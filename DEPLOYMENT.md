@@ -6,8 +6,8 @@
 - [x] `.env.example` created with all required variables
 - [x] `docker-compose.yaml` configured with correct ports
 - [x] `litellm-config.yaml` configured for model routing
-- [x] `onyx_config/onyx.yaml` configured for memory system
-- [x] Port conflicts resolved (Letta API: 8080, Letta ADE: 8283, Onyx: 9090, LiteLLM: 4000)
+- [x] Onyx configured for Git-versioned memory management
+- [x] Port conflicts resolved (Letta API: 3000, Letta ADE: 8283, Onyx: 8080, Qdrant: 6333, LiteLLM: 4000)
 - [x] Health checks added to all services
 - [x] Restart policies configured
 - [x] Volume mounts configured for memory directories
@@ -26,6 +26,7 @@
 - [ ] Add your `ANTHROPIC_API_KEY` to `.env`
 - [ ] Generate secure random string for `LETTA_API_KEY`
 - [ ] Generate secure random string for `LITELLM_MASTER_KEY`
+- [ ] Generate secure random string for `POSTGRES_PASSWORD`
 - [ ] Review and customize `litellm-config.yaml` if needed
 - [ ] Ensure Docker and Docker Compose are installed
 - [ ] Ensure at least 4GB RAM is available
@@ -44,6 +45,7 @@ nano .env  # or use your preferred editor
 # Generate secure keys (example using openssl)
 openssl rand -hex 32  # Use for LETTA_API_KEY
 openssl rand -hex 32  # Use for LITELLM_MASTER_KEY
+openssl rand -hex 32  # Use for POSTGRES_PASSWORD
 ```
 
 ### 2. Start Services
@@ -68,8 +70,8 @@ docker-compose ps
 # All services should show (healthy) status after ~1 minute
 
 # Test individual endpoints
-curl http://localhost:8080/health  # Letta API
-curl http://localhost:9090/health  # Onyx
+curl http://localhost:3000/health  # Letta API
+curl http://localhost:8080/health  # Onyx API
 curl http://localhost:6333/health  # Qdrant
 curl http://localhost:4000/health  # LiteLLM
 
@@ -99,9 +101,9 @@ git commit -m "Add initial user preferences"
 
 | Service | Port | Health Endpoint | Expected Response |
 |---------|------|-----------------|-------------------|
-| Letta API | 8080 | `/health` | 200 OK |
+| Letta API | 3000 | `/health` | 200 OK |
 | Letta ADE (Web UI) | 8283 | N/A | Web interface |
-| Onyx | 9090 | `/health` | 200 OK |
+| Onyx API | 8080 | `/health` | 200 OK |
 | Qdrant | 6333 | `/health` | 200 OK |
 | LiteLLM | 4000 | `/health` | 200 OK |
 
@@ -113,6 +115,8 @@ docker volume ls | grep bears-stack
 
 # Expected volumes:
 # - bears-stack_qdrant_data
+# - bears-stack_letta_data
+# - bears-stack_onyx_db_data
 ```
 
 ### Memory Directory Verification
@@ -124,9 +128,9 @@ ls -la history/
 ls -la projects/
 
 # Verify Onyx can access memory directories
-docker-compose exec onyx ls -la /memories
-docker-compose exec onyx ls -la /history
-docker-compose exec onyx ls -la /projects
+docker-compose exec onyx-api-server ls -la /app/memories
+docker-compose exec onyx-api-server ls -la /app/history
+docker-compose exec onyx-api-server ls -la /app/projects
 ```
 
 ## Troubleshooting
@@ -151,8 +155,8 @@ If you see "port already in use" errors:
 ```bash
 # Find what's using the port
 lsof -i :8283  # Letta ADE (Web UI)
-lsof -i :8080  # Letta API
-lsof -i :9090  # Onyx
+lsof -i :3000  # Letta API
+lsof -i :8080  # Onyx API
 lsof -i :6333  # Qdrant
 lsof -i :4000  # LiteLLM
 
@@ -181,12 +185,14 @@ docker-compose up -d
 
 ```bash
 # Check volume mounts
-docker-compose exec onyx df -h
+docker-compose exec onyx-api-server df -h
 
-# Verify volume exists
+# Verify volumes exist
 docker volume inspect bears-stack_qdrant_data
+docker volume inspect bears-stack_letta_data
+docker volume inspect bears-stack_onyx_db_data
 
-# If volume is missing, recreate it
+# If volumes are missing, recreate them
 docker-compose down -v
 docker-compose up -d
 ```

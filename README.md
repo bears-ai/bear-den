@@ -5,9 +5,10 @@
 Configuration for our agentic assistants platform, using:
 
 - [Letta](https://github.com/letta-ai/letta) – Agent server and orchestration layer
-- [Onyx](https://github.com/onyx-ai/onyx) – Long-term vector memory
-- [Qdrant](https://github.com/qdrant/qdrant) – Vector DB backend for Onyx
+- [Onyx](https://github.com/onyx-dot-app/onyx) – Memory management with Git-versioned Markdown
+- [Qdrant](https://github.com/qdrant/qdrant) – Vector database for semantic memory
 - [LiteLLM](https://github.com/BerriAI/litellm) – Unified LLM gateway
+- [PostgreSQL](https://www.postgresql.org/) – Database backend for Onyx
 - [Coolify](https://coolify.io) (optional) – PaaS for deployment and management
 
 ## Quick Start
@@ -47,8 +48,8 @@ Configuration for our agentic assistants platform, using:
 Once deployed, the following services will be available:
 
 - **Letta ADE (Web UI)**: http://localhost:8283
-- **Letta API Server**: http://localhost:8080
-- **Onyx Memory System**: http://localhost:9090
+- **Letta API Server**: http://localhost:3000
+- **Onyx API Server**: http://localhost:8080
 - **Qdrant Vector DB**: http://localhost:6333
 - **LiteLLM Gateway**: http://localhost:4000
 
@@ -60,6 +61,7 @@ Required environment variables (see [`.env.example`](.env.example)):
 - `ANTHROPIC_API_KEY` - Anthropic API key for Claude models
 - `LETTA_API_KEY` - Authentication key for Letta API (generate a secure random string)
 - `LITELLM_MASTER_KEY` - Master key for LiteLLM gateway (generate a secure random string)
+- `POSTGRES_PASSWORD` - Password for Onyx PostgreSQL database (generate a secure random string)
 
 ## Architecture
 
@@ -82,22 +84,25 @@ See [`memories/README.md`](memories/README.md) for details on the memory system.
 ┌─────────────┐
 │   Letta     │ ← Agent orchestration & tool execution
 │ ADE: :8283  │ ← Web UI for agent management
-│ API: :8080  │
+│ API: :3000  │
 └──────┬──────┘
        │
        ├──────→ ┌─────────────┐
-       │        │   Onyx      │ ← Memory management
-       │        │   :9090     │
+       │        │   Onyx      │ ← Memory management (Git + Markdown)
+       │        │   :8080     │
        │        └──────┬──────┘
        │               │
-       │               ↓
-       │        ┌─────────────┐
-       │        │   Qdrant    │ ← Vector storage
-       │        │   :6333     │
-       │        └─────────────┘
+       │               ├──────→ ┌─────────────┐
+       │               │        │  PostgreSQL │ ← Onyx database
+       │               │        └─────────────┘
+       │               │
+       │               └──────→ ┌─────────────┐
+       │                        │   Qdrant    │ ← Vector storage
+       │                        │   :6333     │
+       │                        └─────────────┘
        │
        └──────→ ┌─────────────┐
-                │  LiteLLM    │ ← Model gateway
+                │  LiteLLM    │ ← Model gateway (OpenAI, Claude, etc.)
                 │   :4000     │
                 └─────────────┘
 ```
@@ -121,7 +126,7 @@ model_routing:
 
 ### Onyx Configuration
 
-Edit [`onyx_config/onyx.yaml`](onyx_config/onyx.yaml) to configure memory collections and embeddings.
+Onyx manages the Git-versioned memory files in the `memories/`, `history/`, and `projects/` directories. Configuration can be customized through environment variables in the docker-compose file.
 
 ## Deployment
 

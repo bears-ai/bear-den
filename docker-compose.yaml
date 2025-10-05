@@ -3,19 +3,21 @@ services:
     image: lettaai/letta:latest
     ports:
       - "8283:8283"  # Letta ADE (Admin Development Environment) Web UI
-      - "8080:8080"  # Letta API Server
+      - "3000:8080"  # Letta API Server (external:internal)
     environment:
-      - ONYX_URL=http://onyx:9090
+      - ONYX_URL=http://onyx-api-server:8080
       - LLM_API_URL=http://litellm:4000/v1
       - MODEL_NAME=gpt-4
-      - API_KEY=${LETTA_API_KEY}
+      - LETTA_SERVER_PASS=${LETTA_API_KEY}
       - LETTA_SERVER_PORT=8080
-      - LETTA_ADE_PORT=8283
+      - OPENAI_API_KEY=${OPENAI_API_KEY}  # For embeddings
     depends_on:
-      onyx:
-        condition: service_healthy
+      onyx-api-server:
+        condition: service_started
       litellm:
         condition: service_healthy
+    volumes:
+      - letta_data:/root/.letta
     networks:
       - letta_net
     restart: unless-stopped
@@ -26,33 +28,47 @@ services:
       retries: 3
       start_period: 40s
 
-  onyx:
-    image: onyxai/onyx:latest
+  onyx-api-server:
+    image: onyxdotapp/onyx-backend:latest
     ports:
-      - "9090:9090"
+      - "8080:8080"
     environment:
-      - VECTOR_DB=qdrant
-      - QDRANT_URL=http://qdrant:6333
-      - ONYX_CONFIG_PATH=/config/onyx.yaml
-      - OPENAI_API_KEY=${OPENAI_API_KEY}  # Needed by Onyx for embeddings
-      - PORT=9090
+      - POSTGRES_HOST=onyx-db
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-password}
+      - POSTGRES_DB=onyx
+      - QDRANT_HOST=qdrant
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - AUTH_TYPE=disabled
     depends_on:
+      onyx-db:
+        condition: service_healthy
       qdrant:
         condition: service_healthy
     volumes:
-      - ./onyx_config:/config:ro
-      - ./memories:/memories
-      - ./history:/history
-      - ./projects:/projects
+      - ./memories:/app/memories
+      - ./history:/app/history
+      - ./projects:/app/projects
+    networks:
+      - letta_net
+    restart: unless-stopped
+
+  onyx-db:
+    image: postgres:15
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-password}
+      - POSTGRES_DB=onyx
+    volumes:
+      - onyx_db_data:/var/lib/postgresql/data
     networks:
       - letta_net
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9090/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 40s
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   qdrant:
     image: qdrant/qdrant:latest
@@ -95,6 +111,8 @@ services:
 
 volumes:
   qdrant_data:
+  letta_data:
+  onyx_db_data:
 
 networks:
   letta_net:
