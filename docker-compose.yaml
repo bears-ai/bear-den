@@ -89,7 +89,7 @@ services:
 
   litellm:
     image: ghcr.io/berriai/litellm:main
-    platform: linux/amd64  # Force x86 image since no ARM build is available
+    platform: linux/arm64
     ports:
       - "4000:4000"
     environment:
