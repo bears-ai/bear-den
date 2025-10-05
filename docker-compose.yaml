@@ -1,6 +1,7 @@
 services:
   letta:
     image: lettaai/letta:latest
+    platform: linux/amd64  # Enable x86_64 emulation on ARM64
     ports:
       - "8283:8283"  # Letta ADE (Admin Development Environment) Web UI
       - "3000:8080"  # Letta API Server (external:internal)

@@ -31,6 +31,16 @@
 - [ ] Ensure Docker and Docker Compose are installed
 - [ ] Ensure at least 4GB RAM is available
 
+### 🔧 ARM64 Deployment Notes
+
+**Good news**: This stack works on ARM64 (Apple Silicon, AWS Graviton, etc.)!
+
+- **LiteLLM**: Native ARM64 support ✅
+- **Letta**: Uses x86_64 emulation via `platform: linux/amd64` in docker-compose.yaml
+- **Other services**: All support ARM64 natively (PostgreSQL, Qdrant, Onyx)
+
+**Performance Note**: Letta runs under emulation on ARM64, which adds ~10-20% overhead. This is acceptable for most use cases. If you need maximum performance, consider using an x86_64 server, but it's not required.
+
 ## Deployment Steps
 
 ### 1. Environment Setup

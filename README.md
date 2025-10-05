@@ -1,6 +1,4 @@
-# 🐻 BEARS Stack
-
-**B**ears **E**volving **A**gentic **R**easoning **S**ystem
+# 🐻 Basic Extensible Agent Runtime Stack (BEARS)
 
 Configuration for our agentic assistants platform, using:
 
