@@ -229,6 +229,25 @@ docker-compose up -d
 
 ## Backup Strategy
 
+### What Needs Backing Up?
+
+**Critical Data (Git-versioned):**
+- `memories/` - All semantic memory in Markdown files
+- `history/` - Conversation transcripts and logs
+- `projects/` - Project context and notes
+
+These are your **source of truth** and are already backed up via Git commits.
+
+**Ephemeral Data (Can be rebuilt):**
+- PostgreSQL (`onyx_db_data`) - Metadata only, can be regenerated from Git files
+- Qdrant (`qdrant_data`) - Vector embeddings, can be re-indexed from memory files
+- Letta (`letta_data`) - Configuration, can be recreated
+
+**Backup Priority:**
+1. **Essential**: Git repository (memories, history, projects) - This is your only irreplaceable data
+2. **Optional**: Qdrant vectors - Saves re-indexing time but can be rebuilt
+3. **Skip**: PostgreSQL - Just metadata that Onyx regenerates from files
+
 ### Automated Backups
 
 ```bash
@@ -239,14 +258,16 @@ DATE=$(date +%Y%m%d_%H%M%S)
 BACKUP_DIR="./backups/$DATE"
 mkdir -p "$BACKUP_DIR"
 
-# Backup Qdrant data
+# Backup Qdrant data (optional - saves re-indexing time)
 docker-compose exec -T qdrant tar czf - /qdrant/storage > "$BACKUP_DIR/qdrant.tar.gz"
 
-# Backup memory files (Git)
+# Backup memory files (Git) - THIS IS THE CRITICAL BACKUP
 git add memories/ history/ projects/
 git commit -m "Backup: $DATE" || true
+git push  # Push to remote for off-site backup
 
 echo "Backup completed: $BACKUP_DIR"
+echo "Memory files committed to Git (source of truth)"
 EOF
 
 chmod +x backup.sh
@@ -255,15 +276,46 @@ chmod +x backup.sh
 ### Restore from Backup
 
 ```bash
-# Restore Qdrant data
+# Restore memory files (Git) - PRIMARY RESTORE METHOD
+git checkout <commit-hash>
+# or
+git pull  # If restoring from remote
+
+# Restart services - Onyx will regenerate PostgreSQL metadata from files
+docker-compose down
+docker-compose up -d
+
+# Optional: Restore Qdrant data (if you backed it up)
+# This saves re-indexing time but is not required
 docker-compose down
 docker volume rm bears-stack_qdrant_data
 docker volume create bears-stack_qdrant_data
 docker run --rm -v bears-stack_qdrant_data:/qdrant/storage -v $(pwd)/backups/YYYYMMDD_HHMMSS:/backup alpine tar xzf /backup/qdrant.tar.gz -C /
 docker-compose up -d
 
-# Restore memory files (Git)
-git checkout <commit-hash>
+# If you didn't backup Qdrant, Onyx will re-index from memory files automatically
+```
+
+### Disaster Recovery
+
+If you lose everything except your Git repository:
+
+```bash
+# Clone your repository
+git clone <your-repo-url> bears-stack
+cd bears-stack
+
+# Set up environment
+cp .env.example .env
+# Edit .env with your API keys
+
+# Start services - Onyx will rebuild everything from memory files
+docker-compose up -d
+
+# Onyx automatically:
+# - Recreates PostgreSQL metadata from Markdown files
+# - Re-indexes all content into Qdrant vectors
+# - Restores full system state from Git history
 ```
 
 ## Monitoring
