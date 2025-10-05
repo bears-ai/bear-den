@@ -3,7 +3,7 @@ FROM python:3.11-slim
 # Install LiteLLM with the gateway extras so the CLI server entrypoint is available.
 ENV PIP_NO_CACHE_DIR=1
 
-RUN pip install "litellm[gateway]"
+RUN pip install "litellm[gateway]" backoff
 
 WORKDIR /app
 
