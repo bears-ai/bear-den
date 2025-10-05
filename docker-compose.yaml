@@ -2,33 +2,57 @@ services:
   letta:
     image: lettaai/letta:latest
     ports:
-      - "3000:3000"
+      - "8283:8283"  # Letta ADE (Admin Development Environment) Web UI
+      - "8080:8080"  # Letta API Server
     environment:
-      - ONYX_URL=http://onyx:8000
-      - LLM_API_URL=http://litellm:8000/v1
+      - ONYX_URL=http://onyx:9090
+      - LLM_API_URL=http://litellm:4000/v1
       - MODEL_NAME=gpt-4
       - API_KEY=${LETTA_API_KEY}
+      - LETTA_SERVER_PORT=8080
+      - LETTA_ADE_PORT=8283
     depends_on:
-      - onyx
-      - litellm
+      onyx:
+        condition: service_healthy
+      litellm:
+        condition: service_healthy
     networks:
       - letta_net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
 
   onyx:
     image: onyxai/onyx:latest
     ports:
-      - "8000:8000"
+      - "9090:9090"
     environment:
       - VECTOR_DB=qdrant
       - QDRANT_URL=http://qdrant:6333
       - ONYX_CONFIG_PATH=/config/onyx.yaml
       - OPENAI_API_KEY=${OPENAI_API_KEY}  # Needed by Onyx for embeddings
+      - PORT=9090
     depends_on:
-      - qdrant
+      qdrant:
+        condition: service_healthy
     volumes:
       - ./onyx_config:/config:ro
+      - ./memories:/memories
+      - ./history:/history
+      - ./projects:/projects
     networks:
       - letta_net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9090/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
 
   qdrant:
     image: qdrant/qdrant:latest
@@ -38,20 +62,36 @@ services:
       - qdrant_data:/qdrant/storage
     networks:
       - letta_net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:6333/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
 
   litellm:
     image: ghcr.io/berriai/litellm:main
     ports:
-      - "8000:8000"
+      - "4000:4000"
     environment:
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
       - LITELLM_MODEL_NAME=openai/gpt-4
       - LITELLM_MASTER_KEY=${LITELLM_MASTER_KEY}
+      - PORT=4000
     volumes:
-      - ./litellm_config.yaml:/app/config.yaml:ro
+      - ./litellm-config.yaml:/app/config.yaml:ro
+    command: ["--config", "/app/config.yaml", "--port", "4000"]
     networks:
       - letta_net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:4000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
 
 volumes:
   qdrant_data:

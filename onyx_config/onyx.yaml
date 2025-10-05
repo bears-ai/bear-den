@@ -5,7 +5,7 @@ vector_db:
 embedding:
   provider: openai
   model: text-embedding-ada-002
-  api_base: http://litellm:8000/v1
+  api_base: http://litellm:4000/v1
   api_key_env: OPENAI_API_KEY
 
 memory_collections:
