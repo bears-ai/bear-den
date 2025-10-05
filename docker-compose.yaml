@@ -100,6 +100,8 @@ services:
       - LITELLM_MODEL_NAME=openai/gpt-4
       - LITELLM_MASTER_KEY=${LITELLM_MASTER_KEY}
       - PORT=4000
+      - SEPARATE_HEALTH_APP=1
+      - SEPARATE_HEALTH_PORT=8001
     volumes:
       - ./litellm-config.yaml:/app/config.yaml:ro
     command: ["--config", "/app/config.yaml", "--port", "4000"]
@@ -107,11 +109,11 @@ services:
       - letta_net
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:4000/health"]
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8001/health"]
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 30s
+      start_period: 40s
 
 volumes:
   qdrant_data:
