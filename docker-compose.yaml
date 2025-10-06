@@ -100,20 +100,18 @@ services:
       - LITELLM_MODEL_NAME=openai/gpt-4
       - LITELLM_MASTER_KEY=${LITELLM_MASTER_KEY}
       - PORT=4000
-      - SEPARATE_HEALTH_APP=1
-      - SEPARATE_HEALTH_PORT=8001
     volumes:
       - ./litellm-config.yaml:/app/config.yaml:ro
     command: ["--config", "/app/config.yaml", "--port", "4000"]
     networks:
       - letta_net
     restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8001/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 40s
+    healthcheck:  # Defines the health check configuration for the container
+      test: [ "CMD-SHELL", "wget --no-verbose --tries=1 http://localhost:4000/health/liveliness || exit 1" ]  # Command to execute for health check
+      interval: 30s  # Perform health check every 30 seconds
+      timeout: 10s   # Health check command times out after 10 seconds
+      retries: 3     # Retry up to 3 times if health check fails
+      start_period: 40s  # Wait 40 seconds after container start before beginning health checks
 
 volumes:
   qdrant_data:
