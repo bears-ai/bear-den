@@ -1,7 +1,6 @@
 services:
   letta:
-    image: lettaai/letta:latest
-    platform: linux/arm64
+    image: letta/letta:latest
     ports:
       - "8283:8283"  # Letta ADE (Admin Development Environment) Web UI
       - "${LETTA_HOST_PORT:-3000}:8080"  # Letta API Server (external:internal)
