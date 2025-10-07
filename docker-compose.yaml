@@ -57,6 +57,7 @@ services:
     networks:
       - letta_net
     restart: unless-stopped
+    command: ["/bin/sh", "-c", "echo 'Starting Onyx Api Server' && uvicorn onyx.main:app --host 0.0.0.0 --port 8080"]
 
 
   onyx-migrate:
@@ -168,7 +169,6 @@ volumes:
   letta_data:
   onyx_db_data:
   redis_data:
-
 
 networks:
   letta_net:
