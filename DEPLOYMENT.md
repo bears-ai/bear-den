@@ -71,6 +71,31 @@ docker-compose up -d
 docker-compose logs -f
 ```
 
+### 2.5 Run Database Migrations (Onyx)
+
+Onyx stores metadata in PostgreSQL and requires database migrations to be applied when upgrading or deploying. This repository includes a one-off `onyx-migrate` service in `docker-compose.yaml` that runs the Alembic migrations.
+
+Run the migrate service once after the database and other dependencies are healthy:
+
+```bash
+# Ensure dependencies are running and healthy
+docker compose up -d onyx-cache onyx-db qdrant
+
+# Run migrations (runs once and exits)
+docker compose up --no-deps --exit-code-from onyx-migrate onyx-migrate
+
+# If migrations succeed, start the API server
+docker compose up -d onyx-api-server
+```
+
+If migrations fail, check the logs for `onyx-migrate` and fix any issues before re-running:
+
+```bash
+docker compose logs --tail=200 onyx-migrate
+```
+
+If you prefer automatic migrations on start (not recommended for production), let me know and I can change `onyx-api-server` to run `alembic upgrade head` on startup instead.
+
 ### 3. Verify Deployment
 
 ```bash
