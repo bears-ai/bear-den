@@ -1,432 +1,663 @@
-# BEARS Stack Deployment Checklist
+# BEARS Stack - Coolify Deployment Guide
 
-## Pre-Deployment Checklist
+Complete guide for deploying the BEARS Stack on Coolify with separate service deployments.
 
-### ✅ Configuration Files
-- [x] `.env.example` created with all required variables
-- [x] `docker-compose.yaml` configured with correct ports
-- [x] `litellm-config.yaml` configured for model routing
-- [x] Onyx configured for Git-versioned memory management
-- [x] Port conflicts resolved (Letta API: 3000, Letta ADE: 8283, Onyx: 8080, Qdrant: 6333, LiteLLM: 4000)
-- [x] Health checks added to all services
-- [x] Restart policies configured
-- [x] Volume mounts configured for memory directories
+## Table of Contents
 
-### ✅ Directory Structure
-- [x] `memories/` directory created with README
-- [x] `memories/personal/` subdirectory created
-- [x] `memories/shared/` subdirectory created
-- [x] `history/` directory created with README
-- [x] `projects/` directory created with README
+1. [Overview](#overview)
+2. [Prerequisites](#prerequisites)
+3. [Architecture](#architecture)
+4. [Deployment Order](#deployment-order)
+5. [Step-by-Step Deployment](#step-by-step-deployment)
+6. [Post-Deployment](#post-deployment)
+7. [Verification](#verification)
+8. [Troubleshooting](#troubleshooting)
 
-### 📋 Before First Deployment
+## Overview
 
-- [ ] Copy `.env.example` to `.env`
-- [ ] Add your `OPENAI_API_KEY` to `.env`
-- [ ] Add your `ANTHROPIC_API_KEY` to `.env`
-- [ ] Generate secure random string for `LETTA_API_KEY`
-- [ ] Generate secure random string for `LITELLM_MASTER_KEY`
-- [ ] Generate secure random string for `POSTGRES_PASSWORD`
-- [ ] Review and customize `litellm-config.yaml` if needed
-- [ ] Ensure Docker and Docker Compose are installed
-- [ ] Ensure at least 4GB RAM is available
+The BEARS Stack uses a **two-repository architecture**:
 
-### 🔧 ARM64 Deployment Notes
+1. **This repository** (`bears-deploy`) - Configuration and deployment guides
+2. **Content repository** - Your memory files (created from `content-template/`)
 
-**Good news**: This stack works on ARM64 (Apple Silicon, AWS Graviton, etc.)!
+Services are deployed individually in Coolify, leveraging:
+- Coolify-managed PostgreSQL with automatic backups
+- Internal Docker networking for service communication
+- Git-based memory synchronization
+- Persistent volumes for data
 
-- **LiteLLM**: Native ARM64 support ✅
-- **Letta**: Uses x86_64 emulation via `platform: linux/amd64` in docker-compose.yaml
-- **Other services**: All support ARM64 natively (PostgreSQL, Qdrant, Onyx)
+## Prerequisites
 
-**Performance Note**: Letta runs under emulation on ARM64, which adds ~10-20% overhead. This is acceptable for most use cases. If you need maximum performance, consider using an x86_64 server, but it's not required.
+### Infrastructure
 
-## Deployment Steps
+- ✅ Coolify instance running (v4.0+)
+- ✅ At least 6 GB RAM available
+- ✅ 20 GB disk space for data and images
+- ✅ Domain name (optional, for HTTPS access)
 
-### 1. Environment Setup
+### Accounts and Keys
 
-```bash
-# Copy environment template
-cp .env.example .env
+- ✅ GitHub account
+- ✅ OpenAI API key (for GPT models and embeddings)
+- ✅ Anthropic API key (for Claude models)
+- ✅ GitHub Personal Access Token (PAT) with Contents: Read/Write permissions
 
-# Edit with your API keys
-nano .env  # or use your preferred editor
+### Local Tools
 
-# Generate secure keys (example using openssl)
-openssl rand -hex 32  # Use for LETTA_API_KEY
-openssl rand -hex 32  # Use for LITELLM_MASTER_KEY
-openssl rand -hex 32  # Use for POSTGRES_PASSWORD
+- ✅ Git client
+- ✅ `openssl` for generating secure keys
+- ✅ Web browser for Coolify and Letta UI
+
+## Architecture
+
+### Service Dependencies
+
+```
+Layer 4: Application
+├── Letta (Agent orchestration + Web UI)
+
+Layer 3: APIs
+├── Onyx API Server (Memory management)
+└── LiteLLM (Model gateway)
+
+Layer 2: Memory
+└── Git Sync (GitHub synchronization)
+
+Layer 1: Infrastructure
+├── PostgreSQL (Database - Coolify-managed)
+├── Redis (Cache)
+└── Qdrant (Vector database)
 ```
 
-### 2. Start Services
+### Data Flow
 
-```bash
-# Pull latest images
-docker-compose pull
-
-# Start all services in detached mode
-docker-compose up -d
-
-# Watch logs during startup
-docker-compose logs -f
+```
+User → Letta → LiteLLM → OpenAI/Anthropic APIs
+           ↓
+         Onyx ← PostgreSQL (metadata)
+           ↓     Qdrant (vectors)
+           ↓     Redis (cache)
+     Markdown files
+           ↓
+       Git Sync → GitHub (backup)
 ```
 
-### 2.5 Run Database Migrations (Onyx)
+## Deployment Order
 
-Onyx stores metadata in PostgreSQL and requires database migrations to be applied when upgrading or deploying. This repository includes a one-off `onyx-migrate` service in `docker-compose.yaml` that runs the Alembic migrations.
+Services **must** be deployed in this order:
 
-Run the migrate service once after the database and other dependencies are healthy:
+1. **PostgreSQL** (Coolify-managed database)
+2. **Redis** (Cache layer)
+3. **Qdrant** (Vector database)
+4. **Git Sync** (Memory synchronization)
+5. **Onyx API Server** (Memory management)
+6. **LiteLLM** (Model gateway)
+7. **Letta** (Agent orchestration)
 
-```bash
-# Ensure dependencies are running and healthy
-docker compose up -d onyx-cache onyx-db qdrant
+## Step-by-Step Deployment
 
-# Run migrations (runs once and exits)
-docker compose up --no-deps --exit-code-from onyx-migrate onyx-migrate
+### Step 0: Prepare Content Repository
 
-# If migrations succeed, start the API server
-docker compose up -d onyx-api-server
-```
+Before deploying any services, create your content repository.
 
-If migrations fail, check the logs for `onyx-migrate` and fix any issues before re-running:
-
-```bash
-docker compose logs --tail=200 onyx-migrate
-```
-
-If you prefer automatic migrations on start (not recommended for production), let me know and I can change `onyx-api-server` to run `alembic upgrade head` on startup instead.
-
-### 3. Verify Deployment
+#### 0.1. Fork Content Template
 
 ```bash
-# Check service status
-docker-compose ps
+# Clone this repository locally
+git clone https://github.com/TheArtificial/bears-deploy.git
+cd bears-deploy
 
-# All services should show (healthy) status after ~1 minute
+# Copy content template
+cp -r content-template ../bears-content
+cd ../bears-content
 
-# Test individual endpoints
-curl http://localhost:3000/health  # Letta API
-curl http://localhost:8080/health  # Onyx API
-curl http://localhost:6333/health  # Qdrant
-curl http://localhost:4000/health  # LiteLLM
-
-# Access Letta Web UI in browser
-open http://localhost:8283  # macOS
-# or visit http://localhost:8283 in your browser
-```
-
-### 4. Initial Configuration
-
-```bash
-# Initialize Git for memory tracking (if not already done)
+# Initialize as new repository
+rm -rf .git
 git init
-git add memories/ history/ projects/
-git commit -m "Initialize memory directories"
+git add .
+git commit -m "Initial commit from BEARS content template"
 
-# Create your first user memory file
-mkdir -p memories/personal/$(whoami)
-echo "# My Preferences" > memories/personal/$(whoami)/preferences.md
-git add memories/
-git commit -m "Add initial user preferences"
+# Create repository on GitHub and push
+# (Create "bears-content" repository on GitHub first)
+git remote add origin https://github.com/YourUsername/bears-content.git
+git branch -M main
+git push -u origin main
 ```
 
-## Post-Deployment Verification
+#### 0.2. Create GitHub Personal Access Token
 
-### Service Health Checks
+1. Go to GitHub → Settings → Developer Settings → Personal Access Tokens → Fine-grained tokens
+2. Click "Generate new token"
+3. Configure:
+   - **Token name**: `BEARS Git Sync`
+   - **Expiration**: 90 days
+   - **Repository access**: Only `bears-content`
+   - **Permissions**: Contents - **Read and write**
+4. Generate and **save the token** (you won't see it again!)
 
-| Service | Port | Health Endpoint | Expected Response |
-|---------|------|-----------------|-------------------|
-| Letta API | 3000 | `/health` | 200 OK |
-| Letta ADE (Web UI) | 8283 | N/A | Web interface |
-| Onyx API | 8080 | `/health` | 200 OK |
-| Qdrant | 6333 | `/health` | 200 OK |
-| LiteLLM | 4000 | `/health` | 200 OK |
+### Step 1: Deploy PostgreSQL
 
-### Volume Verification
+#### 1.1. Create Database in Coolify
+
+1. Go to Coolify → **Databases** → **Add Database**
+2. Select **PostgreSQL**
+3. Configure:
+   - **Name**: `bears-postgres`
+   - **Version**: `15` or `16`
+   - **Username**: `postgres` (default)
+   - **Password**: Click "Generate" or use: `openssl rand -base64 32`
+   - **Database Name**: `onyx`
+4. Click **Deploy**
+5. Wait for status: **Healthy** ✅
+
+#### 1.2. Save Connection Details
 
 ```bash
-# Verify named volumes exist
-docker volume ls | grep bears-stack
-
-# Expected volumes:
-# - bears-stack_qdrant_data
-# - bears-stack_letta_data
-# - bears-stack_onyx_db_data
+# Note these for Onyx deployment:
+POSTGRES_HOST=<coolify-generated-host-name>
+POSTGRES_PORT=5432
+POSTGRES_USER=postgres
+POSTGRES_PASSWORD=<your-generated-password>
+POSTGRES_DB=onyx
 ```
 
-### Memory Directory Verification
+**Verify**: Check database is accessible in Coolify dashboard.
+
+---
+
+### Step 2: Deploy Redis
+
+See [`services/redis/COOLIFY_DEPLOY.md`](services/redis/COOLIFY_DEPLOY.md) for detailed instructions.
+
+#### 2.1. Create Service
+
+1. Coolify → **Add Resource** → **Docker Image**
+2. Configure:
+   - **Service Name**: `bears-redis`
+   - **Image**: `redis:7-alpine`
+   - **Port**: 6379 (internal only)
+
+#### 2.2. Add Persistent Storage
+
+- **Volume Name**: `bears-redis-data`
+- **Mount Path**: `/data`
+
+#### 2.3. Configure Health Check
 
 ```bash
-# Verify directory structure
-ls -la memories/
-ls -la history/
-ls -la projects/
-
-# Verify Onyx can access memory directories
-docker-compose exec onyx-api-server ls -la /app/memories
-docker-compose exec onyx-api-server ls -la /app/history
-docker-compose exec onyx-api-server ls -la /app/projects
+Command: redis-cli ping | grep PONG
+Interval: 10s
+Timeout: 5s
+Retries: 5
 ```
+
+#### 2.4. Deploy
+
+Click **Deploy** and wait for status: **Healthy** ✅
+
+**Verify**: Test in Coolify terminal: `redis-cli ping` → `PONG`
+
+---
+
+### Step 3: Deploy Qdrant
+
+See [`services/qdrant/COOLIFY_DEPLOY.md`](services/qdrant/COOLIFY_DEPLOY.md) for detailed instructions.
+
+#### 3.1. Create Service
+
+1. Coolify → **Add Resource** → **Docker Image**
+2. Configure:
+   - **Service Name**: `bears-qdrant`
+   - **Image**: `qdrant/qdrant:latest`
+   - **Port**: 6333 (internal)
+
+#### 3.2. Add Persistent Storage
+
+- **Volume Name**: `bears-qdrant-data`
+- **Mount Path**: `/qdrant/storage`
+
+#### 3.3. Configure Health Check
+
+```bash
+Command: wget --no-verbose --tries=1 --spider http://localhost:6333/readyz || exit 1
+Interval: 30s
+Timeout: 10s
+Start Period: 60s
+```
+
+#### 3.4. Set Resource Limits
+
+- **Memory**: 2 GB
+- **CPU**: 2 cores
+
+#### 3.5. Deploy
+
+Click **Deploy** and wait for status: **Healthy** ✅
+
+**Verify**: Test in Coolify terminal: `curl http://localhost:6333/` → Returns Qdrant version info
+
+---
+
+### Step 4: Deploy Git Sync
+
+See [`services/git-sync/COOLIFY_DEPLOY.md`](services/git-sync/COOLIFY_DEPLOY.md) for detailed instructions.
+
+#### 4.1. Create Service
+
+1. Coolify → **Add Resource** → **Docker Image**
+2. Choose **Build from Git Repository**
+3. Configure:
+   - **Service Name**: `bears-git-sync`
+   - **Git Repository**: `https://github.com/TheArtificial/bears-deploy`
+   - **Branch**: `main`
+   - **Dockerfile**: `services/git-sync/Dockerfile`
+   - **Build Context**: `services/git-sync`
+
+#### 4.2. Configure Environment Variables
+
+```bash
+# Content Repository
+GIT_SYNC_REPO=https://github.com/YourUsername/bears-content.git
+GIT_SYNC_BRANCH=main
+
+# GitHub Authentication
+GIT_USERNAME=your-github-username
+GIT_PASSWORD=ghp_your_personal_access_token
+
+# Git Identity
+GIT_AUTHOR_NAME=BEARS Git Sync
+GIT_AUTHOR_EMAIL=git-sync@yourdomain.com
+
+# Optional: Sync interval (default: 300s / 5 min)
+GIT_SYNC_INTERVAL=300
+```
+
+#### 4.3. Create Shared Volume
+
+**Critical**: This volume will be shared with Onyx!
+
+- **Volume Name**: `bears-memory`
+- **Mount Path**: `/data`
+
+#### 4.4. Deploy
+
+Click **Deploy** and watch logs for:
+
+```
+🐻 BEARS Git Sync starting...
+📦 Cloning repository for the first time...
+✅ Repository cloned successfully
+✅ Git sync is running!
+```
+
+**Verify**: 
+- Check logs show successful clone
+- Test in terminal: `ls -la /data/` → Should show `memories/`, `history/`, `projects/`, `.git/`
+- Check GitHub repository for auto-commit test
+
+---
+
+### Step 5: Deploy Onyx API Server
+
+See [`services/onyx/COOLIFY_DEPLOY.md`](services/onyx/COOLIFY_DEPLOY.md) for detailed instructions.
+
+#### 5.1. Create Service
+
+1. Coolify → **Add Resource** → **Docker Image**
+2. Configure:
+   - **Service Name**: `bears-onyx`
+   - **Image**: `onyxdotapp/onyx-backend:latest`
+   - **Port**: 8080
+
+#### 5.2. Configure Environment Variables
+
+```bash
+# PostgreSQL (from Step 1)
+POSTGRES_HOST=<your-coolify-postgres-host>
+POSTGRES_PORT=5432
+POSTGRES_USER=postgres
+POSTGRES_PASSWORD=<from-step-1>
+POSTGRES_DB=onyx
+
+# Redis
+REDIS_HOST=bears-redis
+REDIS_PORT=6379
+
+# Qdrant
+QDRANT_HOST=bears-qdrant
+QDRANT_PORT=6333
+
+# OpenAI API
+OPENAI_API_KEY=sk-your-openai-api-key
+
+# Authentication
+AUTH_TYPE=disabled
+```
+
+#### 5.3. Mount Shared Volume
+
+**Critical**: Use the SAME volume as Git Sync!
+
+- **Volume Name**: `bears-memory` (same as git-sync)
+- **Mount Path**: `/app/memory`
+
+#### 5.4. Configure Health Check
+
+```bash
+Command: wget --no-verbose --tries=1 --spider http://localhost:8080/health || exit 1
+Interval: 30s
+Timeout: 10s
+Start Period: 60s
+```
+
+#### 5.5. Custom Start Command
+
+```bash
+/bin/sh -c "uvicorn onyx.main:app --host 0.0.0.0 --port 8080"
+```
+
+#### 5.6. Deploy
+
+Click **Deploy** and watch logs for:
+
+```
+Onyx backend started
+Connected to PostgreSQL
+Connected to Qdrant
+```
+
+**Note**: First deployment doesn't need migrations (empty database).
+
+**Verify**:
+- Test: `curl http://bears-onyx:8080/health` → `{"status": "ok"}`
+- Check terminal: `ls -la /app/memory/` → Should show `memories/`, `history/`, `projects/`
+
+---
+
+### Step 6: Deploy LiteLLM
+
+See [`services/litellm/COOLIFY_DEPLOY.md`](services/litellm/COOLIFY_DEPLOY.md) for detailed instructions.
+
+#### 6.1. Create Service
+
+1. Coolify → **Add Resource** → **Docker Image**
+2. Choose **Build from Git Repository**
+3. Configure:
+   - **Service Name**: `bears-litellm`
+   - **Git Repository**: `https://github.com/TheArtificial/bears-deploy`
+   - **Branch**: `main`
+   - **Dockerfile**: `services/litellm/docker/litellm/Dockerfile`
+   - **Build Context**: `services/litellm/docker/litellm`
+
+#### 6.2. Configure Environment Variables
+
+```bash
+# LLM Provider API Keys
+OPENAI_API_KEY=sk-your-openai-key
+ANTHROPIC_API_KEY=sk-ant-your-anthropic-key
+
+# LiteLLM Configuration
+LITELLM_MASTER_KEY=<generate: openssl rand -hex 32>
+PORT=4000
+```
+
+#### 6.3. Mount Configuration File
+
+Mount `services/litellm/litellm-config.yaml` from repository:
+
+- **Source**: From repository at `services/litellm/litellm-config.yaml`
+- **Target**: `/app/config.yaml`
+- **Read Only**: Yes
+
+**Or** create custom config volume.
+
+#### 6.4. Set Command Override
+
+```bash
+--config /app/config.yaml --port 4000
+```
+
+#### 6.5. Configure Health Check
+
+```bash
+Command: wget --no-verbose --tries=1 --spider http://localhost:4000/health/liveliness || exit 1
+Interval: 30s
+Timeout: 10s
+Start Period: 40s
+```
+
+#### 6.6. Deploy
+
+Click **Deploy** and wait for status: **Healthy** ✅
+
+**Verify**:
+- Test: `curl http://bears-litellm:4000/health/liveliness`
+- List models: `curl http://bears-litellm:4000/v1/models`
+
+---
+
+### Step 7: Deploy Letta
+
+See [`services/letta/COOLIFY_DEPLOY.md`](services/letta/COOLIFY_DEPLOY.md) for detailed instructions.
+
+#### 7.1. Create Service
+
+1. Coolify → **Add Resource** → **Docker Image**
+2. Configure:
+   - **Service Name**: `bears-letta`
+   - **Image**: `letta/letta:latest`
+   - **Port**: 8283 (expose externally or use Coolify proxy)
+
+#### 7.2. Configure Environment Variables
+
+```bash
+# Service Integration
+ONYX_URL=http://bears-onyx:8080
+LLM_API_URL=http://bears-litellm:4000/v1
+
+# Model Configuration
+MODEL_NAME=gpt-4
+
+# Letta Server
+LETTA_SERVER_PORT=8283
+LETTA_SERVER_PASS=<generate: openssl rand -base64 32>
+
+# OpenAI (for embeddings)
+OPENAI_API_KEY=sk-your-openai-key
+```
+
+#### 7.3. Add Persistent Storage
+
+- **Volume Name**: `bears-letta-data`
+- **Mount Path**: `/root/.letta`
+
+#### 7.4. Configure Health Check
+
+```bash
+Command: curl -f http://localhost:8283/v1/health || exit 1
+Interval: 30s
+Timeout: 10s
+Start Period: 40s
+```
+
+#### 7.5. Deploy
+
+Click **Deploy** and wait for status: **Healthy** ✅
+
+**Verify**:
+- Test: `curl http://bears-letta:8283/v1/health`
+- Access Web UI at configured domain or `http://<server-ip>:8283`
+
+---
+
+## Post-Deployment
+
+### Access the Web UI
+
+1. Navigate to your configured Coolify domain or `http://<server-ip>:8283`
+2. Login with `LETTA_SERVER_PASS`
+3. Create your first agent
+4. Start chatting!
+
+### Verify End-to-End Functionality
+
+1. **Create a test agent** in Letta Web UI
+2. **Chat with the agent** - ask it to remember something
+3. **Check GitHub** - verify memory file was created and auto-committed
+4. **Check Qdrant** - `curl http://bears-qdrant:6333/collections`
+5. **Chat again** - verify agent recalls the previous context
+
+### Configure Domain (Optional)
+
+1. In Coolify, add custom domain for Letta service
+2. Configure SSL/TLS certificate
+3. Access via `https://your-domain.com`
+
+## Verification
+
+### Service Health Checklist
+
+Check all services are healthy in Coolify dashboard:
+
+- [ ] PostgreSQL - **Healthy** ✅
+- [ ] Redis - **Healthy** ✅
+- [ ] Qdrant - **Healthy** ✅
+- [ ] Git Sync - **Healthy** ✅
+- [ ] Onyx API - **Healthy** ✅
+- [ ] LiteLLM - **Healthy** ✅
+- [ ] Letta - **Healthy** ✅
+
+### Connectivity Tests
+
+```bash
+# From any service terminal in Coolify:
+
+# Test Redis
+redis-cli -h bears-redis ping
+
+# Test Qdrant
+curl http://bears-qdrant:6333/
+
+# Test Onyx
+curl http://bears-onyx:8080/health
+
+# Test LiteLLM
+curl http://bears-litellm:4000/health/liveliness
+
+# Test Letta
+curl http://bears-letta:8283/v1/health
+```
+
+### Memory Sync Verification
+
+1. Check Git Sync logs for successful syncs
+2. Visit GitHub repository - should have recent auto-commits
+3. Create a test file locally and push - should sync within 5 minutes
+4. Create an agent memory in Letta - should appear in GitHub
 
 ## Troubleshooting
 
-### Services Not Starting
+### Service Won't Start
 
-1. **Check logs**
-   ```bash
-   docker-compose logs <service-name>
-   ```
+1. Check logs in Coolify dashboard
+2. Verify environment variables are set correctly
+3. Ensure dependencies are healthy (check service order)
+4. Review service-specific troubleshooting in `COOLIFY_DEPLOY.md` files
 
-2. **Common issues**
-   - Missing environment variables → Check `.env` file
-   - Port conflicts → Check `lsof -i :<port>`
-   - Insufficient memory → Check `docker stats`
-   - Image pull failures → Check internet connection
+### Connectivity Issues
 
-### Port Conflicts
+**Problem**: Service A can't connect to Service B
 
-If you see "port already in use" errors:
+**Solutions**:
+- Verify both services in same Coolify project
+- Check service names match environment variables
+- Test connectivity from Coolify terminal
+- Ensure target service is healthy
 
-```bash
-# Find what's using the port
-lsof -i :8283  # Letta ADE (Web UI)
-lsof -i :3000  # Letta API
-lsof -i :8080  # Onyx API
-lsof -i :6333  # Qdrant
-lsof -i :4000  # LiteLLM
+### Git Sync Not Pushing
 
-# Option 1: Stop the conflicting service
-# Option 2: Change port in docker-compose.yaml
-```
+**Problem**: No commits appearing on GitHub
 
-### Health Checks Failing
+**Solutions**:
+- Verify `GIT_PASSWORD` (PAT) is valid and has write permissions
+- Check `GIT_SYNC_REPO` URL is correct
+- Review Git Sync logs for authentication errors
+- Test PAT: `curl -H "Authorization: token $GIT_PASSWORD" https://api.github.com/user`
 
-```bash
-# Check if service is actually running
-docker-compose ps
+### Memory Files Not Found
 
-# Check service logs
-docker-compose logs <service-name>
+**Problem**: Onyx can't read memory files
 
-# Restart specific service
-docker-compose restart <service-name>
+**Solutions**:
+- Verify `bears-memory` volume is shared between Git Sync and Onyx
+- Check Git Sync cloned successfully: `ls /data/` in git-sync terminal
+- Check Onyx can see files: `ls /app/memory/` in onyx terminal
+- Review mount paths in both services
 
-# Full restart
-docker-compose down
-docker-compose up -d
-```
+### Agents Not Creating Memories
 
-### Memory Not Persisting
+**Problem**: Letta agents don't persist memories
 
-```bash
-# Check volume mounts
-docker-compose exec onyx-api-server df -h
+**Solutions**:
+- Verify Letta → Onyx connection: `curl $ONYX_URL/health` from Letta terminal
+- Check Onyx logs for errors
+- Test Onyx write permissions: Check `/app/memory/` is writable
+- Review Git Sync logs for commit errors
 
-# Verify volumes exist
-docker volume inspect bears-stack_qdrant_data
-docker volume inspect bears-stack_letta_data
-docker volume inspect bears-stack_onyx_db_data
+### Resource Exhaustion
 
-# If volumes are missing, recreate them
-docker-compose down -v
-docker-compose up -d
-```
+**Problem**: Services OOMKilled or slow performance
 
-## Coolify Deployment
-
-### Prerequisites
-
-- Coolify instance running
-- Git repository accessible to Coolify
-- Environment variables configured in Coolify
-
-### Steps
-
-1. **Add Repository to Coolify**
-   - Go to Coolify dashboard
-   - Add new resource → Docker Compose
-   - Connect to your Git repository
-
-2. **Configure Environment Variables**
-   - In Coolify, go to Environment Variables
-   - Add all variables from `.env.example`
-   - Save configuration
-
-3. **Deploy**
-   - Click "Deploy" in Coolify
-   - Monitor deployment logs
-   - Verify all services are healthy
-
-4. **Configure Domain (Optional)**
-   - Add custom domain in Coolify
-   - Configure SSL/TLS certificates
-   - Update service URLs if needed
-
-## Backup Strategy
-
-### What Needs Backing Up?
-
-**Critical Data (Git-versioned):**
-- `memories/` - All semantic memory in Markdown files
-- `history/` - Conversation transcripts and logs
-- `projects/` - Project context and notes
-
-These are your **source of truth** and are already backed up via Git commits.
-
-**Ephemeral Data (Can be rebuilt):**
-- PostgreSQL (`onyx_db_data`) - Metadata only, can be regenerated from Git files
-- Qdrant (`qdrant_data`) - Vector embeddings, can be re-indexed from memory files
-- Letta (`letta_data`) - Configuration, can be recreated
-
-**Backup Priority:**
-1. **Essential**: Git repository (memories, history, projects) - This is your only irreplaceable data
-2. **Optional**: Qdrant vectors - Saves re-indexing time but can be rebuilt
-3. **Skip**: PostgreSQL - Just metadata that Onyx regenerates from files
-
-### Automated Backups
-
-```bash
-# Create backup script
-cat > backup.sh << 'EOF'
-#!/bin/bash
-DATE=$(date +%Y%m%d_%H%M%S)
-BACKUP_DIR="./backups/$DATE"
-mkdir -p "$BACKUP_DIR"
-
-# Backup Qdrant data (optional - saves re-indexing time)
-docker-compose exec -T qdrant tar czf - /qdrant/storage > "$BACKUP_DIR/qdrant.tar.gz"
-
-# Backup memory files (Git) - THIS IS THE CRITICAL BACKUP
-git add memories/ history/ projects/
-git commit -m "Backup: $DATE" || true
-git push  # Push to remote for off-site backup
-
-echo "Backup completed: $BACKUP_DIR"
-echo "Memory files committed to Git (source of truth)"
-EOF
-
-chmod +x backup.sh
-```
-
-### Restore from Backup
-
-```bash
-# Restore memory files (Git) - PRIMARY RESTORE METHOD
-git checkout <commit-hash>
-# or
-git pull  # If restoring from remote
-
-# Restart services - Onyx will regenerate PostgreSQL metadata from files
-docker-compose down
-docker-compose up -d
-
-# Optional: Restore Qdrant data (if you backed it up)
-# This saves re-indexing time but is not required
-docker-compose down
-docker volume rm bears-stack_qdrant_data
-docker volume create bears-stack_qdrant_data
-docker run --rm -v bears-stack_qdrant_data:/qdrant/storage -v $(pwd)/backups/YYYYMMDD_HHMMSS:/backup alpine tar xzf /backup/qdrant.tar.gz -C /
-docker-compose up -d
-
-# If you didn't backup Qdrant, Onyx will re-index from memory files automatically
-```
-
-### Disaster Recovery
-
-If you lose everything except your Git repository:
-
-```bash
-# Clone your repository
-git clone <your-repo-url> bears-stack
-cd bears-stack
-
-# Set up environment
-cp .env.example .env
-# Edit .env with your API keys
-
-# Start services - Onyx will rebuild everything from memory files
-docker-compose up -d
-
-# Onyx automatically:
-# - Recreates PostgreSQL metadata from Markdown files
-# - Re-indexes all content into Qdrant vectors
-# - Restores full system state from Git history
-```
-
-## Monitoring
-
-### Log Monitoring
-
-```bash
-# Real-time logs for all services
-docker-compose logs -f
-
-# Logs for specific service
-docker-compose logs -f letta
-
-# Last 100 lines
-docker-compose logs --tail=100
-```
-
-### Resource Monitoring
-
-```bash
-# Container resource usage
-docker stats
-
-# Disk usage
-docker system df
-
-# Volume usage
-docker volume ls
-```
-
-## Maintenance
-
-### Regular Tasks
-
-- **Daily**: Check service health and logs
-- **Weekly**: Review and commit memory changes
-- **Monthly**: Update Docker images, backup data
-- **Quarterly**: Review and optimize memory structure
-
-### Updating Services
-
-```bash
-# Pull latest images
-docker-compose pull
-
-# Restart with new images
-docker-compose up -d
-
-# Clean up old images
-docker image prune -a
-```
-
-## Security Considerations
-
-- [ ] Use strong, unique values for `LETTA_API_KEY` and `LITELLM_MASTER_KEY`
-- [ ] Never commit `.env` file to Git (already in `.gitignore`)
-- [ ] Restrict network access to services if deployed publicly
-- [ ] Regularly update Docker images for security patches
-- [ ] Review memory files for sensitive information before sharing
-- [ ] Use HTTPS/TLS if exposing services publicly
-- [ ] Consider implementing rate limiting for API endpoints
+**Solutions**:
+- Check resource usage in Coolify
+- Increase memory limits (especially Qdrant, Onyx)
+- Scale vertically or horizontally
+- Monitor disk space
 
 ## Next Steps
 
-After successful deployment:
+### Production Hardening
 
-1. Create user-specific memory files in `memories/personal/`
-2. Set up your first project in `projects/`
-3. Test agent interactions through Letta API
-4. Configure additional LLM models in `litellm-config.yaml`
-5. Set up automated backups
-6. Configure monitoring and alerting (optional)
+- [ ] Enable authentication on Onyx (`AUTH_TYPE=basic`)
+- [ ] Set up HTTPS for external access
+- [ ] Configure Coolify backups
+- [ ] Set up monitoring/alerting
+- [ ] Document recovery procedures
+- [ ] Test backup/restore process
+
+### Customization
+
+- [ ] Add more models to LiteLLM config
+- [ ] Customize memory structure in content repository
+- [ ] Create project-specific memory directories
+- [ ] Set up multiple agents for different purposes
+- [ ] Configure agent tools/functions
+
+### Ongoing Maintenance
+
+- [ ] Monitor service health daily
+- [ ] Review Git commits weekly
+- [ ] Update Docker images monthly
+- [ ] Rotate API keys quarterly
+- [ ] Review and optimize memory structure
 
 ## Support
 
-For issues or questions:
-- Check service logs: `docker-compose logs <service>`
-- Review documentation in `.kilocode/memory_bank/`
-- Check project issues on GitHub
+For detailed troubleshooting:
+
+- **Service-specific issues**: See `services/{service}/COOLIFY_DEPLOY.md`
+- **Architecture questions**: Review `ARCHITECTURE_NOTES.md`
+- **Memory system**: See `content-template/README.md`
+
+---
+
+**Deployment Complete!** 🎉
+
+Your BEARS Stack is now fully operational with:
+- ✅ Git-versioned memory management
+- ✅ Automatic GitHub synchronization
+- ✅ Semantic search via Qdrant
+- ✅ Multi-model support via LiteLLM
+- ✅ Coolify-managed infrastructure
+
+Start building your agentic assistants! 🐻

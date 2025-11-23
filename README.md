@@ -1,88 +1,182 @@
 # 🐻 Basic Extensible Agent Runtime Stack (BEARS)
 
-Configuration for our agentic assistants platform, using:
+**Configuration repository** for deploying an agentic assistants platform with Coolify, using:
 
 - [Letta](https://github.com/letta-ai/letta) – Agent server and orchestration layer
 - [Onyx](https://github.com/onyx-dot-app/onyx) – Memory management with Git-versioned Markdown
 - [Qdrant](https://github.com/qdrant/qdrant) – Vector database for semantic memory
 - [LiteLLM](https://github.com/BerriAI/litellm) – Unified LLM gateway
 - [PostgreSQL](https://www.postgresql.org/) – Database backend for Onyx
-- [Coolify](https://coolify.io) (optional) – PaaS for deployment and management
+- [Redis](https://redis.io/) – Cache layer for Onyx
+- [Coolify](https://coolify.io) – Self-hosted PaaS for deployment and management
 
-## Quick Start
+## Architecture Overview
+
+This is a **two-repository architecture**:
+
+1. **This repository** (`bears-deploy`) - Configuration and deployment guides
+2. **Content repository** - Your memory files (memories/, history/, projects/)
+
+Memory content is automatically synced to/from GitHub via the Git Sync service, providing version control, backup, and portability.
+
+## Quick Start with Coolify
 
 ### Prerequisites
 
-- Docker and Docker Compose installed
+- Coolify instance running
+- GitHub account for content repository
 - API keys for OpenAI and/or Anthropic
-- At least 4GB RAM available for containers
+- Approximately 4-6 GB RAM available across services
 
-### Initial Setup
+### Deployment Order
 
-1. **Clone the repository**
-   ```bash
-   git clone <repository-url>
-   cd bears-stack
+Services must be deployed in this specific order due to dependencies:
+
+1. **Infrastructure Layer**
+   - Redis (cache)
+   - Qdrant (vector database)
+   - PostgreSQL (Coolify-managed database)
+
+2. **Memory Layer**
+   - Git Sync (memory synchronization)
+
+3. **API Layer**
+   - Onyx API Server (memory management)
+   - LiteLLM (model gateway)
+
+4. **Application Layer**
+   - Letta (agent orchestration + Web UI)
+
+### Deployment Steps
+
+1. **Fork the content template**
+
+   See [`content-template/`](content-template/) for a ready-to-use template repository.
+
+2. **Deploy each service in Coolify**
+
+   Follow the detailed deployment guides in [`services/`](services/):
+
+   - [`services/redis/COOLIFY_DEPLOY.md`](services/redis/COOLIFY_DEPLOY.md)
+   - [`services/qdrant/COOLIFY_DEPLOY.md`](services/qdrant/COOLIFY_DEPLOY.md)
+   - [`services/git-sync/COOLIFY_DEPLOY.md`](services/git-sync/COOLIFY_DEPLOY.md)
+   - [`services/onyx/COOLIFY_DEPLOY.md`](services/onyx/COOLIFY_DEPLOY.md)
+   - [`services/litellm/COOLIFY_DEPLOY.md`](services/litellm/COOLIFY_DEPLOY.md)
+   - [`services/letta/COOLIFY_DEPLOY.md`](services/letta/COOLIFY_DEPLOY.md)
+
+3. **Access the Web UI**
+
+   Once deployed, access Letta at your configured Coolify domain or:
+   ```
+   http://your-coolify-domain:8283
    ```
 
-2. **Configure environment variables**
-   ```bash
-   cp .env.example .env
-   # Edit .env and add your API keys
-   ```
+### Service Endpoints (Internal)
 
-3. **Start the services**
-   ```bash
-   docker-compose up -d
-   ```
+Services communicate via Coolify's internal Docker networking:
 
-4. **Verify services are running**
-   ```bash
-   docker-compose ps
-   ```
+- **Letta Web UI**: `http://bears-letta:8283`
+- **Onyx API**: `http://bears-onyx:8080`
+- **Qdrant**: `http://bears-qdrant:6333`
+- **LiteLLM**: `http://bears-litellm:4000`
+- **Redis**: `redis://bears-redis:6379`
 
-### Service Endpoints
+## Repository Structure
 
-Once deployed, the following services will be available:
-
-- **Letta ADE (Web UI)**: http://localhost:8283
-- **Letta API Server**: http://localhost:3000
-- **Onyx API Server**: http://localhost:8080
-- **Qdrant Vector DB**: http://localhost:6333
-- **LiteLLM Gateway**: http://localhost:4000
+```
+bears-deploy/                    # This repository
+├── services/                   # Service-specific configurations
+│   ├── git-sync/              # Memory synchronization service
+│   │   ├── Dockerfile
+│   │   ├── sync.sh
+│   │   ├── .env.example
+│   │   └── COOLIFY_DEPLOY.md
+│   ├── redis/                 # Cache layer
+│   ├── qdrant/                # Vector database
+│   ├── onyx/                  # Memory management
+│   ├── litellm/               # Model gateway
+│   └── letta/                 # Agent orchestration
+├── content-template/          # Template for content repository
+│   ├── memories/              # Memory files structure
+│   ├── history/               # Conversation logs
+│   ├── projects/              # Project context
+│   └── README.md
+├── archive/                   # Archived docker-compose setup
+│   └── docker-compose.yaml
+├── DEPLOYMENT.md              # Coolify deployment guide
+├── ARCHITECTURE_NOTES.md      # Architecture documentation
+└── README.md                  # This file
+```
 
 ## Environment Variables
 
-Required environment variables (see [`.env.example`](.env.example)):
+Each service has its own `.env.example` file in [`services/{service}/`](services/). Key variables:
 
+**Required API Keys:**
 - `OPENAI_API_KEY` - OpenAI API key for GPT models and embeddings
 - `ANTHROPIC_API_KEY` - Anthropic API key for Claude models
-- `LETTA_API_KEY` - Authentication key for Letta API (generate a secure random string)
-- `LITELLM_MASTER_KEY` - Master key for LiteLLM gateway (generate a secure random string)
-- `POSTGRES_PASSWORD` - Password for Onyx PostgreSQL database (generate a secure random string)
 
-## Architecture
+**Required Service Keys (generate secure random strings):**
+- `LETTA_SERVER_PASS` - Admin password for Letta (use: `openssl rand -base64 32`)
+- `LITELLM_MASTER_KEY` - Master key for LiteLLM (use: `openssl rand -hex 32`)
+- `POSTGRES_PASSWORD` - Password for PostgreSQL database
 
-### Memory System
+**Required Git Sync:**
+- `GIT_SYNC_REPO` - Your content repository URL
+- `GIT_USERNAME` - GitHub username
+- `GIT_PASSWORD` - GitHub Personal Access Token (with Contents: Read/Write)
 
-The BEARS Stack implements a hybrid memory architecture:
+## Memory System
 
-- **Basic Memory** (`memories/`) - Human-editable Markdown files with Git versioning
+The memory system uses a **two-repository architecture**:
+
+### Configuration Repository (This Repo)
+
+Contains deployment configuration, service definitions, and documentation.
+
+### Content Repository
+
+Contains your actual memory files, managed automatically by Git Sync:
+
+- **`memories/`** - Long-term semantic memory
   - `personal/` - User-specific private memory
-  - `shared/` - Household shared memory
-- **Episodic Memory** (`history/`) - Timestamped interaction logs
-- **Project Memory** (`projects/`) - Project-scoped context and notes
-- **Semantic Memory** - Vector embeddings in Qdrant for RAG
+  - `shared/` - Household/team shared memory
+- **`history/`** - Episodic memory (timestamped interaction logs)
+- **`projects/`** - Project-scoped context and notes
 
-See [`memories/README.md`](memories/README.md) for details on the memory system.
+See [`content-template/README.md`](content-template/README.md) for details on the memory system.
 
-### Service Architecture
+### How It Works
+
+1. **Git Sync** clones your content repository to a shared volume
+2. **Onyx** reads/writes Markdown files from the shared volume
+3. **Git Sync** detects file changes and commits/pushes to GitHub
+4. **Qdrant** indexes memory content for semantic search
+5. **PostgreSQL** stores metadata
+6. **Letta** agents use memories via Onyx API
+
+### Memory File Format
+
+Markdown files with YAML frontmatter:
+
+```markdown
+---
+title: "Example Memory"
+tags: ["preference", "personal"]
+created: "2025-11-23T10:30:00Z"
+---
+
+# Memory Content
+
+Human-readable Markdown content.
+```
+
+## Service Architecture
 
 ```
 ┌─────────────┐
-│   Letta     │ ← Agent orchestration & tool execution
-│ ADE: :8283  │ ← Web UI for agent management
-│ API: :3000  │
+│   Letta     │ ← Agent orchestration + Web UI
+│   :8283     │
 └──────┬──────┘
        │
        ├──────→ ┌─────────────┐
@@ -91,12 +185,21 @@ See [`memories/README.md`](memories/README.md) for details on the memory system.
        │        └──────┬──────┘
        │               │
        │               ├──────→ ┌─────────────┐
-       │               │        │  PostgreSQL │ ← Onyx database
+       │               │        │  PostgreSQL │ ← Onyx database (Coolify-managed)
+       │               │        └─────────────┘
+       │               │
+       │               ├──────→ ┌─────────────┐
+       │               │        │   Qdrant    │ ← Vector storage
+       │               │        │   :6333     │
+       │               │        └─────────────┘
+       │               │
+       │               ├──────→ ┌─────────────┐
+       │               │        │    Redis    │ ← Cache layer
+       │               │        │   :6379     │
        │               │        └─────────────┘
        │               │
        │               └──────→ ┌─────────────┐
-       │                        │   Qdrant    │ ← Vector storage
-       │                        │   :6333     │
+       │                        │  Git Sync   │ ← Memory sync to GitHub
        │                        └─────────────┘
        │
        └──────→ ┌─────────────┐
@@ -105,11 +208,13 @@ See [`memories/README.md`](memories/README.md) for details on the memory system.
                 └─────────────┘
 ```
 
+All services communicate via Coolify's internal Docker networking.
+
 ## Configuration
 
 ### LiteLLM Configuration
 
-Edit [`litellm-config.yaml`](litellm-config.yaml) to configure model routing:
+Edit [`services/litellm/litellm-config.yaml`](services/litellm/litellm-config.yaml) to configure model routing:
 
 ```yaml
 general_settings:
@@ -120,129 +225,190 @@ model_routing:
   openai/gpt-4:
     model_name: gpt-4
     provider: openai
+
+  anthropic/claude-3-5-sonnet:
+    model_name: claude-3-5-sonnet-20241022
+    provider: anthropic
 ```
 
-### Onyx Configuration
+### Service Configuration
 
-Onyx manages the Git-versioned memory files in the `memories/`, `history/`, and `projects/` directories. Configuration can be customized through environment variables in the docker-compose file.
+Each service has its own configuration:
+
+- **Git Sync**: [`services/git-sync/.env.example`](services/git-sync/.env.example)
+- **Redis**: Uses defaults, see [`services/redis/`](services/redis/)
+- **Qdrant**: Uses defaults, see [`services/qdrant/`](services/qdrant/)
+- **Onyx**: [`services/onyx/.env.example`](services/onyx/.env.example)
+- **LiteLLM**: [`services/litellm/.env.example`](services/litellm/.env.example)
+- **Letta**: [`services/letta/.env.example`](services/letta/.env.example)
 
 ## Deployment
 
-### Local Development
+See [`DEPLOYMENT.md`](DEPLOYMENT.md) for complete deployment instructions.
 
-```bash
-docker-compose up
-```
+### Quick Deployment Checklist
 
-### Production Deployment with Coolify
-
-1. Import this repository into Coolify
-2. Set environment variables in Coolify dashboard
-3. Deploy using the provided `docker-compose.yaml`
+1. ✅ Create PostgreSQL database in Coolify
+2. ✅ Deploy Redis
+3. ✅ Deploy Qdrant
+4. ✅ Create and push content repository (fork `content-template/`)
+5. ✅ Deploy Git Sync (with content repo credentials)
+6. ✅ Deploy Onyx API Server
+7. ✅ Deploy LiteLLM
+8. ✅ Deploy Letta
+9. ✅ Access Web UI and create first agent
 
 ### Health Checks
 
-All services include health checks. Monitor with:
+All services include health checks visible in Coolify dashboard. Services should show **healthy** status within 1-2 minutes of deployment.
 
-```bash
-docker-compose ps
-```
+## Backup and Recovery
 
-Healthy services will show `(healthy)` status.
+### What's Backed Up Automatically
 
-## Maintenance
+**Critical Data (Git-versioned in content repository):**
+- ✅ All memory files (`memories/`, `history/`, `projects/`)
+- ✅ Full edit history (Git commits)
+- ✅ Timestamps and metadata
 
-### Viewing Logs
+**Managed by Coolify:**
+- ✅ PostgreSQL database (automatic backups)
+- ✅ Service configurations
 
-```bash
-# All services
-docker-compose logs -f
+**Can be Rebuilt:**
+- Qdrant vectors (re-index from memory files)
+- Redis cache (ephemeral data)
 
-# Specific service
-docker-compose logs -f letta
-```
+### Backup Strategy
 
-### Backing Up Data
+**Essential**: Git repository (memories, history, projects)
+- Automatically synced to GitHub by Git Sync service
+- This is your **only irreplaceable data**
 
-```bash
-# Backup vector database
-docker-compose exec qdrant tar czf /tmp/qdrant-backup.tar.gz /qdrant/storage
-docker cp $(docker-compose ps -q qdrant):/tmp/qdrant-backup.tar.gz ./backups/
+**Optional**: Qdrant snapshots
+- Saves re-indexing time but can be rebuilt
 
-# Backup memory files (already in Git)
-git add memories/ history/ projects/
-git commit -m "Backup memory state"
-```
+**Automatic**: PostgreSQL backups via Coolify
 
-### Updating Services
+### Disaster Recovery
 
-```bash
-docker-compose pull
-docker-compose up -d
-```
+If you lose everything except your GitHub content repository:
+
+1. Redeploy all services in Coolify
+2. Git Sync clones content from GitHub
+3. Onyx automatically:
+   - Regenerates PostgreSQL metadata from Markdown files
+   - Re-indexes all content into Qdrant vectors
+   - Restores full system state
+
+Your memory is fully restored! 🎉
+
+## Monitoring
+
+### Service Health
+
+View in Coolify dashboard:
+- All services should show **healthy** status
+- Check logs for any errors or warnings
+
+### Memory Sync Status
+
+Check your content repository on GitHub:
+- Recent commits should show auto-sync messages
+- Verify memory files are being updated
+
+### Resource Usage
+
+Monitor in Coolify:
+- Memory usage per service
+- CPU utilization
+- Disk space (especially Qdrant and PostgreSQL)
 
 ## Troubleshooting
 
-### Port Conflicts
+### Check Service Logs
 
-If you see port binding errors, check for conflicts:
+In Coolify, view logs for any service that's unhealthy.
 
-```bash
-# Check what's using the ports
-lsof -i :3000  # Letta
-lsof -i :8080  # Onyx
-lsof -i :6333  # Qdrant
-lsof -i :4000  # LiteLLM
-```
+### Common Issues
 
-### Service Won't Start
+**Git Sync not pushing**:
+- Verify GitHub PAT is valid and has write permissions
+- Check `GIT_SYNC_REPO` URL is correct
+- Review Git Sync logs for errors
 
-Check logs for the specific service:
+**Onyx can't connect to services**:
+- Ensure all services are in same Coolify project
+- Verify service names match environment variables
+- Check PostgreSQL, Redis, Qdrant are healthy
 
-```bash
-docker-compose logs <service-name>
-```
+**Letta can't reach Onyx or LiteLLM**:
+- Verify `ONYX_URL` and `LLM_API_URL` are correct
+- Check both services are healthy
+- Test connectivity from Coolify terminal
 
-### Memory Not Persisting
+**Memory files not found**:
+- Verify Git Sync cloned content successfully
+- Check `bears-memory` volume is shared between Git Sync and Onyx
+- Review Git Sync logs for clone errors
 
-Ensure named volumes are properly configured:
+For detailed troubleshooting, see service-specific deployment guides in [`services/`](services/).
 
-```bash
-docker volume ls | grep bears-stack
-```
+## Security Considerations
+
+- ✅ Use strong passwords for all services
+- ✅ Rotate API keys and tokens regularly
+- ✅ Keep content repository private on GitHub
+- ✅ Use Coolify's built-in authentication for external access
+- ✅ Enable HTTPS via Coolify proxy for public endpoints
+- ❌ Never commit API keys or passwords to Git
+- ❌ Don't expose internal services publicly without authentication
 
 ## Development
 
-### Project Structure
+### Repository Structure
 
-```
-bears-stack/
-├── docker-compose.yaml      # Service orchestration
-├── litellm-config.yaml      # LLM gateway configuration
-├── onyx_config/
-│   └── onyx.yaml           # Memory system configuration
-├── memories/               # Long-term memory (Git-tracked)
-│   ├── personal/          # User-specific memory
-│   └── shared/            # Household shared memory
-├── history/               # Episodic memory logs
-├── projects/              # Project-scoped context
-└── .kilocode/
-    └── memory_bank/       # Project documentation
-```
+This is a **configuration repository** - it contains deployment configs and documentation, not application code.
+
+**For local development**, see the archived `docker-compose.yaml` in [`archive/`](archive/).
+
+**For Coolify deployment**, follow service-specific guides in [`services/`](services/).
+
+### Contributing
+
+When making changes:
+
+1. Test deployment in a Coolify development environment
+2. Update relevant `COOLIFY_DEPLOY.md` files
+3. Update this README and `DEPLOYMENT.md`
+4. Document any new environment variables in `.env.example` files
 
 ## Documentation
 
-- [Project Brief](.kilocode/memory_bank/project_brief.md) - Overall goals and architecture
-- [Memory Architecture](.kilocode/memory_bank/memory_architecture_brief.md) - Detailed memory system design
-- [Memories README](memories/README.md) - Memory file format and usage
-- [History README](history/README.md) - Episodic memory structure
-- [Projects README](projects/README.md) - Project-scoped memory
+- **[DEPLOYMENT.md](DEPLOYMENT.md)** - Complete Coolify deployment guide
+- **[ARCHITECTURE_NOTES.md](ARCHITECTURE_NOTES.md)** - Detailed architecture documentation
+- **[content-template/README.md](content-template/README.md)** - Memory system guide
+- **Service-specific guides** - See [`services/{service}/COOLIFY_DEPLOY.md`](services/)
+
+## Support
+
+For issues or questions:
+
+- **Deployment issues**: Check service-specific `COOLIFY_DEPLOY.md` guides
+- **Memory system**: See `content-template/README.md`
+- **Architecture questions**: Review `ARCHITECTURE_NOTES.md`
+- **Service logs**: View in Coolify dashboard
 
 ## License
 
 [Add your license here]
 
-## Contributing
+## Acknowledgments
 
-[Add contribution guidelines here]
+Built with:
+- [Letta](https://github.com/letta-ai/letta) - Agent framework
+- [Onyx](https://github.com/onyx-dot-app/onyx) - Memory management
+- [Qdrant](https://github.com/qdrant/qdrant) - Vector database
+- [LiteLLM](https://github.com/BerriAI/litellm) - LLM gateway
+- [Coolify](https://coolify.io) - Deployment platform
 
