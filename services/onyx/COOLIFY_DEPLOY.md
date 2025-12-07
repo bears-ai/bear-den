@@ -1,17 +1,31 @@
 # Onyx API Server - Coolify Deployment Guide
 
+## ⚠️ DEPLOYMENT ORDER WARNING
+
+**This is Step 5 of 7** in the BEARS deployment sequence.
+
+**DO NOT deploy Onyx until you have completed Steps 1-4:**
+1. ✅ PostgreSQL (database)
+2. ✅ **Redis** (cache) - See `services/redis/COOLIFY_DEPLOY.md`
+3. ✅ **Qdrant** (vector database) - See `services/qdrant/COOLIFY_DEPLOY.md`
+4. ✅ **Git Sync** (memory files) - See `services/git-sync/COOLIFY_DEPLOY.md`
+
+Onyx **will not start** without Redis and Qdrant running. See the main [DEPLOYMENT.md](../../DEPLOYMENT.md) for the complete deployment order.
+
 ## Overview
 
 Onyx is the memory management service that handles Git-versioned Markdown files, metadata storage in PostgreSQL, and vector indexing in Qdrant. It's the heart of the BEARS memory system.
 
 ## Prerequisites
 
+⚠️ **CRITICAL**: These services MUST be running and healthy before deploying Onyx:
+
 - Coolify instance running
+- **PostgreSQL database** created in Coolify
+- **Redis service** deployed and healthy (REQUIRED - Onyx will not start without it)
+- **Qdrant service** deployed and healthy (REQUIRED)
 - **Git Sync service** deployed and healthy (provides memory files)
-- **Redis service** deployed and healthy
-- **Qdrant service** deployed and healthy
-- **Coolify-managed PostgreSQL database** created
-- Deploy **before** Letta
+- Deploy **before** Letta (Step 6)
 
 ## Deployment Steps
 
@@ -20,7 +34,7 @@ Onyx is the memory management service that handles Git-versioned Markdown files,
 1. Go to **Databases** → **Add Database** → **PostgreSQL**
 2. Configure:
    - **Database Name**: `bears-onyx-db`
-   - **PostgreSQL Version**: `15` or higher
+   - **PostgreSQL Version**: `17`
    - **Username**: `postgres` (default) or custom
    - **Password**: Generate secure password
 3. **Deploy** and wait for healthy status
@@ -40,6 +54,8 @@ Onyx is the memory management service that handles Git-versioned Markdown files,
    - **External Port**: `8080` (optional, for API access)
 
 4. **Environment Variables**:
+
+   Note that Onyx cannot deal with Coolify's long container hostnames, so <coolify-postgres-host> must be the IP, found by running `hostname -i` from the Postgres container.
 
    ```bash
    # PostgreSQL Configuration (from Coolify-managed database)
@@ -70,80 +86,96 @@ Onyx is the memory management service that handles Git-versioned Markdown files,
 
 5. **Persistent Storage**:
 
-   Mount the **same volume** as Git Sync:
+   Mount the **same volume** as Git Sync (let Coolify choose a source path):
 
    - **Volume Name**: `bears-memory` (shared with git-sync)
    - **Mount Path**: `/app/memory`
 
    **Critical**: This must be the same volume that Git Sync uses!
 
-6. **Health Check**:
+6. **Start Command**:
+
+   In Coolify, configure the start command under service settings:
+
+   ```bash
+   /app/scripts/supervisord_entrypoint.sh
+   ```
+
+7. **Health Check**:
 
    Configure in Coolify:
    ```bash
-   Command: wget --no-verbose --tries=1 --spider http://localhost:8080/health || exit 1
+   Command: python3 -c "import urllib.request; urllib.request.urlopen('http://localhost:8080/health')" && echo 'ok' || exit 1
    Interval: 30s
    Timeout: 10s
    Retries: 3
    Start Period: 60s
    ```
 
-7. **Custom Start Command**:
-
-   Override the default command to specify paths:
-   ```bash
-   /bin/sh -c "uvicorn onyx.main:app --host 0.0.0.0 --port 8080"
-   ```
-
 8. **Restart Policy**: `unless-stopped`
 
 9. **Deploy** the service
 
-### 3. Run Database Migrations
+### 3. Run Database Migrations (Post-Deployment)
 
-**Important**: Onyx requires database migrations before it can start properly.
+After deployment, Onyx must run database migrations before it can operate properly.
 
-#### Option A: Manual Migration (Recommended for First Deployment)
-
-1. SSH into the Onyx container in Coolify terminal
-2. Run migrations:
+1. In Coolify, go to your **bears-onyx** service
+2. Click the **"Execute Command"** or **"Terminal"** button
+3. Run the migration command:
    ```bash
    alembic upgrade head
    ```
-3. Exit and verify Onyx starts successfully
-
-#### Option B: Automatic Migration on Startup
-
-Add to the start command:
-```bash
-/bin/sh -c "alembic upgrade head && uvicorn onyx.main:app --host 0.0.0.0 --port 8080"
-```
-
-**Note**: First deployment doesn't need migrations if database is empty.
+4. Wait for it to complete successfully
+5. Onyx will now be ready to start
 
 ### 4. Verify Deployment
 
-Check health in Coolify:
+After migrations complete, use these commands in the Onyx Coolify terminal:
+
+**Verify migrations completed**:
 
 ```bash
-curl http://bears-onyx:8080/health
-# Should return: {"status": "ok"} or similar
+alembic current
+# Should show the current migration revision
 ```
 
-Test API:
+**Check memory files are accessible**:
 
 ```bash
-curl http://bears-onyx:8080/api/manage/admin/connector/
-# Should return empty list initially
-```
-
-Check memory files are accessible:
-
-```bash
-# In Coolify terminal for onyx service
 ls -la /app/memory/
 # Should show: memories/, history/, projects/
 ```
+
+**Verify PostgreSQL connection** (if psql available):
+
+```bash
+psql -h $POSTGRES_HOST -U $POSTGRES_USER -d $POSTGRES_DB -c "\dt"
+# Should list tables in onyx database
+```
+
+**Check logs for startup messages**:
+
+```bash
+# View logs to see if service started successfully
+# Look for messages like:
+# - "Onyx backend started"
+# - "Connected to PostgreSQL"
+# - "Connected to Qdrant"
+# - "Indexing completed"
+```
+
+**Check if API port is responding**:
+
+```bash
+python3 -c "import socket; s = socket.socket(); s.connect(('localhost', 8080)); print('Port 8080 is open'); s.close()"
+```
+
+If port 8080 is not responding:
+- The Onyx application process may not have started
+- Check the container logs in Coolify dashboard for startup errors
+- Verify all environment variables are correct (especially `POSTGRES_HOST`, `REDIS_HOST`, `QDRANT_HOST`)
+- Ensure dependent services (PostgreSQL, Redis, Qdrant) are running and accessible
 
 ## Configuration Reference
 
@@ -301,10 +333,19 @@ This may take several minutes for large memory collections.
 To force re-index:
 
 ```bash
-# Via API (if authentication is disabled)
-curl -X POST http://bears-onyx:8080/api/admin/reindex
+# Restart Onyx service in Coolify (simplest method)
+# Or use Python to POST to the API:
+python3 << 'EOF'
+import json
+from urllib.request import Request, urlopen
 
-# Or restart Onyx service in Coolify
+req = Request('http://localhost:8080/api/admin/reindex', method='POST')
+try:
+    response = urlopen(req)
+    print(f"Reindex started: {response.status}")
+except Exception as e:
+    print(f"Error: {e}")
+EOF
 ```
 
 ### Monitoring Indexing
@@ -312,56 +353,79 @@ curl -X POST http://bears-onyx:8080/api/admin/reindex
 Check Qdrant collections:
 
 ```bash
-curl http://bears-qdrant:6333/collections
+# Use Python to query Qdrant
+python3 << 'EOF'
+import json
+from urllib.request import urlopen
+
+try:
+    response = urlopen('http://bears-qdrant:6333/collections')
+    collections = json.loads(response.read())
+    print(json.dumps(collections, indent=2))
+except Exception as e:
+    print(f"Error: {e}")
+EOF
 ```
 
-Look for `onyx_chunks` and `onyx_search` collections.
+Look for `onyx_chunks` and `onyx_search` collections in the output.
 
 ## Monitoring
 
 ### Health Check
 
-```bash
-curl http://bears-onyx:8080/health
-```
-
-### API Endpoints
-
-```bash
-# List connectors
-curl http://bears-onyx:8080/api/manage/admin/connector/
-
-# Check user info (if auth enabled)
-curl http://bears-onyx:8080/api/me
-
-# Admin endpoints (if auth disabled)
-curl http://bears-onyx:8080/api/admin/settings
-```
-
-### Logs
-
-View in Coolify dashboard or terminal:
+Check logs in Coolify dashboard to verify startup messages:
 
 ```bash
 # Look for:
 # - "Onyx backend started"
 # - "Connected to PostgreSQL"
 # - "Connected to Qdrant"
-# - "Indexing completed"
+# - "Connected to Redis"
+# - "Indexing started" / "Indexing completed"
 ```
+
+### API Endpoints (via Python)
+
+If you need to test API endpoints without curl, use Python:
+
+```bash
+python3 << 'EOF'
+import json
+import socket
+from urllib.request import urlopen
+
+try:
+    response = urlopen('http://localhost:8080/health')
+    print(json.loads(response.read()))
+except Exception as e:
+    print(f"Error: {e}")
+EOF
+```
+
+Or check if the port is open:
+
+```bash
+python3 -c "import socket; s = socket.socket(); result = s.connect_ex(('localhost', 8080)); print('Port 8080 is ' + ('open' if result == 0 else 'closed')); s.close()"
+```
+
+### Logs
+
+View real-time logs in Coolify terminal or dashboard for the bears-onyx service.
 
 ## Troubleshooting
 
 ### Service Won't Start
 
-**Problem**: Container exits or crashes on startup
+**Problem**: Container exits or crashes on startup, or no logs appear
 
 **Solutions**:
+- ⚠️ **FIRST**: Verify Redis and Qdrant services are running and healthy
+- Check logs: `tail -50 /var/log/celery_*.log` for specific errors
 - Check environment variables are correct
 - Verify PostgreSQL is accessible
-- Confirm Redis and Qdrant are healthy
-- Check logs for specific error messages
 - Ensure `/app/memory` volume is mounted
+
+**Common Issue**: If celery logs show Redis connection errors, Redis is not running or not accessible. Deploy Redis service first (see Redis deployment guide).
 
 ### Can't Connect to PostgreSQL
 
@@ -380,8 +444,8 @@ View in Coolify dashboard or terminal:
 **Solutions**:
 - Verify `REDIS_HOST=bears-redis` (or your service name)
 - Check Redis service is healthy
-- Test: `redis-cli -h bears-redis ping`
 - Ensure both services in same Coolify network
+- Check Onyx logs for "Connected to Redis" message
 
 ### Can't Connect to Qdrant
 
@@ -390,7 +454,7 @@ View in Coolify dashboard or terminal:
 **Solutions**:
 - Verify `QDRANT_HOST=bears-qdrant` (or your service name)
 - Check Qdrant service is healthy
-- Test: `curl http://bears-qdrant:6333/`
+- Test: Use Python to check connection to `http://bears-qdrant:6333/`
 - Ensure both services in same Coolify network
 
 ### Memory Files Not Found
@@ -530,9 +594,9 @@ Deploy Onyx web UI separately if needed (separate container).
 After Onyx is running:
 
 1. ✅ Verify health check passes
-2. ✅ Test API: `curl http://bears-onyx:8080/health`
+2. ✅ Test API: Check logs or use Python script above
 3. ✅ Check memory files: `ls /app/memory/memories/`
-4. ✅ Verify indexing: Check Qdrant collections
+4. ✅ Verify indexing: Check Qdrant collections using Python
 5. ➡️ Deploy **LiteLLM** (model gateway)
 6. ➡️ Deploy **Letta** (agent orchestration)
 

@@ -143,7 +143,7 @@ git push -u origin main
 2. Select **PostgreSQL**
 3. Configure:
    - **Name**: `bears-postgres`
-   - **Version**: `15` or `16`
+   - **Version**: `17`
    - **Username**: `postgres` (default)
    - **Password**: Click "Generate" or use: `openssl rand -base64 32`
    - **Database Name**: `onyx`
@@ -290,7 +290,7 @@ Click **Deploy** and watch logs for:
 ✅ Git sync is running!
 ```
 
-**Verify**: 
+**Verify**:
 - Check logs show successful clone
 - Test in terminal: `ls -la /data/` → Should show `memories/`, `history/`, `projects/`, `.git/`
 - Check GitHub repository for auto-commit test
@@ -320,7 +320,7 @@ POSTGRES_PASSWORD=<from-step-1>
 POSTGRES_DB=onyx
 
 # Redis
-REDIS_HOST=bears-redis
+REDIS_HOST=<bears-redis-ip-addr>
 REDIS_PORT=6379
 
 # Qdrant
@@ -350,13 +350,7 @@ Timeout: 10s
 Start Period: 60s
 ```
 
-#### 5.5. Custom Start Command
-
-```bash
-/bin/sh -c "uvicorn onyx.main:app --host 0.0.0.0 --port 8080"
-```
-
-#### 5.6. Deploy
+#### 5.5. Deploy
 
 Click **Deploy** and watch logs for:
 
@@ -411,11 +405,11 @@ Mount `services/litellm/litellm-config.yaml` from repository:
 
 **Or** create custom config volume.
 
-#### 6.4. Set Command Override
+<!-- #### 6.4. Set Command Override
 
 ```bash
 --config /app/config.yaml --port 4000
-```
+``` -->
 
 #### 6.5. Configure Health Check
 

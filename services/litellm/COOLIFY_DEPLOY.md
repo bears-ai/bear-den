@@ -67,13 +67,9 @@ Use `ghcr.io/berriai/litellm:main-latest` and mount config as volume.
 
    **Or** create a custom config and mount it as a volume.
 
-7. **Command Override**:
+   > **Note**: The Dockerfile is pre-configured to load the config from `/app/config.yaml` and listen on port 4000. No additional command configuration needed.
 
-   ```bash
-   --config /app/config.yaml --port 4000
-   ```
-
-8. **Health Check**:
+7. **Health Check**:
 
    ```bash
    Command: wget --no-verbose --tries=1 --spider http://localhost:4000/health/liveliness || exit 1
@@ -83,9 +79,9 @@ Use `ghcr.io/berriai/litellm:main-latest` and mount config as volume.
    Start Period: 40s
    ```
 
-9. **Restart Policy**: `unless-stopped`
+8. **Restart Policy**: `unless-stopped`
 
-10. **Deploy** the service
+9. **Deploy** the service
 
 ### 3. Verify Deployment
 

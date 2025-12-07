@@ -13,3 +13,6 @@ WORKDIR /app
 
 # Use the litellm CLI as the image entrypoint so docker-compose commands still apply.
 ENTRYPOINT ["litellm"]
+
+# Default command arguments: load config and set port
+CMD ["--config", "/app/config.yaml", "--port", "4000"]
