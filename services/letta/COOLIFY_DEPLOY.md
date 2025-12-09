@@ -36,8 +36,16 @@ Letta is the agent orchestration framework that ties everything together. It pro
    # Onyx Integration
    ONYX_URL=http://bears-onyx:8080
 
-   # LiteLLM Integration
-   LLM_API_URL=http://bears-litellm:4000/v1
+  # LiteLLM Integration
+  LLM_API_URL=http://bears-litellm:4000/v1
+
+  # LiteLLM Master Key (optional)
+  # If LiteLLM is configured to require a master key, set `LITELLM_MASTER_KEY`
+  # in Letta's environment to the same value used by the LiteLLM service so
+  # Letta can authenticate when calling the LiteLLM API. If you prefer to run
+  # LiteLLM without authentication (development/testing only), leave this
+  # variable unset and remove/comment `master_key` in the LiteLLM config.
+  # Example: LITELLM_MASTER_KEY=sk-litellm-<hex>
 
    # Model Configuration
    MODEL_NAME=gpt-4
@@ -111,6 +119,7 @@ curl http://bears-letta:8283/v1/agents
 | `OPENAI_API_KEY` | ✅ Yes | - | For embeddings (can use LiteLLM instead) |
 | `LETTA_SERVER_HOST` | No | `0.0.0.0` | Bind address |
 | `LOG_LEVEL` | No | `INFO` | Logging verbosity |
+| `LITELLM_MASTER_KEY` | Optional | - | Master key for LiteLLM API authentication. If omitted, LiteLLM will accept unauthenticated requests (only recommended for local/dev). |
 
 ### Service Dependencies
 
@@ -261,6 +270,23 @@ View in Coolify dashboard:
 - Check LiteLLM service is healthy
 - Test: `curl http://bears-litellm:4000/health/liveliness`
 - Verify LiteLLM has valid API keys
+ - If you require authentication: ensure Letta is configured to present the LiteLLM master key by setting `LITELLM_MASTER_KEY` in Letta's environment to the same value used by the LiteLLM service. See `services/letta/.env.example` and `services/litellm/.env.example` for examples.
+ - If you prefer unauthenticated LiteLLM: remove or comment out `master_key` in `services/litellm/litellm-config.yaml` (the file shipped in this repo has the `master_key` line commented out). Running without auth is convenient for local/dev but is insecure for production — use internal networks or a proxy if you choose this mode.
+
+### LiteLLM Authentication (Letta)
+
+Letta calls LiteLLM at `LLM_API_URL`. To authenticate, LiteLLM expects requests to include an `Authorization: Bearer <master-key>` header. Provide the same master key in the Letta environment so Letta can forward it when making model requests.
+
+Quick test (replace with your key):
+
+```bash
+# From a machine/container that can reach LiteLLM:
+curl -i -H "Authorization: Bearer sk-litellm-..." http://bears-litellm:4000/v1/models
+
+# From inside Letta (after setting env var), check Letta can reach LiteLLM via an agent or by inspecting logs for successful 200 responses when Letta makes model calls.
+```
+
+If your Letta build exposes a different configuration name for forwarding LLM credentials, consult the Letta documentation. See `services/letta/.env.example` for the variable name used in this repository.
 
 ### Agents Not Creating Memories
 

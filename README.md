@@ -116,9 +116,9 @@ Each service has its own `.env.example` file in [`services/{service}/`](services
 - `OPENAI_API_KEY` - OpenAI API key for GPT models and embeddings
 - `ANTHROPIC_API_KEY` - Anthropic API key for Claude models
 
-**Required Service Keys (generate secure random strings):**
+- **Service Keys (generate secure random strings):**
 - `LETTA_SERVER_PASS` - Admin password for Letta (use: `openssl rand -base64 32`)
-- `LITELLM_MASTER_KEY` - Master key for LiteLLM (use: `openssl rand -hex 32`)
+- `LITELLM_MASTER_KEY` - Master key for LiteLLM (use: `openssl rand -hex 32`) — optional; LiteLLM may be run without authentication for local/dev but this is insecure for production.
 - `POSTGRES_PASSWORD` - Password for PostgreSQL database
 
 **Required Git Sync:**

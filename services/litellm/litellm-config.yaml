@@ -1,7 +1,7 @@
 general_settings:
   default_model: openai/gpt-5
   telemetry: true
-  master_key: ${LITELLM_MASTER_KEY}
+  # master_key: ${LITELLM_MASTER_KEY}  # Optional: enable to require a master key for API requests
 
 model_routing:
   openai/gpt-5:

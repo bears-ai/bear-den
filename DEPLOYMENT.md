@@ -450,7 +450,7 @@ ONYX_URL=http://bears-onyx:8080
 LLM_API_URL=http://bears-litellm:4000/v1
 
 # Model Configuration
-MODEL_NAME=gpt-4
+MODEL_NAME=gpt-5
 
 # Letta Server
 LETTA_SERVER_PORT=8283
@@ -458,6 +458,11 @@ LETTA_SERVER_PASS=<generate: openssl rand -base64 32>
 
 # OpenAI (for embeddings)
 OPENAI_API_KEY=sk-your-openai-key
+
+# LiteLLM Master Key (optional)
+# If LiteLLM requires a master key, set this to match the `LITELLM_MASTER_KEY` used by the `bears-litellm` service.
+# For local/dev you may leave this unset to allow unauthenticated LiteLLM (not recommended for production).
+# Example: LITELLM_MASTER_KEY=sk-litellm-<hex>
 ```
 
 #### 7.3. Add Persistent Storage

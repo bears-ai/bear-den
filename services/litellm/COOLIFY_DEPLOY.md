@@ -131,7 +131,7 @@ model_routing:
 |----------|----------|-------------|
 | `OPENAI_API_KEY` | ✅ Yes | OpenAI API key |
 | `ANTHROPIC_API_KEY` | ✅ Yes | Anthropic API key |
-| `LITELLM_MASTER_KEY` | ✅ Yes | Master key for LiteLLM API authentication |
+| `LITELLM_MASTER_KEY` | Optional | Master key for LiteLLM API authentication. If omitted, LiteLLM will accept unauthenticated requests (suitable for local/dev only). |
 | `PORT` | No | API port (default: 4000) |
 | `LITELLM_LOG` | No | Log level (INFO/DEBUG) |
 
