@@ -3,11 +3,11 @@
 **Configuration repository** for deploying an agentic assistants platform with Coolify, using:
 
 - [Letta](https://github.com/letta-ai/letta) – Agent server and orchestration layer
-- [Onyx](https://github.com/onyx-dot-app/onyx) – Memory management with Git-versioned Markdown
+- Knowledgebase / Memory service (e.g. RMCP + Qdrant) – Memory management with Git-versioned Markdown
 - [Qdrant](https://github.com/qdrant/qdrant) – Vector database for semantic memory
 - [LiteLLM](https://github.com/BerriAI/litellm) – Unified LLM gateway
-- [PostgreSQL](https://www.postgresql.org/) – Database backend for Onyx
-- [Redis](https://redis.io/) – Cache layer for Onyx
+- [PostgreSQL](https://www.postgresql.org/) – Database backend for memory services
+- [Redis](https://redis.io/) – Cache layer for memory services
 - [Coolify](https://coolify.io) – Self-hosted PaaS for deployment and management
 
 ## Architecture Overview
@@ -41,7 +41,7 @@ Services must be deployed in this specific order due to dependencies:
    - Git Sync (memory synchronization)
 
 3. **API Layer**
-   - Onyx API Server (memory management)
+   - Knowledgebase / Memory Service (memory management)
    - LiteLLM (model gateway)
 
 4. **Application Layer**
@@ -76,7 +76,7 @@ Services must be deployed in this specific order due to dependencies:
 Services communicate via Coolify's internal Docker networking:
 
 - **Letta Web UI**: `http://bears-letta:8283`
-- **Onyx API**: `http://bears-onyx:8080`
+- Knowledgebase API: `http://bears-knowledgebase:8080`
 - **Qdrant**: `http://bears-qdrant:6333`
 - **LiteLLM**: `http://bears-litellm:4000`
 - **Redis**: `redis://bears-redis:6379`
@@ -93,7 +93,7 @@ bears-deploy/                    # This repository
 │   │   └── COOLIFY_DEPLOY.md
 │   ├── redis/                 # Cache layer
 │   ├── qdrant/                # Vector database
-│   ├── onyx/                  # Memory management
+│   ├── onyx/                  # (deprecated) Memory management — migrate to `knowledgebase/`
 │   ├── litellm/               # Model gateway
 │   └── letta/                 # Agent orchestration
 ├── content-template/          # Template for content repository
@@ -149,11 +149,11 @@ See [`content-template/README.md`](content-template/README.md) for details on th
 ### How It Works
 
 1. **Git Sync** clones your content repository to a shared volume
-2. **Onyx** reads/writes Markdown files from the shared volume
+2. The knowledgebase / memory service reads/writes Markdown files from the shared volume
 3. **Git Sync** detects file changes and commits/pushes to GitHub
 4. **Qdrant** indexes memory content for semantic search
 5. **PostgreSQL** stores metadata
-6. **Letta** agents use memories via Onyx API
+6. **Letta** agents use memories via the knowledgebase API
 
 ### Memory File Format
 
@@ -179,13 +179,13 @@ Human-readable Markdown content.
 │   :8283     │
 └──────┬──────┘
        │
-       ├──────→ ┌─────────────┐
-       │        │   Onyx      │ ← Memory management (Git + Markdown)
-       │        │   :8080     │
+      ├──────→ ┌─────────────┐
+      │        │   Memory Service      │ ← Memory management (Git + Markdown)
+      │        │   :8080     │
        │        └──────┬──────┘
        │               │
-       │               ├──────→ ┌─────────────┐
-       │               │        │  PostgreSQL │ ← Onyx database (Coolify-managed)
+      │               ├──────→ ┌─────────────┐
+      │               │        │  PostgreSQL │ ← memory metadata DB (Coolify-managed)
        │               │        └─────────────┘
        │               │
        │               ├──────→ ┌─────────────┐

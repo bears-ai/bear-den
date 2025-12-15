@@ -6,8 +6,8 @@ Qdrant is the vector database that stores semantic embeddings for all memory con
 
 ## Prerequisites
 
-- Coolify instance running
-- Deploy **before** Onyx API Server
+ - Coolify instance running
+ - Deploy **before** your memory service / knowledgebase implementation
 
 ## Deployment Steps
 
@@ -108,11 +108,11 @@ Purpose: Vector indexes, collections, and snapshots
 Size: Plan for ~2-5x size of your memory content
 ```
 
-## Service Connectivity
+### Service Connectivity
 
 ### Coolify Internal URL
 
-Onyx will connect to Qdrant using Coolify's internal Docker networking:
+The memory service (knowledgebase/adapter) will connect to Qdrant using Coolify's internal Docker networking:
 
 ```bash
 # HTTP API (recommended)
@@ -170,15 +170,15 @@ Source: /path/to/qdrant-config.yaml
 Target: /qdrant/config/config.yaml
 ```
 
-## Collections Created by Onyx
+## Collections Created by the memory service
 
-Onyx automatically creates these collections:
+Memory backends/adapters typically create collections such as:
 
-1. **`onyx_chunks`** - Text chunks from documents
-2. **`onyx_search`** - Optimized for search queries
-3. **`onyx_messages`** - Chat history embeddings (if enabled)
+1. **`chunks`** - Text chunks from documents
+2. **`search`** - Optimized for search queries
+3. **`messages`** - Chat history embeddings (if enabled)
 
-These are created on first use - no manual setup needed.
+These are created on first use by the memory service or adapter - no manual setup needed.
 
 ## Monitoring
 
@@ -248,13 +248,13 @@ curl -X POST http://bears-qdrant:6333/collections/{collection_name}/snapshots/up
 - Ensure sufficient memory (minimum 512 MB, recommended 1 GB+)
 - Check disk space availability
 
-### Connection Refused from Onyx
+### Connection Refused from the memory service
 
-**Problem**: Onyx can't reach Qdrant
+**Problem**: The memory service can't reach Qdrant
 
 **Solutions**:
-- Verify both services in same Coolify project
-- Check service name matches Onyx config: `QDRANT_HOST=bears-qdrant`
+- Verify both services are in the same Coolify project
+- Check service name matches the memory service config: `QDRANT_HOST=bears-qdrant`
 - Confirm Qdrant health check passes
 - Test: `curl http://bears-qdrant:6333/`
 
@@ -303,10 +303,10 @@ Qdrant has an open API by default. For production:
    QDRANT__SERVICE__API_KEY=your-secure-api-key-here
    ```
 
-   Then configure Onyx:
-   ```bash
-   QDRANT_API_KEY=your-secure-api-key-here
-   ```
+  Then configure your memory service / knowledgebase to use the same API key, for example:
+  ```bash
+  QDRANT_API_KEY=your-secure-api-key-here
+  ```
 
 3. **Option C**: Use Coolify network policies to restrict access
 
@@ -354,11 +354,11 @@ After Qdrant is running:
 1. ✅ Verify health check passes
 2. ✅ Test API: `curl http://bears-qdrant:6333/`
 3. ✅ Check collections: `curl http://bears-qdrant:6333/collections`
-4. ➡️ Deploy **Onyx API Server** (depends on Qdrant + Redis + Git Sync + Postgres)
+4. ➡️ Deploy your memory service / knowledgebase (depends on Qdrant + Redis + Git Sync + Postgres)
 
 ## Coolify Service Name Reference
 
-When deploying Onyx, you'll need to reference this Qdrant service:
+When deploying your memory service/adapter, you'll need to reference this Qdrant service:
 
 ```bash
 # If you named the service "bears-qdrant"

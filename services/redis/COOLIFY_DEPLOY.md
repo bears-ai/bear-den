@@ -2,12 +2,12 @@
 
 ## Overview
 
-Redis serves as the cache layer for Onyx, providing fast temporary storage for session data and query results.
+Redis serves as the cache layer for the memory service/knowledgebase, providing fast temporary storage for session data and query results.
 
 ## Prerequisites
 
 - Coolify instance running
-- Deploy **before** Onyx API Server
+- Deploy **before** your memory service / knowledgebase (if applicable)
 
 ## Deployment Steps
 
@@ -88,14 +88,14 @@ Purpose: Redis persistence (AOF and RDB files)
 
 ### Coolify Internal URL
 
-Onyx will connect to Redis using Coolify's internal Docker networking:
+The memory service / knowledgebase will connect to Redis using Coolify's internal Docker networking:
 
 ```bash
 # Format: <service-name>.<coolify-project>.internal
 redis://bears-redis:6379
 ```
 
-**Important**: Use the service name you configured in Coolify. If you named it differently, update the Onyx configuration accordingly.
+**Important**: Use the service name you configured in Coolify. If you named it differently, update your memory service configuration accordingly.
 
 ## Performance Tuning (Optional)
 
@@ -176,13 +176,13 @@ redis-cli INFO stats
 - Ensure no port conflicts (if exposing externally)
 - Check resource availability
 
-### Connection Refused from Onyx
+### Connection Refused from the memory service
 
-**Problem**: Onyx can't connect to Redis
+**Problem**: The memory service can't connect to Redis
 
 **Solutions**:
 - Verify both services are in same Coolify project
-- Check service name matches Onyx configuration
+- Check service name matches your memory service configuration
 - Confirm Redis is healthy in Coolify
 - Test connection: `redis-cli -h bears-redis ping`
 
@@ -193,7 +193,7 @@ redis-cli INFO stats
 **Solutions**:
 - Increase memory limit in Coolify
 - Set `maxmemory-policy` to appropriate strategy
-- Review Onyx cache usage patterns
+- Review memory service cache usage patterns
 - Consider scaling Redis (vertical or horizontal)
 
 ### Data Loss After Restart
@@ -217,7 +217,7 @@ For added security, enable Redis authentication:
    REDIS_PASSWORD=your-secure-password-here
    ```
 
-2. Update Onyx configuration to use password:
+2. Update your memory service configuration to use the password:
    ```bash
    REDIS_PASSWORD=your-secure-password-here
    ```
@@ -236,11 +236,11 @@ After Redis is running:
 1. ✅ Verify health check passes
 2. ✅ Test connectivity: `redis-cli ping`
 3. ➡️ Deploy **Qdrant** (vector database)
-4. ➡️ Deploy **Onyx API Server** (depends on Redis + Qdrant + Git Sync)
+4. ➡️ Deploy your memory service / knowledgebase (depends on Redis + Qdrant + Git Sync)
 
 ## Coolify Service Name Reference
 
-When deploying Onyx, you'll need to reference this Redis service:
+When deploying your memory service/adapter, you'll need to reference this Redis service:
 
 ```bash
 # If you named the service "bears-redis"

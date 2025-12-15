@@ -21,7 +21,7 @@ The `git-sync` service in your BEARS Stack deployment:
 
 1. **Clones this repository** on first startup
 2. **Watches for file changes** using inotify
-3. **Commits and pushes immediately** when Onyx modifies memory files
+3. **Commits and pushes immediately** when the memory service modifies memory files
 4. **Pulls from origin every 5 minutes** to sync changes from other sources
 5. **Uses rebase strategy** to handle conflicts cleanly
 
@@ -97,7 +97,7 @@ You can manually edit memory files in this repository:
 2. Edit Markdown files as needed
 3. Commit and push changes
 4. Git Sync will pull changes within 5 minutes
-5. Onyx will re-index updated content automatically
+5. The memory service will re-index updated content automatically
 
 ## Directory Details
 
@@ -201,8 +201,8 @@ This repository **IS** your backup. All critical data lives here in Git, version
 - ✅ Timestamps and metadata (Git commits)
 
 **What's ephemeral** (can be rebuilt from this repo):
-- PostgreSQL metadata (Onyx regenerates from files)
-- Qdrant vectors (Onyx re-indexes from files)
+- PostgreSQL metadata (memory service regenerates from files)
+- Qdrant vectors (memory service re-indexes from files)
 - Letta configuration (recreate manually)
 
 ### Disaster Recovery
@@ -212,10 +212,10 @@ If your entire BEARS Stack is lost:
 1. **Clone this repository** on a new server
 2. **Deploy BEARS services** in Coolify
 3. **Point Git Sync** to this repository
-4. **Onyx automatically rebuilds**:
-   - PostgreSQL metadata from Markdown files
-   - Qdrant vector embeddings from content
-   - Full system state from Git history
+4. **The memory service can automatically rebuild**:
+    - PostgreSQL metadata from Markdown files
+    - Qdrant vector embeddings from content
+    - Full system state from Git history
 
 Your memory is fully restored! 🎉
 
@@ -258,12 +258,12 @@ Archive old project: website-v1
 3. Ensure PAT has write permissions
 4. Check for Git conflicts (sync will log errors)
 
-### Changes Not Appearing in Onyx
+### Changes Not Appearing in the memory service
 
 1. Wait 5 minutes for automatic pull
-2. Check Onyx logs for indexing errors
+2. Check the memory service logs for indexing errors
 3. Verify file format (valid YAML frontmatter)
-4. Restart Onyx API service if needed
+4. Restart the memory service if needed
 
 ### Merge Conflicts
 
@@ -292,7 +292,7 @@ Restart the Git Sync service to force an immediate pull from origin.
 
 For issues with:
 - **Git Sync service**: Check BEARS deployment documentation
-- **Memory file format**: See Onyx documentation
+- **Memory file format**: See the memory service documentation
 - **Git operations**: Standard Git troubleshooting applies
 
 ## License

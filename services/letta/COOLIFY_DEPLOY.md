@@ -2,7 +2,7 @@
 
 ## Overview
 
-Letta is the agent orchestration framework that ties everything together. It provides the web UI, API server, and agent runtime that uses Onyx for memory and LiteLLM for model access.
+Letta is the agent orchestration framework that ties everything together. It provides the web UI, API server, and agent runtime. Letta integrates with external memory services via a knowledgebase tools API (embed/upsert/search/get) and with LiteLLM for model access. Prefer a knowledgebase layer so archival memory remains controlled and read-only by default.
 
 ## Prerequisites
 
@@ -12,8 +12,8 @@ Letta is the agent orchestration framework that ties everything together. It pro
   - ✅ Redis
   - ✅ Qdrant
   - ✅ PostgreSQL (Coolify-managed)
-  - ✅ Onyx API Server
   - ✅ LiteLLM
+  - ⚪ Knowledgebase / Memory Service (optional — prefer a dedicated knowledgebase service)
 
 ## Deployment Steps
 
@@ -32,9 +32,15 @@ Letta is the agent orchestration framework that ties everything together. It pro
 
 4. **Environment Variables**:
 
-   ```bash
-   # Onyx Integration
-   ONYX_URL=http://bears-onyx:8080
+  ```bash
+  # Knowledgebase / Memory service
+  # Letta should call a knowledgebase tools API rather than depending
+  # directly on an internal memory implementation. Set this to the
+  # Knowledgebase service URL that provides embed/upsert/search/get
+  # endpoints. Example: `http://bears-knowledgebase:8080`.
+  KNOWLEDGEBASE_URL=http://bears-knowledgebase:8080
+
+  # If you have a legacy adapter, configure it in the knowledgebase layer
 
   # LiteLLM Integration
   LLM_API_URL=http://bears-litellm:4000/v1
@@ -111,7 +117,7 @@ curl http://bears-letta:8283/v1/agents
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `ONYX_URL` | ✅ Yes | - | Onyx API URL (`http://bears-onyx:8080`) |
+| `KNOWLEDGEBASE_URL` | ✅ Yes | - | URL of the knowledgebase tools API (embed/upsert/search/get). Example: `http://bears-knowledgebase:8080` |
 | `LLM_API_URL` | ✅ Yes | - | LiteLLM URL (`http://bears-litellm:4000/v1`) |
 | `MODEL_NAME` | ✅ Yes | `gpt-4` | Default model for agents |
 | `LETTA_SERVER_PORT` | No | `8283` | Web UI and API port |
@@ -127,8 +133,8 @@ Letta requires these services to be healthy:
 
 ```
 Letta
-  ├── Onyx API Server
-  │   ├── PostgreSQL (Coolify-managed)
+  ├── Knowledgebase / Memory Service
+  │   ├── PostgreSQL (Coolify-managed) [optional]
   │   ├── Redis
   │   ├── Qdrant
   │   └── Git Sync
@@ -146,10 +152,10 @@ Access at `http://your-domain:8283`:
 1. **Login** with `LETTA_SERVER_PASS`
 2. **Create an agent**:
    - Choose model (gpt-4, claude-3-5-sonnet, etc.)
-   - Configure memory (automatically uses Onyx)
+  - Configure memory (point agents to the configured knowledgebase)
    - Add tools/functions
 3. **Chat with agent** in the UI
-4. **View memory** - agent memories stored in Onyx → Git
+4. **View memory** - agent memories stored via the knowledgebase → Git
 
 ### API Access
 
@@ -165,7 +171,7 @@ curl -X POST http://bears-letta:8283/v1/agents \
   -d '{
     "name": "my-assistant",
     "model": "gpt-4",
-    "memory": {"type": "onyx"}
+    "memory": {"type": "knowledgebase"}
   }'
 
 # Send message
@@ -178,38 +184,46 @@ curl -X POST http://bears-letta:8283/v1/agents/{agent_id}/messages \
   }'
 ```
 
-## Integration with Onyx
+## Integration with Memory Backends
 
-### How It Works
+Letta should interact with a knowledgebase tools API that exposes a small, stable contract (embed/upsert/search/get). The knowledgebase service can use Qdrant for vectors and Git Sync for archival markdown; Letta should call the knowledgebase API rather than directly mutating archival data.
 
-1. **Agent creates memory** → Letta calls Onyx API
-2. **Onyx writes Markdown file** → `/app/memory/memories/...`
-3. **Git Sync detects change** → Commits and pushes to GitHub
-4. **Memory is searchable** → Qdrant vector index
-5. **Memory persists** → Git version control
+### How It Works (recommended)
+
+1. **Agent creates memory** → Letta calls the configured `KNOWLEDGEBASE_URL` API
+2. **Knowledgebase writes or indexes** → Markdown files for archival + vectors in Qdrant (or other vector store)
+3. **Git Sync detects change** → Commits and pushes archival files to GitHub
+4. **Memory is searchable** → Qdrant vector index (queried via the Knowledgebase API)
+5. **Memory persists** → Git version control (archival records should be treated as read-only by default)
 
 ### Memory Flow
 
 ```
-User chats → Letta agent → Onyx API → Markdown file → Git Sync → GitHub
-                                    ↓
-                                 Qdrant (vectors)
-                                    ↓
-                              PostgreSQL (metadata)
+User chats → Letta agent → Knowledgebase API → (Qdrant vectors + Markdown archive) → Git Sync → GitHub
+                  ↓
+                 Qdrant (vectors)
+                  ↓
+                PostgreSQL (metadata)
 ```
 
 ### Viewing Agent Memories
 
-Check the content repository on GitHub:
+Check the content repository on GitHub (archival markdown files):
 
 ```
 memories/
 └── personal/
-    └── agent-my-assistant/
-        ├── conversation-context.md
-        ├── user-preferences.md
-        └── learned-facts.md
+  └── agent-my-assistant/
+    ├── conversation-context.md
+    ├── user-preferences.md
+    └── learned-facts.md
 ```
+
+### Recommendations
+
+- Treat archival markdown as immutable by default; do not let agents overwrite/archive records without a controlled process.
+- Use a knowledgebase service (we plan to provide an RMCP + Qdrant implementation) to centralize embedding and search logic.
+  - Keep legacy adapters optional; prefer the knowledgebase API as the single integration contract.
 
 ## Monitoring
 
@@ -236,7 +250,7 @@ View in Coolify dashboard:
 ```bash
 # Look for:
 # - "Letta server started"
-# - "Connected to Onyx"
+# - "Connected to memory service"
 # - "Connected to LLM provider"
 # - Agent creation/interaction logs
 ```
@@ -246,20 +260,20 @@ View in Coolify dashboard:
 ### Service Won't Start
 
 **Solutions**:
-- Check all dependencies are healthy (Onyx, LiteLLM)
+- Check all dependencies are healthy (knowledgebase/memory service, LiteLLM)
 - Verify environment variables are correct
 - Ensure port 8283 is not already in use
 - Review logs for specific errors
 
-### Can't Connect to Onyx
+### Can't Connect to the memory service
 
-**Problem**: "Connection refused" to Onyx
+**Problem**: "Connection refused" to the configured knowledgebase/memory service
 
 **Solutions**:
-- Verify `ONYX_URL=http://bears-onyx:8080`
-- Check Onyx service is healthy
-- Test: `curl http://bears-onyx:8080/health`
-- Ensure both services in same Coolify network
+- Verify `KNOWLEDGEBASE_URL` is set and correct in Letta's environment
+- Check the memory service is healthy
+- Test: `curl <KNOWLEDGEBASE_URL>/health`
+- Ensure both services are in the same Coolify network
 
 ### Can't Connect to LiteLLM
 
@@ -293,11 +307,11 @@ If your Letta build exposes a different configuration name for forwarding LLM cr
 **Problem**: No memory files created
 
 **Solutions**:
-- Check Onyx connection
-- Verify Onyx can write to `/app/memory/`
+- Check the memory service connection (KNOWLEDGEBASE_URL)
+- Verify the memory service can write to its configured archive path (e.g. `/app/memory/`)
 - Check Git Sync is running
-- Review Letta logs for Onyx API errors
-- Test Onyx manually: Create a memory via Onyx API
+- Review Letta logs for memory service API errors
+- Test the memory service manually: Create a memory via its API
 
 ### Web UI Not Loading
 
@@ -362,7 +376,7 @@ CPU: 1-2 cores
 
 Factors affecting speed:
 - LiteLLM model choice (GPT-4 slower than GPT-3.5)
-- Onyx query complexity
+  - Memory service query complexity
 - Memory size (larger memories = slower search)
 
 ### Optimization Tips
@@ -420,7 +434,7 @@ memories/shared/team-context.md
 - [ ] Redis responding to ping
 - [ ] Qdrant has collections
 - [ ] PostgreSQL accepting connections
-- [ ] Onyx API returning health OK
+[ ] Knowledgebase / memory service returning health OK
 - [ ] LiteLLM proxying to LLM providers
 - [ ] Letta Web UI accessible
 - [ ] Test agent created successfully
@@ -449,8 +463,8 @@ Your BEARS Stack is now fully deployed! 🎉
 ### Further Reading
 
 - Letta documentation: https://docs.letta.ai
-- Onyx documentation: https://docs.onyx.app
-- LiteLLM documentation: https://docs.litellm.ai
+Memory service documentation: (provider-specific or internal)
+LiteLLM documentation: https://docs.litellm.ai
 
 ## Coolify Service Summary
 
@@ -464,7 +478,7 @@ bears-postgres       (Database - Coolify-managed)
 
 # Core Services
 bears-git-sync       (Memory sync)
-bears-onyx           (Memory management)
+bears-knowledgebase  (Memory management)
 bears-litellm        (Model gateway)
 
 # Agent Framework

@@ -9,7 +9,7 @@ The Git Sync service automatically synchronizes your BEARS memory content (memor
 - Coolify instance running
 - GitHub repository for content (see `content-template/` for a template)
 - GitHub Personal Access Token (PAT) with `Contents: Read and Write` permissions
-- This service must be deployed **before** Onyx API Server
+- This service must be deployed **before** your memory service / knowledgebase implementation
 
 ## Deployment Steps
 
@@ -82,7 +82,7 @@ git push -u origin main
 
    - **Volume Name**: `bears-memory`
    - **Mount Path**: `/data`
-   - **Description**: Shared volume for memory content (used by git-sync and onyx)
+   - **Description**: Shared volume for memory content (used by git-sync and the memory service)
 
 6. **Health Check** (automatically configured in Dockerfile):
    - Checks if `.git` directory exists in `/data`
@@ -135,7 +135,7 @@ ls -la /data
 
 ### Volume Configuration
 
-**Important**: The `bears-memory` volume must be shared with Onyx API Server!
+**Important**: The `bears-memory` volume must be shared with your memory service / knowledgebase!
 
 ```
 Volume Name: bears-memory
@@ -152,7 +152,7 @@ This volume will contain:
 
 ### On File Changes
 
-When Onyx modifies files in `/data`:
+When the memory service modifies files in `/data`:
 
 1. `inotifywait` detects the change immediately
 2. Git Sync waits 2 seconds (debounce for multiple rapid changes)
@@ -242,22 +242,22 @@ Uses `git pull --rebase` strategy:
 - Verify volume is mounted at `/data`
 - Restart service after fixing issues
 
-## Integration with Onyx
+## Integration with memory backends
 
-The Onyx API Server must mount the same `bears-memory` volume:
+The memory service (knowledgebase/adapter) must mount the same `bears-memory` volume.
 
 **Git Sync**:
 ```
 Volume: bears-memory → /data
 ```
 
-**Onyx API**:
+**Memory service** (example):
 ```
 Volume: bears-memory → /app/memory
 ```
 
 When configured this way:
-- Onyx writes to `/app/memory/memories/`, `/app/memory/history/`, `/app/memory/projects/`
+- The memory service writes to `/app/memory/memories/`, `/app/memory/history/`, `/app/memory/projects/`
 - Git Sync sees changes in `/data/memories/`, `/data/history/`, `/data/projects/`
 - Changes are automatically committed and pushed
 
@@ -346,6 +346,6 @@ After Git Sync is running:
 
 1. ✅ Verify logs show successful clone and sync
 2. ✅ Check volume contains `memories/`, `history/`, `projects/`
-3. ➡️ Deploy **Onyx API Server** (with same `bears-memory` volume)
+3. ➡️ Deploy your memory service / knowledgebase (with same `bears-memory` volume)
 4. ✅ Test: Modify a file in content repo, watch it sync to Coolify
-5. ✅ Test: Have Onyx create a memory, watch it commit/push to GitHub
+5. ✅ Test: Have your memory service create a memory, watch it commit/push to GitHub

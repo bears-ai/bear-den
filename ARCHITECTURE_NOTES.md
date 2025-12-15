@@ -27,7 +27,7 @@ The BEARS Stack uses a layered architecture with specialized services deployed i
 │         │              API Layer                        │
 │         │                                                │
 │         ├──────→ ┌─────────────┐                        │
-│         │        │   Onyx      │ ← Memory management    │
+│         │        │ Knowledgebase│ ← Memory management   │
 │         │        │   :8080     │   (Git + Markdown)     │
 │         │        └──────┬──────┘                        │
 │         │               │                                │
@@ -79,7 +79,7 @@ The BEARS Stack uses a layered architecture with specialized services deployed i
   - Commits and pushes immediately on changes
   - Pulls from origin every 5 minutes (configurable)
   - Uses rebase strategy for conflict resolution
-  - Shares volume with Onyx API Server
+  - Shares volume with the memory service
 
 #### Letta (Agent Framework)
 
@@ -91,31 +91,31 @@ The BEARS Stack uses a layered architecture with specialized services deployed i
   - Agent creation and management
   - Tool execution framework
   - Conversation management
-  - Integration with Onyx for memory
+  - Integration with an external knowledgebase (memory service) for memory
   - Web-based Admin Development Environment
 
-#### Onyx (Memory Management)
+#### Knowledgebase / Memory Service
 
-- **Purpose**: Git-versioned memory system with Markdown files
-- **Image**: `onyxdotapp/onyx-backend:latest`
-- **Port**: 8080
+- **Purpose**: Git-versioned memory system with Markdown files and a vector search API
+- **Image**: (varies — this repository uses a separate knowledgebase adapter)
+- **Port**: 8080 (example)
 - **Key Features**:
   - Manages `memories/`, `history/`, and `projects/` directories
   - Reads/writes Markdown files with YAML frontmatter
-  - PostgreSQL backend for metadata
-  - Integration with Qdrant for semantic search
+  - PostgreSQL backend for metadata (optional)
+  - Integration with Qdrant (or other vector DB) for semantic search
   - Shares volume with Git Sync
 
 #### Qdrant (Vector Database)
 
-- **Purpose**: Semantic memory and vector storage
-- **Image**: `qdrant/qdrant:latest`
-- **Port**: 6333
-- **Key Features**:
+-- **Purpose**: Semantic memory and vector storage
+-- **Image**: `qdrant/qdrant:latest`
+-- **Port**: 6333
+-- **Key Features**:
   - Vector embeddings for semantic search
   - Fast similarity search
-  - Used by Onyx for RAG capabilities
-  - Collections auto-created by Onyx
+  - Used by the memory service / knowledgebase for RAG capabilities
+  - Collections auto-created by the memory service or adapter
 
 #### LiteLLM (Model Gateway)
 
@@ -130,7 +130,7 @@ The BEARS Stack uses a layered architecture with specialized services deployed i
 
 #### Redis (Cache)
 
-- **Purpose**: Cache layer for Onyx
+-- **Purpose**: Cache layer for the memory service
 - **Image**: `redis:7-alpine`
 - **Port**: 6379
 - **Key Features**:
@@ -140,11 +140,11 @@ The BEARS Stack uses a layered architecture with specialized services deployed i
 
 #### PostgreSQL (Database)
 
-- **Purpose**: Backend database for Onyx
+-- **Purpose**: Backend database for the memory service
 - **Deployment**: Coolify-managed service
 - **Port**: 5432 (internal only)
 - **Key Features**:
-  - Stores Onyx metadata
+  - Stores memory-service metadata
   - Automatic backups via Coolify
   - Managed updates and maintenance### Memory System
 
@@ -205,30 +205,30 @@ the memory, preference, or context.
 
 #### Shared Volume Architecture
 
-**Critical Design**: Git Sync and Onyx share the same volume!
+**Critical Design**: Git Sync and the memory service share the same volume!
 
 ```
 Volume: bears-memory (shared)
 ├── Git Sync mounts at: /data
-└── Onyx mounts at: /app/memory
+└── Memory service mounts at: /app/memory
 
 Data flow:
 1. Git Sync clones repo → /data
-2. Onyx reads/writes → /app/memory (same volume)
+2. Memory service reads/writes → /app/memory (same volume)
 3. Git Sync detects changes → commits + pushes
-4. Onyx indexes → Qdrant (vectors) + PostgreSQL (metadata)
+4. Memory service indexes → Qdrant (vectors) + PostgreSQL (metadata)
 ```
 
 ### Data Flow
 
 1. **User Interaction** → Letta receives request via Web UI or API
-2. **Memory Retrieval** → Letta queries Onyx for relevant context
-3. **Semantic Search** → Onyx uses Qdrant for vector similarity
+2. **Memory Retrieval** → Letta queries the knowledgebase (memory service) for relevant context
+3. **Semantic Search** → The memory service uses Qdrant for vector similarity
 4. **LLM Inference** → Letta routes to appropriate model via LiteLLM
-5. **Memory Update** → Onyx writes Markdown file to shared volume
+5. **Memory Update** → Memory service writes Markdown file to shared volume
 6. **Git Synchronization** → Git Sync detects change, commits, and pushes to GitHub
-7. **Vector Indexing** → Onyx updates Qdrant with new embeddings
-8. **Metadata Storage** → Onyx updates PostgreSQL with file metadata
+7. **Vector Indexing** → Memory service updates Qdrant with new embeddings
+8. **Metadata Storage** → Memory service updates PostgreSQL with file metadata
 
 ### Deployment Considerations
 
@@ -248,7 +248,7 @@ Data flow:
 - `bears-letta-data` → Letta configuration
 
 **Shared Volume** (multi-service):
-- `bears-memory` → Shared between Git Sync and Onyx for memory files
+- `bears-memory` → Shared between Git Sync and the memory service for memory files
 
 **Coolify-Managed**:
 - PostgreSQL data → Handled by Coolify with automatic backups
@@ -261,10 +261,10 @@ Services communicate using Coolify's internal DNS:
 # Format: <service-name>:<port>
 redis://bears-redis:6379
 http://bears-qdrant:6333
-http://bears-onyx:8080
+http://bears-knowledgebase:8080
 http://bears-litellm:4000
 http://bears-letta:8283
-postgresql://<postgres-host>:5432/onyx
+postgresql://<postgres-host>:5432/<memory-db>
 ```
 
 **Note**: Service names must match exactly what's configured in Coolify.
@@ -274,7 +274,7 @@ postgresql://<postgres-host>:5432/onyx
 | Service | Internal Port | External Access | Purpose |
 |---------|--------------|-----------------|---------|
 | Letta | 8283 | Via Coolify proxy or direct | Web UI + API |
-| Onyx | 8080 | Optional | Memory API |
+| Knowledgebase / Memory Service | 8080 | Optional | Memory API |
 | Qdrant | 6333 | Internal only | Vector DB |
 | LiteLLM | 4000 | Internal only | Model gateway |
 | Redis | 6379 | Internal only | Cache |
@@ -285,14 +285,14 @@ postgresql://<postgres-host>:5432/onyx
 
 ### Security Notes
 
-- Authentication disabled on Onyx for local deployment
+-- Authentication disabled on the memory service for local deployment (if applicable)
 - All services on private Docker network
 - Only specified ports exposed to host
 - Sensitive data in `.env` file (not committed to Git)
 
 ### Future Enhancements
 
-- Add authentication to Onyx API
+-- Add authentication to the memory service API
 - Implement MCP (Modular Content Providers) for external data
 - Add web UI for memory browsing/editing
 - Implement multi-agent collaboration

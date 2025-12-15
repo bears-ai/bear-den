@@ -57,7 +57,7 @@ Layer 4: Application
 ├── Letta (Agent orchestration + Web UI)
 
 Layer 3: APIs
-├── Onyx API Server (Memory management)
+├── Knowledgebase / Memory Service API (Memory management)
 └── LiteLLM (Model gateway)
 
 Layer 2: Memory
@@ -73,13 +73,13 @@ Layer 1: Infrastructure
 
 ```
 User → Letta → LiteLLM → OpenAI/Anthropic APIs
-           ↓
-         Onyx ← PostgreSQL (metadata)
-           ↓     Qdrant (vectors)
-           ↓     Redis (cache)
+        ↓
+    Knowledgebase / Memory Service ← PostgreSQL (metadata)
+        ↓     Qdrant (vectors)
+        ↓     Redis (cache)
      Markdown files
-           ↓
-       Git Sync → GitHub (backup)
+        ↓
+    Git Sync → GitHub (backup)
 ```
 
 ## Deployment Order
@@ -90,7 +90,7 @@ Services **must** be deployed in this order:
 2. **Redis** (Cache layer)
 3. **Qdrant** (Vector database)
 4. **Git Sync** (Memory synchronization)
-5. **Onyx API Server** (Memory management)
+5. **Knowledgebase / Memory Service** (Memory management)
 6. **LiteLLM** (Model gateway)
 7. **Letta** (Agent orchestration)
 
@@ -146,19 +146,19 @@ git push -u origin main
    - **Version**: `17`
    - **Username**: `postgres` (default)
    - **Password**: Click "Generate" or use: `openssl rand -base64 32`
-   - **Database Name**: `onyx`
+   - **Database Name**: `<memory-db>` (previously `onyx` in legacy docs)
 4. Click **Deploy**
 5. Wait for status: **Healthy** ✅
 
 #### 1.2. Save Connection Details
 
 ```bash
-# Note these for Onyx deployment:
+# Note these for the knowledgebase/memory service deployment:
 POSTGRES_HOST=<coolify-generated-host-name>
 POSTGRES_PORT=5432
 POSTGRES_USER=postgres
 POSTGRES_PASSWORD=<your-generated-password>
-POSTGRES_DB=onyx
+POSTGRES_DB=<memory-db>
 ```
 
 **Verify**: Check database is accessible in Coolify dashboard.
@@ -274,7 +274,7 @@ GIT_SYNC_INTERVAL=300
 
 #### 4.3. Create Shared Volume
 
-**Critical**: This volume will be shared with Onyx!
+**Critical**: This volume will be shared with the knowledgebase/memory service!
 
 - **Volume Name**: `bears-memory`
 - **Mount Path**: `/data`
@@ -297,7 +297,7 @@ Click **Deploy** and watch logs for:
 
 ---
 
-### Step 5: Deploy Onyx API Server
+### Step 5: Deploy Knowledgebase / Memory Service API
 
 See [`services/onyx/COOLIFY_DEPLOY.md`](services/onyx/COOLIFY_DEPLOY.md) for detailed instructions.
 
@@ -305,8 +305,8 @@ See [`services/onyx/COOLIFY_DEPLOY.md`](services/onyx/COOLIFY_DEPLOY.md) for det
 
 1. Coolify → **Add Resource** → **Docker Image**
 2. Configure:
-   - **Service Name**: `bears-onyx`
-   - **Image**: `onyxdotapp/onyx-backend:latest`
+   - **Service Name**: `bears-knowledgebase` (or another name you choose)
+   - **Image**: `<your-knowledgebase-image>` (choose the RMCP+Qdrant image or other implementation)
    - **Port**: 8080
 
 #### 5.2. Configure Environment Variables
@@ -317,7 +317,7 @@ POSTGRES_HOST=<your-coolify-postgres-host>
 POSTGRES_PORT=5432
 POSTGRES_USER=postgres
 POSTGRES_PASSWORD=<from-step-1>
-POSTGRES_DB=onyx
+POSTGRES_DB=<memory-db>
 
 # Redis
 REDIS_HOST=<bears-redis-ip-addr>
@@ -352,10 +352,10 @@ Start Period: 60s
 
 #### 5.5. Deploy
 
-Click **Deploy** and watch logs for:
+Click **Deploy** and watch logs for startup/connectivity messages (varies by implementation):
 
 ```
-Onyx backend started
+Knowledgebase backend started
 Connected to PostgreSQL
 Connected to Qdrant
 ```
@@ -363,7 +363,7 @@ Connected to Qdrant
 **Note**: First deployment doesn't need migrations (empty database).
 
 **Verify**:
-- Test: `curl http://bears-onyx:8080/health` → `{"status": "ok"}`
+- Test: `curl http://bears-knowledgebase:8080/health` → expected health response
 - Check terminal: `ls -la /app/memory/` → Should show `memories/`, `history/`, `projects/`
 
 ---
@@ -446,7 +446,7 @@ See [`services/letta/COOLIFY_DEPLOY.md`](services/letta/COOLIFY_DEPLOY.md) for d
 
 ```bash
 # Service Integration
-ONYX_URL=http://bears-onyx:8080
+KNOWLEDGEBASE_URL=http://bears-knowledgebase:8080
 LLM_API_URL=http://bears-litellm:4000/v1
 
 # Model Configuration
@@ -522,7 +522,7 @@ Check all services are healthy in Coolify dashboard:
 - [ ] Redis - **Healthy** ✅
 - [ ] Qdrant - **Healthy** ✅
 - [ ] Git Sync - **Healthy** ✅
-- [ ] Onyx API - **Healthy** ✅
+-- [ ] Knowledgebase API - **Healthy** ✅
 - [ ] LiteLLM - **Healthy** ✅
 - [ ] Letta - **Healthy** ✅
 
@@ -537,8 +537,8 @@ redis-cli -h bears-redis ping
 # Test Qdrant
 curl http://bears-qdrant:6333/
 
-# Test Onyx
-curl http://bears-onyx:8080/health
+# Test Knowledgebase / Memory Service
+curl http://bears-knowledgebase:8080/health
 
 # Test LiteLLM
 curl http://bears-litellm:4000/health/liveliness
@@ -585,12 +585,12 @@ curl http://bears-letta:8283/v1/health
 
 ### Memory Files Not Found
 
-**Problem**: Onyx can't read memory files
+**Problem**: Knowledgebase / memory service can't read memory files
 
 **Solutions**:
-- Verify `bears-memory` volume is shared between Git Sync and Onyx
+- Verify `bears-memory` volume is shared between Git Sync and the memory service
 - Check Git Sync cloned successfully: `ls /data/` in git-sync terminal
-- Check Onyx can see files: `ls /app/memory/` in onyx terminal
+- Check the memory service can see files: `ls /app/memory/` in the knowledgebase container
 - Review mount paths in both services
 
 ### Agents Not Creating Memories
@@ -598,9 +598,9 @@ curl http://bears-letta:8283/v1/health
 **Problem**: Letta agents don't persist memories
 
 **Solutions**:
-- Verify Letta → Onyx connection: `curl $ONYX_URL/health` from Letta terminal
-- Check Onyx logs for errors
-- Test Onyx write permissions: Check `/app/memory/` is writable
+- Verify Letta → knowledgebase connection: `curl $KNOWLEDGEBASE_URL/health` from Letta terminal
+- Check memory service logs for errors
+- Test memory service write permissions: Check `/app/memory/` is writable
 - Review Git Sync logs for commit errors
 
 ### Resource Exhaustion
@@ -609,7 +609,7 @@ curl http://bears-letta:8283/v1/health
 
 **Solutions**:
 - Check resource usage in Coolify
-- Increase memory limits (especially Qdrant, Onyx)
+- Increase memory limits (especially Qdrant, memory service)
 - Scale vertically or horizontally
 - Monitor disk space
 
@@ -617,7 +617,7 @@ curl http://bears-letta:8283/v1/health
 
 ### Production Hardening
 
-- [ ] Enable authentication on Onyx (`AUTH_TYPE=basic`)
+- [ ] Enable authentication on the knowledgebase/memory service (`AUTH_TYPE=basic`)
 - [ ] Set up HTTPS for external access
 - [ ] Configure Coolify backups
 - [ ] Set up monitoring/alerting
