@@ -60,7 +60,7 @@ Services must be deployed in this specific order due to dependencies:
    - [`services/redis/COOLIFY_DEPLOY.md`](services/redis/COOLIFY_DEPLOY.md)
    - [`services/qdrant/COOLIFY_DEPLOY.md`](services/qdrant/COOLIFY_DEPLOY.md)
    - [`services/git-sync/COOLIFY_DEPLOY.md`](services/git-sync/COOLIFY_DEPLOY.md)
-   - [`services/onyx/COOLIFY_DEPLOY.md`](services/onyx/COOLIFY_DEPLOY.md)
+   - Knowledgebase/Memory Service deployment guide (see service directory)
    - [`services/litellm/COOLIFY_DEPLOY.md`](services/litellm/COOLIFY_DEPLOY.md)
    - [`services/letta/COOLIFY_DEPLOY.md`](services/letta/COOLIFY_DEPLOY.md)
 
@@ -93,7 +93,7 @@ bears-deploy/                    # This repository
 │   │   └── COOLIFY_DEPLOY.md
 │   ├── redis/                 # Cache layer
 │   ├── qdrant/                # Vector database
-│   ├── onyx/                  # (deprecated) Memory management — migrate to `knowledgebase/`
+│   ├── knowledgebase/         # Memory management service
 │   ├── litellm/               # Model gateway
 │   └── letta/                 # Agent orchestration
 ├── content-template/          # Template for content repository
@@ -238,7 +238,7 @@ Each service has its own configuration:
 - **Git Sync**: [`services/git-sync/.env.example`](services/git-sync/.env.example)
 - **Redis**: Uses defaults, see [`services/redis/`](services/redis/)
 - **Qdrant**: Uses defaults, see [`services/qdrant/`](services/qdrant/)
-- **Onyx**: [`services/onyx/.env.example`](services/onyx/.env.example)
+- **Knowledgebase**: Service-specific environment configuration
 - **LiteLLM**: [`services/litellm/.env.example`](services/litellm/.env.example)
 - **Letta**: [`services/letta/.env.example`](services/letta/.env.example)
 
@@ -253,7 +253,7 @@ See [`DEPLOYMENT.md`](DEPLOYMENT.md) for complete deployment instructions.
 3. ✅ Deploy Qdrant
 4. ✅ Create and push content repository (fork `content-template/`)
 5. ✅ Deploy Git Sync (with content repo credentials)
-6. ✅ Deploy Onyx API Server
+6. ✅ Deploy Knowledgebase/Memory Service API
 7. ✅ Deploy LiteLLM
 8. ✅ Deploy Letta
 9. ✅ Access Web UI and create first agent
@@ -407,7 +407,7 @@ For issues or questions:
 
 Built with:
 - [Letta](https://github.com/letta-ai/letta) - Agent framework
-- [Onyx](https://github.com/onyx-dot-app/onyx) - Memory management
+- Knowledgebase service - Memory management
 - [Qdrant](https://github.com/qdrant/qdrant) - Vector database
 - [LiteLLM](https://github.com/BerriAI/litellm) - LLM gateway
 - [Coolify](https://coolify.io) - Deployment platform

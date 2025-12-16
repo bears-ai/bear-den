@@ -146,7 +146,7 @@ git push -u origin main
    - **Version**: `17`
    - **Username**: `postgres` (default)
    - **Password**: Click "Generate" or use: `openssl rand -base64 32`
-   - **Database Name**: `<memory-db>` (previously `onyx` in legacy docs)
+   - **Database Name**: `<memory-db>`
 4. Click **Deploy**
 5. Wait for status: **Healthy** ✅
 
@@ -299,7 +299,7 @@ Click **Deploy** and watch logs for:
 
 ### Step 5: Deploy Knowledgebase / Memory Service API
 
-See [`services/onyx/COOLIFY_DEPLOY.md`](services/onyx/COOLIFY_DEPLOY.md) for detailed instructions.
+See the knowledgebase/memory service deployment guide for detailed instructions.
 
 #### 5.1. Create Service
 

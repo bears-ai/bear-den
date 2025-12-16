@@ -387,13 +387,15 @@ services:
     ports:
       - "6333:6333"
 
-  onyx:
-    image: onyx/onyx:latest
+  knowledgebase:
+    image: <knowledgebase-service-image:latest>
     volumes:
-      - onyx_data:/data
+      - knowledgebase_data:/data
       - ./memories:/memories
     environment:
       - GIT_REPO=/memories
+      - POSTGRES_HOST=postgres
+      - QDRANT_HOST=qdrant
 
   litellm:
     image: ghcr.io/berriai/litellm:latest
@@ -412,7 +414,7 @@ services:
 
 volumes:
   qdrant_data:
-  onyx_data:
+  knowledgebase_data:
   letta_data:
 ```
 
