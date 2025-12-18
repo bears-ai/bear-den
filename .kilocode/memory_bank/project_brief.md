@@ -79,7 +79,7 @@ The system is designed to be model-agnostic, self-hosted, and human-inspectable,
 ### AI/ML Components
 - **Model Gateway**: LiteLLM (multi-provider routing)
 - **Agent Framework**: Letta (autonomous workflows, tool execution)
-- **Memory System**: Onyx (structured memory management)
+- **Memory System**: Knowledgebase (structured memory management)
 - **Vector Store**: Qdrant, Weaviate, or Pinecone (semantic retrieval)
 
 ### Memory Architecture
@@ -116,7 +116,7 @@ projects/            # Project-scoped memory files (per-project context)
 This is an exploratory, iterative project with flexible timelines. Development will proceed in capability-driven phases:
 
 - **Phase 1**: Core infrastructure (Docker, Coolify, LiteLLM)
-- **Phase 2**: Basic memory system (Markdown, Git, Onyx)
+- **Phase 2**: Basic memory system (Markdown, Git, Knowledgebase)
 - **Phase 3**: Multi-user support and memory scoping
 - **Phase 4**: Agent framework integration (Letta)
 - **Phase 5**: Advanced features (RAG, MCPs, semantic search)
@@ -172,7 +172,7 @@ Specific dates and deadlines will be determined as the project evolves.
 1. **Behavior Reusability**: Agent behavior, memory, and tools are reusable across models
 2. **User Editability**: Both users can manually revise any part of the memory via Markdown or Git
 3. **Unified Deployment**: All services deployed via a unified Docker Compose file
-4. **Named Volumes**: Persistent storage for Onyx, vector stores (Qdrant/Pinecone/Weaviate)
+4. **Named Volumes**: Persistent storage for Knowledgebase, vector stores (Qdrant/Pinecone/Weaviate)
 
 ### Related Documentation
 - [`agentic-assistant-architecture.md`](agentic-assistant-architecture.md) - Detailed architectural design
