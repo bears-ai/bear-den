@@ -1,13 +1,15 @@
-# 🐻 Basic Extensible Agent Runtime Stack (BEARS)
+# 🐻 Basic Environment for Agent Runtimes Stack (BEARS)
 
 **Configuration repository** for deploying an agentic assistants platform with Coolify, using:
 
 - [Letta](https://github.com/letta-ai/letta) – Agent server and orchestration layer
+- [LibreChat](https://github.com/danny-avila/LibreChat) – Modern chat UI with multi-user support
 - Knowledgebase / Memory service (e.g. RMCP + Qdrant) – Memory management with Git-versioned Markdown
 - [Qdrant](https://github.com/qdrant/qdrant) – Vector database for semantic memory
 - [LiteLLM](https://github.com/BerriAI/litellm) – Unified LLM gateway
 - [PostgreSQL](https://www.postgresql.org/) – Database backend for memory services
 - [Redis](https://redis.io/) – Cache layer for memory services
+- [MongoDB](https://www.mongodb.com/) – Database for LibreChat user management
 - [Coolify](https://coolify.io) – Self-hosted PaaS for deployment and management
 
 ## Architecture Overview
@@ -63,6 +65,7 @@ Services must be deployed in this specific order due to dependencies:
    - Knowledgebase/Memory Service deployment guide (see service directory)
    - [`services/litellm/COOLIFY_DEPLOY.md`](services/litellm/COOLIFY_DEPLOY.md)
    - [`services/letta/COOLIFY_DEPLOY.md`](services/letta/COOLIFY_DEPLOY.md)
+   - [`services/librechat/COOLIFY_DEPLOY.md`](services/librechat/COOLIFY_DEPLOY.md)
 
 3. **Access the Web UI**
 
@@ -296,7 +299,7 @@ If you lose everything except your GitHub content repository:
 
 1. Redeploy all services in Coolify
 2. Git Sync clones content from GitHub
-3. Onyx automatically:
+3. Knowledgebase automatically:
    - Regenerates PostgreSQL metadata from Markdown files
    - Re-indexes all content into Qdrant vectors
    - Restores full system state
@@ -337,19 +340,19 @@ In Coolify, view logs for any service that's unhealthy.
 - Check `GIT_SYNC_REPO` URL is correct
 - Review Git Sync logs for errors
 
-**Onyx can't connect to services**:
+**Knowledgebase can't connect to services**:
 - Ensure all services are in same Coolify project
 - Verify service names match environment variables
 - Check PostgreSQL, Redis, Qdrant are healthy
 
-**Letta can't reach Onyx or LiteLLM**:
-- Verify `ONYX_URL` and `LLM_API_URL` are correct
+**Letta can't reach Knowledgebase or LiteLLM**:
+- Verify `KNOWLEDGEBASE_URL` and `LLM_API_URL` are correct
 - Check both services are healthy
 - Test connectivity from Coolify terminal
 
 **Memory files not found**:
 - Verify Git Sync cloned content successfully
-- Check `bears-memory` volume is shared between Git Sync and Onyx
+- Check `bears-memory` volume is shared between Git Sync and Knowledgebase
 - Review Git Sync logs for clone errors
 
 For detailed troubleshooting, see service-specific deployment guides in [`services/`](services/).

@@ -55,6 +55,7 @@ Services are deployed individually in Coolify, leveraging:
 ```
 Layer 4: Application
 ├── Letta (Agent orchestration + Web UI)
+└── LibreChat (Modern chat UI + Multi-user support)
 
 Layer 3: APIs
 ├── Knowledgebase / Memory Service API (Memory management)
@@ -66,7 +67,9 @@ Layer 2: Memory
 Layer 1: Infrastructure
 ├── PostgreSQL (Database - Coolify-managed)
 ├── Redis (Cache)
-└── Qdrant (Vector database)
+├── Qdrant (Vector database)
+├── MongoDB (User data - Coolify-managed or external)
+└── MeiliSearch (Search functionality - optional)
 ```
 
 ### Data Flow
@@ -80,6 +83,11 @@ User → Letta → LiteLLM → OpenAI/Anthropic APIs
      Markdown files
         ↓
     Git Sync → GitHub (backup)
+
+User → LibreChat → LiteLLM → OpenAI/Anthropic APIs
+        ↓
+    MongoDB (conversations, users)
+    MeiliSearch (search index)
 ```
 
 ## Deployment Order
@@ -93,6 +101,9 @@ Services **must** be deployed in this order:
 5. **Knowledgebase / Memory Service** (Memory management)
 6. **LiteLLM** (Model gateway)
 7. **Letta** (Agent orchestration)
+8. **MongoDB** (Optional - Required for LibreChat)
+9. **MeiliSearch** (Optional - Recommended for LibreChat)
+10. **LibreChat** (Optional - Modern chat UI)
 
 ## Step-by-Step Deployment
 
@@ -489,14 +500,194 @@ Click **Deploy** and wait for status: **Healthy** ✅
 
 ---
 
+### Step 8: Deploy MongoDB (Optional - Required for LibreChat)
+
+LibreChat requires MongoDB for user data, conversations, and configuration.
+
+#### 8.1. Create MongoDB Service in Coolify
+
+1. Coolify → **Add Resource** → **Docker Image**
+2. Configure:
+    - **Service Name**: `bears-mongodb`
+    - **Image**: `mongo:7-jammy`
+    - **Port**: 27017 (internal only)
+
+#### 8.2. Add Persistent Storage
+
+- **Volume Name**: `bears-mongodb-data`
+- **Mount Path**: `/data/db`
+
+#### 8.3. Configure Health Check
+
+```bash
+Command: mongosh --eval "db.adminCommand('ping')"
+Interval: 30s
+Timeout: 10s
+Start Period: 30s
+```
+
+#### 8.4. Deploy
+
+Click **Deploy** and wait for **Healthy** status.
+
+---
+
+### Step 9: Deploy MeiliSearch (Optional - Recommended for LibreChat)
+
+For conversation search functionality in LibreChat.
+
+#### 9.1. Create MeiliSearch Service
+
+1. Coolify → **Add Resource** → **Docker Image**
+2. Configure:
+    - **Service Name**: `bears-meilisearch`
+    - **Image**: `getmeili/meilisearch:v1.12.3`
+    - **Port**: 7700 (internal)
+
+#### 9.2. Environment Variables
+
+```bash
+MEILI_NO_ANALYTICS=true
+MEILI_MASTER_KEY=DrhYf7zENyR6AlUCKmnz0eYASOQdl6zxH7s7MKFSfFCt
+```
+
+#### 9.3. Add Persistent Storage
+
+- **Volume Name**: `bears-meilisearch-data`
+- **Mount Path**: `/meili_data`
+
+#### 9.4. Deploy
+
+Click **Deploy** and wait for **Healthy** status.
+
+---
+
+### Step 10: Deploy LibreChat (Optional - Modern Chat UI)
+
+See [`services/librechat/COOLIFY_DEPLOY.md`](services/librechat/COOLIFY_DEPLOY.md) for detailed instructions.
+
+#### 10.1. Create LibreChat Service
+
+1. Coolify → **Add Resource** → **Docker Image**
+2. Configure:
+    - **Service Name**: `bears-librechat`
+    - **Image**: `ghcr.io/danny-avila/librechat-dev:latest`
+    - **Port**: 3080 (expose externally via Coolify proxy)
+
+#### 10.2. Environment Variables
+
+Copy the configuration from `services/librechat/.env.example` and customize:
+
+```bash
+# Core Configuration
+HOST=0.0.0.0
+PORT=3080
+MONGO_URI=mongodb://bears-mongodb:27017/LibreChat
+MEILI_HOST=http://bears-meilisearch:7700
+MEILI_MASTER_KEY=DrhYf7zENyR6AlUCKmnz0eYASOQdl6zxH7s7MKFSfFCt
+
+# Domain (update with your Coolify domain)
+DOMAIN_CLIENT=https://librechat.yourdomain.com
+DOMAIN_SERVER=https://librechat.yourdomain.com
+
+# LiteLLM Integration (key model configuration)
+OPENAI_API_KEY=sk-litellm-key-placeholder
+OPENAI_REVERSE_PROXY=http://bears-litellm:4000/v1
+
+# Authentication
+ALLOW_REGISTRATION=true
+JWT_SECRET=your-secure-jwt-secret-here
+JWT_REFRESH_SECRET=your-secure-refresh-secret-here
+
+# File permissions
+UID=1000
+GID=1000
+```
+
+**Important**: Generate secure secrets for JWT:
+```bash
+JWT_SECRET=$(openssl rand -base64 32)
+JWT_REFRESH_SECRET=$(openssl rand -base64 32)
+```
+
+#### 10.3. Add Persistent Storage
+
+- **Volume Name**: `bears-librechat-data`
+- **Mount Path**: `/app/client/public/images`
+
+Additional volumes for uploads and logs:
+- **Volume Name**: `bears-librechat-uploads`
+- **Mount Path**: `/app/uploads`
+
+- **Volume Name**: `bears-librechat-logs`
+- **Mount Path**: `/app/logs`
+
+#### 10.4. Configure Health Check
+
+```bash
+Command: curl -f http://localhost:3080/api/health || exit 1
+Interval: 30s
+Timeout: 10s
+Start Period: 60s
+```
+
+#### 10.5. Resource Limits
+
+- **Memory**: 1 GB
+- **CPU**: 1 core
+
+#### 10.6. Deploy
+
+Click **Deploy** and wait for **Healthy** status.
+
+#### 10.7. Configure Domain and SSL
+
+1. In Coolify, configure custom domain for LibreChat service
+2. Enable SSL/TLS certificate
+3. Access LibreChat at `https://librechat.yourdomain.com`
+
+---
+
+### Step 11: Post-LibreChat Configuration
+
+#### 11.1. Initial Setup
+
+1. Access LibreChat at your configured domain
+2. Create an admin account
+3. Configure available models in LibreChat settings
+4. Test model connectivity
+
+#### 11.2. Model Configuration
+
+In LibreChat's admin panel:
+
+1. Go to **Settings** → **Models**
+2. Configure model endpoints (they should auto-detect from LiteLLM)
+3. Set default models for conversations
+
+#### 11.3. User Management
+
+1. Enable/disable user registration as needed
+2. Configure user roles and permissions
+3. Set up user groups if using team features
+
+---
+
 ## Post-Deployment
 
 ### Access the Web UI
 
+#### Letta (Agent Management)
 1. Navigate to your configured Coolify domain or `http://<server-ip>:8283`
 2. Login with `LETTA_SERVER_PASS`
 3. Create your first agent
 4. Start chatting!
+
+#### LibreChat (Modern Chat UI - Optional)
+1. Navigate to your configured LibreChat domain or `http://<server-ip>:3080`
+2. Create an admin account or register as a new user
+3. Configure models in settings
+4. Start chatting with multi-user support!
 
 ### Verify End-to-End Functionality
 
@@ -522,9 +713,12 @@ Check all services are healthy in Coolify dashboard:
 - [ ] Redis - **Healthy** ✅
 - [ ] Qdrant - **Healthy** ✅
 - [ ] Git Sync - **Healthy** ✅
--- [ ] Knowledgebase API - **Healthy** ✅
+- [ ] Knowledgebase API - **Healthy** ✅
 - [ ] LiteLLM - **Healthy** ✅
 - [ ] Letta - **Healthy** ✅
+- [ ] MongoDB (Optional) - **Healthy** ✅
+- [ ] MeiliSearch (Optional) - **Healthy** ✅
+- [ ] LibreChat (Optional) - **Healthy** ✅
 
 ### Connectivity Tests
 
@@ -545,6 +739,15 @@ curl http://bears-litellm:4000/health/liveliness
 
 # Test Letta
 curl http://bears-letta:8283/v1/health
+
+# Test MongoDB (if deployed)
+mongosh mongodb://bears-mongodb:27017/LibreChat --eval "db.stats()"
+
+# Test MeiliSearch (if deployed)
+curl http://bears-meilisearch:7700/health
+
+# Test LibreChat (if deployed)
+curl https://librechat.yourdomain.com/api/health
 ```
 
 ### Memory Sync Verification
@@ -613,6 +816,48 @@ curl http://bears-letta:8283/v1/health
 - Scale vertically or horizontally
 - Monitor disk space
 
+### LibreChat Connection Issues
+
+**Problem**: LibreChat can't connect to LiteLLM
+
+**Solutions**:
+- Verify `OPENAI_REVERSE_PROXY` URL is correct: `http://bears-litellm:4000/v1`
+- Check LiteLLM service is healthy
+- Review LibreChat logs for connection errors
+- Ensure LiteLLM master key is properly configured if required
+
+**Problem**: MongoDB connection failed
+
+**Solutions**:
+- Ensure MongoDB service is deployed and healthy
+- Verify `MONGO_URI` format: `mongodb://bears-mongodb:27017/LibreChat`
+- Check network connectivity between services
+- Review MongoDB logs for authentication issues
+
+**Problem**: MeiliSearch search not working
+
+**Solutions**:
+- Verify MeiliSearch service is healthy
+- Check `MEILI_HOST` and `MEILI_MASTER_KEY` configuration
+- Test MeiliSearch connectivity: `curl http://bears-meilisearch:7700/health`
+- Review LibreChat logs for search-related errors
+
+**Problem**: File upload issues in LibreChat
+
+**Solutions**:
+- Verify volume mounts are correct for uploads
+- Check file permissions (UID/GID settings)
+- Ensure sufficient disk space
+- Review LibreChat logs for upload errors
+
+**Problem**: Multi-user authentication problems
+
+**Solutions**:
+- Verify JWT secrets are set and secure
+- Check MongoDB connectivity for user data
+- Review browser console for client-side errors
+- Ensure `ALLOW_REGISTRATION=true` if user registration is needed
+
 ## Next Steps
 
 ### Production Hardening
@@ -658,5 +903,7 @@ Your BEARS Stack is now fully operational with:
 - ✅ Semantic search via Qdrant
 - ✅ Multi-model support via LiteLLM
 - ✅ Coolify-managed infrastructure
+- ✅ Modern chat UI with LibreChat (optional)
+- ✅ Multi-user authentication and conversation management
 
-Start building your agentic assistants! 🐻
+Start building your agentic assistants with both Letta (agent management) and LibreChat (modern chat interface)! 🐻

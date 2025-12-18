@@ -23,7 +23,7 @@ The system is designed to be model-agnostic, self-hosted, and human-inspectable,
 - Multi-user identity and memory management (personal + shared contexts)
 - Model-agnostic LLM routing via LiteLLM
 - Markdown-based memory system with Git versioning
-- Onyx integration for long-term memory (memories, history, projects)
+- Knowledgebase integration for long-term memory (memories, history, projects)
 - Letta agent framework for autonomous workflows
 - Docker-based deployment via Coolify
 - Project-scoped memory and context management
