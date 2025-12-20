@@ -4,7 +4,7 @@ Complete guide for deploying LibreChat as an additional chat UI for the BEARS St
 
 ## Overview
 
-LibreChat provides a modern, feature-rich chat interface that integrates with the BEARS Stack's LiteLLM gateway and knowledgebase services. It offers multi-user authentication, conversation management, and advanced features like code execution and file uploads.
+LibreChat provides a modern, feature-rich chat interface that integrates with the BEARS Stack's Letta agent orchestration framework. It offers multi-user authentication, conversation management, and advanced features like code execution and file uploads. This deployment uses the cpfiffer/letta-libre fork, which enables LibreChat to serve as the primary UI for interacting with Letta-hosted agents.
 
 ## Prerequisites
 
@@ -18,8 +18,8 @@ LibreChat provides a modern, feature-rich chat interface that integrates with th
 
 LibreChat integrates with BEARS services as follows:
 
-- **Model Access**: Connects to LiteLLM (`http://bears-litellm:4000`) for all AI model interactions
-- **Memory/Context**: Can integrate with the knowledgebase service for enhanced context
+- **Agent Interaction**: Connects to Letta (`http://bears-letta:8283`) for all agent interactions and model access
+- **Memory/Context**: Leverages Letta's integration with the knowledgebase service for enhanced context and memory
 - **Authentication**: Built-in multi-user authentication with MongoDB backend
 - **Search**: Uses MeiliSearch for conversation search functionality
 
@@ -89,9 +89,9 @@ Click **Deploy** and wait for **Healthy** status.
 
 1. Coolify → **Add Resource** → **Docker Image**
 2. Configure:
-   - **Service Name**: `bears-librechat`
-   - **Image**: `ghcr.io/danny-avila/librechat-dev:latest`
-   - **Port**: 3080 (expose externally via Coolify proxy)
+    - **Service Name**: `bears-librechat`
+    - **Image**: `ghcr.io/cpfiffer/letta-libre:latest`
+    - **Port**: 3080 (expose externally via Coolify proxy)
 
 #### 3.2. Environment Variables
 
@@ -109,16 +109,16 @@ MEILI_MASTER_KEY=DrhYf7zENyR6AlUCKmnz0eYASOQdl6zxH7s7MKFSfFCt
 DOMAIN_CLIENT=https://librechat.yourdomain.com
 DOMAIN_SERVER=https://librechat.yourdomain.com
 
-# LiteLLM Integration (key model configuration)
-OPENAI_API_KEY=sk-litellm-key-placeholder
-OPENAI_REVERSE_PROXY=http://bears-litellm:4000/v1
+# Letta Integration (primary model configuration)
+LETTA_URL=http://bears-letta:8283
+LETTA_SERVER_PASS=your-letta-admin-password-here
 
 # Authentication
 ALLOW_REGISTRATION=true
 JWT_SECRET=your-secure-jwt-secret-here
 JWT_REFRESH_SECRET=your-secure-refresh-secret-here
 
-# Knowledgebase Integration (optional)
+# Knowledgebase Integration (optional - handled via Letta)
 RAG_API_URL=http://bears-knowledgebase:8080
 
 # File permissions
@@ -131,6 +131,8 @@ GID=1000
 JWT_SECRET=$(openssl rand -base64 32)
 JWT_REFRESH_SECRET=$(openssl rand -base64 32)
 ```
+
+**Note**: The `LETTA_SERVER_PASS` should match the password set in your Letta service configuration.
 
 #### 3.3. Add Persistent Storage
 
@@ -170,15 +172,16 @@ Click **Deploy** and wait for **Healthy** status.
 
 ## Configuration Details
 
-### LiteLLM Integration
+### Letta Integration
 
-LibreChat connects to LiteLLM using the reverse proxy configuration:
+LibreChat connects to Letta using the agent API configuration:
 
 ```bash
-OPENAI_REVERSE_PROXY=http://bears-litellm:4000/v1
+LETTA_URL=http://bears-letta:8283
+LETTA_SERVER_PASS=<your-letta-admin-password>
 ```
 
-This allows LibreChat to access all models configured in LiteLLM without needing direct API keys.
+This allows LibreChat to interact with Letta-hosted agents, which in turn access all models configured in LiteLLM. Letta handles agent orchestration, memory management, and model routing internally.
 
 ### Multi-User Authentication
 
@@ -197,7 +200,7 @@ For enhanced memory/context capabilities, configure:
 RAG_API_URL=http://bears-knowledgebase:8080
 ```
 
-This enables LibreChat's RAG features to work with the BEARS memory system.
+This enables LibreChat's RAG features to work with the BEARS memory system. Note that primary memory management is handled through Letta's integration with the knowledgebase service.
 
 ## Post-Deployment Configuration
 
@@ -288,19 +291,20 @@ curl https://librechat.yourdomain.com/api/health
 
 Adding LibreChat to BEARS provides:
 
-- **Enhanced UI**: Modern, feature-rich chat interface
+- **Primary UI**: Modern, feature-rich chat interface for interacting with Letta agents
 - **Multi-user support**: Team collaboration capabilities
 - **Advanced features**: Code execution, file uploads, conversation branching
-- **Better UX**: Improved user experience compared to basic Letta interface
-- **Scalability**: Handles multiple concurrent users
+- **Agent Orchestration**: Leverages Letta's agent management and memory systems
+- **Scalability**: Handles multiple concurrent users through Letta's backend
 
-## Alternative Deployment
+## Primary Deployment
 
-If you prefer to use LibreChat as the primary interface instead of Letta:
+This deployment configures LibreChat as the primary user interface for the BEARS Stack:
 
-1. Deploy LibreChat following the steps above
-2. Optionally keep Letta for advanced agent management
-3. Configure users to access LibreChat for regular chat interactions
+1. Deploy LibreChat following the steps above (using the cpfiffer/letta-libre fork)
+2. Ensure Letta is deployed and configured with LiteLLM and knowledgebase integration
+3. Users access LibreChat for all chat interactions, which are routed through Letta agents
+4. Letta remains available for advanced agent management and administration
 
 ---
 

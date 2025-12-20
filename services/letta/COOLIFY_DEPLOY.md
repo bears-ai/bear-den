@@ -2,7 +2,7 @@
 
 ## Overview
 
-Letta is the agent orchestration framework that ties everything together. It provides the web UI, API server, and agent runtime. Letta integrates with external memory services via a knowledgebase tools API (embed/upsert/search/get) and with LiteLLM for model access. Prefer a knowledgebase layer so archival memory remains controlled and read-only by default.
+Letta is the agent orchestration framework that provides the API server and agent runtime for the BEARS Stack. It integrates with external memory services via a knowledgebase tools API (embed/upsert/search/get) and with LiteLLM for model access. LibreChat serves as the primary user interface, connecting to Letta's agent APIs. Prefer a knowledgebase layer so archival memory remains controlled and read-only by default.
 
 ## Prerequisites
 
@@ -27,8 +27,8 @@ Letta is the agent orchestration framework that ties everything together. It pro
    - **Deployment Type**: Public Docker Image
 
 3. **Port Configuration**:
-   - **Internal Port**: `8283` (Web UI + API)
-   - **External Port**: `8283` or use Coolify proxy with custom domain
+    - **Internal Port**: `8283` (API Server)
+    - **External Access**: Internal only (accessed by LibreChat)
 
 4. **Environment Variables**:
 
@@ -145,15 +145,19 @@ Letta
 
 ## Using Letta
 
-### Web UI (Admin Development Environment)
+### Primary Usage via LibreChat
 
-Access at `http://your-domain:8283`:
+Letta agents are primarily accessed through the LibreChat UI, which provides a modern chat interface for interacting with agents. LibreChat handles user authentication, conversation management, and connects to Letta's agent APIs.
+
+### Admin Web UI (Optional)
+
+For advanced agent management and development, access the Letta Web UI at `http://bears-letta:8283` (internal only):
 
 1. **Login** with `LETTA_SERVER_PASS`
 2. **Create an agent**:
-   - Choose model (gpt-4, claude-3-5-sonnet, etc.)
-  - Configure memory (point agents to the configured knowledgebase)
-   - Add tools/functions
+    - Choose model (gpt-4, claude-3-5-sonnet, etc.)
+   - Configure memory (point agents to the configured knowledgebase)
+    - Add tools/functions
 3. **Chat with agent** in the UI
 4. **View memory** - agent memories stored via the knowledgebase → Git
 
@@ -436,14 +440,15 @@ memories/shared/team-context.md
 - [ ] PostgreSQL accepting connections
 [ ] Knowledgebase / memory service returning health OK
 - [ ] LiteLLM proxying to LLM providers
-- [ ] Letta Web UI accessible
-- [ ] Test agent created successfully
+- [ ] Letta API accessible (internal)
+- [ ] LibreChat deployed and accessible
+- [ ] Test agent created via API
 - [ ] Agent memories appearing in GitHub
 
 ### Full Stack Test
 
-1. **Create test agent** in Letta Web UI
-2. **Chat with agent** - ask it to remember something
+1. **Create test agent** via Letta API or admin Web UI
+2. **Chat with agent** through LibreChat - ask it to remember something
 3. **Check GitHub** - verify memory file created
 4. **Check Qdrant** - verify vectors indexed
 5. **Chat again** - verify agent recalls previous context
@@ -454,11 +459,13 @@ Your BEARS Stack is now fully deployed! 🎉
 
 ### Getting Started
 
-1. **Create your first agent** in the Web UI
-2. **Customize memory structure** in the content repo
-3. **Add more models** to LiteLLM config
-4. **Set up monitoring** (optional)
-5. **Configure backups** (PostgreSQL, Qdrant)
+1. **Deploy LibreChat** using the cpfiffer/letta-libre fork
+2. **Create your first agent** via Letta API or admin Web UI
+3. **Access agents** through LibreChat's modern interface
+4. **Customize memory structure** in the content repo
+5. **Add more models** to LiteLLM config
+6. **Set up monitoring** (optional)
+7. **Configure backups** (PostgreSQL, Qdrant)
 
 ### Further Reading
 
@@ -482,7 +489,8 @@ bears-knowledgebase  (Memory management)
 bears-litellm        (Model gateway)
 
 # Agent Framework
-bears-letta          (Orchestration + Web UI)
+bears-letta          (Agent orchestration API)
+bears-librechat      (Primary chat UI)
 ```
 
 All connected through Coolify's internal Docker network! 🐻

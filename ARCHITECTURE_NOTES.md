@@ -18,11 +18,20 @@ The BEARS Stack uses a layered architecture with specialized services deployed i
 │                    Application Layer                    │
 │                                                          │
 │  ┌─────────────┐                                        │
-│  │   Letta     │ ← Agent orchestration + Web UI         │
-│  │   :8283     │                                        │
+│  │ LibreChat  │ ← Primary UI for agent interactions    │
+│  │   :3080     │   (Modern chat interface)              │
 │  └──────┬──────┘                                        │
 └─────────┼───────────────────────────────────────────────┘
-          │
+           │
+┌─────────┼───────────────────────────────────────────────┐
+│         │              Agent Layer                       │
+│         │                                                │
+│         └──────→ ┌─────────────┐                        │
+│                  │   Letta     │ ← Agent orchestration   │
+│                  │   :8283     │   (Tools, memory, state) │
+│                  └──────┬──────┘                        │
+└─────────┼───────────────────────────────────────────────┘
+           │
 ┌─────────┼───────────────────────────────────────────────┐
 │         │              API Layer                        │
 │         │                                                │
@@ -36,7 +45,7 @@ The BEARS Stack uses a layered architecture with specialized services deployed i
 │                  │   :4000     │   (OpenAI, Claude)     │
 │                  └─────────────┘                        │
 └────────────────────────────────────────────────────────┘
-                        │
+                         │
 ┌───────────────────────┼─────────────────────────────────┐
 │                       │        Memory Layer              │
 │                       │                                  │
@@ -50,7 +59,7 @@ The BEARS Stack uses a layered architecture with specialized services deployed i
 │                              (memories/, history/,       │
 │                               projects/, .git/)          │
 └──────────────────────────────────────────────────────────┘
-                                       │
+                                        │
 ┌──────────────────────────────────────┼──────────────────┐
 │                                      │  Infrastructure  │
 │                                      │                  │
@@ -61,10 +70,10 @@ The BEARS Stack uses a layered architecture with specialized services deployed i
 │  └─────────────┘  └─────────────┘  └─────────────┘    │
 │   (metadata)        (cache)          (vectors)         │
 └──────────────────────────────────────────────────────────┘
-          │                  │                  │
-          └──────────────────┴──────────────────┘
-                             │
-                    Coolify Internal Network
+           │                  │                  │
+           └──────────────────┴──────────────────┘
+                              │
+                     Coolify Internal Network
 ```
 
 ### Service Responsibilities
@@ -81,18 +90,32 @@ The BEARS Stack uses a layered architecture with specialized services deployed i
   - Uses rebase strategy for conflict resolution
   - Shares volume with the memory service
 
+#### LibreChat (Primary Chat UI)
+
+- **Purpose**: Modern, feature-rich chat interface for interacting with Letta agents
+- **Image**: `ghcr.io/cpfiffer/letta-libre:latest`
+- **Ports**:
+  - 3080 (Web UI)
+- **Key Features**:
+  - Multi-user authentication with MongoDB
+  - Conversation management and search
+  - File uploads and code execution
+  - Integration with Letta agent APIs
+  - Modern responsive UI
+
 #### Letta (Agent Framework)
 
 - **Purpose**: Agent orchestration, tool execution, and workflow management
 - **Image**: `letta/letta:latest`
 - **Ports**:
-  - 8283 (Web UI + API Server)
+  - 8283 (API Server - internal)
 - **Key Features**:
   - Agent creation and management
   - Tool execution framework
   - Conversation management
   - Integration with an external knowledgebase (memory service) for memory
-  - Web-based Admin Development Environment
+  - Model routing via LiteLLM
+  - Admin API for external UI integration
 
 #### Knowledgebase / Memory Service
 
@@ -221,14 +244,16 @@ Data flow:
 
 ### Data Flow
 
-1. **User Interaction** → Letta receives request via Web UI or API
-2. **Memory Retrieval** → Letta queries the knowledgebase (memory service) for relevant context
-3. **Semantic Search** → The memory service uses Qdrant for vector similarity
-4. **LLM Inference** → Letta routes to appropriate model via LiteLLM
-5. **Memory Update** → Memory service writes Markdown file to shared volume
-6. **Git Synchronization** → Git Sync detects change, commits, and pushes to GitHub
-7. **Vector Indexing** → Memory service updates Qdrant with new embeddings
-8. **Metadata Storage** → Memory service updates PostgreSQL with file metadata
+1. **User Interaction** → LibreChat receives user input via modern chat UI
+2. **Agent Request** → LibreChat sends request to Letta agent API
+3. **Memory Retrieval** → Letta queries the knowledgebase (memory service) for relevant context
+4. **Semantic Search** → The memory service uses Qdrant for vector similarity
+5. **LLM Inference** → Letta routes to appropriate model via LiteLLM
+6. **Agent Response** → Letta processes response and sends back to LibreChat
+7. **Memory Update** → Letta/memory service writes Markdown file to shared volume
+8. **Git Synchronization** → Git Sync detects change, commits, and pushes to GitHub
+9. **Vector Indexing** → Memory service updates Qdrant with new embeddings
+10. **Metadata Storage** → Memory service updates PostgreSQL with file metadata
 
 ### Deployment Considerations
 
@@ -273,7 +298,8 @@ postgresql://<postgres-host>:5432/<memory-db>
 
 | Service | Internal Port | External Access | Purpose |
 |---------|--------------|-----------------|---------|
-| Letta | 8283 | Via Coolify proxy or direct | Web UI + API |
+| LibreChat | 3080 | Via Coolify proxy | Primary chat UI |
+| Letta | 8283 | Internal only | Agent orchestration API |
 | Knowledgebase / Memory Service | 8080 | Optional | Memory API |
 | Qdrant | 6333 | Internal only | Vector DB |
 | LiteLLM | 4000 | Internal only | Model gateway |
@@ -281,7 +307,7 @@ postgresql://<postgres-host>:5432/<memory-db>
 | PostgreSQL | 5432 | Internal only | Database |
 | Git Sync | N/A | No exposed ports | Sync service |
 
-**Security**: Only Letta should be exposed externally. All other services are internal-only.
+**Security**: Only LibreChat should be exposed externally. All other services are internal-only.
 
 ### Security Notes
 
