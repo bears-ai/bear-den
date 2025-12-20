@@ -54,8 +54,8 @@ Services are deployed individually in Coolify, leveraging:
 
 ```
 Layer 4: Application
-├── Letta (Agent orchestration + Web UI)
-└── LibreChat (Modern chat UI + Multi-user support)
+├── LibreChat (Primary chat UI + Multi-user support)
+└── Letta (Agent orchestration API + tooling)
 
 Layer 3: APIs
 ├── Knowledgebase / Memory Service API (Memory management)
@@ -75,19 +75,17 @@ Layer 1: Infrastructure
 ### Data Flow
 
 ```
-User → Letta → LiteLLM → OpenAI/Anthropic APIs
-        ↓
-    Knowledgebase / Memory Service ← PostgreSQL (metadata)
-        ↓     Qdrant (vectors)
-        ↓     Redis (cache)
+User → LibreChat → Letta → LiteLLM → OpenAI/Anthropic APIs
+        ↓          ↓
+        ↓     Knowledgebase / Memory Service ← PostgreSQL (metadata)
+        ↓          ↓
+        ↓          Qdrant (vectors)
+        ↓          Redis (cache)
      Markdown files
         ↓
     Git Sync → GitHub (backup)
 
-User → LibreChat → LiteLLM → OpenAI/Anthropic APIs
-        ↓
-    MongoDB (conversations, users)
-    MeiliSearch (search index)
+LibreChat (MongoDB + MeiliSearch) handles UI, authentication, and search while delegating agent execution to Letta.
 ```
 
 ## Deployment Order
@@ -562,7 +560,7 @@ Click **Deploy** and wait for **Healthy** status.
 
 ---
 
-### Step 10: Deploy LibreChat (Optional - Modern Chat UI)
+### Step 10: Deploy LibreChat (Primary Chat UI)
 
 See [`services/librechat/COOLIFY_DEPLOY.md`](services/librechat/COOLIFY_DEPLOY.md) for detailed instructions.
 
@@ -571,7 +569,7 @@ See [`services/librechat/COOLIFY_DEPLOY.md`](services/librechat/COOLIFY_DEPLOY.m
 1. Coolify → **Add Resource** → **Docker Image**
 2. Configure:
     - **Service Name**: `bears-librechat`
-    - **Image**: `ghcr.io/danny-avila/librechat-dev:latest`
+    - **Image**: `ghcr.io/cpfiffer/letta-libre:latest`
     - **Port**: 3080 (expose externally via Coolify proxy)
 
 #### 10.2. Environment Variables
@@ -590,14 +588,17 @@ MEILI_MASTER_KEY=DrhYf7zENyR6AlUCKmnz0eYASOQdl6zxH7s7MKFSfFCt
 DOMAIN_CLIENT=https://librechat.yourdomain.com
 DOMAIN_SERVER=https://librechat.yourdomain.com
 
-# LiteLLM Integration (key model configuration)
-OPENAI_API_KEY=sk-litellm-key-placeholder
-OPENAI_REVERSE_PROXY=http://bears-litellm:4000/v1
+# Letta Integration (primary agent configuration)
+LETTA_URL=http://bears-letta:8283
+LETTA_SERVER_PASS=your-letta-admin-password
 
 # Authentication
 ALLOW_REGISTRATION=true
 JWT_SECRET=your-secure-jwt-secret-here
 JWT_REFRESH_SECRET=your-secure-refresh-secret-here
+
+# Knowledgebase integration (optional RAG endpoint - Letta handles primary memory)
+RAG_API_URL=http://bears-knowledgebase:8080
 
 # File permissions
 UID=1000
@@ -677,13 +678,17 @@ In LibreChat's admin panel:
 
 ### Access the Web UI
 
-#### Letta (Agent Management)
-1. Navigate to your configured Coolify domain or `http://<server-ip>:8283`
-2. Login with `LETTA_SERVER_PASS`
-3. Create your first agent
-4. Start chatting!
+#### LibreChat (Primary Chat UI)
+1. Navigate to your configured LibreChat domain or `http://<server-ip>:3080`
+2. Create an admin account or register as a new user
+3. Configure models/agents (Letta provider)
+4. Start chatting with multi-user support!
 
-#### LibreChat (Modern Chat UI - Optional)
+#### Letta (Agent Management API)
+1. Access internally via `http://bears-letta:8283` or VPN
+2. Login with `LETTA_SERVER_PASS`
+3. Create/maintain agents, tools, and memory integrations
+4. Use API for automation or advanced workflows
 1. Navigate to your configured LibreChat domain or `http://<server-ip>:3080`
 2. Create an admin account or register as a new user
 3. Configure models in settings
