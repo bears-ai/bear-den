@@ -1,4 +1,4 @@
-# 🐻 Basic Environment for Agents Runtime Stack (BEARS)
+# 🐻 Basic Environment for Agents Runtime Server (BEARS)
 
 **Configuration repository** for deploying an agentic assistants platform with Coolify, using:
 

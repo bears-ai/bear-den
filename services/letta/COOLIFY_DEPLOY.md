@@ -390,6 +390,58 @@ Factors affecting speed:
 3. Cache frequent queries in Redis
 4. Use streaming responses for better UX
 
+## Open WebUI Integration
+
+Letta can be integrated with Open WebUI to provide a modern chat interface with session management. This allows you to use Open WebUI's UI while leveraging Letta's agent capabilities.
+
+### Overview
+
+When integrating Open WebUI with Letta, you need to:
+1. Map Open WebUI chat sessions to Letta agents
+2. Route messages from Open WebUI to the appropriate Letta agent
+3. Manage session persistence and context
+
+### Session Management Strategies
+
+**One Agent Per User** (Recommended for personalization):
+- All chats from a user share the same Letta agent
+- Agent learns user preferences across all conversations
+- Better long-term memory and personalization
+
+**One Agent Per Chat** (Recommended for isolation):
+- Each Open WebUI chat gets its own Letta agent
+- Complete isolation between conversations
+- Better for project-specific or topic-specific chats
+
+### Implementation
+
+See [`OPENWEBUI_SESSIONS.md`](OPENWEBUI_SESSIONS.md) for a complete guide on:
+- Session mapping strategies
+- Pipe function implementation
+- Code examples
+- Integration with BEARS memory system
+
+### Quick Start
+
+1. **Deploy the pipe function** using the example in [`openwebui_pipe_example.py`](openwebui_pipe_example.py)
+2. **Configure environment variables** (see [`openwebui_integration.env.example`](openwebui_integration.env.example))
+3. **Register the pipe function** in Open WebUI as a custom model
+4. **Test the integration** by creating a chat in Open WebUI
+
+### Configuration
+
+Add these environment variables to your Open WebUI service (or pipe function service):
+
+```bash
+LETTA_API_URL=http://bears-letta:8283/v1
+LETTA_SERVER_PASS=<your-letta-password>
+SESSION_STRATEGY=user  # or "chat"
+SESSION_STORAGE=redis
+REDIS_URL=redis://bears-redis:6379
+```
+
+For detailed configuration, see [`openwebui_integration.env.example`](openwebui_integration.env.example).
+
 ## Advanced Configuration
 
 ### Custom Models
