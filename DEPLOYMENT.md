@@ -54,7 +54,7 @@ Services are deployed individually in Coolify, leveraging:
 
 ```
 Layer 4: Application
-├── LibreChat (Primary chat UI + Multi-user support)
+├── OpenWebUI (Primary chat UI + Multi-user support)
 └── Letta (Agent orchestration API + tooling)
 
 Layer 3: APIs
@@ -75,7 +75,7 @@ Layer 1: Infrastructure
 ### Data Flow
 
 ```
-User → LibreChat → Letta → LiteLLM → OpenAI/Anthropic APIs
+User → OpenWebUI → Letta → LiteLLM → OpenAI/Anthropic APIs
         ↓          ↓
         ↓     Knowledgebase / Memory Service ← PostgreSQL (metadata)
         ↓          ↓
@@ -85,7 +85,7 @@ User → LibreChat → Letta → LiteLLM → OpenAI/Anthropic APIs
         ↓
     Git Sync → GitHub (backup)
 
-LibreChat (MongoDB + MeiliSearch) handles UI, authentication, and search while delegating agent execution to Letta.
+OpenWebUI handles UI, authentication, and conversation management while delegating agent execution to Letta via open-webui-tools functions.
 ```
 
 ## Deployment Order
@@ -99,9 +99,7 @@ Services **must** be deployed in this order:
 5. **Knowledgebase / Memory Service** (Memory management)
 6. **LiteLLM** (Model gateway)
 7. **Letta** (Agent orchestration)
-8. **MongoDB** (Optional - Required for LibreChat)
-9. **MeiliSearch** (Optional - Recommended for LibreChat)
-10. **LibreChat** (Optional - Modern chat UI)
+8. **OpenWebUI** (Primary chat UI)
 
 ## Step-by-Step Deployment
 
@@ -498,179 +496,97 @@ Click **Deploy** and wait for status: **Healthy** ✅
 
 ---
 
-### Step 8: Deploy MongoDB (Optional - Required for LibreChat)
+### Step 8: Deploy OpenWebUI (Primary Chat UI)
 
-LibreChat requires MongoDB for user data, conversations, and configuration.
+OpenWebUI provides a modern, extensible chat interface for interacting with Letta agents.
 
-#### 8.1. Create MongoDB Service in Coolify
-
-1. Coolify → **Add Resource** → **Docker Image**
-2. Configure:
-    - **Service Name**: `bears-mongodb`
-    - **Image**: `mongo:7-jammy`
-    - **Port**: 27017 (internal only)
-
-#### 8.2. Add Persistent Storage
-
-- **Volume Name**: `bears-mongodb-data`
-- **Mount Path**: `/data/db`
-
-#### 8.3. Configure Health Check
-
-```bash
-Command: mongosh --eval "db.adminCommand('ping')"
-Interval: 30s
-Timeout: 10s
-Start Period: 30s
-```
-
-#### 8.4. Deploy
-
-Click **Deploy** and wait for **Healthy** status.
-
----
-
-### Step 9: Deploy MeiliSearch (Optional - Recommended for LibreChat)
-
-For conversation search functionality in LibreChat.
-
-#### 9.1. Create MeiliSearch Service
+#### 8.1. Create OpenWebUI Service
 
 1. Coolify → **Add Resource** → **Docker Image**
 2. Configure:
-    - **Service Name**: `bears-meilisearch`
-    - **Image**: `getmeili/meilisearch:v1.12.3`
-    - **Port**: 7700 (internal)
+    - **Service Name**: `bears-openwebui`
+    - **Image**: `ghcr.io/open-webui/open-webui:main` (or `latest`)
+    - **Port**: 3000 (expose externally via Coolify proxy)
 
-#### 9.2. Environment Variables
-
-```bash
-MEILI_NO_ANALYTICS=true
-MEILI_MASTER_KEY=DrhYf7zENyR6AlUCKmnz0eYASOQdl6zxH7s7MKFSfFCt
-```
-
-#### 9.3. Add Persistent Storage
-
-- **Volume Name**: `bears-meilisearch-data`
-- **Mount Path**: `/meili_data`
-
-#### 9.4. Deploy
-
-Click **Deploy** and wait for **Healthy** status.
-
----
-
-### Step 10: Deploy LibreChat (Primary Chat UI)
-
-See [`services/librechat/COOLIFY_DEPLOY.md`](services/librechat/COOLIFY_DEPLOY.md) for detailed instructions.
-
-#### 10.1. Create LibreChat Service
-
-1. Coolify → **Add Resource** → **Docker Image**
-2. Configure:
-    - **Service Name**: `bears-librechat`
-    - **Image**: `ghcr.io/cpfiffer/letta-libre:latest`
-    - **Port**: 3080 (expose externally via Coolify proxy)
-
-#### 10.2. Environment Variables
-
-Copy the configuration from `services/librechat/.env.example` and customize:
+#### 8.2. Environment Variables
 
 ```bash
 # Core Configuration
-HOST=0.0.0.0
-PORT=3080
-MONGO_URI=mongodb://bears-mongodb:27017/LibreChat
-MEILI_HOST=http://bears-meilisearch:7700
-MEILI_MASTER_KEY=DrhYf7zENyR6AlUCKmnz0eYASOQdl6zxH7s7MKFSfFCt
+WEBUI_SECRET_KEY=<generate: openssl rand -base64 32>
+WEBUI_JWT_SECRET_KEY=<generate: openssl rand -base64 32>
+WEBUI_JWT_ACCESS_TOKEN_EXPIRES_IN=86400
+WEBUI_JWT_REFRESH_TOKEN_EXPIRES_IN=604800
 
-# Domain (update with your Coolify domain)
-DOMAIN_CLIENT=https://librechat.yourdomain.com
-DOMAIN_SERVER=https://librechat.yourdomain.com
+# Database (OpenWebUI uses SQLite by default, or PostgreSQL)
+# For PostgreSQL (recommended for production):
+DATABASE_URL=postgresql://user:password@bears-postgres:5432/openwebui
 
-# Letta Integration (primary agent configuration)
-LETTA_URL=http://bears-letta:8283
-LETTA_SERVER_PASS=your-letta-admin-password
+# Letta Integration
+LETTA_API_URL=http://bears-letta:8283/v1
+LETTA_SERVER_PASS=<your-letta-password>
 
-# Authentication
-ALLOW_REGISTRATION=true
-JWT_SECRET=your-secure-jwt-secret-here
-JWT_REFRESH_SECRET=your-secure-refresh-secret-here
-
-# Knowledgebase integration (optional RAG endpoint - Letta handles primary memory)
-RAG_API_URL=http://bears-knowledgebase:8080
-
-# File permissions
-UID=1000
-GID=1000
+# Optional: Knowledgebase integration
+KNOWLEDGEBASE_URL=http://bears-knowledgebase:8080
 ```
 
-**Important**: Generate secure secrets for JWT:
+**Important**: Generate secure secrets:
 ```bash
-JWT_SECRET=$(openssl rand -base64 32)
-JWT_REFRESH_SECRET=$(openssl rand -base64 32)
+WEBUI_SECRET_KEY=$(openssl rand -base64 32)
+WEBUI_JWT_SECRET_KEY=$(openssl rand -base64 32)
 ```
 
-#### 10.3. Add Persistent Storage
+#### 8.3. Add Persistent Storage
 
-- **Volume Name**: `bears-librechat-data`
-- **Mount Path**: `/app/client/public/images`
+- **Volume Name**: `bears-openwebui-data`
+- **Mount Path**: `/app/backend/data`
 
-Additional volumes for uploads and logs:
-- **Volume Name**: `bears-librechat-uploads`
-- **Mount Path**: `/app/uploads`
-
-- **Volume Name**: `bears-librechat-logs`
-- **Mount Path**: `/app/logs`
-
-#### 10.4. Configure Health Check
+#### 8.4. Configure Health Check
 
 ```bash
-Command: curl -f http://localhost:3080/api/health || exit 1
+Command: curl -f http://localhost:3000/api/health || exit 1
 Interval: 30s
 Timeout: 10s
 Start Period: 60s
 ```
 
-#### 10.5. Resource Limits
-
-- **Memory**: 1 GB
-- **CPU**: 1 core
-
-#### 10.6. Deploy
+#### 8.5. Deploy
 
 Click **Deploy** and wait for **Healthy** status.
 
-#### 10.7. Configure Domain and SSL
+#### 8.6. Configure Domain and SSL
 
-1. In Coolify, configure custom domain for LibreChat service
+1. In Coolify, configure custom domain for OpenWebUI service
 2. Enable SSL/TLS certificate
-3. Access LibreChat at `https://librechat.yourdomain.com`
+3. Access OpenWebUI at `https://openwebui.yourdomain.com`
 
 ---
 
-### Step 11: Post-LibreChat Configuration
+### Step 9: Install OpenWebUI Tools Integration
 
-#### 11.1. Initial Setup
+To connect Letta agents as "models" in OpenWebUI, install functions from [open-webui-tools](https://github.com/Haervwe/open-webui-tools).
 
-1. Access LibreChat at your configured domain
-2. Create an admin account
-3. Configure available models in LibreChat settings
-4. Test model connectivity
+#### 9.1. Access OpenWebUI
 
-#### 11.2. Model Configuration
+1. Navigate to your OpenWebUI instance
+2. Log in or create an admin account
+3. Go to **Settings** → **Workspace** → **Functions**
 
-In LibreChat's admin panel:
+#### 9.2. Install Letta Integration Function
 
-1. Go to **Settings** → **Models**
-2. Configure model endpoints (they should auto-detect from LiteLLM)
-3. Set default models for conversations
+1. Visit the [open-webui-tools repository](https://github.com/Haervwe/open-webui-tools)
+2. Find the function that connects to Letta agents (or use the pipe function from `services/letta/openwebui_pipe_example.py`)
+3. Copy the function code into OpenWebUI's Functions section
+4. Configure the function with your Letta API URL and credentials:
+   - `LETTA_API_URL=http://bears-letta:8283/v1`
+   - `LETTA_SERVER_PASS=<your-letta-password>`
 
-#### 11.3. User Management
+#### 9.3. Register Letta Agents as Models
 
-1. Enable/disable user registration as needed
-2. Configure user roles and permissions
-3. Set up user groups if using team features
+1. In OpenWebUI, go to **Settings** → **Models**
+2. Add a custom model/provider that uses your Letta integration function
+3. Letta agents will appear as selectable models in the chat interface
+
+**Note**: See `services/letta/OPENWEBUI_SESSIONS.md` for detailed session management strategies and `services/letta/openwebui_pipe_example.py` for a complete pipe function implementation.
 
 ---
 
@@ -678,21 +594,17 @@ In LibreChat's admin panel:
 
 ### Access the Web UI
 
-#### LibreChat (Primary Chat UI)
-1. Navigate to your configured LibreChat domain or `http://<server-ip>:3080`
+#### OpenWebUI (Primary Chat UI)
+1. Navigate to your configured OpenWebUI domain or `http://<server-ip>:3000`
 2. Create an admin account or register as a new user
-3. Configure models/agents (Letta provider)
-4. Start chatting with multi-user support!
+3. Configure Letta agents as models (via open-webui-tools functions)
+4. Start chatting with Letta agents!
 
 #### Letta (Agent Management API)
 1. Access internally via `http://bears-letta:8283` or VPN
 2. Login with `LETTA_SERVER_PASS`
 3. Create/maintain agents, tools, and memory integrations
 4. Use API for automation or advanced workflows
-1. Navigate to your configured LibreChat domain or `http://<server-ip>:3080`
-2. Create an admin account or register as a new user
-3. Configure models in settings
-4. Start chatting with multi-user support!
 
 ### Verify End-to-End Functionality
 
@@ -721,9 +633,7 @@ Check all services are healthy in Coolify dashboard:
 - [ ] Knowledgebase API - **Healthy** ✅
 - [ ] LiteLLM - **Healthy** ✅
 - [ ] Letta - **Healthy** ✅
-- [ ] MongoDB (Optional) - **Healthy** ✅
-- [ ] MeiliSearch (Optional) - **Healthy** ✅
-- [ ] LibreChat (Optional) - **Healthy** ✅
+- [ ] OpenWebUI - **Healthy** ✅
 
 ### Connectivity Tests
 
@@ -745,14 +655,8 @@ curl http://bears-litellm:4000/health/liveliness
 # Test Letta
 curl http://bears-letta:8283/v1/health
 
-# Test MongoDB (if deployed)
-mongosh mongodb://bears-mongodb:27017/LibreChat --eval "db.stats()"
-
-# Test MeiliSearch (if deployed)
-curl http://bears-meilisearch:7700/health
-
-# Test LibreChat (if deployed)
-curl https://librechat.yourdomain.com/api/health
+# Test OpenWebUI
+curl http://bears-openwebui:3000/api/health
 ```
 
 ### Memory Sync Verification
@@ -821,47 +725,32 @@ curl https://librechat.yourdomain.com/api/health
 - Scale vertically or horizontally
 - Monitor disk space
 
-### LibreChat Connection Issues
+### OpenWebUI Connection Issues
 
-**Problem**: LibreChat can't connect to LiteLLM
-
-**Solutions**:
-- Verify `OPENAI_REVERSE_PROXY` URL is correct: `http://bears-litellm:4000/v1`
-- Check LiteLLM service is healthy
-- Review LibreChat logs for connection errors
-- Ensure LiteLLM master key is properly configured if required
-
-**Problem**: MongoDB connection failed
+**Problem**: OpenWebUI can't connect to Letta agents
 
 **Solutions**:
-- Ensure MongoDB service is deployed and healthy
-- Verify `MONGO_URI` format: `mongodb://bears-mongodb:27017/LibreChat`
-- Check network connectivity between services
-- Review MongoDB logs for authentication issues
+- Verify Letta integration function is properly installed in OpenWebUI
+- Check `LETTA_API_URL` and `LETTA_SERVER_PASS` are correct in function configuration
+- Ensure Letta service is healthy: `curl http://bears-letta:8283/v1/health`
+- Review OpenWebUI logs for connection errors
+- Verify Letta agents are properly registered as models in OpenWebUI
 
-**Problem**: MeiliSearch search not working
-
-**Solutions**:
-- Verify MeiliSearch service is healthy
-- Check `MEILI_HOST` and `MEILI_MASTER_KEY` configuration
-- Test MeiliSearch connectivity: `curl http://bears-meilisearch:7700/health`
-- Review LibreChat logs for search-related errors
-
-**Problem**: File upload issues in LibreChat
+**Problem**: Letta agents not appearing in model list
 
 **Solutions**:
-- Verify volume mounts are correct for uploads
-- Check file permissions (UID/GID settings)
-- Ensure sufficient disk space
-- Review LibreChat logs for upload errors
+- Verify open-webui-tools function is installed and enabled
+- Check function configuration matches your Letta setup
+- Review OpenWebUI function logs for errors
+- Ensure Letta API is accessible from OpenWebUI container
 
-**Problem**: Multi-user authentication problems
+**Problem**: Database connection issues (if using PostgreSQL)
 
 **Solutions**:
-- Verify JWT secrets are set and secure
-- Check MongoDB connectivity for user data
-- Review browser console for client-side errors
-- Ensure `ALLOW_REGISTRATION=true` if user registration is needed
+- Verify PostgreSQL service is healthy
+- Check `DATABASE_URL` format: `postgresql://user:password@bears-postgres:5432/openwebui`
+- Ensure network connectivity between services
+- Review OpenWebUI logs for database errors
 
 ## Next Steps
 
@@ -908,7 +797,10 @@ Your BEARS Stack is now fully operational with:
 - ✅ Semantic search via Qdrant
 - ✅ Multi-model support via LiteLLM
 - ✅ Coolify-managed infrastructure
-- ✅ Modern chat UI with LibreChat (optional)
+- ✅ Modern chat UI with OpenWebUI
 - ✅ Multi-user authentication and conversation management
+- ✅ Letta agent integration via open-webui-tools
 
-Start building your agentic assistants with both Letta (agent management) and LibreChat (modern chat interface)! 🐻
+Start building your agentic assistants with Letta (agent management) and OpenWebUI (modern chat interface)! 🐻
+
+**Future Enhancement**: A middleware layer is planned to provide user-identity mapping, agent access control, and user-aware memory context. See `ARCHITECTURE_NOTES.md` for details.

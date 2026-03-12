@@ -18,8 +18,8 @@ The BEARS Stack uses a layered architecture with specialized services deployed i
 │                    Application Layer                    │
 │                                                          │
 │  ┌─────────────┐                                        │
-│  │ LibreChat  │ ← Primary UI for agent interactions    │
-│  │   :3080     │   (Modern chat interface)              │
+│  │ OpenWebUI   │ ← Primary UI for agent interactions    │
+│  │   :3000     │   (Modern chat interface)              │
 │  └──────┬──────┘                                        │
 └─────────┼───────────────────────────────────────────────┘
            │
@@ -90,18 +90,20 @@ The BEARS Stack uses a layered architecture with specialized services deployed i
   - Uses rebase strategy for conflict resolution
   - Shares volume with the memory service
 
-#### LibreChat (Primary Chat UI)
+#### OpenWebUI (Primary Chat UI)
 
 - **Purpose**: Modern, feature-rich chat interface for interacting with Letta agents
-- **Image**: `ghcr.io/cpfiffer/letta-libre:latest`
+- **Image**: `ghcr.io/open-webui/open-webui:main` (or latest)
 - **Ports**:
-  - 3080 (Web UI)
+  - 3000 (Web UI)
 - **Key Features**:
-  - Multi-user authentication with MongoDB
+  - Multi-user authentication
   - Conversation management and search
   - File uploads and code execution
-  - Integration with Letta agent APIs
+  - Function/tool calling support
+  - Integration with Letta agents via open-webui-tools functions
   - Modern responsive UI
+  - Extensible via functions, tools, and filters
 
 #### Letta (Agent Framework)
 
@@ -244,12 +246,12 @@ Data flow:
 
 ### Data Flow
 
-1. **User Interaction** → LibreChat receives user input via modern chat UI
-2. **Agent Request** → LibreChat sends request to Letta agent API
+1. **User Interaction** → OpenWebUI receives user input via modern chat UI
+2. **Agent Request** → OpenWebUI routes request to Letta agent via function/tool (currently using open-webui-tools)
 3. **Memory Retrieval** → Letta queries the knowledgebase (memory service) for relevant context
 4. **Semantic Search** → The memory service uses Qdrant for vector similarity
 5. **LLM Inference** → Letta routes to appropriate model via LiteLLM
-6. **Agent Response** → Letta processes response and sends back to LibreChat
+6. **Agent Response** → Letta processes response and sends back to OpenWebUI
 7. **Memory Update** → Letta/memory service writes Markdown file to shared volume
 8. **Git Synchronization** → Git Sync detects change, commits, and pushes to GitHub
 9. **Vector Indexing** → Memory service updates Qdrant with new embeddings
@@ -298,7 +300,7 @@ postgresql://<postgres-host>:5432/<memory-db>
 
 | Service | Internal Port | External Access | Purpose |
 |---------|--------------|-----------------|---------|
-| LibreChat | 3080 | Via Coolify proxy | Primary chat UI |
+| OpenWebUI | 3000 | Via Coolify proxy | Primary chat UI |
 | Letta | 8283 | Internal only | Agent orchestration API |
 | Knowledgebase / Memory Service | 8080 | Optional | Memory API |
 | Qdrant | 6333 | Internal only | Vector DB |
@@ -307,7 +309,7 @@ postgresql://<postgres-host>:5432/<memory-db>
 | PostgreSQL | 5432 | Internal only | Database |
 | Git Sync | N/A | No exposed ports | Sync service |
 
-**Security**: Only LibreChat should be exposed externally. All other services are internal-only.
+**Security**: Only OpenWebUI should be exposed externally. All other services are internal-only.
 
 ### Security Notes
 
@@ -316,9 +318,45 @@ postgresql://<postgres-host>:5432/<memory-db>
 - Only specified ports exposed to host
 - Sensitive data in `.env` file (not committed to Git)
 
+### Current Integration: OpenWebUI + Letta
+
+**Current Setup**: Letta agents are connected to OpenWebUI as "models" using functions from [open-webui-tools](https://github.com/Haervwe/open-webui-tools). This allows users to select and interact with Letta agents directly from the OpenWebUI interface.
+
+**Integration Method**:
+- Functions from open-webui-tools repository are installed in OpenWebUI
+- Letta agents appear as selectable models in OpenWebUI's model list
+- Direct API communication between OpenWebUI and Letta service
+
 ### Future Enhancements
 
--- Add authentication to the memory service API
+#### Middleware Layer (Planned)
+
+A middleware layer will be introduced between OpenWebUI and Letta to provide:
+
+1. **User-Identity Mapping**
+   - Map OpenWebUI users to Letta identities
+   - Enable user-aware agent interactions
+   - Support multi-user scenarios with proper identity context
+
+2. **Agent Availability Control**
+   - Restrict which agents ("models") are available to specific users
+   - Role-based agent access control
+   - Per-user agent whitelisting/blacklisting
+
+3. **User-Aware Memory Context**
+   - Agents will be aware of which OpenWebUI user they're interacting with
+   - Memory retrieval and storage will be scoped to user identity
+   - Support for personal vs. shared memory contexts
+
+**Implementation Notes**:
+- Middleware will intercept requests from OpenWebUI to Letta
+- Will handle authentication, authorization, and context injection
+- Will maintain mapping between OpenWebUI user sessions and Letta agent sessions
+- See `services/letta/OPENWEBUI_SESSIONS.md` for current session management strategies
+
+#### Other Enhancements
+
+- Add authentication to the memory service API
 - Implement MCP (Modular Content Providers) for external data
 - Add web UI for memory browsing/editing
 - Implement multi-agent collaboration

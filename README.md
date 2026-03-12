@@ -3,13 +3,12 @@
 **Configuration repository** for deploying an agentic assistants platform with Coolify, using:
 
 - [Letta](https://github.com/letta-ai/letta) – Agent server and orchestration layer
-- [LibreChat](https://github.com/danny-avila/LibreChat) – Modern chat UI with multi-user support
+- [Open WebUI](https://github.com/open-webui/open-webui) – Modern chat UI with multi-user support
 - Knowledgebase / Memory service (e.g. RMCP + Qdrant) – Memory management with Git-versioned Markdown
 - [Qdrant](https://github.com/qdrant/qdrant) – Vector database for semantic memory
 - [LiteLLM](https://github.com/BerriAI/litellm) – Unified LLM gateway
 - [PostgreSQL](https://www.postgresql.org/) – Database backend for memory services
 - [Redis](https://redis.io/) – Cache layer for memory services
-- [MongoDB](https://www.mongodb.com/) – Database for LibreChat user management
 - [Coolify](https://coolify.io) – Self-hosted PaaS for deployment and management
 
 ## Architecture Overview
@@ -47,7 +46,8 @@ Services must be deployed in this specific order due to dependencies:
    - LiteLLM (model gateway)
 
 4. **Application Layer**
-   - Letta (agent orchestration + Web UI)
+   - OpenWebUI (primary chat UI)
+   - Letta (agent orchestration API)
 
 ### Deployment Steps
 
@@ -65,20 +65,21 @@ Services must be deployed in this specific order due to dependencies:
    - Knowledgebase/Memory Service deployment guide (see service directory)
    - [`services/litellm/COOLIFY_DEPLOY.md`](services/litellm/COOLIFY_DEPLOY.md)
    - [`services/letta/COOLIFY_DEPLOY.md`](services/letta/COOLIFY_DEPLOY.md)
-   - [`services/librechat/COOLIFY_DEPLOY.md`](services/librechat/COOLIFY_DEPLOY.md)
+   - OpenWebUI deployment (see OpenWebUI documentation)
 
 3. **Access the Web UI**
 
-   Once deployed, access Letta at your configured Coolify domain or:
+   Once deployed, access OpenWebUI at your configured Coolify domain or:
    ```
-   http://your-coolify-domain:8283
+   http://your-coolify-domain:3000
    ```
 
 ### Service Endpoints (Internal)
 
 Services communicate via Coolify's internal Docker networking:
 
-- **Letta Web UI**: `http://bears-letta:8283`
+- **OpenWebUI**: `http://bears-openwebui:3000` (or your service name)
+- **Letta API**: `http://bears-letta:8283`
 - Knowledgebase API: `http://bears-knowledgebase:8080`
 - **Qdrant**: `http://bears-qdrant:6333`
 - **LiteLLM**: `http://bears-litellm:4000`
@@ -98,7 +99,8 @@ bears-deploy/                    # This repository
 │   ├── qdrant/                # Vector database
 │   ├── knowledgebase/         # Memory management service
 │   ├── litellm/               # Model gateway
-│   └── letta/                 # Agent orchestration
+│   ├── letta/                 # Agent orchestration
+│   └── openwebui/             # OpenWebUI integration (if needed)
 ├── content-template/          # Template for content repository
 │   ├── memories/              # Memory files structure
 │   ├── history/               # Conversation logs
@@ -123,6 +125,7 @@ Each service has its own `.env.example` file in [`services/{service}/`](services
 - `LETTA_SERVER_PASS` - Admin password for Letta (use: `openssl rand -base64 32`)
 - `LITELLM_MASTER_KEY` - Master key for LiteLLM (use: `openssl rand -hex 32`) — optional; LiteLLM may be run without authentication for local/dev but this is insecure for production.
 - `POSTGRES_PASSWORD` - Password for PostgreSQL database
+- OpenWebUI configuration (see OpenWebUI documentation)
 
 **Required Git Sync:**
 - `GIT_SYNC_REPO` - Your content repository URL
@@ -157,6 +160,7 @@ See [`content-template/README.md`](content-template/README.md) for details on th
 4. **Qdrant** indexes memory content for semantic search
 5. **PostgreSQL** stores metadata
 6. **Letta** agents use memories via the knowledgebase API
+7. **OpenWebUI** connects to Letta agents via functions from [open-webui-tools](https://github.com/Haervwe/open-webui-tools)
 
 ### Memory File Format
 
@@ -174,41 +178,68 @@ created: "2025-11-23T10:30:00Z"
 Human-readable Markdown content.
 ```
 
+## OpenWebUI + Letta Integration
+
+### Current Setup
+
+Letta agents are connected to OpenWebUI as "models" using functions from the [open-webui-tools](https://github.com/Haervwe/open-webui-tools) repository. This allows users to:
+
+- Select Letta agents from OpenWebUI's model list
+- Interact with agents directly through the OpenWebUI interface
+- Use OpenWebUI's features (file uploads, conversation management, etc.) with Letta agents
+
+**Installation**: Functions from open-webui-tools are installed in OpenWebUI's Workspace > Functions section, enabling Letta agent integration.
+
+### Future: Middleware Layer (Planned)
+
+A middleware layer will be introduced to provide:
+
+1. **User-Identity Mapping**: Map OpenWebUI users to Letta identities for user-aware interactions
+2. **Agent Access Control**: Restrict which agents are available to specific users
+3. **User-Aware Memory**: Agents will be aware of user context for personalized memory retrieval
+
+See `services/letta/OPENWEBUI_SESSIONS.md` for detailed session management strategies and `ARCHITECTURE_NOTES.md` for architecture details.
+
 ## Service Architecture
 
 ```
 ┌─────────────┐
-│   Letta     │ ← Agent orchestration + Web UI
-│   :8283     │
+│  OpenWebUI  │ ← Primary chat UI
+│   :3000     │
 └──────┬──────┘
        │
-      ├──────→ ┌─────────────┐
-      │        │   Memory Service      │ ← Memory management (Git + Markdown)
-      │        │   :8080     │
-       │        └──────┬──────┘
-       │               │
-      │               ├──────→ ┌─────────────┐
-      │               │        │  PostgreSQL │ ← memory metadata DB (Coolify-managed)
-       │               │        └─────────────┘
-       │               │
-       │               ├──────→ ┌─────────────┐
-       │               │        │   Qdrant    │ ← Vector storage
-       │               │        │   :6333     │
-       │               │        └─────────────┘
-       │               │
-       │               ├──────→ ┌─────────────┐
-       │               │        │    Redis    │ ← Cache layer
-       │               │        │   :6379     │
-       │               │        └─────────────┘
-       │               │
-       │               └──────→ ┌─────────────┐
-       │                        │  Git Sync   │ ← Memory sync to GitHub
-       │                        └─────────────┘
-       │
        └──────→ ┌─────────────┐
-                │  LiteLLM    │ ← Model gateway (OpenAI, Claude, etc.)
-                │   :4000     │
-                └─────────────┘
+                │   Letta     │ ← Agent orchestration API
+                │   :8283     │
+                └──────┬──────┘
+                       │
+                      ├──────→ ┌─────────────┐
+                      │        │   Memory Service      │ ← Memory management (Git + Markdown)
+                      │        │   :8080     │
+                       │        └──────┬──────┘
+                       │               │
+                      │               ├──────→ ┌─────────────┐
+                      │               │        │  PostgreSQL │ ← memory metadata DB (Coolify-managed)
+                       │               │        └─────────────┘
+                       │               │
+                       │               ├──────→ ┌─────────────┐
+                       │               │        │   Qdrant    │ ← Vector storage
+                       │               │        │   :6333     │
+                       │               │        └─────────────┘
+                       │               │
+                       │               ├──────→ ┌─────────────┐
+                       │               │        │    Redis    │ ← Cache layer
+                       │               │        │   :6379     │
+                       │               │        └─────────────┘
+                       │               │
+                       │               └──────→ ┌─────────────┐
+                       │                        │  Git Sync   │ ← Memory sync to GitHub
+                       │                        └─────────────┘
+                       │
+                       └──────→ ┌─────────────┐
+                                │  LiteLLM    │ ← Model gateway (OpenAI, Claude, etc.)
+                                │   :4000     │
+                                └─────────────┘
 ```
 
 All services communicate via Coolify's internal Docker networking.
@@ -259,7 +290,10 @@ See [`DEPLOYMENT.md`](DEPLOYMENT.md) for complete deployment instructions.
 6. ✅ Deploy Knowledgebase/Memory Service API
 7. ✅ Deploy LiteLLM
 8. ✅ Deploy Letta
-9. ✅ Access Web UI and create first agent
+9. ✅ Deploy OpenWebUI
+10. ✅ Install open-webui-tools functions in OpenWebUI
+11. ✅ Configure Letta agents as models in OpenWebUI
+12. ✅ Access Web UI and start chatting with agents
 
 ### Health Checks
 
