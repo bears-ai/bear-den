@@ -1,13 +1,15 @@
 # Qdrant - Coolify Deployment Guide
 
+> **Legacy.** Qdrant backs the **old Git+Qdrant knowledgebase**. **Cabinet (Outline)** is the target shared knowledgebase and does not require Qdrant in BEARS. See [PLAN.md](../../PLAN.md).
+
 ## Overview
 
-Qdrant is the vector database that stores semantic embeddings for all memory content. It enables fast similarity search and powers the RAG (Retrieval Augmented Generation) capabilities of the BEARS stack.
+For legacy deployments only: Qdrant stores embeddings for the standalone knowledgebase service.
 
 ## Prerequisites
 
- - Coolify instance running
- - Deploy **before** your memory service / knowledgebase implementation
+- Coolify instance running  
+- Deploy **before** the legacy memory/knowledgebase service (if used)
 
 ## Deployment Steps
 

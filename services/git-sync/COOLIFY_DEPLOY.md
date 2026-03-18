@@ -1,8 +1,10 @@
 # Git Sync - Coolify Deployment Guide
 
+> **Legacy.** Git Sync supports the **old Git+Qdrant knowledgebase**. The target BEARS design uses **Cabinet (Outline)** for shared human+agent knowledge, which **obviates** this service for new deployments. See [PLAN.md](../../PLAN.md) and [README.md](../../README.md).
+
 ## Overview
 
-The Git Sync service automatically synchronizes your BEARS memory content (memories, history, projects) with a GitHub repository. It watches for file changes and commits/pushes immediately, while pulling from origin every 5 minutes to sync changes from other sources.
+When the legacy stack is deployed, Git Sync synchronizes Markdown content (`memories/`, `history/`, `projects/`) with GitHub: commit/push on change, periodic pull.
 
 ## Prerequisites
 

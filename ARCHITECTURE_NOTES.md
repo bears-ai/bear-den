@@ -11,76 +11,51 @@ The BEARS Stack uses a layered architecture with specialized services deployed i
 **Networking**: Coolify internal Docker networking
 **Storage**: Named volumes + shared volumes + Coolify-managed PostgreSQL
 
-### Current Architecture
+### Target architecture (Cabinet + Letta)
+
+**Cabinet** (backed by **Outline**) is the **shared knowledgebase**: documents that **humans edit in Outline** and **agents access via BEARS Core**. It **does not replace** Letta’s native memory (blocks, conversations, built-in memory tools).
+
+**The Git Sync + Qdrant + standalone knowledgebase service stack is obviated** by Cabinet for that shared-knowledge role. See [PLAN.md](PLAN.md).
 
 ```
 ┌─────────────────────────────────────────────────────────┐
-│                    Application Layer                    │
-│                                                          │
-│  ┌─────────────┐                                        │
-│  │ OpenWebUI   │ ← Primary UI for agent interactions    │
-│  │   :3000     │   (Modern chat interface)              │
-│  └──────┬──────┘                                        │
-└─────────┼───────────────────────────────────────────────┘
-           │
-┌─────────┼───────────────────────────────────────────────┐
-│         │              Agent Layer                       │
-│         │                                                │
-│         └──────→ ┌─────────────┐                        │
-│                  │   Letta     │ ← Agent orchestration   │
-│                  │   :8283     │   (Tools, memory, state) │
-│                  └──────┬──────┘                        │
-└─────────┼───────────────────────────────────────────────┘
-           │
-┌─────────┼───────────────────────────────────────────────┐
-│         │              API Layer                        │
-│         │                                                │
-│         ├──────→ ┌─────────────┐                        │
-│         │        │ Knowledgebase│ ← Memory management   │
-│         │        │   :8080     │   (Git + Markdown)     │
-│         │        └──────┬──────┘                        │
-│         │               │                                │
-│         └──────→ ┌─────────────┐                        │
-│                  │  LiteLLM    │ ← Model gateway        │
-│                  │   :4000     │   (OpenAI, Claude)     │
-│                  └─────────────┘                        │
-└────────────────────────────────────────────────────────┘
-                         │
-┌───────────────────────┼─────────────────────────────────┐
-│                       │        Memory Layer              │
-│                       │                                  │
-│                       └──────→ ┌─────────────┐          │
-│                                │  Git Sync   │          │
-│                                │             │          │
-│                                └──────┬──────┘          │
-│                                       │                  │
-│                                       ↓                  │
-│                              Shared Volume: bears-memory │
-│                              (memories/, history/,       │
-│                               projects/, .git/)          │
-└──────────────────────────────────────────────────────────┘
-                                        │
-┌──────────────────────────────────────┼──────────────────┐
-│                                      │  Infrastructure  │
-│                                      │                  │
-│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐    │
-│  │ PostgreSQL  │  │    Redis    │  │   Qdrant    │    │
-│  │  (Coolify-  │  │   :6379     │  │   :6333     │    │
-│  │   managed)  │  │             │  │             │    │
-│  └─────────────┘  └─────────────┘  └─────────────┘    │
-│   (metadata)        (cache)          (vectors)         │
-└──────────────────────────────────────────────────────────┘
-           │                  │                  │
-           └──────────────────┴──────────────────┘
-                              │
-                     Coolify Internal Network
+│  OpenWebUI (:3000)          Outline (Cabinet UI)         │
+└────────┬────────────────────────────┬──────────────────┘
+         │                            │
+         ▼                            │ docs / search
+┌────────────────┐             ┌──────┴──────┐
+│  BEARS Core    │──Cabinet───▶│  Outline    │
+│  (proxy, auth) │   tools     │  (storage)  │
+└────────┬───────┘             └─────────────┘
+         │
+         ▼
+┌────────────────┐     ┌─────────────┐
+│     Letta        │────▶│  LiteLLM    │
+│  native memory   │     │   :4000     │
+└────────────────┘     └─────────────┘
+```
+
+### Legacy architecture (Git + Qdrant knowledgebase)
+
+Optional during migration. **Superseded by Cabinet** for human+agent shared knowledge.
+
+```
+OpenWebUI → Letta → Knowledgebase (:8080) ← Git Sync + bears-memory
+                         ↓
+                    Qdrant + Redis + PostgreSQL
 ```
 
 ### Service Responsibilities
 
-#### Git Sync (Memory Synchronization)
+#### Cabinet (Outline) — target shared knowledgebase
 
-- **Purpose**: Bidirectional Git synchronization between Coolify and GitHub
+- **Purpose**: Long-lived knowledge **humans and agents** share; agents call Cabinet through **BEARS Core** (see [PLAN.md](PLAN.md)).
+- **Does not replace**: Letta per-agent memory blocks and conversation state.
+- **Obviates**: The separate Git+Qdrant “knowledgebase service” for that use case.
+
+#### Git Sync (legacy — memory synchronization)
+
+- **Purpose** (legacy only): Bidirectional Git synchronization for the old Markdown+Qdrant knowledgebase
 - **Image**: Custom (Alpine + git + inotifywait)
 - **Key Features**:
   - Clones content repository on startup
@@ -115,31 +90,25 @@ The BEARS Stack uses a layered architecture with specialized services deployed i
   - Agent creation and management
   - Tool execution framework
   - Conversation management
-  - Integration with an external knowledgebase (memory service) for memory
+  - **Native agent memory** (blocks, conversations); optional **Cabinet tools** via BEARS for shared Outline knowledge. Legacy: external knowledgebase API (Git+Qdrant)
   - Model routing via LiteLLM
   - Admin API for external UI integration
 
-#### Knowledgebase / Memory Service
+#### Knowledgebase / Memory Service (legacy)
 
-- **Purpose**: Git-versioned memory system with Markdown files and a vector search API
-- **Image**: (varies — this repository uses a separate knowledgebase adapter)
+- **Purpose** (legacy): Git-versioned Markdown + vector search API—**obviated by Cabinet (Outline)** for shared agent+human knowledge
 - **Port**: 8080 (example)
-- **Key Features**:
-  - Manages `memories/`, `history/`, and `projects/` directories
-  - Reads/writes Markdown files with YAML frontmatter
-  - PostgreSQL backend for metadata (optional)
-  - Integration with Qdrant (or other vector DB) for semantic search
-  - Shares volume with Git Sync
+- **When to deploy**: Only if still migrating or maintaining the old stack
 
-#### Qdrant (Vector Database)
+#### Qdrant (Vector Database) — legacy KB
 
-- **Purpose**: Semantic memory and vector storage
+- **Purpose** (legacy): Vectors for the old knowledgebase service
 - **Image**: `qdrant/qdrant:latest`
 - **Port**: 6333
 - **Key Features**:
   - Vector embeddings for semantic search
   - Fast similarity search
-  - Used by the memory service / knowledgebase for RAG capabilities
+  - Used by the **legacy** memory/knowledgebase service if deployed
   - Collections auto-created by the memory service or adapter
 
 #### LiteLLM (Model Gateway)
@@ -155,7 +124,7 @@ The BEARS Stack uses a layered architecture with specialized services deployed i
 
 #### Redis (Cache)
 
-- **Purpose**: Cache layer for the memory service
+- **Purpose**: Cache for **legacy** knowledgebase (if deployed); other uses per service
 - **Image**: `redis:7-alpine`
 - **Port**: 6379
 - **Key Features**:
@@ -165,7 +134,7 @@ The BEARS Stack uses a layered architecture with specialized services deployed i
 
 #### PostgreSQL (Database)
 
-- **Purpose**: Backend database for the memory service
+- **Purpose**: Backend for **legacy** memory service, Outline, Letta, or other apps as deployed
 - **Deployment**: Coolify-managed service
 - **Port**: 5432 (internal only)
 - **Key Features**:
@@ -173,91 +142,30 @@ The BEARS Stack uses a layered architecture with specialized services deployed i
   - Automatic backups via Coolify
   - Managed updates and maintenance
 
-### Memory System
+### Knowledge and memory (terminology)
 
-The memory system uses a **two-repository architecture**:
+| Component | Role |
+|-----------|------|
+| **Letta memory** | Per-agent blocks, conversations, built-in memory tools—not replaced by Cabinet. |
+| **Cabinet (Outline)** | Shared knowledgebase for humans + agents (via BEARS). |
+| **Legacy content repo** | `memories/`, `history/`, `projects/` + Git Sync—**legacy**; migrate to Outline decks/collections when adopting Cabinet. |
 
-#### Configuration Repository (This Repo)
+See [PLAN.md](PLAN.md) and [content-template/README.md](content-template/README.md).
 
-**Purpose**: Deployment configuration, service definitions, documentation
+#### Legacy: two-repository Git-backed KB
 
-**Contents**:
-- Service configurations (`services/`)
-- Deployment guides (`COOLIFY_DEPLOY.md` files)
-- Environment variable templates (`.env.example` files)
-- Architecture documentation
+If you still run Git Sync + knowledgebase: configuration in this repo, Markdown files in a **content repository**, shared `bears-memory` volume, Qdrant indexing. **Obviated by Cabinet** for new designs.
 
-#### Content Repository
+### Data flow (target)
 
-**Purpose**: Actual memory files, version-controlled and backed up
+1. User → OpenWebUI (or LettaBot via BEARS Core) → Letta  
+2. Letta uses **native memory** + model calls via LiteLLM  
+3. When agents use **Cabinet tools**, BEARS Core proxies to **Outline**; humans edit the same docs in Outline’s UI  
 
-**Structure**:
-1. **`memories/`** - Long-term semantic memory
-   - Markdown files with YAML frontmatter
-   - Git-versioned for full history
-   - Human-readable and editable
-   - Separated into `personal/` and `shared/` contexts
+### Data flow (legacy KB)
 
-2. **`history/`** - Episodic memory
-   - Session transcripts and logs
-   - Timestamped interactions
-   - JSON or Markdown format
-
-3. **`projects/`** - Project memory
-   - Project-scoped context
-   - Goals, notes, and progress tracking
-   - Enables long-term continuity
-
-4. **`.git/`** - Git repository metadata
-   - Managed by Git Sync service
-   - Provides version control and audit trail
-
-#### Memory File Format
-
-Markdown with YAML frontmatter:
-
-```markdown
----
-title: "Example Memory"
-tags: ["preference", "personal"]
-created: "2025-11-23T10:30:00Z"
-updated: "2025-11-23T15:45:00Z"
----
-
-# Memory Content
-
-Human-readable Markdown content that describes
-the memory, preference, or context.
-```
-
-#### Shared Volume Architecture
-
-**Critical Design**: Git Sync and the memory service share the same volume!
-
-```
-Volume: bears-memory (shared)
-├── Git Sync mounts at: /data
-└── Memory service mounts at: /app/memory
-
-Data flow:
-1. Git Sync clones repo → /data
-2. Memory service reads/writes → /app/memory (same volume)
-3. Git Sync detects changes → commits + pushes
-4. Memory service indexes → Qdrant (vectors) + PostgreSQL (metadata)
-```
-
-### Data Flow
-
-1. **User Interaction** → OpenWebUI receives user input via modern chat UI
-2. **Agent Request** → OpenWebUI routes request to Letta agent via function/tool (currently using open-webui-tools)
-3. **Memory Retrieval** → Letta queries the knowledgebase (memory service) for relevant context
-4. **Semantic Search** → The memory service uses Qdrant for vector similarity
-5. **LLM Inference** → Letta routes to appropriate model via LiteLLM
-6. **Agent Response** → Letta processes response and sends back to OpenWebUI
-7. **Memory Update** → Letta/memory service writes Markdown file to shared volume
-8. **Git Synchronization** → Git Sync detects change, commits, and pushes to GitHub
-9. **Vector Indexing** → Memory service updates Qdrant with new embeddings
-10. **Metadata Storage** → Memory service updates PostgreSQL with file metadata
+1. User → OpenWebUI → Letta → legacy knowledgebase API → Qdrant + Git-backed Markdown → Git Sync → GitHub  
+2. Prefer migrating this flow to Cabinet per PLAN.md  
 
 ### Deployment Considerations
 
@@ -276,8 +184,8 @@ Data flow:
 - `bears-qdrant-data` → Vector database storage
 - `bears-letta-data` → Letta configuration
 
-**Shared Volume** (multi-service):
-- `bears-memory` → Shared between Git Sync and the memory service for memory files
+**Shared Volume** (legacy multi-service):
+- `bears-memory` → Git Sync + legacy knowledgebase service only
 
 **Coolify-Managed**:
 - PostgreSQL data → Handled by Coolify with automatic backups
@@ -290,7 +198,7 @@ Services communicate using Coolify's internal DNS:
 # Format: <service-name>:<port>
 redis://bears-redis:6379
 http://bears-qdrant:6333
-http://bears-knowledgebase:8080
+http://bears-knowledgebase:8080  # legacy KB only
 http://bears-litellm:4000
 http://bears-letta:8283
 postgresql://<postgres-host>:5432/<memory-db>
@@ -304,8 +212,8 @@ postgresql://<postgres-host>:5432/<memory-db>
 |---------|--------------|-----------------|---------|
 | OpenWebUI | 3000 | Via Coolify proxy | Primary chat UI |
 | Letta | 8283 | Internal only | Agent orchestration API |
-| Knowledgebase / Memory Service | 8080 | Optional | Memory API |
-| Qdrant | 6333 | Internal only | Vector DB |
+| Knowledgebase (legacy) | 8080 | Optional | Legacy memory API |
+| Qdrant | 6333 | Internal only | Legacy vector DB |
 | LiteLLM | 4000 | Internal only | Model gateway |
 | Redis | 6379 | Internal only | Cache |
 | PostgreSQL | 5432 | Internal only | Database |
@@ -331,12 +239,8 @@ postgresql://<postgres-host>:5432/<memory-db>
 
 **For multi-user production** with per-user agents, user identity mapping, and access control, the canonical approach is the **Authentication Proxy** architecture. See **[MULTIUSER_PROXY_ARCHITECTURE.md](MULTIUSER_PROXY_ARCHITECTURE.md)** for the full design. In that model, OpenWebUI and LettaBot talk to the proxy (not directly to Letta); the proxy handles auth, user→agent routing, and enforcement. Session and mapping strategies for the current direct-integration setup are documented in `services/letta/OPENWEBUI_SESSIONS.md`.
 
-### Future Enhancements
+### Future enhancements
 
-#### Other Enhancements
-
-- Add authentication to the memory service API
-- Implement MCP (Modular Content Providers) for external data
-- Add web UI for memory browsing/editing
-- Implement multi-agent collaboration
-- Add monitoring and observability
+- BEARS Core + Cabinet (Outline) per [PLAN.md](PLAN.md)
+- Deprecate legacy Git+Qdrant knowledgebase after migration
+- MCP, multi-agent collaboration, observability

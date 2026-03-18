@@ -1,15 +1,15 @@
 # Memory Architecture Specification
 
+> **Update:** Target shared knowledge is **Cabinet (Outline)**—humans and agents read/write the same docs via BEARS. **Letta memory** (blocks, conversations) is unchanged. The **Git+Qdrant knowledgebase** below is **legacy**, obviated by Cabinet for that role. See repo `PLAN.md`.
+
 ## Overview
 
-The BEARS Stack memory system enables a modular, inspectable agent to reason over multiple memory types simultaneously:
+The agent reasons over:
 
-- **Curated knowledge** (human-editable Markdown)
-- **Large personal corpora** (emails, chats, bookmarks via RAG)
-- **Structured metadata** (key-value slots)
-- **Episodic history** (timestamped interaction logs)
-
-This architecture separates concerns between **symbolic memory** (facts, beliefs), **semantic memory** (vector embeddings), and **modular content providers** (MCPs) for high-volume external data sources.
+- **Letta native memory** (blocks, conversation state, built-in tools)  
+- **Cabinet** (Outline) — curated shared knowledge, human-editable UI  
+- **Large corpora** (RAG, MCPs) as needed  
+- Legacy: Git-tracked Markdown + Qdrant via old knowledgebase API
 
 ---
 

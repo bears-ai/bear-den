@@ -2,7 +2,7 @@
 
 ## Overview
 
-Redis serves as the cache layer for the memory service/knowledgebase, providing fast temporary storage for session data and query results.
+Redis is used as a **cache for the legacy knowledgebase** (if deployed). Not required for the **target** stack (Letta + LiteLLM + Cabinet) unless another service needs Redis.
 
 ## Prerequisites
 

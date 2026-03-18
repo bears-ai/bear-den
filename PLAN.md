@@ -55,6 +55,12 @@ I’ll break it into:
    - Stores docs, properties, versions.
    - Optionally uses its own embeddings for search.
 
+### Knowledge model: Letta memory vs Cabinet (not the old Git/Qdrant stack)
+
+- **Letta’s own memory** (memory blocks, conversations, built-in tools) stays as-is. Cabinet does **not** replace how Letta manages per-agent context, blocks, or the conversation loop.
+- **Cabinet** (implemented on **Outline**) is the **shared knowledgebase**: documents that **both humans and agents** can read and edit, with search and structure suited to long-lived reference material, history, and project notes.
+- The **Git Sync + Qdrant + standalone knowledgebase service** path described in older BEARS docs is **obviated** by Cabinet: you no longer need that stack for agent-accessible archival knowledge. Migrate or retire those services when adopting Cabinet; see repo docs for legacy vs target deployment.
+
 ---
 
 ## 2. Capability “contracts” (pseudo, high‑level)
@@ -247,7 +253,7 @@ Deliverables:
 - Any user in Slack/WhatsApp/OpenWebUI can talk to an agent via BEARS.
 - BEARS knows who they are (internal `user_id`).
 - You can list agents per user and enforce basic access rules, even if it’s just “admins vs normal users.”
-- No Cabinet/Outline yet; agents operate with short‑term/contextual memory only.
+- No Cabinet/Outline yet: agents still use **Letta’s native memory** (blocks, conversations, etc.); the shared human+agent knowledgebase is added in later phases—not the legacy Git/Qdrant knowledgebase service.
 
 ---
 
@@ -367,6 +373,8 @@ This is the “make it livable and reliable” phase.
 ---
 
 ## Summary
+
+**Knowledge:** **Letta memory** stays as the agent’s own context. **Cabinet (Outline)** is the shared knowledgebase for humans and agents. The **Git+Qdrant knowledgebase** is **not** part of the target stack for that purpose.
 
 We’re aiming for:
 

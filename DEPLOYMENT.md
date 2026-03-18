@@ -15,16 +15,17 @@ Complete guide for deploying the BEARS Stack on Coolify with separate service de
 
 ## Overview
 
-The BEARS Stack uses a **two-repository architecture**:
+**Target architecture** (see [PLAN.md](PLAN.md) and [README.md](README.md)):
 
-1. **This repository** (`bears-deploy`) - Configuration and deployment guides
-2. **Content repository** - Your memory files (created from `content-template/`)
+- **Letta** — agent runtime and **native memory** (blocks, conversations); not replaced by Cabinet.
+- **Cabinet** ( **Outline** ) — shared **knowledgebase** that **humans and agents** read and edit; agents reach it via **BEARS Core**. This **obviates** the old Git + Qdrant standalone knowledgebase for that role.
 
-Services are deployed individually in Coolify, leveraging:
-- Coolify-managed PostgreSQL with automatic backups
-- Internal Docker networking for service communication
-- Git-based memory synchronization
-- Persistent volumes for data
+**Legacy two-repository architecture** (optional, migration only):
+
+1. **This repository** (`bears-deploy`) — configuration and deployment guides  
+2. **Content repository** — Git-synced Markdown (`content-template/`) + knowledgebase API + Qdrant  
+
+Deploy services individually in Coolify. Use **LiteLLM → Letta → OpenWebUI** as the minimal path; add **Outline + BEARS Core** when enabling Cabinet. Deploy the **Git Sync + knowledgebase + Qdrant** chain only if you still rely on the legacy KB.
 
 ## Prerequisites
 
@@ -40,7 +41,7 @@ Services are deployed individually in Coolify, leveraging:
 - ✅ GitHub account
 - ✅ OpenAI API key (for GPT models and embeddings)
 - ✅ Anthropic API key (for Claude models)
-- ✅ GitHub Personal Access Token (PAT) with Contents: Read/Write permissions
+- ✅ GitHub PAT with Contents: Read/Write — **only if** using legacy Git Sync + content repo
 
 ### Local Tools
 
@@ -50,64 +51,76 @@ Services are deployed individually in Coolify, leveraging:
 
 ## Architecture
 
-### Service Dependencies
+### Service dependencies (target)
 
 ```
-Layer 4: Application
-├── OpenWebUI (Primary chat UI + Multi-user support)
-└── Letta (Agent orchestration API + tooling)
+Application
+├── OpenWebUI (or LibreChat)
+├── Outline (Cabinet — human-editable knowledge)
+└── Letta (agents + native memory)
 
-Layer 3: APIs
-├── Knowledgebase / Memory Service API (Memory management)
-└── LiteLLM (Model gateway)
+BEARS Core (planned)
+├── Auth proxy → Letta
+└── Cabinet API → Outline (agent tools)
 
-Layer 2: Memory
-└── Git Sync (GitHub synchronization)
-
-Layer 1: Infrastructure
-├── PostgreSQL (Database - Coolify-managed)
-├── Redis (Cache)
-├── Qdrant (Vector database)
-├── MongoDB (User data - Coolify-managed or external)
-└── MeiliSearch (Search functionality - optional)
+APIs
+└── LiteLLM (model gateway)
 ```
 
-### Data Flow
+### Data flow (target)
 
 ```
-User → OpenWebUI → Letta → LiteLLM → OpenAI/Anthropic APIs
-        ↓          ↓
-        ↓     Knowledgebase / Memory Service ← PostgreSQL (metadata)
-        ↓          ↓
-        ↓          Qdrant (vectors)
-        ↓          Redis (cache)
-     Markdown files
-        ↓
-    Git Sync → GitHub (backup)
-
-OpenWebUI handles UI, authentication, and conversation management while delegating agent execution to Letta via open-webui-tools functions.
+User → OpenWebUI → Letta → LiteLLM → providers
+           ↓           ↓
+      (optional)   Cabinet tools → BEARS Core → Outline
+Humans edit Cabinet docs directly in Outline.
 ```
 
-For multi-user deployments with per-user agents, identity mapping, and access control, the canonical approach is the **Authentication Proxy** in front of Letta Cloud. See [MULTIUSER_PROXY_ARCHITECTURE.md](MULTIUSER_PROXY_ARCHITECTURE.md). In that model, OpenWebUI is configured to talk to the proxy, not directly to Letta.
+### Legacy stack (Git + Qdrant knowledgebase)
 
-## Deployment Order
+If you still run the old memory service:
 
-Services **must** be deployed in this order:
+```
+User → OpenWebUI → Letta → Knowledgebase ← Git Sync → GitHub
+                        ↓
+                   Qdrant, Redis, PostgreSQL
+```
 
-1. **PostgreSQL** (Coolify-managed database)
-2. **Redis** (Cache layer)
-3. **Qdrant** (Vector database)
-4. **Git Sync** (Memory synchronization)
-5. **Knowledgebase / Memory Service** (Memory management)
-6. **LiteLLM** (Model gateway)
-7. **Letta** (Agent orchestration)
-8. **OpenWebUI** (Primary chat UI)
+**Prefer migrating** to Cabinet (Outline) per [PLAN.md](PLAN.md); then you can remove Git Sync, Qdrant, and the standalone knowledgebase for that use case.
+
+For multi-user deployments, see [MULTIUSER_PROXY_ARCHITECTURE.md](MULTIUSER_PROXY_ARCHITECTURE.md) (auth proxy / BEARS Core) and [PLAN.md](PLAN.md).
+
+## Deployment order
+
+### Target (Cabinet-oriented)
+
+1. **LiteLLM** (model gateway)  
+2. **Letta** (point `LLM_API_URL` at LiteLLM)  
+3. **OpenWebUI** (or LibreChat)  
+4. **Outline + BEARS Core** — when ready for shared human+agent knowledge ([PLAN.md](PLAN.md))  
+
+No Git Sync / Qdrant / standalone knowledgebase required for this path.
+
+### Legacy (Git + Qdrant knowledgebase)
+
+Deploy in this order **only** if you still use the old KB:
+
+1. **PostgreSQL**  
+2. **Redis**  
+3. **Qdrant**  
+4. **Git Sync**  
+5. **Knowledgebase / Memory Service**  
+6. **LiteLLM**  
+7. **Letta** (with `KNOWLEDGEBASE_URL` if agents use the legacy API)  
+8. **OpenWebUI**
 
 ## Step-by-Step Deployment
 
-### Step 0: Prepare Content Repository
+The steps below begin with **Step 0–5: legacy content + knowledgebase**. If you are on the **target** stack (Cabinet only), skip to **Step 6: LiteLLM** after preparing Letta/OpenWebUI envs—or follow [PLAN.md](PLAN.md) for Outline deployment order.
 
-Before deploying any services, create your content repository.
+### Step 0: Prepare Content Repository (legacy only)
+
+**Skip if** you are not deploying Git Sync + the old knowledgebase. Otherwise create your content repository.
 
 #### 0.1. Fork Content Template
 
@@ -455,7 +468,9 @@ See [`services/letta/COOLIFY_DEPLOY.md`](services/letta/COOLIFY_DEPLOY.md) for d
 
 ```bash
 # Service Integration
-KNOWLEDGEBASE_URL=http://bears-knowledgebase:8080
+# KNOWLEDGEBASE_URL: only if using the legacy Git+Qdrant knowledgebase service.
+# Target stack: use Cabinet (Outline) via BEARS Core tools; Letta native memory unchanged.
+# KNOWLEDGEBASE_URL=http://bears-knowledgebase:8080
 LLM_API_URL=http://bears-litellm:4000/v1
 
 # Model Configuration

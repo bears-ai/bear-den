@@ -2,18 +2,18 @@
 
 ## Overview
 
-Letta is the agent orchestration framework that provides the API server and agent runtime for the BEARS Stack. It integrates with external memory services via a knowledgebase tools API (embed/upsert/search/get) and with LiteLLM for model access. LibreChat serves as the primary user interface, connecting to Letta's agent APIs. Prefer a knowledgebase layer so archival memory remains controlled and read-only by default.
+Letta is the agent orchestration framework for the BEARS Stack: agent runtime, **native memory** (blocks, conversations, built-in tools), and LiteLLM for models.
+
+**Shared knowledgebase:** The target design is **Cabinet** ([Outline](https://www.getoutline.com/)), reachable by agents via **BEARS Core** tools—humans edit the same docs in Outline. Cabinet **does not replace** Letta memory; it obviates the **legacy** Git+Qdrant standalone knowledgebase service. See [PLAN.md](../../PLAN.md).
+
+**Legacy:** If you still run the old knowledgebase API (`KNOWLEDGEBASE_URL`), Letta can call embed/upsert/search/get against that service. Prefer migrating to Cabinet per project docs.
 
 ## Prerequisites
 
 - Coolify instance running
-- **All other services deployed and healthy**:
-  - ✅ Git Sync
-  - ✅ Redis
-  - ✅ Qdrant
-  - ✅ PostgreSQL (Coolify-managed)
-  - ✅ LiteLLM
-  - ⚪ Knowledgebase / Memory Service (optional — prefer a dedicated knowledgebase service)
+- ✅ **LiteLLM** (required for model access)
+- ⚪ **Legacy stack** (only if still using Git+Qdrant KB): Git Sync, Redis, Qdrant, PostgreSQL, Knowledgebase service
+- ⚪ **BEARS Core + Outline** when using Cabinet tools ([PLAN.md](../../PLAN.md))
 
 ## Deployment Steps
 
@@ -33,14 +33,9 @@ Letta is the agent orchestration framework that provides the API server and agen
 4. **Environment Variables**:
 
   ```bash
-  # Knowledgebase / Memory service
-  # Letta should call a knowledgebase tools API rather than depending
-  # directly on an internal memory implementation. Set this to the
-  # Knowledgebase service URL that provides embed/upsert/search/get
-  # endpoints. Example: `http://bears-knowledgebase:8080`.
-  KNOWLEDGEBASE_URL=http://bears-knowledgebase:8080
-
-  # If you have a legacy adapter, configure it in the knowledgebase layer
+  # Legacy only: Git+Qdrant knowledgebase API (embed/upsert/search/get).
+  # Omit or leave unset when using Cabinet (Outline) via BEARS Core tools only.
+  # KNOWLEDGEBASE_URL=http://bears-knowledgebase:8080
 
   # LiteLLM Integration
   LLM_API_URL=http://bears-litellm:4000/v1
@@ -117,7 +112,7 @@ curl http://bears-letta:8283/v1/agents
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `KNOWLEDGEBASE_URL` | ✅ Yes | - | URL of the knowledgebase tools API (embed/upsert/search/get). Example: `http://bears-knowledgebase:8080` |
+| `KNOWLEDGEBASE_URL` | Legacy only | - | Old Git+Qdrant knowledgebase API. **Not needed** for Cabinet/Outline; set only if agents still use that service |
 | `LLM_API_URL` | ✅ Yes | - | LiteLLM URL (`http://bears-litellm:4000/v1`) |
 | `MODEL_NAME` | ✅ Yes | `gpt-4` | Default model for agents |
 | `LETTA_SERVER_PORT` | No | `8283` | Web UI and API port |
@@ -129,25 +124,17 @@ curl http://bears-letta:8283/v1/agents
 
 ### Service Dependencies
 
-Letta requires these services to be healthy:
-
 ```
 Letta
-  ├── Knowledgebase / Memory Service
-  │   ├── PostgreSQL (Coolify-managed) [optional]
-  │   ├── Redis
-  │   ├── Qdrant
-  │   └── Git Sync
-  └── LiteLLM
-      ├── OpenAI API
-      └── Anthropic API
+  ├── LiteLLM → OpenAI / Anthropic / …
+  └── (optional) Legacy knowledgebase OR Cabinet tools via BEARS → Outline
 ```
 
 ## Using Letta
 
-### Primary Usage via LibreChat
+### Primary UI
 
-Letta agents are primarily accessed through the LibreChat UI, which provides a modern chat interface for interacting with agents. LibreChat handles user authentication, conversation management, and connects to Letta's agent APIs.
+Many deployments use **OpenWebUI** or **LibreChat**; configure whichever you run. Agent **memory** stays in Letta; **shared knowledge** is **Cabinet (Outline)** in the target architecture.
 
 ### Admin Web UI (Optional)
 
@@ -156,10 +143,10 @@ For advanced agent management and development, access the Letta Web UI at `http:
 1. **Login** with `LETTA_SERVER_PASS`
 2. **Create an agent**:
     - Choose model (gpt-4, claude-3-5-sonnet, etc.)
-   - Configure memory (point agents to the configured knowledgebase)
+   - Configure memory (Letta blocks; optional legacy `KNOWLEDGEBASE_URL` or Cabinet tools)
     - Add tools/functions
 3. **Chat with agent** in the UI
-4. **View memory** - agent memories stored via the knowledgebase → Git
+4. **View memory** - Letta blocks + conversation history; shared docs in Outline (Cabinet) when deployed
 
 ### API Access
 
@@ -188,46 +175,25 @@ curl -X POST http://bears-letta:8283/v1/agents/{agent_id}/messages \
   }'
 ```
 
-## Integration with Memory Backends
+## Memory and knowledge backends
 
-Letta should interact with a knowledgebase tools API that exposes a small, stable contract (embed/upsert/search/get). The knowledgebase service can use Qdrant for vectors and Git Sync for archival markdown; Letta should call the knowledgebase API rather than directly mutating archival data.
+### Letta native memory
 
-### How It Works (recommended)
+Blocks, conversations, and built-in memory tools—**unchanged** by Cabinet.
 
-1. **Agent creates memory** → Letta calls the configured `KNOWLEDGEBASE_URL` API
-2. **Knowledgebase writes or indexes** → Markdown files for archival + vectors in Qdrant (or other vector store)
-3. **Git Sync detects change** → Commits and pushes archival files to GitHub
-4. **Memory is searchable** → Qdrant vector index (queried via the Knowledgebase API)
-5. **Memory persists** → Git version control (archival records should be treated as read-only by default)
+### Cabinet (target) — Outline via BEARS Core
 
-### Memory Flow
+Shared reference docs, history, project notes: agents use **Cabinet tools**; humans use **Outline**. See [PLAN.md](../../PLAN.md). This **replaces** the need for a separate Git+Qdrant knowledgebase for that content.
 
-```
-User chats → Letta agent → Knowledgebase API → (Qdrant vectors + Markdown archive) → Git Sync → GitHub
-                  ↓
-                 Qdrant (vectors)
-                  ↓
-                PostgreSQL (metadata)
-```
+### Legacy: knowledgebase tools API
 
-### Viewing Agent Memories
-
-Check the content repository on GitHub (archival markdown files):
-
-```
-memories/
-└── personal/
-  └── agent-my-assistant/
-    ├── conversation-context.md
-    ├── user-preferences.md
-    └── learned-facts.md
-```
+If `KNOWLEDGEBASE_URL` is set, Letta can call embed/upsert/search/get against the old service (Markdown on Git + Qdrant). **Prefer Cabinet** for new work; migrate off this path when possible.
 
 ### Recommendations
 
-- Treat archival markdown as immutable by default; do not let agents overwrite/archive records without a controlled process.
-- Use a knowledgebase service (we plan to provide an RMCP + Qdrant implementation) to centralize embedding and search logic.
-  - Keep legacy adapters optional; prefer the knowledgebase API as the single integration contract.
+- Use **Cabinet** for durable knowledge humans and agents share.  
+- Use **Letta memory blocks** for per-agent, in-context state.  
+- Retire **Git+Qdrant knowledgebase** after migrating content to Outline.
 
 ## Monitoring
 
@@ -264,14 +230,14 @@ View in Coolify dashboard:
 ### Service Won't Start
 
 **Solutions**:
-- Check all dependencies are healthy (knowledgebase/memory service, LiteLLM)
+- Check LiteLLM healthy; legacy KB or Cabinet/BEARS as deployed
 - Verify environment variables are correct
 - Ensure port 8283 is not already in use
 - Review logs for specific errors
 
 ### Can't Connect to the memory service
 
-**Problem**: "Connection refused" to the configured knowledgebase/memory service
+**Problem**: "Connection refused" to legacy knowledgebase (if `KNOWLEDGEBASE_URL` is set)
 
 **Solutions**:
 - Verify `KNOWLEDGEBASE_URL` is set and correct in Letta's environment
@@ -475,74 +441,35 @@ Add custom tools/functions:
 
 ### Multi-Agent Collaboration
 
-Deploy multiple agents that share memory:
-
-```
-memories/shared/team-context.md
-```
+Shared team context: use **Cabinet (Outline)** or Letta shared blocks—legacy `memories/shared/` only if still on Git KB.
 
 ## Deployment Completion
 
-### Verification Checklist
+### Verification checklist (target-oriented)
 
-- [ ] All services healthy in Coolify
-- [ ] Git Sync syncing to GitHub
-- [ ] Redis responding to ping
-- [ ] Qdrant has collections
-- [ ] PostgreSQL accepting connections
-[ ] Knowledgebase / memory service returning health OK
-- [ ] LiteLLM proxying to LLM providers
-- [ ] Letta API accessible (internal)
-- [ ] LibreChat deployed and accessible
-- [ ] Test agent created via API
-- [ ] Agent memories appearing in GitHub
+- [ ] LiteLLM healthy; Letta can reach `LLM_API_URL`
+- [ ] Letta API accessible
+- [ ] OpenWebUI or LibreChat can chat with an agent
+- [ ] When Cabinet is deployed: Outline + BEARS Core + agent tools ([PLAN.md](../../PLAN.md))
 
-### Full Stack Test
+### Legacy stack (if deployed)
 
-1. **Create test agent** via Letta API or admin Web UI
-2. **Chat with agent** through LibreChat - ask it to remember something
-3. **Check GitHub** - verify memory file created
-4. **Check Qdrant** - verify vectors indexed
-5. **Chat again** - verify agent recalls previous context
+- [ ] Git Sync, Redis, Qdrant, Postgres, knowledgebase healthy; agent writes appear in GitHub / Qdrant as before
 
-## Next Steps
+### Full stack test
 
-Your BEARS Stack is now fully deployed! 🎉
+1. Create agent; chat via your UI  
+2. Confirm **Letta memory** (blocks/conversation) behaves as expected  
+3. **Cabinet:** verify docs in Outline and agent tool access via BEARS  
+4. **Legacy KB:** GitHub + Qdrant checks if still in use  
 
-### Getting Started
+## Next steps
 
-1. **Deploy LibreChat** using the cpfiffer/letta-libre fork
-2. **Create your first agent** via Letta API or admin Web UI
-3. **Access agents** through LibreChat's modern interface
-4. **Customize memory structure** in the content repo
-5. **Add more models** to LiteLLM config
-6. **Set up monitoring** (optional)
-7. **Configure backups** (PostgreSQL, Qdrant)
+- [PLAN.md](../../PLAN.md) — BEARS Core + Cabinet  
+- Add models in LiteLLM; back up Outline + Letta data per your ops  
 
-### Further Reading
+## Coolify service summary
 
-- Letta documentation: https://docs.letta.ai
-Memory service documentation: (provider-specific or internal)
-LiteLLM documentation: https://docs.litellm.ai
+**Target:** `bears-litellm`, `bears-letta`, UI (OpenWebUI/LibreChat), later **Outline + BEARS Core**.  
 
-## Coolify Service Summary
-
-Your complete BEARS Stack:
-
-```bash
-# Infrastructure
-bears-redis          (Cache)
-bears-qdrant         (Vector DB)
-bears-postgres       (Database - Coolify-managed)
-
-# Core Services
-bears-git-sync       (Memory sync)
-bears-knowledgebase  (Memory management)
-bears-litellm        (Model gateway)
-
-# Agent Framework
-bears-letta          (Agent orchestration API)
-bears-librechat      (Primary chat UI)
-```
-
-All connected through Coolify's internal Docker network! 🐻
+**Legacy (optional):** `bears-git-sync`, `bears-knowledgebase`, Redis, Qdrant, Postgres for old KB.
