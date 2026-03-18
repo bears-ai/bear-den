@@ -6,7 +6,7 @@ Generated with Ezra on the Letta discord: https://discord.com/channels/116173624
 
 This document describes the architecture for a multi-user, multi-agent system built on top of Letta Cloud. The system serves N users with N-to-N relationships to Letta agents, where each agent is aware of the user it serves and can restrict its use of memory and tools accordingly.
 
-The architecture follows **Pattern A: one agent per user**, provisioned via Letta Templates. A thin authentication proxy sits between end users and the Letta API, handling user identity, routing, and access control. End users interact through either OpenWebUI or LettaBot (Slack, Telegram, Discord, etc.).
+The architecture follows **Pattern A: one agent per user**, provisioned via Letta Templates. A thin authentication proxy sits between end users and the Letta API, handling user identity, routing, and access control. End users interact through **OpenWebUI** (web) or **LettaBot** on messaging channels—primarily **Slack** and **WhatsApp** in the BEARS plan (Telegram/Discord are also supported by LettaBot where configured).
 
 ### Implementation Language
 
@@ -99,7 +99,7 @@ client.agents.blocks.attach(agent_id=agent_id, block_id=block.id)
 ```
 +------------------+     +------------------+
 |    OpenWebUI      |     |     LettaBot      |
-|  (chat frontend)  |     | (Slack/TG/Discord)|
+|  (chat frontend)  |     |(Slack, WhatsApp) |
 +--------+---------+     +--------+---------+
          |                         |
          v                         v
@@ -125,7 +125,7 @@ client.agents.blocks.attach(agent_id=agent_id, block_id=block.id)
 
 ### Cabinet (Outline) — shared knowledgebase
 
-**Cabinet** is the BEARS name for long-lived knowledge that **both humans and agents** use. It is implemented on **Outline** (wiki-style UI, search, properties). Agents access it through **BEARS Core** tool endpoints (see [PLAN.md](PLAN.md)); people edit the same documents in Outline.
+**Cabinet** is the BEARS name for long-lived knowledge that **both humans and agents** use. It is implemented on **Outline** (wiki-style UI, search, properties). Agents access it through **Den** (see [PLAN.md](PLAN.md)); people edit the same documents in Outline.
 
 - **Does not replace** Letta’s native memory (memory blocks, conversations, built-in memory tools).
 - **Obviates** the older **Git Sync + Qdrant + standalone knowledgebase** stack for shared archival knowledge—no need to duplicate that pipeline once Cabinet is live.
@@ -164,12 +164,16 @@ The proxy is a stateless HTTP service that:
 
 4. **Prevents cross-user access.** The proxy MUST verify that the requested agent_id belongs to the authenticated user before forwarding any request. The Letta API key is org-level and grants access to all agents.
 
-5. **Handles agent provisioning.** On user signup:
+5. **Handles agent provisioning** (and **channel identity mapping**). The proxy—**Den** in [PLAN.md](PLAN.md)—must tie every chat surface to the same internal `user_id` → Letta identity → agent model. **Slack** and **WhatsApp** do not use email/password signup the same way as web; treat each channel explicitly.
+
+   #### Web (OpenWebUI)
+
+   Classic flow: user signs up or logs in; you create or load `users` row, then provision Letta:
 
    ```python
    # 1. Create Letta Identity
    identity = client.identities.create(
-       identifierkey=f"user{user.id}",
+       identifier_key=f"user{user.id}",
        identity_type="user",
        name=user.name,
    )
@@ -192,6 +196,37 @@ The proxy is a stateless HTTP service that:
    # 4. Store mapping in your database
    db.insert("user_agents", user_id=user.id, agent_id=agent_id)
    ```
+
+   #### Slack
+
+   - **External identity:** Slack `user_id` (e.g. `U0123…`) per workspace; include `team_id` if you serve multiple workspaces.
+   - **Provisioning options:** (a) **Lazy:** on first message, LettaBot forwards Slack user + team to Den; Den looks up `slack_user_id` → `user_id`, creates user + Letta identity + agent if missing, then serves `/chat/message`. (b) **Admin-invite:** map Slack users to accounts in advance (CSV, admin UI, or Slack directory sync).
+   - **LettaBot:** Typically one LettaBot agent entry per human user with `allowedUsers: [U_…]` so DMs route to the right agent; config can be **generated from Den’s DB** on deploy (same as `lettabot.yaml` pattern below).
+   - **Shared channels:** Risk of multiple Slack users talking to one bot endpoint—enforce allowlists, thread/DM-only policies, or Den-side checks that `channel_user_id` matches the mapped user before calling Letta.
+   - **Conversation mapping:** LettaBot already isolates Slack DM vs thread vs channel; Den should map `(slack_user_id, conversation_key)` → Letta `conversation_id` consistently.
+
+   #### WhatsApp
+
+   - **External identity:** WhatsApp **phone number** (E.164) or platform user id from the WhatsApp Business / Cloud API; stable per customer.
+   - **Provisioning:** Same pattern as Slack—**lazy on first inbound message** (LettaBot → Den with `whatsapp_number` / wa id) or pre-provisioned allowlist for known numbers.
+   - **Privacy:** Phone numbers are PII; store hashed or tokenized in logs; restrict which agents/tools can echo them back.
+   - **LettaBot:** Configure WhatsApp channel in `lettabot.yaml` with per-user agent rows and allowlists analogous to Slack (see below).
+   - **Session model:** One WhatsApp chat thread ↔ one Letta conversation; multi-device same number should map to the same internal `user_id`.
+
+   #### Shared tables (conceptual)
+
+   Extend your schema so Den can resolve any channel to `user_id`:
+
+   ```sql
+   -- Example: external_identities
+   user_id UUID REFERENCES users(id),
+   channel TEXT NOT NULL,  -- 'slack' | 'whatsapp' | 'webui'
+   external_id TEXT NOT NULL,  -- Slack U… or E.164 phone
+   metadata JSONB,            -- e.g. { "team_id": "T…" } for Slack
+   UNIQUE (channel, external_id)
+   ```
+
+   All **Slack** and **WhatsApp** traffic to Letta should go **through Den** (`POST /chat/message` or equivalent) so the same policy, agent registry, and LiteLLM tagging apply as for OpenWebUI.
 
 ### API Surface
 
@@ -224,41 +259,49 @@ The admin UI provides management without requiring direct Letta ADE access:
 
 ---
 
-## LettaBot Integration
+## LettaBot Integration (Slack & WhatsApp)
 
-Use a single LettaBot instance configured with multiple agents via the `agents:` array in `lettabot.yaml`:
+**Target flow:** LettaBot receives messages on **Slack** and/or **WhatsApp**, identifies the sender, and calls **Den** (not Letta directly) with `channel`, `channel_user_id` (Slack `U…` or WhatsApp id/phone), and message body. Den resolves identity, picks the Letta agent, and returns the streamed reply to LettaBot for delivery on the same channel.
+
+Until Den is deployed, LettaBot can talk to Letta directly for experiments; production should match the diagram above (LettaBot → Den → Letta Cloud).
+
+Use a **single** LettaBot process with multiple logical agents via the `agents:` array in `lettabot.yaml` (regenerate from Den’s DB when users are added):
 
 ```yaml
 server:
   letta:
     apiKey: ${LETTA_API_KEY}
-    baseUrl: https://api.letta.com
+    baseUrl: https://api.letta.com  # or Den URL if LettaBot is adapted to call Den
 
 agents:
   - name: user-alice
-    agentId: agent-xxx  # Alice's Letta agent
+    agentId: agent-xxx
     channels:
       slack:
         allowedUsers: ["U_ALICE_SLACK_ID"]
-      telegram:
-        allowedUsers: [123456789]
+      whatsapp:
+        allowedUsers: ["+15551234567"]   # E.164; exact shape depends on LettaBot version
 
   - name: user-bob
-    agentId: agent-yyy  # Bob's Letta agent
+    agentId: agent-yyy
     channels:
       slack:
         allowedUsers: ["U_BOB_SLACK_ID"]
+      whatsapp:
+        allowedUsers: ["+447700900123"]
 ```
 
-Key LettaBot configuration notes:
+*(Telegram/Discord blocks work the same way if you enable those channels.)*
 
-- **Single process, multiple agents.** Do NOT run separate LettaBot instances per user. Use the `agents:` array.
-- **DM policies.** Use allowlist DM policy to restrict each agent to its designated user.
-- **Per-user rate limits.** Use `dailyUserLimit` in group configs if agents share channels.
-- **Conversation isolation.** LettaBot already creates per-channel/per-thread conversations. Each Slack DM or Telegram chat gets its own conversation.
-- **Slack user awareness limitation.** LettaBot does not natively map Slack user IDs to Letta Identities. The agent knows who it's talking to from its human memory block (set at provisioning), but in shared channels you would need a custom tool to resolve Slack user metadata. For simplicity, use DM-only or allowlisted channels.
-- **Config changes require restart.** Adding new agents to `lettabot.yaml` requires restarting the LettaBot process. There is no hot-reload for agent config. Plan for this in your ops workflow.
-- **`lettabot.yaml` is the source of truth.** Generate it from your database during deploys. When a new user is provisioned, regenerate the config and restart.
+Key LettaBot notes for **Slack** and **WhatsApp**:
+
+- **Single process, multiple agents.** One LettaBot, many `agents:` entries—do not run one process per user.
+- **DM / allowlist.** Use per-user allowlists so Alice’s Slack id and Alice’s WhatsApp number both route to Alice’s agent only.
+- **Per-user rate limits.** For shared entry points, use `dailyUserLimit` where LettaBot supports it.
+- **Conversation isolation.** LettaBot creates per-channel / per-thread / per-chat conversations; Slack DMs and WhatsApp 1:1 threads stay isolated.
+- **Slack:** In shared channels, multiple users may @ the bot—combine allowlists with Den-side checks so only the mapped user’s agent runs (or use DM-only for strict 1:1).
+- **WhatsApp:** Business API constraints (24h session windows, template messages) affect how you reply; Den/LettaBot should respect Meta’s rules for outbound messages.
+- **Config restart.** Changes to `lettabot.yaml` require restart; **generate YAML from Den** when provisioning Slack/WhatsApp users.
 
 ---
 
@@ -303,10 +346,12 @@ SESSION_SECRET=         # For signing session tokens
 LETTA_API_KEY=          # Same org-level key
 LETTA_BASE_URL=https://api.letta.com
 LETTABOT_CONFIG=/path/to/lettabot.yaml
-# Channel tokens as needed:
+# Channel tokens (Slack + WhatsApp are first-class in BEARS):
 SLACK_BOT_TOKEN=
-TELEGRAM_BOT_TOKEN=
-DISCORD_BOT_TOKEN=
+WHATSAPP_ACCESS_TOKEN=   # WhatsApp Cloud API
+WHATSAPP_PHONE_NUMBER_ID=
+WHATSAPP_APP_SECRET=     # webhook verification
+# Optional: TELEGRAM_BOT_TOKEN=, DISCORD_BOT_TOKEN=
 ```
 
 
@@ -379,6 +424,6 @@ Memory block template:
 |-------|----------------|
 | Letta Cloud | Agent state, memory, conversations, model inference, tool execution |
 | Auth Proxy | User auth, user-to-agent routing, access control, admin UI, agent provisioning |
-| LettaBot | Channel interface (Slack/TG/Discord), conversation isolation, message relay |
+| LettaBot | **Slack & WhatsApp** (and optional TG/Discord): channel adapter; forwards to Den; conversation isolation |
 | OpenWebUI | Web chat frontend, talks to proxy |
 | Your Database | User accounts, user-agent mappings, sessions, admin metadata |
