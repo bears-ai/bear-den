@@ -1,15 +1,22 @@
-Here’s a high‑level, ops‑oriented plan and architecture, with an MVP that works **without Cabinet first**, then adds Cabinet/Outline in stages.
+# BEARS plan & architecture
+
+High‑level, ops‑oriented plan and architecture: MVP **without Cabinet first**, then Cabinet/Outline in stages.
+
+**Reading order:** Skim [§1](#1-system-architecture-components-and-responsibilities)–[§2](#2-capability-contracts-pseudo-high-level) for components and pseudo-contracts; use [§3](#3-project-plan-phased-mvp--cabinet--maturity) for phased delivery.
+
+## Table of contents
+
+| Section | Contents |
+|---------|----------|
+| [§1](#1-system-architecture-components-and-responsibilities) | Components, Letta vs Cabinet, optional LettaBot→Den |
+| [§2](#2-capability-contracts-pseudo-high-level) | Frontends→Den, Den→Letta, Cabinet, Outline, LiteLLM observability |
+| [§3](#3-project-plan-phased-mvp--cabinet--maturity) | Phase 0–4 milestones |
+| [Summary](#summary) | One-page recap |
 
 **Terminology**
 
 - **BEARS** — the whole system (stack): Letta, LiteLLM, Den, Outline, frontends, LettaBot, etc.
 - **Den** — the **BEARS control plane and gateway**: single orchestration service for identity, routing, policy, Cabinet API, and model-call observability (see below).
-
-I’ll break it into:
-
-1. System architecture (high‑level components and responsibilities)
-2. Capability “contracts” (pseudo, not detailed APIs)
-3. Project plan: phases and milestones (MVP → Cabinet → polish)
 
 ---
 

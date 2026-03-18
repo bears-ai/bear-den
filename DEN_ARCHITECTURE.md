@@ -180,7 +180,7 @@ Seed **human** / **persona** blocks when creating each user’s agent via API or
 | Layer | Responsibility |
 |-------|------------------|
 | **Self-hosted Letta** | Agent state, memory blocks, conversations, tools, calls to LiteLLM |
-| **Den (Axum)** | Auth, routing, policy, Cabinet API, Slack/WhatsApp identity, Letta proxy |
+| **Den (Axum)** | Auth, routing, policy, Cabinet API, Letta proxy; optional Slack/WhatsApp identity when LettaBot fronts Den |
 | **LettaBot** | Slack/WhatsApp → Letta direct (v1); optional → Den later |
-| **OpenWebUI** | Web UI → Den |
+| **Open WebUI** | Web UI → Den (v1) |
 | **PostgreSQL** | Den: users, mappings, sessions |

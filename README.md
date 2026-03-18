@@ -8,6 +8,18 @@
 - **[LiteLLM](https://github.com/BerriAI/litellm)** — Model gateway  
 - **[Coolify](https://coolify.io)** — Deployment  
 
+## Documentation map
+
+| I want to… | Read |
+|------------|------|
+| **Deploy on Coolify** | [DEPLOYMENT.md](DEPLOYMENT.md), then `services/*/COOLIFY_DEPLOY.md` |
+| **Understand the stack** | This file + [ARCHITECTURE_NOTES.md](ARCHITECTURE_NOTES.md) |
+| **Roadmap & phases** (Den, Cabinet, Outline) | [PLAN.md](PLAN.md) |
+| **Multi-user web** (Den + Letta) | [DEN_ARCHITECTURE.md](DEN_ARCHITECTURE.md) |
+| **Open WebUI ↔ Letta** (direct) | [services/letta/OPENWEBUI_INTEGRATION.md](services/letta/OPENWEBUI_INTEGRATION.md), [OPENWEBUI_SESSIONS.md](services/letta/OPENWEBUI_SESSIONS.md) |
+
+*Agent-oriented notes under `.kilocode/memory_bank/` are for tooling, not end-user docs.*
+
 ## Architecture
 
 | Piece | Role |
@@ -18,15 +30,15 @@
 
 ## Quick start (Coolify)
 
-1. Deploy **LiteLLM** → **Letta** (`LLM_API_URL`) → **OpenWebUI**  
-2. Install [open-webui-tools](https://github.com/Haervwe/open-webui-tools) in OpenWebUI for Letta agents  
+1. Deploy **LiteLLM** → **Letta** (`LLM_API_URL`) → **Open WebUI**  
+2. Install [open-webui-tools](https://github.com/Haervwe/open-webui-tools) in Open WebUI for Letta agents  
 3. Roll out **Outline** and **Den** per [PLAN.md](PLAN.md) for Cabinet and channels  
 
 **Guide:** [DEPLOYMENT.md](DEPLOYMENT.md)
 
 ### Internal endpoints (typical)
 
-- OpenWebUI: `http://bears-openwebui:3000`  
+- Open WebUI (`bears-openwebui`): `http://bears-openwebui:3000`  
 - Letta: `http://bears-letta:8283`  
 - LiteLLM: `http://bears-litellm:4000`  
 
@@ -48,18 +60,10 @@ DEN_ARCHITECTURE.md
 
 Per-service `.env.example` files. Common: `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `LETTA_SERVER_PASS`, `LLM_API_URL`, `LITELLM_MASTER_KEY`.
 
-## OpenWebUI + Letta
+## Open WebUI + Letta
 
-Direct integration via open-webui-tools. For production multi-user identity and **Den**, see [DEN_ARCHITECTURE.md](DEN_ARCHITECTURE.md).
-
-## Docs
-
-- [DEPLOYMENT.md](DEPLOYMENT.md)  
-- [PLAN.md](PLAN.md) — Den, Cabinet, phases  
-- [ARCHITECTURE_NOTES.md](ARCHITECTURE_NOTES.md)  
-- [DEN_ARCHITECTURE.md](DEN_ARCHITECTURE.md)  
-- `services/*/COOLIFY_DEPLOY.md`  
+Direct integration via [open-webui-tools](https://github.com/Haervwe/open-webui-tools). For production multi-user identity and **Den**, see [DEN_ARCHITECTURE.md](DEN_ARCHITECTURE.md).
 
 ## License
 
-[Add your license here]
+Add a `LICENSE` file to the repository root when you publish or distribute this configuration.
