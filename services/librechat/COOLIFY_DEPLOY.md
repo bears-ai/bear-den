@@ -9,9 +9,7 @@ LibreChat provides a modern, feature-rich chat interface that integrates with th
 ## Prerequisites
 
 - ✅ LiteLLM and Letta deployed and healthy  
-- ⚪ **Legacy KB:** PostgreSQL, Redis, Qdrant, Git Sync, Knowledgebase—only if still used  
-- ✅ MongoDB instance (Coolify-managed or external)
-- ✅ MongoDB instance (Coolify-managed or external)
+- ✅ MongoDB (Coolify-managed or external)
 - ✅ Domain configured in Coolify for LibreChat
 
 ## Architecture Integration
@@ -19,7 +17,7 @@ LibreChat provides a modern, feature-rich chat interface that integrates with th
 LibreChat integrates with BEARS services as follows:
 
 - **Agent Interaction**: Connects to Letta (`http://bears-letta:8283`) for all agent interactions and model access
-- **Memory/Context**: Letta native memory + **Cabinet (Outline)** via BEARS when deployed; legacy knowledgebase only if `KNOWLEDGEBASE_URL` / RAG still point at old stack
+- **Memory/Context**: Letta native memory; shared knowledge via **Cabinet (Outline)** when **Den** is deployed ([PLAN.md](../../PLAN.md))
 - **Authentication**: Built-in multi-user authentication with MongoDB backend
 - **Search**: Uses MeiliSearch for conversation search functionality
 
@@ -118,9 +116,6 @@ ALLOW_REGISTRATION=true
 JWT_SECRET=your-secure-jwt-secret-here
 JWT_REFRESH_SECRET=your-secure-refresh-secret-here
 
-# Legacy RAG / knowledgebase only (omit if using Cabinet)
-# RAG_API_URL=http://bears-knowledgebase:8080
-
 # File permissions
 UID=1000
 GID=1000
@@ -191,10 +186,6 @@ LibreChat provides built-in user management:
 - Login/logout functionality
 - User-specific conversation history
 - Admin panel for user management
-
-### RAG / legacy knowledgebase
-
-`RAG_API_URL` to `bears-knowledgebase` applies only to the **legacy** Git+Qdrant stack. **Target:** shared knowledge lives in **Outline (Cabinet)**; Letta holds per-agent memory. See [PLAN.md](../../PLAN.md).
 
 ## Post-Deployment Configuration
 
@@ -296,7 +287,7 @@ Adding LibreChat to BEARS provides:
 This deployment configures LibreChat as the primary user interface for the BEARS Stack:
 
 1. Deploy LibreChat following the steps above (using the cpfiffer/letta-libre fork)
-2. Ensure Letta is deployed with LiteLLM; legacy knowledgebase or Cabinet per your stack ([PLAN.md](../../PLAN.md))
+2. Ensure Letta is deployed with LiteLLM ([PLAN.md](../../PLAN.md) for Den/Cabinet)
 3. Users access LibreChat for all chat interactions, which are routed through Letta agents
 4. Letta remains available for advanced agent management and administration
 

@@ -128,9 +128,7 @@ client.agents.blocks.attach(agent_id=agent_id, block_id=block.id)
 **Cabinet** is the BEARS name for long-lived knowledge that **both humans and agents** use. It is implemented on **Outline** (wiki-style UI, search, properties). Agents access it through **Den** (see [PLAN.md](PLAN.md)); people edit the same documents in Outline.
 
 - **Does not replace** Letta’s native memory (memory blocks, conversations, built-in memory tools).
-- **Obviates** the older **Git Sync + Qdrant + standalone knowledgebase** stack for shared archival knowledge—no need to duplicate that pipeline once Cabinet is live.
-
-When designing agent tools, prefer Cabinet for durable reference content; keep Letta blocks for per-user / per-agent context the agent updates during chat.
+When designing agent tools, use **Cabinet** for durable reference content; keep Letta blocks for per-user / per-agent context the agent updates during chat.
 
 ### Authentication Proxy Requirements
 

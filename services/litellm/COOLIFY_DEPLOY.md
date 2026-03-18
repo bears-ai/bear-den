@@ -281,7 +281,7 @@ Enable caching for repeated requests:
 general_settings:
   cache: true
   cache_type: redis
-  redis_host: bears-redis
+  redis_host: redis  # if using Redis for LiteLLM cache
   redis_port: 6379
 ```
 

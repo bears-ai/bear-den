@@ -1,823 +1,115 @@
-# BEARS Stack - Coolify Deployment Guide
+# BEARS Stack — Coolify Deployment Guide
 
-Complete guide for deploying the BEARS Stack on Coolify with separate service deployments.
+Deploy the BEARS stack as separate services in Coolify. Shared knowledge uses **Outline (Cabinet)** via **Den** when you add them—see [PLAN.md](PLAN.md).
 
-## Table of Contents
+## Table of contents
 
 1. [Overview](#overview)
 2. [Prerequisites](#prerequisites)
 3. [Architecture](#architecture)
-4. [Deployment Order](#deployment-order)
-5. [Step-by-Step Deployment](#step-by-step-deployment)
-6. [Post-Deployment](#post-deployment)
+4. [Deployment order](#deployment-order)
+5. [Step-by-step](#step-by-step-deployment)
+6. [Post-deployment](#post-deployment)
 7. [Verification](#verification)
 8. [Troubleshooting](#troubleshooting)
 
 ## Overview
 
-**Target architecture** (see [PLAN.md](PLAN.md) and [README.md](README.md)):
-
-- **Letta** — agent runtime and **native memory** (blocks, conversations); not replaced by Cabinet.
-- **Cabinet** ( **Outline** ) — shared **knowledgebase** that **humans and agents** read and edit; agents reach it via **BEARS Core**. This **obviates** the old Git + Qdrant standalone knowledgebase for that role.
-
-**Legacy two-repository architecture** (optional, migration only):
-
-1. **This repository** (`bears-deploy`) — configuration and deployment guides  
-2. **Content repository** — Git-synced Markdown (`content-template/`) + knowledgebase API + Qdrant  
-
-Deploy services individually in Coolify. Use **LiteLLM → Letta → OpenWebUI** as the minimal path; add **Outline + BEARS Core** when enabling Cabinet. Deploy the **Git Sync + knowledgebase + Qdrant** chain only if you still rely on the legacy KB.
+- **This repo** (`bears-deploy`) — configs and docs for Letta, LiteLLM, OpenWebUI, etc.
+- **Letta** — agents and native memory (blocks, conversations).
+- **Cabinet** — shared knowledge in **Outline**, exposed to agents through **Den** ([PLAN.md](PLAN.md)).
 
 ## Prerequisites
 
-### Infrastructure
-
-- ✅ Coolify instance running (v4.0+)
-- ✅ At least 6 GB RAM available
-- ✅ 20 GB disk space for data and images
-- ✅ Domain name (optional, for HTTPS access)
-
-### Accounts and Keys
-
-- ✅ GitHub account
-- ✅ OpenAI API key (for GPT models and embeddings)
-- ✅ Anthropic API key (for Claude models)
-- ✅ GitHub PAT with Contents: Read/Write — **only if** using legacy Git Sync + content repo
-
-### Local Tools
-
-- ✅ Git client
-- ✅ `openssl` for generating secure keys
-- ✅ Web browser for Coolify and Letta UI
+- Coolify v4+
+- ~4 GB RAM minimum (Letta + LiteLLM + OpenWebUI)
+- API keys: OpenAI and/or Anthropic (and others per LiteLLM config)
 
 ## Architecture
 
-### Service dependencies (target)
-
 ```
-Application
-├── OpenWebUI (or LibreChat)
-├── Outline (Cabinet — human-editable knowledge)
-└── Letta (agents + native memory)
-
-BEARS Core (planned)
-├── Auth proxy → Letta
-└── Cabinet API → Outline (agent tools)
-
-APIs
-└── LiteLLM (model gateway)
+OpenWebUI → Letta → LiteLLM → model providers
+(Optional later: Den, Outline/Cabinet per PLAN.md)
 ```
-
-### Data flow (target)
-
-```
-User → OpenWebUI → Letta → LiteLLM → providers
-           ↓           ↓
-      (optional)   Cabinet tools → BEARS Core → Outline
-Humans edit Cabinet docs directly in Outline.
-```
-
-### Legacy stack (Git + Qdrant knowledgebase)
-
-If you still run the old memory service:
-
-```
-User → OpenWebUI → Letta → Knowledgebase ← Git Sync → GitHub
-                        ↓
-                   Qdrant, Redis, PostgreSQL
-```
-
-**Prefer migrating** to Cabinet (Outline) per [PLAN.md](PLAN.md); then you can remove Git Sync, Qdrant, and the standalone knowledgebase for that use case.
-
-For multi-user deployments, see [MULTIUSER_PROXY_ARCHITECTURE.md](MULTIUSER_PROXY_ARCHITECTURE.md) (auth proxy / BEARS Core) and [PLAN.md](PLAN.md).
 
 ## Deployment order
 
-### Target (Cabinet-oriented)
+1. **LiteLLM** — model gateway  
+2. **Letta** — must reach LiteLLM  
+3. **OpenWebUI** — chat UI + open-webui-tools → Letta  
+4. **Outline + Den** — when enabling Cabinet ([PLAN.md](PLAN.md))
 
-1. **LiteLLM** (model gateway)  
-2. **Letta** (point `LLM_API_URL` at LiteLLM)  
-3. **OpenWebUI** (or LibreChat)  
-4. **Outline + BEARS Core** — when ready for shared human+agent knowledge ([PLAN.md](PLAN.md))  
+## Step-by-step deployment
 
-No Git Sync / Qdrant / standalone knowledgebase required for this path.
+### Step 1: LiteLLM
 
-### Legacy (Git + Qdrant knowledgebase)
+See [`services/litellm/COOLIFY_DEPLOY.md`](services/litellm/COOLIFY_DEPLOY.md).
 
-Deploy in this order **only** if you still use the old KB:
+- Service name e.g. `bears-litellm`, port `4000`  
+- Set provider keys, `LITELLM_MASTER_KEY` for production  
+- Mount `services/litellm/litellm-config.yaml` → `/app/config.yaml`  
+- Health: `GET http://bears-litellm:4000/health/liveliness`
 
-1. **PostgreSQL**  
-2. **Redis**  
-3. **Qdrant**  
-4. **Git Sync**  
-5. **Knowledgebase / Memory Service**  
-6. **LiteLLM**  
-7. **Letta** (with `KNOWLEDGEBASE_URL` if agents use the legacy API)  
-8. **OpenWebUI**
+### Step 2: Letta
 
-## Step-by-Step Deployment
+See [`services/letta/COOLIFY_DEPLOY.md`](services/letta/COOLIFY_DEPLOY.md).
 
-The steps below begin with **Step 0–5: legacy content + knowledgebase**. If you are on the **target** stack (Cabinet only), skip to **Step 6: LiteLLM** after preparing Letta/OpenWebUI envs—or follow [PLAN.md](PLAN.md) for Outline deployment order.
+- `LLM_API_URL=http://bears-litellm:4000/v1`  
+- `LETTA_SERVER_PASS`, `OPENAI_API_KEY` (or embeddings via LiteLLM)  
+- Volume: `bears-letta-data` → `/root/.letta`  
+- Health: `GET http://bears-letta:8283/v1/health`
 
-### Step 0: Prepare Content Repository (legacy only)
+### Step 3: OpenWebUI
 
-**Skip if** you are not deploying Git Sync + the old knowledgebase. Otherwise create your content repository.
+1. Image: `ghcr.io/open-webui/open-webui:main`, port `3000`  
+2. Secrets: `WEBUI_SECRET_KEY`, `WEBUI_JWT_SECRET_KEY` (generate with `openssl rand -base64 32`)  
+3. Letta: `LETTA_API_URL=http://bears-letta:8283/v1`, `LETTA_SERVER_PASS=<same as Letta>`  
+4. Optional: Coolify **PostgreSQL** + `DATABASE_URL` for production multi-user OpenWebUI  
+5. Volume: `bears-openwebui-data` → `/app/backend/data`  
+6. Health: `GET /api/health`
 
-#### 0.1. Fork Content Template
+### Step 4: OpenWebUI ↔ Letta (open-webui-tools)
 
-```bash
-# Clone this repository locally
-git clone https://github.com/TheArtificial/bears-deploy.git
-cd bears-deploy
+1. OpenWebUI → **Settings** → **Workspace** → **Functions**  
+2. Install Letta integration from [open-webui-tools](https://github.com/Haervwe/open-webui-tools) (or `services/letta/openwebui_pipe_example.py`)  
+3. **Settings** → **Models**: register Letta-backed models  
 
-# Copy content template
-cp -r content-template ../bears-content
-cd ../bears-content
+Multi-user / Den / Letta Cloud: [MULTIUSER_PROXY_ARCHITECTURE.md](MULTIUSER_PROXY_ARCHITECTURE.md). Direct OpenWebUI sessions: `services/letta/OPENWEBUI_SESSIONS.md`.
 
-# Initialize as new repository
-rm -rf .git
-git init
-git add .
-git commit -m "Initial commit from BEARS content template"
+### Step 5: Outline & Den (Cabinet)
 
-# Create repository on GitHub and push
-# (Create "bears-content" repository on GitHub first)
-git remote add origin https://github.com/YourUsername/bears-content.git
-git branch -M main
-git push -u origin main
-```
+Follow [PLAN.md](PLAN.md) when you deploy the control plane and Outline-backed Cabinet.
 
-#### 0.2. Create GitHub Personal Access Token
+## Post-deployment
 
-1. Go to GitHub → Settings → Developer Settings → Personal Access Tokens → Fine-grained tokens
-2. Click "Generate new token"
-3. Configure:
-   - **Token name**: `BEARS Git Sync`
-   - **Expiration**: 90 days
-   - **Repository access**: Only `bears-content`
-   - **Permissions**: Contents - **Read and write**
-4. Generate and **save the token** (you won't see it again!)
-
-### Step 1: Deploy PostgreSQL
-
-#### 1.1. Create Database in Coolify
-
-1. Go to Coolify → **Databases** → **Add Database**
-2. Select **PostgreSQL**
-3. Configure:
-   - **Name**: `bears-postgres`
-   - **Version**: `17`
-   - **Username**: `postgres` (default)
-   - **Password**: Click "Generate" or use: `openssl rand -base64 32`
-   - **Database Name**: `<memory-db>`
-4. Click **Deploy**
-5. Wait for status: **Healthy** ✅
-
-#### 1.2. Save Connection Details
-
-```bash
-# Note these for the knowledgebase/memory service deployment:
-POSTGRES_HOST=<coolify-generated-host-name>
-POSTGRES_PORT=5432
-POSTGRES_USER=postgres
-POSTGRES_PASSWORD=<your-generated-password>
-POSTGRES_DB=<memory-db>
-```
-
-**Verify**: Check database is accessible in Coolify dashboard.
-
----
-
-### Step 2: Deploy Redis
-
-See [`services/redis/COOLIFY_DEPLOY.md`](services/redis/COOLIFY_DEPLOY.md) for detailed instructions.
-
-#### 2.1. Create Service
-
-1. Coolify → **Add Resource** → **Docker Image**
-2. Configure:
-   - **Service Name**: `bears-redis`
-   - **Image**: `redis:7-alpine`
-   - **Port**: 6379 (internal only)
-
-#### 2.2. Add Persistent Storage
-
-- **Volume Name**: `bears-redis-data`
-- **Mount Path**: `/data`
-
-#### 2.3. Configure Health Check
-
-```bash
-Command: redis-cli ping | grep PONG
-Interval: 10s
-Timeout: 5s
-Retries: 5
-```
-
-#### 2.4. Deploy
-
-Click **Deploy** and wait for status: **Healthy** ✅
-
-**Verify**: Test in Coolify terminal: `redis-cli ping` → `PONG`
-
----
-
-### Step 3: Deploy Qdrant
-
-See [`services/qdrant/COOLIFY_DEPLOY.md`](services/qdrant/COOLIFY_DEPLOY.md) for detailed instructions.
-
-#### 3.1. Create Service
-
-1. Coolify → **Add Resource** → **Docker Image**
-2. Configure:
-   - **Service Name**: `bears-qdrant`
-   - **Image**: `qdrant/qdrant:latest`
-   - **Port**: 6333 (internal)
-
-#### 3.2. Add Persistent Storage
-
-- **Volume Name**: `bears-qdrant-data`
-- **Mount Path**: `/qdrant/storage`
-
-#### 3.3. Configure Health Check
-
-```bash
-Command: wget --no-verbose --tries=1 --spider http://localhost:6333/readyz || exit 1
-Interval: 30s
-Timeout: 10s
-Start Period: 60s
-```
-
-#### 3.4. Set Resource Limits
-
-- **Memory**: 2 GB
-- **CPU**: 2 cores
-
-#### 3.5. Deploy
-
-Click **Deploy** and wait for status: **Healthy** ✅
-
-**Verify**: Test in Coolify terminal: `curl http://localhost:6333/` → Returns Qdrant version info
-
----
-
-### Step 4: Deploy Git Sync
-
-See [`services/git-sync/COOLIFY_DEPLOY.md`](services/git-sync/COOLIFY_DEPLOY.md) for detailed instructions.
-
-#### 4.1. Create Service
-
-1. Coolify → **Add Resource** → **Docker Image**
-2. Choose **Build from Git Repository**
-3. Configure:
-   - **Service Name**: `bears-git-sync`
-   - **Git Repository**: `https://github.com/TheArtificial/bears-deploy`
-   - **Branch**: `main`
-   - **Dockerfile**: `services/git-sync/Dockerfile`
-   - **Build Context**: `services/git-sync`
-
-#### 4.2. Configure Environment Variables
-
-```bash
-# Content Repository
-GIT_SYNC_REPO=https://github.com/YourUsername/bears-content.git
-GIT_SYNC_BRANCH=main
-
-# GitHub Authentication
-GIT_USERNAME=your-github-username
-GIT_PASSWORD=ghp_your_personal_access_token
-
-# Git Identity
-GIT_AUTHOR_NAME=BEARS Git Sync
-GIT_AUTHOR_EMAIL=git-sync@yourdomain.com
-
-# Optional: Sync interval (default: 300s / 5 min)
-GIT_SYNC_INTERVAL=300
-```
-
-#### 4.3. Create Shared Volume
-
-**Critical**: This volume will be shared with the knowledgebase/memory service!
-
-- **Volume Name**: `bears-memory`
-- **Mount Path**: `/data`
-
-#### 4.4. Deploy
-
-Click **Deploy** and watch logs for:
-
-```
-🐻 BEARS Git Sync starting...
-📦 Cloning repository for the first time...
-✅ Repository cloned successfully
-✅ Git sync is running!
-```
-
-**Verify**:
-- Check logs show successful clone
-- Test in terminal: `ls -la /data/` → Should show `memories/`, `history/`, `projects/`, `.git/`
-- Check GitHub repository for auto-commit test
-
----
-
-### Step 5: Deploy Knowledgebase / Memory Service API
-
-See the knowledgebase/memory service deployment guide for detailed instructions.
-
-#### 5.1. Create Service
-
-1. Coolify → **Add Resource** → **Docker Image**
-2. Configure:
-   - **Service Name**: `bears-knowledgebase` (or another name you choose)
-   - **Image**: `<your-knowledgebase-image>` (choose the RMCP+Qdrant image or other implementation)
-   - **Port**: 8080
-
-#### 5.2. Configure Environment Variables
-
-```bash
-# PostgreSQL (from Step 1)
-POSTGRES_HOST=<your-coolify-postgres-host>
-POSTGRES_PORT=5432
-POSTGRES_USER=postgres
-POSTGRES_PASSWORD=<from-step-1>
-POSTGRES_DB=<memory-db>
-
-# Redis
-REDIS_HOST=<bears-redis-ip-addr>
-REDIS_PORT=6379
-
-# Qdrant
-QDRANT_HOST=bears-qdrant
-QDRANT_PORT=6333
-
-# OpenAI API
-OPENAI_API_KEY=sk-your-openai-api-key
-
-# Authentication
-AUTH_TYPE=disabled
-```
-
-#### 5.3. Mount Shared Volume
-
-**Critical**: Use the SAME volume as Git Sync!
-
-- **Volume Name**: `bears-memory` (same as git-sync)
-- **Mount Path**: `/app/memory`
-
-#### 5.4. Configure Health Check
-
-```bash
-Command: wget --no-verbose --tries=1 --spider http://localhost:8080/health || exit 1
-Interval: 30s
-Timeout: 10s
-Start Period: 60s
-```
-
-#### 5.5. Deploy
-
-Click **Deploy** and watch logs for startup/connectivity messages (varies by implementation):
-
-```
-Knowledgebase backend started
-Connected to PostgreSQL
-Connected to Qdrant
-```
-
-**Note**: First deployment doesn't need migrations (empty database).
-
-**Verify**:
-- Test: `curl http://bears-knowledgebase:8080/health` → expected health response
-- Check terminal: `ls -la /app/memory/` → Should show `memories/`, `history/`, `projects/`
-
----
-
-### Step 6: Deploy LiteLLM
-
-See [`services/litellm/COOLIFY_DEPLOY.md`](services/litellm/COOLIFY_DEPLOY.md) for detailed instructions.
-
-#### 6.1. Create Service
-
-1. Coolify → **Add Resource** → **Docker Image**
-2. Choose **Build from Git Repository**
-3. Configure:
-   - **Service Name**: `bears-litellm`
-   - **Git Repository**: `https://github.com/TheArtificial/bears-deploy`
-   - **Branch**: `main`
-   - **Dockerfile**: `services/litellm/docker/litellm/Dockerfile`
-   - **Build Context**: `services/litellm/docker/litellm`
-
-#### 6.2. Configure Environment Variables
-
-```bash
-# LLM Provider API Keys
-OPENAI_API_KEY=sk-your-openai-key
-ANTHROPIC_API_KEY=sk-ant-your-anthropic-key
-
-# LiteLLM Configuration
-LITELLM_MASTER_KEY=<generate: openssl rand -hex 32>
-PORT=4000
-```
-
-#### 6.3. Mount Configuration File
-
-Mount `services/litellm/litellm-config.yaml` from repository:
-
-- **Source**: From repository at `services/litellm/litellm-config.yaml`
-- **Target**: `/app/config.yaml`
-- **Read Only**: Yes
-
-**Or** create custom config volume.
-
-<!-- #### 6.4. Set Command Override
-
-```bash
---config /app/config.yaml --port 4000
-``` -->
-
-#### 6.5. Configure Health Check
-
-```bash
-Command: wget --no-verbose --tries=1 --spider http://localhost:4000/health/liveliness || exit 1
-Interval: 30s
-Timeout: 10s
-Start Period: 40s
-```
-
-#### 6.6. Deploy
-
-Click **Deploy** and wait for status: **Healthy** ✅
-
-**Verify**:
-- Test: `curl http://bears-litellm:4000/health/liveliness`
-- List models: `curl http://bears-litellm:4000/v1/models`
-
----
-
-### Step 7: Deploy Letta
-
-See [`services/letta/COOLIFY_DEPLOY.md`](services/letta/COOLIFY_DEPLOY.md) for detailed instructions.
-
-#### 7.1. Create Service
-
-1. Coolify → **Add Resource** → **Docker Image**
-2. Configure:
-   - **Service Name**: `bears-letta`
-   - **Image**: `letta/letta:latest`
-   - **Port**: 8283 (expose externally or use Coolify proxy)
-
-#### 7.2. Configure Environment Variables
-
-```bash
-# Service Integration
-# KNOWLEDGEBASE_URL: only if using the legacy Git+Qdrant knowledgebase service.
-# Target stack: use Cabinet (Outline) via BEARS Core tools; Letta native memory unchanged.
-# KNOWLEDGEBASE_URL=http://bears-knowledgebase:8080
-LLM_API_URL=http://bears-litellm:4000/v1
-
-# Model Configuration
-MODEL_NAME=gpt-5
-
-# Letta Server
-LETTA_SERVER_PORT=8283
-LETTA_SERVER_PASS=<generate: openssl rand -base64 32>
-
-# OpenAI (for embeddings)
-OPENAI_API_KEY=sk-your-openai-key
-
-# LiteLLM Master Key (optional)
-# If LiteLLM requires a master key, set this to match the `LITELLM_MASTER_KEY` used by the `bears-litellm` service.
-# For local/dev you may leave this unset to allow unauthenticated LiteLLM (not recommended for production).
-# Example: LITELLM_MASTER_KEY=sk-litellm-<hex>
-```
-
-#### 7.3. Add Persistent Storage
-
-- **Volume Name**: `bears-letta-data`
-- **Mount Path**: `/root/.letta`
-
-#### 7.4. Configure Health Check
-
-```bash
-Command: curl -f http://localhost:8283/v1/health || exit 1
-Interval: 30s
-Timeout: 10s
-Start Period: 40s
-```
-
-#### 7.5. Deploy
-
-Click **Deploy** and wait for status: **Healthy** ✅
-
-**Verify**:
-- Test: `curl http://bears-letta:8283/v1/health`
-- Access Web UI at configured domain or `http://<server-ip>:8283`
-
----
-
-### Step 8: Deploy OpenWebUI (Primary Chat UI)
-
-OpenWebUI provides a modern, extensible chat interface for interacting with Letta agents.
-
-#### 8.1. Create OpenWebUI Service
-
-1. Coolify → **Add Resource** → **Docker Image**
-2. Configure:
-    - **Service Name**: `bears-openwebui`
-    - **Image**: `ghcr.io/open-webui/open-webui:main` (or `latest`)
-    - **Port**: 3000 (expose externally via Coolify proxy)
-
-#### 8.2. Environment Variables
-
-```bash
-# Core Configuration
-WEBUI_SECRET_KEY=<generate: openssl rand -base64 32>
-WEBUI_JWT_SECRET_KEY=<generate: openssl rand -base64 32>
-WEBUI_JWT_ACCESS_TOKEN_EXPIRES_IN=86400
-WEBUI_JWT_REFRESH_TOKEN_EXPIRES_IN=604800
-
-# Database (OpenWebUI uses SQLite by default, or PostgreSQL)
-# For PostgreSQL (recommended for production):
-DATABASE_URL=postgresql://user:password@bears-postgres:5432/openwebui
-
-# Letta Integration
-LETTA_API_URL=http://bears-letta:8283/v1
-LETTA_SERVER_PASS=<your-letta-password>
-
-# Optional: Knowledgebase integration
-KNOWLEDGEBASE_URL=http://bears-knowledgebase:8080
-```
-
-**Important**: Generate secure secrets:
-```bash
-WEBUI_SECRET_KEY=$(openssl rand -base64 32)
-WEBUI_JWT_SECRET_KEY=$(openssl rand -base64 32)
-```
-
-#### 8.3. Add Persistent Storage
-
-- **Volume Name**: `bears-openwebui-data`
-- **Mount Path**: `/app/backend/data`
-
-#### 8.4. Configure Health Check
-
-```bash
-Command: curl -f http://localhost:3000/api/health || exit 1
-Interval: 30s
-Timeout: 10s
-Start Period: 60s
-```
-
-#### 8.5. Deploy
-
-Click **Deploy** and wait for **Healthy** status.
-
-#### 8.6. Configure Domain and SSL
-
-1. In Coolify, configure custom domain for OpenWebUI service
-2. Enable SSL/TLS certificate
-3. Access OpenWebUI at `https://openwebui.yourdomain.com`
-
----
-
-### Step 9: Install OpenWebUI Tools Integration
-
-To connect Letta agents as "models" in OpenWebUI, install functions from [open-webui-tools](https://github.com/Haervwe/open-webui-tools).
-
-#### 9.1. Access OpenWebUI
-
-1. Navigate to your OpenWebUI instance
-2. Log in or create an admin account
-3. Go to **Settings** → **Workspace** → **Functions**
-
-#### 9.2. Install Letta Integration Function
-
-1. Visit the [open-webui-tools repository](https://github.com/Haervwe/open-webui-tools)
-2. Find the function that connects to Letta agents (or use the pipe function from `services/letta/openwebui_pipe_example.py`)
-3. Copy the function code into OpenWebUI's Functions section
-4. Configure the function with your Letta API URL and credentials:
-   - `LETTA_API_URL=http://bears-letta:8283/v1`
-   - `LETTA_SERVER_PASS=<your-letta-password>`
-
-#### 9.3. Register Letta Agents as Models
-
-1. In OpenWebUI, go to **Settings** → **Models**
-2. Add a custom model/provider that uses your Letta integration function
-3. Letta agents will appear as selectable models in the chat interface
-
-**Note**: For the canonical multi-user architecture (auth proxy, one agent per user, Letta Cloud), see [MULTIUSER_PROXY_ARCHITECTURE.md](MULTIUSER_PROXY_ARCHITECTURE.md). For session strategies with the current direct OpenWebUI→Letta setup, see `services/letta/OPENWEBUI_SESSIONS.md` and `services/letta/openwebui_pipe_example.py`.
-
----
-
-## Post-Deployment
-
-### Access the Web UI
-
-#### OpenWebUI (Primary Chat UI)
-1. Navigate to your configured OpenWebUI domain or `http://<server-ip>:3000`
-2. Create an admin account or register as a new user
-3. Configure Letta agents as models (via open-webui-tools functions)
-4. Start chatting with Letta agents!
-
-#### Letta (Agent Management API)
-1. Access internally via `http://bears-letta:8283` or VPN
-2. Login with `LETTA_SERVER_PASS`
-3. Create/maintain agents, tools, and memory integrations
-4. Use API for automation or advanced workflows
-
-### Verify End-to-End Functionality
-
-1. **Create a test agent** in Letta Web UI
-2. **Chat with the agent** - ask it to remember something
-3. **Check GitHub** - verify memory file was created and auto-committed
-4. **Check Qdrant** - `curl http://bears-qdrant:6333/collections`
-5. **Chat again** - verify agent recalls the previous context
-
-### Configure Domain (Optional)
-
-1. In Coolify, add custom domain for Letta service
-2. Configure SSL/TLS certificate
-3. Access via `https://your-domain.com`
+- OpenWebUI: chat with Letta agents via configured models  
+- Letta UI (internal): agent and memory management at `:8283`  
+- Add **Den** + **Outline** for shared knowledge and channel routing  
 
 ## Verification
 
-### Service Health Checklist
+| Check | Command / action |
+|-------|------------------|
+| LiteLLM | `curl http://bears-litellm:4000/health/liveliness` |
+| Letta | `curl http://bears-letta:8283/v1/health` |
+| OpenWebUI | `curl http://bears-openwebui:3000/api/health` |
 
-Check all services are healthy in Coolify dashboard:
-
-- [ ] PostgreSQL - **Healthy** ✅
-- [ ] Redis - **Healthy** ✅
-- [ ] Qdrant - **Healthy** ✅
-- [ ] Git Sync - **Healthy** ✅
-- [ ] Knowledgebase API - **Healthy** ✅
-- [ ] LiteLLM - **Healthy** ✅
-- [ ] Letta - **Healthy** ✅
-- [ ] OpenWebUI - **Healthy** ✅
-
-### Connectivity Tests
-
-```bash
-# From any service terminal in Coolify:
-
-# Test Redis
-redis-cli -h bears-redis ping
-
-# Test Qdrant
-curl http://bears-qdrant:6333/
-
-# Test Knowledgebase / Memory Service
-curl http://bears-knowledgebase:8080/health
-
-# Test LiteLLM
-curl http://bears-litellm:4000/health/liveliness
-
-# Test Letta
-curl http://bears-letta:8283/v1/health
-
-# Test OpenWebUI
-curl http://bears-openwebui:3000/api/health
-```
-
-### Memory Sync Verification
-
-1. Check Git Sync logs for successful syncs
-2. Visit GitHub repository - should have recent auto-commits
-3. Create a test file locally and push - should sync within 5 minutes
-4. Create an agent memory in Letta - should appear in GitHub
+End-to-end: create an agent in Letta, select it in OpenWebUI, send a message.
 
 ## Troubleshooting
 
-### Service Won't Start
+- **Letta ↔ LiteLLM:** `LLM_API_URL`, optional `LITELLM_MASTER_KEY` must match LiteLLM config  
+- **OpenWebUI ↔ Letta:** function `LETTA_API_URL` and `LETTA_SERVER_PASS`  
+- **OpenWebUI DB:** if using Postgres, verify `DATABASE_URL` and network to DB  
 
-1. Check logs in Coolify dashboard
-2. Verify environment variables are set correctly
-3. Ensure dependencies are healthy (check service order)
-4. Review service-specific troubleshooting in `COOLIFY_DEPLOY.md` files
-
-### Connectivity Issues
-
-**Problem**: Service A can't connect to Service B
-
-**Solutions**:
-- Verify both services in same Coolify project
-- Check service names match environment variables
-- Test connectivity from Coolify terminal
-- Ensure target service is healthy
-
-### Git Sync Not Pushing
-
-**Problem**: No commits appearing on GitHub
-
-**Solutions**:
-- Verify `GIT_PASSWORD` (PAT) is valid and has write permissions
-- Check `GIT_SYNC_REPO` URL is correct
-- Review Git Sync logs for authentication errors
-- Test PAT: `curl -H "Authorization: token $GIT_PASSWORD" https://api.github.com/user`
-
-### Memory Files Not Found
-
-**Problem**: Knowledgebase / memory service can't read memory files
-
-**Solutions**:
-- Verify `bears-memory` volume is shared between Git Sync and the memory service
-- Check Git Sync cloned successfully: `ls /data/` in git-sync terminal
-- Check the memory service can see files: `ls /app/memory/` in the knowledgebase container
-- Review mount paths in both services
-
-### Agents Not Creating Memories
-
-**Problem**: Letta agents don't persist memories
-
-**Solutions**:
-- Verify Letta → knowledgebase connection: `curl $KNOWLEDGEBASE_URL/health` from Letta terminal
-- Check memory service logs for errors
-- Test memory service write permissions: Check `/app/memory/` is writable
-- Review Git Sync logs for commit errors
-
-### Resource Exhaustion
-
-**Problem**: Services OOMKilled or slow performance
-
-**Solutions**:
-- Check resource usage in Coolify
-- Increase memory limits (especially Qdrant, memory service)
-- Scale vertically or horizontally
-- Monitor disk space
-
-### OpenWebUI Connection Issues
-
-**Problem**: OpenWebUI can't connect to Letta agents
-
-**Solutions**:
-- Verify Letta integration function is properly installed in OpenWebUI
-- Check `LETTA_API_URL` and `LETTA_SERVER_PASS` are correct in function configuration
-- Ensure Letta service is healthy: `curl http://bears-letta:8283/v1/health`
-- Review OpenWebUI logs for connection errors
-- Verify Letta agents are properly registered as models in OpenWebUI
-
-**Problem**: Letta agents not appearing in model list
-
-**Solutions**:
-- Verify open-webui-tools function is installed and enabled
-- Check function configuration matches your Letta setup
-- Review OpenWebUI function logs for errors
-- Ensure Letta API is accessible from OpenWebUI container
-
-**Problem**: Database connection issues (if using PostgreSQL)
-
-**Solutions**:
-- Verify PostgreSQL service is healthy
-- Check `DATABASE_URL` format: `postgresql://user:password@bears-postgres:5432/openwebui`
-- Ensure network connectivity between services
-- Review OpenWebUI logs for database errors
-
-## Next Steps
-
-### Production Hardening
-
-- [ ] Enable authentication on the knowledgebase/memory service (`AUTH_TYPE=basic`)
-- [ ] Set up HTTPS for external access
-- [ ] Configure Coolify backups
-- [ ] Set up monitoring/alerting
-- [ ] Document recovery procedures
-- [ ] Test backup/restore process
-
-### Customization
-
-- [ ] Add more models to LiteLLM config
-- [ ] Customize memory structure in content repository
-- [ ] Create project-specific memory directories
-- [ ] Set up multiple agents for different purposes
-- [ ] Configure agent tools/functions
-
-### Ongoing Maintenance
-
-- [ ] Monitor service health daily
-- [ ] Review Git commits weekly
-- [ ] Update Docker images monthly
-- [ ] Rotate API keys quarterly
-- [ ] Review and optimize memory structure
+Service-specific detail: `services/*/COOLIFY_DEPLOY.md`.
 
 ## Support
 
-For detailed troubleshooting:
-
-- **Service-specific issues**: See `services/{service}/COOLIFY_DEPLOY.md`
-- **Architecture questions**: Review `ARCHITECTURE_NOTES.md`
-- **Memory system**: See `content-template/README.md`
+- [ARCHITECTURE_NOTES.md](ARCHITECTURE_NOTES.md)  
+- [PLAN.md](PLAN.md) — Den, Cabinet, Outline  
+- [MULTIUSER_PROXY_ARCHITECTURE.md](MULTIUSER_PROXY_ARCHITECTURE.md)  
 
 ---
 
-**Deployment Complete!** 🎉
-
-Your BEARS Stack is now fully operational with:
-- ✅ Git-versioned memory management
-- ✅ Automatic GitHub synchronization
-- ✅ Semantic search via Qdrant
-- ✅ Multi-model support via LiteLLM
-- ✅ Coolify-managed infrastructure
-- ✅ Modern chat UI with OpenWebUI
-- ✅ Multi-user authentication and conversation management
-- ✅ Letta agent integration via open-webui-tools
-
-Start building your agentic assistants with Letta (agent management) and OpenWebUI (modern chat interface)! 🐻
-
-**Multi-user production**: For per-user agents, user-identity mapping, and access control, use the Authentication Proxy architecture described in [MULTIUSER_PROXY_ARCHITECTURE.md](MULTIUSER_PROXY_ARCHITECTURE.md).
+**Deployment complete.** Multi-user production with per-user agents and Den: see [MULTIUSER_PROXY_ARCHITECTURE.md](MULTIUSER_PROXY_ARCHITECTURE.md).

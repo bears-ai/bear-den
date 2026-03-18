@@ -428,12 +428,8 @@ def save_session_to_history(chat_id: str, user_id: str):
         "summary": None  # Can be generated later
     }
 
-    # Save to history/ directory via knowledgebase API
-    knowledgebase_url = os.getenv("KNOWLEDGEBASE_URL", "http://bears-knowledgebase:8080")
-    requests.post(
-        f"{knowledgebase_url}/history/sessions",
-        json=session_data
-    )
+    # Optional: persist session summaries to Cabinet (Outline) via Den when available
+    # See PLAN.md — not required for basic OpenWebUI ↔ Letta mapping
 ```
 
 ## Configuration
@@ -450,14 +446,9 @@ LETTA_SERVER_PASS=<your-password>
 # Session Management Strategy
 SESSION_STRATEGY=user  # or "chat" or "hybrid"
 
-# Storage Backend
-SESSION_STORAGE=redis  # or "postgres" or "file"
-REDIS_URL=redis://bears-redis:6379
-# or
-POSTGRES_URL=postgresql://user:pass@host:5432/db
-
-# Knowledgebase Integration
-KNOWLEDGEBASE_URL=http://bears-knowledgebase:8080
+SESSION_STORAGE=file  # or redis / postgres if you run those services
+# REDIS_URL=redis://redis:6379
+# POSTGRES_URL=postgresql://user:pass@host:5432/db
 ```
 
 ## Testing
@@ -520,7 +511,7 @@ assert agent1 != agent2, "Different chats should have different agents"
 2. **Implement storage** for session mappings (Redis/PostgreSQL/file)
 3. **Create pipe function** in Open WebUI
 4. **Test integration** with sample chats
-5. **Integrate with BEARS memory** system for history tracking
+5. **Optional:** archive highlights to **Cabinet** via Den ([PLAN.md](../../PLAN.md))
 6. **Add session management UI** (optional) for viewing/managing sessions
 
 ## References

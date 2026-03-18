@@ -22,12 +22,11 @@ import redis
 LETTA_API_URL = os.getenv("LETTA_API_URL", "http://bears-letta:8283/v1")
 LETTA_API_KEY = os.getenv("LETTA_SERVER_PASS", "")
 SESSION_STRATEGY = os.getenv("SESSION_STRATEGY", "user")  # "user", "chat", or "hybrid"
-REDIS_URL = os.getenv("REDIS_URL", "redis://bears-redis:6379")
+REDIS_URL = os.getenv("REDIS_URL", "")  # optional; e.g. redis://redis:6379 if you run Redis
 
-# Initialize Redis client (if using Redis for session storage)
 try:
     redis_client = redis.from_url(REDIS_URL) if REDIS_URL else None
-except:
+except Exception:
     redis_client = None
 
 

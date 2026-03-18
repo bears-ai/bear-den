@@ -6,7 +6,7 @@
 
 BEARS Stack is a long-running, modular assistant system that supports persistent identity, memory, and agency across multiple users and foundational models. It behaves like a member of the household—growing in awareness and usefulness over time—while remaining portable, transparent, and fully under user control.
 
-The system is model-agnostic and self-hosted. **Shared knowledge** is moving to **Cabinet** ([Outline](https://www.getoutline.com/))—human- and agent-editable docs that **do not replace** Letta’s per-agent memory. The older **Git+Qdrant knowledgebase** is **obviated** by Cabinet for that role (see repo `PLAN.md`, `README.md`).
+The system is model-agnostic and self-hosted. **Shared knowledge** is **Cabinet** on **Outline** (human- and agent-editable); **Letta** holds per-agent memory. See `PLAN.md` (Den, Cabinet).
 
 ## Goals and Objectives
 
@@ -23,7 +23,6 @@ The system is model-agnostic and self-hosted. **Shared knowledge** is moving to 
 - Multi-user identity and memory management (personal + shared contexts)
 - Model-agnostic LLM routing via LiteLLM
 - **Cabinet (Outline)** for shared long-term knowledge (humans + agents); Letta native memory for agent context  
-- Legacy: Git+Qdrant knowledgebase (being retired for that use case)
 - Letta agent framework for autonomous workflows
 - Docker-based deployment via Coolify
 - Project-scoped memory and context management
@@ -50,8 +49,8 @@ The system is model-agnostic and self-hosted. **Shared knowledge** is moving to 
 ### Functional Requirements
 1. Support multiple user identities with separate personal and shared memory spaces
 2. Route requests to any LLM backend (OpenAI, Claude, Mistral, LM Studio, etc.)
-3. Maintain human-readable memory in Markdown format
-4. Version all memory changes via Git
+3. Shared knowledge human-readable and editable in **Outline (Cabinet)**
+4. Letta per-agent memory and conversation state in Letta
 5. Enable project-based memory scoping for focused workflows
    - Projects can be focused (e.g., "Move to PMTiles") or open-ended
    - Each project maintains its own scoped memory and context
@@ -74,13 +73,12 @@ The system is model-agnostic and self-hosted. **Shared knowledge** is moving to 
 ### Core Infrastructure
 - **Deployment**: Coolify (Docker Compose orchestration)
 - **Containerization**: Docker with named volumes for persistence
-- **Version Control**: Git for memory and configuration tracking
+- **Config**: Git for this deploy repo; knowledge in Outline
 
 ### AI/ML Components
 - **Model Gateway**: LiteLLM (multi-provider routing)
 - **Agent Framework**: Letta (autonomous workflows, tool execution)
-- **Memory**: Letta native + **Cabinet (Outline)** for shared knowledge; legacy knowledgebase optional
-- **Vector Store**: Qdrant, Weaviate, or Pinecone (semantic retrieval)
+- **Memory**: Letta native + **Cabinet (Outline)** for shared knowledge
 - **Multi-User Auth**: Canonical design is the Authentication Proxy in front of Letta Cloud (one agent per user, routing, access control). See `MULTIUSER_PROXY_ARCHITECTURE.md`.
 
 ### Memory Architecture
@@ -117,7 +115,7 @@ projects/            # Project-scoped memory files (per-project context)
 This is an exploratory, iterative project with flexible timelines. Development will proceed in capability-driven phases:
 
 - **Phase 1**: Core infrastructure (Docker, Coolify, LiteLLM)
-- **Phase 2**: Cabinet (Outline) + Letta memory; legacy Git+Qdrant KB optional
+- **Phase 2**: Cabinet (Outline) + Letta memory
 - **Phase 3**: Multi-user support and memory scoping
 - **Phase 4**: Agent framework integration (Letta)
 - **Phase 5**: Advanced features (RAG, MCPs, semantic search)
@@ -173,7 +171,7 @@ Specific dates and deadlines will be determined as the project evolves.
 1. **Behavior Reusability**: Agent behavior, memory, and tools are reusable across models
 2. **User Editability**: Both users can manually revise any part of the memory via Markdown or Git
 3. **Unified Deployment**: All services deployed via a unified Docker Compose file
-4. **Named Volumes**: Letta, Outline, LiteLLM; legacy Qdrant only if old KB retained
+4. **Named Volumes**: Letta, Outline, LiteLLM
 
 ### Related Documentation
 - [`agentic-assistant-architecture.md`](agentic-assistant-architecture.md) - Detailed architectural design

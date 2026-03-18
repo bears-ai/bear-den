@@ -1,15 +1,14 @@
 # Memory Architecture Specification
 
-> **Update:** Target shared knowledge is **Cabinet (Outline)**—humans and agents read/write the same docs via BEARS. **Letta memory** (blocks, conversations) is unchanged. The **Git+Qdrant knowledgebase** below is **legacy**, obviated by Cabinet for that role. See repo `PLAN.md`.
+> **Update:** Shared knowledge is **Cabinet (Outline)** via **Den**. **Letta memory** (blocks, conversations) is separate. See repo `PLAN.md`.
 
 ## Overview
 
 The agent reasons over:
 
 - **Letta native memory** (blocks, conversation state, built-in tools)  
-- **Cabinet** (Outline) — curated shared knowledge, human-editable UI  
-- **Large corpora** (RAG, MCPs) as needed  
-- Legacy: Git-tracked Markdown + Qdrant via old knowledgebase API
+- **Cabinet** (Outline) — shared knowledge, human-editable UI, agent tools via Den  
+- **Large corpora** (RAG, MCPs) as needed
 
 ---
 
@@ -376,81 +375,27 @@ tags:
 
 ## Implementation Details
 
-### Docker Compose Services
+### Stack sketch (conceptual)
 
 ```yaml
+# See bears-deploy: LiteLLM, Letta, OpenWebUI; Den + Outline for Cabinet (PLAN.md)
 services:
-  qdrant:
-    image: qdrant/qdrant:latest
-    volumes:
-      - qdrant_data:/qdrant/storage
-    ports:
-      - "6333:6333"
-
-  knowledgebase:
-    image: <knowledgebase-service-image:latest>
-    volumes:
-      - knowledgebase_data:/data
-      - ./memories:/memories
-    environment:
-      - GIT_REPO=/memories
-      - POSTGRES_HOST=postgres
-      - QDRANT_HOST=qdrant
-
-  litellm:
-    image: ghcr.io/berriai/litellm:latest
-    volumes:
-      - ./litellm-config.yaml:/app/config.yaml
-    ports:
-      - "4000:4000"
-
-  letta:
-    image: letta/letta:latest
-    volumes:
-      - letta_data:/data
-    depends_on:
-      - qdrant
-      - litellm
-
-volumes:
-  qdrant_data:
-  knowledgebase_data:
-  letta_data:
+  litellm: { ... }
+  letta: { depends_on: [litellm] }
+  # outline:, den: per deployment
 ```
 
-### Git Integration
+### Cabinet (Outline)
 
-**Repository Structure**:
-```
-bears-memory/
-├── memories/
-│   ├── personal/
-│   └── shared/
-├── history/
-├── projects/
-└── .git/
-```
-
-**Commit Strategy**:
-- Automatic commits for agent-generated content
-- Manual commits for user edits
-- Descriptive commit messages with context
-- Branch per project (optional)
-
-**Hooks**:
-- `post-commit`: Trigger re-embedding
-- `pre-push`: Validate memory format
-- `post-merge`: Sync vector store
+Shared docs and search—humans edit in Outline; agents via Den tools.
 
 ---
 
 ## Future Enhancements
 
 ### Phase 1 (Current)
-- ✅ Basic Memory (Markdown + Git)
-- ✅ Episodic Memory (JSON logs)
-- 🔄 Slot Memory (KV store)
-- 🔄 Vector Store (Qdrant)
+- Letta memory blocks + conversations
+- Cabinet (Outline) for shared knowledge
 
 ### Phase 2 (Next)
 - Agent-based summarizers for MCP data

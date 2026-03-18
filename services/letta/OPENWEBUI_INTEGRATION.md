@@ -10,7 +10,7 @@ For production multi-user deployments with **one agent per user**, user-identity
 
 Letta agents are currently connected to OpenWebUI as "models" using functions from the [open-webui-tools](https://github.com/Haervwe/open-webui-tools) repository. This provides a direct integration that allows users to select and interact with Letta agents through OpenWebUI's interface.
 
-**Knowledge:** Letta **memory** (blocks, conversations) is separate from the shared **Cabinet** knowledgebase ([Outline](https://www.getoutline.com/), via BEARS per [PLAN.md](../../PLAN.md)). The old Git+Qdrant knowledgebase is **legacy**.
+**Knowledge:** Letta **memory** (blocks, conversations) is separate from shared **Cabinet** on **Outline** (via **Den**—[PLAN.md](../../PLAN.md)).
 
 ### How It Works
 
