@@ -1,5 +1,10 @@
 Here’s a high‑level, ops‑oriented plan and architecture, with an MVP that works **without Cabinet first**, then adds Cabinet/Outline in stages.
 
+**Terminology**
+
+- **BEARS** — the whole system (stack): Letta, LiteLLM, Den, Outline, frontends, LettaBot, etc.
+- **Den** — the **BEARS control plane and gateway**: single orchestration service for identity, routing, policy, Cabinet API, and model-call observability (see below).
+
 I’ll break it into:
 
 1. System architecture (high‑level components and responsibilities)
@@ -12,31 +17,30 @@ I’ll break it into:
 
 ### Core components
 
-1. **BEARS Core**
-   - Identity and session mapping
-   - Agent registry and configuration
-   - Policy (RBAC, tool/model gating, rate limits)
-   - Auth‑aware proxy between:
-     - Frontends ↔ Letta
-     - Agents ↔ Cabinet (once Cabinet exists)
-   - Central logging and observability integration (including LiteLLM).
+1. **Den** (control plane + gateway)
+   - Maps **external identities** (Slack, WhatsApp, web, etc.) to **internal users**.
+   - **Agent registry**; **routes** chat to the correct Letta agent.
+   - **Auth** and **tool/model policies** (RBAC, gating, rate limits).
+   - **Cabinet API** for agents (search/read/write), implemented against **Outline**.
+   - **Tags and forwards** all model traffic **through LiteLLM** so logs/costs are attributable (`user_id`, `agent_id`, `channel`, etc.).
+   - Auth‑aware proxy: frontends ↔ Letta; agent tool calls ↔ Cabinet.
 
 2. **Letta**
    - Agent runtime (conversation loop + tools).
    - Per‑agent configuration: system prompts, tools, memory adapters.
-   - Stateless(ish) from BEARS’ point of view; BEARS passes user/agent IDs and context.
+   - Stateless(ish) from Den’s point of view; Den passes user/agent IDs and context.
 
 3. **LettaBot**
    - Channel adapters:
      - Slack, WhatsApp (others later).
    - For each message:
      - Authenticate/identify external user,
-     - Forward to BEARS with identity + channel metadata,
+     - Forward to **Den** with identity + channel metadata,
      - Stream responses back.
 
 4. **OpenWebUI (and any other web/CLI frontends)**
-   - Authenticates users (ideally via BEARS or a shared SSO).
-   - Forwards chat requests to BEARS instead of directly to Letta.
+   - Authenticates users (ideally via Den or a shared SSO).
+   - Forwards chat requests to **Den** instead of directly to Letta.
 
 5. **LiteLLM**
    - Model routing/proxy between Letta and OpenAI (and any other models).
@@ -44,11 +48,9 @@ I’ll break it into:
    - Optional: caching / rate‑limiting at the model layer.
 
 6. **Cabinet (later)**
-   - Logical service that agents use for long‑term knowledge & history.
-   - Backed by:
-     - **Outline** (documents, properties, embeddings), and
-     - BEARS’ identity and policy.
-   - Exposes search/read/write semantics to agents.
+   - Logical knowledge layer agents use for long‑term reference & history.
+   - **API exposed by Den**; storage and human UI on **Outline**.
+   - Den enforces identity and policy on every Cabinet operation.
 
 7. **Outline**
    - Human knowledge base UI.
@@ -67,7 +69,7 @@ I’ll break it into:
 
 Not exact APIs, but what each interface *does*.
 
-### 2.1 Frontends → BEARS
+### 2.1 Frontends → Den
 
 **Purpose:** send authenticated user messages to the right Letta agent, get responses back.
 
@@ -75,7 +77,7 @@ Not exact APIs, but what each interface *does*.
 
 - `POST /chat/send`
   - Input: `{ user_token, channel, agent_id, message, metadata }`
-    - `user_token`: BEARS or upstream auth token → BEARS resolves to `user_id`.
+    - `user_token`: Den or upstream auth token → Den resolves to internal `user_id`.
     - `channel`: `"slack" | "whatsapp" | "webui" | ..."`
     - `agent_id`: which agent to talk to (or default per-channel).
     - `metadata`:
@@ -102,7 +104,7 @@ Later, you can add:
 
 ---
 
-### 2.2 BEARS → Letta (agent invocation)
+### 2.2 Den → Letta (agent invocation)
 
 **Purpose:** call Letta with clear identity and context; Letta returns messages (and tool calls).
 
@@ -112,10 +114,10 @@ You can think of a single RPC:
 
 Where:
 
-- `user_id`: BEARS internal ID (stable across Slack/WhatsApp/web).
-- `agent_id`: configuration key in Letta.
+- `user_id`: Den’s internal ID (stable across Slack/WhatsApp/web).
+- `agent_id`: configuration key in Letta (from Den’s registry).
 - `channel_ctx`: `{ channel, channel_user_id, channel_conversation_id }`.
-- `session_ctx`: optional (recent messages, conversation ID, etc.) that BEARS or Letta manages.
+- `session_ctx`: optional (recent messages, conversation ID, etc.) that Den or Letta manages.
 
 Letta returns:
 
@@ -123,11 +125,11 @@ Letta returns:
 - Tool calls (e.g., `{"tool": "cabinet.search", ...}`),
 - Final responses.
 
-BEARS doesn’t need to know Letta’s internal details, just that it can be called with a user+agent context.
+Den doesn’t need to know Letta’s internal details, just that it can be called with a user+agent context. Model calls from Letta run **through LiteLLM** with tags Den supplies (or enforces) for observability.
 
 ---
 
-### 2.3 Agents → BEARS services (via Letta tools)
+### 2.3 Agents → Den (via Letta tools)
 
 Two notable services:
 
@@ -137,13 +139,13 @@ Pseudo‑contract:
 
 - `cabinet.search(query, filters) -> [doc_summary]`
   - `filters` might include `kind`, `project`, `tags`, etc.
-  - Actually implemented as a BEARS endpoint that calls Outline search.
+  - Implemented as **Den** endpoints that call Outline search.
 
 - `cabinet.get(doc_id) -> full_doc`
 - `cabinet.create(kind, title, body, properties) -> doc_id`
 - `cabinet.update(doc_id, body?, properties?) -> doc_id`
 
-Agents never talk directly to Outline; they call these tool functions, which BEARS implements in terms of Outline APIs and policies.
+Agents never talk directly to Outline; they call these tools, which **Den** implements on top of Outline APIs and policies.
 
 #### b) User profile / preferences (optional but nice)
 
@@ -154,11 +156,11 @@ Even if initially this is just a thin layer over some DB or config, the contract
 
 ---
 
-### 2.4 BEARS → Outline (Cabinet backend)
+### 2.4 Den → Outline (Cabinet backend)
 
 **Purpose:** use Outline’s docs, properties, and embeddings as the Cabinet storage.
 
-Capabilities (internal to BEARS):
+Capabilities (internal to Den):
 
 - `outline.search(query, property_filters) -> docs`
   - Uses Outline’s embeddings + property filters.
@@ -167,23 +169,20 @@ Capabilities (internal to BEARS):
 - `outline.create_doc(deck_id, title, content, properties) -> doc_id`
 - `outline.update_doc(doc_id, content?, properties?)`
 
-BEARS enforces:
+Den enforces:
 
 - Which decks a given `user_id` and `agent_id` can touch.
 - Property schema (kinds, projects, tags, etc.).
 
 ---
 
-### 2.5 BEARS ↔ LiteLLM
+### 2.5 Den ↔ LiteLLM
 
-Letta already uses LiteLLM for model calls and observability.
+**Den’s job:** every model call is **tagged** and **routed through LiteLLM** for observability (costs, usage, attribution).
 
-BEARS’ main concerns:
-
-- **Identity tagging**: ensure Letta passes through enough metadata (`user_id`, `agent_id`, maybe `channel`) so that LiteLLM logs are useful for per‑user/agent observability.
-- **Policy linkage**: BEARS’ rate limits and model/agent policies should align with LiteLLM’s logging and possible rate limiting.
-
-No extra public contract required; just configuration and metadata conventions.
+- Den attaches (or requires) metadata: `user_id`, `agent_id`, `channel`, etc., on traffic that reaches LiteLLM—whether by configuring Letta’s outbound calls, proxying, or headers/metadata conventions.
+- **Policy alignment:** Den’s model/tool allowlists and rate limits match what LiteLLM enforces or logs.
+- LiteLLM remains the single gateway to OpenAI and other providers from BEARS’ perspective.
 
 ---
 
@@ -196,7 +195,7 @@ No extra public contract required; just configuration and metadata conventions.
 - Letta running locally or on your infra.
 - LiteLLM configured as Letta’s model proxy.
 - OpenWebUI already talking to Letta (your current state).
-- LettaBot installed on Slack and (optionally) wired to Letta directly for experiments (no BEARS yet).
+- LettaBot installed on Slack and (optionally) wired to Letta directly for experiments (no **Den** yet).
 
 Deliverables:
 - Working Letta + LiteLLM stack.
@@ -204,9 +203,9 @@ Deliverables:
 
 ---
 
-### Phase 1 – BEARS as auth‑aware proxy & agent manager (no Cabinet yet)
+### Phase 1 – **Den**: auth‑aware proxy & agent manager (no Cabinet yet)
 
-**Goal:** Move from “frontends → Letta” to “frontends → BEARS → Letta”, and centralize identity/policy.
+**Goal:** Move from “frontends → Letta” to “frontends → **Den** → Letta”, and centralize identity/policy.
 
 **Capabilities to implement:**
 
@@ -221,11 +220,11 @@ Deliverables:
 2. **Agent registry**
    - A config file or small DB:
      - `agents[agent_id] = { name, description, associated_letta_id, allowed_users_or_roles, tools_enabled, default_model }`.
-   - BEARS’ job:
+   - **Den’s** job:
      - Validate `agent_id` requests from frontends.
      - Only allow access based on user permissions.
 
-3. **Chat proxy API**
+3. **Chat proxy API** (on Den)
    - `POST /chat/send`:
      - Accepts message, auth token, optional `agent_id`.
      - Resolves `user_id`.
@@ -233,25 +232,22 @@ Deliverables:
      - Calls `invoke_agent` on Letta.
      - Streams response back.
 
-4. **Frontends switched to BEARS**
+4. **Frontends switched to Den**
    - LettaBot:
-     - Instead of calling Letta directly, it calls BEARS `/chat/send`.
+     - Instead of calling Letta directly, it calls Den `/chat/send`.
    - OpenWebUI:
-     - Configure it to talk to BEARS:
-       - Either treat BEARS as a “LLM backend with tools”,
+     - Configure it to talk to Den:
+       - Either treat Den as a “LLM backend with tools”,
        - Or implement a small adapter that maps its requests to `/chat/send`.
 
-5. **LiteLLM observability integration**
-   - Ensure that BEARS/Letta:
-     - Pass metadata (`user_id`, `agent_id`, `channel`) into LiteLLM’s logging context.
-   - Validate that you can see:
-     - Per‑user/per‑agent token usage,
-     - Which channels are driving the most traffic.
+5. **LiteLLM observability** (via Den)
+   - Den ensures model traffic through LiteLLM carries tags (`user_id`, `agent_id`, `channel`).
+   - Validate per‑user/per‑agent token usage and channel‑level traffic in LiteLLM (or Den) logs.
 
 **Phase 1 success:**
 
-- Any user in Slack/WhatsApp/OpenWebUI can talk to an agent via BEARS.
-- BEARS knows who they are (internal `user_id`).
+- Any user in Slack/WhatsApp/OpenWebUI can talk to an agent **via Den**.
+- Den knows who they are (internal `user_id`).
 - You can list agents per user and enforce basic access rules, even if it’s just “admins vs normal users.”
 - No Cabinet/Outline yet: agents still use **Letta’s native memory** (blocks, conversations, etc.); the shared human+agent knowledgebase is added in later phases—not the legacy Git/Qdrant knowledgebase service.
 
@@ -269,7 +265,7 @@ Deliverables:
      - `kind`, `project`, `tags`, `people`, `source`, `status`, etc.
    - Decide which agents can read/write which kinds.
 
-2. **Cabinet service in BEARS (skeleton)**
+2. **Cabinet API on Den (skeleton)**
    - Implement Cabinet endpoints (for agents):
      - `cabinet.search`, `cabinet.get`, `cabinet.create`, `cabinet.update`.
    - Initially, these can return stub data or use a temporary in‑memory store while you finalize behavior.
@@ -279,7 +275,7 @@ Deliverables:
      - `cabinet_search_tool`
      - `cabinet_read_tool`
      - `cabinet_write_tool`
-   - Wire them to BEARS’ Cabinet service.
+   - Wire them to **Den’s** Cabinet API.
    - Update one or two agents to:
      - Use Cabinet for “remembering” things,
      - Summarizing conversations into “knowledge” notes.
@@ -296,7 +292,7 @@ At the end of Phase 2, Cabinet is a defined, testable contract, even if Outline 
 
 1. **Set up Outline**
    - Deploy Outline (self‑hosted).
-   - Configure authentication to match/align with BEARS (SSO, shared provider, or BEARS as OAuth provider if you go that route).
+   - Configure authentication to match/align with Den / BEARS (SSO, shared provider, or Den as OAuth consumer if you go that route).
    - Create decks:
      - `Cabinet – Knowledge`
      - `Cabinet – History`
@@ -309,7 +305,7 @@ At the end of Phase 2, Cabinet is a defined, testable contract, even if Outline 
      - Reading/writing properties,
      - Searching with embeddings + filters.
 
-3. **Implement Outline‑backed Cabinet adapter in BEARS**
+3. **Implement Outline‑backed Cabinet adapter in Den**
    - Implement:
      - `outline.search` → Outline API.
      - `outline.get_doc`, `.create_doc`, `.update_doc`.
@@ -329,8 +325,8 @@ At the end of Phase 2, Cabinet is a defined, testable contract, even if Outline 
 
 **Phase 3 success:**
 
-- Cabinet is real: Outline is the store, agents read/write it via BEARS.
-- Human and agent access are governed by the same identity/policy layer in BEARS.
+- Cabinet is real: Outline is the store, agents read/write it **via Den**.
+- Human and agent access are governed by the same identity/policy layer **in Den**.
 - At least one production‑like workflow uses Cabinet in Slack or OpenWebUI.
 
 ---
@@ -354,14 +350,14 @@ At the end of Phase 2, Cabinet is a defined, testable contract, even if Outline 
      - Tools for “promote this to knowledge” from a chat.
 
 3. **RBAC and tool governance**
-   - In BEARS:
+   - In **Den**:
      - More nuanced rules:
        - Some users/agents can write to `knowledge`,
        - Others only to `history` or read‑only.
      - Restrict dangerous or heavy tools/models to specific roles.
 
 4. **Observability & ops polish**
-   - Use LiteLLM + BEARS logs to:
+   - Use LiteLLM + **Den** logs to:
      - Monitor per‑user/per‑agent token usage,
      - Alert on spikes or errors.
    - Build minimal dashboards (could be just Grafana over logs) for:
@@ -378,13 +374,14 @@ This is the “make it livable and reliable” phase.
 
 We’re aiming for:
 
-- **BEARS as the core ops brain**:
-  - Identity, policy, routing, observability.
-  - Managing Letta agents and LettaBot configs.
-  - Exposing Cabinet to agents and keeping Cabinet/Outline auth aligned with human auth.
+- **Den** as the **BEARS control plane and gateway**:
+  - Maps external identities → internal users; agent registry; chat routing to Letta.
+  - Auth and tool/model policies; **Cabinet API** backed by Outline.
+  - Tags and forwards model calls through **LiteLLM** for observability.
+  - LettaBot and OpenWebUI target Den; Cabinet/Outline auth aligned with human auth.
 
 - **Phased delivery**:
-  - **MVP (Phase 1):** BEARS proxy with multi‑user chat via Letta; no Cabinet yet.
+  - **MVP (Phase 1):** Den in front of Letta; multi‑user chat; no Cabinet yet.
   - **Phase 2:** Cabinet abstraction defined and wired as tools (even if stubbed).
   - **Phase 3:** Cabinet backed by Outline with properties + embeddings.
   - **Phase 4:** Refine memory policies, multi‑user ergonomics, RBAC, and workflows.
