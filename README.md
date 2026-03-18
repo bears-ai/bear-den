@@ -110,6 +110,7 @@ bears-deploy/                    # This repository
 │   └── docker-compose.yaml
 ├── DEPLOYMENT.md              # Coolify deployment guide
 ├── ARCHITECTURE_NOTES.md      # Architecture documentation
+├── MULTIUSER_PROXY_ARCHITECTURE.md  # Canonical multi-user auth proxy design
 └── README.md                  # This file
 ```
 
@@ -180,7 +181,7 @@ Human-readable Markdown content.
 
 ## OpenWebUI + Letta Integration
 
-### Current Setup
+### Current Setup (Direct Integration)
 
 Letta agents are connected to OpenWebUI as "models" using functions from the [open-webui-tools](https://github.com/Haervwe/open-webui-tools) repository. This allows users to:
 
@@ -188,17 +189,11 @@ Letta agents are connected to OpenWebUI as "models" using functions from the [op
 - Interact with agents directly through the OpenWebUI interface
 - Use OpenWebUI's features (file uploads, conversation management, etc.) with Letta agents
 
-**Installation**: Functions from open-webui-tools are installed in OpenWebUI's Workspace > Functions section, enabling Letta agent integration.
+**Installation**: Functions from open-webui-tools are installed in OpenWebUI's Workspace > Functions section, enabling Letta agent integration. This setup is suitable for single-organization or development use.
 
-### Future: Middleware Layer (Planned)
+### Multi-User: Authentication Proxy (Canonical)
 
-A middleware layer will be introduced to provide:
-
-1. **User-Identity Mapping**: Map OpenWebUI users to Letta identities for user-aware interactions
-2. **Agent Access Control**: Restrict which agents are available to specific users
-3. **User-Aware Memory**: Agents will be aware of user context for personalized memory retrieval
-
-See `services/letta/OPENWEBUI_SESSIONS.md` for detailed session management strategies and `ARCHITECTURE_NOTES.md` for architecture details.
+For production multi-user deployments—with **one agent per user**, user-identity mapping, and access control—the canonical approach is the **Authentication Proxy** architecture. See **[MULTIUSER_PROXY_ARCHITECTURE.md](MULTIUSER_PROXY_ARCHITECTURE.md)**. In that model, OpenWebUI and LettaBot talk to a thin proxy (Rust/Axum) that sits in front of Letta Cloud; the proxy handles auth, user→agent routing, and enforcement. Session strategies for the current direct OpenWebUI→Letta setup are in `services/letta/OPENWEBUI_SESSIONS.md`. Architecture overview: `ARCHITECTURE_NOTES.md`.
 
 ## Service Architecture
 
@@ -424,6 +419,7 @@ When making changes:
 
 - **[DEPLOYMENT.md](DEPLOYMENT.md)** - Complete Coolify deployment guide
 - **[ARCHITECTURE_NOTES.md](ARCHITECTURE_NOTES.md)** - Detailed architecture documentation
+- **[MULTIUSER_PROXY_ARCHITECTURE.md](MULTIUSER_PROXY_ARCHITECTURE.md)** - Canonical multi-user auth proxy (Letta Cloud + proxy)
 - **[content-template/README.md](content-template/README.md)** - Memory system guide
 - **Service-specific guides** - See [`services/{service}/COOLIFY_DEPLOY.md`](services/)
 

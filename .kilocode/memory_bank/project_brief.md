@@ -81,6 +81,7 @@ The system is designed to be model-agnostic, self-hosted, and human-inspectable,
 - **Agent Framework**: Letta (autonomous workflows, tool execution)
 - **Memory System**: Knowledgebase (structured memory management)
 - **Vector Store**: Qdrant, Weaviate, or Pinecone (semantic retrieval)
+- **Multi-User Auth**: Canonical design is the Authentication Proxy in front of Letta Cloud (one agent per user, routing, access control). See `MULTIUSER_PROXY_ARCHITECTURE.md`.
 
 ### Memory Architecture
 

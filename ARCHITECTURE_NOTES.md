@@ -133,10 +133,10 @@ The BEARS Stack uses a layered architecture with specialized services deployed i
 
 #### Qdrant (Vector Database)
 
--- **Purpose**: Semantic memory and vector storage
--- **Image**: `qdrant/qdrant:latest`
--- **Port**: 6333
--- **Key Features**:
+- **Purpose**: Semantic memory and vector storage
+- **Image**: `qdrant/qdrant:latest`
+- **Port**: 6333
+- **Key Features**:
   - Vector embeddings for semantic search
   - Fast similarity search
   - Used by the memory service / knowledgebase for RAG capabilities
@@ -155,7 +155,7 @@ The BEARS Stack uses a layered architecture with specialized services deployed i
 
 #### Redis (Cache)
 
--- **Purpose**: Cache layer for the memory service
+- **Purpose**: Cache layer for the memory service
 - **Image**: `redis:7-alpine`
 - **Port**: 6379
 - **Key Features**:
@@ -165,13 +165,15 @@ The BEARS Stack uses a layered architecture with specialized services deployed i
 
 #### PostgreSQL (Database)
 
--- **Purpose**: Backend database for the memory service
+- **Purpose**: Backend database for the memory service
 - **Deployment**: Coolify-managed service
 - **Port**: 5432 (internal only)
 - **Key Features**:
   - Stores memory-service metadata
   - Automatic backups via Coolify
-  - Managed updates and maintenance### Memory System
+  - Managed updates and maintenance
+
+### Memory System
 
 The memory system uses a **two-repository architecture**:
 
@@ -313,46 +315,23 @@ postgresql://<postgres-host>:5432/<memory-db>
 
 ### Security Notes
 
--- Authentication disabled on the memory service for local deployment (if applicable)
+- Authentication disabled on the memory service for local deployment (if applicable)
 - All services on private Docker network
 - Only specified ports exposed to host
 - Sensitive data in `.env` file (not committed to Git)
 
 ### Current Integration: OpenWebUI + Letta
 
-**Current Setup**: Letta agents are connected to OpenWebUI as "models" using functions from [open-webui-tools](https://github.com/Haervwe/open-webui-tools). This allows users to select and interact with Letta agents directly from the OpenWebUI interface.
+**Current Setup**: Letta agents are connected to OpenWebUI as "models" using functions from [open-webui-tools](https://github.com/Haervwe/open-webui-tools). This allows users to select and interact with Letta agents directly from the OpenWebUI interface. This is suitable for single-organization or development deployments where all users share access to the same Letta instance.
 
 **Integration Method**:
 - Functions from open-webui-tools repository are installed in OpenWebUI
 - Letta agents appear as selectable models in OpenWebUI's model list
 - Direct API communication between OpenWebUI and Letta service
 
+**For multi-user production** with per-user agents, user identity mapping, and access control, the canonical approach is the **Authentication Proxy** architecture. See **[MULTIUSER_PROXY_ARCHITECTURE.md](MULTIUSER_PROXY_ARCHITECTURE.md)** for the full design. In that model, OpenWebUI and LettaBot talk to the proxy (not directly to Letta); the proxy handles auth, user→agent routing, and enforcement. Session and mapping strategies for the current direct-integration setup are documented in `services/letta/OPENWEBUI_SESSIONS.md`.
+
 ### Future Enhancements
-
-#### Middleware Layer (Planned)
-
-A middleware layer will be introduced between OpenWebUI and Letta to provide:
-
-1. **User-Identity Mapping**
-   - Map OpenWebUI users to Letta identities
-   - Enable user-aware agent interactions
-   - Support multi-user scenarios with proper identity context
-
-2. **Agent Availability Control**
-   - Restrict which agents ("models") are available to specific users
-   - Role-based agent access control
-   - Per-user agent whitelisting/blacklisting
-
-3. **User-Aware Memory Context**
-   - Agents will be aware of which OpenWebUI user they're interacting with
-   - Memory retrieval and storage will be scoped to user identity
-   - Support for personal vs. shared memory contexts
-
-**Implementation Notes**:
-- Middleware will intercept requests from OpenWebUI to Letta
-- Will handle authentication, authorization, and context injection
-- Will maintain mapping between OpenWebUI user sessions and Letta agent sessions
-- See `services/letta/OPENWEBUI_SESSIONS.md` for current session management strategies
 
 #### Other Enhancements
 

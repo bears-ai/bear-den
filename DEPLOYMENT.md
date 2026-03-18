@@ -88,6 +88,8 @@ User → OpenWebUI → Letta → LiteLLM → OpenAI/Anthropic APIs
 OpenWebUI handles UI, authentication, and conversation management while delegating agent execution to Letta via open-webui-tools functions.
 ```
 
+For multi-user deployments with per-user agents, identity mapping, and access control, the canonical approach is the **Authentication Proxy** in front of Letta Cloud. See [MULTIUSER_PROXY_ARCHITECTURE.md](MULTIUSER_PROXY_ARCHITECTURE.md). In that model, OpenWebUI is configured to talk to the proxy, not directly to Letta.
+
 ## Deployment Order
 
 Services **must** be deployed in this order:
@@ -586,7 +588,7 @@ To connect Letta agents as "models" in OpenWebUI, install functions from [open-w
 2. Add a custom model/provider that uses your Letta integration function
 3. Letta agents will appear as selectable models in the chat interface
 
-**Note**: See `services/letta/OPENWEBUI_SESSIONS.md` for detailed session management strategies and `services/letta/openwebui_pipe_example.py` for a complete pipe function implementation.
+**Note**: For the canonical multi-user architecture (auth proxy, one agent per user, Letta Cloud), see [MULTIUSER_PROXY_ARCHITECTURE.md](MULTIUSER_PROXY_ARCHITECTURE.md). For session strategies with the current direct OpenWebUI→Letta setup, see `services/letta/OPENWEBUI_SESSIONS.md` and `services/letta/openwebui_pipe_example.py`.
 
 ---
 
@@ -803,4 +805,4 @@ Your BEARS Stack is now fully operational with:
 
 Start building your agentic assistants with Letta (agent management) and OpenWebUI (modern chat interface)! 🐻
 
-**Future Enhancement**: A middleware layer is planned to provide user-identity mapping, agent access control, and user-aware memory context. See `ARCHITECTURE_NOTES.md` for details.
+**Multi-user production**: For per-user agents, user-identity mapping, and access control, use the Authentication Proxy architecture described in [MULTIUSER_PROXY_ARCHITECTURE.md](MULTIUSER_PROXY_ARCHITECTURE.md).
