@@ -6,7 +6,7 @@ BEARS uses **only self-hosted Letta** (e.g. `letta/letta:latest` on Coolify). **
 
 ## Overview
 
-**v1 Den:** **OpenWebUI → Den → Letta** (web auth, agent registry, policy). **LettaBot** (**Slack/WhatsApp**) typically stays **LettaBot → Letta direct** until you adopt the optional proxy path—see [PLAN.md](PLAN.md) § *Den as LettaBot → Letta proxy*. Multi-user pattern for web: one agent per user (or your mapping), `user_id` → `agent_id` in Den’s DB.
+**v1 Den:** **Open WebUI → Den → Letta** (web auth, agent registry, policy). **LettaBot** (**Slack/WhatsApp**) typically stays **LettaBot → Letta direct** until you adopt the optional proxy path—see [PLAN.md](PLAN.md) § *Den as LettaBot → Letta proxy*. Multi-user pattern for web: one agent per user (or your mapping), `user_id` → `agent_id` in Den’s DB.
 
 ### Den implementation (Axum)
 
@@ -26,7 +26,7 @@ API shapes depend on your Letta version—confirm against your server.
 ### Agents & conversations
 
 - Each **user** maps to a **Letta agent** (or shared agent + conversation isolation, per product choice).
-- **Conversations** isolate threads (Slack thread, WhatsApp chat, OpenWebUI session). Prefer **per-conversation** message APIs where available so concurrent channels do not block each other.
+- **Conversations** isolate threads (Slack thread, WhatsApp chat, Open WebUI session). Prefer **per-conversation** message APIs where available so concurrent channels do not block each other.
 
 ### Memory blocks
 
@@ -45,7 +45,7 @@ API shapes depend on your Letta version—confirm against your server.
 ## System architecture
 
 ```
-  OpenWebUI ──────► Den ──────► Letta ───► LiteLLM ───► providers
+  Open WebUI ─────► Den ──────► Letta ───► LiteLLM ───► providers
   (v1 path)
 
   LettaBot ───────────────────► Letta     (v1: direct; optional later: via Den)
@@ -117,9 +117,9 @@ Regenerate `lettabot.yaml` from Den’s DB when users are added.
 
 ---
 
-## OpenWebUI
+## Open WebUI
 
-Point OpenWebUI (or a pipe function) at **Den**, not raw Letta, when multi-user auth and routing matter. Den forwards to self-hosted Letta. Optional: OpenAI-compatible shim on Den for `/v1/chat/completions`.
+Point Open WebUI (or a pipe function) at **Den**, not raw Letta, when multi-user auth and routing matter. Den forwards to self-hosted Letta. Optional: OpenAI-compatible shim on Den for `/v1/chat/completions`.
 
 ---
 
@@ -131,7 +131,7 @@ Point OpenWebUI (or a pipe function) at **Den**, not raw Letta, when multi-user 
 | **Den** | Axum service; `LETTA_BASE_URL=http://bears-letta:8283`; Letta admin credential; `DATABASE_URL`; `SESSION_SECRET`; Outline/Cabinet credentials when Phase 3+ |
 | **PostgreSQL** | Den user/agent/session data |
 | **LettaBot** | Slack + WhatsApp tokens; config volume |
-| **OpenWebUI** | Talks to Den in production multi-user mode |
+| **Open WebUI** | Talks to Den in production multi-user mode |
 
 ```bash
 # Den (example)

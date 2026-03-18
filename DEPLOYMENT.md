@@ -15,20 +15,20 @@ Deploy the BEARS stack as separate services in Coolify. Shared knowledge uses **
 
 ## Overview
 
-- **This repo** (`bears-deploy`) — configs and docs for Letta, LiteLLM, OpenWebUI, etc.
+- **This repo** (`bears-depoy`) — configs and docs for Letta, LiteLLM, Open WebUI, etc.
 - **Letta** — agents and native memory (blocks, conversations).
 - **Cabinet** — shared knowledge in **Outline**, exposed to agents through **Den** ([PLAN.md](PLAN.md)).
 
 ## Prerequisites
 
 - Coolify v4+
-- ~4 GB RAM minimum (Letta + LiteLLM + OpenWebUI)
+- ~4 GB RAM minimum (Letta + LiteLLM + Open WebUI)
 - API keys: OpenAI and/or Anthropic (and others per LiteLLM config)
 
 ## Architecture
 
 ```
-OpenWebUI → Letta → LiteLLM → model providers
+Open WebUI → Letta → LiteLLM → model providers
 (Optional later: Den, Outline/Cabinet per PLAN.md)
 ```
 
@@ -36,14 +36,14 @@ OpenWebUI → Letta → LiteLLM → model providers
 
 1. **LiteLLM** — model gateway  
 2. **Letta** — must reach LiteLLM  
-3. **OpenWebUI** — chat UI + open-webui-tools → Letta  
+3. **Open WebUI** — chat UI + open-webui-tools → Letta  
 4. **Outline + Den** — when enabling Cabinet ([PLAN.md](PLAN.md))
 
 ## Step-by-step deployment
 
 ### Step 1: LiteLLM
 
-See [`services/litellm/COOLIFY_DEPLOY.md`](services/litellm/COOLIFY_DEPLOY.md).
+Part of the overall order in this guide; details: [`services/litellm/COOLIFY_DEPLOY.md`](services/litellm/COOLIFY_DEPLOY.md).
 
 - Service name e.g. `bears-litellm`, port `4000`  
 - Set provider keys, `LITELLM_MASTER_KEY` for production  
@@ -59,22 +59,22 @@ See [`services/letta/COOLIFY_DEPLOY.md`](services/letta/COOLIFY_DEPLOY.md).
 - Volume: `bears-letta-data` → `/root/.letta`  
 - Health: `GET http://bears-letta:8283/v1/health`
 
-### Step 3: OpenWebUI
+### Step 3: Open WebUI
 
 1. Image: `ghcr.io/open-webui/open-webui:main`, port `3000`  
 2. Secrets: `WEBUI_SECRET_KEY`, `WEBUI_JWT_SECRET_KEY` (generate with `openssl rand -base64 32`)  
 3. Letta: `LETTA_API_URL=http://bears-letta:8283/v1`, `LETTA_SERVER_PASS=<same as Letta>`  
-4. Optional: Coolify **PostgreSQL** + `DATABASE_URL` for production multi-user OpenWebUI  
+4. Optional: Coolify **PostgreSQL** + `DATABASE_URL` for production multi-user Open WebUI  
 5. Volume: `bears-openwebui-data` → `/app/backend/data`  
 6. Health: `GET /api/health`
 
-### Step 4: OpenWebUI ↔ Letta (open-webui-tools)
+### Step 4: Open WebUI ↔ Letta (open-webui-tools)
 
-1. OpenWebUI → **Settings** → **Workspace** → **Functions**  
+1. Open WebUI → **Settings** → **Workspace** → **Functions**  
 2. Install Letta integration from [open-webui-tools](https://github.com/Haervwe/open-webui-tools) (or `services/letta/openwebui_pipe_example.py`)  
 3. **Settings** → **Models**: register Letta-backed models  
 
-Multi-user **Den (Axum)** + self-hosted Letta: [DEN_ARCHITECTURE.md](DEN_ARCHITECTURE.md). Direct OpenWebUI sessions: `services/letta/OPENWEBUI_SESSIONS.md`.
+Multi-user **Den (Axum)** + self-hosted Letta: [DEN_ARCHITECTURE.md](DEN_ARCHITECTURE.md). Direct Open WebUI sessions: [`services/letta/OPENWEBUI_SESSIONS.md`](services/letta/OPENWEBUI_SESSIONS.md).
 
 ### Step 5: Outline & Den (Cabinet)
 
@@ -82,7 +82,7 @@ Follow [PLAN.md](PLAN.md) when you deploy the control plane and Outline-backed C
 
 ## Post-deployment
 
-- OpenWebUI: chat with Letta agents via configured models  
+- Open WebUI: chat with Letta agents via configured models  
 - Letta UI (internal): agent and memory management at `:8283`  
 - Add **Den** + **Outline** for shared knowledge and channel routing  
 
@@ -92,15 +92,15 @@ Follow [PLAN.md](PLAN.md) when you deploy the control plane and Outline-backed C
 |-------|------------------|
 | LiteLLM | `curl http://bears-litellm:4000/health/liveliness` |
 | Letta | `curl http://bears-letta:8283/v1/health` |
-| OpenWebUI | `curl http://bears-openwebui:3000/api/health` |
+| Open WebUI | `curl http://bears-openwebui:3000/api/health` |
 
-End-to-end: create an agent in Letta, select it in OpenWebUI, send a message.
+End-to-end: create an agent in Letta, select it in Open WebUI, send a message.
 
 ## Troubleshooting
 
 - **Letta ↔ LiteLLM:** `LLM_API_URL`, optional `LITELLM_MASTER_KEY` must match LiteLLM config  
-- **OpenWebUI ↔ Letta:** function `LETTA_API_URL` and `LETTA_SERVER_PASS`  
-- **OpenWebUI DB:** if using Postgres, verify `DATABASE_URL` and network to DB  
+- **Open WebUI ↔ Letta:** function `LETTA_API_URL` and `LETTA_SERVER_PASS`  
+- **Open WebUI DB:** if using Postgres, verify `DATABASE_URL` and network to DB  
 
 Service-specific detail: `services/*/COOLIFY_DEPLOY.md`.
 

@@ -7,7 +7,7 @@ Single-page view of the BEARS stack on Coolify. **Roadmap and contracts:** [PLAN
 **Cabinet** (**Outline**) is the shared knowledgebase: humans edit in Outline; agents access it through **Den** (Cabinet API, policy). **Letta** keeps **native memory** (blocks, conversations)—Cabinet does not replace that.
 
 ```
-Open WebUI          Outline (human editing)
+Open WebUI         Outline (human editing)
     │                      ▲
     ▼                      │
    Den ──Cabinet API───────┘

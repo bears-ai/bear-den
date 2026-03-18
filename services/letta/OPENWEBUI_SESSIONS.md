@@ -1,10 +1,26 @@
 # Open WebUI + Letta Session Management Guide
 
+## Table of contents
+
+| Section | Topics |
+|---------|--------|
+| [Overview](#overview) | Canonical path vs direct integration |
+| [Architecture](#architecture) | Letta vs Open WebUI session model |
+| [Mapping strategies](#mapping-strategies) | Per user, per chat, hybrid |
+| [Implementation](#implementation) | Storage, Letta helpers, Open WebUI hooks |
+| [Advanced features](#advanced-features) | |
+| [Integration with BEARS memory](#integration-with-bears-memory-system) | Letta memory vs Cabinet |
+| [Configuration](#configuration) | |
+| [Testing](#testing) | |
+| [Troubleshooting](#troubleshooting) | |
+| [Next steps](#next-steps) | |
+| [References](#references) | |
+
 ## Overview
 
-**Canonical multi-user (web):** **Den** (Axum) → **self-hosted Letta** — see **[DEN_ARCHITECTURE.md](../../DEN_ARCHITECTURE.md)** / [PLAN.md](../../PLAN.md). **v1:** OpenWebUI → Den; LettaBot may stay direct-to-Letta.
+**Canonical multi-user (web):** **Den** (Axum) → **self-hosted Letta** — see **[DEN_ARCHITECTURE.md](../../DEN_ARCHITECTURE.md)** / [PLAN.md](../../PLAN.md). **v1:** Open WebUI → Den; LettaBot may stay direct-to-Letta.
 
-This guide describes session management when using **direct OpenWebUI→Letta integration** (self-hosted Letta or setups without the auth proxy). It explains how to map Open WebUI chats to Letta agents and choose strategies (one agent per user, per chat, or hybrid) when you are not using the canonical proxy.
+This guide covers **direct Open WebUI → Letta** (no Den): mapping chats to Letta agents (per user, per chat, or hybrid).
 
 ## Architecture
 
@@ -14,7 +30,7 @@ This guide describes session management when using **direct OpenWebUI→Letta in
 - **Persistent Memory**: All interactions contribute to the agent's long-term memory
 - **No Traditional Sessions**: Letta doesn't use ephemeral sessions; agents are persistent
 
-### Open WebUI's Chat Model
+### Open WebUI chat model
 
 - **Chat Sessions**: Each chat has its own persistent history
 - **User Management**: Open WebUI tracks users and their conversations
@@ -280,7 +296,7 @@ async def letta_agent_pipe(
 
 In Open WebUI, register your pipe function as a custom model:
 
-1. **Via Open WebUI UI**:
+1. **Via Open WebUI**:
    - Go to Settings → Models
    - Add Custom Model
    - Set model name (e.g., `letta-agent`)
@@ -429,7 +445,7 @@ def save_session_to_history(chat_id: str, user_id: str):
     }
 
     # Optional: persist session summaries to Cabinet (Outline) via Den when available
-    # See PLAN.md — not required for basic OpenWebUI ↔ Letta mapping
+    # See PLAN.md — not required for basic Open WebUI ↔ Letta mapping
 ```
 
 ## Configuration

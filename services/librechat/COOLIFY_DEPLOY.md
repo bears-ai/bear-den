@@ -1,6 +1,6 @@
 # LibreChat - Coolify Deployment Guide
 
-Complete guide for deploying LibreChat as an additional chat UI for the BEARS Stack.
+**Stack order:** Deploy **LiteLLM** and **Letta** first ([DEPLOYMENT.md](../../DEPLOYMENT.md)). LibreChat is an optional UI alongside **Open WebUI**.
 
 ## Overview
 

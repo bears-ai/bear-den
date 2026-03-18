@@ -3,7 +3,7 @@
 **Configuration repository** for deploying an agent platform on **Coolify**:
 
 - **[Letta](https://github.com/letta-ai/letta)** — Agent runtime, native memory (blocks, conversations, tools)  
-- **[Open WebUI](https://github.com/open-webui/open-webui)** — Chat UI  
+- **[Open WebUI](https://github.com/open-webui/open-webui)** (open-webui) — Chat UI  
 - **[Outline](https://www.getoutline.com/)** + **Den** (Rust/Axum) — Control plane + **Cabinet**; see [PLAN.md](PLAN.md). **Self-hosted Letta only** (no Letta Cloud).  
 - **[LiteLLM](https://github.com/BerriAI/litellm)** — Model gateway  
 - **[Coolify](https://coolify.io)** — Deployment  

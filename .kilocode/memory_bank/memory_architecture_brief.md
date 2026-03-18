@@ -378,7 +378,7 @@ tags:
 ### Stack sketch (conceptual)
 
 ```yaml
-# See bears-deploy: LiteLLM, Letta, OpenWebUI; Den + Outline for Cabinet (PLAN.md)
+# See bears-depoy: LiteLLM, Letta, Open WebUI; Den + Outline for Cabinet (PLAN.md)
 services:
   litellm: { ... }
   letta: { depends_on: [litellm] }

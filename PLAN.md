@@ -226,7 +226,7 @@ Deliverables:
 **Capabilities to implement:**
 
 1. **Identity and user mapping** (v1: **web-first**)
-   - Minimal user model: `user_id` + **`webui_account_id → user_id`** (or equivalent for Open Web UI).
+   - Minimal user model: `user_id` + **`webui_account_id → user_id`** (or equivalent for Open WebUI).
    - **Slack/WhatsApp mappings** in Den are for when (if) you add the optional LettaBot→Den path—not required for v1.
    - Simple auth for web: shared secret, basic login, or OAuth.
 
@@ -336,7 +336,7 @@ At the end of Phase 2, Cabinet is a defined, testable contract, even if Outline 
 
 - Cabinet is real: Outline is the store, agents read/write it **via Den**.
 - Human and agent access are governed by the same identity/policy layer **in Den**.
-- At least one production‑like workflow uses Cabinet in Slack or Open Web UI.
+- At least one production‑like workflow uses Cabinet in Slack or Open WebUI.
 
 ---
 

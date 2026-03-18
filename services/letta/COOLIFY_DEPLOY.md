@@ -1,5 +1,7 @@
 # Letta - Coolify Deployment Guide
 
+**Stack order:** This is **step 2** in [DEPLOYMENT.md](../../DEPLOYMENT.md) (after LiteLLM). Details below.
+
 ## Overview
 
 Letta is the BEARS agent runtime: **native memory** (blocks, conversations, tools) and models via **LiteLLM**. Shared knowledge is **Cabinet** on **Outline**, exposed to agents through **Den** ([PLAN.md](../../PLAN.md)). Cabinet does **not** replace Letta’s per-agent memory.
@@ -123,7 +125,7 @@ Cabinet tools (when Den + Outline are deployed) → Den → Outline
 
 ### Primary UI
 
-Many deployments use **OpenWebUI** or **LibreChat**; configure whichever you run. Agent **memory** stays in Letta; **shared knowledge** is **Cabinet (Outline)** in the target architecture.
+Many deployments use **Open WebUI** or **LibreChat**; configure whichever you run. Agent **memory** stays in Letta; **shared knowledge** is **Cabinet (Outline)** in the target architecture.
 
 ### Admin Web UI (Optional)
 
@@ -285,9 +287,9 @@ CPU: 1-2 cores
 
 Factors: model choice, context size, tool latency (e.g. Cabinet). Use streaming where supported.
 
-## Open WebUI Integration
+## Open WebUI integration
 
-Letta can be integrated with Open WebUI to provide a modern chat interface with session management. This allows you to use Open WebUI's UI while leveraging Letta's agent capabilities.
+Letta can be integrated with Open WebUI for a modern chat UI and session management, using Letta’s agent capabilities.
 
 ### Overview
 
@@ -373,7 +375,7 @@ Shared team context: **Cabinet (Outline)** or Letta shared blocks.
 ## Deployment completion
 
 - [ ] LiteLLM healthy; Letta reaches `LLM_API_URL`
-- [ ] OpenWebUI/LibreChat can chat with an agent
+- [ ] Open WebUI / LibreChat can chat with an agent
 - [ ] Den + Outline + Cabinet tools when rolled out ([PLAN.md](../../PLAN.md))
 
 **Services:** `bears-litellm`, `bears-letta`, UI; later **Outline + Den**.

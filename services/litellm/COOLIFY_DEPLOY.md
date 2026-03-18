@@ -1,5 +1,7 @@
 # LiteLLM - Coolify Deployment Guide
 
+**Stack order:** This is **step 1** in [DEPLOYMENT.md](../../DEPLOYMENT.md). Details below.
+
 ## Overview
 
 LiteLLM provides a unified gateway to multiple LLM providers (OpenAI, Anthropic, etc.) with a consistent API interface. It handles model routing, fallbacks, and load balancing.
