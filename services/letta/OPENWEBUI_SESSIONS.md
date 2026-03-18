@@ -2,7 +2,7 @@
 
 ## Overview
 
-**Canonical multi-user architecture:** **Den** (Axum) in front of **self-hosted Letta** — see **[MULTIUSER_PROXY_ARCHITECTURE.md](../../MULTIUSER_PROXY_ARCHITECTURE.md)**. OpenWebUI and LettaBot target Den for auth and routing.
+**Canonical multi-user (web):** **Den** (Axum) → **self-hosted Letta** — see **[DEN_ARCHITECTURE.md](../../DEN_ARCHITECTURE.md)** / [PLAN.md](../../PLAN.md). **v1:** OpenWebUI → Den; LettaBot may stay direct-to-Letta.
 
 This guide describes session management when using **direct OpenWebUI→Letta integration** (self-hosted Letta or setups without the auth proxy). It explains how to map Open WebUI chats to Letta agents and choose strategies (one agent per user, per chat, or hybrid) when you are not using the canonical proxy.
 
@@ -516,7 +516,7 @@ assert agent1 != agent2, "Different chats should have different agents"
 
 ## References
 
-- **[MULTIUSER_PROXY_ARCHITECTURE.md](../../MULTIUSER_PROXY_ARCHITECTURE.md)** – Den + self-hosted Letta
+- **[DEN_ARCHITECTURE.md](../../DEN_ARCHITECTURE.md)** – Den + self-hosted Letta; LettaBot optional via Den ([PLAN.md](../../PLAN.md))
 - [Letta Documentation](https://docs.letta.com)
 - [Open WebUI Documentation](https://docs.openwebui.com)
 - [Letta API Reference](https://docs.letta.com/api-reference)

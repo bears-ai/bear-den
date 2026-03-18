@@ -41,7 +41,7 @@ services/
 PLAN.md
 DEPLOYMENT.md
 ARCHITECTURE_NOTES.md
-MULTIUSER_PROXY_ARCHITECTURE.md
+DEN_ARCHITECTURE.md
 ```
 
 ## Environment variables
@@ -50,14 +50,14 @@ Per-service `.env.example` files. Common: `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`,
 
 ## OpenWebUI + Letta
 
-Direct integration via open-webui-tools. For production multi-user identity and **Den**, see [MULTIUSER_PROXY_ARCHITECTURE.md](MULTIUSER_PROXY_ARCHITECTURE.md).
+Direct integration via open-webui-tools. For production multi-user identity and **Den**, see [DEN_ARCHITECTURE.md](DEN_ARCHITECTURE.md).
 
 ## Docs
 
 - [DEPLOYMENT.md](DEPLOYMENT.md)  
 - [PLAN.md](PLAN.md) — Den, Cabinet, phases  
 - [ARCHITECTURE_NOTES.md](ARCHITECTURE_NOTES.md)  
-- [MULTIUSER_PROXY_ARCHITECTURE.md](MULTIUSER_PROXY_ARCHITECTURE.md)  
+- [DEN_ARCHITECTURE.md](DEN_ARCHITECTURE.md)  
 - `services/*/COOLIFY_DEPLOY.md`  
 
 ## License

@@ -79,7 +79,7 @@ The system is model-agnostic and self-hosted. **Shared knowledge** is **Cabinet*
 - **Model Gateway**: LiteLLM (multi-provider routing)
 - **Agent Framework**: Letta (autonomous workflows, tool execution)
 - **Memory**: Letta native + **Cabinet (Outline)** for shared knowledge
-- **Multi-User Auth**: **Den** (Axum) in front of **self-hosted Letta**. See `MULTIUSER_PROXY_ARCHITECTURE.md`.
+- **Multi-User Auth**: **Den** (Axum) in front of **self-hosted Letta**. See `DEN_ARCHITECTURE.md` / `PLAN.md`.
 
 ### Memory Architecture
 

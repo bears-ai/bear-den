@@ -6,7 +6,7 @@ BEARS uses **only self-hosted Letta** (e.g. `letta/letta:latest` on Coolify). **
 
 ## Overview
 
-Multi-user pattern: **one Letta agent per user** (or your chosen mapping), with **Den** between clients and Letta. Den authenticates users, maps channels (OpenWebUI, Slack, WhatsApp) to internal `user_id`, routes to the correct `agent_id`, and forwards to **self-hosted Letta**. End users use **OpenWebUI** (web) or **LettaBot** (**Slack**, **WhatsApp**; Telegram/Discord optional).
+**v1 Den:** **OpenWebUI → Den → Letta** (web auth, agent registry, policy). **LettaBot** (**Slack/WhatsApp**) typically stays **LettaBot → Letta direct** until you adopt the optional proxy path—see [PLAN.md](PLAN.md) § *Den as LettaBot → Letta proxy*. Multi-user pattern for web: one agent per user (or your mapping), `user_id` → `agent_id` in Den’s DB.
 
 ### Den implementation (Axum)
 
@@ -45,31 +45,14 @@ API shapes depend on your Letta version—confirm against your server.
 ## System architecture
 
 ```
-+------------------+     +------------------+
-|    OpenWebUI      |     |     LettaBot      |
-|  (chat frontend)  |     |(Slack, WhatsApp) |
-+--------+---------+     +--------+---------+
-         |                         |
-         v                         v
-+------------------------------------------------+
-|  Den (Rust / Axum) — BEARS control plane       |
-|  Auth, user↔agent map, policy, Cabinet API     |
-|  Proxies chat → Letta only                     |
-+------------------------+-----------------------+
-                         |
-                         v
-+------------------+
-| Self-hosted Letta|
-| :8283            |
-+--------+---------+
-         |  LLM traffic (direct)
-         v
-+------------------+
-| LiteLLM          |──► model providers
-+------------------+
+  OpenWebUI ──────► Den ──────► Letta ───► LiteLLM ───► providers
+  (v1 path)
 
-(Den → Letta for chat only. Den may call LiteLLM separately for metrics/spend — not inference.)
+  LettaBot ───────────────────► Letta     (v1: direct; optional later: via Den)
+  (Slack/WhatsApp)
 ```
+
+Den → Letta for **web** chat only. Den may call LiteLLM separately for **metrics/spend** (not inference). Optional **LettaBot → Den → Letta**: [PLAN.md](PLAN.md).
 
 ### Cabinet (Outline)
 
@@ -83,11 +66,11 @@ Long-lived shared knowledge: agents via **Den** Cabinet tools; humans in **Outli
 2. **Store** `user_id` → `agent_id` (and optional `letta_identity` metadata if you use identities).
 3. **Route** chat: resolve agent + conversation, call Letta message API, **stream** response back.
 4. **Enforce** ownership: only the authenticated user’s agent may be used.
-5. **Provision** agents on signup (HTTP to self-hosted Letta) and map **Slack / WhatsApp** external ids → `user_id` (see [PLAN.md](PLAN.md) § provisioning).
+5. **Provision** agents on signup (HTTP to self-hosted Letta). **Slack/WhatsApp → `user_id` mapping** applies when/if LettaBot fronts Den—not required for v1 web-only Den.
 
-### Slack & WhatsApp
+### Slack & WhatsApp (optional Den proxy)
 
-Same as [PLAN.md](PLAN.md): lazy or admin-mapped provisioning; LettaBot → **Den** → Letta in production; `external_identities` table for `(channel, external_id) → user_id`.
+If you later route LettaBot through Den: lazy or admin-mapped provisioning, `external_identities` for `(channel, external_id) → user_id`. See [PLAN.md](PLAN.md) value-add table.
 
 ### Public API (Den)
 
@@ -109,16 +92,16 @@ Cabinet tool endpoints are internal or agent-facing per PLAN.
 
 ## LettaBot (Slack & WhatsApp)
 
-**Production:** LettaBot → **Den** (`/chat/send` or dedicated internal route) with channel metadata → Den → self-hosted Letta.
+**v1 / default:** LettaBot → **Letta** directly (`baseUrl: http://bears-letta:8283`). **Not** a Den release requirement.
 
-**Experiments:** LettaBot → Letta directly (bypass Den).
+**Optional later:** LettaBot → **Den** → Letta (unified identity/policy)—see [PLAN.md](PLAN.md).
 
 ```yaml
 server:
   letta:
-    apiKey: ${LETTA_SERVER_PASS}   # admin password or token your Letta expects
-    baseUrl: http://bears-letta:8283  # internal URL when talking to Letta
-    # When calling Den instead: baseUrl: http://bears-den:8080 (example)
+    apiKey: ${LETTA_SERVER_PASS}
+    baseUrl: http://bears-letta:8283   # direct to Letta (v1)
+    # Future optional: baseUrl pointing at Den if fronting LettaBot
 
 agents:
   - name: user-alice
@@ -198,6 +181,6 @@ Seed **human** / **persona** blocks when creating each user’s agent via API or
 |-------|------------------|
 | **Self-hosted Letta** | Agent state, memory blocks, conversations, tools, calls to LiteLLM |
 | **Den (Axum)** | Auth, routing, policy, Cabinet API, Slack/WhatsApp identity, Letta proxy |
-| **LettaBot** | Slack/WhatsApp adapter → Den |
+| **LettaBot** | Slack/WhatsApp → Letta direct (v1); optional → Den later |
 | **OpenWebUI** | Web UI → Den |
 | **PostgreSQL** | Den: users, mappings, sessions |

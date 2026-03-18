@@ -54,7 +54,7 @@ Expose only what users need (e.g. OpenWebUI via Coolify proxy).
 
 ### Multi-user
 
-[MULTIUSER_PROXY_ARCHITECTURE.md](MULTIUSER_PROXY_ARCHITECTURE.md) — **Den (Axum)**, self-hosted Letta only, Slack/WhatsApp via LettaBot.
+[DEN_ARCHITECTURE.md](DEN_ARCHITECTURE.md) — Den (Axum), self-hosted Letta; **v1** web via Den, LettaBot direct ([PLAN.md](PLAN.md)).
 
 ### Future
 

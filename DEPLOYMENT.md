@@ -74,7 +74,7 @@ See [`services/letta/COOLIFY_DEPLOY.md`](services/letta/COOLIFY_DEPLOY.md).
 2. Install Letta integration from [open-webui-tools](https://github.com/Haervwe/open-webui-tools) (or `services/letta/openwebui_pipe_example.py`)  
 3. **Settings** → **Models**: register Letta-backed models  
 
-Multi-user **Den (Axum)** + self-hosted Letta: [MULTIUSER_PROXY_ARCHITECTURE.md](MULTIUSER_PROXY_ARCHITECTURE.md). Direct OpenWebUI sessions: `services/letta/OPENWEBUI_SESSIONS.md`.
+Multi-user **Den (Axum)** + self-hosted Letta: [DEN_ARCHITECTURE.md](DEN_ARCHITECTURE.md). Direct OpenWebUI sessions: `services/letta/OPENWEBUI_SESSIONS.md`.
 
 ### Step 5: Outline & Den (Cabinet)
 
@@ -108,8 +108,8 @@ Service-specific detail: `services/*/COOLIFY_DEPLOY.md`.
 
 - [ARCHITECTURE_NOTES.md](ARCHITECTURE_NOTES.md)  
 - [PLAN.md](PLAN.md) — Den, Cabinet, Outline  
-- [MULTIUSER_PROXY_ARCHITECTURE.md](MULTIUSER_PROXY_ARCHITECTURE.md)  
+- [DEN_ARCHITECTURE.md](DEN_ARCHITECTURE.md)  
 
 ---
 
-**Deployment complete.** Multi-user production with per-user agents and Den: see [MULTIUSER_PROXY_ARCHITECTURE.md](MULTIUSER_PROXY_ARCHITECTURE.md).
+**Deployment complete.** Multi-user production with per-user agents and Den: see [DEN_ARCHITECTURE.md](DEN_ARCHITECTURE.md).

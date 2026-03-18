@@ -32,12 +32,9 @@ I’ll break it into:
    - Stateless(ish) from Den’s point of view; Den calls the **self‑hosted Letta REST API** (reqwest from Axum).
 
 3. **LettaBot**
-   - Channel adapters:
-     - Slack, WhatsApp (others later).
-   - For each message:
-     - Authenticate/identify external user,
-     - Forward to **Den** with identity + channel metadata,
-     - Stream responses back.
+   - Channel adapters: Slack, WhatsApp (others later).
+   - **Initial Den releases:** LettaBot typically talks **directly to Letta** (same as today’s experiments). **Not** required to go through Den for v1.
+   - **Optional later:** route LettaBot → **Den** → Letta so messaging channels share Den’s identity and policy with web—see [Den as LettaBot proxy (optional)](#den-as-lettabot--letta-proxy-optional-value-add-not-a-v1-feature) below.
 
 4. **OpenWebUI (and any other web/CLI frontends)**
    - Authenticates users (ideally via Den or a shared SSO).
@@ -61,6 +58,21 @@ I’ll break it into:
 
 - **Letta’s own memory** (memory blocks, conversations, built-in tools) stays as-is. Cabinet does **not** replace how Letta manages per-agent context, blocks, or the conversation loop.
 - **Cabinet** (implemented on **Outline**) is the **shared knowledgebase**: documents that **both humans and agents** can read and edit.
+
+### Den as LettaBot → Letta proxy (optional value-add, **not** a v1 feature)
+
+Routing **LettaBot** through **Den** (instead of LettaBot → Letta direct) is a **potential** enhancement, **not** part of the **initial Den release**.
+
+**Why you might add it later**
+
+| Benefit | Description |
+|--------|-------------|
+| **Unified identity** | Slack/WhatsApp external ids live in Den next to web users (`user_id`, `external_identities`). |
+| **One policy surface** | Same rate limits, agent access, and (with Cabinet) permissions for web and chat apps. |
+| **Provisioning** | Lazy onboarding (e.g. first DM) without regenerating `lettabot.yaml` and restarting LettaBot per user. |
+| **Audit** | One place to log who used which agent on which channel. |
+
+**v1 scope:** Den’s first shipped role is **OpenWebUI (web) → Den → Letta**, plus agent registry, auth, Cabinet API (as phases land), and LiteLLM observability reads. **LettaBot remains direct-to-Letta** until you explicitly choose to put Den in that path.
 
 ---
 
@@ -202,17 +214,14 @@ Deliverables:
 
 ### Phase 1 – **Den**: auth‑aware proxy & agent manager (no Cabinet yet)
 
-**Goal:** Move from “frontends → Letta” to “frontends → **Den** → Letta”, and centralize identity/policy.
+**Goal:** Move **web chat** from “OpenWebUI → Letta” to “OpenWebUI → **Den** → Letta”, with identity and policy in Den. **LettaBot → Den → Letta is out of scope for this release** (see [optional LettaBot proxy](#den-as-lettabot--letta-proxy-optional-value-add-not-a-v1-feature)).
 
 **Capabilities to implement:**
 
-1. **Identity and user mapping**
-   - Minimal user model: `user_id`, plus mappings:
-     - `slack_user_id → user_id`
-     - `whatsapp_number → user_id`
-     - `webui_account_id → user_id` (if you integrate OpenWebUI auth).
-   - Simple auth for web/CLI:
-     - Could be shared secret, basic login, or OAuth; doesn’t need to be fancy initially.
+1. **Identity and user mapping** (v1: **web-first**)
+   - Minimal user model: `user_id` + **`webui_account_id → user_id`** (or equivalent for OpenWebUI).
+   - **Slack/WhatsApp mappings** in Den are for when (if) you add the optional LettaBot→Den path—not required for v1.
+   - Simple auth for web: shared secret, basic login, or OAuth.
 
 2. **Agent registry**
    - A config file or small DB:
@@ -229,24 +238,20 @@ Deliverables:
      - Calls `invoke_agent` on Letta.
      - Streams response back.
 
-4. **Frontends switched to Den**
-   - LettaBot:
-     - Instead of calling Letta directly, it calls Den `/chat/send`.
-   - OpenWebUI:
-     - Configure it to talk to Den:
-       - Either treat Den as a “LLM backend with tools”,
-       - Or implement a small adapter that maps its requests to `/chat/send`.
+4. **OpenWebUI → Den** (v1 release target)
+   - Configure OpenWebUI to talk to Den (`/chat/send` or adapter): auth, agent picker, streaming.
+   - **LettaBot:** keep **direct to Letta** for v1; optional Den front later (see optional proxy section above).
 
 5. **LiteLLM observability** (Den reads, does not proxy)
    - Letta → LiteLLM stays direct. **Den** connects to LiteLLM **only** for observability (metrics/spend/logs APIs or log shipping) as needed.
    - Where possible, align Letta/LiteLLM logging with Den’s identity data for attribution.
 
-**Phase 1 success:**
+**Phase 1 success (v1):**
 
-- Any user in Slack/WhatsApp/OpenWebUI can talk to an agent **via Den**.
-- Den knows who they are (internal `user_id`).
-- You can list agents per user and enforce basic access rules, even if it’s just “admins vs normal users.”
-- No Cabinet/Outline yet: agents use **Letta’s native memory** (blocks, conversations, etc.); shared knowledge arrives in later phases.
+- Web users (OpenWebUI) chat **via Den** → Letta; Den resolves `user_id`, enforces agent access, streams replies.
+- **Slack/WhatsApp** may still use LettaBot → Letta direct; no requirement that they hit Den yet.
+- Agent registry + basic RBAC for **web** users.
+- No Cabinet/Outline yet: **Letta native memory** only; shared knowledge in later phases.
 
 ---
 
@@ -371,10 +376,10 @@ We’re aiming for:
   - Maps external identities → internal users; agent registry; chat routing to **Letta** (Letta → **LiteLLM** direct for models).
   - Auth and tool/model policies; **Cabinet API** backed by Outline.
   - **LiteLLM:** Den uses it **only for observability** (not as a proxy for model traffic).
-  - LettaBot and OpenWebUI target Den; Cabinet/Outline auth aligned with human auth.
+  - **v1:** OpenWebUI → Den → Letta. **LettaBot → Den** is an optional later value-add (see § Den as LettaBot proxy). Cabinet/Outline auth aligned with human auth when Cabinet ships.
 
 - **Phased delivery**:
-  - **MVP (Phase 1):** Den in front of Letta; multi‑user chat; no Cabinet yet.
+  - **MVP (Phase 1):** Den for **web**; LettaBot may stay direct-to-Letta; no Cabinet yet.
   - **Phase 2:** Cabinet abstraction defined and wired as tools (even if stubbed).
   - **Phase 3:** Cabinet backed by Outline with properties + embeddings.
   - **Phase 4:** Refine memory policies, multi‑user ergonomics, RBAC, and workflows.

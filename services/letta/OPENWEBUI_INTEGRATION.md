@@ -2,7 +2,7 @@
 
 ## Canonical Multi-User Architecture
 
-For production multi-user deployments, OpenWebUI should talk to **Den** (Rust/Axum), which fronts **self-hosted Letta**. See **[MULTIUSER_PROXY_ARCHITECTURE.md](../../MULTIUSER_PROXY_ARCHITECTURE.md)**. Below: **direct** OpenWebUI → Letta for dev/single-tenant.
+For production multi-user deployments, OpenWebUI should talk to **Den** (Rust/Axum), which fronts **self-hosted Letta**. See **[DEN_ARCHITECTURE.md](../../DEN_ARCHITECTURE.md)**. Below: **direct** OpenWebUI → Letta for dev/single-tenant.
 
 ## Current Integration (Direct)
 
@@ -58,11 +58,11 @@ For detailed session management strategies (one agent per user, one per chat, hy
 - **No User-Aware Memory**: Agents don't know which OpenWebUI user they're interacting with
 - **Direct API Access**: OpenWebUI communicates directly with Letta
 
-For multi-user production, use **Den** (Axum): [MULTIUSER_PROXY_ARCHITECTURE.md](../../MULTIUSER_PROXY_ARCHITECTURE.md) — self-hosted Letta only.
+For multi-user production, use **Den** (Axum): [DEN_ARCHITECTURE.md](../../DEN_ARCHITECTURE.md) — self-hosted Letta only.
 
 ## References
 
-- **[MULTIUSER_PROXY_ARCHITECTURE.md](../../MULTIUSER_PROXY_ARCHITECTURE.md)** – Den (Axum) + self-hosted Letta
+- **[DEN_ARCHITECTURE.md](../../DEN_ARCHITECTURE.md)** – Den (Axum) + self-hosted Letta
 - [Open WebUI Documentation](https://docs.openwebui.com)
 - [Open WebUI Tools Repository](https://github.com/Haervwe/open-webui-tools)
 - [Letta Documentation](https://docs.letta.com)
