@@ -17,18 +17,19 @@ I’ll break it into:
 
 ### Core components
 
-1. **Den** (control plane + gateway)
+1. **Den** (control plane + gateway), implemented in **Rust with Axum**
    - Maps **external identities** (Slack, WhatsApp, web, etc.) to **internal users**.
    - **Agent registry**; **routes** chat to the correct Letta agent.
    - **Auth** and **tool/model policies** (RBAC, gating, rate limits).
    - **Cabinet API** for agents (search/read/write), implemented against **Outline**.
-   - **Tags and forwards** all model traffic **through LiteLLM** so logs/costs are attributable (`user_id`, `agent_id`, `channel`, etc.).
-   - Auth‑aware proxy: frontends ↔ Letta; agent tool calls ↔ Cabinet.
+   - **LiteLLM (observability only):** Den does **not** proxy model traffic. **Letta calls LiteLLM directly.** Den may connect to LiteLLM for **metrics, spend logs, admin API**, etc., and join that with Den’s `user_id` / `agent_id` / channel data where your logging pipeline allows.
+   - Auth‑aware proxy: frontends ↔ **Letta** only for chat (not through LiteLLM); agent tool calls ↔ Cabinet.
 
-2. **Letta**
+2. **Letta** (**self‑hosted only** in BEARS—e.g. Coolify `bears-letta:8283`, not Letta Cloud)
    - Agent runtime (conversation loop + tools).
+   - **Model calls:** **Letta → LiteLLM** directly (`LLM_API_URL`). No Den in that path.
    - Per‑agent configuration: system prompts, tools, memory adapters.
-   - Stateless(ish) from Den’s point of view; Den passes user/agent IDs and context.
+   - Stateless(ish) from Den’s point of view; Den calls the **self‑hosted Letta REST API** (reqwest from Axum).
 
 3. **LettaBot**
    - Channel adapters:
@@ -43,9 +44,8 @@ I’ll break it into:
    - Forwards chat requests to **Den** instead of directly to Letta.
 
 5. **LiteLLM**
-   - Model routing/proxy between Letta and OpenAI (and any other models).
-   - Observability hooks (request logs, costs, model usage).
-   - Optional: caching / rate‑limiting at the model layer.
+   - **Letta’s** model gateway (Letta → LiteLLM → providers). Den does not proxy this traffic.
+   - Observability (logs, costs, metrics) — **Den** may consume for dashboards/correlation only.
 
 6. **Cabinet (later)**
    - Logical knowledge layer agents use for long‑term reference & history.
@@ -124,7 +124,7 @@ Letta returns:
 - Tool calls (e.g., `{"tool": "cabinet.search", ...}`),
 - Final responses.
 
-Den doesn’t need to know Letta’s internal details, just that it can be called with a user+agent context. Model calls from Letta run **through LiteLLM** with tags Den supplies (or enforces) for observability.
+Den doesn’t need to know Letta’s internal details for routing chat. **Inference path:** user → Den → Letta → **LiteLLM** (direct). Den does not touch LiteLLM for model requests.
 
 ---
 
@@ -175,13 +175,11 @@ Den enforces:
 
 ---
 
-### 2.5 Den ↔ LiteLLM
+### 2.5 Den and LiteLLM (observability only)
 
-**Den’s job:** every model call is **tagged** and **routed through LiteLLM** for observability (costs, usage, attribution).
-
-- Den attaches (or requires) metadata: `user_id`, `agent_id`, `channel`, etc., on traffic that reaches LiteLLM—whether by configuring Letta’s outbound calls, proxying, or headers/metadata conventions.
-- **Policy alignment:** Den’s model/tool allowlists and rate limits match what LiteLLM enforces or logs.
-- LiteLLM remains the single gateway to OpenAI and other providers from BEARS’ perspective.
+- **Traffic:** **Letta → LiteLLM** for all completions/embeddings. **Den never proxies** LiteLLM.
+- **Den’s use of LiteLLM:** optional **read-only** integration for observability—e.g. LiteLLM **metrics**, **spend tracking**, admin API, or exported logs—so operators (or Den) can monitor cost and usage. Correlating calls to Den’s `user_id` / `agent_id` may require **Letta/LiteLLM metadata** (e.g. custom headers or logging hooks) configured outside Den’s request path.
+- **Policy:** Den can still enforce **which users/agents may chat** before forwarding to Letta; model allowlists at the **LiteLLM** layer remain separate (configure both consistently).
 
 ---
 
@@ -239,9 +237,9 @@ Deliverables:
        - Either treat Den as a “LLM backend with tools”,
        - Or implement a small adapter that maps its requests to `/chat/send`.
 
-5. **LiteLLM observability** (via Den)
-   - Den ensures model traffic through LiteLLM carries tags (`user_id`, `agent_id`, `channel`).
-   - Validate per‑user/per‑agent token usage and channel‑level traffic in LiteLLM (or Den) logs.
+5. **LiteLLM observability** (Den reads, does not proxy)
+   - Letta → LiteLLM stays direct. **Den** connects to LiteLLM **only** for observability (metrics/spend/logs APIs or log shipping) as needed.
+   - Where possible, align Letta/LiteLLM logging with Den’s identity data for attribution.
 
 **Phase 1 success:**
 
@@ -356,12 +354,8 @@ At the end of Phase 2, Cabinet is a defined, testable contract, even if Outline 
      - Restrict dangerous or heavy tools/models to specific roles.
 
 4. **Observability & ops polish**
-   - Use LiteLLM + **Den** logs to:
-     - Monitor per‑user/per‑agent token usage,
-     - Alert on spikes or errors.
-   - Build minimal dashboards (could be just Grafana over logs) for:
-     - Channel usage,
-     - Agent performance.
+   - **LiteLLM** metrics/spend + **Den** logs + optional correlation (Letta does not route LLM traffic through Den).
+   - Dashboards: channel usage (Den), model cost (LiteLLM), agent performance.
 
 This is the “make it livable and reliable” phase.
 
@@ -374,9 +368,9 @@ This is the “make it livable and reliable” phase.
 We’re aiming for:
 
 - **Den** as the **BEARS control plane and gateway**:
-  - Maps external identities → internal users; agent registry; chat routing to Letta.
+  - Maps external identities → internal users; agent registry; chat routing to **Letta** (Letta → **LiteLLM** direct for models).
   - Auth and tool/model policies; **Cabinet API** backed by Outline.
-  - Tags and forwards model calls through **LiteLLM** for observability.
+  - **LiteLLM:** Den uses it **only for observability** (not as a proxy for model traffic).
   - LettaBot and OpenWebUI target Den; Cabinet/Outline auth aligned with human auth.
 
 - **Phased delivery**:

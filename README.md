@@ -4,7 +4,7 @@
 
 - **[Letta](https://github.com/letta-ai/letta)** — Agent runtime, native memory (blocks, conversations, tools)  
 - **[Open WebUI](https://github.com/open-webui/open-webui)** — Chat UI  
-- **[Outline](https://www.getoutline.com/)** + **Den** — Shared **Cabinet** knowledgebase (humans + agents); see [PLAN.md](PLAN.md)  
+- **[Outline](https://www.getoutline.com/)** + **Den** (Rust/Axum) — Control plane + **Cabinet**; see [PLAN.md](PLAN.md). **Self-hosted Letta only** (no Letta Cloud).  
 - **[LiteLLM](https://github.com/BerriAI/litellm)** — Model gateway  
 - **[Coolify](https://coolify.io)** — Deployment  
 
@@ -14,7 +14,7 @@
 |-------|------|
 | **Letta memory** | Per-agent context (blocks, conversations)—not replaced by Cabinet |
 | **Cabinet (Outline)** | Long-lived docs; people edit in Outline, agents use tools via **Den** |
-| **Den** | Control plane: identity, routing, policy, Cabinet API, LiteLLM tagging ([PLAN.md](PLAN.md)) |
+| **Den** | Control plane: identity, routing, policy, Cabinet API; **LiteLLM only for observability** ([PLAN.md](PLAN.md)) |
 
 ## Quick start (Coolify)
 

@@ -2,7 +2,7 @@
 
 ## Overview
 
-**Canonical multi-user architecture:** For production multi-user deployments with one agent per user, identity mapping, and access control, the project standard is the **Authentication Proxy** in front of Letta Cloud. See **[MULTIUSER_PROXY_ARCHITECTURE.md](../../MULTIUSER_PROXY_ARCHITECTURE.md)**. OpenWebUI and LettaBot talk to the proxy; the proxy handles auth, user→agent routing, and session→conversation mapping.
+**Canonical multi-user architecture:** **Den** (Axum) in front of **self-hosted Letta** — see **[MULTIUSER_PROXY_ARCHITECTURE.md](../../MULTIUSER_PROXY_ARCHITECTURE.md)**. OpenWebUI and LettaBot target Den for auth and routing.
 
 This guide describes session management when using **direct OpenWebUI→Letta integration** (self-hosted Letta or setups without the auth proxy). It explains how to map Open WebUI chats to Letta agents and choose strategies (one agent per user, per chat, or hybrid) when you are not using the canonical proxy.
 
@@ -516,7 +516,7 @@ assert agent1 != agent2, "Different chats should have different agents"
 
 ## References
 
-- **[MULTIUSER_PROXY_ARCHITECTURE.md](../../MULTIUSER_PROXY_ARCHITECTURE.md)** – Canonical multi-user auth proxy (Letta Cloud + proxy)
+- **[MULTIUSER_PROXY_ARCHITECTURE.md](../../MULTIUSER_PROXY_ARCHITECTURE.md)** – Den + self-hosted Letta
 - [Letta Documentation](https://docs.letta.com)
 - [Open WebUI Documentation](https://docs.openwebui.com)
 - [Letta API Reference](https://docs.letta.com/api-reference)

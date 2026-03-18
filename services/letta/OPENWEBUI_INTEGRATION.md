@@ -2,7 +2,7 @@
 
 ## Canonical Multi-User Architecture
 
-For production multi-user deployments with **one agent per user**, user-identity mapping, and access control, the project standard is the **Authentication Proxy** in front of Letta Cloud. See **[MULTIUSER_PROXY_ARCHITECTURE.md](../../MULTIUSER_PROXY_ARCHITECTURE.md)**. In that model, OpenWebUI is configured to use the proxy as its API base; the proxy handles auth, user→agent routing, and request forwarding to Letta Cloud. The sections below describe the **direct integration** (OpenWebUI → Letta without the proxy), which is suitable for single-org or development.
+For production multi-user deployments, OpenWebUI should talk to **Den** (Rust/Axum), which fronts **self-hosted Letta**. See **[MULTIUSER_PROXY_ARCHITECTURE.md](../../MULTIUSER_PROXY_ARCHITECTURE.md)**. Below: **direct** OpenWebUI → Letta for dev/single-tenant.
 
 ## Current Integration (Direct)
 
@@ -58,11 +58,11 @@ For detailed session management strategies (one agent per user, one per chat, hy
 - **No User-Aware Memory**: Agents don't know which OpenWebUI user they're interacting with
 - **Direct API Access**: OpenWebUI communicates directly with Letta
 
-For multi-user production, use the **Authentication Proxy** architecture: [MULTIUSER_PROXY_ARCHITECTURE.md](../../MULTIUSER_PROXY_ARCHITECTURE.md). It specifies a Rust/Axum proxy that provides user auth, user→agent mapping, access control, and session→conversation routing in front of Letta Cloud.
+For multi-user production, use **Den** (Axum): [MULTIUSER_PROXY_ARCHITECTURE.md](../../MULTIUSER_PROXY_ARCHITECTURE.md) — self-hosted Letta only.
 
 ## References
 
-- **[MULTIUSER_PROXY_ARCHITECTURE.md](../../MULTIUSER_PROXY_ARCHITECTURE.md)** – Canonical multi-user auth proxy (Letta Cloud + proxy)
+- **[MULTIUSER_PROXY_ARCHITECTURE.md](../../MULTIUSER_PROXY_ARCHITECTURE.md)** – Den (Axum) + self-hosted Letta
 - [Open WebUI Documentation](https://docs.openwebui.com)
 - [Open WebUI Tools Repository](https://github.com/Haervwe/open-webui-tools)
 - [Letta Documentation](https://docs.letta.com)

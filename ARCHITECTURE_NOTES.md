@@ -24,7 +24,7 @@ Until Den is deployed, OpenWebUI talks to Letta directly; add Den + Outline per 
 
 | Component | Role |
 |-----------|------|
-| **Den** | Auth, identity mapping, agent registry, chat routing to Letta, Cabinet API, LiteLLM metadata |
+| **Den** | Auth, routing to Letta, Cabinet API; **LiteLLM** only for observability (Letta → LiteLLM direct) |
 | **Letta** | Agents, tools, memory blocks, conversations |
 | **LiteLLM** | Unified model API |
 | **OpenWebUI** | Primary web chat (optional: LibreChat) |
@@ -54,7 +54,7 @@ Expose only what users need (e.g. OpenWebUI via Coolify proxy).
 
 ### Multi-user
 
-[MULTIUSER_PROXY_ARCHITECTURE.md](MULTIUSER_PROXY_ARCHITECTURE.md) — Den, Letta Cloud or self-hosted patterns, Slack/WhatsApp via LettaBot.
+[MULTIUSER_PROXY_ARCHITECTURE.md](MULTIUSER_PROXY_ARCHITECTURE.md) — **Den (Axum)**, self-hosted Letta only, Slack/WhatsApp via LettaBot.
 
 ### Future
 
