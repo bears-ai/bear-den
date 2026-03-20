@@ -4,7 +4,8 @@ This directory serves as the project's memory bank - a centralized location for 
 
 ## Contents
 
-- [`project_brief.md`](project_brief.md) - The main project brief document containing goals, scope, requirements, and other key project information
+- [`project_brief.md`](project_brief.md) — goals, scope, requirements (aligned with repo **bear** / Den model; see root `PLAN.md`)
+- [`memory_architecture_brief.md`](memory_architecture_brief.md) — memory layers and Cabinet vs Letta per **bear**
 
 ## Purpose
 

@@ -6,7 +6,7 @@ BEARS uses **only self-hosted Letta** (e.g. `letta/letta:latest` on Coolify). **
 
 ## Overview
 
-**v1 Den:** **Open WebUI → Den → Letta** (web auth, agent registry, policy). **LettaBot** (**Slack/WhatsApp**) typically stays **LettaBot → Letta direct** until you adopt the optional proxy path—see [PLAN.md](PLAN.md) § *Den as LettaBot → Letta proxy*. Multi-user pattern for web: one agent per user (or your mapping), `user_id` → `agent_id` in Den’s DB.
+**v1 Den:** **Open WebUI → Den → Letta** (web auth, **bear** registry, **users↔bears** membership, policy). **LettaBot** (**Slack/WhatsApp**) typically stays **LettaBot → Letta direct** for **chat** until you adopt the optional proxy path—see [PLAN.md](PLAN.md) § *Den as LettaBot → Letta proxy*—while Den still **provisions Letta agents** and **updates LettaBot / Open WebUI** so the right **bears** appear per user. **Many‑to‑many:** each user can use many bears; some bears are shared by many users. Den enforces membership on every request.
 
 ### Den implementation (Axum)
 
@@ -23,22 +23,28 @@ Examples below use **Python/TypeScript** for readability; **Den** implements the
 
 API shapes depend on your Letta version—confirm against your server.
 
-### Agents & conversations
+### Bears, users, and conversations
 
-- Each **user** maps to a **Letta agent** (or shared agent + conversation isolation, per product choice).
+- A **bear** is one **Letta agent**. **Users ↔ bears** is **many‑to‑many**: store `(user_id, bear_id)` membership in Den; optional roles (owner, member, read‑only).
 - **Conversations** isolate threads (Slack thread, WhatsApp chat, Open WebUI session). Prefer **per-conversation** message APIs where available so concurrent channels do not block each other.
 
 ### Memory blocks
 
 - **human**, **persona**, optional **shared** read-only blocks (org policy)—same ideas as Cloud; create/attach via your server’s blocks/agents API or Letta UI.
 
-### Provisioning (self-hosted)
+### Provisioning bears (Den-owned)
 
-**Templates / Identities** as described for Letta Cloud may not exist on self-hosted builds. Typical approach:
+**Den** is responsible for **bear lifecycle**: create/update the Letta agent, record the bear in Den’s registry, attach **users↔bears** membership, **regenerate LettaBot config** and **Open WebUI** exposure, and (when Cabinet exists) set **Cabinet** permissions per user and bear.
 
-1. **Create agent** via Letta API or admin UI (model, system prompt, tools, memory blocks).
-2. Store `user_id` → `agent_id` in **Den’s database**.
-3. Optionally script agent creation from Den on signup (HTTP `POST` to Letta’s agent endpoint with shared headers).
+**Templates / Identities** as described for Letta Cloud may not exist on self-hosted builds. Typical flow:
+
+1. **Den** calls Letta’s API to **create or update** the Letta agent (model, system prompt, tools, memory blocks) for a new or changed **bear**.
+2. Den stores **`bear_id` ↔ `associated_letta_id`** plus metadata (name, description, tool flags, default model, …).
+3. Den maintains **`(user_id, bear_id)`** membership (many‑to‑many).
+4. Den **publishes** bear lists: Open WebUI adapter / agent picker sources from Den; **LettaBot** `lettabot.yaml` (or generated fragment) is updated so channel allowlists reference the correct Letta agent ids for each bear.
+5. When Cabinet ships: Den applies **deck/kind ACLs** per `(user_id, bear_id)` on Cabinet operations.
+
+Admins may still use the Letta UI for experiments; **production truth** for which bears exist and who may use them should live in **Den**.
 
 ---
 
@@ -56,17 +62,19 @@ Den → Letta for **web** chat only. Den may call LiteLLM separately for **metri
 
 ### Cabinet (Outline)
 
-Long-lived shared knowledge: agents via **Den** Cabinet tools; humans in **Outline**. See [PLAN.md](PLAN.md).
+Long-lived shared knowledge: **bears** via **Den** Cabinet tools; humans in **Outline**. See [PLAN.md](PLAN.md).
 
 ---
 
 ## Den — behavioral requirements
 
 1. **Authenticate** end users (OAuth, session, API key, etc.).
-2. **Store** `user_id` → `agent_id` (and optional `letta_identity` metadata if you use identities).
-3. **Route** chat: resolve agent + conversation, call Letta message API, **stream** response back.
-4. **Enforce** ownership: only the authenticated user’s agent may be used.
-5. **Provision** agents on signup (HTTP to self-hosted Letta). **Slack/WhatsApp → `user_id` mapping** applies when/if LettaBot fronts Den—not required for v1 web-only Den.
+2. **Register bears** and **`(user_id, bear_id)`** membership (many‑to‑many); optional `letta_identity` metadata if you use identities.
+3. **Provision bears:** create/update Letta agents via API; keep registry and clients in sync (Open WebUI, LettaBot yaml).
+4. **Route** chat: resolve **bear** + conversation, call Letta message API, **stream** response back.
+5. **Enforce** membership: the authenticated user may only invoke **bears** they belong to.
+6. **Cabinet (later):** enforce per‑user, per‑bear permissions on Cabinet tools.
+7. **Slack/WhatsApp → `user_id` mapping** applies when/if LettaBot fronts Den for chat—not required for v1 web-only Den; Den may still map channel users to `user_id` for **config** and future proxying.
 
 ### Slack & WhatsApp (optional Den proxy)
 
@@ -79,11 +87,11 @@ Minimum surface (names align with [PLAN.md](PLAN.md) where noted):
 | Endpoint | Method | Description |
 |----------|--------|-------------|
 | /auth/login | POST | Authenticate, session token |
-| /auth/signup | POST | Create user + provision agent on Letta |
+| /auth/signup | POST | Create user + attach to default bear(s) and/or provision new bears on Letta as policy dictates |
 | /chat/send | POST | User message → agent (streaming) — same role as `/chat/message` |
 | /chat/message | POST | Optional alias for clients expecting this name |
 | /chat/conversations | GET/POST | List / create conversations |
-| /agents | GET | Agents visible to user |
+| /agents | GET | **Bears** visible to user (member list) |
 | /admin/* | … | User/agent admin (optional) |
 
 Cabinet tool endpoints are internal or agent-facing per PLAN.
@@ -113,7 +121,7 @@ agents:
         allowedUsers: ["+15551234567"]
 ```
 
-Regenerate `lettabot.yaml` from Den’s DB when users are added.
+Regenerate `lettabot.yaml` from Den’s DB when **bears** or **users↔bears** membership changes.
 
 ---
 
@@ -129,7 +137,7 @@ Point Open WebUI (or a pipe function) at **Den**, not raw Letta, when multi-user
 |-----------|--------|
 | **Self-hosted Letta** | Coolify service; volume for `/root/.letta`; `LETTA_SERVER_PASS`; `LLM_API_URL` → LiteLLM |
 | **Den** | Axum service; `LETTA_BASE_URL=http://bears-letta:8283`; Letta admin credential; `DATABASE_URL`; `SESSION_SECRET`; Outline/Cabinet credentials when Phase 3+ |
-| **PostgreSQL** | Den user/agent/session data |
+| **PostgreSQL** | Den users, **bears**, **users↔bears** membership, sessions |
 | **LettaBot** | Slack + WhatsApp tokens; config volume |
 | **Open WebUI** | Talks to Den in production multi-user mode |
 
@@ -161,17 +169,27 @@ WHATSAPP_ACCESS_TOKEN=...
 
 ---
 
-## Agent design (one user per agent)
+## Bear design (personal vs shared)
 
-Example system prompt shape:
+Bears may be **personal** (one primary user, still many‑to‑many if you add delegates) or **shared** (household/project bear with many members). Prompts and memory blocks should match the sharing model.
+
+Example **personal** bear prompt shape:
 
 ```
 You are a personal assistant for {{user_name}}.
-You serve exactly one user. Do not share information across users.
+You serve this user’s interests; respect boundaries for other people they mention.
 ...
 ```
 
-Seed **human** / **persona** blocks when creating each user’s agent via API or UI.
+Example **shared** bear prompt shape:
+
+```
+You are a household assistant for {{group_name}}.
+Multiple members may chat with you; attribute preferences per user when known.
+...
+```
+
+Seed **human** / **persona** (and optional **shared**) blocks when Den provisions each bear on Letta.
 
 ---
 
@@ -180,7 +198,7 @@ Seed **human** / **persona** blocks when creating each user’s agent via API or
 | Layer | Responsibility |
 |-------|------------------|
 | **Self-hosted Letta** | Agent state, memory blocks, conversations, tools, calls to LiteLLM |
-| **Den (Axum)** | Auth, routing, policy, Cabinet API, Letta proxy; optional Slack/WhatsApp identity when LettaBot fronts Den |
+| **Den (Axum)** | Auth; **bear** provisioning (Letta + Open WebUI + LettaBot config); **users↔bears** membership; routing; Cabinet API; Letta proxy; optional Slack/WhatsApp identity when LettaBot fronts Den |
 | **LettaBot** | Slack/WhatsApp → Letta direct (v1); optional → Den later |
 | **Open WebUI** | Web UI → Den (v1) |
 | **PostgreSQL** | Den: users, mappings, sessions |

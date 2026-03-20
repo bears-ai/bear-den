@@ -4,7 +4,7 @@ Single-page view of the BEARS stack on Coolify. **Roadmap and contracts:** [PLAN
 
 ## Target architecture
 
-**Cabinet** (**Outline**) is the shared knowledgebase: humans edit in Outline; agents access it through **Den** (Cabinet API, policy). **Letta** keeps **native memory** (blocks, conversations)—Cabinet does not replace that.
+**Cabinet** (**Outline**) is the shared knowledgebase: humans edit in Outline; **bears** (Letta agents) access it through **Den** (Cabinet API, policy). **Letta** keeps **native memory** (blocks, conversations) per bear—Cabinet does not replace that. **Bear** = one agent; **BEARS** = the stack. See [PLAN.md](PLAN.md) terminology.
 
 ```
 Open WebUI         Outline (human editing)
@@ -22,8 +22,8 @@ Open WebUI         Outline (human editing)
 
 | Component | Role |
 |-----------|------|
-| **Den** | Auth, routing to Letta, Cabinet API; **LiteLLM** only for observability (Letta → LiteLLM direct) |
-| **Letta** | Agents, tools, memory blocks, conversations |
+| **Den** | **Bear** provisioning (Letta + Open WebUI + LettaBot config), **users↔bears** membership, auth, routing to Letta, Cabinet API; **LiteLLM** only for observability (Letta → LiteLLM direct) |
+| **Letta** | **Bear** runtime: tools, memory blocks, conversations per Letta agent |
 | **LiteLLM** | Unified model API |
 | **Open WebUI** | Primary web chat (optional: LibreChat) |
 | **Outline** | Cabinet storage and UI |
@@ -40,9 +40,9 @@ Open WebUI         Outline (human editing)
 
 **Web (today, no Den):** User → Open WebUI → Letta → LiteLLM → providers.
 
-**LettaBot (Slack/WhatsApp):** **v1** is LettaBot → Letta direct. Optional later: LettaBot → Den → Letta ([PLAN.md](PLAN.md)).
+**LettaBot (Slack/WhatsApp):** **v1** is LettaBot → Letta direct for **chat**; Den still drives **which bears** appear in bot config. Optional later: LettaBot → Den → Letta ([PLAN.md](PLAN.md)).
 
-**Cabinet:** Agent tool calls → Den → Outline.
+**Cabinet:** Bear tool calls → Den → Outline.
 
 ## Ports (internal)
 

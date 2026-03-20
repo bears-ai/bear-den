@@ -4,7 +4,7 @@
 
 ## Overview
 
-LibreChat provides a modern, feature-rich chat interface that integrates with the BEARS Stack's Letta agent orchestration framework. It offers multi-user authentication, conversation management, and advanced features like code execution and file uploads. This deployment uses the cpfiffer/letta-libre fork, which enables LibreChat to serve as the primary UI for interacting with Letta-hosted agents.
+LibreChat provides a modern, feature-rich chat interface that integrates with the BEARS stack’s Letta **bear** runtime. It offers multi-user authentication, conversation management, and advanced features like code execution and file uploads. This deployment uses the cpfiffer/letta-libre fork, which enables LibreChat to serve as the primary UI for interacting with **bears** (Letta-hosted agents).
 
 ## Prerequisites
 
@@ -16,7 +16,7 @@ LibreChat provides a modern, feature-rich chat interface that integrates with th
 
 LibreChat integrates with BEARS services as follows:
 
-- **Agent Interaction**: Connects to Letta (`http://bears-letta:8283`) for all agent interactions and model access
+- **Bear interaction**: Connects to Letta (`http://bears-letta:8283`) for all **bear** (agent) chat and model access; **Den** provisions bears and membership when deployed ([PLAN.md](../../PLAN.md))
 - **Memory/Context**: Letta native memory; shared knowledge via **Cabinet (Outline)** when **Den** is deployed ([PLAN.md](../../PLAN.md))
 - **Authentication**: Built-in multi-user authentication with MongoDB backend
 - **Search**: Uses MeiliSearch for conversation search functionality
@@ -169,14 +169,14 @@ Click **Deploy** and wait for **Healthy** status.
 
 ### Letta Integration
 
-LibreChat connects to Letta using the agent API configuration:
+LibreChat connects to Letta using the **agent** API (each **bear** is a Letta agent):
 
 ```bash
 LETTA_URL=http://bears-letta:8283
 LETTA_SERVER_PASS=<your-letta-admin-password>
 ```
 
-This allows LibreChat to interact with Letta-hosted agents, which in turn access all models configured in LiteLLM. Letta handles agent orchestration, memory management, and model routing internally.
+This allows LibreChat to interact with **bears** (Letta-hosted agents), which in turn access all models configured in LiteLLM. Letta handles **bear** runtime, memory, and model routing internally; **Den** owns provisioning and **users↔bears** when you add it ([PLAN.md](../../PLAN.md)).
 
 ### Multi-User Authentication
 
@@ -276,10 +276,10 @@ curl https://librechat.yourdomain.com/api/health
 
 Adding LibreChat to BEARS provides:
 
-- **Primary UI**: Modern, feature-rich chat interface for interacting with Letta agents
+- **Primary UI**: Modern, feature-rich chat interface for interacting with **bears** (Letta agents)
 - **Multi-user support**: Team collaboration capabilities
 - **Advanced features**: Code execution, file uploads, conversation branching
-- **Agent Orchestration**: Leverages Letta's agent management and memory systems
+- **Bear runtime**: Leverages Letta’s agent APIs and per‑bear memory
 - **Scalability**: Handles multiple concurrent users through Letta's backend
 
 ## Primary Deployment
@@ -288,11 +288,11 @@ This deployment configures LibreChat as the primary user interface for the BEARS
 
 1. Deploy LibreChat following the steps above (using the cpfiffer/letta-libre fork)
 2. Ensure Letta is deployed with LiteLLM ([PLAN.md](../../PLAN.md) for Den/Cabinet)
-3. Users access LibreChat for all chat interactions, which are routed through Letta agents
-4. Letta remains available for advanced agent management and administration
+3. Users access LibreChat for all chat interactions, which are routed through **bears** (Letta agents)
+4. Letta remains available for advanced **bear** / agent management and administration
 
 ---
 
 **Deployment Complete!** 🎉
 
-LibreChat is now integrated with your BEARS Stack, providing a modern chat interface for your AI agents.
+LibreChat is now integrated with your BEARS stack, providing a modern chat interface for your **bears** (Letta agents).

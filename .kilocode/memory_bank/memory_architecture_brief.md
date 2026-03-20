@@ -4,10 +4,10 @@
 
 ## Overview
 
-The agent reasons over:
+Each **bear** (Letta agent) reasons over:
 
 - **Letta native memory** (blocks, conversation state, built-in tools)  
-- **Cabinet** (Outline) — shared knowledge, human-editable UI, agent tools via Den  
+- **Cabinet** (Outline) — shared knowledge, human-editable UI, **bear** tools via Den  
 - **Large corpora** (RAG, MCPs) as needed
 
 ---
@@ -61,7 +61,7 @@ updated: 2025-10-05
 
 **Operations**:
 - Read: Load relevant files based on user context and query
-- Write: Agent suggests edits → user approves → Git commit
+- Write: **Bear** (assistant) suggests edits → user approves → Git commit
 - Search: Full-text search across Markdown files
 - Version: Git history tracks all changes with timestamps
 
@@ -143,7 +143,7 @@ User Query → Embed Query → Vector Search (top-k=10) → Rerank → Context I
 
 **Use Cases**:
 - User profile data (name, preferences, location)
-- Agent state (current goal, active project)
+- **Bear** state (current goal, active project)
 - Session context (last interaction, conversation state)
 - Feature flags and configuration
 
@@ -197,7 +197,7 @@ history/
 **Operations**:
 - Append: Add new interactions to current session
 - Query: Search by date range, user, project, or tags
-- Summarize: Agent-generated summaries of sessions
+- Summarize: **Bear**-generated summaries of sessions
 - Promote: Extract key facts to Basic Memory
 
 ---
@@ -239,9 +239,9 @@ Response:
 ```
 
 **Integration**:
-- MCPs can be queried directly by agents via tool calls
+- MCPs can be queried directly by **bears** via tool calls
 - MCP results can be embedded and indexed into vector store
-- Agents can summarize MCP data and promote to Basic Memory
+- **Bears** can summarize MCP data and promote to Basic Memory
 
 ---
 
@@ -268,7 +268,7 @@ graph TD
 1. User submits query with context (user ID, project)
 2. Load relevant Basic Memory files (personal + shared)
 3. Perform semantic search in Vector DB (top-k=10)
-4. Fetch relevant slots (user profile, agent state)
+4. Fetch relevant slots (user profile, **bear** state)
 5. Optionally query MCPs for additional context
 6. Assemble context and inject into LLM prompt
 7. Generate response
@@ -306,7 +306,7 @@ graph TD
 **Goal**: Move important information from ephemeral to permanent memory
 
 **Flow**:
-1. Agent identifies significant facts in conversation
+1. **Bear** identifies significant facts in conversation
 2. Suggests promotion to Basic Memory with proposed location
 3. User reviews and approves/edits
 4. Commit to Git with descriptive message
@@ -387,18 +387,18 @@ services:
 
 ### Cabinet (Outline)
 
-Shared docs and search—humans edit in Outline; agents via Den tools.
+Shared docs and search—humans edit in Outline; **bears** via Den Cabinet tools.
 
 ---
 
 ## Future Enhancements
 
 ### Phase 1 (Current)
-- Letta memory blocks + conversations
-- Cabinet (Outline) for shared knowledge
+- Letta per‑**bear** memory blocks + conversations
+- Cabinet (Outline) for shared knowledge (via Den when deployed)
 
 ### Phase 2 (Next)
-- Agent-based summarizers for MCP data
+- **Bear**-based summarizers for MCP data
 - Memory promotion UI for human approval
 - Time-aware vector embeddings with temporal decay
 - Conflict detection and resolution workflows
@@ -414,6 +414,7 @@ Shared docs and search—humans edit in Outline; agents via Den tools.
 ## Related Documentation
 
 - [`project_brief.md`](project_brief.md) - Overall project goals and scope
-- [`README.md`](README.md) - Memory bank overview
+- [`README.md`](README.md) - Memory bank overview  
+- Repo [`PLAN.md`](../../PLAN.md) — **bear** terminology, Den provisioning, users↔bears
 - Docker Compose configuration: `../docker-compose.yaml`
 - LiteLLM configuration: `../litellm-config.yaml`

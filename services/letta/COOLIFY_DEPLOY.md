@@ -4,7 +4,9 @@
 
 ## Overview
 
-Letta is the BEARS agent runtime: **native memory** (blocks, conversations, tools) and models via **LiteLLM**. Shared knowledge is **Cabinet** on **Outline**, exposed to agents through **Den** ([PLAN.md](../../PLAN.md)). Cabinet does **not** replace Letta’s per-agent memory.
+Letta is the BEARS **bear runtime**: each **bear** is a **Letta agent** (conversation loop, tools, native **memory** blocks). Models go through **LiteLLM**. Shared knowledge is **Cabinet** on **Outline**, exposed to **bears** through **Den** ([PLAN.md](../../PLAN.md)). Cabinet does **not** replace Letta’s per‑**bear** memory.
+
+**Terminology:** In BEARS docs, **bear** = one assistant backed by a Letta agent. **Den** provisions bears (Letta API), **users↔bears** membership (many‑to‑many), and surfaces bears in Open WebUI / LettaBot—see [PLAN.md](../../PLAN.md). The Letta HTTP API still uses paths like `/v1/agents`; that **agent** id is the runtime id for a bear.
 
 ## Prerequisites
 
@@ -106,7 +108,7 @@ curl http://bears-letta:8283/v1/agents
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
 | `LLM_API_URL` | ✅ Yes | - | LiteLLM URL (`http://bears-litellm:4000/v1`) |
-| `MODEL_NAME` | ✅ Yes | `gpt-4` | Default model for agents |
+| `MODEL_NAME` | ✅ Yes | `gpt-4` | Default model for new Letta agents (**bears**) |
 | `LETTA_SERVER_PORT` | No | `8283` | Web UI and API port |
 | `LETTA_SERVER_PASS` | ✅ Yes | - | Admin password for Letta |
 | `OPENAI_API_KEY` | ✅ Yes | - | For embeddings (can use LiteLLM instead) |
@@ -125,28 +127,30 @@ Cabinet tools (when Den + Outline are deployed) → Den → Outline
 
 ### Primary UI
 
-Many deployments use **Open WebUI** or **LibreChat**; configure whichever you run. Agent **memory** stays in Letta; **shared knowledge** is **Cabinet (Outline)** in the target architecture.
+Many deployments use **Open WebUI** or **LibreChat**; configure whichever you run. Per‑**bear** **memory** stays in Letta; **shared knowledge** is **Cabinet (Outline)** in the target architecture.
 
 ### Admin Web UI (Optional)
 
-For advanced agent management and development, access the Letta Web UI at `http://bears-letta:8283` (internal only):
+For advanced **bear** (Letta agent) management and development, access the Letta Web UI at `http://bears-letta:8283` (internal only):
 
 1. **Login** with `LETTA_SERVER_PASS`
-2. **Create an agent**:
+2. **Create a bear** (Letta: “create agent”):
     - Choose model (gpt-4, claude-3-5-sonnet, etc.)
    - Configure memory (Letta blocks; add Cabinet tools when Den is live)
     - Add tools/functions
-3. **Chat with agent** in the UI
-4. **View memory** - Letta blocks + conversation history; shared docs in Outline (Cabinet) when deployed
+3. **Chat with the bear** in the UI
+4. **View memory** - Letta blocks + conversation history; shared docs in Outline (Cabinet) when deployed  
+
+In production, prefer **Den** as the system of record for which bears exist and who may use them ([PLAN.md](../../PLAN.md)); the Letta UI remains useful for ops and debugging.
 
 ### API Access
 
 ```bash
-# List agents
+# List bears (Letta API: GET /v1/agents)
 curl http://bears-letta:8283/v1/agents \
   -H "Authorization: Bearer $LETTA_SERVER_PASS"
 
-# Create agent
+# Create a bear (Letta API: POST /v1/agents)
 curl -X POST http://bears-letta:8283/v1/agents \
   -H "Authorization: Bearer $LETTA_SERVER_PASS" \
   -H "Content-Type: application/json" \
@@ -155,7 +159,7 @@ curl -X POST http://bears-letta:8283/v1/agents \
     "model": "gpt-4"
   }'
 
-# Send message
+# Send message ({agent_id} = Letta’s id for that bear)
 curl -X POST http://bears-letta:8283/v1/agents/{agent_id}/messages \
   -H "Authorization: Bearer $LETTA_SERVER_PASS" \
   -H "Content-Type: application/json" \
@@ -178,13 +182,13 @@ curl -X POST http://bears-letta:8283/v1/agents/{agent_id}/messages \
 curl http://bears-letta:8283/v1/health
 ```
 
-### Agent Status
+### Bear / agent status (Letta API)
 
 ```bash
-# List all agents
+# List all bears (same as Letta agents)
 curl http://bears-letta:8283/v1/agents
 
-# Get agent details
+# Get one bear’s details
 curl http://bears-letta:8283/v1/agents/{agent_id}
 ```
 
@@ -196,7 +200,7 @@ View in Coolify dashboard:
 # Look for:
 # - "Letta server started"
 # - "Connected to LLM provider"
-# - Agent creation/interaction logs
+# - Bear/agent creation and chat logs
 ```
 
 ## Troubleshooting
@@ -231,7 +235,7 @@ Quick test (replace with your key):
 # From a machine/container that can reach LiteLLM:
 curl -i -H "Authorization: Bearer sk-litellm-..." http://bears-litellm:4000/v1/models
 
-# From inside Letta (after setting env var), check Letta can reach LiteLLM via an agent or by inspecting logs for successful 200 responses when Letta makes model calls.
+# From inside Letta (after setting env var), check Letta can reach LiteLLM via a bear (agent) or by inspecting logs for successful 200 responses when Letta makes model calls.
 ```
 
 If your Letta build exposes a different configuration name for forwarding LLM credentials, consult the Letta documentation. See `services/letta/.env.example` for the variable name used in this repository.
@@ -283,30 +287,32 @@ Memory: 1-2 GB
 CPU: 1-2 cores
 ```
 
-### Agent Response Time
+### Bear response time
 
 Factors: model choice, context size, tool latency (e.g. Cabinet). Use streaming where supported.
 
 ## Open WebUI integration
 
-Letta can be integrated with Open WebUI for a modern chat UI and session management, using Letta’s agent capabilities.
+Letta can be integrated with Open WebUI for a modern chat UI and session management, using Letta’s **bear** (agent) capabilities.
 
 ### Overview
 
-When integrating Open WebUI with Letta, you need to:
-1. Map Open WebUI chat sessions to Letta agents
-2. Route messages from Open WebUI to the appropriate Letta agent
-3. Manage session persistence and context
+When integrating Open WebUI with Letta **directly** (no Den), you typically:
+1. Map Open WebUI chat sessions to Letta **agents** (bears)
+2. Route messages to the appropriate **bear**
+3. Manage session persistence and context  
 
-### Session Management Strategies
+**With Den:** users have **many** bears and some bears are **shared**; Den enforces membership and surfaces the bear list—see [PLAN.md](../../PLAN.md).
 
-**One Agent Per User** (Recommended for personalization):
+### Session management strategies (direct mode)
+
+**One bear per Open WebUI user** (simple personalization):
 - All chats from a user share the same Letta agent
-- Agent learns user preferences across all conversations
+- The bear learns user preferences across all conversations
 - Better long-term memory and personalization
 
-**One Agent Per Chat** (Recommended for isolation):
-- Each Open WebUI chat gets its own Letta agent
+**One bear per Open WebUI chat** (isolation):
+- Each chat gets its own Letta agent
 - Complete isolation between conversations
 - Better for project-specific or topic-specific chats
 
@@ -341,10 +347,10 @@ See [`openwebui_integration.env.example`](openwebui_integration.env.example).
 
 ### Custom Models
 
-Configure different models per agent:
+Configure different models per bear:
 
 ```bash
-# In agent creation
+# In Letta agent (bear) creation
 {
   "model": "anthropic/claude-3-5-sonnet",
   "model_config": {
@@ -354,7 +360,7 @@ Configure different models per agent:
 }
 ```
 
-### Agent Tools
+### Bear tools (Letta)
 
 Add custom tools/functions:
 
@@ -368,14 +374,14 @@ Add custom tools/functions:
 }
 ```
 
-### Multi-Agent Collaboration
+### Multi-user / shared bears
 
-Shared team context: **Cabinet (Outline)** or Letta shared blocks.
+Shared team context: **Cabinet (Outline)**, Letta shared blocks, or a **shared bear** with many users (Den manages membership—[PLAN.md](../../PLAN.md)).
 
 ## Deployment completion
 
 - [ ] LiteLLM healthy; Letta reaches `LLM_API_URL`
-- [ ] Open WebUI / LibreChat can chat with an agent
+- [ ] Open WebUI / LibreChat can chat with a **bear** (Letta agent)
 - [ ] Den + Outline + Cabinet tools when rolled out ([PLAN.md](../../PLAN.md))
 
 **Services:** `bears-litellm`, `bears-letta`, UI; later **Outline + Den**.

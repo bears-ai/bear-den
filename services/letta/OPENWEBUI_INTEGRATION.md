@@ -8,16 +8,16 @@ For production multi-user deployments, Open WebUI should talk to **Den** (Rust/A
 
 ### Overview
 
-Letta agents are connected to Open WebUI as “models” using functions from the [open-webui-tools](https://github.com/Haervwe/open-webui-tools) repository. That yields direct integration: users select and interact with Letta agents through Open WebUI.
+**Bears** (Letta agents) are connected to Open WebUI as “models” using functions from the [open-webui-tools](https://github.com/Haervwe/open-webui-tools) repository. That yields direct integration: users select and interact with **bears** through Open WebUI.
 
 **Knowledge:** Letta **memory** (blocks, conversations) is separate from shared **Cabinet** on **Outline** (via **Den**—[PLAN.md](../../PLAN.md)).
 
 ### How it works
 
 1. **Function installation:** Install functions from open-webui-tools in Open WebUI **Workspace → Functions**
-2. **Model registration:** Register Letta agents as custom models in Open WebUI
+2. **Model registration:** Register **bears** (Letta agents) as custom models in Open WebUI
 3. **Direct communication:** Open WebUI talks to the Letta API service
-4. **Agent selection:** Users pick Letta agents from the model dropdown
+4. **Bear selection:** Users pick **bears** from the model dropdown (with **Den**: only **member** bears—[PLAN.md](../../PLAN.md))
 
 ### Setup instructions
 
@@ -47,13 +47,13 @@ See `openwebui_integration.env.example` for environment variables.
 
 ### Session management
 
-For session strategies (one agent per user, per chat, hybrid), see [OPENWEBUI_SESSIONS.md](OPENWEBUI_SESSIONS.md).
+For session strategies (one **bear** per user, per chat, hybrid) in **direct** mode, see [OPENWEBUI_SESSIONS.md](OPENWEBUI_SESSIONS.md). With **Den**, **users↔bears** is many‑to‑many ([PLAN.md](../../PLAN.md)).
 
 ### Limitations of direct setup
 
 - **No user–identity mapping:** Open WebUI users are not mapped to Letta identities  
-- **No access control:** All agents are visible to all users  
-- **No user-aware memory:** Agents are not tied to a specific Open WebUI user  
+- **No access control:** All **bears** are visible to all users  
+- **No user-aware membership:** Not the **users↔bears** model Den provides  
 - **Direct API access:** Traffic goes straight to Letta  
 
 For multi-user production, use **Den** (Axum): [DEN_ARCHITECTURE.md](../../DEN_ARCHITECTURE.md) — self-hosted Letta only.

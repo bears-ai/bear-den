@@ -16,8 +16,8 @@ Deploy the BEARS stack as separate services in Coolify. Shared knowledge uses **
 ## Overview
 
 - **This repo** (`bears-depoy`) — configs and docs for Letta, LiteLLM, Open WebUI, etc.
-- **Letta** — agents and native memory (blocks, conversations).
-- **Cabinet** — shared knowledge in **Outline**, exposed to agents through **Den** ([PLAN.md](PLAN.md)).
+- **Letta** — **bear** runtime: one Letta agent per bear; native memory (blocks, conversations).
+- **Cabinet** — shared knowledge in **Outline**, exposed to **bears** through **Den** ([PLAN.md](PLAN.md)).
 
 ## Prerequisites
 
@@ -29,7 +29,8 @@ Deploy the BEARS stack as separate services in Coolify. Shared knowledge uses **
 
 ```
 Open WebUI → Letta → LiteLLM → model providers
-(Optional later: Den, Outline/Cabinet per PLAN.md)
+(Target with Den: Open WebUI → Den → Letta; Den provisions bears + membership — [PLAN.md](PLAN.md))
+(Optional: Outline/Cabinet with Den per PLAN.md)
 ```
 
 ## Deployment order
@@ -82,9 +83,9 @@ Follow [PLAN.md](PLAN.md) when you deploy the control plane and Outline-backed C
 
 ## Post-deployment
 
-- Open WebUI: chat with Letta agents via configured models  
-- Letta UI (internal): agent and memory management at `:8283`  
-- Add **Den** + **Outline** for shared knowledge and channel routing  
+- Open WebUI: chat with **bears** (Letta agents) via configured models  
+- Letta UI (internal): **bear** / agent and memory management at `:8283`  
+- Add **Den** + **Outline** for shared knowledge, **users↔bears** membership, and channel routing  
 
 ## Verification
 
@@ -94,7 +95,7 @@ Follow [PLAN.md](PLAN.md) when you deploy the control plane and Outline-backed C
 | Letta | `curl http://bears-letta:8283/v1/health` |
 | Open WebUI | `curl http://bears-openwebui:3000/api/health` |
 
-End-to-end: create an agent in Letta, select it in Open WebUI, send a message.
+End-to-end: create a **bear** in Letta (or via Den when deployed), select it in Open WebUI, send a message.
 
 ## Troubleshooting
 
@@ -112,4 +113,4 @@ Service-specific detail: `services/*/COOLIFY_DEPLOY.md`.
 
 ---
 
-**Deployment complete.** Multi-user production with per-user agents and Den: see [DEN_ARCHITECTURE.md](DEN_ARCHITECTURE.md).
+**Deployment complete.** Multi-user production with **many bears per user**, **shared bears**, and Den: see [DEN_ARCHITECTURE.md](DEN_ARCHITECTURE.md) and [PLAN.md](PLAN.md).

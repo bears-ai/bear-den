@@ -6,7 +6,7 @@
 
 BEARS Stack is a long-running, modular assistant system that supports persistent identity, memory, and agency across multiple users and foundational models. It behaves like a member of the household—growing in awareness and usefulness over time—while remaining portable, transparent, and fully under user control.
 
-The system is model-agnostic and self-hosted. **Shared knowledge** is **Cabinet** on **Outline** (human- and agent-editable); **Letta** holds per-agent memory. See `PLAN.md` (Den, Cabinet).
+The system is model-agnostic and self-hosted. **Shared knowledge** is **Cabinet** on **Outline** (human- and **bear**-editable via tools); **Letta** holds per‑**bear** memory (each **bear** is a Letta agent). **Den** provisions bears, **users↔bears** membership (many‑to‑many), and surfaces bears in Open WebUI / LettaBot. See `PLAN.md` and `DEN_ARCHITECTURE.md`.
 
 ## Goals and Objectives
 
@@ -14,7 +14,7 @@ The system is model-agnostic and self-hosted. **Shared knowledge** is **Cabinet*
 2. **Multi-User Support**: Enable multiple household members (e.g., you and Shannon) to interact with personalized and shared memory contexts
 3. **Model Agnosticism**: Decouple behavior from any single LLM provider using LiteLLM as a routing layer
 4. **Transparency & Control**: Shared knowledge human-readable and editable (Outline); Letta memory inspectable in Letta
-5. **Agentic Capabilities**: Enable autonomous task execution, planning, and tool use via Letta framework
+5. **Agentic capabilities**: Enable autonomous task execution, planning, and tool use per **bear** via Letta
 6. **Scalable Memory**: Support both curated knowledge and large-scale data retrieval (RAG, MCPs)
 
 ## Scope
@@ -22,8 +22,8 @@ The system is model-agnostic and self-hosted. **Shared knowledge** is **Cabinet*
 ### Included
 - Multi-user identity and memory management (personal + shared contexts)
 - Model-agnostic LLM routing via LiteLLM
-- **Cabinet (Outline)** for shared long-term knowledge (humans + agents); Letta native memory for agent context  
-- Letta agent framework for autonomous workflows
+- **Cabinet (Outline)** for shared long-term knowledge (humans + **bears**); Letta native memory per **bear**  
+- Letta as **bear** runtime for autonomous workflows (tools, planning)
 - Docker-based deployment via Coolify
 - Project-scoped memory and context management
 - Basic RAG capabilities for semantic retrieval
@@ -32,7 +32,7 @@ The system is model-agnostic and self-hosted. **Shared knowledge** is **Cabinet*
 ### Excluded (Future Considerations)
 - Advanced personalization (LoRA, DPO, self-distillation)
 - Full web UI for memory browsing/editing
-- Real-time multi-agent collaboration
+- Real-time multi-bear collaboration (beyond shared bears + Cabinet)
 - Mobile applications
 
 ## Target Audience
@@ -50,15 +50,15 @@ The system is model-agnostic and self-hosted. **Shared knowledge** is **Cabinet*
 1. Support multiple user identities with separate personal and shared memory spaces
 2. Route requests to any LLM backend (OpenAI, Claude, Mistral, LM Studio, etc.)
 3. Shared knowledge human-readable and editable in **Outline (Cabinet)**
-4. Letta per-agent memory and conversation state in Letta
+4. Letta per‑**bear** memory and conversation state
 5. Enable project-based memory scoping for focused workflows
    - Projects can be focused (e.g., "Move to PMTiles") or open-ended
    - Each project maintains its own scoped memory and context
-   - Projects enable long-term agent continuity and user control over history
-6. Support agent autonomy with tool execution and planning
-   - Agents can execute tools or plans
-   - Agents can loop autonomously or wait for input
-   - Agents operate within the memory and scope of a specific user + project
+   - Projects enable long-term **bear** continuity and user control over history
+6. Support **bear** autonomy with tool execution and planning
+   - Bears can execute tools or plans
+   - Bears can loop autonomously or wait for input
+   - Each bear operates within Letta memory and Den policy (user + **bear** + project scope)
 7. Provide semantic search over large text corpora (emails, chats, bookmarks)
 
 ### Non-Functional Requirements
@@ -66,7 +66,7 @@ The system is model-agnostic and self-hosted. **Shared knowledge** is **Cabinet*
 2. **Transparency**: Memory must be inspectable and editable by humans
 3. **Portability**: System can be moved between hosts without data loss
 4. **Reliability**: Persistent storage via named Docker volumes
-5. **Separation of Concerns**: Clear boundaries between agent short-term and long-term memory
+5. **Separation of Concerns**: Clear boundaries between **bear** (Letta) context and shared **Cabinet** knowledge
 
 ## Technical Stack
 
@@ -77,9 +77,9 @@ The system is model-agnostic and self-hosted. **Shared knowledge** is **Cabinet*
 
 ### AI/ML Components
 - **Model Gateway**: LiteLLM (multi-provider routing)
-- **Agent Framework**: Letta (autonomous workflows, tool execution)
+- **Bear runtime**: Letta (autonomous workflows, tool execution; one Letta agent per bear)
 - **Memory**: Letta native + **Cabinet (Outline)** for shared knowledge
-- **Multi-User Auth**: **Den** (Axum) in front of **self-hosted Letta**. See `DEN_ARCHITECTURE.md` / `PLAN.md`.
+- **Multi-user auth & bear registry**: **Den** (Axum) in front of **self-hosted Letta**; many **bears** per user and shared bears. See `DEN_ARCHITECTURE.md` / `PLAN.md`.
 
 ### Memory Architecture
 
@@ -95,7 +95,7 @@ The system implements a **hybrid memory model** combining multiple memory types:
 - **Slot Memory**: Key-value store for structured metadata
   - Fast access to frequently used values
 - **Episodic Memory**: JSON/Markdown logs of interactions
-  - Session transcripts and agent logs with timestamps
+  - Session transcripts and **bear** logs with timestamps
   - Enables timeline reconstruction and debugging
 - **MCPs**: Modular Content Providers for external data (emails, bookmarks, etc.)
 
@@ -104,7 +104,7 @@ The system implements a **hybrid memory model** combining multiple memory types:
 memories/
   personal/          # User-specific private memory (factual beliefs, skills, preferences)
   shared/            # Household shared memory (common experiences, household knowledge)
-history/             # Session transcripts and agent logs (versioned with timestamps)
+history/             # Session transcripts and **bear** logs (versioned with timestamps)
 projects/            # Project-scoped memory files (per-project context)
 ```
 
@@ -117,7 +117,7 @@ This is an exploratory, iterative project with flexible timelines. Development w
 - **Phase 1**: Core infrastructure (Docker, Coolify, LiteLLM)
 - **Phase 2**: Cabinet (Outline) + Letta memory
 - **Phase 3**: Multi-user support and memory scoping
-- **Phase 4**: Agent framework integration (Letta)
+- **Phase 4**: **Bear** runtime hardening (Letta) + Den provisioning
 - **Phase 5**: Advanced features (RAG, MCPs, semantic search)
 
 Specific dates and deadlines will be determined as the project evolves.
@@ -144,7 +144,7 @@ Specific dates and deadlines will be determined as the project evolves.
 - Users are comfortable with technical tools (Git, Docker, Markdown)
 - Household use case (2-4 users maximum)
 - Memory separation between users is important but not cryptographically enforced
-- Agent memory (short-term and long-term) requires clear separation of concerns
+- **Bear** memory (Letta) vs shared **Cabinet** requires clear separation of concerns
 - System will evolve iteratively based on usage patterns
 
 ### Privacy Considerations
@@ -168,7 +168,7 @@ Specific dates and deadlines will be determined as the project evolves.
 - Investigate scalable augmentation via retrieval-augmented generation (RAG) over large data corpora
 
 ### Key Design Principles
-1. **Behavior Reusability**: Agent behavior, memory, and tools are reusable across models
+1. **Behavior Reusability**: **Bear** behavior, memory, and tools are reusable across models
 2. **User Editability**: Both users can manually revise any part of the memory via Markdown or Git
 3. **Unified Deployment**: All services deployed via a unified Docker Compose file
 4. **Named Volumes**: Letta, Outline, LiteLLM

@@ -18,17 +18,19 @@
 
 ## Overview
 
-**Canonical multi-user (web):** **Den** (Axum) → **self-hosted Letta** — see **[DEN_ARCHITECTURE.md](../../DEN_ARCHITECTURE.md)** / [PLAN.md](../../PLAN.md). **v1:** Open WebUI → Den; LettaBot may stay direct-to-Letta.
+**Canonical multi-user (web):** **Den** (Axum) → **self-hosted Letta** — see **[DEN_ARCHITECTURE.md](../../DEN_ARCHITECTURE.md)** / [PLAN.md](../../PLAN.md). **v1:** Open WebUI → Den; LettaBot may stay direct-to-Letta. Den **provisions bears**, maintains **users↔bears** (many‑to‑many), and surfaces bears in Open WebUI / LettaBot.
 
-This guide covers **direct Open WebUI → Letta** (no Den): mapping chats to Letta agents (per user, per chat, or hybrid).
+**Terminology:** A **bear** is one assistant backed by a Letta **agent**. Letta’s REST API uses `/v1/agents` and `agent_id`; in prose below, that id is the runtime id for a **bear**.
+
+This guide covers **direct Open WebUI → Letta** (no Den): mapping chats to Letta **agents** / **bears** (per user, per chat, or hybrid). These patterns are **simplified**; production many‑to‑many membership lives in **Den**.
 
 ## Architecture
 
-### Letta's Agent Model
+### Letta persistence (one bear = one Letta agent)
 
-- **Stateful Agents**: Each Letta agent maintains a single, continuous message history
-- **Persistent Memory**: All interactions contribute to the agent's long-term memory
-- **No Traditional Sessions**: Letta doesn't use ephemeral sessions; agents are persistent
+- **Stateful bears**: Each Letta agent (**bear**) maintains a single, continuous message history
+- **Persistent memory**: All interactions contribute to the bear’s long-term memory (Letta blocks + conversation)
+- **No traditional sessions**: Letta doesn’t use ephemeral sessions; **bears** are persistent identities in Letta
 
 ### Open WebUI chat model
 
@@ -38,12 +40,12 @@ This guide covers **direct Open WebUI → Letta** (no Den): mapping chats to Let
 
 ## Mapping Strategies
 
-### Strategy 1: One Agent Per User (Recommended for Personalization)
+### Strategy 1: One bear per Open WebUI user (direct mode; simple personalization)
 
-**Approach**: Create one Letta agent per Open WebUI user. All chats from that user share the same agent's memory.
+**Approach**: Create one Letta agent (**bear**) per Open WebUI user. All chats from that user share the same bear’s memory.
 
 **Pros**:
-- Agent learns user preferences across all conversations
+- The bear learns user preferences across all conversations
 - Consistent personality and context across chats
 - Better long-term memory and personalization
 
@@ -53,9 +55,9 @@ This guide covers **direct Open WebUI → Letta** (no Den): mapping chats to Let
 
 **Use Case**: Personal assistant that should remember you across all interactions
 
-### Strategy 2: One Agent Per Chat (Recommended for Isolation)
+### Strategy 2: One bear per Open WebUI chat (direct mode; isolation)
 
-**Approach**: Create one Letta agent per Open WebUI chat session. Each chat has its own isolated agent.
+**Approach**: Create one Letta agent (**bear**) per Open WebUI chat session. Each chat has its own isolated bear.
 
 **Pros**:
 - Complete isolation between conversations
@@ -64,29 +66,29 @@ This guide covers **direct Open WebUI → Letta** (no Den): mapping chats to Let
 
 **Cons**:
 - No cross-chat memory or learning
-- More agents to manage
+- More **bears** to manage
 - Less personalized experience
 
 **Use Case**: Project-specific chats, topic-specific conversations, or when you want clean separation
 
-### Strategy 3: Hybrid (Recommended for Flexibility)
+### Strategy 3: Hybrid (direct mode; flexibility)
 
-**Approach**: Use a combination - one agent per user by default, but allow creating new agents for specific chats when needed.
+**Approach**: Use a combination — one **bear** per user by default, but allow creating new **bears** for specific chats when needed.
 
 **Pros**:
 - Flexibility to choose isolation level
-- Can create project-specific agents
+- Can create project-specific **bears**
 - Balance between personalization and isolation
 
 **Cons**:
 - More complex mapping logic
-- Need to track agent purpose/scope
+- Need to track each bear’s purpose/scope
 
 ## Implementation
 
 ### Step 1: Session Mapping Storage
 
-You need to store the mapping between Open WebUI chats and Letta agents. Options:
+You need to store the mapping between Open WebUI chats and Letta **agents** (bears). Options:
 
 #### Option A: Redis (Fast, Ephemeral)
 
@@ -131,9 +133,9 @@ CREATE INDEX idx_user_id ON chat_agent_mapping(user_id);
 }
 ```
 
-### Step 2: Letta Agent Management Functions
+### Step 2: Letta bear helpers (API: `/agents`)
 
-Create helper functions to manage Letta agents:
+Create helper functions to create and message Letta **agents** (bears):
 
 ```python
 import requests
@@ -208,7 +210,7 @@ def send_message_to_agent(agent_id: str, message: str) -> str:
 
 ### Step 3: Open WebUI Pipe Function
 
-Create a pipe function in Open WebUI that routes messages to Letta agents:
+Create a pipe function in Open WebUI that routes messages to Letta **bears** (agents):
 
 ```python
 # openwebui_pipe_function.py
@@ -227,13 +229,13 @@ async def letta_agent_pipe(
     **kwargs
 ) -> Dict[str, Any]:
     """
-    Open WebUI pipe function that routes messages to Letta agents.
+    Open WebUI pipe function that routes messages to Letta bears (agents).
 
     This function:
     1. Extracts chat_id and user_id from the request
-    2. Gets or creates a Letta agent for the chat
-    3. Sends the message to the agent
-    4. Returns the agent's response
+    2. Gets or creates a Letta bear (agent) for the chat
+    3. Sends the message to the bear
+    4. Returns the bear’s response
     """
 
     # Extract chat and user information
@@ -310,7 +312,7 @@ pipe_config = {
     "name": "letta-agent",
     "type": "pipe",
     "function": letta_agent_pipe,
-    "description": "Routes messages to Letta agents with session management"
+    "description": "Routes messages to Letta bears (agents) with session management"
 }
 ```
 
@@ -359,7 +361,7 @@ def get_session_history(chat_id: str) -> list:
 
 ### Session Archiving
 
-When a chat is archived in Open WebUI, you can optionally archive the Letta agent:
+When a chat is archived in Open WebUI, you can optionally archive the Letta **bear** (agent):
 
 ```python
 def archive_chat_session(chat_id: str, archive_agent: bool = False):
@@ -407,9 +409,9 @@ For shared chats (e.g., team channels):
 
 ```python
 def create_shared_agent(chat_id: str, user_ids: list, name: str = None):
-    """Create an agent shared by multiple users."""
+    """Create a shared bear (Letta agent) for multiple users (Den normally owns membership)."""
     agent_id = create_letta_agent(
-        name=name or f"Shared agent for {chat_id}",
+        name=name or f"Shared bear for {chat_id}",
         user_id=None  # No single user owner
     )
 
@@ -420,9 +422,9 @@ def create_shared_agent(chat_id: str, user_ids: list, name: str = None):
     return agent_id
 ```
 
-## Integration with BEARS Memory System
+## Integration with BEARS memory
 
-Since you're using the BEARS stack, you can integrate session data with your memory system:
+Since you're using the BEARS stack, you can integrate session data with your memory system (per‑**bear** context in Letta; shared **Cabinet** via Den when deployed):
 
 ```python
 def save_session_to_history(chat_id: str, user_id: str):
@@ -503,7 +505,7 @@ assert agent1 != agent2, "Different chats should have different agents"
 
 ## Troubleshooting
 
-### Agent Not Found
+### Bear / agent not found
 
 - Check Letta API connectivity
 - Verify `LETTA_API_URL` and `LETTA_SERVER_PASS` are correct
