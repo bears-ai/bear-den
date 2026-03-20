@@ -4,6 +4,8 @@
 
 BEARS uses **only self-hosted Letta** (e.g. `letta/letta:latest` on Coolify). **Den** is the control plane and gateway (**Rust / Axum**). **Letta calls LiteLLM directly** for models; Den may talk to LiteLLM **only for observability** (metrics/spend/logs)—see [PLAN.md](PLAN.md).
 
+**Phase 1 implementation:** [PHASE1_BOOTSTRAP.md](PHASE1_BOOTSTRAP.md) — Rust service in **`services/den/`**; **Twain** is a throwaway bootstrap label for milestone 0 only, not a directory in this repo.
+
 ## Overview
 
 **v1 Den:** **Open WebUI → Den → Letta** (web auth, **bear** registry, **users↔bears** membership, policy). **LettaBot** (**Slack/WhatsApp**) typically stays **LettaBot → Letta direct** for **chat** until you adopt the optional proxy path—see [PLAN.md](PLAN.md) § *Den as LettaBot → Letta proxy*—while Den still **provisions Letta agents** and **updates LettaBot / Open WebUI** so the right **bears** appear per user. **Many‑to‑many:** each user can use many bears; some bears are shared by many users. Den enforces membership on every request.

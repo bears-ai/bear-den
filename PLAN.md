@@ -226,6 +226,8 @@ Deliverables:
 
 ### Phase 1 – **Den**: auth‑aware proxy & **bear** manager (no Cabinet yet)
 
+**Implementation plan:** [PHASE1_BOOTSTRAP.md](PHASE1_BOOTSTRAP.md) — Den at `services/den/`; **Twain** is only an ephemeral bootstrap codename for M0 (not a repo path).
+
 **Goal:** Move **web chat** from “Open WebUI → Letta” to “Open WebUI → **Den** → Letta”, with identity and policy in Den. **LettaBot → Den → Letta is out of scope for this release** (see [optional LettaBot proxy](#den-as-lettabot--letta-proxy-optional-value-add-not-a-v1-feature)).
 
 **Capabilities to implement:**
@@ -399,5 +401,3 @@ We’re aiming for:
   - **Phase 2:** Cabinet abstraction defined and wired as tools (even if stubbed).
   - **Phase 3:** Cabinet backed by Outline with properties + embeddings.
   - **Phase 4:** Refine memory policies, multi‑user ergonomics, RBAC, and workflows.
-
-If you want to go one level deeper next, we can pick one phase (probably Phase 1) and outline concrete tasks and acceptance criteria (e.g., “what needs to work by the end of an MVP weekend”).

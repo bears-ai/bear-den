@@ -18,6 +18,7 @@ Each assistant in the product is a **bear** (one **Letta** agent). **BEARS** nam
 | **Understand the stack** | This file + [ARCHITECTURE_NOTES.md](ARCHITECTURE_NOTES.md) |
 | **Roadmap & phases** (Den, Cabinet, Outline) | [PLAN.md](PLAN.md) |
 | **Multi-user web** (Den + Letta) | [DEN_ARCHITECTURE.md](DEN_ARCHITECTURE.md) |
+| **Phase 1 build (Den; Twain = M0 bootstrap only)** | [PHASE1_BOOTSTRAP.md](PHASE1_BOOTSTRAP.md) |
 | **Open WebUI ↔ Letta** (direct) | [services/letta/OPENWEBUI_INTEGRATION.md](services/letta/OPENWEBUI_INTEGRATION.md), [OPENWEBUI_SESSIONS.md](services/letta/OPENWEBUI_SESSIONS.md) |
 
 *Tooling-oriented notes under `.kilocode/memory_bank/` use the same **bear** vocabulary; they are for assistants, not end-user docs.*
@@ -48,10 +49,12 @@ Each assistant in the product is a **bear** (one **Letta** agent). **BEARS** nam
 
 ```
 services/
+├── den/             # Phase 1 control plane (Axum); see PHASE1_BOOTSTRAP.md
 ├── litellm/
 ├── letta/
 ├── librechat/       # optional UI
 └── openwebui/
+PHASE1_BOOTSTRAP.md
 PLAN.md
 DEPLOYMENT.md
 ARCHITECTURE_NOTES.md
