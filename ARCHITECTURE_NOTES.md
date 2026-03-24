@@ -22,7 +22,7 @@ Loquix ──────┘     │
 
 | Component | Role |
 |-----------|------|
-| **Den** | **Bear** provisioning (Letta + Open WebUI + LettaBot config), **users↔bears** membership, auth, routing to Letta, optional **Loquix** static UI, Cabinet API; **LiteLLM** only for observability (Letta → LiteLLM direct) |
+| **Den** | **Operator console** (browser: users, bears, Letta provision, LettaBot yaml); **bear** provisioning (Letta + Open WebUI + LettaBot config), **users↔bears** membership, auth, routing to Letta, optional **Loquix** chat UI, Cabinet API; **LiteLLM** only for observability (Letta → LiteLLM direct) |
 | **Letta** | **Bear** runtime: tools, memory blocks, conversations per Letta agent |
 | **LiteLLM** | Unified model API |
 | **Open WebUI** | Full-featured web chat (optional: LibreChat) |

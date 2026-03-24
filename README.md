@@ -19,7 +19,7 @@ Each assistant in the product is a **bear** (one **Letta** agent). **BEARS** nam
 | **Understand the stack** | This file + [ARCHITECTURE_NOTES.md](ARCHITECTURE_NOTES.md) |
 | **Roadmap & phases** (Den, Cabinet, Outline) | [PLAN.md](PLAN.md) |
 | **Multi-user web** (Den + Letta; Open WebUI or Loquix) | [DEN_ARCHITECTURE.md](DEN_ARCHITECTURE.md) |
-| **Phase 1 build (Den; Trestle = M0 bootstrap only)** | [PHASE1_BOOTSTRAP.md](PHASE1_BOOTSTRAP.md) |
+| **Phase 1 build (Den; operator console first; Trestle = M0 bootstrap only)** | [PHASE1_BOOTSTRAP.md](PHASE1_BOOTSTRAP.md) |
 | **Open WebUI ↔ Letta** (direct) | [services/letta/OPENWEBUI_INTEGRATION.md](services/letta/OPENWEBUI_INTEGRATION.md), [OPENWEBUI_SESSIONS.md](services/letta/OPENWEBUI_SESSIONS.md) |
 
 *Tooling-oriented notes under `.kilocode/memory_bank/` use the same **bear** vocabulary; they are for assistants, not end-user docs.*

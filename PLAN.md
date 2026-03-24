@@ -232,6 +232,8 @@ Deliverables:
 
 **Goal:** Move **web chat** from “Open WebUI → Letta” to “Open WebUI → **Den** → Letta”, with identity and policy in Den. **LettaBot → Den → Letta is out of scope for this release** (see [optional LettaBot proxy](#den-as-lettabot--letta-proxy-optional-value-add-not-a-v1-feature)).
 
+**Delivery priority:** Ship a **Den-hosted operator console** (browser) **early** so the **first user-testable moment** is “operator provisions users, auth, and bears (Letta + LettaBot yaml) without API gymnastics.” Open WebUI / Loquix chat follow as soon as that control plane is usable — see [PHASE1_BOOTSTRAP.md](PHASE1_BOOTSTRAP.md) milestones **M4b**, **M5**.
+
 **Capabilities to implement:**
 
 1. **Identity and user mapping** (v1: **web-first**)
@@ -257,8 +259,9 @@ Deliverables:
      - Streams response back.
 
 4. **Web UIs → Den** (v1 release targets)
+   - **Operator console (priority):** Den serves a browser UI for **user** accounts, **operator auth**, **bear** CRUD and **Letta provision**, **membership**, and **LettaBot** `lettabot.yaml` preview/download (see [PHASE1_BOOTSTRAP.md](PHASE1_BOOTSTRAP.md)).
    - **Open WebUI:** configure to talk to Den (`/chat/send` or adapter): auth, **bear** picker (only member bears), streaming.
-   - **Den native chat (Loquix):** serve a chat page from Den that uses Loquix (`<loquix-chat-container>`, composer, message list, etc.) and binds to the **same** authenticated streaming chat and bear-list APIs—operator choice vs Open WebUI for users who want a lighter, Den‑centric UI ([Loquix repo](https://github.com/loquix-dev/loquix)).
+   - **Den native chat (Loquix):** optional **end-user** chat page (e.g. `/app` or `/chat`) using Loquix — **after** the operator console and chat API are stable ([Loquix repo](https://github.com/loquix-dev/loquix)).
    - **LettaBot:** keep **direct to Letta** for v1 chat; Den still **updates LettaBot config** so Slack/WhatsApp show the correct bears per allowlists; optional Den proxy for chat later (see optional proxy section above).
 
 5. **LiteLLM observability** (Den reads, does not proxy)
@@ -267,6 +270,7 @@ Deliverables:
 
 **Phase 1 success (v1):**
 
+- **Operator console:** provision users, bears (Letta agents), membership, and LettaBot yaml from the browser.
 - Web users chat **via Den** → Letta (**Open WebUI** and/or **Den’s Loquix page**); Den resolves `user_id`, enforces **bear** membership, streams replies.
 - **Slack/WhatsApp** may still use LettaBot → Letta direct for **messages**; Den still drives **which bears** exist and appear in bot config. No requirement that chat hits Den until you adopt the optional proxy.
 - Bear registry, **users↔bears** membership, and basic RBAC for **web** users.

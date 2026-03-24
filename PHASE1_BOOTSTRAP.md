@@ -4,7 +4,9 @@
 
 Put the Rust project at **`services/den/`** (suggested) with package/binary name **`den`**, Coolify service e.g. **`bears-den`**.
 
-**Phase 1 success** (from PLAN): web users chat **Open WebUI → Den → Letta**; bear registry + **users↔bears** many-to-many; LettaBot stays **direct to Letta** for chat but Den **owns** bear provisioning and **LettaBot config output**; optional **read-only** LiteLLM observability; **no Cabinet**.
+**Phase 1 success** (from PLAN): **operator console** usable for full provisioning; web users chat **Open WebUI → Den → Letta** (and/or Loquix); bear registry + **users↔bears** many-to-many; LettaBot stays **direct to Letta** for chat but Den **owns** bear provisioning and **LettaBot config output**; optional **read-only** LiteLLM observability; **no Cabinet**.
+
+**Delivery priority:** Reach the **first user-testable moment** as early as possible: an **operator provisioning UI** (browser) for **authentication**, **user** lifecycle, **agent/bear** lifecycle (Letta create/sync), **membership**, and **LettaBot** setup (preview/download generated `lettabot.yaml`, copy-paste instructions). End-user **chat** (Open WebUI / Loquix) follows once provisioning flows are usable without `curl`.
 
 ---
 
@@ -24,13 +26,14 @@ Use whatever **one-off** scaffold you prefer (`cargo new`, an internal template,
 |------|-------------|
 | Runtime | Axum HTTP server, structured logging, graceful shutdown |
 | Data | PostgreSQL schema + migrations; Den is system of record for users, bears, membership |
-| Auth (web-first) | Minimal login suitable for homelab: e.g. session cookie after email+password **or** long-lived API token for Open WebUI server-side calls |
-| Bears | CRUD (admin), `letta_agent_id` linkage, provision via Letta REST API |
-| Membership | Many-to-many `user_bear`; enforce on every chat |
+| **Operator console (priority)** | **Browser UI** served by Den for: operator login; **create/edit users** (and end-user login/register as policy allows); **create/provision bears** (Letta agent create/update); **grant/revoke membership**; **Letta health** indicator; **LettaBot** panel (rendered YAML, download, short deploy checklist). Same actions backed by JSON admin API; **no `curl` required** for happy-path setup. |
+| Auth (web-first) | Session cookie after email+password **or** long-lived API token for Open WebUI server-side calls; **operators** use a distinct **admin/operator** session or role (e.g. `users.is_admin`, bootstrap admin email) — **do not** expose `ADMIN_API_KEY` to browser JavaScript |
+| Bears | CRUD (admin API + operator UI), `letta_agent_id` linkage, provision via Letta REST API |
+| Membership | Many-to-many `user_bear`; enforce on every chat; managed in operator UI |
 | Chat | `POST /chat/send` (and/or OpenAI-compatible shim later) → validate → Letta messages API with **SSE streaming** back to client |
-| Den web UI (optional) | Static **Loquix** chat page served by Den (`GET /` or `/app`); uses **same** chat + discovery endpoints as Open WebUI — see [Loquix](https://github.com/loquix-dev/loquix) |
+| Den web UI: Loquix (defer after console) | Static **Loquix** chat page (`GET /chat` or `/app/chat`); uses **same** chat + discovery endpoints as Open WebUI — see [Loquix](https://github.com/loquix-dev/loquix) |
 | Discovery | `GET /agents` or `GET /bears` → bears the current user may use |
-| LettaBot | `GET /internal/lettabot.yaml` (admin-authenticated) **or** write to volume path on change — generated from DB |
+| LettaBot | `GET /admin/lettabot.yaml` (operator session **or** server-side key); operator UI shows preview; optional write to volume path on change |
 | Policy | RBAC-lite: membership check + optional per-bear `can_use` + basic rate limit |
 | LiteLLM | Optional: fetch metrics/admin spend **read-only**; no proxying completions |
 | Deploy | **Self-building Docker image** (multi-stage: build Rust in container, runtime image with binary + `ca-certificates`) |
@@ -57,7 +60,7 @@ services/den/
 ├── README.md               # runbook: env vars, ports, Open WebUI notes
 ├── migrations/             # SQL (sqlx or refinery)
 │   └── 001_initial.sql
-├── static/                 # optional: Loquix chat UI (index.html, bundled assets) or vite output
+├── static/                 # operator console (priority) + later Loquix chat assets
 └── src/
     ├── main.rs
     ├── config.rs           # figment/env: DATABASE_URL, LETTA_*, SESSION_*, BIND_ADDR, STATIC_ROOT?
@@ -65,7 +68,7 @@ services/den/
     ├── state.rs            # AppState: pool, letta client, config
     ├── db/
     ├── auth/
-    ├── handlers/           # health, auth, bears, chat, admin
+    ├── handlers/           # health, auth, bears, chat, admin, operator_ui (or templates)
     ├── letta/              # reqwest client, SSE forward
     ├── observability/
     └── middleware/
@@ -93,6 +96,8 @@ services/den/
 
 **Alternates:** Diesel instead of sqlx; rate limit via `tower_governor`.
 
+**Operator UI stack:** Prefer **small and shippable**: e.g. **Askama/Tera** HTML + forms or **htmx** against JSON admin routes; or a **Vite** SPA under `static/` if you want richer tables early. Mounted at **`/`** or **`/console`**; keep API JSON separate for Open WebUI integration later.
+
 ---
 
 ## 4. Database schema (v1)
@@ -104,6 +109,7 @@ services/den/
 - `id` UUID PK
 - `email` TEXT UNIQUE NOT NULL (or `username` if no email)
 - `password_hash` TEXT NOT NULL (nullable only if token-only users)
+- `is_admin` BOOLEAN NOT NULL DEFAULT false — operator console access (bootstrap first admin via migration or `BOOTSTRAP_ADMIN_EMAIL`)
 - `webui_account_id` TEXT NULL UNIQUE — map Open WebUI stable id when available
 - `created_at`, `updated_at` TIMESTAMPTZ
 
@@ -153,7 +159,7 @@ services/den/
 | Method | Path | Purpose |
 |--------|------|---------|
 | GET | `/health` | Liveness (no DB) or `/ready` with DB ping |
-| GET | `/`, `/assets/*` | Optional: **Loquix** single-page chat (static files); route only paths that do not shadow API |
+| GET | `/`, `/console`, `/assets/*` | **Operator console** (priority): static +/or templated pages for provisioning; **Loquix** chat can live under `/app` or `/chat` so it does not block console at `/` |
 | POST | `/auth/register` | Optional; may disable in prod and use admin-created users |
 | POST | `/auth/login` | Returns session cookie or `{ token }` |
 | POST | `/auth/logout` | Invalidate session |
@@ -168,16 +174,19 @@ services/den/
 - `POST` Letta `.../agents/{letta_agent_id}/messages` (exact path per your Letta version — **verify against running image**)
 - Stream SSE (or NDJSON) back matching what Open WebUI adapter expects
 
-### Admin (protect with `ADMIN_API_KEY` or separate admin role)
+### Admin / operator API (protect with **operator session** in browser; `ADMIN_API_KEY` for automation only)
 
 | Method | Path | Purpose |
 |--------|------|---------|
 | POST | `/admin/bears` | Create bear: optionally `provision=true` → create Letta agent then insert row |
 | PATCH | `/admin/bears/:id` | Update metadata; optional re-sync Letta |
 | POST | `/admin/bears/:id/provision` | Idempotent: create or update Letta agent from Den template |
+| POST | `/admin/users` | Create user (operator); optional `set_password` / invite flow |
+| PATCH | `/admin/users/:id` | Update user flags (e.g. `is_admin`), reset password if implemented |
 | POST | `/admin/users/:id/bears` | Grant membership |
 | DELETE | `/admin/users/:id/bears/:bear_id` | Revoke |
-| GET | `/admin/lettabot.yaml` | Render yaml from DB + template |
+| GET | `/admin/lettabot.yaml` | Render yaml from DB + template (`text/yaml`; operator UI embeds or downloads) |
+| GET | `/admin/health/letta` | Optional: Letta reachable + auth OK — surface in console |
 
 ### Internal / optional
 
@@ -211,18 +220,30 @@ services/den/
 
 **Deliverable:** Document the chosen path in `services/den/README.md` + example env for Open WebUI.
 
-### Den native UI: Loquix (optional parallel)
+### Den native UI: operator console (before Loquix)
 
-**Goal:** Offer a **first-party** chat UI on Den as an **alternative to Open WebUI**, reusing the **same** `POST /v1/chat/send` streaming handler and `GET /v1/bears` (no second gateway to Letta).
+**Goal:** An operator with only a browser completes **auth setup**, **users**, **bears + Letta provision**, **membership**, and **LettaBot yaml** handoff without reading API docs.
 
-**Pieces:**
+**Suggested screens (iterate thin):**
 
-1. **Static assets** — `services/den/static/` (or a small `web/` package built with Vite/esbuild): HTML shell with Loquix imports (`@loquix/core/tokens/variables.css`, `define-chat-container`, `define-message-list`, `define-chat-composer`, etc.); see [Loquix README](https://github.com/loquix-dev/loquix) and streaming recipe.
-2. **Axum** — `ServeDir` for `/` + assets; mount **below** API routes or use a dedicated prefix (`/app`) if path conflicts are awkward.
-3. **Browser → Den** — `fetch` + `ReadableStream` (or `EventSource` if you standardize on SSE) for assistant tokens; map Den’s stream chunks to Loquix message content per your negotiated format.
-4. **Auth** — Prefer **same-origin** session cookies so Loquix page and API share Den origin without CORS preflight for cookies; Bearer tokens also work with explicit `Authorization`.
+1. **Sign in** — operator vs normal user (or single login + role gate on `/console/*`).
+2. **Users** — list, create, optional password set; link to membership.
+3. **Bears** — list, create, **Provision to Letta** / re-sync, show `letta_agent_id` and errors inline.
+4. **Membership** — assign bears ↔ users (checkbox grid or paired selects).
+5. **LettaBot** — live YAML preview, download button, bullet list: where to paste, restart bot, Letta `baseUrl` hint.
 
-**Milestone:** Ship after **M5** (chat proxy works with `curl`); can land with or shortly after **M6** (Open WebUI). Document “Loquix-only homelab” vs “Open WebUI + Den” in `services/den/README.md`.
+### Den native UI: Loquix (after chat API is stable)
+
+**Goal:** **End-user** chat alternative to Open WebUI — same `POST /v1/chat/send` and `GET /v1/bears`.
+
+**Pieces:** Serve under **`/app` or `/chat`** so **`/` stays the operator console** unless you prefer a landing page with two links.
+
+1. **Static assets** — Loquix shell in `services/den/static/chat/` (or separate package).
+2. **Axum** — `ServeDir` below API routes; **CORS** only if needed.
+3. **Browser → Den** — streaming per [Loquix](https://github.com/loquix-dev/loquix) recipe.
+4. **Auth** — end-user session (not operator) for chat testing.
+
+**Milestone:** Ship after **M6** (chat proxy + Open WebUI path proven) or in parallel once M5 is done if you want Loquix-first end users.
 
 ---
 
@@ -231,9 +252,9 @@ services/den/
 - **Template:** Stable structure matching [DEN_ARCHITECTURE.md](DEN_ARCHITECTURE.md) sample (`agents[].agentId`, `channels.slack.allowedUsers`, …).
 - **Data source:** `bears` + `user_bear` + optional `user_external_ids` table (Phase 1: **manual** Slack user ids in admin API or env map).
 - **Delivery:**
-  - **Pull:** `GET /admin/lettabot.yaml`
+  - **Pull:** `GET /admin/lettabot.yaml` (also surfaced in **operator console**)
   - **Push (optional):** Write to shared volume if Den has mount (Coolify volume)
-- **Reload:** Document that LettaBot must restart or SIGHUP if no hot reload — operational note in `services/den/README.md`.
+- **Reload:** Operator UI should link to this doc: LettaBot restart or SIGHUP if no hot reload — `services/den/README.md`.
 
 ---
 
@@ -269,7 +290,8 @@ services/den/
 | `SESSION_SECRET` | yes | HMAC/signing for cookies |
 | `LETTA_BASE_URL` | yes | Letta root URL |
 | `LETTA_AUTH` | yes | Bearer token for Letta |
-| `ADMIN_API_KEY` | yes (prod) | Protect admin routes |
+| `ADMIN_API_KEY` | yes (prod) | Machine/automation access to admin JSON API; **browser uses operator session** |
+| `BOOTSTRAP_ADMIN_EMAIL` | no | First-run: promote this user to `is_admin` on registration (homelab) |
 | `RUST_LOG` | no | `den=info,tower_http=info` |
 | `LITELLM_BASE_URL` | no | Observability only |
 | `LITELLM_MASTER_KEY` | no | If required by LiteLLM admin |
@@ -278,7 +300,7 @@ services/den/
 
 ## 12. Security checklist (Phase 1)
 
-- [ ] Never expose `LETTA_AUTH` or `ADMIN_API_KEY` to browsers
+- [ ] Never expose `LETTA_AUTH` or `ADMIN_API_KEY` to browsers; operator console uses **cookie session** + `is_admin` (or equivalent)
 - [ ] Argon2 cost params documented for homelab vs prod
 - [ ] Rate limit on `/v1/chat/send` and `/auth/login`
 - [ ] CORS restricted to trusted web origins if credentialed cookies cross-origin; **Loquix on same host as Den** avoids this for the native UI
@@ -294,35 +316,41 @@ services/den/
 | Unit | Password verify, membership guard, yaml render |
 | Integration | Postgres + Den with `testcontainers` or docker-compose test job |
 | Letta | Optional `wiremock` or recorded HTTP for CI; nightly job against real Letta |
-| Manual | `curl` scripts in `services/den/scripts/` for login → list bears → stream chat |
+| Manual | `curl` optional; **primary:** operator walks console → test user signs in → sees bears |
 
 ---
 
 ## 14. Milestones (suggested order)
 
+**First user-testable moment:** end of **M5** — operator completes full setup in the **console** (users, bears, Letta provision, membership, LettaBot YAML); a **test user** can sign in and **list** bears; chat may still be `curl`/adapter-only until M6.
+
 | # | Milestone | Exit criteria |
 |---|-----------|----------------|
 | M0 | **Trestle bootstrap → Den** | Throwaway scaffold merged into `services/den/`; Axum `GET /health`, config, tracing, Dockerfile |
-| M1 | Postgres | Migrations applied; no business logic |
-| M2 | Auth | Register/login disabled or gated; session or API token works |
-| M3 | Bears + membership | Admin CRUD + user sees only member bears |
-| M4 | Letta provision | `POST /admin/bears` creates Letta agent + row |
-| M5 | Chat proxy | Streaming `POST /v1/chat/send` end-to-end with curl |
+| M1 | Postgres | Migrations applied (`users.is_admin`, …); no business logic |
+| M2 | Auth | Register/login gated; session or API token; **operator login** with `is_admin` (or bootstrap admin) |
+| M3 | Admin API: users, bears, membership | JSON CRUD + user sees only member bears on `GET /v1/bears`; non-member 403 on chat (stub ok until M5) |
+| M4 | Letta provision | `POST /admin/bears` (+ provision) creates Letta agent + row; errors returned to client |
+| **M4b** | **Operator console v1** | **Browser UI** covers: users, bears + provision trigger, membership, LettaBot YAML view/download, Letta health — **no curl for setup** |
+| M5 | Chat proxy | Streaming `POST /v1/chat/send` end-to-end; test user chats via console “try it” **or** curl |
 | M6 | Open WebUI | Documented integration path; demo user chatting via Den |
-| M6b | Loquix UI (optional) | Den serves static Loquix page; demo user chats in browser via same streaming API |
-| M7 | LettaBot yaml | `GET /admin/lettabot.yaml` matches real bot config needs |
+| M6b | Loquix UI (optional) | Den serves chat under `/app` or `/chat`; demo user chats in browser |
+| M7 | LettaBot yaml polish | Generated yaml matches real bot configs; copy-paste tested from console |
 | M8 | Polish | Rate limits, readiness probe, Coolify deploy |
 
 **LiteLLM observability:** M8 or parallel track.
+
+**Note:** **M4b** can overlap **M3–M4** (build UI against stub endpoints first) but must land **before** M6; goal is **shortest path to “someone can try the system.”**
 
 ---
 
 ## 15. Acceptance criteria (Phase 1 complete)
 
+- [ ] **Operator console:** create users, provision bears to Letta, manage membership, view/download LettaBot yaml — all in browser
 - [ ] Open WebUI **and/or** Den-hosted **Loquix** page sends chat **through Den** to Letta with streaming responses (same API contract)
 - [ ] At least two users and two bears with **many-to-many** membership verified (user A: bears 1+2; user B: bear 2 only)
 - [ ] Non-member cannot invoke bear (403)
-- [ ] New bear can be provisioned in Letta from Den admin API
+- [ ] New bear can be provisioned in Letta from **console** (admin API underneath)
 - [ ] LettaBot yaml can be generated from current DB state; LettaBot still talks **direct** to Letta
 - [ ] Deployed via **single Dockerfile** build on Coolify (or CI → registry)
 - [ ] No Cabinet calls required
@@ -339,9 +367,10 @@ services/den/
 
 ## 17. Open decisions (resolve before M4–M6)
 
-1. **Auth mechanism for Open WebUI:** cookie from browser vs server-side API token per workspace
-2. **Bear id in JSON:** `agent_id` vs `bear_id` vs both with alias
-3. **Letta agent create payload:** single template vs per-bear type (personal vs shared)
-4. **Conversation id:** Letta thread/conversation API — map Open WebUI `chat_id` to Letta conversation if required by API version
+1. **Operator UI stack:** server-rendered (Askama/Tera + htmx) vs SPA in `static/`
+2. **Auth mechanism for Open WebUI:** cookie from browser vs server-side API token per workspace
+3. **Bear id in JSON:** `agent_id` vs `bear_id` vs both with alias
+4. **Letta agent create payload:** single template vs per-bear type (personal vs shared)
+5. **Conversation id:** Letta thread/conversation API — map Open WebUI `chat_id` to Letta conversation if required by API version
 
 Record decisions in **`services/den/DECISIONS.md`** as you lock them.
