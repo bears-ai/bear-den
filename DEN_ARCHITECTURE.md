@@ -4,7 +4,7 @@
 
 BEARS uses **only self-hosted Letta** (e.g. `letta/letta:latest` on Coolify). **Den** is the control plane and gateway (**Rust / Axum**). **Letta calls LiteLLM directly** for models; Den may talk to LiteLLM **only for observability** (metrics/spend/logs)—see [PLAN.md](PLAN.md).
 
-**Phase 1 implementation:** [PHASE1_BOOTSTRAP.md](PHASE1_BOOTSTRAP.md) — Rust service in **`services/den/`**; **Twain** is a throwaway bootstrap label for milestone 0 only, not a directory in this repo.
+**Phase 1 implementation:** [PHASE1_BOOTSTRAP.md](PHASE1_BOOTSTRAP.md) — Rust service in **`services/den/`**; **Trestle** is a throwaway bootstrap label for milestone 0 only, not a directory in this repo.
 
 ## Overview
 

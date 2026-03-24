@@ -4,11 +4,11 @@ Each assistant in the product is a **bear** (one **Letta** agent). **BEARS** nam
 
 **Configuration repository** for deploying that stack on **Coolify**:
 
-- **[Letta](https://github.com/letta-ai/letta)** — **Bear** runtime, native memory (blocks, conversations, tools)  
-- **[Open WebUI](https://github.com/open-webui/open-webui)** (open-webui) — Chat UI  
-- **[Outline](https://www.getoutline.com/)** + **Den** (Rust/Axum) — Control plane + **Cabinet**; see [PLAN.md](PLAN.md). **Self-hosted Letta only** (no Letta Cloud).  
-- **[LiteLLM](https://github.com/BerriAI/litellm)** — Model gateway  
-- **[Coolify](https://coolify.io)** — Deployment  
+- **[Letta](https://github.com/letta-ai/letta)** — **Bear** runtime, native memory (blocks, conversations, tools)
+- **[Open WebUI](https://github.com/open-webui/open-webui)** (open-webui) — Chat UI
+- **[Outline](https://www.getoutline.com/)** + **Den** (Rust/Axum) — Control plane + **Cabinet**; see [PLAN.md](PLAN.md). **Self-hosted Letta only** (no Letta Cloud).
+- **[LiteLLM](https://github.com/BerriAI/litellm)** — Model gateway
+- **[Coolify](https://coolify.io)** — Deployment
 
 ## Documentation map
 
@@ -18,7 +18,7 @@ Each assistant in the product is a **bear** (one **Letta** agent). **BEARS** nam
 | **Understand the stack** | This file + [ARCHITECTURE_NOTES.md](ARCHITECTURE_NOTES.md) |
 | **Roadmap & phases** (Den, Cabinet, Outline) | [PLAN.md](PLAN.md) |
 | **Multi-user web** (Den + Letta) | [DEN_ARCHITECTURE.md](DEN_ARCHITECTURE.md) |
-| **Phase 1 build (Den; Twain = M0 bootstrap only)** | [PHASE1_BOOTSTRAP.md](PHASE1_BOOTSTRAP.md) |
+| **Phase 1 build (Den; Trestle = M0 bootstrap only)** | [PHASE1_BOOTSTRAP.md](PHASE1_BOOTSTRAP.md) |
 | **Open WebUI ↔ Letta** (direct) | [services/letta/OPENWEBUI_INTEGRATION.md](services/letta/OPENWEBUI_INTEGRATION.md), [OPENWEBUI_SESSIONS.md](services/letta/OPENWEBUI_SESSIONS.md) |
 
 *Tooling-oriented notes under `.kilocode/memory_bank/` use the same **bear** vocabulary; they are for assistants, not end-user docs.*
@@ -33,17 +33,17 @@ Each assistant in the product is a **bear** (one **Letta** agent). **BEARS** nam
 
 ## Quick start (Coolify)
 
-1. Deploy **LiteLLM** → **Letta** (`LLM_API_URL`) → **Open WebUI**  
-2. Install [open-webui-tools](https://github.com/Haervwe/open-webui-tools) in Open WebUI for **bears** (Letta agents)  
-3. Roll out **Outline** and **Den** per [PLAN.md](PLAN.md) for Cabinet and channels  
+1. Deploy **LiteLLM** → **Letta** (`LLM_API_URL`) → **Open WebUI**
+2. Install [open-webui-tools](https://github.com/Haervwe/open-webui-tools) in Open WebUI for **bears** (Letta agents)
+3. Roll out **Outline** and **Den** per [PLAN.md](PLAN.md) for Cabinet and channels
 
 **Guide:** [DEPLOYMENT.md](DEPLOYMENT.md)
 
 ### Internal endpoints (typical)
 
-- Open WebUI (`bears-openwebui`): `http://bears-openwebui:3000`  
-- Letta: `http://bears-letta:8283`  
-- LiteLLM: `http://bears-litellm:4000`  
+- Open WebUI (`bears-openwebui`): `http://bears-openwebui:3000`
+- Letta: `http://bears-letta:8283`
+- LiteLLM: `http://bears-litellm:4000`
 
 ## Repository layout
 

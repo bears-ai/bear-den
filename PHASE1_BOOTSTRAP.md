@@ -1,6 +1,6 @@
-# Phase 1 implementation plan (Den) — Twain bootstrap
+# Phase 1 implementation plan (Den) — Trestle bootstrap
 
-**Twain** is only a **short-lived bootstrap codename** for the first milestone: bare-bones **Axum + PostgreSQL + self-building Docker**. It is **not** a service directory in this repo and does not persist after you have a working skeleton. The **lasting** binary, crate, and deploy artifact are **Den** (see [PLAN.md](PLAN.md), [DEN_ARCHITECTURE.md](DEN_ARCHITECTURE.md)).
+**Trestle** is only a **short-lived bootstrap codename** for the first milestone: bare-bones **Axum + PostgreSQL + self-building Docker**. It is **not** a service directory in this repo and does not persist after you have a working skeleton. The **lasting** binary, crate, and deploy artifact are **Den** (see [PLAN.md](PLAN.md), [DEN_ARCHITECTURE.md](DEN_ARCHITECTURE.md)).
 
 Put the Rust project at **`services/den/`** (suggested) with package/binary name **`den`**, Coolify service e.g. **`bears-den`**.
 
@@ -8,9 +8,9 @@ Put the Rust project at **`services/den/`** (suggested) with package/binary name
 
 ---
 
-## 0. Twain bootstrap (M0 only)
+## 0. Trestle bootstrap (M0 only)
 
-Use whatever **one-off** scaffold you prefer (`cargo new`, an internal template, or a throwaway repo named “twain”). **Do not** add `services/twain/` here. When the skeleton has health + config + Dockerfile + migrations wiring, **merge into `services/den/`** and drop the Twain name from paths and binary.
+Use whatever **one-off** scaffold you prefer (`cargo new`, an internal template, or a throwaway repo named “trestle”). **Do not** add `services/trestle/` here. When the skeleton has health + config + Dockerfile + migrations wiring, **merge into `services/den/`** and drop the Trestle name from paths and binary.
 
 **M0 exit:** `services/den/` exists with Axum `GET /health`, env-based config, tracing, and a multi-stage `Dockerfile`.
 
@@ -99,40 +99,40 @@ services/den/
 
 **`users`**
 
-- `id` UUID PK  
-- `email` TEXT UNIQUE NOT NULL (or `username` if no email)  
-- `password_hash` TEXT NOT NULL (nullable only if token-only users)  
-- `webui_account_id` TEXT NULL UNIQUE — map Open WebUI stable id when available  
-- `created_at`, `updated_at` TIMESTAMPTZ  
+- `id` UUID PK
+- `email` TEXT UNIQUE NOT NULL (or `username` if no email)
+- `password_hash` TEXT NOT NULL (nullable only if token-only users)
+- `webui_account_id` TEXT NULL UNIQUE — map Open WebUI stable id when available
+- `created_at`, `updated_at` TIMESTAMPTZ
 
 **`sessions`** (if using DB-backed opaque tokens)
 
-- `id` UUID PK  
-- `user_id` UUID FK → users ON DELETE CASCADE  
-- `expires_at` TIMESTAMPTZ  
-- `created_at`  
+- `id` UUID PK
+- `user_id` UUID FK → users ON DELETE CASCADE
+- `expires_at` TIMESTAMPTZ
+- `created_at`
 
 **`bears`**
 
-- `id` UUID PK — Den’s **bear_id** (expose as `agent_id` in JSON if you want API parity with PLAN)  
-- `slug` TEXT UNIQUE — human-stable handle (`household`, `personal-hans`)  
-- `name`, `description` TEXT  
-- `letta_agent_id` TEXT NOT NULL — Letta’s agent id string  
-- `default_model` TEXT NULL — informational; Letta is source of truth for actual model  
-- `tools_enabled` JSONB NULL — optional mirror for future Cabinet  
-- `created_at`, `updated_at`  
+- `id` UUID PK — Den’s **bear_id** (expose as `agent_id` in JSON if you want API parity with PLAN)
+- `slug` TEXT UNIQUE — human-stable handle (`household`, `personal-hans`)
+- `name`, `description` TEXT
+- `letta_agent_id` TEXT NOT NULL — Letta’s agent id string
+- `default_model` TEXT NULL — informational; Letta is source of truth for actual model
+- `tools_enabled` JSONB NULL — optional mirror for future Cabinet
+- `created_at`, `updated_at`
 
 **`user_bear`** (many-to-many)
 
-- `user_id` UUID FK  
-- `bear_id` UUID FK  
-- `role` TEXT NULL — e.g. `member`, `owner`  
-- PK `(user_id, bear_id)`  
+- `user_id` UUID FK
+- `bear_id` UUID FK
+- `role` TEXT NULL — e.g. `member`, `owner`
+- PK `(user_id, bear_id)`
 
 **`audit_chat`** (optional but useful)
 
-- `id` BIGSERIAL  
-- `user_id`, `bear_id`, `created_at`, `bytes_out` INT NULL  
+- `id` BIGSERIAL
+- `user_id`, `bear_id`, `created_at`, `bytes_out` INT NULL
 
 ### Migrations
 
@@ -159,11 +159,11 @@ services/den/
 
 **Chat contract** (align with [PLAN.md](PLAN.md) §2.1):
 
-- Resolve `Authorization: Bearer <token>` or session cookie → `user_id`  
-- Resolve `agent_id` → `bear_id` → `letta_agent_id`; **403** if not member  
-- Apply rate limit  
-- `POST` Letta `.../agents/{letta_agent_id}/messages` (exact path per your Letta version — **verify against running image**)  
-- Stream SSE (or NDJSON) back matching what Open WebUI adapter expects  
+- Resolve `Authorization: Bearer <token>` or session cookie → `user_id`
+- Resolve `agent_id` → `bear_id` → `letta_agent_id`; **403** if not member
+- Apply rate limit
+- `POST` Letta `.../agents/{letta_agent_id}/messages` (exact path per your Letta version — **verify against running image**)
+- Stream SSE (or NDJSON) back matching what Open WebUI adapter expects
 
 ### Admin (protect with `ADMIN_API_KEY` or separate admin role)
 
@@ -186,12 +186,12 @@ services/den/
 
 ## 6. Letta integration
 
-1. **Config:** `LETTA_BASE_URL` (e.g. `http://bears-letta:8283`), `LETTA_AUTH` (Bearer `LETTA_SERVER_PASS` or as per your Letta version).  
-2. **Provision:**  
-   - `POST /v1/agents` with JSON body (name, model, system prompt — store template in Den or env).  
-   - On success, persist `letta_agent_id` on `bears` row.  
-3. **Chat:** Use per-agent messages endpoint; enable streaming.  
-4. **Version drift:** Document that Letta OpenAPI may differ by image tag; pin Letta version in deploy docs and add integration tests against that tag.  
+1. **Config:** `LETTA_BASE_URL` (e.g. `http://bears-letta:8283`), `LETTA_AUTH` (Bearer `LETTA_SERVER_PASS` or as per your Letta version).
+2. **Provision:**
+   - `POST /v1/agents` with JSON body (name, model, system prompt — store template in Den or env).
+   - On success, persist `letta_agent_id` on `bears` row.
+3. **Chat:** Use per-agent messages endpoint; enable streaming.
+4. **Version drift:** Document that Letta OpenAPI may differ by image tag; pin Letta version in deploy docs and add integration tests against that tag.
 5. **Failure modes:** If Letta 5xx, return 502 with correlation id; do not leak Letta stack traces.
 
 ---
@@ -200,8 +200,8 @@ services/den/
 
 **Options** (pick one for first ship):
 
-1. **Custom “API base”** — If Open WebUI can point at a compatible OpenAI-style `/v1/chat/completions`, implement a **thin shim** on Den that maps to Letta (harder if Letta is not OpenAI-shaped).  
-2. **Pipe / function** — Fork or extend [open-webui-tools](https://github.com/Haervwe/open-webui-tools) pattern: function calls Den `POST /v1/chat/send` with user’s mapped token; bear picker = model list from `GET /v1/bears`.  
+1. **Custom “API base”** — If Open WebUI can point at a compatible OpenAI-style `/v1/chat/completions`, implement a **thin shim** on Den that maps to Letta (harder if Letta is not OpenAI-shaped).
+2. **Pipe / function** — Fork or extend [open-webui-tools](https://github.com/Haervwe/open-webui-tools) pattern: function calls Den `POST /v1/chat/send` with user’s mapped token; bear picker = model list from `GET /v1/bears`.
 3. **Middleware proxy** — Less ideal; Open WebUI still thinks it talks to “Letta” but network path goes through Den (only if URL rewrite is trivial).
 
 **User mapping:** On first login from Open WebUI, pass `webui_user_id` header or claim; Den upserts `users.webui_account_id`.
@@ -212,20 +212,20 @@ services/den/
 
 ## 8. LettaBot YAML generation
 
-- **Template:** Stable structure matching [DEN_ARCHITECTURE.md](DEN_ARCHITECTURE.md) sample (`agents[].agentId`, `channels.slack.allowedUsers`, …).  
-- **Data source:** `bears` + `user_bear` + optional `user_external_ids` table (Phase 1: **manual** Slack user ids in admin API or env map).  
-- **Delivery:**  
-  - **Pull:** `GET /admin/lettabot.yaml`  
-  - **Push (optional):** Write to shared volume if Den has mount (Coolify volume)  
+- **Template:** Stable structure matching [DEN_ARCHITECTURE.md](DEN_ARCHITECTURE.md) sample (`agents[].agentId`, `channels.slack.allowedUsers`, …).
+- **Data source:** `bears` + `user_bear` + optional `user_external_ids` table (Phase 1: **manual** Slack user ids in admin API or env map).
+- **Delivery:**
+  - **Pull:** `GET /admin/lettabot.yaml`
+  - **Push (optional):** Write to shared volume if Den has mount (Coolify volume)
 - **Reload:** Document that LettaBot must restart or SIGHUP if no hot reload — operational note in `services/den/README.md`.
 
 ---
 
 ## 9. LiteLLM observability (optional Milestone 1.5)
 
-- Env: `LITELLM_BASE_URL`, `LITELLM_MASTER_KEY` (read-only usage).  
-- Endpoints to call: `/health/liveliness`, `/metrics` (Prometheus), or admin spend API per your LiteLLM version.  
-- **No** forwarding of chat completions through Den.  
+- Env: `LITELLM_BASE_URL`, `LITELLM_MASTER_KEY` (read-only usage).
+- Endpoints to call: `/health/liveliness`, `/metrics` (Prometheus), or admin spend API per your LiteLLM version.
+- **No** forwarding of chat completions through Den.
 - **Attribution:** Document gap: correlating LiteLLM logs to `user_id` may need Letta extra headers — out of Den unless you add Letta config change.
 
 ---
@@ -234,10 +234,10 @@ services/den/
 
 **Pattern:** multi-stage `Dockerfile` in **`services/den/`**.
 
-1. **Builder:** `rust:1.xx-bookworm`, install deps, `cargo build --release`.  
-   - Use **cargo-chef** or **cache mount** (`--mount=type=cache`) to speed rebuilds.  
-2. **Runtime:** `debian:bookworm-slim`, install `ca-certificates`, copy binary from builder, non-root user.  
-3. **Entrypoint:** `/usr/local/bin/den` or run migrations then exec (choose one strategy and document).  
+1. **Builder:** `rust:1.xx-bookworm`, install deps, `cargo build --release`.
+   - Use **cargo-chef** or **cache mount** (`--mount=type=cache`) to speed rebuilds.
+2. **Runtime:** `debian:bookworm-slim`, install `ca-certificates`, copy binary from builder, non-root user.
+3. **Entrypoint:** `/usr/local/bin/den` or run migrations then exec (choose one strategy and document).
 4. **Coolify:** Service e.g. **`bears-den`**, internal port e.g. `8080`, env from secrets, link to Postgres + network to `bears-letta`.
 
 **`.dockerignore`:** `target/`, `.git/`, etc.
@@ -262,12 +262,12 @@ services/den/
 
 ## 12. Security checklist (Phase 1)
 
-- [ ] Never expose `LETTA_AUTH` or `ADMIN_API_KEY` to browsers  
-- [ ] Argon2 cost params documented for homelab vs prod  
-- [ ] Rate limit on `/v1/chat/send` and `/auth/login`  
-- [ ] CORS restricted to Open WebUI origin if credentialed cookies  
-- [ ] SQL injection: only parameterized queries (sqlx)  
-- [ ] Dependencies: `cargo audit` in CI  
+- [ ] Never expose `LETTA_AUTH` or `ADMIN_API_KEY` to browsers
+- [ ] Argon2 cost params documented for homelab vs prod
+- [ ] Rate limit on `/v1/chat/send` and `/auth/login`
+- [ ] CORS restricted to Open WebUI origin if credentialed cookies
+- [ ] SQL injection: only parameterized queries (sqlx)
+- [ ] Dependencies: `cargo audit` in CI
 
 ---
 
@@ -286,7 +286,7 @@ services/den/
 
 | # | Milestone | Exit criteria |
 |---|-----------|----------------|
-| M0 | **Twain bootstrap → Den** | Throwaway scaffold merged into `services/den/`; Axum `GET /health`, config, tracing, Dockerfile |
+| M0 | **Trestle bootstrap → Den** | Throwaway scaffold merged into `services/den/`; Axum `GET /health`, config, tracing, Dockerfile |
 | M1 | Postgres | Migrations applied; no business logic |
 | M2 | Auth | Register/login disabled or gated; session or API token works |
 | M3 | Bears + membership | Admin CRUD + user sees only member bears |
@@ -302,29 +302,29 @@ services/den/
 
 ## 15. Acceptance criteria (Phase 1 complete)
 
-- [ ] Open WebUI (or documented client) sends chat **through Den** to Letta with streaming responses  
-- [ ] At least two users and two bears with **many-to-many** membership verified (user A: bears 1+2; user B: bear 2 only)  
-- [ ] Non-member cannot invoke bear (403)  
-- [ ] New bear can be provisioned in Letta from Den admin API  
-- [ ] LettaBot yaml can be generated from current DB state; LettaBot still talks **direct** to Letta  
-- [ ] Deployed via **single Dockerfile** build on Coolify (or CI → registry)  
-- [ ] No Cabinet calls required  
+- [ ] Open WebUI (or documented client) sends chat **through Den** to Letta with streaming responses
+- [ ] At least two users and two bears with **many-to-many** membership verified (user A: bears 1+2; user B: bear 2 only)
+- [ ] Non-member cannot invoke bear (403)
+- [ ] New bear can be provisioned in Letta from Den admin API
+- [ ] LettaBot yaml can be generated from current DB state; LettaBot still talks **direct** to Letta
+- [ ] Deployed via **single Dockerfile** build on Coolify (or CI → registry)
+- [ ] No Cabinet calls required
 
 ---
 
 ## 16. Documentation updates after code exists
 
-- [ ] [DEPLOYMENT.md](DEPLOYMENT.md) — add Step for Den + Postgres  
-- [ ] [DEN_ARCHITECTURE.md](DEN_ARCHITECTURE.md) — `services/den/README.md` for ports/env  
-- [ ] [PLAN.md](PLAN.md) — Phase 1 already links this bootstrap plan  
+- [ ] [DEPLOYMENT.md](DEPLOYMENT.md) — add Step for Den + Postgres
+- [ ] [DEN_ARCHITECTURE.md](DEN_ARCHITECTURE.md) — `services/den/README.md` for ports/env
+- [ ] [PLAN.md](PLAN.md) — Phase 1 already links this bootstrap plan
 
 ---
 
 ## 17. Open decisions (resolve before M4–M6)
 
-1. **Auth mechanism for Open WebUI:** cookie from browser vs server-side API token per workspace  
-2. **Bear id in JSON:** `agent_id` vs `bear_id` vs both with alias  
-3. **Letta agent create payload:** single template vs per-bear type (personal vs shared)  
-4. **Conversation id:** Letta thread/conversation API — map Open WebUI `chat_id` to Letta conversation if required by API version  
+1. **Auth mechanism for Open WebUI:** cookie from browser vs server-side API token per workspace
+2. **Bear id in JSON:** `agent_id` vs `bear_id` vs both with alias
+3. **Letta agent create payload:** single template vs per-bear type (personal vs shared)
+4. **Conversation id:** Letta thread/conversation API — map Open WebUI `chat_id` to Letta conversation if required by API version
 
 Record decisions in **`services/den/DECISIONS.md`** as you lock them.

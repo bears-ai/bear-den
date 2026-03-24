@@ -226,7 +226,7 @@ Deliverables:
 
 ### Phase 1 – **Den**: auth‑aware proxy & **bear** manager (no Cabinet yet)
 
-**Implementation plan:** [PHASE1_BOOTSTRAP.md](PHASE1_BOOTSTRAP.md) — Den at `services/den/`; **Twain** is only an ephemeral bootstrap codename for M0 (not a repo path).
+**Implementation plan:** [PHASE1_BOOTSTRAP.md](PHASE1_BOOTSTRAP.md) — Den at `services/den/`; **Trestle** is only an ephemeral bootstrap codename for M0 (not a repo path).
 
 **Goal:** Move **web chat** from “Open WebUI → Letta” to “Open WebUI → **Den** → Letta”, with identity and policy in Den. **LettaBot → Den → Letta is out of scope for this release** (see [optional LettaBot proxy](#den-as-lettabot--letta-proxy-optional-value-add-not-a-v1-feature)).
 
