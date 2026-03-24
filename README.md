@@ -53,7 +53,6 @@ services/
 ├── den/             # Phase 1 control plane (Axum); see PHASE1_BOOTSTRAP.md
 ├── litellm/
 ├── letta/
-├── librechat/       # optional UI
 └── openwebui/
 PHASE1_BOOTSTRAP.md
 PLAN.md
