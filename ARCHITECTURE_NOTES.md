@@ -7,14 +7,14 @@ Single-page view of the BEARS stack on Coolify. **Roadmap and contracts:** [PLAN
 **Cabinet** (**Outline**) is the shared knowledgebase: humans edit in Outline; **bears** (Letta agents) access it through **Den** (Cabinet API, policy). **Letta** keeps **native memory** (blocks, conversations) per bear—Cabinet does not replace that. **Bear** = one agent; **BEARS** = the stack. See [PLAN.md](PLAN.md) terminology.
 
 ```
-Open WebUI         Outline (human editing)
-    │                      ▲
-    ▼                      │
-   Den ──Cabinet API───────┘
-    │
-    ▼
-  Letta ──► LiteLLM ──► providers
+Open WebUI ──┐     Outline (human editing)
+             │              ▲
+Browser/     ├──► Den ──Cabinet API───────┘
+Loquix ──────┘     │
+                   ▼
+                 Letta ──► LiteLLM ──► providers
 ```
+(Loquix: optional Den-served UI — [DEN_ARCHITECTURE.md](DEN_ARCHITECTURE.md).)
 
 **Until Den is deployed:** Open WebUI talks to Letta directly. Add Den + Outline per [PLAN.md](PLAN.md).
 
@@ -22,10 +22,11 @@ Open WebUI         Outline (human editing)
 
 | Component | Role |
 |-----------|------|
-| **Den** | **Bear** provisioning (Letta + Open WebUI + LettaBot config), **users↔bears** membership, auth, routing to Letta, Cabinet API; **LiteLLM** only for observability (Letta → LiteLLM direct) |
+| **Den** | **Bear** provisioning (Letta + Open WebUI + LettaBot config), **users↔bears** membership, auth, routing to Letta, optional **Loquix** static UI, Cabinet API; **LiteLLM** only for observability (Letta → LiteLLM direct) |
 | **Letta** | **Bear** runtime: tools, memory blocks, conversations per Letta agent |
 | **LiteLLM** | Unified model API |
-| **Open WebUI** | Primary web chat (optional: LibreChat) |
+| **Open WebUI** | Full-featured web chat (optional: LibreChat) |
+| **Loquix (on Den)** | Optional first-party chat UI—same Den streaming APIs as Open WebUI ([Loquix](https://github.com/loquix-dev/loquix)) |
 | **Outline** | Cabinet storage and UI |
 
 ## Letta
@@ -36,7 +37,7 @@ Open WebUI         Outline (human editing)
 
 ## Data flow
 
-**Web (target with Den):** User → Open WebUI → Den → Letta → LiteLLM → providers.
+**Web (target with Den):** User → Open WebUI **or** Den **Loquix** page → Den → Letta → LiteLLM → providers.
 
 **Web (today, no Den):** User → Open WebUI → Letta → LiteLLM → providers.
 

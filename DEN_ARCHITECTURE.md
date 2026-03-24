@@ -8,14 +8,14 @@ BEARS uses **only self-hosted Letta** (e.g. `letta/letta:latest` on Coolify). **
 
 ## Overview
 
-**v1 Den:** **Open WebUI → Den → Letta** (web auth, **bear** registry, **users↔bears** membership, policy). **LettaBot** (**Slack/WhatsApp**) typically stays **LettaBot → Letta direct** for **chat** until you adopt the optional proxy path—see [PLAN.md](PLAN.md) § *Den as LettaBot → Letta proxy*—while Den still **provisions Letta agents** and **updates LettaBot / Open WebUI** so the right **bears** appear per user. **Many‑to‑many:** each user can use many bears; some bears are shared by many users. Den enforces membership on every request.
+**v1 Den:** **Web → Den → Letta** for chat: either **Open WebUI → Den** or a **first‑party Den web UI** built with **[Loquix](https://github.com/loquix-dev/loquix)** (same Axum routes: auth, bear list, **SSE streaming** `POST /v1/chat/send`). Both are alternatives at the browser layer; Den remains the control plane (**bear** registry, **users↔bears** membership, policy). **LettaBot** (**Slack/WhatsApp**) typically stays **LettaBot → Letta direct** for **chat** until you adopt the optional proxy path—see [PLAN.md](PLAN.md) § *Den as LettaBot → Letta proxy*—while Den still **provisions Letta agents** and **updates LettaBot / Open WebUI** so the right **bears** appear per user. **Many‑to‑many:** each user can use many bears; some bears are shared by many users. Den enforces membership on every request.
 
 ### Den implementation (Axum)
 
 - **Stack:** Axum + reqwest (no official Letta Rust SDK).
 - **Letta base URL:** e.g. `http://bears-letta:8283` on Coolify internal network. Use **`LETTA_SERVER_PASS`** (or your Letta version’s admin auth) for server-to-server calls—never expose to browsers.
 - **OpenAPI:** Generate typed clients from **your** Letta server’s spec if published (path varies by version; check [Letta docs](https://docs.letta.com)); otherwise call REST paths you verify against the running image.
-- **Streaming:** Letta message streams are typically **SSE**; use `reqwest-eventsource`, `eventsource-stream`, or equivalent from Axum handlers when proxying to browsers or LettaBot.
+- **Streaming:** Letta message streams are typically **SSE**; use `reqwest-eventsource`, `eventsource-stream`, or equivalent from Axum handlers when proxying to browsers (Open WebUI, **Loquix** `fetch` streams, or LettaBot).
 
 Examples below use **Python/TypeScript** for readability; **Den** implements the same flows via reqwest.
 
@@ -53,8 +53,9 @@ Admins may still use the Letta UI for experiments; **production truth** for whic
 ## System architecture
 
 ```
-  Open WebUI ─────► Den ──────► Letta ───► LiteLLM ───► providers
-  (v1 path)
+  Open WebUI ─────┐
+                  ├──► Den ──────► Letta ───► LiteLLM ───► providers
+  Browser/Loquix ─┘      (v1 web: same Den APIs + streaming)
 
   LettaBot ───────────────────► Letta     (v1: direct; optional later: via Den)
   (Slack/WhatsApp)
@@ -94,6 +95,7 @@ Minimum surface (names align with [PLAN.md](PLAN.md) where noted):
 | /chat/message | POST | Optional alias for clients expecting this name |
 | /chat/conversations | GET/POST | List / create conversations |
 | /agents | GET | **Bears** visible to user (member list) |
+| /, /assets/* | GET | Optional: Den-hosted **Loquix** chat UI (static) |
 | /admin/* | … | User/agent admin (optional) |
 
 Cabinet tool endpoints are internal or agent-facing per PLAN.
@@ -133,6 +135,22 @@ Point Open WebUI (or a pipe function) at **Den**, not raw Letta, when multi-user
 
 ---
 
+## Den native web UI (Loquix)
+
+**Purpose:** A **direct** chat experience served by Den—**alternative to Open WebUI** for operators who want a minimal, Den‑aligned surface—with no duplicate inference path (still **Den → Letta**; **Letta → LiteLLM**).
+
+**Stack:** [Loquix](https://github.com/loquix-dev/loquix) — Lit 3 **web components** (`loquix-chat-container`, `loquix-message-list`, `loquix-chat-composer`, streaming and attachment patterns as needed). Import `@loquix/core`, tokens CSS, and `define/*` entrypoints per Loquix docs; ship static `index.html` + bundled JS from **`services/den/static/`** (or build step) and serve with `tower-http::services::ServeDir` (or embed with `rust-embed`).
+
+**Integration:**
+
+1. **Session or Bearer auth** — same as Open WebUI path; Loquix page uses `credentials: 'include'` or `Authorization` on `fetch` to `POST /v1/chat/send` (SSE or NDJSON—**match one contract** and document it in `services/den/README.md`).
+2. **Bear picker** — populate `loquix-model-selector` (or a simple custom list) from `GET /v1/bears` / `GET /agents` (membership-filtered).
+3. **Streaming** — forward Letta SSE through Den; consume in the page with `ReadableStream` / `EventSource` and append to `loquix-message-content` (see Loquix **Streaming chat** recipe).
+
+**Ops:** Same Den deployment; optionally expose only Den (plus Letta internal) and skip Open WebUI for some users. CORS: if the chat UI is **same-origin** (served from Den), credentialed cookies avoid cross-origin complexity.
+
+---
+
 ## Deployment
 
 | Component | Notes |
@@ -142,6 +160,7 @@ Point Open WebUI (or a pipe function) at **Den**, not raw Letta, when multi-user
 | **PostgreSQL** | Den users, **bears**, **users↔bears** membership, sessions |
 | **LettaBot** | Slack + WhatsApp tokens; config volume |
 | **Open WebUI** | Talks to Den in production multi-user mode |
+| **Loquix (static)** | Served by Den; talks to Den **same origin** for chat (optional) |
 
 ```bash
 # Den (example)

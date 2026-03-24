@@ -28,6 +28,7 @@ Use whatever **one-off** scaffold you prefer (`cargo new`, an internal template,
 | Bears | CRUD (admin), `letta_agent_id` linkage, provision via Letta REST API |
 | Membership | Many-to-many `user_bear`; enforce on every chat |
 | Chat | `POST /chat/send` (and/or OpenAI-compatible shim later) → validate → Letta messages API with **SSE streaming** back to client |
+| Den web UI (optional) | Static **Loquix** chat page served by Den (`GET /` or `/app`); uses **same** chat + discovery endpoints as Open WebUI — see [Loquix](https://github.com/loquix-dev/loquix) |
 | Discovery | `GET /agents` or `GET /bears` → bears the current user may use |
 | LettaBot | `GET /internal/lettabot.yaml` (admin-authenticated) **or** write to volume path on change — generated from DB |
 | Policy | RBAC-lite: membership check + optional per-bear `can_use` + basic rate limit |
@@ -56,9 +57,10 @@ services/den/
 ├── README.md               # runbook: env vars, ports, Open WebUI notes
 ├── migrations/             # SQL (sqlx or refinery)
 │   └── 001_initial.sql
+├── static/                 # optional: Loquix chat UI (index.html, bundled assets) or vite output
 └── src/
     ├── main.rs
-    ├── config.rs           # figment/env: DATABASE_URL, LETTA_*, SESSION_*, BIND_ADDR
+    ├── config.rs           # figment/env: DATABASE_URL, LETTA_*, SESSION_*, BIND_ADDR, STATIC_ROOT?
     ├── error.rs            # unified ApiError → HTTP
     ├── state.rs            # AppState: pool, letta client, config
     ├── db/
@@ -151,6 +153,7 @@ services/den/
 | Method | Path | Purpose |
 |--------|------|---------|
 | GET | `/health` | Liveness (no DB) or `/ready` with DB ping |
+| GET | `/`, `/assets/*` | Optional: **Loquix** single-page chat (static files); route only paths that do not shadow API |
 | POST | `/auth/register` | Optional; may disable in prod and use admin-created users |
 | POST | `/auth/login` | Returns session cookie or `{ token }` |
 | POST | `/auth/logout` | Invalidate session |
@@ -207,6 +210,19 @@ services/den/
 **User mapping:** On first login from Open WebUI, pass `webui_user_id` header or claim; Den upserts `users.webui_account_id`.
 
 **Deliverable:** Document the chosen path in `services/den/README.md` + example env for Open WebUI.
+
+### Den native UI: Loquix (optional parallel)
+
+**Goal:** Offer a **first-party** chat UI on Den as an **alternative to Open WebUI**, reusing the **same** `POST /v1/chat/send` streaming handler and `GET /v1/bears` (no second gateway to Letta).
+
+**Pieces:**
+
+1. **Static assets** — `services/den/static/` (or a small `web/` package built with Vite/esbuild): HTML shell with Loquix imports (`@loquix/core/tokens/variables.css`, `define-chat-container`, `define-message-list`, `define-chat-composer`, etc.); see [Loquix README](https://github.com/loquix-dev/loquix) and streaming recipe.
+2. **Axum** — `ServeDir` for `/` + assets; mount **below** API routes or use a dedicated prefix (`/app`) if path conflicts are awkward.
+3. **Browser → Den** — `fetch` + `ReadableStream` (or `EventSource` if you standardize on SSE) for assistant tokens; map Den’s stream chunks to Loquix message content per your negotiated format.
+4. **Auth** — Prefer **same-origin** session cookies so Loquix page and API share Den origin without CORS preflight for cookies; Bearer tokens also work with explicit `Authorization`.
+
+**Milestone:** Ship after **M5** (chat proxy works with `curl`); can land with or shortly after **M6** (Open WebUI). Document “Loquix-only homelab” vs “Open WebUI + Den” in `services/den/README.md`.
 
 ---
 
@@ -265,7 +281,7 @@ services/den/
 - [ ] Never expose `LETTA_AUTH` or `ADMIN_API_KEY` to browsers
 - [ ] Argon2 cost params documented for homelab vs prod
 - [ ] Rate limit on `/v1/chat/send` and `/auth/login`
-- [ ] CORS restricted to Open WebUI origin if credentialed cookies
+- [ ] CORS restricted to trusted web origins if credentialed cookies cross-origin; **Loquix on same host as Den** avoids this for the native UI
 - [ ] SQL injection: only parameterized queries (sqlx)
 - [ ] Dependencies: `cargo audit` in CI
 
@@ -293,6 +309,7 @@ services/den/
 | M4 | Letta provision | `POST /admin/bears` creates Letta agent + row |
 | M5 | Chat proxy | Streaming `POST /v1/chat/send` end-to-end with curl |
 | M6 | Open WebUI | Documented integration path; demo user chatting via Den |
+| M6b | Loquix UI (optional) | Den serves static Loquix page; demo user chats in browser via same streaming API |
 | M7 | LettaBot yaml | `GET /admin/lettabot.yaml` matches real bot config needs |
 | M8 | Polish | Rate limits, readiness probe, Coolify deploy |
 
@@ -302,7 +319,7 @@ services/den/
 
 ## 15. Acceptance criteria (Phase 1 complete)
 
-- [ ] Open WebUI (or documented client) sends chat **through Den** to Letta with streaming responses
+- [ ] Open WebUI **and/or** Den-hosted **Loquix** page sends chat **through Den** to Letta with streaming responses (same API contract)
 - [ ] At least two users and two bears with **many-to-many** membership verified (user A: bears 1+2; user B: bear 2 only)
 - [ ] Non-member cannot invoke bear (403)
 - [ ] New bear can be provisioned in Letta from Den admin API

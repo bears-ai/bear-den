@@ -6,6 +6,7 @@ Each assistant in the product is a **bear** (one **Letta** agent). **BEARS** nam
 
 - **[Letta](https://github.com/letta-ai/letta)** — **Bear** runtime, native memory (blocks, conversations, tools)
 - **[Open WebUI](https://github.com/open-webui/open-webui)** (open-webui) — Chat UI
+- **[Loquix](https://github.com/loquix-dev/loquix)** — Optional **Den**-hosted web chat (same Den APIs as Open WebUI); see [DEN_ARCHITECTURE.md](DEN_ARCHITECTURE.md)
 - **[Outline](https://www.getoutline.com/)** + **Den** (Rust/Axum) — Control plane + **Cabinet**; see [PLAN.md](PLAN.md). **Self-hosted Letta only** (no Letta Cloud).
 - **[LiteLLM](https://github.com/BerriAI/litellm)** — Model gateway
 - **[Coolify](https://coolify.io)** — Deployment
@@ -17,7 +18,7 @@ Each assistant in the product is a **bear** (one **Letta** agent). **BEARS** nam
 | **Deploy on Coolify** | [DEPLOYMENT.md](DEPLOYMENT.md), then `services/*/COOLIFY_DEPLOY.md` |
 | **Understand the stack** | This file + [ARCHITECTURE_NOTES.md](ARCHITECTURE_NOTES.md) |
 | **Roadmap & phases** (Den, Cabinet, Outline) | [PLAN.md](PLAN.md) |
-| **Multi-user web** (Den + Letta) | [DEN_ARCHITECTURE.md](DEN_ARCHITECTURE.md) |
+| **Multi-user web** (Den + Letta; Open WebUI or Loquix) | [DEN_ARCHITECTURE.md](DEN_ARCHITECTURE.md) |
 | **Phase 1 build (Den; Trestle = M0 bootstrap only)** | [PHASE1_BOOTSTRAP.md](PHASE1_BOOTSTRAP.md) |
 | **Open WebUI ↔ Letta** (direct) | [services/letta/OPENWEBUI_INTEGRATION.md](services/letta/OPENWEBUI_INTEGRATION.md), [OPENWEBUI_SESSIONS.md](services/letta/OPENWEBUI_SESSIONS.md) |
 
@@ -29,7 +30,7 @@ Each assistant in the product is a **bear** (one **Letta** agent). **BEARS** nam
 |-------|------|
 | **Letta memory** | Per‑**bear** context (blocks, conversations)—not replaced by Cabinet |
 | **Cabinet (Outline)** | Long-lived docs; people edit in Outline, **bears** use tools via **Den** |
-| **Den** | Control plane: **bear** lifecycle (Letta + Open WebUI + LettaBot), **users↔bears** membership, identity, routing, policy, Cabinet API; **LiteLLM only for observability** ([PLAN.md](PLAN.md)) |
+| **Den** | Control plane: **bear** lifecycle (Letta + Open WebUI + LettaBot), **users↔bears** membership, identity, routing, policy, Cabinet API; optional **Loquix** chat UI **served from Den** ([DEN_ARCHITECTURE.md](DEN_ARCHITECTURE.md)); **LiteLLM only for observability** ([PLAN.md](PLAN.md)) |
 
 ## Quick start (Coolify)
 
