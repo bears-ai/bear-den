@@ -1,0 +1,318 @@
+{% extends "admin/base.html" %}
+
+{% block title %}OAuth Client: {{ client.name }}{% endblock %}
+
+{% block admin_content %}
+<h2>OAuth Client Details</h2>
+
+{% if show_created %}
+<div class="alert alert-success">
+  <strong>OAuth Client Created Successfully!</strong><br>
+  {% if not client.public %}
+  <strong>IMPORTANT:</strong> Save the client secret below - it will not be shown again.
+  <div class="client-secret-display">
+    <strong>Client Secret:</strong> <code>{{ client_secret }}</code>
+  </div>
+  {% else %}
+  <strong>This is a public client.</strong> No client secret is required - use PKCE (code_verifier) for authentication.
+  {% endif %}
+</div>
+{% endif %}
+
+{% if show_regenerated %}
+<div class="alert alert-success">
+  <strong>Client Secret Regenerated!</strong><br>
+  {% if not client.public %}
+  <strong>IMPORTANT:</strong> Save the new client secret below - it will not be shown again.
+  <div class="client-secret-display">
+    <strong>New Client Secret:</strong> <code>{{ client_secret }}</code>
+  </div>
+  {% else %}
+  <strong>This is a public client.</strong> No client secret is required - use PKCE (code_verifier) for authentication.
+  {% endif %}
+</div>
+{% endif %}
+
+<div class="client-details">
+  <div class="detail-section">
+    <h3>Basic Information</h3>
+    <table class="details-table">
+      <tr>
+        <td><strong>ID:</strong></td>
+        <td>{{ client.id }}</td>
+      </tr>
+      <tr>
+        <td><strong>Name:</strong></td>
+        <td>{{ client.name }}</td>
+      </tr>
+      <tr>
+        <td><strong>Client ID:</strong></td>
+        <td><code>{{ client.client_id }}</code></td>
+      </tr>
+      <tr>
+        <td><strong>Status:</strong></td>
+        <td>
+          {% if client.active %}
+            <span class="status-active">Active</span>
+          {% else %}
+            <span class="status-inactive">Inactive</span>
+          {% endif %}
+        </td>
+      </tr>
+      <tr>
+        <td><strong>Trusted:</strong></td>
+        <td>
+          {% if client.trusted %}
+            <span class="status-trusted">Yes</span>
+            <small>(Authorization requests are automatically approved)</small>
+          {% else %}
+            <span class="status-untrusted">No</span>
+            <small>(Users must manually approve authorization requests)</small>
+          {% endif %}
+        </td>
+      </tr>
+      <tr>
+        <td><strong>Client Type:</strong></td>
+        <td>
+          {% if client.public %}
+            <span class="status-public">Public</span>
+            <small>(Uses PKCE, no client secret required)</small>
+          {% else %}
+            <span class="status-confidential">Confidential</span>
+            <small>(Requires client secret for authentication)</small>
+          {% endif %}
+        </td>
+      </tr>
+      <tr>
+        <td><strong>Created:</strong></td>
+        <td>{{ client.created_at | datetimeformat(format="short") }}</td>
+      </tr>
+      <tr>
+        <td><strong>Updated:</strong></td>
+        <td>{{ client.updated_at | datetimeformat(format="short") }}</td>
+      </tr>
+    </table>
+  </div>
+
+  <div class="detail-section">
+    <h3>OAuth Configuration</h3>
+
+    <h4>Allowed Scopes</h4>
+    <ul class="scopes-list">
+      {% for scope in scopes %}
+      <li>
+        <code>{{ scope }}</code>
+        {% if scope == "profile:read" %}
+        - Access to basic profile information (username, display name)
+        {% elif scope == "profile:email" %}
+        - Access to user's email address
+        {% elif scope == "data:read" %}
+        - Read access to user data exposed by your API (starter scope — customize)
+        {% elif scope == "data:write" %}
+        - Write access to user data exposed by your API (starter scope — customize)
+        {% endif %}
+      </li>
+      {% endfor %}
+    </ul>
+
+    <h4>Redirect URIs</h4>
+    <ul class="redirect-uris-list">
+      {% for uri in redirect_uris %}
+      <li><code>{{ uri }}</code></li>
+      {% endfor %}
+    </ul>
+  </div>
+</div>
+
+<div class="actions">
+  <a class="action" href="/admin/oauth_clients/{{ client.id }}/edit">Edit Client</a>
+  <a class="action" href="/admin/oauth_clients/{{ client.id }}/pkce-test">PKCE Testing</a>
+
+  {% if client.active %}
+  <form method="post" action="./toggle_trusted" style="display: inline;">
+    {% if client.trusted %}
+    <button type="submit" class="action-warning"
+            onsubmit="return confirm('Are you sure you want to mark this client as untrusted? Users will need to manually approve authorization requests.')">
+      Mark as Untrusted
+    </button>
+    {% else %}
+    <button type="submit" class="action-info"
+            onsubmit="return confirm('Are you sure you want to mark this client as trusted? Authorization requests will be automatically approved.')">
+      Mark as Trusted
+    </button>
+    {% endif %}
+  </form>
+
+  {% if not client.public %}
+  <form method="post" action="./regenerate_secret" style="display: inline;"
+        onsubmit="return confirm('Are you sure you want to regenerate the client secret? This will invalidate the current secret and may break existing integrations.')">
+    <button type="submit" class="action-warning">Regenerate Secret</button>
+  </form>
+  {% endif %}
+
+  <form method="post" action="./deactivate" style="display: inline;"
+        onsubmit="return confirm('Are you sure you want to deactivate this OAuth client? This will prevent it from being used for new authorizations.')">
+    <button type="submit" class="action-danger">Deactivate Client</button>
+  </form>
+  {% endif %}
+</div>
+
+<style>
+.alert {
+  padding: 15px;
+  margin-bottom: 20px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+}
+
+.alert-success {
+  color: #155724;
+  background-color: #d4edda;
+  border-color: #c3e6cb;
+}
+
+.client-secret-display {
+  margin-top: 10px;
+  padding: 10px;
+  background-color: #f8f9fa;
+  border: 1px solid #dee2e6;
+  border-radius: 3px;
+}
+
+.client-details {
+  margin: 20px 0;
+}
+
+.detail-section {
+  margin-bottom: 30px;
+  padding: 20px;
+  border: 1px solid #ddd;
+  border-radius: 5px;
+  background-color: #f9f9f9;
+}
+
+.detail-section h3 {
+  margin-top: 0;
+  margin-bottom: 15px;
+  color: #333;
+}
+
+.detail-section h4 {
+  margin-top: 20px;
+  margin-bottom: 10px;
+  color: #555;
+}
+
+.details-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.details-table td {
+  padding: 8px 12px;
+  border-bottom: 1px solid #eee;
+  vertical-align: top;
+}
+
+.details-table td:first-child {
+  width: 150px;
+  font-weight: bold;
+}
+
+.scopes-list, .redirect-uris-list {
+  list-style-type: none;
+  padding: 0;
+}
+
+.scopes-list li, .redirect-uris-list li {
+  padding: 5px 0;
+  border-bottom: 1px solid #eee;
+}
+
+.status-active {
+  color: #28a745;
+  font-weight: bold;
+}
+
+.status-inactive {
+  color: #dc3545;
+  font-weight: bold;
+}
+
+.status-trusted {
+  color: #007bff;
+  font-weight: bold;
+}
+
+.status-untrusted {
+  color: #6c757d;
+  font-weight: bold;
+}
+
+code {
+  background-color: #f8f9fa;
+  padding: 2px 4px;
+  border-radius: 3px;
+  font-family: monospace;
+  font-size: 0.9em;
+}
+
+.actions {
+  margin-top: 30px;
+  padding-top: 20px;
+  border-top: 1px solid #ddd;
+}
+
+.actions > * {
+  margin-right: 10px;
+}
+
+.action-warning {
+  background-color: #ffc107;
+  color: #212529;
+  border: 1px solid #ffc107;
+  padding: 8px 16px;
+  border-radius: 3px;
+  cursor: pointer;
+  text-decoration: none;
+  display: inline-block;
+}
+
+.action-warning:hover {
+  background-color: #e0a800;
+  border-color: #d39e00;
+}
+
+.action-info {
+  background-color: #17a2b8;
+  color: white;
+  border: 1px solid #17a2b8;
+  padding: 8px 16px;
+  border-radius: 3px;
+  cursor: pointer;
+  text-decoration: none;
+  display: inline-block;
+}
+
+.action-info:hover {
+  background-color: #138496;
+  border-color: #117a8b;
+}
+
+.action-danger {
+  background-color: #dc3545;
+  color: white;
+  border: 1px solid #dc3545;
+  padding: 8px 16px;
+  border-radius: 3px;
+  cursor: pointer;
+  text-decoration: none;
+  display: inline-block;
+}
+
+.action-danger:hover {
+  background-color: #c82333;
+  border-color: #bd2130;
+}
+</style>
+{% endblock %}

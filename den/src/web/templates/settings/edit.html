@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% import "forms.jinja" as forms %}
+
+{% block breadcrumb %}<a href="/settings">Settings</a> > {% endblock %}
+{% block title %}Update Settings{% endblock %}
+
+{% block content %}
+<div class="box">
+<form method="post">
+  <div class="fields-grid">
+    {{ forms.input("display_name", "Display Name", 'text', 'required minlength="3" maxlength="100"', settings_form) }}
+    {{ forms.select("theme", "Theme", theme_descriptions, 'required', settings_form) }}
+    {{ forms.select("week_start_day", "Start Week On", day_of_week_names, 'required', settings_form, hint="Weekly reports will be sent on this day") }}
+  </div>
+  <div class="button-row">
+    <button>Save</button>
+  </div>
+</form>
+</div>
+{% endblock %}

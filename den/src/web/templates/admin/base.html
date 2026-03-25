@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+
+{% block title %}Operations{% endblock %}
+
+{% block content %}
+<nav>
+    <a href="/admin">Dashboard</a> |
+    <a href="/admin/users/">Users</a> |
+    <a href="/admin/oauth_clients/">OAuth Clients</a>
+</nav>
+
+<hr>
+
+{% block admin_content %}{% endblock %}
+{% endblock %}

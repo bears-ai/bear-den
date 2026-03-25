@@ -1,0 +1,136 @@
+<!doctype html>
+{% if session is defined and session.theme %}
+<html lang="en" class="theme-{{ session.theme }}">
+    {% else %}
+    <html lang="en">
+        {% endif %}
+        <head>
+            <title>
+                {% if self.meta_title() %}{% block meta_title %}{% endblock %}{%
+                else %}{% block title %}{{ title }}{% endblock %}{% endif %}
+            </title>
+            <link rel="stylesheet" href="/assets/css/style.css" />
+            <link rel="preconnect" href="https://fonts.googleapis.com" />
+            <link
+                rel="preconnect"
+                href="https://fonts.gstatic.com"
+                crossorigin
+            />
+            <link
+                href="https://fonts.googleapis.com/css2?family=Geist+Mono:wght@100..900&family=Geist:wght@100..900&display=swap"
+                rel="stylesheet"
+            />
+            <meta
+                name="viewport"
+                content="width=device-width, initial-scale=1"
+            />
+            <link rel="manifest" href="/assets/manifest.json" />
+            <meta name="mobile-web-app-capable" content="yes" />
+            <meta name="application-name" content="Web app" />
+            <meta name="apple-mobile-web-app-title" content="Web app" />
+            <link
+                rel="apple-touch-icon"
+                sizes="96x96"
+                href="/assets/icons/jaunty.png"
+            />
+            <link rel="icon" sizes="96x96" href="/assets/icons/jaunty.png" />
+            {% block head %}{% endblock %}
+        </head>
+        <body class="{{ template_tag }}">
+            <header>
+                <a href="/" class="logo">
+                    <span class="logo-wordmark">App</span>
+                </a>
+                <nav>
+                    <ul class="menu">
+                        <li class="menu-item-home">
+                            <a href="/">Home</a>
+                        </li>
+
+                        {% if error_code is defined %}
+                        <li class="menu-item-user">⚠️</li>
+                        {% else %}
+                        <li class="menu-item-submenu">
+                            <input id="menu-toggle" type="checkbox" />
+                            <label
+                                class="menu-button-container"
+                                for="menu-toggle"
+                            >
+                                <div class="hamburger-icon"></div>
+                                <div>
+                                    {% if session is defined and session.username
+                                    is defined %}
+                                    {{ session.username }}
+                                    {% else %}
+                                    <a href="/login">Account</a>
+                                    {% endif %}
+                                </div>
+                            </label>
+
+                            <ul class="submenu">
+                                {% if session is defined and session.username
+                                is defined %}
+                                <li><a href="/settings">Settings</a></li>
+                                {% if session.is_admin %}
+                                <li><a href="/admin">Admin</a></li>
+                                {% endif %}
+                                <li><a href="/logout">Logout</a></li>
+                                {% else %}
+                                <li>
+                                    <a href="/account/register">Register</a>
+                                </li>
+                                <li><a href="/login">Login</a></li>
+                                {% endif %}
+                            </ul>
+                        </li>
+                        {% endif %}
+                    </ul>
+                </nav>
+                <script>
+                    document.addEventListener("DOMContentLoaded", function () {
+                        const menuToggle =
+                            document.getElementById("menu-toggle");
+                        if (!menuToggle) return;
+                        const menuItems = document.querySelectorAll(".menu a");
+                        menuItems.forEach((item) => {
+                            item.addEventListener("click", function () {
+                                menuToggle.checked = false;
+                            });
+                        });
+                    });
+                </script>
+            </header>
+            <section id="content">
+                {% if self.title() %}
+                <header>
+                    <div class="breadcrumb">
+                        {% if self.breadcrumb() %}{% block breadcrumb %}{%
+                        endblock %}{% else %}&nbsp;{% endif %}
+                    </div>
+                    <div class="title-bar">
+                        <h2>{{ self.title() }}</h2>
+                        {% if self.subnav() %}
+                        <nav>
+                            <ul class="subnav">
+                                {% block subnav %}{% endblock %}
+                            </ul>
+                        </nav>
+                        {% endif %}
+                    </div>
+                </header>
+                {% endif %} {% block content %}{% endblock %}
+            </section>
+            <footer>
+                <!-- &#x2394; -->
+                <nav>
+                    <ul>
+                        <li>
+                            <a href="#" title="Set your feedback URL in templates">Feedback</a>
+                        </li>
+                    </ul>
+                </nav>
+                <p>&copy; 2025 The Artificial Creative BV</p>
+            </footer>
+        </body>
+    </html>
+</html>

@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n                UPDATE email_messages\n                SET\n                    response_message = $2,\n                    failed_at = NOW()\n                WHERE id = $1\n                ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "b39d9cd2cc82561a10ee9b78b3afeccb8ac1d5a8d9d4cf7f2f07868412312996"
+}

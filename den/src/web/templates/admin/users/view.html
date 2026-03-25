@@ -1,0 +1,41 @@
+{% extends "admin/base.html" %}
+{% import "forms.jinja" as forms %}
+
+{% block title %}User #{{id}}{% endblock %}
+
+{% block admin_content %}
+<dl>
+  <dt>Username</dt>
+  <dd>{{ user.username }}</dd>
+  <dt>Display Name</dt>
+  <dd>{{ user.display_name }}</dd>
+  <dt>Email</dt>
+  <dd>{{ user.email }}</dd>
+</dl>
+
+<h3>Invitations</h3>
+{% if invites %}
+<ul>
+  {% for invite in invites %}
+    <li>
+      {% if invite.new_username %}
+        <span class="key">{{ invite.code }}</span> was used by <strong>{{ invite.new_display_name }}</strong> ({{ invite.new_username }})
+      {% else %}
+        <span class="key">{{ invite.code }}</span> (unused)
+      {% endif %}
+    </li>
+  {% endfor %}
+</ul>
+{% else %}
+<p><em>No invites</em></p>
+{% endif %}
+
+<p><a href="/admin/users/{{ id }}/edit">Edit user</a> ·
+   <a href="/admin/users/{{ id }}/change_password">Change password</a> ·
+   <form style="display:inline" method="post" action="/admin/users/{{ id }}/create_invite"><button type="submit">Create invite</button></form> ·
+   <a href="/admin/users/{{ id }}/test_email">Send test email</a></p>
+
+<form method="post" action="/admin/users/{{ id }}/delete" onsubmit="return confirm('Delete this user?');">
+  <button type="submit" class="button-danger">Delete user</button>
+</form>
+{% endblock %}

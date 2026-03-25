@@ -1,0 +1,11 @@
+{% extends "base.html" %}
+{% import "forms.jinja" as forms %}
+
+{% block breadcrumb %}<a href="/settings">Settings</a> > <a href="/settings/email">Email</a> > {% endblock %}
+{% block title %}Verify Email{% endblock %}
+
+{% block content %}
+<p>
+    An email has been sent to <strong>{{ email_sent_to }}</strong>. Please check your inbox and follow the instructions to verify this as your email address.
+</p>
+{% endblock %}

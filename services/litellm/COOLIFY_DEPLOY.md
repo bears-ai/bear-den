@@ -1,6 +1,6 @@
 # LiteLLM - Coolify Deployment Guide
 
-**Stack order:** This is **step 1** in [DEPLOYMENT.md](../../DEPLOYMENT.md). Details below.
+**Stack order:** This is **step 1** in [DEPLOYMENT.md](../../docs/deployment/DEPLOYMENT.md). Details below.
 
 ## Overview
 

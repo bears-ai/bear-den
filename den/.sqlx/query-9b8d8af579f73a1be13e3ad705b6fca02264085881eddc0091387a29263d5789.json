@@ -1,0 +1,64 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT\n            users.id AS id,\n            username,\n            display_name,\n            email,\n            (email_configs.verified_at IS NOT NULL) AS email_verified,\n            theme,\n            week_start_day,\n            users.created_at AS created\n        FROM users\n        LEFT JOIN email_configs\n            ON users.id = email_configs.user_id\n            AND email_configs.active = true\n        WHERE\n            users.id = $1\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 1,
+        "name": "username",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 2,
+        "name": "display_name",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 3,
+        "name": "email",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 4,
+        "name": "email_verified",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 5,
+        "name": "theme",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 6,
+        "name": "week_start_day",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 7,
+        "name": "created",
+        "type_info": "Timestamp"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int4"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      null,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "9b8d8af579f73a1be13e3ad705b6fca02264085881eddc0091387a29263d5789"
+}

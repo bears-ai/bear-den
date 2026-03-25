@@ -1,0 +1,110 @@
+{% extends "base.html" %}
+
+{% block title %}OAuth Error{% endblock %}
+
+{% block content %}
+<div class="text-center">
+    <h1>Authorization Error</h1>
+    <p class="text-muted">There was a problem with the authorization request</p>
+</div>
+
+<div class="alert alert-error">
+    <strong>Error:</strong> {{ error_code | default("unknown_error") }}
+    {% if error_description %}
+    <br>
+    <span>{{ error_description }}</span>
+    {% endif %}
+</div>
+
+<div class="form-container">
+    {% if error_code == "access_denied" %}
+        <h2>Access Denied</h2>
+        <p>You have denied access to the requesting application. This is normal if you chose not to authorize the application.</p>
+
+        {% if client_name %}
+        <p>The application <strong>{{ client_name }}</strong> will not be able to access your account.</p>
+        {% endif %}
+
+    {% elif error_code == "invalid_request" %}
+        <h2>Invalid Request</h2>
+        <p>The authorization request was malformed or missing required parameters.</p>
+        <p class="text-muted">This is typically a problem with the application making the request. Please contact the application developer.</p>
+
+    {% elif error_code == "invalid_client" %}
+        <h2>Invalid Client</h2>
+        <p>The application is not recognized or is not authorized to make this request.</p>
+        <p class="text-muted">This may indicate that the application is not properly registered with this service.</p>
+
+    {% elif error_code == "invalid_grant" %}
+        <h2>Invalid Grant</h2>
+        <p>The authorization grant provided is invalid, expired, or has been revoked.</p>
+        <p class="text-muted">You may need to restart the authorization process.</p>
+
+    {% elif error_code == "unauthorized_client" %}
+        <h2>Unauthorized Client</h2>
+        <p>The application is not authorized to use this authorization method.</p>
+        <p class="text-muted">Please contact the application developer for assistance.</p>
+
+    {% elif error_code == "unsupported_grant_type" %}
+        <h2>Unsupported Grant Type</h2>
+        <p>The authorization server does not support this grant type.</p>
+        <p class="text-muted">The application may be using an outdated authorization method.</p>
+
+    {% elif error_code == "invalid_scope" %}
+        <h2>Invalid Scope</h2>
+        <p>The requested permissions are invalid or not supported.</p>
+        <p class="text-muted">The application may be requesting access to features that don't exist.</p>
+
+    {% elif error_code == "unsupported_response_type" %}
+        <h2>Unsupported Response Type</h2>
+        <p>The authorization server does not support this response type.</p>
+        <p class="text-muted">The application may be using an unsupported authorization flow.</p>
+
+    {% elif error_code == "server_error" %}
+        <h2>Server Error</h2>
+        <p>The authorization server encountered an unexpected error.</p>
+        <p class="text-muted">Please try again later. If the problem persists, please contact support.</p>
+
+    {% elif error_code == "temporarily_unavailable" %}
+        <h2>Service Temporarily Unavailable</h2>
+        <p>The authorization server is temporarily unavailable due to maintenance or high load.</p>
+        <p class="text-muted">Please try again in a few minutes.</p>
+
+    {% else %}
+        <h2>Unknown Error</h2>
+        <p>An unexpected error occurred during the authorization process.</p>
+        <p class="text-muted">Please try again or contact support if the problem persists.</p>
+    {% endif %}
+
+    {% if client_name %}
+    <div class="form-field">
+        <label><strong>Application:</strong></label>
+        <p>{{ client_name }}</p>
+    </div>
+    {% endif %}
+
+    {% if redirect_uri and error_code == "access_denied" %}
+    <div class="form-field">
+        <label><strong>Return to Application:</strong></label>
+        <p>
+            <a href="{{ redirect_uri }}{% if state %}?state={{ state }}{% endif %}" class="button">
+                Return to {{ client_name | default("Application") }}
+            </a>
+        </p>
+    </div>
+    {% endif %}
+</div>
+
+<div class="text-center">
+    <div class="button-group">
+        <a href="/" class="button">Return home</a>
+    </div>
+</div>
+
+{% if technical_details %}
+<details style="margin-top: 2rem; padding: 1rem; border: 1px solid var(--border-color); border-radius: 4px;">
+    <summary style="cursor: pointer; font-weight: 500;">Technical Details</summary>
+    <pre style="margin-top: 1rem; padding: 1rem; background-color: var(--button-bg); border-radius: 4px; overflow-x: auto; font-family: var(--mono-font); font-size: 0.9rem;">{{ technical_details }}</pre>
+</details>
+{% endif %}
+{% endblock %}

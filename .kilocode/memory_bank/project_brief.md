@@ -6,7 +6,7 @@
 
 BEARS Stack is a long-running, modular assistant system that supports persistent identity, memory, and agency across multiple users and foundational models. It behaves like a member of the household—growing in awareness and usefulness over time—while remaining portable, transparent, and fully under user control.
 
-The system is model-agnostic and self-hosted. **Shared knowledge** is **Cabinet** on **Outline** (human- and **bear**-editable via tools); **Letta** holds per‑**bear** memory (each **bear** is a Letta agent). **Den** provisions bears, **users↔bears** membership (many‑to‑many), and surfaces bears in Open WebUI / LettaBot. See `PLAN.md` and `DEN_ARCHITECTURE.md`.
+The system is model-agnostic and self-hosted. **Shared knowledge** is **Cabinet** on **Outline** (human- and **bear**-editable via tools); **Letta** holds per‑**bear** memory (each **bear** is a Letta agent). **Den** provisions bears, **users↔bears** membership (many‑to‑many), and surfaces bears in Open WebUI / LettaBot. See [`docs/planning/PLAN.md`](../../docs/planning/PLAN.md) and Den / multi-user web in [`docs/architecture/DEN_ARCHITECTURE.md`](../../docs/architecture/DEN_ARCHITECTURE.md).
 
 ## Goals and Objectives
 
@@ -79,7 +79,7 @@ The system is model-agnostic and self-hosted. **Shared knowledge** is **Cabinet*
 - **Model Gateway**: LiteLLM (multi-provider routing)
 - **Bear runtime**: Letta (autonomous workflows, tool execution; one Letta agent per bear)
 - **Memory**: Letta native + **Cabinet (Outline)** for shared knowledge
-- **Multi-user auth & bear registry**: **Den** (Axum) in front of **self-hosted Letta**; many **bears** per user and shared bears. See `DEN_ARCHITECTURE.md` / `PLAN.md`.
+- **Multi-user auth & bear registry**: **Den** (Axum) in front of **self-hosted Letta**; many **bears** per user and shared bears. See [`docs/architecture/DEN_ARCHITECTURE.md`](../../docs/architecture/DEN_ARCHITECTURE.md) / [`docs/planning/PLAN.md`](../../docs/planning/PLAN.md).
 
 ### Memory Architecture
 

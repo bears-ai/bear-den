@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% import "forms.jinja" as forms %}
+
+{% block breadcrumb %}<a href="/settings">Settings</a> > {% endblock %}
+{% block title %}Account{% endblock %}
+{% block subnav %}
+{% endblock %}
+
+{% block content %}
+<section class="two-columns">
+<div>
+    Account created {{ user.created | dateformat(format="medium") }}
+
+{% if invites %}
+    <h3>Invitations</h3>
+    <ul>
+    {% for invite in invites %}
+        <li>
+            {% if invite.new_username %}
+                <span class="key">{{ invite.key }}</span> was used by {{ invite.new_display_name }} ({{ invite.new_username }})
+            {% else %}
+                Link for <span class="key">{{ invite.key }}</span> (copy and share): <a href="https://newapp.example/account/register?invite={{ invite.key }}">https://newapp.example/account/register?invite={{ invite.key }}</a>
+            {% endif %}
+        </li>
+    {% endfor %}
+    </ul>
+{% endif %}
+
+</div>
+<div>
+    <div class="box full-width">
+        Password set (TODO: strength, last change)
+        <ul class="button-row">
+            <li><a class="button-link" href="/account/password">Change Password</a></li>
+        </ul>
+    </div>
+</div>
+{% endblock %}

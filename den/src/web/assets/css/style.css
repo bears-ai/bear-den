@@ -1,0 +1,81 @@
+/*
+ * FRONTEND DEVELOPMENT GUIDELINES
+ *
+ * IMPORTANT: Read doc/frontend-development.md before making changes!
+ *
+ * CSS RULES:
+ * - Never use inline styles in templates
+ * - Use existing classes first before creating new ones
+ * - Always use CSS variables (see below) for colors, spacing, typography
+ * - No rounded corners or gradients - maintain geometric design
+ *
+ * ADDING NEW STYLES:
+ * - Single class: Add to bottom of specifics.css with descriptive comment
+ * - Multiple classes: Create new CSS file and import here
+ *
+ * CSS VARIABLES: Use these predefined variables for consistency
+ */
+
+@import url("reset.css");
+@import url("layout.css");
+@import url("menu.css");
+@import url("common.css");
+@import url("specifics.css");
+
+:root {
+    --narrow-width: 700px;
+    --medium-width: 1100px;
+
+    --thin-line-unit: 1px;
+    --spacing-unit: 0.5em;
+
+    --logo-font-family: "Geist", sans-serif;
+    --logo-font-weight: 700;
+    --logo-font-style: normal;
+
+    --body-font-family: "Geist", sans-serif;
+    --body-font-weight: 400;
+    --body-font-style: normal;
+
+    --data-font-family: "Geist Mono", monospace;
+    --data-font-weight: 400;
+    --data-font-style: normal;
+
+    --meta-color: #aaaaaa;
+    --accent-color: #cc11dd;
+    --error-color: #CC0000;
+    --warning-color: #ee7700;
+    --success-color: #009900;
+
+    --page-color: #EEEEEE;
+    --text-color: #121212;
+    --border-color: #121212;
+    --selected-color: #121212;
+    --selected-text-color: #EEEEEE;
+}
+
+html.theme-dark {
+    --page-color: #121212;
+    --text-color: #DDDDDD;
+    --border-color: #DDDDDD;
+    --selected-color: #DDDDDD;
+    --selected-text-color: #121212;
+}
+
+@media (prefers-color-scheme: dark) {
+    :root {
+        --page-color: #121212;
+        --text-color: #DDDDDD;
+        --border-color: #DDDDDD;
+        --selected-color: #DDDDDD;
+        --selected-text-color: #121212;
+    }
+
+    html.theme-light {
+        --page-color: #DDDDDD;
+        --text-color: #121212;
+        --border-color: #121212;
+        --selected-color: #121212;
+        --selected-text-color: #DDDDDD;
+    }
+}

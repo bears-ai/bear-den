@@ -1,0 +1,17 @@
+{
+    "lang": "en",
+    "id": "newapp",
+    "name": "newapp",
+    "short_name": "newapp",
+    "icons": [
+        {
+            "src": "/assets/icons/jaunty.png",
+            "sizes": "96x96",
+            "type": "image/png"
+        }
+    ],
+    "start_url": "/",
+    "display": "fullscreen",
+    "theme_color": "black",
+    "background_color": "white"
+}

@@ -1,0 +1,174 @@
+/* -------------------
+   Responsive Navigation Menu
+
+   Pure CSS checkbox toggle pattern for submenu activation.
+
+   Wide (≥700px): home | account (username)
+   Narrow (<700px): home | hamburger (account submenu)
+*/
+
+
+.menu-button-container {
+    display: none;
+    height: 24px;
+    cursor: pointer;
+    flex-direction: column;
+    justify-content: end;
+    position: relative;
+    margin: 0;
+    padding: 0;
+}
+
+.menu-button-container > div:last-child {
+    display: none;
+    white-space: nowrap;
+    text-align: right;
+}
+
+.hamburger-icon {
+    display: block;
+    background-color: var(--text-color);
+    position: relative;
+    margin-bottom: 3px;
+
+    bottom: 12px;
+    height: 3px;
+    width: 24px;
+    transition: all 400ms cubic-bezier(0.23, 1, 0.32, 1);
+    flex-shrink: 0;
+}
+
+.hamburger-icon::before,
+.hamburger-icon::after {
+    display: block;
+    content: '';
+    background-color: var(--text-color);
+    position: absolute;
+    height: 3px;
+    width: 24px;
+    transition: all 400ms cubic-bezier(0.23, 1, 0.32, 1);
+    left: 0;
+}
+
+.hamburger-icon::before {
+    top: -8px;
+}
+
+.hamburger-icon::after {
+    top: 8px;
+}
+
+#menu-toggle:checked ~ .menu-button-container .hamburger-icon::before {
+    top: 50%;
+    transform: translateY(-50%) rotate(45deg);
+}
+
+#menu-toggle:checked ~ .menu-button-container .hamburger-icon {
+    background: rgba(255, 255, 255, 0);
+}
+
+#menu-toggle:checked ~ .menu-button-container .hamburger-icon::after {
+    top: 50%;
+    transform: translateY(-50%) rotate(-45deg);
+}
+
+@media (max-width: 699px) {
+    .menu-button-container {
+        display: flex;
+    }
+}
+
+/* ===== Checkbox Toggle ===== */
+
+#menu-toggle {
+    display: none;
+}
+
+/* ===== Submenu ===== */
+
+.menu-item-submenu {
+    position: relative;
+}
+
+.submenu {
+    display: none;
+    position: absolute;
+    top: 100%;
+    right: 0;
+    background-color: var(--page-color);
+    border: var(--thin-line-unit) solid var(--border-color);
+    border-top: none;
+    list-style: none;
+    margin: 0;
+    margin-top: 12px;
+    padding: 0;
+    min-width: 150px;
+    z-index: 1000;
+}
+
+#menu-toggle:checked ~ .submenu {
+    display: block;
+}
+
+.submenu > li {
+    display: block;
+    margin: 0;
+    padding: 0;
+    border-bottom: var(--thin-line-unit) solid var(--border-color);
+}
+
+.submenu > li:last-child {
+    border-bottom: none;
+}
+
+.submenu a {
+    display: block;
+    padding: var(--spacing-unit);
+    text-decoration: none;
+    color: var(--text-color);
+}
+
+.submenu a:hover {
+    background-color: var(--selected-color);
+    color: var(--selected-text-color);
+}
+
+/* ===== Wide Viewport (≥700px) ===== */
+
+@media (min-width: 700px) {
+    body > header nav ul.menu > li.menu-item-home {
+        display: flex !important;
+    }
+
+    body > header nav ul.menu > li.menu-item-submenu .menu-button-container {
+        display: flex !important;
+    }
+
+    body > header nav ul.menu > li.menu-item-submenu .hamburger-icon {
+        display: none !important;
+    }
+
+    body > header nav ul.menu > li.menu-item-submenu .menu-button-container > div:last-child {
+        display: block !important;
+    }
+}
+
+/* ===== Narrow Viewport (<700px) ===== */
+
+@media (max-width: 699px) {
+    body > header nav ul.menu > li.menu-item-home {
+        display: flex !important;
+    }
+
+    body > header nav ul.menu > li.menu-item-submenu .menu-button-container {
+        display: flex !important;
+    }
+
+    body > header nav ul.menu > li.menu-item-submenu .hamburger-icon {
+        display: flex !important;
+    }
+
+    body > header nav ul.menu > li.menu-item-submenu .menu-button-container > div:last-child {
+        display: none !important;
+    }
+}

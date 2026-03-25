@@ -1,0 +1,17 @@
+{% extends "admin/base.html" %}
+{% import "forms.jinja" as forms %}
+
+{% block title %}Edit User #{{ id }}{% endblock %}
+
+{% block admin_content %}
+<div class="box">
+<form method="post">
+  {{ forms.input("username", "Username", 'text', 'required maxlength="30"', user) }}
+  {{ forms.input("display_name", "Display Name", 'text', 'required maxlength="255"', user) }}
+  {{ forms.input("email", "Email", 'email', 'required', user) }}
+  {{ forms.select("theme", "Theme", theme_descriptions, 'required', user) }}
+  {{ forms.select("week_start_day", "Start Week On", day_of_week_names, 'required', user, hint="Weekly reports will be sent on this day") }}
+  <button>Save</button>
+</form>
+</div>
+{% endblock %}

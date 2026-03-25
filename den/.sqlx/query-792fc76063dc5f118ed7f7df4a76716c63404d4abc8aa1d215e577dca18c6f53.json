@@ -1,0 +1,17 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        UPDATE oauth_clients\n        SET name = $2, redirect_uris = $3, scopes = $4, updated_at = NOW()\n        WHERE id = $1\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int4",
+        "Varchar",
+        "Jsonb",
+        "Jsonb"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "792fc76063dc5f118ed7f7df4a76716c63404d4abc8aa1d215e577dca18c6f53"
+}

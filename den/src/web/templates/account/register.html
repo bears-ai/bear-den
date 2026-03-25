@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% import "forms.jinja" as forms %}
+
+{% block title %}Register{% endblock %}
+
+{% block content %}
+<section class="two-columns">
+  <div>
+    {% if invite is defined %}
+      <p>
+        You've found an invitation code: <span class="key">{{ invite.key }}</span>
+      </p>
+      <p>
+        It was created by {{ invite.display_name }} ({{ invite.username }}).
+      </p>
+    {% else %}
+      <p>
+        This site is invite-only and there isn't a waiting list yet. If you don't have an invite key, ask a user for one.
+      </p>
+    {% endif %}
+  </div>
+  <form method="post" class="box">
+    <div class="fields-grid">
+    {{ forms.input("invite_key", "Invite code", "text", 'required pattern="'+ pattern_invite +'"', user, hint="8–128 characters: letters, numbers, _ or -") }}
+    {{ forms.input("username", "Username", "text", 'required minlength="4" maxlength="30" pattern="'+ pattern_username +'"', user, hint="At least 4 letters and numbers") }}
+    {{ forms.input("display_name", "Display Name", "text", 'required maxlength="255"', user, hint="What others will see") }}
+    {{ forms.input("email", "Email", "email", 'required', user) }}
+    {{ forms.input("password", "Password", "password", 'required minlength="8"', hint="At least 8 characters") }}
+    {{ forms.input("password_check", "Password again", "password", 'required', hint="Must match") }}
+    {{ forms.input("terms", "", "checkbox", 'required', false, appendix="I agree to the terms of service") }}
+    </div>
+    <ul class="button-row">
+      <li><button>Sign Up</button></li>
+    </ul>
+  </form>
+</section>
+{% endblock %}

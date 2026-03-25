@@ -1,0 +1,64 @@
+{# `errors` is expected as a global map of fields #}
+{% macro input(name, label, type, extra_attrs, form_data, hint, appendix) %}
+  {% set errors = form_data.errors if (errors is undefined) and (form_data is defined) and (form_data.errors is defined) %}
+  {% set value_attr = 'value="' ~ form_data[name]|e ~ '" ' if form_data is defined and form_data %}
+  <label for="{{name}}_input" {{ 'class="has-error"' if errors and errors[name] }}>{{label}}</label>
+  <div class="form-field{{ ' has-error' if errors and errors[name] }}">
+    <input id="{{name}}_input" name="{{name}}" type="{{ type or 'text'}}" {{value_attr | safe}}{{extra_attrs | safe}}>
+    {%- if appendix is defined %}
+    <label for="{{name}}_input">{{appendix | safe}}</label>
+    {% endif -%}
+  {% if errors and errors[name] %}
+    <span class="form-hint form-errors">Submission error: {{ errors[name] | map(attribute="message", default="unknown error") | join(", ") }}</span>
+    <!-- {{ debug(errors[name]) }} -->
+  {% else %}
+    {%- if hint is defined %}
+    <span class="form-hint">{{ hint | safe }}</span>
+    {% endif -%}
+  {% endif %}
+  </div>
+{% endmacro %}
+
+{% macro select(name, label, options, extra_attrs, form_data, hint, appendix) %}
+  {% set errors = form_data.errors if (errors is undefined) and (form_data is defined) and (form_data.errors is defined) %}
+  {% set selected_key = form_data[name] if form_data is defined and form_data %}
+  <label for="{{name}}_select" {{ 'class="has-error"' if errors and errors[name] }}>{{label}}</label>
+  <div class="form-field{{ ' has-error' if errors and errors[name] }}">
+    <select id="{{name}}_select" name="{{name}}" {{value_attr | safe}}{{extra_attrs | safe}}>
+    {% for value, label in options|items %}
+      <option value="{{ value }}"{{ ' selected' if value == selected_key }}>{{ label }}</option>
+    {% endfor %}
+    </select>
+    {%- if appendix is defined %}
+    <label for="{{name}}_select">{{appendix | safe}}</label>
+    {% endif -%}
+  {% if errors and errors[name] %}
+    <span class="form-hint form-errors">Submission error: {{ errors[name] | map(attribute="message", default="unknown error") | join(", ") }}</span>
+    <!-- {{ debug(errors[name]) }} -->
+  {% else %}
+    {%- if hint is defined %}
+    <span class="form-hint">{{ hint | safe }}</span>
+    {% endif -%}
+  {% endif %}
+  </div>
+
+{% macro textarea(name, label, extra_attrs, form_data, hint, appendix) %}
+  {% set errors = form_data.errors if (errors is undefined) and (form_data is defined) and (form_data.errors is defined) %}
+  {% set value = form_data[name] if form_data is defined and form_data %}
+  <label for="{{name}}_textarea" {{ 'class="has-error"' if errors and errors[name] }}>{{label}}</label>
+  <div class="form-field{{ ' has-error' if errors and errors[name] }}">
+    <textarea id="{{name}}_textarea" name="{{name}}" {{extra_attrs | safe}}>{{ value | e if value }}</textarea>
+    {%- if appendix is defined %}
+    <label for="{{name}}_textarea">{{appendix | safe}}</label>
+    {% endif -%}
+  {% if errors and errors[name] %}
+    <span class="form-hint form-errors">Submission error: {{ errors[name] | map(attribute="message", default="unknown error") | join(", ") }}</span>
+  {% else %}
+    {%- if hint is defined %}
+    <span class="form-hint">{{ hint | safe }}</span>
+    {% endif -%}
+  {% endif %}
+  </div>
+{% endmacro %}
+
+{% endmacro %}

@@ -1,18 +1,18 @@
 # Letta - Coolify Deployment Guide
 
-**Stack order:** This is **step 2** in [DEPLOYMENT.md](../../DEPLOYMENT.md) (after LiteLLM). Details below.
+**Stack order:** This is **step 2** in [DEPLOYMENT.md](../../docs/deployment/DEPLOYMENT.md) (after LiteLLM). Details below.
 
 ## Overview
 
-Letta is the BEARS **bear runtime**: each **bear** is a **Letta agent** (conversation loop, tools, native **memory** blocks). Models go through **LiteLLM**. Shared knowledge is **Cabinet** on **Outline**, exposed to **bears** through **Den** ([PLAN.md](../../PLAN.md)). Cabinet does **not** replace Letta’s per‑**bear** memory.
+Letta is the BEARS **bear runtime**: each **bear** is a **Letta agent** (conversation loop, tools, native **memory** blocks). Models go through **LiteLLM**. Shared knowledge is **Cabinet** on **Outline**, exposed to **bears** through **Den** ([PLAN.md](../../docs/planning/PLAN.md)). Cabinet does **not** replace Letta’s per‑**bear** memory.
 
-**Terminology:** In BEARS docs, **bear** = one assistant backed by a Letta agent. **Den** provisions bears (Letta API), **users↔bears** membership (many‑to‑many), and surfaces bears in Open WebUI / LettaBot—see [PLAN.md](../../PLAN.md). The Letta HTTP API still uses paths like `/v1/agents`; that **agent** id is the runtime id for a bear.
+**Terminology:** In BEARS docs, **bear** = one assistant backed by a Letta agent. **Den** provisions bears (Letta API), **users↔bears** membership (many‑to‑many), and surfaces bears in Open WebUI / LettaBot—see [PLAN.md](../../docs/planning/PLAN.md). The Letta HTTP API still uses paths like `/v1/agents`; that **agent** id is the runtime id for a bear.
 
 ## Prerequisites
 
 - Coolify
 - **LiteLLM** deployed and reachable
-- **Den + Outline** when using Cabinet tools ([PLAN.md](../../PLAN.md))
+- **Den + Outline** when using Cabinet tools ([PLAN.md](../../docs/planning/PLAN.md))
 
 ## Deployment Steps
 
@@ -141,7 +141,7 @@ For advanced **bear** (Letta agent) management and development, access the Letta
 3. **Chat with the bear** in the UI
 4. **View memory** - Letta blocks + conversation history; shared docs in Outline (Cabinet) when deployed  
 
-In production, prefer **Den** as the system of record for which bears exist and who may use them ([PLAN.md](../../PLAN.md)); the Letta UI remains useful for ops and debugging.
+In production, prefer **Den** as the system of record for which bears exist and who may use them ([PLAN.md](../../docs/planning/PLAN.md)); the Letta UI remains useful for ops and debugging.
 
 ### API Access
 
@@ -172,7 +172,7 @@ curl -X POST http://bears-letta:8283/v1/agents/{agent_id}/messages \
 ## Memory and knowledge
 
 - **Letta:** blocks, conversations, built-in memory tools.  
-- **Cabinet:** shared docs on **Outline**, via **Den** tools—see [PLAN.md](../../PLAN.md).
+- **Cabinet:** shared docs on **Outline**, via **Den** tools—see [PLAN.md](../../docs/planning/PLAN.md).
 
 ## Monitoring
 
@@ -302,7 +302,7 @@ When integrating Open WebUI with Letta **directly** (no Den), you typically:
 2. Route messages to the appropriate **bear**
 3. Manage session persistence and context  
 
-**With Den:** users have **many** bears and some bears are **shared**; Den enforces membership and surfaces the bear list—see [PLAN.md](../../PLAN.md).
+**With Den:** users have **many** bears and some bears are **shared**; Den enforces membership and surfaces the bear list—see [PLAN.md](../../docs/planning/PLAN.md).
 
 ### Session management strategies (direct mode)
 
@@ -376,12 +376,12 @@ Add custom tools/functions:
 
 ### Multi-user / shared bears
 
-Shared team context: **Cabinet (Outline)**, Letta shared blocks, or a **shared bear** with many users (Den manages membership—[PLAN.md](../../PLAN.md)).
+Shared team context: **Cabinet (Outline)**, Letta shared blocks, or a **shared bear** with many users (Den manages membership—[PLAN.md](../../docs/planning/PLAN.md)).
 
 ## Deployment completion
 
 - [ ] LiteLLM healthy; Letta reaches `LLM_API_URL`
 - [ ] Open WebUI / LibreChat can chat with a **bear** (Letta agent)
-- [ ] Den + Outline + Cabinet tools when rolled out ([PLAN.md](../../PLAN.md))
+- [ ] Den + Outline + Cabinet tools when rolled out ([PLAN.md](../../docs/planning/PLAN.md))
 
 **Services:** `bears-litellm`, `bears-letta`, UI; later **Outline + Den**.

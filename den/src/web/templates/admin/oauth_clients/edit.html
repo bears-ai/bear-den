@@ -1,0 +1,240 @@
+{% extends "admin/base.html" %}
+{% import "forms.jinja" as forms %}
+
+{% block title %}Edit OAuth Client{% endblock %}
+
+{% block admin_content %}
+<h2>Edit OAuth Client</h2>
+
+<div class="box">
+<form method="post">
+  {{ forms.input("name", "Client Name", "text", 'required maxlength="255"', client, "A human-readable name for this OAuth client application") }}
+
+  <label for="redirect_uris_input">Redirect URIs</label>
+  <div class="form-field{{ ' has-error' if errors and errors.redirect_uris }}">
+    <textarea id="redirect_uris_input" name="redirect_uris" rows="4" required placeholder="https://example.com/oauth/callback&#10;http://localhost:3000/callback">{{ client.redirect_uris if client }}</textarea>
+    {% if redirect_uris_errors %}
+      <span class="form-hint form-errors">Submission error: {{ redirect_uris_errors | join(", ") }}</span>
+    {% else %}
+      <span class="form-hint">Enter one redirect URI per line. HTTPS required for production domains, HTTP allowed for localhost.</span>
+    {% endif %}
+  </div>
+
+  <label>OAuth Scopes</label>
+  <div class="form-field{{ ' has-error' if errors and errors.scopes }}">
+    {% for scope in available_scopes %}
+    <div class="checkbox-item">
+      <input type="checkbox" id="scope_{{ scope }}" name="scopes" value="{{ scope }}"
+             {% if client and scope in client.scopes %}checked{% endif %}>
+      <label for="scope_{{ scope }}">
+        <strong>{{ scope }}</strong>
+        {% if scope == "profile:read" %}
+        - Access to basic profile information (username, display name)
+        {% elif scope == "profile:email" %}
+        - Access to user's email address
+        {% elif scope == "data:read" %}
+        - Read access to user data exposed by your API (starter scope — customize)
+        {% elif scope == "data:write" %}
+        - Write access to user data exposed by your API (starter scope — customize)
+        {% endif %}
+      </label>
+    </div>
+    {% endfor %}
+    {% if scopes_errors %}
+      <span class="form-hint form-errors">Submission error: {{ scopes_errors | join(", ") }}</span>
+    {% else %}
+      <span class="form-hint">Select the permissions this client will be able to request from users.</span>
+    {% endif %}
+  </div>
+
+  <!-- Scope Preview Section -->
+  <div id="scope-preview-section" style="display: none; margin-top: 15px; padding: 10px; background-color: #f0f8ff; border-radius: 5px;">
+    <h4 style="margin-top: 0;">Scope Preview</h4>
+    <p id="scope-preview-text">No scopes selected</p>
+    <div id="scope-warnings" style="margin-top: 10px;"></div>
+  </div>
+
+  <button type="submit">Update OAuth Client</button>
+  <a href="../{{ id }}" class="button-secondary">Cancel</a>
+</form>
+</div>
+
+<div class="warning-box">
+  <h3>⚠️ Important Notes</h3>
+  <ul>
+    <li><strong>Client ID and Secret:</strong> These cannot be changed through editing. Use "Regenerate Secret" if needed.</li>
+    <li><strong>Scope Changes:</strong> Reducing scopes may break existing integrations that depend on removed permissions.</li>
+    <li><strong>Redirect URI Changes:</strong> Ensure all redirect URIs are still valid to prevent authorization failures.</li>
+  </ul>
+</div>
+
+<style>
+.box {
+  max-width: 600px;
+  margin: 20px 0;
+  padding: 20px;
+  border: 1px solid #ddd;
+  border-radius: 5px;
+  background-color: #f9f9f9;
+}
+
+.warning-box {
+  max-width: 600px;
+  margin: 20px 0;
+  padding: 15px;
+  border: 1px solid #ffc107;
+  border-radius: 5px;
+  background-color: #fff3cd;
+}
+
+.warning-box h3 {
+  margin-top: 0;
+  color: #856404;
+}
+
+.warning-box ul {
+  margin-bottom: 0;
+}
+
+.warning-box li {
+  margin-bottom: 8px;
+}
+
+textarea {
+  width: 100%;
+  padding: 8px;
+  border: 1px solid #ddd;
+  border-radius: 3px;
+  font-family: monospace;
+  font-size: 0.9em;
+}
+
+.checkbox-item {
+  margin: 8px 0;
+  display: flex;
+  align-items: flex-start;
+}
+
+.checkbox-item input[type="checkbox"] {
+  margin-right: 8px;
+  margin-top: 2px;
+}
+
+.checkbox-item label {
+  flex: 1;
+  cursor: pointer;
+}
+
+.form-hint {
+  display: block;
+  font-size: 0.85em;
+  color: #666;
+  margin-top: 4px;
+}
+
+.form-errors {
+  color: #dc3545;
+}
+
+.has-error textarea,
+.has-error input {
+  border-color: #dc3545;
+}
+
+.button-secondary {
+  display: inline-block;
+  padding: 8px 16px;
+  margin-left: 10px;
+  background-color: #6c757d;
+  color: white;
+  text-decoration: none;
+  border-radius: 3px;
+  border: 1px solid #6c757d;
+}
+
+.button-secondary:hover {
+  background-color: #5a6268;
+  border-color: #545b62;
+}
+</style>
+
+<script>
+// Enhanced scope management with preview and validation
+function updateScopePreview() {
+    const checkboxes = document.querySelectorAll('input[name="scopes"]:checked');
+    const previewSection = document.getElementById('scope-preview-section');
+    const previewText = document.getElementById('scope-preview-text');
+    const warningsContainer = document.getElementById('scope-warnings');
+
+    const selectedScopes = Array.from(checkboxes).map(cb => cb.value);
+
+    if (selectedScopes.length === 0) {
+        previewSection.style.display = 'none';
+        return;
+    }
+
+    // Generate preview based on selected scopes
+    let preview = '';
+    let warnings = [];
+
+    // Check for profile:read (required for most operations)
+    const hasProfileRead = selectedScopes.includes('profile:read');
+    const hasProfileEmail = selectedScopes.includes('profile:email');
+    const hasDataRead = selectedScopes.includes('data:read');
+    const hasDataWrite = selectedScopes.includes('data:write');
+
+    if (hasProfileRead && hasProfileEmail && hasDataRead && hasDataWrite) {
+        preview = 'This client can request profile, email, and read/write API data scopes.';
+        warnings.push('⚠️ Full access includes all available permissions.');
+    } else if (hasProfileRead && hasDataRead && hasDataWrite) {
+        preview = 'This client can request profile and read/write API data scopes (no email).';
+        warnings.push('ℹ️ Full API data access without email scope.');
+    } else if (hasProfileRead && hasDataRead) {
+        preview = 'This client can request profile and read-only API data scopes.';
+        warnings.push('ℹ️ Read-oriented API scopes without write permissions.');
+    } else if (hasProfileRead && hasDataWrite) {
+        preview = 'This client can request profile and write API data scopes (no read-only data scope).';
+        warnings.push('ℹ️ Write access without data:read.');
+    } else if (hasProfileRead && hasProfileEmail) {
+        preview = 'This client will have access to profile information and email address only.';
+        warnings.push('ℹ️ Basic profile access only.');
+    } else if (hasProfileRead) {
+        preview = 'This client will have access to basic profile information only (username, display name).';
+        warnings.push('ℹ️ Minimum required scope for authentication.');
+    }
+
+    // Validate scope dependencies
+    if ((hasDataRead || hasDataWrite) && !hasProfileRead) {
+        warnings.push('❌ Error: data:read and data:write require profile:read scope.');
+    }
+
+    previewText.textContent = preview;
+
+    // Clear previous warnings
+    warningsContainer.innerHTML = '';
+
+    // Add new warnings
+    warnings.forEach(warning => {
+        const warningElement = document.createElement('div');
+        warningElement.style.color = warning.startsWith('❌') ? '#dc3545' : warning.startsWith('⚠️') ? '#dc3545' : '#007bff';
+        warningElement.style.fontSize = '0.85em';
+        warningElement.style.marginTop = '5px';
+        warningElement.textContent = warning;
+        warningsContainer.appendChild(warningElement);
+    });
+
+    previewSection.style.display = 'block';
+}
+
+// Add event listeners to all scope checkboxes
+document.addEventListener('DOMContentLoaded', function() {
+    const checkboxes = document.querySelectorAll('input[name="scopes"]');
+    checkboxes.forEach(checkbox => {
+        checkbox.addEventListener('change', updateScopePreview);
+    });
+    
+    // Initialize preview
+    updateScopePreview();
+});
+</script>
+{% endblock %}

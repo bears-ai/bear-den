@@ -1,0 +1,155 @@
+{% extends "admin/base.html" %}
+
+{% block title %}OAuth Access Tokens{% endblock %}
+
+{% block admin_content %}
+<h2>OAuth Access Tokens</h2>
+
+<div class="actions">
+  <a class="action-primary" href="./generate">Generate New Token</a>
+</div>
+
+<table>
+  <thead>
+    <tr>
+      <th>ID</th>
+      <th>User</th>
+      <th>Client</th>
+      <th>Scopes</th>
+      <th>Expires</th>
+      <th>Status</th>
+      <th>Created</th>
+      <th>Actions</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for token in tokens %}
+    <tr>
+      <td>{{ token.token_id }}</td>
+      <td>
+        <div>{{ token.display_name }} ({{ token.username }})</div>
+        <div style="font-size: 0.9em; color: #666;">{{ token.email }}</div>
+      </td>
+      <td>
+        <div>{{ token.client_name }}</div>
+        <div style="font-size: 0.9em; color: #666;"><code>{{ token.client_identifier }}</code></div>
+      </td>
+      <td>
+        {% for scope in token.parse_scopes() %}
+          <span class="scope">{{ scope.as_str() }}</span>
+        {% endfor %}
+      </td>
+      <td>{{ token.expires_at | datetimeformat(format="short") }}</td>
+      <td>
+        {% if token.revoked %}
+          <span class="status-revoked">Revoked</span>
+        {% elif token.expires_at < now() %}
+          <span class="status-expired">Expired</span>
+        {% else %}
+          <span class="status-active">Active</span>
+        {% endif %}
+      </td>
+      <td>{{ token.token_created_at | datetimeformat(format="short") }}</td>
+      <td>
+        <a class="navigate" href="./{{ token.token_id }}">Details</a>
+        {% if not token.revoked and token.expires_at > now() %}
+          <form method="post" action="./{{ token.token_id }}/revoke" style="display: inline;">
+            <button type="submit" class="action-danger" onclick="return confirm('Are you sure you want to revoke this token?')">Revoke</button>
+          </form>
+        {% endif %}
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+
+{% if tokens|length == 0 %}
+<p>No OAuth access tokens found.</p>
+{% endif %}
+
+<style>
+.actions {
+  margin-bottom: 20px;
+}
+
+.action-primary {
+  background-color: #28a745;
+  color: white;
+  border: none;
+  padding: 8px 16px;
+  border-radius: 3px;
+  cursor: pointer;
+  font-size: 0.9em;
+  text-decoration: none;
+  display: inline-block;
+}
+
+.action-primary:hover {
+  background-color: #218838;
+}
+
+.status-active {
+  color: #28a745;
+  font-weight: bold;
+}
+
+.status-expired {
+  color: #ffc107;
+  font-weight: bold;
+}
+
+.status-revoked {
+  color: #dc3545;
+  font-weight: bold;
+}
+
+.scope {
+  background-color: #e9ecef;
+  padding: 2px 6px;
+  border-radius: 3px;
+  font-size: 0.8em;
+  margin-right: 4px;
+  display: inline-block;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-bottom: 20px;
+}
+
+th, td {
+  padding: 8px 12px;
+  text-align: left;
+  border-bottom: 1px solid #ddd;
+  vertical-align: top;
+}
+
+th {
+  background-color: #f8f9fa;
+  font-weight: bold;
+}
+
+code {
+  background-color: #f8f9fa;
+  padding: 2px 4px;
+  border-radius: 3px;
+  font-family: monospace;
+  font-size: 0.9em;
+}
+
+.action-danger {
+  background-color: #dc3545;
+  color: white;
+  border: none;
+  padding: 4px 8px;
+  border-radius: 3px;
+  cursor: pointer;
+  font-size: 0.9em;
+}
+
+.action-danger:hover {
+  background-color: #c82333;
+}
+</style>
+{% endblock %}

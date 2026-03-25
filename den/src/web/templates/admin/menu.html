@@ -1,0 +1,12 @@
+{% extends "admin/base.html" %}
+
+{% block title %}Admin{% endblock %}
+
+{% block admin_content %}
+<h3>Site administration</h3>
+<p>{{ users | length }} user(s) in database.</p>
+<ul>
+  <li><a href="/admin/users/">User management</a></li>
+  <li><a href="/admin/oauth_clients/">OAuth clients</a></li>
+</ul>
+{% endblock %}

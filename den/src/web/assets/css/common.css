@@ -1,0 +1,248 @@
+a {
+    color: var(--text-color);
+    text-decoration: underline;
+}
+a:hover {
+    color: var(--accent-color);
+}
+
+button, .button-link, .button-action, .button-borderless {
+    padding-left: 1rem;
+    padding-right: 1rem;
+    padding-top: 2px;
+    padding-bottom: 2px;
+
+    width: fit-content;
+
+    border: solid var(--thin-line-unit) var(--border-color);
+    /* border-radius: var(--spacing-unit); */
+
+    background-color: var(--page-color);
+    color: var(--text-color);
+
+    text-transform: uppercase;
+    text-decoration: none;
+}
+.button-link {
+    padding-right: 0.5rem;
+}
+.button-link::after {
+    padding-left: 0.3rem;
+    content: '\2794'; /* alternate lighter:  \2192 */
+}
+.button-borderless {
+    background-color: transparent;
+    color: var(--text-color);
+    border: solid var(--thin-line-unit) transparent;
+    text-decoration: underline;
+}
+button:hover, .button-link:hover, .button-action:hover {
+    background-color: var(--accent-color);
+    border-color: var(--accent-color);
+    color: var(--page-color);
+}
+button:active, .button-link:active, .button-action:active {
+    background-color: var(--selected-color);
+    border-color: var(--selected-color);
+    color: var(--selected-text-color);
+}
+
+table {
+    width: auto; /* override sakura */
+}
+
+.fields-grid {
+    display: grid;
+    grid-template-columns: [names] auto [values] 1fr;
+    grid-auto-flow: row;
+    gap: var(--spacing-unit);
+
+    margin-top: var(--spacing-unit);
+    margin-bottom: var(--spacing-unit);
+    padding: 0;
+}
+
+dl.fields-grid {
+    dt {
+        grid-column: names;
+        grid-row: auto;
+        text-align: right;
+
+        padding-left: 1rem;
+        padding-right: 1rem;
+
+        text-transform: uppercase;
+    }
+    dt::after {
+        content: ':';
+    }
+    dd {
+        grid-column: values;
+        grid-row: auto;
+        margin: 0;
+    }
+}
+
+form > .fields-grid {
+    .form-message {
+        grid-column: values;
+        grid-row: auto;
+
+        text-emphasis: bold;
+    }
+    label {
+        grid-column: names;
+        grid-row: auto;
+        text-align: right;
+
+        text-transform: uppercase;
+
+        padding-left: 1rem;
+        padding-right: 1rem;
+    }
+    .form-field {
+        grid-column: values;
+        grid-row: auto;
+        margin-left: 0;
+        margin-bottom: calc(var(--spacing-unit) * 2);
+
+        input, textarea, select {
+            /* width: 100%; */
+            border: solid var(--thin-line-unit) var(--border-color);
+            margin-right: var(--spacing-unit);
+        }
+        input[type="checkbox"], input[type="radio"] {
+            width: auto;
+            float: left;
+            margin-right: var(--spacing-unit);
+        }
+        label {
+            grid-column: values;
+            text-align: left;
+
+            text-transform: none;
+        }
+        .form-hint {
+            white-space: nowrap;
+            color: var(--meta-color);
+            font-size: small;
+        }
+        input:user-invalid + .form-hint, .form-hint.form-errors {
+            color: var(--warning-color);
+        }
+        input:user-valid + .form-hint:not(.form-errors) {
+            color: var(--success-color);
+        }
+    }
+}
+
+
+.full-width {
+    width: 100%;
+}
+
+/* general content areas */
+.box, .box-unpadded, .box-unbordered {
+    display: flex;
+    flex-direction: column;
+
+    width: fit-content;
+    margin-top: var(--spacing-unit);
+    margin-bottom: var(--spacing-unit);
+    margin-left: auto;
+    margin-right: auto;
+
+    h3 {
+        margin-top: 0;
+        /* margin-bottom: var(--spacing-unit);
+        padding-bottom: var(--spacing-unit);
+        border-bottom: var(--thin-line-unit) solid var(--border-color); */
+    }
+}
+.box, .box-unpadded {
+    border: solid var(--spacing-unit) var(--border-color);
+}
+.box, .box-borderless {
+    padding: var(--spacing-unit);
+}
+
+/* usually below a dl or form grid */
+.button-row {
+    width: fit-content;
+    margin-left: auto;
+    margin-bottom: 0;
+    padding: 0;
+
+    flex: 1;
+
+    display: flex;
+    align-items: flex-end; /* Align buttons to bottom */
+
+    li {
+        display: inline-block;
+        margin: 0 0 0 var(--spacing-unit);
+    }
+}
+
+div.error {
+    color: var(--error-color);
+}
+span.error {
+    color: var(--error-color);
+}
+
+span.warning {
+    color: var(--warning-color);
+}
+span.success {
+    color: var(--success-color);
+}
+
+.caption {
+    font-size: smaller;
+    color: var(--meta-color);
+    margin-top: 0;
+    /* margin-bottom: var(--spacing-unit); */
+}
+
+/* static noise */
+
+/* Usage:
+   <div class="bw-static"></div>
+   Optionally override:
+   .bw-static { --pixelSize: 2px; --animDur: 1s; --bgColor: #000; }
+*/
+
+.bw-static {
+  /* Controls: 2px blocks, 1s flicker by default */
+  --pixelSize: 2px;
+  --animDur: 1s;
+  --bgColor: #000;
+
+  /* Size is variable; element will tile the noise */
+  background-color: var(--bgColor);
+
+  /* Inline SVG as data URL; percent-encoded to be safe across browsers */
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='64' height='64'%3E%3Cdefs%3E%3Cfilter id='f' x='0%25' y='0%25' width='100%25' height='100%25' color-interpolation-filters='sRGB'%3E%3CfeTurbulence id='t' type='turbulence' baseFrequency='0.22' numOctaves='1' stitchTiles='stitch' seed='1' result='n'/%3E%3CfeColorMatrix in='n' type='matrix' result='l' values='0.2126 0.7152 0.0722 0 0 0.2126 0.7152 0.0722 0 0 0.2126 0.7152 0.0722 0 0 0 0 0 1 0'/%3E%3CfeComponentTransfer in='l' result='bw'%3E%3CfeFuncR type='discrete' tableValues='0 1'/%3E%3CfeFuncG type='discrete' tableValues='0 1'/%3E%3CfeFuncB type='discrete' tableValues='0 1'/%3E%3CfeFuncA type='discrete' tableValues='1 1'/%3E%3C/feComponentTransfer%3E%3C/filter%3E%3C/defs%3E%3Crect x='0' y='0' width='64' height='64' filter='url(%23f)'/%3E%3Canimate xlink:href='%23t' attributeName='seed' values='1;2;3;4;5;6;7;8;9;10' dur='1s' repeatCount='indefinite'/%3E%3C/svg%3E");
+
+  /* Make each tile a “pixel grid” cell; adjust with --pixelSize */
+  background-size: var(--pixelSize) var(--pixelSize);
+
+  /* Tile across any size */
+  background-repeat: repeat;
+
+  /* Optional: ensure the element shows the texture */
+  /* Set explicit size or let content dictate */
+  display: block;
+}
+
+/* Helper: override animation duration inside the encoded SVG via filter-speed trick
+   Some engines won’t honor CSS vars inside SVG. For consistent flicker speed,
+   duplicate classes with different data URLs if you need multiple speeds.
+   Alternatively, define variants: */
+.bw-static.slow {
+  --animDur: 2s;
+}
+.bw-static.fast {
+  --animDur: 0.4s;
+}

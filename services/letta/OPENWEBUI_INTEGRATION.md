@@ -2,7 +2,7 @@
 
 ## Canonical multi-user architecture
 
-For production multi-user deployments, Open WebUI should talk to **Den** (Rust/Axum), which fronts **self-hosted Letta**. See **[DEN_ARCHITECTURE.md](../../DEN_ARCHITECTURE.md)**. Below: **direct** Open WebUI → Letta for dev/single-tenant.
+For production multi-user deployments, Open WebUI should talk to **Den** (Rust/Axum), which fronts **self-hosted Letta**. See **[DEN_ARCHITECTURE.md](../../docs/architecture/DEN_ARCHITECTURE.md)**. Below: **direct** Open WebUI → Letta for dev/single-tenant.
 
 ## Current integration (direct)
 
@@ -10,14 +10,14 @@ For production multi-user deployments, Open WebUI should talk to **Den** (Rust/A
 
 **Bears** (Letta agents) are connected to Open WebUI as “models” using functions from the [open-webui-tools](https://github.com/Haervwe/open-webui-tools) repository. That yields direct integration: users select and interact with **bears** through Open WebUI.
 
-**Knowledge:** Letta **memory** (blocks, conversations) is separate from shared **Cabinet** on **Outline** (via **Den**—[PLAN.md](../../PLAN.md)).
+**Knowledge:** Letta **memory** (blocks, conversations) is separate from shared **Cabinet** on **Outline** (via **Den**—[PLAN.md](../../docs/planning/PLAN.md)).
 
 ### How it works
 
 1. **Function installation:** Install functions from open-webui-tools in Open WebUI **Workspace → Functions**
 2. **Model registration:** Register **bears** (Letta agents) as custom models in Open WebUI
 3. **Direct communication:** Open WebUI talks to the Letta API service
-4. **Bear selection:** Users pick **bears** from the model dropdown (with **Den**: only **member** bears—[PLAN.md](../../PLAN.md))
+4. **Bear selection:** Users pick **bears** from the model dropdown (with **Den**: only **member** bears—[PLAN.md](../../docs/planning/PLAN.md))
 
 ### Setup instructions
 
@@ -47,7 +47,7 @@ See `openwebui_integration.env.example` for environment variables.
 
 ### Session management
 
-For session strategies (one **bear** per user, per chat, hybrid) in **direct** mode, see [OPENWEBUI_SESSIONS.md](OPENWEBUI_SESSIONS.md). With **Den**, **users↔bears** is many‑to‑many ([PLAN.md](../../PLAN.md)).
+For session strategies (one **bear** per user, per chat, hybrid) in **direct** mode, see [OPENWEBUI_SESSIONS.md](OPENWEBUI_SESSIONS.md). With **Den**, **users↔bears** is many‑to‑many ([PLAN.md](../../docs/planning/PLAN.md)).
 
 ### Limitations of direct setup
 
@@ -56,11 +56,11 @@ For session strategies (one **bear** per user, per chat, hybrid) in **direct** m
 - **No user-aware membership:** Not the **users↔bears** model Den provides  
 - **Direct API access:** Traffic goes straight to Letta  
 
-For multi-user production, use **Den** (Axum): [DEN_ARCHITECTURE.md](../../DEN_ARCHITECTURE.md) — self-hosted Letta only.
+For multi-user production, use **Den** (Axum): [DEN_ARCHITECTURE.md](../../docs/architecture/DEN_ARCHITECTURE.md) — self-hosted Letta only.
 
 ## References
 
-- **[DEN_ARCHITECTURE.md](../../DEN_ARCHITECTURE.md)** — Den (Axum) + self-hosted Letta  
+- **[DEN_ARCHITECTURE.md](../../docs/architecture/DEN_ARCHITECTURE.md)** — Den (Axum) + self-hosted Letta  
 - [Open WebUI documentation](https://docs.openwebui.com)  
 - [open-webui-tools](https://github.com/Haervwe/open-webui-tools)  
 - [Letta documentation](https://docs.letta.com)  

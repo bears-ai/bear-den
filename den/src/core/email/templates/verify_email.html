@@ -1,0 +1,136 @@
+<html>
+<head>
+    <meta name="color-scheme" content="light dark">
+    <meta name="supported-color-schemes" content="light dark">
+    <style type="text/css">
+        :root {
+            color-scheme: light dark;
+            supported-color-schemes: light dark;
+        }
+        body {
+            margin: 0;
+            padding: 24px;
+            background-color: #f4f4f4;
+            color: #111111;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        }
+        a {
+            color: #111111 !important;
+        }
+        .outer-table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        .content-table {
+            width: 100%;
+            max-width: 600px;
+            border-collapse: collapse;
+            background-color: #ffffff;
+            border: 8px solid #111111;
+        }
+        .logo-cell {
+            text-align: center;
+            padding: 24px 24px 8px 24px;
+        }
+        .content-cell {
+            padding: 0 24px 24px 24px;
+            font-size: 16px;
+            line-height: 1.6;
+        }
+        .content-cell h1 {
+            margin: 0 0 16px 0;
+            font-size: 24px;
+            letter-spacing: 0.05em;
+        }
+        .content-cell p {
+            margin: 0 0 16px 0;
+        }
+        .content-cell .summary {
+            margin: 24px 0;
+            padding: 16px;
+            border: 2px solid #111111;
+            text-align: center;
+            font-size: 18px;
+            font-weight: bold;
+        }
+        .content-cell .summary small {
+            display: block;
+            margin-top: 8px;
+            font-size: 14px;
+            font-weight: normal;
+        }
+        .content-cell .week-image {
+            margin: 24px auto;
+            text-align: center;
+        }
+        .content-cell .week-image img {
+            width: 120px;
+            height: 120px;
+            display: block;
+            margin: 0 auto;
+        }
+        .content-cell .cta {
+            display: inline-block;
+            margin-top: 8px;
+            padding: 12px 24px;
+            border: 2px solid #111111;
+            text-decoration: none;
+            font-weight: bold;
+            letter-spacing: 0.05em;
+        }
+        .footer-cell {
+            text-align: center;
+            padding: 16px 24px 24px 24px;
+            font-size: 12px;
+            color: #444444;
+        }
+        @media (prefers-color-scheme: dark) {
+            body {
+                background-color: #111111;
+                color: #ffffff;
+            }
+            a {
+                color: #ffffff !important;
+            }
+            .content-table {
+                background-color: #1a1a1a;
+                border-color: #ffffff;
+            }
+            .content-cell .summary {
+                border-color: #ffffff;
+            }
+            .content-cell .cta {
+                border-color: #ffffff;
+            }
+            .footer-cell {
+                color: #bbbbbb;
+            }
+        }
+    </style>
+</head>
+<body>
+    <table class="outer-table" border="0" cellpadding="0" cellspacing="0">
+        <tr>
+            <td align="center">
+                <table class="content-table" border="0" cellpadding="0" cellspacing="0">
+                    <tr>
+                        <td class="logo-cell">
+                            <a href="{{ base_url }}redirect/logo/{{ relative_url_dashboard }}">
+                                <img alt="" width="160" src="{{ base_url }}logo.png" style="width: 160px;">
+                            </a>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td class="content-cell">
+                            <h1>VERIFY EMAIL</h1>
+                            <p>Welcome, {{ display_name }}!</p>
+                            <p>To complete your registration, please verify your email address by clicking the link below:</p>
+                            <a class="cta" href="{{ verify_link }}">VERIFY EMAIL</a>
+                        </td>
+                    </tr>
+                </table>
+            </td>
+        </tr>
+    </table>
+</body>
+</html>

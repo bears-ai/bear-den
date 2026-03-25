@@ -1,6 +1,6 @@
 # Memory Architecture Specification
 
-> **Update:** Shared knowledge is **Cabinet (Outline)** via **Den**. **Letta memory** (blocks, conversations) is separate. See repo `PLAN.md`.
+> **Update:** Shared knowledge is **Cabinet (Outline)** via **Den**. **Letta memory** (blocks, conversations) is separate. See repo [`docs/planning/PLAN.md`](../../docs/planning/PLAN.md).
 
 ## Overview
 
@@ -415,6 +415,6 @@ Shared docs and search—humans edit in Outline; **bears** via Den Cabinet tools
 
 - [`project_brief.md`](project_brief.md) - Overall project goals and scope
 - [`README.md`](README.md) - Memory bank overview  
-- Repo [`PLAN.md`](../../PLAN.md) — **bear** terminology, Den provisioning, users↔bears
+- Repo [`docs/planning/PLAN.md`](../../docs/planning/PLAN.md) — **bear** terminology, Den provisioning, users↔bears
 - Docker Compose configuration: `../docker-compose.yaml`
 - LiteLLM configuration: `../litellm-config.yaml`

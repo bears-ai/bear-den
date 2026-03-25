@@ -1,0 +1,273 @@
+{% extends "admin/base.html" %}
+
+{% block title %}Generate OAuth Access Token{% endblock %}
+
+{% block admin_content %}
+<h2>Generate OAuth Access Token</h2>
+
+<p>Use this form to manually generate an access token for testing and administrative purposes.</p>
+
+{% if error %}
+<div class="alert alert-error">
+  <strong>Error:</strong> {{ error }}
+</div>
+{% endif %}
+
+<form method="post" action="./generate">
+  <div class="form-group">
+    <label for="client_id">OAuth Client:</label>
+    <select id="client_id" name="client_id" required>
+      <option value="">-- Select a client --</option>
+      {% for client in clients %}
+      <option value="{{ client.id }}" {% if form_data.client_id == client.id.to_string() %}selected{% endif %}>
+        {{ client.name }} ({{ client.client_id }})
+      </option>
+      {% endfor %}
+    </select>
+    {% if errors.client_id %}
+    <div class="error-message">{{ errors.client_id | join(sep=", ") }}</div>
+    {% endif %}
+  </div>
+
+  <div class="form-group">
+    <label for="user_id">User:</label>
+    <select id="user_id" name="user_id" required>
+      <option value="">-- Select a user --</option>
+      {% for user in users %}
+      <option value="{{ user.id }}" {% if form_data.user_id == user.id.to_string() %}selected{% endif %}>
+        {{ user.display_name }} ({{ user.username }})
+      </option>
+      {% endfor %}
+    </select>
+    {% if errors.user_id %}
+    <div class="error-message">{{ errors.user_id | join(sep=", ") }}</div>
+    {% endif %}
+  </div>
+
+  <div class="form-group">
+    <label>Scopes:</label>
+    <div class="scopes-checkboxes">
+      {% for scope in available_scopes %}
+      <label class="checkbox-label">
+        <input type="checkbox" name="scopes" value="{{ scope }}"
+               {% if form_data.scopes and scope in form_data.scopes %}checked{% endif %}>
+        <code>{{ scope }}</code>
+        {% if scope == "profile" %}
+        - Access to basic profile information
+        {% elif scope == "email" %}
+        - Access to user's email address
+        {% endif %}
+      </label>
+      {% endfor %}
+    </div>
+    {% if errors.scopes %}
+    <div class="error-message">{{ errors.scopes | join(sep=", ") }}</div>
+    {% endif %}
+  </div>
+
+  <div class="form-group">
+    <label for="expires_in">Expiration (hours):</label>
+    <input type="number" id="expires_in" name="expires_in" min="1" max="720" value="{% if form_data.expires_in %}{{ form_data.expires_in }}{% else %}1{% endif %}" required>
+    <small>Maximum 720 hours (30 days)</small>
+    {% if errors.expires_in %}
+    <div class="error-message">{{ errors.expires_in | join(sep=", ") }}</div>
+    {% endif %}
+  </div>
+
+  <div class="form-actions">
+    <button type="submit" class="action-primary">Generate Token</button>
+    <a href="./" class="action-secondary">Cancel</a>
+  </div>
+</form>
+
+{% if generated_token %}
+<div class="token-result">
+  <h3>Token Generated Successfully!</h3>
+  <div class="token-display">
+    <strong>Access Token:</strong>
+    <div class="token-value"><code>{{ generated_token.token }}</code></div>
+    <small>This token will expire on {{ generated_token.expires_at | datetimeformat(format="short") }}</small>
+  </div>
+  
+  <div class="token-info">
+    <h4>Token Details:</h4>
+    <ul>
+      <li><strong>Client:</strong> {{ generated_token.client_name }} ({{ generated_token.client_identifier }})</li>
+      <li><strong>User:</strong> {{ generated_token.username }} ({{ generated_token.display_name }})</li>
+      <li><strong>Scopes:</strong>
+        {% for scope in generated_token.parse_scopes() %}
+          <span class="scope">{{ scope.as_str() }}</span>
+        {% endfor %}
+      </li>
+      <li><strong>Expires:</strong> {{ generated_token.expires_at | datetimeformat(format="short") }}</li>
+    </ul>
+  </div>
+  
+  <div class="token-warning">
+    <strong>IMPORTANT:</strong> Save this token immediately - it will not be shown again.
+  </div>
+</div>
+{% endif %}
+
+<style>
+.form-group {
+  margin-bottom: 20px;
+}
+
+.form-group label {
+  display: block;
+  margin-bottom: 5px;
+  font-weight: bold;
+}
+
+.form-group select,
+.form-group input[type="number"] {
+  width: 100%;
+  max-width: 500px;
+  padding: 8px 12px;
+  border: 1px solid #ddd;
+  border-radius: 3px;
+  font-size: 1em;
+}
+
+.scopes-checkboxes {
+  display: grid;
+  gap: 10px;
+  max-width: 600px;
+}
+
+.checkbox-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px;
+  background-color: #f8f9fa;
+  border-radius: 3px;
+}
+
+.checkbox-label input[type="checkbox"] {
+  margin-right: 8px;
+}
+
+.form-actions {
+  margin-top: 30px;
+  display: flex;
+  gap: 10px;
+}
+
+.action-primary {
+  background-color: #28a745;
+  color: white;
+  border: none;
+  padding: 10px 20px;
+  border-radius: 3px;
+  cursor: pointer;
+  font-size: 1em;
+}
+
+.action-primary:hover {
+  background-color: #218838;
+}
+
+.action-secondary {
+  background-color: #6c757d;
+  color: white;
+  border: none;
+  padding: 10px 20px;
+  border-radius: 3px;
+  cursor: pointer;
+  font-size: 1em;
+  text-decoration: none;
+  display: inline-block;
+}
+
+.action-secondary:hover {
+  background-color: #5a6268;
+}
+
+.error-message {
+  color: #dc3545;
+  font-size: 0.9em;
+  margin-top: 5px;
+}
+
+.alert-error {
+  padding: 15px;
+  margin-bottom: 20px;
+  background-color: #f8d7da;
+  border: 1px solid #f5c6cb;
+  color: #721c24;
+  border-radius: 4px;
+}
+
+.token-result {
+  margin-top: 40px;
+  padding: 20px;
+  background-color: #e9ecef;
+  border-radius: 5px;
+  border: 1px solid #dee2e6;
+}
+
+.token-display {
+  margin: 15px 0;
+  padding: 15px;
+  background-color: #f8f9fa;
+  border-radius: 3px;
+  border: 1px solid #dee2e6;
+  word-break: break-all;
+}
+
+.token-value {
+  font-family: monospace;
+  font-size: 0.9em;
+  margin: 10px 0;
+}
+
+.token-info {
+  margin-top: 20px;
+  padding-top: 15px;
+  border-top: 1px solid #dee2e6;
+}
+
+.token-info ul {
+  list-style-type: none;
+  padding: 0;
+}
+
+.token-info li {
+  padding: 5px 0;
+}
+
+.token-warning {
+  margin-top: 20px;
+  padding: 10px;
+  background-color: #fff3cd;
+  border: 1px solid #ffeaa7;
+  color: #856404;
+  border-radius: 3px;
+}
+
+.scope {
+  background-color: #e9ecef;
+  padding: 2px 6px;
+  border-radius: 3px;
+  font-size: 0.8em;
+  margin-right: 4px;
+  display: inline-block;
+}
+
+code {
+  background-color: #f8f9fa;
+  padding: 2px 4px;
+  border-radius: 3px;
+  font-family: monospace;
+  font-size: 0.9em;
+}
+
+@media (max-width: 768px) {
+  .form-actions {
+    flex-direction: column;
+  }
+}
+</style>
+{% endblock %}

@@ -1,0 +1,107 @@
+[package]
+name = "newapp"
+version = "0.1.0"
+edition = "2024"
+
+[features]
+production = []
+
+[profile.dev]
+# Optimize for faster linking in development
+debug = 1          # Reduce debug info (0 = none, 1 = line tables, 2 = full)
+incremental = true # Enable incremental compilation
+codegen-units = 256 # More codegen units = faster compile, slower runtime
+
+[profile.dev.package.sqlx-macros]
+opt-level = 0
+
+# Optimize heavy dependencies in debug builds to reduce binary size
+[profile.dev.package."*"]
+opt-level = 1      # Light optimization for all dependencies
+debug = 0          # No debug symbols for dependencies
+
+# Keep our own code unoptimized for debugging
+[profile.dev.package.newapp]
+opt-level = 0
+debug = 2
+
+# Fast development profile for even quicker iteration
+[profile.dev-fast]
+inherits = "dev"
+debug = 0          # No debug info at all
+opt-level = 0      # No optimization
+incremental = true
+codegen-units = 256
+
+[profile.release]
+# Optimize for reasonable binary speed while keeping link times practical
+# On slower machines thin/full LTO plus single codegen unit can make the final
+# link step take minutes. Use a more link-friendly default and keep a way to
+# build with LTO when needed (see README / CI).
+lto = false         # disable LTO by default to speed linking
+codegen-units = 64  # increased units for faster link times on slow machines
+panic = "abort"    # smaller binaries
+strip = "symbols"  # remove symbols from release builds
+
+# If you want maximal runtime performance / smallest binary you can still
+# build with LTO and fewer codegen units explicitly:
+# cargo build --release -Z unstable-options --profile release-lto
+
+[dependencies]
+utoipa = { version = "4.0", features = ["axum_extras"] }
+anyhow = "1.0"
+async-trait = "0.1.86"
+axum = { version = "0.8", default-features = false, features = ["json", "http1", "matched-path", "tokio", "macros"] }
+axum-extra = { version = "0.10.0", features = ["form", "query"] }
+axum-login = "0.17.0"
+# tower-sessions-postgres-store = "0.1.1"
+# tower-sessions-moka-store = "0.15.0"
+tower-sessions-sqlx-store = { version = "0.15", features = ["postgres"] }
+sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "postgres", "time", "json", "uuid"] }
+futures = "0.3"
+minijinja = { version = "2.5.0", features = ["loader", "preserve_order", "json"] }
+# minijinja-autoreload = "2.5.0"  # Only needed in development
+minijinja-contrib = { version = "2.6.0", features = ["datetime", "timezone"] }
+password-auth = "1.0.0"
+serde = { version = "1", features = ["derive"] }
+thiserror = "2.0.12"
+time = { version = "0.3.37", features = ["serde-well-known"] }
+tokio = { version = "1", default-features = false, features = ["macros", "rt-multi-thread", "signal"] }
+tokio-util = { version = "^0.7", default-features = false }
+tower = "0.5.2"
+tower-http = { version = "0.6.2", features = ["trace", "cors"] }
+# tower-livereload = "0.9"  # Commented out - not currently used
+tracing = "0.1.41"
+tracing-subscriber = { version = "0.3.19", features = ["env-filter"] }
+# OpenTelemetry removed - using lightweight tracing only
+# tracing-opentelemetry = "0.30.0"
+# opentelemetry = { version = "0.29.1", features = ["trace", "metrics"] }
+# opentelemetry-otlp = { version = "0.29.0", features = ["grpc-tonic", "reqwest-client", "tls-roots"] }
+# opentelemetry_sdk = "0.29.0"
+validator = { version = "0.20", features = ["derive"] }
+serde_json = "1.0.138"
+dotenvy = "0.15.7"
+minijinja-embed = "2.7.0"
+axum-embed = "0.1.0"
+memory-serve = "1.2.1"
+url = "2.5.4"
+rand = "0.9.1"
+regex = "1.11.1"
+indexmap = { version = "2.9.0", features = ["serde"] }
+mailgun-rs = "2.0.1"
+urlencoding = "2.1"
+ammonia = "4.1.1"
+pulldown-cmark = "0.13.0"
+jsonwebtoken = "9.3.0"
+sha2 = "0.10"
+base64 = "0.22"
+
+[dev-dependencies]
+http-body-util = "0.1"
+minijinja-autoreload = "2.5.0"  # Development-only template reloading
+tower = { version = "0.5.2", features = ["util"] }
+
+[build-dependencies]
+tokio = { version = "1", features = ["rt-multi-thread"] }
+sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "postgres"] }
+minijinja-embed = "2.7.0"

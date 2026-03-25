@@ -1,0 +1,36 @@
+volumes:
+  postgres-data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind # Bind mount into the workspace so capacity matches host disk
+      device: ../.postgres-data
+
+services:
+  app:
+    deploy:
+      resources:
+        limits:
+          memory: 16G
+        reservations:
+          memory: 12G
+    build:
+      context: .
+      dockerfile: Dockerfile
+    env_file:
+      - .env
+
+    volumes:
+      - ../..:/workspaces:cached
+
+    command: sleep infinity
+
+    network_mode: service:db
+
+  db:
+    image: pgautoupgrade/pgautoupgrade:16-alpine
+    restart: unless-stopped
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    env_file:
+      - .env

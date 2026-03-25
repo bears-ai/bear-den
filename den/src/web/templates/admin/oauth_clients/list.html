@@ -1,0 +1,102 @@
+{% extends "admin/base.html" %}
+
+{% block title %}OAuth Clients{% endblock %}
+
+{% block admin_content %}
+<h2>OAuth Clients</h2>
+
+<table>
+  <thead>
+    <tr>
+      <th>ID</th>
+      <th>Name</th>
+      <th>Client ID</th>
+      <th>Status</th>
+      <th>Trusted</th>
+      <th>Created</th>
+      <th>Actions</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for client in clients %}
+    <tr>
+      <td>{{ client.id }}</td>
+      <td>{{ client.name }}</td>
+      <td><code>{{ client.client_id }}</code></td>
+      <td>
+        {% if client.active %}
+          <span class="status-active">Active</span>
+        {% else %}
+          <span class="status-inactive">Inactive</span>
+        {% endif %}
+      </td>
+      <td>
+        {% if client.trusted %}
+          <span class="status-trusted">Yes</span>
+        {% else %}
+          <span class="status-untrusted">No</span>
+        {% endif %}
+      </td>
+      <td>{{ client.created_at | datetimeformat(format="short") }}</td>
+      <td>
+        <a class="navigate" href="./{{ client.id }}">Details</a>
+        <a class="navigate" href="./{{ client.id }}/edit">Edit</a>
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+
+{% if clients|length == 0 %}
+<p>No OAuth clients registered yet.</p>
+{% endif %}
+
+<a class="action" href="./add">Add OAuth Client</a>
+
+<style>
+.status-active {
+  color: #28a745;
+  font-weight: bold;
+}
+
+.status-inactive {
+  color: #dc3545;
+  font-weight: bold;
+}
+
+.status-trusted {
+  color: #007bff;
+  font-weight: bold;
+}
+
+.status-untrusted {
+  color: #6c757d;
+  font-weight: bold;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-bottom: 20px;
+}
+
+th, td {
+  padding: 8px 12px;
+  text-align: left;
+  border-bottom: 1px solid #ddd;
+}
+
+th {
+  background-color: #f8f9fa;
+  font-weight: bold;
+}
+
+code {
+  background-color: #f8f9fa;
+  padding: 2px 4px;
+  border-radius: 3px;
+  font-family: monospace;
+  font-size: 0.9em;
+}
+</style>
+{% endblock %}

@@ -1,0 +1,368 @@
+{% extends "admin/base.html" %}
+
+{% block title %}PKCE Testing: {{ client_name }}{% endblock %}
+
+{% block admin_content %}
+<h2>PKCE Testing for OAuth Client: {{ client_name }}</h2>
+
+<div class="pkce-test-container">
+    <div class="pkce-info-section">
+        <h3>About PKCE Testing</h3>
+        <p>
+            This tool allows you to test and validate PKCE (Proof Key for Code Exchange) flows for your OAuth client.
+            PKCE provides enhanced security for public clients by preventing authorization code interception attacks.
+        </p>
+        
+        <h4>How to Use:</h4>
+        <ol>
+            <li><strong>Generate Sample Values:</strong> Use the provided sample code verifier and challenge for testing</li>
+            <li><strong>Test Validation:</strong> Enter your own values and click "Test PKCE Validation"</li>
+            <li><strong>Review Results:</strong> See if the validation succeeds or fails with detailed feedback</li>
+        </ol>
+        
+        <div class="pkce-methods-info">
+            <h4>Supported Challenge Methods:</h4>
+            <ul>
+                <li><strong>S256:</strong> SHA256 hash of the code verifier (recommended for production)</li>
+                <li><strong>plain:</strong> Code challenge equals code verifier (less secure, for testing only)</li>
+            </ul>
+        </div>
+    </div>
+
+    <div class="pkce-test-form">
+        <h3>PKCE Validation Test</h3>
+        
+        {% if errors %}
+        <div class="alert alert-error">
+            <strong>Validation Errors:</strong>
+            <ul>
+                {% if errors.code_verifier %}
+                {% for error in errors.code_verifier %}
+                <li>Code Verifier: {{ error }}</li>
+                {% endfor %}
+                {% endif %}
+                {% if errors.code_challenge %}
+                {% for error in errors.code_challenge %}
+                <li>Code Challenge: {{ error }}</li>
+                {% endfor %}
+                {% endif %}
+                {% if errors.code_challenge_method %}
+                {% for error in errors.code_challenge_method %}
+                <li>Challenge Method: {{ error }}</li>
+                {% endfor %}
+                {% endif %}
+            </ul>
+        </div>
+        {% endif %}
+
+        <form method="post" action="/admin/oauth_clients/{{ client_id }}/pkce-test">
+            <div class="form-group">
+                <label for="code_verifier">Code Verifier:</label>
+                <textarea id="code_verifier" name="code_verifier" rows="3" required>{{ form_data.code_verifier if form_data else sample_verifier }}</textarea>
+                <small>Must be 43-128 characters using alphanumeric and -._~ characters</small>
+            </div>
+
+            <div class="form-group">
+                <label for="code_challenge">Code Challenge:</label>
+                <textarea id="code_challenge" name="code_challenge" rows="3" required>{{ form_data.code_challenge if form_data else sample_challenge }}</textarea>
+                <small>Base64url-encoded challenge derived from the verifier</small>
+            </div>
+
+            <div class="form-group">
+                <label for="code_challenge_method">Challenge Method:</label>
+                <select id="code_challenge_method" name="code_challenge_method" required>
+                    <option value="S256" {% if form_data and form_data.code_challenge_method == "S256" %}selected{% endif %}>S256 (SHA256 - Recommended)</option>
+                    <option value="plain" {% if form_data and form_data.code_challenge_method == "plain" %}selected{% endif %}>plain (Testing Only)</option>
+                </select>
+            </div>
+
+            <div class="form-actions">
+                <button type="submit" class="action-info">Test PKCE Validation</button>
+                <button type="button" class="action" onclick="generateSampleValues()">Generate Sample Values</button>
+                <a href="/admin/oauth_clients/{{ client_id }}" class="action">Back to Client</a>
+            </div>
+        </form>
+    </div>
+
+    {% if test_result %}
+    <div class="pkce-test-result">
+        <h3>Test Result</h3>
+        
+        {% if test_result.success %}
+        <div class="alert alert-success">
+            <strong>✓ {{ test_result.message }}</strong>
+            <p>{{ test_result.validation_details }}</p>
+        </div>
+        {% else %}
+        <div class="alert alert-error">
+            <strong>✗ {{ test_result.message }}</strong>
+            <p>{{ test_result.validation_details }}</p>
+        </div>
+        {% endif %}
+        
+        <div class="result-details">
+            <h4>Validation Details:</h4>
+            <ul>
+                <li><strong>Code Verifier:</strong> <code>{{ form_data.code_verifier }}</code></li>
+                <li><strong>Code Challenge:</strong> <code>{{ form_data.code_challenge }}</code></li>
+                <li><strong>Challenge Method:</strong> <code>{{ form_data.code_challenge_method }}</code></li>
+                <li><strong>Status:</strong> <span class="status-{{ 'success' if test_result.success else 'error' }}">{{ test_result.message }}</span></li>
+            </ul>
+        </div>
+    </div>
+    {% endif %}
+
+    <div class="pkce-sample-section">
+        <h3>Sample PKCE Values</h3>
+        
+        <div class="sample-values">
+            <div class="sample-field">
+                <label>Sample Code Verifier:</label>
+                <div class="sample-code"><code id="sample-verifier">{{ sample_verifier }}</code></div>
+                <button class="copy-btn" onclick="copyToClipboard('sample-verifier')">Copy</button>
+            </div>
+
+            <div class="sample-field">
+                <label>Sample Code Challenge (S256):</label>
+                <div class="sample-code"><code id="sample-challenge">{{ sample_challenge }}</code></div>
+                <button class="copy-btn" onclick="copyToClipboard('sample-challenge')">Copy</button>
+            </div>
+        </div>
+        
+        <div class="pkce-explanation">
+            <h4>How PKCE Works:</h4>
+            <ol>
+                <li><strong>Client generates:</strong> A random code verifier (43-128 chars)</li>
+                <li><strong>Client creates challenge:</strong> SHA256 hash of verifier (base64url encoded) for S256 method</li>
+                <li><strong>Authorization request:</strong> Includes code challenge and method</li>
+                <li><strong>Token request:</strong> Includes original code verifier</li>
+                <li><strong>Server validates:</strong> Recomputes challenge from verifier and compares</li>
+            </ol>
+        </div>
+    </div>
+</div>
+
+<style>
+.pkce-test-container {
+    margin: 20px 0;
+    padding: 20px;
+    border: 1px solid #ddd;
+    border-radius: 5px;
+    background-color: #f9f9f9;
+}
+
+.pkce-info-section {
+    margin-bottom: 30px;
+    padding: 15px;
+    background-color: #e8f4f8;
+    border-left: 4px solid #17a2b8;
+    border-radius: 3px;
+}
+
+.pkce-info-section h3 {
+    color: #17a2b8;
+    margin-top: 0;
+}
+
+.pkce-methods-info {
+    margin-top: 15px;
+    padding: 10px;
+    background-color: #f8f9fa;
+    border-radius: 3px;
+}
+
+.pkce-test-form {
+    margin-bottom: 30px;
+    padding: 20px;
+    background-color: white;
+    border: 1px solid #ddd;
+    border-radius: 5px;
+}
+
+.form-group {
+    margin-bottom: 15px;
+}
+
+.form-group label {
+    display: block;
+    margin-bottom: 5px;
+    font-weight: bold;
+}
+
+.form-group textarea {
+    width: 100%;
+    padding: 8px;
+    border: 1px solid #ddd;
+    border-radius: 3px;
+    font-family: monospace;
+    font-size: 0.9em;
+}
+
+.form-group select {
+    padding: 8px;
+    border: 1px solid #ddd;
+    border-radius: 3px;
+}
+
+.form-group small {
+    display: block;
+    margin-top: 3px;
+    color: #666;
+    font-size: 0.8em;
+}
+
+.form-actions {
+    margin-top: 20px;
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
+.pkce-test-result {
+    margin: 20px 0;
+    padding: 20px;
+    background-color: white;
+    border: 1px solid #ddd;
+    border-radius: 5px;
+}
+
+.alert {
+    padding: 15px;
+    margin-bottom: 20px;
+    border: 1px solid transparent;
+    border-radius: 4px;
+}
+
+.alert-success {
+    color: #155724;
+    background-color: #d4edda;
+    border-color: #c3e6cb;
+}
+
+.alert-error {
+    color: #721c24;
+    background-color: #f8d7da;
+    border-color: #f5c6cb;
+}
+
+.result-details {
+    margin-top: 15px;
+    padding: 15px;
+    background-color: #f8f9fa;
+    border-radius: 3px;
+}
+
+.result-details ul {
+    list-style-type: none;
+    padding: 0;
+}
+
+.result-details li {
+    padding: 5px 0;
+    border-bottom: 1px solid #eee;
+}
+
+.status-success {
+    color: #28a745;
+    font-weight: bold;
+}
+
+.status-error {
+    color: #dc3545;
+    font-weight: bold;
+}
+
+.pkce-sample-section {
+    margin-top: 30px;
+    padding: 20px;
+    background-color: white;
+    border: 1px solid #ddd;
+    border-radius: 5px;
+}
+
+.sample-values {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 20px;
+    margin-bottom: 20px;
+}
+
+.sample-field {
+    display: flex;
+    flex-direction: column;
+}
+
+.sample-field label {
+    font-weight: bold;
+    margin-bottom: 5px;
+}
+
+.sample-code {
+    padding: 10px;
+    background-color: #f8f9fa;
+    border: 1px solid #dee2e6;
+    border-radius: 3px;
+    margin-bottom: 5px;
+    word-break: break-all;
+}
+
+.copy-btn {
+    padding: 5px 10px;
+    background-color: #17a2b8;
+    color: white;
+    border: none;
+    border-radius: 3px;
+    cursor: pointer;
+    align-self: flex-start;
+}
+
+.copy-btn:hover {
+    background-color: #138496;
+}
+
+.pkce-explanation {
+    margin-top: 20px;
+    padding: 15px;
+    background-color: #f8f9fa;
+    border-radius: 3px;
+}
+
+.pkce-explanation ol {
+    padding-left: 20px;
+}
+
+@media (max-width: 768px) {
+    .sample-values {
+        grid-template-columns: 1fr;
+    }
+}
+</style>
+
+<script>
+function generateSampleValues() {
+    // Generate a new random code verifier (simplified for demo)
+    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~';
+    let verifier = '';
+    const length = 43 + Math.floor(Math.random() * 86); // 43-128 chars
+    
+    for (let i = 0; i < length; i++) {
+        verifier += chars.charAt(Math.floor(Math.random() * chars.length));
+    }
+    
+    document.getElementById('code_verifier').value = verifier;
+    document.getElementById('code_challenge').value = 'Generate challenge using S256 method';
+    document.getElementById('code_challenge_method').value = 'S256';
+}
+
+function copyToClipboard(elementId) {
+    const element = document.getElementById(elementId);
+    const text = element.textContent;
+    
+    navigator.clipboard.writeText(text).then(function() {
+        alert('Copied to clipboard: ' + text.substring(0, 20) + '...');
+    }).catch(function(err) {
+        console.error('Could not copy text: ', err);
+    });
+}
+</script>
+{% endblock %}

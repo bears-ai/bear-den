@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+
+{% block title %}{{ error_name }} Error{% endblock %}
+
+{% block content %}
+    <p>
+        Something has gone terribly awry.
+    </p><p>
+        So far, there are no proactive notifications. So please tell Hans about this.
+    </p>
+    <div class="box">
+        <code>{{ error_message }}</code>
+        <!-- {{ error_details }} -->
+    </div>
+{% endblock %}
