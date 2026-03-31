@@ -1,10 +1,5 @@
 # Plans
 
-This directory is intentionally **empty** in the starter.
+**BEARS / Den product planning** lives in the monorepo: **[`docs/planning/`](../../docs/planning/)** — [Phase 1 bootstrap](../../docs/planning/PHASE1_BOOTSTRAP.md), [locked Phase 1 decisions](../../docs/planning/PHASE1_DECISIONS.md), [roadmap](../../docs/planning/PLAN.md).
 
-Use it for **your** roadmap when you clone this repository and build a concrete product: feature specs, status, and design notes. The old upstream product plans were removed so the repo stays product-agnostic.
-
-Suggested layout:
-
-- One short `project-status.md` for current focus.
-- Feature plans as separate Markdown files with a consistent status line at the top.
+This directory is kept as a **shim** so old links and starter habits still land somewhere useful. Do not add duplicate planning docs here.

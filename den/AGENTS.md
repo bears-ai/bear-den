@@ -39,6 +39,6 @@ How to orient in **this project**: a Rust web **starter** (Axum, SQLx, MiniJinja
 | Frontend / templates | [`docs/frontend-development.md`](docs/frontend-development.md) |
 | MiniJinja template limits (vs full Jinja2) | [`docs/minijinja-template-limitations.md`](docs/minijinja-template-limitations.md) |
 
-## Planning docs
+## Planning docs (BEARS)
 
-The [`plans/`](plans/) directory is reserved for **your** product roadmap when you turn this starter into a concrete app. The starter ships without any product plans.
+Monorepo **[`docs/planning/`](../docs/planning/)**: [Phase 1 bootstrap](../docs/planning/PHASE1_BOOTSTRAP.md), [Phase 1 decisions](../docs/planning/PHASE1_DECISIONS.md), [PLAN](../docs/planning/PLAN.md). The [`plans/`](plans/) folder here is only a **pointer** to those paths—do not duplicate planning markdown under `den/plans/`.

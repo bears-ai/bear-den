@@ -8,7 +8,7 @@ Human-oriented docs for the **Basic Environment for Agents Runtime Server (BEARS
 
 | Path | Contents |
 |------|----------|
-| [planning/](planning/) | Roadmap, phased delivery, Phase 1 Den bootstrap |
+| [planning/](planning/) | Roadmap, phased delivery, Phase 1 Den bootstrap, [locked Phase 1 decisions](planning/PHASE1_DECISIONS.md) |
 | [deployment/](deployment/) | Coolify deployment order and steps |
 | [architecture/](architecture/) | Stack notes, Den + multi-user Letta |
 

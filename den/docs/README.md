@@ -33,6 +33,6 @@ Index of agent- and contributor-oriented docs for **this project**.
 
 - **[`rename-from-starter.md`](rename-from-starter.md)** — checklist and greps when moving off the `newapp` placeholders.
 
-## Plans (your product)
+## Plans (BEARS / Den)
 
-See [../plans/README.md](../plans/README.md). Add your own plans when you build a product on top of this starter.
+Product roadmap and Phase 1 decisions: **[`docs/planning/`](../../docs/planning/)** in the monorepo. [../plans/README.md](../plans/README.md) links there from inside `den/`.

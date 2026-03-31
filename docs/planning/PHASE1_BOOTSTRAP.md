@@ -8,6 +8,8 @@ Put the Rust project at repo-root **`den/`** with package/binary name **`den`**,
 
 **Delivery priority:** Reach the **first user-testable moment** as early as possible: an **operator provisioning UI** (browser) for **authentication**, **user** lifecycle, **agent/bear** lifecycle (Letta create/sync), **membership**, and **LettaBot** setup (preview/download generated `lettabot.yaml`, copy-paste instructions). End-user **chat** via **Loquix** (same-origin on Den) follows once the **chat API** (M5) is stable; **Open WebUI** integration can ship **after** Loquix when needed.
 
+**Locked product decisions** (operator UI, streaming, API IDs, provisioning, threading, deferred Open WebUI auth): [PHASE1_DECISIONS.md](PHASE1_DECISIONS.md).
+
 ---
 
 ## 0. Trestle bootstrap (M0 only)
@@ -374,6 +376,8 @@ den/
 
 ## 17. Open decisions (resolve before M4–M6)
 
+**Resolved for this repo** — see [PHASE1_DECISIONS.md](PHASE1_DECISIONS.md). The list below is the original prompt; update that file if choices change.
+
 1. **Operator UI stack:** server-rendered (Askama/Tera + htmx) vs SPA in `static/`
 2. **Streaming payload for `POST /v1/chat/send`:** SSE vs NDJSON — **lock for Loquix first**; Open WebUI adapters translate if needed
 3. **Auth mechanism for optional Open WebUI:** cookie from browser vs server-side API token per workspace
@@ -381,4 +385,6 @@ den/
 5. **Letta agent create payload:** single template vs per-bear type (personal vs shared)
 6. **Conversation id:** Letta thread/conversation API — map client `chat_id` to Letta conversation if required by API version
 
-Record decisions in **`den/DECISIONS.md`** as you lock them.
+Record new or changed decisions in **[PHASE1_DECISIONS.md](PHASE1_DECISIONS.md)** (monorepo `docs/planning/`).
+
+The planning file **`den/DECISIONS.md`** is **not** used; keep a single source under `docs/planning/`.
