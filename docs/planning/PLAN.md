@@ -18,7 +18,7 @@ High‑level, ops‑oriented plan and architecture: MVP **without Cabinet first*
 - **BEARS** — the **deployment stack** (acronym): Letta, LiteLLM, Den, Outline, frontends, LettaBot, etc. Not the same as a single **bear**.
 - **Bear** — one **Letta-backed agent**: a distinct assistant with its own Letta agent id, prompts, memory, and tools. Users interact with **bears**; Den registers and provisions them.
 - **Users ↔ bears (many‑to‑many)** — a **user** may access **many** bears (e.g. personal + household + project). A **bear** may be shared by **many** users (e.g. a household assistant). Den stores membership and enforces it on every chat and Cabinet call.
-- **Den** — the **BEARS control plane and gateway**: identity, **bear lifecycle** (provision Letta agents, surface bears in Open WebUI and LettaBot config), routing, authz, Cabinet API, and LiteLLM observability reads. Den is the **system of record** for which users may use which bears and how they appear in each channel (see below).
+- **Den** — the **BEARS control plane and gateway**: identity, **bear lifecycle** (provision Letta agents, surface bears in **Loquix**, **optional Open WebUI**, and LettaBot config), routing, authz, Cabinet API, and LiteLLM observability reads. Den is the **system of record** for which users may use which bears and how they appear in each channel (see below).
 
 ---
 
@@ -29,7 +29,7 @@ High‑level, ops‑oriented plan and architecture: MVP **without Cabinet first*
 1. **Den** (control plane + gateway), implemented in **Rust with Axum**
    - Maps **external identities** (Slack, WhatsApp, web, etc.) to **internal users**.
    - **Provisions and registers bears:** creates and updates **Letta agents** via API; keeps Den’s **bear registry** in sync (`bear_id` / `agent_id` ↔ `associated_letta_id`); drives **which bears exist** and **who may use them**.
-   - **Surfaces bears in clients:** emits or updates config so **Open WebUI** (agent picker, adapters) and **LettaBot** (`lettabot.yaml` or equivalent) list the correct bears per user/channel. **Den may also serve a first‑party web chat** built with **[Loquix](https://github.com/loquix-dev/loquix)** (framework‑agnostic Lit web components for AI chat): same **auth, membership, and streaming** endpoints as other web clients—**alternative to Open WebUI**, not a replacement for Den’s control‑plane role. *Traffic path* may still be Open WebUI → Den → Letta while LettaBot → Letta stays direct in v1—see optional proxy below—but **provisioning and visibility** are Den’s job.
+   - **Surfaces bears in clients:** emits or updates config so **Den-hosted Loquix** (first‑party browser chat), **optional Open WebUI** (when deployed), and **LettaBot** (`lettabot.yaml` or equivalent) list the correct bears per user/channel. **[Loquix](https://github.com/loquix-dev/loquix)** uses the same **auth, membership, and streaming** endpoints as every other web client; Open WebUI is an **optional** path for teams that want it—not a replacement for Den’s control‑plane role. *Traffic path for web chat defaults to* Loquix → Den → Letta *unless you add Open WebUI*; LettaBot → Letta may stay direct in v1—see optional proxy below—but **provisioning and visibility** are Den’s job.
    - **User and Cabinet permissions:** membership tables (users↔bears); later, **Cabinet** ACLs per user and bear (decks, kinds, read/write)—enforced on Den’s Cabinet API.
    - **Routes** chat to the correct Letta agent for the chosen bear.
    - **Auth** and **tool/model policies** (RBAC, gating, rate limits).
@@ -49,8 +49,8 @@ High‑level, ops‑oriented plan and architecture: MVP **without Cabinet first*
    - **Optional later:** route LettaBot → **Den** → Letta so messaging channels share Den’s identity and policy with web—see [Den as LettaBot proxy (optional)](#den-as-lettabot--letta-proxy-optional-value-add-not-a-v1-feature) below.
 
 4. **Web chat frontends**
-   - **Open WebUI** (and any other web/CLI clients): authenticate users (ideally via Den or a shared SSO); forward chat to **Den** instead of directly to Letta.
-   - **Den + Loquix** (optional first‑party UI): HTML/JS served by Den (static assets or embedded) using **[Loquix](https://github.com/loquix-dev/loquix)** components; the browser calls Den’s **same** `POST /chat/send` (or `/v1/chat/send`) streaming API and `GET /agents` / bear list—**no separate inference path**; LiteLLM remains Letta → LiteLLM only.
+   - **Den + Loquix** (**primary first‑party UI**): HTML/JS served by Den using **[Loquix](https://github.com/loquix-dev/loquix)** components; the browser calls Den’s **`POST /v1/chat/send`** streaming API and `GET /agents` or bear list—**no separate inference path**; LiteLLM remains Letta → LiteLLM only.
+   - **Open WebUI** (optional): authenticate users (ideally via Den or a shared SSO); forward chat to **Den** instead of directly to Letta when you choose to deploy it.
 
 5. **LiteLLM**
    - **Letta’s** model gateway (Letta → LiteLLM → providers). Den does not proxy this traffic.
@@ -84,7 +84,7 @@ Routing **LettaBot** through **Den** (instead of LettaBot → Letta direct) is a
 | **Provisioning** | Den remains the source of truth for bears; lazy onboarding (e.g. first DM) without hand-editing `lettabot.yaml` for every user change. |
 | **Audit** | One place to log who used which **bear** on which channel. |
 
-**v1 scope:** Den’s first shipped role is **Open WebUI (web) → Den → Letta**, plus **bear registry**, **bear provisioning** (Letta agent create/update), **surfacing bears** in Open WebUI and LettaBot config, **users↔bears** membership, auth, Cabinet API (as phases land), and LiteLLM observability reads. **LettaBot chat traffic remains direct-to-Letta** until you explicitly route it through Den; Den still **owns** which bears exist and how they appear in LettaBot/Open WebUI.
+**v1 scope:** Den’s first shipped **web chat** path is **Loquix (on Den) → Den → Letta**, plus **bear registry**, **bear provisioning** (Letta agent create/update), **surfacing bears** in LettaBot config and optionally in Open WebUI when enabled, **users↔bears** membership, auth, Cabinet API (as phases land), and LiteLLM observability reads. **Open WebUI → Den → Letta** is **optional**. **LettaBot chat traffic remains direct-to-Letta** until you explicitly route it through Den; Den still **owns** which bears exist and how they appear in LettaBot (and Open WebUI if used).
 
 ---
 
@@ -96,7 +96,7 @@ Not exact APIs, but what each interface *does*.
 
 **Purpose:** send authenticated user messages to the right **bear** (Letta agent), get responses back.
 
-**Clients:** **Open WebUI** (pipe/adapter), a **Den-hosted Loquix** chat page, or other HTTP clients—all use the same authenticated endpoints and streaming semantics where applicable.
+**Clients:** **Den-hosted Loquix** (primary web UI), **optional Open WebUI** (pipe/adapter), or other HTTP clients—all use the same authenticated endpoints and streaming semantics where applicable.
 
 **Capabilities:**
 
@@ -120,7 +120,7 @@ Not exact APIs, but what each interface *does*.
 
 - `GET /agents/list` (or `/bears/list`)
   - Input: `{ user_token }`
-  - Output: **bears** the user is allowed to see/use (for Open WebUI agent picker).
+  - Output: **bears** the user is allowed to see/use (Loquix bear picker; optional Open WebUI agent picker).
 
 Later, you can add:
 
@@ -230,14 +230,14 @@ Deliverables:
 
 **Implementation plan:** [PHASE1_BOOTSTRAP.md](PHASE1_BOOTSTRAP.md) — Den (Rust) lives in repo-root **`den/`**; **Trestle** is only an ephemeral bootstrap codename for M0 (not a repo path).
 
-**Goal:** Move **web chat** from “Open WebUI → Letta” to “Open WebUI → **Den** → Letta”, with identity and policy in Den. **LettaBot → Den → Letta is out of scope for this release** (see [optional LettaBot proxy](#den-as-lettabot--letta-proxy-optional-value-add-not-a-v1-feature)).
+**Goal:** Move **web chat** from clients talking **directly to Letta** to **browser → Den → Letta**, with identity and policy in Den. The **default browser client** is **Den-hosted Loquix**; **Open WebUI** is an **optional** addition. **LettaBot → Den → Letta is out of scope for this release** (see [optional LettaBot proxy](#den-as-lettabot--letta-proxy-optional-value-add-not-a-v1-feature)).
 
-**Delivery priority:** Ship a **Den-hosted operator console** (browser) **early** so the **first user-testable moment** is “operator provisions users, auth, and bears (Letta + LettaBot yaml) without API gymnastics.” Open WebUI / Loquix chat follow as soon as that control plane is usable — see [PHASE1_BOOTSTRAP.md](PHASE1_BOOTSTRAP.md) milestones **M4b**, **M5**.
+**Delivery priority:** Ship a **Den-hosted operator console** (browser) **early** so the **first user-testable moment** is “operator provisions users, auth, and bears (Letta + LettaBot yaml) without API gymnastics.” **Loquix** end-user chat follows as soon as the chat API (**M5**) is stable — **before** optional Open WebUI — see [PHASE1_BOOTSTRAP.md](PHASE1_BOOTSTRAP.md) milestones **M4b**, **M5**, **M6**.
 
 **Capabilities to implement:**
 
 1. **Identity and user mapping** (v1: **web-first**)
-   - Minimal user model: `user_id` + **`webui_account_id → user_id`** (or equivalent for Open WebUI).
+   - Minimal user model: `user_id` + **`webui_account_id → user_id`** when **optional Open WebUI** maps external ids.
    - **Slack/WhatsApp mappings** in Den are for when (if) you add the optional LettaBot→Den path—not required for v1.
    - Simple auth for web: shared secret, basic login, or OAuth.
 
@@ -247,7 +247,7 @@ Deliverables:
      - **Membership:** which `user_id`s may use which `bear_id` (and optional roles). A user has many bears; a bear can have many users.
    - **Den’s** job:
      - **Provision** bears in Letta (create/update agents) when admins or workflows add or change a bear.
-     - **Publish** bear lists to Open WebUI and regenerate **LettaBot** config snippets / `lettabot.yaml` as needed so each channel exposes the right bears.
+     - **Publish** bear lists to **Loquix** (via Den APIs), **optional Open WebUI**, and regenerate **LettaBot** config snippets / `lettabot.yaml` as needed so each channel exposes the right bears.
      - Validate `agent_id` / bear id on every request; deny if the user is not a member.
 
 3. **Chat proxy API** (on Den)
@@ -260,8 +260,8 @@ Deliverables:
 
 4. **Web UIs → Den** (v1 release targets)
    - **Operator console (priority):** Den serves a browser UI for **user** accounts, **operator auth**, **bear** CRUD and **Letta provision**, **membership**, and **LettaBot** `lettabot.yaml` preview/download (see [PHASE1_BOOTSTRAP.md](PHASE1_BOOTSTRAP.md)).
-   - **Open WebUI:** configure to talk to Den (`/chat/send` or adapter): auth, **bear** picker (only member bears), streaming.
-   - **Den native chat (Loquix):** optional **end-user** chat page (e.g. `/app` or `/chat`) using Loquix — **after** the operator console and chat API are stable ([Loquix repo](https://github.com/loquix-dev/loquix)).
+   - **Den native chat (Loquix):** **primary end-user** chat page (e.g. `/app` or `/chat`) — **after** the operator console and chat API are stable ([Loquix repo](https://github.com/loquix-dev/loquix)); same-origin with Den by default.
+   - **Open WebUI (optional):** configure to talk to Den (`/v1/chat/send` or adapter): auth, **bear** picker (only member bears), streaming — ship when a deployment needs it (**M6b** in bootstrap plan).
    - **LettaBot:** keep **direct to Letta** for v1 chat; Den still **updates LettaBot config** so Slack/WhatsApp show the correct bears per allowlists; optional Den proxy for chat later (see optional proxy section above).
 
 5. **LiteLLM observability** (Den reads, does not proxy)
@@ -271,7 +271,7 @@ Deliverables:
 **Phase 1 success (v1):**
 
 - **Operator console:** provision users, bears (Letta agents), membership, and LettaBot yaml from the browser.
-- Web users chat **via Den** → Letta (**Open WebUI** and/or **Den’s Loquix page**); Den resolves `user_id`, enforces **bear** membership, streams replies.
+- Web users chat **via Den** → Letta (**Den’s Loquix page** as the reference path; **Open WebUI optional**); Den resolves `user_id`, enforces **bear** membership, streams replies.
 - **Slack/WhatsApp** may still use LettaBot → Letta direct for **messages**; Den still drives **which bears** exist and appear in bot config. No requirement that chat hits Den until you adopt the optional proxy.
 - Bear registry, **users↔bears** membership, and basic RBAC for **web** users.
 - No Cabinet/Outline yet: **Letta native memory** only; shared knowledge in later phases.
@@ -398,10 +398,10 @@ This is the “make it livable and reliable” phase.
 We’re aiming for:
 
 - **Den** as the **BEARS control plane and gateway**:
-  - Maps external identities → internal users; **provisions bears** in Letta; **bear registry** and **users↔bears** membership; **surfaces bears** in Open WebUI and LettaBot config; chat routing to **Letta** (Letta → **LiteLLM** direct for models).
+  - Maps external identities → internal users; **provisions bears** in Letta; **bear registry** and **users↔bears** membership; **surfaces bears** in **Loquix**, **optional Open WebUI**, and LettaBot config; chat routing to **Letta** (Letta → **LiteLLM** direct for models).
   - Auth and tool/model policies; per‑user and per‑bear **Cabinet** permissions when Cabinet ships; **Cabinet API** backed by Outline.
   - **LiteLLM:** Den uses it **only for observability** (not as a proxy for model traffic).
-  - **v1:** Open WebUI → Den → Letta; **optional** Den-hosted **Loquix** UI → same Den APIs → Letta. **LettaBot** may stay **direct-to-Letta** for chat while Den still **owns bear provisioning and bot/UI exposure**. **LettaBot → Den** for messages is an optional later value-add (see § Den as LettaBot proxy). Cabinet/Outline auth aligned with human auth when Cabinet ships.
+  - **v1:** **Loquix (on Den)** → Den → Letta as the **default web chat** path; **Open WebUI** → Den → Letta **optional** when deployed. **LettaBot** may stay **direct-to-Letta** for chat while Den still **owns bear provisioning and bot/UI exposure**. **LettaBot → Den** for messages is an optional later value-add (see § Den as LettaBot proxy). Cabinet/Outline auth aligned with human auth when Cabinet ships.
 
 - **Phased delivery**:
   - **MVP (Phase 1):** Den for **web**; bear lifecycle + membership; LettaBot may stay direct-to-Letta for **traffic**; no Cabinet yet.
