@@ -176,9 +176,7 @@ async fn register_view(
         }
     }
 
-    web::render_template(
-        state.template_env,
-        "account/register.html",
+    web::render_template(&state, "account/register.html",
         auth_session,
         template_context,
     )
@@ -200,9 +198,7 @@ pub async fn register_action(
 
     if let Err(form_validation_errors) = form.validate_with_args(&validate_context) {
         // TODO: abstract to share with add_user_view?
-        web::render_template(
-            state.template_env,
-            "account/register.html",
+        web::render_template(&state, "account/register.html",
             auth_session,
             context! {
                 pattern_invite => "^[a-zA-Z0-9_-]{8,128}$",
@@ -241,9 +237,7 @@ pub async fn register_action(
             )
             .await?;
 
-            Ok(web::render_template(
-                state.template_env,
-                "settings/email/verify_sent.html",
+            Ok(web::render_template(&state, "settings/email/verify_sent.html",
                 auth_session,
                 context! {
                 email_sent_to => email_sent_to
@@ -258,9 +252,7 @@ pub async fn register_action(
                 ValidationError::new("This key isn't valid or has already been used"),
             );
             // again, this could be abstracted?
-            web::render_template(
-                state.template_env,
-                "account/register.html",
+            web::render_template(&state, "account/register.html",
                 auth_session,
                 context! {
                     pattern_invite => "^[a-zA-Z0-9_-]{8,128}$",
@@ -293,9 +285,7 @@ async fn view_account(
         })
         .collect();
 
-    web::render_template(
-        state.template_env,
-        "account/view.html",
+    web::render_template(&state, "account/view.html",
         auth_session,
         context! {
             user => user,
@@ -318,7 +308,7 @@ async fn view_account(
 
 //     let user_form: AccountForm = user.into();
 
-//     web::render_template(state.template_env, "account/edit.html", auth_session, context! {
+//     web::render_template(&state, "account/edit.html", auth_session, context! {
 //         user => user_form,
 //     }).await
 // }
@@ -364,9 +354,7 @@ pub async fn change_password_view(
         .await?
         .ok_or(CustomError::NotFound("User not found".to_string()))?;
 
-    web::render_template(
-        state.template_env,
-        "account/password.html",
+    web::render_template(&state, "account/password.html",
         auth_session,
         context! {
             target => context!{ username },
@@ -387,9 +375,7 @@ pub async fn change_password_action(
             .await?
             .ok_or(CustomError::NotFound("User not found".to_string()))?;
 
-        Ok(web::render_template(
-            state.template_env,
-            "account/password.html",
+        Ok(web::render_template(&state, "account/password.html",
             auth_session,
             context! {
                 form => context! {

@@ -7,7 +7,7 @@
 use axum::{
     Router,
     extract::{MatchedPath, State},
-    http::{Request, StatusCode},
+    http::{HeaderValue, Request, StatusCode},
     routing::get,
 };
 use axum_login::{
@@ -100,6 +100,7 @@ pub async fn create_api_app(
     // Build the main router with proper authentication layer ordering
     let router = Router::new()
         // Health check endpoint (no authentication required)
+        .route("/health", get(|| async { "OK" }))
         .route("/healthcheck", get(|| async { "API OK" }))
         .route("/health/ready", get(api_readiness))
         // API v1.0 endpoints with Bearer token authentication (no session auth layer needed)
@@ -109,13 +110,13 @@ pub async fn create_api_app(
         // Set main API state BEFORE adding middleware layers
         .with_state(api_state)
         // Add CORS middleware for cross-origin API requests
-        .layer(create_api_cors_layer())
+        .layer(create_api_cors_layer(config.as_ref()))
         // Add request tracing
         .layer(create_tracing_layer())
         // OAuth endpoints with their own state and authentication layer
         .nest(
             "/oauth",
-            create_oauth_router()
+            create_oauth_router(config.as_ref())
                 .with_state(oauth_state)
                 .layer(auth_layer),
         );
@@ -197,15 +198,22 @@ fn create_auth_layer(
 ///
 /// # Returns
 /// Configured CORS layer
-fn create_api_cors_layer() -> CorsLayer {
+fn create_api_cors_layer(config: &Config) -> CorsLayer {
     #[cfg(feature = "production")]
     {
+        let origins: Vec<HeaderValue> = config
+            .cors_allowed_origins()
+            .into_iter()
+            .filter_map(|o| HeaderValue::from_str(&o).ok())
+            .collect();
+        if origins.is_empty() {
+            tracing::error!(
+                "CORS: no allowed origins from WEB_SERVER_URL / API_SERVER_URL; check configuration."
+            );
+        }
         CorsLayer::new()
-            // Restrict allowed origins to production domains
-            .allow_origin([
-                axum::http::HeaderValue::from_static("https://newapp.example"),
-                axum::http::HeaderValue::from_static("https://api.newapp.example"),
-            ])
+            // Restrict allowed origins to configured public web + API URLs
+            .allow_origin(origins)
             // Allow standard API headers
             .allow_headers([
                 axum::http::header::AUTHORIZATION,
@@ -227,14 +235,22 @@ fn create_api_cors_layer() -> CorsLayer {
     }
     #[cfg(not(feature = "production"))]
     {
+        let mut dev_origins: Vec<HeaderValue> = vec![
+            HeaderValue::from_static("http://localhost:3000"),
+            HeaderValue::from_static("http://localhost:8080"),
+            HeaderValue::from_static("http://127.0.0.1:3000"),
+            HeaderValue::from_static("http://127.0.0.1:8080"),
+        ];
+        for o in config.cors_allowed_origins() {
+            if let Ok(h) = HeaderValue::from_str(&o) {
+                if !dev_origins.contains(&h) {
+                    dev_origins.push(h);
+                }
+            }
+        }
         CorsLayer::new()
-            // Allow specific development origins for PKCE and OAuth flows
-            .allow_origin([
-                axum::http::HeaderValue::from_static("http://localhost:3000"),
-                axum::http::HeaderValue::from_static("http://localhost:8080"),
-                axum::http::HeaderValue::from_static("http://127.0.0.1:3000"),
-                axum::http::HeaderValue::from_static("http://127.0.0.1:8080"),
-            ])
+            // Typical localhost ports plus any `WEB_SERVER_URL` / `API_SERVER_URL` origins
+            .allow_origin(dev_origins)
             // Allow standard API headers
             .allow_headers([
                 axum::http::header::AUTHORIZATION,
@@ -286,6 +302,7 @@ fn create_tracing_layer() -> TraceLayer<
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::Config;
 
     #[test]
     fn test_api_state_creation() {
@@ -296,7 +313,7 @@ mod tests {
 
     #[test]
     fn test_cors_layer_creation() {
-        let _cors_layer = create_api_cors_layer();
+        let _cors_layer = create_api_cors_layer(&Config::test_stub());
         // Test that CORS layer can be created without panicking
         assert!(true);
     }

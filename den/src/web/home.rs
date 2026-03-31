@@ -30,16 +30,14 @@ async fn home(
             if !u.email_verified.unwrap_or(false) {
                 return Ok(Redirect::to("/settings/email/verify").into_response());
             }
-            web::render_template(
-                state.template_env,
-                "dashboard_empty.html",
+            web::render_template(&state, "dashboard_empty.html",
                 auth_session,
                 context! {},
             )
             .await
         }
         None => {
-            web::render_template(state.template_env, "home.html", auth_session, context! {}).await
+            web::render_template(&state, "home.html", auth_session, context! {}).await
         }
     }
 }

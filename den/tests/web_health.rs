@@ -4,7 +4,7 @@ use axum::{
     http::{Request, StatusCode},
 };
 use http_body_util::BodyExt;
-use newapp::{api, config::Config, web};
+use den::{api, config::Config, web};
 use sqlx::postgres::PgPoolOptions;
 use std::sync::Arc;
 use tower::ServiceExt;
@@ -49,6 +49,23 @@ async fn api_app() -> axum::Router {
 }
 
 #[tokio::test]
+async fn web_health_returns_ok() {
+    let app = web_app().await;
+    let res = app
+        .oneshot(
+            Request::builder()
+                .uri("/health")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let body = res.into_body().collect().await.unwrap().to_bytes();
+    assert_eq!(body.as_ref(), b"OK");
+}
+
+#[tokio::test]
 async fn web_healthcheck_returns_ok() {
     let app = web_app().await;
     let res = app
@@ -78,6 +95,23 @@ async fn web_readiness_returns_ok_when_db_up() {
         .await
         .unwrap();
     assert_eq!(res.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn api_health_returns_ok() {
+    let app = api_app().await;
+    let res = app
+        .oneshot(
+            Request::builder()
+                .uri("/health")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let body = res.into_body().collect().await.unwrap().to_bytes();
+    assert_eq!(body.as_ref(), b"OK");
 }
 
 #[tokio::test]

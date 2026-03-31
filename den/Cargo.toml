@@ -1,5 +1,5 @@
 [package]
-name = "newapp"
+name = "den"
 version = "0.1.0"
 edition = "2024"
 
@@ -21,7 +21,7 @@ opt-level = 1      # Light optimization for all dependencies
 debug = 0          # No debug symbols for dependencies
 
 # Keep our own code unoptimized for debugging
-[profile.dev.package.newapp]
+[profile.dev.package.den]
 opt-level = 0
 debug = 2
 

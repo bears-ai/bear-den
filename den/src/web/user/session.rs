@@ -75,9 +75,7 @@ pub async fn login_password_action(
     let next = form.next.clone();
 
     if let Err(form_validation_errors) = form.validate() {
-        return web::render_template(
-            state.template_env,
-            "login.html",
+        return web::render_template(&state, "login.html",
             auth_session,
             context! {
                 next => next.unwrap_or_default(),
@@ -92,9 +90,7 @@ pub async fn login_password_action(
     let user = match auth_session.authenticate(Credentials::from(form)).await {
         Ok(Some(user)) => user,
         _ => {
-            return web::render_template(
-                state.template_env,
-                "login.html",
+            return web::render_template(&state, "login.html",
                 auth_session,
                 context! {
                     next => next.unwrap_or_default(),
@@ -109,9 +105,7 @@ pub async fn login_password_action(
 
     if auth_session.login(&user).await.is_err() {
         tracing::error!("Error logging in valid user: {:?}", user);
-        return web::render_template(
-            state.template_env,
-            "login.html",
+        return web::render_template(&state, "login.html",
             auth_session,
             context! {
                 next => next.unwrap_or_default(),
@@ -143,9 +137,7 @@ async fn login_form(
     }
 
     // User not authenticated, show login form
-    web::render_template(
-        state.template_env,
-        "login.html",
+    web::render_template(&state, "login.html",
         auth_session,
         context! {
             next => next.unwrap_or_default()

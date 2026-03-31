@@ -6,9 +6,6 @@ use sqlx::{PgPool, query, query_as};
 
 use crate::{config::Config, errors::CustomError};
 
-static MAIL_FROM_NAME: &str = "Application";
-static MAIL_FROM_ADDRESS: &str = "noreply@newapp.example";
-
 pub struct EmailConfig {
     pub user_id: i32,
     pub email_config_id: i32,
@@ -132,7 +129,10 @@ pub async fn send_email_template(
         html,
         ..Default::default()
     };
-    let sender = EmailAddress::name_address(MAIL_FROM_NAME, MAIL_FROM_ADDRESS);
+    let sender = EmailAddress::name_address(
+        app_config.app_display_name.as_str(),
+        app_config.mail_from_address.as_str(),
+    );
 
     match mailgun_client()
         .async_send(MailgunRegion::EU, &sender, message, attachments)

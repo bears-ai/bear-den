@@ -190,9 +190,7 @@ async fn oauth_clients_list(
 ) -> Result<Response, CustomError> {
     let clients = oauth_db::list_oauth_clients(&state.sqlx_pool).await?;
 
-    web::render_template(
-        state.template_env,
-        "admin/oauth_clients/list.html",
+    web::render_template(&state, "admin/oauth_clients/list.html",
         auth_session,
         context! {
             clients
@@ -210,9 +208,7 @@ async fn add_oauth_client_view(
         .map(|s| s.as_str().to_string())
         .collect();
 
-    web::render_template(
-        state.template_env,
-        "admin/oauth_clients/add.html",
+    web::render_template(&state, "admin/oauth_clients/add.html",
         auth_session,
         context! {
             available_scopes
@@ -357,9 +353,7 @@ pub async fn add_oauth_client_action(
             })
             .unwrap_or_default();
 
-        web::render_template(
-            state.template_env,
-            "admin/oauth_clients/add.html",
+        web::render_template(&state, "admin/oauth_clients/add.html",
             auth_session,
             context! {
                 errors => validation_errors,
@@ -409,9 +403,7 @@ async fn view_oauth_client(
     let show_regenerated = params.regenerated.as_deref() == Some("true");
     let client_secret = params.client_secret;
 
-    web::render_template(
-        state.template_env,
-        "admin/oauth_clients/view.html",
+    web::render_template(&state, "admin/oauth_clients/view.html",
         auth_session,
         context! {
             client,
@@ -440,9 +432,7 @@ async fn edit_oauth_client_view(
         .map(|s| s.as_str().to_string())
         .collect();
 
-    web::render_template(
-        state.template_env,
-        "admin/oauth_clients/edit.html",
+    web::render_template(&state, "admin/oauth_clients/edit.html",
         auth_session,
         context! {
             id,
@@ -541,9 +531,7 @@ pub async fn edit_oauth_client_action(
             })
             .unwrap_or_default();
 
-        web::render_template(
-            state.template_env,
-            "admin/oauth_clients/edit.html",
+        web::render_template(&state, "admin/oauth_clients/edit.html",
             auth_session,
             context! {
                 id,
@@ -572,9 +560,7 @@ async fn pkce_test_view(
     let sample_verifier = generate_pkce_code_verifier();
     let sample_challenge = generate_pkce_code_challenge(&sample_verifier);
 
-    web::render_template(
-        state.template_env,
-        "admin/oauth_clients/pkce_test.html",
+    web::render_template(&state, "admin/oauth_clients/pkce_test.html",
         auth_session,
         context! {
             client_id,
@@ -643,9 +629,7 @@ pub async fn pkce_test_action(
             },
         };
 
-        web::render_template(
-            state.template_env,
-            "admin/oauth_clients/pkce_test.html",
+        web::render_template(&state, "admin/oauth_clients/pkce_test.html",
             auth_session,
             context! {
                 client_id,
@@ -710,9 +694,7 @@ pub async fn pkce_test_action(
             })
             .unwrap_or_default();
 
-        web::render_template(
-            state.template_env,
-            "admin/oauth_clients/pkce_test.html",
+        web::render_template(&state, "admin/oauth_clients/pkce_test.html",
             auth_session,
             context! {
                 client_id,
@@ -791,9 +773,7 @@ async fn oauth_tokens_list(
 ) -> Result<Response, CustomError> {
     let tokens = oauth_db::list_all_access_tokens_with_context(&state.sqlx_pool).await?;
 
-    web::render_template(
-        state.template_env,
-        "admin/oauth_tokens/list.html",
+    web::render_template(&state, "admin/oauth_tokens/list.html",
         auth_session,
         context! {
             tokens
@@ -837,9 +817,7 @@ async fn view_oauth_token(
         .await?
         .ok_or_else(|| CustomError::NotFound("OAuth token not found".to_string()))?;
 
-    web::render_template(
-        state.template_env,
-        "admin/oauth_tokens/view.html",
+    web::render_template(&state, "admin/oauth_tokens/view.html",
         auth_session,
         context! {
             token
@@ -883,9 +861,7 @@ async fn generate_token_view(
         .map(|s| s.as_str().to_string())
         .collect();
 
-    web::render_template(
-        state.template_env,
-        "admin/oauth_tokens/generate.html",
+    web::render_template(&state, "admin/oauth_tokens/generate.html",
         auth_session,
         context! {
             clients,
@@ -981,9 +957,7 @@ pub async fn generate_token_action(
             .await?
             .ok_or_else(|| CustomError::System("Failed to retrieve generated token".to_string()))?;
 
-        web::render_template(
-            state.template_env,
-            "admin/oauth_tokens/generate.html",
+        web::render_template(&state, "admin/oauth_tokens/generate.html",
             auth_session,
             context! {
                 clients => oauth_db::list_oauth_clients(&state.sqlx_pool).await?,
@@ -1065,9 +1039,7 @@ pub async fn generate_token_action(
             })
             .unwrap_or_default();
 
-        web::render_template(
-            state.template_env,
-            "admin/oauth_tokens/generate.html",
+        web::render_template(&state, "admin/oauth_tokens/generate.html",
             auth_session,
             context! {
                 clients => oauth_db::list_oauth_clients(&state.sqlx_pool).await?,

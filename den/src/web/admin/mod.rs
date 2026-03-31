@@ -24,9 +24,7 @@ async fn admin_home(
 ) -> Result<Response, CustomError> {
     let users = user::db::get_users(&state.sqlx_pool).await?;
 
-    web::render_template(
-        state.template_env,
-        "admin/menu.html",
+    web::render_template(&state, "admin/menu.html",
         auth_session,
         context! {
             users => users,

@@ -38,9 +38,9 @@ pub async fn run() -> Result<(), Error> {
     let tracing_filter: String;
     #[cfg(feature = "production")]
     {
-        tracing_filter = "newapp=info,\
-            newapp::web=info,\
-            newapp::api=info,\
+        tracing_filter = "den=info,\
+            den::web=info,\
+            den::api=info,\
             tower_sessions=info,\
             tower_http=info,\
             axum=info,\
@@ -49,10 +49,10 @@ pub async fn run() -> Result<(), Error> {
     }
     #[cfg(not(feature = "production"))]
     {
-        tracing_filter = "newapp=info,\
-            newapp::core=debug,\
-            newapp::web=debug,\
-            newapp::api=debug,\
+        tracing_filter = "den=info,\
+            den::core=debug,\
+            den::web=debug,\
+            den::api=debug,\
             tower_sessions=info,\
             tower_http=info,\
             axum=info,\
@@ -70,6 +70,13 @@ pub async fn run() -> Result<(), Error> {
 
     let config = Arc::new(Config::load());
     email::init_mailgun(config.as_ref());
+    tracing::info!(
+        app = %config.app_display_name,
+        slug = %config.app_slug,
+        web_url = %config.web_server_url,
+        api_url = %config.api_server_url,
+        "Loaded configuration",
+    );
 
     let mut services = Vec::new();
     if config.run_web {
@@ -88,7 +95,7 @@ pub async fn run() -> Result<(), Error> {
         tracing::warn!("No services enabled! Set RUN_WEB, RUN_API, or RUN_WORKERS to true.");
     } else {
         tracing::info!(
-            "Starting application (`newapp`) with services: {}",
+            "Starting application (`den`) with services: {}",
             services.join(", ")
         );
     }

@@ -65,9 +65,7 @@ async fn edit_email_view(
     let user_email_settings = email_settings::settings_by_id(&sqlx_pool, user_id).await?;
     let email_form: EmailForm = user_email_settings.into();
 
-    web::render_template(
-        state.template_env.clone(),
-        "settings/email/edit.html",
+    web::render_template(&state, "settings/email/edit.html",
         auth_session,
         context! {
             form => email_form,
@@ -85,9 +83,7 @@ pub async fn edit_email_action(
     let sqlx_pool = state.sqlx_pool.clone();
 
     if let Err(form_validation_errors) = email_form.validate() {
-        return Ok(web::render_template(
-            state.template_env.clone(),
-            "settings/email/edit.html",
+        return Ok(web::render_template(&state, "settings/email/edit.html",
             auth_session,
             context! {
 
@@ -130,9 +126,7 @@ async fn verify_email_view(
         };
         session.insert(VERIFY_TOKEN, token.clone()).await?;
 
-        web::render_template(
-            state.template_env.clone(),
-            "settings/email/verify.html",
+        web::render_template(&state, "settings/email/verify.html",
             auth_session,
             context! {
                 email_address => user_email_settings.email,
@@ -171,9 +165,7 @@ async fn verify_email_action(
         email_settings::send_verify_email_for_user_id(&sqlx_pool, user_id, &state.config).await?;
     session.remove::<String>(VERIFY_TOKEN).await?;
 
-    Ok(web::render_template(
-        state.template_env.clone(),
-        "settings/email/verify_sent.html",
+    Ok(web::render_template(&state, "settings/email/verify_sent.html",
         auth_session,
         context! {
             email_sent_to => email_sent_to
@@ -202,9 +194,7 @@ async fn verify_email_process(
 
     tracing::debug!("Verification result: {}", message_key);
 
-    Ok(web::render_template(
-        state.template_env.clone(),
-        "settings/email/verify_result.html",
+    Ok(web::render_template(&state, "settings/email/verify_result.html",
         auth_session,
         context! {
             verify_message_key => message_key,

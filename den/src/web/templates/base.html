@@ -24,10 +24,10 @@
                 name="viewport"
                 content="width=device-width, initial-scale=1"
             />
-            <link rel="manifest" href="/assets/manifest.json" />
+            <link rel="manifest" href="/manifest.json" />
             <meta name="mobile-web-app-capable" content="yes" />
-            <meta name="application-name" content="Web app" />
-            <meta name="apple-mobile-web-app-title" content="Web app" />
+            <meta name="application-name" content="{{ app_display_name }}" />
+            <meta name="apple-mobile-web-app-title" content="{{ app_display_name }}" />
             <link
                 rel="apple-touch-icon"
                 sizes="96x96"
@@ -39,7 +39,7 @@
         <body class="{{ template_tag }}">
             <header>
                 <a href="/" class="logo">
-                    <span class="logo-wordmark">App</span>
+                    <span class="logo-wordmark">{{ app_display_name }}</span>
                 </a>
                 <nav>
                     <ul class="menu">

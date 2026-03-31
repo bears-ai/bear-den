@@ -1,10 +1,10 @@
-//! Binary entrypoint. Application logic lives in the `newapp` library crate ([`newapp::run`]).
+//! Binary entrypoint. Application logic lives in the `den` library crate ([`den::run`]).
 use std::io::Error;
 
-/// Main entry point (starter template; default package name `newapp`).
+/// Den control-plane binary (BEARS Phase 1).
 ///
-/// Enable services with `RUN_WEB`, `RUN_API`, `RUN_WORKERS` (see `README.md` and [`newapp::config::Config`]).
+/// Enable services with `RUN_WEB`, `RUN_API`, `RUN_WORKERS` (see `README.md` and [`den::config::Config`]).
 #[tokio::main]
 async fn main() -> Result<(), Error> {
-    newapp::run().await
+    den::run().await
 }

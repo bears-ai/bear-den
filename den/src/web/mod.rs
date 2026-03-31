@@ -14,7 +14,7 @@ use crate::{auth_backend::Backend, config::Config};
 use axum::{
     Router,
     extract::{MatchedPath, State},
-    http::{Request, StatusCode},
+    http::{header, Request, StatusCode},
     response::{Html, IntoResponse, Response},
     routing::get,
 };
@@ -77,6 +77,26 @@ impl AppState {
     pub fn sqlx_pool(&self) -> &PgPool {
         &self.sqlx_pool
     }
+}
+
+async fn web_manifest(State(state): State<AppState>) -> impl IntoResponse {
+    let body = serde_json::json!({
+        "lang": "en",
+        "id": state.config.app_slug,
+        "name": state.config.app_display_name,
+        "short_name": state.config.app_slug,
+        "icons": [{
+            "src": "/assets/icons/jaunty.png",
+            "sizes": "96x96",
+            "type": "image/png"
+        }],
+        "start_url": "/",
+        "display": "fullscreen",
+        "theme_color": "black",
+        "background_color": "white"
+    })
+    .to_string();
+    ([(header::CONTENT_TYPE, "application/manifest+json")], body)
 }
 
 async fn web_readiness(State(state): State<AppState>) -> Result<&'static str, StatusCode> {
@@ -183,6 +203,8 @@ pub async fn server(
                 )
             }),
         )
+        .route("/manifest.json", get(web_manifest))
+        .route("/health", get(|| async { "OK" }))
         .route("/healthcheck", get(|| async { "OK" }))
         .route("/health/ready", get(web_readiness))
         .with_state(state);
@@ -192,11 +214,18 @@ pub async fn server(
 
 #[allow(deprecated)] // minijinja: eval_to_state; migrate to render_captured when upgrading templates
 pub async fn render_template(
-    template_env: Environment<'static>,
+    state: &AppState,
     template_id: &str,
     auth_session: AuthSession<Backend>,
     ctx: minijinja::Value,
 ) -> Result<Response, CustomError> {
+    let ctx = minijinja::context! {
+        app_display_name => state.config.app_display_name.clone(),
+        app_slug => state.config.app_slug.clone(),
+        public_web_origin => state.config.web_public_origin(),
+        ..ctx
+    };
+    let template_env = state.template_env.clone();
     if let Some((template_tag, _)) = template_id.replace("/", "-").clone().split_once('.') {
         let merged_ctx = match auth_session.user {
             Some(user) => minijinja::context! {

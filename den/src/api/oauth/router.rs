@@ -7,9 +7,12 @@
 
 use axum::{
     Router,
+    http::HeaderValue,
     routing::{get, post},
 };
 use tower_http::cors::CorsLayer;
+
+use crate::config::Config;
 
 use super::endpoints::{OAuthState, authorize_get, authorize_post, token_post, userinfo_get};
 
@@ -31,7 +34,7 @@ use super::endpoints::{OAuthState, authorize_get, authorize_post, token_post, us
 /// - Token endpoint validates client credentials and authorization codes
 /// - User info endpoint validates Bearer tokens
 /// - CORS is configured to allow cross-origin OAuth flows
-pub fn create_oauth_router() -> Router<OAuthState> {
+pub fn create_oauth_router(config: &Config) -> Router<OAuthState> {
     Router::new()
         // Authorization endpoint - handles OAuth authorization flow initiation
         .route("/authorize", get(authorize_get).post(authorize_post))
@@ -40,7 +43,7 @@ pub fn create_oauth_router() -> Router<OAuthState> {
         // User info endpoint - returns user information for valid tokens
         .route("/userinfo", get(userinfo_get))
         // Add CORS middleware for cross-origin OAuth requests
-        .layer(create_oauth_cors_layer())
+        .layer(create_oauth_cors_layer(config))
 }
 
 /// Create CORS layer for OAuth endpoints
@@ -57,39 +60,78 @@ pub fn create_oauth_router() -> Router<OAuthState> {
 ///
 /// # Returns
 /// A configured CORS layer for OAuth endpoints
-fn create_oauth_cors_layer() -> CorsLayer {
-    CorsLayer::new()
-        // Restrict allowed origins to production domains
-        .allow_origin([
-            axum::http::HeaderValue::from_static("https://newapp.example"),
-            axum::http::HeaderValue::from_static("https://api.newapp.example"),
-        ])
-        // Allow standard OAuth headers
-        .allow_headers([
-            axum::http::header::AUTHORIZATION,
-            axum::http::header::CONTENT_TYPE,
-            axum::http::header::ACCEPT,
-        ])
-        // Explicitly list allowed HTTP methods to comply with CORS spec
-        .allow_methods([
-            axum::http::Method::GET,
-            axum::http::Method::POST,
-            axum::http::Method::PUT,
-            axum::http::Method::DELETE,
-            axum::http::Method::OPTIONS,
-            axum::http::Method::PATCH,
-        ])
-        // Include credentials for session-based authentication
-        .allow_credentials(true)
+fn create_oauth_cors_layer(config: &Config) -> CorsLayer {
+    #[cfg(feature = "production")]
+    {
+        let origins: Vec<HeaderValue> = config
+            .cors_allowed_origins()
+            .into_iter()
+            .filter_map(|o| HeaderValue::from_str(&o).ok())
+            .collect();
+        if origins.is_empty() {
+            tracing::error!(
+                "OAuth CORS: no allowed origins from WEB_SERVER_URL / API_SERVER_URL."
+            );
+        }
+        CorsLayer::new()
+            .allow_origin(origins)
+            .allow_headers([
+                axum::http::header::AUTHORIZATION,
+                axum::http::header::CONTENT_TYPE,
+                axum::http::header::ACCEPT,
+            ])
+            .allow_methods([
+                axum::http::Method::GET,
+                axum::http::Method::POST,
+                axum::http::Method::PUT,
+                axum::http::Method::DELETE,
+                axum::http::Method::OPTIONS,
+                axum::http::Method::PATCH,
+            ])
+            .allow_credentials(true)
+    }
+    #[cfg(not(feature = "production"))]
+    {
+        let mut dev_origins: Vec<HeaderValue> = vec![
+            HeaderValue::from_static("http://localhost:3000"),
+            HeaderValue::from_static("http://localhost:8080"),
+            HeaderValue::from_static("http://127.0.0.1:3000"),
+            HeaderValue::from_static("http://127.0.0.1:8080"),
+        ];
+        for o in config.cors_allowed_origins() {
+            if let Ok(h) = HeaderValue::from_str(&o) {
+                if !dev_origins.contains(&h) {
+                    dev_origins.push(h);
+                }
+            }
+        }
+        CorsLayer::new()
+            .allow_origin(dev_origins)
+            .allow_headers([
+                axum::http::header::AUTHORIZATION,
+                axum::http::header::CONTENT_TYPE,
+                axum::http::header::ACCEPT,
+            ])
+            .allow_methods([
+                axum::http::Method::GET,
+                axum::http::Method::POST,
+                axum::http::Method::PUT,
+                axum::http::Method::DELETE,
+                axum::http::Method::OPTIONS,
+                axum::http::Method::PATCH,
+            ])
+            .allow_credentials(true)
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::Config;
 
     #[tokio::test]
     async fn test_oauth_router_creation() {
-        let _router = create_oauth_router();
+        let _router = create_oauth_router(&Config::test_stub());
 
         // Test that the router can be created without panicking
         assert!(true);
@@ -97,7 +139,7 @@ mod tests {
 
     #[test]
     fn test_cors_layer_creation() {
-        let _cors_layer = create_oauth_cors_layer();
+        let _cors_layer = create_oauth_cors_layer(&Config::test_stub());
 
         // Test that the CORS layer can be created without panicking
         assert!(true);

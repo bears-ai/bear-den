@@ -19,7 +19,7 @@
             {% if invite.new_username %}
                 <span class="key">{{ invite.key }}</span> was used by {{ invite.new_display_name }} ({{ invite.new_username }})
             {% else %}
-                Link for <span class="key">{{ invite.key }}</span> (copy and share): <a href="https://newapp.example/account/register?invite={{ invite.key }}">https://newapp.example/account/register?invite={{ invite.key }}</a>
+                Link for <span class="key">{{ invite.key }}</span> (copy and share): <a href="{{ public_web_origin }}/account/register?invite={{ invite.key }}">{{ public_web_origin }}/account/register?invite={{ invite.key }}</a>
             {% endif %}
         </li>
     {% endfor %}

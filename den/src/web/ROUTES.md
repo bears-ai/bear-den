@@ -4,7 +4,10 @@ Axum routes for the web server (`RUN_WEB=true`). Update this file when you add o
 
 ## Top-level (`src/web/mod.rs`)
 
-- `GET /healthcheck` — liveness
+- `GET /health` — liveness (BEARS Phase 1 M0 canonical path)
+- `GET /healthcheck` — liveness (legacy alias)
+- `GET /health/ready` — readiness (DB ping)
+- `GET /manifest.json` — Web App Manifest (`APP_DISPLAY_NAME`, `APP_SLUG`, icons)
 - `GET /assets/*` — static assets (memory-serve)
 - `GET /*` — fallback 404 (`src/web/public.rs`) for unmatched paths
 

@@ -13,10 +13,10 @@ use time::OffsetDateTime;
 const JWT_ALGORITHM: Algorithm = Algorithm::HS256;
 
 /// JWT issuer claim
-const JWT_ISSUER: &str = "newapp-oauth";
+const JWT_ISSUER: &str = "den-oauth";
 
 /// JWT audience claim
-const JWT_AUDIENCE: &str = "newapp-api";
+const JWT_AUDIENCE: &str = "den-api";
 
 /// JWT claims structure for OAuth access tokens
 ///
@@ -283,7 +283,7 @@ pub fn get_jwt_secret() -> Vec<u8> {
     std::env::var("JWT_SECRET")
         .unwrap_or_else(|_| {
             tracing::warn!("JWT_SECRET not set, using default secret (not secure for production)");
-            "newapp-oauth-jwt-secret-change-in-production".to_string()
+            "den-oauth-jwt-secret-change-in-production".to_string()
         })
         .into_bytes()
 }

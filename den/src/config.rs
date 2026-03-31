@@ -1,9 +1,19 @@
 #![allow(dead_code)]
 
-#[cfg(not(feature = "production"))]
-static URL_PREFIX: &str = "https://redirectmeto.com/http://localhost:3000/";
-#[cfg(feature = "production")]
-static URL_PREFIX: &str = "https://newapp.example/";
+use std::collections::HashSet;
+
+use url::Url;
+
+/// Human-facing product name (browser title, emails, PWA). Override with `APP_DISPLAY_NAME`.
+const DEFAULT_APP_DISPLAY_NAME: &str = "BEARS Den";
+
+/// Machine slug (manifest `id`, short name). Override with `APP_SLUG`.
+const DEFAULT_APP_SLUG: &str = "bears-den";
+
+/// Default public web origin when `WEB_SERVER_URL` is unset in **production** builds.
+/// Forks should set `WEB_SERVER_URL` / `API_SERVER_URL` or change these constants.
+const DEFAULT_PROD_WEB_ORIGIN: &str = "https://bears.artificial.design";
+const DEFAULT_PROD_API_ORIGIN: &str = "https://api.bears.artificial.design";
 
 #[derive(Clone, Debug)]
 pub struct Config {
@@ -13,8 +23,16 @@ pub struct Config {
     pub mailgun_api_key: String,
     pub mailgun_domain: String,
 
+    /// Shown as the sender display name in outbound mail.
+    pub app_display_name: String,
+    /// Local-part@domain for Mailgun From (full address). Override with `MAIL_FROM_ADDRESS`.
+    pub mail_from_address: String,
+
     pub telemetry_url_prefix: String,
     pub email_verify_url_prefix: String,
+
+    /// Short machine id (`manifest.json` id, etc.).
+    pub app_slug: String,
 
     /// Optional cookie `Domain` attribute (production). When unset or empty, cookies are host-only.
     pub session_cookie_domain: Option<String>,
@@ -31,11 +49,38 @@ pub struct Config {
     pub web_port: u16,
     pub api_port: u16,
 
+    /// Public base URL for the **web** service (no trailing slash). Links, redirects, CORS.
     pub web_server_url: String,
+    /// Public base URL for the **API** service (no trailing slash).
     pub api_server_url: String,
 }
 
 impl Config {
+    /// Web origin without trailing slash — use for path suffixes: `{}{path}`.
+    pub fn web_public_origin(&self) -> String {
+        self.web_server_url.trim_end_matches('/').to_string()
+    }
+
+    /// Distinct browser `Origin` values for CORS (scheme + host + port, no path).
+    pub fn cors_allowed_origins(&self) -> Vec<String> {
+        let mut seen = HashSet::new();
+        let mut out = Vec::new();
+        for raw in [&self.web_server_url, &self.api_server_url] {
+            match Url::parse(raw.as_str()) {
+                Ok(u) => {
+                    let origin = u.origin().ascii_serialization();
+                    if origin != "null" && seen.insert(origin.clone()) {
+                        out.push(origin);
+                    }
+                }
+                Err(e) => tracing::warn!(
+                    "Could not parse URL for CORS origin (value={raw:?}): {e}"
+                ),
+            }
+        }
+        out
+    }
+
     /// Load configuration from process environment (and optional `.env` via dotenvy).
     ///
     /// Call once at process startup; thread an [`std::sync::Arc`] through services that need it.
@@ -44,7 +89,9 @@ impl Config {
             tracing::info!("Loaded .env file");
         }
 
-        let email_verify_url_prefix = format!("{URL_PREFIX}settings/email/verify/");
+        let app_display_name = std::env::var("APP_DISPLAY_NAME")
+            .unwrap_or_else(|_| DEFAULT_APP_DISPLAY_NAME.to_string());
+        let app_slug = std::env::var("APP_SLUG").unwrap_or_else(|_| DEFAULT_APP_SLUG.to_string());
 
         fn parse_bool_env(name: &str, default: bool) -> bool {
             std::env::var(name)
@@ -107,29 +154,41 @@ impl Config {
         let web_server_url = std::env::var("WEB_SERVER_URL").unwrap_or_else(|_| {
             #[cfg(feature = "production")]
             {
-                "https://newapp.example".to_string()
+                DEFAULT_PROD_WEB_ORIGIN.to_string()
             }
             #[cfg(not(feature = "production"))]
             {
                 format!("http://localhost:{web_port}")
             }
         });
+        let web_server_url = trim_url_for_storage(web_server_url);
 
         let api_server_url = std::env::var("API_SERVER_URL").unwrap_or_else(|_| {
             #[cfg(feature = "production")]
             {
-                "https://api.newapp.example".to_string()
+                DEFAULT_PROD_API_ORIGIN.to_string()
             }
             #[cfg(not(feature = "production"))]
             {
                 format!("http://localhost:{api_port}")
             }
         });
+        let api_server_url = trim_url_for_storage(api_server_url);
+
+        let public_web_base = format_url_prefix(&web_server_url);
+        let email_verify_url_prefix = format!("{}settings/email/verify/", public_web_base);
+        let telemetry_url_prefix = format!("{}telemetry/", public_web_base);
 
         let session_cookie_domain = std::env::var("SESSION_COOKIE_DOMAIN")
             .ok()
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty());
+
+        let mail_from_address = std::env::var("MAIL_FROM_ADDRESS").unwrap_or_else(|_| {
+            derive_default_mail_from(&web_server_url).unwrap_or_else(|| {
+                "noreply@bears.artificial.design".to_string()
+            })
+        });
 
         Config {
             templates_dir: std::env::var("TEMPLATES_DIR")
@@ -139,8 +198,13 @@ impl Config {
             mailgun_api_key: std::env::var("MAILGUN_API_KEY").unwrap_or_default(),
             mailgun_domain: std::env::var("MAILGUN_DOMAIN").unwrap_or_default(),
 
-            telemetry_url_prefix: format!("{URL_PREFIX}telemetry/"),
+            app_display_name,
+            mail_from_address,
+
+            telemetry_url_prefix,
             email_verify_url_prefix,
+
+            app_slug,
 
             session_cookie_domain,
 
@@ -151,6 +215,51 @@ impl Config {
             api_port,
             web_server_url,
             api_server_url,
+        }
+    }
+}
+
+fn trim_url_for_storage(url: String) -> String {
+    url.trim_end_matches('/').to_string()
+}
+
+/// Ensures a trailing slash for URL-prefix style concatenation.
+fn format_url_prefix(base: &str) -> String {
+    format!("{}/", base.trim_end_matches('/'))
+}
+
+/// If `WEB_SERVER_URL` is a normal `https` host, use `noreply@<host>`.
+fn derive_default_mail_from(web_server_url: &str) -> Option<String> {
+    let u = Url::parse(web_server_url).ok()?;
+    let host = u.host_str()?;
+    if host == "localhost" || host.starts_with('[') {
+        return None;
+    }
+    Some(format!("noreply@{host}"))
+}
+
+#[cfg(test)]
+impl Config {
+    /// Minimal config for unit tests that only need URL / branding fields.
+    pub fn test_stub() -> Self {
+        Self {
+            templates_dir: "x".into(),
+            database_url: "postgres://localhost/den_test".into(),
+            mailgun_api_key: String::new(),
+            mailgun_domain: String::new(),
+            app_display_name: "Test".into(),
+            mail_from_address: "noreply@localhost".into(),
+            telemetry_url_prefix: "http://localhost:3000/telemetry/".into(),
+            email_verify_url_prefix: "http://localhost:3000/settings/email/verify/".into(),
+            app_slug: "test".into(),
+            session_cookie_domain: None,
+            run_web: false,
+            run_api: false,
+            run_workers: false,
+            web_port: 3000,
+            api_port: 3001,
+            web_server_url: "http://localhost:3000".into(),
+            api_server_url: "http://localhost:3001".into(),
         }
     }
 }
