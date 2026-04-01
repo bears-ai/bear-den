@@ -11,7 +11,6 @@
       <th>Slug</th>
       <th>Name</th>
       <th>Letta agent</th>
-      <th>From template</th>
     </tr>
   </thead>
   <tbody>
@@ -20,10 +19,9 @@
       <td><code>{{ b.slug }}</code></td>
       <td>{{ b.name }}</td>
       <td>{% if b.letta_agent_id %}{{ b.letta_agent_id }}{% else %}<em>unset</em>{% endif %}</td>
-      <td>{% if b.source_template_id %}<code>{{ b.source_template_id }}</code>{% else %}—{% endif %}</td>
     </tr>
   {% endfor %}
   </tbody>
 </table>
-<p><a class="action" href="./new">New bear from template</a></p>
+<p><a class="action" href="./new">New bear</a></p>
 {% endblock %}

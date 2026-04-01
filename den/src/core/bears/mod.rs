@@ -4,4 +4,4 @@
 pub mod db;
 pub mod model;
 
-pub use model::{Bear, BearTemplate};
+pub use model::Bear;

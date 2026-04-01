@@ -9,7 +9,7 @@ use axum_extra::extract::Form;
 use axum_extra::routing::RouterExt;
 use minijinja::context;
 use serde::{Deserialize, Serialize};
-use uuid::Uuid;
+use sqlx::types::Json;
 use validator::{Validate, ValidationError, ValidationErrors};
 
 use crate::{
@@ -25,16 +25,20 @@ pub fn router() -> Router<AppState> {
         .route_with_tsr("/bears/new", get(new_view).post(new_action))
 }
 
-#[derive(Validate, Serialize, Deserialize, Debug)]
-pub struct NewBearFromTemplateForm {
-    #[validate(length(min = 1))]
-    template_id: String,
+#[derive(Validate, Serialize, Deserialize, Debug, Default)]
+pub struct NewBearForm {
     #[validate(length(min = 1, max = 120))]
     slug: String,
-    #[validate(length(min = 1, max = 255))]
+    #[validate(length(max = 255))]
     name: String,
     #[validate(length(max = 2000))]
     description: String,
+    #[validate(length(max = 100_000))]
+    system_prompt: String,
+    #[validate(length(max = 255))]
+    default_model: String,
+    /// Raw JSON for optional tools config; empty = none
+    tools_json: String,
 }
 
 async fn list_view(
@@ -55,12 +59,11 @@ async fn new_view(
     State(state): State<AppState>,
     auth_session: AuthSession,
 ) -> Result<Response, CustomError> {
-    let templates = bears_db::list_templates(state.sqlx_pool()).await?;
     web::render_template(
         &state,
         "admin/bears/new.html",
         auth_session,
-        context! { templates },
+        context! { form => NewBearForm::default() },
     )
     .await
 }
@@ -68,28 +71,33 @@ async fn new_view(
 pub async fn new_action(
     State(state): State<AppState>,
     auth_session: AuthSession,
-    Form(form): Form<NewBearFromTemplateForm>,
+    Form(form): Form<NewBearForm>,
 ) -> Result<Response, CustomError> {
     let mut validation_errors = ValidationErrors::new();
     if let Err(e) = form.validate() {
         validation_errors = e;
     }
 
-    let template_id: Option<Uuid> = form.template_id.trim().parse().ok();
-    let tid = if form.template_id.trim().is_empty() {
-        validation_errors.add(
-            "template_id",
-            ValidationError::new("Choose a template."),
-        );
-        None
-    } else if template_id.is_none() {
-        validation_errors.add(
-            "template_id",
-            ValidationError::new("template_id must be a valid UUID"),
-        );
+    let tools_enabled = if form.tools_json.trim().is_empty() {
         None
     } else {
-        template_id
+        match serde_json::from_str::<serde_json::Value>(form.tools_json.trim()) {
+            Ok(v) => Some(Json(v)),
+            Err(_) => {
+                validation_errors.add(
+                    "tools_json",
+                    ValidationError::new("tools_json must be valid JSON or empty"),
+                );
+                None
+            }
+        }
+    };
+
+    let default_model = form.default_model.trim();
+    let default_model_opt = if default_model.is_empty() {
+        None
+    } else {
+        Some(default_model)
     };
 
     if bears_db::bear_slug_exists(state.sqlx_pool(), form.slug.trim()).await? {
@@ -100,18 +108,18 @@ pub async fn new_action(
     }
 
     if validation_errors.is_empty() {
-        let template_id = tid.expect("checked");
-        let _ = bears_db::create_bear_from_template(
+        let _ = bears_db::create_bear(
             state.sqlx_pool(),
-            template_id,
             form.slug.trim(),
             form.name.trim(),
             form.description.trim(),
+            form.system_prompt.trim(),
+            default_model_opt,
+            tools_enabled,
         )
         .await?;
         Ok(Redirect::to("/admin/bears/").into_response())
     } else {
-        let templates = bears_db::list_templates(state.sqlx_pool()).await?;
         web::render_template(
             &state,
             "admin/bears/new.html",
@@ -119,7 +127,6 @@ pub async fn new_action(
             context! {
                 errors => validation_errors,
                 form => form,
-                templates,
             },
         )
         .await

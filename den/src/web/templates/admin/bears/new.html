@@ -5,28 +5,29 @@
 
 {% block admin_content %}
 <div class="box">
-<h3>Create bear from template</h3>
-{% if not templates %}
-<p>No templates yet. <a href="/admin/bear-templates/add">Create a template</a> first.</p>
-{% else %}
+<h3>New bear</h3>
+<p>Define slug, prompt, and optional model/tools. Duplicate an existing bear in the UI later if two configs should match.</p>
 <form method="post">
-  <label for="template_id_select">Template</label>
-  <div class="form-field{% if errors and errors.template_id %} has-error{% endif %}">
-    <select id="template_id_select" name="template_id" required>
-      <option value="">—</option>
-      {% for t in templates %}
-      <option value="{{ t.id }}"{% if form and form.template_id == t.id|string %} selected{% endif %}>{{ t.slug }} — {{ t.name }}</option>
-      {% endfor %}
-    </select>
-    {% if errors and errors.template_id %}
-    <span class="form-hint form-errors">Submission error: {{ errors.template_id | map(attribute="message", default="unknown error") | join(", ") }}</span>
+  {{ forms.input("slug", "Slug", "text", 'required maxlength="120"', form) }}
+  {{ forms.input("name", "Name", "text", 'maxlength="255"', form) }}
+  {{ forms.input("description", "Description", "text", 'maxlength="2000"', form) }}
+  <label for="system_prompt_textarea" {% if errors and errors.system_prompt %}class="has-error"{% endif %}>System prompt</label>
+  <div class="form-field{% if errors and errors.system_prompt %} has-error{% endif %}">
+    <textarea id="system_prompt_textarea" name="system_prompt" rows="12" cols="72">{{ form.system_prompt if form else '' }}</textarea>
+    {% if errors and errors.system_prompt %}
+    <span class="form-hint form-errors">Submission error: {{ errors.system_prompt | map(attribute="message", default="unknown error") | join(", ") }}</span>
     {% endif %}
   </div>
-  {{ forms.input("slug", "Bear slug", "text", 'required maxlength="120"', form) }}
-  {{ forms.input("name", "Display name", "text", 'required maxlength="255"', form) }}
-  {{ forms.input("description", "Description", "text", 'maxlength="2000"', form) }}
+  {{ forms.input("default_model", "Default model (optional)", "text", 'maxlength="255" placeholder="e.g. gpt-4o"', form) }}
+  <label for="tools_json_textarea" {% if errors and errors.tools_json %}class="has-error"{% endif %}>Tools JSON (optional)</label>
+  <div class="form-field{% if errors and errors.tools_json %} has-error{% endif %}">
+    <textarea id="tools_json_textarea" name="tools_json" rows="4" cols="72" placeholder="{}">{{ form.tools_json if form else '' }}</textarea>
+    <span class="form-hint">Leave empty for none. Must be valid JSON.</span>
+    {% if errors and errors.tools_json %}
+    <span class="form-hint form-errors">Submission error: {{ errors.tools_json | map(attribute="message", default="unknown error") | join(", ") }}</span>
+    {% endif %}
+  </div>
   <button type="submit">Create bear</button>
 </form>
-{% endif %}
 </div>
 {% endblock %}

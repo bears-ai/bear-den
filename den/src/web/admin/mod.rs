@@ -1,6 +1,5 @@
 // ROUTES: When modifying routes in this file, update /src/web/ROUTES.md if present.
 pub mod api;
-pub mod bear_templates;
 pub mod bears;
 pub mod membership;
 pub mod oauth_clients;
@@ -21,7 +20,6 @@ pub fn router() -> Router<AppState> {
         .nest("/api", api::router())
         .merge(users::router())
         .merge(oauth_clients::router())
-        .merge(bear_templates::router())
         .merge(bears::router())
         .merge(membership::router())
 }

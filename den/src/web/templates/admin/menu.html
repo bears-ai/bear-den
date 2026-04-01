@@ -7,10 +7,9 @@
 <p>{{ users | length }} user(s) in database.</p>
 <ul>
   <li><a href="/admin/users/">User management</a></li>
-  <li><a href="/admin/bear-templates/">Bear templates</a> — reusable prompts / defaults</li>
-  <li><a href="/admin/bears/">Bears</a> — create from template (Letta id when provisioned)</li>
+  <li><a href="/admin/bears/">Bears</a> — registry + prompt/model (Letta id when provisioned)</li>
   <li><a href="/admin/membership/">Membership</a> — grant user access to a bear</li>
   <li><a href="/admin/oauth_clients/">OAuth clients</a></li>
-  <li><small>JSON (same session): <code>/admin/api/bear-templates</code>, <code>/admin/api/bears</code>, <code>/admin/api/membership</code></small></li>
+  <li><small>JSON (same session): <code>/admin/api/bears</code>, <code>/admin/api/membership</code></small></li>
 </ul>
 {% endblock %}

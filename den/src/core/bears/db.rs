@@ -1,73 +1,17 @@
-//! SQL for bears, templates, and `user_bear` (runtime `query_as` — see `model.rs`).
+//! SQL for bears and `user_bear` (runtime `query_as` — see `model.rs`).
 
 use sqlx::{PgPool, types::Json};
 use uuid::Uuid;
 
 use crate::errors::CustomError;
 
-use super::model::{Bear, BearTemplate};
-
-pub async fn list_templates(pool: &PgPool) -> Result<Vec<BearTemplate>, CustomError> {
-    sqlx::query_as::<_, BearTemplate>(
-        r#"
-        SELECT id, slug, name, description, system_prompt, default_model, tools_enabled,
-               created_at, updated_at
-        FROM bear_templates
-        ORDER BY slug
-        "#,
-    )
-    .fetch_all(pool)
-    .await
-    .map_err(Into::into)
-}
-
-pub async fn get_template(pool: &PgPool, id: Uuid) -> Result<Option<BearTemplate>, CustomError> {
-    sqlx::query_as::<_, BearTemplate>(
-        r#"
-        SELECT id, slug, name, description, system_prompt, default_model, tools_enabled,
-               created_at, updated_at
-        FROM bear_templates
-        WHERE id = $1
-        "#,
-    )
-    .bind(id)
-    .fetch_optional(pool)
-    .await
-    .map_err(Into::into)
-}
-
-pub async fn create_template(
-    pool: &PgPool,
-    slug: &str,
-    name: &str,
-    description: &str,
-    system_prompt: &str,
-    default_model: Option<&str>,
-    tools_enabled: Option<Json<serde_json::Value>>,
-) -> Result<Uuid, CustomError> {
-    let row: (Uuid,) = sqlx::query_as(
-        r#"
-        INSERT INTO bear_templates (slug, name, description, system_prompt, default_model, tools_enabled)
-        VALUES ($1, $2, $3, $4, $5, $6)
-        RETURNING id
-        "#,
-    )
-    .bind(slug)
-    .bind(name)
-    .bind(description)
-    .bind(system_prompt)
-    .bind(default_model)
-    .bind(tools_enabled)
-    .fetch_one(pool)
-    .await?;
-    Ok(row.0)
-}
+use super::model::Bear;
 
 pub async fn list_bears(pool: &PgPool) -> Result<Vec<Bear>, CustomError> {
     sqlx::query_as::<_, Bear>(
         r#"
         SELECT id, slug, name, description, letta_agent_id, default_model, tools_enabled,
-               system_prompt, source_template_id, created_at, updated_at
+               system_prompt, created_at, updated_at
         FROM bears
         ORDER BY slug
         "#,
@@ -81,7 +25,7 @@ pub async fn get_bear(pool: &PgPool, id: Uuid) -> Result<Option<Bear>, CustomErr
     sqlx::query_as::<_, Bear>(
         r#"
         SELECT id, slug, name, description, letta_agent_id, default_model, tools_enabled,
-               system_prompt, source_template_id, created_at, updated_at
+               system_prompt, created_at, updated_at
         FROM bears
         WHERE id = $1
         "#,
@@ -102,43 +46,32 @@ pub async fn bear_slug_exists(pool: &PgPool, slug: &str) -> Result<bool, CustomE
     Ok(n.0 > 0)
 }
 
-pub async fn template_slug_exists(pool: &PgPool, slug: &str) -> Result<bool, CustomError> {
-    let n: (i64,) = sqlx::query_as(
-        "SELECT COUNT(*)::bigint FROM bear_templates WHERE slug = $1",
-    )
-    .bind(slug)
-    .fetch_one(pool)
-    .await?;
-    Ok(n.0 > 0)
-}
-
-/// Copies prompt/model/tools from the template; `letta_agent_id` stays unset until Letta provisions.
-pub async fn create_bear_from_template(
+/// `letta_agent_id` stays unset until Letta provisions the agent.
+pub async fn create_bear(
     pool: &PgPool,
-    template_id: Uuid,
     slug: &str,
     name: &str,
     description: &str,
+    system_prompt: &str,
+    default_model: Option<&str>,
+    tools_enabled: Option<Json<serde_json::Value>>,
 ) -> Result<Uuid, CustomError> {
-    let row: Option<(Uuid,)> = sqlx::query_as(
+    let row: (Uuid,) = sqlx::query_as(
         r#"
-        INSERT INTO bears (slug, name, description, system_prompt, default_model, tools_enabled,
-                          letta_agent_id, source_template_id)
-        SELECT $1, $2, $3, bt.system_prompt, bt.default_model, bt.tools_enabled, NULL, bt.id
-        FROM bear_templates bt
-        WHERE bt.id = $4
-        RETURNING bears.id
+        INSERT INTO bears (slug, name, description, system_prompt, default_model, tools_enabled, letta_agent_id)
+        VALUES ($1, $2, $3, $4, $5, $6, NULL)
+        RETURNING id
         "#,
     )
     .bind(slug)
     .bind(name)
     .bind(description)
-    .bind(template_id)
-    .fetch_optional(pool)
+    .bind(system_prompt)
+    .bind(default_model)
+    .bind(tools_enabled)
+    .fetch_one(pool)
     .await?;
-
-    row.map(|r| r.0)
-        .ok_or_else(|| CustomError::NotFound("template not found".to_string()))
+    Ok(row.0)
 }
 
 pub async fn grant_membership(
