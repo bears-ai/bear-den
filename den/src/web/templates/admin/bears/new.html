@@ -1,0 +1,32 @@
+{% extends "admin/base.html" %}
+{% import "forms.jinja" as forms %}
+
+{% block title %}New bear{% endblock %}
+
+{% block admin_content %}
+<div class="box">
+<h3>Create bear from template</h3>
+{% if not templates %}
+<p>No templates yet. <a href="/admin/bear-templates/add">Create a template</a> first.</p>
+{% else %}
+<form method="post">
+  <label for="template_id_select">Template</label>
+  <div class="form-field{% if errors and errors.template_id %} has-error{% endif %}">
+    <select id="template_id_select" name="template_id" required>
+      <option value="">—</option>
+      {% for t in templates %}
+      <option value="{{ t.id }}"{% if form and form.template_id == t.id|string %} selected{% endif %}>{{ t.slug }} — {{ t.name }}</option>
+      {% endfor %}
+    </select>
+    {% if errors and errors.template_id %}
+    <span class="form-hint form-errors">Submission error: {{ errors.template_id | map(attribute="message", default="unknown error") | join(", ") }}</span>
+    {% endif %}
+  </div>
+  {{ forms.input("slug", "Bear slug", "text", 'required maxlength="120"', form) }}
+  {{ forms.input("name", "Display name", "text", 'required maxlength="255"', form) }}
+  {{ forms.input("description", "Description", "text", 'maxlength="2000"', form) }}
+  <button type="submit">Create bear</button>
+</form>
+{% endif %}
+</div>
+{% endblock %}

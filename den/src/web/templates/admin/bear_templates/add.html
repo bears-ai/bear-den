@@ -1,0 +1,33 @@
+{% extends "admin/base.html" %}
+{% import "forms.jinja" as forms %}
+
+{% block title %}Add bear template{% endblock %}
+
+{% block admin_content %}
+<div class="box">
+<h3>New template</h3>
+<form method="post">
+  {{ forms.input("slug", "Slug", "text", 'required maxlength="120"', draft) }}
+  {{ forms.input("name", "Name", "text", 'maxlength="255"', draft) }}
+  {{ forms.input("description", "Description", "text", 'maxlength="2000"', draft) }}
+  <label for="system_prompt_textarea" {% if errors and errors.system_prompt %}class="has-error"{% endif %}>System prompt</label>
+  <div class="form-field{% if errors and errors.system_prompt %} has-error{% endif %}">
+    <textarea id="system_prompt_textarea" name="system_prompt" required rows="12" cols="72">{{ draft.system_prompt if draft else '' }}</textarea>
+    <span class="form-hint">Used when creating bears from this template.</span>
+    {% if errors and errors.system_prompt %}
+    <span class="form-hint form-errors">Submission error: {{ errors.system_prompt | map(attribute="message", default="unknown error") | join(", ") }}</span>
+    {% endif %}
+  </div>
+  {{ forms.input("default_model", "Default model (optional)", "text", 'maxlength="255" placeholder="e.g. gpt-4o"', draft) }}
+  <label for="tools_json_textarea" {% if errors and errors.tools_json %}class="has-error"{% endif %}>Tools JSON (optional)</label>
+  <div class="form-field{% if errors and errors.tools_json %} has-error{% endif %}">
+    <textarea id="tools_json_textarea" name="tools_json" rows="4" cols="72" placeholder="{}">{{ draft.tools_json if draft else '' }}</textarea>
+    <span class="form-hint">Leave empty for none. Must be valid JSON.</span>
+    {% if errors and errors.tools_json %}
+    <span class="form-hint form-errors">Submission error: {{ errors.tools_json | map(attribute="message", default="unknown error") | join(", ") }}</span>
+    {% endif %}
+  </div>
+  <button type="submit">Create template</button>
+</form>
+</div>
+{% endblock %}

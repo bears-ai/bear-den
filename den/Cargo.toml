@@ -65,7 +65,7 @@ minijinja-contrib = { version = "2.6.0", features = ["datetime", "timezone"] }
 password-auth = "1.0.0"
 serde = { version = "1", features = ["derive"] }
 thiserror = "2.0.12"
-time = { version = "0.3.37", features = ["serde-well-known"] }
+time = { version = "0.3.37", features = ["serde", "serde-well-known"] }
 tokio = { version = "1", default-features = false, features = ["macros", "rt-multi-thread", "signal"] }
 tokio-util = { version = "^0.7", default-features = false }
 tower = "0.5.2"

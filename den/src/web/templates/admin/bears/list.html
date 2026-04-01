@@ -1,0 +1,29 @@
+{% extends "admin/base.html" %}
+
+{% block title %}Bears{% endblock %}
+
+{% block admin_content %}
+<h3>Bears</h3>
+<p>Registry rows; Letta agent id is filled when provisioning is wired.</p>
+<table>
+  <thead>
+    <tr>
+      <th>Slug</th>
+      <th>Name</th>
+      <th>Letta agent</th>
+      <th>From template</th>
+    </tr>
+  </thead>
+  <tbody>
+  {% for b in bears %}
+    <tr>
+      <td><code>{{ b.slug }}</code></td>
+      <td>{{ b.name }}</td>
+      <td>{% if b.letta_agent_id %}{{ b.letta_agent_id }}{% else %}<em>unset</em>{% endif %}</td>
+      <td>{% if b.source_template_id %}<code>{{ b.source_template_id }}</code>{% else %}—{% endif %}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+<p><a class="action" href="./new">New bear from template</a></p>
+{% endblock %}
