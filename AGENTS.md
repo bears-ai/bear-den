@@ -7,6 +7,8 @@ Use this file for **repository conventions** when editing or generating changes.
 - **Light monorepo:** docs under `docs/`, Coolify-oriented assets under `services/*`, and the **Den** Rust service at repo root in **`den/`** (add the `cargo` tree there; it is not under `services/`).
 - **Terminology:** **Bear** = one assistant backed by a Letta agent. **Den** = control plane (provisioning, **users↔bears** membership, routing, Cabinet API when deployed). **BEARS** = the deployment stack name.
 
+**Den builds:** In environments with Rust installed (dev container, CI), run `cargo build` / `cargo test` from **`den/`** to verify changes. See [`den/AGENTS.md`](den/AGENTS.md) (“Verifying Rust changes”).
+
 ## Where to read
 
 | Topic | Path |

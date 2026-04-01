@@ -2,6 +2,15 @@
 
 How to orient in **this project**: a Rust web **starter** (Axum, SQLx, MiniJinja, PostgreSQL, optional split web/API/workers). For **running locally**, see [`docs/quickstart.md`](docs/quickstart.md). For **deploy** (env, migrations, Docker build), see [`docs/deploy.md`](docs/deploy.md). **Service toggles** (`RUN_WEB`, `RUN_API`, `RUN_WORKERS`) and health checks are covered in [`docs/infrastructure-and-ops.md`](docs/infrastructure-and-ops.md).
 
+## Verifying Rust changes (agents + dev containers)
+
+**`cargo` is available** in typical dev containers and CI images that include the Rust toolchain. After editing this crate, **run checks from the `den/` directory** (package root), for example:
+
+- `cargo build` or `cargo check` — compile the library + binary.
+- `cargo test` — unit tests; integration tests that need Postgres require `DATABASE_URL` and applied migrations (see [`docs/quickstart.md`](docs/quickstart.md)).
+
+Do not assume the environment is “simulated only”: prefer **running `cargo` yourself** to catch compile errors before handing work back.
+
 ## Start here
 
 1. [`docs/README.md`](docs/README.md) — documentation index.
