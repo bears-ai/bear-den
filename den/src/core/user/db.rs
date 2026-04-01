@@ -13,7 +13,8 @@ pub struct User {
     pub theme: String,
 }
 
-/// For authentication purposes
+/// For authentication purposes (`admin_flag` is effective operator flag: `COALESCE(is_admin, admin_flag)` in queries below).
+#[derive(sqlx::FromRow)]
 pub struct UserAuth {
     pub id: i32,
     pub username: String,
@@ -80,11 +81,16 @@ pub async fn get_user_by_username(
     db_pool: &PgPool,
     username: &str,
 ) -> Result<Option<UserAuth>, CustomError> {
-    let user = query_as!(
-        UserAuth,
-        r#"SELECT id, username, passhash, admin_flag as "admin_flag!", theme FROM users WHERE username = $1"#,
-        username
+    let user = sqlx::query_as::<_, UserAuth>(
+        r#"
+        SELECT id, username, passhash,
+               COALESCE(is_admin, admin_flag) AS admin_flag,
+               theme
+        FROM users
+        WHERE username = $1
+        "#,
     )
+    .bind(username)
     .fetch_optional(db_pool)
     .await?;
     Ok(user)
@@ -105,11 +111,16 @@ pub async fn get_user_auth_by_email(
     db_pool: &PgPool,
     email: &str,
 ) -> Result<Option<UserAuth>, CustomError> {
-    let user = query_as!(
-        UserAuth,
-        r#"SELECT id, username, passhash, admin_flag as "admin_flag!", theme FROM users WHERE email = $1"#,
-        email
+    let user = sqlx::query_as::<_, UserAuth>(
+        r#"
+        SELECT id, username, passhash,
+               COALESCE(is_admin, admin_flag) AS admin_flag,
+               theme
+        FROM users
+        WHERE email = $1
+        "#,
     )
+    .bind(email)
     .fetch_optional(db_pool)
     .await?;
     Ok(user)

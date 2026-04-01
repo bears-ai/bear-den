@@ -1,5 +1,5 @@
-//! Verifies Phase 1 M1 migrations: `bears`, `user_bear`, `audit_chat`, user columns.
-//! Requires `DATABASE_URL` and `sqlx migrate run` applied.
+//! Verifies Phase 1 migrations: bear registry, provisioning columns, membership, user columns.
+//! Requires `DATABASE_URL` and `sqlx migrate run` applied (all `migrations/*.up.sql`).
 
 use sqlx::postgres::PgPoolOptions;
 
@@ -53,4 +53,59 @@ async fn m1_users_extended_columns_exist() {
     .expect("information_schema query");
 
     assert_eq!(n, 2, "users missing webui_account_id or is_admin");
+}
+
+#[tokio::test]
+async fn m1b_bears_has_system_prompt_column() {
+    dotenvy::dotenv().ok();
+    let url = std::env::var("DATABASE_URL").expect("DATABASE_URL for integration test");
+    let pool = PgPoolOptions::new()
+        .max_connections(2)
+        .connect(&url)
+        .await
+        .expect("connect postgres");
+
+    let n: i64 = sqlx::query_scalar(
+        r#"
+        SELECT COUNT(*)::bigint
+        FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND table_name = 'bears'
+          AND column_name = 'system_prompt'
+        "#,
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("information_schema query");
+
+    assert_eq!(n, 1, "bears missing system_prompt");
+}
+
+#[tokio::test]
+async fn m1b_letta_agent_id_nullable() {
+    dotenvy::dotenv().ok();
+    let url = std::env::var("DATABASE_URL").expect("DATABASE_URL for integration test");
+    let pool = PgPoolOptions::new()
+        .max_connections(2)
+        .connect(&url)
+        .await
+        .expect("connect postgres");
+
+    let nullable: String = sqlx::query_scalar(
+        r#"
+        SELECT is_nullable
+        FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND table_name = 'bears'
+          AND column_name = 'letta_agent_id'
+        "#,
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("information_schema query");
+
+    assert_eq!(
+        nullable, "YES",
+        "letta_agent_id should be nullable until Letta provisions the agent"
+    );
 }
