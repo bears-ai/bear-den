@@ -2,8 +2,10 @@
 pub mod admin;
 pub mod filters;
 pub mod home;
+pub mod loquix;
 pub mod public;
 pub mod user;
+pub mod v1;
 
 use indexmap::IndexMap;
 use std::sync::OnceLock;
@@ -22,7 +24,7 @@ use axum::{
 use memory_serve::{CacheControl, MemoryServe, load_assets};
 
 use axum_login::{
-    AuthManagerLayerBuilder, AuthSession, permission_required,
+    AuthManagerLayerBuilder, AuthSession, login_required, permission_required,
     tower_sessions::{
         cookie::SameSite,
         {Expiry, SessionManagerLayer},
@@ -71,6 +73,7 @@ pub struct AppState {
     template_env: Environment<'static>,
     asset_router: Arc<Router<AppState>>,
     pub config: Arc<Config>,
+    pub letta: std::sync::Arc<crate::core::letta::LettaClient>,
 }
 
 impl AppState {
@@ -136,12 +139,14 @@ pub async fn server_with_state(
     let memory_serve =
         MemoryServe::new(load_assets!("src/web/assets")).cache_control(CacheControl::Short);
 
+    let letta = std::sync::Arc::new(crate::core::letta::LettaClient::new(config.as_ref()));
     server(
         AppState {
             sqlx_pool: sqlx_pool.clone(),
             template_env: env.clone(),
             asset_router: Arc::new(memory_serve.into_router()),
             config: config.clone(),
+            letta,
         },
         session_store,
     )
@@ -183,6 +188,12 @@ pub async fn server(
     let router = Router::new()
         .nest("/admin", admin::router())
         .route_layer(permission_required!(Backend, login_url = "/login", "admin"))
+        .merge(
+            Router::new()
+                .route("/app", get(loquix::app_page))
+                .route_layer(login_required!(Backend, login_url = "/login")),
+        )
+        .nest("/v1", v1::router())
         .merge(user::router())
         .merge(home::router())
         .merge(public::router())

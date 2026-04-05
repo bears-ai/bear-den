@@ -3,6 +3,7 @@ pub mod api;
 pub mod bears;
 pub mod membership;
 pub mod oauth_clients;
+pub mod ops;
 pub mod users;
 
 use axum::response::Response;
@@ -18,6 +19,7 @@ pub fn router() -> Router<AppState> {
     Router::new()
         .route("/", get(admin_home))
         .nest("/api", api::router())
+        .merge(ops::router())
         .merge(users::router())
         .merge(oauth_clients::router())
         .merge(bears::router())
@@ -30,10 +32,28 @@ async fn admin_home(
 ) -> Result<Response, CustomError> {
     let users = user::db::get_users(&state.sqlx_pool).await?;
 
+    let (letta_status, letta_detail) = if !state.letta.is_enabled() {
+        (
+            "not_configured",
+            "Set LETTA_BASE_URL (and LETTA_API_KEY if required) for provisioning and chat."
+                .to_string(),
+        )
+    } else {
+        match state.letta.check_health().await {
+            Ok(_) => (
+                "ok",
+                "GET /v1/health succeeded — same check Den uses before provisioning.".to_string(),
+            ),
+            Err(e) => ("error", e.to_string()),
+        }
+    };
+
     web::render_template(&state, "admin/menu.html",
         auth_session,
         context! {
             users => users,
+            letta_status => letta_status,
+            letta_detail => letta_detail,
         },
     )
     .await

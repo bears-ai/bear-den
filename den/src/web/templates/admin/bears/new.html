@@ -7,6 +7,9 @@
 <div class="box">
 <h3>New bear</h3>
 <p>Define slug, prompt, and optional model/tools. Duplicate an existing bear in the UI later if two configs should match.</p>
+{% if provision_error %}
+<p class="form-errors"><strong>Letta provisioning failed</strong> (bear was saved): {{ provision_error }}</p>
+{% endif %}
 <form method="post">
   {{ forms.input("slug", "Slug", "text", 'required maxlength="120"', form) }}
   {{ forms.input("name", "Name", "text", 'maxlength="255"', form) }}

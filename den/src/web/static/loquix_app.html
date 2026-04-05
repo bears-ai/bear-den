@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Chat — Den</title>
+  <link rel="stylesheet" href="https://unpkg.com/@loquix/core/src/tokens/variables.css" crossorigin="anonymous" />
+  <link rel="stylesheet" href="https://unpkg.com/@loquix/core/src/tokens/themes/dark.css" crossorigin="anonymous" />
+  <script src="https://unpkg.com/@loquix/core/cdn/loquix.min.js" crossorigin="anonymous"></script>
+  <style>
+    body { margin: 0; min-height: 100vh; background: var(--loquix-canvas-bg, #0f172a); color: var(--loquix-fg-default, #e2e8f0); font-family: system-ui, sans-serif; }
+    .den-loquix-wrap { max-width: 56rem; margin: 0 auto; padding: 1rem; }
+    .den-toolbar { display: flex; gap: 1rem; align-items: center; margin-bottom: 0.75rem; flex-wrap: wrap; }
+    .den-toolbar a { color: #93c5fd; }
+    .den-toolbar label { font-size: 0.9rem; }
+    .den-toolbar select { min-width: 12rem; padding: 0.35rem 0.5rem; border-radius: 6px; border: 1px solid #334155; background: #1e293b; color: inherit; }
+    .den-err { color: #fca5a5; font-size: 0.9rem; margin: 0.5rem 0; }
+  </style>
+</head>
+<body>
+  <div class="den-loquix-wrap">
+    <div class="den-toolbar">
+      <a href="/">Home</a>
+      <label>Bear <select id="bear-picker" aria-label="Bear"></select></label>
+      <span id="bear-status"></span>
+    </div>
+    <p id="err" class="den-err" hidden></p>
+    <loquix-chat-container layout="full">
+      <loquix-chat-header slot="header" agent-name="Chat"></loquix-chat-header>
+      <loquix-message-list slot="messages" id="msg-list"></loquix-message-list>
+      <loquix-chat-composer slot="composer" id="composer" placeholder="Message your bear…"></loquix-chat-composer>
+    </loquix-chat-container>
+  </div>
+  <script>
+    const errEl = document.getElementById('err');
+    const statusEl = document.getElementById('bear-status');
+    const bearPicker = document.getElementById('bear-picker');
+    const messageList = document.getElementById('msg-list');
+    const composer = document.getElementById('composer');
+
+    function showErr(msg) {
+      errEl.textContent = msg;
+      errEl.hidden = false;
+    }
+
+    async function loadBears() {
+      const r = await fetch('/v1/bears', { credentials: 'same-origin' });
+      if (r.status === 401) {
+        window.location.href = '/login?next=' + encodeURIComponent('/app');
+        return;
+      }
+      if (!r.ok) {
+        showErr('Could not load bears: HTTP ' + r.status);
+        return;
+      }
+      const bears = await r.json();
+      bearPicker.innerHTML = '';
+      if (!bears.length) {
+        statusEl.textContent = 'No bears assigned — ask an operator to grant membership.';
+        return;
+      }
+      bears.forEach(function (b) {
+        const opt = document.createElement('option');
+        opt.value = b.bear_id;
+        opt.textContent = b.slug + ' — ' + b.name;
+        bearPicker.appendChild(opt);
+      });
+      statusEl.textContent = bears.length + ' bear(s).';
+    }
+
+    let abortCtl = null;
+
+    document.addEventListener('loquix-submit', async function (e) {
+      const content = e.detail.content;
+      const bearId = bearPicker.value;
+      if (!bearId) {
+        showErr('Pick a bear first.');
+        return;
+      }
+      errEl.hidden = true;
+
+      const userMsg = document.createElement('loquix-message-item');
+      userMsg.setAttribute('role', 'user');
+      userMsg.setAttribute('status', 'complete');
+      const userContent = document.createElement('loquix-message-content');
+      userContent.textContent = content;
+      userMsg.appendChild(userContent);
+      messageList.appendChild(userMsg);
+
+      const assistantMsg = document.createElement('loquix-message-item');
+      assistantMsg.setAttribute('role', 'assistant');
+      assistantMsg.setAttribute('status', 'streaming');
+      const assistantContent = document.createElement('loquix-message-content');
+      assistantContent.setAttribute('streaming-cursor', 'caret');
+      assistantMsg.appendChild(assistantContent);
+      messageList.appendChild(assistantMsg);
+
+      composer.setAttribute('streaming', '');
+      abortCtl = new AbortController();
+
+      try {
+        const response = await fetch('/v1/chat/send', {
+          method: 'POST',
+          credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ bear_id: bearId, message: content }),
+          signal: abortCtl.signal,
+        });
+        if (response.status === 401) {
+          window.location.href = '/login?next=' + encodeURIComponent('/app');
+          return;
+        }
+        if (!response.ok) {
+          const t = await response.text();
+          throw new Error(t || ('HTTP ' + response.status));
+        }
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          assistantContent.textContent += decoder.decode(value, { stream: true });
+        }
+      } catch (x) {
+        if (x.name === 'AbortError') {
+          assistantContent.textContent += '\n[stopped]';
+        } else {
+          showErr(String(x.message || x));
+        }
+      } finally {
+        assistantContent.removeAttribute('streaming-cursor');
+        assistantMsg.setAttribute('status', 'complete');
+        composer.removeAttribute('streaming');
+        abortCtl = null;
+      }
+    });
+
+    document.addEventListener('loquix-stop', function () {
+      if (abortCtl) abortCtl.abort();
+    });
+
+    loadBears();
+  </script>
+</body>
+</html>

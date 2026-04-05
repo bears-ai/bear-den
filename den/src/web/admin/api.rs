@@ -15,6 +15,7 @@ use crate::{
         bears::{
             db::{self as bears_db, MembershipRow},
             model::Bear,
+            provision,
         },
         user::db as user_db,
     },
@@ -83,6 +84,13 @@ async fn create_bear(
         tools,
     )
     .await?;
+
+    if let Err(e) =
+        provision::provision_bear_if_configured(state.sqlx_pool(), state.letta.as_ref(), id).await
+    {
+        tracing::warn!(%id, "Letta provision failed after admin API create: {e}");
+    }
+
     Ok((axum::http::StatusCode::CREATED, Json(IdResponse { id })))
 }
 

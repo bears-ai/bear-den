@@ -38,9 +38,11 @@ Use the devcontainer or local `.env` (see [`.env.example`](.env.example)) with `
 
 **Templates:** in **development**, MiniJinja loads files from `TEMPLATES_DIR` (default `src/web/templates`). In **`--features production`** / release Docker builds, templates are **embedded** at compile time—plan on **rebuilding** the binary when HTML changes in production.
 
-**Fresh database:** the only schema file is `migrations/20250309000000_trestle.up.sql`. For `SQLX_OFFLINE` / CI builds, run `cargo sqlx prepare` against a DB with that migration applied and commit `.sqlx/`.
+**Fresh database:** apply all migrations under `migrations/` (see [`migrations/README.md`](migrations/README.md), including default operator **`admin`**). For `SQLX_OFFLINE` / CI builds, run `cargo sqlx prepare` against a DB with migrations applied and commit `.sqlx/`.
 
 **Mail:** `MAILGUN_API_KEY` and `MAILGUN_DOMAIN` default to empty; set them (or swap the mail implementation) before relying on outbound email.
+
+**Letta + Loquix (BEARS Phase 1):** set `LETTA_BASE_URL` (and `LETTA_API_KEY` if your Letta instance requires it) so creating bears in the operator console can provision Letta agents and so signed-in users can chat via **`GET /app`** (Loquix UI → `POST /v1/chat/send` SSE proxy). See [`.env.example`](.env.example).
 
 **Shutdown:** **Ctrl+C** is honored on all platforms; **SIGTERM** triggers graceful shutdown on **Unix** only.
 

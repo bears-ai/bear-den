@@ -11,6 +11,8 @@
 
    (Use the same `DATABASE_URL` the app will use.)
 
+   A migration seeds a **bootstrap operator** on empty databases: username **`admin`**, password **`Never deploy with default passwords.`** (see [`migrations/README.md`](../migrations/README.md) § *Default operator account*). Replace that password before any real deployment.
+
 3. Enable at least one service, for example **`RUN_WEB=true`** (and optionally `RUN_API`, `RUN_WORKERS`).
 4. Run:
 

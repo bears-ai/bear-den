@@ -1,0 +1,30 @@
+{% extends "admin/base.html" %}
+
+{% block title %}LettaBot YAML{% endblock %}
+
+{% block admin_content %}
+<h3>LettaBot configuration</h3>
+
+<p>
+  Generated from <strong>users ↔ bears</strong> membership. Each row uses the bear&rsquo;s
+  <code>letta_agent_id</code> after provisioning. Entries without a Letta id are skipped
+  (<strong>{{ skipped_unprovisioned }}</strong> membership row(s) currently skipped).
+</p>
+
+{% if not letta_configured %}
+<p class="form-errors"><strong>Note:</strong> <code>LETTA_BASE_URL</code> is not set in Den.
+  The YAML below uses a placeholder <code>baseUrl</code> — replace it with your real Letta URL.</p>
+{% endif %}
+
+<ol>
+  <li>Download <a href="/admin/lettabot.yaml"><code>lettabot.yaml</code></a> (or copy from the preview).</li>
+  <li>Fill <code>allowedUsers</code> under Slack / WhatsApp with real channel user IDs.</li>
+  <li>Ensure <code>${LETTA_SERVER_PASS}</code> matches Letta&rsquo;s admin credential at deploy time.</li>
+  <li>Mount the file for LettaBot and restart the bot so it reloads config.</li>
+</ol>
+
+<p><a href="/admin/lettabot.yaml" download>Download <code>lettabot.yaml</code></a></p>
+
+<h4>Preview</h4>
+<pre class="lettabot-yaml">{{ lettabot_yaml }}</pre>
+{% endblock %}

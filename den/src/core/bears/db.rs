@@ -119,3 +119,71 @@ pub async fn list_memberships(pool: &PgPool) -> Result<Vec<MembershipRow>, Custo
     .await
     .map_err(Into::into)
 }
+
+pub async fn list_bears_for_user(pool: &PgPool, user_id: i32) -> Result<Vec<Bear>, CustomError> {
+    sqlx::query_as::<_, Bear>(
+        r#"
+        SELECT b.id, b.slug, b.name, b.description, b.letta_agent_id, b.default_model, b.tools_enabled,
+               b.system_prompt, b.created_at, b.updated_at
+        FROM bears b
+        INNER JOIN user_bear ub ON ub.bear_id = b.id
+        WHERE ub.user_id = $1
+        ORDER BY b.slug
+        "#,
+    )
+    .bind(user_id)
+    .fetch_all(pool)
+    .await
+    .map_err(Into::into)
+}
+
+pub async fn user_may_use_bear(pool: &PgPool, user_id: i32, bear_id: Uuid) -> Result<bool, CustomError> {
+    let n: (i64,) = sqlx::query_as(
+        r#"
+        SELECT COUNT(*)::bigint FROM user_bear WHERE user_id = $1 AND bear_id = $2
+        "#,
+    )
+    .bind(user_id)
+    .bind(bear_id)
+    .fetch_one(pool)
+    .await?;
+    Ok(n.0 > 0)
+}
+
+pub async fn set_letta_agent_id(
+    pool: &PgPool,
+    bear_id: Uuid,
+    agent_id: &str,
+) -> Result<(), CustomError> {
+    sqlx::query(
+        "UPDATE bears SET letta_agent_id = $1, updated_at = NOW() WHERE id = $2",
+    )
+    .bind(agent_id)
+    .bind(bear_id)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+/// One row per `user_bear` for LettaBot YAML (`username` + `bear_slug` + optional Letta id).
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct LettaBotRow {
+    pub username: String,
+    pub bear_slug: String,
+    pub letta_agent_id: Option<String>,
+}
+
+pub async fn list_lettabot_rows(pool: &PgPool) -> Result<Vec<LettaBotRow>, CustomError> {
+    sqlx::query_as::<_, LettaBotRow>(
+        r#"
+        SELECT u.username, b.slug AS bear_slug, b.letta_agent_id
+        FROM user_bear ub
+        INNER JOIN users u ON u.id = ub.user_id
+        INNER JOIN bears b ON b.id = ub.bear_id
+        ORDER BY u.username, b.slug
+        "#,
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(Into::into)
+}

@@ -53,6 +53,11 @@ pub struct Config {
     pub web_server_url: String,
     /// Public base URL for the **API** service (no trailing slash).
     pub api_server_url: String,
+
+    /// Letta server base URL (no trailing slash), e.g. `http://letta:8283`. Empty = provisioning/chat proxy disabled.
+    pub letta_base_url: String,
+    /// Optional `Authorization: Bearer` value for Letta (omit when local Letta has no auth).
+    pub letta_api_key: String,
 }
 
 impl Config {
@@ -190,6 +195,12 @@ impl Config {
             })
         });
 
+        let letta_base_url = std::env::var("LETTA_BASE_URL")
+            .unwrap_or_default()
+            .trim_end_matches('/')
+            .to_string();
+        let letta_api_key = std::env::var("LETTA_API_KEY").unwrap_or_default();
+
         Config {
             templates_dir: std::env::var("TEMPLATES_DIR")
                 .unwrap_or("src/web/templates".to_string()),
@@ -215,6 +226,8 @@ impl Config {
             api_port,
             web_server_url,
             api_server_url,
+            letta_base_url,
+            letta_api_key,
         }
     }
 }
@@ -260,6 +273,8 @@ impl Config {
             api_port: 3001,
             web_server_url: "http://localhost:3000".into(),
             api_server_url: "http://localhost:3001".into(),
+            letta_base_url: String::new(),
+            letta_api_key: String::new(),
         }
     }
 }

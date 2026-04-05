@@ -14,7 +14,7 @@ use validator::{Validate, ValidationError, ValidationErrors};
 
 use crate::{
     auth_backend::AuthSession,
-    core::bears::db as bears_db,
+    core::bears::{db as bears_db, provision},
     errors::CustomError,
     web::{self, AppState},
 };
@@ -108,7 +108,7 @@ pub async fn new_action(
     }
 
     if validation_errors.is_empty() {
-        let _ = bears_db::create_bear(
+        let id = bears_db::create_bear(
             state.sqlx_pool(),
             form.slug.trim(),
             form.name.trim(),
@@ -118,6 +118,29 @@ pub async fn new_action(
             tools_enabled,
         )
         .await?;
+
+        if let Err(e) = provision::provision_bear_if_configured(
+            state.sqlx_pool(),
+            state.letta.as_ref(),
+            id,
+        )
+        .await
+        {
+            if state.letta.is_enabled() {
+                tracing::warn!(%id, "Letta provision failed: {e}");
+                return web::render_template(
+                    &state,
+                    "admin/bears/new.html",
+                    auth_session,
+                    context! {
+                        form => form,
+                        provision_error => e.to_string(),
+                    },
+                )
+                .await;
+            }
+        }
+
         Ok(Redirect::to("/admin/bears/").into_response())
     } else {
         web::render_template(
