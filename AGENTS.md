@@ -9,6 +9,18 @@ Use this file for **repository conventions** when editing or generating changes.
 
 **Den builds:** In environments with Rust installed (dev container, CI), run `cargo build` / `cargo test` from **`den/`** to verify changes. See [`den/AGENTS.md`](den/AGENTS.md) (“Verifying Rust changes”).
 
+## GitOps and reproducibility
+
+**Strict GitOps is the default assumption:** configuration that affects how the stack runs should live in **this repository** (or be generated from files in-repo in CI), go through normal review, and avoid **silent drift** from one-off edits in hosting UIs or production consoles. Prefer declarative assets under `services/*`, env templates, and docs over “remember to click this in Coolify.”
+
+**Production should be reconstructible** from three inputs only:
+
+1. **This repository** (configs, compose/Coolify definitions, migrations or schema notes as applicable).
+2. **Database backups** — use **as few distinct database products and backup scopes as practical**; do not treat ad-hoc dumps or undocumented DBs as part of the contract unless they are called out in `docs/`.
+3. **External object storage** — assume **S3-compatible** buckets (or equivalent) for blobs and large artifacts; credentials are environment/secret injected, not the source of truth for *what* to deploy.
+
+When proposing gateways, proxies, or operators, **favor file- or repo-driven config** over mutable runtime-only admin UIs unless the project explicitly opts in. If a component requires a DB or UI-managed state, document what must be in backups versus what is disposable.
+
 ## Where to read
 
 | Topic | Path |
