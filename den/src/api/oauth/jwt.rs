@@ -230,28 +230,6 @@ impl JwtManager {
 
         Ok(claims)
     }
-
-    /// Extract claims from a JWT token without full validation
-    ///
-    /// This is useful for debugging or when you need to inspect a token
-    /// without validating its signature or expiration.
-    ///
-    /// # Arguments
-    /// * `token` - The JWT token string
-    ///
-    /// # Returns
-    /// Decoded JWT claims or error if malformed
-    pub fn _decode_claims_unsafe(&self, token: &str) -> Result<JwtClaims, OAuthError> {
-        let mut validation = Validation::new(JWT_ALGORITHM);
-        validation.validate_exp = false;
-        validation.validate_nbf = false;
-        validation.insecure_disable_signature_validation();
-
-        let token_data = decode::<JwtClaims>(token, &self.decoding_key, &validation)
-            .map_err(|e| OAuthError::ServerError(format!("Failed to decode JWT: {e}")))?;
-
-        Ok(token_data.claims)
-    }
 }
 
 /// Generate a unique JWT ID (jti claim)

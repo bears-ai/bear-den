@@ -7,7 +7,7 @@
 use axum::{
     Form, Json,
     extract::{Query, State},
-    http::{HeaderMap, StatusCode, header::AUTHORIZATION},
+    http::{HeaderMap, HeaderValue, StatusCode, header::AUTHORIZATION},
     response::{IntoResponse, Redirect, Response},
 };
 use serde::Deserialize;
@@ -815,10 +815,10 @@ async fn validate_pkce(
         (None, None) => {
             tracing::debug!("PKCE was not used in authorization request");
             // PKCE was not used - code_verifier should not be provided
-            if token_request.code_verifier.is_some() {
+            if let Some(verifier) = token_request.code_verifier.as_ref() {
                 tracing::warn!(
                     "code_verifier provided but PKCE was not used in authorization: verifier_length={}",
-                    token_request.code_verifier.as_ref().unwrap().len()
+                    verifier.len()
                 );
                 return Err(OAuthError::InvalidRequest(
                     "code_verifier was provided, but PKCE was not used in the authorization request. Either remove the code_verifier parameter, or ensure code_challenge and code_challenge_method were included in the original authorization request.".to_string(),
@@ -1317,9 +1317,8 @@ fn bearer_error_response(error: OAuthError) -> Response {
     // Add WWW-Authenticate header
     response.headers_mut().insert(
         "WWW-Authenticate",
-        www_authenticate
-            .parse()
-            .unwrap_or_else(|_| "Bearer".parse().unwrap()),
+        HeaderValue::from_str(&www_authenticate)
+            .unwrap_or_else(|_| HeaderValue::from_static("Bearer")),
     );
 
     response

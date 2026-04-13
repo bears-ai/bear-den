@@ -1,7 +1,7 @@
 use axum::{
     Router,
     extract::State,
-    http::{HeaderMap, StatusCode, header::AUTHORIZATION},
+    http::{HeaderMap, HeaderValue, StatusCode, header::AUTHORIZATION},
     response::{IntoResponse, Json, Response},
     routing::get,
 };
@@ -162,9 +162,8 @@ fn bearer_error_response(error: OAuthError) -> Response {
     let mut response = (status_code, Json(error_response)).into_response();
     response.headers_mut().insert(
         "WWW-Authenticate",
-        www_authenticate
-            .parse()
-            .unwrap_or_else(|_| "Bearer".parse().unwrap()),
+        HeaderValue::from_str(&www_authenticate)
+            .unwrap_or_else(|_| HeaderValue::from_static("Bearer")),
     );
 
     response

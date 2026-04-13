@@ -1,5 +1,5 @@
-// ROUTES: When modifying routes in this file, update /src/web/ROUTES.md
 //! First-party chat shell (Loquix from CDN + Den `/v1` APIs).
+//! When changing routes wired to this UI, update `src/web/ROUTES.md`.
 
 use axum::response::{Html, IntoResponse};
 
