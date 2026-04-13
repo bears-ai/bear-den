@@ -17,11 +17,98 @@ use crate::{
     auth_backend::AuthSession,
     core::{
         bears::{db as bears_db, provision, Bear},
-        letta::AgentSummary,
+        letta::{AgentSummary, LettaModelOption},
     },
     errors::CustomError,
     web::{self, AppState},
 };
+
+/// When Letta is enabled, `GET /v1/models/` populates the bear model `<select>`.
+async fn letta_model_select_context(
+    state: &AppState,
+) -> (bool, Vec<LettaModelOption>, Option<String>) {
+    if !state.letta.is_enabled() {
+        return (false, Vec::new(), None);
+    }
+    match state.letta.list_llm_models().await {
+        Ok(models) if models.is_empty() => (
+            true,
+            models,
+            Some("Letta returned no LLM models.".into()),
+        ),
+        Ok(models) => (true, models, None),
+        Err(e) => (
+            true,
+            Vec::new(),
+            Some(format!(
+                "Could not load models from Letta: {e}. You can still type a model handle below if you know it."
+            )),
+        ),
+    }
+}
+
+/// If the bear already has a `default_model` not returned by Letta, keep it selectable (legacy / BYOK).
+fn ensure_stored_model_in_options(bear: &Bear, mut options: Vec<LettaModelOption>) -> Vec<LettaModelOption> {
+    if let Some(ref h) = bear.default_model {
+        let h = h.trim();
+        if !h.is_empty() && !options.iter().any(|m| m.handle == h) {
+            options.insert(
+                0,
+                LettaModelOption {
+                    handle: h.to_string(),
+                    label: format!("{h} (stored on bear)"),
+                },
+            );
+        }
+    }
+    options
+}
+
+fn validate_default_model_for_letta(
+    letta_fetch: &Option<Result<Vec<LettaModelOption>, CustomError>>,
+    default_model_trim: &str,
+    validation_errors: &mut ValidationErrors,
+) {
+    let Some(res) = letta_fetch else {
+        return;
+    };
+
+    match res {
+        Err(_) => {
+            if default_model_trim.is_empty() {
+                validation_errors.add(
+                    "default_model",
+                    ValidationError::new(
+                        "Model is required when Letta is configured. Enter a valid model handle.",
+                    ),
+                );
+            }
+        }
+        Ok(models) if models.is_empty() => {
+            validation_errors.add(
+                "default_model",
+                ValidationError::new(
+                    "Letta has no LLM models available; configure models in Letta before creating bears.",
+                ),
+            );
+        }
+        Ok(models) => {
+            if default_model_trim.is_empty() {
+                validation_errors.add(
+                    "default_model",
+                    ValidationError::new("Choose a model from the list."),
+                );
+                return;
+            }
+            if !models.iter().any(|m| m.handle == default_model_trim) {
+                validation_errors.add(
+                    "default_model",
+                    ValidationError::new("Pick a model from the list."),
+                );
+            }
+        }
+    }
+}
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -159,11 +246,18 @@ async fn new_view(
     State(state): State<AppState>,
     auth_session: AuthSession,
 ) -> Result<Response, CustomError> {
+    let (letta_configured, letta_model_options, letta_models_fetch_error) =
+        letta_model_select_context(&state).await;
     web::render_template(
         &state,
         "admin/bears/new.html",
         auth_session,
-        context! { form => NewBearForm::default() },
+        context! {
+            form => NewBearForm::default(),
+            letta_configured,
+            letta_model_options,
+            letta_models_fetch_error,
+        },
     )
     .await
 }
@@ -173,6 +267,12 @@ pub async fn new_action(
     auth_session: AuthSession,
     Form(form): Form<NewBearForm>,
 ) -> Result<Response, CustomError> {
+    let letta_fetch = if state.letta.is_enabled() {
+        Some(state.letta.list_llm_models().await)
+    } else {
+        None
+    };
+
     let mut validation_errors = ValidationErrors::new();
     if let Err(e) = form.validate() {
         validation_errors = e;
@@ -193,11 +293,13 @@ pub async fn new_action(
         }
     };
 
-    let default_model = form.default_model.trim();
-    let default_model_opt = if default_model.is_empty() {
+    let default_model_trim = form.default_model.trim();
+    validate_default_model_for_letta(&letta_fetch, default_model_trim, &mut validation_errors);
+
+    let default_model_opt = if default_model_trim.is_empty() {
         None
     } else {
-        Some(default_model)
+        Some(default_model_trim)
     };
 
     if bears_db::bear_slug_exists(state.sqlx_pool(), form.slug.trim()).await? {
@@ -228,6 +330,8 @@ pub async fn new_action(
         {
             if state.letta.is_enabled() {
                 tracing::warn!(%id, "Letta provision failed: {e}");
+                let (letta_configured, letta_model_options, letta_models_fetch_error) =
+                    letta_model_select_context(&state).await;
                 return web::render_template(
                     &state,
                     "admin/bears/new.html",
@@ -235,6 +339,9 @@ pub async fn new_action(
                     context! {
                         form => form,
                         provision_error => e.to_string(),
+                        letta_configured,
+                        letta_model_options,
+                        letta_models_fetch_error,
                     },
                 )
                 .await;
@@ -243,6 +350,8 @@ pub async fn new_action(
 
         Ok(Redirect::to(&format!("/admin/bears/{id}")).into_response())
     } else {
+        let (letta_configured, letta_model_options, letta_models_fetch_error) =
+            letta_model_select_context(&state).await;
         web::render_template(
             &state,
             "admin/bears/new.html",
@@ -250,6 +359,9 @@ pub async fn new_action(
             context! {
                 errors => validation_errors,
                 form => form,
+                letta_configured,
+                letta_model_options,
+                letta_models_fetch_error,
             },
         )
         .await
@@ -265,11 +377,24 @@ async fn edit_view(
         .await?
         .ok_or_else(|| CustomError::NotFound("bear not found".to_string()))?;
     let form = NewBearForm::from(&bear);
+    let (letta_configured, letta_model_options, letta_models_fetch_error) =
+        letta_model_select_context(&state).await;
+    let letta_model_options = if letta_configured {
+        ensure_stored_model_in_options(&bear, letta_model_options)
+    } else {
+        letta_model_options
+    };
     web::render_template(
         &state,
         "admin/bears/edit.html",
         auth_session,
-        context! { bear, form },
+        context! {
+            bear,
+            form,
+            letta_configured,
+            letta_model_options,
+            letta_models_fetch_error,
+        },
     )
     .await
 }
@@ -283,6 +408,18 @@ async fn edit_action(
     let bear = bears_db::get_bear(state.sqlx_pool(), id)
         .await?
         .ok_or_else(|| CustomError::NotFound("bear not found".to_string()))?;
+
+    let letta_fetch = if state.letta.is_enabled() {
+        Some(
+            state
+                .letta
+                .list_llm_models()
+                .await
+                .map(|opts| ensure_stored_model_in_options(&bear, opts)),
+        )
+    } else {
+        None
+    };
 
     let mut validation_errors = ValidationErrors::new();
     if let Err(e) = form.validate() {
@@ -304,11 +441,13 @@ async fn edit_action(
         }
     };
 
-    let default_model = form.default_model.trim();
-    let default_model_opt = if default_model.is_empty() {
+    let default_model_trim = form.default_model.trim();
+    validate_default_model_for_letta(&letta_fetch, default_model_trim, &mut validation_errors);
+
+    let default_model_opt = if default_model_trim.is_empty() {
         None
     } else {
-        Some(default_model)
+        Some(default_model_trim)
     };
 
     if bears_db::bear_slug_exists_excluding(state.sqlx_pool(), form.slug.trim(), id).await? {
@@ -333,6 +472,13 @@ async fn edit_action(
 
         Ok(Redirect::to(&format!("/admin/bears/{id}")).into_response())
     } else {
+        let (letta_configured, letta_model_options, letta_models_fetch_error) =
+            letta_model_select_context(&state).await;
+        let letta_model_options = if letta_configured {
+            ensure_stored_model_in_options(&bear, letta_model_options)
+        } else {
+            letta_model_options
+        };
         web::render_template(
             &state,
             "admin/bears/edit.html",
@@ -341,6 +487,9 @@ async fn edit_action(
                 errors => validation_errors,
                 form => form,
                 bear,
+                letta_configured,
+                letta_model_options,
+                letta_models_fetch_error,
             },
         )
         .await

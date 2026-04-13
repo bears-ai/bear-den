@@ -26,11 +26,23 @@ pub async fn provision_bear_if_configured(
         return Ok(());
     }
 
+    let model = bear
+        .default_model
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| {
+            CustomError::ValidationError(
+                "default_model is required to provision a Letta agent (pick a model from Letta)."
+                    .to_string(),
+            )
+        })?;
+
     let agent_id = letta
         .create_agent(
             bear.name.as_str(),
             bear.system_prompt.as_str(),
-            bear.default_model.as_deref(),
+            Some(model),
         )
         .await?;
 

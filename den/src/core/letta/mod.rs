@@ -4,4 +4,4 @@ mod agent_summary;
 mod client;
 
 pub use agent_summary::AgentSummary;
-pub use client::LettaClient;
+pub use client::{LettaClient, LettaModelOption};
