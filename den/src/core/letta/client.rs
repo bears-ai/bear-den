@@ -14,6 +14,13 @@ pub struct LettaModelOption {
     pub label: String,
 }
 
+/// One row from `GET /v1/tools/` for multi-select (`tool_ids` on create/patch).
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct LettaToolOption {
+    pub id: String,
+    pub label: String,
+}
+
 /// Thin Letta REST client (create agent, stream chat). Disabled when `letta_base_url` is empty.
 #[derive(Clone)]
 pub struct LettaClient {
@@ -86,12 +93,50 @@ impl LettaClient {
         Ok(parse_letta_llm_model_list(&v))
     }
 
+    /// `GET /v1/tools/` — tool ids for agent `tool_ids`.
+    pub async fn list_tools(&self) -> Result<Vec<LettaToolOption>, CustomError> {
+        if !self.is_enabled() {
+            return Err(CustomError::System(
+                "Letta is not configured (set LETTA_BASE_URL)".to_string(),
+            ));
+        }
+
+        let url = format!("{}/v1/tools/", self.base_url);
+        let resp = self
+            .http
+            .get(url)
+            .headers(self.auth_headers())
+            .send()
+            .await
+            .map_err(|e| CustomError::System(format!("Letta list tools request failed: {e}")))?;
+
+        let status = resp.status();
+        let text = resp
+            .text()
+            .await
+            .map_err(|e| CustomError::System(format!("Letta list tools body: {e}")))?;
+
+        if !status.is_success() {
+            return Err(CustomError::System(format!(
+                "Letta list tools HTTP {status}: {text}"
+            )));
+        }
+
+        let v: serde_json::Value = serde_json::from_str(&text).map_err(|e| {
+            CustomError::Parsing(format!("Letta list tools JSON: {e}; body: {text}"))
+        })?;
+
+        Ok(parse_letta_tool_list(&v))
+    }
+
     /// `POST /v1/agents` — returns Letta agent id (e.g. `agent-…`).
     pub async fn create_agent(
         &self,
         name: &str,
         system_prompt: &str,
         model: Option<&str>,
+        agent_type: Option<&str>,
+        tool_ids: &[String],
     ) -> Result<String, CustomError> {
         if !self.is_enabled() {
             return Err(CustomError::System(
@@ -104,6 +149,12 @@ impl LettaClient {
         body.insert("system".to_string(), json!(system_prompt));
         if let Some(m) = model.filter(|s| !s.is_empty()) {
             body.insert("model".to_string(), json!(m));
+        }
+        if let Some(t) = agent_type.map(str::trim).filter(|s| !s.is_empty()) {
+            body.insert("agent_type".to_string(), json!(t));
+        }
+        if !tool_ids.is_empty() {
+            body.insert("tool_ids".to_string(), json!(tool_ids));
         }
 
         let url = format!("{}/v1/agents", self.base_url);
@@ -255,6 +306,61 @@ impl LettaClient {
             CustomError::Parsing(format!("Letta get agent JSON: {e}; body: {text}"))
         })
     }
+
+    /// `PATCH /v1/agents/{agent_id}` — align Letta agent with Den bear fields.
+    pub async fn patch_agent(
+        &self,
+        agent_id: &str,
+        name: &str,
+        description: &str,
+        system: &str,
+        model: Option<&str>,
+        agent_type: Option<&str>,
+        tool_ids: &[String],
+    ) -> Result<(), CustomError> {
+        if !self.is_enabled() {
+            return Err(CustomError::System(
+                "Letta is not configured (set LETTA_BASE_URL)".to_string(),
+            ));
+        }
+
+        let mut body = serde_json::Map::new();
+        body.insert("name".to_string(), json!(name));
+        body.insert("description".to_string(), json!(description));
+        body.insert("system".to_string(), json!(system));
+        if let Some(m) = model.map(str::trim).filter(|s| !s.is_empty()) {
+            body.insert("model".to_string(), json!(m));
+        }
+        if let Some(t) = agent_type.map(str::trim).filter(|s| !s.is_empty()) {
+            body.insert("agent_type".to_string(), json!(t));
+        }
+        body.insert("tool_ids".to_string(), json!(tool_ids));
+
+        let url = format!("{}/v1/agents/{agent_id}", self.base_url);
+        let resp = self
+            .http
+            .patch(url)
+            .headers(self.auth_headers())
+            .header(CONTENT_TYPE, "application/json")
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| CustomError::System(format!("Letta patch agent request failed: {e}")))?;
+
+        let status = resp.status();
+        let text = resp
+            .text()
+            .await
+            .map_err(|e| CustomError::System(format!("Letta patch agent body: {e}")))?;
+
+        if !status.is_success() {
+            return Err(CustomError::System(format!(
+                "Letta patch agent HTTP {status}: {text}"
+            )));
+        }
+
+        Ok(())
+    }
 }
 
 fn parse_letta_llm_model_list(v: &serde_json::Value) -> Vec<LettaModelOption> {
@@ -320,6 +426,52 @@ fn parse_letta_llm_model_list(v: &serde_json::Value) -> Vec<LettaModelOption> {
     out
 }
 
+fn parse_letta_tool_list(v: &serde_json::Value) -> Vec<LettaToolOption> {
+    let items: &[serde_json::Value] = if let Some(a) = v.as_array() {
+        a.as_slice()
+    } else if let Some(a) = v.get("tools").and_then(|x| x.as_array()) {
+        a.as_slice()
+    } else if let Some(a) = v.get("data").and_then(|x| x.as_array()) {
+        a.as_slice()
+    } else if let Some(a) = v.get("items").and_then(|x| x.as_array()) {
+        a.as_slice()
+    } else {
+        &[]
+    };
+
+    let mut out: Vec<LettaToolOption> = Vec::new();
+    let mut seen = std::collections::HashSet::<String>::new();
+
+    for item in items {
+        let id = item
+            .get("id")
+            .and_then(|x| x.as_str())
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_string());
+        let Some(id) = id else {
+            continue;
+        };
+        if !seen.insert(id.clone()) {
+            continue;
+        }
+
+        let label = item
+            .get("name")
+            .or_else(|| item.get("tool_name"))
+            .and_then(|x| x.as_str())
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| id.clone());
+
+        out.push(LettaToolOption { id, label });
+    }
+
+    out.sort_by(|a, b| a.label.cmp(&b.label));
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -364,5 +516,28 @@ mod tests {
         c.letta_base_url = String::new();
         let client = LettaClient::new(&c);
         assert!(!client.is_enabled());
+    }
+
+    #[test]
+    fn parse_tools_top_level_array() {
+        let v = serde_json::json!([
+            {"id": "tool-a", "name": "Alpha"},
+            {"id": "tool-b", "name": "Beta"}
+        ]);
+        let t = parse_letta_tool_list(&v);
+        assert_eq!(t.len(), 2);
+        assert!(t.iter().any(|x| x.id == "tool-a" && x.label == "Alpha"));
+    }
+
+    #[test]
+    fn parse_tools_de_duplicates_by_id() {
+        let v = serde_json::json!({
+            "tools": [
+                {"id": "x", "name": "one"},
+                {"id": "x", "name": "two"}
+            ]
+        });
+        let t = parse_letta_tool_list(&v);
+        assert_eq!(t.len(), 1);
     }
 }

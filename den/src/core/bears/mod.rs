@@ -5,5 +5,6 @@ pub mod db;
 pub mod lettabot;
 pub mod model;
 pub mod provision;
+pub mod sync;
 
 pub use model::Bear;

@@ -48,6 +48,8 @@ API shapes depend on your Letta version—confirm against your server.
 
 Admins may still use the Letta UI for experiments; **production truth** for which bears exist and who may use them should live in **Den**.
 
+For a concise list of **Letta agent knobs that Den’s bear UI does not yet drive**, see [LETTA_BEAR_UI_EXPOSURE.md](LETTA_BEAR_UI_EXPOSURE.md).
+
 ---
 
 ## System architecture

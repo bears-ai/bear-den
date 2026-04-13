@@ -16,6 +16,10 @@ pub struct Bear {
     pub letta_agent_id: Option<String>,
     pub default_model: Option<String>,
     pub tools_enabled: Option<Json<serde_json::Value>>,
+    /// Letta `agent_type` on create/patch when set (e.g. `memgpt_agent`, `letta_v1_agent`).
+    pub letta_agent_type: Option<String>,
+    /// Letta `tool_ids` on create/patch (JSON array of strings in Postgres).
+    pub letta_tool_ids: Json<Vec<String>>,
     pub system_prompt: String,
     pub created_at: OffsetDateTime,
     pub updated_at: OffsetDateTime,

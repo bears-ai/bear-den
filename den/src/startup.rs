@@ -80,7 +80,10 @@ mod tests {
     #[test]
     fn validate_jwt_rules_when_not_production_build() {
         let prev = std::env::var("JWT_SECRET").ok();
-        std::env::remove_var("JWT_SECRET");
+        // SAFETY: single-threaded test; no concurrent env reads in this process.
+        unsafe {
+            std::env::remove_var("JWT_SECRET");
+        }
 
         let base = Config::test_stub();
         validate_runtime_config(&base).expect("web-only must not require JWT_SECRET");
@@ -92,15 +95,17 @@ mod tests {
             "RUN_API=true requires JWT_SECRET"
         );
 
-        std::env::set_var(
-            "JWT_SECRET",
-            "test-jwt-secret-for-unit-tests-min-length-ok",
-        );
+        unsafe {
+            std::env::set_var(
+                "JWT_SECRET",
+                "test-jwt-secret-for-unit-tests-min-length-ok",
+            );
+        }
         validate_runtime_config(&api_on).expect("RUN_API with JWT_SECRET should pass");
 
         match prev {
-            Some(v) => std::env::set_var("JWT_SECRET", v),
-            None => std::env::remove_var("JWT_SECRET"),
+            Some(v) => unsafe { std::env::set_var("JWT_SECRET", v) },
+            None => unsafe { std::env::remove_var("JWT_SECRET") },
         }
     }
 }

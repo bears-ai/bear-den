@@ -38,11 +38,20 @@ pub async fn provision_bear_if_configured(
             )
         })?;
 
+    let agent_type = bear
+        .letta_agent_type
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
+    let tool_ids: &[String] = &bear.letta_tool_ids.0;
+
     let agent_id = letta
         .create_agent(
             bear.name.as_str(),
             bear.system_prompt.as_str(),
             Some(model),
+            agent_type,
+            tool_ids,
         )
         .await?;
 

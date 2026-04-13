@@ -6,7 +6,13 @@
 {% block admin_content %}
 <div class="box">
 <h3>Edit bear</h3>
-<p>Slug, prompts, and tools. When Letta is configured, pick an LLM model from Letta (required for provisioning). Other changes are stored in Den only — for Letta status or provisioning retry, use <a href="/admin/bears/{{ bear.id }}">bear details</a>.</p>
+<p>Changes are saved in Den and applied to the Letta agent when one is linked. If Letta rejects an update, an error appears below; Den may still have saved your edits.</p>
+{% if letta_sync_error %}
+<p class="form-errors"><strong>Letta sync failed</strong>: {{ letta_sync_error }}</p>
+{% endif %}
+{% if letta_agent_fetch_warn %}
+<p class="form-errors"><strong>Could not load agent from Letta for diagnostics:</strong> {{ letta_agent_fetch_warn }}</p>
+{% endif %}
 <form method="post">
   {{ forms.input("slug", "Slug", "text", 'required maxlength="120"', form) }}
   {{ forms.input("name", "Name", "text", 'maxlength="255"', form) }}
@@ -16,6 +22,18 @@
     <textarea id="system_prompt_textarea" name="system_prompt" rows="12" cols="72">{{ form.system_prompt if form else '' }}</textarea>
     {% if errors and errors.system_prompt %}
     <span class="form-hint form-errors">Submission error: {{ errors.system_prompt | map(attribute="message", default="unknown error") | join(", ") }}</span>
+    {% endif %}
+  </div>
+  <label for="letta_agent_type_field" {% if errors and errors.letta_agent_type %}class="has-error"{% endif %}>Letta agent type</label>
+  <div class="form-field{% if errors and errors.letta_agent_type %} has-error{% endif %}">
+    <select id="letta_agent_type_field" name="letta_agent_type">
+      {% for row in letta_agent_type_rows %}
+      <option value="{{ row.value | e }}"{% if form and form.letta_agent_type == row.value %} selected{% endif %}>{{ row.label | e }}</option>
+      {% endfor %}
+    </select>
+    <span class="form-hint">Sent to Letta as <code>agent_type</code> when set.</span>
+    {% if errors and errors.letta_agent_type %}
+    <span class="form-hint form-errors">Submission error: {{ errors.letta_agent_type | map(attribute="message", default="unknown error") | join(", ") }}</span>
     {% endif %}
   </div>
   {% if letta_configured %}
@@ -45,16 +63,55 @@
   {% else %}
   {{ forms.input("default_model", "Default model (optional)", "text", 'maxlength="255" placeholder="e.g. gpt-4o"', form) }}
   {% endif %}
-  <label for="tools_json_textarea" {% if errors and errors.tools_json %}class="has-error"{% endif %}>Tools JSON (optional)</label>
-  <div class="form-field{% if errors and errors.tools_json %} has-error{% endif %}">
-    <textarea id="tools_json_textarea" name="tools_json" rows="4" cols="72" placeholder="{}">{{ form.tools_json if form else '' }}</textarea>
-    <span class="form-hint">Leave empty for none. Must be valid JSON.</span>
-    {% if errors and errors.tools_json %}
-    <span class="form-hint form-errors">Submission error: {{ errors.tools_json | map(attribute="message", default="unknown error") | join(", ") }}</span>
+  {% if letta_configured and letta_tools_fetch_error %}
+  <p class="form-errors">{{ letta_tools_fetch_error }}</p>
+  {% endif %}
+  {% if letta_tools_configured and letta_tool_options and letta_tool_options | length > 0 %}
+  <label for="letta_tool_ids_field" {% if errors and errors.letta_tool_ids %}class="has-error"{% endif %}>Letta tools</label>
+  <div class="form-field{% if errors and errors.letta_tool_ids %} has-error{% endif %}">
+    <select id="letta_tool_ids_field" name="letta_tool_ids" multiple size="12">
+      {% for t in letta_tool_options %}
+      <option value="{{ t.id | e }}"{% if form and t.id in form.letta_tool_ids %} selected{% endif %}>{{ t.label | e }} — <code>{{ t.id | e }}</code></option>
+      {% endfor %}
+    </select>
+    <span class="form-hint">Hold Ctrl/Cmd to select multiple. Sent to Letta as <code>tool_ids</code>.</span>
+    {% if errors and errors.letta_tool_ids %}
+    <span class="form-hint form-errors">Submission error: {{ errors.letta_tool_ids | map(attribute="message", default="unknown error") | join(", ") }}</span>
     {% endif %}
   </div>
+  {% else %}
+  {% for id in form.letta_tool_ids %}
+  <input type="hidden" name="letta_tool_ids" value="{{ id | e }}" />
+  {% endfor %}
+  {% endif %}
   <button type="submit">Save changes</button>
 </form>
+
+{% if letta_diagnostics %}
+<h3 style="margin-top: 2rem;">Letta agent snapshot</h3>
+<p class="form-hint">Read-only view from <code>GET /v1/agents/{{ bear.letta_agent_id }}</code> when this page was loaded.</p>
+{% if letta_diagnostics.blocks and letta_diagnostics.blocks | length > 0 %}
+<h4>Memory blocks</h4>
+<ul>
+  {% for b in letta_diagnostics.blocks %}
+  <li>{% if b.label %}<strong>{{ b.label | e }}</strong>{% else %}<em>(no label)</em>{% endif %}{% if b.id %} — <code>{{ b.id | e }}</code>{% endif %}</li>
+  {% endfor %}
+</ul>
+{% endif %}
+{% if letta_diagnostics.tools and letta_diagnostics.tools | length > 0 %}
+<h4>Tools</h4>
+<ul>
+  {% for t in letta_diagnostics.tools %}
+  <li>{% if t.name %}{{ t.name | e }}{% else %}<em>(no name)</em>{% endif %} — <code>{{ t.id | e }}</code></li>
+  {% endfor %}
+</ul>
+{% endif %}
+<details style="margin-top: 1rem;">
+  <summary>Raw Letta agent JSON</summary>
+  <pre style="white-space: pre-wrap; max-height: 28rem; overflow: auto;">{{ letta_diagnostics.raw_json | e }}</pre>
+</details>
+{% endif %}
+
 <p><a href="/admin/bears/{{ bear.id }}">View bear details</a> · <a href="/admin/bears/">All bears</a></p>
 </div>
 {% endblock %}

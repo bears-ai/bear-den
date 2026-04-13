@@ -1,0 +1,52 @@
+//! Push Den bear registry fields to an existing Letta agent (`PATCH /v1/agents/{id}`).
+
+use sqlx::PgPool;
+use uuid::Uuid;
+
+use crate::core::{bears::db as bears_db, letta::LettaClient};
+use crate::errors::CustomError;
+
+/// When Letta is configured and the bear has `letta_agent_id`, PATCH Letta to match Den.
+/// No-op if Letta is disabled or no agent id is stored.
+pub async fn sync_bear_to_letta(
+    pool: &PgPool,
+    letta: &LettaClient,
+    bear_id: Uuid,
+) -> Result<(), CustomError> {
+    if !letta.is_enabled() {
+        return Ok(());
+    }
+
+    let bear = bears_db::get_bear(pool, bear_id)
+        .await?
+        .ok_or_else(|| CustomError::NotFound("bear not found".to_string()))?;
+
+    let Some(agent_id) = bear
+        .letta_agent_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    else {
+        return Ok(());
+    };
+
+    let model = bear
+        .default_model
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
+
+    let tool_ids: Vec<String> = bear.letta_tool_ids.0.clone();
+
+    letta
+        .patch_agent(
+            agent_id,
+            bear.name.as_str(),
+            bear.description.as_str(),
+            bear.system_prompt.as_str(),
+            model,
+            bear.letta_agent_type.as_deref(),
+            &tool_ids,
+        )
+        .await
+}

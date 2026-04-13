@@ -6,9 +6,12 @@
 {% block admin_content %}
 <div class="box">
 <h3>New bear</h3>
-<p>Define slug, prompts, and tools. When Letta is configured, you must pick an LLM model from Letta so agents can be provisioned.</p>
+<p>Define slug, prompts, model, agent type, and tools. When Letta is configured, changes are applied to Letta automatically after save (errors appear below if Letta rejects an update).</p>
 {% if provision_error %}
 <p class="form-errors"><strong>Letta provisioning failed</strong> (bear was saved): {{ provision_error }}</p>
+{% endif %}
+{% if letta_sync_error %}
+<p class="form-errors"><strong>Letta sync failed</strong> (bear was saved): {{ letta_sync_error }}</p>
 {% endif %}
 <form method="post">
   {{ forms.input("slug", "Slug", "text", 'required maxlength="120"', form) }}
@@ -19,6 +22,18 @@
     <textarea id="system_prompt_textarea" name="system_prompt" rows="12" cols="72">{{ form.system_prompt if form else '' }}</textarea>
     {% if errors and errors.system_prompt %}
     <span class="form-hint form-errors">Submission error: {{ errors.system_prompt | map(attribute="message", default="unknown error") | join(", ") }}</span>
+    {% endif %}
+  </div>
+  <label for="letta_agent_type_field" {% if errors and errors.letta_agent_type %}class="has-error"{% endif %}>Letta agent type</label>
+  <div class="form-field{% if errors and errors.letta_agent_type %} has-error{% endif %}">
+    <select id="letta_agent_type_field" name="letta_agent_type">
+      {% for row in letta_agent_type_rows %}
+      <option value="{{ row.value | e }}"{% if form and form.letta_agent_type == row.value %} selected{% endif %}>{{ row.label | e }}</option>
+      {% endfor %}
+    </select>
+    <span class="form-hint">Sent to Letta as <code>agent_type</code> when set; empty option uses Letta default.</span>
+    {% if errors and errors.letta_agent_type %}
+    <span class="form-hint form-errors">Submission error: {{ errors.letta_agent_type | map(attribute="message", default="unknown error") | join(", ") }}</span>
     {% endif %}
   </div>
   {% if letta_configured %}
@@ -48,14 +63,26 @@
   {% else %}
   {{ forms.input("default_model", "Default model (optional)", "text", 'maxlength="255" placeholder="e.g. gpt-4o"', form) }}
   {% endif %}
-  <label for="tools_json_textarea" {% if errors and errors.tools_json %}class="has-error"{% endif %}>Tools JSON (optional)</label>
-  <div class="form-field{% if errors and errors.tools_json %} has-error{% endif %}">
-    <textarea id="tools_json_textarea" name="tools_json" rows="4" cols="72" placeholder="{}">{{ form.tools_json if form else '' }}</textarea>
-    <span class="form-hint">Leave empty for none. Must be valid JSON.</span>
-    {% if errors and errors.tools_json %}
-    <span class="form-hint form-errors">Submission error: {{ errors.tools_json | map(attribute="message", default="unknown error") | join(", ") }}</span>
+  {% if letta_configured and letta_tools_fetch_error %}
+  <p class="form-errors">{{ letta_tools_fetch_error }}</p>
+  {% endif %}
+  {% if letta_tools_configured and letta_tool_options and letta_tool_options | length > 0 %}
+  <label for="letta_tool_ids_field" {% if errors and errors.letta_tool_ids %}class="has-error"{% endif %}>Letta tools</label>
+  {% if letta_tools_fetch_error %}
+  <p class="form-errors">{{ letta_tools_fetch_error }}</p>
+  {% endif %}
+  <div class="form-field{% if errors and errors.letta_tool_ids %} has-error{% endif %}">
+    <select id="letta_tool_ids_field" name="letta_tool_ids" multiple size="12">
+      {% for t in letta_tool_options %}
+      <option value="{{ t.id | e }}"{% if form and t.id in form.letta_tool_ids %} selected{% endif %}>{{ t.label | e }} — <code>{{ t.id | e }}</code></option>
+      {% endfor %}
+    </select>
+    <span class="form-hint">Hold Ctrl/Cmd to select multiple. Sent to Letta as <code>tool_ids</code>. From <code>GET /v1/tools/</code>.</span>
+    {% if errors and errors.letta_tool_ids %}
+    <span class="form-hint form-errors">Submission error: {{ errors.letta_tool_ids | map(attribute="message", default="unknown error") | join(", ") }}</span>
     {% endif %}
   </div>
+  {% endif %}
   <button type="submit">Create bear</button>
 </form>
 </div>

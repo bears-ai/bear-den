@@ -52,7 +52,11 @@ pub struct CreateBearRequest {
     description: String,
     system_prompt: String,
     default_model: Option<String>,
+    /// Deprecated: prefer `letta_tool_ids`. When set, stored as `bears.tools_enabled` for backward compatibility.
     tools_enabled: Option<serde_json::Value>,
+    letta_agent_type: Option<String>,
+    #[serde(default)]
+    letta_tool_ids: Vec<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -74,6 +78,17 @@ async fn create_bear(
         ));
     }
     let tools = body.tools_enabled.map(SqlxJson);
+    let letta_tool_ids: Vec<String> = body
+        .letta_tool_ids
+        .iter()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect();
+    let letta_agent_type = body
+        .letta_agent_type
+        .as_ref()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
     let id = bears_db::create_bear(
         state.sqlx_pool(),
         slug,
@@ -82,6 +97,8 @@ async fn create_bear(
         body.system_prompt.trim(),
         body.default_model.as_deref().map(str::trim).filter(|s| !s.is_empty()),
         tools,
+        letta_agent_type.as_deref(),
+        SqlxJson(letta_tool_ids),
     )
     .await?;
 

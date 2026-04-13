@@ -11,7 +11,7 @@ pub async fn list_bears(pool: &PgPool) -> Result<Vec<Bear>, CustomError> {
     sqlx::query_as::<_, Bear>(
         r#"
         SELECT id, slug, name, description, letta_agent_id, default_model, tools_enabled,
-               system_prompt, created_at, updated_at
+               letta_agent_type, letta_tool_ids, system_prompt, created_at, updated_at
         FROM bears
         ORDER BY slug
         "#,
@@ -25,7 +25,7 @@ pub async fn get_bear(pool: &PgPool, id: Uuid) -> Result<Option<Bear>, CustomErr
     sqlx::query_as::<_, Bear>(
         r#"
         SELECT id, slug, name, description, letta_agent_id, default_model, tools_enabled,
-               system_prompt, created_at, updated_at
+               letta_agent_type, letta_tool_ids, system_prompt, created_at, updated_at
         FROM bears
         WHERE id = $1
         "#,
@@ -70,6 +70,8 @@ pub async fn update_bear(
     system_prompt: &str,
     default_model: Option<&str>,
     tools_enabled: Option<Json<serde_json::Value>>,
+    letta_agent_type: Option<&str>,
+    letta_tool_ids: Json<Vec<String>>,
 ) -> Result<(), CustomError> {
     let r = sqlx::query(
         r#"
@@ -80,8 +82,10 @@ pub async fn update_bear(
             system_prompt = $4,
             default_model = $5,
             tools_enabled = $6,
+            letta_agent_type = $7,
+            letta_tool_ids = $8,
             updated_at = NOW()
-        WHERE id = $7
+        WHERE id = $9
         "#,
     )
     .bind(slug)
@@ -90,6 +94,8 @@ pub async fn update_bear(
     .bind(system_prompt)
     .bind(default_model)
     .bind(tools_enabled)
+    .bind(letta_agent_type)
+    .bind(letta_tool_ids)
     .bind(id)
     .execute(pool)
     .await?;
@@ -108,11 +114,16 @@ pub async fn create_bear(
     system_prompt: &str,
     default_model: Option<&str>,
     tools_enabled: Option<Json<serde_json::Value>>,
+    letta_agent_type: Option<&str>,
+    letta_tool_ids: Json<Vec<String>>,
 ) -> Result<Uuid, CustomError> {
     let row: (Uuid,) = sqlx::query_as(
         r#"
-        INSERT INTO bears (slug, name, description, system_prompt, default_model, tools_enabled, letta_agent_id)
-        VALUES ($1, $2, $3, $4, $5, $6, NULL)
+        INSERT INTO bears (
+            slug, name, description, system_prompt, default_model, tools_enabled,
+            letta_agent_type, letta_tool_ids, letta_agent_id
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NULL)
         RETURNING id
         "#,
     )
@@ -122,6 +133,8 @@ pub async fn create_bear(
     .bind(system_prompt)
     .bind(default_model)
     .bind(tools_enabled)
+    .bind(letta_agent_type)
+    .bind(letta_tool_ids)
     .fetch_one(pool)
     .await?;
     Ok(row.0)
@@ -177,7 +190,7 @@ pub async fn list_bears_for_user(pool: &PgPool, user_id: i32) -> Result<Vec<Bear
     sqlx::query_as::<_, Bear>(
         r#"
         SELECT b.id, b.slug, b.name, b.description, b.letta_agent_id, b.default_model, b.tools_enabled,
-               b.system_prompt, b.created_at, b.updated_at
+               b.letta_agent_type, b.letta_tool_ids, b.system_prompt, b.created_at, b.updated_at
         FROM bears b
         INNER JOIN user_bear ub ON ub.bear_id = b.id
         WHERE ub.user_id = $1

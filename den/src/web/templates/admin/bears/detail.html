@@ -25,7 +25,11 @@
   <dd>{{ bear.updated_at | datetimeformat(format="short") }}</dd>
   <dt>Default model</dt>
   <dd>{% if bear.default_model %}{{ bear.default_model }}{% else %}<em>none</em>{% endif %}</dd>
-  <dt>Tools JSON</dt>
+  <dt>Letta agent type (Den)</dt>
+  <dd>{% if bear.letta_agent_type %}{{ bear.letta_agent_type }}{% else %}<em>none (Letta default)</em>{% endif %}</dd>
+  <dt>Letta tool ids (Den)</dt>
+  <dd>{% if letta_tool_ids_display %}<code>{{ letta_tool_ids_display | e }}</code>{% else %}<em>none</em>{% endif %}</dd>
+  <dt>Legacy tools JSON</dt>
   <dd>{% if tools_json_display %}<pre style="white-space: pre-wrap; max-height: 16rem; overflow: auto;">{{ tools_json_display }}</pre>{% else %}<em>none</em>{% endif %}</dd>
 </dl>
 
