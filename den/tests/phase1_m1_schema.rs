@@ -1,7 +1,15 @@
 //! Verifies Phase 1 migrations: bear registry, provisioning columns, membership, user columns.
-//! Requires `DATABASE_URL` and `sqlx migrate run` applied (all `migrations/*.up.sql`).
+//! Requires `DATABASE_URL` (empty database is fine — migrations run here like production).
 
 use sqlx::postgres::PgPoolOptions;
+
+async fn apply_migrations(pool: &sqlx::PgPool) {
+    sqlx::migrate!()
+        .set_ignore_missing(true)
+        .run(pool)
+        .await
+        .expect("sqlx migrations for integration test");
+}
 
 #[tokio::test]
 async fn m1_bears_and_membership_tables_exist() {
@@ -12,6 +20,8 @@ async fn m1_bears_and_membership_tables_exist() {
         .connect(&url)
         .await
         .expect("connect postgres");
+
+    apply_migrations(&pool).await;
 
     sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM bears")
         .fetch_one(&pool)
@@ -39,6 +49,8 @@ async fn m1_users_extended_columns_exist() {
         .await
         .expect("connect postgres");
 
+    apply_migrations(&pool).await;
+
     let n: i64 = sqlx::query_scalar(
         r#"
         SELECT COUNT(*)::bigint
@@ -65,6 +77,8 @@ async fn m1b_bears_has_system_prompt_column() {
         .await
         .expect("connect postgres");
 
+    apply_migrations(&pool).await;
+
     let n: i64 = sqlx::query_scalar(
         r#"
         SELECT COUNT(*)::bigint
@@ -90,6 +104,8 @@ async fn m1b_letta_agent_id_nullable() {
         .connect(&url)
         .await
         .expect("connect postgres");
+
+    apply_migrations(&pool).await;
 
     let nullable: String = sqlx::query_scalar(
         r#"

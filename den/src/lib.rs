@@ -107,6 +107,12 @@ pub async fn run() -> Result<(), Error> {
         .await
         .expect("can't connect to database");
 
+    sqlx::migrate!()
+        .set_ignore_missing(true)
+        .run(&sqlx_pool)
+        .await
+        .expect("failed to run SQLx database migrations");
+
     let session_store = PostgresStore::new(sqlx_pool.clone());
     session_store.migrate().await.unwrap();
 

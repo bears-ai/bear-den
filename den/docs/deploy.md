@@ -9,7 +9,7 @@ Trestle expects a **working PostgreSQL service** you operate separately. The app
 **Before the container or binary runs:**
 
 1. Start Postgres (sidecar VM, compose service, managed DB, etc.).
-2. Create a database and **apply migrations** from [`migrations/`](../migrations/) (for example `sqlx migrate run` against that URL, or your platform's migration job).
+2. Create a database (empty is fine). On startup, `den` runs **embedded SQLx migrations** from [`migrations/`](../migrations/) against `DATABASE_URL` before serving (same as local `cargo run` once the process connects).
 
 ## Typical runtime environment
 
@@ -17,7 +17,7 @@ Trestle expects a **working PostgreSQL service** you operate separately. The app
 
 | Variable | Role |
 |----------|------|
-| `DATABASE_URL` | **Required.** Postgres connection string; DB must exist and be migrated. |
+| `DATABASE_URL` | **Required.** Postgres connection string; the database must exist; schema is applied automatically at startup. |
 | `RUN_WEB` / `RUN_API` / `RUN_WORKERS` | Enable HTTP web, HTTP API, and in-process workers (each defaults to `false` if unset). Turn **at least one** on for a meaningful smoke test. |
 | `PORT` / `API_PORT` | Listen ports when web/API are enabled (defaults `3000` / `3001`). |
 
@@ -27,7 +27,7 @@ Trestle expects a **working PostgreSQL service** you operate separately. The app
 
 ## SQLx offline builds
 
-Set **`SQLX_OFFLINE=true`** for CI or air-gapped builds after committing the query cache under [`.sqlx/`](../.sqlx/) (regenerate with `cargo sqlx prepare` against a migrated database; see [sqlx-patterns.md](sqlx-patterns.md)).
+Set **`SQLX_OFFLINE=true`** for CI or air-gapped builds after committing the query cache under [`.sqlx/`](../.sqlx/) (regenerate with `cargo sqlx prepare` against a database that has applied the current migrations at least once — for example after one local `cargo run`; see [sqlx-patterns.md](sqlx-patterns.md)).
 
 ## Docker image build
 

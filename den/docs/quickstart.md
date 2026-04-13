@@ -2,23 +2,17 @@
 
 ## Run the app
 
-1. Copy [`.env.example`](../.env.example) to `.env` (or set env another way) and set **`DATABASE_URL`** to a PostgreSQL database that exists on your machine or network.
-2. Apply migrations from [`migrations/`](../migrations/), for example:
-
-   ```bash
-   sqlx migrate run
-   ```
-
-   (Use the same `DATABASE_URL` the app will use.)
-
-   A migration seeds a **bootstrap operator** on empty databases: username **`admin`**, password **`Never deploy with default passwords.`** (see [`migrations/README.md`](../migrations/README.md) § *Default operator account*). Replace that password before any real deployment.
-
-3. Enable at least one service, for example **`RUN_WEB=true`** (and optionally `RUN_API`, `RUN_WORKERS`).
-4. Run:
+1. Copy [`.env.example`](../.env.example) to `.env` (or set env another way) and set **`DATABASE_URL`** to a PostgreSQL database that exists on your machine or network (empty database is fine).
+2. Enable at least one service, for example **`RUN_WEB=true`** (and optionally `RUN_API`, `RUN_WORKERS`).
+3. Run:
 
    ```bash
    cargo run
    ```
+
+   On startup the app applies SQLx migrations from [`migrations/`](../migrations/) automatically. A migration seeds a **bootstrap operator** on empty databases: username **`admin`**, password **`Never deploy with default passwords.`** (see [`migrations/README.md`](../migrations/README.md) § *Default operator account*). Replace that password before any real deployment.
+
+   When you add new migration files, use `sqlx migrate add` / `sqlx migrate run` from the `den/` directory as described in [sqlx-patterns.md](sqlx-patterns.md).
 
 You can use the devcontainer in this repo instead of a manual local Postgres setup if that matches your workflow.
 
@@ -32,7 +26,7 @@ In **development**, MiniJinja loads files from **`TEMPLATES_DIR`** (default `src
 
 ## Fresh database and SQLx offline
 
-The schema is applied via migrations under `migrations/`. For **`SQLX_OFFLINE`** / CI builds, run `cargo sqlx prepare` against a database with migrations applied and commit [`.sqlx/`](../.sqlx/). See [sqlx-patterns.md](sqlx-patterns.md).
+The schema is applied automatically on startup from `migrations/`. For **`SQLX_OFFLINE`** / CI builds, run `cargo sqlx prepare` against a database that has run those migrations at least once and commit [`.sqlx/`](../.sqlx/). See [sqlx-patterns.md](sqlx-patterns.md).
 
 ## Mail
 

@@ -1,4 +1,4 @@
-//! Integration tests for web HTTP endpoints. Requires `DATABASE_URL` and applied migrations.
+//! Integration tests for web HTTP endpoints. Requires `DATABASE_URL` (empty DB is fine).
 use axum::{
     body::Body,
     http::{Request, StatusCode},
@@ -10,6 +10,14 @@ use std::sync::Arc;
 use tower::ServiceExt;
 use tower_sessions_sqlx_store::PostgresStore;
 
+async fn apply_app_migrations(pool: &sqlx::PgPool) {
+    sqlx::migrate!()
+        .set_ignore_missing(true)
+        .run(pool)
+        .await
+        .expect("sqlx migrations for integration test");
+}
+
 async fn web_app() -> axum::Router {
     dotenvy::dotenv().ok();
     let config = Arc::new(Config::load());
@@ -18,7 +26,8 @@ async fn web_app() -> axum::Router {
         .acquire_timeout(std::time::Duration::from_secs(5))
         .connect(&config.database_url)
         .await
-        .expect("DATABASE_URL must be set with a migrated database for integration tests");
+        .expect("DATABASE_URL must be set for integration tests");
+    apply_app_migrations(&pool).await;
     let store = PostgresStore::new(pool.clone());
     store
         .migrate()
@@ -37,7 +46,8 @@ async fn api_app() -> axum::Router {
         .acquire_timeout(std::time::Duration::from_secs(5))
         .connect(&config.database_url)
         .await
-        .expect("DATABASE_URL must be set with a migrated database for integration tests");
+        .expect("DATABASE_URL must be set for integration tests");
+    apply_app_migrations(&pool).await;
     let store = PostgresStore::new(pool.clone());
     store
         .migrate()

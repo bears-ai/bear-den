@@ -1,6 +1,6 @@
 ### Migrations
 
-Applied with **`sqlx migrate run`** from the `den/` directory (requires `DATABASE_URL`).
+At **process startup**, `den` runs embedded migrations against `DATABASE_URL` (same files as below). For **authoring** schema changes you still use **`sqlx migrate run`** / **`sqlx migrate add`** from the `den/` directory when developing locally.
 
 | File | Purpose |
 |------|---------|
@@ -11,7 +11,7 @@ Applied with **`sqlx migrate run`** from the `den/` directory (requires `DATABAS
 
 ### Default operator account
 
-After a fresh `sqlx migrate run`, you can sign in at `/login` with:
+After migrations have been applied (first container start or local `cargo run` on an empty DB), you can sign in at `/login` with:
 
 | Field | Value |
 |-------|--------|
@@ -25,4 +25,4 @@ The stored `passhash` is Argon2id (PHC). If you change the password string in th
 
 **Note:** Legacy `users.id` is still `serial`. `user_bear.user_id` is `INTEGER` FK to `users(id)` so the schema is consistent without a UUID cutover. A later milestone may migrate identity to UUID per [PHASE1_BOOTSTRAP.md](../../docs/planning/PHASE1_BOOTSTRAP.md). Prefer column **`is_admin`** for operators; legacy **`admin_flag`** remains for older queries until fully retired.
 
-Production builds with `--features=production` also run `sqlx migrate` from `build.rs` when `DATABASE_URL` is set at compile time.
+Production **container** runs apply the same migrations automatically on startup (`src/lib.rs`); you do not need a separate deploy-time migration step for normal hosting.
