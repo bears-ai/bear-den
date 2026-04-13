@@ -30,17 +30,21 @@ RUN apk add --no-cache clang lld musl-dev git
 # output directory before the cache mounted /app/target is unmounted.
 #
 # ARG OUT_DIR=/app/target/release
-# $DATABASE_URL and ./migrations are needed by sqlx at build time.
-ARG DATABASE_URL
+# SQLx: either a reachable `DATABASE_URL` with schema matching queries, or
+# `SQLX_OFFLINE=true` plus a bind-mounted [`.sqlx/`](.sqlx/) (see `docs/deploy.md`).
+ARG DATABASE_URL=postgres://postgres:postgres@127.0.0.1:5432/postgres?sslmode=disable
+ARG SQLX_OFFLINE=false
 RUN --mount=type=bind,source=src,target=src \
     --mount=type=bind,source=migrations,target=migrations \
+    --mount=type=bind,source=.sqlx,target=.sqlx,ro \
     --mount=type=bind,source=Cargo.toml,target=Cargo.toml \
     --mount=type=bind,source=Cargo.lock,target=Cargo.lock \
     --mount=type=bind,source=build.rs,target=build.rs \
     --mount=type=cache,target=/app/target/ \
     --mount=type=cache,target=/usr/local/cargo/git/db \
     --mount=type=cache,target=/usr/local/cargo/registry/ \
-export DATABASE_URL && echo DATABASE_URL = $DATABASE_URL && \
+export DATABASE_URL SQLX_OFFLINE && \
+echo "DATABASE_URL=$DATABASE_URL" && echo "SQLX_OFFLINE=$SQLX_OFFLINE" && \
 cargo build --locked --release --features=production --message-format=short && \
 cp ./target/release/$APP_NAME /bin/server
 

@@ -48,9 +48,10 @@ Open **Build Arguments** / **Docker Build Args** (wording varies by Coolify vers
 
 | Name | Purpose |
 | ---- | ------- |
-| `DATABASE_URL` | **Required for `cargo build`.** Must reach PostgreSQL **from Coolify’s build host** so SQLx compile-time checks can run (it does **not** have to match production; a disposable build database is fine if you treat it as compile-only). |
+| `DATABASE_URL` | Used at **image build** for SQLx when **`SQLX_OFFLINE` is unset or `false`**. Must reach PostgreSQL from the build environment (disposable compile-only DB is fine). The Dockerfile defaults to a dummy URL when you use offline mode instead. |
+| `SQLX_OFFLINE` | Set to **`true`** to compile against committed [`.sqlx/`](.sqlx/) query metadata (no live Postgres during `cargo build`). The Dockerfile bind-mounts `.sqlx` read-only for this path. Regenerate metadata with `cargo sqlx prepare` when queries change. |
 
-If the build cannot reach Postgres, the image build will fail at the SQLx compile step. There is no substitute in-repo for this requirement without changing the build pipeline (for example building the image in CI with offline query metadata and deploying a pre-published tag — **Option B**).
+If you omit `SQLX_OFFLINE=true`, the build needs a reachable Postgres so SQLx can verify queries against a database that has applied the current migrations (same as before). Offline builds are the usual **CI / air-gapped** approach (see [`docs/deploy.md`](docs/deploy.md)).
 
 At **container start**, Den connects using the **runtime** `DATABASE_URL` and applies any pending migrations there automatically.
 

@@ -38,11 +38,11 @@ pub fn sqlx_migrate_ignore_missing_from_env() -> bool {
 
 /// Run embedded SQLx migrations from `migrations/` against `pool`.
 pub async fn run_sqlx_migrations(pool: &PgPool) -> Result<(), sqlx::migrate::MigrateError> {
-    let mut migrator = sqlx::migrate!();
     if sqlx_migrate_ignore_missing_from_env() {
-        migrator = migrator.set_ignore_missing(true);
+        sqlx::migrate!().set_ignore_missing(true).run(pool).await
+    } else {
+        sqlx::migrate!().run(pool).await
     }
-    migrator.run(pool).await
 }
 
 fn requires_jwt_secret(config: &Config) -> bool {
