@@ -205,6 +205,7 @@ Den enforces:
 
 - **Traffic:** **Letta → Bifrost** for calls configured against `LLM_API_URL` (typically chat completions). **Embeddings** may use the same URL or direct provider credentials per Letta settings. **Den never proxies** Bifrost.
 - **Den’s use of Bifrost:** optional **read-only** integration for observability—e.g. Bifrost **metrics**, **`/health`**, Prometheus, or exported logs—so operators (or Den) can monitor usage. Correlating calls to Den’s `user_id` / `agent_id` may require **Letta/Bifrost metadata** (e.g. custom headers or logging hooks) configured outside Den’s request path.
+- **Naming (`BIFROST_*`):** Den uses **Bifrost-specific** configuration (e.g. `BIFROST_BASE_URL`), not a vendor-neutral `MODEL_GATEWAY_*`, so the **operator console** may assume **Bifrost’s** health routes, Prometheus layout, and documented management APIs without an extra abstraction layer.
 - **Policy:** Den can still enforce **which users may chat with which bears** before forwarding to Letta; model allowlists at the **Bifrost** layer remain separate (configure both consistently).
 
 ---
