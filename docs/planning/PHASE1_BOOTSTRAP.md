@@ -4,7 +4,7 @@
 
 Put the Rust project at repo-root **`den/`** with package/binary name **`den`**, Coolify service e.g. **`bears-den`**.
 
-**Phase 1 success** (from PLAN): **operator console** usable for full provisioning; web users chat **Den-hosted Loquix → Den → Letta** as the **primary** end-user path; **Open WebUI → Den → Letta** is an **optional** addition for teams that want it; bear registry + **users↔bears** many-to-many; LettaBot stays **direct to Letta** for chat but Den **owns** bear provisioning and **LettaBot config output**; optional **read-only** LiteLLM observability; **no Cabinet**.
+**Phase 1 success** (from PLAN): **operator console** usable for full provisioning; web users chat **Den-hosted Loquix → Den → Letta** as the **primary** end-user path; **Open WebUI → Den → Letta** is an **optional** addition for teams that want it; bear registry + **users↔bears** many-to-many; LettaBot stays **direct to Letta** for chat but Den **owns** bear provisioning and **LettaBot config output**; optional **read-only** Bifrost observability; **no Cabinet**.
 
 **Delivery priority:** Reach the **first user-testable moment** as early as possible: an **operator provisioning UI** (browser) for **authentication**, **user** lifecycle, **agent/bear** lifecycle (Letta create/sync), **membership**, and **LettaBot** setup (preview/download generated `lettabot.yaml`, copy-paste instructions). End-user **chat** via **Loquix** (same-origin on Den) follows once the **chat API** (M5) is stable; **Open WebUI** integration can ship **after** Loquix when needed.
 
@@ -38,7 +38,7 @@ Use whatever **one-off** scaffold you prefer (`cargo new`, an internal template,
 | Discovery | `GET /agents` or `GET /bears` → bears the current user may use |
 | LettaBot | `GET /admin/lettabot.yaml` (operator session **or** server-side key); operator UI shows preview; optional write to volume path on change |
 | Policy | RBAC-lite: membership check + optional per-bear `can_use` + basic rate limit |
-| LiteLLM | Optional: fetch metrics/admin spend **read-only**; no proxying completions |
+| Bifrost | Optional: fetch metrics/health **read-only**; no proxying completions |
 | Deploy | **Self-building Docker image** (multi-stage: build Rust in container, runtime image with binary + `ca-certificates`) |
 
 ### Explicitly out of scope (Phase 1)
@@ -88,7 +88,7 @@ den/
 | Web | **Axum** 0.7+ | Matches PLAN “Den in Rust” |
 | Async runtime | **tokio** | Standard |
 | DB driver | **sqlx** with `runtime-tokio-rustls`, `postgres`, `migrate` | Compile-time checked queries optional (`offline` mode in CI) |
-| HTTP client | **reqwest** | Letta + LiteLLM admin calls |
+| HTTP client | **reqwest** | Letta + optional Bifrost observability calls |
 | SSE / stream | **axum** `body::Body`, `futures::Stream`, or `async-stream` | Proxy Letta stream without buffering full reply |
 | Passwords | **argon2** | `password-hash` crate |
 | Sessions | **signed cookie** (e.g. `tower-cookies` + **Key** from `SESSION_SECRET`) **or** opaque token in DB | Pick one for v1; document the other as Phase 1.1 |
@@ -193,7 +193,7 @@ den/
 
 ### Internal / optional
 
-| GET | `/internal/litellm/health` | Proxy read to LiteLLM `/health` or metrics (if enabled) |
+| GET | `/internal/bifrost/health` | Proxy read to Bifrost `GET /health` or metrics (if enabled) |
 
 **OpenAPI:** Generate with `utoipa` in a follow-up milestone if useful; optional Open WebUI adapters may consume it.
 
@@ -265,12 +265,12 @@ den/
 
 ---
 
-## 9. LiteLLM observability (optional Milestone 1.5)
+## 9. Bifrost observability (optional Milestone 1.5)
 
-- Env: `LITELLM_BASE_URL`, `LITELLM_MASTER_KEY` (read-only usage).
-- Endpoints to call: `/health/liveliness`, `/metrics` (Prometheus), or admin spend API per your LiteLLM version.
+- Env: `BIFROST_BASE_URL` (e.g. `http://bears-bifrost:8080`). Management auth, if any, depends on your Bifrost config (file-only GitOps setups often expose `GET /health` without extra headers).
+- Endpoints to call: `GET /health`, Prometheus scrape target if enabled, or log export per [Bifrost observability](https://docs.getbifrost.ai/features/observability/default).
 - **No** forwarding of chat completions through Den.
-- **Attribution:** Document gap: correlating LiteLLM logs to `user_id` may need Letta extra headers — out of Den unless you add Letta config change.
+- **Attribution:** Document gap: correlating gateway logs to `user_id` may need Letta extra headers — out of Den unless you add Letta config change.
 
 ---
 
@@ -300,8 +300,7 @@ den/
 | `ADMIN_API_KEY` | yes (prod) | Machine/automation access to admin JSON API; **browser uses operator session** |
 | `BOOTSTRAP_ADMIN_EMAIL` | no | First-run: promote this user to `is_admin` on registration (homelab) |
 | `RUST_LOG` | no | `den=info,tower_http=info` |
-| `LITELLM_BASE_URL` | no | Observability only |
-| `LITELLM_MASTER_KEY` | no | If required by LiteLLM admin |
+| `BIFROST_BASE_URL` | no | Observability only (e.g. `http://bears-bifrost:8080`) |
 
 ---
 
@@ -347,7 +346,7 @@ den/
 | M7 | LettaBot yaml polish | Generated yaml matches real bot configs; copy-paste tested from console |
 | M8 | Polish | Rate limits, readiness probe, Coolify deploy |
 
-**LiteLLM observability:** M8 or parallel track.
+**Bifrost observability:** M8 or parallel track.
 
 **Note:** **M4b** can overlap **M3–M4** (build UI against stub endpoints first). **M6 (Loquix)** can overlap late **M5** (UI shell early; wire streaming when API is ready). **M6b (Open WebUI)** is **not** on the critical path for “someone can try the system” in-browser.
 

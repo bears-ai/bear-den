@@ -12,7 +12,7 @@ The system is model-agnostic and self-hosted. **Shared knowledge** is **Cabinet*
 
 1. **Persistent Identity & Memory**: Create an assistant that maintains continuity across sessions, models, and time
 2. **Multi-User Support**: Enable multiple household members (e.g., you and Shannon) to interact with personalized and shared memory contexts
-3. **Model Agnosticism**: Decouple behavior from any single LLM provider using LiteLLM as a routing layer
+3. **Model Agnosticism**: Decouple behavior from any single LLM provider using **Bifrost** as the model gateway
 4. **Transparency & Control**: Shared knowledge human-readable and editable (Outline); Letta memory inspectable in Letta
 5. **Agentic capabilities**: Enable autonomous task execution, planning, and tool use per **bear** via Letta
 6. **Scalable Memory**: Support both curated knowledge and large-scale data retrieval (RAG, MCPs)
@@ -21,7 +21,7 @@ The system is model-agnostic and self-hosted. **Shared knowledge** is **Cabinet*
 
 ### Included
 - Multi-user identity and memory management (personal + shared contexts)
-- Model-agnostic LLM routing via LiteLLM
+- Model-agnostic LLM routing via Bifrost
 - **Cabinet (Outline)** for shared long-term knowledge (humans + **bears**); Letta native memory per **bear**  
 - Letta as **bear** runtime for autonomous workflows (tools, planning)
 - Docker-based deployment via Coolify
@@ -76,7 +76,7 @@ The system is model-agnostic and self-hosted. **Shared knowledge** is **Cabinet*
 - **Config**: Git for this deploy repo; knowledge in Outline
 
 ### AI/ML Components
-- **Model Gateway**: LiteLLM (multi-provider routing)
+- **Model Gateway**: Bifrost (multi-provider routing)
 - **Bear runtime**: Letta (autonomous workflows, tool execution; one Letta agent per bear)
 - **Memory**: Letta native + **Cabinet (Outline)** for shared knowledge
 - **Multi-user auth & bear registry**: **Den** (Axum) in front of **self-hosted Letta**; many **bears** per user and shared bears. See [`docs/architecture/DEN_ARCHITECTURE.md`](../../docs/architecture/DEN_ARCHITECTURE.md) / [`docs/planning/PLAN.md`](../../docs/planning/PLAN.md).
@@ -114,7 +114,7 @@ projects/            # Project-scoped memory files (per-project context)
 
 This is an exploratory, iterative project with flexible timelines. Development will proceed in capability-driven phases:
 
-- **Phase 1**: Core infrastructure (Docker, Coolify, LiteLLM)
+- **Phase 1**: Core infrastructure (Docker, Coolify, Bifrost)
 - **Phase 2**: Cabinet (Outline) + Letta memory
 - **Phase 3**: Multi-user support and memory scoping
 - **Phase 4**: **Bear** runtime hardening (Letta) + Den provisioning
@@ -171,11 +171,11 @@ Specific dates and deadlines will be determined as the project evolves.
 1. **Behavior Reusability**: **Bear** behavior, memory, and tools are reusable across models
 2. **User Editability**: Both users can manually revise any part of the memory via Markdown or Git
 3. **Unified Deployment**: All services deployed via a unified Docker Compose file
-4. **Named Volumes**: Letta, Outline, LiteLLM
+4. **Named Volumes**: Letta, Outline, Bifrost (optional bind for `config.json` only; no DB by default)
 
 ### Related Documentation
 - [`agentic-assistant-architecture.md`](agentic-assistant-architecture.md) - Detailed architectural design
 - [`memory_architecture_brief.md`](memory_architecture_brief.md) - Memory system specifications
 
 ### Current Status
-Project is in initial setup phase. Core infrastructure (Docker Compose, LiteLLM config) has been started.
+Project is in initial setup phase. Core infrastructure (Docker Compose, Bifrost `config.json`) has been started.

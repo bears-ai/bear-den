@@ -1,17 +1,17 @@
 # Letta - Coolify Deployment Guide
 
-**Stack order:** This is **step 2** in [DEPLOYMENT.md](../../docs/deployment/DEPLOYMENT.md) (after LiteLLM). Details below.
+**Stack order:** This is **step 2** in [DEPLOYMENT.md](../../docs/deployment/DEPLOYMENT.md) (after Bifrost). Details below.
 
 ## Overview
 
-Letta is the BEARS **bear runtime**: each **bear** is a **Letta agent** (conversation loop, tools, native **memory** blocks). Models go through **LiteLLM**. Shared knowledge is **Cabinet** on **Outline**, exposed to **bears** through **Den** ([PLAN.md](../../docs/planning/PLAN.md)). Cabinet does **not** replace Letta’s per‑**bear** memory.
+Letta is the BEARS **bear runtime**: each **bear** is a **Letta agent** (conversation loop, tools, native **memory** blocks). Models go through **Bifrost** (`LLM_API_URL`). Shared knowledge is **Cabinet** on **Outline**, exposed to **bears** through **Den** ([PLAN.md](../../docs/planning/PLAN.md)). Cabinet does **not** replace Letta’s per‑**bear** memory.
 
 **Terminology:** In BEARS docs, **bear** = one assistant backed by a Letta agent. **Den** provisions bears (Letta API), **users↔bears** membership (many‑to‑many), and surfaces bears in Open WebUI / LettaBot—see [PLAN.md](../../docs/planning/PLAN.md). The Letta HTTP API still uses paths like `/v1/agents`; that **agent** id is the runtime id for a bear.
 
 ## Prerequisites
 
 - Coolify
-- **LiteLLM** deployed and reachable
+- **Bifrost** deployed and reachable ([`../bifrost/COOLIFY_DEPLOY.md`](../bifrost/COOLIFY_DEPLOY.md))
 - **Den + Outline** when using Cabinet tools ([PLAN.md](../../docs/planning/PLAN.md))
 
 ## Deployment Steps
@@ -32,16 +32,11 @@ Letta is the BEARS **bear runtime**: each **bear** is a **Letta agent** (convers
 4. **Environment Variables**:
 
   ```bash
-  # LiteLLM
-  LLM_API_URL=http://bears-litellm:4000/v1
+  # Bifrost (OpenAI-compatible gateway)
+  LLM_API_URL=http://bears-bifrost:8080/v1
 
-  # LiteLLM Master Key (optional)
-  # If LiteLLM is configured to require a master key, set `LITELLM_MASTER_KEY`
-  # in Letta's environment to the same value used by the LiteLLM service so
-  # Letta can authenticate when calling the LiteLLM API. If you prefer to run
-  # LiteLLM without authentication (development/testing only), leave this
-  # variable unset and remove/comment `master_key` in the LiteLLM config.
-  # Example: LITELLM_MASTER_KEY=sk-litellm-<hex>
+  # The stock BEARS Bifrost config is file-based GitOps without a client gateway key.
+  # Keep OPENAI_API_KEY set for embeddings and any Letta features that call OpenAI directly.
 
    # Model Configuration
    MODEL_NAME=gpt-4
@@ -107,19 +102,18 @@ curl http://bears-letta:8283/v1/agents
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `LLM_API_URL` | ✅ Yes | - | LiteLLM URL (`http://bears-litellm:4000/v1`) |
+| `LLM_API_URL` | ✅ Yes | - | Bifrost URL (`http://bears-bifrost:8080/v1`) |
 | `MODEL_NAME` | ✅ Yes | `gpt-4` | Default model for new Letta agents (**bears**) |
 | `LETTA_SERVER_PORT` | No | `8283` | Web UI and API port |
 | `LETTA_SERVER_PASS` | ✅ Yes | - | Admin password for Letta |
-| `OPENAI_API_KEY` | ✅ Yes | - | For embeddings (can use LiteLLM instead) |
+| `OPENAI_API_KEY` | ✅ Yes | - | For embeddings and direct OpenAI calls; chat completions use `LLM_API_URL` |
 | `LETTA_SERVER_HOST` | No | `0.0.0.0` | Bind address |
 | `LOG_LEVEL` | No | `INFO` | Logging verbosity |
-| `LITELLM_MASTER_KEY` | Optional | - | Master key for LiteLLM API authentication. If omitted, LiteLLM will accept unauthenticated requests (only recommended for local/dev). |
 
 ### Service Dependencies
 
 ```
-Letta → LiteLLM → providers
+Letta → Bifrost → providers
 Cabinet tools (when Den + Outline are deployed) → Den → Outline
 ```
 
@@ -208,37 +202,33 @@ View in Coolify dashboard:
 ### Service Won't Start
 
 **Solutions**:
-- Check LiteLLM healthy
-- Verify environment variables are correct
+- Verify environment variables are correct (`LETTA_SERVER_PASS`, `LLM_API_URL`, …)
 - Ensure port 8283 is not already in use
+- From the Letta container network, confirm Bifrost is reachable (see below)
 - Review logs for specific errors
 
-### Can't Connect to LiteLLM
+### Can't connect to Bifrost
 
 **Problem**: Model requests failing
 
 **Solutions**:
-- Verify `LLM_API_URL=http://bears-litellm:4000/v1`
-- Check LiteLLM service is healthy
-- Test: `curl http://bears-litellm:4000/health/liveliness`
-- Verify LiteLLM has valid API keys
- - If you require authentication: ensure Letta is configured to present the LiteLLM master key by setting `LITELLM_MASTER_KEY` in Letta's environment to the same value used by the LiteLLM service. See `services/letta/.env.example` and `services/litellm/.env.example` for examples.
- - If you prefer unauthenticated LiteLLM: remove or comment out `master_key` in `services/litellm/litellm-config.yaml` (the file shipped in this repo has the `master_key` line commented out). Running without auth is convenient for local/dev but is insecure for production — use internal networks or a proxy if you choose this mode.
+- Verify `LLM_API_URL=http://bears-bifrost:8080/v1` (include the `/v1` suffix).
+- Check the Bifrost service: `curl http://bears-bifrost:8080/health` and `curl http://bears-bifrost:8080/v1/models`
+- Confirm Bifrost has valid provider keys in its environment and `services/bifrost/config.json` mounted at `/app/data/config.json` ([`../bifrost/COOLIFY_DEPLOY.md`](../bifrost/COOLIFY_DEPLOY.md)).
 
-### LiteLLM Authentication (Letta)
+### Gateway authentication (Letta)
 
-Letta calls LiteLLM at `LLM_API_URL`. To authenticate, LiteLLM expects requests to include an `Authorization: Bearer <master-key>` header. Provide the same master key in the Letta environment so Letta can forward it when making model requests.
+With the **file-based GitOps** `config.json` shipped in this repo, Bifrost does **not** require a client `Authorization` header for `/v1` calls; provider keys live on the gateway. Letta still needs **`OPENAI_API_KEY`** for embeddings and any direct OpenAI usage.
 
-Quick test (replace with your key):
+If you enable **Bifrost governance / virtual keys**, align Letta’s outbound credential with Bifrost’s documentation (often the OpenAI-compatible `Authorization` header).
+
+Quick test:
 
 ```bash
-# From a machine/container that can reach LiteLLM:
-curl -i -H "Authorization: Bearer sk-litellm-..." http://bears-litellm:4000/v1/models
-
-# From inside Letta (after setting env var), check Letta can reach LiteLLM via a bear (agent) or by inspecting logs for successful 200 responses when Letta makes model calls.
+curl -sS http://bears-bifrost:8080/v1/models
 ```
 
-If your Letta build exposes a different configuration name for forwarding LLM credentials, consult the Letta documentation. See `services/letta/.env.example` for the variable name used in this repository.
+If your Letta build exposes a different configuration name for forwarding LLM credentials, consult the Letta documentation. See `services/letta/.env.example` for the variables used in this repository.
 
 ### Web UI Not Loading
 
@@ -380,8 +370,8 @@ Shared team context: **Cabinet (Outline)**, Letta shared blocks, or a **shared b
 
 ## Deployment completion
 
-- [ ] LiteLLM healthy; Letta reaches `LLM_API_URL`
+- [ ] Bifrost healthy; Letta reaches `LLM_API_URL`
 - [ ] Open WebUI / LibreChat can chat with a **bear** (Letta agent)
 - [ ] Den + Outline + Cabinet tools when rolled out ([PLAN.md](../../docs/planning/PLAN.md))
 
-**Services:** `bears-litellm`, `bears-letta`, UI; later **Outline + Den**.
+**Services:** `bears-bifrost`, `bears-letta`, UI; later **Outline + Den**.

@@ -15,48 +15,48 @@ Deploy the BEARS stack as separate services in Coolify. Shared knowledge uses **
 
 ## Overview
 
-- **This repo** (`bears-depoy`) — configs and docs for Letta, LiteLLM, Open WebUI, etc.
+- **This repo** (`bears-depoy`) — configs and docs for Letta, Bifrost, Open WebUI, etc.
 - **Letta** — **bear** runtime: one Letta agent per bear; native memory (blocks, conversations).
 - **Cabinet** — shared knowledge in **Outline**, exposed to **bears** through **Den** ([PLAN.md](../planning/PLAN.md)).
 
 ## Prerequisites
 
 - Coolify v4+
-- ~4 GB RAM minimum (Letta + LiteLLM + Open WebUI)
-- API keys: OpenAI and/or Anthropic (and others per LiteLLM config)
+- ~4 GB RAM minimum (Letta + Bifrost + Open WebUI)
+- API keys: OpenAI and/or Anthropic (and others per `services/bifrost/config.json`)
 
 ## Architecture
 
 ```
-Open WebUI → Letta → LiteLLM → model providers
+Open WebUI → Letta → Bifrost → model providers
 (Target with Den: Open WebUI → Den → Letta; Den provisions bears + membership — [PLAN.md](../planning/PLAN.md))
 (Optional: Outline/Cabinet with Den per PLAN.md)
 ```
 
 ## Deployment order
 
-1. **LiteLLM** — model gateway  
-2. **Letta** — must reach LiteLLM  
+1. **Bifrost** — model gateway  
+2. **Letta** — must reach Bifrost  
 3. **Open WebUI** — chat UI + open-webui-tools → Letta  
 4. **Outline + Den** — when enabling Cabinet ([PLAN.md](../planning/PLAN.md))
 
 ## Step-by-step deployment
 
-### Step 1: LiteLLM
+### Step 1: Bifrost
 
-Part of the overall order in this guide; details: [`../../services/litellm/COOLIFY_DEPLOY.md`](../../services/litellm/COOLIFY_DEPLOY.md).
+Part of the overall order in this guide; details: [`../../services/bifrost/COOLIFY_DEPLOY.md`](../../services/bifrost/COOLIFY_DEPLOY.md).
 
-- Service name e.g. `bears-litellm`, port `4000`  
-- Set provider keys, `LITELLM_MASTER_KEY` for production  
-- Mount `services/litellm/litellm-config.yaml` → `/app/config.yaml`  
-- Health: `GET http://bears-litellm:4000/health/liveliness`
+- Service name e.g. `bears-bifrost`, port `8080` (set `APP_HOST=0.0.0.0`, `APP_PORT=8080`)  
+- Set provider keys in Coolify env (referenced from `config.json` via `env.*`)  
+- Mount `services/bifrost/config.json` → `/app/data/config.json` (read-only)  
+- Health: `GET http://bears-bifrost:8080/health`
 
 ### Step 2: Letta
 
 See [`../../services/letta/COOLIFY_DEPLOY.md`](../../services/letta/COOLIFY_DEPLOY.md).
 
-- `LLM_API_URL=http://bears-litellm:4000/v1`  
-- `LETTA_SERVER_PASS`, `OPENAI_API_KEY` (or embeddings via LiteLLM)  
+- `LLM_API_URL=http://bears-bifrost:8080/v1`  
+- `LETTA_SERVER_PASS`, `OPENAI_API_KEY` (embeddings; chat completions go through Bifrost)  
 - Volume: `bears-letta-data` → `/root/.letta`  
 - Health: `GET http://bears-letta:8283/v1/health`
 
@@ -91,7 +91,7 @@ Follow [PLAN.md](../planning/PLAN.md) when you deploy the control plane and Outl
 
 | Check | Command / action |
 |-------|------------------|
-| LiteLLM | `curl http://bears-litellm:4000/health/liveliness` |
+| Bifrost | `curl http://bears-bifrost:8080/health` |
 | Letta | `curl http://bears-letta:8283/v1/health` |
 | Open WebUI | `curl http://bears-openwebui:3000/api/health` |
 
@@ -99,7 +99,7 @@ End-to-end: create a **bear** in Letta (or via Den when deployed), select it in 
 
 ## Troubleshooting
 
-- **Letta ↔ LiteLLM:** `LLM_API_URL`, optional `LITELLM_MASTER_KEY` must match LiteLLM config  
+- **Letta ↔ Bifrost:** `LLM_API_URL` must match Bifrost’s internal URL and `/v1` suffix; provider keys must be valid on the Bifrost service.  
 - **Open WebUI ↔ Letta:** function `LETTA_API_URL` and `LETTA_SERVER_PASS`  
 - **Open WebUI DB:** if using Postgres, verify `DATABASE_URL` and network to DB  
 

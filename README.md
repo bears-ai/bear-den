@@ -10,7 +10,7 @@ Each assistant in the product is a **bear** (one **Letta** agent). **BEARS** nam
 - **[Open WebUI](https://github.com/open-webui/open-webui)** (open-webui) — Chat UI
 - **[Loquix](https://github.com/loquix-dev/loquix)** — Optional **Den**-hosted web chat (same Den APIs as Open WebUI); see [docs/architecture/DEN_ARCHITECTURE.md](docs/architecture/DEN_ARCHITECTURE.md)
 - **[Outline](https://www.getoutline.com/)** + **Den** (Rust/Axum) — Control plane + **Cabinet**; see [docs/planning/PLAN.md](docs/planning/PLAN.md). **Self-hosted Letta only** (no Letta Cloud).
-- **[LiteLLM](https://github.com/BerriAI/litellm)** — Model gateway
+- **[Bifrost](https://github.com/maximhq/bifrost)** — Model gateway (OpenAI-compatible `/v1`; file-based config in `services/bifrost/`)
 - **[Coolify](https://coolify.io)** — Deployment
 
 **Repository layout, cloning, and sparse checkout:** [docs/README.md](docs/README.md). **Notes for coding agents:** [AGENTS.md](AGENTS.md).
@@ -35,11 +35,11 @@ Each assistant in the product is a **bear** (one **Letta** agent). **BEARS** nam
 |-------|------|
 | **Letta memory** | Per‑**bear** context (blocks, conversations)—not replaced by Cabinet |
 | **Cabinet (Outline)** | Long-lived docs; people edit in Outline, **bears** use tools via **Den** |
-| **Den** | Control plane: **bear** lifecycle (Letta + Open WebUI + LettaBot), **users↔bears** membership, identity, routing, policy, Cabinet API; optional **Loquix** chat UI **served from Den** ([docs/architecture/DEN_ARCHITECTURE.md](docs/architecture/DEN_ARCHITECTURE.md)); **LiteLLM only for observability** ([docs/planning/PLAN.md](docs/planning/PLAN.md)) |
+| **Den** | Control plane: **bear** lifecycle (Letta + Open WebUI + LettaBot), **users↔bears** membership, identity, routing, policy, Cabinet API; optional **Loquix** chat UI **served from Den** ([docs/architecture/DEN_ARCHITECTURE.md](docs/architecture/DEN_ARCHITECTURE.md)); **Bifrost only for observability** ([docs/planning/PLAN.md](docs/planning/PLAN.md)) |
 
 ## Quick start (Coolify)
 
-1. Deploy **LiteLLM** → **Letta** (`LLM_API_URL`) → **Open WebUI**
+1. Deploy **Bifrost** → **Letta** (`LLM_API_URL`) → **Open WebUI**
 2. Install [open-webui-tools](https://github.com/Haervwe/open-webui-tools) in Open WebUI for **bears** (Letta agents)
 3. Roll out **Outline** and **Den** per [docs/planning/PLAN.md](docs/planning/PLAN.md) for Cabinet and channels
 
@@ -49,7 +49,7 @@ Each assistant in the product is a **bear** (one **Letta** agent). **BEARS** nam
 
 - Open WebUI (`bears-openwebui`): `http://bears-openwebui:3000`
 - Letta: `http://bears-letta:8283`
-- LiteLLM: `http://bears-litellm:4000`
+- Bifrost: `http://bears-bifrost:8080`
 
 ## Repository layout
 
@@ -61,7 +61,7 @@ docs/
 ├── deployment/      # DEPLOYMENT.md
 └── architecture/    # ARCHITECTURE_NOTES.md, DEN_ARCHITECTURE.md
 services/
-├── litellm/
+├── bifrost/
 ├── letta/
 └── openwebui/       # (when present)
 README.md
@@ -70,7 +70,7 @@ AGENTS.md
 
 ## Environment variables
 
-Per-service `.env.example` files. Common: `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `LETTA_SERVER_PASS`, `LLM_API_URL`, `LITELLM_MASTER_KEY`.
+Per-service `.env.example` files. Common: `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `LETTA_SERVER_PASS`, `LLM_API_URL` (Letta → Bifrost).
 
 ## Open WebUI + Letta
 

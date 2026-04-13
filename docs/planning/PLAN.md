@@ -9,16 +9,16 @@ High‑level, ops‑oriented plan and architecture: MVP **without Cabinet first*
 | Section | Contents |
 |---------|----------|
 | [§1](#1-system-architecture) | Components, Letta vs Cabinet, optional LettaBot→Den |
-| [§2](#2-capability-contracts-pseudo) | Frontends→Den, Den→Letta, bears→Cabinet, Outline, LiteLLM observability |
+| [§2](#2-capability-contracts-pseudo) | Frontends→Den, Den→Letta, bears→Cabinet, Outline, Bifrost observability |
 | [§3](#3-phased-roadmap) | Phase 0–4 milestones |
 | [Summary](#summary) | One-page recap |
 
 **Terminology**
 
-- **BEARS** — the **deployment stack** (acronym): Letta, LiteLLM, Den, Outline, frontends, LettaBot, etc. Not the same as a single **bear**.
+- **BEARS** — the **deployment stack** (acronym): Letta, Bifrost, Den, Outline, frontends, LettaBot, etc. Not the same as a single **bear**.
 - **Bear** — one **Letta-backed agent**: a distinct assistant with its own Letta agent id, prompts, memory, and tools. Users interact with **bears**; Den registers and provisions them.
 - **Users ↔ bears (many‑to‑many)** — a **user** may access **many** bears (e.g. personal + household + project). A **bear** may be shared by **many** users (e.g. a household assistant). Den stores membership and enforces it on every chat and Cabinet call.
-- **Den** — the **BEARS control plane and gateway**: identity, **bear lifecycle** (provision Letta agents, surface bears in **Loquix**, **optional Open WebUI**, and LettaBot config), routing, authz, Cabinet API, and LiteLLM observability reads. Den is the **system of record** for which users may use which bears and how they appear in each channel (see below).
+- **Den** — the **BEARS control plane and gateway**: identity, **bear lifecycle** (provision Letta agents, surface bears in **Loquix**, **optional Open WebUI**, and LettaBot config), routing, authz, Cabinet API, and Bifrost observability reads. Den is the **system of record** for which users may use which bears and how they appear in each channel (see below).
 
 ---
 
@@ -34,12 +34,12 @@ High‑level, ops‑oriented plan and architecture: MVP **without Cabinet first*
    - **Routes** chat to the correct Letta agent for the chosen bear.
    - **Auth** and **tool/model policies** (RBAC, gating, rate limits).
    - **Cabinet API** for bears (search/read/write), implemented against **Outline**.
-   - **LiteLLM (observability only):** Den does **not** proxy model traffic. **Letta calls LiteLLM directly.** Den may connect to LiteLLM for **metrics, spend logs, admin API**, etc., and join that with Den’s `user_id` / `agent_id` / channel data where your logging pipeline allows.
-   - Auth‑aware proxy: frontends ↔ **Letta** only for chat (not through LiteLLM); **bear** tool calls ↔ Cabinet.
+   - **Bifrost (observability only):** Den does **not** proxy model traffic. **Letta calls Bifrost directly.** Den may connect to Bifrost for **metrics, health checks, Prometheus scrapes, or log exports** (per your Bifrost version and config), and join that with Den’s `user_id` / `agent_id` / channel data where your logging pipeline allows.
+   - Auth‑aware proxy: frontends ↔ **Letta** only for chat (not through Bifrost); **bear** tool calls ↔ Cabinet.
 
 2. **Letta** (**self‑hosted only** in BEARS—e.g. Coolify `bears-letta:8283`, not Letta Cloud)
    - **Bear runtime:** conversation loop + tools for each Letta agent (each **bear**).
-   - **Model calls:** **Letta → LiteLLM** directly (`LLM_API_URL`). No Den in that path.
+   - **Model calls:** **Letta → Bifrost** directly (`LLM_API_URL`). No Den in that path.
    - Per‑**bear** configuration: system prompts, tools, memory adapters.
    - Stateless(ish) from Den’s point of view; Den calls the **self‑hosted Letta REST API** (reqwest from Axum).
 
@@ -49,12 +49,12 @@ High‑level, ops‑oriented plan and architecture: MVP **without Cabinet first*
    - **Optional later:** route LettaBot → **Den** → Letta so messaging channels share Den’s identity and policy with web—see [Den as LettaBot proxy (optional)](#den-as-lettabot--letta-proxy-optional-value-add-not-a-v1-feature) below.
 
 4. **Web chat frontends**
-   - **Den + Loquix** (**primary first‑party UI**): HTML/JS served by Den using **[Loquix](https://github.com/loquix-dev/loquix)** components; the browser calls Den’s **`POST /v1/chat/send`** streaming API and `GET /agents` or bear list—**no separate inference path**; LiteLLM remains Letta → LiteLLM only.
+   - **Den + Loquix** (**primary first‑party UI**): HTML/JS served by Den using **[Loquix](https://github.com/loquix-dev/loquix)** components; the browser calls Den’s **`POST /v1/chat/send`** streaming API and `GET /agents` or bear list—**no separate inference path**; Bifrost remains Letta → Bifrost only.
    - **Open WebUI** (optional): authenticate users (ideally via Den or a shared SSO); forward chat to **Den** instead of directly to Letta when you choose to deploy it.
 
-5. **LiteLLM**
-   - **Letta’s** model gateway (Letta → LiteLLM → providers). Den does not proxy this traffic.
-   - Observability (logs, costs, metrics) — **Den** may consume for dashboards/correlation only.
+5. **Bifrost**
+   - **Letta’s** model gateway (Letta → Bifrost → providers). Den does not proxy this traffic.
+   - Observability (logs, metrics, usage) — **Den** may consume for dashboards/correlation only.
 
 6. **Cabinet (later)**
    - Logical knowledge layer **bears** use for long‑term reference & history.
@@ -84,7 +84,7 @@ Routing **LettaBot** through **Den** (instead of LettaBot → Letta direct) is a
 | **Provisioning** | Den remains the source of truth for bears; lazy onboarding (e.g. first DM) without hand-editing `lettabot.yaml` for every user change. |
 | **Audit** | One place to log who used which **bear** on which channel. |
 
-**v1 scope:** Den’s first shipped **web chat** path is **Loquix (on Den) → Den → Letta**, plus **bear registry**, **bear provisioning** (Letta agent create/update), **surfacing bears** in LettaBot config and optionally in Open WebUI when enabled, **users↔bears** membership, auth, Cabinet API (as phases land), and LiteLLM observability reads. **Open WebUI → Den → Letta** is **optional**. **LettaBot chat traffic remains direct-to-Letta** until you explicitly route it through Den; Den still **owns** which bears exist and how they appear in LettaBot (and Open WebUI if used).
+**v1 scope:** Den’s first shipped **web chat** path is **Loquix (on Den) → Den → Letta**, plus **bear registry**, **bear provisioning** (Letta agent create/update), **surfacing bears** in LettaBot config and optionally in Open WebUI when enabled, **users↔bears** membership, auth, Cabinet API (as phases land), and Bifrost observability reads. **Open WebUI → Den → Letta** is **optional**. **LettaBot chat traffic remains direct-to-Letta** until you explicitly route it through Den; Den still **owns** which bears exist and how they appear in LettaBot (and Open WebUI if used).
 
 ---
 
@@ -150,7 +150,7 @@ Letta returns:
 - Tool calls (e.g., `{"tool": "cabinet.search", ...}`),
 - Final responses.
 
-Den doesn’t need to know Letta’s internal details for routing chat. **Inference path:** user → Den → Letta → **LiteLLM** (direct). Den does not touch LiteLLM for model requests.
+Den doesn’t need to know Letta’s internal details for routing chat. **Inference path:** user → Den → Letta → **Bifrost** (direct). Den does not touch Bifrost for model requests.
 
 ---
 
@@ -201,11 +201,11 @@ Den enforces:
 
 ---
 
-### 2.5 Den and LiteLLM (observability only)
+### 2.5 Den and Bifrost (observability only)
 
-- **Traffic:** **Letta → LiteLLM** for all completions/embeddings. **Den never proxies** LiteLLM.
-- **Den’s use of LiteLLM:** optional **read-only** integration for observability—e.g. LiteLLM **metrics**, **spend tracking**, admin API, or exported logs—so operators (or Den) can monitor cost and usage. Correlating calls to Den’s `user_id` / `agent_id` may require **Letta/LiteLLM metadata** (e.g. custom headers or logging hooks) configured outside Den’s request path.
-- **Policy:** Den can still enforce **which users may chat with which bears** before forwarding to Letta; model allowlists at the **LiteLLM** layer remain separate (configure both consistently).
+- **Traffic:** **Letta → Bifrost** for calls configured against `LLM_API_URL` (typically chat completions). **Embeddings** may use the same URL or direct provider credentials per Letta settings. **Den never proxies** Bifrost.
+- **Den’s use of Bifrost:** optional **read-only** integration for observability—e.g. Bifrost **metrics**, **`/health`**, Prometheus, or exported logs—so operators (or Den) can monitor usage. Correlating calls to Den’s `user_id` / `agent_id` may require **Letta/Bifrost metadata** (e.g. custom headers or logging hooks) configured outside Den’s request path.
+- **Policy:** Den can still enforce **which users may chat with which bears** before forwarding to Letta; model allowlists at the **Bifrost** layer remain separate (configure both consistently).
 
 ---
 
@@ -216,12 +216,12 @@ Den enforces:
 **Goal:** Have basic pieces running in isolation.
 
 - Letta running locally or on your infra.
-- LiteLLM configured as Letta’s model proxy.
+- Bifrost configured as Letta’s model proxy.
 - Open WebUI already talking to Letta (your current state).
 - LettaBot installed on Slack and (optionally) wired to Letta directly for experiments (no **Den** yet).
 
 Deliverables:
-- Working Letta + LiteLLM stack.
+- Working Letta + Bifrost stack.
 - Working Slack bot talking to *some* **bear** (can be crude).
 
 ---
@@ -264,9 +264,9 @@ Deliverables:
    - **Open WebUI (optional):** configure to talk to Den (`/v1/chat/send` or adapter): auth, **bear** picker (only member bears), streaming — ship when a deployment needs it (**M6b** in bootstrap plan).
    - **LettaBot:** keep **direct to Letta** for v1 chat; Den still **updates LettaBot config** so Slack/WhatsApp show the correct bears per allowlists; optional Den proxy for chat later (see optional proxy section above).
 
-5. **LiteLLM observability** (Den reads, does not proxy)
-   - Letta → LiteLLM stays direct. **Den** connects to LiteLLM **only** for observability (metrics/spend/logs APIs or log shipping) as needed.
-   - Where possible, align Letta/LiteLLM logging with Den’s identity data for attribution.
+5. **Bifrost observability** (Den reads, does not proxy)
+   - Letta → Bifrost stays direct. **Den** connects to Bifrost **only** for observability (metrics/health/logs APIs or log shipping) as needed.
+   - Where possible, align Letta/Bifrost logging with Den’s identity data for attribution.
 
 **Phase 1 success (v1):**
 
@@ -382,8 +382,8 @@ At the end of Phase 2, Cabinet is a defined, testable contract, even if Outline 
      - Restrict dangerous or heavy tools/models to specific roles.
 
 4. **Observability & ops polish**
-   - **LiteLLM** metrics/spend + **Den** logs + optional correlation (Letta does not route LLM traffic through Den).
-   - Dashboards: channel usage (Den), model cost (LiteLLM), per‑**bear** usage.
+   - **Bifrost** metrics/usage + **Den** logs + optional correlation (Letta does not route LLM traffic through Den).
+   - Dashboards: channel usage (Den), model usage/cost (Bifrost + provider billing), per‑**bear** usage.
 
 This is the “make it livable and reliable” phase.
 
@@ -398,9 +398,9 @@ This is the “make it livable and reliable” phase.
 We’re aiming for:
 
 - **Den** as the **BEARS control plane and gateway**:
-  - Maps external identities → internal users; **provisions bears** in Letta; **bear registry** and **users↔bears** membership; **surfaces bears** in **Loquix**, **optional Open WebUI**, and LettaBot config; chat routing to **Letta** (Letta → **LiteLLM** direct for models).
+  - Maps external identities → internal users; **provisions bears** in Letta; **bear registry** and **users↔bears** membership; **surfaces bears** in **Loquix**, **optional Open WebUI**, and LettaBot config; chat routing to **Letta** (Letta → **Bifrost** direct for models).
   - Auth and tool/model policies; per‑user and per‑bear **Cabinet** permissions when Cabinet ships; **Cabinet API** backed by Outline.
-  - **LiteLLM:** Den uses it **only for observability** (not as a proxy for model traffic).
+  - **Bifrost:** Den uses it **only for observability** (not as a proxy for model traffic).
   - **v1:** **Loquix (on Den)** → Den → Letta as the **default web chat** path; **Open WebUI** → Den → Letta **optional** when deployed. **LettaBot** may stay **direct-to-Letta** for chat while Den still **owns bear provisioning and bot/UI exposure**. **LettaBot → Den** for messages is an optional later value-add (see § Den as LettaBot proxy). Cabinet/Outline auth aligned with human auth when Cabinet ships.
 
 - **Phased delivery**:

@@ -73,7 +73,7 @@ updated: 2025-10-05
 
 **Implementation**:
 - Tool: Qdrant (primary), Weaviate, or Pinecone (alternatives)
-- Embedding Model: Configurable via LiteLLM (e.g., OpenAI, Cohere, local models)
+- Embedding Model: Configurable via Letta/OpenAI (or route embeddings through Bifrost if you extend `services/bifrost/config.json`)
 - Chunk Size: 512-1024 tokens with 128-token overlap
 - Metadata: Source, timestamp, user, tags
 
@@ -378,10 +378,10 @@ tags:
 ### Stack sketch (conceptual)
 
 ```yaml
-# See bears-depoy: LiteLLM, Letta, Open WebUI; Den + Outline for Cabinet (PLAN.md)
+# See bears-depoy: Bifrost, Letta, Open WebUI; Den + Outline for Cabinet (PLAN.md)
 services:
-  litellm: { ... }
-  letta: { depends_on: [litellm] }
+  bifrost: { ... }
+  letta: { depends_on: [bifrost] }
   # outline:, den: per deployment
 ```
 
@@ -417,4 +417,4 @@ Shared docs and search—humans edit in Outline; **bears** via Den Cabinet tools
 - [`README.md`](README.md) - Memory bank overview  
 - Repo [`docs/planning/PLAN.md`](../../docs/planning/PLAN.md) — **bear** terminology, Den provisioning, users↔bears
 - Docker Compose configuration: `../docker-compose.yaml`
-- LiteLLM configuration: `../litellm-config.yaml`
+- Bifrost configuration: `services/bifrost/config.json` (repo root)

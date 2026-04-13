@@ -2,7 +2,7 @@
 
 *Earlier notes drew on Letta Discord discussion:* https://discord.com/channels/1161736243340640419/1467667826730078386
 
-BEARS uses **only self-hosted Letta** (e.g. `letta/letta:latest` on Coolify). **Den** is the control plane and gateway (**Rust / Axum**). **Letta calls LiteLLM directly** for models; Den may talk to LiteLLM **only for observability** (metrics/spend/logs)—see [PLAN.md](../planning/PLAN.md).
+BEARS uses **only self-hosted Letta** (e.g. `letta/letta:latest` on Coolify). **Den** is the control plane and gateway (**Rust / Axum**). **Letta calls Bifrost directly** for models; Den may talk to Bifrost **only for observability** (metrics/health/logs)—see [PLAN.md](../planning/PLAN.md).
 
 **Phase 1 implementation:** [PHASE1_BOOTSTRAP.md](../planning/PHASE1_BOOTSTRAP.md) — Rust service in repo-root **`den/`**; **Trestle** is a throwaway bootstrap label for milestone 0 only, not a directory in this repo.
 
@@ -54,14 +54,14 @@ Admins may still use the Letta UI for experiments; **production truth** for whic
 
 ```
   Loquix (on Den) ─────┐
-  Open WebUI (opt.) ───┼──► Den ──────► Letta ───► LiteLLM ───► providers
+  Open WebUI (opt.) ───┼──► Den ──────► Letta ───► Bifrost ───► providers
                        │      (v1 web: same Den APIs + streaming)
 
   LettaBot ───────────────────► Letta     (v1: direct; optional later: via Den)
   (Slack/WhatsApp)
 ```
 
-Den → Letta for **web** chat only. Den may call LiteLLM separately for **metrics/spend** (not inference). Optional **LettaBot → Den → Letta**: [PLAN.md](../planning/PLAN.md).
+Den → Letta for **web** chat only. Den may call Bifrost separately for **metrics/health** (not inference). Optional **LettaBot → Den → Letta**: [PLAN.md](../planning/PLAN.md).
 
 ### Cabinet (Outline)
 
@@ -137,7 +137,7 @@ Regenerate `lettabot.yaml` from Den’s DB when **bears** or **users↔bears** m
 
 ## Den native web UI (Loquix, end-user chat) — **primary**
 
-**Purpose:** The default **browser** chat experience for **end users**—**Den → Letta** with no duplicate inference path (**Letta → LiteLLM** remains direct). Mount under **`/app` or `/chat`** so **`/` can remain the operator console**. **Streaming and request shapes should be optimized for Loquix first**; other clients (optional Open WebUI) adapt.
+**Purpose:** The default **browser** chat experience for **end users**—**Den → Letta** with no duplicate inference path (**Letta → Bifrost** remains direct). Mount under **`/app` or `/chat`** so **`/` can remain the operator console**. **Streaming and request shapes should be optimized for Loquix first**; other clients (optional Open WebUI) adapt.
 
 **Stack:** [Loquix](https://github.com/loquix-dev/loquix) — Lit 3 **web components** (`loquix-chat-container`, `loquix-message-list`, `loquix-chat-composer`, streaming and attachment patterns as needed). Import `@loquix/core`, tokens CSS, and `define/*` entrypoints per Loquix docs; ship static `index.html` + bundled JS from **`den/static/`** (or build step) and serve with `tower-http::services::ServeDir` (or embed with `rust-embed`).
 
@@ -161,7 +161,7 @@ Point Open WebUI (or a pipe function) at **Den**, not raw Letta, when multi-user
 
 | Component | Notes |
 |-----------|--------|
-| **Self-hosted Letta** | Coolify service; volume for `/root/.letta`; `LETTA_SERVER_PASS`; `LLM_API_URL` → LiteLLM |
+| **Self-hosted Letta** | Coolify service; volume for `/root/.letta`; `LETTA_SERVER_PASS`; `LLM_API_URL` → Bifrost |
 | **Den** | Axum service; `LETTA_BASE_URL=http://bears-letta:8283`; Letta admin credential; `DATABASE_URL`; `SESSION_SECRET`; Outline/Cabinet credentials when Phase 3+ |
 | **PostgreSQL** | Den users, **bears**, **users↔bears** membership, sessions |
 | **LettaBot** | Slack + WhatsApp tokens; config volume |
@@ -183,7 +183,7 @@ WHATSAPP_ACCESS_TOKEN=...
 
 ### Self-hosted Letta checklist
 
-- Deploy Letta + LiteLLM per [DEPLOYMENT.md](../deployment/DEPLOYMENT.md)
+- Deploy Letta + Bifrost per [DEPLOYMENT.md](../deployment/DEPLOYMENT.md)
 - Create a **baseline agent** (or template script) for per-user clones
 - Harden **Letta admin** credential; reachable only from Den / internal network
 - Attach **Cabinet** tools when Den exposes them ([PLAN.md](../planning/PLAN.md))
@@ -224,7 +224,7 @@ Seed **human** / **persona** (and optional **shared**) blocks when Den provision
 
 | Layer | Responsibility |
 |-------|------------------|
-| **Self-hosted Letta** | Agent state, memory blocks, conversations, tools, calls to LiteLLM |
+| **Self-hosted Letta** | Agent state, memory blocks, conversations, tools, calls to Bifrost |
 | **Den (Axum)** | Auth; **bear** provisioning (Letta + **Loquix** + optional Open WebUI + LettaBot config); **users↔bears** membership; routing; Cabinet API; Letta proxy; optional Slack/WhatsApp identity when LettaBot fronts Den |
 | **LettaBot** | Slack/WhatsApp → Letta direct (v1); optional → Den later |
 | **Loquix (on Den)** | **Primary** browser UI → Den (v1) |
