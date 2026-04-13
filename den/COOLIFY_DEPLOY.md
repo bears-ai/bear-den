@@ -5,7 +5,7 @@
 ## Overview
 
 - **One image, one binary** — built from [`Dockerfile`](Dockerfile) in this directory. Runtime behavior is controlled with **environment variables** (`RUN_WEB`, `RUN_API`, `RUN_WORKERS`, ports, `DATABASE_URL`, …). Deeper reference: [`docs/deploy.md`](docs/deploy.md) and [`docs/infrastructure-and-ops.md`](docs/infrastructure-and-ops.md).
-- **PostgreSQL is mandatory** — Den exits on startup if it cannot use `DATABASE_URL`. The **database must exist** (empty is fine); on each start Den runs **embedded SQLx migrations** from [`migrations/`](migrations/) against that URL before serving traffic, so routine deploys do not need a separate migration job.
+- **PostgreSQL is mandatory** — Den exits on startup if it cannot use `DATABASE_URL`. The **database must exist** (empty is fine); on each start Den runs **embedded SQLx migrations** from [`migrations/`](migrations/) against that URL before serving traffic, so routine deploys do not need a separate migration job. By default migrations are **strict** (see `SQLX_MIGRATE_IGNORE_MISSING` in [`.env.example`](.env.example) / [`docs/deploy.md`](docs/deploy.md)—leave it unset in production).
 - **SQLx at image build time** — the `Dockerfile` runs `cargo build` with compile-time SQLx checks. Coolify’s build environment must supply a **`DATABASE_URL` build argument** that resolves **from the build machine** (often the same Postgres you use at runtime, reachable on the Docker build network). See **Build-time database** below.
 
 ## Prerequisites
@@ -63,6 +63,7 @@ In the resource → **Environment Variables** / **Production Variables**, set at
 | Variable | Notes |
 | -------- | ----- |
 | `DATABASE_URL` | **Required.** The database Den serves at runtime; migrations run against this URL on startup (connection string as accepted by SQLx / `tokio-postgres`). |
+| `JWT_SECRET` | **Required for release images** (Dockerfile builds with `--features production`). Use a long random value. Also required whenever `RUN_API=true` in dev builds so OAuth access tokens can be signed (HS256). |
 | `RUN_WEB` | `true` to serve the web UI (recommended first smoke). |
 | `RUN_API` | `true` if you need the standalone API listener. |
 | `RUN_WORKERS` | `true` when you want in-process workers enabled. |
@@ -85,6 +86,10 @@ Integrations (set when you wire the rest of the stack):
 | `LETTA_API_KEY` | Bearer token when Letta is configured with `LETTA_SERVER_PASS` / API auth. |
 
 Mail, OAuth, and other keys are documented in [`.env.example`](.env.example) and [`docs/deploy.md`](docs/deploy.md).
+
+**Migrations:** Den applies embedded SQL from [`migrations/`](migrations/) on startup. By default, SQLx does **not** ignore migration files missing from the binary; do not set `SQLX_MIGRATE_IGNORE_MISSING` in production unless you are following a documented recovery procedure for a legacy `_sqlx_migrations` table.
+
+**Sessions:** Login sessions use `tower-sessions` with the Postgres store; the session cookie carries an opaque id and data lives in Postgres. Optional signed/encrypted cookies (`with_signed` / `with_private`) are not configured in this repo—no extra session signing env var is required today.
 
 ### 6. Ports
 

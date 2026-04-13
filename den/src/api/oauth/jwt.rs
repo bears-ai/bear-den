@@ -250,20 +250,20 @@ fn generate_jti() -> String {
         .collect()
 }
 
-/// Get JWT secret from environment or generate a default one
+/// JWT signing material for HS256 access tokens.
 ///
-/// In production, this should always come from a secure environment variable.
-/// For development, we provide a default secret.
-///
-/// # Returns
-/// JWT secret as bytes
+/// When `RUN_API=true` or the binary is built with `--features production`, startup
+/// requires a non-empty `JWT_SECRET` (see [`crate::startup::validate_runtime_config`]).
+/// If this is called without that guard (e.g. tests), a dev-only default may apply.
 pub fn get_jwt_secret() -> Vec<u8> {
     std::env::var("JWT_SECRET")
+        .map(|s| s.into_bytes())
         .unwrap_or_else(|_| {
-            tracing::warn!("JWT_SECRET not set, using default secret (not secure for production)");
-            "den-oauth-jwt-secret-change-in-production".to_string()
+            tracing::warn!(
+                "JWT_SECRET not set; using embedded development default (never use in real deployments)"
+            );
+            b"den-oauth-jwt-secret-change-in-production".to_vec()
         })
-        .into_bytes()
 }
 
 /// Create a global JWT manager instance

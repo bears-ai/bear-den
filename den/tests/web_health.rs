@@ -4,16 +4,14 @@ use axum::{
     http::{Request, StatusCode},
 };
 use http_body_util::BodyExt;
-use den::{api, config::Config, web};
+use den::{api, config::Config, startup::run_sqlx_migrations, web};
 use sqlx::postgres::PgPoolOptions;
 use std::sync::Arc;
 use tower::ServiceExt;
 use tower_sessions_sqlx_store::PostgresStore;
 
 async fn apply_app_migrations(pool: &sqlx::PgPool) {
-    sqlx::migrate!()
-        .set_ignore_missing(true)
-        .run(pool)
+    run_sqlx_migrations(pool)
         .await
         .expect("sqlx migrations for integration test");
 }

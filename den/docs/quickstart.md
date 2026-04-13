@@ -24,9 +24,15 @@ Without `--features production`, [`src/config.rs`](../src/config.rs) sets `URL_P
 
 In **development**, MiniJinja loads files from **`TEMPLATES_DIR`** (default `src/web/templates`). In **`--features production`** / release Docker builds, templates are **embedded** at compile time—plan on **rebuilding** the binary when HTML changes in production.
 
+## API and JWT secret
+
+If you enable **`RUN_API=true`**, set **`JWT_SECRET`** to a long random value (OAuth access tokens are HS256-signed). Release and Docker images are built with **`--features production`**, which also requires **`JWT_SECRET`** at runtime.
+
 ## Fresh database and SQLx offline
 
 The schema is applied automatically on startup from `migrations/`. For **`SQLX_OFFLINE`** / CI builds, run `cargo sqlx prepare` against a database that has run those migrations at least once and commit [`.sqlx/`](../.sqlx/). See [sqlx-patterns.md](sqlx-patterns.md).
+
+**Strict migrations:** By default, SQLx does not ignore migration files missing from the repo. If integration tests or a disposable database fail with a migration history mismatch, fix the database or set **`SQLX_MIGRATE_IGNORE_MISSING=true`** only as a documented recovery step—not for routine production deploys.
 
 ## Mail
 

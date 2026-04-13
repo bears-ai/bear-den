@@ -1,24 +1,17 @@
 //! Library surface for integration tests and embedding. The binary entrypoint is [`run`].
 //!
-//! Clippy: the tree still carries a large extracted domain. These allows keep `cargo clippy -- -D warnings`
-//! workable in CI; remove them gradually as call sites are cleaned up.
-#![allow(clippy::assertions_on_constants)]
-#![allow(clippy::collapsible_if)]
-#![allow(clippy::manual_range_contains)]
-#![allow(clippy::match_like_matches_macro)]
-#![allow(clippy::ptr_arg)]
-#![allow(clippy::redundant_closure)]
-#![allow(clippy::result_large_err)]
-#![allow(clippy::should_implement_trait)]
-#![allow(clippy::too_many_arguments)]
+//! Clippy: broad suppressions live on the largest legacy modules (for example [`crate::api::oauth`]);
+//! prefer fixing warnings locally and shrinking those module allows over time.
 pub mod api;
 pub mod auth_backend;
 pub mod config;
 pub mod core;
 pub mod errors;
+pub mod startup;
 pub mod web;
 
 use crate::config::Config;
+use crate::startup::{StartupError, run_sqlx_migrations, validate_runtime_config};
 use tokio::{signal, task::JoinSet};
 use tokio_util::sync::CancellationToken;
 use tracing_subscriber::{EnvFilter, layer::SubscriberExt, util::SubscriberInitExt};
@@ -29,10 +22,10 @@ use sqlx::postgres::PgPoolOptions;
 use tower_sessions_sqlx_store::PostgresStore;
 
 use std::sync::Arc;
-use std::{io::Error, net::SocketAddr};
+use std::net::SocketAddr;
 
 /// Run all enabled services until a shutdown signal (Ctrl+C, or SIGTERM on Unix).
-pub async fn run() -> Result<(), Error> {
+pub async fn run() -> Result<(), StartupError> {
     let mut task_set = JoinSet::new();
 
     let tracing_filter: String;
@@ -66,9 +59,10 @@ pub async fn run() -> Result<(), Error> {
         ))
         .with(tracing_subscriber::fmt::layer())
         .try_init()
-        .unwrap();
+        .map_err(|e| StartupError::Tracing(e.to_string()))?;
 
     let config = Arc::new(Config::load());
+    validate_runtime_config(config.as_ref())?;
     email::init_mailgun(config.as_ref());
     tracing::info!(
         app = %config.app_display_name,
@@ -104,17 +98,15 @@ pub async fn run() -> Result<(), Error> {
         .max_connections(5)
         .acquire_timeout(std::time::Duration::from_secs(3))
         .connect(&config.database_url)
-        .await
-        .expect("can't connect to database");
+        .await?;
 
-    sqlx::migrate!()
-        .set_ignore_missing(true)
-        .run(&sqlx_pool)
-        .await
-        .expect("failed to run SQLx database migrations");
+    run_sqlx_migrations(&sqlx_pool).await?;
 
     let session_store = PostgresStore::new(sqlx_pool.clone());
-    session_store.migrate().await.unwrap();
+    session_store
+        .migrate()
+        .await
+        .map_err(|e| StartupError::SessionStore(format!("{e:?}")))?;
 
     let deletion_task = tokio::task::spawn(
         session_store

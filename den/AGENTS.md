@@ -8,6 +8,7 @@ How to orient in **this project**: a Rust web **starter** (Axum, SQLx, MiniJinja
 
 - `cargo build` or `cargo check` — compile the library + binary.
 - `cargo test` — unit tests; integration tests that need Postgres require `DATABASE_URL` and applied migrations (see [`docs/quickstart.md`](docs/quickstart.md)).
+- `cargo clippy --all-targets` — Clippy is not suppressed at the crate root; the heaviest legacy bundle remains scoped on [`src/api/oauth/mod.rs`](src/api/oauth/mod.rs). Fix warnings in code you touch and shrink those module-level allows over time.
 
 Do not assume the environment is “simulated only”: prefer **running `cargo` yourself** to catch compile errors before handing work back.
 

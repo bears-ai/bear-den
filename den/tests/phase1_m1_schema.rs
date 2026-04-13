@@ -1,12 +1,11 @@
 //! Verifies Phase 1 migrations: bear registry, provisioning columns, membership, user columns.
 //! Requires `DATABASE_URL` (empty database is fine — migrations run here like production).
 
+use den::startup::run_sqlx_migrations;
 use sqlx::postgres::PgPoolOptions;
 
 async fn apply_migrations(pool: &sqlx::PgPool) {
-    sqlx::migrate!()
-        .set_ignore_missing(true)
-        .run(pool)
+    run_sqlx_migrations(pool)
         .await
         .expect("sqlx migrations for integration test");
 }

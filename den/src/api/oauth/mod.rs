@@ -3,6 +3,15 @@
 //! This module provides OAuth 2.0 authorization server functionality following RFC 6749.
 //! It includes data structures for clients, authorization codes, access tokens, and
 //! request/response handling for OAuth endpoints.
+#![allow(clippy::assertions_on_constants)]
+#![allow(clippy::collapsible_if)]
+#![allow(clippy::manual_range_contains)]
+#![allow(clippy::match_like_matches_macro)]
+#![allow(clippy::ptr_arg)]
+#![allow(clippy::redundant_closure)]
+#![allow(clippy::result_large_err)]
+#![allow(clippy::should_implement_trait)]
+#![allow(clippy::too_many_arguments)]
 
 pub mod db;
 pub mod endpoints;

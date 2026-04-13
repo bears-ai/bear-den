@@ -32,7 +32,7 @@ Note that the name "newapp" is used in a few places. You or our agent should see
 
 ## Quickstart
 
-Use the devcontainer or local `.env` (see [`.env.example`](.env.example)) with `DATABASE_URL`, set `RUN_WEB=true` (and optionally `RUN_API`, `RUN_WORKERS`), then `cargo run`. Migrations apply automatically on startup; use `sqlx migrate add` / `sqlx migrate run` when authoring new SQL migrations.
+Use the devcontainer or local `.env` (see [`.env.example`](.env.example)) with `DATABASE_URL`, set `RUN_WEB=true` (and optionally `RUN_API`, `RUN_WORKERS`), then `cargo run`. Migrations apply automatically on startup; use `sqlx migrate add` / `sqlx migrate run` when authoring new SQL migrations. Set **`JWT_SECRET`** when `RUN_API=true` or when using **`--features production`** (Docker release builds).
 
 **Development-only link prefix:** Without `--features production`, [`src/config.rs`](src/config.rs) sets `URL_PREFIX` to `https://redirectmeto.com/http://localhost:3000/`. Generated absolute links (email verification, telemetry) therefore go through the third-party redirect service [redirectmeto.com](https://redirectmeto.com) before hitting your local app. Edit `URL_PREFIX` in that file if you prefer plain `http://localhost:…`, a tunnel URL, or another approach.
 
