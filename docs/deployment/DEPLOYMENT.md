@@ -46,9 +46,10 @@ Open WebUI → Letta → Bifrost → model providers
 
 Part of the overall order in this guide; details: [`../../services/bifrost/COOLIFY_DEPLOY.md`](../../services/bifrost/COOLIFY_DEPLOY.md).
 
-- Service name e.g. `bears-bifrost`, port `8080` (set `APP_HOST=0.0.0.0`, `APP_PORT=8080`)  
-- Set provider keys in Coolify env (referenced from `config.json` via `env.*`)  
-- Mount `services/bifrost/config.json` → `/app/data/config.json` (read-only)  
+**Recommended:** deploy from **Git** with Coolify’s **Docker Compose** build pack using [`../../services/bifrost/docker-compose.yml`](../../services/bifrost/docker-compose.yml) so `config.json` is taken from the repository on each deploy (enable **Preserve Repository During Deployment** in Coolify).
+
+Otherwise (plain **Docker Image**): service name e.g. `bears-bifrost`, port `8080` (`APP_HOST=0.0.0.0`, `APP_PORT=8080`), provider keys in Coolify env, mount `services/bifrost/config.json` → `/app/data/config.json` (read-only).
+
 - Health: `GET http://bears-bifrost:8080/health`
 
 ### Step 2: Letta

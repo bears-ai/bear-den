@@ -4,68 +4,144 @@
 
 ## Overview
 
-[Bifrost](https://github.com/maximhq/bifrost) is the BEARS **model gateway**: OpenAI-compatible `/v1` API, multi-provider routing, low overhead. **Letta** calls Bifrost directly (`LLM_API_URL`).
+[Bifrost](https://github.com/maximhq/bifrost) is the BEARS **model gateway**: OpenAI-compatible `/v1` API, multi-provider routing. **Letta** calls Bifrost using `LLM_API_URL` (see `[../letta/COOLIFY_DEPLOY.md](../letta/COOLIFY_DEPLOY.md)`).
 
-This repository uses **file-based (GitOps) configuration**: `services/bifrost/config.json` is mounted read-only. There is **no `config_store`** block, so the admin UI stays off and Bifrost does not persist mutable config to SQLite—see [Bifrost “Two Configuration Modes”](https://docs.getbifrost.ai/quickstart/gateway/setting-up).
+This repository uses **file-based (GitOps) configuration**: `services/bifrost/config.json` is mounted read-only into the container. There is **no `config_store`** block in that file, so Bifrost’s **built-in admin UI stays off** and the process does not rely on SQLite for gateway config—see [Bifrost “Two Configuration Modes”](https://docs.getbifrost.ai/quickstart/gateway/setting-up).
 
 ## Prerequisites
 
-- Coolify v4+ (or any Docker host)
-- API keys for providers you enable in `config.json` (at minimum `OPENAI_API_KEY` for the default file in this repo)
+- Coolify v4+
+- Provider API keys for every `env.*` reference in `services/bifrost/config.json` (the default file requires `**OPENAI_API_KEY`**)
+- A **GitHub** (or other Git) remote for this repo—only required for the **Git + Docker Compose** path below
 
-## Deployment (official image)
+---
 
-1. **Add resource** → **Docker Image** (pull, not build).
+## Option A (recommended): `config.json` from Git — Docker Compose build pack
 
-2. **Image**: `maximhq/bifrost`  
-   Pin a tag in production (for example `maximhq/bifrost:v1.4.9` — check [Docker Hub](https://hub.docker.com/r/maximhq/bifrost/tags) for current tags).
+Coolify can **clone your repository on each deploy** and bind-mount files from that checkout into the container. Then `config.json` is always whatever is on the branch you deploy—no pasting JSON into the Coolify UI.
 
-3. **Service name** (internal DNS): e.g. `bears-bifrost`
+Official pattern: [Docker Compose build pack](https://coolify.io/docs/builds/packs/docker-compose) with a compose file in this repo (`[docker-compose.yaml](docker-compose.yaml)`).
 
-4. **Ports**
+### 1. Create the resource
 
-   - **Internal**: `8080` (Bifrost default; override with `APP_PORT` if you change it)
-   - Map publicly only if you intend to expose the gateway outside the private network.
+1. Open your Coolify **project** → **Add New Resource**.
+2. Choose **Public Repository** or **Private Repository** (GitHub App / deploy key) and select **this** monorepo.
+3. When asked for the **build pack**, pick **Docker Compose** (not Nixpacks, not “Docker Image” alone).
 
-5. **Environment variables** (see [`services/bifrost/.env.example`](.env.example))
+### 2. Point Coolify at the compose file
 
-   ```bash
-   APP_HOST=0.0.0.0
-   APP_PORT=8080
-   OPENAI_API_KEY=sk-...
-   # ANTHROPIC_API_KEY=sk-ant-...   # if you add Anthropic to config.json
-   LOG_LEVEL=info
-   LOG_STYLE=json
-   ```
+In the Docker Compose build-pack settings:
 
-6. **Mount `config.json` (required for GitOps mode)**
 
-   Mount the repo file into Bifrost’s **app directory** (same layout as `docker run -v …/data:/app/data` in upstream docs):
+| Field                       | Value                                |
+| --------------------------- | ------------------------------------ |
+| **Branch**                  | e.g. `main` (or your release branch) |
+| **Base Directory**          | `services/bifrost`                   |
+| **Docker Compose Location** | `docker-compose.yaml`                |
 
-   - **Source (repo):** `services/bifrost/config.json`
-   - **Target (container):** `/app/data/config.json`
-   - **Read only:** Yes
 
-   To add Anthropic (or other providers), edit `config.json` in git and redeploy. See [Provider configuration](https://docs.getbifrost.ai/quickstart/gateway/provider-configuration).
+Coolify combines **Base Directory** + **Docker Compose Location** to find the file.
 
-7. **Health check**
+### 3. Preserve the Git checkout (required for the bind mount)
 
-   ```text
-   Command: wget --no-verbose --tries=1 --spider http://127.0.0.1:8080/health || exit 1
-   ```
+Enable **Preserve Repository During Deployment** (wording may vary slightly by Coolify version).
 
-   Adjust host/port if you change `APP_PORT`.
+Without this, bind mounts like `./config.json:/app/data/config.json` often fail because the compose working tree is not kept on the server. This is the usual fix when mounting **files from the repo** into containers on Coolify; see community notes in the [Coolify Docker Compose + Git guide](https://dev.to/mandrasch/simple-coolify-example-with-docker-compose-github-deployments-53m).
 
-8. **Restart policy**: `unless-stopped`
+### 4. Pin the image in Git (recommended)
 
-## Verify
+Edit `[docker-compose.yaml](docker-compose.yaml)` and replace `maximhq/bifrost:latest` with a **pinned tag** (e.g. `maximhq/bifrost:v1.4.9`). Check [Docker Hub tags](https://hub.docker.com/r/maximhq/bifrost/tags). Redeploy after edits.
+
+### 5. Environment variables (still in Coolify — secrets only)
+
+`config.json` references keys via `env.*` (for example `env.OPENAI_API_KEY`). **Secrets stay in Coolify**, not in Git:
+
+1. Open the resource → **Environment Variables** (or **Production Variables**).
+2. Add at least `**OPENAI_API_KEY`** (and any other provider keys your `config.json` references).
+3. Optional: override defaults with `**APP_PORT**`, `**LOG_LEVEL**`, `**LOG_STYLE**` if you do not want the values from `docker-compose.yaml`.
+
+### 6. Ports, health check, restart
+
+- **Ports:** `docker-compose.yaml` maps `**8080:8080`**. Adjust in the compose file if Coolify should publish a different host port, or remove the `ports:` section if you only need internal access and will reach the service by stack DNS (advanced—see Coolify networking docs).
+- **Health check / restart policy:** set in Coolify’s service UI if you prefer overrides, or extend `docker-compose.yaml` with `healthcheck:` and `restart:` (already `unless-stopped` on the service).
+
+### 7. Deploy
+
+**Deploy** / **Redeploy**. On success, other services on the **same Coolify network** should resolve `**http://bears-bifrost:8080`** (the **service name** in `[docker-compose.yaml](docker-compose.yaml)`).
+
+### 8. Connecting Letta across stacks (if needed)
+
+If Letta is a **separate** Coolify resource, it must share a **Docker network** with Bifrost (Coolify “**Connect to Predefined Network**” / shared network—see [Coolify compose networking](https://coolify.io/docs/knowledge-base/docker/compose)). If both services live in the **same** compose stack, they already share a network.
+
+---
+
+## Option B: Public image only — manual `config.json` in Coolify
+
+Use this when you **cannot** use the Git-backed compose flow (for example, no Git integration on that host). You pull `**maximhq/bifrost`** as a plain **Docker Image** resource and supply `config.json` via Coolify **Storages** (bind mount, pasted file, or host path)—as in the previous revision of this guide.
+
+### 1. Create the service
+
+1. **Add New Resource** → **Docker Image**.
+2. **Save** to open the resource editor.
+
+### 2. General / image
+
+
+| Coolify field | Suggested value                                                                                                   |
+| ------------- | ----------------------------------------------------------------------------------------------------------------- |
+| **Name**      | `bears-bifrost`                                                                                                   |
+| **Image**     | `maximhq/bifrost` — **pin a tag** in production; see [Docker Hub](https://hub.docker.com/r/maximhq/bifrost/tags). |
+
+
+### 3. Ports
+
+Expose **8080** internally (and publicly only if required). Match `**APP_PORT`** in environment.
+
+### 4. Environment variables
+
+Same secret set as **Option A §5** (`OPENAI_API_KEY`, …). See `[.env.example](.env.example)`.
+
+### 5. Mount `config.json`
+
+Under **Storages** / **Volumes**, mount `**config.json`** at `**/app/data/config.json**` (read-only): bind host path, Coolify file storage, or pasted content—**not** loaded automatically from Git in this mode.
+
+### 6. Health check
+
+- **Command:** `curl -fsS http://127.0.0.1:8080/health >/dev/null || exit 1`
+- **Interval:** `30s` · **Timeout:** `10s` · **Retries:** `3` · **Start period:** `40s`
+
+### 7. Restart policy
+
+`**unless-stopped`**, then **Deploy**.
+
+---
+
+## Option C: Bake `config.json` into a tiny image (Git build, no bind mount)
+
+If your Coolify plan prefers **one Dockerfile per service** instead of compose:
+
+1. Add a `Dockerfile` next to `config.json` with:
+  ```dockerfile
+   FROM maximhq/bifrost:v1.4.9
+   COPY config.json /app/data/config.json
+  ```
+2. In Coolify, create a **Dockerfile** deployment from Git: **Base Directory** `services/bifrost`, Dockerfile path `Dockerfile`.
+3. Set provider secrets only in Coolify **Environment Variables**.
+
+Every config change requires an **image rebuild**—good for immutability, less convenient for rapid `config.json` iteration than Option A.
+
+---
+
+## Verify (after deploy)
+
+From a container on the **same Docker network** as `bears-bifrost` (or Coolify **Terminal** on that service):
 
 ```bash
 curl -sS http://bears-bifrost:8080/health
 curl -sS http://bears-bifrost:8080/v1/models
 ```
 
-Smoke test (no `Authorization` header required for the default GitOps layout; provider keys are server-side):
+Optional smoke test:
 
 ```bash
 curl -sS http://bears-bifrost:8080/v1/chat/completions \
@@ -73,30 +149,29 @@ curl -sS http://bears-bifrost:8080/v1/chat/completions \
   -d '{"model":"openai/gpt-4o-mini","messages":[{"role":"user","content":"ping"}]}'
 ```
 
-## Letta wiring
+## Letta (next service)
 
-Set on the **Letta** service:
-
-```bash
-LLM_API_URL=http://bears-bifrost:8080/v1
-```
-
-Keep **`OPENAI_API_KEY`** on Letta for **embeddings** (and any Letta features that call OpenAI directly). Chat completions go to Bifrost; Bifrost uses the keys declared in `config.json`.
-
-If you later enable Bifrost **governance / virtual keys** and require a client `Authorization` header, align Letta’s forwarded credential with Bifrost’s docs— the stock BEARS layout assumes **no** gateway master key.
+Set `**LLM_API_URL=http://bears-bifrost:8080/v1**` on Letta (adjust host if you renamed the compose service). Keep `**OPENAI_API_KEY**` on Letta for **embeddings**. Details: `[../letta/COOLIFY_DEPLOY.md](../letta/COOLIFY_DEPLOY.md)`.
 
 ## Observability
 
-- **HTTP:** `GET /health`
-- **Prometheus:** scrape metrics from Bifrost if enabled in your version (see [Bifrost observability](https://docs.getbifrost.ai/features/observability/default)).
-- **Den:** optional read-only checks against `BIFROST_BASE_URL` (see [PLAN.md](../../docs/planning/PLAN.md)); not implemented in Den by default.
+- **Liveness:** `GET /health`
+- **Prometheus / OTLP:** [Bifrost observability](https://docs.getbifrost.ai/features/observability/default)
+- **Den:** optional `**BIFROST_BASE_URL`** — [PLAN.md](../../docs/planning/PLAN.md)
 
 ## Troubleshooting
 
-- **Empty model list:** confirm `config.json` is mounted at `/app/data/config.json` and env vars referenced via `env.*` exist on the container.
-- **401 from provider:** invalid or missing provider API key in the environment.
-- **Letta cannot reach gateway:** same Docker network, correct hostname (`bears-bifrost`), port `8080` unless overridden.
 
-## Next step
+| Symptom                                                   | What to check                                                                                                                                |
+| --------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| Compose deploy: “cannot mount … config.json” / empty file | **Preserve Repository During Deployment** enabled; **Base Directory** is `services/bifrost` so `./config.json` exists in the compose context |
+| Container exits on start                                  | **Logs** — invalid JSON, missing `env.`* variables in Coolify                                                                                |
+| Letta cannot resolve `bears-bifrost`                      | Same **Docker network** (Option A §8), or use Coolify-generated hostname for the stack                                                       |
 
-Deploy **Letta**: [`../letta/COOLIFY_DEPLOY.md`](../letta/COOLIFY_DEPLOY.md).
+
+## Reference
+
+- Compose stack for Coolify: `[docker-compose.yaml](docker-compose.yaml)`
+- Example env keys: `[.env.example](.env.example)`
+- Bifrost provider config: [Provider configuration](https://docs.getbifrost.ai/quickstart/gateway/provider-configuration)
+

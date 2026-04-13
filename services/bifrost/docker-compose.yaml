@@ -1,0 +1,24 @@
+# Bifrost for BEARS — use with Coolify’s **Docker Compose** build pack from Git.
+#
+# Coolify UI (summary):
+#   - Add Resource → Public/Private Git → Build Pack: **Docker Compose**
+#   - Base Directory: `services/bifrost`
+#   - Docker Compose file: `docker-compose.yml`
+#   - Enable **Preserve Repository During Deployment** so `./config.json` binds from the clone.
+#   - Set secrets (e.g. OPENAI_API_KEY) in Coolify → Environment Variables for this resource.
+#
+# See COOLIFY_DEPLOY.md for full steps and links.
+
+services:
+  bears-bifrost:
+    image: maximhq/bifrost:v1.4.22
+    restart: unless-stopped
+    environment:
+      APP_HOST: "0.0.0.0"
+      APP_PORT: "8080"
+      LOG_LEVEL: info
+      LOG_STYLE: json
+    volumes:
+      - ./config.json:/app/data/config.json:ro
+    ports:
+      - "8080:8080"
