@@ -3,7 +3,7 @@
 # Coolify UI (summary):
 #   - Add Resource → Public/Private Git → Build Pack: **Docker Compose**
 #   - Base Directory: `services/bifrost`
-#   - Docker Compose file: `docker-compose.yml`
+#   - Docker Compose file: `docker-compose.yaml`
 #   - Enable **Preserve Repository During Deployment** so `./config.json` binds from the clone.
 #   - Set secrets (e.g. OPENAI_API_KEY) in Coolify → Environment Variables for this resource.
 #
@@ -15,10 +15,25 @@ services:
     restart: unless-stopped
     environment:
       APP_HOST: "0.0.0.0"
-      APP_PORT: "8080"
+      APP_PORT: "4000"
       LOG_LEVEL: info
       LOG_STYLE: json
     volumes:
       - ./config.json:/app/data/config.json:ro
     ports:
-      - "8080:8080"
+      - "4000:4000"
+    # BusyBox wget (present in upstream image); keep port in sync with APP_PORT / ports.
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "wget",
+          "--no-verbose",
+          "--tries=1",
+          "--spider",
+          "http://127.0.0.1:8080/health",
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s

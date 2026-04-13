@@ -62,8 +62,9 @@ Edit `[docker-compose.yaml](docker-compose.yaml)` and replace `maximhq/bifrost:l
 
 ### 6. Ports, health check, restart
 
-- **Ports:** `docker-compose.yaml` maps `**8080:8080`**. Adjust in the compose file if Coolify should publish a different host port, or remove the `ports:` section if you only need internal access and will reach the service by stack DNS (advanced—see Coolify networking docs).
-- **Health check / restart policy:** set in Coolify’s service UI if you prefer overrides, or extend `docker-compose.yaml` with `healthcheck:` and `restart:` (already `unless-stopped` on the service).
+- **Ports:** `docker-compose.yaml` maps **`8080:8080`**. Adjust in the compose file if Coolify should publish a different host port, or remove the `ports:` section if you only need internal access and will reach the service by stack DNS (advanced—see Coolify networking docs).
+- **Health check:** defined in **`docker-compose.yaml`** (`healthcheck` → BusyBox **`wget --spider`** against `/health` on port **8080**). Docker / Coolify use it for container readiness. If you change **`APP_PORT`** or the published port, update the **`healthcheck`** URL to match (or remove it and configure health in Coolify only).
+- **Restart:** `restart: unless-stopped` is already set on the service.
 
 ### 7. Deploy
 
@@ -103,16 +104,21 @@ Same secret set as **Option A §5** (`OPENAI_API_KEY`, …). See `[.env.example]
 
 ### 5. Mount `config.json`
 
-Under **Storages** / **Volumes**, mount `**config.json`** at `**/app/data/config.json**` (read-only): bind host path, Coolify file storage, or pasted content—**not** loaded automatically from Git in this mode.
+Under **Storages** / **Volumes**, mount **`config.json`** at **`/app/data/config.json`** (read-only): bind host path, Coolify file storage, or pasted content—**not** loaded automatically from Git in this mode.
 
 ### 6. Health check
 
-- **Command:** `curl -fsS http://127.0.0.1:8080/health >/dev/null || exit 1`
+The upstream Bifrost image includes BusyBox **`wget`** (not `curl`). Use the same probe as in [`docker-compose.yaml`](docker-compose.yaml):
+
+```bash
+wget --no-verbose --tries=1 --spider http://127.0.0.1:8080/health || exit 1
+```
+
 - **Interval:** `30s` · **Timeout:** `10s` · **Retries:** `3` · **Start period:** `40s`
 
 ### 7. Restart policy
 
-`**unless-stopped`**, then **Deploy**.
+**`unless-stopped`**, then **Deploy**.
 
 ---
 
