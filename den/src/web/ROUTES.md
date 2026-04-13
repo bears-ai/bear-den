@@ -34,6 +34,9 @@ Axum routes for the web server (`RUN_WEB=true`). Update this file when you add o
 - `GET /admin/` — admin menu (includes Letta `/v1/health` status when `LETTA_BASE_URL` is set)
 - `GET|POST /admin/users/*` — user management
 - `GET|POST /admin/bears/*` — bear registry (create bear with prompt/model fields)
+- `GET /admin/bears/{id}` — read-only bear detail (Den fields, membership count, Letta agent summary when configured)
+- `GET|POST /admin/bears/{id}/edit` — edit bear row (slug, prompt, model, tools JSON)
+- `POST /admin/bears/{id}/retry-letta` — create Letta agent when `letta_agent_id` is unset (responds with detail HTML including a status line)
 - `GET|POST /admin/membership/*` — list and grant `user_bear` membership
 - `GET /admin/health/letta` — JSON: Letta reachable + auth (`GET /v1/health` on Letta) (`src/web/admin/ops.rs`)
 - `GET /admin/lettabot` — LettaBot YAML preview + deploy checklist (operator HTML)

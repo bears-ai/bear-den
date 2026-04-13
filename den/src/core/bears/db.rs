@@ -46,6 +46,59 @@ pub async fn bear_slug_exists(pool: &PgPool, slug: &str) -> Result<bool, CustomE
     Ok(n.0 > 0)
 }
 
+pub async fn bear_slug_exists_excluding(
+    pool: &PgPool,
+    slug: &str,
+    exclude_id: Uuid,
+) -> Result<bool, CustomError> {
+    let n: (i64,) = sqlx::query_as(
+        "SELECT COUNT(*)::bigint FROM bears WHERE slug = $1 AND id <> $2",
+    )
+    .bind(slug)
+    .bind(exclude_id)
+    .fetch_one(pool)
+    .await?;
+    Ok(n.0 > 0)
+}
+
+pub async fn update_bear(
+    pool: &PgPool,
+    id: Uuid,
+    slug: &str,
+    name: &str,
+    description: &str,
+    system_prompt: &str,
+    default_model: Option<&str>,
+    tools_enabled: Option<Json<serde_json::Value>>,
+) -> Result<(), CustomError> {
+    let r = sqlx::query(
+        r#"
+        UPDATE bears
+        SET slug = $1,
+            name = $2,
+            description = $3,
+            system_prompt = $4,
+            default_model = $5,
+            tools_enabled = $6,
+            updated_at = NOW()
+        WHERE id = $7
+        "#,
+    )
+    .bind(slug)
+    .bind(name)
+    .bind(description)
+    .bind(system_prompt)
+    .bind(default_model)
+    .bind(tools_enabled)
+    .bind(id)
+    .execute(pool)
+    .await?;
+    if r.rows_affected() == 0 {
+        return Err(CustomError::NotFound("bear not found".to_string()));
+    }
+    Ok(())
+}
+
 /// `letta_agent_id` stays unset until Letta provisions the agent.
 pub async fn create_bear(
     pool: &PgPool,
@@ -135,6 +188,16 @@ pub async fn list_bears_for_user(pool: &PgPool, user_id: i32) -> Result<Vec<Bear
     .fetch_all(pool)
     .await
     .map_err(Into::into)
+}
+
+pub async fn count_bear_members(pool: &PgPool, bear_id: Uuid) -> Result<i64, CustomError> {
+    let n: (i64,) = sqlx::query_as(
+        "SELECT COUNT(*)::bigint FROM user_bear WHERE bear_id = $1",
+    )
+    .bind(bear_id)
+    .fetch_one(pool)
+    .await?;
+    Ok(n.0)
 }
 
 pub async fn user_may_use_bear(pool: &PgPool, user_id: i32, bear_id: Uuid) -> Result<bool, CustomError> {

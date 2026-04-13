@@ -11,14 +11,16 @@
       <th>Slug</th>
       <th>Name</th>
       <th>Letta agent</th>
+      <th></th>
     </tr>
   </thead>
   <tbody>
   {% for b in bears %}
     <tr>
-      <td><code>{{ b.slug }}</code></td>
-      <td>{{ b.name }}</td>
+      <td><a href="/admin/bears/{{ b.id }}"><code>{{ b.slug }}</code></a></td>
+      <td><a href="/admin/bears/{{ b.id }}">{{ b.name }}</a></td>
       <td>{% if b.letta_agent_id %}{{ b.letta_agent_id }}{% else %}<em>unset</em>{% endif %}</td>
+      <td><a class="navigate" href="/admin/bears/{{ b.id }}/edit">Edit</a></td>
     </tr>
   {% endfor %}
   </tbody>

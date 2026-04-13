@@ -1,0 +1,34 @@
+{% extends "admin/base.html" %}
+{% import "forms.jinja" as forms %}
+
+{% block title %}Edit bear · {{ bear.slug }}{% endblock %}
+
+{% block admin_content %}
+<div class="box">
+<h3>Edit bear</h3>
+<p>Slug, prompts, and optional model/tools. Changes are stored in Den only. For Letta status or provisioning retry, use <a href="/admin/bears/{{ bear.id }}">bear details</a>.</p>
+<form method="post">
+  {{ forms.input("slug", "Slug", "text", 'required maxlength="120"', form) }}
+  {{ forms.input("name", "Name", "text", 'maxlength="255"', form) }}
+  {{ forms.input("description", "Description", "text", 'maxlength="2000"', form) }}
+  <label for="system_prompt_textarea" {% if errors and errors.system_prompt %}class="has-error"{% endif %}>System prompt</label>
+  <div class="form-field{% if errors and errors.system_prompt %} has-error{% endif %}">
+    <textarea id="system_prompt_textarea" name="system_prompt" rows="12" cols="72">{{ form.system_prompt if form else '' }}</textarea>
+    {% if errors and errors.system_prompt %}
+    <span class="form-hint form-errors">Submission error: {{ errors.system_prompt | map(attribute="message", default="unknown error") | join(", ") }}</span>
+    {% endif %}
+  </div>
+  {{ forms.input("default_model", "Default model (optional)", "text", 'maxlength="255" placeholder="e.g. gpt-4o"', form) }}
+  <label for="tools_json_textarea" {% if errors and errors.tools_json %}class="has-error"{% endif %}>Tools JSON (optional)</label>
+  <div class="form-field{% if errors and errors.tools_json %} has-error{% endif %}">
+    <textarea id="tools_json_textarea" name="tools_json" rows="4" cols="72" placeholder="{}">{{ form.tools_json if form else '' }}</textarea>
+    <span class="form-hint">Leave empty for none. Must be valid JSON.</span>
+    {% if errors and errors.tools_json %}
+    <span class="form-hint form-errors">Submission error: {{ errors.tools_json | map(attribute="message", default="unknown error") | join(", ") }}</span>
+    {% endif %}
+  </div>
+  <button type="submit">Save changes</button>
+</form>
+<p><a href="/admin/bears/{{ bear.id }}">View bear details</a> · <a href="/admin/bears/">All bears</a></p>
+</div>
+{% endblock %}

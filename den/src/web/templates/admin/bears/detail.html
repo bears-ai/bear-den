@@ -1,0 +1,111 @@
+{% extends "admin/base.html" %}
+
+{% block title %}Bear · {{ bear.slug }}{% endblock %}
+
+{% block admin_content %}
+<div class="box">
+<h2>{{ bear.name }}</h2>
+<p><code>{{ bear.slug }}</code>
+  · <a class="action" href="/admin/bears/{{ bear.id }}/edit">Edit bear</a>
+  · <a href="/admin/bears/">All bears</a></p>
+
+{% if letta_retry_message %}
+<p class="form-errors">{{ letta_retry_message }}</p>
+{% endif %}
+
+<h3>Registry (Den)</h3>
+<dl>
+  <dt>Bear id</dt>
+  <dd><code>{{ bear.id }}</code></dd>
+  <dt>Description</dt>
+  <dd>{% if bear.description %}{{ bear.description }}{% else %}<em>none</em>{% endif %}</dd>
+  <dt>Created</dt>
+  <dd>{{ bear.created_at | datetimeformat(format="short") }}</dd>
+  <dt>Updated</dt>
+  <dd>{{ bear.updated_at | datetimeformat(format="short") }}</dd>
+  <dt>Default model</dt>
+  <dd>{% if bear.default_model %}{{ bear.default_model }}{% else %}<em>none</em>{% endif %}</dd>
+  <dt>Tools JSON</dt>
+  <dd>{% if tools_json_display %}<pre style="white-space: pre-wrap; max-height: 16rem; overflow: auto;">{{ tools_json_display }}</pre>{% else %}<em>none</em>{% endif %}</dd>
+</dl>
+
+<h3>System prompt (Den)</h3>
+<pre style="white-space: pre-wrap; max-height: 24rem; overflow: auto;">{{ bear.system_prompt }}</pre>
+
+<h3>Membership</h3>
+<p><strong>{{ member_count }}</strong> user(s) can use this bear via <code>user_bear</code>.
+  <a href="/admin/membership/">Manage membership</a></p>
+
+<h3>Letta agent</h3>
+{% if not letta_configured %}
+<p><em>Letta is not configured on this Den instance</em> (<code>LETTA_BASE_URL</code> empty). Stored agent id, if any, is not verified against Letta.</p>
+{% endif %}
+
+{% if bear.letta_agent_id %}
+<p><strong>Stored agent id:</strong> <code>{{ bear.letta_agent_id }}</code></p>
+{% if letta_api_base %}
+<p class="form-hint">End-user chat (via Den) calls <code>POST {{ letta_api_base }}/v1/agents/{{ bear.letta_agent_id }}/messages</code> with streaming.</p>
+{% endif %}
+
+{% if letta_agent_fetch_error %}
+<p class="form-errors"><strong>Could not load agent from Letta:</strong> {{ letta_agent_fetch_error }}</p>
+<p class="form-hint">The id may be stale if the agent was deleted in Letta, or Letta may be unreachable.</p>
+{% elif letta_agent_summary %}
+<p><em>Fields below are from Letta</em> <code>GET /v1/agents/{{ bear.letta_agent_id }}</code> (shape may vary by server version).</p>
+<dl>
+  <dt>Letta id</dt>
+  <dd><code>{{ letta_agent_summary.id }}</code></dd>
+  {% if letta_agent_summary.name %}
+  <dt>Name</dt>
+  <dd>{{ letta_agent_summary.name }}</dd>
+  {% endif %}
+  {% if letta_agent_summary.agent_type %}
+  <dt>Agent type</dt>
+  <dd><code>{{ letta_agent_summary.agent_type }}</code></dd>
+  {% endif %}
+  {% if letta_agent_summary.model %}
+  <dt>Model (Letta)</dt>
+  <dd>{{ letta_agent_summary.model }}</dd>
+  {% endif %}
+  {% if letta_agent_summary.description %}
+  <dt>Description (Letta)</dt>
+  <dd>{{ letta_agent_summary.description }}</dd>
+  {% endif %}
+  {% if letta_agent_summary.created_at %}
+  <dt>Created (Letta)</dt>
+  <dd>{{ letta_agent_summary.created_at }}</dd>
+  {% endif %}
+  {% if letta_agent_summary.updated_at %}
+  <dt>Updated (Letta)</dt>
+  <dd>{{ letta_agent_summary.updated_at }}</dd>
+  {% endif %}
+  {% if letta_memory_blocks_label %}
+  <dt>Memory blocks</dt>
+  <dd>{{ letta_memory_blocks_label }}</dd>
+  {% endif %}
+  {% if letta_tools_count_label %}
+  <dt>Tools (count)</dt>
+  <dd>{{ letta_tools_count_label }}</dd>
+  {% endif %}
+  {% if letta_agent_summary.system_excerpt %}
+  <dt>System (excerpt)</dt>
+  <dd><pre style="white-space: pre-wrap;">{{ letta_agent_summary.system_excerpt }}</pre></dd>
+  {% endif %}
+</dl>
+{% if bear.default_model and letta_agent_summary.model and bear.default_model != letta_agent_summary.model %}
+<p class="form-errors">Den <strong>default model</strong> (<code>{{ bear.default_model }}</code>) differs from the <strong>model</strong> on the Letta agent (<code>{{ letta_agent_summary.model }}</code>). Align them if you expect matching behavior.</p>
+{% endif %}
+{% endif %}
+
+{% else %}
+<p><em>No Letta agent id stored for this bear.</em></p>
+{% if letta_configured %}
+<form method="post" action="/admin/bears/{{ bear.id }}/retry-letta" style="margin-top: 0.5rem;">
+  <button type="submit">Retry Letta provisioning</button>
+  <span class="form-hint">Creates an agent in Letta and saves its id on success.</span>
+</form>
+{% endif %}
+{% endif %}
+
+</div>
+{% endblock %}

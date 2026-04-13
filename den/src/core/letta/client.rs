@@ -176,6 +176,40 @@ impl LettaClient {
 
         Ok(text)
     }
+
+    /// `GET /v1/agents/{agent_id}` — full JSON for operator diagnostics.
+    pub async fn fetch_agent(&self, agent_id: &str) -> Result<serde_json::Value, CustomError> {
+        if !self.is_enabled() {
+            return Err(CustomError::System(
+                "Letta is not configured (set LETTA_BASE_URL)".to_string(),
+            ));
+        }
+
+        let url = format!("{}/v1/agents/{agent_id}", self.base_url);
+        let resp = self
+            .http
+            .get(url)
+            .headers(self.auth_headers())
+            .send()
+            .await
+            .map_err(|e| CustomError::System(format!("Letta get agent request failed: {e}")))?;
+
+        let status = resp.status();
+        let text = resp
+            .text()
+            .await
+            .map_err(|e| CustomError::System(format!("Letta get agent body: {e}")))?;
+
+        if !status.is_success() {
+            return Err(CustomError::System(format!(
+                "Letta get agent HTTP {status}: {text}"
+            )));
+        }
+
+        serde_json::from_str(&text).map_err(|e| {
+            CustomError::Parsing(format!("Letta get agent JSON: {e}; body: {text}"))
+        })
+    }
 }
 
 #[cfg(test)]
