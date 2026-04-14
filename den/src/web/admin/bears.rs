@@ -499,7 +499,7 @@ pub async fn new_action(
             validation_errors.add(
                 "attach_letta_agent_id",
                 ValidationError::new(
-                    "Letta is not configured; remove attach mode or configure Letta.",
+                    "Letta is not configured; remove attach mode or configure Letta first.",
                 ),
             );
         } else {
@@ -519,9 +519,7 @@ pub async fn new_action(
             if bears_db::bear_exists_for_letta_agent_id(state.sqlx_pool(), attach_trim).await? {
                 validation_errors.add(
                     "attach_letta_agent_id",
-                    ValidationError::new(
-                        "Another bear already uses this Letta agent id.",
-                    ),
+                    ValidationError::new("Another bear already uses this Letta agent id."),
                 );
             }
         }

@@ -5,11 +5,11 @@
 {% block admin_content %}
 <div class="box">
 <h3>Letta agents not linked to a bear</h3>
-<p>These Letta agent ids are not referenced by any row in Den&rsquo;s <code>bears.letta_agent_id</code>. Use <strong>Create bear</strong> to register the agent as a bear (no duplicate agent is created).</p>
+<p>These Letta agent ids are not referenced by any row in Den’s <code>bears.letta_agent_id</code>. Use <strong>Create bear</strong> to register the agent as a bear (no duplicate agent is created).</p>
 {% if letta_list_error %}
 <p class="form-errors">{{ letta_list_error }}</p>
 {% endif %}
-{% if letta_configured and not letta_list_error and unlinked_rows | length == 0 %}
+{% if letta_configured and not letta_list_error and (unlinked_rows | length == 0) %}
 <p>Every agent returned by Letta is already linked to a bear (or Letta returned an empty list).</p>
 {% elif letta_configured and not letta_list_error %}
 <table>
@@ -25,7 +25,7 @@
     <tr>
       <td>{{ row.display_name | e }}</td>
       <td><code>{{ row.agent_id | e }}</code></td>
-      <td><a class="action" href="{{ row.new_bear_href | e }}">Create bear&hellip;</a></td>
+      <td><a class="action" href="{{ row.new_bear_href | e }}">Create bear…</a></td>
     </tr>
   {% endfor %}
   </tbody>
