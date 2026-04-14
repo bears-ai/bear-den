@@ -387,3 +387,51 @@ pub async fn send_verify_email_for_user_id(
 
     Ok(email_address)
 }
+
+/// Operator override: set or clear `verified_at` on the active `email_configs` row for the user’s current `users.email`.
+pub async fn set_admin_email_verified(
+    db_pool: &PgPool,
+    user_id: i32,
+    verified: bool,
+) -> Result<(), CustomError> {
+    let verified_at: Option<time::OffsetDateTime> = if verified {
+        Some(time::OffsetDateTime::now_utc())
+    } else {
+        None
+    };
+
+    let res = sqlx::query(
+        r#"
+        UPDATE email_configs
+        SET
+            verified_at = $1,
+            updated_at = NOW()
+        WHERE user_id = $2
+          AND active = true
+          AND email_address = (SELECT email FROM users WHERE id = $2)
+        "#,
+    )
+    .bind(verified_at)
+    .bind(user_id)
+    .execute(db_pool)
+    .await?;
+
+    if res.rows_affected() == 0 && verified {
+        let email: String = sqlx::query_scalar("SELECT email FROM users WHERE id = $1")
+            .bind(user_id)
+            .fetch_optional(db_pool)
+            .await?
+            .ok_or_else(|| CustomError::NotFound(format!("user {user_id} not found")))?;
+
+        sqlx::query(
+            r#"INSERT INTO email_configs (user_id, email_address, active, verified_at)
+               VALUES ($1, $2, true, NOW())"#,
+        )
+        .bind(user_id)
+        .bind(&email)
+        .execute(db_pool)
+        .await?;
+    }
+
+    Ok(())
+}

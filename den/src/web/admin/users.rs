@@ -18,7 +18,7 @@ use minijinja::context;
 
 use crate::{
     auth_backend::AuthSession,
-    core::{email, user, user::db as user_db},
+    core::{email, user, user::db as user_db, user::email_settings},
     errors::CustomError,
     web::{self, AppState},
 };
@@ -49,6 +49,9 @@ pub struct UserForm {
     display_name: String,
     #[validate(email)]
     email: String,
+    /// 1 = verified (`email_configs.verified_at` set), 0 = not verified.
+    #[validate(range(min = 0, max = 1))]
+    email_verified: i32,
     theme: String,
     #[validate(range(min = 0, max = 6))]
     week_start_day: i32,
@@ -61,6 +64,11 @@ impl From<crate::core::user::User> for UserForm {
             username: record.username,
             display_name: record.display_name,
             email: record.email,
+            email_verified: if record.email_verified.unwrap_or(false) {
+                1
+            } else {
+                0
+            },
             theme: record.theme,
             week_start_day: record.week_start_day,
         }
@@ -201,23 +209,49 @@ async fn edit_user_view(
 pub async fn edit_user_action(
     Path(id): Path<i32>,
     State(state): State<AppState>,
+    auth_session: AuthSession,
     Form(form): Form<UserForm>,
-) -> Result<Redirect, CustomError> {
-    // TODO: validate
+) -> Result<Response, CustomError> {
+    let mut validation_errors = ValidationErrors::new();
+    if let Err(e) = form.validate() {
+        validation_errors = e;
+    }
 
-    user_db::update_user_by_id(
-        &state.sqlx_pool,
-        id,
-        &form.email,
-        &form.username,
-        &form.display_name,
-        &form.theme,
-        form.week_start_day,
-    )
-    .await?;
+    if validation_errors.is_empty() {
+        user_db::update_user_by_id(
+            &state.sqlx_pool,
+            id,
+            &form.email,
+            &form.username,
+            &form.display_name,
+            &form.theme,
+            form.week_start_day,
+        )
+        .await?;
 
-    // 303 redirect to users list
-    Ok(Redirect::to("/admin/users/"))
+        email_settings::set_admin_email_verified(
+            &state.sqlx_pool,
+            id,
+            form.email_verified == 1,
+        )
+        .await?;
+
+        Ok(Redirect::to("/admin/users/").into_response())
+    } else {
+        web::render_template(
+            &state,
+            "admin/users/edit.html",
+            auth_session,
+            context! {
+                id,
+                user => form,
+                errors => validation_errors,
+                theme_descriptions => web::theme_descriptions(),
+                day_of_week_names => web::day_of_week_names(),
+            },
+        )
+        .await
+    }
 }
 
 #[derive(Validate, Serialize, Deserialize)]

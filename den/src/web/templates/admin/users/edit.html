@@ -9,6 +9,17 @@
   {{ forms.input("username", "Username", 'text', 'required maxlength="30"', user) }}
   {{ forms.input("display_name", "Display Name", 'text', 'required maxlength="255"', user) }}
   {{ forms.input("email", "Email", 'email', 'required', user) }}
+  <label for="email_verified_select" {% if errors and errors.email_verified %}class="has-error"{% endif %}>Email verified</label>
+  <div class="form-field{% if errors and errors.email_verified %} has-error{% endif %}">
+    <select id="email_verified_select" name="email_verified" required>
+      <option value="0"{% if user.email_verified == 0 %} selected{% endif %}>No (not verified)</option>
+      <option value="1"{% if user.email_verified == 1 %} selected{% endif %}>Yes (verified)</option>
+    </select>
+    <span class="form-hint">Sets <code>email_configs.verified_at</code> for the active row matching this user’s email (operator override).</span>
+    {% if errors and errors.email_verified %}
+    <span class="form-hint form-errors">Submission error: {{ errors.email_verified | map(attribute="message", default="unknown error") | join(", ") }}</span>
+    {% endif %}
+  </div>
   {{ forms.select("theme", "Theme", theme_descriptions, 'required', user) }}
   {{ forms.select("week_start_day", "Start Week On", day_of_week_names, 'required', user, hint="Weekly reports will be sent on this day") }}
   <button>Save</button>

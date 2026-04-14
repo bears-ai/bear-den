@@ -11,6 +11,8 @@
   <dd>{{ user.display_name }}</dd>
   <dt>Email</dt>
   <dd>{{ user.email }}</dd>
+  <dt>Email verified</dt>
+  <dd>{% if user.email_verified == 1 %}Yes{% else %}No{% endif %}</dd>
 </dl>
 
 <h3>Invitations</h3>
