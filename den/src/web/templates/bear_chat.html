@@ -78,9 +78,8 @@
     .den-err { color: var(--error-color); font-size: 0.9rem; margin: 0.5rem 0; }
     #chat-wrap {
       flex: 1;
-      display: flex;
-      flex-direction: column;
       min-height: 0;
+      overflow: hidden;
     }
   </style>
 </head>
@@ -120,7 +119,7 @@
       var srf = cv('--surface-color');
 
       chat.style.cssText =
-        'flex:1; width:100%; border:solid 1px ' + brd +
+        'height:100%; width:100%; border:solid 1px ' + brd +
         '; border-radius:0; font-family:"Geist",sans-serif;' +
         ' font-size:0.9375rem; background:' + pg + ';';
 
@@ -140,23 +139,25 @@
             outerContainer: { justifyContent: 'flex-start' },
             bubble: {
               borderRadius: '0',
-              padding: '6px 0 10px 0',
+              padding: '10px 14px',
               maxWidth: '100%',
               lineHeight: '1.6',
               color: fg,
-              backgroundColor: 'transparent',
-              borderBottom: '1px solid ' + brd,
               marginLeft: '0',
             },
           },
-          ai:   { bubble: {} },
-          user: { bubble: {} },
+          ai: {
+            bubble: { backgroundColor: srf },
+          },
+          user: {
+            bubble: { backgroundColor: pg, border: '1px solid ' + brd },
+          },
         },
         loading: {
           message: {
             styles: {
               outerContainer: { justifyContent: 'flex-start' },
-              bubble: { backgroundColor: 'transparent', color: met, borderRadius: '0', borderBottom: '1px solid ' + brd, padding: '6px 0 10px 0' },
+              bubble: { backgroundColor: srf, color: met, borderRadius: '0', padding: '10px 14px' },
             },
           },
         },
@@ -164,21 +165,37 @@
 
       chat.textInput = {
         styles: {
-          container: { backgroundColor: pg, border: '1px solid ' + brd, borderRadius: '0', color: fg },
-          text:      { color: fg, fontFamily: "'Geist', sans-serif" },
-          focus:     { borderColor: acc },
+          container: {
+            width: '100%',
+            margin: '0',
+            border: 'unset',
+            borderTop: '1px solid ' + brd,
+            borderRadius: '0px',
+            boxShadow: 'unset',
+            backgroundColor: pg,
+            color: fg,
+          },
+          text: {
+            color: fg,
+            fontFamily: "'Geist', sans-serif",
+            fontSize: '1.05em',
+            paddingTop: '11px',
+            paddingBottom: '13px',
+            paddingLeft: '12px',
+            paddingRight: '2.4em',
+          },
+          focus: {},
         },
         placeholder: { text: 'Message your bear\u2026', style: { color: met } },
       };
 
       chat.submitButtonStyles = {
-        submit:   { container: { default: { backgroundColor: acc, borderRadius: '0' }, hover: { backgroundColor: acc, filter: 'brightness(0.85)' } }, svg: { styles: { default: { filter: 'brightness(0) invert(1)' } } } },
-        loading:  { container: { default: { backgroundColor: met, borderRadius: '0' } }, svg: { styles: { default: { filter: 'brightness(0) invert(1)' } } } },
-        stop:     { container: { default: { backgroundColor: '#CC0000', borderRadius: '0' }, hover: { backgroundColor: '#aa0000' } }, svg: { styles: { default: { filter: 'brightness(0) invert(1)' } } } },
-        disabled: { container: { default: { backgroundColor: srf, borderRadius: '0', cursor: 'default' } }, svg: { styles: { default: { filter: 'brightness(0) invert(0.5)' } } } },
+        submit:  { container: { default: { transform: 'scale(1.21)', marginBottom: '-3px', marginRight: '0.4em' } } },
+        loading: { container: { default: { transform: 'scale(1.21)', marginBottom: '-3px', marginRight: '0.4em' } } },
+        stop:    { container: { default: { transform: 'scale(1.21)', marginBottom: '-3px', marginRight: '0.4em' } } },
       };
 
-      chat.inputAreaStyle = { backgroundColor: pg, borderTop: '1px solid ' + brd };
+      chat.inputAreaStyle = { backgroundColor: pg };
 
       chat.auxiliaryStyle =
         '::-webkit-scrollbar{width:6px}' +

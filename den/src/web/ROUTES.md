@@ -23,10 +23,9 @@ Axum routes for the web server (`RUN_WEB=true`). Update this file when you add o
 
 ## End-user chat (Phase 1 — same origin as web)
 
-- `GET /app` — Deep Chat shell (login required); static HTML + vendored Deep Chat under `/assets/deep-chat/*`, calls `/v1/*` with session cookies (`src/web/loquix.rs`, `src/web/static/deep_chat_app.html`).
-- `GET /bear/{slug}` — Deep Chat view for a single bear the user may access (membership-checked; `src/web/templates/bear_chat.html`); same `/v1/chat/send` streaming as `/app`.
+- `GET /bear/{slug}` — Deep Chat view for a single bear the user may access (membership-checked; `src/web/templates/bear_chat.html`, handler in `src/web/loquix.rs`).
 - `GET /v1/bears` — JSON list of bears the signed-in user may use (membership-filtered; no Letta ids exposed) (`src/web/v1/mod.rs`).
-- `POST /v1/chat/send` — membership check, then proxies Letta `POST /v1/agents/{id}/messages/stream` (SSE); the browser parses `data:` lines and shows `assistant_message` content (see `bear_chat.html` / `static/deep_chat_app.html`).
+- `POST /v1/chat/send` — membership check, then proxies Letta `POST /v1/agents/{id}/messages/stream` (SSE); the browser parses `data:` lines and shows `assistant_message` content (see `bear_chat.html`).
 
 `/v1/*` uses `login_required!(…)` (same session as the rest of the web app).
 

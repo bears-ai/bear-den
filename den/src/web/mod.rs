@@ -190,7 +190,6 @@ pub async fn server(
         .route_layer(permission_required!(Backend, login_url = "/login", "admin"))
         .merge(
             Router::new()
-                .route("/app", get(loquix::app_page))
                 .route("/bear/{slug}", get(loquix::bear_page))
                 .route_layer(login_required!(Backend, login_url = "/login")),
         )

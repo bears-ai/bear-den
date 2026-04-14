@@ -3,7 +3,7 @@
 
 use axum::{
     extract::{Path, State},
-    response::{Html, IntoResponse, Redirect, Response},
+    response::{IntoResponse, Redirect, Response},
 };
 use minijinja::context;
 
@@ -13,12 +13,6 @@ use crate::{
     errors::CustomError,
     web::{self, AppState},
 };
-
-const APP_HTML: &str = include_str!("static/deep_chat_app.html");
-
-pub async fn app_page() -> impl IntoResponse {
-    Html(APP_HTML)
-}
 
 /// Deep Chat view for one bear (`/bear/{slug}`); membership-checked.
 pub async fn bear_page(
