@@ -12,6 +12,8 @@ How to orient in **this project**: a Rust web **starter** (Axum, SQLx, MiniJinja
 
 Do not assume the environment is “simulated only”: prefer **running `cargo` yourself** to catch compile errors before handing work back.
 
+**Docker build:** Do not treat a change as **complete** until a **`docker build`** of [`Dockerfile`](Dockerfile) from the `den/` directory succeeds. Release images use **`--features production`**, Alpine/musl, and SQLx at build time in ways a local glibc `cargo check` does not fully replicate. When Docker is unavailable locally, say so explicitly; otherwise run the image build (build-time env: [`docs/deploy.md`](docs/deploy.md), [`COOLIFY_DEPLOY.md`](COOLIFY_DEPLOY.md)).
+
 ## Start here
 
 1. [`docs/README.md`](docs/README.md) — documentation index.
