@@ -42,7 +42,7 @@ Use the devcontainer or local `.env` (see [`.env.example`](.env.example)) with `
 
 **Mail:** `MAILGUN_API_KEY` and `MAILGUN_DOMAIN` default to empty; set them (or swap the mail implementation) before relying on outbound email.
 
-**Letta + Loquix (BEARS Phase 1):** set `LETTA_BASE_URL` (and `LETTA_API_KEY` if your Letta instance requires it) so creating bears in the operator console can provision Letta agents and so signed-in users can chat via **`GET /app`** (Loquix UI → `POST /v1/chat/send` SSE proxy). See [`.env.example`](.env.example).
+**Letta + Loquix (BEARS Phase 1):** set `LETTA_BASE_URL` (and `LETTA_API_KEY` if your Letta instance requires it) so creating bears in the operator console can provision Letta agents and so signed-in users can chat via **`GET /bear/{slug}`** (per-bear Loquix) or **`GET /app`** (multi-bear picker), both using `POST /v1/chat/send` with session cookies. See [`.env.example`](.env.example).
 
 **Shutdown:** **Ctrl+C** is honored on all platforms; **SIGTERM** triggers graceful shutdown on **Unix** only.
 

@@ -19,11 +19,12 @@ Axum routes for the web server (`RUN_WEB=true`). Update this file when you add o
 
 ## Home (`src/web/home.rs`)
 
-- `GET /` — marketing home when logged out; logged-in users see `dashboard_empty.html` (or redirect to email verify if needed)
+- `GET /` — marketing home when logged out; logged-in users see `dashboard.html` listing bears they may use (links to `/bear/{slug}`), or redirect to email verify if needed
 
 ## End-user chat (Phase 1 — same origin as web)
 
 - `GET /app` — Loquix-based chat shell (login required); static HTML + CDN `@loquix/core`, calls `/v1/*` with session cookies (`src/web/loquix.rs`, `src/web/static/loquix_app.html`).
+- `GET /bear/{slug}` — Loquix chat for a single bear the user may access (membership-checked; `src/web/templates/bear_chat.html`); same `/v1/chat/send` streaming as `/app`.
 - `GET /v1/bears` — JSON list of bears the signed-in user may use (membership-filtered; no Letta ids exposed) (`src/web/v1/mod.rs`).
 - `POST /v1/chat/send` — membership check, then proxies Letta `POST /v1/agents/{id}/messages` with `streaming: true`; response is `text/event-stream` for the browser fetch stream.
 
@@ -34,6 +35,8 @@ Axum routes for the web server (`RUN_WEB=true`). Update this file when you add o
 - `GET /admin/` — admin menu (includes Letta `/v1/health` status when `LETTA_BASE_URL` is set)
 - `GET|POST /admin/users/*` — user management
 - `GET|POST /admin/bears/*` — bear registry (create bear with prompt/model fields)
+- `GET /admin/bears/unlinked-letta-agents` — Letta agents with no Den bear (`letta_agent_id`); link to new-bear-from-agent flow
+- `GET /admin/bears/new?from_letta_agent={id}` — new bear form prefilled from Letta `GET /v1/agents/{id}` (hidden `attach_letta_agent_id` skips provisioning)
 - `GET /admin/bears/{id}` — read-only bear detail (Den fields, membership count, Letta agent summary when configured)
 - `GET|POST /admin/bears/{id}/edit` — edit bear row (slug, prompt, model, tools JSON)
 - `POST /admin/bears/{id}/retry-letta` — create Letta agent when `letta_agent_id` is unset (responds with detail HTML including a status line)

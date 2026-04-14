@@ -6,7 +6,13 @@
 {% block admin_content %}
 <div class="box">
 <h3>New bear</h3>
-<p>Define slug, prompts, model, agent type, and tools. When Letta is configured, changes are applied to Letta automatically after save (errors appear below if Letta rejects an update).</p>
+<p>Define slug, prompts, model, agent type, and tools. When Letta is configured, Den applies your fields to Letta after save (errors appear below if Letta rejects an update).</p>
+{% if from_agent_error %}
+<p class="form-errors">{{ from_agent_error }}</p>
+{% endif %}
+{% if form and form.attach_letta_agent_id %}
+<p class="form-hint"><strong>Link existing Letta agent</strong> — Den will <em>not</em> call <code>POST /v1/agents</code>. The bear row is linked to <code>{{ form.attach_letta_agent_id | e }}</code> and fields are pushed with <code>PATCH</code> after create.</p>
+{% endif %}
 {% if provision_error %}
 <p class="form-errors"><strong>Letta provisioning failed</strong> (bear was saved): {{ provision_error }}</p>
 {% endif %}
@@ -14,6 +20,12 @@
 <p class="form-errors"><strong>Letta sync failed</strong> (bear was saved): {{ letta_sync_error }}</p>
 {% endif %}
 <form method="post">
+  {% if form and form.attach_letta_agent_id %}
+  <input type="hidden" name="attach_letta_agent_id" value="{{ form.attach_letta_agent_id | e }}" />
+  {% endif %}
+  {% if errors and errors.attach_letta_agent_id %}
+  <p class="form-errors">{% for e in errors.attach_letta_agent_id %}{{ e.message | default("unknown error") }}{% if not loop.last %}; {% endif %}{% endfor %}</p>
+  {% endif %}
   {{ forms.input("slug", "Slug", "text", 'required maxlength="120"', form) }}
   {{ forms.input("name", "Name", "text", 'maxlength="255"', form) }}
   {{ forms.input("description", "Description", "text", 'maxlength="2000"', form) }}
@@ -83,7 +95,7 @@
     {% endif %}
   </div>
   {% endif %}
-  <button type="submit">Create bear</button>
+  <button type="submit">{% if form and form.attach_letta_agent_id %}Create bear and link agent{% else %}Create bear{% endif %}</button>
 </form>
 </div>
 {% endblock %}

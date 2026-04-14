@@ -21,6 +21,13 @@ pub struct LettaToolOption {
     pub label: String,
 }
 
+/// Minimal row from `GET /v1/agents` for admin orphan-agent listing.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct LettaAgentListItem {
+    pub id: String,
+    pub name: Option<String>,
+}
+
 /// Thin Letta REST client (create agent, stream chat). Disabled when `letta_base_url` is empty.
 #[derive(Clone)]
 pub struct LettaClient {
@@ -307,6 +314,42 @@ impl LettaClient {
         })
     }
 
+    /// `GET /v1/agents` — list agents (shape varies by server; ids required).
+    pub async fn list_agents(&self) -> Result<Vec<LettaAgentListItem>, CustomError> {
+        if !self.is_enabled() {
+            return Err(CustomError::System(
+                "Letta is not configured (set LETTA_BASE_URL)".to_string(),
+            ));
+        }
+
+        let url = format!("{}/v1/agents", self.base_url);
+        let resp = self
+            .http
+            .get(url)
+            .headers(self.auth_headers())
+            .send()
+            .await
+            .map_err(|e| CustomError::System(format!("Letta list agents request failed: {e}")))?;
+
+        let status = resp.status();
+        let text = resp
+            .text()
+            .await
+            .map_err(|e| CustomError::System(format!("Letta list agents body: {e}")))?;
+
+        if !status.is_success() {
+            return Err(CustomError::System(format!(
+                "Letta list agents HTTP {status}: {text}"
+            )));
+        }
+
+        let v: serde_json::Value = serde_json::from_str(&text).map_err(|e| {
+            CustomError::Parsing(format!("Letta list agents JSON: {e}; body: {text}"))
+        })?;
+
+        Ok(parse_letta_agent_list(&v))
+    }
+
     /// `PATCH /v1/agents/{agent_id}` — align Letta agent with Den bear fields.
     pub async fn patch_agent(
         &self,
@@ -426,6 +469,54 @@ fn parse_letta_llm_model_list(v: &serde_json::Value) -> Vec<LettaModelOption> {
     out
 }
 
+fn parse_letta_agent_list(v: &serde_json::Value) -> Vec<LettaAgentListItem> {
+    let items: &[serde_json::Value] = if let Some(a) = v.as_array() {
+        a.as_slice()
+    } else if let Some(a) = v.get("agents").and_then(|x| x.as_array()) {
+        a.as_slice()
+    } else if let Some(a) = v.get("data").and_then(|x| x.as_array()) {
+        a.as_slice()
+    } else if let Some(a) = v.get("items").and_then(|x| x.as_array()) {
+        a.as_slice()
+    } else {
+        &[]
+    };
+
+    let mut out: Vec<LettaAgentListItem> = Vec::new();
+    let mut seen = std::collections::HashSet::<String>::new();
+
+    for item in items {
+        let id = item
+            .get("id")
+            .and_then(|x| x.as_str())
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_string());
+        let Some(id) = id else {
+            continue;
+        };
+        if !seen.insert(id.clone()) {
+            continue;
+        }
+
+        let name = item
+            .get("name")
+            .and_then(|x| x.as_str())
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_string());
+
+        out.push(LettaAgentListItem { id, name });
+    }
+
+    out.sort_by(|a, b| {
+        let an = a.name.as_deref().unwrap_or(&a.id);
+        let bn = b.name.as_deref().unwrap_or(&b.id);
+        an.cmp(bn).then_with(|| a.id.cmp(&b.id))
+    });
+    out
+}
+
 fn parse_letta_tool_list(v: &serde_json::Value) -> Vec<LettaToolOption> {
     let items: &[serde_json::Value] = if let Some(a) = v.as_array() {
         a.as_slice()
@@ -539,5 +630,30 @@ mod tests {
         });
         let t = parse_letta_tool_list(&v);
         assert_eq!(t.len(), 1);
+    }
+
+    #[test]
+    fn parse_agents_top_level_array_sorted_by_name() {
+        let v = serde_json::json!([
+            {"id": "agent-b", "name": "Beta"},
+            {"id": "agent-a", "name": "Alpha"}
+        ]);
+        let a = parse_letta_agent_list(&v);
+        assert_eq!(a.len(), 2);
+        assert_eq!(a[0].id, "agent-a");
+        assert_eq!(a[1].id, "agent-b");
+    }
+
+    #[test]
+    fn parse_agents_nested_skips_missing_id() {
+        let v = serde_json::json!({
+            "agents": [
+                {"name": "no id"},
+                {"id": "agent-1", "name": "One"}
+            ]
+        });
+        let a = parse_letta_agent_list(&v);
+        assert_eq!(a.len(), 1);
+        assert_eq!(a[0].id, "agent-1");
     }
 }

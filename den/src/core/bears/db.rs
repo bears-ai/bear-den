@@ -203,6 +203,28 @@ pub async fn list_bears_for_user(pool: &PgPool, user_id: i32) -> Result<Vec<Bear
     .map_err(Into::into)
 }
 
+/// Bear visible to the user via `user_bear`, keyed by slug (for `/bear/{slug}`).
+pub async fn bear_for_user_by_slug(
+    pool: &PgPool,
+    user_id: i32,
+    slug: &str,
+) -> Result<Option<Bear>, CustomError> {
+    sqlx::query_as::<_, Bear>(
+        r#"
+        SELECT b.id, b.slug, b.name, b.description, b.letta_agent_id, b.default_model, b.tools_enabled,
+               b.letta_agent_type, b.letta_tool_ids, b.system_prompt, b.created_at, b.updated_at
+        FROM bears b
+        INNER JOIN user_bear ub ON ub.bear_id = b.id
+        WHERE ub.user_id = $1 AND b.slug = $2
+        "#,
+    )
+    .bind(user_id)
+    .bind(slug)
+    .fetch_optional(pool)
+    .await
+    .map_err(Into::into)
+}
+
 pub async fn count_bear_members(pool: &PgPool, bear_id: Uuid) -> Result<i64, CustomError> {
     let n: (i64,) = sqlx::query_as(
         "SELECT COUNT(*)::bigint FROM user_bear WHERE bear_id = $1",
@@ -221,6 +243,33 @@ pub async fn user_may_use_bear(pool: &PgPool, user_id: i32, bear_id: Uuid) -> Re
     )
     .bind(user_id)
     .bind(bear_id)
+    .fetch_one(pool)
+    .await?;
+    Ok(n.0 > 0)
+}
+
+/// Non-empty `letta_agent_id` values already assigned to some bear (for orphan-agent UI).
+pub async fn list_letta_agent_ids_in_use(pool: &PgPool) -> Result<Vec<String>, CustomError> {
+    let rows: Vec<(String,)> = sqlx::query_as(
+        r#"
+        SELECT letta_agent_id
+        FROM bears
+        WHERE letta_agent_id IS NOT NULL AND btrim(letta_agent_id) <> ''
+        "#,
+    )
+    .fetch_all(pool)
+    .await?;
+    Ok(rows.into_iter().map(|r| r.0).collect())
+}
+
+pub async fn bear_exists_for_letta_agent_id(
+    pool: &PgPool,
+    agent_id: &str,
+) -> Result<bool, CustomError> {
+    let n: (i64,) = sqlx::query_as(
+        "SELECT COUNT(*)::bigint FROM bears WHERE letta_agent_id = $1",
+    )
+    .bind(agent_id)
     .fetch_one(pool)
     .await?;
     Ok(n.0 > 0)

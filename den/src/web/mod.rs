@@ -191,6 +191,7 @@ pub async fn server(
         .merge(
             Router::new()
                 .route("/app", get(loquix::app_page))
+                .route("/bear/{slug}", get(loquix::bear_page))
                 .route_layer(login_required!(Backend, login_url = "/login")),
         )
         .nest("/v1", v1::router())

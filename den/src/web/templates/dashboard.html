@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+
+{% block title %}Home{% endblock %}
+
+{% block content %}
+<section>
+    <h2>Your bears</h2>
+    {% if bears and bears | length > 0 %}
+    <ul>
+        {% for b in bears %}
+        <li>
+            <a href="/bear/{{ b.slug | e }}">{{ b.name | e }}</a>
+            {% if b.description %}
+            <p>{{ b.description | e }}</p>
+            {% endif %}
+        </li>
+        {% endfor %}
+    </ul>
+    <p class="form-hint">Open a bear to chat with Loquix. You can still use <a href="/app">the multi-bear picker</a> if you prefer.</p>
+    {% else %}
+    <p>You do not have access to any bears yet. Ask an operator to grant membership, or use <a href="/settings">Settings</a> if you are setting up your account.</p>
+    {% endif %}
+</section>
+{% endblock %}
