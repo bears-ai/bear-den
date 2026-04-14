@@ -22,10 +22,14 @@ RUN cargo chef prepare --recipe-path recipe.json
 FROM chef-base AS cacher
 COPY --from=planner /app/recipe.json recipe.json
 COPY Cargo.toml Cargo.lock build.rs ./
+# Target artifacts must live in the image layer (not only a cache mount) so a
+# later stage can `COPY --from=cacher /app/target`. Compile into a cache mount,
+# then snapshot into /app/target for the committed layer.
 RUN --mount=type=cache,target=/usr/local/cargo/registry/,id=den-cargo-registry \
     --mount=type=cache,target=/usr/local/cargo/git/db,id=den-cargo-git \
-    --mount=type=cache,target=/app/target/,id=den-cargo-target \
-    cargo chef cook --release --recipe-path recipe.json
+    --mount=type=cache,target=/mnt/cargo-target,id=den-cargo-target \
+    CARGO_TARGET_DIR=/mnt/cargo-target cargo chef cook --release --recipe-path recipe.json \
+    && mkdir -p /app/target && cp -a /mnt/cargo-target/. /app/target/
 
 FROM rust-base AS build
 ARG APP_NAME=den
