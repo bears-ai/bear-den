@@ -30,7 +30,34 @@
       width: 100%;
       box-sizing: border-box;
     }
-    .den-loquix-wrap loquix-chat-container { flex: 1; min-height: 0; }
+    /* Host: explicit min block size so inner height:100% / flex chain can resolve (see below). */
+    .den-loquix-wrap loquix-chat-container {
+      flex: 1 1 auto;
+      width: 100%;
+      min-height: calc(100vh - 10rem);
+      min-height: calc(100dvh - 10rem);
+    }
+    /*
+     * Loquix slots live in a shadow column flex; the messages slot does not get flex-grow.
+     * loquix-message-list's :host { flex:1 } only works when the parent is a flex container —
+     * the slot is not, so the list collapses to 0×0 unless we give it a definite min-height here
+     * (light-DOM rules still apply to slotted nodes).
+     */
+    .den-loquix-wrap loquix-chat-container > loquix-message-list {
+      display: block;
+      width: 100%;
+      min-height: min(32rem, calc(100vh - 14rem));
+      min-height: min(32rem, calc(100dvh - 14rem));
+    }
+    .den-loquix-wrap loquix-chat-container > loquix-chat-composer {
+      display: block;
+      width: 100%;
+      min-height: 5.5rem;
+    }
+    .den-loquix-wrap loquix-chat-container > loquix-chat-header {
+      display: block;
+      width: 100%;
+    }
     .den-toolbar { display: flex; gap: 1rem; align-items: center; margin-bottom: 0.75rem; flex-wrap: wrap; }
     .den-toolbar a { color: #93c5fd; }
     .den-toolbar .den-bear-meta { font-size: 0.95rem; }

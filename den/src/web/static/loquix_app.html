@@ -28,7 +28,27 @@
       width: 100%;
       box-sizing: border-box;
     }
-    .den-loquix-wrap loquix-chat-container { flex: 1; min-height: 0; }
+    .den-loquix-wrap loquix-chat-container {
+      flex: 1 1 auto;
+      width: 100%;
+      min-height: calc(100vh - 10rem);
+      min-height: calc(100dvh - 10rem);
+    }
+    .den-loquix-wrap loquix-chat-container > loquix-message-list {
+      display: block;
+      width: 100%;
+      min-height: min(32rem, calc(100vh - 14rem));
+      min-height: min(32rem, calc(100dvh - 14rem));
+    }
+    .den-loquix-wrap loquix-chat-container > loquix-chat-composer {
+      display: block;
+      width: 100%;
+      min-height: 5.5rem;
+    }
+    .den-loquix-wrap loquix-chat-container > loquix-chat-header {
+      display: block;
+      width: 100%;
+    }
     .den-toolbar { display: flex; gap: 1rem; align-items: center; margin-bottom: 0.75rem; flex-wrap: wrap; }
     .den-toolbar a { color: #93c5fd; }
     .den-toolbar label { font-size: 0.9rem; }
