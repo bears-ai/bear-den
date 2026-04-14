@@ -1,4 +1,5 @@
 name: Den – build & push image
+# inspired by https://nusendra.com/post/github-actions-ghcr-coolify-deployment
 
 on:
   push:

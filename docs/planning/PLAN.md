@@ -276,6 +276,9 @@ Deliverables:
 - **Slack/WhatsApp** may still use LettaBot → Letta direct for **messages**; Den still drives **which bears** exist and appear in bot config. No requirement that chat hits Den until you adopt the optional proxy.
 - Bear registry, **users↔bears** membership, and basic RBAC for **web** users.
 - No Cabinet/Outline yet: **Letta native memory** only; shared knowledge in later phases.
+- **User onboarding:** new account → Personal Bear auto-provisioned → user lands in chat with onboarding prompt.
+- **Memory dashboard:** users can view their `human` and `person:{name}` Letta blocks across all their bears.
+- **Org policy:** operator sets a shared `org_policy` Letta block (default from `den/defaults/org_policy.md`) applied to all bears.
 
 ---
 
@@ -305,6 +308,11 @@ Deliverables:
    - Update one or two **bears** to:
      - Use Cabinet for “remembering” things,
      - Summarizing conversations into “knowledge” notes.
+
+4. **Provisional users and LettaBot identity**
+   - When LettaBot reports a message from a user not in Den’s registry (unknown Slack user, WhatsApp number, etc.), Den creates a **provisional user** record: no login credentials, flagged `is_provisional = true`, with a `display_name` derived from the external id.
+   - Den provisions `person:{name}` blocks for provisional users on any bear they interact with, so the bear can accumulate knowledge about them across interactions.
+   - The admin console shows provisional users alongside full accounts; operators can promote a provisional user to a full account (linking their external id to login credentials).
 
 At the end of Phase 2, Cabinet is a defined, testable contract, even if Outline isn’t fully wired.
 

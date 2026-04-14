@@ -39,6 +39,9 @@ Use whatever **one-off** scaffold you prefer (`cargo new`, an internal template,
 | LettaBot | `GET /admin/lettabot.yaml` (operator session **or** server-side key); operator UI shows preview; optional write to volume path on change |
 | Policy | RBAC-lite: membership check + optional per-bear `can_use` + basic rate limit |
 | Bifrost | Optional: fetch metrics/health **read-only**; no proxying completions |
+| **User onboarding** | On new account creation, auto-provision a **Personal Bear** (slug: `personal-{name-slug}`) from a configurable default template set in the admin UI; immediately redirect the new user into chat with that bear using a standard onboarding prompt that invites the bear to learn about them |
+| **Memory dashboard** | User-facing page showing the current user's `human` block (per bear) and any `person:{name}` blocks across all their bears — read-only in Phase 1 |
+| **Org policy block** | Admin UI panel to view and edit the `org_policy` Letta block applied to all bears; seed content from **`den/defaults/org_policy.md`** (in-repo) when no policy has been set and the first bear is provisioned |
 | Deploy | **Self-building Docker image** (multi-stage: build Rust in container, runtime image with binary + `ca-certificates`) |
 
 ### Explicitly out of scope (Phase 1)
@@ -111,10 +114,12 @@ den/
 
 - `id` UUID PK
 - `email` TEXT UNIQUE NOT NULL (or `username` if no email)
+- `display_name` TEXT NULL — human-readable name; used in Personal Bear slug and onboarding prompt
 - `password_hash` TEXT NOT NULL (nullable only if token-only users)
 - `is_admin` BOOLEAN NOT NULL DEFAULT false — operator console access (bootstrap first admin via migration or `BOOTSTRAP_ADMIN_EMAIL`)
 - `webui_account_id` TEXT NULL UNIQUE — map Open WebUI stable id when available
 - `created_at`, `updated_at` TIMESTAMPTZ
+- *(Phase 2)* `is_provisional` BOOLEAN NOT NULL DEFAULT false — no login; created automatically when LettaBot encounters an unknown user
 
 **`sessions`** (if using DB-backed opaque tokens)
 
@@ -145,6 +150,24 @@ den/
 - `id` BIGSERIAL
 - `user_id`, `bear_id`, `created_at`, `bytes_out` INT NULL
 
+**`bear_conversations`** (maps Den users to Letta Conversation objects)
+
+- `user_id` UUID FK → users ON DELETE CASCADE
+- `bear_id` UUID FK → bears ON DELETE CASCADE
+- `letta_conversation_id` TEXT NOT NULL — Letta `conv-xxx` id
+- `channel` TEXT NULL — e.g. `web`, `slack`, `whatsapp`; NULL = default web
+- `created_at` TIMESTAMPTZ
+- PK `(user_id, bear_id, channel)` — one conversation per user+bear+channel
+
+**`user_bear_blocks`** (tracks per-user Letta blocks for group-mode bears)
+
+- `user_id` UUID FK → users ON DELETE CASCADE
+- `bear_id` UUID FK → bears ON DELETE CASCADE
+- `letta_block_id` TEXT NOT NULL — Letta block id
+- `block_label` TEXT NOT NULL — e.g. `person:alice`
+- `created_at` TIMESTAMPTZ
+- PK `(user_id, bear_id, block_label)`
+
 ### Migrations
 
 - Use **sqlx migrate** or **refinery**; run migrations on startup (`migrate!` in dev) **or** separate init container in production (document both).
@@ -168,6 +191,7 @@ den/
 | POST | `/auth/logout` | Invalidate session |
 | GET | `/v1/bears` or `/agents` | List bears for **authenticated** user (membership filter) |
 | POST | `/v1/chat/send` | Body: `{ message, agent_id?, conversation_id?, stream? }` — **agent_id** = bear id |
+| GET | `/v1/me/memory` | Return current user's `human` block content (per bear) and any `person:{name}` blocks across all member bears — for the memory dashboard |
 
 **Chat contract** (align with [PLAN.md](PLAN.md) §2.1):
 
@@ -190,6 +214,9 @@ den/
 | DELETE | `/admin/users/:id/bears/:bear_id` | Revoke |
 | GET | `/admin/lettabot.yaml` | Render yaml from DB + template (`text/yaml`; operator UI embeds or downloads) |
 | GET | `/admin/health/letta` | Optional: Letta reachable + auth OK — surface in console |
+| GET | `/admin/org-policy` | View current `org_policy` block content (from Letta or seeded default) |
+| PUT | `/admin/org-policy` | Write `org_policy` block content; Den updates the Letta block on all provisioned bears |
+| GET | `/admin/onboarding` | View/edit default Personal Bear template and onboarding prompt used for new users |
 
 ### Internal / optional
 
@@ -340,6 +367,7 @@ den/
 | M3 | Admin API: users, bears, membership | JSON CRUD + user sees only member bears on `GET /v1/bears`; non-member 403 on chat (stub ok until M5) |
 | M4 | Letta provision | `POST /admin/bears` (+ provision) creates Letta agent + row; errors returned to client |
 | **M4b** | **Operator console v1** | **Browser UI** covers: users, bears + provision trigger, membership, LettaBot YAML view/download, Letta health — **no curl for setup** |
+| **M4c** | **Onboarding + org policy** | Admin configures `org_policy` block (seeded from `den/defaults/org_policy.md`) and Personal Bear default template; new user account creation auto-provisions their Personal Bear |
 | M5 | Chat proxy | Streaming `POST /v1/chat/send` end-to-end; validated with **curl**, integration test, or console “try it” |
 | **M6** | **Loquix UI (first-party)** | Den serves chat under `/app` or `/chat`; demo user chats in browser — **reference client** for streaming contract |
 | **M6b** | **Open WebUI (optional)** | Documented integration path + example env; demo user chatting via Den **when a deployment chooses Open WebUI** |
@@ -348,7 +376,7 @@ den/
 
 **Bifrost observability:** M8 or parallel track.
 
-**Note:** **M4b** can overlap **M3–M4** (build UI against stub endpoints first). **M6 (Loquix)** can overlap late **M5** (UI shell early; wire streaming when API is ready). **M6b (Open WebUI)** is **not** on the critical path for “someone can try the system” in-browser.
+**Note:** **M4b** can overlap **M3–M4** (build UI against stub endpoints first). **M4c** can overlap **M4b** (org policy UI is a small panel; onboarding wiring needs M4 provision). **M6 (Loquix)** can overlap late **M5** (UI shell early; wire streaming when API is ready). **M6b (Open WebUI)** is **not** on the critical path for “someone can try the system” in-browser.
 
 ---
 
@@ -362,6 +390,9 @@ den/
 - [ ] LettaBot yaml can be generated from current DB state; LettaBot still talks **direct** to Letta
 - [ ] Deployed via **single Dockerfile** build on Coolify (or CI → registry)
 - [ ] No Cabinet calls required
+- [ ] New user registration auto-provisions their Personal Bear in Letta and redirects them into chat with the onboarding prompt
+- [ ] `GET /v1/me/memory` returns the current user's `human` block content across their bears
+- [ ] Admin can view and edit the `org_policy` block via the console; `den/defaults/org_policy.md` is applied on first bear creation when no policy exists
 
 ---
 
