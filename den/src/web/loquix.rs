@@ -1,4 +1,4 @@
-//! First-party chat shell (Loquix from CDN + Den `/v1` APIs).
+//! First-party chat shell (Deep Chat component + Den `/v1` APIs).
 //! When changing routes wired to this UI, update `src/web/ROUTES.md`.
 
 use axum::{
@@ -14,13 +14,13 @@ use crate::{
     web::{self, AppState},
 };
 
-const APP_HTML: &str = include_str!("static/loquix_app.html");
+const APP_HTML: &str = include_str!("static/deep_chat_app.html");
 
 pub async fn app_page() -> impl IntoResponse {
     Html(APP_HTML)
 }
 
-/// Loquix chat for one bear (`/bear/{slug}`); membership-checked.
+/// Deep Chat view for one bear (`/bear/{slug}`); membership-checked.
 pub async fn bear_page(
     Path(slug): Path<String>,
     State(state): State<AppState>,

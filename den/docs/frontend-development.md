@@ -88,21 +88,21 @@ src/web/templates/
 └── admin/                # Admin interface
 ```
 
-## Bear chat (Loquix)
+## Bear chat (Deep Chat)
 
-End-user chat is **not** the main MiniJinja + `style.css` stack; it uses vendored [**Loquix**](https://loquix.dev) web components.
+End-user chat is **not** the main MiniJinja + `style.css` stack; it uses a vendored [**Deep Chat**](https://deepchat.dev) web component (`<deep-chat>`).
 
 | Route | Source |
 |-------|--------|
 | `GET /bear/{slug}` | [`src/web/templates/bear_chat.html`](../src/web/templates/bear_chat.html) |
-| `GET /app` | [`src/web/static/loquix_app.html`](../src/web/static/loquix_app.html) (included via [`loquix.rs`](../src/web/loquix.rs)) |
+| `GET /app` | [`src/web/static/deep_chat_app.html`](../src/web/static/deep_chat_app.html) (included via [`loquix.rs`](../src/web/loquix.rs)) |
 
 **Behavior to preserve**
 
-1. **Same-origin assets** — `@loquix/core` (JS + CSS) lives under [`src/web/assets/loquix/`](../src/web/assets/loquix/) and is linked as `/assets/loquix/...` so the shell works without a third-party CDN.
-2. **Dark theme** — `<html class="loquix-theme-dark">` must stay on those pages so [`themes/dark.css`](../src/web/assets/loquix/themes/dark.css) applies (Loquix tokens are scoped to that class / `[data-theme='dark']`).
-3. **Script order** — Load [`loquix.min.js`](../src/web/assets/loquix/loquix.min.js) **before** the inline handler script so custom elements are defined first.
-4. **Letta stream** — `POST /v1/chat/send` returns SSE; the page scripts parse `data:` JSON lines and append **`assistant_message`** `content` only (see `consumeLettaSseToAssistantMessage` in both HTML files).
+1. **Same-origin asset** — `deepChat.bundle.js` lives under [`src/web/assets/deep-chat/`](../src/web/assets/deep-chat/) and is linked as `/assets/deep-chat/deepChat.bundle.js` so the shell works without a third-party CDN.
+2. **Light / dark theming** — chat pages replicate the same CSS variable definitions from `style.css` (`--page-color`, `--text-color`, `--border-color`, `--accent-color`, `--meta-color`, `--surface-color`) and honour the `theme-dark` / `theme-light` classes plus `prefers-color-scheme`. Deep Chat's JS style API (`messageStyles`, `textInput`, `submitButtonStyles`, etc.) reads the resolved CSS variable values at init via `getComputedStyle`.
+3. **Slack-style layout** — messages are left-aligned (both user and AI), with name labels above and a bottom border divider instead of speech bubbles.
+4. **Letta stream** — `POST /v1/chat/send` returns SSE; the chat handler uses `connect.handler` + `connect.stream` to parse `data:` JSON lines and stream only **`assistant_message`** `content` (see `lettaSseHandler` in both HTML files).
 
 **Local dev:** After changing anything under `src/web/assets/`, rebuild and restart `den` so `memory-serve` picks up routes and paths ([`quickstart.md`](quickstart.md) § *Static assets*).
 

@@ -1,5 +1,5 @@
 // ROUTES: When modifying routes in this file, update /src/web/ROUTES.md
-//! End-user JSON + SSE under `/v1/*` (session cookie, same origin as Loquix).
+//! End-user JSON + SSE under `/v1/*` (session cookie, same origin as Deep Chat).
 
 use axum::{
     Json, Router,
@@ -28,7 +28,7 @@ pub fn router() -> Router<AppState> {
         .route_layer(login_required!(Backend, login_url = "/login"))
 }
 
-/// Membership-filtered bears for Loquix (no Letta agent id exposed).
+/// Membership-filtered bears for the chat UI (no Letta agent id exposed).
 #[derive(Serialize)]
 pub struct BearPublic {
     pub bear_id: Uuid,

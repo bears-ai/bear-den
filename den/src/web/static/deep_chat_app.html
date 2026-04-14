@@ -1,13 +1,9 @@
 <!DOCTYPE html>
-{% if session is defined and session.theme %}
-<html lang="en" class="theme-{{ session.theme }}">
-{% else %}
 <html lang="en">
-{% endif %}
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>{{ bear_name | e }} — Chat</title>
+  <title>Chat — Den</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Geist+Mono:wght@100..900&family=Geist:wght@100..900&display=swap" rel="stylesheet" />
@@ -21,27 +17,12 @@
       --error-color:  #CC0000;
       --surface-color:#DDDDDD;
     }
-    html.theme-dark {
-      --page-color:   #121212;
-      --text-color:   #DDDDDD;
-      --border-color: #DDDDDD;
-      --accent-color: #cc11dd;
-      --meta-color:   #aaaaaa;
-      --error-color:  #CC0000;
-      --surface-color:#1a1a1a;
-    }
     @media (prefers-color-scheme: dark) {
       :root {
         --page-color:   #121212;
         --text-color:   #DDDDDD;
         --border-color: #DDDDDD;
         --surface-color:#1a1a1a;
-      }
-      html.theme-light {
-        --page-color:   #EEEEEE;
-        --text-color:   #121212;
-        --border-color: #121212;
-        --surface-color:#DDDDDD;
       }
     }
     html, body { height: 100%; margin: 0; }
@@ -73,8 +54,16 @@
     }
     .den-toolbar a { color: var(--text-color); text-decoration: underline; }
     .den-toolbar a:hover { color: var(--accent-color); }
-    .den-toolbar .den-bear-meta { font-size: 0.95rem; }
-    .den-toolbar code { font-size: 0.85rem; font-family: "Geist Mono", monospace; }
+    .den-toolbar label { font-size: 0.9rem; text-transform: uppercase; }
+    .den-toolbar select {
+      min-width: 12rem;
+      padding: 0.35rem 0.5rem;
+      border-radius: 0;
+      border: 1px solid var(--border-color);
+      background: var(--page-color);
+      color: var(--text-color);
+      font-family: "Geist", sans-serif;
+    }
     .den-err { color: var(--error-color); font-size: 0.9rem; margin: 0.5rem 0; }
     #chat-wrap {
       flex: 1;
@@ -88,7 +77,8 @@
   <div class="den-wrap">
     <div class="den-toolbar">
       <a href="/">Home</a>
-      <span class="den-bear-meta">Chatting with <strong>{{ bear_name | e }}</strong> (<code>{{ bear_slug | e }}</code>)</span>
+      <label>Bear <select id="bear-picker" aria-label="Bear"></select></label>
+      <span id="bear-status"></span>
     </div>
     <p id="err" class="den-err" hidden></p>
     <div id="chat-wrap">
@@ -97,9 +87,9 @@
   </div>
   <script type="module" src="/assets/deep-chat/deepChat.bundle.js"></script>
   <script>
-    var BEAR_ID   = "{{ bear_id | e }}";
-    var BEAR_NAME = "{{ bear_name | e }}";
-    var errEl = document.getElementById('err');
+    var errEl      = document.getElementById('err');
+    var statusEl   = document.getElementById('bear-status');
+    var bearPicker = document.getElementById('bear-picker');
 
     function showErr(msg) {
       errEl.textContent = msg;
@@ -109,6 +99,54 @@
     function cv(name) {
       return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
     }
+
+    /* ── bear picker ── */
+
+    async function loadBears() {
+      var r = await fetch('/v1/bears', { credentials: 'same-origin' });
+      if (r.status === 401) {
+        window.location.href = '/login?next=' + encodeURIComponent(window.location.pathname);
+        return;
+      }
+      if (!r.ok) { showErr('Could not load bears: HTTP ' + r.status); return; }
+      var bears = await r.json();
+      bearPicker.innerHTML = '';
+      if (!bears.length) {
+        statusEl.textContent = 'No bears assigned \u2014 ask an operator to grant membership.';
+        return;
+      }
+      bears.forEach(function (b) {
+        var opt = document.createElement('option');
+        opt.value = b.bear_id;
+        opt.textContent = b.slug + ' \u2014 ' + b.name;
+        bearPicker.appendChild(opt);
+      });
+      statusEl.textContent = bears.length + ' bear(s).';
+      applyBearName();
+    }
+
+    function currentBearName() {
+      var sel = bearPicker.selectedOptions[0];
+      return sel ? sel.textContent.split(' \u2014 ').pop() : 'Bear';
+    }
+
+    function applyBearName() {
+      var chat = document.getElementById('chat');
+      var acc = cv('--accent-color');
+      var met = cv('--meta-color');
+      chat.names = {
+        ai:   { text: currentBearName(), style: { color: acc, fontSize: '0.8rem', fontWeight: '600', textTransform: 'uppercase' } },
+        user: { text: 'You',             style: { color: met, fontSize: '0.8rem', fontWeight: '600', textTransform: 'uppercase' } },
+      };
+    }
+
+    bearPicker.addEventListener('change', function () {
+      var chat = document.getElementById('chat');
+      chat.clearMessages();
+      applyBearName();
+    });
+
+    /* ── configure Deep Chat ── */
 
     function configureDenChat() {
       var chat = document.getElementById('chat');
@@ -130,8 +168,8 @@
       };
 
       chat.names = {
-        ai:   { text: BEAR_NAME, style: { color: acc, fontSize: '0.8rem', fontWeight: '600', textTransform: 'uppercase' } },
-        user: { text: 'You',     style: { color: met, fontSize: '0.8rem', fontWeight: '600', textTransform: 'uppercase' } },
+        ai:   { text: 'Bear', style: { color: acc, fontSize: '0.8rem', fontWeight: '600', textTransform: 'uppercase' } },
+        user: { text: 'You',  style: { color: met, fontSize: '0.8rem', fontWeight: '600', textTransform: 'uppercase' } },
       };
 
       chat.messageStyles = {
@@ -190,13 +228,16 @@
       chat.connect = { handler: lettaSseHandler, stream: true };
     }
 
+    /* ── Letta SSE handler ── */
+
     function lettaSseHandler(body, signals) {
       var userText = (body.messages || [])
         .filter(function (m) { return m.role === 'user'; })
         .map(function (m) { return m.text || ''; })
         .pop() || '';
 
-      if (!BEAR_ID) { signals.onResponse({ error: 'Missing bear.' }); return; }
+      var bearId = bearPicker.value;
+      if (!bearId) { signals.onResponse({ error: 'Pick a bear first.' }); return; }
       errEl.hidden = true;
 
       var abortCtl = new AbortController();
@@ -206,7 +247,7 @@
         method: 'POST',
         credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ bear_id: BEAR_ID, message: userText }),
+        body: JSON.stringify({ bear_id: bearId, message: userText }),
         signal: abortCtl.signal,
       }).then(function (response) {
         if (response.status === 401) {
@@ -254,7 +295,10 @@
       });
     }
 
-    customElements.whenDefined('deep-chat').then(configureDenChat);
+    customElements.whenDefined('deep-chat').then(function () {
+      configureDenChat();
+      loadBears();
+    });
   </script>
 </body>
 </html>

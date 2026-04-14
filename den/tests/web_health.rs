@@ -105,15 +105,12 @@ async fn web_readiness_returns_ok_when_db_up() {
     assert_eq!(res.status(), StatusCode::OK);
 }
 
-/// Bear chat (`/bear/{slug}`) loads Loquix from `/assets/loquix/*`; these must not 404.
+/// Bear chat (`/bear/{slug}`) loads Deep Chat from `/assets/deep-chat/*`; these must not 404.
 #[tokio::test]
-async fn web_loquix_vendor_assets_are_served() {
+async fn web_deep_chat_vendor_assets_are_served() {
     let app = web_app().await;
     for path in [
-        "/assets/loquix/variables.css",
-        "/assets/loquix/themes/dark.css",
-        "/assets/loquix/loquix.min.js",
-        "/assets/loquix/loquix-register.js",
+        "/assets/deep-chat/deepChat.bundle.js",
     ] {
         let res = app
             .clone()
