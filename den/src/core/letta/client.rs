@@ -204,7 +204,10 @@ impl LettaClient {
         Ok(id)
     }
 
-    /// `POST /v1/agents/{id}/messages` with `streaming: true`. Caller consumes the body stream.
+    /// `POST /v1/agents/{id}/messages/stream` (Letta API v1 / SDK-style streaming).
+    ///
+    /// Older servers accepted `POST …/messages` with `{ input, streaming: true }`; current Letta
+    /// returns 422 for that shape and expects this dedicated SSE endpoint with a `messages` array.
     pub async fn post_messages_streaming(
         &self,
         agent_id: &str,
@@ -217,12 +220,14 @@ impl LettaClient {
         }
 
         let body = json!({
-            "input": user_input,
-            "streaming": true,
-            "include_pings": true,
+            "messages": [{
+                "role": "user",
+                "content": user_input,
+            }],
+            "stream_tokens": true,
         });
 
-        let url = format!("{}/v1/agents/{agent_id}/messages", self.base_url);
+        let url = format!("{}/v1/agents/{agent_id}/messages/stream", self.base_url);
 
         let resp = self
             .http

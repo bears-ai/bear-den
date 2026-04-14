@@ -88,6 +88,24 @@ src/web/templates/
 └── admin/                # Admin interface
 ```
 
+## Bear chat (Loquix)
+
+End-user chat is **not** the main MiniJinja + `style.css` stack; it uses vendored [**Loquix**](https://loquix.dev) web components.
+
+| Route | Source |
+|-------|--------|
+| `GET /bear/{slug}` | [`src/web/templates/bear_chat.html`](../src/web/templates/bear_chat.html) |
+| `GET /app` | [`src/web/static/loquix_app.html`](../src/web/static/loquix_app.html) (included via [`loquix.rs`](../src/web/loquix.rs)) |
+
+**Behavior to preserve**
+
+1. **Same-origin assets** — `@loquix/core` (JS + CSS) lives under [`src/web/assets/loquix/`](../src/web/assets/loquix/) and is linked as `/assets/loquix/...` so the shell works without a third-party CDN.
+2. **Dark theme** — `<html class="loquix-theme-dark">` must stay on those pages so [`themes/dark.css`](../src/web/assets/loquix/themes/dark.css) applies (Loquix tokens are scoped to that class / `[data-theme='dark']`).
+3. **Script order** — Load [`loquix.min.js`](../src/web/assets/loquix/loquix.min.js) **before** the inline handler script so custom elements are defined first.
+4. **Letta stream** — `POST /v1/chat/send` returns SSE; the page scripts parse `data:` JSON lines and append **`assistant_message`** `content` only (see `consumeLettaSseToAssistantMessage` in both HTML files).
+
+**Local dev:** After changing anything under `src/web/assets/`, rebuild and restart `den` so `memory-serve` picks up routes and paths ([`quickstart.md`](quickstart.md) § *Static assets*).
+
 ## JavaScript Guidelines
 
 ### Approach

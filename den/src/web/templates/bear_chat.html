@@ -1,12 +1,12 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" class="loquix-theme-dark">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>{{ bear_name | e }} — Chat</title>
-  <link rel="stylesheet" href="https://unpkg.com/@loquix/core/src/tokens/variables.css" crossorigin="anonymous" />
-  <link rel="stylesheet" href="https://unpkg.com/@loquix/core/src/tokens/themes/dark.css" crossorigin="anonymous" />
-  <script src="https://unpkg.com/@loquix/core/cdn/loquix.min.js" crossorigin="anonymous"></script>
+  <!-- Same-origin @loquix/core 0.1.2 (see assets/loquix/VERSION); dark theme needs .loquix-theme-dark on an ancestor. -->
+  <link rel="stylesheet" href="/assets/loquix/variables.css" />
+  <link rel="stylesheet" href="/assets/loquix/themes/dark.css" />
   <style>
     /* Loquix :host uses height:100%; percentage height needs a definite chain — without this
        the chat host often resolves to 0px while the toolbar (outside the component) still shows. */
@@ -78,6 +78,8 @@
       <loquix-chat-composer slot="composer" id="composer" placeholder="Message your bear…"></loquix-chat-composer>
     </loquix-chat-container>
   </div>
+  <script src="/assets/loquix/loquix.min.js"></script>
+  <script src="/assets/loquix/loquix-register.js"></script>
   <script>
     const BEAR_ID = "{{ bear_id | e }}";
     const errEl = document.getElementById('err');
@@ -90,6 +92,34 @@
     }
 
     let abortCtl = null;
+
+    /** Letta streams SSE (`data: {json}\\n`). Append visible assistant text only. */
+    async function consumeLettaSseToAssistantMessage(reader, decoder, assistantContent) {
+      let lineBuf = '';
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        lineBuf += decoder.decode(value, { stream: true });
+        let nl;
+        while ((nl = lineBuf.indexOf('\n')) >= 0) {
+          const raw = lineBuf.slice(0, nl);
+          lineBuf = lineBuf.slice(nl + 1);
+          const line = raw.replace(/\r$/, '');
+          if (!line.startsWith('data: ')) continue;
+          const payload = line.slice(6).trim();
+          if (payload === '' || payload === '[DONE]') continue;
+          let obj;
+          try {
+            obj = JSON.parse(payload);
+          } catch {
+            continue;
+          }
+          if (obj.message_type === 'assistant_message' && typeof obj.content === 'string') {
+            assistantContent.textContent += obj.content;
+          }
+        }
+      }
+    }
 
     document.addEventListener('loquix-submit', async function (e) {
       const content = e.detail.content;
@@ -136,11 +166,7 @@
         }
         const reader = response.body.getReader();
         const decoder = new TextDecoder();
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          assistantContent.textContent += decoder.decode(value, { stream: true });
-        }
+        await consumeLettaSseToAssistantMessage(reader, decoder, assistantContent);
       } catch (x) {
         if (x.name === 'AbortError') {
           assistantContent.textContent += '\n[stopped]';

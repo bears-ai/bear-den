@@ -105,6 +105,40 @@ async fn web_readiness_returns_ok_when_db_up() {
     assert_eq!(res.status(), StatusCode::OK);
 }
 
+/// Bear chat (`/bear/{slug}`) loads Loquix from `/assets/loquix/*`; these must not 404.
+#[tokio::test]
+async fn web_loquix_vendor_assets_are_served() {
+    let app = web_app().await;
+    for path in [
+        "/assets/loquix/variables.css",
+        "/assets/loquix/themes/dark.css",
+        "/assets/loquix/loquix.min.js",
+        "/assets/loquix/loquix-register.js",
+    ] {
+        let res = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(path)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            res.status(),
+            StatusCode::OK,
+            "expected 200 for {path}"
+        );
+        let body = res.into_body().collect().await.unwrap().to_bytes();
+        assert!(
+            body.len() > 100,
+            "expected non-trivial body for {path}, got {} bytes",
+            body.len()
+        );
+    }
+}
+
 #[tokio::test]
 async fn api_health_returns_ok() {
     let app = api_app().await;

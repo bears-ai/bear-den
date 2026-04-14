@@ -85,7 +85,7 @@ uuid = { version = "1", features = ["serde", "v4"] }
 dotenvy = "0.15.7"
 minijinja-embed = "2.7.0"
 axum-embed = "0.1.0"
-memory-serve = "1.2.1"
+memory-serve = "1.2.2"
 url = "2.5.4"
 rand = "0.9.1"
 regex = "1.11.1"

@@ -48,7 +48,7 @@
 {% if bear.letta_agent_id %}
 <p><strong>Stored agent id:</strong> <code>{{ bear.letta_agent_id }}</code></p>
 {% if letta_api_base %}
-<p class="form-hint">End-user chat (via Den) calls <code>POST {{ letta_api_base }}/v1/agents/{{ bear.letta_agent_id }}/messages</code> with streaming.</p>
+<p class="form-hint">End-user chat (via Den) proxies Letta <code>POST …/v1/agents/{{ bear.letta_agent_id }}/messages/stream</code> (SSE).</p>
 {% endif %}
 
 {% if letta_agent_fetch_error %}

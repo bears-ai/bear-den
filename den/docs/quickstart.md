@@ -14,6 +14,8 @@
 
    When you add new migration files, use `sqlx migrate add` / `sqlx migrate run` from the `den/` directory as described in [sqlx-patterns.md](sqlx-patterns.md).
 
+   **Static assets (`src/web/assets/`):** In a **debug** `cargo run`, `memory-serve` registers routes when the binary is **compiled** and reads file bytes from **disk** at request time using those recorded paths. If you add or change files under `src/web/assets/` (for example Loquix under `assets/loquix/`), run a **fresh build** and **restart** the `den` process; a long-lived or stale process can otherwise return **404** for `/assets/...` even though the files exist in the tree. Release builds embed assets in the binary instead.
+
 You can use the devcontainer in this repo instead of a manual local Postgres setup if that matches your workflow.
 
 ## Development-only link prefix
