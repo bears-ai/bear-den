@@ -37,11 +37,11 @@ References:
 
 #### Scenario A: One Person Per Session (the common case)
 
-This covers **Loquix**, **Open WebUI**, and **1:1 DMs** via LettaBot (Slack DM, WhatsApp private chat). Each message comes from exactly one identified user.
+This covers **Den chat**, **Open WebUI**, and **1:1 DMs** via LettaBot (Slack DM, WhatsApp private chat). Each message comes from exactly one identified user.
 
 ```
                   ┌──────────────────────────────────────────────────┐
-  Loquix ─────┐   │           Letta Agent (one bear)                 │
+  Den chat ─────┐   │           Letta Agent (one bear)                 │
   Open WebUI ─┤   │                                                  │
   LettaBot DM ┘   │  ┌────────────────┐  ┌────────────────────────┐ │
        │           │  │ persona block   │  │ org_policy block       │ │
@@ -132,7 +132,7 @@ One Letta Conversation maps to the group thread, but the bear must distinguish s
 
 ### Hybrid: A Bear That Does Both
 
-Most bears will handle **both** scenarios: 1:1 chats via Loquix/web and group chats via LettaBot. The approaches compose cleanly:
+Most bears will handle **both** scenarios: 1:1 chats via Den chat/web and group chats via LettaBot. The approaches compose cleanly:
 
 - **1:1 conversations** use `isolated_block_labels: ["human"]` — person-specific memory is automatic via the Conversations API.
 - **Group conversations** use explicit `person:{name}` blocks — person-specific memory is managed by Den and the system prompt.

@@ -29,6 +29,7 @@ Deploy the BEARS stack as separate services in Coolify. Shared knowledge uses **
 
 ```
 Open WebUI → Letta → Bifrost → model providers
+                                Garage (S3) ← Den (presigned upload/download for chat media)
 (Target with Den: Open WebUI → Den → Letta; Den provisions bears + membership — [PLAN.md](../planning/PLAN.md))
 (Optional: Outline/Cabinet with Den per PLAN.md)
 ```
@@ -36,9 +37,10 @@ Open WebUI → Letta → Bifrost → model providers
 ## Deployment order
 
 1. **Bifrost** — model gateway  
-2. **Letta** — must reach Bifrost  
-3. **Open WebUI** — chat UI + open-webui-tools → Letta  
-4. **Outline + Den** — when enabling Cabinet ([PLAN.md](../planning/PLAN.md))
+2. **Garage** — S3-compatible object storage (chat media, generated images)  
+3. **Letta** — must reach Bifrost  
+4. **Open WebUI** — chat UI + open-webui-tools → Letta  
+5. **Outline + Den** — when enabling Cabinet ([PLAN.md](../planning/PLAN.md)); Den needs Garage credentials
 
 ## Step-by-step deployment
 
@@ -52,7 +54,18 @@ Otherwise (plain **Docker Image**): service name e.g. `bears-bifrost`, port `808
 
 - Health: `GET http://bears-bifrost:8080/health`
 
-### Step 2: Letta
+### Step 2: Garage
+
+See [`../../services/garage/COOLIFY_DEPLOY.md`](../../services/garage/COOLIFY_DEPLOY.md).
+
+[Garage](https://garagehq.deuxfleurs.fr/) is the BEARS object store (S3-compatible, self-hosted, Rust). Deploy before Den.
+
+- Image: `dxflrs/garage:v2.2.0`, config via `garage.toml`  
+- S3 API port: `3900` (internal), admin: `3903`  
+- After deploy: create bucket `bears-media` + service key for Den  
+- Health: `garage stats -a` or `GET http://bears-garage:3903/health`
+
+### Step 3: Letta
 
 See [`../../services/letta/COOLIFY_DEPLOY.md`](../../services/letta/COOLIFY_DEPLOY.md).
 
@@ -61,7 +74,7 @@ See [`../../services/letta/COOLIFY_DEPLOY.md`](../../services/letta/COOLIFY_DEPL
 - Volume: `bears-letta-data` → `/root/.letta`  
 - Health: `GET http://bears-letta:8283/v1/health`
 
-### Step 3: Open WebUI
+### Step 4: Open WebUI
 
 1. Image: `ghcr.io/open-webui/open-webui:main`, port `3000`  
 2. Secrets: `WEBUI_SECRET_KEY`, `WEBUI_JWT_SECRET_KEY` (generate with `openssl rand -base64 32`)  
@@ -70,7 +83,7 @@ See [`../../services/letta/COOLIFY_DEPLOY.md`](../../services/letta/COOLIFY_DEPL
 5. Volume: `bears-openwebui-data` → `/app/backend/data`  
 6. Health: `GET /api/health`
 
-### Step 4: Open WebUI ↔ Letta (open-webui-tools)
+### Step 5: Open WebUI ↔ Letta (open-webui-tools)
 
 1. Open WebUI → **Settings** → **Workspace** → **Functions**  
 2. Install Letta integration from [open-webui-tools](https://github.com/Haervwe/open-webui-tools) (or `../../services/letta/openwebui_pipe_example.py`)  
@@ -78,7 +91,7 @@ See [`../../services/letta/COOLIFY_DEPLOY.md`](../../services/letta/COOLIFY_DEPL
 
 Multi-user **Den (Axum)** + self-hosted Letta: [DEN_ARCHITECTURE.md](../architecture/DEN_ARCHITECTURE.md). Direct Open WebUI sessions: [`../../services/letta/OPENWEBUI_SESSIONS.md`](../../services/letta/OPENWEBUI_SESSIONS.md).
 
-### Step 5: Outline & Den (Cabinet)
+### Step 6: Outline & Den (Cabinet)
 
 Follow [PLAN.md](../planning/PLAN.md) when you deploy the control plane and Outline-backed Cabinet.
 
@@ -93,6 +106,7 @@ Follow [PLAN.md](../planning/PLAN.md) when you deploy the control plane and Outl
 | Check | Command / action |
 |-------|------------------|
 | Bifrost | `curl http://bears-bifrost:8080/health` |
+| Garage | `curl http://bears-garage:3903/health` |
 | Letta | `curl http://bears-letta:8283/v1/health` |
 | Open WebUI | `curl http://bears-openwebui:3000/api/health` |
 

@@ -2,7 +2,7 @@
 pub mod admin;
 pub mod filters;
 pub mod home;
-pub mod loquix;
+pub mod bear_chat;
 pub mod public;
 pub mod user;
 pub mod v1;
@@ -74,6 +74,7 @@ pub struct AppState {
     asset_router: Arc<Router<AppState>>,
     pub config: Arc<Config>,
     pub letta: std::sync::Arc<crate::core::letta::LettaClient>,
+    pub media: Option<crate::core::s3::MediaStore>,
 }
 
 impl AppState {
@@ -140,6 +141,7 @@ pub async fn server_with_state(
         MemoryServe::new(load_assets!("src/web/assets")).cache_control(CacheControl::Short);
 
     let letta = std::sync::Arc::new(crate::core::letta::LettaClient::new(config.as_ref()));
+    let media = crate::core::s3::MediaStore::new(config.as_ref());
     server(
         AppState {
             sqlx_pool: sqlx_pool.clone(),
@@ -147,6 +149,7 @@ pub async fn server_with_state(
             asset_router: Arc::new(memory_serve.into_router()),
             config: config.clone(),
             letta,
+            media,
         },
         session_store,
     )
@@ -190,7 +193,7 @@ pub async fn server(
         .route_layer(permission_required!(Backend, login_url = "/login", "admin"))
         .merge(
             Router::new()
-                .route("/bear/{slug}", get(loquix::bear_page))
+                .route("/bear/{slug}", get(bear_chat::bear_page))
                 .route_layer(login_required!(Backend, login_url = "/login")),
         )
         .nest("/v1", v1::router())

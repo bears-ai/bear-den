@@ -30,6 +30,7 @@ When proposing gateways, proxies, or operators, **favor file- or repo-driven con
 | Roadmap and contracts | [docs/planning/PLAN.md](docs/planning/PLAN.md) |
 | Phase 1 Den build (bootstrap → operator console) | [docs/planning/PHASE1_BOOTSTRAP.md](docs/planning/PHASE1_BOOTSTRAP.md) |
 | Coolify deployment | [docs/deployment/DEPLOYMENT.md](docs/deployment/DEPLOYMENT.md) |
+| Garage (S3 object storage) | [services/garage/COOLIFY_DEPLOY.md](services/garage/COOLIFY_DEPLOY.md) |
 | Stack one-pager | [docs/architecture/ARCHITECTURE_NOTES.md](docs/architecture/ARCHITECTURE_NOTES.md) |
 | Den + self-hosted Letta (multi-user web) | [docs/architecture/DEN_ARCHITECTURE.md](docs/architecture/DEN_ARCHITECTURE.md) |
 | Assistant memory / project brief | [.kilocode/memory_bank/](.kilocode/memory_bank/) |

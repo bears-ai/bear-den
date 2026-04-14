@@ -8,7 +8,7 @@ Each assistant in the product is a **bear** (one **Letta** agent). **BEARS** nam
 
 - **[Letta](https://github.com/letta-ai/letta)** — **Bear** runtime, native memory (blocks, conversations, tools)
 - **[Open WebUI](https://github.com/open-webui/open-webui)** (open-webui) — Chat UI
-- **[Loquix](https://github.com/loquix-dev/loquix)** — Optional **Den**-hosted web chat (same Den APIs as Open WebUI); see [docs/architecture/DEN_ARCHITECTURE.md](docs/architecture/DEN_ARCHITECTURE.md)
+- **Den chat UI** — First-party browser chat (Deep Chat web component, same Den APIs as Open WebUI); see [docs/architecture/DEN_ARCHITECTURE.md](docs/architecture/DEN_ARCHITECTURE.md)
 - **[Outline](https://www.getoutline.com/)** + **Den** (Rust/Axum) — Control plane + **Cabinet**; see [docs/planning/PLAN.md](docs/planning/PLAN.md). **Self-hosted Letta only** (no Letta Cloud).
 - **[Bifrost](https://github.com/maximhq/bifrost)** — Model gateway (OpenAI-compatible `/v1`; file-based config in `services/bifrost/`)
 - **[Coolify](https://coolify.io)** — Deployment
@@ -22,7 +22,7 @@ Each assistant in the product is a **bear** (one **Letta** agent). **BEARS** nam
 | **Deploy on Coolify** | [docs/deployment/DEPLOYMENT.md](docs/deployment/DEPLOYMENT.md), then `services/*/COOLIFY_DEPLOY.md` |
 | **Understand the stack** | This file + [docs/architecture/ARCHITECTURE_NOTES.md](docs/architecture/ARCHITECTURE_NOTES.md) |
 | **Roadmap & phases** (Den, Cabinet, Outline) | [docs/planning/PLAN.md](docs/planning/PLAN.md) |
-| **Multi-user web** (Den + Letta; Open WebUI or Loquix) | [docs/architecture/DEN_ARCHITECTURE.md](docs/architecture/DEN_ARCHITECTURE.md) |
+| **Multi-user web** (Den + Letta; Den chat UI or Open WebUI) | [docs/architecture/DEN_ARCHITECTURE.md](docs/architecture/DEN_ARCHITECTURE.md) |
 | **Phase 1 build** (Den; operator console first; Trestle = M0 bootstrap only) | [docs/planning/PHASE1_BOOTSTRAP.md](docs/planning/PHASE1_BOOTSTRAP.md) |
 | **Open WebUI ↔ Letta** (direct) | [services/letta/OPENWEBUI_INTEGRATION.md](services/letta/OPENWEBUI_INTEGRATION.md), [OPENWEBUI_SESSIONS.md](services/letta/OPENWEBUI_SESSIONS.md) |
 | **Full doc index** | [docs/README.md](docs/README.md) |
@@ -35,7 +35,7 @@ Each assistant in the product is a **bear** (one **Letta** agent). **BEARS** nam
 |-------|------|
 | **Letta memory** | Per‑**bear** context (blocks, conversations)—not replaced by Cabinet |
 | **Cabinet (Outline)** | Long-lived docs; people edit in Outline, **bears** use tools via **Den** |
-| **Den** | Control plane: **bear** lifecycle (Letta + Open WebUI + LettaBot), **users↔bears** membership, identity, routing, policy, Cabinet API; optional **Loquix** chat UI **served from Den** ([docs/architecture/DEN_ARCHITECTURE.md](docs/architecture/DEN_ARCHITECTURE.md)); **Bifrost only for observability** ([docs/planning/PLAN.md](docs/planning/PLAN.md)) |
+| **Den** | Control plane: **bear** lifecycle (Letta + Open WebUI + LettaBot), **users↔bears** membership, identity, routing, policy, Cabinet API; first-party chat UI **served from Den** ([docs/architecture/DEN_ARCHITECTURE.md](docs/architecture/DEN_ARCHITECTURE.md)); **Bifrost only for observability** ([docs/planning/PLAN.md](docs/planning/PLAN.md)) |
 
 ## Quick start (Coolify)
 

@@ -94,7 +94,7 @@ End-user chat is **not** the main MiniJinja + `style.css` stack; it uses a vendo
 
 | Route | Source |
 |-------|--------|
-| `GET /bear/{slug}` | [`src/web/templates/bear_chat.html`](../src/web/templates/bear_chat.html) (handler in [`loquix.rs`](../src/web/loquix.rs)) |
+| `GET /bear/{slug}` | [`src/web/templates/bear_chat.html`](../src/web/templates/bear_chat.html) (handler in [`bear_chat.rs`](../src/web/bear_chat.rs)) |
 
 **Behavior to preserve**
 

@@ -58,6 +58,23 @@ pub struct Config {
     pub letta_base_url: String,
     /// Optional `Authorization: Bearer` value for Letta (omit when local Letta has no auth).
     pub letta_api_key: String,
+
+    /// S3-compatible endpoint (e.g. `http://bears-garage:3900`). Empty = media upload disabled.
+    pub s3_endpoint: String,
+    /// S3 bucket for chat media and generated images.
+    pub s3_bucket: String,
+    /// S3 region (Garage default: `garage`).
+    pub s3_region: String,
+    /// S3 access key id.
+    pub s3_access_key_id: String,
+    /// S3 secret access key.
+    pub s3_secret_access_key: String,
+    /// Public URL prefix for presigned download URLs (the origin browsers can reach).
+    /// Falls back to `s3_endpoint` when empty.
+    pub s3_public_url: String,
+    /// Use path-style addressing (`endpoint/bucket/key` instead of `bucket.endpoint/key`).
+    /// Required for Garage and most self-hosted S3; defaults to true.
+    pub s3_force_path_style: bool,
 }
 
 impl Config {
@@ -201,6 +218,20 @@ impl Config {
             .to_string();
         let letta_api_key = std::env::var("LETTA_API_KEY").unwrap_or_default();
 
+        let s3_endpoint = std::env::var("S3_ENDPOINT")
+            .unwrap_or_default()
+            .trim_end_matches('/')
+            .to_string();
+        let s3_bucket = std::env::var("S3_BUCKET").unwrap_or_default();
+        let s3_region = std::env::var("S3_REGION").unwrap_or_else(|_| "garage".to_string());
+        let s3_access_key_id = std::env::var("S3_ACCESS_KEY_ID").unwrap_or_default();
+        let s3_secret_access_key = std::env::var("S3_SECRET_ACCESS_KEY").unwrap_or_default();
+        let s3_public_url = std::env::var("S3_PUBLIC_URL")
+            .unwrap_or_default()
+            .trim_end_matches('/')
+            .to_string();
+        let s3_force_path_style = parse_bool_env("S3_FORCE_PATH_STYLE", true);
+
         Config {
             templates_dir: std::env::var("TEMPLATES_DIR")
                 .unwrap_or("src/web/templates".to_string()),
@@ -228,6 +259,13 @@ impl Config {
             api_server_url,
             letta_base_url,
             letta_api_key,
+            s3_endpoint,
+            s3_bucket,
+            s3_region,
+            s3_access_key_id,
+            s3_secret_access_key,
+            s3_public_url,
+            s3_force_path_style,
         }
     }
 }
@@ -275,6 +313,13 @@ impl Config {
             api_server_url: "http://localhost:3001".into(),
             letta_base_url: String::new(),
             letta_api_key: String::new(),
+            s3_endpoint: String::new(),
+            s3_bucket: String::new(),
+            s3_region: "garage".into(),
+            s3_access_key_id: String::new(),
+            s3_secret_access_key: String::new(),
+            s3_public_url: String::new(),
+            s3_force_path_style: true,
         }
     }
 }
