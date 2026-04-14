@@ -442,11 +442,14 @@ async fn unlinked_letta_agents_view(
                     }
                     let LettaAgentListItem { id, name } = a;
                     let display_name = name.clone().unwrap_or_else(|| id.clone());
-                    let q = urlencoding::encode(&id);
+                    let new_bear_href = format!(
+                        "/admin/bears/new?from_letta_agent={}",
+                        urlencoding::encode(&id).into_owned()
+                    );
                     unlinked_rows.push(UnlinkedLettaAgentRow {
                         display_name,
                         agent_id: id,
-                        new_bear_href: format!("/admin/bears/new?from_letta_agent={q}"),
+                        new_bear_href,
                     });
                 }
             }
