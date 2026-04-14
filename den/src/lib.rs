@@ -94,11 +94,43 @@ pub async fn run() -> Result<(), StartupError> {
         );
     }
 
+    let db_redacted = redact_database_url(&config.database_url);
+    tracing::info!(
+        db_url = %db_redacted,
+        max_connections = config.db_max_connections,
+        acquire_timeout_secs = config.db_acquire_timeout_secs,
+        idle_timeout_secs = config.db_idle_timeout_secs,
+        "Connecting to database",
+    );
+
+    let idle_timeout = if config.db_idle_timeout_secs == 0 {
+        None
+    } else {
+        Some(std::time::Duration::from_secs(config.db_idle_timeout_secs))
+    };
+
     let sqlx_pool = PgPoolOptions::new()
-        .max_connections(5)
-        .acquire_timeout(std::time::Duration::from_secs(3))
+        .max_connections(config.db_max_connections)
+        .acquire_timeout(std::time::Duration::from_secs(config.db_acquire_timeout_secs))
+        .idle_timeout(idle_timeout)
         .connect(&config.database_url)
-        .await?;
+        .await
+        .map_err(|e| {
+            tracing::error!(
+                db_url = %db_redacted,
+                error = %e,
+                "Failed to connect to database — is Postgres running and accepting connections?",
+            );
+            StartupError::Database {
+                message: format!("{e}"),
+                db_url: db_redacted.clone(),
+                hint: "Check that Postgres is running, DATABASE_URL is correct, \
+                       and the host/port are reachable from this container."
+                    .into(),
+            }
+        })?;
+
+    tracing::info!("Database connected successfully");
 
     run_sqlx_migrations(&sqlx_pool).await?;
 
@@ -257,5 +289,18 @@ async fn shutdown_signal() {
     {
         ctrl_c.await;
         tracing::info!("Initiating graceful shutdown (Ctrl+C)");
+    }
+}
+
+/// Return a copy of the DATABASE_URL with the password replaced by `***`.
+fn redact_database_url(raw: &str) -> String {
+    match url::Url::parse(raw) {
+        Ok(mut u) => {
+            if u.password().is_some() {
+                let _ = u.set_password(Some("***"));
+            }
+            u.to_string()
+        }
+        Err(_) => "<unparseable DATABASE_URL>".into(),
     }
 }

@@ -42,7 +42,13 @@ async fn api_readiness(State(state): State<ApiState>) -> Result<&'static str, St
         .fetch_one(&state.sqlx_pool)
         .await
         .map_err(|e| {
-            tracing::warn!("database readiness check failed: {e}");
+            let pool = &state.sqlx_pool;
+            tracing::warn!(
+                error = %e,
+                pool_size = pool.size(),
+                pool_idle = pool.num_idle(),
+                "database readiness check failed (api)",
+            );
             StatusCode::SERVICE_UNAVAILABLE
         })?;
     Ok("OK")

@@ -20,6 +20,13 @@ pub enum StartupError {
     Io(#[from] std::io::Error),
     #[error("tracing subscriber: {0}")]
     Tracing(String),
+    /// Database connection failed with operator-actionable context.
+    #[error("database error: {message} (url={db_url})\n  hint: {hint}")]
+    Database {
+        message: String,
+        db_url: String,
+        hint: String,
+    },
 }
 
 /// `true` when SQLx should ignore migration files present in `_sqlx_migrations` but missing

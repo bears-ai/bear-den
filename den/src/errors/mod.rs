@@ -12,6 +12,8 @@ pub enum CustomError {
     Anyhow(anyhow::Error),
     System(String),
     Database(String),
+    /// Pool exhaustion or closed — semantically distinct from a query-level Database error.
+    DatabaseUnavailable(String),
     Session(String),
     Authentication(String),
     Authorization(String),
@@ -36,6 +38,9 @@ impl fmt::Display for CustomError {
             }
             CustomError::Database(ref cause) => {
                 write!(f, "Database Error: {cause}")
+            }
+            CustomError::DatabaseUnavailable(ref cause) => {
+                write!(f, "Database Unavailable: {cause}")
             }
             CustomError::Session(ref cause) => {
                 write!(f, "Session Error: {cause}")
@@ -77,6 +82,9 @@ impl IntoResponse for CustomError {
             }
             CustomError::Database(message) => {
                 ("Database", message, StatusCode::UNPROCESSABLE_ENTITY)
+            }
+            CustomError::DatabaseUnavailable(message) => {
+                ("Database Unavailable", message, StatusCode::SERVICE_UNAVAILABLE)
             }
             CustomError::Session(message) => {
                 ("Session", message, StatusCode::INTERNAL_SERVER_ERROR)
@@ -146,7 +154,28 @@ impl From<axum::http::uri::InvalidUri> for CustomError {
 
 impl From<sqlx::Error> for CustomError {
     fn from(err: sqlx::Error) -> CustomError {
-        CustomError::Database(err.to_string())
+        match &err {
+            sqlx::Error::PoolTimedOut => {
+                tracing::error!(
+                    "Connection pool exhausted — all connections are busy or broken. \
+                     Consider raising DB_MAX_CONNECTIONS (currently hardcoded at build time \
+                     or via env) or DB_ACQUIRE_TIMEOUT_SECS. If this repeats, check for \
+                     long-running queries or Postgres availability."
+                );
+                CustomError::DatabaseUnavailable(
+                    "pool exhausted: all database connections are busy (pool timed out). \
+                     The server cannot handle this request right now."
+                        .into(),
+                )
+            }
+            sqlx::Error::PoolClosed => {
+                tracing::error!("Database connection pool is closed — the server is shutting down or the pool was dropped.");
+                CustomError::DatabaseUnavailable(
+                    "database pool closed — the server may be shutting down".into(),
+                )
+            }
+            _ => CustomError::Database(err.to_string()),
+        }
     }
 }
 

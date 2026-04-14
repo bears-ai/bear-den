@@ -75,6 +75,14 @@ pub struct Config {
     /// Use path-style addressing (`endpoint/bucket/key` instead of `bucket.endpoint/key`).
     /// Required for Garage and most self-hosted S3; defaults to true.
     pub s3_force_path_style: bool,
+
+    /// Maximum number of connections in the SQLx pool (`DB_MAX_CONNECTIONS`, default 5).
+    pub db_max_connections: u32,
+    /// Seconds to wait for a connection from the pool before timing out (`DB_ACQUIRE_TIMEOUT_SECS`, default 3).
+    pub db_acquire_timeout_secs: u64,
+    /// Seconds a connection can sit idle before being closed (`DB_IDLE_TIMEOUT_SECS`, default 600).
+    /// Set to 0 to disable idle reaping.
+    pub db_idle_timeout_secs: u64,
 }
 
 impl Config {
@@ -232,6 +240,28 @@ impl Config {
             .to_string();
         let s3_force_path_style = parse_bool_env("S3_FORCE_PATH_STYLE", true);
 
+        let db_max_connections: u32 = std::env::var("DB_MAX_CONNECTIONS")
+            .unwrap_or_else(|_| "5".to_string())
+            .parse()
+            .unwrap_or_else(|_| {
+                tracing::warn!("Invalid DB_MAX_CONNECTIONS, defaulting to 5");
+                5
+            });
+        let db_acquire_timeout_secs: u64 = std::env::var("DB_ACQUIRE_TIMEOUT_SECS")
+            .unwrap_or_else(|_| "3".to_string())
+            .parse()
+            .unwrap_or_else(|_| {
+                tracing::warn!("Invalid DB_ACQUIRE_TIMEOUT_SECS, defaulting to 3");
+                3
+            });
+        let db_idle_timeout_secs: u64 = std::env::var("DB_IDLE_TIMEOUT_SECS")
+            .unwrap_or_else(|_| "600".to_string())
+            .parse()
+            .unwrap_or_else(|_| {
+                tracing::warn!("Invalid DB_IDLE_TIMEOUT_SECS, defaulting to 600");
+                600
+            });
+
         Config {
             templates_dir: std::env::var("TEMPLATES_DIR")
                 .unwrap_or("src/web/templates".to_string()),
@@ -266,6 +296,9 @@ impl Config {
             s3_secret_access_key,
             s3_public_url,
             s3_force_path_style,
+            db_max_connections,
+            db_acquire_timeout_secs,
+            db_idle_timeout_secs,
         }
     }
 }
@@ -320,6 +353,9 @@ impl Config {
             s3_secret_access_key: String::new(),
             s3_public_url: String::new(),
             s3_force_path_style: true,
+            db_max_connections: 5,
+            db_acquire_timeout_secs: 3,
+            db_idle_timeout_secs: 600,
         }
     }
 }
