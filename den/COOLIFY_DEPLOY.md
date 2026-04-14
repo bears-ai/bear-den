@@ -17,7 +17,7 @@
 
 ---
 
-## Option A (recommended): Build from Git — Dockerfile build pack
+## Option A: Build from Git — Dockerfile build pack
 
 ### 1. Database (before first deploy)
 
@@ -129,13 +129,27 @@ Use **Deploy** / **Redeploy** on the resource. Watch **Build logs** for compile 
 
 ---
 
-## Option B: Pre-built image — “Docker Image” resource
+## Option B (recommended): Pre-built image from CI — “Docker Image” resource
 
-Use this when Coolify should **not** compile Rust (for example you build and push `ghcr.io/your-org/den:tag` from CI).
+A GitHub Actions workflow ([`.github/workflows/den-image.yml`](../.github/workflows/den-image.yml)) builds the Docker image on every push to `main` that touches `den/` and pushes it to GHCR. This avoids compiling Rust on the Coolify host (which can OOM on small servers).
+
+The workflow:
+
+- Builds with **`SQLX_OFFLINE=true`** against the committed [`.sqlx/`](.sqlx/) metadata (no database needed at build time).
+- Tags images as **`ghcr.io/theartificial/den:latest`** and **`ghcr.io/theartificial/den:<short-sha>`**.
+- Uses GitHub Actions layer cache (`type=gha`) so unchanged layers are reused across builds.
+
+### Coolify setup
 
 1. **Add New Resource** → **Docker Image**.
-2. Set **Image** to your pinned tag (avoid `:latest` in production).
-3. Configure **environment variables**, **ports**, **health checks**, and **restart policy** exactly as in **Option A §5–§8**.
+2. Set **Image** to `ghcr.io/theartificial/den:latest` (or pin a SHA tag for reproducibility).
+3. If the GHCR package is **private**, add a registry credential in Coolify (**Keys & Tokens** → **Docker Registry**) using a GitHub PAT with `read:packages` scope.
+4. Configure **environment variables**, **ports**, **health checks**, and **restart policy** exactly as in **Option A §5–§8**.
+5. To auto-deploy on push, add a **Coolify webhook** as a GitHub repository webhook (or use Coolify's built-in polling). Alternatively, trigger a redeploy manually after the CI image is pushed.
+
+### Keeping `.sqlx/` up to date
+
+When you add or change SQLx queries, run `cargo sqlx prepare` locally against a database with current migrations applied, then commit the updated `.sqlx/` directory. The CI build will fail if the metadata is stale.
 
 New versions still apply migrations automatically on first container start against the configured `DATABASE_URL`.
 
@@ -157,6 +171,7 @@ After deploy:
 | Symptom | What to check in Coolify |
 | ------- | ------------------------ |
 | **Build fails** during `cargo build` / SQLx | **`DATABASE_URL` build arg** reachable from the build server for compile-time checks; repo includes committed [`.sqlx/`](.sqlx/) if you use offline builds. |
+| **Build killed / exit 255 with no compiler error** | Likely OOM during the Rust link step. Switch to **Option B** (CI-built image) or add swap / RAM to the build host. |
 | **Container exits immediately** | **Logs** — missing or invalid `DATABASE_URL`, or a **migration error** (DDL permissions, broken migration, incompatible existing schema). |
 | **Running but `/health/ready` is 503** | Database credentials or network from the Den container to Postgres; if the process exits instead, check logs for migration failures. |
 | **Letta provisioning fails** | `LETTA_BASE_URL` scheme/host/port; shared network with Letta; `LETTA_API_KEY` matches Letta’s server password / auth configuration. |
