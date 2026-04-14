@@ -8,8 +8,29 @@
   <link rel="stylesheet" href="https://unpkg.com/@loquix/core/src/tokens/themes/dark.css" crossorigin="anonymous" />
   <script src="https://unpkg.com/@loquix/core/cdn/loquix.min.js" crossorigin="anonymous"></script>
   <style>
-    body { margin: 0; min-height: 100vh; background: var(--loquix-canvas-bg, #0f172a); color: var(--loquix-fg-default, #e2e8f0); font-family: system-ui, sans-serif; }
-    .den-loquix-wrap { max-width: 56rem; margin: 0 auto; padding: 1rem; }
+    /* Loquix :host uses height:100%; percentage height needs a definite chain — without this
+       the chat host often resolves to 0px while the toolbar (outside the component) still shows. */
+    html, body { height: 100%; margin: 0; }
+    body {
+      display: flex;
+      flex-direction: column;
+      min-height: 100vh;
+      background: var(--loquix-canvas-bg, #0f172a);
+      color: var(--loquix-fg-default, #e2e8f0);
+      font-family: system-ui, sans-serif;
+    }
+    .den-loquix-wrap {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      min-height: 0;
+      max-width: 56rem;
+      margin: 0 auto;
+      padding: 1rem;
+      width: 100%;
+      box-sizing: border-box;
+    }
+    .den-loquix-wrap loquix-chat-container { flex: 1; min-height: 0; }
     .den-toolbar { display: flex; gap: 1rem; align-items: center; margin-bottom: 0.75rem; flex-wrap: wrap; }
     .den-toolbar a { color: #93c5fd; }
     .den-toolbar .den-bear-meta { font-size: 0.95rem; }
