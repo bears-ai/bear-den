@@ -78,8 +78,8 @@
     .den-err { color: var(--error-color); font-size: 0.9rem; margin: 0.5rem 0; }
     #chat-wrap {
       flex: 1;
+      position: relative;
       min-height: 0;
-      overflow: hidden;
     }
   </style>
 </head>
@@ -119,7 +119,8 @@
       var srf = cv('--surface-color');
 
       chat.style.cssText =
-        'height:100%; width:100%; border:solid 1px ' + brd +
+        'position:absolute; top:0; left:0; width:100%; height:100%;' +
+        ' box-sizing:border-box; border:solid 1px ' + brd +
         '; border-radius:0; font-family:"Geist",sans-serif;' +
         ' font-size:0.9375rem; background:' + pg + ';';
 
@@ -128,28 +129,25 @@
         user: { src: '', styles: { avatar: { display: 'none' } } },
       };
 
-      chat.names = {
-        ai:   { text: BEAR_NAME, style: { color: acc, fontSize: '0.8rem', fontWeight: '600', textTransform: 'uppercase' } },
-        user: { text: 'You',     style: { color: met, fontSize: '0.8rem', fontWeight: '600', textTransform: 'uppercase' } },
-      };
+      chat.names = false;
 
       chat.messageStyles = {
         default: {
           shared: {
-            outerContainer: { justifyContent: 'flex-start' },
             bubble: {
               borderRadius: '0',
               padding: '10px 14px',
               maxWidth: '100%',
               lineHeight: '1.6',
               color: fg,
-              marginLeft: '0',
             },
           },
           ai: {
+            outerContainer: { justifyContent: 'flex-start' },
             bubble: { backgroundColor: srf },
           },
           user: {
+            outerContainer: { justifyContent: 'flex-end' },
             bubble: { backgroundColor: pg, border: '1px solid ' + brd },
           },
         },
@@ -200,7 +198,8 @@
       chat.auxiliaryStyle =
         '::-webkit-scrollbar{width:6px}' +
         '::-webkit-scrollbar-thumb{background:' + met + ';border-radius:0}' +
-        '::-webkit-scrollbar-track{background:transparent}';
+        '::-webkit-scrollbar-track{background:transparent}' +
+        '#messages{padding-top:1rem !important}';
 
       chat.remarkable = { html: false, breaks: true };
 

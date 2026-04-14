@@ -1,0 +1,36 @@
+---
+description: Deep Chat web component styling reference for bear chat UI
+globs: den/src/web/templates/bear_chat.html
+alwaysApply: false
+---
+
+# Deep Chat styling
+
+The bear chat UI uses the [Deep Chat](https://deepchat.dev) web component (`<deep-chat>`).
+
+## Styling reference
+
+Full docs: <https://deepchat.dev/docs/styles/>
+
+Design examples (including "full width input"): <https://deepchat.dev/examples/design/>
+
+## Key properties used in `bear_chat.html`
+
+| JS property | What it controls |
+|---|---|
+| `style` / `chatStyle` | Host element (outer container) |
+| `messageStyles` | Per-role bubble colours, alignment (`outerContainer.justifyContent`), padding |
+| `textInput` | Input box styling, placeholder, character limit |
+| `submitButtonStyles` | Send/loading/stop/disabled button states |
+| `inputAreaStyle` | Bottom bar wrapping input + buttons |
+| `auxiliaryStyle` | Raw CSS injected into Shadow DOM (scrollbar, internal overrides) |
+| `avatars` | Avatar images/visibility per role |
+| `names` | Name labels per role (text, colour, font) |
+
+## Conventions
+
+- All colour values are read at init from CSS custom properties (`--page-color`, `--text-color`, etc.) via `getComputedStyle`, not hard-coded.
+- No rounded corners (`borderRadius: '0'`) per the Den design system.
+- User bubbles: right-aligned, page-colour background with thin border.
+- AI bubbles: left-aligned, surface-colour background.
+- Input uses the "full width input" pattern: `border: 'unset'`, `borderTop` separator, `width: '100%'`.
