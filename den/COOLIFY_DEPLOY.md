@@ -145,7 +145,12 @@ The workflow:
 2. Set **Image** to `ghcr.io/theartificial/den:latest` (or pin a SHA tag for reproducibility).
 3. If the GHCR package is **private**, add a registry credential in Coolify (**Keys & Tokens** → **Docker Registry**) using a GitHub PAT with `read:packages` scope.
 4. Configure **environment variables**, **ports**, **health checks**, and **restart policy** exactly as in **Option A §5–§8**.
-5. To auto-deploy on push, add a **Coolify webhook** as a GitHub repository webhook (or use Coolify's built-in polling). Alternatively, trigger a redeploy manually after the CI image is pushed.
+5. The CI workflow triggers a Coolify redeploy automatically via webhook after a successful image push. Set two **GitHub repository secrets** (**Settings → Secrets → Actions**):
+
+   | Secret | Where to find it |
+   | ------ | ---------------- |
+   | `COOLIFY_WEBHOOK` | Coolify dashboard → your Den resource → **Webhooks** → copy the deploy URL. |
+   | `COOLIFY_TOKEN` | Coolify dashboard → **Keys & Tokens** (or **API Tokens**) → create a token with **deploy** permission. |
 
 ### Keeping `.sqlx/` up to date
 
