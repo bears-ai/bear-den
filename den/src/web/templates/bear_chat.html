@@ -109,6 +109,39 @@
       return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
     }
 
+    function escapeHtml(t) {
+      return String(t)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
+    }
+
+    /** Letta sometimes wraps the real payload in `contents` (same pattern as `error_message`). */
+    function lettaInnerForStream(obj) {
+      if (!obj || typeof obj !== 'object') return obj;
+      if (obj.contents && typeof obj.contents === 'object' && obj.contents.message_type) {
+        return obj.contents;
+      }
+      return obj;
+    }
+
+    /** HTML ai-bubble: single-line horizontal scroll; Expand toggles full wrapped text (plain only — no Markdown in html). */
+    function buildReasoningHtml(fullText) {
+      var esc = escapeHtml(fullText);
+      return (
+        '<div class="den-reasoning-wrap" data-den-reasoning="1">' +
+          '<div class="den-reasoning-head">' +
+            '<span class="den-reasoning-kicker">Thinking</span>' +
+            '<div class="den-reasoning-scroll">' +
+              esc +
+            '</div>' +
+            '<button type="button" class="den-reasoning-toggle" aria-expanded="false">Expand</button>' +
+          '</div>' +
+        '</div>'
+      );
+    }
+
     function configureDenChat() {
       var chat = document.getElementById('chat');
       var pg  = cv('--page-color');
@@ -199,11 +232,49 @@
         '::-webkit-scrollbar{width:6px}' +
         '::-webkit-scrollbar-thumb{background:' + met + ';border-radius:0}' +
         '::-webkit-scrollbar-track{background:transparent}' +
-        '#messages{padding-top:1rem !important}';
+        '#messages{padding-top:1rem !important}' +
+        '.den-reasoning-wrap{font-size:0.9em;color:inherit;opacity:0.92}' +
+        '.den-reasoning-head{display:flex;align-items:center;gap:0.45rem;min-width:0}' +
+        '.den-reasoning-kicker{flex:0 0 auto;font-variant:small-caps;letter-spacing:0.06em;font-size:0.78em;opacity:0.8}' +
+        '.den-reasoning-scroll{flex:1 1 auto;min-width:0;overflow-x:auto;overflow-y:hidden;max-height:1.55em;line-height:1.55em;font-family:"Geist Mono",ui-monospace,monospace;font-size:0.88em;white-space:nowrap;-webkit-overflow-scrolling:touch}' +
+        '.den-reasoning-wrap.den-reasoning-expanded .den-reasoning-scroll{white-space:pre-wrap;overflow-x:visible;overflow-y:auto;max-height:18rem}' +
+        '.den-reasoning-toggle{flex:0 0 auto;margin:0;padding:0.12em 0.35em;border:none;background:transparent;color:inherit;opacity:0.72;cursor:pointer;font:inherit;font-size:0.82em;text-decoration:underline;text-underline-offset:2px}' +
+        '.den-reasoning-toggle:hover{opacity:1}';
 
       chat.remarkable = { html: false, breaks: true };
 
       chat.connect = { handler: lettaSseHandler, stream: true };
+
+      chat.addEventListener('click', function (ev) {
+        var path = typeof ev.composedPath === 'function' ? ev.composedPath() : [ev.target];
+        var btn = null;
+        for (var i = 0; i < path.length; i++) {
+          var n = path[i];
+          if (n && n.nodeType === 1 && n.classList && n.classList.contains('den-reasoning-toggle')) {
+            btn = n;
+            break;
+          }
+        }
+        if (!btn) return;
+        var w = btn.closest('[data-den-reasoning]');
+        if (!w) return;
+        var on = !w.classList.contains('den-reasoning-expanded');
+        w.classList.toggle('den-reasoning-expanded', on);
+        btn.setAttribute('aria-expanded', on ? 'true' : 'false');
+        btn.textContent = on ? 'Collapse' : 'Expand';
+      });
+    }
+
+    /** Map one Letta SSE JSON object to `{ error: string }` or null. */
+    function lettaStreamEventErrorSignal(obj) {
+      var inner = lettaInnerForStream(obj);
+      if (!inner || inner.message_type !== 'error_message') return null;
+      var lines = [];
+      if (inner.error_type) lines.push('[' + String(inner.error_type) + ']');
+      if (inner.message) lines.push(String(inner.message));
+      if (inner.detail) lines.push(String(inner.detail));
+      var msg = lines.length ? lines.join('\n\n') : 'An error occurred.';
+      return { error: msg };
     }
 
     function lettaSseHandler(body, signals) {
@@ -237,6 +308,11 @@
         var reader = response.body.getReader();
         var decoder = new TextDecoder();
         var lineBuf = '';
+        var reasoningFull = '';
+        var hadReasoning = false;
+        var assistantBuf = '';
+        var assistantLastId = null;
+        var NO_ID = '___den_letta_assistant_no_id___';
         signals.onOpen();
 
         function pump() {
@@ -252,8 +328,48 @@
               var payload = line.slice(6).trim();
               if (payload === '' || payload === '[DONE]') continue;
               try { var obj = JSON.parse(payload); } catch (_) { continue; }
-              if (obj.message_type === 'assistant_message' && typeof obj.content === 'string') {
-                signals.onResponse({ text: obj.content });
+              var errSig = lettaStreamEventErrorSignal(obj);
+              if (errSig) {
+                signals.onResponse(errSig);
+                continue;
+              }
+              var inner = lettaInnerForStream(obj);
+              if (!inner || typeof inner !== 'object') continue;
+
+              if (inner.message_type === 'reasoning_message') {
+                var piece = '';
+                if (typeof inner.reasoning === 'string') piece = inner.reasoning;
+                else if (typeof inner.content === 'string') piece = inner.content;
+                if (!piece) continue;
+                var wasEmpty = reasoningFull.length === 0;
+                reasoningFull += piece;
+                hadReasoning = true;
+                signals.onResponse({
+                  html: buildReasoningHtml(reasoningFull),
+                  role: 'ai',
+                  overwrite: !wasEmpty,
+                });
+                continue;
+              }
+
+              if (inner.message_type === 'assistant_message' && typeof inner.content === 'string') {
+                var aid =
+                  inner.id != null && String(inner.id) !== '' ? String(inner.id) : null;
+                var sameAssistant =
+                  aid != null
+                    ? aid === assistantLastId
+                    : assistantLastId === NO_ID;
+                if (!sameAssistant) {
+                  assistantLastId = aid != null ? aid : NO_ID;
+                  assistantBuf = inner.content;
+                } else {
+                  assistantBuf += inner.content;
+                }
+                signals.onResponse({
+                  text: assistantBuf,
+                  overwrite: hadReasoning || sameAssistant,
+                });
+                if (hadReasoning) hadReasoning = false;
               }
             }
             return pump();

@@ -25,7 +25,7 @@ Axum routes for the web server (`RUN_WEB=true`). Update this file when you add o
 
 - `GET /bear/{slug}` — Deep Chat view for a single bear the user may access (membership-checked; `src/web/templates/bear_chat.html`, handler in `src/web/bear_chat.rs`).
 - `GET /v1/bears` — JSON list of bears the signed-in user may use (membership-filtered; no Letta ids exposed) (`src/web/v1/mod.rs`).
-- `POST /v1/chat/send` — membership check, then proxies Letta `POST /v1/agents/{id}/messages/stream` (SSE); the browser parses `data:` lines and shows `assistant_message` content (see `bear_chat.html`).
+- `POST /v1/chat/send` — membership check, then proxies Letta `POST /v1/agents/{id}/messages/stream` (SSE); the browser parses `data:` lines and shows `reasoning_message` (HTML “Thinking” strip), `assistant_message` text, and `error_message` payloads in Deep Chat (see `bear_chat.html`).
 
 `/v1/*` uses `login_required!(…)` (same session as the rest of the web app).
 
