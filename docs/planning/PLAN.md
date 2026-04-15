@@ -8,7 +8,7 @@ High‑level, ops‑oriented plan and architecture: MVP **without Cabinet first*
 
 | Section | Contents |
 |---------|----------|
-| [§1](#1-system-architecture) | Components, Letta vs Cabinet, Den→LettaBot→Letta, Den-managed skills and MCP (Phase 2) |
+| [§1](#1-system-architecture) | Components, Letta vs Cabinet, Den→LettaBot→Letta, Den-managed skills and MCP (Phase 1) |
 | [§2](#2-capability-contracts-pseudo) | Frontends→Den, Den→Letta, bears→Cabinet, Outline, Bifrost observability |
 | [§3](#3-phased-roadmap) | Phase 0–4 milestones |
 | [Summary](#summary) | One-page recap |
@@ -19,7 +19,7 @@ High‑level, ops‑oriented plan and architecture: MVP **without Cabinet first*
 - **Bear** — one **Letta-backed agent**: a distinct assistant with its own Letta agent id, prompts, memory, and tools. Users interact with **bears**; Den registers and provisions them.
 - **Bot (LettaBot row)** — the **LettaBot** `agents[]` entry Den generates for a bear (channels, `agentId` pointing at Letta). “Skill management for the bear” is **skill management for this bot row** and the filesystem paths LettaBot uses for that agent.
 - **Users ↔ bears (many‑to‑many)** — a **user** may access **many** bears (e.g. personal + household + project). A **bear** may be shared by **many** users (e.g. a household assistant). Den stores membership and enforces it on every chat and Cabinet call.
-- **Den** — the **BEARS control plane and gateway**: identity, **bear lifecycle** (provision Letta agents, surface bears in the **Den chat UI**, **optional Open WebUI**, and LettaBot config), **[skills catalog and per-bear attachments](https://docs.letta.com/letta-code/skills/)** (materialized for LettaBot; see [DEN_ARCHITECTURE.md](../architecture/DEN_ARCHITECTURE.md)), **local MCP server catalog and per-bear MCP attachments** ([Phase 2](#phase-2--introduce-cabinet-as-an-abstract-service-outline-still-in-background); [DEN_ARCHITECTURE.md](../architecture/DEN_ARCHITECTURE.md)), routing, authz, Cabinet API, and Bifrost observability reads. Den is the **system of record** for which users may use which bears, which skills each bear’s bot may load, **which MCP servers each bear may use**, and how they appear in each channel (see below).
+- **Den** — the **BEARS control plane and gateway**: identity, **bear lifecycle** (provision Letta agents, surface bears in the **Den chat UI**, **optional Open WebUI**, and LettaBot config), **[skills catalog and per-bear attachments](https://docs.letta.com/letta-code/skills/)** (materialized for LettaBot; see [DEN_ARCHITECTURE.md](../architecture/DEN_ARCHITECTURE.md)), **local MCP server catalog and per-bear MCP attachments** (Phase 1, alongside skills; [DEN_ARCHITECTURE.md](../architecture/DEN_ARCHITECTURE.md)), routing, authz, Cabinet API, and Bifrost observability reads. Den is the **system of record** for which users may use which bears, which skills each bear’s bot may load, **which MCP servers each bear may use**, and how they appear in each channel (see below).
 
 ---
 
@@ -32,7 +32,7 @@ High‑level, ops‑oriented plan and architecture: MVP **without Cabinet first*
    - **Provisions and registers bears:** creates and updates **Letta agents** via API; keeps Den’s **bear registry** in sync (`bear_id` / `agent_id` ↔ `associated_letta_id`); drives **which bears exist** and **who may use them**.
    - **Surfaces bears in clients:** emits or updates config so **Den's chat UI** (first-party browser chat), **optional Open WebUI** (when deployed), and **LettaBot** (`lettabot.yaml` or equivalent) list the correct bears per user/channel. The Den chat UI uses the same **auth, membership, and streaming** endpoints as every other web client; Open WebUI is an **optional** path for teams that want it—not a replacement for Den’s control‑plane role. *Traffic path for web chat is* **Den chat UI → Den → LettaBot → Letta** (LettaBot is mandatory for agent interaction; see [DEN_ARCHITECTURE.md](../architecture/DEN_ARCHITECTURE.md)).
    - **Manages skills for each bear’s bot:** catalog (URLs, pins, org library), attach/detach per bear, then **materialize** [Agent Skills](https://agentskills.io/)–compatible trees onto volumes/paths LettaBot reads; LettaBot remains the runtime that discovers and loads skills.
-   - **Manages MCP servers for each bear (Phase 2):** **local catalog** in Den (org-defined and curated third-party entries), optional **discovery** from the [official MCP Registry](https://modelcontextprotocol.io/registry) without requiring Den to proxy public servers; **per-bear attachments** using the **same catalog vs attachment pattern** as skills; **provisioning** of MCP server processes left to **Coolify** (Den stores connection metadata and policy, not generic process orchestration).
+   - **Manages MCP servers for each bear (Phase 1, with skills):** **local catalog** in Den (org-defined and curated third-party entries), optional **discovery** from the [official MCP Registry](https://modelcontextprotocol.io/registry) without requiring Den to proxy public servers; **per-bear attachments** using the **same catalog vs attachment pattern** as skills; **provisioning** of MCP server processes left to **Coolify** (Den stores connection metadata and policy, not generic process orchestration).
    - **User and Cabinet permissions:** membership tables (users↔bears); later, **Cabinet** ACLs per user and bear (decks, kinds, read/write)—enforced on Den’s Cabinet API.
    - **Routes** web chat through **LettaBot** to the correct Letta agent for the chosen bear; **channels** connect to LettaBot directly, still backed by the same Letta agent ids Den provisions.
    - **Auth** and **tool/model policies** (RBAC, gating, rate limits).
@@ -76,11 +76,11 @@ High‑level, ops‑oriented plan and architecture: MVP **without Cabinet first*
 
 ### Canonical paths vs optional channel proxy
 
-**Canonical (BEARS target):** **Den chat UI → Den → LettaBot → Letta** for web; **channels → LettaBot → Letta** for Slack/WhatsApp/etc. **Letta** is the persistence backend; **LettaBot** is the agent runtime (including [skills](https://docs.letta.com/letta-code/skills/)). **Den** owns registry, membership, **skills catalog and per-bear materialization** (Phase 1), **MCP catalog and per-bear MCP attachments** (Phase 2), and generated LettaBot config.
+**Canonical (BEARS target):** **Den chat UI → Den → LettaBot → Letta** for web; **channels → LettaBot → Letta** for Slack/WhatsApp/etc. **Letta** is the persistence backend; **LettaBot** is the agent runtime (including [skills](https://docs.letta.com/letta-code/skills/)). **Den** owns registry, membership, **skills and MCP catalogs**, **per-bear materialization** for both (Phase 1), and generated LettaBot config.
 
 **Optional later:** route **channel** messages **LettaBot → Den → LettaBot** (Den in the middle of the messaging hop) **only** if you need a single Den audit point for every Slack/WhatsApp payload—**not** the default and **not** required for web+LettaBot alignment. See [DEN_ARCHITECTURE.md](../architecture/DEN_ARCHITECTURE.md) for the full diagram.
 
-**v1 scope (aligned with Phase 1):** **Den chat UI → Den → LettaBot → Letta**, **bear registry**, **bear provisioning** (Letta agent create/update), **LettaBot** config and **Den-managed skills** (catalog + per-bear attach + materialize to LettaBot-visible paths—exact milestone can trail core chat; see [PHASE1_BOOTSTRAP.md](PHASE1_BOOTSTRAP.md)), **surfacing bears** in LettaBot and optionally in Open WebUI when enabled, **users↔bears** membership, auth, Cabinet API (as phases land), and Bifrost observability reads. **Open WebUI → Den → LettaBot → Letta** is **optional**. **MCP catalog and per-bear MCP attachments** are **Phase 2** ([§3 Phase 2](#phase-2--introduce-cabinet-as-an-abstract-service-outline-still-in-background)), alongside Cabinet abstraction.
+**v1 scope (aligned with Phase 1):** **Den chat UI → Den → LettaBot → Letta**, **bear registry**, **bear provisioning** (Letta agent create/update), **LettaBot** config, **Den-managed skills** and **MCP catalog** (each: catalog + per-bear attach + materialize into runtime-visible config—exact milestones may trail core chat; develop **side-by-side**; see [PHASE1_BOOTSTRAP.md](PHASE1_BOOTSTRAP.md)), **surfacing bears** in LettaBot and optionally in Open WebUI when enabled, **users↔bears** membership, auth, Cabinet API (as phases land), and Bifrost observability reads. **Open WebUI → Den → LettaBot → Letta** is **optional**.
 
 ---
 
@@ -251,20 +251,34 @@ Deliverables:
      - Streams response back.
 
 4. **Web UIs → Den** (v1 release targets)
-   - **Operator console (priority):** Den serves a browser UI for **user** accounts, **operator auth**, **bear** CRUD and **Letta provision**, **membership**, and **LettaBot** `lettabot.yaml` preview/download (see [PHASE1_BOOTSTRAP.md](PHASE1_BOOTSTRAP.md)).
+   - **Operator console (priority):** Den serves a browser UI for **user** accounts, **operator auth**, **bear** CRUD and **Letta provision**, **membership**, **skills and MCP servers per bear**, and **LettaBot** `lettabot.yaml` preview/download (see [PHASE1_BOOTSTRAP.md](PHASE1_BOOTSTRAP.md)).
    - **Den native chat:** **primary end-user** chat page at `/bear/{slug}` — **after** the operator console and chat API are stable; same-origin with Den by default.
    - **Open WebUI (optional):** configure to talk to Den (`/v1/chat/send` or adapter): auth, **bear** picker (only member bears), streaming — ship when a deployment needs it (**M6b** in bootstrap plan).
-   - **LettaBot:** required for **all** chat traffic; Den **updates LettaBot config** and **materializes skills** so each bear’s bot row matches Den’s registry; channels use LettaBot natively; optional **channel-only** Den proxy later (see [Canonical paths vs optional channel proxy](#canonical-paths-vs-optional-channel-proxy)).
+   - **LettaBot:** required for **all** chat traffic; Den **updates LettaBot config** and **materializes skills and MCP attachments** so each bear’s bot row matches Den’s registry; channels use LettaBot natively; optional **channel-only** Den proxy later (see [Canonical paths vs optional channel proxy](#canonical-paths-vs-optional-channel-proxy)).
 
 5. **Bifrost observability** (Den reads, does not proxy)
    - Letta → Bifrost stays direct. **Den** connects to Bifrost **only** for observability (metrics/health/logs APIs or log shipping) as needed.
    - Where possible, align Letta/Bifrost logging with Den’s identity data for attribution.
 
+6. **MCP catalog and bear attachments (Phase 1, alongside skills)**
+   - Same **operator and GitOps patterns** as skills: local registry in Den, **per-bear** allowlists, materialization into Letta / LettaBot config as your versions support.
+   - **Principles**
+     - **No separate self-hosted “MCP management platform”:** Den holds a **local registry** (Postgres or exported config). The [official MCP Registry](https://modelcontextprotocol.io/registry) is an **optional upstream for discovery** (metadata, `server.json`–style identifiers): operators may **import or link** entries; **public third-party servers** can remain **non-proxied** (Den catalogs and authorizes; Letta/LettaBot or the deployment connects per your network layout).
+     - **Provisioning:** **Coolify** (or equivalent) deploys **first-party** MCP servers (for example GitHub repository access) and any **third-party** MCP images you choose to run yourself. Den records **how bears may use** each server (URL, stdio template, required secret *names*, internal DNS name)—not a generic multi-tenant MCP process spawner inside Den.
+     - **Shared patterns with skills:** **Catalog** rows (metadata, trust flags, source URL or official registry id) + **`(bear_id, server_id, enabled, order)`** attachments + **materialization** into generated yaml, env templates, or Letta agent fields (for example `tool_ids`) as supported by deployed Letta and LettaBot. Operator console: browse/import, attach per bear, reorder, disable. **GitOps:** same export or CI story as skills where applicable.
+     - **Security:** Treat MCP as **adjacent executable and network capability** to the agent: allowlists, secret injection via the platform (Coolify secrets to env), SSRF and supply-chain checks for catalog imports, clear audit of which bear may use which server.
+   - **Implementation steps** (order flexible vs chat and skills milestones in [PHASE1_BOOTSTRAP.md](PHASE1_BOOTSTRAP.md))
+     1. **Schema and APIs:** Local `mcp_servers` (or equivalent) + `bear_mcp_servers` join table; admin CRUD and list-for-bear; optional read-through to the official registry API for **search and import only**.
+     2. **Operator UI:** Reuse skills UX patterns (catalog table, attach to bear, per-bear list).
+     3. **Deploy integration:** Document Coolify service templates for the first MCP (for example GitHub); Den fields for base URL, command template, and health hints.
+     4. **Letta and LettaBot wiring:** Map attached servers to Letta agent tool configuration or LettaBot MCP client configuration as supported by the deployed Letta and LettaBot versions (may trail skills materialization slightly; keep the same release train).
+     5. **First catalog entry:** **GitHub-hosted repository access** MCP (org-built or vetted upstream), deployed on Coolify, attached to selected bears.
+
 **Phase 1 success (v1):**
 
-- **Operator console:** provision users, bears (Letta agents), membership, **skills per bear** (catalog + attach; materialization may ship shortly after core chat), and LettaBot yaml from the browser.
+- **Operator console:** provision users, bears (Letta agents), membership, **skills and MCP servers per bear** (each: catalog + attach; materialization may ship shortly after core chat), and LettaBot yaml from the browser.
 - Web users chat **Den’s chat UI → Den → LettaBot → Letta** (**Open WebUI** optional on the same path); Den resolves `user_id`, enforces **bear** membership, streams replies.
-- **Slack/WhatsApp** use **LettaBot → Letta** for messages; Den still drives **which bears**, **which skills**, and how they appear in bot config.
+- **Slack/WhatsApp** use **LettaBot → Letta** for messages; Den still drives **which bears**, **which skills**, **which MCP servers**, and how they appear in bot config.
 - Bear registry, **users↔bears** membership, and basic RBAC for **web** users.
 - No Cabinet/Outline yet: **Letta native memory** only; shared knowledge in later phases.
 - **User onboarding:** new account → Personal Bear auto-provisioned → user lands in chat with onboarding prompt.
@@ -275,9 +289,7 @@ Deliverables:
 
 ### Phase 2 – Introduce Cabinet as an abstract service (Outline still in background)
 
-**Goal:** Define the **Cabinet abstraction** and wire it as Letta tools, while starting with a minimal Outline integration. In parallel, introduce Den’s **local MCP server catalog** and **per-bear MCP attachments**, reusing the **same architectural patterns** as **Den-managed skills** (catalog vs attachment, operator console, GitOps-friendly exports). **MCP server provisioning** (containers, env, networking) stays in **Coolify**; Den is the **policy and metadata** layer and integrates discovered servers with Letta/LettaBot as those products expose MCP (for example `tool_ids`, transport config).
-
-#### Cabinet (existing Phase 2 track)
+**Goal:** Define the **Cabinet abstraction** and wire it as Letta tools, while starting with a minimal Outline integration.
 
 **Steps:**
 
@@ -307,24 +319,7 @@ Deliverables:
    - Den provisions `person:{name}` blocks for provisional users on any bear they interact with, so the bear can accumulate knowledge about them across interactions.
    - The admin console shows provisional users alongside full accounts; operators can promote a provisional user to a full account (linking their external id to login credentials).
 
-#### MCP catalog and bear attachments (Phase 2)
-
-**Principles**
-
-- **No separate self-hosted “MCP management platform”:** Den holds a **local registry** (Postgres or exported config). The [official MCP Registry](https://modelcontextprotocol.io/registry) is an **optional upstream for discovery** (metadata, `server.json`–style identifiers): operators may **import or link** entries; **public third-party servers** can remain **non-proxied** (Den catalogs and authorizes; Letta/LettaBot or the deployment connects per your network layout).
-- **Provisioning:** **Coolify** (or equivalent) deploys **first-party** MCP servers (for example GitHub repository access) and any **third-party** MCP images you choose to run yourself. Den records **how bears may use** each server (URL, stdio template, required secret *names*, internal DNS name)—not a generic multi-tenant MCP process spawner inside Den.
-- **Shared patterns with skills:** **Catalog** rows (metadata, trust flags, source URL or official registry id) + **`(bear_id, server_id, enabled, order)`** attachments + **materialization** into whatever Letta/LettaBot needs (generated yaml, env templates, Letta tool registration) once the stack’s MCP wiring is defined. Operator console: browse/import, attach per bear, reorder, disable. **GitOps:** same export or CI story as skills where applicable.
-- **Security:** Treat MCP as **adjacent executable and network capability** to the agent: allowlists, secret injection via the platform (Coolify secrets to env), SSRF and supply-chain checks for catalog imports, clear audit of which bear may use which server.
-
-**Implementation steps (order flexible relative to Cabinet milestones)**
-
-1. **Schema and APIs:** Local `mcp_servers` (or equivalent) + `bear_mcp_servers` join table; admin CRUD and list-for-bear; optional read-through to the official registry API for **search and import only**.
-2. **Operator UI:** Reuse skills UX patterns (catalog table, attach to bear, per-bear list).
-3. **Deploy integration:** Document Coolify service templates for the first MCP (for example GitHub); Den fields for base URL, command template, and health hints.
-4. **Letta and LettaBot wiring:** Map attached servers to Letta agent tool configuration or LettaBot MCP client configuration as supported by the deployed Letta and LettaBot versions (may follow Cabinet tool work in the same phase).
-5. **First catalog entry:** **GitHub-hosted repository access** MCP (org-built or vetted upstream), deployed on Coolify, attached to selected bears.
-
-At the end of Phase 2, Cabinet is a defined, testable contract, even if Outline isn’t fully wired, and **MCP** is a **first-class, Den-governed** extension path for bear tools with a documented **Coolify plus local catalog** split of responsibilities.
+At the end of Phase 2, Cabinet is a defined, testable contract, even if Outline isn’t fully wired.
 
 ---
 
@@ -417,13 +412,13 @@ This is the “make it livable and reliable” phase.
 We’re aiming for:
 
 - **Den** as the **BEARS control plane and gateway**:
-  - Maps external identities → internal users; **provisions bears** in Letta; **bear registry** and **users↔bears** membership; **skills catalog and per-bear bot attachments** (materialized for LettaBot); **MCP catalog and per-bear MCP attachments** (Phase 2); **surfaces bears** in **Den chat UI**, **optional Open WebUI**, and LettaBot config; web chat routing **Den → LettaBot → Letta** (Letta → **Bifrost** direct for models).
+  - Maps external identities → internal users; **provisions bears** in Letta; **bear registry** and **users↔bears** membership; **skills and MCP catalogs** and **per-bear bot attachments** (materialized for LettaBot); **surfaces bears** in **Den chat UI**, **optional Open WebUI**, and LettaBot config; web chat routing **Den → LettaBot → Letta** (Letta → **Bifrost** direct for models).
   - Auth and tool/model policies; per‑user and per‑bear **Cabinet** permissions when Cabinet ships; **Cabinet API** backed by Outline.
   - **Bifrost:** Den uses it **only for observability** (not as a proxy for model traffic).
   - **v1:** **Den chat UI** → **Den** → **LettaBot** → **Letta** as the **default web chat** path; **Open WebUI** → Den → LettaBot → Letta **optional** when deployed. **LettaBot** is **required** for agent interaction; **channels** → LettaBot → Letta. **Optional channel-only Den proxy** for audit is a later value-add (see [Canonical paths vs optional channel proxy](#canonical-paths-vs-optional-channel-proxy)). Cabinet/Outline auth aligned with human auth when Cabinet ships.
 
 - **Phased delivery**:
-  - **MVP (Phase 1):** Den for **web** via **LettaBot**; bear lifecycle + membership + **Den-managed skills**; no Cabinet yet.
-  - **Phase 2:** Cabinet abstraction defined and wired as tools (even if stubbed); **local MCP catalog** (optional official registry discovery), **per-bear MCP attachments** (shared patterns with skills), **Coolify** for MCP server deployment; first server example **GitHub repository access**.
+  - **MVP (Phase 1):** Den for **web** via **LettaBot**; bear lifecycle + membership + **Den-managed skills** and **local MCP catalog** (optional official registry discovery), **per-bear MCP attachments** (same patterns as skills), **Coolify** for MCP server processes; first server example **GitHub repository access**; no Cabinet yet.
+  - **Phase 2:** Cabinet abstraction defined and wired as tools (even if stubbed).
   - **Phase 3:** Cabinet backed by Outline with properties + embeddings.
   - **Phase 4:** Refine memory policies, multi‑user ergonomics, RBAC, and workflows.

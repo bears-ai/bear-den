@@ -145,7 +145,7 @@ Regenerate `lettabot.yaml` (or `LETTABOT_CONFIG_YAML`) from Den’s DB when **be
 
 **Security:** Treat skills as **trusted code adjacent to the agent**; restrict who can publish org skills; cap size; validate fetches (SSRF, malware, prompt injection) per org policy.
 
-### Den-managed MCP servers (Phase 2)
+### Den-managed MCP servers (Phase 1)
 
 **Den is the system of record for which [Model Context Protocol](https://modelcontextprotocol.io/) (MCP) servers each bear may use.** Letta and LettaBot remain the **runtime** that opens MCP sessions and invokes tools; Den does not replace an MCP host. This mirrors **Den-managed skills**: same split between **catalog**, **per-bear attachment**, and **materialization** into config the runtime reads.
 
@@ -160,13 +160,13 @@ Regenerate `lettabot.yaml` (or `LETTABOT_CONFIG_YAML`) from Den’s DB when **be
 
 **Security:** Treat MCP servers like **network-exposed and executable-adjacent** capabilities: allowlists, secrets injected by the platform (Coolify → env), supply-chain review for imports, SSRF policy on any fetch-by-URL catalog path.
 
-See [PLAN.md](../planning/PLAN.md) Phase 2 for the phased implementation checklist.
+See [PLAN.md](../planning/PLAN.md) Phase 1 for the phased implementation checklist (MCP alongside skills).
 
 ---
 
 ## Operator console (provisioning UI)
 
-**Purpose:** Ship **before** (or in tight parallel with) end-user chat: browser flows for **operator login**, **users**, **bears** + **Letta provision**, **membership**, **skills per bear**, **MCP servers per bear** (Phase 2), **LettaBot yaml** handoff / sync, and optional **Letta connectivity** check. See [PHASE1_BOOTSTRAP.md](../planning/PHASE1_BOOTSTRAP.md) for routes, `is_admin`, and milestones **M4b** / **first user-testable moment**.
+**Purpose:** Ship **before** (or in tight parallel with) end-user chat: browser flows for **operator login**, **users**, **bears** + **Letta provision**, **membership**, **skills and MCP servers per bear**, **LettaBot yaml** handoff / sync, and optional **Letta connectivity** check. See [PHASE1_BOOTSTRAP.md](../planning/PHASE1_BOOTSTRAP.md) for routes, `is_admin`, and milestones **M4b** / **first user-testable moment**.
 
 ---
 
