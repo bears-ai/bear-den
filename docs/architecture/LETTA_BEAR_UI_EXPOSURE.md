@@ -4,6 +4,8 @@ Den’s **operator bear forms** and **JSON admin create-bear** API sync a subset
 
 Confirm field names and enums against **your** self-hosted Letta image; see [DEN_ARCHITECTURE.md](DEN_ARCHITECTURE.md).
 
+**Skills:** [Letta Code / Agent Skills](https://docs.letta.com/letta-code/skills/) for each bear’s **LettaBot row** are **not** edited through the Letta agent PATCH form; Den owns **catalog, per-bear attach, and materialization** to filesystem paths LettaBot reads ([DEN_ARCHITECTURE.md](DEN_ARCHITECTURE.md) § Den-managed skills).
+
 ## Exposed via bears (Den registry → Letta)
 
 | Area | Letta usage |

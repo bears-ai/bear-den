@@ -10,11 +10,10 @@ Single-page view of the BEARS stack on Coolify. **Roadmap and contracts:** [PLAN
 Den (chat UI) ────┐     Outline (human editing)
 Open WebUI (opt.) ┤              ▲
                   ├──► Den ──Cabinet API───────┘
-                  │      │ ╲
-                  ▼      ▼   ╲──► Garage (S3)
-                 Letta ──► Bifrost ──► providers
+                  │      │──────────────► Garage (S3)
+                  │      └──► LettaBot ──► Letta ──► Bifrost ──► providers
 ```
-(Den serves the first-party browser chat UI; **Open WebUI** is optional — [DEN_ARCHITECTURE.md](DEN_ARCHITECTURE.md).)
+(Den serves the first-party browser chat UI; **Open WebUI** is optional; **LettaBot** is required for agent chat — [DEN_ARCHITECTURE.md](DEN_ARCHITECTURE.md).)
 
 **Until Den is deployed:** Open WebUI may talk to Letta directly. Add Den + Outline per [PLAN.md](../planning/PLAN.md).
 
@@ -22,8 +21,9 @@ Open WebUI (opt.) ┤              ▲
 
 | Component | Role |
 |-----------|------|
-| **Den** | **Operator console** (browser: users, bears, Letta provision, LettaBot yaml); **bear** provisioning (Letta + optional Open WebUI + LettaBot config), **users↔bears** membership, auth, routing to Letta, first-party chat UI, Cabinet API; **Bifrost** only for observability (Letta → Bifrost direct) |
-| **Letta** | **Bear** runtime: tools, memory blocks, conversations per Letta agent |
+| **Den** | **Operator console** (browser: users, bears, Letta provision, **skills per bear**, LettaBot yaml); **bear** provisioning on Letta + **LettaBot** config + **skill materialization**; **users↔bears** membership; auth; **web** routing **Den → LettaBot**; first-party chat UI; Cabinet API; **Bifrost** only for observability (Letta → Bifrost direct) |
+| **LettaBot** | **Agent runtime** for web (via Den) and channels; uses **Letta** for persistence; loads [skills](https://docs.letta.com/letta-code/skills/) from paths Den manages |
+| **Letta** | **Persistence** for LettaBot: tools, memory blocks, conversations per Letta agent (**bear**) |
 | **Bifrost** | Unified OpenAI-compatible model gateway (`/v1`) — see `services/bifrost/` |
 | **Den chat UI** | **Primary** first-party chat UI — Deep Chat web component served by Den; reference client for Den streaming APIs |
 | **Open WebUI** | Full-featured web chat **optional** when deployed (e.g. LibreChat) |
@@ -38,11 +38,11 @@ Open WebUI (opt.) ┤              ▲
 
 ## Data flow
 
-**Web (target with Den):** User → Den chat page **(default)** **or** optional **Open WebUI** → Den → Letta → Bifrost → providers.
+**Web (target with Den):** User → Den chat page **(default)** **or** optional **Open WebUI** → **Den → LettaBot → Letta** → Bifrost → providers.
 
 **Web (today, no Den):** User → Open WebUI → Letta → Bifrost → providers.
 
-**LettaBot (Slack/WhatsApp):** **v1** is LettaBot → Letta direct for **chat**; Den still drives **which bears** appear in bot config. Optional later: LettaBot → Den → Letta ([PLAN.md](../planning/PLAN.md)).
+**LettaBot (Slack/WhatsApp and agent runtime):** Channels → **LettaBot → Letta**; web → **Den → LettaBot → Letta**. Den drives **which bears**, **which skills**, and **LettaBot** config. Optional later: channel-only Den proxy for audit ([PLAN.md](../planning/PLAN.md)).
 
 **Cabinet:** Bear tool calls → Den → Outline.
 

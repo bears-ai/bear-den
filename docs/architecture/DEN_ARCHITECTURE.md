@@ -29,7 +29,7 @@ API shapes depend on your Letta version—confirm against your server.
 
 ### Bears, users, and conversations
 
-- A **bear** is one **Letta agent**. **Users ↔ bears** is **many‑to‑many**: store `(user_id, bear_id)` membership in Den; optional roles (owner, member, read‑only).
+- A **bear** is one **Letta agent** in Den’s registry. In deployment terms it is also the **LettaBot agent row** that fronts that Letta agent: one bear ↔ one `agents[]` entry in generated **LettaBot** config (`agentId` = Letta’s agent id). **Users ↔ bears** is **many‑to‑many**: store `(user_id, bear_id)` membership in Den; optional roles (owner, member, read‑only).
 - **Conversations** isolate threads (Slack thread, WhatsApp chat, Den chat or Open WebUI session). Prefer **per-conversation** message APIs where available so concurrent channels do not block each other.
 
 ### Memory blocks
@@ -38,7 +38,7 @@ API shapes depend on your Letta version—confirm against your server.
 
 ### Provisioning bears (Den-owned)
 
-**Den** is responsible for **bear lifecycle**: create/update the Letta agent, record the bear in Den’s registry, attach **users↔bears** membership, **regenerate LettaBot config** and keep **optional Open WebUI** client views consistent, and (when Cabinet exists) set **Cabinet** permissions per user and bear.
+**Den** is responsible for **bear lifecycle**: create/update the Letta agent, record the bear in Den’s registry, attach **users↔bears** membership, **manage skills for each bear’s LettaBot row** (see [Den-managed skills](#den-managed-skills)), **regenerate LettaBot config** and materialize skill trees, keep **optional Open WebUI** client views consistent, and (when Cabinet exists) set **Cabinet** permissions per user and bear.
 
 **Templates / Identities** as described for Letta Cloud may not exist on self-hosted builds. Typical flow:
 
@@ -128,13 +128,28 @@ agents:
         allowedUsers: ["+15551234567"]
 ```
 
-Regenerate `lettabot.yaml` (or `LETTABOT_CONFIG_YAML`) from Den’s DB when **bears** or **users↔bears** membership changes. Skill directories and [Agent Skills](https://agentskills.io/)–compatible trees can be managed from **Den’s operator UI** by materializing files/volumes LettaBot reads, aligned with [Letta Code skills](https://docs.letta.com/letta-code/skills/).
+Regenerate `lettabot.yaml` (or `LETTABOT_CONFIG_YAML`) from Den’s DB when **bears** or **users↔bears** membership changes.
+
+### Den-managed skills
+
+**Den is the system of record for which [Letta Code / Agent Skills](https://docs.letta.com/letta-code/skills/) each bear’s bot may use.** Operators attach skills **per bear** (i.e. per LettaBot `agents[]` entry / underlying Letta agent). LettaBot continues to **load and run** skills from the filesystem layouts it supports; Den does not reimplement the skill runtime.
+
+**Responsibilities**
+
+- **Catalog:** Den stores skill metadata (name, source URL or package id, pinned revision, scope: org-wide vs user-uploaded) and optional trust flags.
+- **Attachment:** `(bear_id, skill_id, enabled, order)` (or equivalent) defines the skill set for that bear’s bot.
+- **Materialization:** On change, Den writes or syncs [Agent Skills](https://agentskills.io/)–compatible **directories** (`SKILL.md` + assets) onto paths LettaBot reads—e.g. per-agent under `~/.letta/agents/{letta_agent_id}/skills/`, shared org library mapped to **global** skill dirs, or paths referenced from generated yaml—**exact layout depends on your LettaBot/Letta Code version**; keep this mapping in deploy docs next to volume mounts.
+- **Sharing:** Reuse the same catalog entry across many bears; materialize **copies** per agent dir or use a **shared** directory plus Den policy for who may attach which catalog skill.
+
+**Operator console:** paste GitHub URLs, pick from catalog, preview, enable/disable, reorder. **GitOps:** exported config or CI can drive the same materialization inputs as the UI.
+
+**Security:** Treat skills as **trusted code adjacent to the agent**; restrict who can publish org skills; cap size; validate fetches (SSRF, malware, prompt injection) per org policy.
 
 ---
 
 ## Operator console (provisioning UI)
 
-**Purpose:** Ship **before** (or in tight parallel with) end-user chat: browser flows for **operator login**, **users**, **bears** + **Letta provision**, **membership**, **LettaBot yaml** handoff, and optional **Letta connectivity** check. See [PHASE1_BOOTSTRAP.md](../planning/PHASE1_BOOTSTRAP.md) for routes, `is_admin`, and milestones **M4b** / **first user-testable moment**.
+**Purpose:** Ship **before** (or in tight parallel with) end-user chat: browser flows for **operator login**, **users**, **bears** + **Letta provision**, **membership**, **skills per bear**, **LettaBot yaml** handoff / sync, and optional **Letta connectivity** check. See [PHASE1_BOOTSTRAP.md](../planning/PHASE1_BOOTSTRAP.md) for routes, `is_admin`, and milestones **M4b** / **first user-testable moment**.
 
 ---
 
@@ -229,7 +244,7 @@ Seed **human** / **persona** (and optional **shared**) blocks when Den provision
 |-------|------------------|
 | **Self-hosted Letta** | **Persistence backend** for LettaBot: agent state, memory blocks, conversations, tools, calls to Bifrost |
 | **LettaBot** | **Core agent platform**: all end-user and channel interaction; uses Letta for state; [skills](https://docs.letta.com/letta-code/skills/) and Letta Code behaviors apply here |
-| **Den (Axum)** | Auth; **bear** provisioning on Letta + **LettaBot** config; **users↔bears** membership; **web** routing **Den → LettaBot**; Cabinet API; operator console; optional channel↔user mapping for directory/analytics |
+| **Den (Axum)** | Auth; **bear** provisioning on Letta + **LettaBot** config; **skills catalog and per-bear skill sets** (materialized for LettaBot); **users↔bears** membership; **web** routing **Den → LettaBot**; Cabinet API; operator console; optional channel↔user mapping for directory/analytics |
 | **Den chat UI** | **Primary** browser UI → **Den** → **LettaBot** |
 | **Open WebUI** | **Optional** web UI → **Den** → **LettaBot** when deployed |
 | **PostgreSQL** | Den: users, mappings, sessions |

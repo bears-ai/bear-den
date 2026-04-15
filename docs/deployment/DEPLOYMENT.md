@@ -30,7 +30,7 @@ Deploy the BEARS stack as separate services in Coolify. Shared knowledge uses **
 ```
 Open WebUI → Letta → Bifrost → model providers
                                 Garage (S3) ← Den (presigned upload/download for chat media)
-(Target with Den: Open WebUI → Den → Letta; Den provisions bears + membership — [PLAN.md](../planning/PLAN.md))
+(Target with Den: Den chat UI / Open WebUI → Den → LettaBot → Letta; Den provisions bears + membership + **skills for each bear’s bot** — [PLAN.md](../planning/PLAN.md), [DEN_ARCHITECTURE.md](../architecture/DEN_ARCHITECTURE.md))
 (Optional: Outline/Cabinet with Den per PLAN.md)
 ```
 
