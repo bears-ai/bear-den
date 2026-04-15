@@ -21,7 +21,7 @@ Open WebUI (opt.) ┤              ▲
 
 | Component | Role |
 |-----------|------|
-| **Den** | **Operator console** (browser: users, bears, Letta provision, **skills per bear**, LettaBot yaml); **bear** provisioning on Letta + **LettaBot** config + **skill materialization**; **users↔bears** membership; auth; **web** routing **Den → LettaBot**; first-party chat UI; Cabinet API; **Bifrost** only for observability (Letta → Bifrost direct) |
+| **Den** | **Operator console** (browser: users, bears, Letta provision, **skills per bear**, **MCP servers per bear** in Phase 2, LettaBot yaml); **bear** provisioning on Letta + **LettaBot** config + **skill materialization**; **local MCP catalog** and per-bear attachments (Phase 2); **users↔bears** membership; auth; **web** routing **Den → LettaBot**; first-party chat UI; Cabinet API; **Bifrost** only for observability (Letta → Bifrost direct) |
 | **LettaBot** | **Agent runtime** for web (via Den) and channels; uses **Letta** for persistence; loads [skills](https://docs.letta.com/letta-code/skills/) from paths Den manages |
 | **Letta** | **Persistence** for LettaBot: tools, memory blocks, conversations per Letta agent (**bear**) |
 | **Bifrost** | Unified OpenAI-compatible model gateway (`/v1`) — see `services/bifrost/` |
@@ -42,7 +42,7 @@ Open WebUI (opt.) ┤              ▲
 
 **Web (today, no Den):** User → Open WebUI → Letta → Bifrost → providers.
 
-**LettaBot (Slack/WhatsApp and agent runtime):** Channels → **LettaBot → Letta**; web → **Den → LettaBot → Letta**. Den drives **which bears**, **which skills**, and **LettaBot** config. Optional later: channel-only Den proxy for audit ([PLAN.md](../planning/PLAN.md)).
+**LettaBot (Slack/WhatsApp and agent runtime):** Channels → **LettaBot → Letta**; web → **Den → LettaBot → Letta**. Den drives **which bears**, **which skills**, **which MCP servers** (Phase 2), and **LettaBot** config. Optional later: channel-only Den proxy for audit ([PLAN.md](../planning/PLAN.md)).
 
 **Cabinet:** Bear tool calls → Den → Outline.
 
@@ -74,4 +74,4 @@ Deploy guide: [`services/garage/COOLIFY_DEPLOY.md`](../../services/garage/COOLIF
 
 ## Next steps
 
-Den + Outline deployment, observability dashboards—see [PLAN.md](../planning/PLAN.md).
+Den + Outline deployment, observability dashboards—see [PLAN.md](../planning/PLAN.md). **Phase 2** adds Cabinet tools and the **MCP local catalog** (Coolify for server processes, Den for catalog and bear attachments)—[PLAN.md §3 Phase 2](../planning/PLAN.md#phase-2--introduce-cabinet-as-an-abstract-service-outline-still-in-background), [DEN_ARCHITECTURE.md](DEN_ARCHITECTURE.md) (Den-managed MCP servers).

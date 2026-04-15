@@ -421,3 +421,9 @@ den/
 Record new or changed decisions in **[PHASE1_DECISIONS.md](PHASE1_DECISIONS.md)** (monorepo `docs/planning/`).
 
 The planning file **`den/DECISIONS.md`** is **not** used; keep a single source under `docs/planning/`.
+
+---
+
+## 18. Phase 2 pointer (after bootstrap)
+
+Phase 1 stops at skills, chat, and operator flows above. **Phase 2** (see [PLAN.md](PLAN.md) § Phase 2) adds **Cabinet** as Letta-facing tools, **provisional users**, and **Den-managed MCP**: a **local MCP catalog** with optional discovery from the official MCP Registry, **per-bear attachments** (same patterns as skills), **Coolify** for MCP server processes, and a first example such as **GitHub repository access**. Architecture: [DEN_ARCHITECTURE.md](../architecture/DEN_ARCHITECTURE.md) (Den-managed MCP servers).

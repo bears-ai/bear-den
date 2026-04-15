@@ -145,11 +145,28 @@ Regenerate `lettabot.yaml` (or `LETTABOT_CONFIG_YAML`) from Den’s DB when **be
 
 **Security:** Treat skills as **trusted code adjacent to the agent**; restrict who can publish org skills; cap size; validate fetches (SSRF, malware, prompt injection) per org policy.
 
+### Den-managed MCP servers (Phase 2)
+
+**Den is the system of record for which [Model Context Protocol](https://modelcontextprotocol.io/) (MCP) servers each bear may use.** Letta and LettaBot remain the **runtime** that opens MCP sessions and invokes tools; Den does not replace an MCP host. This mirrors **Den-managed skills**: same split between **catalog**, **per-bear attachment**, and **materialization** into config the runtime reads.
+
+**Responsibilities**
+
+- **Catalog (local registry):** Den stores MCP server metadata (display name, transport hints, org vs imported, optional link to the [official MCP Registry](https://modelcontextprotocol.io/registry), trust flags). Operators may **query or import** from the official registry for discovery; **cataloging a public server does not require Den to proxy** tool traffic.
+- **Attachment:** `(bear_id, mcp_server_id, enabled, order)` (or equivalent) defines which MCP servers a bear’s agent may use, analogous to skills.
+- **Materialization:** On change, Den updates generated **LettaBot** yaml, sidecar config, or Letta agent fields (for example `tool_ids` or MCP transport blocks) as supported by your Letta and LettaBot versions—**exact wiring belongs in deploy docs** next to how LettaBot reaches each MCP URL or stdio command.
+- **Provisioning:** **Coolify** (or your stack orchestrator) runs MCP server **containers or processes**; Den records **connection templates** (internal base URL, stdio command shape, required env **names**) and **policy**, not ad hoc process spawning inside Den.
+
+**Shared patterns with skills:** Operator console flows (catalog table, attach to bear, reorder, disable), GitOps or exported config driving the same inputs as the UI, reuse of trust and review habits.
+
+**Security:** Treat MCP servers like **network-exposed and executable-adjacent** capabilities: allowlists, secrets injected by the platform (Coolify → env), supply-chain review for imports, SSRF policy on any fetch-by-URL catalog path.
+
+See [PLAN.md](../planning/PLAN.md) Phase 2 for the phased implementation checklist.
+
 ---
 
 ## Operator console (provisioning UI)
 
-**Purpose:** Ship **before** (or in tight parallel with) end-user chat: browser flows for **operator login**, **users**, **bears** + **Letta provision**, **membership**, **skills per bear**, **LettaBot yaml** handoff / sync, and optional **Letta connectivity** check. See [PHASE1_BOOTSTRAP.md](../planning/PHASE1_BOOTSTRAP.md) for routes, `is_admin`, and milestones **M4b** / **first user-testable moment**.
+**Purpose:** Ship **before** (or in tight parallel with) end-user chat: browser flows for **operator login**, **users**, **bears** + **Letta provision**, **membership**, **skills per bear**, **MCP servers per bear** (Phase 2), **LettaBot yaml** handoff / sync, and optional **Letta connectivity** check. See [PHASE1_BOOTSTRAP.md](../planning/PHASE1_BOOTSTRAP.md) for routes, `is_admin`, and milestones **M4b** / **first user-testable moment**.
 
 ---
 
