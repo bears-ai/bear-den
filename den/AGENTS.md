@@ -25,7 +25,7 @@ Do not assume the environment is “simulated only”: prefer **running `cargo` 
 
 ## Working on features
 
-- **HTTP (web UI)** — `src/web/`, templates under `src/web/templates/`.
+- **HTTP (web UI)** — `src/web/`, templates under `src/web/templates/`. **CSS:** follow [`docs/frontend-development.md`](docs/frontend-development.md): no authored `<style>` blocks or inline layout/theme in templates; standalone pages still use `/assets/css/style.css` and scoped rules in `src/web/assets/css/specifics.css`.
 - **HTTP (standalone API + OAuth provider)** — `src/api/`.
 - **Shared domain / DB** — `src/core/` (this tree still carries a large legacy domain from extraction; follow existing modules and `migrations/`).
 - **Config** — `src/config.rs`, plus env and ops notes in [`docs/deploy.md`](docs/deploy.md), [`docs/infrastructure-and-ops.md`](docs/infrastructure-and-ops.md), and [`.env.example`](.env.example).

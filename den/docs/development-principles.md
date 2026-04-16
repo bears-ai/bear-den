@@ -27,7 +27,7 @@ Agent- and product-agnostic practices for building a **small surface-area** web 
 - **Vanilla JavaScript** for app-specific behavior; avoid SPA frameworks unless the product truly needs client-managed state at scale.
 - **Progressive enhancement**: core flows should remain usable if scripts fail or load slowly.
 - **Minimal front-end toolchain**: no mandatory Node/bundler step for day-to-day work if plain assets suffice. When a heavy capability is needed (e.g. maps), **load it explicitly** (CDN or a single vendored bundle) rather than importing an entire frontend ecosystem.
-- **Centralize styling** in shared stylesheets; avoid inline styles and one-off patterns that fight the rest of the design system.
+- **Centralize styling** in shared stylesheets under `src/web/assets/css/` (entry: `style.css`). Avoid inline styles, **embedded `<style>` blocks in templates**, and duplicated theme tokens on individual pages—even full HTML documents that skip `base.html` should still link the same stylesheet and add page rules to `specifics.css` (or an imported file) with a scoping class. Third-party widgets may need JS-applied styles; drive them from CSS variables, not literals copied from the design system.
 
 ---
 

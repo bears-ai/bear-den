@@ -1,10 +1,13 @@
 /*
  * FRONTEND DEVELOPMENT GUIDELINES
  *
- * IMPORTANT: Read doc/frontend-development.md before making changes!
+ * IMPORTANT: Read docs/frontend-development.md before making changes.
  *
  * CSS RULES:
- * - Never use inline styles in templates
+ * - Never use inline styles on elements in templates
+ * - Do not add authored <style> blocks in HTML templates; standalone pages
+ *   still link this file and put page rules in specifics.css (scope with a
+ *   class on html/body). See docs/frontend-development.md § "Standalone HTML".
  * - Use existing classes first before creating new ones
  * - Always use CSS variables (see below) for colors, spacing, typography
  * - No rounded corners or gradients - maintain geometric design

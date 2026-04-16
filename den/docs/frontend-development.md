@@ -55,6 +55,7 @@ Add to the **bottom** of `src/web/assets/css/specifics.css`:
 
 #### Colors
 - `--page-color` - Main content background
+- `--surface-color` - Muted panels and alternate surfaces (for example AI chat bubbles)
 - `--text-color` - Primary text
 - `--border-color` - Standard borders
 - `--accent-color` - Highlights/hovers
@@ -79,6 +80,17 @@ Add to the **bottom** of `src/web/assets/css/specifics.css`:
 - **Use semantic HTML** for accessibility
 - **See**: [`minijinja-template-limitations.md`](minijinja-template-limitations.md) for template restrictions
 
+### Standalone HTML documents (no `base.html`)
+
+Some routes render a **full HTML document** without extending `base.html` (for example [`bear_chat.html`](../src/web/templates/bear_chat.html)). Treat them like every other UI surface:
+
+1. **Link the shared stack** — `<link rel="stylesheet" href="/assets/css/style.css" />` (same path as `base.html`). Do not redefine global tokens in the template.
+2. **Put layout and chrome in CSS files** — page shell rules live in [`specifics.css`](../src/web/assets/css/specifics.css) (or a file imported from `style.css`), with a **page-scoping class** on `<html>` or `<body>` (for example `html.den-bear-chat-page`) so rules do not leak to the rest of the app.
+3. **Add or extend design tokens in `style.css`** — new colours, spacing scales, or JS-readable `--chat-*` (etc.) variables belong next to the rest of the design system, not in a template `<style>` block.
+4. **JavaScript may configure third-party components** (for example Deep Chat’s style API) but should **read values via `getComputedStyle` / `var(--…)`** from those tokens, not hard-coded hex or pixel literals that duplicate the system.
+
+If a third-party snippet truly requires a tiny inline or embedded style and cannot consume your classes, document the exception in the PR and keep it minimal.
+
 ### Template Structure
 ```
 src/web/templates/
@@ -91,7 +103,7 @@ src/web/templates/
 
 ## Bear chat (Deep Chat)
 
-End-user chat is **not** the main MiniJinja + `style.css` stack; it uses a vendored [**Deep Chat**](https://deepchat.dev) web component (`<deep-chat>`).
+End-user chat is a **standalone MiniJinja document** (it does not extend `base.html`) but it **uses the same [`style.css`](../src/web/assets/css/style.css) import chain** as the rest of the web UI. The page adds a vendored [**Deep Chat**](https://deepchat.dev) web component (`<deep-chat>`).
 
 | Route | Source |
 |-------|--------|
@@ -121,15 +133,16 @@ End-user chat is **not** the main MiniJinja + `style.css` stack; it uses a vendo
 ## Development Workflow
 
 ### Adding a New Feature
-1. ✅ Create templates in `src/web/templates/[feature]/`
+1. ✅ Create templates in `src/web/templates/[feature]/` (or a standalone `.html` if the route needs a full document)
 2. ✅ Process data in Rust handlers (not templates)
 3. ✅ Check existing CSS classes first
-4. ✅ Add styles using CSS variables
+4. ✅ Add styles using CSS variables in `src/web/assets/css/` — not in template `<style>` blocks
 5. ✅ Add minimal JavaScript if needed
 6. ✅ Test without JavaScript
 
 ### Code Review Checklist
-- [ ] No inline CSS styles
+- [ ] No inline CSS styles on elements
+- [ ] No authored `<style>` blocks in templates (standalone pages use `style.css` + `specifics.css`; see [Standalone HTML documents](#standalone-html-documents-no-basehtml))
 - [ ] Uses CSS variables
 - [ ] No rounded corners/gradients
 - [ ] Logic in handlers, not templates
