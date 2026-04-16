@@ -29,7 +29,8 @@ Design examples (including "full width input"): <https://deepchat.dev/examples/d
 
 ## Conventions
 
-- All colour values are read at init from CSS custom properties (`--page-color`, `--text-color`, etc.) via `getComputedStyle`, not hard-coded.
+- Page chrome and layout live in [`den/src/web/assets/css/specifics.css`](../../den/src/web/assets/css/specifics.css) under `html.den-bear-chat-page` (imported via `style.css`).
+- Colours and spacing for the Deep Chat host and bubbles are driven by tokens in [`den/src/web/assets/css/style.css`](../../den/src/web/assets/css/style.css) (`--surface-color`, `--chat-*`, etc.); JS reads resolved values with `getComputedStyle` where the component API needs literals, and `auxiliaryStyle` prefers `var(--…)`.
 - No rounded corners (`borderRadius: '0'`) per the Den design system.
 - User bubbles: right-aligned, page-colour background with thin border.
 - AI bubbles: left-aligned, surface-colour background.

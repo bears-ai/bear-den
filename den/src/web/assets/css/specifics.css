@@ -7,3 +7,62 @@
  * - Use CSS variables from style.css: var(--spacing-unit), var(--page-color), etc.
  * - No rounded corners or gradients — keep the geometric look unless you change that rule.
  */
+
+/* ---- Bear chat (/bear/:slug) — standalone page (templates/bear_chat.html) ---- */
+
+html.den-bear-chat-page {
+    height: 100%;
+}
+
+html.den-bear-chat-page body {
+    margin: 0;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    min-height: 100vh;
+    padding-left: 0;
+    padding-right: 0;
+}
+
+html.den-bear-chat-page .den-wrap {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    max-width: min(var(--chat-shell-max-width), var(--medium-width));
+    margin: 0 auto;
+    padding: calc(var(--spacing-unit) * 2);
+    width: 100%;
+    box-sizing: border-box;
+}
+
+html.den-bear-chat-page .den-toolbar {
+    display: flex;
+    gap: calc(var(--spacing-unit) * 2);
+    align-items: center;
+    margin-bottom: calc(var(--spacing-unit) * 1.5);
+    flex-wrap: wrap;
+}
+
+html.den-bear-chat-page .den-toolbar .den-bear-meta {
+    font-size: smaller;
+}
+
+html.den-bear-chat-page .den-toolbar code {
+    font-size: smaller;
+    font-family: var(--data-font-family);
+    font-weight: var(--data-font-weight);
+    font-style: var(--data-font-style);
+}
+
+html.den-bear-chat-page .den-err {
+    color: var(--error-color);
+    font-size: smaller;
+    margin: var(--spacing-unit) 0;
+}
+
+html.den-bear-chat-page #chat-wrap {
+    flex: 1;
+    position: relative;
+    min-height: 0;
+}

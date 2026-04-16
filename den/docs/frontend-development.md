@@ -9,7 +9,8 @@ This project follows a minimalist frontend approach using server-side rendering,
 ## Key Principles
 
 ### 🚫 What NOT to do
-- **Never use inline CSS styles** in HTML templates
+- **Never use inline CSS styles** in HTML templates (`style="…"` on elements).
+- **Never put authored layout or theme CSS inside `<style>` blocks in templates.** Duplicating `:root` colours, spacing, or component rules in a page file drifts from the design system, bypasses review patterns, and repeats work (for example bear chat historically inlined a full theme until it linked [`style.css`](../src/web/assets/css/style.css) and moved rules to [`specifics.css`](../src/web/assets/css/specifics.css)). **Standalone pages** (full HTML documents that do not extend `base.html`) are not an exception: they still load the same stylesheet entrypoint and keep page-specific selectors in `specifics.css` (or a dedicated imported file), scoped with a class on `<html>` or `<body>` when needed.
 - **Don't add rounded corners or gradients** - maintain geometric design
 - **Avoid complex JavaScript frameworks** - keep it vanilla
 - **Don't put complex logic in templates** - process data in Rust handlers
@@ -99,7 +100,7 @@ End-user chat is **not** the main MiniJinja + `style.css` stack; it uses a vendo
 **Behavior to preserve**
 
 1. **Same-origin asset** — `deepChat.bundle.js` lives under [`src/web/assets/deep-chat/`](../src/web/assets/deep-chat/) and is linked as `/assets/deep-chat/deepChat.bundle.js` so the shell works without a third-party CDN.
-2. **Light / dark theming** — chat pages replicate the same CSS variable definitions from `style.css` (`--page-color`, `--text-color`, `--border-color`, `--accent-color`, `--meta-color`, `--surface-color`) and honour the `theme-dark` / `theme-light` classes plus `prefers-color-scheme`. Deep Chat's JS style API (`messageStyles`, `textInput`, `submitButtonStyles`, etc.) reads the resolved CSS variable values at init via `getComputedStyle`.
+2. **Light / dark theming** — chat loads the same [`style.css`](../src/web/assets/css/style.css) stack as the rest of the web UI (including [`specifics.css`](../src/web/assets/css/specifics.css) for the `.den-bear-chat-page` shell). Tokens such as `--page-color`, `--surface-color`, and the `--chat-*` bridge variables honour `theme-dark` / `theme-light` and `prefers-color-scheme`. Deep Chat's JS style API (`messageStyles`, `textInput`, `submitButtonStyles`, etc.) reads resolved values at init via `getComputedStyle`, and `auxiliaryStyle` uses `var(--…)` so shadow-DOM rules track tokens.
 3. **Slack-style layout** — messages are left-aligned (both user and AI), with name labels above and a bottom border divider instead of speech bubbles.
 4. **Letta stream** — `POST /v1/chat/send` returns SSE; the chat handler uses `connect.handler` + `connect.stream` to parse `data:` JSON lines. It surfaces **`error_message`** (including nested `contents`) as Deep Chat errors; streams **`reasoning_message`** into a dedicated **HTML** ai bubble (single-line horizontal scroll, optional Expand for full text — plain text only, no Markdown in that bubble per Deep Chat’s `html` vs `text` tradeoff, see [deep-chat#429](https://github.com/OvidijusParsiunas/deep-chat/issues/429)); then **`assistant_message`** as **`text`** (Markdown-friendly). **`overwrite: true`** follows [Deep Chat’s connect `Response` docs](https://deepchat.dev/docs/connect#Stream): overwrite the last ai bubble while reasoning streams, replace reasoning with the first assistant chunk when `hadReasoning`, and concatenate token-streamed assistant chunks that share an `id` (or lack one). See `lettaSseHandler` in `bear_chat.html`.
 

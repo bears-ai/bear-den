@@ -1,87 +1,17 @@
 <!DOCTYPE html>
 {% if session is defined and session.theme %}
-<html lang="en" class="theme-{{ session.theme }}">
+<html lang="en" class="den-bear-chat-page theme-{{ session.theme }}">
 {% else %}
-<html lang="en">
+<html lang="en" class="den-bear-chat-page">
 {% endif %}
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>{{ bear_name | e }} — Chat</title>
+  <link rel="stylesheet" href="/assets/css/style.css" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Geist+Mono:wght@100..900&family=Geist:wght@100..900&display=swap" rel="stylesheet" />
-  <style>
-    :root {
-      --page-color:   #EEEEEE;
-      --text-color:   #121212;
-      --border-color: #121212;
-      --accent-color: #cc11dd;
-      --meta-color:   #aaaaaa;
-      --error-color:  #CC0000;
-      --surface-color:#DDDDDD;
-    }
-    html.theme-dark {
-      --page-color:   #121212;
-      --text-color:   #DDDDDD;
-      --border-color: #DDDDDD;
-      --accent-color: #cc11dd;
-      --meta-color:   #aaaaaa;
-      --error-color:  #CC0000;
-      --surface-color:#1a1a1a;
-    }
-    @media (prefers-color-scheme: dark) {
-      :root {
-        --page-color:   #121212;
-        --text-color:   #DDDDDD;
-        --border-color: #DDDDDD;
-        --surface-color:#1a1a1a;
-      }
-      html.theme-light {
-        --page-color:   #EEEEEE;
-        --text-color:   #121212;
-        --border-color: #121212;
-        --surface-color:#DDDDDD;
-      }
-    }
-    html, body { height: 100%; margin: 0; }
-    body {
-      display: flex;
-      flex-direction: column;
-      min-height: 100vh;
-      background: var(--page-color);
-      color: var(--text-color);
-      font-family: "Geist", sans-serif;
-    }
-    .den-wrap {
-      flex: 1;
-      display: flex;
-      flex-direction: column;
-      min-height: 0;
-      max-width: 56rem;
-      margin: 0 auto;
-      padding: 1rem;
-      width: 100%;
-      box-sizing: border-box;
-    }
-    .den-toolbar {
-      display: flex;
-      gap: 1rem;
-      align-items: center;
-      margin-bottom: 0.75rem;
-      flex-wrap: wrap;
-    }
-    .den-toolbar a { color: var(--text-color); text-decoration: underline; }
-    .den-toolbar a:hover { color: var(--accent-color); }
-    .den-toolbar .den-bear-meta { font-size: 0.95rem; }
-    .den-toolbar code { font-size: 0.85rem; font-family: "Geist Mono", monospace; }
-    .den-err { color: var(--error-color); font-size: 0.9rem; margin: 0.5rem 0; }
-    #chat-wrap {
-      flex: 1;
-      position: relative;
-      min-height: 0;
-    }
-  </style>
 </head>
 <body>
   <div class="den-wrap">
@@ -205,15 +135,20 @@
       var pg  = cv('--page-color');
       var fg  = cv('--text-color');
       var brd = cv('--border-color');
-      var acc = cv('--accent-color');
       var met = cv('--meta-color');
       var srf = cv('--surface-color');
+      var tln = cv('--thin-line-unit');
+      var bubblePad = cv('--chat-bubble-padding-block') + ' ' + cv('--chat-bubble-padding-inline');
+      var lh = cv('--chat-line-height');
+      var bodyFont = cv('--body-font-family');
+      var border1 = tln + ' solid ' + brd;
+      var submitScale = 'scale(' + cv('--chat-submit-button-scale') + ')';
 
       chat.style.cssText =
         'position:absolute; top:0; left:0; width:100%; height:100%;' +
-        ' box-sizing:border-box; border:solid 1px ' + brd +
-        '; border-radius:0; font-family:"Geist",sans-serif;' +
-        ' font-size:0.9375rem; background:' + pg + ';';
+        ' box-sizing:border-box; border:solid var(--thin-line-unit) var(--border-color);' +
+        ' border-radius:0; font-family: var(--body-font-family);' +
+        ' font-size: var(--chat-font-size); background: var(--page-color);';
 
       chat.avatars = {
         ai:   { src: '', styles: { avatar: { display: 'none' } } },
@@ -227,9 +162,9 @@
           shared: {
             bubble: {
               borderRadius: '0',
-              padding: '10px 14px',
+              padding: bubblePad,
               maxWidth: '100%',
-              lineHeight: '1.6',
+              lineHeight: lh,
               color: fg,
             },
           },
@@ -239,14 +174,14 @@
           },
           user: {
             outerContainer: { justifyContent: 'flex-end' },
-            bubble: { backgroundColor: pg, border: '1px solid ' + brd },
+            bubble: { backgroundColor: pg, border: border1 },
           },
         },
         loading: {
           message: {
             styles: {
               outerContainer: { justifyContent: 'flex-start' },
-              bubble: { backgroundColor: srf, color: met, borderRadius: '0', padding: '10px 14px' },
+              bubble: { backgroundColor: srf, color: met, borderRadius: '0', padding: bubblePad },
             },
           },
         },
@@ -258,7 +193,7 @@
             width: '100%',
             margin: '0',
             border: 'unset',
-            borderTop: '1px solid ' + brd,
+            borderTop: border1,
             borderRadius: '0px',
             boxShadow: 'unset',
             backgroundColor: pg,
@@ -266,12 +201,12 @@
           },
           text: {
             color: fg,
-            fontFamily: "'Geist', sans-serif",
-            fontSize: '1.05em',
-            paddingTop: '11px',
-            paddingBottom: '13px',
-            paddingLeft: '12px',
-            paddingRight: '2.4em',
+            fontFamily: bodyFont,
+            fontSize: cv('--chat-input-font-size'),
+            paddingTop: cv('--chat-input-pad-top'),
+            paddingBottom: cv('--chat-input-pad-bottom'),
+            paddingLeft: cv('--chat-input-pad-left'),
+            paddingRight: cv('--chat-input-pad-right'),
           },
           focus: {},
         },
@@ -279,24 +214,24 @@
       };
 
       chat.submitButtonStyles = {
-        submit:  { container: { default: { transform: 'scale(1.21)', marginBottom: '-3px', marginRight: '0.4em' } } },
-        loading: { container: { default: { transform: 'scale(1.21)', marginBottom: '-3px', marginRight: '0.4em' } } },
-        stop:    { container: { default: { transform: 'scale(1.21)', marginBottom: '-3px', marginRight: '0.4em' } } },
+        submit:  { container: { default: { transform: submitScale, marginBottom: cv('--chat-submit-nudge-y'), marginRight: cv('--chat-submit-margin-right') } } },
+        loading: { container: { default: { transform: submitScale, marginBottom: cv('--chat-submit-nudge-y'), marginRight: cv('--chat-submit-margin-right') } } },
+        stop:    { container: { default: { transform: submitScale, marginBottom: cv('--chat-submit-nudge-y'), marginRight: cv('--chat-submit-margin-right') } } },
       };
 
       chat.inputAreaStyle = { backgroundColor: pg };
 
       chat.auxiliaryStyle =
-        '::-webkit-scrollbar{width:6px}' +
-        '::-webkit-scrollbar-thumb{background:' + met + ';border-radius:0}' +
+        '::-webkit-scrollbar{width:var(--chat-scrollbar-size)}' +
+        '::-webkit-scrollbar-thumb{background:var(--meta-color);border-radius:0}' +
         '::-webkit-scrollbar-track{background:transparent}' +
-        '#messages{padding-top:1rem !important}' +
-        '.den-reasoning-wrap{font-size:0.9em;color:inherit;opacity:0.92}' +
-        '.den-reasoning-head{display:flex;align-items:center;gap:0.45rem;min-width:0}' +
-        '.den-reasoning-kicker{flex:0 0 auto;font-variant:small-caps;letter-spacing:0.06em;font-size:0.78em;opacity:0.8}' +
-        '.den-reasoning-scroll{flex:1 1 auto;min-width:0;overflow-x:auto;overflow-y:hidden;max-height:1.55em;line-height:1.55em;font-family:"Geist Mono",ui-monospace,monospace;font-size:0.88em;white-space:nowrap;-webkit-overflow-scrolling:touch}' +
-        '.den-reasoning-wrap.den-reasoning-expanded .den-reasoning-scroll{white-space:pre-wrap;overflow-x:visible;overflow-y:auto;max-height:18rem}' +
-        '.den-reasoning-toggle{flex:0 0 auto;margin:0;padding:0.12em 0.35em;border:none;background:transparent;color:inherit;opacity:0.72;cursor:pointer;font:inherit;font-size:0.82em;text-decoration:underline;text-underline-offset:2px}' +
+        '#messages{padding-top:var(--chat-messages-padding-top)!important}' +
+        '.den-reasoning-wrap{font-size:smaller;color:inherit;opacity:0.92}' +
+        '.den-reasoning-head{display:flex;align-items:center;gap:calc(var(--spacing-unit) * 0.9);min-width:0}' +
+        '.den-reasoning-kicker{flex:0 0 auto;font-variant:small-caps;letter-spacing:0.06em;font-size:smaller;opacity:0.8}' +
+        '.den-reasoning-scroll{flex:1 1 auto;min-width:0;overflow-x:auto;overflow-y:hidden;max-height:calc(1em * var(--chat-line-height));line-height:var(--chat-line-height);font-family:var(--data-font-family),ui-monospace,monospace;font-size:smaller;white-space:nowrap;-webkit-overflow-scrolling:touch}' +
+        '.den-reasoning-wrap.den-reasoning-expanded .den-reasoning-scroll{white-space:pre-wrap;overflow-x:visible;overflow-y:auto;max-height:calc(var(--spacing-unit) * 36)}' +
+        '.den-reasoning-toggle{flex:0 0 auto;margin:0;padding:calc(var(--spacing-unit) * 0.24) calc(var(--spacing-unit) * 0.7);border:none;background:transparent;color:inherit;opacity:0.72;cursor:pointer;font:inherit;font-size:smaller;text-decoration:underline;text-underline-offset:calc(var(--thin-line-unit) * 2)}' +
         '.den-reasoning-toggle:hover{opacity:1}';
 
       chat.remarkable = { html: false, breaks: true };
