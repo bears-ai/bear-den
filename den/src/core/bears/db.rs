@@ -259,60 +259,6 @@ pub async fn membership_role_for_user(
 }
 
 #[derive(Debug, Clone, sqlx::FromRow, serde::Serialize)]
-pub struct BearChatActivityRow {
-    pub id: i64,
-    pub username: String,
-    pub channel: String,
-    pub message_preview: String,
-    pub created_at: time::OffsetDateTime,
-}
-
-pub async fn record_chat_activity(
-    pool: &PgPool,
-    bear_id: Uuid,
-    user_id: i32,
-    channel: &str,
-    message_preview: &str,
-) -> Result<(), CustomError> {
-    let preview: String = message_preview.chars().take(500).collect();
-    sqlx::query(
-        r#"
-        INSERT INTO bear_chat_activity (bear_id, user_id, channel, message_preview)
-        VALUES ($1, $2, $3, $4)
-        "#,
-    )
-    .bind(bear_id)
-    .bind(user_id)
-    .bind(channel)
-    .bind(preview)
-    .execute(pool)
-    .await?;
-    Ok(())
-}
-
-pub async fn list_chat_activity_for_bear(
-    pool: &PgPool,
-    bear_id: Uuid,
-    limit: i64,
-) -> Result<Vec<BearChatActivityRow>, CustomError> {
-    sqlx::query_as::<_, BearChatActivityRow>(
-        r#"
-        SELECT a.id, u.username, a.channel, a.message_preview, a.created_at
-        FROM bear_chat_activity a
-        INNER JOIN users u ON u.id = a.user_id
-        WHERE a.bear_id = $1
-        ORDER BY a.created_at DESC
-        LIMIT $2
-        "#,
-    )
-    .bind(bear_id)
-    .bind(limit)
-    .fetch_all(pool)
-    .await
-    .map_err(Into::into)
-}
-
-#[derive(Debug, Clone, sqlx::FromRow, serde::Serialize)]
 pub struct MembershipRow {
     pub user_id: i32,
     pub username: String,

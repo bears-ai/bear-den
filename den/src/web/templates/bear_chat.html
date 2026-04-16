@@ -17,10 +17,16 @@
 </head>
 <body>
   <div class="den-wrap">
-    <div class="den-toolbar">
-      <a href="/">Home</a>
-      · <a href="/bear/{{ bear_slug | e }}/details">Bear details</a>
-      <span class="den-bear-meta">Chatting with <strong>{{ bear_name | e }}</strong> (<code>{{ bear_slug | e }}</code>)</span>
+    <div class="den-toolbar den-chat-toolbar">
+      <div class="den-chat-toolbar-links">
+        <a href="/">Home</a>
+        · <a href="/bear/{{ bear_slug | e }}/details">Bear details</a>
+        <span class="den-bear-meta">Chatting with <strong>{{ bear_name | e }}</strong> (<code>{{ bear_slug | e }}</code>)</span>
+      </div>
+      <div class="den-chat-conv-wrap" id="den-chat-conv-wrap" hidden>
+        <label for="den-conv">Conversation</label>
+        <select id="den-conv" class="den-chat-conv-select" aria-label="Conversation"></select>
+      </div>
     </div>
     <p id="err" class="den-err" hidden></p>
     <div id="chat-wrap">
@@ -30,6 +36,8 @@
   <script>
     var BEAR_ID   = "{{ bear_id | e }}";
     var BEAR_NAME = "{{ bear_name | e }}";
+    /** Letta conversation id (`default` = agent main thread, or `conv-…`). */
+    var CONVERSATION_ID = 'default';
     var errEl = document.getElementById('err');
     /** Page size for Letta `GET …/messages` (newest page first; scroll up loads older). */
     var DEN_HISTORY_PAGE = 50;
@@ -166,6 +174,7 @@
       }
       var params = new URLSearchParams();
       params.set('bear_id', BEAR_ID);
+      params.set('conversation_id', CONVERSATION_ID);
       params.set('limit', String(DEN_HISTORY_PAGE));
       if (index > 0 && historyNextBefore) {
         params.set('before', historyNextBefore);
@@ -373,7 +382,11 @@
         method: 'POST',
         credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ bear_id: BEAR_ID, message: userText }),
+        body: JSON.stringify({
+          bear_id: BEAR_ID,
+          message: userText,
+          conversation_id: CONVERSATION_ID,
+        }),
         signal: abortCtl.signal,
       }).then(function (response) {
         if (response.status === 401) {
@@ -466,7 +479,104 @@
       });
     }
 
-    customElements.whenDefined('deep-chat').then(configureDenChat);
+    function remountDeepChat() {
+      var wrap = document.getElementById('chat-wrap');
+      if (!wrap) return;
+      historyNextBefore = null;
+      wrap.innerHTML = '<deep-chat id="chat"></deep-chat>';
+      customElements.whenDefined('deep-chat').then(configureDenChat);
+    }
+
+    function loadConversations() {
+      if (!BEAR_ID) {
+        return Promise.resolve();
+      }
+      return fetch('/v1/chat/conversations?bear_id=' + encodeURIComponent(BEAR_ID), {
+        credentials: 'same-origin',
+      })
+        .then(function (response) {
+          if (response.status === 401) {
+            window.location.href = '/login?next=' + encodeURIComponent(window.location.pathname);
+            return { __den_skip: true };
+          }
+          if (!response.ok) {
+            return response.text().then(function (t) {
+              throw new Error(t || 'HTTP ' + response.status);
+            });
+          }
+          return response.json();
+        })
+        .then(function (data) {
+          if (data && data.__den_skip) return 'skip-boot';
+          var wrap = document.getElementById('den-chat-conv-wrap');
+          var sel = document.getElementById('den-conv');
+          if (!wrap || !sel) return;
+          var list = data && data.conversations ? data.conversations : [];
+          sel.innerHTML = '';
+          var i;
+          for (i = 0; i < list.length; i++) {
+            var c = list[i];
+            if (!c || !c.id) continue;
+            var opt = document.createElement('option');
+            opt.value = c.id;
+            opt.textContent = c.title || c.id;
+            sel.appendChild(opt);
+          }
+          if (sel.options.length === 0) {
+            var o = document.createElement('option');
+            o.value = 'default';
+            o.textContent = 'Main chat';
+            sel.appendChild(o);
+          }
+          wrap.hidden = false;
+          var firstId = list[0] && list[0].id ? list[0].id : 'default';
+          sel.value = firstId;
+          CONVERSATION_ID = sel.value;
+          sel.onchange = function () {
+            CONVERSATION_ID = sel.value;
+            remountDeepChat();
+          };
+          return 'ok';
+        })
+        .catch(function (err) {
+          showErr(String(err.message || err));
+          var wrap = document.getElementById('den-chat-conv-wrap');
+          var sel = document.getElementById('den-conv');
+          if (wrap && sel) {
+            sel.innerHTML = '';
+            var o = document.createElement('option');
+            o.value = 'default';
+            o.textContent = 'Main chat';
+            sel.appendChild(o);
+            wrap.hidden = false;
+            sel.onchange = function () {
+              CONVERSATION_ID = sel.value;
+              remountDeepChat();
+            };
+          }
+          CONVERSATION_ID = 'default';
+          return 'ok';
+        });
+    }
+
+    function boot() {
+      loadConversations()
+        .then(function (tag) {
+          if (tag === 'skip-boot') return false;
+          return customElements.whenDefined('deep-chat').then(function () {
+            return true;
+          });
+        })
+        .then(function (doConfigure) {
+          if (doConfigure) configureDenChat();
+        })
+        .catch(function (err) {
+          showErr(String(err.message || err));
+          customElements.whenDefined('deep-chat').then(configureDenChat);
+        });
+    }
+
+    boot();
   </script>
 </body>
 </html>

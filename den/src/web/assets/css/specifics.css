@@ -38,11 +38,48 @@ html.den-bear-chat-page .den-wrap {
 }
 
 html.den-bear-chat-page .den-toolbar {
-    display: flex;
-    gap: calc(var(--spacing-unit) * 2);
-    align-items: center;
-    margin-bottom: calc(var(--spacing-unit) * 1.5);
-    flex-wrap: wrap;
+  display: flex;
+  gap: calc(var(--spacing-unit) * 2);
+  align-items: center;
+  margin-bottom: calc(var(--spacing-unit) * 1.5);
+  flex-wrap: wrap;
+}
+
+html.den-bear-chat-page .den-chat-toolbar {
+  justify-content: space-between;
+}
+
+html.den-bear-chat-page .den-chat-toolbar-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: calc(var(--spacing-unit) * 2);
+  align-items: center;
+  min-width: 0;
+}
+
+html.den-bear-chat-page .den-chat-conv-wrap {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: calc(var(--spacing-unit) * 0.75);
+  flex: 0 0 auto;
+  margin-left: auto;
+}
+
+html.den-bear-chat-page .den-chat-conv-wrap label {
+  font-size: smaller;
+  color: var(--meta-color);
+}
+
+html.den-bear-chat-page .den-chat-conv-select {
+  font: inherit;
+  font-size: smaller;
+  color: var(--text-color);
+  background: var(--field-fill-color);
+  border: var(--thin-line-unit) solid var(--border-color);
+  border-radius: 0;
+  padding: calc(var(--spacing-unit) * 0.35) calc(var(--spacing-unit) * 0.75);
+  max-width: min(22rem, 100vw);
 }
 
 html.den-bear-chat-page .den-toolbar .den-bear-meta {

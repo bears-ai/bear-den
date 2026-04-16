@@ -1,6 +1,8 @@
 // ROUTES: When modifying routes in this file, update /src/web/ROUTES.md
 //! End-user JSON + SSE under `/v1/*` (session cookie, same origin as Deep Chat).
 
+use std::cmp::Ordering;
+
 use axum::{
     Json, Router,
     body::Body,
@@ -25,6 +27,7 @@ use crate::{
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/bears", get(list_my_bears))
+        .route("/chat/conversations", get(chat_conversations))
         .route("/chat/history", get(chat_history))
         .route("/chat/send", post(chat_send))
         .route_layer(login_required!(Backend, login_url = "/login"))
@@ -68,11 +71,32 @@ async fn list_my_bears(
 #[derive(Debug, Deserialize)]
 pub struct ChatHistoryQuery {
     pub bear_id: Uuid,
+    /// Letta conversation: `default` (agent main thread) or `conv-…`.
+    #[serde(default)]
+    pub conversation_id: Option<String>,
     /// Letta cursor: messages older than this id (see `GET /v1/agents/{id}/messages?before=`).
     #[serde(default)]
     pub before: Option<String>,
     #[serde(default)]
     pub limit: Option<u32>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ChatConversationsQuery {
+    pub bear_id: Uuid,
+}
+
+#[derive(Serialize)]
+pub struct ChatConversationRow {
+    pub id: String,
+    pub title: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_message_at: Option<String>,
+}
+
+#[derive(Serialize)]
+pub struct ChatConversationsResponse {
+    pub conversations: Vec<ChatConversationRow>,
 }
 
 #[derive(Serialize)]
@@ -87,6 +111,187 @@ pub struct ChatHistoryResponse {
     pub has_more: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub next_before: Option<String>,
+}
+
+fn letta_conversations_top_array<'a>(v: &'a serde_json::Value) -> &'a [serde_json::Value] {
+    if let Some(a) = v.as_array() {
+        return a.as_slice();
+    }
+    if let Some(a) = v.get("conversations").and_then(|x| x.as_array()) {
+        return a.as_slice();
+    }
+    if let Some(a) = v.get("data").and_then(|x| x.as_array()) {
+        return a.as_slice();
+    }
+    if let Some(a) = v.get("items").and_then(|x| x.as_array()) {
+        return a.as_slice();
+    }
+    &[]
+}
+
+/// Hide rows that look archived (Letta may extend the schema; Den may add flags later).
+fn conversation_is_archived(v: &serde_json::Value) -> bool {
+    v.get("archived").and_then(|x| x.as_bool()) == Some(true)
+        || v.get("is_archived").and_then(|x| x.as_bool()) == Some(true)
+        || v.get("deleted").and_then(|x| x.as_bool()) == Some(true)
+        || v.get("hidden").and_then(|x| x.as_bool()) == Some(true)
+        || v.get("status").and_then(|x| x.as_str()) == Some("archived")
+}
+
+fn conversation_title_from_value(v: &serde_json::Value, id: &str) -> String {
+    v.get("summary")
+        .and_then(|x| x.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| format!("Chat ({})", id.trim_start_matches("conv-")))
+}
+
+fn cmp_conversation_row_newest_first(a: &ChatConversationRow, b: &ChatConversationRow) -> Ordering {
+    match (&a.last_message_at, &b.last_message_at) {
+        (Some(al), Some(bl)) => bl.cmp(al),
+        (None, Some(_)) => Ordering::Greater,
+        (Some(_), None) => Ordering::Less,
+        (None, None) => a.id.cmp(&b.id),
+    }
+}
+
+/// `None` / empty / `default` → agent main thread. Otherwise must be `conv-` + hex / hyphen (Letta id).
+fn normalize_client_conversation_id(raw: Option<&str>) -> Result<String, CustomError> {
+    let s = raw.map(str::trim).filter(|s| !s.is_empty()).unwrap_or("default");
+    if s == "default" {
+        return Ok("default".to_string());
+    }
+    let ok = s.starts_with("conv-")
+        && s.len() > 8
+        && s
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_');
+    if ok {
+        Ok(s.to_string())
+    } else {
+        Err(CustomError::ValidationError(format!(
+            "invalid conversation_id (expected 'default' or a Letta conv- id): {s}"
+        )))
+    }
+}
+
+async fn chat_conversations(
+    State(state): State<AppState>,
+    auth_session: AuthSession,
+    Query(q): Query<ChatConversationsQuery>,
+) -> Result<Json<ChatConversationsResponse>, CustomError> {
+    let user_id = auth_session
+        .user
+        .as_ref()
+        .map(|u| u.id)
+        .ok_or_else(|| CustomError::Authentication("login required".to_string()))?;
+
+    let allowed = bears_db::user_may_use_bear(state.sqlx_pool(), user_id, q.bear_id).await?;
+    if !allowed {
+        return Err(CustomError::Authorization(
+            "you do not have access to this bear".to_string(),
+        ));
+    }
+
+    let bear = bears_db::get_bear(state.sqlx_pool(), q.bear_id)
+        .await?
+        .ok_or_else(|| CustomError::NotFound("bear not found".to_string()))?;
+
+    let default_only = || {
+        Json(ChatConversationsResponse {
+            conversations: vec![ChatConversationRow {
+                id: "default".to_string(),
+                title: "Main chat".to_string(),
+                last_message_at: None,
+            }],
+        })
+    };
+
+    if !state.letta.is_enabled() {
+        return Ok(default_only());
+    }
+
+    let Some(agent_id) = bear
+        .letta_agent_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    else {
+        return Ok(default_only());
+    };
+
+    let mut rows: Vec<ChatConversationRow> = Vec::new();
+
+    let default_last = match state
+        .letta
+        .list_conversation_messages("default", Some(agent_id), 1, None)
+        .await
+    {
+        Ok(peek) => letta_messages_top_array(&peek)
+            .first()
+            .and_then(|m| {
+                m.get("date")
+                    .or_else(|| m.get("created_at"))
+                    .and_then(|x| x.as_str())
+                    .map(|s| s.to_string())
+            }),
+        Err(e) => {
+            tracing::warn!(%e, "default conversation activity peek failed");
+            None
+        }
+    };
+
+    rows.push(ChatConversationRow {
+        id: "default".to_string(),
+        title: "Main chat".to_string(),
+        last_message_at: default_last,
+    });
+
+    match state.letta.list_conversations_for_agent(agent_id, 100).await {
+        Ok(list_body) => {
+            for item in letta_conversations_top_array(&list_body) {
+                if conversation_is_archived(item) {
+                    continue;
+                }
+                let Some(id) = item
+                    .get("id")
+                    .and_then(|x| x.as_str())
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                else {
+                    continue;
+                };
+                if !id.starts_with("conv-") {
+                    continue;
+                }
+                let last_message_at = item
+                    .get("last_message_at")
+                    .and_then(|x| x.as_str())
+                    .map(|s| s.to_string())
+                    .or_else(|| {
+                        item.get("updated_at")
+                            .and_then(|x| x.as_str())
+                            .map(|s| s.to_string())
+                    });
+                let title = conversation_title_from_value(item, id);
+                rows.push(ChatConversationRow {
+                    id: id.to_string(),
+                    title,
+                    last_message_at,
+                });
+            }
+        }
+        Err(e) => {
+            tracing::warn!(%e, "list conversations failed; returning Main chat only");
+        }
+    }
+
+    rows.sort_by(cmp_conversation_row_newest_first);
+
+    Ok(Json(ChatConversationsResponse {
+        conversations: rows,
+    }))
 }
 
 async fn chat_history(
@@ -135,9 +340,16 @@ async fn chat_history(
     let limit = q.limit.unwrap_or(50).clamp(1, 100);
     let before = q.before.as_deref().map(str::trim).filter(|s| !s.is_empty());
 
+    let conv_id = normalize_client_conversation_id(q.conversation_id.as_deref())?;
+    let agent_for_conv = if conv_id == "default" {
+        Some(agent_id)
+    } else {
+        None
+    };
+
     let body = state
         .letta
-        .list_agent_messages(agent_id, limit, before)
+        .list_conversation_messages(&conv_id, agent_for_conv, limit, before)
         .await?;
 
     let (messages, has_more, next_before) = map_letta_history_page(&body, limit);
@@ -363,25 +575,16 @@ async fn chat_send(
             )
         })?;
 
-    if body.conversation_id.is_some() {
-        tracing::debug!("conversation_id accepted but not yet forwarded to Letta in this build");
-    }
-
-    if let Err(e) = bears_db::record_chat_activity(
-        state.sqlx_pool(),
-        body.bear_id,
-        user_id,
-        "den_web",
-        body.message.trim(),
-    )
-    .await
-    {
-        tracing::warn!(%user_id, bear_id = %body.bear_id, "bear_chat_activity insert failed: {e}");
-    }
+    let conv_id = normalize_client_conversation_id(body.conversation_id.as_deref())?;
+    let agent_for_stream = if conv_id == "default" {
+        Some(agent_id)
+    } else {
+        None
+    };
 
     let upstream = state
         .letta
-        .post_messages_streaming(agent_id, body.message.trim())
+        .post_conversation_messages_streaming(&conv_id, agent_for_stream, body.message.trim())
         .await?;
 
     let stream = upstream.bytes_stream().map(|res| {
@@ -549,5 +752,40 @@ mod chat_history_map_tests {
         assert_eq!(nb.as_deref(), Some("older"));
         assert_eq!(msgs[0].text, "first");
         assert_eq!(msgs[1].text, "second");
+    }
+}
+
+#[cfg(test)]
+mod conversation_id_tests {
+    use super::normalize_client_conversation_id;
+
+    #[test]
+    fn normalizes_default_aliases() {
+        assert_eq!(
+            normalize_client_conversation_id(None).unwrap(),
+            "default"
+        );
+        assert_eq!(
+            normalize_client_conversation_id(Some("")).unwrap(),
+            "default"
+        );
+        assert_eq!(
+            normalize_client_conversation_id(Some("default")).unwrap(),
+            "default"
+        );
+    }
+
+    #[test]
+    fn accepts_conv_prefix_ids() {
+        assert_eq!(
+            normalize_client_conversation_id(Some("conv-abc12345")).unwrap(),
+            "conv-abc12345"
+        );
+    }
+
+    #[test]
+    fn rejects_garbage_ids() {
+        assert!(normalize_client_conversation_id(Some("../../../etc/passwd")).is_err());
+        assert!(normalize_client_conversation_id(Some("conv-x")).is_err());
     }
 }

@@ -297,7 +297,6 @@ async fn bear_details_get(
     let bear = load_bear_member(state.sqlx_pool(), user_id, &slug).await?;
     let is_admin = viewer_is_bear_admin(state.sqlx_pool(), user_id, bear.id).await?;
     let members = bears_db::list_members_for_bear(state.sqlx_pool(), bear.id).await?;
-    let activity = bears_db::list_chat_activity_for_bear(state.sqlx_pool(), bear.id, 80).await?;
 
     let letta_configured = state.letta.is_enabled();
     let letta_api_base = state.config.letta_base_url.trim().to_string();
@@ -353,7 +352,6 @@ async fn bear_details_get(
             bear,
             is_admin,
             members,
-            activity,
             letta_configured,
             letta_api_base,
             letta_agent_summary,

@@ -78,28 +78,6 @@
     <h3>System prompt (Den)</h3>
     <pre style="white-space: pre-wrap; max-height: 24rem; overflow: auto;">{{ bear.system_prompt | e }}</pre>
 
-    <h3>Conversations &amp; activity</h3>
-    <p class="form-hint">Den records each message you send from the web chat (shared Letta thread per bear). Channel is <code>den_web</code>.</p>
-    {% if activity and activity | length > 0 %}
-    <table>
-        <thead>
-            <tr><th>When</th><th>User</th><th>Channel</th><th>Preview</th></tr>
-        </thead>
-        <tbody>
-            {% for row in activity %}
-            <tr>
-                <td>{{ row.created_at | datetimeformat(format="short") }}</td>
-                <td>{{ row.username | e }}</td>
-                <td><code>{{ row.channel | e }}</code></td>
-                <td>{{ row.message_preview | e }}</td>
-            </tr>
-            {% endfor %}
-        </tbody>
-    </table>
-    {% else %}
-    <p><em>No recorded chat activity yet.</em></p>
-    {% endif %}
-
     <h3>Letta agent</h3>
     {% if not letta_configured %}
     <p><em>Letta is not configured</em> (<code>LETTA_BASE_URL</code> empty).</p>

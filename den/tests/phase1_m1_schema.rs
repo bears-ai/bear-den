@@ -36,11 +36,6 @@ async fn m1_bears_and_membership_tables_exist() {
         .fetch_one(&pool)
         .await
         .expect("audit_chat table queryable");
-
-    sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM bear_chat_activity")
-        .fetch_one(&pool)
-        .await
-        .expect("bear_chat_activity table queryable");
 }
 
 #[tokio::test]

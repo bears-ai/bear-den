@@ -24,7 +24,7 @@ Axum routes for the web server (`RUN_WEB=true`). Update this file when you add o
 ## Member bear management (`src/web/bear_management.rs`)
 
 - `GET|POST /bears/new` — create a bear; creator is granted `user_bear.role = admin` and Letta is provisioned like operator create (`src/web/bear_create_support.rs` shared form context)
-- `GET /bear/{slug}/details` — bear overview for any member: Den fields, members (roles), recent Den web chat activity, Letta agent summary + memory block list when configured
+- `GET /bear/{slug}/details` — bear overview for any member: Den fields, members (roles), Letta agent summary + memory block list when configured
 - `GET|POST /bear/{slug}/details/edit` — edit bear (bear admins only); same fields as operator edit
 - `POST /bear/{slug}/details/delete` — delete bear row (bear admins only); form field `confirm_slug` must match the slug
 - `POST /bear/{slug}/details/members/add` — add or update a user by username (`username`, `role` = `member` or `admin`) — bear admins only
@@ -34,8 +34,9 @@ Axum routes for the web server (`RUN_WEB=true`). Update this file when you add o
 
 - `GET /bear/{slug}` — Deep Chat view for a single bear the user may access (membership-checked; `src/web/templates/bear_chat.html`, handler in `src/web/bear_chat.rs`).
 - `GET /v1/bears` — JSON list of bears the signed-in user may use (membership-filtered; includes `is_bear_admin`; no Letta ids exposed) (`src/web/v1/mod.rs`).
-- `GET /v1/chat/history` — query `bear_id` (required), optional `before` (Letta message id cursor), optional `limit` (default 50, max 100). Membership-checked; proxies Letta `GET /v1/agents/{id}/messages?order=desc` for Deep Chat `loadHistory` (initial window + scroll-up pagination when more exists).
-- `POST /v1/chat/send` — membership check, then proxies Letta `POST /v1/agents/{id}/messages/stream` (SSE); the browser parses `data:` lines and shows `reasoning_message` (HTML “Thinking” strip), `assistant_message` text, and `error_message` payloads in Deep Chat (see `bear_chat.html`).
+- `GET /v1/chat/conversations` — query `bear_id` (required). Membership-checked; returns `{ "conversations": [ { "id", "title", "last_message_at" } ] }` for the bear’s Letta agent (`default` = main thread + `conv-…` rows), sorted by most recent activity, excluding conversations that look archived in Letta JSON.
+- `GET /v1/chat/history` — query `bear_id` (required), optional `conversation_id` (`default` or `conv-…`; default when omitted), optional `before` (Letta message id cursor), optional `limit` (default 50, max 100). Membership-checked; proxies Letta `GET /v1/conversations/{id}/messages?order=desc` (with `agent_id` when `conversation_id=default`) for Deep Chat `loadHistory`.
+- `POST /v1/chat/send` — JSON body `bear_id`, `message`, optional `conversation_id` (`default` or `conv-…`). Membership-checked; proxies Letta `POST /v1/conversations/{id}/messages` with streaming (SSE); the browser parses `data:` lines and shows `reasoning_message` (HTML “Thinking” strip), `assistant_message` text, and `error_message` payloads in Deep Chat (see `bear_chat.html`).
 
 `/v1/*` uses `login_required!(…)` (same session as the rest of the web app).
 

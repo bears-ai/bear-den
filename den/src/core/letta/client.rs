@@ -206,6 +206,10 @@ impl LettaClient {
 
     /// `POST /v1/agents/{id}/messages/stream` (Letta API v1 / SDK-style streaming).
     ///
+    /// Prefer [`Self::post_conversation_messages_streaming`] for new code paths; this remains for
+    /// callers that target the legacy agent-default endpoint directly.
+    #[allow(dead_code)]
+    ///
     /// Older servers accepted `POST …/messages` with `{ input, streaming: true }`; current Letta
     /// returns 422 for that shape and expects this dedicated SSE endpoint with a `messages` array.
     pub async fn post_messages_streaming(
@@ -253,7 +257,173 @@ impl LettaClient {
         Ok(resp)
     }
 
+    /// `GET /v1/conversations/` — conversations for one agent (`order_by=last_message_at`, newest first).
+    pub async fn list_conversations_for_agent(
+        &self,
+        agent_id: &str,
+        limit: u32,
+    ) -> Result<serde_json::Value, CustomError> {
+        if !self.is_enabled() {
+            return Err(CustomError::System(
+                "Letta is not configured (set LETTA_BASE_URL)".to_string(),
+            ));
+        }
+
+        let limit = limit.clamp(1, 200);
+        let limit_str = limit.to_string();
+        let url = format!("{}/v1/conversations/", self.base_url);
+        let resp = self
+            .http
+            .get(url)
+            .headers(self.auth_headers())
+            .query(&[
+                ("agent_id", agent_id),
+                ("limit", limit_str.as_str()),
+                ("order_by", "last_message_at"),
+                ("order", "desc"),
+            ])
+            .send()
+            .await
+            .map_err(|e| CustomError::System(format!("Letta list conversations request failed: {e}")))?;
+
+        let status = resp.status();
+        let text = resp
+            .text()
+            .await
+            .map_err(|e| CustomError::System(format!("Letta list conversations body: {e}")))?;
+
+        if !status.is_success() {
+            return Err(CustomError::System(format!(
+                "Letta list conversations HTTP {status}: {text}"
+            )));
+        }
+
+        serde_json::from_str(&text).map_err(|e| {
+            CustomError::Parsing(format!("Letta list conversations JSON: {e}; body: {text}"))
+        })
+    }
+
+    /// `GET /v1/conversations/{conversation_id}/messages` — paginated history for one conversation.
+    ///
+    /// For the agent default thread, pass `conversation_id == "default"` and `Some(agent_id)`.
+    pub async fn list_conversation_messages(
+        &self,
+        conversation_id: &str,
+        agent_id: Option<&str>,
+        limit: u32,
+        before: Option<&str>,
+    ) -> Result<serde_json::Value, CustomError> {
+        if !self.is_enabled() {
+            return Err(CustomError::System(
+                "Letta is not configured (set LETTA_BASE_URL)".to_string(),
+            ));
+        }
+
+        let limit = limit.clamp(1, 100);
+        let limit_str = limit.to_string();
+        let url = format!(
+            "{}/v1/conversations/{}/messages",
+            self.base_url,
+            conversation_id
+        );
+
+        let mut req = self
+            .http
+            .get(url)
+            .headers(self.auth_headers())
+            .query(&[("order", "desc"), ("limit", limit_str.as_str())]);
+
+        if let Some(a) = agent_id.map(str::trim).filter(|s| !s.is_empty()) {
+            req = req.query(&[("agent_id", a)]);
+        }
+        if let Some(b) = before.map(str::trim).filter(|s| !s.is_empty()) {
+            req = req.query(&[("before", b)]);
+        }
+
+        let resp = req
+            .send()
+            .await
+            .map_err(|e| CustomError::System(format!("Letta list conversation messages failed: {e}")))?;
+
+        let status = resp.status();
+        let text = resp
+            .text()
+            .await
+            .map_err(|e| CustomError::System(format!("Letta list conversation messages body: {e}")))?;
+
+        if !status.is_success() {
+            return Err(CustomError::System(format!(
+                "Letta list conversation messages HTTP {status}: {text}"
+            )));
+        }
+
+        serde_json::from_str(&text).map_err(|e| {
+            CustomError::Parsing(format!(
+                "Letta list conversation messages JSON: {e}; body: {text}"
+            ))
+        })
+    }
+
+    /// `POST /v1/conversations/{conversation_id}/messages` with `streaming: true` (SSE).
+    ///
+    /// For the agent default thread, pass `conversation_id == "default"` and `Some(agent_id)` in the body.
+    pub async fn post_conversation_messages_streaming(
+        &self,
+        conversation_id: &str,
+        agent_id: Option<&str>,
+        user_input: &str,
+    ) -> Result<reqwest::Response, CustomError> {
+        if !self.is_enabled() {
+            return Err(CustomError::System(
+                "Letta is not configured (set LETTA_BASE_URL)".to_string(),
+            ));
+        }
+
+        let mut body = serde_json::Map::new();
+        body.insert(
+            "messages".to_string(),
+            json!([{
+                "role": "user",
+                "content": user_input,
+            }]),
+        );
+        body.insert("streaming".to_string(), json!(true));
+        body.insert("stream_tokens".to_string(), json!(true));
+        if let Some(a) = agent_id.map(str::trim).filter(|s| !s.is_empty()) {
+            body.insert("agent_id".to_string(), json!(a));
+        }
+
+        let url = format!(
+            "{}/v1/conversations/{}/messages",
+            self.base_url, conversation_id
+        );
+
+        let resp = self
+            .http
+            .post(url)
+            .headers(self.auth_headers())
+            .header(CONTENT_TYPE, "application/json")
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| CustomError::System(format!("Letta conversation messages request failed: {e}")))?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let text = resp
+                .text()
+                .await
+                .unwrap_or_else(|_| "(no body)".to_string());
+            return Err(CustomError::System(format!(
+                "Letta conversation messages HTTP {status}: {text}"
+            )));
+        }
+
+        Ok(resp)
+    }
+
     /// `GET /v1/agents/{id}/messages` — paginated message history (`order`, `limit`, optional `before` cursor).
+    #[allow(dead_code)]
     pub async fn list_agent_messages(
         &self,
         agent_id: &str,
