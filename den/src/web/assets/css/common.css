@@ -7,6 +7,7 @@ a:hover {
 }
 
 /* Text-entry controls (forms + bear chat): shared fill token */
+input:not([type]),
 input[type="text"],
 input[type="email"],
 input[type="password"],
@@ -129,8 +130,6 @@ form > .fields-grid {
             /* width: 100%; */
             border: solid var(--thin-line-unit) var(--border-color);
             margin-right: var(--spacing-unit);
-            background-color: var(--field-fill-color);
-            color: var(--text-color);
         }
         input[type="checkbox"], input[type="radio"] {
             width: auto;

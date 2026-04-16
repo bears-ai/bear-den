@@ -56,6 +56,7 @@ Add to the **bottom** of `src/web/assets/css/specifics.css`:
 #### Colors
 - `--page-color` - Main content background
 - `--surface-color` - Muted panels and alternate surfaces (for example AI chat bubbles)
+- `--field-fill-color` - Background for text inputs, textareas, selects, and the bear chat composer (`#ffffff` in current themes)
 - `--text-color` - Primary text
 - `--border-color` - Standard borders
 - `--accent-color` - Highlights/hovers
