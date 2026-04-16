@@ -302,6 +302,12 @@
         '::-webkit-scrollbar{width:var(--chat-scrollbar-size)}' +
         '::-webkit-scrollbar-thumb{background:var(--meta-color);border-radius:0}' +
         '::-webkit-scrollbar-track{background:transparent}' +
+        /* Default Deep Chat downwards layout is display:grid with implicit auto rows; after
+           loadHistory the message list can steal all height and clip #input until a reflow
+           (e.g. window focus). Pin messages to a flexible scroll row and keep the composer row. */
+        '#chat-view.deep-chat-downwards-mode{grid-template-rows:minmax(0,1fr) auto!important;min-height:0!important}' +
+        '#chat-view.deep-chat-downwards-mode #messages{min-height:0!important}' +
+        '#chat-view.deep-chat-downwards-mode #input{margin-top:0!important}' +
         '#messages{padding-top:var(--chat-messages-padding-top)!important}' +
         '.den-reasoning-wrap{font-size:smaller;color:inherit;opacity:0.92}' +
         '.den-reasoning-head{display:flex;align-items:center;gap:calc(var(--spacing-unit) * 0.9);min-width:0}' +

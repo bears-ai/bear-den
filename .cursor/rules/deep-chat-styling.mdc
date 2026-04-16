@@ -23,7 +23,7 @@ Design examples (including "full width input"): <https://deepchat.dev/examples/d
 | `textInput` | Input box styling, placeholder, character limit |
 | `submitButtonStyles` | Send/loading/stop/disabled button states |
 | `inputAreaStyle` | Bottom bar wrapping input + buttons |
-| `auxiliaryStyle` | Raw CSS injected into Shadow DOM (scrollbar, internal overrides) |
+| `auxiliaryStyle` | Raw CSS injected into Shadow DOM (scrollbar, internal overrides, **downwards grid row fix** so `#messages` does not clip `#input` after `loadHistory`) |
 | `avatars` | Avatar images/visibility per role |
 | `names` | Name labels per role (text, colour, font) |
 
