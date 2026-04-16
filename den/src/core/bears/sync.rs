@@ -36,8 +36,6 @@ pub async fn sync_bear_to_letta(
         .map(str::trim)
         .filter(|s| !s.is_empty());
 
-    let tool_ids: Vec<String> = bear.letta_tool_ids.0.clone();
-
     letta
         .patch_agent(
             agent_id,
@@ -46,7 +44,9 @@ pub async fn sync_bear_to_letta(
             bear.system_prompt.as_str(),
             model,
             bear.letta_agent_type.as_deref(),
-            &tool_ids,
+            &bear.letta_tool_ids.0,
         )
-        .await
+        .await?;
+
+    Ok(())
 }

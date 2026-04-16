@@ -68,7 +68,7 @@ For a concise list of **Letta agent knobs that Den’s bear UI does not yet driv
 
 ### Cabinet (Outline)
 
-Long-lived shared knowledge: **bears** via **Den** Cabinet tools; humans in **Outline**. See [PLAN.md](../planning/PLAN.md).
+Long-lived shared knowledge: **bears** via **Den** Cabinet tools; humans in **Outline**. See [PLAN.md](../planning/PLAN.md). **Tool shape:** Cabinet access for agents is **Den-native meta tools** (same pattern as [Den meta tools](#den-meta-tools-bears-control-plane-tools)), not a separate MCP requirement.
 
 ---
 
@@ -161,6 +161,27 @@ Regenerate `lettabot.yaml` (or `LETTABOT_CONFIG_YAML`) from Den’s DB when **be
 **Security:** Treat MCP servers like **network-exposed and executable-adjacent** capabilities: allowlists, secrets injected by the platform (Coolify → env), supply-chain review for imports, SSRF policy on any fetch-by-URL catalog path.
 
 See [PLAN.md](../planning/PLAN.md) Phase 1 for the phased implementation checklist (MCP alongside skills).
+
+---
+
+## Den meta tools (BEARS control-plane tools)
+
+**Intent.** Some agent capabilities are not generic “skills” or third-party MCP integrations—they are **BEARS control-plane** operations: enforce **Den** policy, touch **Letta** state in a governed way, or call **Cabinet** through Den. Examples include **renaming a conversation** (Letta `summary`), **Cabinet** search/read/write with deck/kind ACLs, and future **meta** actions (audit hooks, rate hints, feature gates).
+
+**Default: implement in Den; register on the Letta agent—no MCP required for these.**
+
+- **Placement.** Implement as **Den-owned** modules and HTTP handlers (or a small internal “tool gateway” behind one base path). During **bear provisioning**, register the corresponding **Letta custom tools** (names + schemas) on the bear’s agent alongside `letta_core` tools. **Den** executes the real work: membership checks, `PATCH /v1/conversations/…` for titles, Cabinet API calls to Outline, etc.
+- **Why not MCP by default.** [Den-managed MCP servers](#den-managed-mcp-servers-phase-1) (under [LettaBot](#lettabot-core-platform)) remain the right pattern for **optional, reusable, third-party** tool hosts (Exa, Composio, org-specific MCP). **Meta** tools are **tightly coupled** to BEARS identity and policy; keeping them in Den avoids an extra hop, duplicate auth stories, and split ownership. Use MCP when you **deliberately** want portability or a vendor’s server—not because “tools must be MCP.”
+- **Cabinet.** **Cabinet** tools follow the **same** pattern: **Den** is the policy and API boundary to Outline; bears invoke **Den-implemented** tools. A separate “Cabinet MCP” is unnecessary unless you integrate an external MCP that Den does not own—**Den still fronts policy** on every call.
+
+**Contract (conceptual).**
+
+1. **Authorization.** Resolve **user and membership** in Den (from tool-execution context Letta provides, signed server-to-server payloads, or internal-only callbacks). Do not trust model-supplied user ids for security boundaries.
+2. **Scope.** Bind each invocation to **`bear_id` / `letta_agent_id`** and, when relevant, **`conversation_id`**; reject cross-bear or out-of-membership use.
+3. **Provisioning.** Bear create/update attaches the meta tool definitions the Letta agent should expose; Den’s registry records which capabilities each bear has (for UI and GitOps parity).
+4. **Transport.** Use whatever **Letta** supports for custom tools (HTTP callback to Den, server-registered executors, etc.); the **architectural** decision is *Den implements the handler*, independent of MCP.
+
+**When MCP is still appropriate.** Third-party catalogs, **Cursor-style** reuse across products, or **optional** per-bear attachments that are **not** BEARS-specific—attach via the MCP catalog and materialize into LettaBot/Letta config as today.
 
 ---
 
@@ -261,7 +282,7 @@ Seed **human** / **persona** (and optional **shared**) blocks when Den provision
 |-------|------------------|
 | **Self-hosted Letta** | **Persistence backend** for LettaBot: agent state, memory blocks, conversations, tools, calls to Bifrost |
 | **LettaBot** | **Core agent platform**: all end-user and channel interaction; uses Letta for state; [skills](https://docs.letta.com/letta-code/skills/) and Letta Code behaviors apply here |
-| **Den (Axum)** | Auth; **bear** provisioning on Letta + **LettaBot** config; **skills catalog and per-bear skill sets** (materialized for LettaBot); **users↔bears** membership; **web** routing **Den → LettaBot**; Cabinet API; operator console; optional channel↔user mapping for directory/analytics |
+| **Den (Axum)** | Auth; **bear** provisioning on Letta + **LettaBot** config; **skills catalog and per-bear skill sets** (materialized for LettaBot); **users↔bears** membership; **web** routing **Den → LettaBot**; **Den meta tools** (Letta-registered control-plane tools—conversation titles, Cabinet, …); Cabinet API; operator console; optional channel↔user mapping for directory/analytics |
 | **Den chat UI** | **Primary** browser UI → **Den** → **LettaBot** |
 | **Open WebUI** | **Optional** web UI → **Den** → **LettaBot** when deployed |
 | **PostgreSQL** | Den: users, mappings, sessions |

@@ -33,6 +33,7 @@ When proposing gateways, proxies, or operators, **favor file- or repo-driven con
 | Garage (S3 object storage) | [services/garage/COOLIFY_DEPLOY.md](services/garage/COOLIFY_DEPLOY.md) |
 | Stack one-pager | [docs/architecture/ARCHITECTURE_NOTES.md](docs/architecture/ARCHITECTURE_NOTES.md) |
 | Den + self-hosted Letta (multi-user web) | [docs/architecture/DEN_ARCHITECTURE.md](docs/architecture/DEN_ARCHITECTURE.md) |
+| Den meta tools (Letta-registered, Den-implemented) | [DEN_ARCHITECTURE.md § Den meta tools](docs/architecture/DEN_ARCHITECTURE.md#den-meta-tools-bears-control-plane-tools) |
 | Den web UI (templates, CSS: no page-local `<style>`) | [den/docs/frontend-development.md](den/docs/frontend-development.md), [den/AGENTS.md](den/AGENTS.md) |
 | Assistant memory / project brief | [.kilocode/memory_bank/](.kilocode/memory_bank/) |
 

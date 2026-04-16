@@ -43,7 +43,6 @@ pub async fn provision_bear_if_configured(
         .as_deref()
         .map(str::trim)
         .filter(|s| !s.is_empty());
-    let tool_ids: &[String] = &bear.letta_tool_ids.0;
 
     let agent_id = letta
         .create_agent(
@@ -51,7 +50,7 @@ pub async fn provision_bear_if_configured(
             bear.system_prompt.as_str(),
             Some(model),
             agent_type,
-            tool_ids,
+            &bear.letta_tool_ids.0,
         )
         .await?;
 
