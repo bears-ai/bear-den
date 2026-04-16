@@ -20,6 +20,10 @@ use uuid::Uuid;
 use crate::{
     auth_backend::{AuthSession, Backend},
     core::bears::db::{self as bears_db, role_is_bear_admin},
+    core::letta::{
+        LettaClient, display_conversation_title, first_user_message_text_for_title,
+        is_acceptable_derived_title, is_meaningful_conversation_title, UNTITLED_THREAD,
+    },
     errors::CustomError,
     web::AppState,
 };
@@ -138,22 +142,51 @@ fn conversation_is_archived(v: &serde_json::Value) -> bool {
         || v.get("status").and_then(|x| x.as_str()) == Some("archived")
 }
 
-fn conversation_title_from_value(v: &serde_json::Value, id: &str) -> String {
-    v.get("summary")
-        .and_then(|x| x.as_str())
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .map(|s| s.to_string())
-        .unwrap_or_else(|| format!("Chat ({})", id.trim_start_matches("conv-")))
-}
-
 fn cmp_conversation_row_newest_first(a: &ChatConversationRow, b: &ChatConversationRow) -> Ordering {
     match (&a.last_message_at, &b.last_message_at) {
         (Some(al), Some(bl)) => bl.cmp(al),
         (None, Some(_)) => Ordering::Greater,
-        (Some(_), None) => Ordering::Less,
         (None, None) => a.id.cmp(&b.id),
+        (Some(_), None) => Ordering::Less,
     }
+}
+
+/// Thread label for `conv-…` rows: Letta `summary` when human-usable, else derived from the first
+/// meaningful user message; persists a generated title via Letta when appropriate.
+async fn resolve_conversation_row_title(
+    letta: &LettaClient,
+    item: &serde_json::Value,
+    conv_id: &str,
+) -> String {
+    let summary = item.get("summary").and_then(|x| x.as_str());
+    if is_meaningful_conversation_title(summary, conv_id) {
+        return summary.unwrap().trim().to_string();
+    }
+
+    let body = match letta
+        .list_conversation_messages(conv_id, None, 100, None, true)
+        .await
+    {
+        Ok(b) => b,
+        Err(e) => {
+            tracing::warn!(%e, %conv_id, "list messages for conversation title failed");
+            return display_conversation_title(summary, conv_id, None);
+        }
+    };
+
+    let first_user = first_user_message_text_for_title(&body);
+    let title = display_conversation_title(summary, conv_id, first_user.as_deref());
+
+    let should_persist =
+        title != UNTITLED_THREAD && is_acceptable_derived_title(&title, conv_id);
+
+    if should_persist {
+        if let Err(e) = letta.patch_conversation_summary(conv_id, &title).await {
+            tracing::warn!(%e, %conv_id, "patch conversation summary (title) failed");
+        }
+    }
+
+    title
 }
 
 /// `None` / empty / `default` → agent main thread. Otherwise must be `conv-` + hex / hyphen (Letta id).
@@ -225,7 +258,7 @@ async fn chat_conversations(
 
     let default_last = match state
         .letta
-        .list_conversation_messages("default", Some(agent_id), 1, None)
+        .list_conversation_messages("default", Some(agent_id), 1, None, false)
         .await
     {
         Ok(peek) => letta_messages_top_array(&peek)
@@ -274,7 +307,7 @@ async fn chat_conversations(
                             .and_then(|x| x.as_str())
                             .map(|s| s.to_string())
                     });
-                let title = conversation_title_from_value(item, id);
+                let title = resolve_conversation_row_title(&state.letta, item, id).await;
                 rows.push(ChatConversationRow {
                     id: id.to_string(),
                     title,
@@ -349,7 +382,7 @@ async fn chat_history(
 
     let body = state
         .letta
-        .list_conversation_messages(&conv_id, agent_for_conv, limit, before)
+        .list_conversation_messages(&conv_id, agent_for_conv, limit, before, false)
         .await?;
 
     let (messages, has_more, next_before) = map_letta_history_page(&body, limit);

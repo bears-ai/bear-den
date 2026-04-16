@@ -306,12 +306,15 @@ impl LettaClient {
     /// `GET /v1/conversations/{conversation_id}/messages` — paginated history for one conversation.
     ///
     /// For the agent default thread, pass `conversation_id == "default"` and `Some(agent_id)`.
+    ///
+    /// `oldest_first`: when `true`, uses `order=asc` (first page = oldest messages) per Letta API.
     pub async fn list_conversation_messages(
         &self,
         conversation_id: &str,
         agent_id: Option<&str>,
         limit: u32,
         before: Option<&str>,
+        oldest_first: bool,
     ) -> Result<serde_json::Value, CustomError> {
         if !self.is_enabled() {
             return Err(CustomError::System(
@@ -321,6 +324,7 @@ impl LettaClient {
 
         let limit = limit.clamp(1, 100);
         let limit_str = limit.to_string();
+        let order = if oldest_first { "asc" } else { "desc" };
         let url = format!(
             "{}/v1/conversations/{}/messages",
             self.base_url,
@@ -331,7 +335,7 @@ impl LettaClient {
             .http
             .get(url)
             .headers(self.auth_headers())
-            .query(&[("order", "desc"), ("limit", limit_str.as_str())]);
+            .query(&[("order", order), ("limit", limit_str.as_str())]);
 
         if let Some(a) = agent_id.map(str::trim).filter(|s| !s.is_empty()) {
             req = req.query(&[("agent_id", a)]);
@@ -362,6 +366,48 @@ impl LettaClient {
                 "Letta list conversation messages JSON: {e}; body: {text}"
             ))
         })
+    }
+
+    /// `PATCH /v1/conversations/{conversation_id}` — set `summary` (human-facing thread title).
+    pub async fn patch_conversation_summary(
+        &self,
+        conversation_id: &str,
+        summary: &str,
+    ) -> Result<(), CustomError> {
+        if !self.is_enabled() {
+            return Err(CustomError::System(
+                "Letta is not configured (set LETTA_BASE_URL)".to_string(),
+            ));
+        }
+
+        let url = format!(
+            "{}/v1/conversations/{}",
+            self.base_url, conversation_id
+        );
+        let body = json!({ "summary": summary });
+        let resp = self
+            .http
+            .patch(url)
+            .headers(self.auth_headers())
+            .header(CONTENT_TYPE, "application/json")
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| CustomError::System(format!("Letta patch conversation failed: {e}")))?;
+
+        let status = resp.status();
+        let text = resp
+            .text()
+            .await
+            .map_err(|e| CustomError::System(format!("Letta patch conversation body: {e}")))?;
+
+        if !status.is_success() {
+            return Err(CustomError::System(format!(
+                "Letta patch conversation HTTP {status}: {text}"
+            )));
+        }
+
+        Ok(())
     }
 
     /// `POST /v1/conversations/{conversation_id}/messages` with `streaming: true` (SSE).
