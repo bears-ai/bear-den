@@ -150,14 +150,11 @@ den/
 - `id` BIGSERIAL
 - `user_id`, `bear_id`, `created_at`, `bytes_out` INT NULL
 
-**`bear_conversations`** (maps Den users to Letta Conversation objects)
+**`bear_conversations`** (**optional cache only**, not source of truth)
 
-- `user_id` UUID FK → users ON DELETE CASCADE
-- `bear_id` UUID FK → bears ON DELETE CASCADE
-- `letta_conversation_id` TEXT NOT NULL — Letta `conv-xxx` id
-- `channel` TEXT NULL — e.g. `web`, `slack`, `whatsapp`; NULL = default web
-- `created_at` TIMESTAMPTZ
-- PK `(user_id, bear_id, channel)` — one conversation per user+bear+channel
+- Use only for local UX hints (for example, "resume last thread" in the Den chat UI).
+- Do **not** require this table for correctness of chat routing.
+- LettaBot + Letta remain canonical for conversation lifecycle and per-channel thread separation.
 
 **`user_bear_blocks`** (tracks per-user Letta blocks for group-mode bears)
 
@@ -190,7 +187,7 @@ den/
 | POST | `/auth/login` | Returns session cookie or `{ token }` |
 | POST | `/auth/logout` | Invalidate session |
 | GET | `/v1/bears` or `/agents` | List bears for **authenticated** user (membership filter) |
-| POST | `/v1/chat/send` | Body: `{ message, agent_id?, conversation_id?, stream? }` — **agent_id** = bear id |
+| POST | `/v1/chat/send` | Body: `{ message, agent_id?, conversation_id?, stream?, channel?, channel_thread_id? }` — **agent_id** = bear id |
 | GET | `/v1/me/memory` | Return current user's `human` block content (per bear) and any `person:{name}` blocks across all member bears — for the memory dashboard |
 
 **Chat contract** (align with [PLAN.md](PLAN.md) §2.1):
@@ -198,7 +195,8 @@ den/
 - Resolve `Authorization: Bearer <token>` or session cookie → `user_id`
 - Resolve `agent_id` → `bear_id` → `letta_agent_id`; **403** if not member
 - Apply rate limit
-- Call **LettaBot** for the bear’s configured bot row (HTTP/gRPC/socket per your deployment — **verify against LettaBot version**); LettaBot persists via Letta.
+- Call **LettaBot** for the bear’s configured bot row (HTTP/gRPC/socket per your deployment — **verify against LettaBot version**); pass through `conversation_id` (if supplied) plus `channel` and `channel_thread_id` so LettaBot resolves/creates the right Letta conversation.
+- Keep conversation ownership in LettaBot/Letta; Den should not implement its own canonical thread-mapping logic in Phase 1.
 - Stream SSE (or NDJSON) back using a **single documented contract** — first-party chat UI is the reference client; Open WebUI adapters must conform or translate
 
 ### Admin / operator API (protect with **operator session** in browser; `ADMIN_API_KEY` for automation only)
@@ -233,7 +231,7 @@ den/
 2. **Provision (Den → Letta):**
    - `POST /v1/agents` with JSON body (name, model, system prompt — store template in Den or env).
    - On success, persist `letta_agent_id` on `bears` row.
-3. **Chat (Den → LettaBot → Letta):** Den does **not** use Letta’s browser-facing messages API directly for `POST /v1/chat/send`; it calls **LettaBot**, which owns the conversation loop and uses Letta for persistence and models. Enable streaming on the Den bridge.
+3. **Chat (Den → LettaBot → Letta):** Den does **not** use Letta’s browser-facing messages API directly for `POST /v1/chat/send`; it calls **LettaBot**, which owns the conversation loop and uses Letta for persistence and models. Den forwards conversation context (`conversation_id`, `channel`, `channel_thread_id`) and LettaBot resolves/creates Letta conversations.
 4. **LettaBot config:** Render `lettabot.yaml` from DB; mount or sync **skill directories** per [DEN_ARCHITECTURE.md](../architecture/DEN_ARCHITECTURE.md) § Den-managed skills.
 5. **Version drift:** Letta OpenAPI and LettaBot APIs may differ by image/tag; pin versions in deploy docs and add integration tests.
 6. **Failure modes:** If LettaBot or Letta returns 5xx, return 502 with correlation id; do not leak upstream stack traces.
@@ -371,7 +369,7 @@ den/
 | M4 | Letta provision | `POST /admin/bears` (+ provision) creates Letta agent + row; errors returned to client |
 | **M4b** | **Operator console v1** | **Browser UI** covers: users, bears + provision trigger, membership, LettaBot YAML view/download, Letta health — **no curl for setup** |
 | **M4c** | **Onboarding + org policy** | Admin configures `org_policy` block (seeded from `den/defaults/org_policy.md`) and Personal Bear default template; new user account creation auto-provisions their Personal Bear |
-| M5 | Chat proxy | Streaming `POST /v1/chat/send` end-to-end; validated with **curl**, integration test, or console “try it” |
+| M5 | Chat proxy | Streaming `POST /v1/chat/send` end-to-end; conversation/thread context forwarded to LettaBot; validated with **curl**, integration test, or console “try it” |
 | **M6** | **Den chat UI (first-party)** | Den serves chat at `/bear/{slug}`; demo user chats in browser — **reference client** for streaming contract |
 | **M6b** | **Open WebUI (optional)** | Documented integration path + example env; demo user chatting via Den **when a deployment chooses Open WebUI** |
 | M7 | LettaBot yaml + skills polish | Generated yaml matches real bot configs; **skills** catalog + per-bear materialization tested; copy-paste / volume deploy tested from console |
@@ -387,6 +385,7 @@ den/
 
 - [ ] **Operator console:** create users, provision bears to Letta, manage membership, **manage skills per bear**, view/download LettaBot yaml — all in browser
 - [ ] Den-hosted **chat UI** sends chat **Den → LettaBot → Letta** with streaming responses (**primary**); **Open WebUI optional** — if used, same API contract via adapter/shim
+- [ ] Conversation behavior proven for one shared bear across at least two channels/threads: same bear identity, distinct Letta threads per channel/thread policy, with LettaBot as canonical mapper
 - [ ] At least two users and two bears with **many-to-many** membership verified (user A: bears 1+2; user B: bear 2 only)
 - [ ] Non-member cannot invoke bear (403)
 - [ ] New bear can be provisioned in Letta from **console** (admin API underneath)

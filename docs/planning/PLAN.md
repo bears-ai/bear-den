@@ -97,7 +97,7 @@ Not exact APIs, but what each interface *does*.
 **Capabilities:**
 
 - `POST /chat/send`
-  - Input: `{ user_token, channel, agent_id, message, metadata }`
+  - Input: `{ user_token, channel, agent_id, message, conversation_id?, metadata }`
     - `user_token`: Den or upstream auth token → Den resolves to internal `user_id`.
     - `channel`: `"slack" | "whatsapp" | "webui" | ..."`
     - `agent_id`: which **bear** to talk to (Den’s id → Letta `associated_letta_id`), or default per-channel—**only if** this user is a member of that bear.
@@ -108,7 +108,8 @@ Not exact APIs, but what each interface *does*.
     - Checks policies:
       - Is `agent_id` allowed for this user?
       - Apply rate limits, etc.
-    - Constructs a request for **LettaBot** (with `user_id`, `agent_id`, channel context) so the bear’s bot row handles the Letta conversation.
+    - Constructs a request for **LettaBot** (with `user_id`, `agent_id`, conversation/thread hints, and channel context) so the bear’s bot row handles the Letta conversation.
+    - Lets LettaBot resolve or create the canonical Letta conversation/thread mapping for that bear and channel context.
     - Forwards to **LettaBot → Letta**; streams responses back through Den.
   - Output:
     - Streaming or buffered messages to the frontend.
@@ -137,7 +138,7 @@ Where:
 - `user_id`: Den’s internal ID (stable across Slack/WhatsApp/web).
 - `agent_id`: Den’s **bear** key; resolves to the Letta agent id and LettaBot row Den configured (and must pass **user↔bear** membership checks on web).
 - `channel_ctx`: `{ channel, channel_user_id, channel_conversation_id }`.
-- `session_ctx`: optional (recent messages, conversation ID, etc.) managed by LettaBot/Letta.
+- `session_ctx`: optional (recent messages, caller `conversation_id`, thread hints, etc.); **resolved canonically by LettaBot/Letta** in Phase 1.
 
 **Inference path:** user → **Den** → **LettaBot** → **Letta** → **Bifrost**. Den does not touch Bifrost for model requests.
 
@@ -244,10 +245,10 @@ Deliverables:
 
 3. **Chat proxy API** (on Den)
    - `POST /chat/send`:
-     - Accepts message, auth token, optional `agent_id`.
+     - Accepts message, auth token, optional `agent_id`, and optional `conversation_id`/thread hints.
      - Resolves `user_id`.
      - Applies rate limits / policies.
-     - Invokes **LettaBot** for the resolved bear (not raw Letta chat APIs).
+     - Invokes **LettaBot** for the resolved bear (not raw Letta chat APIs), forwarding conversation context without Den-owned thread mapping.
      - Streams response back.
 
 4. **Web UIs → Den** (v1 release targets)
@@ -279,6 +280,7 @@ Deliverables:
 - **Operator console:** provision users, bears (Letta agents), membership, **skills and MCP servers per bear** (each: catalog + attach; materialization may ship shortly after core chat), and LettaBot yaml from the browser.
 - Web users chat **Den’s chat UI → Den → LettaBot → Letta** (**Open WebUI** optional on the same path); Den resolves `user_id`, enforces **bear** membership, streams replies.
 - **Slack/WhatsApp** use **LettaBot → Letta** for messages; Den still drives **which bears**, **which skills**, **which MCP servers**, and how they appear in bot config.
+- Conversation behavior is channel/thread-aware with one canonical owner: LettaBot + Letta. A bear stays consistent across channels while each channel/thread remains a distinct conversation context.
 - Bear registry, **users↔bears** membership, and basic RBAC for **web** users.
 - No Cabinet/Outline yet: **Letta native memory** only; shared knowledge in later phases.
 - **User onboarding:** new account → Personal Bear auto-provisioned → user lands in chat with onboarding prompt.
