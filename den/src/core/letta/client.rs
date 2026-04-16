@@ -253,6 +253,55 @@ impl LettaClient {
         Ok(resp)
     }
 
+    /// `GET /v1/agents/{id}/messages` — paginated message history (`order`, `limit`, optional `before` cursor).
+    pub async fn list_agent_messages(
+        &self,
+        agent_id: &str,
+        limit: u32,
+        before: Option<&str>,
+    ) -> Result<serde_json::Value, CustomError> {
+        if !self.is_enabled() {
+            return Err(CustomError::System(
+                "Letta is not configured (set LETTA_BASE_URL)".to_string(),
+            ));
+        }
+
+        let limit = limit.clamp(1, 100);
+        let limit_str = limit.to_string();
+        let url = format!("{}/v1/agents/{agent_id}/messages", self.base_url);
+
+        let mut req = self
+            .http
+            .get(&url)
+            .headers(self.auth_headers())
+            .query(&[("order", "desc"), ("limit", limit_str.as_str())]);
+
+        if let Some(b) = before.map(str::trim).filter(|s| !s.is_empty()) {
+            req = req.query(&[("before", b)]);
+        }
+
+        let resp = req
+            .send()
+            .await
+            .map_err(|e| CustomError::System(format!("Letta list messages request failed: {e}")))?;
+
+        let status = resp.status();
+        let text = resp
+            .text()
+            .await
+            .map_err(|e| CustomError::System(format!("Letta list messages body: {e}")))?;
+
+        if !status.is_success() {
+            return Err(CustomError::System(format!(
+                "Letta list messages HTTP {status}: {text}"
+            )));
+        }
+
+        serde_json::from_str(&text).map_err(|e| {
+            CustomError::Parsing(format!("Letta list messages JSON: {e}; body: {text}"))
+        })
+    }
+
     /// `GET /v1/health` — used by operator console and deploy health checks.
     pub async fn check_health(&self) -> Result<String, CustomError> {
         if !self.is_enabled() {

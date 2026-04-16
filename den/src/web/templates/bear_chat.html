@@ -99,6 +99,9 @@
     var BEAR_ID   = "{{ bear_id | e }}";
     var BEAR_NAME = "{{ bear_name | e }}";
     var errEl = document.getElementById('err');
+    /** Page size for Letta `GET …/messages` (newest page first; scroll up loads older). */
+    var DEN_HISTORY_PAGE = 50;
+    var historyNextBefore = null;
 
     function showErr(msg) {
       errEl.textContent = msg;
@@ -140,6 +143,53 @@
           '</div>' +
         '</div>'
       );
+    }
+
+    /**
+     * Deep Chat `loadHistory`: first call loads the newest window; when the returned array ends
+     * with `false`, scrolling to the top requests older messages (see deepchat.dev/docs/interceptors).
+     */
+    function loadDenHistory(index) {
+      if (!BEAR_ID) {
+        return Promise.resolve([]);
+      }
+      if (index === 0) {
+        historyNextBefore = null;
+      } else if (!historyNextBefore) {
+        return Promise.resolve([]);
+      }
+      var params = new URLSearchParams();
+      params.set('bear_id', BEAR_ID);
+      params.set('limit', String(DEN_HISTORY_PAGE));
+      if (index > 0 && historyNextBefore) {
+        params.set('before', historyNextBefore);
+      }
+      return fetch('/v1/chat/history?' + params.toString(), {
+        credentials: 'same-origin',
+      }).then(function (response) {
+        if (response.status === 401) {
+          window.location.href = '/login?next=' + encodeURIComponent(window.location.pathname);
+          return { messages: [], has_more: false, next_before: null };
+        }
+        if (!response.ok) {
+          return response.text().then(function (t) {
+            throw new Error(t || 'HTTP ' + response.status);
+          });
+        }
+        return response.json();
+      }).then(function (data) {
+        historyNextBefore = data.next_before || null;
+        var out = (data.messages || []).map(function (m) {
+          return { role: m.role, text: m.text };
+        });
+        if (data.has_more) {
+          out.push(false);
+        }
+        return out;
+      }).catch(function (err) {
+        showErr(String(err.message || err));
+        return [];
+      });
     }
 
     function configureDenChat() {
@@ -242,6 +292,8 @@
         '.den-reasoning-toggle:hover{opacity:1}';
 
       chat.remarkable = { html: false, breaks: true };
+
+      chat.loadHistory = loadDenHistory;
 
       chat.connect = { handler: lettaSseHandler, stream: true };
 
