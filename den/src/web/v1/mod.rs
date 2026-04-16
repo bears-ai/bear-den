@@ -17,7 +17,7 @@ use uuid::Uuid;
 
 use crate::{
     auth_backend::{AuthSession, Backend},
-    core::bears::db as bears_db,
+    core::bears::db::{self as bears_db, role_is_bear_admin},
     errors::CustomError,
     web::AppState,
 };
@@ -37,6 +37,8 @@ pub struct BearPublic {
     pub slug: String,
     pub name: String,
     pub description: String,
+    /// `user_bear.role == "admin"` for this user (bear admin, not site operator).
+    pub is_bear_admin: bool,
 }
 
 async fn list_my_bears(
@@ -52,11 +54,12 @@ async fn list_my_bears(
     let rows = bears_db::list_bears_for_user(state.sqlx_pool(), user_id).await?;
     let out: Vec<BearPublic> = rows
         .into_iter()
-        .map(|b| BearPublic {
-            bear_id: b.id,
-            slug: b.slug,
-            name: b.name,
-            description: b.description,
+        .map(|row| BearPublic {
+            bear_id: row.bear.id,
+            slug: row.bear.slug,
+            name: row.bear.name,
+            description: row.bear.description,
+            is_bear_admin: role_is_bear_admin(row.membership_role.as_deref()),
         })
         .collect();
     Ok(Json(out))
@@ -362,6 +365,18 @@ async fn chat_send(
 
     if body.conversation_id.is_some() {
         tracing::debug!("conversation_id accepted but not yet forwarded to Letta in this build");
+    }
+
+    if let Err(e) = bears_db::record_chat_activity(
+        state.sqlx_pool(),
+        body.bear_id,
+        user_id,
+        "den_web",
+        body.message.trim(),
+    )
+    .await
+    {
+        tracing::warn!(%user_id, bear_id = %body.bear_id, "bear_chat_activity insert failed: {e}");
     }
 
     let upstream = state

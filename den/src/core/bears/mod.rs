@@ -7,4 +7,4 @@ pub mod model;
 pub mod provision;
 pub mod sync;
 
-pub use model::Bear;
+pub use model::{Bear, BearWithMembership};

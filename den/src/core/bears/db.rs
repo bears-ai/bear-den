@@ -5,7 +5,7 @@ use uuid::Uuid;
 
 use crate::errors::CustomError;
 
-use super::model::Bear;
+use super::model::{Bear, BearWithMembership};
 
 pub async fn list_bears(pool: &PgPool) -> Result<Vec<Bear>, CustomError> {
     sqlx::query_as::<_, Bear>(
@@ -140,6 +140,18 @@ pub async fn create_bear(
     Ok(row.0)
 }
 
+/// Canonical role for users who manage membership and bear settings (not site `users.is_admin`).
+pub const BEAR_ROLE_ADMIN: &str = "admin";
+pub const BEAR_ROLE_MEMBER: &str = "member";
+
+#[inline]
+pub fn role_is_bear_admin(role: Option<&str>) -> bool {
+    matches!(
+        role.map(|s| s.trim().eq_ignore_ascii_case(BEAR_ROLE_ADMIN)),
+        Some(true)
+    )
+}
+
 pub async fn grant_membership(
     pool: &PgPool,
     user_id: i32,
@@ -150,7 +162,7 @@ pub async fn grant_membership(
         r#"
         INSERT INTO user_bear (user_id, bear_id, role)
         VALUES ($1, $2, $3)
-        ON CONFLICT (user_id, bear_id) DO NOTHING
+        ON CONFLICT (user_id, bear_id) DO UPDATE SET role = EXCLUDED.role
         "#,
     )
     .bind(user_id)
@@ -159,6 +171,145 @@ pub async fn grant_membership(
     .execute(pool)
     .await?;
     Ok(())
+}
+
+pub async fn revoke_membership(
+    pool: &PgPool,
+    user_id: i32,
+    bear_id: Uuid,
+) -> Result<(), CustomError> {
+    let r = sqlx::query("DELETE FROM user_bear WHERE user_id = $1 AND bear_id = $2")
+        .bind(user_id)
+        .bind(bear_id)
+        .execute(pool)
+        .await?;
+    if r.rows_affected() == 0 {
+        return Err(CustomError::NotFound("membership not found".to_string()));
+    }
+    Ok(())
+}
+
+pub async fn delete_bear(pool: &PgPool, bear_id: Uuid) -> Result<(), CustomError> {
+    let r = sqlx::query("DELETE FROM bears WHERE id = $1")
+        .bind(bear_id)
+        .execute(pool)
+        .await?;
+    if r.rows_affected() == 0 {
+        return Err(CustomError::NotFound("bear not found".to_string()));
+    }
+    Ok(())
+}
+
+#[derive(Debug, Clone, sqlx::FromRow, serde::Serialize)]
+pub struct BearMemberRow {
+    pub user_id: i32,
+    pub username: String,
+    pub role: Option<String>,
+}
+
+pub async fn list_members_for_bear(
+    pool: &PgPool,
+    bear_id: Uuid,
+) -> Result<Vec<BearMemberRow>, CustomError> {
+    sqlx::query_as::<_, BearMemberRow>(
+        r#"
+        SELECT ub.user_id, u.username, ub.role
+        FROM user_bear ub
+        INNER JOIN users u ON u.id = ub.user_id
+        WHERE ub.bear_id = $1
+        ORDER BY
+            CASE WHEN lower(btrim(coalesce(ub.role, ''))) = 'admin' THEN 0 ELSE 1 END,
+            u.username
+        "#,
+    )
+    .bind(bear_id)
+    .fetch_all(pool)
+    .await
+    .map_err(Into::into)
+}
+
+pub async fn count_bear_admins(pool: &PgPool, bear_id: Uuid) -> Result<i64, CustomError> {
+    let n: (i64,) = sqlx::query_as(
+        r#"
+        SELECT COUNT(*)::bigint
+        FROM user_bear
+        WHERE bear_id = $1
+          AND lower(btrim(coalesce(role, ''))) = 'admin'
+        "#,
+    )
+    .bind(bear_id)
+    .fetch_one(pool)
+    .await?;
+    Ok(n.0)
+}
+
+pub async fn membership_role_for_user(
+    pool: &PgPool,
+    user_id: i32,
+    bear_id: Uuid,
+) -> Result<Option<Option<String>>, CustomError> {
+    let row: Option<(Option<String>,)> = sqlx::query_as(
+        "SELECT role FROM user_bear WHERE user_id = $1 AND bear_id = $2",
+    )
+    .bind(user_id)
+    .bind(bear_id)
+    .fetch_optional(pool)
+    .await?;
+    Ok(row.map(|r| r.0))
+}
+
+#[derive(Debug, Clone, sqlx::FromRow, serde::Serialize)]
+pub struct BearChatActivityRow {
+    pub id: i64,
+    pub username: String,
+    pub channel: String,
+    pub message_preview: String,
+    pub created_at: time::OffsetDateTime,
+}
+
+pub async fn record_chat_activity(
+    pool: &PgPool,
+    bear_id: Uuid,
+    user_id: i32,
+    channel: &str,
+    message_preview: &str,
+) -> Result<(), CustomError> {
+    let preview: String = message_preview.chars().take(500).collect();
+    sqlx::query(
+        r#"
+        INSERT INTO bear_chat_activity (bear_id, user_id, channel, message_preview)
+        VALUES ($1, $2, $3, $4)
+        "#,
+    )
+    .bind(bear_id)
+    .bind(user_id)
+    .bind(channel)
+    .bind(preview)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+pub async fn list_chat_activity_for_bear(
+    pool: &PgPool,
+    bear_id: Uuid,
+    limit: i64,
+) -> Result<Vec<BearChatActivityRow>, CustomError> {
+    sqlx::query_as::<_, BearChatActivityRow>(
+        r#"
+        SELECT a.id, u.username, a.channel, a.message_preview, a.created_at
+        FROM bear_chat_activity a
+        INNER JOIN users u ON u.id = a.user_id
+        WHERE a.bear_id = $1
+        ORDER BY a.created_at DESC
+        LIMIT $2
+        "#,
+    )
+    .bind(bear_id)
+    .bind(limit)
+    .fetch_all(pool)
+    .await
+    .map_err(Into::into)
 }
 
 #[derive(Debug, Clone, sqlx::FromRow, serde::Serialize)]
@@ -186,11 +337,15 @@ pub async fn list_memberships(pool: &PgPool) -> Result<Vec<MembershipRow>, Custo
     .map_err(Into::into)
 }
 
-pub async fn list_bears_for_user(pool: &PgPool, user_id: i32) -> Result<Vec<Bear>, CustomError> {
-    sqlx::query_as::<_, Bear>(
+pub async fn list_bears_for_user(
+    pool: &PgPool,
+    user_id: i32,
+) -> Result<Vec<BearWithMembership>, CustomError> {
+    sqlx::query_as::<_, BearWithMembership>(
         r#"
         SELECT b.id, b.slug, b.name, b.description, b.letta_agent_id, b.default_model, b.tools_enabled,
-               b.letta_agent_type, b.letta_tool_ids, b.system_prompt, b.created_at, b.updated_at
+               b.letta_agent_type, b.letta_tool_ids, b.system_prompt, b.created_at, b.updated_at,
+               ub.role AS membership_role
         FROM bears b
         INNER JOIN user_bear ub ON ub.bear_id = b.id
         WHERE ub.user_id = $1

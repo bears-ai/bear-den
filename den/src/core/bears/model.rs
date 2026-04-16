@@ -7,6 +7,14 @@ use sqlx::FromRow;
 use time::OffsetDateTime;
 use uuid::Uuid;
 
+/// Bear plus `user_bear.role` for the current user (`list_bears_for_user`).
+#[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
+pub struct BearWithMembership {
+    #[sqlx(flatten)]
+    pub bear: Bear,
+    pub membership_role: Option<String>,
+}
+
 #[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
 pub struct Bear {
     pub id: Uuid,

@@ -1,0 +1,158 @@
+{% extends "base.html" %}
+
+{% block title %}{{ bear.name | e }} — Details{% endblock %}
+
+{% block content %}
+<section>
+    <h2>{{ bear.name | e }}</h2>
+    <p>
+        <code>{{ bear.slug | e }}</code>
+        · <a href="/bear/{{ bear.slug | e }}">Open chat</a>
+        {% if is_admin %}
+        · <a href="/bear/{{ bear.slug | e }}/details/edit">Edit bear</a>
+        {% endif %}
+    </p>
+
+    <h3>Members</h3>
+    {% if members and members | length > 0 %}
+    <ul>
+        {% for m in members %}
+        <li>
+            <strong>{{ m.username | e }}</strong>
+            — {% if m.role == 'admin' %}admin{% elif m.role == 'member' %}member{% elif m.role %}{{ m.role | e }}{% else %}member{% endif %}
+            {% if is_admin %}
+            <form method="post" action="/bear/{{ bear.slug | e }}/details/members/remove" style="display:inline;">
+                <input type="hidden" name="remove_user_id" value="{{ m.user_id }}" />
+                <button type="submit" onclick="return confirm('Remove this user from the bear?');">Remove</button>
+            </form>
+            {% endif %}
+        </li>
+        {% endfor %}
+    </ul>
+    {% else %}
+    <p><em>No members listed.</em></p>
+    {% endif %}
+
+    {% if is_admin %}
+    <h4>Add user by username</h4>
+    <form method="post" action="/bear/{{ bear.slug | e }}/details/members/add" class="form-field">
+        <label for="username_add">Username</label>
+        <input id="username_add" name="username" type="text" required maxlength="120" autocomplete="username" />
+        <label for="role_add">Role</label>
+        <select id="role_add" name="role">
+            <option value="member" selected>member</option>
+            <option value="admin">admin</option>
+        </select>
+        <button type="submit">Add or update member</button>
+    </form>
+
+    <h3 style="margin-top: 2rem;">Delete bear</h3>
+    <p class="form-hint">This removes the bear from Den and all memberships. Letta agents are not deleted automatically.</p>
+    <form method="post" action="/bear/{{ bear.slug | e }}/details/delete">
+        <label for="confirm_slug">Type the bear slug <code>{{ bear.slug | e }}</code> to confirm</label>
+        <input id="confirm_slug" name="confirm_slug" type="text" required autocomplete="off" />
+        <p><button type="submit">Delete bear permanently</button></p>
+    </form>
+    {% endif %}
+
+    <h3 style="margin-top: 2rem;">Den registry</h3>
+    <dl>
+        <dt>Bear id</dt>
+        <dd><code>{{ bear.id }}</code></dd>
+        <dt>Description</dt>
+        <dd>{% if bear.description %}{{ bear.description | e }}{% else %}<em>none</em>{% endif %}</dd>
+        <dt>Created</dt>
+        <dd>{{ bear.created_at | datetimeformat(format="short") }}</dd>
+        <dt>Updated</dt>
+        <dd>{{ bear.updated_at | datetimeformat(format="short") }}</dd>
+        <dt>Default model</dt>
+        <dd>{% if bear.default_model %}{{ bear.default_model | e }}{% else %}<em>none</em>{% endif %}</dd>
+        <dt>Letta agent type (Den)</dt>
+        <dd>{% if bear.letta_agent_type %}{{ bear.letta_agent_type | e }}{% else %}<em>none (Letta default)</em>{% endif %}</dd>
+        <dt>Letta tool ids (Den)</dt>
+        <dd>{% if letta_tool_ids_display %}<code>{{ letta_tool_ids_display | e }}</code>{% else %}<em>none</em>{% endif %}</dd>
+        <dt>Legacy tools JSON</dt>
+        <dd>{% if tools_json_display %}<pre style="white-space: pre-wrap; max-height: 16rem; overflow: auto;">{{ tools_json_display | e }}</pre>{% else %}<em>none</em>{% endif %}</dd>
+    </dl>
+
+    <h3>System prompt (Den)</h3>
+    <pre style="white-space: pre-wrap; max-height: 24rem; overflow: auto;">{{ bear.system_prompt | e }}</pre>
+
+    <h3>Conversations &amp; activity</h3>
+    <p class="form-hint">Den records each message you send from the web chat (shared Letta thread per bear). Channel is <code>den_web</code>.</p>
+    {% if activity and activity | length > 0 %}
+    <table>
+        <thead>
+            <tr><th>When</th><th>User</th><th>Channel</th><th>Preview</th></tr>
+        </thead>
+        <tbody>
+            {% for row in activity %}
+            <tr>
+                <td>{{ row.created_at | datetimeformat(format="short") }}</td>
+                <td>{{ row.username | e }}</td>
+                <td><code>{{ row.channel | e }}</code></td>
+                <td>{{ row.message_preview | e }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <p><em>No recorded chat activity yet.</em></p>
+    {% endif %}
+
+    <h3>Letta agent</h3>
+    {% if not letta_configured %}
+    <p><em>Letta is not configured</em> (<code>LETTA_BASE_URL</code> empty).</p>
+    {% endif %}
+    {% if bear.letta_agent_id %}
+    <p><strong>Stored agent id:</strong> <code>{{ bear.letta_agent_id | e }}</code></p>
+    {% if letta_api_base %}
+    <p class="form-hint">Chat uses Letta <code>POST …/v1/agents/{{ bear.letta_agent_id | e }}/messages/stream</code> (SSE).</p>
+    {% endif %}
+    {% if letta_agent_fetch_error %}
+    <p class="form-errors"><strong>Could not load agent from Letta:</strong> {{ letta_agent_fetch_error | e }}</p>
+    {% elif letta_agent_summary %}
+    <p><em>Summary from Letta</em> <code>GET /v1/agents/{{ bear.letta_agent_id | e }}</code>.</p>
+    <dl>
+        {% if letta_agent_summary.name %}
+        <dt>Name</dt>
+        <dd>{{ letta_agent_summary.name | e }}</dd>
+        {% endif %}
+        {% if letta_agent_summary.agent_type %}
+        <dt>Agent type</dt>
+        <dd><code>{{ letta_agent_summary.agent_type | e }}</code></dd>
+        {% endif %}
+        {% if letta_agent_summary.model %}
+        <dt>Model (Letta)</dt>
+        <dd>{{ letta_agent_summary.model | e }}</dd>
+        {% endif %}
+        {% if letta_memory_blocks_label %}
+        <dt>Memory blocks (count)</dt>
+        <dd>{{ letta_memory_blocks_label | e }}</dd>
+        {% endif %}
+        {% if letta_tools_count_label %}
+        <dt>Tools (count)</dt>
+        <dd>{{ letta_tools_count_label | e }}</dd>
+        {% endif %}
+    </dl>
+    {% endif %}
+    {% else %}
+    <p><em>No Letta agent linked yet.</em></p>
+    {% endif %}
+
+    {% if letta_diagnostics %}
+    <h3>Memory blocks (Letta)</h3>
+    {% if letta_diagnostics.blocks and letta_diagnostics.blocks | length > 0 %}
+    <ul>
+        {% for b in letta_diagnostics.blocks %}
+        <li>{% if b.label %}<strong>{{ b.label | e }}</strong>{% else %}<em>(no label)</em>{% endif %}{% if b.id %} — <code>{{ b.id | e }}</code>{% endif %}{% if b.char_count %} — ~{{ b.char_count }} chars{% endif %}</li>
+        {% endfor %}
+    </ul>
+    {% else %}
+    <p><em>No blocks in the Letta response.</em></p>
+    {% endif %}
+    {% elif letta_diag_error %}
+    <p class="form-errors">Could not load Letta diagnostics: {{ letta_diag_error | e }}</p>
+    {% endif %}
+</section>
+{% endblock %}

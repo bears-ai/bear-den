@@ -1,8 +1,10 @@
 // ROUTES: When modifying routes in this file, update /src/web/ROUTES.md if present.
 pub mod admin;
+pub mod bear_chat;
+pub mod bear_create_support;
+pub mod bear_management;
 pub mod filters;
 pub mod home;
-pub mod bear_chat;
 pub mod public;
 pub mod user;
 pub mod v1;
@@ -199,6 +201,7 @@ pub async fn server(
         .route_layer(permission_required!(Backend, login_url = "/login", "admin"))
         .merge(
             Router::new()
+                .merge(bear_management::router())
                 .route("/bear/{slug}", get(bear_chat::bear_page))
                 .route_layer(login_required!(Backend, login_url = "/login")),
         )

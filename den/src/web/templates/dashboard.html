@@ -5,11 +5,14 @@
 {% block content %}
 <section>
     <h2>Your bears</h2>
+    <p><a href="/bears/new">Create a new bear</a> (you become its admin).</p>
     {% if bears and bears | length > 0 %}
     <ul>
         {% for b in bears %}
         <li>
             <a href="/bear/{{ b.slug | e }}">{{ b.name | e }}</a>
+            {% if b.is_admin %}<span class="form-hint">(you are admin)</span>{% endif %}
+            — <a href="/bear/{{ b.slug | e }}/details">Details</a>
             {% if b.description %}
             <p>{{ b.description | e }}</p>
             {% endif %}
@@ -17,7 +20,7 @@
         {% endfor %}
     </ul>
     {% else %}
-    <p>You do not have access to any bears yet. Ask an operator to grant membership, or use <a href="/settings">Settings</a> if you are setting up your account.</p>
+    <p>You do not have access to any bears yet. Create one above, ask a bear admin to invite you, or use <a href="/settings">Settings</a> if you are setting up your account.</p>
     {% endif %}
 </section>
 {% endblock %}

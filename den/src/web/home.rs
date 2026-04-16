@@ -10,7 +10,8 @@ use serde::Serialize;
 
 use crate::{
     auth_backend::AuthSession,
-    core::{bears::db as bears_db, user},
+    core::bears::db::{self as bears_db, role_is_bear_admin},
+    core::user,
     errors::CustomError,
     web::{self, AppState},
 };
@@ -22,6 +23,7 @@ struct DashboardBear {
     slug: String,
     name: String,
     description: String,
+    is_admin: bool,
 }
 
 pub fn router() -> Router<AppState> {
@@ -42,10 +44,11 @@ async fn home(
             let rows = bears_db::list_bears_for_user(&state.sqlx_pool, user_id).await?;
             let bears: Vec<DashboardBear> = rows
                 .into_iter()
-                .map(|b| DashboardBear {
-                    slug: b.slug,
-                    name: b.name,
-                    description: b.description,
+                .map(|row| DashboardBear {
+                    slug: row.bear.slug,
+                    name: row.bear.name,
+                    description: row.bear.description,
+                    is_admin: role_is_bear_admin(row.membership_role.as_deref()),
                 })
                 .collect();
             web::render_template(

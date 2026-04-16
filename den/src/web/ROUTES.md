@@ -19,12 +19,21 @@ Axum routes for the web server (`RUN_WEB=true`). Update this file when you add o
 
 ## Home (`src/web/home.rs`)
 
-- `GET /` — marketing home when logged out; logged-in users see `dashboard.html` listing bears they may use (links to `/bear/{slug}`), or redirect to email verify if needed
+- `GET /` — marketing home when logged out; logged-in users see `dashboard.html` listing bears they may use (links to `/bear/{slug}` and `/bear/{slug}/details`), a link to create bears (`/bears/new`), or redirect to email verify if needed
+
+## Member bear management (`src/web/bear_management.rs`)
+
+- `GET|POST /bears/new` — create a bear; creator is granted `user_bear.role = admin` and Letta is provisioned like operator create (`src/web/bear_create_support.rs` shared form context)
+- `GET /bear/{slug}/details` — bear overview for any member: Den fields, members (roles), recent Den web chat activity, Letta agent summary + memory block list when configured
+- `GET|POST /bear/{slug}/details/edit` — edit bear (bear admins only); same fields as operator edit
+- `POST /bear/{slug}/details/delete` — delete bear row (bear admins only); form field `confirm_slug` must match the slug
+- `POST /bear/{slug}/details/members/add` — add or update a user by username (`username`, `role` = `member` or `admin`) — bear admins only
+- `POST /bear/{slug}/details/members/remove` — remove membership (`remove_user_id`) — bear admins only; cannot remove the last admin
 
 ## End-user chat (Phase 1 — same origin as web)
 
 - `GET /bear/{slug}` — Deep Chat view for a single bear the user may access (membership-checked; `src/web/templates/bear_chat.html`, handler in `src/web/bear_chat.rs`).
-- `GET /v1/bears` — JSON list of bears the signed-in user may use (membership-filtered; no Letta ids exposed) (`src/web/v1/mod.rs`).
+- `GET /v1/bears` — JSON list of bears the signed-in user may use (membership-filtered; includes `is_bear_admin`; no Letta ids exposed) (`src/web/v1/mod.rs`).
 - `GET /v1/chat/history` — query `bear_id` (required), optional `before` (Letta message id cursor), optional `limit` (default 50, max 100). Membership-checked; proxies Letta `GET /v1/agents/{id}/messages?order=desc` for Deep Chat `loadHistory` (initial window + scroll-up pagination when more exists).
 - `POST /v1/chat/send` — membership check, then proxies Letta `POST /v1/agents/{id}/messages/stream` (SSE); the browser parses `data:` lines and shows `reasoning_message` (HTML “Thinking” strip), `assistant_message` text, and `error_message` payloads in Deep Chat (see `bear_chat.html`).
 
