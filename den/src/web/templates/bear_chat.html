@@ -213,7 +213,7 @@
       var fg  = cv('--text-color');
       var brd = cv('--border-color');
       var met = cv('--meta-color');
-      var srf = cv('--surface-color');
+      // var srf = cv('--surface-color');
       var tln = cv('--thin-line-unit');
       var bubblePad = tok.bubblePad;
       var lh = tok.lh;
@@ -247,7 +247,7 @@
           },
           ai: {
             outerContainer: { justifyContent: 'flex-start' },
-            bubble: { backgroundColor: srf },
+            bubble: { backgroundColor: pg },
           },
           user: {
             outerContainer: { justifyContent: 'flex-end' },
@@ -258,7 +258,7 @@
           message: {
             styles: {
               outerContainer: { justifyContent: 'flex-start' },
-              bubble: { backgroundColor: srf, color: met, borderRadius: '0', padding: bubblePad },
+              bubble: { backgroundColor: pg, color: met, borderRadius: '0', padding: bubblePad },
             },
           },
         },
