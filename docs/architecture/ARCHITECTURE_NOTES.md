@@ -21,7 +21,7 @@ Open WebUI (opt.) ┤              ▲
 
 | Component | Role |
 |-----------|------|
-| **Den** | **Operator console** (browser: users, bears, Letta provision, **skills and MCP servers per bear**, LettaBot yaml); **bear** provisioning on Letta + **LettaBot** config + **skill and MCP materialization**; **local MCP catalog** and per-bear attachments (Phase 1); **users↔bears** membership; auth; **web** routing **Den → LettaBot**; first-party chat UI; Cabinet API; **Bifrost** only for observability (Letta → Bifrost direct) |
+| **Den** | **Operator console** (browser: users, bears, Letta provision, **skills and MCP servers per bear**, LettaBot yaml); **bear** provisioning on Letta + **LettaBot** config + **skill and MCP materialization**; **local MCP catalog** and per-bear attachments (Phase 1); **users↔bears** membership; auth; **web** routing **Den → LettaBot**; first-party chat UI; Cabinet API; **Bifrost** for **observability on the bear model path** (Letta → Bifrost direct for chat); future Den-side LLM usage may differ ([PLAN.md](../planning/PLAN.md) §2.5) |
 | **LettaBot** | **Agent runtime** for web (via Den) and channels; uses **Letta** for persistence; loads [skills](https://docs.letta.com/letta-code/skills/) from paths Den manages |
 | **Letta** | **Persistence** for LettaBot: tools, memory blocks, conversations per Letta agent (**bear**) |
 | **Bifrost** | Unified OpenAI-compatible model gateway (`/v1`) — see `services/bifrost/` |

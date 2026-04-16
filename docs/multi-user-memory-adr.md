@@ -33,6 +33,8 @@ References:
 
 ## Decision
 
+**Relationship to Phase 1:** [Phase 1 planning](planning/PHASE1_BOOTSTRAP.md) is **web-first** and **1:1**-oriented; **Scenario A** below matches that near-term shape (per-user conversations and isolated `human` memory). **Scenario B** (multi-person group threads, `person:{name}` blocks, `group_context`, Den-managed per-person block lifecycle) is a **future / post–Phase 1 design target**—useful to decide early, **not** a commitment that Phase 1 will ship full group semantics or Den channel identity mapping. Where Phase 1 UI touches memory (for example a memory dashboard), it should stay aligned with **Letta-native** state for 1:1 flows and avoid implying group-mode completeness.
+
 ### Two Distinct Scenarios
 
 #### Scenario A: One Person Per Session (the common case)
@@ -79,6 +81,8 @@ This covers **Den chat**, **Open WebUI**, and **1:1 DMs** via LettaBot (Slack DM
 No special multi-user instructions. The standard `human`/`persona` pattern works unchanged — the agent thinks it is always talking to one person (which it is, per conversation).
 
 #### Scenario B: Multiple People in One Chat Session (the hard case)
+
+**Implementation status:** **Post–Phase 1** target design (see note under [Decision](#decision)); not required for v1 web chat delivery.
 
 This covers **LettaBot group chats**: a Slack channel, a WhatsApp group, or a Slack thread where multiple people interact with the bear simultaneously.
 

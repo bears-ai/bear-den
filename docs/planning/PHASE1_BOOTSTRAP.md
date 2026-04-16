@@ -40,7 +40,7 @@ Use whatever **one-off** scaffold you prefer (`cargo new`, an internal template,
 | Policy | RBAC-lite: membership check + optional per-bear `can_use` + basic rate limit |
 | Bifrost | Optional: fetch metrics/health **read-only**; no proxying completions |
 | **User onboarding** | On new account creation, auto-provision a **Personal Bear** (slug: `personal-{name-slug}`) from a configurable default template set in the admin UI; immediately redirect the new user into chat with that bear using a standard onboarding prompt that invites the bear to learn about them |
-| **Memory dashboard** | User-facing page showing the current user's `human` block (per bear) and any `person:{name}` blocks across all their bears — read-only in Phase 1 |
+| **Memory dashboard** | Read-only view of **Letta-native** memory on member bears: **primary** focus is the current user’s **`human`** content (per bear / per-conversation as the Letta API returns it for 1:1 web). **`person:{name}`** rows only when such blocks already exist (mostly **group-mode**, largely **post–Phase 1** per [multi-user-memory-adr.md](../multi-user-memory-adr.md)); avoid implying a merged global profile beyond Letta state |
 | **Org policy block** | Admin UI panel to view and edit the `org_policy` Letta block applied to all bears; seed content from **`den/defaults/org_policy.md`** (in-repo) when no policy has been set and the first bear is provisioned |
 | Deploy | **Self-building Docker image** (multi-stage: build Rust in container, runtime image with binary + `ca-certificates`) |
 
@@ -130,7 +130,7 @@ den/
 
 **`bears`**
 
-- `id` UUID PK — Den’s **bear_id** (expose as `agent_id` in JSON if you want API parity with PLAN)
+- `id` UUID PK — Den’s **`bear_id`** (public JSON field name **`bear_id`** per [PHASE1_DECISIONS.md](PHASE1_DECISIONS.md))
 - `slug` TEXT UNIQUE — human-stable handle (`household`, `personal-hans`)
 - `name`, `description` TEXT
 - `letta_agent_id` TEXT NOT NULL — Letta’s agent id string
@@ -187,13 +187,13 @@ den/
 | POST | `/auth/login` | Returns session cookie or `{ token }` |
 | POST | `/auth/logout` | Invalidate session |
 | GET | `/v1/bears` or `/agents` | List bears for **authenticated** user (membership filter) |
-| POST | `/v1/chat/send` | Body: `{ message, agent_id?, conversation_id?, stream?, channel?, channel_thread_id? }` — **agent_id** = bear id |
-| GET | `/v1/me/memory` | Return current user's `human` block content (per bear) and any `person:{name}` blocks across all member bears — for the memory dashboard |
+| POST | `/v1/chat/send` | Body: `{ message, bear_id?, conversation_id?, stream?, channel?, channel_thread_id? }` — **`bear_id`** selects the bear ([PHASE1_DECISIONS.md](PHASE1_DECISIONS.md)) |
+| GET | `/v1/me/memory` | Return current user’s **`human`** memory (per bear, as Letta exposes it) and any existing **`person:{name}`** blocks on member bears — for the memory dashboard (see **Memory dashboard** row in §1 in-scope table) |
 
 **Chat contract** (align with [PLAN.md](PLAN.md) §2.1):
 
 - Resolve `Authorization: Bearer <token>` or session cookie → `user_id`
-- Resolve `agent_id` → `bear_id` → `letta_agent_id`; **403** if not member
+- Resolve **`bear_id`** → `letta_agent_id`; **403** if not member
 - Apply rate limit
 - Call **LettaBot** for the bear’s configured bot row (HTTP/gRPC/socket per your deployment — **verify against LettaBot version**); pass through `conversation_id` (if supplied) plus `channel` and `channel_thread_id` so LettaBot resolves/creates the right Letta conversation.
 - Keep conversation ownership in LettaBot/Letta; Den should not implement its own canonical thread-mapping logic in Phase 1.
@@ -393,7 +393,7 @@ den/
 - [ ] Deployed via **single Dockerfile** build on Coolify (or CI → registry)
 - [ ] No Cabinet calls required
 - [ ] New user registration auto-provisions their Personal Bear in Letta and redirects them into chat with the onboarding prompt
-- [ ] `GET /v1/me/memory` returns the current user's `human` block content across their bears
+- [ ] `GET /v1/me/memory` returns the current user’s **`human`** content (per member bear as Letta exposes it); **`person:{name}`** included only when present on the agent
 - [ ] Admin can view and edit the `org_policy` block via the console; `den/defaults/org_policy.md` is applied on first bear creation when no policy exists
 
 ---
@@ -413,7 +413,7 @@ den/
 1. **Operator UI stack:** server-rendered (Askama/Tera + htmx) vs SPA in `static/`
 2. **Streaming payload for `POST /v1/chat/send`:** SSE vs NDJSON — **lock for Den chat UI first**; Open WebUI adapters translate if needed
 3. **Auth mechanism for optional Open WebUI:** cookie from browser vs server-side API token per workspace
-4. **Bear id in JSON:** `agent_id` vs `bear_id` vs both with alias
+4. **Bear id in JSON:** **`bear_id` only** in public v1 JSON ([PHASE1_DECISIONS.md](PHASE1_DECISIONS.md)); **`letta_agent_id`** stays internal to provisioning/LettaBot wiring
 5. **Letta agent create payload:** single template vs per-bear type (personal vs shared)
 6. **Conversation id:** Letta thread/conversation API — map client `chat_id` to Letta conversation if required by API version
 

@@ -19,7 +19,8 @@ High‑level, ops‑oriented plan and architecture: MVP **without Cabinet first*
 - **Bear** — one **Letta-backed agent**: a distinct assistant with its own Letta agent id, prompts, memory, and tools. Users interact with **bears**; Den registers and provisions them.
 - **Bot (LettaBot row)** — the **LettaBot** `agents[]` entry Den generates for a bear (channels, `agentId` pointing at Letta). “Skill management for the bear” is **skill management for this bot row** and the filesystem paths LettaBot uses for that agent.
 - **Users ↔ bears (many‑to‑many)** — a **user** may access **many** bears (e.g. personal + household + project). A **bear** may be shared by **many** users (e.g. a household assistant). Den stores membership and enforces it on every chat and Cabinet call.
-- **Den** — the **BEARS control plane and gateway**: identity, **bear lifecycle** (provision Letta agents, surface bears in the **Den chat UI**, **optional Open WebUI**, and LettaBot config), **[skills catalog and per-bear attachments](https://docs.letta.com/letta-code/skills/)** (materialized for LettaBot; see [DEN_ARCHITECTURE.md](../architecture/DEN_ARCHITECTURE.md)), **local MCP server catalog and per-bear MCP attachments** (Phase 1, alongside skills; [DEN_ARCHITECTURE.md](../architecture/DEN_ARCHITECTURE.md)), routing, authz, Cabinet API, and Bifrost observability reads. Den is the **system of record** for which users may use which bears, which skills each bear’s bot may load, **which MCP servers each bear may use**, and how they appear in each channel (see below).
+- **Den** — the **BEARS control plane and gateway**: identity, **bear lifecycle** (provision Letta agents, surface bears in the **Den chat UI**, **optional Open WebUI**, and LettaBot config), **[skills catalog and per-bear attachments](https://docs.letta.com/letta-code/skills/)** (materialized for LettaBot; see [DEN_ARCHITECTURE.md](../architecture/DEN_ARCHITECTURE.md)), **local MCP server catalog and per-bear MCP attachments** (Phase 1, alongside skills; [DEN_ARCHITECTURE.md](../architecture/DEN_ARCHITECTURE.md)), routing, authz, Cabinet API, and **optional Bifrost observability reads** for the **Letta → Bifrost bear inference path** (details in [§2.5](#25-den-and-bifrost-observability-on-the-bear-path)). Den is the **system of record** for which users may use which bears, which skills each bear’s bot may load, **which MCP servers each bear may use**, and how they appear in each channel (see below).
+- **bear_id** / **letta_agent_id** — **`bear_id`** is Den’s **public** identifier for a bear in JSON APIs (**v1:** `bear_id` only; see [PHASE1_DECISIONS.md](PHASE1_DECISIONS.md)). **`letta_agent_id`** is Letta’s internal agent id (server-to-server provisioning and LettaBot wiring). The word **agent** is still useful when reading **Letta** docs; in **Den-facing** contracts and examples, prefer **bear** / **`bear_id`**.
 
 ---
 
@@ -29,7 +30,7 @@ High‑level, ops‑oriented plan and architecture: MVP **without Cabinet first*
 
 1. **Den** (control plane + gateway), implemented in **Rust with Axum**
    - Maps **external identities** (Slack, WhatsApp, web, etc.) to **internal users**.
-   - **Provisions and registers bears:** creates and updates **Letta agents** via API; keeps Den’s **bear registry** in sync (`bear_id` / `agent_id` ↔ `associated_letta_id`); drives **which bears exist** and **who may use them**.
+   - **Provisions and registers bears:** creates and updates **Letta agents** via API; keeps Den’s **bear registry** in sync (`bear_id` ↔ `letta_agent_id`); drives **which bears exist** and **who may use them**.
    - **Surfaces bears in clients:** emits or updates config so **Den's chat UI** (first-party browser chat), **optional Open WebUI** (when deployed), and **LettaBot** (`lettabot.yaml` or equivalent) list the correct bears per user/channel. The Den chat UI uses the same **auth, membership, and streaming** endpoints as every other web client; Open WebUI is an **optional** path for teams that want it—not a replacement for Den’s control‑plane role. *Traffic path for web chat is* **Den chat UI → Den → LettaBot → Letta** (LettaBot is mandatory for agent interaction; see [DEN_ARCHITECTURE.md](../architecture/DEN_ARCHITECTURE.md)).
    - **Manages skills for each bear’s bot:** catalog (URLs, pins, org library), attach/detach per bear, then **materialize** [Agent Skills](https://agentskills.io/)–compatible trees onto volumes/paths LettaBot reads; LettaBot remains the runtime that discovers and loads skills.
    - **Manages MCP servers for each bear (Phase 1, with skills):** **local catalog** in Den (org-defined and curated third-party entries), optional **discovery** from the [official MCP Registry](https://modelcontextprotocol.io/registry) without requiring Den to proxy public servers; **per-bear attachments** using the **same catalog vs attachment pattern** as skills; **provisioning** of MCP server processes left to **Coolify** (Den stores connection metadata and policy, not generic process orchestration).
@@ -37,7 +38,7 @@ High‑level, ops‑oriented plan and architecture: MVP **without Cabinet first*
    - **Routes** web chat through **LettaBot** to the correct Letta agent for the chosen bear; **channels** connect to LettaBot directly, still backed by the same Letta agent ids Den provisions.
    - **Auth** and **tool/model policies** (RBAC, gating, rate limits).
    - **Cabinet API** for bears (search/read/write), implemented against **Outline**.
-   - **Bifrost (observability only):** Den does **not** proxy model traffic. **Letta calls Bifrost directly.** Den may connect to Bifrost for **metrics, health checks, Prometheus scrapes, or log exports** (per your Bifrost version and config), and join that with Den’s `user_id` / `agent_id` / channel data where your logging pipeline allows.
+   - **Bifrost (Phase 1 and bear chat paths):** On the **end-user bear inference path**, Den does **not** proxy model traffic: **Letta → Bifrost** (via `LLM_API_URL`). Den may still connect to Bifrost for **metrics, health checks, Prometheus scrapes, or log exports** (per your Bifrost version and config), and join that with Den’s `user_id` / `bear_id` / channel data where your logging pipeline allows. **Future flexibility:** Den may call models or gateways **directly** for **control-plane or operational** LLM work without changing the **Letta → Bifrost** path for bear chat.
    - Auth‑aware proxy: frontends ↔ **LettaBot** ↔ **Letta** for chat (not through Bifrost on Den); **bear** tool calls ↔ Cabinet.
 
 2. **Letta** (**self‑hosted only** in BEARS—e.g. Coolify `bears-letta:8283`, not Letta Cloud)
@@ -52,12 +53,12 @@ High‑level, ops‑oriented plan and architecture: MVP **without Cabinet first*
    - **Den → LettaBot:** Den bridges **browser** traffic so web matches channel behavior; Den **does not** call Letta’s end-user message APIs directly for chat.
 
 4. **Web chat frontends**
-   - **Den chat UI** (**primary first-party UI**): Deep Chat web component served by Den; the browser calls Den’s **`POST /v1/chat/send`** streaming API and `GET /agents` or bear list—Den forwards to **LettaBot → Letta**; Bifrost remains **Letta → Bifrost** only.
+   - **Den chat UI** (**primary first-party UI**): Deep Chat web component served by Den; the browser calls Den’s **`POST /v1/chat/send`** streaming API and **`GET /v1/bears`** (membership-filtered list; see [PHASE1_BOOTSTRAP.md](PHASE1_BOOTSTRAP.md) for route variants)—Den forwards to **LettaBot → Letta**; **bear** model calls remain **Letta → Bifrost**.
    - **Open WebUI** (optional): authenticate users (ideally via Den or a shared SSO); forward chat to **Den** (which uses **LettaBot → Letta**) when you choose to deploy it.
 
 5. **Bifrost**
-   - **Letta’s** model gateway (Letta → Bifrost → providers). Den does not proxy this traffic.
-   - Observability (logs, metrics, usage) — **Den** may consume for dashboards/correlation only.
+   - **Letta’s** model gateway for **bear** calls (Letta → Bifrost → providers). Den does not proxy **that** traffic in Phase 1.
+   - Observability (logs, metrics, usage) — **Den** may consume Bifrost for dashboards/correlation on the bear path; future Den-side LLM usage may or may not go through Bifrost.
 
 6. **Cabinet (later)**
    - Logical knowledge layer **bears** use for long‑term reference & history.
@@ -97,18 +98,18 @@ Not exact APIs, but what each interface *does*.
 **Capabilities:**
 
 - `POST /chat/send`
-  - Input: `{ user_token, channel, agent_id, message, conversation_id?, metadata }`
+  - Input: `{ user_token, channel, bear_id, message, conversation_id?, metadata }`
     - `user_token`: Den or upstream auth token → Den resolves to internal `user_id`.
     - `channel`: `"slack" | "whatsapp" | "webui" | ..."`
-    - `agent_id`: which **bear** to talk to (Den’s id → Letta `associated_letta_id`), or default per-channel—**only if** this user is a member of that bear.
+    - `bear_id`: which **bear** to talk to (Den’s id → Letta `letta_agent_id`), or default per-channel—**only if** this user is a member of that bear.
     - `metadata`:
       - `channel_user_id`, `channel_conversation_id`, etc.
   - Behavior:
     - Authenticates `user_token` → `user_id`.
     - Checks policies:
-      - Is `agent_id` allowed for this user?
+      - Is `bear_id` allowed for this user?
       - Apply rate limits, etc.
-    - Constructs a request for **LettaBot** (with `user_id`, `agent_id`, conversation/thread hints, and channel context) so the bear’s bot row handles the Letta conversation.
+    - Constructs a request for **LettaBot** (with `user_id`, `bear_id`, conversation/thread hints, and channel context) so the bear’s bot row handles the Letta conversation.
     - Lets LettaBot resolve or create the canonical Letta conversation/thread mapping for that bear and channel context.
     - Forwards to **LettaBot → Letta**; streams responses back through Den.
   - Output:
@@ -131,12 +132,12 @@ Later, you can add:
 
 You can think of a single logical RPC from Den’s perspective:
 
-- `invoke_bear_bot(user_id, agent_id, message, channel_ctx, session_ctx)`
+- `invoke_bear_bot(user_id, bear_id, message, channel_ctx, session_ctx)`
 
 Where:
 
 - `user_id`: Den’s internal ID (stable across Slack/WhatsApp/web).
-- `agent_id`: Den’s **bear** key; resolves to the Letta agent id and LettaBot row Den configured (and must pass **user↔bear** membership checks on web).
+- `bear_id`: Den’s **bear** key; resolves to **`letta_agent_id`** and the LettaBot row Den configured (and must pass **user↔bear** membership checks on web).
 - `channel_ctx`: `{ channel, channel_user_id, channel_conversation_id }`.
 - `session_ctx`: optional (recent messages, caller `conversation_id`, thread hints, etc.); **resolved canonically by LettaBot/Letta** in Phase 1.
 
@@ -188,15 +189,15 @@ Capabilities (internal to Den):
 
 Den enforces:
 
-- Which decks a given `user_id` and **bear** (`agent_id`) can touch.
+- Which decks a given `user_id` and **bear** (`bear_id`) can touch.
 - Property schema (kinds, projects, tags, etc.).
 
 ---
 
-### 2.5 Den and Bifrost (observability only)
+### 2.5 Den and Bifrost (observability on the bear path)
 
-- **Traffic:** **Letta → Bifrost** for calls configured against `LLM_API_URL` (typically chat completions). **Embeddings** may use the same URL or direct provider credentials per Letta settings. **Den never proxies** Bifrost.
-- **Den’s use of Bifrost:** optional **read-only** integration for observability—e.g. Bifrost **metrics**, **`/health`**, Prometheus, or exported logs—so operators (or Den) can monitor usage. Correlating calls to Den’s `user_id` / `agent_id` may require **Letta/Bifrost metadata** (e.g. custom headers or logging hooks) configured outside Den’s request path.
+- **Traffic:** **Letta → Bifrost** for calls configured against `LLM_API_URL` (typically chat completions). **Embeddings** may use the same URL or direct provider credentials per Letta settings. **Den does not proxy Bifrost for bear chat** in Phase 1.
+- **Den’s use of Bifrost:** optional **read-only** integration for observability—e.g. Bifrost **metrics**, **`/health`**, Prometheus, or exported logs—so operators (or Den) can monitor **bear** usage. Correlating calls to Den’s `user_id` / `bear_id` may require **Letta/Bifrost metadata** (e.g. custom headers or logging hooks) configured outside Den’s request path. **Future:** Den-side operational or control-plane LLM calls are **not** required to use Bifrost; keep docs and dashboards clear about **which path** is being described.
 - **Naming (`BIFROST_*`):** Den uses **Bifrost-specific** configuration (e.g. `BIFROST_BASE_URL`), not a vendor-neutral `MODEL_GATEWAY_*`, so the **operator console** may assume **Bifrost’s** health routes, Prometheus layout, and documented management APIs without an extra abstraction layer.
 - **Policy:** Den enforces **which users may chat with which bears** before forwarding to **LettaBot**; model allowlists at the **Bifrost** layer remain separate (configure both consistently).
 
@@ -236,16 +237,16 @@ Deliverables:
 
 2. **Bear registry and membership (many‑to‑many)**
    - A DB (or config that Den imports) holding at least:
-     - **Bears:** `agents[bear_id]` (name may stay `agent_id` in APIs) `= { name, description, associated_letta_id, tools_enabled, default_model, … }`.
+     - **Bears:** `agents[bear_id]` `= { name, description, letta_agent_id, tools_enabled, default_model, … }` (public JSON uses **`bear_id`** per [PHASE1_DECISIONS.md](PHASE1_DECISIONS.md)).
      - **Membership:** which `user_id`s may use which `bear_id` (and optional roles). A user has many bears; a bear can have many users.
    - **Den’s** job:
      - **Provision** bears in Letta (create/update agents) when admins or workflows add or change a bear.
      - **Publish** bear lists via Den APIs, **optional Open WebUI**, and regenerate **LettaBot** config snippets / `lettabot.yaml` as needed so each channel exposes the right bears.
-     - Validate `agent_id` / bear id on every request; deny if the user is not a member.
+     - Validate `bear_id` on every request; deny if the user is not a member.
 
 3. **Chat proxy API** (on Den)
    - `POST /chat/send`:
-     - Accepts message, auth token, optional `agent_id`, and optional `conversation_id`/thread hints.
+     - Accepts message, auth token, optional `bear_id`, and optional `conversation_id`/thread hints.
      - Resolves `user_id`.
      - Applies rate limits / policies.
      - Invokes **LettaBot** for the resolved bear (not raw Letta chat APIs), forwarding conversation context without Den-owned thread mapping.
@@ -257,8 +258,8 @@ Deliverables:
    - **Open WebUI (optional):** configure to talk to Den (`/v1/chat/send` or adapter): auth, **bear** picker (only member bears), streaming — ship when a deployment needs it (**M6b** in bootstrap plan).
    - **LettaBot:** required for **all** chat traffic; Den **updates LettaBot config** and **materializes skills and MCP attachments** so each bear’s bot row matches Den’s registry; channels use LettaBot natively; optional **channel-only** Den proxy later (see [Canonical paths vs optional channel proxy](#canonical-paths-vs-optional-channel-proxy)).
 
-5. **Bifrost observability** (Den reads, does not proxy)
-   - Letta → Bifrost stays direct. **Den** connects to Bifrost **only** for observability (metrics/health/logs APIs or log shipping) as needed.
+5. **Bifrost observability** (Den reads; no bear-traffic proxy)
+   - Letta → Bifrost stays direct for **bear** model calls. **Den** connects to Bifrost **only** for observability (metrics/health/logs APIs or log shipping) as needed on that path.
    - Where possible, align Letta/Bifrost logging with Den’s identity data for attribution.
 
 6. **MCP catalog and bear attachments (Phase 1, alongside skills)**
@@ -284,7 +285,7 @@ Deliverables:
 - Bear registry, **users↔bears** membership, and basic RBAC for **web** users.
 - No Cabinet/Outline yet: **Letta native memory** only; shared knowledge in later phases.
 - **User onboarding:** new account → Personal Bear auto-provisioned → user lands in chat with onboarding prompt.
-- **Memory dashboard:** users can view their `human` and `person:{name}` Letta blocks across all their bears.
+- **Memory dashboard:** read-focused UI over **Letta-native** memory for bears the user may access—**primary** content is **`human`** (including per-conversation isolated copies where the Letta API exposes them for 1:1 web flows). **`person:{name}`** blocks appear **when they already exist** on an agent (mostly relevant to **group-mode** designs in [multi-user-memory-adr.md](../multi-user-memory-adr.md), largely **post–Phase 1**); the UI must **not** imply a new unified cross-bear memory layer beyond what Letta stores.
 - **Org policy:** operator sets a shared `org_policy` Letta block (default from `den/defaults/org_policy.md`) applied to all bears.
 
 ---
@@ -398,7 +399,7 @@ At the end of Phase 2, Cabinet is a defined, testable contract, even if Outline 
      - Restrict dangerous or heavy tools/models to specific roles.
 
 4. **Observability & ops polish**
-   - **Bifrost** metrics/usage + **Den** logs + optional correlation (Letta does not route LLM traffic through Den).
+   - **Bifrost** metrics/usage + **Den** logs + optional correlation (Letta does not route **bear** LLM traffic through Den for chat).
    - Dashboards: channel usage (Den), model usage/cost (Bifrost + provider billing), per‑**bear** usage.
 
 This is the “make it livable and reliable” phase.
@@ -416,7 +417,7 @@ We’re aiming for:
 - **Den** as the **BEARS control plane and gateway**:
   - Maps external identities → internal users; **provisions bears** in Letta; **bear registry** and **users↔bears** membership; **skills and MCP catalogs** and **per-bear bot attachments** (materialized for LettaBot); **surfaces bears** in **Den chat UI**, **optional Open WebUI**, and LettaBot config; web chat routing **Den → LettaBot → Letta** (Letta → **Bifrost** direct for models).
   - Auth and tool/model policies; per‑user and per‑bear **Cabinet** permissions when Cabinet ships; **Cabinet API** backed by Outline.
-  - **Bifrost:** Den uses it **only for observability** (not as a proxy for model traffic).
+  - **Bifrost:** For **Phase 1 and bear chat**, Den uses it **for observability only** (not as a proxy for **bear** model traffic); future Den **control-plane** LLM usage may use other call paths.
   - **v1:** **Den chat UI** → **Den** → **LettaBot** → **Letta** as the **default web chat** path; **Open WebUI** → Den → LettaBot → Letta **optional** when deployed. **LettaBot** is **required** for agent interaction; **channels** → LettaBot → Letta. **Optional channel-only Den proxy** for audit is a later value-add (see [Canonical paths vs optional channel proxy](#canonical-paths-vs-optional-channel-proxy)). Cabinet/Outline auth aligned with human auth when Cabinet ships.
 
 - **Phased delivery**:

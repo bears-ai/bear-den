@@ -2,7 +2,7 @@
 
 *Earlier notes drew on Letta Discord discussion:* https://discord.com/channels/1161736243340640419/1467667826730078386
 
-BEARS uses **only self-hosted Letta** (e.g. `letta/letta:latest` on Coolify). **Den** is the control plane and gateway (**Rust / Axum**). **Letta calls Bifrost directly** for models; Den may talk to Bifrost **only for observability** (metrics/health/logs)—see [PLAN.md](../planning/PLAN.md).
+BEARS uses **only self-hosted Letta** (e.g. `letta/letta:latest` on Coolify). **Den** is the control plane and gateway (**Rust / Axum**). **For Phase 1 and bear chat**, **Letta calls Bifrost directly** for model calls; Den may talk to Bifrost **for observability** on that path (metrics/health/logs). **Future** Den features (for example control-plane LLM helpers) are **not** required to route through Bifrost—see [PLAN.md](../planning/PLAN.md) §2.5.
 
 **LettaBot** is the **mandatory agent runtime** for all conversational and tool-driven interaction: every path that talks to a bear goes **through LettaBot**, which in turn uses **Letta** as its **state and persistence backend** (agents, memory blocks, conversations, tools). Den does **not** call Letta’s message APIs directly for end-user chat; it forwards to LettaBot so browser, messaging channels, and future clients share one stack (including [Letta Code skills](https://docs.letta.com/letta-code/skills/) behavior where applicable).
 
@@ -64,7 +64,7 @@ For a concise list of **Letta agent knobs that Den’s bear UI does not yet driv
   Slack / WhatsApp / … ─────────────────► LettaBot ───► Letta ───► Bifrost ───► providers
 ```
 
-**Web** chat is **never** Den → Letta for messages: **Web → Den → LettaBot → Letta**. **Channels** talk to **LettaBot**, which persists through **Letta**. Den may call Bifrost separately for **metrics/health** (not inference). Older notes in [PLAN.md](../planning/PLAN.md) that described optional **LettaBot → Den → Letta** are superseded here by **Den → LettaBot → Letta** for web; Letta remains the persistence API LettaBot calls.
+**Web** chat is **never** Den → Letta for messages: **Web → Den → LettaBot → Letta**. **Channels** talk to **LettaBot**, which persists through **Letta**. Den may call Bifrost separately for **metrics/health** on the **bear inference** path (not bear chat inference through Den). Older notes in [PLAN.md](../planning/PLAN.md) that described optional **LettaBot → Den → Letta** are superseded here by **Den → LettaBot → Letta** for web; Letta remains the persistence API LettaBot calls.
 
 ### Cabinet (Outline)
 
