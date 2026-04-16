@@ -42,6 +42,31 @@
       return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
     }
 
+    /**
+     * Resolve a design token to a computed CSS value for Deep Chat's style API.
+     * getPropertyValue on :root returns raw `calc(var(...))` for many `--chat-*` tokens; the
+     * component applies strings inside Shadow DOM where those vars may not resolve, which can
+     * zero out the text input. Applying `prop: var(name)` on a light-DOM probe yields px/rem.
+     */
+    function cvComputed(name, prop) {
+      var p = document.getElementById('den-cv-probe');
+      if (!p) {
+        p = document.createElement('div');
+        p.id = 'den-cv-probe';
+        p.setAttribute('aria-hidden', 'true');
+        p.style.cssText =
+          'box-sizing:border-box;position:absolute!important;left:-9999px!important;top:0!important;' +
+          'visibility:hidden!important;pointer-events:none!important;margin:0!important;padding:0!important;' +
+          'border:none!important;width:auto!important;height:auto!important;font-size:16px!important;' +
+          'line-height:normal!important;font-family:inherit!important;';
+        document.body.appendChild(p);
+      }
+      p.style.setProperty(prop, 'var(' + name + ')');
+      var v = getComputedStyle(p).getPropertyValue(prop).trim();
+      p.style.removeProperty(prop);
+      return v;
+    }
+
     function escapeHtml(t) {
       return String(t)
         .replace(/&/g, '&amp;')
@@ -138,8 +163,11 @@
       var met = cv('--meta-color');
       var srf = cv('--surface-color');
       var tln = cv('--thin-line-unit');
-      var bubblePad = cv('--chat-bubble-padding-block') + ' ' + cv('--chat-bubble-padding-inline');
-      var lh = cv('--chat-line-height');
+      var bubblePad =
+        cvComputed('--chat-bubble-padding-block', 'padding-top') +
+        ' ' +
+        cvComputed('--chat-bubble-padding-inline', 'padding-left');
+      var lh = cvComputed('--chat-line-height', 'line-height');
       var bodyFont = cv('--body-font-family');
       var border1 = tln + ' solid ' + brd;
       var submitScale = 'scale(' + cv('--chat-submit-button-scale') + ')';
@@ -202,11 +230,11 @@
           text: {
             color: fg,
             fontFamily: bodyFont,
-            fontSize: cv('--chat-input-font-size'),
-            paddingTop: cv('--chat-input-pad-top'),
-            paddingBottom: cv('--chat-input-pad-bottom'),
-            paddingLeft: cv('--chat-input-pad-left'),
-            paddingRight: cv('--chat-input-pad-right'),
+            fontSize: cvComputed('--chat-input-font-size', 'font-size'),
+            paddingTop: cvComputed('--chat-input-pad-top', 'padding-top'),
+            paddingBottom: cvComputed('--chat-input-pad-bottom', 'padding-bottom'),
+            paddingLeft: cvComputed('--chat-input-pad-left', 'padding-left'),
+            paddingRight: cvComputed('--chat-input-pad-right', 'padding-right'),
           },
           focus: {},
         },
@@ -214,9 +242,9 @@
       };
 
       chat.submitButtonStyles = {
-        submit:  { container: { default: { transform: submitScale, marginBottom: cv('--chat-submit-nudge-y'), marginRight: cv('--chat-submit-margin-right') } } },
-        loading: { container: { default: { transform: submitScale, marginBottom: cv('--chat-submit-nudge-y'), marginRight: cv('--chat-submit-margin-right') } } },
-        stop:    { container: { default: { transform: submitScale, marginBottom: cv('--chat-submit-nudge-y'), marginRight: cv('--chat-submit-margin-right') } } },
+        submit:  { container: { default: { transform: submitScale, marginBottom: cvComputed('--chat-submit-nudge-y', 'margin-bottom'), marginRight: cvComputed('--chat-submit-margin-right', 'margin-right') } } },
+        loading: { container: { default: { transform: submitScale, marginBottom: cvComputed('--chat-submit-nudge-y', 'margin-bottom'), marginRight: cvComputed('--chat-submit-margin-right', 'margin-right') } } },
+        stop:    { container: { default: { transform: submitScale, marginBottom: cvComputed('--chat-submit-nudge-y', 'margin-bottom'), marginRight: cvComputed('--chat-submit-margin-right', 'margin-right') } } },
       };
 
       chat.inputAreaStyle = { backgroundColor: pg };

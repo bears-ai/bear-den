@@ -9,6 +9,7 @@
  */
 
 /* ---- Bear chat (/bear/:slug) — standalone page (templates/bear_chat.html) ---- */
+/* Within-chat styles are defined via script in that page */
 
 html.den-bear-chat-page {
     height: 100%;
