@@ -335,6 +335,9 @@ impl LettaClient {
     }
 
     /// `GET /v1/agents/{agent_id}` — full JSON for operator diagnostics.
+    ///
+    /// Requests `include=agent.blocks` and `include=agent.tools` because current Letta
+    /// APIs omit those relationships by default unless asked (see Letta retrieve-agent docs).
     pub async fn fetch_agent(&self, agent_id: &str) -> Result<serde_json::Value, CustomError> {
         if !self.is_enabled() {
             return Err(CustomError::System(
@@ -346,6 +349,10 @@ impl LettaClient {
         let resp = self
             .http
             .get(url)
+            .query(&[
+                ("include", "agent.blocks"),
+                ("include", "agent.tools"),
+            ])
             .headers(self.auth_headers())
             .send()
             .await

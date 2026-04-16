@@ -55,6 +55,15 @@ fn array_len(v: &Value, key: &str) -> Option<usize> {
     v.get(key).and_then(|x| x.as_array()).map(|a| a.len())
 }
 
+fn memory_block_count(v: &Value) -> Option<usize> {
+    array_len(v, "blocks").or_else(|| {
+        v.get("memory")
+            .and_then(|m| m.get("blocks"))
+            .and_then(|x| x.as_array())
+            .map(|a| a.len())
+    })
+}
+
 impl AgentSummary {
     pub fn from_letta_agent_state(v: &Value) -> Self {
         let id = v
@@ -77,7 +86,7 @@ impl AgentSummary {
             description: pick_str(v, &["description"]),
             created_at: pick_str(v, &["created_at"]),
             updated_at: pick_str(v, &["updated_at"]),
-            memory_block_count: array_len(v, "blocks"),
+            memory_block_count: memory_block_count(v),
             tool_count: array_len(v, "tools"),
             system_excerpt,
         }
@@ -107,5 +116,16 @@ mod tests {
         assert_eq!(s.model.as_deref(), Some("gpt-4o"));
         assert_eq!(s.memory_block_count, Some(1));
         assert_eq!(s.tool_count, Some(2));
+    }
+
+    #[test]
+    fn summary_counts_blocks_under_deprecated_memory() {
+        let v = json!({
+            "id": "agent-test",
+            "memory": {"blocks": [{"id": "b1"}, {"id": "b2"}]},
+            "tools": []
+        });
+        let s = AgentSummary::from_letta_agent_state(&v);
+        assert_eq!(s.memory_block_count, Some(2));
     }
 }

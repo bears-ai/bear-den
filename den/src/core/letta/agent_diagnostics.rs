@@ -44,12 +44,23 @@ fn pick_str(v: &Value, keys: &[&str]) -> Option<String> {
     None
 }
 
+/// Top-level `blocks`, or deprecated `memory.blocks` on older agent payloads.
+fn agent_blocks_array(v: &Value) -> Option<&Vec<Value>> {
+    v.get("blocks")
+        .and_then(|x| x.as_array())
+        .or_else(|| {
+            v.get("memory")
+                .and_then(|m| m.get("blocks"))
+                .and_then(|x| x.as_array())
+        })
+}
+
 impl LettaAgentDiagnostics {
     pub fn from_agent_json(v: &Value) -> Self {
         let raw_json = serde_json::to_string_pretty(v).unwrap_or_else(|_| v.to_string());
 
         let mut blocks = Vec::new();
-        if let Some(arr) = v.get("blocks").and_then(|x| x.as_array()) {
+        if let Some(arr) = agent_blocks_array(v) {
             for b in arr {
                 let char_count = b
                     .get("value")
@@ -106,5 +117,17 @@ mod tests {
         assert_eq!(d.blocks[0].char_count, Some(3));
         assert_eq!(d.tools.len(), 1);
         assert_eq!(d.tools[0].id, "tool-1");
+    }
+
+    #[test]
+    fn parses_blocks_from_deprecated_memory_field() {
+        let v = json!({
+            "id": "agent-x",
+            "memory": {"blocks": [{"id": "b2", "label": "persona", "value": "x"}]},
+            "tools": []
+        });
+        let d = LettaAgentDiagnostics::from_agent_json(&v);
+        assert_eq!(d.blocks.len(), 1);
+        assert_eq!(d.blocks[0].label.as_deref(), Some("persona"));
     }
 }
