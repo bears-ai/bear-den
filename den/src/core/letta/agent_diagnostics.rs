@@ -9,6 +9,8 @@ pub struct LettaBlockRow {
     pub label: Option<String>,
     /// Rough size of the block payload for overview tables (characters).
     pub char_count: Option<usize>,
+    /// Block body from Letta (`value` / `content`), for read-only UI.
+    pub content: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -31,6 +33,21 @@ fn block_value_char_count(v: &Value) -> usize {
     serde_json::to_string(v)
         .map(|s| s.chars().count())
         .unwrap_or(0)
+}
+
+/// Text or JSON-serialized body from `value` / `content` on a Letta block object.
+fn block_body_text(b: &Value) -> Option<String> {
+    fn from_field(block: &Value, key: &str) -> Option<String> {
+        let v = block.get(key)?;
+        if let Some(s) = v.as_str() {
+            return Some(s.to_string());
+        }
+        if v.is_null() {
+            return None;
+        }
+        serde_json::to_string_pretty(v).ok()
+    }
+    from_field(b, "value").or_else(|| from_field(b, "content"))
 }
 
 fn pick_str(v: &Value, keys: &[&str]) -> Option<String> {
@@ -69,10 +86,12 @@ impl LettaAgentDiagnostics {
                         b.get("content")
                             .map(block_value_char_count)
                     });
+                let content = block_body_text(b);
                 blocks.push(LettaBlockRow {
                     id: pick_str(b, &["id"]),
                     label: pick_str(b, &["label", "name"]),
                     char_count,
+                    content,
                 });
             }
         }
@@ -115,6 +134,7 @@ mod tests {
         assert_eq!(d.blocks.len(), 1);
         assert_eq!(d.blocks[0].label.as_deref(), Some("human"));
         assert_eq!(d.blocks[0].char_count, Some(3));
+        assert_eq!(d.blocks[0].content.as_deref(), Some("abc"));
         assert_eq!(d.tools.len(), 1);
         assert_eq!(d.tools[0].id, "tool-1");
     }
@@ -129,5 +149,17 @@ mod tests {
         let d = LettaAgentDiagnostics::from_agent_json(&v);
         assert_eq!(d.blocks.len(), 1);
         assert_eq!(d.blocks[0].label.as_deref(), Some("persona"));
+        assert_eq!(d.blocks[0].content.as_deref(), Some("x"));
+    }
+
+    #[test]
+    fn parses_non_string_block_value_as_json() {
+        let v = json!({
+            "id": "agent-x",
+            "blocks": [{"id": "b1", "label": "cfg", "value": {"k": 1}}],
+            "tools": []
+        });
+        let d = LettaAgentDiagnostics::from_agent_json(&v);
+        assert!(d.blocks[0].content.as_ref().unwrap().contains("\"k\""));
     }
 }

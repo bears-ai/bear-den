@@ -121,11 +121,24 @@
     {% if letta_diagnostics %}
     <h3>Memory blocks (Letta)</h3>
     {% if letta_diagnostics.blocks and letta_diagnostics.blocks | length > 0 %}
-    <ul>
+    <div class="den-letta-memory-blocks">
         {% for b in letta_diagnostics.blocks %}
-        <li>{% if b.label %}<strong>{{ b.label | e }}</strong>{% else %}<em>(no label)</em>{% endif %}{% if b.id %} — <code>{{ b.id | e }}</code>{% endif %}{% if b.char_count %} — ~{{ b.char_count }} chars{% endif %}</li>
+        <details class="den-letta-memory-block">
+            <summary class="den-letta-memory-block-summary">
+                {% if b.label %}<span class="den-letta-memory-block-label"><strong>{{ b.label | e }}</strong></span>{% else %}<span class="den-letta-memory-block-label"><em>(no label)</em></span>{% endif %}
+                {% if b.id %}<span class="den-letta-memory-block-id"><code>{{ b.id | e }}</code></span>{% endif %}
+                {% if b.char_count %}<span class="den-letta-memory-block-meta">~{{ b.char_count }} chars</span>{% endif %}
+            </summary>
+            <div class="den-letta-memory-block-body">
+                {% if b.content %}
+                <pre class="den-letta-memory-block-pre">{{ b.content | e }}</pre>
+                {% else %}
+                <p class="form-hint"><em>No value in the Letta payload for this block.</em></p>
+                {% endif %}
+            </div>
+        </details>
         {% endfor %}
-    </ul>
+    </div>
     {% else %}
     <p><em>No blocks in the Letta response.</em></p>
     {% endif %}

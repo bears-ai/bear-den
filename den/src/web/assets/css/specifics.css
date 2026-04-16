@@ -104,3 +104,47 @@ html.den-bear-chat-page #chat-wrap {
     position: relative;
     min-height: 0;
 }
+
+/* ---- Letta memory blocks (bear details / edit snapshots) ---- */
+.den-letta-memory-blocks {
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-unit);
+}
+
+.den-letta-memory-block {
+    border: solid var(--thin-line-unit) var(--border-color);
+    background: var(--page-color);
+}
+
+.den-letta-memory-block-summary {
+    cursor: pointer;
+    padding: calc(var(--spacing-unit) * 0.75) var(--spacing-unit);
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: calc(var(--spacing-unit) * 0.75);
+    font: inherit;
+}
+
+.den-letta-memory-block-body {
+    padding: 0 var(--spacing-unit) var(--spacing-unit);
+    border-top: solid var(--thin-line-unit) var(--border-color);
+}
+
+.den-letta-memory-block-pre {
+    margin: var(--spacing-unit) 0 0;
+    white-space: pre-wrap;
+    word-break: break-word;
+    max-height: 24rem;
+    overflow: auto;
+    font-family: var(--data-font-family);
+    font-weight: var(--data-font-weight);
+    font-style: var(--data-font-style);
+    font-size: smaller;
+}
+
+.den-letta-memory-block-meta {
+    color: var(--meta-color);
+    font-size: smaller;
+}
