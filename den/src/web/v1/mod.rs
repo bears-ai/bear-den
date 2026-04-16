@@ -191,6 +191,9 @@ fn letta_message_sort_key(msg: &serde_json::Value) -> (String, i64) {
 
 fn letta_message_text(inner: &serde_json::Value) -> Option<String> {
     let content = inner.get("content")?;
+    if content.is_null() {
+        return None;
+    }
     if let Some(s) = content.as_str() {
         let s = s.trim();
         return if s.is_empty() { None } else { Some(s.to_string()) };
@@ -225,11 +228,21 @@ fn letta_message_text(inner: &serde_json::Value) -> Option<String> {
     }
 }
 
+fn letta_message_id_string(m: &serde_json::Value) -> Option<String> {
+    match m.get("id")? {
+        serde_json::Value::String(s) if !s.is_empty() => Some(s.clone()),
+        serde_json::Value::Number(n) => Some(n.to_string()),
+        _ => None,
+    }
+}
+
 /// Cursor for `before=` on the next page: chronologically oldest id in this Letta batch (any type).
 fn oldest_raw_message_id(raw: &[serde_json::Value]) -> Option<String> {
-    let mut best: Option<(String, i64, &str)> = None;
+    let mut best: Option<(String, i64, String)> = None;
     for m in raw {
-        let id = m.get("id").and_then(|x| x.as_str()).filter(|s| !s.is_empty())?;
+        let Some(id) = letta_message_id_string(m) else {
+            continue;
+        };
         let key = letta_message_sort_key(m);
         if best
             .as_ref()
@@ -238,7 +251,7 @@ fn oldest_raw_message_id(raw: &[serde_json::Value]) -> Option<String> {
             best = Some((key.0, key.1, id));
         }
     }
-    best.map(|(_, _, id)| id.to_string())
+    best.map(|(_, _, id)| id)
 }
 
 fn map_letta_history_page(body: &serde_json::Value, page_limit: u32) -> (Vec<ChatHistoryMessage>, bool, Option<String>) {
@@ -263,7 +276,7 @@ fn map_letta_history_page(body: &serde_json::Value, page_limit: u32) -> (Vec<Cha
             "assistant_message" => "ai",
             _ => continue,
         };
-        let Some(text) = letta_message_text(inner) else {
+        let Some(text) = letta_message_text(inner).or_else(|| letta_message_text(msg)) else {
             continue;
         };
         let (d, s) = letta_message_sort_key(msg);
@@ -472,6 +485,33 @@ mod chat_history_map_tests {
         assert_eq!(msgs.len(), 2);
         assert_eq!(msgs[1].role, "ai");
         assert_eq!(msgs[1].text, "hello back");
+    }
+
+    #[test]
+    fn user_text_on_envelope_when_contents_has_no_content() {
+        let body = serde_json::json!([
+            {
+                "id": "u1",
+                "date": "2025-01-01T00:00:00Z",
+                "message_type": "user_message",
+                "content": "from envelope",
+                "contents": {
+                    "message_type": "user_message"
+                }
+            }
+        ]);
+        let (msgs, _, _) = map_letta_history_page(&body, 10);
+        assert_eq!(msgs.len(), 1);
+        assert_eq!(msgs[0].text, "from envelope");
+    }
+
+    #[test]
+    fn oldest_cursor_skips_rows_without_id() {
+        let raw = vec![
+            serde_json::json!({"date": "2025-01-02T00:00:00Z", "message_type": "tool_call_message"}),
+            serde_json::json!({"id": "keep", "date": "2025-01-01T00:00:00Z", "message_type": "user_message", "content": "x"}),
+        ];
+        assert_eq!(oldest_raw_message_id(&raw).as_deref(), Some("keep"));
     }
 
     #[test]

@@ -178,11 +178,19 @@
         }
         return response.json();
       }).then(function (data) {
+        if (!data || typeof data !== 'object') {
+          return [];
+        }
         historyNextBefore = data.next_before || null;
-        var out = (data.messages || []).map(function (m) {
-          return { role: m.role, text: m.text };
-        });
-        if (data.has_more) {
+        var out = (data.messages || [])
+          .filter(function (m) {
+            return m && typeof m === 'object' && (m.role === 'user' || m.role === 'ai');
+          })
+          .map(function (m) {
+            return { role: m.role, text: String(m.text != null ? m.text : '') };
+          });
+        // Deep Chat expects `false` only after real messages; `[false]` alone can break the component.
+        if (data.has_more && out.length > 0) {
           out.push(false);
         }
         return out;
@@ -293,9 +301,9 @@
 
       chat.remarkable = { html: false, breaks: true };
 
-      chat.loadHistory = loadDenHistory;
-
       chat.connect = { handler: lettaSseHandler, stream: true };
+
+      chat.loadHistory = loadDenHistory;
 
       chat.addEventListener('click', function (ev) {
         var path = typeof ev.composedPath === 'function' ? ev.composedPath() : [ev.target];
