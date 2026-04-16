@@ -56,7 +56,9 @@
     --selected-color: #121212;
     --selected-text-color: #EEEEEE;
     /* Panels / alternate message surfaces (bear chat, etc.) */
-    /* --surface-color: #DDDDDD; */
+    --surface-color: #DDDDDD;
+    /* Text fields, textareas, selects, chat composer — high-contrast fill vs --page-color */
+    --field-fill-color: #ffffff;
 
     /*
      * Deep Chat (bear_chat.html) reads these via getComputedStyle for the
@@ -87,7 +89,8 @@ html.theme-dark {
     --border-color: #DDDDDD;
     --selected-color: #DDDDDD;
     --selected-text-color: #121212;
-    /* --surface-color: #1a1a1a; */
+    --surface-color: #1a1a1a;
+    --field-fill-color: #ffffff;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -97,7 +100,8 @@ html.theme-dark {
         --border-color: #DDDDDD;
         --selected-color: #DDDDDD;
         --selected-text-color: #121212;
-        /* --surface-color: #1a1a1a; */
+        --surface-color: #1a1a1a;
+        --field-fill-color: #ffffff;
     }
 
     html.theme-light {
@@ -106,6 +110,7 @@ html.theme-dark {
         --border-color: #121212;
         --selected-color: #121212;
         --selected-text-color: #DDDDDD;
-        /* --surface-color: #CCCCCC; */
+        --surface-color: #cccccc;
+        --field-fill-color: #ffffff;
     }
 }

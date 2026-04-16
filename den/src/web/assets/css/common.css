@@ -6,6 +6,25 @@ a:hover {
     color: var(--accent-color);
 }
 
+/* Text-entry controls (forms + bear chat): shared fill token */
+input[type="text"],
+input[type="email"],
+input[type="password"],
+input[type="search"],
+input[type="url"],
+input[type="tel"],
+input[type="number"],
+input[type="date"],
+input[type="datetime-local"],
+input[type="month"],
+input[type="week"],
+input[type="time"],
+textarea,
+select {
+    background-color: var(--field-fill-color);
+    color: var(--text-color);
+}
+
 button, .button-link, .button-action, .button-borderless {
     padding-left: 1rem;
     padding-right: 1rem;
@@ -110,6 +129,8 @@ form > .fields-grid {
             /* width: 100%; */
             border: solid var(--thin-line-unit) var(--border-color);
             margin-right: var(--spacing-unit);
+            background-color: var(--field-fill-color);
+            color: var(--text-color);
         }
         input[type="checkbox"], input[type="radio"] {
             width: auto;

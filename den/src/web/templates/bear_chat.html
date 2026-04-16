@@ -210,10 +210,11 @@
       var chat = document.getElementById('chat');
       var tok = resolveDeepChatLayoutTokens();
       var pg  = cv('--page-color');
+      var ff  = cv('--field-fill-color');
       var fg  = cv('--text-color');
       var brd = cv('--border-color');
       var met = cv('--meta-color');
-      // var srf = cv('--surface-color');
+      var srf = cv('--surface-color');
       var tln = cv('--thin-line-unit');
       var bubblePad = tok.bubblePad;
       var lh = tok.lh;
@@ -247,7 +248,7 @@
           },
           ai: {
             outerContainer: { justifyContent: 'flex-start' },
-            bubble: { backgroundColor: pg },
+            bubble: { backgroundColor: srf },
           },
           user: {
             outerContainer: { justifyContent: 'flex-end' },
@@ -273,7 +274,7 @@
             borderTop: border1,
             borderRadius: '0px',
             boxShadow: 'unset',
-            backgroundColor: pg,
+            backgroundColor: ff,
             color: fg,
           },
           text: {
@@ -296,7 +297,7 @@
         stop:    { container: { default: { transform: submitScale, marginBottom: tok.submitMb, marginRight: tok.submitMr } } },
       };
 
-      chat.inputAreaStyle = { backgroundColor: pg };
+      chat.inputAreaStyle = { backgroundColor: ff };
 
       chat.auxiliaryStyle =
         '::-webkit-scrollbar{width:var(--chat-scrollbar-size)}' +
@@ -308,7 +309,7 @@
         '#chat-view.deep-chat-downwards-mode{grid-template-rows:minmax(0,1fr) auto!important;min-height:0!important}' +
         '#chat-view.deep-chat-downwards-mode #messages{min-height:0!important}' +
         '#chat-view.deep-chat-downwards-mode #input{margin-top:0!important}' +
-        '#messages{padding-top:var(--chat-messages-padding-top)!important}' +
+        '#messages{padding-top:var(--chat-messages-padding-top)!important;background-color:var(--surface-color)!important}' +
         '.den-reasoning-wrap{font-size:smaller;color:inherit;opacity:0.92}' +
         '.den-reasoning-head{display:flex;align-items:center;gap:calc(var(--spacing-unit) * 0.9);min-width:0}' +
         '.den-reasoning-kicker{flex:0 0 auto;font-variant:small-caps;letter-spacing:0.06em;font-size:smaller;opacity:0.8}' +
