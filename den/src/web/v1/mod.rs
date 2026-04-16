@@ -169,16 +169,49 @@ fn letta_inner_for_history(msg: &serde_json::Value) -> &serde_json::Value {
     }
 }
 
+fn letta_message_type<'a>(msg: &'a serde_json::Value, inner: &'a serde_json::Value) -> &'a str {
+    inner
+        .get("message_type")
+        .and_then(|x| x.as_str())
+        .or_else(|| msg.get("message_type").and_then(|x| x.as_str()))
+        .unwrap_or("")
+}
+
+/// ISO `date` from the envelope (sorting must not use `inner` alone — `contents` may omit it).
+fn letta_message_sort_key(msg: &serde_json::Value) -> (String, i64) {
+    let date = msg
+        .get("date")
+        .or_else(|| msg.get("created_at"))
+        .and_then(|x| x.as_str())
+        .unwrap_or("")
+        .to_string();
+    let seq = msg.get("seq_id").and_then(|x| x.as_i64()).unwrap_or(0);
+    (date, seq)
+}
+
 fn letta_message_text(inner: &serde_json::Value) -> Option<String> {
-    if let Some(s) = inner.get("content").and_then(|c| c.as_str()) {
+    let content = inner.get("content")?;
+    if let Some(s) = content.as_str() {
         let s = s.trim();
         return if s.is_empty() { None } else { Some(s.to_string()) };
     }
-    let parts = inner.get("content").and_then(|c| c.as_array())?;
+    // Single structured part, e.g. `{ "type": "text", "text": "..." }`
+    if let Some(obj) = content.as_object() {
+        if let Some(t) = obj.get("text").and_then(|x| x.as_str()) {
+            let t = t.trim();
+            if !t.is_empty() {
+                return Some(t.to_string());
+            }
+        }
+    }
+    let parts = content.as_array()?;
     let mut out = String::new();
     for p in parts {
         let ty = p.get("type").and_then(|x| x.as_str()).unwrap_or("");
-        if matches!(ty, "text" | "text_delta" | "reasoning_text") {
+        if matches!(
+            ty,
+            "text" | "Text" | "text_delta" | "reasoning_text" | "output_text"
+        ) {
             if let Some(t) = p.get("text").and_then(|x| x.as_str()) {
                 out.push_str(t);
             }
@@ -192,22 +225,39 @@ fn letta_message_text(inner: &serde_json::Value) -> Option<String> {
     }
 }
 
+/// Cursor for `before=` on the next page: chronologically oldest id in this Letta batch (any type).
+fn oldest_raw_message_id(raw: &[serde_json::Value]) -> Option<String> {
+    let mut best: Option<(String, i64, &str)> = None;
+    for m in raw {
+        let id = m.get("id").and_then(|x| x.as_str()).filter(|s| !s.is_empty())?;
+        let key = letta_message_sort_key(m);
+        if best
+            .as_ref()
+            .is_none_or(|b| key.0 < b.0 || (key.0 == b.0 && key.1 < b.1))
+        {
+            best = Some((key.0, key.1, id));
+        }
+    }
+    best.map(|(_, _, id)| id.to_string())
+}
+
 fn map_letta_history_page(body: &serde_json::Value, page_limit: u32) -> (Vec<ChatHistoryMessage>, bool, Option<String>) {
     let raw = letta_messages_top_array(body);
-    let next_before = raw
-        .last()
-        .and_then(|m| m.get("id").and_then(|x| x.as_str()))
-        .filter(|s| !s.is_empty())
-        .map(std::string::ToString::to_string);
+    let next_before = oldest_raw_message_id(raw);
     let has_more = raw.len() >= page_limit as usize;
 
-    let mut messages: Vec<ChatHistoryMessage> = Vec::new();
-    for msg in raw.iter().rev() {
+    #[derive(Clone)]
+    struct Row {
+        /// `(date, seq_id, raw_index)` — `raw_index` stabilizes ordering when dates are absent.
+        sort: (String, i64, usize),
+        role: String,
+        text: String,
+    }
+
+    let mut rows: Vec<Row> = Vec::new();
+    for (raw_idx, msg) in raw.iter().enumerate() {
         let inner = letta_inner_for_history(msg);
-        let mt = inner
-            .get("message_type")
-            .and_then(|x| x.as_str())
-            .unwrap_or("");
+        let mt = letta_message_type(msg, inner);
         let role = match mt {
             "user_message" => "user",
             "assistant_message" => "ai",
@@ -216,11 +266,30 @@ fn map_letta_history_page(body: &serde_json::Value, page_limit: u32) -> (Vec<Cha
         let Some(text) = letta_message_text(inner) else {
             continue;
         };
-        messages.push(ChatHistoryMessage {
+        let (d, s) = letta_message_sort_key(msg);
+        rows.push(Row {
+            sort: (d, s, raw_idx),
             role: role.to_string(),
             text,
         });
     }
+
+    let batch_has_dates = raw.iter().any(|m| !letta_message_sort_key(m).0.is_empty());
+    if batch_has_dates {
+        rows.sort_by(|a, b| a.sort.cmp(&b.sort));
+    } else {
+        // Letta is requested with `order=desc` (newest first). Without timestamps, preserve that
+        // ordering by sorting mapped rows in descending raw index (older messages first).
+        rows.sort_by(|a, b| b.sort.2.cmp(&a.sort.2));
+    }
+
+    let messages = rows
+        .into_iter()
+        .map(|r| ChatHistoryMessage {
+            role: r.role,
+            text: r.text,
+        })
+        .collect();
 
     (messages, has_more, next_before)
 }
@@ -309,11 +378,13 @@ mod chat_history_map_tests {
         let body = serde_json::json!([
             {
                 "id": "m-new",
+                "date": "2025-01-02T00:00:00Z",
                 "message_type": "assistant_message",
                 "content": "Hi there"
             },
             {
                 "id": "m-old",
+                "date": "2025-01-01T00:00:00Z",
                 "message_type": "user_message",
                 "content": "Hello"
             }
@@ -331,7 +402,12 @@ mod chat_history_map_tests {
     #[test]
     fn has_more_when_page_full() {
         let body = serde_json::json!([
-            {"id": "a", "message_type": "user_message", "content": "x"}
+            {
+                "id": "a",
+                "date": "2025-01-01T00:00:00Z",
+                "message_type": "user_message",
+                "content": "x"
+            }
         ]);
         let (_msgs, has_more, _) = map_letta_history_page(&body, 1);
         assert!(has_more);
@@ -342,6 +418,7 @@ mod chat_history_map_tests {
         let body = serde_json::json!([
             {
                 "id": "w",
+                "date": "2025-01-01T00:00:00Z",
                 "contents": {
                     "message_type": "user_message",
                     "content": "wrapped"
@@ -356,12 +433,66 @@ mod chat_history_map_tests {
     #[test]
     fn skips_unknown_message_types() {
         let body = serde_json::json!([
-            {"id": "t", "message_type": "tool_call_message", "content": "{}"},
-            {"id": "u", "message_type": "user_message", "content": "ok"}
+            {
+                "id": "t",
+                "date": "2025-01-01T00:00:00Z",
+                "message_type": "tool_call_message",
+                "content": "{}"
+            },
+            {
+                "id": "u",
+                "date": "2025-01-02T00:00:00Z",
+                "message_type": "user_message",
+                "content": "ok"
+            }
         ]);
         let (msgs, _, nb) = map_letta_history_page(&body, 10);
-        assert_eq!(nb.as_deref(), Some("u"));
+        assert_eq!(nb.as_deref(), Some("t"));
         assert_eq!(msgs.len(), 1);
         assert_eq!(msgs[0].text, "ok");
+    }
+
+    #[test]
+    fn assistant_content_as_single_text_object() {
+        let body = serde_json::json!([
+            {
+                "id": "a1",
+                "date": "2025-01-01T00:00:00Z",
+                "message_type": "user_message",
+                "content": "hey"
+            },
+            {
+                "id": "a2",
+                "date": "2025-01-02T00:00:00Z",
+                "message_type": "assistant_message",
+                "content": {"type": "text", "text": "hello back"}
+            }
+        ]);
+        let (msgs, _, _) = map_letta_history_page(&body, 10);
+        assert_eq!(msgs.len(), 2);
+        assert_eq!(msgs[1].role, "ai");
+        assert_eq!(msgs[1].text, "hello back");
+    }
+
+    #[test]
+    fn sorts_by_date_when_api_order_is_asc() {
+        let body = serde_json::json!([
+            {
+                "id": "older",
+                "date": "2025-01-01T00:00:00Z",
+                "message_type": "user_message",
+                "content": "first"
+            },
+            {
+                "id": "newer",
+                "date": "2025-01-02T00:00:00Z",
+                "message_type": "assistant_message",
+                "content": "second"
+            }
+        ]);
+        let (msgs, _, nb) = map_letta_history_page(&body, 10);
+        assert_eq!(nb.as_deref(), Some("older"));
+        assert_eq!(msgs[0].text, "first");
+        assert_eq!(msgs[1].text, "second");
     }
 }
