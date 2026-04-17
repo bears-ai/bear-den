@@ -14,6 +14,8 @@ pub struct AgentSummary {
     pub updated_at: Option<String>,
     pub memory_block_count: Option<usize>,
     pub tool_count: Option<usize>,
+    /// Full top-level `system` / `system_prompt` from Letta when present.
+    pub system: Option<String>,
     /// Short excerpt when Letta exposes a top-level system string.
     pub system_excerpt: Option<String>,
 }
@@ -72,11 +74,16 @@ impl AgentSummary {
             .unwrap_or("(missing id)")
             .to_string();
 
-        let system_excerpt = v
+        let system = v
             .get("system")
             .or_else(|| v.get("system_prompt"))
             .and_then(|x| x.as_str())
-            .map(|s| excerpt(s, 280));
+            .map(|s| s.to_string());
+
+        let system_excerpt = system
+            .as_deref()
+            .map(|s| excerpt(s, 280))
+            .filter(|s| !s.is_empty());
 
         Self {
             id,
@@ -88,6 +95,7 @@ impl AgentSummary {
             updated_at: pick_str(v, &["updated_at"]),
             memory_block_count: memory_block_count(v),
             tool_count: array_len(v, "tools"),
+            system,
             system_excerpt,
         }
     }
@@ -105,6 +113,7 @@ mod tests {
             "name": "Helper",
             "agent_type": "memgpt_agent",
             "model": "gpt-4o",
+            "system": "You are a test agent.",
             "created_at": "2025-01-01T00:00:00Z",
             "blocks": [{"id": "b1"}],
             "tools": [{"id": "t1"}, {"id": "t2"}]
@@ -116,6 +125,7 @@ mod tests {
         assert_eq!(s.model.as_deref(), Some("gpt-4o"));
         assert_eq!(s.memory_block_count, Some(1));
         assert_eq!(s.tool_count, Some(2));
+        assert_eq!(s.system.as_deref(), Some("You are a test agent."));
     }
 
     #[test]

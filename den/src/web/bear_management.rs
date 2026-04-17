@@ -20,7 +20,7 @@ use crate::{
     core::{
         bears::{
             db as bears_db,
-            db::{BEAR_ROLE_ADMIN, BEAR_ROLE_MEMBER, role_is_bear_admin},
+            db::{BearMemberRow, BEAR_ROLE_ADMIN, BEAR_ROLE_MEMBER, role_is_bear_admin},
             provision,
             sync,
             Bear,
@@ -32,8 +32,9 @@ use crate::{
     errors::CustomError,
     web::{
         bear_create_support::{
-            bear_edit_page_context, bear_new_form_context, ensure_stored_model_in_options_for_handle,
-            insert_new_bear_row, validate_default_model_for_letta, NewBearForm,
+            bear_details_quick_edit_context, bear_edit_page_context, bear_new_form_context,
+            ensure_stored_model_in_options_for_handle, insert_new_bear_row,
+            validate_default_model_for_letta, BearDetailsQuickUpdateForm, NewBearForm,
         },
         render_template, AppState,
     },
@@ -43,6 +44,10 @@ pub fn router() -> Router<AppState> {
     Router::new()
         .route_with_tsr("/bears/new", get(new_bear_get).post(new_bear_post))
         .route_with_tsr("/bear/{slug}/details", get(bear_details_get))
+        .route_with_tsr(
+            "/bear/{slug}/details/update",
+            post(bear_details_quick_update_post),
+        )
         .route_with_tsr(
             "/bear/{slug}/details/edit",
             get(bear_edit_get).post(bear_edit_post),
@@ -280,30 +285,24 @@ async fn new_bear_post(
     .await
 }
 
-async fn bear_details_get(
-    Path(slug): Path<String>,
-    State(state): State<AppState>,
+/// Renders [`bear/details.html`]. When `quick` is set, uses the given form and errors (failed save);
+/// otherwise bear admins get a form prefilled from `bear`.
+async fn render_bear_details_page(
+    state: &AppState,
     auth_session: AuthSession,
+    bear: Bear,
+    members: Vec<BearMemberRow>,
+    is_admin: bool,
+    quick: Option<(BearDetailsQuickUpdateForm, ValidationErrors, Option<String>)>,
 ) -> Result<Response, CustomError> {
-    let user_id = auth_session
-        .user
-        .as_ref()
-        .map(|u| u.id)
-        .ok_or_else(|| CustomError::Authentication("login required".to_string()))?;
-    if let Some(r) = email_verify_redirect(state.sqlx_pool(), user_id).await? {
-        return Ok(r.into_response());
-    }
-
-    let bear = load_bear_member(state.sqlx_pool(), user_id, &slug).await?;
-    let is_admin = viewer_is_bear_admin(state.sqlx_pool(), user_id, bear.id).await?;
-    let members = bears_db::list_members_for_bear(state.sqlx_pool(), bear.id).await?;
-
     let letta_configured = state.letta.is_enabled();
     let letta_api_base = state.config.letta_base_url.trim().to_string();
 
     let (letta_agent_summary, letta_agent_fetch_error, letta_diagnostics, letta_diag_error) =
         if letta_configured {
-            if let Some(agent_id) = bear.letta_agent_id.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+            if let Some(agent_id) =
+                bear.letta_agent_id.as_deref().map(str::trim).filter(|s| !s.is_empty())
+            {
                 match state.letta.fetch_agent(agent_id).await {
                     Ok(v) => (
                         Some(AgentSummary::from_letta_agent_state(&v)),
@@ -344,10 +343,16 @@ async fn bear_details_get(
         Some(bear.letta_tool_ids.0.join(", "))
     };
 
-    render_template(
-        &state,
-        "bear/details.html",
-        auth_session,
+    let ctx = if is_admin {
+        let (form, errors, sync_err) = match quick {
+            Some((f, e, s)) => (f, e, s),
+            None => (
+                BearDetailsQuickUpdateForm::from(&bear),
+                ValidationErrors::new(),
+                None,
+            ),
+        };
+        let page = bear_details_quick_edit_context(state, &bear, &form).await;
         context! {
             bear,
             is_admin,
@@ -362,7 +367,157 @@ async fn bear_details_get(
             letta_tools_count_label,
             tools_json_display,
             letta_tool_ids_display,
-        },
+            quick_form => form,
+            errors => errors,
+            letta_sync_error => sync_err,
+            ..page
+        }
+    } else {
+        context! {
+            bear,
+            is_admin,
+            members,
+            letta_configured,
+            letta_api_base,
+            letta_agent_summary,
+            letta_agent_fetch_error,
+            letta_diagnostics,
+            letta_diag_error,
+            letta_memory_blocks_label,
+            letta_tools_count_label,
+            tools_json_display,
+            letta_tool_ids_display,
+        }
+    };
+
+    render_template(state, "bear/details.html", auth_session, ctx).await
+}
+
+async fn bear_details_get(
+    Path(slug): Path<String>,
+    State(state): State<AppState>,
+    auth_session: AuthSession,
+) -> Result<Response, CustomError> {
+    let user_id = auth_session
+        .user
+        .as_ref()
+        .map(|u| u.id)
+        .ok_or_else(|| CustomError::Authentication("login required".to_string()))?;
+    if let Some(r) = email_verify_redirect(state.sqlx_pool(), user_id).await? {
+        return Ok(r.into_response());
+    }
+
+    let bear = load_bear_member(state.sqlx_pool(), user_id, &slug).await?;
+    let is_admin = viewer_is_bear_admin(state.sqlx_pool(), user_id, bear.id).await?;
+    let members = bears_db::list_members_for_bear(state.sqlx_pool(), bear.id).await?;
+
+    render_bear_details_page(&state, auth_session, bear, members, is_admin, None).await
+}
+
+async fn bear_details_quick_update_post(
+    Path(slug): Path<String>,
+    State(state): State<AppState>,
+    auth_session: AuthSession,
+    Form(form): Form<BearDetailsQuickUpdateForm>,
+) -> Result<Response, CustomError> {
+    let user_id = auth_session
+        .user
+        .as_ref()
+        .map(|u| u.id)
+        .ok_or_else(|| CustomError::Authentication("login required".to_string()))?;
+    if let Some(r) = email_verify_redirect(state.sqlx_pool(), user_id).await? {
+        return Ok(r.into_response());
+    }
+
+    let bear = load_bear_member(state.sqlx_pool(), user_id, &slug).await?;
+    if !viewer_is_bear_admin(state.sqlx_pool(), user_id, bear.id).await? {
+        return Err(CustomError::Authorization(
+            "bear admin role required".to_string(),
+        ));
+    }
+
+    let letta_fetch = if state.letta.is_enabled() {
+        Some(
+            state
+                .letta
+                .list_llm_models()
+                .await
+                .map(|opts| {
+                    let model_trim = form.default_model.trim();
+                    let h = (!model_trim.is_empty()).then_some(model_trim);
+                    ensure_stored_model_in_options_for_handle(h, opts)
+                }),
+        )
+    } else {
+        None
+    };
+
+    let mut validation_errors = ValidationErrors::new();
+    if let Err(e) = form.validate() {
+        validation_errors = e;
+    }
+
+    let default_model_trim = form.default_model.trim();
+    validate_default_model_for_letta(&letta_fetch, default_model_trim, &mut validation_errors);
+
+    let default_model_opt = if default_model_trim.is_empty() {
+        None
+    } else {
+        Some(default_model_trim)
+    };
+
+    let letta_agent_type_db: Option<String> = bear
+        .letta_agent_type
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string);
+
+    let members = bears_db::list_members_for_bear(state.sqlx_pool(), bear.id).await?;
+
+    if validation_errors.is_empty() {
+        bears_db::update_bear(
+            state.sqlx_pool(),
+            bear.id,
+            bear.slug.as_str(),
+            form.name.trim(),
+            form.description.trim(),
+            form.system_prompt.trim(),
+            default_model_opt,
+            None::<Json<serde_json::Value>>,
+            letta_agent_type_db.as_deref(),
+            Json(bear.letta_tool_ids.0.clone()),
+        )
+        .await?;
+
+        if let Err(e) = sync::sync_bear_to_letta(state.sqlx_pool(), state.letta.as_ref(), bear.id).await
+        {
+            tracing::warn!(bear_id = %bear.id, "Letta sync after bear quick update failed: {e}");
+            let bear = bears_db::get_bear(state.sqlx_pool(), bear.id)
+                .await?
+                .ok_or_else(|| CustomError::NotFound("bear not found".to_string()))?;
+            let empty_errors = ValidationErrors::new();
+            return render_bear_details_page(
+                &state,
+                auth_session,
+                bear,
+                members,
+                true,
+                Some((form, empty_errors, Some(format!("Saved in Den, but Letta rejected the update: {e}")))),
+            )
+            .await;
+        }
+
+        return Ok(Redirect::to(&format!("/bear/{}/details", bear.slug)).into_response());
+    }
+
+    render_bear_details_page(
+        &state,
+        auth_session,
+        bear,
+        members,
+        true,
+        Some((form, validation_errors, None)),
     )
     .await
 }

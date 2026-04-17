@@ -186,6 +186,53 @@ pub fn validate_default_model_for_letta(
     }
 }
 
+/// Subset of [`NewBearForm`] for inline edits on the bear details page (name, description, model, system prompt).
+/// Slug, Letta agent type, and tool ids are unchanged; use `/bear/{slug}/details/edit` for those.
+#[derive(Validate, Serialize, Deserialize, Debug, Default, Clone)]
+pub struct BearDetailsQuickUpdateForm {
+    #[validate(length(max = 255))]
+    pub name: String,
+    #[validate(length(max = 2000))]
+    pub description: String,
+    #[validate(length(max = 100_000))]
+    pub system_prompt: String,
+    #[validate(length(max = 255))]
+    pub default_model: String,
+}
+
+impl From<&Bear> for BearDetailsQuickUpdateForm {
+    fn from(bear: &Bear) -> Self {
+        Self {
+            name: bear.name.clone(),
+            description: bear.description.clone(),
+            system_prompt: bear.system_prompt.clone(),
+            default_model: bear.default_model.clone().unwrap_or_default(),
+        }
+    }
+}
+
+/// Letta model list for the bear details quick-edit form (same merge rules as the full edit page).
+pub async fn bear_details_quick_edit_context(
+    state: &AppState,
+    _bear: &Bear,
+    form: &BearDetailsQuickUpdateForm,
+) -> minijinja::Value {
+    let (letta_configured, letta_model_options, letta_models_fetch_error) =
+        letta_model_select_context(state).await;
+    let model_trim = form.default_model.trim();
+    let model_handle = (!model_trim.is_empty()).then_some(model_trim);
+    let letta_model_options = if letta_configured {
+        ensure_stored_model_in_options_for_handle(model_handle, letta_model_options)
+    } else {
+        letta_model_options
+    };
+    context! {
+        letta_configured,
+        letta_model_options,
+        letta_models_fetch_error,
+    }
+}
+
 #[derive(Validate, Serialize, Deserialize, Debug, Default)]
 pub struct NewBearForm {
     #[validate(length(min = 1, max = 120))]
