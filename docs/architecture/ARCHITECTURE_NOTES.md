@@ -21,8 +21,8 @@ Open WebUI (opt.) ┤              ▲
 
 | Component | Role |
 |-----------|------|
-| **Den** | **Operator console** (browser: users, bears, Letta provision, **skills and MCP servers per bear**, LettaBot yaml); **bear** provisioning on Letta + **LettaBot** config + **skill and MCP materialization**; **local MCP catalog** and per-bear attachments (Phase 1); **users↔bears** membership; auth; **web** routing **Den → LettaBot**; first-party chat UI; **[Den meta tools](DEN_ARCHITECTURE.md#den-meta-tools-bears-control-plane-tools)** (Letta-registered control-plane tools—conversation titles, Cabinet, …—implemented in Den, MCP optional for third-party only); Cabinet API; **Bifrost** for **observability on the bear model path** (Letta → Bifrost direct for chat); future Den-side LLM usage may differ ([PLAN.md](../planning/PLAN.md) §2.5) |
-| **LettaBot** | **Agent runtime** for web (via Den) and channels; uses **Letta** for persistence; loads [skills](https://docs.letta.com/letta-code/skills/) from paths Den manages |
+| **Den** | **Operator console** (browser: users, bears, Letta provision, **skills and MCP servers per bear**, LettaBot yaml); **bear** provisioning on Letta + **LettaBot** config + **skill and MCP materialization**; **local MCP catalog** and per-bear attachments (Phase 1); **users↔bears** membership; auth; **web** routing **Den → LettaBot**; first-party chat UI; **[Den meta tools](DEN_ARCHITECTURE.md#den-meta-tools-bears-control-plane-tools)** (**control-plane tool definitions and policy in Den**; **LettaBot** brokers execution; **no** ad hoc tool code in Letta for these; MCP remains for optional third-party servers); Cabinet API; **Bifrost** for **observability on the bear model path** (Letta → Bifrost direct for chat); future Den-side LLM usage may differ ([PLAN.md](../planning/PLAN.md) §2.5) |
+| **LettaBot** | **Agent runtime** for web (via Den) and channels; uses **Letta** for persistence; loads [skills](https://docs.letta.com/letta-code/skills/) from paths Den manages; **brokers** [Den meta tools](DEN_ARCHITECTURE.md#den-meta-tools-bears-control-plane-tools) (Den APIs) to agents |
 | **Letta** | **Persistence** for LettaBot: tools, memory blocks, conversations per Letta agent (**bear**) |
 | **Bifrost** | Unified OpenAI-compatible model gateway (`/v1`) — see `services/bifrost/` |
 | **Den chat UI** | **Primary** first-party chat UI — Deep Chat web component served by Den; reference client for Den streaming APIs |
@@ -44,7 +44,7 @@ Open WebUI (opt.) ┤              ▲
 
 **LettaBot (Slack/WhatsApp and agent runtime):** Channels → **LettaBot → Letta**; web → **Den → LettaBot → Letta**. Den drives **which bears**, **which skills**, **which MCP servers**, and **LettaBot** config. Optional later: channel-only Den proxy for audit ([PLAN.md](../planning/PLAN.md)).
 
-**Cabinet:** Bear tool calls → Den → Outline. **Architecture:** agent-facing Cabinet operations are **[Den meta tools](DEN_ARCHITECTURE.md#den-meta-tools-bears-control-plane-tools)** (same pattern as other BEARS control-plane tools), not a separate MCP layer by default.
+**Cabinet:** Bear tool calls → **LettaBot** → **Den** → Outline. **Architecture:** agent-facing Cabinet operations use the **[Den meta tools](DEN_ARCHITECTURE.md#den-meta-tools-bears-control-plane-tools)** pattern (Den APIs + LettaBot broker), not a separate MCP layer by default.
 
 ## Ports (internal)
 
