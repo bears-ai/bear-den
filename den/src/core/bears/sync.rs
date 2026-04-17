@@ -1,4 +1,5 @@
-//! Push Den bear registry fields to an existing Letta agent (`PATCH /v1/agents/{id}`).
+//! Push Den bear registry fields to an existing Letta agent (`PATCH /v1/agents/{id}`), then
+//! `POST /v1/agents/{id}/recompile` so Letta refreshes the compiled system prompt.
 
 use sqlx::PgPool;
 use uuid::Uuid;
@@ -6,8 +7,8 @@ use uuid::Uuid;
 use crate::core::{bears::db as bears_db, letta::LettaClient};
 use crate::errors::CustomError;
 
-/// When Letta is configured and the bear has `letta_agent_id`, PATCH Letta to match Den.
-/// No-op if Letta is disabled or no agent id is stored.
+/// When Letta is configured and the bear has `letta_agent_id`, PATCH Letta to match Den, then
+/// recompile the agent. No-op if Letta is disabled or no agent id is stored.
 pub async fn sync_bear_to_letta(
     pool: &PgPool,
     letta: &LettaClient,
@@ -47,6 +48,8 @@ pub async fn sync_bear_to_letta(
             &bear.letta_tool_ids.0,
         )
         .await?;
+
+    letta.recompile_agent(agent_id).await?;
 
     Ok(())
 }

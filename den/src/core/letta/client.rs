@@ -681,6 +681,39 @@ impl LettaClient {
 
         Ok(())
     }
+
+    /// `POST /v1/agents/{agent_id}/recompile` — materialize the compiled system prompt after PATCH
+    /// (Letta treats this as a separate step from updating stored `system` / blocks).
+    pub async fn recompile_agent(&self, agent_id: &str) -> Result<(), CustomError> {
+        if !self.is_enabled() {
+            return Err(CustomError::System(
+                "Letta is not configured (set LETTA_BASE_URL)".to_string(),
+            ));
+        }
+
+        let url = format!("{}/v1/agents/{agent_id}/recompile", self.base_url);
+        let resp = self
+            .http
+            .post(url)
+            .headers(self.auth_headers())
+            .send()
+            .await
+            .map_err(|e| CustomError::System(format!("Letta recompile agent request failed: {e}")))?;
+
+        let status = resp.status();
+        let text = resp
+            .text()
+            .await
+            .map_err(|e| CustomError::System(format!("Letta recompile agent body: {e}")))?;
+
+        if !status.is_success() {
+            return Err(CustomError::System(format!(
+                "Letta recompile agent HTTP {status}: {text}"
+            )));
+        }
+
+        Ok(())
+    }
 }
 
 fn parse_letta_llm_model_list(v: &serde_json::Value) -> Vec<LettaModelOption> {
