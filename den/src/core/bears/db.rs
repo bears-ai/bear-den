@@ -391,16 +391,18 @@ pub async fn set_letta_agent_id(
     Ok(())
 }
 
-/// One row per `user_bear` for LettaBot YAML (`username` + `bear_slug` + optional Letta id).
+/// One row per `user_bear` for Letta Code harness YAML (`username` + `bear_slug` + optional Letta id).
 #[derive(Debug, Clone, sqlx::FromRow)]
-pub struct LettaBotRow {
+pub struct LettaCodeHarnessRow {
     pub username: String,
     pub bear_slug: String,
     pub letta_agent_id: Option<String>,
 }
 
-pub async fn list_lettabot_rows(pool: &PgPool) -> Result<Vec<LettaBotRow>, CustomError> {
-    sqlx::query_as::<_, LettaBotRow>(
+pub async fn list_letta_code_harness_rows(
+    pool: &PgPool,
+) -> Result<Vec<LettaCodeHarnessRow>, CustomError> {
+    sqlx::query_as::<_, LettaCodeHarnessRow>(
         r#"
         SELECT u.username, b.slug AS bear_slug, b.letta_agent_id
         FROM user_bear ub

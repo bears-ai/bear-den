@@ -13,7 +13,7 @@ A **bear** (one Letta agent) may be shared by multiple **users** (Den's `user_be
 1. Know who it is talking to at any moment.
 2. Read and write **person-specific** memories (preferences, facts, history) independently per user.
 3. Maintain its own **identity and shared knowledge** (persona, policies, domain knowledge) across all users.
-4. Handle the case where **multiple people appear in the same chat session** (e.g. a Slack channel or WhatsApp group via LettaBot).
+4. Handle the case where **multiple people appear in the same chat session** (e.g. a Slack channel or WhatsApp group via Letta Code).
 
 Letta provides three primitives that together solve this:
 
@@ -39,13 +39,13 @@ References:
 
 #### Scenario A: One Person Per Session (the common case)
 
-This covers **Den chat**, **Open WebUI**, and **1:1 DMs** via LettaBot (Slack DM, WhatsApp private chat). Each message comes from exactly one identified user.
+This covers **Den chat**, **Open WebUI**, and **1:1 DMs** via messaging channels (Slack DM today via [Letta Code Channels](https://docs.letta.com/letta-code/channels/); WhatsApp when available). Each message comes from exactly one identified user.
 
 ```
                   ┌──────────────────────────────────────────────────┐
   Den chat ─────┐   │           Letta Agent (one bear)                 │
   Open WebUI ─┤   │                                                  │
-  LettaBot DM ┘   │  ┌────────────────┐  ┌────────────────────────┐ │
+  Slack DM ┘        │  ┌────────────────┐  ┌────────────────────────┐ │
        │           │  │ persona block   │  │ org_policy block       │ │
        ▼           │  │ (shared)        │  │ (shared, read-only)    │ │
   Den router ──────│  └────────┬───────┘  └───────────┬────────────┘ │
@@ -84,7 +84,7 @@ No special multi-user instructions. The standard `human`/`persona` pattern works
 
 **Implementation status:** **Post–Phase 1** target design (see note under [Decision](#decision)); not required for v1 web chat delivery.
 
-This covers **LettaBot group chats**: a Slack channel, a WhatsApp group, or a Slack thread where multiple people interact with the bear simultaneously.
+This covers **Letta Code group chats**: a Slack channel, a WhatsApp group, or a Slack thread where multiple people interact with the bear simultaneously.
 
 One Letta Conversation maps to the group thread, but the bear must distinguish speakers and maintain per-person memory.
 
@@ -97,7 +97,7 @@ One Letta Conversation maps to the group thread, but the bear must distinguish s
   │ Carol     │  │   │  │ (shared)   │  │ (participants, channel) │ │
   └───────────┘  │   │  └──────┬─────┘  └────────────┬────────────┘ │
                  │   │         │                     │              │
-  LettaBot       │   │  ┌──────┴─────────────────────┴────────┐     │
+  Letta Code       │   │  ┌──────┴─────────────────────┴────────┐     │
   (prefixes      ▼   │  │         Group Conversation           │     │
    messages      ────►│  │                                     │     │
    with sender)      │  │  ┌──────────┐ ┌────────┐ ┌───────┐ │     │
@@ -111,7 +111,7 @@ One Letta Conversation maps to the group thread, but the bear must distinguish s
 
 **How it works:**
 
-1. LettaBot (or Den as proxy) **prefixes** each message with the sender's identity: `[Alice]: Can you check my schedule?`. This is the simplest reliable way for the agent to know who is talking.
+1. Letta Code (or Den as proxy) **prefixes** each message with the sender's identity: `[Alice]: Can you check my schedule?`. This is the simplest reliable way for the agent to know who is talking.
 2. Instead of a single `human` block, the bear has **per-person blocks** with labels like `person:alice`, `person:bob`. These are standard read-write memory blocks the agent can update with `memory_insert` / `memory_replace`.
 3. An optional `group_context` block stores shared group state (e.g. "This is the #project-alpha Slack channel. Participants: Alice, Bob, Carol.").
 4. The **system prompt** instructs the bear:
@@ -136,7 +136,7 @@ One Letta Conversation maps to the group thread, but the bear must distinguish s
 
 ### Hybrid: A Bear That Does Both
 
-Most bears will handle **both** scenarios: 1:1 chats via Den chat/web and group chats via LettaBot. The approaches compose cleanly:
+Most bears will handle **both** scenarios: 1:1 chats via Den chat/web and group chats via Letta Code. The approaches compose cleanly:
 
 - **1:1 conversations** use `isolated_block_labels: ["human"]` — person-specific memory is automatic via the Conversations API.
 - **Group conversations** use explicit `person:{name}` blocks — person-specific memory is managed by Den and the system prompt.
@@ -157,13 +157,13 @@ The key design question is whether a bear should also have `person:{name}` block
 | `person:{name}` | Per bear (attached when user joins) | Yes | Facts about a specific person (group mode) |
 | `group_context` | Per group conversation | Yes | Shared state for a group thread |
 
-### What LettaBot Needs to Do
+### What Letta Code Needs to Do
 
-For multi-person chats, LettaBot (or Den as proxy) must:
+For multi-person chats, Letta Code (or Den as proxy) must:
 
-1. **Identify the sender** in every message. The simplest approach: prefix the message content with `[username]:` before sending to Letta. LettaBot already knows who sent the Slack/WhatsApp message.
-2. **Map external IDs to Den users.** LettaBot config (generated by Den) maps Slack user IDs and WhatsApp numbers to Den usernames. Den already generates `lettabot.yaml` with `allowedUsers`; extend this to include a `name`/`displayName` mapping.
-3. **Route through Den (later).** In v1, LettaBot talks to Letta directly. When LettaBot-to-Den proxy lands, Den handles the sender prefix injection and person-block provisioning automatically.
+1. **Identify the sender** in every message. The simplest approach: prefix the message content with `[username]:` before sending to Letta. Letta Code already knows who sent the Slack/WhatsApp message.
+2. **Map external IDs to Den users.** Harness config (generated by Den) maps Slack user IDs and WhatsApp numbers to Den usernames. Den already generates allowlists / `letta-code.yaml`; extend this to include a `name`/`displayName` mapping.
+3. **Route through Den (later).** In v1, the harness talks to Letta directly. When a channel-only Den proxy lands, Den handles the sender prefix injection and person-block provisioning automatically.
 
 ---
 

@@ -18,7 +18,7 @@
 
 ## Overview
 
-**Canonical multi-user (web):** **Den** (Axum) → **self-hosted Letta** — see **[DEN_ARCHITECTURE.md](../../docs/architecture/DEN_ARCHITECTURE.md)** / [PLAN.md](../../docs/planning/PLAN.md). **v1:** Open WebUI → Den; LettaBot may stay direct-to-Letta. Den **provisions bears**, maintains **users↔bears** (many‑to‑many), and surfaces bears in Open WebUI / LettaBot.
+**Canonical multi-user (web):** **Den** (Axum) → **self-hosted Letta** — see **[DEN_ARCHITECTURE.md](../../docs/architecture/DEN_ARCHITECTURE.md)** / [PLAN.md](../../docs/planning/PLAN.md). **v1:** Open WebUI → Den; **Letta Code** harness may stay direct-to-Letta for experiments. Den **provisions bears**, maintains **users↔bears** (many‑to‑many), and surfaces bears in Open WebUI / **Letta Code**.
 
 **Terminology:** A **bear** is one assistant backed by a Letta **agent**. Letta’s REST API uses `/v1/agents` and `agent_id`; in prose below, that id is the runtime id for a **bear**.
 
@@ -534,7 +534,7 @@ assert agent1 != agent2, "Different chats should have different agents"
 
 ## References
 
-- **[DEN_ARCHITECTURE.md](../../docs/architecture/DEN_ARCHITECTURE.md)** – Den + self-hosted Letta; LettaBot optional via Den ([PLAN.md](../../docs/planning/PLAN.md))
+- **[DEN_ARCHITECTURE.md](../../docs/architecture/DEN_ARCHITECTURE.md)** – Den + self-hosted Letta; **Letta Code** harness via Den ([PLAN.md](../../docs/planning/PLAN.md))
 - [Letta Documentation](https://docs.letta.com)
 - [Open WebUI Documentation](https://docs.openwebui.com)
 - [Letta API Reference](https://docs.letta.com/api-reference)

@@ -53,8 +53,8 @@ Axum routes for the web server (`RUN_WEB=true`). Update this file when you add o
 - `POST /admin/bears/{id}/retry-letta` — create Letta agent when `letta_agent_id` is unset (responds with detail HTML including a status line)
 - `GET|POST /admin/membership/*` — list and grant `user_bear` membership
 - `GET /admin/health/letta` — JSON: Letta reachable + auth (`GET /v1/health` on Letta) (`src/web/admin/ops.rs`)
-- `GET /admin/lettabot` — LettaBot YAML preview + deploy checklist (operator HTML)
-- `GET /admin/lettabot.yaml` — download `lettabot.yaml` (`text/yaml`; membership → agents)
+- `GET /admin/letta-code` — Letta Code harness deploy preview + checklist (operator HTML)
+- `GET /admin/letta-code.yaml` — download `letta-code.yaml` (`text/yaml`; membership → agents)
 - `GET|POST /admin/api/*` — JSON admin API (bears, membership; operator session cookie)
 - `GET|POST /admin/oauth_clients/*` — OAuth client CRUD, PKCE test
 - `GET|POST /admin/oauth_tokens/*` — token admin

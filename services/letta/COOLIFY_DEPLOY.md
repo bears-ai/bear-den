@@ -6,7 +6,7 @@
 
 Letta is the BEARS **bear runtime**: each **bear** is a **Letta agent** (conversation loop, tools, native **memory** blocks). Models go through **Bifrost** (`LLM_API_URL`). Shared knowledge is **Cabinet** on **Outline**, exposed to **bears** through **Den** ([PLAN.md](../../docs/planning/PLAN.md)). Cabinet does **not** replace Letta’s per‑**bear** memory.
 
-**Terminology:** In BEARS docs, **bear** = one assistant backed by a Letta agent. **Den** provisions bears (Letta API), **users↔bears** membership (many‑to‑many), and surfaces bears in Open WebUI / LettaBot—see [PLAN.md](../../docs/planning/PLAN.md). The Letta HTTP API still uses paths like `/v1/agents`; that **agent** id is the runtime id for a bear.
+**Terminology:** In BEARS docs, **bear** = one assistant backed by a Letta agent. **Den** provisions bears (Letta API), **users↔bears** membership (many‑to‑many), and surfaces bears in Open WebUI / **Letta Code** harness—see [PLAN.md](../../docs/planning/PLAN.md). The Letta HTTP API still uses paths like `/v1/agents`; that **agent** id is the runtime id for a bear.
 
 ## Prerequisites
 

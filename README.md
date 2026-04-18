@@ -35,7 +35,7 @@ Each assistant in the product is a **bear** (one **Letta** agent). **BEARS** nam
 |-------|------|
 | **Letta memory** | Per‑**bear** context (blocks, conversations)—not replaced by Cabinet |
 | **Cabinet (Outline)** | Long-lived docs; people edit in Outline, **bears** use tools via **Den** |
-| **Den** | Control plane: **bear** lifecycle (Letta + Open WebUI + LettaBot), **users↔bears** membership, identity, routing, policy, Cabinet API; first-party chat UI **served from Den** ([docs/architecture/DEN_ARCHITECTURE.md](docs/architecture/DEN_ARCHITECTURE.md)); **Bifrost only for observability** ([docs/planning/PLAN.md](docs/planning/PLAN.md)) |
+| **Den** | Control plane: **bear** lifecycle (Letta + Open WebUI + **Letta Code** harness), **users↔bears** membership, identity, routing, policy, Cabinet API; first-party chat UI **served from Den** ([docs/architecture/DEN_ARCHITECTURE.md](docs/architecture/DEN_ARCHITECTURE.md)); **Bifrost only for observability** ([docs/planning/PLAN.md](docs/planning/PLAN.md)) |
 
 ## Quick start (Coolify)
 

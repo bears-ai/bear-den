@@ -6,14 +6,16 @@ Single-page view of the BEARS stack on Coolify. **Roadmap and contracts:** [PLAN
 
 **Cabinet** (**Outline**) is the shared knowledgebase: humans edit in Outline; **bears** (Letta agents) access it through **Den** (Cabinet API, policy). **Letta** keeps **native memory** (blocks, conversations) per bear—Cabinet does not replace that. **Bear** = one agent; **BEARS** = the stack. See [PLAN.md](../planning/PLAN.md) terminology.
 
+Three layers (see [DEN_ARCHITECTURE.md](DEN_ARCHITECTURE.md)): **persistence (Letta)** → **harness (Letta Code)** → **control plane (Den)** for operations; web and Slack sit on the harness.
+
 ```
 Den (chat UI) ────┐     Outline (human editing)
 Open WebUI (opt.) ┤              ▲
                   ├──► Den ──Cabinet API───────┘
                   │      │──────────────► Garage (S3)
-                  │      └──► LettaBot ──► Letta ──► Bifrost ──► providers
+                  │      └──► Letta Code ──► Letta ──► Bifrost ──► providers
 ```
-(Den serves the first-party browser chat UI; **Open WebUI** is optional; **LettaBot** is required for agent chat — [DEN_ARCHITECTURE.md](DEN_ARCHITECTURE.md).)
+(Den serves the first-party browser chat UI; **Open WebUI** is optional; **Letta Code** is the mandatory harness for agent chat — [DEN_ARCHITECTURE.md](DEN_ARCHITECTURE.md).)
 
 **Until Den is deployed:** Open WebUI may talk to Letta directly. Add Den + Outline per [PLAN.md](../planning/PLAN.md).
 
@@ -21,9 +23,9 @@ Open WebUI (opt.) ┤              ▲
 
 | Component | Role |
 |-----------|------|
-| **Den** | **Operator console** (browser: users, bears, Letta provision, **skills and MCP servers per bear**, LettaBot yaml); **bear** provisioning on Letta + **LettaBot** config + **skill and MCP materialization**; **local MCP catalog** and per-bear attachments (Phase 1); **users↔bears** membership; auth; **web** routing **Den → LettaBot**; first-party chat UI; **[Den meta tools](DEN_ARCHITECTURE.md#den-meta-tools-bears-control-plane-tools)** (**control-plane tool definitions and policy in Den**; **LettaBot** brokers execution; **no** ad hoc tool code in Letta for these; MCP remains for optional third-party servers); Cabinet API; **Bifrost** for **observability on the bear model path** (Letta → Bifrost direct for chat); future Den-side LLM usage may differ ([PLAN.md](../planning/PLAN.md) §2.5) |
-| **LettaBot** | **Agent runtime** for web (via Den) and channels; uses **Letta** for persistence; loads [skills](https://docs.letta.com/letta-code/skills/) from paths Den manages; **brokers** [Den meta tools](DEN_ARCHITECTURE.md#den-meta-tools-bears-control-plane-tools) (Den APIs) to agents |
-| **Letta** | **Persistence** for LettaBot: tools, memory blocks, conversations per Letta agent (**bear**) |
+| **Den** | **Operator console** (browser: users, bears, Letta provision, **skills and MCP servers per bear**, harness deploy config); **bear** provisioning on Letta + **Letta Code** config + **skill and MCP materialization**; **local MCP catalog** and per-bear attachments (Phase 1); **users↔bears** membership; auth; **web** routing **Den → Letta Code**; first-party chat UI; **[Den meta tools](DEN_ARCHITECTURE.md#den-meta-tools-bears-control-plane-tools)** (**control-plane tool definitions and policy in Den**; **Letta Code** brokers execution; **no** ad hoc tool code in Letta for these; MCP remains for optional third-party servers); Cabinet API; **Bifrost** for **observability on the bear model path** (Letta → Bifrost direct for chat); future Den-side LLM usage may differ ([PLAN.md](../planning/PLAN.md) §2.5) |
+| **Letta Code** | **[Harness](https://docs.letta.com/letta-code)** for web (via Den) and **Slack** ([Channels](https://docs.letta.com/letta-code/channels/), beta); uses **Letta** for persistence; loads [skills](https://docs.letta.com/letta-code/skills/) from paths Den manages; **brokers** [Den meta tools](DEN_ARCHITECTURE.md#den-meta-tools-bears-control-plane-tools) (Den APIs) to agents. **WhatsApp** is desired but not in Letta Code Channels yet. |
+| **Letta** | **Persistence** for the harness: tools, memory blocks, conversations per Letta agent (**bear**) |
 | **Bifrost** | Unified OpenAI-compatible model gateway (`/v1`) — see `services/bifrost/` |
 | **Den chat UI** | **Primary** first-party chat UI — Deep Chat web component served by Den; reference client for Den streaming APIs |
 | **Open WebUI** | Full-featured web chat **optional** when deployed (e.g. LibreChat) |
@@ -38,13 +40,13 @@ Open WebUI (opt.) ┤              ▲
 
 ## Data flow
 
-**Web (target with Den):** User → Den chat page **(default)** **or** optional **Open WebUI** → **Den → LettaBot → Letta** → Bifrost → providers.
+**Web (target with Den):** User → Den chat page **(default)** **or** optional **Open WebUI** → **Den → Letta Code → Letta** → Bifrost → providers.
 
 **Web (today, no Den):** User → Open WebUI → Letta → Bifrost → providers.
 
-**LettaBot (Slack/WhatsApp and agent runtime):** Channels → **LettaBot → Letta**; web → **Den → LettaBot → Letta**. Den drives **which bears**, **which skills**, **which MCP servers**, and **LettaBot** config. Optional later: channel-only Den proxy for audit ([PLAN.md](../planning/PLAN.md)).
+**Slack + harness:** **Slack** → **Letta Code** ([Channels](https://docs.letta.com/letta-code/channels/)) → **Letta**; **web** → **Den → Letta Code → Letta**. Den drives **which bears**, **which skills**, **which MCP servers**, and harness config. **WhatsApp:** not in Letta Code Channels yet—roadmap. Optional later: channel-only Den proxy for audit ([PLAN.md](../planning/PLAN.md)).
 
-**Cabinet:** Bear tool calls → **LettaBot** → **Den** → Outline. **Architecture:** agent-facing Cabinet operations use the **[Den meta tools](DEN_ARCHITECTURE.md#den-meta-tools-bears-control-plane-tools)** pattern (Den APIs + LettaBot broker), not a separate MCP layer by default.
+**Cabinet:** Bear tool calls → **Letta Code** → **Den** → Outline. **Architecture:** agent-facing Cabinet operations use the **[Den meta tools](DEN_ARCHITECTURE.md#den-meta-tools-bears-control-plane-tools)** pattern (Den APIs + Letta Code broker), not a separate MCP layer by default.
 
 ## Ports (internal)
 
@@ -70,7 +72,7 @@ Deploy guide: [`services/garage/COOLIFY_DEPLOY.md`](../../services/garage/COOLIF
 
 ## Multi-user
 
-[DEN_ARCHITECTURE.md](DEN_ARCHITECTURE.md) — Den (Axum), self-hosted Letta; **v1** web via Den, LettaBot direct ([PLAN.md](../planning/PLAN.md)).
+[DEN_ARCHITECTURE.md](DEN_ARCHITECTURE.md) — Den (Axum), self-hosted Letta; **v1** web via Den, **Letta Code** harness ([PLAN.md](../planning/PLAN.md)).
 
 ## Next steps
 

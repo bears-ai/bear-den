@@ -1,5 +1,5 @@
 // ROUTES: When modifying routes in this file, update /src/web/ROUTES.md if present.
-//! Operator console: Letta connectivity and LettaBot YAML (Phase 1 M4b).
+//! Operator console: Letta connectivity and Letta Code harness YAML (Phase 1 M4b).
 
 use axum::{
     Json, Router,
@@ -13,7 +13,7 @@ use serde::Serialize;
 
 use crate::{
     auth_backend::AuthSession,
-    core::bears::{db as bears_db, lettabot},
+    core::bears::{db as bears_db, letta_code_harness},
     errors::CustomError,
     web::{self, AppState},
 };
@@ -21,8 +21,8 @@ use crate::{
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/health/letta", get(letta_health_json))
-        .route("/lettabot", get(lettabot_page))
-        .route("/lettabot.yaml", get(lettabot_yaml_download))
+        .route("/letta-code", get(letta_code_harness_page))
+        .route("/letta-code.yaml", get(letta_code_harness_yaml_download))
 }
 
 #[derive(Serialize)]
@@ -55,24 +55,27 @@ async fn letta_health_json(State(state): State<AppState>) -> Json<LettaHealthJso
     }
 }
 
-async fn lettabot_page(
+async fn letta_code_harness_page(
     State(state): State<AppState>,
     auth_session: AuthSession,
 ) -> Result<Response, CustomError> {
-    let rows = bears_db::list_lettabot_rows(state.sqlx_pool()).await?;
+    let rows = bears_db::list_letta_code_harness_rows(state.sqlx_pool()).await?;
     let skipped = rows
         .iter()
         .filter(|r| r.letta_agent_id.is_none())
         .count();
-    let yaml = lettabot::render_lettabot_yaml(state.config.letta_base_url.as_str(), &rows)?;
+    let yaml = letta_code_harness::render_letta_code_harness_yaml(
+        state.config.letta_base_url.as_str(),
+        &rows,
+    )?;
     let letta_configured = state.letta.is_enabled();
 
     web::render_template(
         &state,
-        "admin/lettabot.html",
+        "admin/letta_code_harness.html",
         auth_session,
         context! {
-            lettabot_yaml => yaml,
+            harness_yaml => yaml,
             skipped_unprovisioned => skipped,
             letta_configured => letta_configured,
         },
@@ -80,9 +83,12 @@ async fn lettabot_page(
     .await
 }
 
-async fn lettabot_yaml_download(State(state): State<AppState>) -> Result<Response, CustomError> {
-    let rows = bears_db::list_lettabot_rows(state.sqlx_pool()).await?;
-    let yaml = lettabot::render_lettabot_yaml(state.config.letta_base_url.as_str(), &rows)?;
+async fn letta_code_harness_yaml_download(State(state): State<AppState>) -> Result<Response, CustomError> {
+    let rows = bears_db::list_letta_code_harness_rows(state.sqlx_pool()).await?;
+    let yaml = letta_code_harness::render_letta_code_harness_yaml(
+        state.config.letta_base_url.as_str(),
+        &rows,
+    )?;
 
     let mut headers = HeaderMap::new();
     headers.insert(
@@ -91,7 +97,7 @@ async fn lettabot_yaml_download(State(state): State<AppState>) -> Result<Respons
     );
     headers.insert(
         header::CONTENT_DISPOSITION,
-        HeaderValue::from_static("attachment; filename=\"lettabot.yaml\""),
+        HeaderValue::from_static("attachment; filename=\"letta-code.yaml\""),
     );
 
     Ok((headers, yaml).into_response())
