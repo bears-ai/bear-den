@@ -46,13 +46,12 @@ References:
 
 #### Scenario A: One Person Per Session (the common case)
 
-This covers **Den chat**, **Open WebUI**, and **1:1 DMs** via messaging channels (Slack DM today via [Letta Code Channels](https://docs.letta.com/letta-code/channels/); WhatsApp when available). Each message comes from exactly one identified user.
+This covers **Den web chat**, and **1:1 DMs** via messaging channels (Slack DM today via [Letta Code Channels](https://docs.letta.com/letta-code/channels/); WhatsApp when available). Each message comes from exactly one identified user.
 
 ```
                   ┌──────────────────────────────────────────────────┐
   Den chat ─────┐   │           Letta Agent (one bear)                 │
-  Open WebUI ─┤   │                                                  │
-  Slack DM ┘        │  ┌────────────────┐  ┌────────────────────────┐ │
+  Slack DM ─┘       │  ┌────────────────┐  ┌────────────────────────┐ │
        │           │  │ persona block   │  │ org_policy block       │ │
        ▼           │  │ (shared)        │  │ (shared, read-only)    │ │
   Den router ──────│  └────────┬───────┘  └───────────┬────────────┘ │

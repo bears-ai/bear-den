@@ -1,8 +1,10 @@
 # Open WebUI + Letta Integration Guide
 
+> **Deprecated for BEARS:** The stack uses **Den embedded Deep Chat** as the only first-party web chat ([DEN_ARCHITECTURE.md](../../docs/architecture/DEN_ARCHITECTURE.md)). This file is **historical / experimental** (direct Open WebUI → Letta) and is **not** a maintained BEARS deployment path.
+
 ## Canonical multi-user architecture
 
-For production multi-user deployments, Open WebUI should talk to **Den** (Rust/Axum), which fronts **self-hosted Letta**. See **[DEN_ARCHITECTURE.md](../../docs/architecture/DEN_ARCHITECTURE.md)**. Below: **direct** Open WebUI → Letta for dev/single-tenant.
+Multi-user BEARS uses **Den** (Rust/Axum) with **Letta Code** + **self-hosted Letta** — see **[DEN_ARCHITECTURE.md](../../docs/architecture/DEN_ARCHITECTURE.md)**. Below: **direct** Open WebUI → Letta for dev/single-tenant experiments only.
 
 ## Current integration (direct)
 

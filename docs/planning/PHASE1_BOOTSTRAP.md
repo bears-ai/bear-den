@@ -4,11 +4,11 @@
 
 Put the Rust project at repo-root **`den/`** with package/binary name **`den`**, Coolify service e.g. **`bears-den`**.
 
-**Phase 1 success** (from PLAN): **operator console** usable for full provisioning; web users chat via **Den's chat UI → Den → Letta Code → Letta** as the **primary** end-user path; **Open WebUI → Den → Letta Code → Letta** is an **optional** addition for teams that want it; bear registry + **users↔bears** many-to-many; **first-class routines** (schedules + UI; **output delivery** model TBD per [routines-automation-adr.md](../routines-automation-adr.md)); **Letta Code** is the **required** agent runtime (channels and web); **Den** owns bear provisioning on Letta, **Letta Code config**, **skills catalog + per-bear attachments**, and **MCP catalog + per-bear MCP attachments** (materialized for Letta Code; same patterns as skills; **Coolify** runs MCP server processes); optional **read-only** Bifrost observability; **no Cabinet**.
+**Phase 1 success** (from PLAN): **operator console** usable for full provisioning; web users chat via **Den's chat UI → Den → Letta Code → Letta** as the **only** first-party browser path; bear registry + **users↔bears** many-to-many; **first-class routines** (schedules + UI; file outputs → **Garage** per [artifacts-garage-adr.md](../artifacts-garage-adr.md)); **Letta Code** is the **required** agent runtime (channels and web); **Den** owns bear provisioning on Letta, **Letta Code config**, **skills catalog + per-bear attachments**, and **MCP catalog + per-bear MCP attachments** (materialized for Letta Code; same patterns as skills; **Coolify** runs MCP server processes); **Garage** for **artifacts** (+ separate **Cabinet** bucket when Outline ships); optional **read-only** Bifrost observability; **no Cabinet** app until Phase 2.
 
-**Delivery priority:** Reach the **first user-testable moment** as early as possible: an **operator provisioning UI** (browser) for **authentication**, **user** lifecycle, **agent/bear** lifecycle (Letta create/sync), **membership**, **Letta Code** setup (preview/download generated `letta-code.yaml`, copy-paste instructions), **skills** and **MCP servers** (each: catalog + attach per bear; develop **side-by-side**; materialization may land in **M7** or dedicated milestones if chat stability comes first). End-user **chat** (same-origin on Den) follows once the **chat API** (M5) is stable; **Open WebUI** integration can ship after when needed.
+**Delivery priority:** Reach the **first user-testable moment** as early as possible: an **operator provisioning UI** (browser) for **authentication**, **user** lifecycle, **agent/bear** lifecycle (Letta create/sync), **membership**, **Letta Code** setup (preview/download generated `letta-code.yaml`, copy-paste instructions), **skills** and **MCP servers** (each: catalog + attach per bear; develop **side-by-side**; materialization may land in **M7** or dedicated milestones if chat stability comes first). End-user **chat** (same-origin on Den) follows once the **chat API** (M5) is stable.
 
-**Locked product decisions** (operator UI, streaming, API IDs, provisioning, threading, deferred Open WebUI auth): [PHASE1_DECISIONS.md](PHASE1_DECISIONS.md).
+**Locked product decisions** (operator UI, streaming, API IDs, provisioning, threading): [PHASE1_DECISIONS.md](PHASE1_DECISIONS.md).
 
 ---
 
@@ -29,12 +29,11 @@ Use whatever **one-off** scaffold you prefer (`cargo new`, an internal template,
 | Runtime | Axum HTTP server, structured logging, graceful shutdown |
 | Data | PostgreSQL schema + migrations; Den is system of record for users, bears, membership |
 | **Operator console (priority)** | **Browser UI** served by Den for: operator login; **create/edit users** (and end-user login/register as policy allows); **create/provision bears** (Letta agent create/update); **grant/revoke membership**; **skills** (org catalog, attach/detach per bear, optional paste-from-URL); **MCP servers** (local catalog, optional official-registry import, attach/detach per bear—same UX patterns as skills); **Letta health** indicator; **Letta Code** panel (rendered YAML, download, short deploy checklist). Same actions backed by JSON admin API; **no `curl` required** for happy-path setup. |
-| Auth (web-first) | Session cookie after email+password **or** long-lived API token for automation / optional Open WebUI server-side calls; **operators** use a distinct **admin/operator** session or role (e.g. `users.is_admin`, bootstrap admin email) — **do not** expose `ADMIN_API_KEY` to browser JavaScript |
+| Auth (web-first) | Session cookie after email+password **or** long-lived API token for automation; **operators** use a distinct **admin/operator** session or role (e.g. `users.is_admin`, bootstrap admin email) — **do not** expose `ADMIN_API_KEY` to browser JavaScript |
 | Bears | CRUD (admin API + operator UI), `letta_agent_id` linkage, provision via Letta REST API; **predefined subagents** (e.g. reflection) per [dynamic-skills-subagents-adr.md](../dynamic-skills-subagents-adr.md) when that ADR is accepted and Letta API fields are known (may trail core CRUD) |
 | Membership | Many-to-many `user_bear`; enforce on every chat; managed in operator UI |
-| Chat | `POST /v1/chat/send` (and/or OpenAI-compatible shim later for Open WebUI) → validate → **Letta Code** bridge → Letta with **SSE streaming** back to client |
-| Den chat UI (first-party, priority after M5) | Deep Chat page (`GET /bear/{slug}`); **primary** end-user path — same chat + discovery endpoints as any other HTTP client; same-origin with Den |
-| Open WebUI (optional) | Pipe, custom backend, or OpenAI-style shim pointing at Den — **same** membership + streaming contract as Den chat UI; ship when a deployment needs it |
+| Chat | `POST /v1/chat/send` (and/or optional OpenAI-compatible shim for non-browser API clients) → validate → **Letta Code** bridge → Letta with **SSE streaming** back to client |
+| Den chat UI (first-party, priority after M5) | Deep Chat page (`GET /bear/{slug}`); **only** first-party end-user web path — same chat + discovery endpoints as automation clients; same-origin with Den |
 | Discovery | `GET /agents` or `GET /bears` → bears the current user may use |
 | Harness deploy | `GET /admin/letta-code` / `GET /admin/letta-code.yaml` (operator session **or** server-side key): preview/download **harness** config; optional write to volume path on change; **skills** materialized to paths **Letta Code** reads; **MCP** connection metadata / Letta tool wiring per [DEN_ARCHITECTURE.md](../architecture/DEN_ARCHITECTURE.md) § Den-managed skills and § Den-managed MCP servers |
 | Policy | RBAC-lite: membership check + optional per-bear `can_use` + basic rate limit |
@@ -42,7 +41,8 @@ Use whatever **one-off** scaffold you prefer (`cargo new`, an internal template,
 | **User onboarding** | On new account creation, auto-provision a **Personal Bear** (slug: `personal-{name-slug}`) from a configurable default template set in the admin UI; immediately redirect the new user into chat with that bear using a standard onboarding prompt that invites the bear to learn about them |
 | **Memory dashboard + bear memory UX** | **Dashboard:** read **`human`** (per bear / per-conversation as Letta returns for 1:1 web) and show a **holistic memory weight** per member bear so users can **compare** which bears have accumulated the most learned material (users, projects, archival — per Letta APIs). Frame as **weight** (richness), **not** capacity pressure; no warnings. **`person:{name}`** rows only when such blocks exist (mostly **group-mode**, post–Phase 1 per [multi-user-memory-adr.md](../multi-user-memory-adr.md)). **Bear detail (operator):** full read-only **Letta state summary** for one bear — **all** blocks + archival where exposed; assurance only ([PLAN.md](PLAN.md) § Phase 1 memory model, [PHASE1_DECISIONS.md](PHASE1_DECISIONS.md) decision 8). **Product promise:** small curated **always-on** blocks; longer history **findable** via archival/tools — Den does **not** add a second memory store. |
 | **Org policy block** | Admin UI panel to view and edit the `org_policy` Letta block applied to all bears; seed content from **`den/defaults/org_policy.md`** (in-repo) when no policy has been set and the first bear is provisioned |
-| **Routines** | **First-class** DB-backed **schedules** + management UI; each routine **assigned to one bear** (inherits tools, MCP, membership like chat). Execution via **Letta Code** / harness; **where results are stored or surfaced** (artifacts vs dedicated conversation vs hybrid) **remains open** until [routines-automation-adr.md](../routines-automation-adr.md) is updated — may ship schedule + trigger before final delivery UX. **No** automatic skill-learning from unattended runs ([PHASE1_DECISIONS.md](PHASE1_DECISIONS.md) decision **10**) |
+| **Routines** | **First-class** DB-backed **schedules** + management UI; each routine **assigned to one bear** (inherits tools, MCP, membership like chat). Execution via **Letta Code** / harness; **file outputs** → **Garage** artifacts ([artifacts-garage-adr.md](../artifacts-garage-adr.md), [routines-automation-adr.md](../routines-automation-adr.md)). **No** automatic skill-learning from unattended runs ([PHASE1_DECISIONS.md](PHASE1_DECISIONS.md) decision **10**) |
+| **Artifacts / Garage** | Agent outputs, **user uploads**, routine files → **S3** (**artifacts** bucket); **metadata** + **GC** per [artifacts-garage-adr.md](../artifacts-garage-adr.md) ([PHASE1_DECISIONS.md](PHASE1_DECISIONS.md) decision **11**). **Cabinet** attachments → **different bucket** (Outline). May trail core chat; presigned URLs + GC worker as milestones allow |
 | Deploy | **Self-building Docker image** (multi-stage: build Rust in container, runtime image with binary + `ca-certificates`) |
 
 ### Explicitly out of scope (Phase 1)
@@ -64,7 +64,7 @@ den/
 ├── Cargo.toml
 ├── Dockerfile
 ├── .dockerignore
-├── README.md               # runbook: env vars, ports, chat UI + optional Open WebUI notes
+├── README.md               # runbook: env vars, ports, embedded chat UI
 ├── migrations/             # SQL (sqlx or refinery)
 │   └── 001_initial.sql
 ├── static/                 # operator console (priority) + chat assets
@@ -103,7 +103,7 @@ den/
 
 **Alternates:** Diesel instead of sqlx; rate limit via `tower_governor`.
 
-**Operator UI stack:** Prefer **small and shippable**: e.g. **Askama/Tera** HTML + forms or **htmx** against JSON admin routes; or a **Vite** SPA under `static/` if you want richer tables early. Mounted at **`/`** or **`/console`**; keep API JSON stable for the chat UI and **optional Open WebUI** adapters.
+**Operator UI stack:** Prefer **small and shippable**: e.g. **Askama/Tera** HTML + forms or **htmx** against JSON admin routes; or a **Vite** SPA under `static/` if you want richer tables early. Mounted at **`/`** or **`/console`**; keep API JSON stable for the chat UI and other HTTP clients.
 
 ---
 
@@ -118,7 +118,6 @@ den/
 - `display_name` TEXT NULL — human-readable name; used in Personal Bear slug and onboarding prompt
 - `password_hash` TEXT NOT NULL (nullable only if token-only users)
 - `is_admin` BOOLEAN NOT NULL DEFAULT false — operator console access (bootstrap first admin via migration or `BOOTSTRAP_ADMIN_EMAIL`)
-- `webui_account_id` TEXT NULL UNIQUE — map Open WebUI stable id when available
 - `created_at`, `updated_at` TIMESTAMPTZ
 - *(Phase 2)* `is_provisional` BOOLEAN NOT NULL DEFAULT false — no login; created automatically when Letta Code encounters an unknown user
 
@@ -172,7 +171,7 @@ den/
 
 ### Indexes
 
-- `user_bear(bear_id)`, `users(webui_account_id)`, `bears(slug)`
+- `user_bear(bear_id)`, `users(email)`, `bears(slug)`
 
 ---
 
@@ -198,7 +197,7 @@ den/
 - Apply rate limit
 - Call **Letta Code** for the bear’s harness binding (HTTP/gRPC/socket per your deployment — **verify against Letta Code version**); pass through `conversation_id` (if supplied) plus `channel` and `channel_thread_id` so Letta Code resolves/creates the right Letta conversation.
 - Keep conversation ownership in Letta Code/Letta; Den should not implement its own canonical thread-mapping logic in Phase 1.
-- Stream SSE (or NDJSON) back using a **single documented contract** — first-party chat UI is the reference client; Open WebUI adapters must conform or translate
+- Stream SSE (or NDJSON) back using a **single documented contract** — Den chat UI is the reference client; other HTTP clients must conform or translate
 
 ### Admin / operator API (protect with **operator session** in browser; `ADMIN_API_KEY` for automation only)
 
@@ -222,7 +221,7 @@ den/
 
 | GET | `/internal/bifrost/health` | Proxy read to Bifrost `GET /health` or metrics (if enabled) |
 
-**OpenAPI:** Generate with `utoipa` in a follow-up milestone if useful; optional Open WebUI adapters may consume it.
+**OpenAPI:** Generate with `utoipa` in a follow-up milestone if useful.
 
 ---
 
@@ -239,11 +238,11 @@ den/
 
 ---
 
-## 7. End-user chat: Den chat UI (primary) and Open WebUI (optional)
+## 7. End-user chat: Den embedded Deep Chat
 
 ### Den native UI — **first-party chat (Phase 1 target)**
 
-**Goal:** **End-user** chat shipped on Den — **same** `POST /v1/chat/send` and `GET /v1/bears` as every other client; traffic path **Den → Letta Code → Letta**; **no dependency** on Open WebUI for BEARS operators who only need Den + Letta Code + Letta.
+**Goal:** **End-user** chat shipped on Den — **same** `POST /v1/chat/send` and `GET /v1/bears` as every other client; traffic path **Den → Letta Code → Letta**.
 
 **Pieces:** Primary chat route **`/bear/{slug}`** (same origin as Den); **`/`** is operator console unless you add a landing page.
 
@@ -252,7 +251,7 @@ den/
 3. **Browser → Den** — SSE streaming via `POST /v1/chat/send`; **this contract is the reference** shape.
 4. **Auth** — end-user session (not operator) for chat.
 
-**Milestone:** Ship in **M6** immediately after **M5** (chat proxy) — **before** optional Open WebUI work.
+**Milestone:** Ship in **M6** immediately after **M5** (chat proxy).
 
 ### Den native UI: operator console
 
@@ -266,20 +265,6 @@ den/
 4. **Membership** — assign bears ↔ users (checkbox grid or paired selects).
 5. **Letta Code** — live YAML/config preview, download button, bullet list: where to paste, restart **`letta server`** (or equivalent), Letta `LETTA_BASE_URL` hint.
 6. **Skills** — catalog (add from URL or upload), attach to bear, enable/disable; show materialization status when Den syncs trees for Letta Code.
-
-### Open WebUI integration (optional, **M6b**)
-
-**When:** After **M6** proves the Den chat + streaming contract in the browser.
-
-**Options** (pick one per deployment):
-
-1. **Custom “API base”** — If Open WebUI can point at a compatible OpenAI-style `/v1/chat/completions`, implement a **thin shim** on Den that maps to **Letta Code → Letta** (same as native chat path).
-2. **Pipe / function** — Fork or extend [open-webui-tools](https://github.com/Haervwe/open-webui-tools) pattern: function calls Den `POST /v1/chat/send` with user’s mapped token; bear picker = model list from `GET /v1/bears`.
-3. **Middleware proxy** — Less ideal; Open WebUI still thinks it talks to “Letta” but network path goes through Den (only if URL rewrite is trivial).
-
-**User mapping:** On first login from Open WebUI, pass `webui_user_id` header or claim; Den upserts `users.webui_account_id`.
-
-**Deliverable:** Document the chosen path in `den/README.md` + example env for Open WebUI.
 
 ---
 
@@ -372,20 +357,19 @@ den/
 | **M4c** | **Onboarding + org policy** | Admin configures `org_policy` block (seeded from `den/defaults/org_policy.md`) and Personal Bear default template; new user account creation auto-provisions their Personal Bear |
 | M5 | Chat proxy | Streaming `POST /v1/chat/send` end-to-end; conversation/thread context forwarded to Letta Code; validated with **curl**, integration test, or console “try it” |
 | **M6** | **Den chat UI (first-party)** | Den serves chat at `/bear/{slug}`; demo user chats in browser — **reference client** for streaming contract |
-| **M6b** | **Open WebUI (optional)** | Documented integration path + example env; demo user chatting via Den **when a deployment chooses Open WebUI** |
 | M7 | Letta Code yaml + skills polish | Generated yaml matches real bot configs; **skills** catalog + per-bear materialization tested; copy-paste / volume deploy tested from console |
 | M8 | Polish | Rate limits, readiness probe, Coolify deploy |
 
 **Bifrost observability:** M8 or parallel track.
 
-**Note:** **M4b** can overlap **M3–M4** (build UI against stub endpoints first). **M4c** can overlap **M4b** (org policy UI is a small panel; onboarding wiring needs M4 provision). **M6 (chat UI)** can overlap late **M5** (UI shell early; wire streaming when API is ready). **M6b (Open WebUI)** is **not** on the critical path for “someone can try the system” in-browser.
+**Note:** **M4b** can overlap **M3–M4** (build UI against stub endpoints first). **M4c** can overlap **M4b** (org policy UI is a small panel; onboarding wiring needs M4 provision). **M6 (chat UI)** can overlap late **M5** (UI shell early; wire streaming when API is ready).
 
 ---
 
 ## 15. Acceptance criteria (Phase 1 complete)
 
 - [ ] **Operator console:** create users, provision bears to Letta, manage membership, **manage skills per bear**, view/download Letta Code yaml — all in browser
-- [ ] Den-hosted **chat UI** sends chat **Den → Letta Code → Letta** with streaming responses (**primary**); **Open WebUI optional** — if used, same API contract via adapter/shim
+- [ ] Den-hosted **chat UI** sends chat **Den → Letta Code → Letta** with streaming responses
 - [ ] Conversation behavior proven for one shared bear across at least two channels/threads: same bear identity, distinct Letta threads per channel/thread policy, with Letta Code as canonical mapper
 - [ ] At least two users and two bears with **many-to-many** membership verified (user A: bears 1+2; user B: bear 2 only)
 - [ ] Non-member cannot invoke bear (403)
@@ -396,7 +380,8 @@ den/
 - [ ] New user registration auto-provisions their Personal Bear in Letta and redirects them into chat with the onboarding prompt
 - [ ] `GET /v1/me/memory` returns the current user’s **`human`** content (per member bear as Letta exposes it); **`person:{name}`** included only when present on the agent; **holistic memory weight** per bear for dashboard comparison; where Letta exposes archival **metadata**, bear-detail views surface enough for the full **state** summary in [PLAN.md](PLAN.md) § Phase 1 memory model and [PHASE1_DECISIONS.md](PHASE1_DECISIONS.md) decision 8 (no Den-owned memory store)
 - [ ] Admin can view and edit the `org_policy` block via the console; `den/defaults/org_policy.md` is applied on first bear creation when no policy exists
-- [ ] **Routines:** CRUD + list UI for schedules **bound to a bear** per [routines-automation-adr.md](../routines-automation-adr.md) and [PHASE1_DECISIONS.md](PHASE1_DECISIONS.md) decision **10**; execution path to Letta Code validated; **output delivery** (artifacts vs conversation vs hybrid) may remain **stub or deferred** until that ADR closes
+- [ ] **Routines:** CRUD + list UI for schedules **bound to a bear** per [routines-automation-adr.md](../routines-automation-adr.md) and [PHASE1_DECISIONS.md](PHASE1_DECISIONS.md) decision **10**; execution path to Letta Code validated; **file outputs** stored in **Garage** per [artifacts-garage-adr.md](../artifacts-garage-adr.md)
+- [ ] **Artifacts:** **Garage** artifacts bucket + presigned upload/download from Den; **metadata** (incl. `conversation_id`, provenance); **GC** job or policy for stale objects — per [artifacts-garage-adr.md](../artifacts-garage-adr.md) decision **11** (may trail M6)
 
 ---
 
@@ -413,11 +398,10 @@ den/
 **Resolved for this repo** — see [PHASE1_DECISIONS.md](PHASE1_DECISIONS.md). The list below is the original prompt; update that file if choices change.
 
 1. **Operator UI stack:** server-rendered (Askama/Tera + htmx) vs SPA in `static/`
-2. **Streaming payload for `POST /v1/chat/send`:** SSE vs NDJSON — **lock for Den chat UI first**; Open WebUI adapters translate if needed
-3. **Auth mechanism for optional Open WebUI:** cookie from browser vs server-side API token per workspace
-4. **Bear id in JSON:** **`bear_id` only** in public v1 JSON ([PHASE1_DECISIONS.md](PHASE1_DECISIONS.md)); **`letta_agent_id`** stays internal to provisioning/Letta Code wiring
-5. **Letta agent create payload:** single template vs per-bear type (personal vs shared)
-6. **Conversation id:** Letta thread/conversation API — map client `chat_id` to Letta conversation if required by API version
+2. **Streaming payload for `POST /v1/chat/send`:** SSE vs NDJSON — **lock for Den chat UI first**; automation clients translate if needed
+3. **Bear id in JSON:** **`bear_id` only** in public v1 JSON ([PHASE1_DECISIONS.md](PHASE1_DECISIONS.md)); **`letta_agent_id`** stays internal to provisioning/Letta Code wiring
+4. **Letta agent create payload:** single template vs per-bear type (personal vs shared)
+5. **Conversation id:** Letta thread/conversation API — map client `chat_id` to Letta conversation if required by API version
 
 Record new or changed decisions in **[PHASE1_DECISIONS.md](PHASE1_DECISIONS.md)** (monorepo `docs/planning/`).
 

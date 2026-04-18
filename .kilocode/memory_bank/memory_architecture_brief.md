@@ -378,7 +378,7 @@ tags:
 ### Stack sketch (conceptual)
 
 ```yaml
-# See bears-depoy: Bifrost, Letta, Open WebUI; Den + Outline for Cabinet (PLAN.md)
+# See bears-depoy: Bifrost, Letta, Den embedded chat; Den + Outline for Cabinet (PLAN.md)
 services:
   bifrost: { ... }
   letta: { depends_on: [bifrost] }

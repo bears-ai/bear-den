@@ -1,6 +1,9 @@
 """
 Open WebUI Pipe Function Example for Letta Integration
 
+NOT part of the BEARS stack — BEARS uses Den embedded Deep Chat only (see docs/architecture/DEN_ARCHITECTURE.md).
+Kept as a reference for experiments outside this repo.
+
 This is a practical example of how to implement a pipe function that connects
 Open WebUI chats to Letta agents with session management.
 

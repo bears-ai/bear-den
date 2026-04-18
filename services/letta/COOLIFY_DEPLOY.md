@@ -1,12 +1,12 @@
 # Letta - Coolify Deployment Guide
 
-**Stack order:** This is **step 2** in [DEPLOYMENT.md](../../docs/deployment/DEPLOYMENT.md) (after Bifrost). Details below.
+**Stack order:** Deploy **after Bifrost** and **Garage**; before **Den** — see [DEPLOYMENT.md](../../docs/deployment/DEPLOYMENT.md). Details below.
 
 ## Overview
 
 Letta is the BEARS **bear runtime**: each **bear** is a **Letta agent** (conversation loop, tools, native **memory** blocks). Models go through **Bifrost** (`LLM_API_URL`). Shared knowledge is **Cabinet** on **Outline**, exposed to **bears** through **Den** ([PLAN.md](../../docs/planning/PLAN.md)). Cabinet does **not** replace Letta’s per‑**bear** memory.
 
-**Terminology:** In BEARS docs, **bear** = one assistant backed by a Letta agent. **Den** provisions bears (Letta API), **users↔bears** membership (many‑to‑many), and surfaces bears in Open WebUI / **Letta Code** harness—see [PLAN.md](../../docs/planning/PLAN.md). The Letta HTTP API still uses paths like `/v1/agents`; that **agent** id is the runtime id for a bear.
+**Terminology:** In BEARS docs, **bear** = one assistant backed by a Letta agent. **Den** provisions bears (Letta API), **users↔bears** membership (many‑to‑many), and surfaces bears in the **Den chat UI** and **Letta Code** harness—see [PLAN.md](../../docs/planning/PLAN.md). The Letta HTTP API still uses paths like `/v1/agents`; that **agent** id is the runtime id for a bear.
 
 ## Prerequisites
 
@@ -27,7 +27,7 @@ Letta is the BEARS **bear runtime**: each **bear** is a **Letta agent** (convers
 
 3. **Port Configuration**:
     - **Internal Port**: `8283` (API Server)
-    - **External Access**: Internal only (accessed by LibreChat)
+    - **External Access**: Internal only (accessed by **Den**, operators, and other stack services)
 
 4. **Environment Variables**:
 
@@ -121,7 +121,7 @@ Cabinet tools (when Den + Outline are deployed) → Den → Outline
 
 ### Primary UI
 
-Many deployments use **Open WebUI** or **LibreChat**; configure whichever you run. Per‑**bear** **memory** stays in Letta; **shared knowledge** is **Cabinet (Outline)** in the target architecture.
+End-user chat in BEARS is **Den embedded Deep Chat** → Den → Letta Code → Letta. Per‑**bear** **memory** stays in Letta; **shared knowledge** is **Cabinet (Outline)** in the target architecture.
 
 ### Admin Web UI (Optional)
 
@@ -281,57 +281,11 @@ CPU: 1-2 cores
 
 Factors: model choice, context size, tool latency (e.g. Cabinet). Use streaming where supported.
 
-## Open WebUI integration
+## Third-party chat UIs (not part of BEARS)
 
-Letta can be integrated with Open WebUI for a modern chat UI and session management, using Letta’s **bear** (agent) capabilities.
+BEARS does **not** include **Open WebUI** or similar parallel web chat stacks. First-party browser chat is **Den embedded Deep Chat** ([DEN_ARCHITECTURE.md](../../docs/architecture/DEN_ARCHITECTURE.md)).
 
-### Overview
-
-When integrating Open WebUI with Letta **directly** (no Den), you typically:
-1. Map Open WebUI chat sessions to Letta **agents** (bears)
-2. Route messages to the appropriate **bear**
-3. Manage session persistence and context  
-
-**With Den:** users have **many** bears and some bears are **shared**; Den enforces membership and surfaces the bear list—see [PLAN.md](../../docs/planning/PLAN.md).
-
-### Session management strategies (direct mode)
-
-**One bear per Open WebUI user** (simple personalization):
-- All chats from a user share the same Letta agent
-- The bear learns user preferences across all conversations
-- Better long-term memory and personalization
-
-**One bear per Open WebUI chat** (isolation):
-- Each chat gets its own Letta agent
-- Complete isolation between conversations
-- Better for project-specific or topic-specific chats
-
-### Implementation
-
-See [`OPENWEBUI_SESSIONS.md`](OPENWEBUI_SESSIONS.md) for a complete guide on:
-- Session mapping strategies
-- Pipe function implementation
-- Code examples
-- Integration with Letta + optional Den/Cabinet
-
-### Quick Start
-
-1. **Deploy the pipe function** using the example in [`openwebui_pipe_example.py`](openwebui_pipe_example.py)
-2. **Configure environment variables** (see [`openwebui_integration.env.example`](openwebui_integration.env.example))
-3. **Register the pipe function** in Open WebUI as a custom model
-4. **Test the integration** by creating a chat in Open WebUI
-
-### Configuration
-
-Add these environment variables to your Open WebUI service (or pipe function service):
-
-```bash
-LETTA_API_URL=http://bears-letta:8283/v1
-LETTA_SERVER_PASS=<your-letta-password>
-SESSION_STRATEGY=user  # or "chat"
-```
-
-See [`openwebui_integration.env.example`](openwebui_integration.env.example).
+Historical notes and pipe examples for Open WebUI ↔ Letta live under [`OPENWEBUI_INTEGRATION.md`](OPENWEBUI_INTEGRATION.md) and [`OPENWEBUI_SESSIONS.md`](OPENWEBUI_SESSIONS.md) (**deprecated** for this stack; not maintained as a deployment path).
 
 ## Advanced Configuration
 
@@ -371,7 +325,7 @@ Shared team context: **Cabinet (Outline)**, Letta shared blocks, or a **shared b
 ## Deployment completion
 
 - [ ] Bifrost healthy; Letta reaches `LLM_API_URL`
-- [ ] Open WebUI / LibreChat can chat with a **bear** (Letta agent)
+- [ ] **Den** (when deployed) can reach Letta for provisioning and chat via **Letta Code**; end users chat through Den’s web UI
 - [ ] Den + Outline + Cabinet tools when rolled out ([PLAN.md](../../docs/planning/PLAN.md))
 
 **Services:** `bears-bifrost`, `bears-letta`, UI; later **Outline + Den**.

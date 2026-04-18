@@ -1,5 +1,7 @@
 # Open WebUI + Letta Session Management Guide
 
+> **Deprecated for BEARS:** The stack uses **Den embedded Deep Chat** only ([DEN_ARCHITECTURE.md](../../docs/architecture/DEN_ARCHITECTURE.md)). This guide documents **direct Open WebUI → Letta** (no Den) for historical reference; it is **not** a BEARS deployment path.
+
 ## Table of contents
 
 | Section | Topics |
@@ -18,7 +20,7 @@
 
 ## Overview
 
-**Canonical multi-user (web):** **Den** (Axum) → **self-hosted Letta** — see **[DEN_ARCHITECTURE.md](../../docs/architecture/DEN_ARCHITECTURE.md)** / [PLAN.md](../../docs/planning/PLAN.md). **v1:** Open WebUI → Den; **Letta Code** harness may stay direct-to-Letta for experiments. Den **provisions bears**, maintains **users↔bears** (many‑to‑many), and surfaces bears in Open WebUI / **Letta Code**.
+**Canonical multi-user (web):** **Den** (Axum) → **Letta Code** → **self-hosted Letta** — see **[DEN_ARCHITECTURE.md](../../docs/architecture/DEN_ARCHITECTURE.md)** / [PLAN.md](../../docs/planning/PLAN.md). Den **provisions bears**, maintains **users↔bears** (many‑to‑many), and surfaces bears in the **Den chat UI** and **Letta Code** harness config.
 
 **Terminology:** A **bear** is one assistant backed by a Letta **agent**. Letta’s REST API uses `/v1/agents` and `agent_id`; in prose below, that id is the runtime id for a **bear**.
 

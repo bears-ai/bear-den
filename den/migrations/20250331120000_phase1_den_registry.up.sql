@@ -2,7 +2,7 @@
 -- Legacy `users.id` remains INTEGER until a later migration moves identity to UUID; `user_bear.user_id`
 -- follows that type so FKs are valid. Bear identifiers use UUID as in PHASE1_BOOTSTRAP.md.
 
--- Open WebUI stable id mapping (nullable until first link).
+-- Optional external chat client id (nullable; legacy column name — BEARS uses Den embedded chat only).
 ALTER TABLE users
     ADD COLUMN IF NOT EXISTS webui_account_id TEXT;
 CREATE UNIQUE INDEX IF NOT EXISTS users_webui_account_id_key ON users (webui_account_id)

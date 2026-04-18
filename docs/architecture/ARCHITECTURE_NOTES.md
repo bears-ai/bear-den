@@ -9,15 +9,14 @@ Single-page view of the BEARS stack on Coolify. **Roadmap and contracts:** [PLAN
 Three layers (see [DEN_ARCHITECTURE.md](DEN_ARCHITECTURE.md)): **persistence (Letta)** → **harness (Letta Code)** → **control plane (Den)** for operations; web and Slack sit on the harness.
 
 ```
-Den (chat UI) ────┐     Outline (human editing)
-Open WebUI (opt.) ┤              ▲
-                  ├──► Den ──Cabinet API───────┘
-                  │      │──────────────► Garage (S3)
-                  │      └──► Letta Code ──► Letta ──► Bifrost ──► providers
+Den (chat UI) ───────────────┐     Outline (human editing)
+                             ├──► Den ──Cabinet API───────┘
+                             │      │──────────────► Garage (S3)
+                             │      └──► Letta Code ──► Letta ──► Bifrost ──► providers
 ```
-(Den serves the first-party browser chat UI; **Open WebUI** is optional; **Letta Code** is the mandatory harness for agent chat — [DEN_ARCHITECTURE.md](DEN_ARCHITECTURE.md).)
+(Den serves the first-party browser chat UI (Deep Chat); **Letta Code** is the mandatory harness for agent chat — [DEN_ARCHITECTURE.md](DEN_ARCHITECTURE.md).)
 
-**Until Den is deployed:** Open WebUI may talk to Letta directly. Add Den + Outline per [PLAN.md](../planning/PLAN.md).
+**Until Den is deployed:** you can exercise Letta + Bifrost directly; add Den + Outline per [PLAN.md](../planning/PLAN.md).
 
 ## Components
 
@@ -27,9 +26,8 @@ Open WebUI (opt.) ┤              ▲
 | **Letta Code** | **[Harness](https://docs.letta.com/letta-code)** for web (via Den) and **Slack** ([Channels](https://docs.letta.com/letta-code/channels/), beta); uses **Letta** for persistence; loads [skills](https://docs.letta.com/letta-code/skills/) from paths Den manages; **brokers** [Den meta tools](DEN_ARCHITECTURE.md#den-meta-tools-bears-control-plane-tools) (Den APIs) to agents. **WhatsApp** is desired but not in Letta Code Channels yet. |
 | **Letta** | **Persistence** for the harness: tools, memory blocks, conversations per Letta agent (**bear**) |
 | **Bifrost** | Unified OpenAI-compatible model gateway (`/v1`) — see `services/bifrost/` |
-| **Den chat UI** | **Primary** first-party chat UI — Deep Chat web component served by Den; reference client for Den streaming APIs |
-| **Open WebUI** | Full-featured web chat **optional** when deployed (e.g. LibreChat) |
-| **Garage** | S3-compatible object storage — chat media uploads, generated images, binary artifacts ([`services/garage/`](../../services/garage/)) |
+| **Den chat UI** | **Only** first-party web chat — Deep Chat web component served by Den; reference client for Den streaming APIs |
+| **Garage** | S3-compatible object storage — **artifacts** bucket (agent outputs, uploads, routines; **not** in Letta) + **separate** Cabinet bucket (Outline); GC on artifacts — [artifacts-garage-adr.md](../artifacts-garage-adr.md), [`services/garage/`](../../services/garage/) |
 | **Outline** | Cabinet storage and UI |
 
 ## Letta
@@ -41,9 +39,9 @@ Open WebUI (opt.) ┤              ▲
 
 ## Data flow
 
-**Web (target with Den):** User → Den chat page **(default)** **or** optional **Open WebUI** → **Den → Letta Code → Letta** → Bifrost → providers.
+**Web (target with Den):** User → Den chat page → **Den → Letta Code → Letta** → Bifrost → providers.
 
-**Web (today, no Den):** User → Open WebUI → Letta → Bifrost → providers.
+**Web (no Den yet):** exercise Letta + Bifrost directly (e.g. Letta UI on `:8283`); first-party multi-user web chat lands with Den.
 
 **Slack + harness:** **Slack** → **Letta Code** ([Channels](https://docs.letta.com/letta-code/channels/)) → **Letta**; **web** → **Den → Letta Code → Letta**. Den drives **which bears**, **which skills**, **which MCP servers**, and harness config. **WhatsApp:** not in Letta Code Channels yet—roadmap. Optional later: channel-only Den proxy for audit ([PLAN.md](../planning/PLAN.md)).
 
@@ -53,23 +51,24 @@ Open WebUI (opt.) ┤              ▲
 
 | Service | Port |
 |---------|------|
-| Open WebUI | 3000 |
+| Den (HTTP) | app-defined (e.g. 3000 behind Coolify) |
 | Garage S3 API | 3900 |
 | Garage Admin | 3903 |
 | Letta | 8283 |
 | Bifrost | 8080 |
 
-Expose only what users need (e.g. Open WebUI via Coolify proxy).
+Expose only what users need (e.g. Den behind Coolify proxy).
 
 ## Object storage (Garage)
 
-[Garage](https://garagehq.deuxfleurs.fr/) is the S3-compatible store for binary media that should not live in PostgreSQL or Letta's context window. Den issues presigned S3 URLs — browsers upload/download directly to Garage; Den never proxies the bytes.
+[Garage](https://garagehq.deuxfleurs.fr/) is the S3-compatible store for **files that must not live in Letta** (or large blobs in Postgres). Den issues presigned S3 URLs — browsers upload/download directly to Garage; Den never proxies the bytes.
 
-- **Bucket:** `bears-media` (chat attachments, generated images)
-- **Auth:** scoped service key per Den instance (not root credentials)
-- **Backup:** Garage data volumes are part of the three-input contract (repo + DB backups + object storage)
+- **`bears-artifacts`** — Ephemeral **artifacts**: agent/tool/skill outputs, **human uploads**, routine file outputs; **metadata** (e.g. `conversation_id`, provenance); **garbage collection** by Den policy. Not Cabinet.
+- **`bears-cabinet`** — **Cabinet / Outline** attachments only (Phase 2+); **no** artifact GC rules from Den; optional **promote artifact → Cabinet** UX later.
+- **Auth:** scoped service keys (Den for artifacts; Outline/Cabinet wiring separately).
+- **Backup:** Garage volumes remain part of the three-input contract (repo + DB backups + object storage).
 
-Deploy guide: [`services/garage/COOLIFY_DEPLOY.md`](../../services/garage/COOLIFY_DEPLOY.md).
+Architecture: [artifacts-garage-adr.md](../artifacts-garage-adr.md). Deploy: [`services/garage/COOLIFY_DEPLOY.md`](../../services/garage/COOLIFY_DEPLOY.md).
 
 ## Multi-user
 

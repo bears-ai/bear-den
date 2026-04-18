@@ -5,7 +5,7 @@ At **process startup**, `den` runs embedded migrations against `DATABASE_URL` (s
 | File | Purpose |
 |------|---------|
 | [`20250309000000_trestle.up.sql`](20250309000000_trestle.up.sql) | Starter: `users`, invites, email, OAuth tables |
-| [`20250331120000_phase1_den_registry.up.sql`](20250331120000_phase1_den_registry.up.sql) | **Phase 1 M1**: `bears`, `user_bear`, `audit_chat`; `users.webui_account_id`, `users.is_admin` |
+| [`20250331120000_phase1_den_registry.up.sql`](20250331120000_phase1_den_registry.up.sql) | **Phase 1 M1**: `bears`, `user_bear`, `audit_chat`; optional `users.webui_account_id` (legacy name; unused in BEARS v1), `users.is_admin` |
 | [`20250401120000_phase1_bear_provisioning_fields.up.sql`](20250401120000_phase1_bear_provisioning_fields.up.sql) | **Phase 1 M1b**: `bears.system_prompt`; nullable `bears.letta_agent_id` until provisioned |
 | [`20250401130000_phase1_bootstrap_admin.up.sql`](20250401130000_phase1_bootstrap_admin.up.sql) | **Bootstrap operator** (only if no `username = 'admin'` yet): see **Default operator account** below |
 

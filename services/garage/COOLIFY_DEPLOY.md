@@ -4,7 +4,7 @@
 
 ## Overview
 
-[Garage](https://garagehq.deuxfleurs.fr/) is the BEARS **object store**: S3-compatible, self-hosted, written in Rust, maintained by the [Deuxfleurs](https://deuxfleurs.fr/) non-profit. Used for chat media uploads, generated images, and binary artifacts that should not live in PostgreSQL or Letta's context window.
+[Garage](https://garagehq.deuxfleurs.fr/) is the BEARS **object store**: S3-compatible, self-hosted, written in Rust, maintained by the [Deuxfleurs](https://deuxfleurs.fr/) non-profit. **Den** uses it for **artifacts** (agent outputs, user uploads, routine files — **not** stored in Letta) and, in a **separate bucket**, **Cabinet / Outline** attachments. See [artifacts-garage-adr.md](../../docs/artifacts-garage-adr.md).
 
 Garage is lightweight (≈1 GB RAM), includes built-in deduplication and compression, and is designed for small-to-medium self-hosted deployments.
 
@@ -87,9 +87,9 @@ The compose file defines two named volumes:
 
 ---
 
-## Post-deploy: cluster layout, bucket, and key
+## Post-deploy: cluster layout, buckets, and keys
 
-After first deploy, set up the cluster layout and create the media bucket. From the Garage container (Coolify **Terminal** or `docker exec`):
+After first deploy, set up the cluster layout and create **two buckets** (artifacts vs Cabinet). From the Garage container (Coolify **Terminal** or `docker exec`):
 
 ```bash
 # 1. Check node status and get the node ID
@@ -99,20 +99,28 @@ garage status
 garage layout assign -z dc1 -c 10G <node_id_prefix>
 garage layout apply --version 1
 
-# 3. Create the media bucket
-garage bucket create bears-media
+# 3. Artifacts bucket — ephemeral agent outputs, human uploads, routine files (GC by Den policy)
+garage bucket create bears-artifacts
 
-# 4. Create a service key for Den
+# 4. Cabinet bucket — Outline / Cabinet attachments only (no Den artifact GC; lifecycle per Outline)
+garage bucket create bears-cabinet
+
+# 5. Create a service key for Den (artifacts + presigned URLs for uploads)
 garage key create den-service-key
 
-# 5. Grant Den's key read+write on the bucket
-garage bucket allow --read --write bears-media --key den-service-key
+# 6. Grant Den read+write on the artifacts bucket
+garage bucket allow --read --write bears-artifacts --key den-service-key
 
-# 6. Show the key credentials (copy Key ID and Secret key for Den config)
+# 7. Optional Phase 2+: grant Den or Outline writer on bears-cabinet per your Cabinet adapter
+# garage bucket allow --read --write bears-cabinet --key den-service-key
+
+# 8. Show the key credentials (copy Key ID and Secret key for Den config)
 garage key info den-service-key
 ```
 
-The output of step 6 gives you the **Key ID** and **Secret key** to use as Den's `S3_ACCESS_KEY_ID` and `S3_SECRET_ACCESS_KEY`.
+The output of step 8 gives you the **Key ID** and **Secret key** to use as Den's `S3_ACCESS_KEY_ID` and `S3_SECRET_ACCESS_KEY`.
+
+**Migration:** Older docs used **`bears-media`** as a single bucket name. New deployments should use **`bears-artifacts`** for the artifact model; rename or `aws s3 sync` between buckets if you already have data in `bears-media`.
 
 ---
 
@@ -122,7 +130,10 @@ Set these on the **Den** service (see [`../../den/COOLIFY_DEPLOY.md`](../../den/
 
 ```bash
 S3_ENDPOINT=http://bears-garage:3900
-S3_BUCKET=bears-media
+# Ephemeral artifacts + uploads (see ../../docs/artifacts-garage-adr.md). Den currently uses S3_BUCKET.
+S3_BUCKET=bears-artifacts
+# Phase 2+ Cabinet / Outline: separate bucket in Garage; wire when Den Cabinet adapter needs direct S3
+# S3_BUCKET_CABINET=bears-cabinet
 S3_REGION=garage
 S3_ACCESS_KEY_ID=<Key ID from garage key info>
 S3_SECRET_ACCESS_KEY=<Secret key from garage key info>
@@ -157,7 +168,8 @@ export AWS_SECRET_ACCESS_KEY=<secret>
 export AWS_DEFAULT_REGION=garage
 export AWS_ENDPOINT_URL=http://bears-garage:3900
 
-aws s3 ls s3://bears-media/
+aws s3 ls s3://bears-artifacts/
+aws s3 ls s3://bears-cabinet/
 ```
 
 ## Troubleshooting

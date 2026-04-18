@@ -10,7 +10,7 @@
 
 **Idea 5 (automation):** BEARS needs **scheduled / unattended** work—briefings, checks, reminders—analogous to upstream [Letta Code scheduling](https://docs.letta.com/letta-code/scheduling) and host-level cron, but with a **first-class** operator and user story in **Den**.
 
-This ADR records **decided** product rules and **open** design questions. Full implementation of **output delivery** may trail schedule definition and execution wiring until the open questions close.
+This ADR records **decided** product rules for routines. **File outputs** from runs are stored per [artifacts-garage-adr.md](artifacts-garage-adr.md) (Garage / S3, **not** Letta). **Browsing / notification UX** for those links may still trail schedule + storage.
 
 ---
 
@@ -26,27 +26,20 @@ This ADR records **decided** product rules and **open** design questions. Full i
 
 ---
 
-## Open design: where routine results live
+## Resolved: file outputs → Garage artifacts
 
-**Not decided — do not implement a single delivery model until this section is resolved.**
+**Binary and large** routine outputs are **not** stored in Letta. They are **S3 objects** in the **artifacts bucket** ([artifacts-garage-adr.md](artifacts-garage-adr.md)), with metadata including **`conversation_id`**, **`bear_id`**, **`routine_id`**, and provenance. **Garbage collection** applies per artifact policy—not the Cabinet bucket.
 
-Candidates under discussion:
-
-| Direction | Sketch |
-|-----------|--------|
-| **Artifacts** | Store routine outputs **outside** normal chat threads (e.g. blob/object or Den rows with metadata), linked to `bear_id` / `routine_id`. |
-| **Dedicated conversation** | Each routine (or run) uses a **specific Letta conversation** users open in the web UI like a channel. |
-| **Hybrid** | Default conversation transcript **plus** optional attachment of a single **artifact** (report, file summary). |
-
-**Interim:** Den may ship **routine definitions + triggers** (and execution via Letta Code / harness) **before** committing to end-user **browsing** of results, if execution path is validated first—coordinate with [PHASE1_BOOTSTRAP.md](planning/PHASE1_BOOTSTRAP.md) milestones.
+**Optional:** A Letta **conversation** may still hold **references** (message text pointing at artifact keys); that is harness/UI design, not the storage of bytes.
 
 ---
 
 ## Consequences
 
-- **Schema:** New tables (or equivalent) for `routine`, schedule expression, `bear_id` FK, enabled flag, audit fields; optional `last_run`, `next_run` for UI.
+- **Schema:** New tables (or equivalent) for `routine`, schedule expression, `bear_id` FK, enabled flag, audit fields; optional `last_run`, `next_run` for UI; optional links to **artifact** keys for each run.
 - **Harness:** Letta Code remains the **execution** path for agent turns triggered by Den or timer; exact **invoke** shape (HTTP to harness, internal queue, etc.) belongs in implementation notes and deploy docs.
-- **Cross-link:** [PLAN.md](planning/PLAN.md) § Routines and scheduled work.
+- **Object storage:** Den (or tools) **upload** routine file outputs to Garage using the same artifact pipeline as chat- and skill-generated files.
+- **Cross-link:** [PLAN.md](planning/PLAN.md) § Routines and scheduled work; [artifacts-garage-adr.md](artifacts-garage-adr.md).
 
 ---
 

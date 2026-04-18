@@ -35,6 +35,7 @@ When proposing gateways, proxies, or operators, **favor file- or repo-driven con
 | Den + self-hosted Letta (multi-user web) | [docs/architecture/DEN_ARCHITECTURE.md](docs/architecture/DEN_ARCHITECTURE.md) |
 | Dynamic skills & reflection subagents | [docs/dynamic-skills-subagents-adr.md](docs/dynamic-skills-subagents-adr.md) |
 | Routines & scheduling (Phase 1) | [docs/routines-automation-adr.md](docs/routines-automation-adr.md) |
+| Artifacts & Garage (S3) | [docs/artifacts-garage-adr.md](docs/artifacts-garage-adr.md) |
 | Den meta tools (Den facade, Letta Code–brokered) | [DEN_ARCHITECTURE.md — Den meta tools](docs/architecture/DEN_ARCHITECTURE.md#den-meta-tools-bears-control-plane-tools) |
 | Den web UI (templates, CSS: no page-local `<style>`) | [den/docs/frontend-development.md](den/docs/frontend-development.md), [den/AGENTS.md](den/AGENTS.md) |
 | Assistant memory / project brief | [.kilocode/memory_bank/](.kilocode/memory_bank/) |
