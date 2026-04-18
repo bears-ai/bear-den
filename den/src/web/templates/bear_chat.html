@@ -1,39 +1,36 @@
-<!DOCTYPE html>
-{% if session is defined and session.theme %}
-<html lang="en" class="den-bear-chat-page theme-{{ session.theme }}">
-{% else %}
-<html lang="en" class="den-bear-chat-page">
-{% endif %}
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>{{ bear_name | e }} — Chat</title>
-  <link rel="stylesheet" href="/assets/css/style.css" />
-  <link rel="modulepreload" href="/assets/deep-chat/deepChat.bundle.js" />
-  <script type="module" src="/assets/deep-chat/deepChat.bundle.js"></script>
-  <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Geist+Mono:wght@100..900&family=Geist:wght@100..900&display=swap" rel="stylesheet" />
-</head>
-<body>
-  <div class="den-wrap">
+{% extends "base.html" %}
+
+{% block title %}{{ bear_name | e }} — Chat{% endblock %}
+
+{% block subnav %}
+<li><a class="button-link" href="/bear/{{ bear_slug | e }}/details">Bear details</a></li>
+{% endblock %}
+
+{% block head %}
+{{ super() }}
+<link rel="modulepreload" href="/assets/deep-chat/deepChat.bundle.js" />
+<script type="module" src="/assets/deep-chat/deepChat.bundle.js"></script>
+{% endblock %}
+
+{% block content %}
+<div class="den-wrap">
     <div class="den-toolbar den-chat-toolbar">
-      <div class="den-chat-toolbar-links">
-        <a href="/">Home</a>
-        · <a href="/bear/{{ bear_slug | e }}/details">Bear details</a>
-        <span class="den-bear-meta">Chatting with <strong>{{ bear_name | e }}</strong> (<code>{{ bear_slug | e }}</code>)</span>
-      </div>
-      <div class="den-chat-conv-wrap" id="den-chat-conv-wrap" hidden>
-        <label for="den-conv">Conversation</label>
-        <select id="den-conv" class="den-chat-conv-select" aria-label="Conversation"></select>
-      </div>
+        <div class="den-chat-toolbar-links">
+            <a href="/">Home</a>
+            · <a href="/bear/{{ bear_slug | e }}/details">Bear details</a>
+            <span class="den-bear-meta">Chatting with <strong>{{ bear_name | e }}</strong> (<code>{{ bear_slug | e }}</code>)</span>
+        </div>
+        <div class="den-chat-conv-wrap" id="den-chat-conv-wrap" hidden>
+            <label for="den-conv">Conversation</label>
+            <select id="den-conv" class="den-chat-conv-select" aria-label="Conversation"></select>
+        </div>
     </div>
     <p id="err" class="den-err" hidden></p>
     <div id="chat-wrap">
-      <deep-chat id="chat"></deep-chat>
+        <deep-chat id="chat"></deep-chat>
     </div>
-  </div>
-  <script>
+</div>
+<script>
     var BEAR_ID   = "{{ bear_id | e }}";
     var BEAR_NAME = "{{ bear_name | e }}";
     /** Letta conversation id (`default` = agent main thread, or `conv-…`). */
@@ -580,6 +577,5 @@
     }
 
     boot();
-  </script>
-</body>
-</html>
+</script>
+{% endblock %}
