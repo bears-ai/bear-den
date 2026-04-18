@@ -8,7 +8,7 @@ High‑level, ops‑oriented plan and architecture: MVP **without Cabinet first*
 
 | Section | Contents |
 |---------|----------|
-| [§1](#1-system-architecture) | Components, Letta vs Cabinet, Phase 1 memory model, Den→Letta Code→Letta, Den-managed skills and MCP (Phase 1) |
+| [§1](#1-system-architecture) | Components, Letta vs Cabinet, Phase 1 memory model, [shared blocks & concurrency](#shared-memory-blocks-and-concurrency-letta), Den→Letta Code→Letta, Den-managed skills and MCP (Phase 1) |
 | [§2](#2-capability-contracts-pseudo) | Frontends→Den, Den→Letta, bears→Cabinet, Outline, Bifrost observability |
 | [§3](#3-phased-roadmap) | Phase 0–4 milestones |
 | [Summary](#summary) | One-page recap |
@@ -85,6 +85,49 @@ Aligned with [multi-user-memory-adr.md](../multi-user-memory-adr.md) (Scenario A
   - **Memory dashboard (end-user):** Besides read access to **`human`** (and related content per [multi-user-memory-adr.md](../multi-user-memory-adr.md)), show a **holistic memory weight** per bear the user can access — a **cross-bear** view of which assistants have accumulated the most learned material (users, projects, archival — whatever Letta’s APIs allow aggregating). Frame this as **weight** (richness / how much is stored), **not** “pressure” or how close to a limit; **no** capacity warnings or alerts in Den. Purpose: **assurance and comparison**, not memory management (Letta owns automation).
   - **Bear detail (operator):** Full **Letta-native state summary** for one bear — **all** memory blocks and **archival** indicators/stats **where the API exposes them**; prefer **tokens** (or whatever the API returns). Read-only **assurance** that Letta has things under control; **not** an affordance to edit or consolidate memory in Den. See **Phase 1 memory visibility (Idea 2)** in [PHASE1_DECISIONS.md](PHASE1_DECISIONS.md).
 - **Scope:** Phase 1 stays **1:1 per (user, bear)** for web; **no** new shared “household memory” layer in Den (group-mode / `person:{name}` extras remain as in the ADR).
+
+### Shared memory blocks and concurrency (Letta)
+
+BEARS is **team-oriented**: several users (and sometimes **several concurrent agent runs**—e.g. Slack, web, scheduled jobs) can interact with bears whose **memory blocks** are shared or overlap. Letta’s block tools implement **read-modify-write** on a **single string** (`block.value`) without CAS or row-level locking exposed to tools—so **architects must assume contention** on shared blocks. The following summarizes known behaviors and mitigations (upstream issue ids refer to Letta’s tracker).
+
+**Write-path races**
+
+- Memory tools are **not atomic at the DB layer**: two concurrent updates can interleave like a classic lost update (both read `v1`, each writes its own `v2`).
+- **`memory_insert`** / legacy **`core_memory_append`**: additive semantics help, but **two concurrent inserts can still drop one** if they race in the same window.
+- **`memory_replace`** / legacy **`core_memory_replace`**: find-and-replace on a substring—if the target moved between read and write, the op **fails with an error** (loud failure is desirable under contention). **`memory_insert` is more robust** than **`memory_replace`** when multiple writers exist.
+- **Practical ranking:** prefer **`memory_insert`** for cross-writer shared state; treat **`memory_replace`** as **brittle** under contention.
+
+**Read-path staleness**
+
+- Shared block writes become visible to other agents **on the next system-prompt compilation**, not mid-turn.
+- **Compiled context is per-conversation.** Issue **LET-7893**: some conversations can retain **stale** compiled context even after an agent-level recompile; **conversation-level** `POST /v1/conversations/{id}/recompile` is the targeted fix (agent-level `POST /v1/agents/{id}/recompile` exists on Cloud). Do **not** assume a write in one conversation is immediately visible in another agent’s in-flight turn—there is **no cross-agent memory barrier** you can rely on from the model’s perspective.
+
+**Memfs / git-backed blocks (if/when issue LET-8217 ships)**
+
+- Shared **memfs** inherits **git-style** merge semantics: concurrent writes can surface as **merge conflicts**, not last-write-wins. Reports also mention **sync bugs** (e.g. git→Postgres webhook failing under concurrent sessions) and **block limit validation bypass** on the memfs write path (**LET-8133**): git sync can persist **unbounded** growth—**do not rely** on server-side `limit` alone for safety.
+
+**Design patterns (implementation agents and Den-adjacent automation)**
+
+1. **Single-writer per shared block** — route all mutations for a given shared block through **one** curator/supervisory agent or job (aligns with upstream “conscience” style patterns, e.g. LET-8179). Others **read** freely.
+2. **Prefer `memory_insert` over `memory_replace`** for shared writes; favor an **append-log** shape (“record event”) over rewriting canonical state in place.
+3. **Structure shared blocks as append-only logs**; optionally **compact** in a separate, infrequent pass (single writer).
+4. **Do not assume write-then-read across agents** — after a writer updates a block, readers may need an explicit **`POST /v1/conversations/{id}/recompile`** (when available) or accept **next-turn** visibility.
+5. **Keep mutation-heavy working state in per-agent or per-conversation blocks**; **promote** to shared blocks only at **checkpoints**.
+6. **Validate block size in your proxy or automation** — enforce caps in Den or harness-side tooling; do not assume Letta’s limit is enforced on every path (**LET-8133**).
+7. **Conflict detection at the boundary you control** — if Den or a meta tool orchestrates writes, stamp versions/timestamps and reject or merge **non-monotonic** updates in that layer.
+8. **Monitor for silent desync** — e.g. empty `in_context_message_ids` as a canary for wiped compiled context; consider **heartbeat recompiles** for long-lived conversations.
+
+**Production readiness checks**
+
+- Load-test **concurrent `memory_insert`** from two or more agents against one block—confirm **no drops** at expected concurrency.
+- Measure **recompile latency end-to-end** (writer updates → reader’s next turn reflects it).
+- Exercise behavior when a block **exceeds configured `limit`** during a shared write (especially if memfs or git paths are enabled).
+
+**Unknowns**
+
+- Exact **race window** size on Cloud’s Postgres path is **not** published—treat contention as **probabilistic**, not negligible.
+
+See also [multi-user-memory-adr.md](../multi-user-memory-adr.md) (per-user isolation vs shared blocks) and [DEN_ARCHITECTURE.md](../architecture/DEN_ARCHITECTURE.md) (memory blocks overview).
 
 ### Canonical paths vs optional channel proxy
 
@@ -401,6 +444,7 @@ At the end of Phase 2, Cabinet is a defined, testable contract, even if Outline 
      - Scheduled summaries:
        - E.g., daily/weekly “what changed” docs in `history` or `knowledge`.
      - Tools for “promote this to knowledge” from a chat.
+   - Align **shared Letta block** updates with [§ Shared memory blocks and concurrency](#shared-memory-blocks-and-concurrency-letta): prefer a **single writer** (or Den-orchestrated merges) for promoted shared state; use **Cabinet** for durable shared knowledge where Letta block semantics are the wrong fit.
 
 3. **RBAC and tool governance**
    - In **Den**:
@@ -419,7 +463,7 @@ This is the “make it livable and reliable” phase.
 
 ## Summary
 
-**Knowledge:** **Letta memory** is per‑**bear** (per Letta agent) context — **blocks** (curated, bounded) plus **archival** and tools as Letta provides. **Phase 1:** no Den memory store; **dashboard** shows **weight** (holistic, cross-bear); **bear detail** shows full state ([§ Phase 1 memory model](#phase-1-memory-model-user-promise-persistence-and-ux)). **Cabinet (Outline)** is the shared knowledgebase for humans and bears (post–Phase 1).
+**Knowledge:** **Letta memory** is per‑**bear** (per Letta agent) context — **blocks** (curated, bounded) plus **archival** and tools as Letta provides. **Shared blocks** under multi-writer concurrency need explicit patterns ([§ Shared memory blocks and concurrency](#shared-memory-blocks-and-concurrency-letta)). **Phase 1:** no Den memory store; **dashboard** shows **weight** (holistic, cross-bear); **bear detail** shows full state ([§ Phase 1 memory model](#phase-1-memory-model-user-promise-persistence-and-ux)). **Cabinet (Outline)** is the shared knowledgebase for humans and bears (post–Phase 1).
 
 **Bears:** Each **agent** in the product sense is a **bear**. **Users ↔ bears** is **many‑to‑many**.
 

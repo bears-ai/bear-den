@@ -37,6 +37,7 @@ Open WebUI (opt.) ┤              ▲
 - Image: `letta/letta:latest`, port `8283`  
 - Models via `LLM_API_URL` → Bifrost  
 - Shared knowledge: Cabinet tools (via Den) when deployed  
+- **Shared memory blocks:** multiple concurrent writers can race on the same block; compiled context can be stale across conversations until recompile—see [PLAN.md § Shared memory blocks and concurrency](../planning/PLAN.md#shared-memory-blocks-and-concurrency-letta).
 
 ## Data flow
 

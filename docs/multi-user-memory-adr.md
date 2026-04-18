@@ -28,6 +28,7 @@ References:
 - [Letta Conversations API](https://docs.letta.com/guides/agents/conversations/)
 - [DEN_ARCHITECTURE.md](architecture/DEN_ARCHITECTURE.md) — Den + self-hosted Letta
 - [PLAN.md](planning/PLAN.md) — roadmap and contracts
+- [PLAN.md § Shared memory blocks and concurrency](planning/PLAN.md#shared-memory-blocks-and-concurrency-letta) — write-path races, read staleness (e.g. LET-7893), memfs caveats (LET-8217, LET-8133), and team-oriented mitigations when **multiple agents** touch **shared** blocks
 
 ---
 
