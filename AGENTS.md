@@ -13,6 +13,8 @@ Use this file for **repository conventions** when editing or generating changes.
 
 **Strict GitOps is the default assumption:** configuration that affects how the stack runs should live in **this repository** (or be generated from files in-repo in CI), go through normal review, and avoid **silent drift** from one-off edits in hosting UIs or production consoles. Prefer declarative assets under `services/*`, env templates, and docs over “remember to click this in Coolify.”
 
+**Den SQL migrations:** Files under `den/migrations/` are **immutable once applied**. SQLx stores a checksum per version in `public._sqlx_migrations`; editing an existing `*_up.sql` (even comments) breaks verification and can stop Den from starting. **Add a new migration** for any schema change. Rules and checksum repair steps: [`den/migrations/README.md`](den/migrations/README.md).
+
 **Production should be reconstructible** from three inputs only:
 
 1. **This repository** (configs, compose/Coolify definitions, migrations or schema notes as applicable).
@@ -38,6 +40,7 @@ When proposing gateways, proxies, or operators, **favor file- or repo-driven con
 | Artifacts & Garage (S3) | [docs/artifacts-garage-adr.md](docs/artifacts-garage-adr.md) |
 | Den meta tools (Den facade, Letta Code–brokered) | [DEN_ARCHITECTURE.md — Den meta tools](docs/architecture/DEN_ARCHITECTURE.md#den-meta-tools-bears-control-plane-tools) |
 | Den web UI (templates, CSS: no page-local `<style>`) | [den/docs/frontend-development.md](den/docs/frontend-development.md), [den/AGENTS.md](den/AGENTS.md) |
+| Den SQL migrations (immutability, checksum repair) | [den/migrations/README.md](den/migrations/README.md) |
 | Assistant memory / project brief | [.kilocode/memory_bank/](.kilocode/memory_bank/) |
 
 Prefer **updating existing docs** under `docs/` rather than adding new top-level `.md` files. Root should stay limited to **README.md** and **AGENTS.md** unless the project explicitly expands that rule.

@@ -23,6 +23,11 @@ Do not assume the environment is “simulated only”: prefer **running `cargo` 
 5. [`docs/development-principles.md`](docs/development-principles.md) — development principles (dependencies, frontend minimalism); populate for your product.
 6. Implementation patterns under [`docs/`](docs/): SQLx, MiniJinja contexts, Axum handlers, infrastructure, frontend, deploy.
 
+## Database migrations (SQLx)
+
+- **Never edit** an existing file under `migrations/` that has already been applied anywhere: SQLx checksums the file content in `_sqlx_migrations`. **Add a new** `*_up.sql` for fixes or new columns (see [`migrations/README.md`](migrations/README.md)).
+- If checksum drift already happened, follow **Repairing checksum mismatch** in that README (`sqlx migrate info`, then align `checksum` with the canonical file).
+
 ## Working on features
 
 - **HTTP (web UI)** — `src/web/`, templates under `src/web/templates/`. **CSS:** follow [`docs/frontend-development.md`](docs/frontend-development.md): no authored `<style>` blocks or inline layout/theme in templates; standalone pages still use `/assets/css/style.css` and scoped rules in `src/web/assets/css/specifics.css`.
