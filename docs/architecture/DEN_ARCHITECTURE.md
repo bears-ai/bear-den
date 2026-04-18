@@ -43,6 +43,7 @@ API shapes depend on your Letta version—confirm against your server.
 ### Memory blocks
 
 - **human**, **persona**, optional **shared** read-only blocks (org policy)—same ideas as Cloud; create/attach via your server’s blocks/agents API or Letta UI.
+- **Archival memory** (Letta): vector-searchable store the agent uses per Letta’s tools — complementary to blocks, not a Den-managed layer. **Phase 1 UX** (memory dashboard, bear detail) surfaces Letta-native state only; product copy distinguishes **curated blocks** vs **retrievable** archival. See [PLAN.md](../planning/PLAN.md) § Phase 1 memory model.
 
 ### Provisioning bears (Den-owned)
 

@@ -40,7 +40,7 @@ Use whatever **one-off** scaffold you prefer (`cargo new`, an internal template,
 | Policy | RBAC-lite: membership check + optional per-bear `can_use` + basic rate limit |
 | Bifrost | Optional: fetch metrics/health **read-only**; no proxying completions |
 | **User onboarding** | On new account creation, auto-provision a **Personal Bear** (slug: `personal-{name-slug}`) from a configurable default template set in the admin UI; immediately redirect the new user into chat with that bear using a standard onboarding prompt that invites the bear to learn about them |
-| **Memory dashboard** | Read-only view of **Letta-native** memory on member bears: **primary** focus is the current user’s **`human`** content (per bear / per-conversation as the Letta API returns it for 1:1 web). **`person:{name}`** rows only when such blocks already exist (mostly **group-mode**, largely **post–Phase 1** per [multi-user-memory-adr.md](../multi-user-memory-adr.md)); avoid implying a merged global profile beyond Letta state |
+| **Memory dashboard + bear memory UX** | Read-only view of **Letta-native** memory — **primary** focus: current user’s **`human`** content (per bear / per-conversation as Letta returns for 1:1 web). **`person:{name}`** rows only when such blocks already exist (mostly **group-mode**, post–Phase 1 per [multi-user-memory-adr.md](../multi-user-memory-adr.md)). **Operator bear detail** surfaces the same Letta-backed picture for that bear (blocks; archival **stats or indicators** where the Letta API exposes them). **Product promise** ([PLAN.md](PLAN.md) § Phase 1 memory model): small curated **always-on** blocks; **longer history** is **findable** via Letta archival/tools — Den does **not** add a second memory store. Help copy must not imply “everything in prompt every turn.” |
 | **Org policy block** | Admin UI panel to view and edit the `org_policy` Letta block applied to all bears; seed content from **`den/defaults/org_policy.md`** (in-repo) when no policy has been set and the first bear is provisioned |
 | Deploy | **Self-building Docker image** (multi-stage: build Rust in container, runtime image with binary + `ca-certificates`) |
 
@@ -261,7 +261,7 @@ den/
 
 1. **Sign in** — operator vs normal user (or single login + role gate on `/console/*`).
 2. **Users** — list, create, optional password set; link to membership.
-3. **Bears** — list, create, **Provision to Letta** / re-sync, show `letta_agent_id` and errors inline.
+3. **Bears** — list, create, **Provision to Letta** / re-sync, show `letta_agent_id` and errors inline; **bear detail** includes **Letta-native memory state** (blocks + archival hints per API) per [PLAN.md](PLAN.md) § Phase 1 memory model.
 4. **Membership** — assign bears ↔ users (checkbox grid or paired selects).
 5. **Letta Code** — live YAML/config preview, download button, bullet list: where to paste, restart **`letta server`** (or equivalent), Letta `LETTA_BASE_URL` hint.
 6. **Skills** — catalog (add from URL or upload), attach to bear, enable/disable; show materialization status when Den syncs trees for Letta Code.
@@ -393,7 +393,7 @@ den/
 - [ ] Deployed via **single Dockerfile** build on Coolify (or CI → registry)
 - [ ] No Cabinet calls required
 - [ ] New user registration auto-provisions their Personal Bear in Letta and redirects them into chat with the onboarding prompt
-- [ ] `GET /v1/me/memory` returns the current user’s **`human`** content (per member bear as Letta exposes it); **`person:{name}`** included only when present on the agent
+- [ ] `GET /v1/me/memory` returns the current user’s **`human`** content (per member bear as Letta exposes it); **`person:{name}`** included only when present on the agent; where Letta exposes archival **metadata**, responses or bear-detail views surface enough for the **memory UX** in [PLAN.md](PLAN.md) § Phase 1 memory model (no Den-owned memory store)
 - [ ] Admin can view and edit the `org_policy` block via the console; `den/defaults/org_policy.md` is applied on first bear creation when no policy exists
 
 ---

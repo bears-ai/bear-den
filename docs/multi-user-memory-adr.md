@@ -35,6 +35,8 @@ References:
 
 **Relationship to Phase 1:** [Phase 1 planning](planning/PHASE1_BOOTSTRAP.md) is **web-first** and **1:1**-oriented; **Scenario A** below matches that near-term shape (per-user conversations and isolated `human` memory). **Scenario B** (multi-person group threads, `person:{name}` blocks, `group_context`, Den-managed per-person block lifecycle) is a **future / post–Phase 1 design target**—useful to decide early, **not** a commitment that Phase 1 will ship full group semantics or Den channel identity mapping. Where Phase 1 UI touches memory (for example a memory dashboard), it should stay aligned with **Letta-native** state for 1:1 flows and avoid implying group-mode completeness.
 
+**Phase 1 product promise (blocks vs archival):** End-user and operator copy should reflect **curated, bounded memory blocks** as “always in mind” and **archival memory** (Letta-native, typically tool-mediated retrieval) as “findable when needed” — not a second store in Den. See [PLAN.md](planning/PLAN.md) § Phase 1 memory model.
+
 ### Two Distinct Scenarios
 
 #### Scenario A: One Person Per Session (the common case)
