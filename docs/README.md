@@ -2,7 +2,7 @@
 
 Human-oriented docs for the **Basic Environment for Agents Runtime Server (BEARS)** stack: Coolify deploy configs, planning, and architecture.
 
-**Start here:** [README.md](../README.md) at the repository root (overview and doc map).
+**Start here:** [README.md](../README.md) at the repository root (short overview). **Full doc map:** this page. **Agent/repo conventions:** [AGENTS.md](../AGENTS.md).
 
 ## Layout
 

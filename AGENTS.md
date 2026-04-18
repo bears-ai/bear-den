@@ -2,6 +2,8 @@
 
 Use this file for **repository conventions** when editing or generating changes.
 
+**vs [README.md](README.md):** The README is the **human** landing page (short overview, links out). **This file** holds what agents need repeatedly: terminology, GitOps, migration immutability, doc map, cloning, and link rules. Do not duplicate long narrative architecture in README—summarize there and keep detail here and under `docs/`.
+
 ## What this repo is
 
 - **Light monorepo:** docs under `docs/`, Coolify-oriented assets under `services/*`, and the **Den** Rust service at repo root in **`den/`** (add the `cargo` tree there; it is not under `services/`).
@@ -27,7 +29,7 @@ When proposing gateways, proxies, or operators, **favor file- or repo-driven con
 
 | Topic | Path |
 |-------|------|
-| Overview + doc map | [README.md](README.md) |
+| Human-oriented overview (short) | [README.md](README.md) |
 | Doc index, monorepo clone notes | [docs/README.md](docs/README.md) |
 | Roadmap and contracts | [docs/planning/PLAN.md](docs/planning/PLAN.md) |
 | Phase 1 Den build (bootstrap → operator console) | [docs/planning/PHASE1_BOOTSTRAP.md](docs/planning/PHASE1_BOOTSTRAP.md) |

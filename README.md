@@ -1,78 +1,28 @@
-# 🐻 Basic Environment for Agents Runtime Server (BEARS)
+# 🐻 BEARS — Basic Environment for Agents Runtime Server
 
-Each assistant in the product is a **bear** (one **Letta** agent). **BEARS** names the **stack**; **users↔bears** is many‑to‑many, with **Den** provisioning bears and clients—see [docs/planning/PLAN.md](docs/planning/PLAN.md).
+**BEARS** is the stack name. Each product assistant is a **bear** (one [Letta](https://github.com/letta-ai/letta) agent). **Den** (Rust, in `den/`) is the control plane: provisioning, **users↔bears** membership, first-party web chat (Deep Chat), and Cabinet when Outline is deployed.
 
-**Light monorepo:** this repository holds **documentation** under [`docs/`](docs/README.md), **Coolify-oriented configs** under `services/`, and the **Den** control plane as a **Rust** codebase at repo root in **`den/`** (Phase 1 bootstrap: [docs/planning/PHASE1_BOOTSTRAP.md](docs/planning/PHASE1_BOOTSTRAP.md)).
+This repo is a **light monorepo**: `docs/`, Coolify-oriented **`services/`**, and **`den/`** for the Den application (not under `services/`).
 
-**Configuration repository** for deploying that stack on **Coolify**:
+## Start here
 
-- **[Letta](https://github.com/letta-ai/letta)** — **Bear** runtime, native memory (blocks, conversations, tools)
-- **Den chat UI** — First-party browser chat (Deep Chat web component, same Den APIs); see [docs/architecture/DEN_ARCHITECTURE.md](docs/architecture/DEN_ARCHITECTURE.md)
-- **[Outline](https://www.getoutline.com/)** + **Den** (Rust/Axum) — Control plane + **Cabinet**; see [docs/planning/PLAN.md](docs/planning/PLAN.md). **Self-hosted Letta only** (no Letta Cloud).
-- **[Bifrost](https://github.com/maximhq/bifrost)** — Model gateway (OpenAI-compatible `/v1`; file-based config in `services/bifrost/`)
-- **[Coolify](https://coolify.io)** — Deployment
+| If you want to… | Open |
+|-----------------|------|
+| **Deploy** (Coolify order, services) | [docs/deployment/DEPLOYMENT.md](docs/deployment/DEPLOYMENT.md) |
+| **Roadmap & architecture** | [docs/planning/PLAN.md](docs/planning/PLAN.md), [docs/architecture/ARCHITECTURE_NOTES.md](docs/architecture/ARCHITECTURE_NOTES.md) |
+| **Den + Letta + web chat** | [docs/architecture/DEN_ARCHITECTURE.md](docs/architecture/DEN_ARCHITECTURE.md) |
+| **Every doc in one place** | [docs/README.md](docs/README.md) |
 
-**Repository layout, cloning, and sparse checkout:** [docs/README.md](docs/README.md). **Notes for coding agents:** [AGENTS.md](AGENTS.md).
+**Stack (high level):** Letta → Bifrost for models; **Letta Code** harness for channels/web; **Den** for operators and browser chat; **Garage** for S3 artifacts; **Outline** + Den for Cabinet when you add shared knowledge. Self-hosted Letta only.
 
-## Documentation map
+**Quick deploy order:** Bifrost → Garage → Letta → Den → Outline/Cabinet when ready — details in [DEPLOYMENT.md](docs/deployment/DEPLOYMENT.md).
 
-| I want to… | Read |
-|------------|------|
-| **Deploy on Coolify** | [docs/deployment/DEPLOYMENT.md](docs/deployment/DEPLOYMENT.md), then `services/*/COOLIFY_DEPLOY.md` |
-| **Understand the stack** | This file + [docs/architecture/ARCHITECTURE_NOTES.md](docs/architecture/ARCHITECTURE_NOTES.md) |
-| **Roadmap & phases** (Den, Cabinet, Outline) | [docs/planning/PLAN.md](docs/planning/PLAN.md) |
-| **Multi-user web** (Den + Letta; Den chat UI) | [docs/architecture/DEN_ARCHITECTURE.md](docs/architecture/DEN_ARCHITECTURE.md) |
-| **Dynamic skills & reflection subagents** (bear config, Letta Code) | [docs/dynamic-skills-subagents-adr.md](docs/dynamic-skills-subagents-adr.md) |
-| **Routines & scheduling** (Phase 1, Den) | [docs/routines-automation-adr.md](docs/routines-automation-adr.md) |
-| **Artifacts & Garage** (S3, not Letta) | [docs/artifacts-garage-adr.md](docs/artifacts-garage-adr.md) |
-| **Phase 1 build** (Den; operator console first; Trestle = M0 bootstrap only) | [docs/planning/PHASE1_BOOTSTRAP.md](docs/planning/PHASE1_BOOTSTRAP.md) |
-| **Full doc index** | [docs/README.md](docs/README.md) |
+---
 
-*Tooling-oriented notes under `.kilocode/memory_bank/` use the same **bear** vocabulary; they are for assistants, not end-user docs.*
+**Coding agents & repo conventions** (GitOps, migrations, terminology, link rules): **[AGENTS.md](AGENTS.md)** — kept separate so this README stays short for humans.
 
-## Architecture
-
-| Piece | Role |
-|-------|------|
-| **Letta memory** | Per‑**bear** context (blocks, conversations)—not replaced by Cabinet |
-| **Cabinet (Outline)** | Long-lived docs; people edit in Outline, **bears** use tools via **Den** |
-| **Den** | Control plane: **bear** lifecycle (Letta + **Letta Code** harness), **users↔bears** membership, identity, routing, policy, Cabinet API; first-party chat UI **served from Den** ([docs/architecture/DEN_ARCHITECTURE.md](docs/architecture/DEN_ARCHITECTURE.md)); **Bifrost only for observability** ([docs/planning/PLAN.md](docs/planning/PLAN.md)) |
-
-## Quick start (Coolify)
-
-1. Deploy **Bifrost** → **Garage** (S3 for artifacts) → **Letta** (`LLM_API_URL` → Bifrost)
-2. Deploy **Den** (control plane + embedded chat UI) per [docs/planning/PHASE1_BOOTSTRAP.md](docs/planning/PHASE1_BOOTSTRAP.md) and [den/](den/) deploy notes
-3. Roll out **Outline** and Cabinet wiring per [docs/planning/PLAN.md](docs/planning/PLAN.md) when you enable shared knowledge
-
-**Guide:** [docs/deployment/DEPLOYMENT.md](docs/deployment/DEPLOYMENT.md)
-
-### Internal endpoints (typical)
-
-- Den: `http://bears-den:<port>` (app port from your Coolify service)
-- Letta: `http://bears-letta:8283`
-- Bifrost: `http://bears-bifrost:8080`
-
-## Repository layout
-
-```
-den/                 # Den control plane (Rust / Axum); see docs/planning/PHASE1_BOOTSTRAP.md
-docs/
-├── README.md        # Doc index; shallow clone & sparse-checkout hints
-├── planning/        # PLAN.md, PHASE1_BOOTSTRAP.md
-├── deployment/      # DEPLOYMENT.md
-└── architecture/    # ARCHITECTURE_NOTES.md, DEN_ARCHITECTURE.md
-services/
-├── bifrost/
-├── garage/
-└── letta/
-README.md
-AGENTS.md
-```
-
-## Environment variables
-
-Per-service `.env.example` files. Common: `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `LETTA_SERVER_PASS`, `LLM_API_URL` (Letta → Bifrost).
+*Assistant-oriented notes also live under [.kilocode/memory_bank/](.kilocode/memory_bank/).*
 
 ## License
 
-Add a `LICENSE` file to the repository root when you publish or distribute this configuration.
+Add a `LICENSE` at the repo root when you publish or distribute this configuration.
