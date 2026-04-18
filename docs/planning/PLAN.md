@@ -90,9 +90,8 @@ Aligned with [multi-user-memory-adr.md](../multi-user-memory-adr.md) (Scenario A
 
 **Goal:** **Catalog skills** from Den plus **bear-authored** skills that can **improve over time**, using **Letta Code** (including upstream **skills-creation** patterns where enabled) and Letta **subagents** such as **`reflection`** for auto-discovery—without Den reimplementing the harness.
 
-- **Architecture record:** [dynamic-skills-subagents-adr.md](../dynamic-skills-subagents-adr.md) (status **Proposed** until expert wiring is pasted and reviewed).
+- **Architecture record:** [dynamic-skills-subagents-adr.md](../dynamic-skills-subagents-adr.md) (status **Proposed**). It records an **inspirational Letta expert sketch** (e.g. `skill-curator` subagent, memory policy, `SubagentStop` hook, git staging)—**not** a mandatory blueprint. **Product emphasis:** **users and operators stay in control** of promoted skills; conservatism in the sketch is one possible bias, not the BEARS default goal.
 - **Den’s role:** Keep **catalog attach + materialization** as today; **extend bear configuration** so operators define **predefined subagents** (types, parameters) provisioned with the primary agent. **Runtime** remains **Letta Code → Letta**.
-- **Expert input:** The ADR includes a **placeholder section** for the Letta expert’s recommended approach—paste it there and promote the ADR when accepted.
 
 ### Shared memory blocks and concurrency (Letta)
 

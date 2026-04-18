@@ -156,7 +156,7 @@ Regenerate **harness deploy artifacts** (e.g. `letta-code.yaml` from the operato
 
 **Beyond static catalog skills:** BEARS targets **dynamic** skills—operators attach **catalog** skills per bear (above), and **bears** may **create or refine** skills over time using **Letta Code** capabilities (e.g. upstream **skills-creation** patterns) and Letta **subagent** mechanisms such as **`reflection`** for auto-discovery. **Den** does not run the skill runtime; it **extends bear provisioning** so each bear’s configuration includes **predefined subagents** and remains **GitOps-friendly**.
 
-**Single ADR:** [dynamic-skills-subagents-adr.md](../dynamic-skills-subagents-adr.md) — preliminary decisions, security notes, and a **placeholder** for the Letta expert’s recommended wiring. Update that ADR when the expert approach is integrated.
+**Single ADR:** [dynamic-skills-subagents-adr.md](../dynamic-skills-subagents-adr.md) — preliminary decisions, security notes, and an **inspirational** expert sketch (e.g. `skill-curator` subagent, `Task` policy, `SubagentStop` hook, git staging). BEARS prioritizes **user/operator control** over promoted skills; expert “conservative” bias is optional, not the default product goal.
 
 ### Den-managed MCP servers (Phase 1)
 
