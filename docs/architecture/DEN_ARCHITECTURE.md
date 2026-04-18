@@ -122,6 +122,8 @@ Cabinet tool endpoints are internal or agent-facing per PLAN.
 
 **Letta Code is required** for BEARS: it is the **[harness](https://docs.letta.com/letta-code)** that runs the agent loop—skills, tool execution, [Channels](https://docs.letta.com/letta-code/channels/) (Slack), [scheduling](https://docs.letta.com/letta-code/scheduling), streaming to Den for web. **Letta** is the **persistence and server API** the harness uses—agents, blocks, conversations, and model calls **through Letta → Bifrost**.
 
+**Routines (Phase 1):** **Den** stores **first-class** scheduled work (**routines**) each **bound to one bear**; execution is delegated to the harness/Letta per [routines-automation-adr.md](../routines-automation-adr.md). **Output delivery** (artifacts vs conversation vs hybrid) is an **open** design topic; **no** automatic skill-learning from unattended runs by default ([PHASE1_DECISIONS.md](../planning/PHASE1_DECISIONS.md) decision **10**).
+
 - **Letta Code → Letta:** Point `LETTA_BASE_URL` at the self-hosted Letta HTTP API (e.g. `http://bears-letta:8283`) and use the Letta admin API key—this is the normal harness ↔ persistence link, not a shortcut to bypass Den for policy reasons.
 - **Den → Letta Code:** Den bridges **browser and operator-initiated** traffic so web chat matches Slack. Implementation detail (HTTP adapter, sidecar, shared network) belongs in `den/` and deployment docs; the **contract** is **Web → Den → Letta Code → Letta**.
 - **Tools:** For BEARS-defined capabilities (below), **Letta Code is the execution broker** between agents and **Den**—not a place to embed ad hoc tool scripts. See [Den meta tools](#den-meta-tools-bears-control-plane-tools).

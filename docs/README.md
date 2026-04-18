@@ -12,6 +12,7 @@ Human-oriented docs for the **Basic Environment for Agents Runtime Server (BEARS
 | [deployment/](deployment/) | Coolify deployment order and steps |
 | [architecture/](architecture/) | Stack notes, Den + multi-user Letta; [Letta vs bear UI coverage](architecture/LETTA_BEAR_UI_EXPOSURE.md); [Den meta tools](architecture/DEN_ARCHITECTURE.md#den-meta-tools-bears-control-plane-tools) (Den-defined control-plane tools and APIs; **Letta Code** brokers execution; not ad hoc scripts in Letta) |
 | [dynamic-skills-subagents-adr.md](dynamic-skills-subagents-adr.md) | Dynamic skills (catalog + bear-authored), **reflection** subagents, predefined subagents in **bear** configuration; inspirational expert sketch (`skill-curator`, hooks) — Proposed |
+| [routines-automation-adr.md](routines-automation-adr.md) | **Routines** (Phase 1): Den-managed schedules, bear-assigned; inherited policy; output delivery TBD; no skill-learning from background runs — Proposed |
 
 Service-specific runbooks stay next to their configs: `services/*/COOLIFY_DEPLOY.md` and related `.md` under each service tree.
 

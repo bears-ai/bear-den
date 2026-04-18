@@ -2,7 +2,7 @@
 
 **Status:** Active  
 **Last updated:** 2026-04-18  
-**Context:** Product choices for BEARS Phase 1, aligned with [PHASE1_BOOTSTRAP.md](PHASE1_BOOTSTRAP.md) §17. Decision 4 revised 2026-04-16: no template table; duplicate bear instead. Decision 8 added 2026-04-18: memory dashboard **weight** vs bear-detail **state**.
+**Context:** Product choices for BEARS Phase 1, aligned with [PHASE1_BOOTSTRAP.md](PHASE1_BOOTSTRAP.md) §17. Decision 4 revised 2026-04-16: no template table; duplicate bear instead. Decision 8 added 2026-04-18: memory dashboard **weight** vs bear-detail **state**. Decision 10 added 2026-04-18: **routines** (Idea 5).
 
 ## Decisions
 
@@ -17,10 +17,11 @@
 | 7 | Phase 1 memory model (Idea 3) | **Curated blocks vs findable history:** User-facing promise is **small always-in-context memory blocks** + **longer material retrievable** via Letta **archival** and tools (on-demand retrieval; not “all knowledge in every prompt”). **No Den memory store** in Phase 1 — only Letta APIs. **Scope:** 1:1 per `(user, bear)` for web; no new shared household memory layer in Den. See [PLAN.md](PLAN.md) § Phase 1 memory model. |
 | 8 | Phase 1 memory visibility (Idea 2) | **Two UIs:** (1) **Memory dashboard:** **`human`** readout plus a **holistic memory weight** per member bear (cross-bear comparison — which bear has **learned / stored** the most about users, projects, and other Letta-visible memory). Use **weight** framing, **not** “pressure” or proximity to limits; **no** capacity warnings or Den-side consolidation — **assurance and comparison** only; Letta owns memory automation. (2) **Bear detail (operator):** full read-only **Letta state summary** — **all** blocks + **archival** where the API exposes them; prefer **tokens**, else whatever Letta returns. **Not** a management affordance in Den. |
 | 9 | Dynamic skills & subagents (Idea 1) | **Goal:** catalog skills **plus** bear-created/improved skills over time, using **Letta Code** (e.g. skills-creation skill) and Letta **`reflection`** (and related) subagents for auto-discovery. **Den** extends **bear configuration** to include **predefined subagents** and keeps catalog attach + materialization as system of record for org skills; runtime remains Letta Code/Letta. See [dynamic-skills-subagents-adr.md](../dynamic-skills-subagents-adr.md) — includes **inspirational** expert sketch (`skill-curator`, hooks, git review); **users/operators in control** of promotion beats “maximal conservatism” as the default product goal. |
+| 10 | Routines & scheduling (Idea 5) | **Phase 1:** **First-class routines** in Den (DB-backed schedules + UI). Each routine is **assigned to one bear**; tools, policy, and membership **inherit** from that bear (same as interactive chat). **Where outputs are stored or shown** (artifacts vs dedicated Letta conversation vs hybrid) is **open** — see [routines-automation-adr.md](../routines-automation-adr.md); implement schedule + execution path before committing to delivery UX if needed. **No** automatic **skill-learning / curator** behavior from unattended routine runs unless explicitly designed later. |
 
 ## Implementation order (after these decisions)
 
-1. Postgres schema: `users`, `bears`, `user_bear` (and migrations); per-bear `system_prompt`, nullable `letta_agent_id` until provisioned.
+1. Postgres schema: `users`, `bears`, `user_bear` (and migrations); per-bear `system_prompt`, nullable `letta_agent_id` until provisioned; **`routines`** (or equivalent) for Phase 1 — `bear_id`, schedule, enabled, audit (see [routines-automation-adr.md](../routines-automation-adr.md)).
 2. Auth + operator roles (`is_admin`, bootstrap), rate limits on login.
 3. Admin JSON APIs + operator console (MiniJinja): users, bears (create / **duplicate**, provision), membership, harness deploy preview (`letta-code.yaml`).
 4. `POST /v1/chat/send` with membership enforcement, **Den → Letta Code** proxy, **SSE**, and pass-through conversation/thread context.
@@ -30,5 +31,6 @@
 ## References
 
 - Phase 1 bootstrap milestones and API sketch: [PHASE1_BOOTSTRAP.md](PHASE1_BOOTSTRAP.md)
-- Stack roadmap: [PLAN.md](PLAN.md) (including [Phase 1 memory model](PLAN.md#phase-1-memory-model-user-promise-persistence-and-ux)); decisions **7–9** (memory model + visibility + dynamic skills/subagents)
+- Stack roadmap: [PLAN.md](PLAN.md) (including [Phase 1 memory model](PLAN.md#phase-1-memory-model-user-promise-persistence-and-ux)); decisions **7–10** (memory + visibility + skills/subagents + routines)
 - Dynamic skills & reflection subagents: [dynamic-skills-subagents-adr.md](../dynamic-skills-subagents-adr.md)
+- Routines & scheduling: [routines-automation-adr.md](../routines-automation-adr.md)

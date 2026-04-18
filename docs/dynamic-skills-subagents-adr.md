@@ -38,6 +38,8 @@
 
 5. **Human / user control:** Automation should keep **people in the loop** for what merges into durable, deploy-visible skill trees—**not** “as little change as possible by default.” The expert sketch below leans **conservative** (bias toward `NO_ACTION`, branch-only writes). BEARS may adopt different thresholds per org: the invariant is **user and operator agency** over skill promotion, not maximal conservatism.
 
+6. **Routines excluded by default:** **Scheduled / unattended** runs ([routines-automation-adr.md](routines-automation-adr.md)) **must not** feed automatic skill-curator or reflection learning loops unless explicitly designed. That preserves **user control** and avoids polluting skills from background jobs.
+
 ---
 
 ## Inspirational wiring (Letta expert sketch)
