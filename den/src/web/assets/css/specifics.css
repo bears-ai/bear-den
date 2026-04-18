@@ -8,24 +8,30 @@
  * - No rounded corners or gradients — keep the geometric look unless you change that rule.
  */
 
-/* ---- Bear chat (/bear/:slug) — standalone page (templates/bear_chat.html) ---- */
+/* ---- Bear chat (/bear/:slug) — extends base.html; body class from template_tag (bear_chat) ---- */
 /* Within-chat styles are defined via script in that page */
 
-html.den-bear-chat-page {
-    height: 100%;
-}
-
-html.den-bear-chat-page body {
+body.bear_chat {
     margin: 0;
-    height: 100%;
+    min-height: 100vh;
     display: flex;
     flex-direction: column;
-    min-height: 100vh;
     padding-left: 0;
     padding-right: 0;
 }
 
-html.den-bear-chat-page .den-wrap {
+body.bear_chat > section#content {
+    flex: 1 1 auto;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+}
+
+body.bear_chat section#content > header {
+    flex: 0 0 auto;
+}
+
+body.bear_chat .den-wrap {
     flex: 1;
     display: flex;
     flex-direction: column;
@@ -37,7 +43,7 @@ html.den-bear-chat-page .den-wrap {
     box-sizing: border-box;
 }
 
-html.den-bear-chat-page .den-toolbar {
+body.bear_chat .den-toolbar {
   display: flex;
   gap: calc(var(--spacing-unit) * 2);
   align-items: center;
@@ -45,11 +51,11 @@ html.den-bear-chat-page .den-toolbar {
   flex-wrap: wrap;
 }
 
-html.den-bear-chat-page .den-chat-toolbar {
+body.bear_chat .den-chat-toolbar {
   justify-content: space-between;
 }
 
-html.den-bear-chat-page .den-chat-toolbar-links {
+body.bear_chat .den-chat-toolbar-links {
   display: flex;
   flex-wrap: wrap;
   gap: calc(var(--spacing-unit) * 2);
@@ -57,7 +63,7 @@ html.den-bear-chat-page .den-chat-toolbar-links {
   min-width: 0;
 }
 
-html.den-bear-chat-page .den-chat-conv-wrap {
+body.bear_chat .den-chat-conv-wrap {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -66,12 +72,12 @@ html.den-bear-chat-page .den-chat-conv-wrap {
   margin-left: auto;
 }
 
-html.den-bear-chat-page .den-chat-conv-wrap label {
+body.bear_chat .den-chat-conv-wrap label {
   font-size: smaller;
   color: var(--meta-color);
 }
 
-html.den-bear-chat-page .den-chat-conv-select {
+body.bear_chat .den-chat-conv-select {
   font: inherit;
   font-size: smaller;
   color: var(--text-color);
@@ -82,24 +88,24 @@ html.den-bear-chat-page .den-chat-conv-select {
   max-width: min(22rem, 100vw);
 }
 
-html.den-bear-chat-page .den-toolbar .den-bear-meta {
+body.bear_chat .den-toolbar .den-bear-meta {
     font-size: smaller;
 }
 
-html.den-bear-chat-page .den-toolbar code {
+body.bear_chat .den-toolbar code {
     font-size: smaller;
     font-family: var(--data-font-family);
     font-weight: var(--data-font-weight);
     font-style: var(--data-font-style);
 }
 
-html.den-bear-chat-page .den-err {
+body.bear_chat .den-err {
     color: var(--error-color);
     font-size: smaller;
     margin: var(--spacing-unit) 0;
 }
 
-html.den-bear-chat-page #chat-wrap {
+body.bear_chat #chat-wrap {
     flex: 1;
     position: relative;
     min-height: 0;

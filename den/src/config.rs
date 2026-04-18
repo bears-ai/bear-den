@@ -5,10 +5,10 @@ use std::collections::HashSet;
 use url::Url;
 
 /// Human-facing product name (browser title, emails, PWA). Override with `APP_DISPLAY_NAME`.
-const DEFAULT_APP_DISPLAY_NAME: &str = "BEARS Den";
+const DEFAULT_APP_DISPLAY_NAME: &str = "BEARS";
 
 /// Machine slug (manifest `id`, short name). Override with `APP_SLUG`.
-const DEFAULT_APP_SLUG: &str = "bears-den";
+const DEFAULT_APP_SLUG: &str = "bears";
 
 /// Default public web origin when `WEB_SERVER_URL` is unset in **production** builds.
 /// Forks should set `WEB_SERVER_URL` / `API_SERVER_URL` or change these constants.

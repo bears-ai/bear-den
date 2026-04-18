@@ -28,13 +28,20 @@ body>header {
     text-transform: uppercase;
 
     .logo {
+        text-decoration: none;
         display: inline-flex;
         align-items: center;
         white-space: nowrap;
-        color: var(--text-color);
         margin: 0;
         margin-bottom: 6px;
         padding: 0;
+
+        .logo-symbol {
+            fill: var(--text-color);
+            width: 32px;
+            height: 32px;
+            margin-right: 8px;
+        }
 
         .logo-wordmark {
             font-size: 1.35rem;
@@ -45,8 +52,10 @@ body>header {
         }
     }
 
-    .logo:hover .logo-wordmark {
-        color: var(--accent-color);
+    .logo:hover {
+        .logo-wordmark {
+            color: var(--accent-color);
+        }
     }
 
     nav {

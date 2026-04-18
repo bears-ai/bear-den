@@ -62,7 +62,7 @@
 
     /*
      * Deep Chat (bear_chat.html) reads these via getComputedStyle for the
-     * component style API; keep in sync with .den-bear-chat-page rules.
+     * component style API; keep in sync with body.bear_chat rules in specifics.css.
      */
     --chat-font-size: calc(15 / 16 * 1rem);
     --chat-line-height: 1.6;
