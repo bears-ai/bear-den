@@ -39,7 +39,7 @@ Axum routes for the web server (`RUN_WEB=true`). Update this file when you add o
 
 ## End-user chat (Phase 1 — same origin as web)
 
-- `GET /bear/{slug}` — Deep Chat view for a single bear the user may access (membership-checked; `src/web/templates/bear_chat.html`, handler in `src/web/bear_chat.rs`).
+- `GET /bear/{slug}` — Deep Chat view for a single bear the user may access (membership-checked; `src/web/templates/bear_chat.html`, handler in `src/web/bear_chat.rs`). Registered with trailing-slash redirect (`/bear/{slug}/` → `/bear/{slug}`) so links like `/bear/{slug}/?conversation_id=…` from the details UI resolve.
 - `GET /v1/bears` — JSON list of bears the signed-in user may use (membership-filtered; includes `is_bear_admin`; no Letta ids exposed) (`src/web/v1/mod.rs`).
 - `GET /v1/chat/conversations` — query `bear_id` (required). Membership-checked; returns `{ "conversations": [ { "id", "title", "last_message_at" } ] }` for the bear’s Letta agent (`default` = main thread + `conv-…` rows), sorted by most recent activity, excluding conversations that look archived in Letta JSON.
 - `GET /v1/chat/history` — query `bear_id` (required), optional `conversation_id` (`default` or `conv-…`; default when omitted), optional `before` (Letta message id cursor), optional `limit` (default 50, max 100). Membership-checked; proxies Letta `GET /v1/conversations/{id}/messages?order=desc` (with `agent_id` when `conversation_id=default`) for Deep Chat `loadHistory`.

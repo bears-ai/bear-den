@@ -22,6 +22,7 @@ use axum::{
     response::{Html, IntoResponse, Response},
     routing::get,
 };
+use axum_extra::routing::RouterExt;
 
 use memory_serve::{CacheControl, MemoryServe, load_assets};
 
@@ -202,7 +203,8 @@ pub async fn server(
         .merge(
             Router::new()
                 .merge(bear_management::router())
-                .route("/bear/{slug}", get(bear_chat::bear_page))
+                // TSR: conversation links use `/bear/{slug}/?conversation_id=…`; plain `/bear/{slug}` is the canonical chat URL.
+                .route_with_tsr("/bear/{slug}", get(bear_chat::bear_page))
                 .route_layer(login_required!(Backend, login_url = "/login")),
         )
         .nest("/v1", v1::router())
