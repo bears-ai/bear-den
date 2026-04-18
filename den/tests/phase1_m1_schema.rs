@@ -56,14 +56,32 @@ async fn m1_users_extended_columns_exist() {
         FROM information_schema.columns
         WHERE table_schema = 'public'
           AND table_name = 'users'
-          AND column_name IN ('webui_account_id', 'is_admin')
+          AND column_name = 'is_admin'
         "#,
     )
     .fetch_one(&pool)
     .await
     .expect("information_schema query");
 
-    assert_eq!(n, 2, "users missing webui_account_id or is_admin");
+    assert_eq!(n, 1, "users missing is_admin");
+
+    let webui_cols: i64 = sqlx::query_scalar(
+        r#"
+        SELECT COUNT(*)::bigint
+        FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND table_name = 'users'
+          AND column_name = 'webui_account_id'
+        "#,
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("information_schema query");
+
+    assert_eq!(
+        webui_cols, 0,
+        "users.webui_account_id should be removed (see 20260418130000 migration)"
+    );
 }
 
 #[tokio::test]
