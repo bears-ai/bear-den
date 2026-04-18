@@ -83,10 +83,10 @@ Add to the **bottom** of `src/web/assets/css/specifics.css`:
 
 ### Standalone HTML documents (no `base.html`)
 
-Some routes render a **full HTML document** without extending `base.html` (for example [`bear_chat.html`](../src/web/templates/bear_chat.html)). Treat them like every other UI surface:
+Occasionally a route may render a **full HTML document** without extending `base.html`. Prefer extending [`base.html`](../src/web/templates/base.html) when possible. If you must use a standalone shell, treat it like every other UI surface:
 
 1. **Link the shared stack** — `<link rel="stylesheet" href="/assets/css/style.css" />` (same path as `base.html`). Do not redefine global tokens in the template.
-2. **Put layout and chrome in CSS files** — page shell rules live in [`specifics.css`](../src/web/assets/css/specifics.css) (or a file imported from `style.css`), with a **page-scoping class** on `<html>` or `<body>` (for example `html.den-bear-chat-page`) so rules do not leak to the rest of the app.
+2. **Put layout and chrome in CSS files** — page shell rules live in [`specifics.css`](../src/web/assets/css/specifics.css) (or a file imported from `style.css`), with a **page-scoping class** on `<html>` or `<body>` (for example the `template_tag` body class from [`render_template`](../src/web/mod.rs)) so rules do not leak to the rest of the app.
 3. **Add or extend design tokens in `style.css`** — new colours, spacing scales, or JS-readable `--chat-*` (etc.) variables belong next to the rest of the design system, not in a template `<style>` block.
 4. **JavaScript may configure third-party components** (for example Deep Chat’s style API) but should **read values via `getComputedStyle` / `var(--…)`** from those tokens, not hard-coded hex or pixel literals that duplicate the system.
 
@@ -107,7 +107,7 @@ src/web/templates/
 │   ├── access.html
 │   ├── conversations.html
 │   └── memory.html
-├── bear_chat.html         # Standalone document (see [Bear chat](#bear-chat-deep-chat))
+├── bear_chat.html         # Bear chat (Deep Chat); extends `base.html` (see [Bear chat](#bear-chat-deep-chat))
 └── admin/                 # Admin interface
 ```
 
@@ -119,7 +119,7 @@ The [`bear/`](../src/web/templates/bear/) templates illustrate the **boxed** lay
 
 ## Bear chat (Deep Chat)
 
-End-user chat is a **standalone MiniJinja document** (it does not extend `base.html`) but it **uses the same [`style.css`](../src/web/assets/css/style.css) import chain** as the rest of the web UI. The page adds a vendored [**Deep Chat**](https://deepchat.dev) web component (`<deep-chat>`).
+End-user chat extends [`base.html`](../src/web/templates/base.html) like other member pages and **uses the same [`style.css`](../src/web/assets/css/style.css) import chain** from the layout. The template adds a vendored [**Deep Chat**](https://deepchat.dev) web component (`<deep-chat>`) via `{% block head %}`.
 
 | Route | Source |
 |-------|--------|
@@ -130,7 +130,7 @@ Optional query **`conversation_id`** — when set (for example `conv-…` from b
 **Behavior to preserve**
 
 1. **Same-origin asset** — `deepChat.bundle.js` lives under [`src/web/assets/deep-chat/`](../src/web/assets/deep-chat/) and is linked as `/assets/deep-chat/deepChat.bundle.js` so the shell works without a third-party CDN.
-2. **Light / dark theming** — chat loads the same [`style.css`](../src/web/assets/css/style.css) stack as the rest of the web UI (including [`specifics.css`](../src/web/assets/css/specifics.css) for the `.den-bear-chat-page` shell). Tokens such as `--page-color`, `--surface-color`, and the `--chat-*` bridge variables honour `theme-dark` / `theme-light` and `prefers-color-scheme`. Deep Chat's JS style API (`messageStyles`, `textInput`, `submitButtonStyles`, etc.) reads resolved values at init via `getComputedStyle`, and `auxiliaryStyle` uses `var(--…)` so shadow-DOM rules track tokens.
+2. **Light / dark theming** — chat loads the same [`style.css`](../src/web/assets/css/style.css) stack as the rest of the web UI (including [`specifics.css`](../src/web/assets/css/specifics.css) for the `body.bear_chat` shell). Tokens such as `--page-color`, `--surface-color`, and the `--chat-*` bridge variables honour `theme-dark` / `theme-light` and `prefers-color-scheme`. Deep Chat's JS style API (`messageStyles`, `textInput`, `submitButtonStyles`, etc.) reads resolved values at init via `getComputedStyle`, and `auxiliaryStyle` uses `var(--…)` so shadow-DOM rules track tokens.
 3. **Slack-style layout** — messages are left-aligned (both user and AI), with name labels above and a bottom border divider instead of speech bubbles.
 4. **Letta stream** — `POST /v1/chat/send` returns SSE; the chat handler uses `connect.handler` + `connect.stream` to parse `data:` JSON lines. It surfaces **`error_message`** (including nested `contents`) as Deep Chat errors; streams **`reasoning_message`** into a dedicated **HTML** ai bubble (single-line horizontal scroll, optional Expand for full text — plain text only, no Markdown in that bubble per Deep Chat’s `html` vs `text` tradeoff, see [deep-chat#429](https://github.com/OvidijusParsiunas/deep-chat/issues/429)); then **`assistant_message`** as **`text`** (Markdown-friendly). **`overwrite: true`** follows [Deep Chat’s connect `Response` docs](https://deepchat.dev/docs/connect#Stream): overwrite the last ai bubble while reasoning streams, replace reasoning with the first assistant chunk when `hadReasoning`, and concatenate token-streamed assistant chunks that share an `id` (or lack one). See `lettaSseHandler` in `bear_chat.html`.
 
