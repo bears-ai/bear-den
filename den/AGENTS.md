@@ -2,6 +2,8 @@
 
 How to orient in **this project**: a Rust web **starter** (Axum, SQLx, MiniJinja, PostgreSQL, optional split web/API/workers). For **running locally**, see [`docs/quickstart.md`](docs/quickstart.md). For **deploy** (env, migrations, Docker build), see [`docs/deploy.md`](docs/deploy.md). **Service toggles** (`RUN_WEB`, `RUN_API`, `RUN_WORKERS`) and health checks are covered in [`docs/infrastructure-and-ops.md`](docs/infrastructure-and-ops.md).
 
+In the **BEARS** monorepo, **Den** is the **provisioning controller** and **orchestrator** for the stack: it **configures** downstream services (especially the **Letta API server**), **runs** first-party surfaces such as the **web chat UI**, and exposes **control-plane tools** (for example **Den meta tools**). **Its own** PostgreSQL state exists so Den can **enforce policy**, **validate** operations, and **rebuild** consistent outward configuration from **repo + backups**—not to hold Letta’s runtime agent memory, which stays on the **Letta** side. See [`../docs/architecture/DEN_ARCHITECTURE.md`](../docs/architecture/DEN_ARCHITECTURE.md) and the root [`../AGENTS.md`](../AGENTS.md) (“Den’s role”).
+
 ## Verifying Rust changes (agents + dev containers)
 
 **`cargo` is available** in typical dev containers and CI images that include the Rust toolchain. After editing this crate, **run checks from the `den/` directory** (package root), for example:

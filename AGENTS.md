@@ -7,7 +7,13 @@ Use this file for **repository conventions** when editing or generating changes.
 ## What this repo is
 
 - **Light monorepo:** docs under `docs/`, Coolify-oriented assets under `services/*`, and the **Den** Rust service at repo root in **`den/`** (add the `cargo` tree there; it is not under `services/`).
-- **Terminology:** **Bear** = the primary assistant backed by a Letta agent; **subagents** (e.g. reflection) are configured per bear when used ([docs/dynamic-skills-subagents-adr.md](docs/dynamic-skills-subagents-adr.md)). **Den** = control plane (provisioning, **users↔bears** membership, routing, Cabinet API when deployed). **BEARS** = the deployment stack name.
+- **Terminology:** **Bear** = the primary assistant backed by a Letta agent; **subagents** (e.g. reflection) are configured per bear when used ([docs/dynamic-skills-subagents-adr.md](docs/dynamic-skills-subagents-adr.md)). **Den** = **control plane**: **provisioning controller** for downstream services (notably the **Letta API server**) and **orchestrator** of user-facing flows (first-party web chat UI, harness bridging, **Den meta tools** and related APIs), plus **users↔bears** membership, routing, Cabinet API when deployed. **BEARS** = the deployment stack name. For persistence boundaries and what belongs in Den’s database, see [Den’s role](#dens-role-provisioning-controller-orchestrator-and-what-den-stores) below.
+
+### Den’s role: provisioning controller, orchestrator, and what Den stores
+
+Den is **not only** “configuration”: it **hosts** product surfaces (for example the **chat UI**) and **implements control-plane tools** (for example **Den meta tools**) that **coordinate** with Letta and the harness. Separately, as **provisioning controller**, it **applies** desired state to downstream services—especially **Letta** (agents, tools, blocks, and related provisioning)—and **orchestrates** how authenticated users reach bears under policy.
+
+**Den’s PostgreSQL** holds **Den-owned** records—registry, membership, credentials pointers, materialized deploy/config snapshots—so the control plane can **validate** operations and **reconstitute** the same outward configuration after a deploy or restore. That database is **not** a second system of record for Letta’s in-server conversational memory and agent state; **Letta** remains the persistence API for that runtime data. Deeper architecture: [docs/architecture/DEN_ARCHITECTURE.md](docs/architecture/DEN_ARCHITECTURE.md).
 
 **Den builds:** In environments with Rust installed (dev container, CI), run `cargo build` / `cargo test` from **`den/`** to verify changes. See [`den/AGENTS.md`](den/AGENTS.md) (“Verifying Rust changes”).
 
