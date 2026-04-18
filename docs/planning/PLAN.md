@@ -81,7 +81,9 @@ Aligned with [multi-user-memory-adr.md](../multi-user-memory-adr.md) (Scenario A
 
 - **User-facing promise:** The bear keeps a **small, curated** set of facts in **always-in-context memory blocks** (e.g. `persona`, isolated `human` per conversation/user). **Longer or older material** is **findable when needed** via Letta’s **archival memory** and related tools — not implied to sit in the prompt on every turn. (Letta typically exposes archival as **vector-backed retrieval** the agent invokes **on demand** via tools; confirm behavior against your deployed Letta/Letta Code version.)
 - **Persistence:** Phase 1 adds **no second memory store in Den**. All memory semantics remain **Letta-native** (blocks, conversations, archival as Letta implements them). Den surfaces **state** for UX only.
-- **UX:** **Memory dashboard** (end-user) and **bear detail** in the operator console should **surface Letta-native memory state** — memory **blocks** (sizes/limits where the API exposes them), and **archival** indicators or stats **where Letta exposes them** — without implying a Den-managed unified profile or cross-bear merge beyond Letta.
+- **UX (two surfaces):**
+  - **Memory dashboard (end-user):** Besides read access to **`human`** (and related content per [multi-user-memory-adr.md](../multi-user-memory-adr.md)), show a **holistic memory weight** per bear the user can access — a **cross-bear** view of which assistants have accumulated the most learned material (users, projects, archival — whatever Letta’s APIs allow aggregating). Frame this as **weight** (richness / how much is stored), **not** “pressure” or how close to a limit; **no** capacity warnings or alerts in Den. Purpose: **assurance and comparison**, not memory management (Letta owns automation).
+  - **Bear detail (operator):** Full **Letta-native state summary** for one bear — **all** memory blocks and **archival** indicators/stats **where the API exposes them**; prefer **tokens** (or whatever the API returns). Read-only **assurance** that Letta has things under control; **not** an affordance to edit or consolidate memory in Den. See **Phase 1 memory visibility (Idea 2)** in [PHASE1_DECISIONS.md](PHASE1_DECISIONS.md).
 - **Scope:** Phase 1 stays **1:1 per (user, bear)** for web; **no** new shared “household memory” layer in Den (group-mode / `person:{name}` extras remain as in the ADR).
 
 ### Canonical paths vs optional channel proxy
@@ -294,7 +296,7 @@ Deliverables:
 - Bear registry, **users↔bears** membership, and basic RBAC for **web** users.
 - No Cabinet/Outline yet: **Letta native memory** only; shared knowledge in later phases.
 - **User onboarding:** new account → Personal Bear auto-provisioned → user lands in chat with onboarding prompt.
-- **Memory dashboard and bear memory UX:** read-focused UI over **Letta-native** memory — **primary** content is **`human`** (including per-conversation isolated copies where the Letta API exposes them for 1:1 web flows). **`person:{name}`** blocks appear **when they already exist** on an agent (mostly relevant to **group-mode** designs in [multi-user-memory-adr.md](../multi-user-memory-adr.md), largely **post–Phase 1**). **Bear detail** (operator console) surfaces the same **Letta-native** picture for provisioning/debug (blocks + archival hints per API). Copy and labels follow the **Phase 1 memory model** ([§ Knowledge model](#knowledge-model-letta-memory-vs-cabinet)): curated blocks vs **findable** longer history — **not** a Den-side memory layer and **not** “everything always in context.”
+- **Memory dashboard and bear memory UX:** **Dashboard:** **`human`** (and per-conversation isolation as the Letta API exposes for 1:1 web) plus a **holistic weight** summary per member bear for **cross-bear comparison** (which bear has learned / stored the most — **weight**, not pressure). **`person:{name}`** blocks appear **when they already exist** (mostly **group-mode**, post–Phase 1). **Bear detail** (operator): full **Letta-native** summary — **all** blocks + archival hints; assurance-only, not a management UI. Copy follows the **Phase 1 memory model** ([§ Knowledge model](#knowledge-model-letta-memory-vs-cabinet)): curated blocks vs **findable** longer history — **not** a Den-side memory layer and **not** “everything always in context.”
 - **Org policy:** operator sets a shared `org_policy` Letta block (default from `den/defaults/org_policy.md`) applied to all bears.
 
 ---
@@ -417,7 +419,7 @@ This is the “make it livable and reliable” phase.
 
 ## Summary
 
-**Knowledge:** **Letta memory** is per‑**bear** (per Letta agent) context — **blocks** (curated, bounded) plus **archival** and tools as Letta provides. **Phase 1:** no Den memory store; UX surfaces Letta state ([§ Phase 1 memory model](#phase-1-memory-model-user-promise-persistence-and-ux)). **Cabinet (Outline)** is the shared knowledgebase for humans and bears (post–Phase 1).
+**Knowledge:** **Letta memory** is per‑**bear** (per Letta agent) context — **blocks** (curated, bounded) plus **archival** and tools as Letta provides. **Phase 1:** no Den memory store; **dashboard** shows **weight** (holistic, cross-bear); **bear detail** shows full state ([§ Phase 1 memory model](#phase-1-memory-model-user-promise-persistence-and-ux)). **Cabinet (Outline)** is the shared knowledgebase for humans and bears (post–Phase 1).
 
 **Bears:** Each **agent** in the product sense is a **bear**. **Users ↔ bears** is **many‑to‑many**.
 

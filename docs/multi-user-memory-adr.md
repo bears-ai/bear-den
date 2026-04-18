@@ -37,6 +37,8 @@ References:
 
 **Phase 1 product promise (blocks vs archival):** End-user and operator copy should reflect **curated, bounded memory blocks** as “always in mind” and **archival memory** (Letta-native, typically tool-mediated retrieval) as “findable when needed” — not a second store in Den. See [PLAN.md](planning/PLAN.md) § Phase 1 memory model.
 
+**Memory dashboard metric:** The dashboard should expose a **holistic memory weight** per bear (cross-bear comparison — which assistants have accumulated the most learned material), framed as **weight** not **pressure**; operators get the full per-bear **state** summary in **bear detail**. See [PHASE1_DECISIONS.md](planning/PHASE1_DECISIONS.md) decision 8.
+
 ### Two Distinct Scenarios
 
 #### Scenario A: One Person Per Session (the common case)
