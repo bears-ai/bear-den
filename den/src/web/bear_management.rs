@@ -1,4 +1,4 @@
-//! Member-facing bear lifecycle: create bears (you become admin), details, membership, edit/delete for bear admins.
+//! Member-facing bear lifecycle: create bears (you become admin), details, membership, edit/delete for bear admins (or site operators).
 //! When changing routes, update `src/web/ROUTES.md`.
 
 use axum::{
@@ -16,7 +16,7 @@ use uuid::Uuid;
 use validator::{Validate, ValidationError, ValidationErrors};
 
 use crate::{
-    auth_backend::AuthSession,
+    auth_backend::{AuthSession, SessionUser},
     core::{
         bears::{
             compute_letta_drift,
@@ -24,7 +24,7 @@ use crate::{
             db::{BearMemberRow, BEAR_ROLE_ADMIN, BEAR_ROLE_MEMBER, role_is_bear_admin},
             provision,
             sync,
-            Bear, LettaDriftFlags,
+            Bear,
         },
         letta::{load_agent_conversations, AgentSummary, LettaAgentDiagnostics},
         user,
@@ -118,6 +118,18 @@ async fn viewer_is_bear_admin(
         None => false,
         Some(inner) => role_is_bear_admin(inner.as_deref()),
     })
+}
+
+/// Edit bear settings, resync, access, membership, delete: bear admins or site operators (`users.admin_flag`).
+async fn viewer_can_manage_bear(
+    pool: &sqlx::PgPool,
+    user: &SessionUser,
+    bear_id: Uuid,
+) -> Result<bool, CustomError> {
+    if user.is_admin {
+        return Ok(true);
+    }
+    viewer_is_bear_admin(pool, user.id, bear_id).await
 }
 
 #[derive(Debug, Deserialize)]
@@ -326,42 +338,47 @@ async fn render_bear_details_page(
     auth_session: AuthSession,
     bear: Bear,
     members: Vec<BearMemberRow>,
-    is_admin: bool,
+    can_manage_bear: bool,
     letta_resync_query: Option<String>,
 ) -> Result<Response, CustomError> {
     let letta_configured = state.letta.is_enabled();
     let letta_api_base = state.config.letta_base_url.trim().to_string();
     let slug = bear.slug.clone();
 
-    let (letta_agent_summary, letta_agent_fetch_error, letta_diagnostics, letta_diag_error) =
+    let (letta_agent_summary, letta_agent_fetch_error, letta_diagnostics, letta_diag_error, letta_drift) =
         if letta_configured {
             if let Some(agent_id) =
                 bear.letta_agent_id.as_deref().map(str::trim).filter(|s| !s.is_empty())
             {
                 match state.letta.fetch_agent(agent_id).await {
-                    Ok(v) => (
-                        Some(AgentSummary::from_letta_agent_state(&v)),
-                        None,
-                        Some(LettaAgentDiagnostics::from_agent_json(&v)),
-                        None,
-                    ),
+                    Ok(v) => {
+                        let summary = AgentSummary::from_letta_agent_state(&v);
+                        let diagnostics = LettaAgentDiagnostics::from_agent_json(&v);
+                        let drift = compute_letta_drift(
+                            &bear,
+                            Some(&summary),
+                            Some(&diagnostics),
+                            Some(&v),
+                        );
+                        (
+                            Some(summary),
+                            None,
+                            Some(diagnostics),
+                            None,
+                            drift,
+                        )
+                    }
                     Err(e) => {
                         let msg = e.to_string();
-                        (None, Some(msg.clone()), None, Some(msg))
+                        (None, Some(msg.clone()), None, Some(msg), None)
                     }
                 }
             } else {
-                (None, None, None, None)
+                (None, None, None, None, None)
             }
         } else {
-            (None, None, None, None)
+            (None, None, None, None, None)
         };
-
-    let letta_drift: Option<LettaDriftFlags> = compute_letta_drift(
-        &bear,
-        letta_agent_summary.as_ref(),
-        letta_diagnostics.as_ref(),
-    );
 
     let (conversation_rows, has_archived_conversations) =
         if letta_configured {
@@ -419,7 +436,7 @@ async fn render_bear_details_page(
         auth_session,
         context! {
             bear,
-            is_admin,
+            can_manage_bear,
             members,
             letta_configured,
             letta_api_base,
@@ -443,17 +460,17 @@ async fn bear_details_get(
     State(state): State<AppState>,
     auth_session: AuthSession,
 ) -> Result<Response, CustomError> {
-    let user_id = auth_session
+    let user = auth_session
         .user
         .as_ref()
-        .map(|u| u.id)
         .ok_or_else(|| CustomError::Authentication("login required".to_string()))?;
+    let user_id = user.id;
     if let Some(r) = email_verify_redirect(state.sqlx_pool(), user_id).await? {
         return Ok(r.into_response());
     }
 
     let bear = load_bear_member(state.sqlx_pool(), user_id, &slug).await?;
-    let is_admin = viewer_is_bear_admin(state.sqlx_pool(), user_id, bear.id).await?;
+    let can_manage_bear = viewer_can_manage_bear(state.sqlx_pool(), user, bear.id).await?;
     let members = bears_db::list_members_for_bear(state.sqlx_pool(), bear.id).await?;
 
     render_bear_details_page(
@@ -461,7 +478,7 @@ async fn bear_details_get(
         auth_session,
         bear,
         members,
-        is_admin,
+        can_manage_bear,
         q.letta_resync,
     )
     .await
@@ -472,19 +489,19 @@ async fn bear_resync_letta_post(
     State(state): State<AppState>,
     auth_session: AuthSession,
 ) -> Result<Response, CustomError> {
-    let user_id = auth_session
+    let user = auth_session
         .user
         .as_ref()
-        .map(|u| u.id)
         .ok_or_else(|| CustomError::Authentication("login required".to_string()))?;
+    let user_id = user.id;
     if let Some(r) = email_verify_redirect(state.sqlx_pool(), user_id).await? {
         return Ok(r.into_response());
     }
 
     let bear = load_bear_member(state.sqlx_pool(), user_id, &slug).await?;
-    if !viewer_is_bear_admin(state.sqlx_pool(), user_id, bear.id).await? {
+    if !viewer_can_manage_bear(state.sqlx_pool(), user, bear.id).await? {
         return Err(CustomError::Authorization(
-            "bear admin role required".to_string(),
+            "bear admin or site admin role required".to_string(),
         ));
     }
 
@@ -525,19 +542,19 @@ async fn bear_edit_overview_get(
     State(state): State<AppState>,
     auth_session: AuthSession,
 ) -> Result<Response, CustomError> {
-    let user_id = auth_session
+    let user = auth_session
         .user
         .as_ref()
-        .map(|u| u.id)
         .ok_or_else(|| CustomError::Authentication("login required".to_string()))?;
+    let user_id = user.id;
     if let Some(r) = email_verify_redirect(state.sqlx_pool(), user_id).await? {
         return Ok(r.into_response());
     }
 
     let bear = load_bear_member(state.sqlx_pool(), user_id, &slug).await?;
-    if !viewer_is_bear_admin(state.sqlx_pool(), user_id, bear.id).await? {
+    if !viewer_can_manage_bear(state.sqlx_pool(), user, bear.id).await? {
         return Err(CustomError::Authorization(
-            "bear admin role required".to_string(),
+            "bear admin or site admin role required".to_string(),
         ));
     }
     let form = BearOverviewEditForm::from(&bear);
@@ -560,19 +577,19 @@ async fn bear_edit_overview_post(
     auth_session: AuthSession,
     Form(form): Form<BearOverviewEditForm>,
 ) -> Result<Response, CustomError> {
-    let user_id = auth_session
+    let user = auth_session
         .user
         .as_ref()
-        .map(|u| u.id)
         .ok_or_else(|| CustomError::Authentication("login required".to_string()))?;
+    let user_id = user.id;
     if let Some(r) = email_verify_redirect(state.sqlx_pool(), user_id).await? {
         return Ok(r.into_response());
     }
 
     let bear = load_bear_member(state.sqlx_pool(), user_id, &slug).await?;
-    if !viewer_is_bear_admin(state.sqlx_pool(), user_id, bear.id).await? {
+    if !viewer_can_manage_bear(state.sqlx_pool(), user, bear.id).await? {
         return Err(CustomError::Authorization(
-            "bear admin role required".to_string(),
+            "bear admin or site admin role required".to_string(),
         ));
     }
 
@@ -646,19 +663,19 @@ async fn bear_edit_prompt_get(
     State(state): State<AppState>,
     auth_session: AuthSession,
 ) -> Result<Response, CustomError> {
-    let user_id = auth_session
+    let user = auth_session
         .user
         .as_ref()
-        .map(|u| u.id)
         .ok_or_else(|| CustomError::Authentication("login required".to_string()))?;
+    let user_id = user.id;
     if let Some(r) = email_verify_redirect(state.sqlx_pool(), user_id).await? {
         return Ok(r.into_response());
     }
 
     let bear = load_bear_member(state.sqlx_pool(), user_id, &slug).await?;
-    if !viewer_is_bear_admin(state.sqlx_pool(), user_id, bear.id).await? {
+    if !viewer_can_manage_bear(state.sqlx_pool(), user, bear.id).await? {
         return Err(CustomError::Authorization(
-            "bear admin role required".to_string(),
+            "bear admin or site admin role required".to_string(),
         ));
     }
     let form = BearPromptEditForm::from(&bear);
@@ -681,19 +698,19 @@ async fn bear_edit_prompt_post(
     auth_session: AuthSession,
     Form(form): Form<BearPromptEditForm>,
 ) -> Result<Response, CustomError> {
-    let user_id = auth_session
+    let user = auth_session
         .user
         .as_ref()
-        .map(|u| u.id)
         .ok_or_else(|| CustomError::Authentication("login required".to_string()))?;
+    let user_id = user.id;
     if let Some(r) = email_verify_redirect(state.sqlx_pool(), user_id).await? {
         return Ok(r.into_response());
     }
 
     let bear = load_bear_member(state.sqlx_pool(), user_id, &slug).await?;
-    if !viewer_is_bear_admin(state.sqlx_pool(), user_id, bear.id).await? {
+    if !viewer_can_manage_bear(state.sqlx_pool(), user, bear.id).await? {
         return Err(CustomError::Authorization(
-            "bear admin role required".to_string(),
+            "bear admin or site admin role required".to_string(),
         ));
     }
 
@@ -756,19 +773,19 @@ async fn bear_edit_configuration_get(
     State(state): State<AppState>,
     auth_session: AuthSession,
 ) -> Result<Response, CustomError> {
-    let user_id = auth_session
+    let user = auth_session
         .user
         .as_ref()
-        .map(|u| u.id)
         .ok_or_else(|| CustomError::Authentication("login required".to_string()))?;
+    let user_id = user.id;
     if let Some(r) = email_verify_redirect(state.sqlx_pool(), user_id).await? {
         return Ok(r.into_response());
     }
 
     let bear = load_bear_member(state.sqlx_pool(), user_id, &slug).await?;
-    if !viewer_is_bear_admin(state.sqlx_pool(), user_id, bear.id).await? {
+    if !viewer_can_manage_bear(state.sqlx_pool(), user, bear.id).await? {
         return Err(CustomError::Authorization(
-            "bear admin role required".to_string(),
+            "bear admin or site admin role required".to_string(),
         ));
     }
     let form = BearConfigurationEditForm::from(&bear);
@@ -793,19 +810,19 @@ async fn bear_edit_configuration_post(
     auth_session: AuthSession,
     Form(form): Form<BearConfigurationEditForm>,
 ) -> Result<Response, CustomError> {
-    let user_id = auth_session
+    let user = auth_session
         .user
         .as_ref()
-        .map(|u| u.id)
         .ok_or_else(|| CustomError::Authentication("login required".to_string()))?;
+    let user_id = user.id;
     if let Some(r) = email_verify_redirect(state.sqlx_pool(), user_id).await? {
         return Ok(r.into_response());
     }
 
     let bear = load_bear_member(state.sqlx_pool(), user_id, &slug).await?;
-    if !viewer_is_bear_admin(state.sqlx_pool(), user_id, bear.id).await? {
+    if !viewer_can_manage_bear(state.sqlx_pool(), user, bear.id).await? {
         return Err(CustomError::Authorization(
-            "bear admin role required".to_string(),
+            "bear admin or site admin role required".to_string(),
         ));
     }
 
@@ -916,20 +933,19 @@ async fn bear_access_get(
     State(state): State<AppState>,
     auth_session: AuthSession,
 ) -> Result<Response, CustomError> {
-    let user_id = auth_session
+    let user = auth_session
         .user
         .as_ref()
-        .map(|u| u.id)
         .ok_or_else(|| CustomError::Authentication("login required".to_string()))?;
+    let user_id = user.id;
     if let Some(r) = email_verify_redirect(state.sqlx_pool(), user_id).await? {
         return Ok(r.into_response());
     }
 
     let bear = load_bear_member(state.sqlx_pool(), user_id, &slug).await?;
-    let is_admin = viewer_is_bear_admin(state.sqlx_pool(), user_id, bear.id).await?;
-    if !is_admin {
+    if !viewer_can_manage_bear(state.sqlx_pool(), user, bear.id).await? {
         return Err(CustomError::Authorization(
-            "bear admin role required".to_string(),
+            "bear admin or site admin role required".to_string(),
         ));
     }
     let members = bears_db::list_members_for_bear(state.sqlx_pool(), bear.id).await?;
@@ -940,7 +956,6 @@ async fn bear_access_get(
         context! {
             bear,
             members,
-            is_admin,
         },
     )
     .await
@@ -1065,19 +1080,19 @@ async fn bear_delete_post(
     auth_session: AuthSession,
     Form(body): Form<BearDeleteForm>,
 ) -> Result<Response, CustomError> {
-    let user_id = auth_session
+    let user = auth_session
         .user
         .as_ref()
-        .map(|u| u.id)
         .ok_or_else(|| CustomError::Authentication("login required".to_string()))?;
+    let user_id = user.id;
     if let Some(r) = email_verify_redirect(state.sqlx_pool(), user_id).await? {
         return Ok(r.into_response());
     }
 
     let bear = load_bear_member(state.sqlx_pool(), user_id, &slug).await?;
-    if !viewer_is_bear_admin(state.sqlx_pool(), user_id, bear.id).await? {
+    if !viewer_can_manage_bear(state.sqlx_pool(), user, bear.id).await? {
         return Err(CustomError::Authorization(
-            "bear admin role required".to_string(),
+            "bear admin or site admin role required".to_string(),
         ));
     }
     if body.confirm_slug.trim() != bear.slug {
@@ -1104,19 +1119,19 @@ async fn member_add_post(
     auth_session: AuthSession,
     Form(form): Form<MemberAddForm>,
 ) -> Result<Response, CustomError> {
-    let user_id = auth_session
+    let user = auth_session
         .user
         .as_ref()
-        .map(|u| u.id)
         .ok_or_else(|| CustomError::Authentication("login required".to_string()))?;
+    let user_id = user.id;
     if let Some(r) = email_verify_redirect(state.sqlx_pool(), user_id).await? {
         return Ok(r.into_response());
     }
 
     let bear = load_bear_member(state.sqlx_pool(), user_id, &slug).await?;
-    if !viewer_is_bear_admin(state.sqlx_pool(), user_id, bear.id).await? {
+    if !viewer_can_manage_bear(state.sqlx_pool(), user, bear.id).await? {
         return Err(CustomError::Authorization(
-            "bear admin role required".to_string(),
+            "bear admin or site admin role required".to_string(),
         ));
     }
 
@@ -1156,19 +1171,19 @@ async fn member_remove_post(
     auth_session: AuthSession,
     Form(body): Form<MemberRemoveForm>,
 ) -> Result<Response, CustomError> {
-    let user_id = auth_session
+    let user = auth_session
         .user
         .as_ref()
-        .map(|u| u.id)
         .ok_or_else(|| CustomError::Authentication("login required".to_string()))?;
+    let user_id = user.id;
     if let Some(r) = email_verify_redirect(state.sqlx_pool(), user_id).await? {
         return Ok(r.into_response());
     }
 
     let bear = load_bear_member(state.sqlx_pool(), user_id, &slug).await?;
-    if !viewer_is_bear_admin(state.sqlx_pool(), user_id, bear.id).await? {
+    if !viewer_can_manage_bear(state.sqlx_pool(), user, bear.id).await? {
         return Err(CustomError::Authorization(
-            "bear admin role required".to_string(),
+            "bear admin or site admin role required".to_string(),
         ));
     }
 

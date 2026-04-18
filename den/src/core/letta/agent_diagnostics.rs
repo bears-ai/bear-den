@@ -74,6 +74,7 @@ fn agent_blocks_array(v: &Value) -> Option<&Vec<Value>> {
 
 impl LettaAgentDiagnostics {
     pub fn from_agent_json(v: &Value) -> Self {
+        let v = super::unwrap_letta_agent_document(v);
         let raw_json = serde_json::to_string_pretty(v).unwrap_or_else(|_| v.to_string());
 
         let mut blocks = Vec::new();

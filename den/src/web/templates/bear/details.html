@@ -21,7 +21,7 @@
             <p class="bear-overview-name"><strong>{{ bear.name | e }}</strong></p>
             <p><code id="bear-slug" title="{{ bear.id }}">{{ bear.slug | e }}</code></p>
             <p>{% if bear.description %}{{ bear.description | e }}{% else %}<em>No description.</em>{% endif %}</p>
-            {% if is_admin %}
+            {% if can_manage_bear %}
             <ul class="button-row">
                 <li><a class="button-link" href="/bear/{{ bear.slug | e }}/details/edit/overview">Edit</a></li>
             </ul>
@@ -30,7 +30,7 @@
         <div id="usage" class="box full-width">
             <h3>Usage</h3>
             <p class="caption">People</p>
-            <p class="den-bear-inline-list">{% if members and members | length > 0 %}{% for m in members %}{% if not loop.first %}, {% endif %}{% if m.role == 'admin' %}<strong>{{ m.username | e }}</strong>{% else %}{{ m.username | e }}{% endif %}{% endfor %}{% if is_admin %}, <a href="/bear/{{ bear.slug | e }}/details/access">Manage access</a>{% endif %}{% else %}<em>No members.</em>{% if is_admin %} <a href="/bear/{{ bear.slug | e }}/details/access">Manage access</a>{% endif %}{% endif %}</p>
+            <p class="den-bear-inline-list">{% if members and members | length > 0 %}{% for m in members %}{% if not loop.first %}, {% endif %}{% if m.role == 'admin' %}<strong>{{ m.username | e }}</strong>{% else %}{{ m.username | e }}{% endif %}{% endfor %}{% if can_manage_bear %}, <a href="/bear/{{ bear.slug | e }}/details/access">Manage access</a>{% endif %}{% else %}<em>No members.</em>{% if can_manage_bear %} <a href="/bear/{{ bear.slug | e }}/details/access">Manage access</a>{% endif %}{% endif %}</p>
             <p class="caption">Active conversations</p>
             {% if not letta_configured or not bear.letta_agent_id %}
             <p class="form-hint">Link a Letta agent to list conversations.</p>
@@ -56,14 +56,19 @@
             {% if letta_agent_fetch_error %}
             <p class="form-errors">Could not load agent from Letta: {{ letta_agent_fetch_error | e }}</p>
             {% endif %}
-            {% if is_admin and letta_drift and letta_drift.drift_any %}
-            <p class="form-errors"><strong>Letta is out of sync with Den.</strong> Use resync to overwrite Letta with the values saved here.</p>
+            {% if letta_drift and letta_drift.drift_any %}
+            <p class="form-errors"><strong>Den and Letta disagree</strong> on registry fields (see below).{% if not can_manage_bear %} Ask a bear admin to resync or edit.{% else %} Resync overwrites Letta with the values saved in Den.{% endif %}</p>
+            {% if letta_agent_summary and letta_agent_summary.system_excerpt %}
+            <p class="caption">Letta instructions (excerpt from API): {{ letta_agent_summary.system_excerpt | e }}</p>
+            {% endif %}
+            {% if can_manage_bear %}
             <form method="post" action="/bear/{{ bear.slug | e }}/details/resync-letta" class="den-bear-resync-form">
                 <p><button type="submit">Resync Letta</button></p>
             </form>
             {% endif %}
+            {% endif %}
             <pre class="den-bear-prompt-pre">{{ bear.system_prompt | e }}</pre>
-            {% if is_admin %}
+            {% if can_manage_bear %}
             <ul class="button-row">
                 <li><a class="button-link" href="/bear/{{ bear.slug | e }}/details/edit/prompt">Edit</a></li>
             </ul>
@@ -82,10 +87,10 @@
                 <dt>Tools</dt>
                 <dd>{% if letta_tool_ids_display %}<code>{{ letta_tool_ids_display | e }}</code>{% else %}<em>none</em>{% endif %}</dd>
             </dl>
-            {% if letta_drift and letta_drift.drift_any and is_admin %}
-            <p class="form-hint">{% if letta_drift.model %}Model differs from Letta. {% endif %}{% if letta_drift.agent_type %}Agent type differs from Letta. {% endif %}{% if letta_drift.tools %}Tools differ from Letta.{% endif %}</p>
+            {% if letta_drift and letta_drift.drift_any %}
+            <p class="form-hint">{% if letta_drift.system_prompt %}System prompt differs from Letta. {% endif %}{% if letta_drift.model %}Model differs from Letta. {% endif %}{% if letta_drift.agent_type %}Agent type differs from Letta. {% endif %}{% if letta_drift.tools %}Tools differ from Letta.{% endif %}</p>
             {% endif %}
-            {% if is_admin %}
+            {% if can_manage_bear %}
             <ul class="button-row">
                 <li><a class="button-link" href="/bear/{{ bear.slug | e }}/details/edit/configuration">Edit</a></li>
             </ul>

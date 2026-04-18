@@ -68,6 +68,7 @@ fn memory_block_count(v: &Value) -> Option<usize> {
 
 impl AgentSummary {
     pub fn from_letta_agent_state(v: &Value) -> Self {
+        let v = super::unwrap_letta_agent_document(v);
         let id = v
             .get("id")
             .and_then(|x| x.as_str())
