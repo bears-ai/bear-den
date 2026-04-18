@@ -1,12 +1,12 @@
 {% extends "base.html" %}
 
-{% block title %}{{ bear.name | e }} — Bear{% endblock %}
+{% block title %}{{ bear.name | e }}{% endblock %}
+{% block subnav %}
+    <li><a class="button-link" href="/bear/{{ bear.slug | e }}">Chat</a></li>
+{% endblock %}
 
 {% block content %}
 <section>
-    <h2>{{ bear.name | e }}</h2>
-    <p class="caption"><a href="/bear/{{ bear.slug | e }}">Open chat</a></p>
-
     {% if letta_resync_notice == 'ok' %}
     <p class="form-hint"><span class="success">Letta was updated from Den.</span></p>
     {% elif letta_resync_notice == 'error' %}
@@ -14,11 +14,11 @@
     {% endif %}
 
     <section class="two-columns">
+    <div>
         <div id="overview" class="box full-width">
-            <h3>Overview</h3>
             <!-- created: {{ bear.created_at | datetimeformat(format="short") }} -->
             <!-- updated: {{ bear.updated_at | datetimeformat(format="short") }} -->
-            <p class="bear-overview-name"><strong>{{ bear.name | e }}</strong></p>
+            <h3 class="bear-overview-name">{{ bear.name | e }}</h3>
             <p><code id="bear-slug" title="{{ bear.id }}">{{ bear.slug | e }}</code></p>
             <p>{% if bear.description %}{{ bear.description | e }}{% else %}<em>No description.</em>{% endif %}</p>
             {% if can_manage_bear %}
@@ -27,8 +27,9 @@
             </ul>
             {% endif %}
         </div>
+    </div>
+    <div>
         <div id="usage" class="box full-width">
-            <h3>Usage</h3>
             <p class="caption">People</p>
             <p class="den-bear-inline-list">{% if members and members | length > 0 %}{% for m in members %}{% if not loop.first %}, {% endif %}{% if m.role == 'admin' %}<strong>{{ m.username | e }}</strong>{% else %}{{ m.username | e }}{% endif %}{% endfor %}{% if can_manage_bear %}, <a href="/bear/{{ bear.slug | e }}/details/access">Manage access</a>{% endif %}{% else %}<em>No members.</em>{% if can_manage_bear %} <a href="/bear/{{ bear.slug | e }}/details/access">Manage access</a>{% endif %}{% endif %}</p>
             <p class="caption">Active conversations</p>
@@ -47,23 +48,29 @@
             {% endif %}
             {% endif %}
         </div>
+    </div>
     </section>
 
-    <section>
+    <section class="two-columns">
+    <div>
         <div id="prompt" class="box full-width">
             <h3>System prompt</h3>
-            <p class="caption">Stored in Den (authoritative)</p>
+            {% if letta_resync_notice == 'ok' %}
+            <p class="form-hint"><span class="success">Letta was updated from Den.</span></p>
+            {% elif letta_resync_notice == 'error' %}
+            <p class="form-errors">Could not resync Letta. Check that Letta is reachable and the agent is linked.</p>
+            {% endif %}
             {% if letta_agent_fetch_error %}
             <p class="form-errors">Could not load agent from Letta: {{ letta_agent_fetch_error | e }}</p>
             {% endif %}
             {% if letta_drift and letta_drift.drift_any %}
-            <p class="form-errors"><strong>Den and Letta disagree</strong> on registry fields (see below).{% if not can_manage_bear %} Ask a bear admin to resync or edit.{% else %} Resync overwrites Letta with the values saved in Den.{% endif %}</p>
+            <p class="form-errors"><strong>Letta is out of sync.</strong>{% if not can_manage_bear %} Ask a bear admin to resync or edit.{% else %} Force sync to update.{% endif %}</p>
             {% if letta_agent_summary and letta_agent_summary.system_excerpt %}
             <p class="caption">Letta instructions (excerpt from API): {{ letta_agent_summary.system_excerpt | e }}</p>
             {% endif %}
             {% if can_manage_bear %}
             <form method="post" action="/bear/{{ bear.slug | e }}/details/resync-letta" class="den-bear-resync-form">
-                <p><button type="submit">Resync Letta</button></p>
+                <p><button type="submit">Force Sync</button></p>
             </form>
             {% endif %}
             {% endif %}
@@ -74,9 +81,8 @@
             </ul>
             {% endif %}
         </div>
-    </section>
-
-    <section>
+    </div>
+    <div>
         <div id="configuration" class="box full-width">
             <h3>Configuration</h3>
             <dl class="fields-grid">
@@ -96,6 +102,7 @@
             </ul>
             {% endif %}
         </div>
+    </div>
     </section>
 
     <section>

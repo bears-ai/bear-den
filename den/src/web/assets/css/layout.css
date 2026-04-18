@@ -206,13 +206,24 @@ section.two-columns {
     display: flex;
     flex-direction: row;
     justify-content: center;
+    align-items: stretch;
     flex-wrap: wrap;
     column-gap: var(--spacing-unit);
+    padding: 0;
 
     >* {
+        display: flex;
+        flex-direction: column;
         width: calc(50% - (var(--spacing-unit)/2)); /* account for gap */
         min-width: calc(var(--narrow-width)/2);
-        margin-bottom: var(--spacing-unit);
+        /* margin-bottom: var(--spacing-unit); */
+        margin: 0;
+        padding: 0;
+
+        /* Single .box per column fills the stretched column; skip when multiple .box are stacked (e.g. settings). */
+        > .box:only-child {
+            flex: 1 1 auto;
+        }
     }
 }
 
