@@ -16,6 +16,7 @@
 | 6 | Open WebUI authentication | **Deferred** until optional **M6b**. Revisit: cookie vs server-side API token when domains and Open WebUI integration path are known. |
 | 7 | Phase 1 memory model (Idea 3) | **Curated blocks vs findable history:** User-facing promise is **small always-in-context memory blocks** + **longer material retrievable** via Letta **archival** and tools (on-demand retrieval; not “all knowledge in every prompt”). **No Den memory store** in Phase 1 — only Letta APIs. **Scope:** 1:1 per `(user, bear)` for web; no new shared household memory layer in Den. See [PLAN.md](PLAN.md) § Phase 1 memory model. |
 | 8 | Phase 1 memory visibility (Idea 2) | **Two UIs:** (1) **Memory dashboard:** **`human`** readout plus a **holistic memory weight** per member bear (cross-bear comparison — which bear has **learned / stored** the most about users, projects, and other Letta-visible memory). Use **weight** framing, **not** “pressure” or proximity to limits; **no** capacity warnings or Den-side consolidation — **assurance and comparison** only; Letta owns memory automation. (2) **Bear detail (operator):** full read-only **Letta state summary** — **all** blocks + **archival** where the API exposes them; prefer **tokens**, else whatever Letta returns. **Not** a management affordance in Den. |
+| 9 | Dynamic skills & subagents (Idea 1) | **Goal:** catalog skills **plus** bear-created/improved skills over time, using **Letta Code** (e.g. skills-creation skill) and Letta **`reflection`** (and related) subagents for auto-discovery. **Den** extends **bear configuration** to include **predefined subagents** and keeps catalog attach + materialization as system of record for org skills; runtime remains Letta Code/Letta. See [dynamic-skills-subagents-adr.md](../dynamic-skills-subagents-adr.md); **expert-suggested wiring** is captured in that ADR when integrated. |
 
 ## Implementation order (after these decisions)
 
@@ -29,4 +30,5 @@
 ## References
 
 - Phase 1 bootstrap milestones and API sketch: [PHASE1_BOOTSTRAP.md](PHASE1_BOOTSTRAP.md)
-- Stack roadmap: [PLAN.md](PLAN.md) (including [Phase 1 memory model](PLAN.md#phase-1-memory-model-user-promise-persistence-and-ux)); decisions **7–8** (memory model + visibility)
+- Stack roadmap: [PLAN.md](PLAN.md) (including [Phase 1 memory model](PLAN.md#phase-1-memory-model-user-promise-persistence-and-ux)); decisions **7–9** (memory model + visibility + dynamic skills/subagents)
+- Dynamic skills & reflection subagents: [dynamic-skills-subagents-adr.md](../dynamic-skills-subagents-adr.md)

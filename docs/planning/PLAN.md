@@ -8,7 +8,7 @@ High‑level, ops‑oriented plan and architecture: MVP **without Cabinet first*
 
 | Section | Contents |
 |---------|----------|
-| [§1](#1-system-architecture) | Components, Letta vs Cabinet, Phase 1 memory model, [shared blocks & concurrency](#shared-memory-blocks-and-concurrency-letta), Den→Letta Code→Letta, Den-managed skills and MCP (Phase 1) |
+| [§1](#1-system-architecture) | Components, Letta vs Cabinet, Phase 1 memory model, [shared blocks & concurrency](#shared-memory-blocks-and-concurrency-letta), [dynamic skills & subagents](#dynamic-skills-reflection-subagents-and-bear-configuration), Den→Letta Code→Letta, Den-managed skills and MCP (Phase 1) |
 | [§2](#2-capability-contracts-pseudo) | Frontends→Den, Den→Letta, bears→Cabinet, Outline, Bifrost observability |
 | [§3](#3-phased-roadmap) | Phase 0–4 milestones |
 | [Summary](#summary) | One-page recap |
@@ -16,8 +16,8 @@ High‑level, ops‑oriented plan and architecture: MVP **without Cabinet first*
 **Terminology**
 
 - **BEARS** — the **deployment stack** (acronym): Letta, Bifrost, Den, Outline, frontends, **Letta Code** harness, etc. Not the same as a single **bear**.
-- **Bear** — one **Letta-backed agent**: a distinct assistant with its own Letta agent id, prompts, memory, and tools. Users interact with **bears**; Den registers and provisions them.
-- **Harness binding (per bear)** — Den-generated mapping from a **bear** to its **`letta_agent_id`**, **Letta Code** skill paths, Slack [Channels](https://docs.letta.com/letta-code/channels/) bind, and related deploy config.
+- **Bear** — one **Letta-backed primary agent**: the distinct assistant users talk to; its own Letta agent id, prompts, memory, and tools. **Subagents** (e.g. Letta **`reflection`** type) are **configured per bear** where upstream supports them—see [dynamic-skills-subagents-adr.md](../dynamic-skills-subagents-adr.md). Den registers and provisions the bear **and** materializes predefined subagent configuration for reproducible deploys.
+- **Harness binding (per bear)** — Den-generated mapping from a **bear** to its **`letta_agent_id`**, **Letta Code** skill paths, **subagent** definitions the harness/Letta expect, Slack [Channels](https://docs.letta.com/letta-code/channels/) bind, and related deploy config.
 - **Users ↔ bears (many‑to‑many)** — a **user** may access **many** bears (e.g. personal + household + project). A **bear** may be shared by **many** users (e.g. a household assistant). Den stores membership and enforces it on every chat and Cabinet call.
 - **Den** — the **BEARS control plane and gateway** (also the **operations layer** in plain language): identity, **bear lifecycle** (provision Letta agents, surface bears in the **Den chat UI**, **optional Open WebUI**, and **Letta Code** harness config), **[skills catalog and per-bear attachments](https://docs.letta.com/letta-code/skills/)** (materialized for **Letta Code**; see [DEN_ARCHITECTURE.md](../architecture/DEN_ARCHITECTURE.md)), **local MCP server catalog and per-bear MCP attachments** (Phase 1, alongside skills; [DEN_ARCHITECTURE.md](../architecture/DEN_ARCHITECTURE.md)), routing, authz, Cabinet API, and **optional Bifrost observability reads** for the **Letta → Bifrost bear inference path** (details in [§2.5](#25-den-and-bifrost-observability-on-the-bear-path)). Den is the **system of record** for which users may use which bears, which skills each bear loads, **which MCP servers each bear may use**, and how they appear on **web** and **Slack** (**WhatsApp** desired upstream; not in Letta Code Channels yet).
 - **bear_id** / **letta_agent_id** — **`bear_id`** is Den’s **public** identifier for a bear in JSON APIs (**v1:** `bear_id` only; see [PHASE1_DECISIONS.md](PHASE1_DECISIONS.md)). **`letta_agent_id`** is Letta’s internal agent id (server-to-server provisioning and harness wiring). The word **agent** is still useful when reading **Letta** docs; in **Den-facing** contracts and examples, prefer **bear** / **`bear_id`**.
@@ -32,7 +32,7 @@ High‑level, ops‑oriented plan and architecture: MVP **without Cabinet first*
    - Maps **external identities** (Slack, WhatsApp, web, etc.) to **internal users**.
    - **Provisions and registers bears:** creates and updates **Letta agents** via API; keeps Den’s **bear registry** in sync (`bear_id` ↔ `letta_agent_id`); drives **which bears exist** and **who may use them**.
    - **Surfaces bears in clients:** emits or updates config so **Den's chat UI** (first-party browser chat), **optional Open WebUI** (when deployed), and **Letta Code** harness deploy artifacts (e.g. `letta-code.yaml`) list the correct bears per user/channel. The Den chat UI uses the same **auth, membership, and streaming** endpoints as every other web client; Open WebUI is an **optional** path for teams that want it—not a replacement for Den’s control‑plane role. *Traffic path for web chat is* **Den chat UI → Den → Letta Code → Letta** (the harness is mandatory for agent interaction; see [DEN_ARCHITECTURE.md](../architecture/DEN_ARCHITECTURE.md)).
-   - **Manages skills for each bear:** catalog (URLs, pins, org library), attach/detach per bear, then **materialize** [Agent Skills](https://agentskills.io/)–compatible trees onto volumes/paths Letta Code reads; Letta Code remains the runtime that discovers and loads skills.
+   - **Manages skills for each bear:** catalog (URLs, pins, org library), attach/detach per bear, then **materialize** [Agent Skills](https://agentskills.io/)–compatible trees onto volumes/paths Letta Code reads; Letta Code remains the runtime that discovers and loads skills. **Dynamic** skills (bear-created / improved over time) and **reflection** subagents follow [dynamic-skills-subagents-adr.md](../dynamic-skills-subagents-adr.md) and [PHASE1_DECISIONS.md](PHASE1_DECISIONS.md) decision **9**.
    - **Manages MCP servers for each bear (Phase 1, with skills):** **local catalog** in Den (org-defined and curated third-party entries), optional **discovery** from the [official MCP Registry](https://modelcontextprotocol.io/registry) without requiring Den to proxy public servers; **per-bear attachments** using the **same catalog vs attachment pattern** as skills; **provisioning** of MCP server processes left to **Coolify** (Den stores connection metadata and policy, not generic process orchestration).
    - **User and Cabinet permissions:** membership tables (users↔bears); later, **Cabinet** ACLs per user and bear (decks, kinds, read/write)—enforced on Den’s Cabinet API.
    - **Routes** web chat through **Letta Code** to the correct Letta agent for the chosen bear; **channels** connect to Letta Code directly, still backed by the same Letta agent ids Den provisions.
@@ -85,6 +85,14 @@ Aligned with [multi-user-memory-adr.md](../multi-user-memory-adr.md) (Scenario A
   - **Memory dashboard (end-user):** Besides read access to **`human`** (and related content per [multi-user-memory-adr.md](../multi-user-memory-adr.md)), show a **holistic memory weight** per bear the user can access — a **cross-bear** view of which assistants have accumulated the most learned material (users, projects, archival — whatever Letta’s APIs allow aggregating). Frame this as **weight** (richness / how much is stored), **not** “pressure” or how close to a limit; **no** capacity warnings or alerts in Den. Purpose: **assurance and comparison**, not memory management (Letta owns automation).
   - **Bear detail (operator):** Full **Letta-native state summary** for one bear — **all** memory blocks and **archival** indicators/stats **where the API exposes them**; prefer **tokens** (or whatever the API returns). Read-only **assurance** that Letta has things under control; **not** an affordance to edit or consolidate memory in Den. See **Phase 1 memory visibility (Idea 2)** in [PHASE1_DECISIONS.md](PHASE1_DECISIONS.md).
 - **Scope:** Phase 1 stays **1:1 per (user, bear)** for web; **no** new shared “household memory” layer in Den (group-mode / `person:{name}` extras remain as in the ADR).
+
+### Dynamic skills, reflection subagents, and bear configuration
+
+**Goal:** **Catalog skills** from Den plus **bear-authored** skills that can **improve over time**, using **Letta Code** (including upstream **skills-creation** patterns where enabled) and Letta **subagents** such as **`reflection`** for auto-discovery—without Den reimplementing the harness.
+
+- **Architecture record:** [dynamic-skills-subagents-adr.md](../dynamic-skills-subagents-adr.md) (status **Proposed** until expert wiring is pasted and reviewed).
+- **Den’s role:** Keep **catalog attach + materialization** as today; **extend bear configuration** so operators define **predefined subagents** (types, parameters) provisioned with the primary agent. **Runtime** remains **Letta Code → Letta**.
+- **Expert input:** The ADR includes a **placeholder section** for the Letta expert’s recommended approach—paste it there and promote the ADR when accepted.
 
 ### Shared memory blocks and concurrency (Letta)
 
@@ -465,7 +473,7 @@ This is the “make it livable and reliable” phase.
 
 **Knowledge:** **Letta memory** is per‑**bear** (per Letta agent) context — **blocks** (curated, bounded) plus **archival** and tools as Letta provides. **Shared blocks** under multi-writer concurrency need explicit patterns ([§ Shared memory blocks and concurrency](#shared-memory-blocks-and-concurrency-letta)). **Phase 1:** no Den memory store; **dashboard** shows **weight** (holistic, cross-bear); **bear detail** shows full state ([§ Phase 1 memory model](#phase-1-memory-model-user-promise-persistence-and-ux)). **Cabinet (Outline)** is the shared knowledgebase for humans and bears (post–Phase 1).
 
-**Bears:** Each **agent** in the product sense is a **bear**. **Users ↔ bears** is **many‑to‑many**.
+**Bears:** Each **primary agent** in the product sense is a **bear**; **subagents** (e.g. reflection) are **part of bear configuration** where used ([dynamic-skills-subagents-adr.md](../dynamic-skills-subagents-adr.md)). **Users ↔ bears** is **many‑to‑many**.
 
 We’re aiming for:
 

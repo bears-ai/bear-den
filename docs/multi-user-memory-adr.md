@@ -40,6 +40,8 @@ References:
 
 **Memory dashboard metric:** The dashboard should expose a **holistic memory weight** per bear (cross-bear comparison — which assistants have accumulated the most learned material), framed as **weight** not **pressure**; operators get the full per-bear **state** summary in **bear detail**. See [PHASE1_DECISIONS.md](planning/PHASE1_DECISIONS.md) decision 8.
 
+**Skills and subagents (separate ADR):** Procedural **skills** lifecycle (catalog, bear-created, reflection subagents) is covered in [dynamic-skills-subagents-adr.md](dynamic-skills-subagents-adr.md), not in this ADR.
+
 ### Two Distinct Scenarios
 
 #### Scenario A: One Person Per Session (the common case)

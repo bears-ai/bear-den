@@ -5,7 +5,7 @@ Use this file for **repository conventions** when editing or generating changes.
 ## What this repo is
 
 - **Light monorepo:** docs under `docs/`, Coolify-oriented assets under `services/*`, and the **Den** Rust service at repo root in **`den/`** (add the `cargo` tree there; it is not under `services/`).
-- **Terminology:** **Bear** = one assistant backed by a Letta agent. **Den** = control plane (provisioning, **users↔bears** membership, routing, Cabinet API when deployed). **BEARS** = the deployment stack name.
+- **Terminology:** **Bear** = the primary assistant backed by a Letta agent; **subagents** (e.g. reflection) are configured per bear when used ([docs/dynamic-skills-subagents-adr.md](docs/dynamic-skills-subagents-adr.md)). **Den** = control plane (provisioning, **users↔bears** membership, routing, Cabinet API when deployed). **BEARS** = the deployment stack name.
 
 **Den builds:** In environments with Rust installed (dev container, CI), run `cargo build` / `cargo test` from **`den/`** to verify changes. See [`den/AGENTS.md`](den/AGENTS.md) (“Verifying Rust changes”).
 
@@ -33,6 +33,7 @@ When proposing gateways, proxies, or operators, **favor file- or repo-driven con
 | Garage (S3 object storage) | [services/garage/COOLIFY_DEPLOY.md](services/garage/COOLIFY_DEPLOY.md) |
 | Stack one-pager | [docs/architecture/ARCHITECTURE_NOTES.md](docs/architecture/ARCHITECTURE_NOTES.md) |
 | Den + self-hosted Letta (multi-user web) | [docs/architecture/DEN_ARCHITECTURE.md](docs/architecture/DEN_ARCHITECTURE.md) |
+| Dynamic skills & reflection subagents | [docs/dynamic-skills-subagents-adr.md](docs/dynamic-skills-subagents-adr.md) |
 | Den meta tools (Den facade, Letta Code–brokered) | [DEN_ARCHITECTURE.md — Den meta tools](docs/architecture/DEN_ARCHITECTURE.md#den-meta-tools-bears-control-plane-tools) |
 | Den web UI (templates, CSS: no page-local `<style>`) | [den/docs/frontend-development.md](den/docs/frontend-development.md), [den/AGENTS.md](den/AGENTS.md) |
 | Assistant memory / project brief | [.kilocode/memory_bank/](.kilocode/memory_bank/) |

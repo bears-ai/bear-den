@@ -23,6 +23,7 @@ Each assistant in the product is a **bear** (one **Letta** agent). **BEARS** nam
 | **Understand the stack** | This file + [docs/architecture/ARCHITECTURE_NOTES.md](docs/architecture/ARCHITECTURE_NOTES.md) |
 | **Roadmap & phases** (Den, Cabinet, Outline) | [docs/planning/PLAN.md](docs/planning/PLAN.md) |
 | **Multi-user web** (Den + Letta; Den chat UI or Open WebUI) | [docs/architecture/DEN_ARCHITECTURE.md](docs/architecture/DEN_ARCHITECTURE.md) |
+| **Dynamic skills & reflection subagents** (bear config, Letta Code) | [docs/dynamic-skills-subagents-adr.md](docs/dynamic-skills-subagents-adr.md) |
 | **Phase 1 build** (Den; operator console first; Trestle = M0 bootstrap only) | [docs/planning/PHASE1_BOOTSTRAP.md](docs/planning/PHASE1_BOOTSTRAP.md) |
 | **Open WebUI ↔ Letta** (direct) | [services/letta/OPENWEBUI_INTEGRATION.md](services/letta/OPENWEBUI_INTEGRATION.md), [OPENWEBUI_SESSIONS.md](services/letta/OPENWEBUI_SESSIONS.md) |
 | **Full doc index** | [docs/README.md](docs/README.md) |
