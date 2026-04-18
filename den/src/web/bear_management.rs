@@ -3,14 +3,14 @@
 
 use axum::{
     Router,
-    extract::{Path, State},
+    extract::{Path, Query, State},
     response::{IntoResponse, Redirect, Response},
     routing::{get, post},
 };
 use axum_extra::extract::Form;
 use axum_extra::routing::RouterExt;
 use minijinja::context;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use sqlx::types::Json;
 use uuid::Uuid;
 use validator::{Validate, ValidationError, ValidationErrors};
@@ -19,22 +19,24 @@ use crate::{
     auth_backend::AuthSession,
     core::{
         bears::{
+            compute_letta_drift,
             db as bears_db,
             db::{BearMemberRow, BEAR_ROLE_ADMIN, BEAR_ROLE_MEMBER, role_is_bear_admin},
             provision,
             sync,
-            Bear,
+            Bear, LettaDriftFlags,
         },
-        letta::{AgentSummary, LettaAgentDiagnostics},
+        letta::{load_agent_conversations, AgentSummary, LettaAgentDiagnostics},
         user,
         user::db as user_db,
     },
     errors::CustomError,
     web::{
         bear_create_support::{
-            bear_details_quick_edit_context, bear_edit_page_context, bear_new_form_context,
+            bear_configuration_page_context, bear_new_form_context,
             ensure_stored_model_in_options_for_handle, insert_new_bear_row,
-            validate_default_model_for_letta, BearDetailsQuickUpdateForm, NewBearForm,
+            validate_default_model_for_letta, BearConfigurationEditForm, BearOverviewEditForm,
+            BearPromptEditForm, NewBearForm,
         },
         render_template, AppState,
     },
@@ -45,13 +47,31 @@ pub fn router() -> Router<AppState> {
         .route_with_tsr("/bears/new", get(new_bear_get).post(new_bear_post))
         .route_with_tsr("/bear/{slug}/details", get(bear_details_get))
         .route_with_tsr(
-            "/bear/{slug}/details/update",
-            post(bear_details_quick_update_post),
+            "/bear/{slug}/details/resync-letta",
+            post(bear_resync_letta_post),
         )
         .route_with_tsr(
             "/bear/{slug}/details/edit",
-            get(bear_edit_get).post(bear_edit_post),
+            get(bear_edit_redirect_get),
         )
+        .route_with_tsr(
+            "/bear/{slug}/details/edit/overview",
+            get(bear_edit_overview_get).post(bear_edit_overview_post),
+        )
+        .route_with_tsr(
+            "/bear/{slug}/details/edit/prompt",
+            get(bear_edit_prompt_get).post(bear_edit_prompt_post),
+        )
+        .route_with_tsr(
+            "/bear/{slug}/details/edit/configuration",
+            get(bear_edit_configuration_get).post(bear_edit_configuration_post),
+        )
+        .route_with_tsr("/bear/{slug}/details/access", get(bear_access_get))
+        .route_with_tsr(
+            "/bear/{slug}/details/conversations",
+            get(bear_conversations_get),
+        )
+        .route_with_tsr("/bear/{slug}/details/memory", get(bear_memory_get))
         .route_with_tsr("/bear/{slug}/details/delete", post(bear_delete_post))
         .route_with_tsr(
             "/bear/{slug}/details/members/add",
@@ -98,6 +118,21 @@ async fn viewer_is_bear_admin(
         None => false,
         Some(inner) => role_is_bear_admin(inner.as_deref()),
     })
+}
+
+#[derive(Debug, Deserialize)]
+struct BearDetailsQuery {
+    letta_resync: Option<String>,
+}
+
+#[derive(Serialize)]
+struct DetailsConvRow {
+    id: String,
+    title: String,
+    last_message_at: Option<String>,
+    channel_label: &'static str,
+    web_href: String,
+    archived: bool,
 }
 
 async fn new_bear_get(
@@ -285,18 +320,18 @@ async fn new_bear_post(
     .await
 }
 
-/// Renders [`bear/details.html`]. When `quick` is set, uses the given form and errors (failed save);
-/// otherwise bear admins get a form prefilled from `bear`.
+/// Renders [`bear/details.html`].
 async fn render_bear_details_page(
     state: &AppState,
     auth_session: AuthSession,
     bear: Bear,
     members: Vec<BearMemberRow>,
     is_admin: bool,
-    quick: Option<(BearDetailsQuickUpdateForm, ValidationErrors, Option<String>)>,
+    letta_resync_query: Option<String>,
 ) -> Result<Response, CustomError> {
     let letta_configured = state.letta.is_enabled();
     let letta_api_base = state.config.letta_base_url.trim().to_string();
+    let slug = bear.slug.clone();
 
     let (letta_agent_summary, letta_agent_fetch_error, letta_diagnostics, letta_diag_error) =
         if letta_configured {
@@ -322,20 +357,49 @@ async fn render_bear_details_page(
             (None, None, None, None)
         };
 
-    let letta_memory_blocks_label = letta_agent_summary
-        .as_ref()
-        .and_then(|s| s.memory_block_count)
-        .map(|n| n.to_string());
-    let letta_tools_count_label = letta_agent_summary
-        .as_ref()
-        .and_then(|s| s.tool_count)
-        .map(|n| n.to_string());
+    let letta_drift: Option<LettaDriftFlags> = compute_letta_drift(
+        &bear,
+        letta_agent_summary.as_ref(),
+        letta_diagnostics.as_ref(),
+    );
 
-    let tools_json_display = bear
-        .tools_enabled
-        .as_ref()
-        .and_then(|j| serde_json::to_string_pretty(&j.0).ok())
-        .filter(|s| !s.trim().is_empty());
+    let (conversation_rows, has_archived_conversations) =
+        if letta_configured {
+            if let Some(agent_id) =
+                bear.letta_agent_id.as_deref().map(str::trim).filter(|s| !s.is_empty())
+            {
+                let snap = load_agent_conversations(state.letta.as_ref(), agent_id).await;
+                let has_archived = snap.has_archived;
+                let rows: Vec<DetailsConvRow> = snap
+                    .active
+                    .into_iter()
+                    .map(|r| {
+                        let web_href = if r.id == "default" {
+                            format!("/bear/{}/", slug)
+                        } else {
+                            format!(
+                                "/bear/{}/?conversation_id={}",
+                                slug,
+                                urlencoding::encode(&r.id)
+                            )
+                        };
+                        DetailsConvRow {
+                            id: r.id,
+                            title: r.title,
+                            last_message_at: r.last_message_at,
+                            channel_label: "Web",
+                            web_href,
+                            archived: false,
+                        }
+                    })
+                    .collect();
+                (rows, has_archived)
+            } else {
+                (Vec::new(), false)
+            }
+        } else {
+            (Vec::new(), false)
+        };
 
     let letta_tool_ids_display = if bear.letta_tool_ids.0.is_empty() {
         None
@@ -343,58 +407,39 @@ async fn render_bear_details_page(
         Some(bear.letta_tool_ids.0.join(", "))
     };
 
-    let ctx = if is_admin {
-        let (form, errors, sync_err) = match quick {
-            Some((f, e, s)) => (f, e, s),
-            None => (
-                BearDetailsQuickUpdateForm::from(&bear),
-                ValidationErrors::new(),
-                None,
-            ),
-        };
-        let page = bear_details_quick_edit_context(state, &bear, &form).await;
-        context! {
-            bear,
-            is_admin,
-            members,
-            letta_configured,
-            letta_api_base,
-            letta_agent_summary,
-            letta_agent_fetch_error,
-            letta_diagnostics,
-            letta_diag_error,
-            letta_memory_blocks_label,
-            letta_tools_count_label,
-            tools_json_display,
-            letta_tool_ids_display,
-            quick_form => form,
-            errors => errors,
-            letta_sync_error => sync_err,
-            ..page
-        }
-    } else {
-        context! {
-            bear,
-            is_admin,
-            members,
-            letta_configured,
-            letta_api_base,
-            letta_agent_summary,
-            letta_agent_fetch_error,
-            letta_diagnostics,
-            letta_diag_error,
-            letta_memory_blocks_label,
-            letta_tools_count_label,
-            tools_json_display,
-            letta_tool_ids_display,
-        }
+    let letta_resync_notice = match letta_resync_query.as_deref() {
+        Some("ok") => Some("ok"),
+        Some("error") => Some("error"),
+        _ => None,
     };
 
-    render_template(state, "bear/details.html", auth_session, ctx).await
+    render_template(
+        state,
+        "bear/details.html",
+        auth_session,
+        context! {
+            bear,
+            is_admin,
+            members,
+            letta_configured,
+            letta_api_base,
+            letta_agent_summary,
+            letta_agent_fetch_error,
+            letta_diagnostics,
+            letta_diag_error,
+            letta_drift,
+            letta_tool_ids_display,
+            conversation_rows,
+            has_archived_conversations,
+            letta_resync_notice,
+        },
+    )
+    .await
 }
 
 async fn bear_details_get(
     Path(slug): Path<String>,
+    Query(q): Query<BearDetailsQuery>,
     State(state): State<AppState>,
     auth_session: AuthSession,
 ) -> Result<Response, CustomError> {
@@ -411,14 +456,21 @@ async fn bear_details_get(
     let is_admin = viewer_is_bear_admin(state.sqlx_pool(), user_id, bear.id).await?;
     let members = bears_db::list_members_for_bear(state.sqlx_pool(), bear.id).await?;
 
-    render_bear_details_page(&state, auth_session, bear, members, is_admin, None).await
+    render_bear_details_page(
+        &state,
+        auth_session,
+        bear,
+        members,
+        is_admin,
+        q.letta_resync,
+    )
+    .await
 }
 
-async fn bear_details_quick_update_post(
+async fn bear_resync_letta_post(
     Path(slug): Path<String>,
     State(state): State<AppState>,
     auth_session: AuthSession,
-    Form(form): Form<BearDetailsQuickUpdateForm>,
 ) -> Result<Response, CustomError> {
     let user_id = auth_session
         .user
@@ -436,74 +488,249 @@ async fn bear_details_quick_update_post(
         ));
     }
 
-    let letta_fetch = if state.letta.is_enabled() {
-        Some(
-            state
-                .letta
-                .list_llm_models()
-                .await
-                .map(|opts| {
-                    let model_trim = form.default_model.trim();
-                    let h = (!model_trim.is_empty()).then_some(model_trim);
-                    ensure_stored_model_in_options_for_handle(h, opts)
-                }),
-        )
-    } else {
-        None
-    };
+    let target = format!("/bear/{}/details", bear.slug);
+    if !state.letta.is_enabled() || bear.letta_agent_id.as_deref().map(str::trim).filter(|s| !s.is_empty()).is_none()
+    {
+        return Ok(Redirect::to(&format!("{target}?letta_resync=error")).into_response());
+    }
+
+    if let Err(e) = sync::sync_bear_to_letta(state.sqlx_pool(), state.letta.as_ref(), bear.id).await {
+        tracing::warn!(bear_id = %bear.id, "Letta resync from details failed: {e}");
+        return Ok(Redirect::to(&format!("{target}?letta_resync=error")).into_response());
+    }
+
+    Ok(Redirect::to(&format!("{target}?letta_resync=ok")).into_response())
+}
+
+async fn bear_edit_redirect_get(
+    Path(slug): Path<String>,
+    State(state): State<AppState>,
+    auth_session: AuthSession,
+) -> Result<Response, CustomError> {
+    let user_id = auth_session
+        .user
+        .as_ref()
+        .map(|u| u.id)
+        .ok_or_else(|| CustomError::Authentication("login required".to_string()))?;
+    if let Some(r) = email_verify_redirect(state.sqlx_pool(), user_id).await? {
+        return Ok(r.into_response());
+    }
+
+    let _bear = load_bear_member(state.sqlx_pool(), user_id, &slug).await?;
+    Ok(Redirect::to(&format!("/bear/{}/details/edit/overview", slug.trim())).into_response())
+}
+
+async fn bear_edit_overview_get(
+    Path(slug): Path<String>,
+    State(state): State<AppState>,
+    auth_session: AuthSession,
+) -> Result<Response, CustomError> {
+    let user_id = auth_session
+        .user
+        .as_ref()
+        .map(|u| u.id)
+        .ok_or_else(|| CustomError::Authentication("login required".to_string()))?;
+    if let Some(r) = email_verify_redirect(state.sqlx_pool(), user_id).await? {
+        return Ok(r.into_response());
+    }
+
+    let bear = load_bear_member(state.sqlx_pool(), user_id, &slug).await?;
+    if !viewer_is_bear_admin(state.sqlx_pool(), user_id, bear.id).await? {
+        return Err(CustomError::Authorization(
+            "bear admin role required".to_string(),
+        ));
+    }
+    let form = BearOverviewEditForm::from(&bear);
+    render_template(
+        &state,
+        "bear/edit_overview.html",
+        auth_session,
+        context! {
+            bear,
+            form,
+            errors => ValidationErrors::new(),
+        },
+    )
+    .await
+}
+
+async fn bear_edit_overview_post(
+    Path(slug): Path<String>,
+    State(state): State<AppState>,
+    auth_session: AuthSession,
+    Form(form): Form<BearOverviewEditForm>,
+) -> Result<Response, CustomError> {
+    let user_id = auth_session
+        .user
+        .as_ref()
+        .map(|u| u.id)
+        .ok_or_else(|| CustomError::Authentication("login required".to_string()))?;
+    if let Some(r) = email_verify_redirect(state.sqlx_pool(), user_id).await? {
+        return Ok(r.into_response());
+    }
+
+    let bear = load_bear_member(state.sqlx_pool(), user_id, &slug).await?;
+    if !viewer_is_bear_admin(state.sqlx_pool(), user_id, bear.id).await? {
+        return Err(CustomError::Authorization(
+            "bear admin role required".to_string(),
+        ));
+    }
 
     let mut validation_errors = ValidationErrors::new();
     if let Err(e) = form.validate() {
         validation_errors = e;
     }
 
-    let default_model_trim = form.default_model.trim();
-    validate_default_model_for_letta(&letta_fetch, default_model_trim, &mut validation_errors);
+    if bears_db::bear_slug_exists_excluding(state.sqlx_pool(), form.slug.trim(), bear.id).await? {
+        validation_errors.add(
+            "slug",
+            ValidationError::new("A bear with this slug already exists."),
+        );
+    }
 
-    let default_model_opt = if default_model_trim.is_empty() {
-        None
-    } else {
-        Some(default_model_trim)
-    };
+    if validation_errors.is_empty() {
+        bears_db::update_bear(
+            state.sqlx_pool(),
+            bear.id,
+            form.slug.trim(),
+            form.name.trim(),
+            form.description.trim(),
+            bear.system_prompt.as_str(),
+            bear.default_model.as_deref(),
+            None::<Json<serde_json::Value>>,
+            bear.letta_agent_type.as_deref(),
+            Json(bear.letta_tool_ids.0.clone()),
+        )
+        .await?;
 
-    let letta_agent_type_db: Option<String> = bear
-        .letta_agent_type
-        .as_deref()
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .map(str::to_string);
+        if let Err(e) = sync::sync_bear_to_letta(state.sqlx_pool(), state.letta.as_ref(), bear.id).await {
+            tracing::warn!(bear_id = %bear.id, "Letta sync after overview edit failed: {e}");
+            let bear = bears_db::get_bear(state.sqlx_pool(), bear.id)
+                .await?
+                .ok_or_else(|| CustomError::NotFound("bear not found".to_string()))?;
+            return render_template(
+                &state,
+                "bear/edit_overview.html",
+                auth_session,
+                context! {
+                    errors => ValidationErrors::new(),
+                    form => form,
+                    bear,
+                    letta_sync_error => format!(
+                        "Bear was saved in Den, but Letta rejected the update: {e}"
+                    ),
+                },
+            )
+            .await;
+        }
 
-    let members = bears_db::list_members_for_bear(state.sqlx_pool(), bear.id).await?;
+        let out_slug = form.slug.trim().to_string();
+        return Ok(Redirect::to(&format!("/bear/{out_slug}/details")).into_response());
+    }
+
+    render_template(
+        &state,
+        "bear/edit_overview.html",
+        auth_session,
+        context! {
+            errors => validation_errors,
+            form => form,
+            bear,
+        },
+    )
+    .await
+}
+
+async fn bear_edit_prompt_get(
+    Path(slug): Path<String>,
+    State(state): State<AppState>,
+    auth_session: AuthSession,
+) -> Result<Response, CustomError> {
+    let user_id = auth_session
+        .user
+        .as_ref()
+        .map(|u| u.id)
+        .ok_or_else(|| CustomError::Authentication("login required".to_string()))?;
+    if let Some(r) = email_verify_redirect(state.sqlx_pool(), user_id).await? {
+        return Ok(r.into_response());
+    }
+
+    let bear = load_bear_member(state.sqlx_pool(), user_id, &slug).await?;
+    if !viewer_is_bear_admin(state.sqlx_pool(), user_id, bear.id).await? {
+        return Err(CustomError::Authorization(
+            "bear admin role required".to_string(),
+        ));
+    }
+    let form = BearPromptEditForm::from(&bear);
+    render_template(
+        &state,
+        "bear/edit_prompt.html",
+        auth_session,
+        context! {
+            bear,
+            form,
+            errors => ValidationErrors::new(),
+        },
+    )
+    .await
+}
+
+async fn bear_edit_prompt_post(
+    Path(slug): Path<String>,
+    State(state): State<AppState>,
+    auth_session: AuthSession,
+    Form(form): Form<BearPromptEditForm>,
+) -> Result<Response, CustomError> {
+    let user_id = auth_session
+        .user
+        .as_ref()
+        .map(|u| u.id)
+        .ok_or_else(|| CustomError::Authentication("login required".to_string()))?;
+    if let Some(r) = email_verify_redirect(state.sqlx_pool(), user_id).await? {
+        return Ok(r.into_response());
+    }
+
+    let bear = load_bear_member(state.sqlx_pool(), user_id, &slug).await?;
+    if !viewer_is_bear_admin(state.sqlx_pool(), user_id, bear.id).await? {
+        return Err(CustomError::Authorization(
+            "bear admin role required".to_string(),
+        ));
+    }
+
+    let mut validation_errors = ValidationErrors::new();
+    if let Err(e) = form.validate() {
+        validation_errors = e;
+    }
 
     if validation_errors.is_empty() {
         bears_db::update_bear(
             state.sqlx_pool(),
             bear.id,
             bear.slug.as_str(),
-            form.name.trim(),
-            form.description.trim(),
+            bear.name.as_str(),
+            bear.description.as_str(),
             form.system_prompt.trim(),
-            default_model_opt,
+            bear.default_model.as_deref(),
             None::<Json<serde_json::Value>>,
-            letta_agent_type_db.as_deref(),
+            bear.letta_agent_type.as_deref(),
             Json(bear.letta_tool_ids.0.clone()),
         )
         .await?;
 
-        if let Err(e) = sync::sync_bear_to_letta(state.sqlx_pool(), state.letta.as_ref(), bear.id).await
-        {
-            tracing::warn!(bear_id = %bear.id, "Letta sync after bear quick update failed: {e}");
-            let bear = bears_db::get_bear(state.sqlx_pool(), bear.id)
-                .await?
-                .ok_or_else(|| CustomError::NotFound("bear not found".to_string()))?;
-            let empty_errors = ValidationErrors::new();
-            return render_bear_details_page(
+        if let Err(e) = sync::sync_bear_to_letta(state.sqlx_pool(), state.letta.as_ref(), bear.id).await {
+            tracing::warn!(bear_id = %bear.id, "Letta sync after prompt edit failed: {e}");
+            return render_template(
                 &state,
+                "bear/edit_prompt.html",
                 auth_session,
-                bear,
-                members,
-                true,
-                Some((form, empty_errors, Some(format!("Saved in Den, but Letta rejected the update: {e}")))),
+                context! {
+                    errors => ValidationErrors::new(),
+                    form => form,
+                    bear,
+                    letta_sync_error => format!(
+                        "Bear was saved in Den, but Letta rejected the update: {e}"
+                    ),
+                },
             )
             .await;
         }
@@ -511,18 +738,20 @@ async fn bear_details_quick_update_post(
         return Ok(Redirect::to(&format!("/bear/{}/details", bear.slug)).into_response());
     }
 
-    render_bear_details_page(
+    render_template(
         &state,
+        "bear/edit_prompt.html",
         auth_session,
-        bear,
-        members,
-        true,
-        Some((form, validation_errors, None)),
+        context! {
+            errors => validation_errors,
+            form => form,
+            bear,
+        },
     )
     .await
 }
 
-async fn bear_edit_get(
+async fn bear_edit_configuration_get(
     Path(slug): Path<String>,
     State(state): State<AppState>,
     auth_session: AuthSession,
@@ -542,26 +771,27 @@ async fn bear_edit_get(
             "bear admin role required".to_string(),
         ));
     }
-    let form = NewBearForm::from(&bear);
-    let page = bear_edit_page_context(&state, &bear, &form).await;
+    let form = BearConfigurationEditForm::from(&bear);
+    let page = bear_configuration_page_context(&state, &bear, &form).await;
     render_template(
         &state,
-        "bear/edit.html",
+        "bear/edit_configuration.html",
         auth_session,
         context! {
             bear,
             form,
+            errors => ValidationErrors::new(),
             ..page
         },
     )
     .await
 }
 
-async fn bear_edit_post(
+async fn bear_edit_configuration_post(
     Path(slug): Path<String>,
     State(state): State<AppState>,
     auth_session: AuthSession,
-    Form(form): Form<NewBearForm>,
+    Form(form): Form<BearConfigurationEditForm>,
 ) -> Result<Response, CustomError> {
     let user_id = auth_session
         .user
@@ -625,21 +855,14 @@ async fn bear_edit_post(
         Some(default_model_trim)
     };
 
-    if bears_db::bear_slug_exists_excluding(state.sqlx_pool(), form.slug.trim(), bear.id).await? {
-        validation_errors.add(
-            "slug",
-            ValidationError::new("A bear with this slug already exists."),
-        );
-    }
-
     if validation_errors.is_empty() {
         bears_db::update_bear(
             state.sqlx_pool(),
             bear.id,
-            form.slug.trim(),
-            form.name.trim(),
-            form.description.trim(),
-            form.system_prompt.trim(),
+            bear.slug.as_str(),
+            bear.name.as_str(),
+            bear.description.as_str(),
+            bear.system_prompt.as_str(),
             default_model_opt,
             None::<Json<serde_json::Value>>,
             letta_agent_type_db.as_deref(),
@@ -648,18 +871,17 @@ async fn bear_edit_post(
         .await?;
 
         if let Err(e) = sync::sync_bear_to_letta(state.sqlx_pool(), state.letta.as_ref(), bear.id).await {
-            tracing::warn!(bear_id = %bear.id, "Letta sync after bear edit failed: {e}");
+            tracing::warn!(bear_id = %bear.id, "Letta sync after configuration edit failed: {e}");
             let bear = bears_db::get_bear(state.sqlx_pool(), bear.id)
                 .await?
                 .ok_or_else(|| CustomError::NotFound("bear not found".to_string()))?;
-            let page = bear_edit_page_context(&state, &bear, &form).await;
-            let empty_errors = ValidationErrors::new();
-                    return render_template(
+            let page = bear_configuration_page_context(&state, &bear, &form).await;
+            return render_template(
                 &state,
-                "bear/edit.html",
+                "bear/edit_configuration.html",
                 auth_session,
                 context! {
-                    errors => empty_errors,
+                    errors => ValidationErrors::new(),
                     form => form,
                     bear,
                     letta_sync_error => format!(
@@ -671,20 +893,162 @@ async fn bear_edit_post(
             .await;
         }
 
-        let out_slug = form.slug.trim().to_string();
-        return Ok(Redirect::to(&format!("/bear/{out_slug}/details")).into_response());
+        return Ok(Redirect::to(&format!("/bear/{}/details", bear.slug)).into_response());
     }
 
-    let page = bear_edit_page_context(&state, &bear, &form).await;
+    let page = bear_configuration_page_context(&state, &bear, &form).await;
     render_template(
         &state,
-        "bear/edit.html",
+        "bear/edit_configuration.html",
         auth_session,
         context! {
             errors => validation_errors,
             form => form,
             bear,
             ..page
+        },
+    )
+    .await
+}
+
+async fn bear_access_get(
+    Path(slug): Path<String>,
+    State(state): State<AppState>,
+    auth_session: AuthSession,
+) -> Result<Response, CustomError> {
+    let user_id = auth_session
+        .user
+        .as_ref()
+        .map(|u| u.id)
+        .ok_or_else(|| CustomError::Authentication("login required".to_string()))?;
+    if let Some(r) = email_verify_redirect(state.sqlx_pool(), user_id).await? {
+        return Ok(r.into_response());
+    }
+
+    let bear = load_bear_member(state.sqlx_pool(), user_id, &slug).await?;
+    let is_admin = viewer_is_bear_admin(state.sqlx_pool(), user_id, bear.id).await?;
+    if !is_admin {
+        return Err(CustomError::Authorization(
+            "bear admin role required".to_string(),
+        ));
+    }
+    let members = bears_db::list_members_for_bear(state.sqlx_pool(), bear.id).await?;
+    render_template(
+        &state,
+        "bear/access.html",
+        auth_session,
+        context! {
+            bear,
+            members,
+            is_admin,
+        },
+    )
+    .await
+}
+
+async fn bear_conversations_get(
+    Path(slug): Path<String>,
+    State(state): State<AppState>,
+    auth_session: AuthSession,
+) -> Result<Response, CustomError> {
+    let user_id = auth_session
+        .user
+        .as_ref()
+        .map(|u| u.id)
+        .ok_or_else(|| CustomError::Authentication("login required".to_string()))?;
+    if let Some(r) = email_verify_redirect(state.sqlx_pool(), user_id).await? {
+        return Ok(r.into_response());
+    }
+
+    let bear = load_bear_member(state.sqlx_pool(), user_id, &slug).await?;
+    let letta_configured = state.letta.is_enabled();
+
+    let (rows, list_error) = if letta_configured {
+        if let Some(agent_id) = bear.letta_agent_id.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+            let snap = load_agent_conversations(state.letta.as_ref(), agent_id).await;
+            let rows: Vec<DetailsConvRow> = snap
+                .all
+                .into_iter()
+                .map(|r| {
+                    let web_href = if r.id == "default" {
+                        format!("/bear/{}/", bear.slug)
+                    } else {
+                        format!(
+                            "/bear/{}/?conversation_id={}",
+                            bear.slug,
+                            urlencoding::encode(&r.id)
+                        )
+                    };
+                    DetailsConvRow {
+                        id: r.id,
+                        title: r.title,
+                        last_message_at: r.last_message_at,
+                        channel_label: "Web",
+                        web_href,
+                        archived: r.archived,
+                    }
+                })
+                .collect();
+            (rows, None)
+        } else {
+            (Vec::new(), Some("No Letta agent is linked to this bear.".to_string()))
+        }
+    } else {
+        (Vec::new(), Some("Letta is not configured.".to_string()))
+    };
+
+    render_template(
+        &state,
+        "bear/conversations.html",
+        auth_session,
+        context! {
+            bear,
+            conversation_rows => rows,
+            list_error,
+        },
+    )
+    .await
+}
+
+async fn bear_memory_get(
+    Path(slug): Path<String>,
+    State(state): State<AppState>,
+    auth_session: AuthSession,
+) -> Result<Response, CustomError> {
+    let user_id = auth_session
+        .user
+        .as_ref()
+        .map(|u| u.id)
+        .ok_or_else(|| CustomError::Authentication("login required".to_string()))?;
+    if let Some(r) = email_verify_redirect(state.sqlx_pool(), user_id).await? {
+        return Ok(r.into_response());
+    }
+
+    let bear = load_bear_member(state.sqlx_pool(), user_id, &slug).await?;
+    let letta_configured = state.letta.is_enabled();
+
+    let (letta_diagnostics, letta_diag_error) = if letta_configured {
+        if let Some(agent_id) = bear.letta_agent_id.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+            match state.letta.fetch_agent(agent_id).await {
+                Ok(v) => (Some(LettaAgentDiagnostics::from_agent_json(&v)), None),
+                Err(e) => (None, Some(e.to_string())),
+            }
+        } else {
+            (None, None)
+        }
+    } else {
+        (None, None)
+    };
+
+    render_template(
+        &state,
+        "bear/memory.html",
+        auth_session,
+        context! {
+            bear,
+            letta_configured,
+            letta_diagnostics,
+            letta_diag_error,
         },
     )
     .await
@@ -778,7 +1142,7 @@ async fn member_add_post(
 
     bears_db::grant_membership(state.sqlx_pool(), target.id, bear.id, role_db).await?;
 
-    Ok(Redirect::to(&format!("/bear/{}/details", bear.slug)).into_response())
+    Ok(Redirect::to(&format!("/bear/{}/details/access", bear.slug)).into_response())
 }
 
 #[derive(Debug, Deserialize)]
@@ -823,5 +1187,5 @@ async fn member_remove_post(
 
     bears_db::revoke_membership(state.sqlx_pool(), body.remove_user_id, bear.id).await?;
 
-    Ok(Redirect::to(&format!("/bear/{}/details", bear.slug)).into_response())
+    Ok(Redirect::to(&format!("/bear/{}/details/access", bear.slug)).into_response())
 }

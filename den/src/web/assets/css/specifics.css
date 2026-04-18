@@ -148,3 +148,46 @@ html.den-bear-chat-page #chat-wrap {
     color: var(--meta-color);
     font-size: smaller;
 }
+
+/* ---- Bear details (/bear/:slug/details) ---- */
+.den-bear-inline-list {
+    margin-top: 0;
+    line-height: 1.5;
+}
+
+.den-bear-conv-list {
+    list-style: none;
+    padding-left: 0;
+    margin: 0;
+}
+
+.den-bear-conv-list li {
+    margin-bottom: calc(var(--spacing-unit) * 0.75);
+}
+
+.den-bear-prompt-pre {
+    white-space: pre-wrap;
+    word-break: break-word;
+    max-height: 24rem;
+    overflow: auto;
+    font-family: var(--data-font-family);
+    font-size: smaller;
+    margin: var(--spacing-unit) 0;
+    padding: var(--spacing-unit);
+    border: solid var(--thin-line-unit) var(--border-color);
+    background: var(--field-fill-color);
+}
+
+.den-bear-memory-summary {
+    list-style: none;
+    padding-left: 0;
+    margin: 0 0 var(--spacing-unit);
+}
+
+.den-bear-memory-summary li {
+    margin-bottom: calc(var(--spacing-unit) * 0.5);
+}
+
+.den-bear-resync-form {
+    margin-bottom: var(--spacing-unit);
+}

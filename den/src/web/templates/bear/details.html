@@ -1,212 +1,116 @@
 {% extends "base.html" %}
-{% import "forms.jinja" as forms %}
 
-{% block title %}{{ bear.name | e }} — Details{% endblock %}
+{% block title %}{{ bear.name | e }} — Bear{% endblock %}
 
 {% block content %}
 <section>
     <h2>{{ bear.name | e }}</h2>
-    <p>
-        <code>{{ bear.slug | e }}</code>
-        · <a href="/bear/{{ bear.slug | e }}">Open chat</a>
-        {% if is_admin %}
-        · <a href="/bear/{{ bear.slug | e }}/details/edit">Edit bear</a> <span class="form-hint">(slug, agent type, tools)</span>
-        {% endif %}
-    </p>
+    <p class="caption"><a href="/bear/{{ bear.slug | e }}">Open chat</a></p>
 
-    {% if is_admin %}
-    <h3>Bear settings</h3>
-    {% if letta_sync_error %}
-    <p class="form-errors"><strong>Letta sync failed</strong>: {{ letta_sync_error | e }}</p>
-    {% endif %}
-    <form method="post" action="/bear/{{ bear.slug | e }}/details/update">
-        {{ forms.input("name", "Name", "text", 'maxlength="255"', quick_form) }}
-        {{ forms.input("description", "Description", "text", 'maxlength="2000"', quick_form) }}
-        {% if letta_configured %}
-        <label for="details_default_model_field" {% if errors and errors.default_model %}class="has-error"{% endif %}>Model (required for Letta)</label>
-        {% if letta_models_fetch_error %}
-        <p class="form-errors">{{ letta_models_fetch_error | e }}</p>
-        {% endif %}
-        <div class="form-field{% if errors and errors.default_model %} has-error{% endif %}">
-            {% if letta_model_options and letta_model_options | length > 0 %}
-            <select id="details_default_model_field" name="default_model" required>
-                <option value="" disabled{% if not quick_form or not quick_form.default_model %} selected{% endif %}>— Choose a model —</option>
-                {% for m in letta_model_options %}
-                <option value="{{ m.handle | e }}"{% if quick_form and quick_form.default_model == m.handle %} selected{% endif %}>{{ m.label | e }} — <code>{{ m.handle | e }}</code></option>
-                {% endfor %}
-            </select>
-            <span class="form-hint">From Letta <code>GET /v1/models/</code>.</span>
-            {% else %}
-            <input id="details_default_model_field" name="default_model" type="text" maxlength="255" required
-                placeholder="provider/model-handle"
-                value="{{ quick_form.default_model | e if quick_form else '' }}" />
-            <span class="form-hint">No model list from Letta; enter a handle if you know it.</span>
-            {% endif %}
-            {% if errors and errors.default_model %}
-            <span class="form-hint form-errors">Submission error: {{ errors.default_model | map(attribute="message", default="unknown error") | join(", ") }}</span>
-            {% endif %}
-        </div>
-        {% else %}
-        {{ forms.input("default_model", "Default model (optional)", "text", 'maxlength="255" placeholder="e.g. gpt-4o"', quick_form) }}
-        {% endif %}
-        <label for="details_system_prompt_textarea" {% if errors and errors.system_prompt %}class="has-error"{% endif %}>System prompt</label>
-        <div class="form-field{% if errors and errors.system_prompt %} has-error{% endif %}">
-            <textarea id="details_system_prompt_textarea" name="system_prompt" rows="12" cols="72">{{ quick_form.system_prompt if quick_form else '' }}</textarea>
-            {% if errors and errors.system_prompt %}
-            <span class="form-hint form-errors">Submission error: {{ errors.system_prompt | map(attribute="message", default="unknown error") | join(", ") }}</span>
-            {% endif %}
-        </div>
-        <span class="form-hint">Saved to Den and pushed to Letta when sync succeeds. Slug, Letta agent type, and tools are on <a href="/bear/{{ bear.slug | e }}/details/edit">Edit bear</a>.</span>
-        <p><button type="submit">Save</button></p>
-    </form>
+    {% if letta_resync_notice == 'ok' %}
+    <p class="form-hint"><span class="success">Letta was updated from Den.</span></p>
+    {% elif letta_resync_notice == 'error' %}
+    <p class="form-errors">Could not resync Letta. Check that Letta is reachable and the agent is linked.</p>
     {% endif %}
 
-    <h3>Members</h3>
-    {% if members and members | length > 0 %}
-    <ul>
-        {% for m in members %}
-        <li>
-            <strong>{{ m.username | e }}</strong>
-            — {% if m.role == 'admin' %}admin{% elif m.role == 'member' %}member{% elif m.role %}{{ m.role | e }}{% else %}member{% endif %}
+    <section class="two-columns">
+        <div id="overview" class="box full-width">
+            <h3>Overview</h3>
+            <!-- created: {{ bear.created_at | datetimeformat(format="short") }} -->
+            <!-- updated: {{ bear.updated_at | datetimeformat(format="short") }} -->
+            <p class="bear-overview-name"><strong>{{ bear.name | e }}</strong></p>
+            <p><code id="bear-slug" title="{{ bear.id }}">{{ bear.slug | e }}</code></p>
+            <p>{% if bear.description %}{{ bear.description | e }}{% else %}<em>No description.</em>{% endif %}</p>
             {% if is_admin %}
-            <form method="post" action="/bear/{{ bear.slug | e }}/details/members/remove" style="display:inline;">
-                <input type="hidden" name="remove_user_id" value="{{ m.user_id }}" />
-                <button type="submit" onclick="return confirm('Remove this user from the bear?');">Remove</button>
+            <ul class="button-row">
+                <li><a class="button-link" href="/bear/{{ bear.slug | e }}/details/edit/overview">Edit</a></li>
+            </ul>
+            {% endif %}
+        </div>
+        <div id="usage" class="box full-width">
+            <h3>Usage</h3>
+            <p class="caption">People</p>
+            <p class="den-bear-inline-list">{% if members and members | length > 0 %}{% for m in members %}{% if not loop.first %}, {% endif %}{% if m.role == 'admin' %}<strong>{{ m.username | e }}</strong>{% else %}{{ m.username | e }}{% endif %}{% endfor %}{% if is_admin %}, <a href="/bear/{{ bear.slug | e }}/details/access">Manage access</a>{% endif %}{% else %}<em>No members.</em>{% if is_admin %} <a href="/bear/{{ bear.slug | e }}/details/access">Manage access</a>{% endif %}{% endif %}</p>
+            <p class="caption">Active conversations</p>
+            {% if not letta_configured or not bear.letta_agent_id %}
+            <p class="form-hint">Link a Letta agent to list conversations.</p>
+            {% else %}
+            <ul class="den-bear-conv-list">
+                {% for c in conversation_rows %}
+                <li>{{ c.title | e }} — <span class="caption">{{ c.channel_label }}</span>{% if c.last_message_at %} — <span class="caption">{{ c.last_message_at }}</span>{% endif %} — <a href="{{ c.web_href | e }}">Open</a></li>
+                {% else %}
+                <li class="caption">No conversations yet.</li>
+                {% endfor %}
+            </ul>
+            {% if has_archived_conversations %}
+            <p class="form-hint"><a href="/bear/{{ bear.slug | e }}/details/conversations">All conversations</a> (includes archived)</p>
+            {% endif %}
+            {% endif %}
+        </div>
+    </section>
+
+    <section>
+        <div id="prompt" class="box full-width">
+            <h3>System prompt</h3>
+            <p class="caption">Stored in Den (authoritative)</p>
+            {% if letta_agent_fetch_error %}
+            <p class="form-errors">Could not load agent from Letta: {{ letta_agent_fetch_error | e }}</p>
+            {% endif %}
+            {% if is_admin and letta_drift and letta_drift.drift_any %}
+            <p class="form-errors"><strong>Letta is out of sync with Den.</strong> Use resync to overwrite Letta with the values saved here.</p>
+            <form method="post" action="/bear/{{ bear.slug | e }}/details/resync-letta" class="den-bear-resync-form">
+                <p><button type="submit">Resync Letta</button></p>
             </form>
             {% endif %}
-        </li>
-        {% endfor %}
-    </ul>
-    {% else %}
-    <p><em>No members listed.</em></p>
-    {% endif %}
+            <pre class="den-bear-prompt-pre">{{ bear.system_prompt | e }}</pre>
+            {% if is_admin %}
+            <ul class="button-row">
+                <li><a class="button-link" href="/bear/{{ bear.slug | e }}/details/edit/prompt">Edit</a></li>
+            </ul>
+            {% endif %}
+        </div>
+    </section>
 
-    {% if is_admin %}
-    <h4>Add user by username</h4>
-    <form method="post" action="/bear/{{ bear.slug | e }}/details/members/add" class="form-field">
-        <label for="username_add">Username</label>
-        <input id="username_add" name="username" type="text" required maxlength="120" autocomplete="username" />
-        <label for="role_add">Role</label>
-        <select id="role_add" name="role">
-            <option value="member" selected>member</option>
-            <option value="admin">admin</option>
-        </select>
-        <button type="submit">Add or update member</button>
-    </form>
+    <section>
+        <div id="configuration" class="box full-width">
+            <h3>Configuration</h3>
+            <dl class="fields-grid">
+                <dt>Model</dt>
+                <dd>{% if bear.default_model %}{{ bear.default_model | e }}{% else %}<em>none</em>{% endif %}</dd>
+                <dt>Agent type</dt>
+                <dd>{% if bear.letta_agent_type %}{{ bear.letta_agent_type | e }}{% else %}<em>Letta default</em>{% endif %}</dd>
+                <dt>Tools</dt>
+                <dd>{% if letta_tool_ids_display %}<code>{{ letta_tool_ids_display | e }}</code>{% else %}<em>none</em>{% endif %}</dd>
+            </dl>
+            {% if letta_drift and letta_drift.drift_any and is_admin %}
+            <p class="form-hint">{% if letta_drift.model %}Model differs from Letta. {% endif %}{% if letta_drift.agent_type %}Agent type differs from Letta. {% endif %}{% if letta_drift.tools %}Tools differ from Letta.{% endif %}</p>
+            {% endif %}
+            {% if is_admin %}
+            <ul class="button-row">
+                <li><a class="button-link" href="/bear/{{ bear.slug | e }}/details/edit/configuration">Edit</a></li>
+            </ul>
+            {% endif %}
+        </div>
+    </section>
 
-    <h3 style="margin-top: 2rem;">Delete bear</h3>
-    <p class="form-hint">This removes the bear from Den and all memberships. Letta agents are not deleted automatically.</p>
-    <form method="post" action="/bear/{{ bear.slug | e }}/details/delete">
-        <label for="confirm_slug">Type the bear slug <code>{{ bear.slug | e }}</code> to confirm</label>
-        <input id="confirm_slug" name="confirm_slug" type="text" required autocomplete="off" />
-        <p><button type="submit">Delete bear permanently</button></p>
-    </form>
-    {% endif %}
-
-    <h3 style="margin-top: 2rem;">System prompt</h3>
-    {% if letta_agent_summary %}
-    <p class="form-hint">Live from Letta <code>GET /v1/agents/{{ bear.letta_agent_id | e }}</code> (queried on this page load).</p>
-    {% if letta_agent_summary.system %}
-    <pre style="white-space: pre-wrap; max-height: 24rem; overflow: auto;">{{ letta_agent_summary.system | e }}</pre>
-    {% else %}
-    <p><em>No top-level <code>system</code> string on this agent response.</em> Instructions may live only in memory blocks below.</p>
-    {% endif %}
-    <h4>Den database (recovery / reprovision)</h4>
-    <p class="form-hint">Cached in Den for disaster recovery or replacing the Letta server. Edit the bear to change this copy; sync pushes it to Letta when possible.</p>
-    <pre style="white-space: pre-wrap; max-height: 24rem; overflow: auto;">{{ bear.system_prompt | e }}</pre>
-    {% elif bear.letta_agent_id and letta_configured and letta_agent_fetch_error %}
-    <p class="form-errors"><strong>Could not load agent from Letta:</strong> {{ letta_agent_fetch_error | e }}</p>
-    <p>Showing the system prompt last stored in Den only.</p>
-    <pre style="white-space: pre-wrap; max-height: 24rem; overflow: auto;">{{ bear.system_prompt | e }}</pre>
-    {% else %}
-    <p class="form-hint">{% if not letta_configured %}Letta is not configured (<code>LETTA_BASE_URL</code> empty).{% elif not bear.letta_agent_id %}No Letta agent is linked to this bear yet.{% endif %} Showing the Den registry copy.</p>
-    <pre style="white-space: pre-wrap; max-height: 24rem; overflow: auto;">{{ bear.system_prompt | e }}</pre>
-    {% endif %}
-
-    <h3 style="margin-top: 2rem;">Den registry</h3>
-    <dl>
-        <dt>Bear id</dt>
-        <dd><code>{{ bear.id }}</code></dd>
-        <dt>Description</dt>
-        <dd>{% if bear.description %}{{ bear.description | e }}{% else %}<em>none</em>{% endif %}</dd>
-        <dt>Created</dt>
-        <dd>{{ bear.created_at | datetimeformat(format="short") }}</dd>
-        <dt>Updated</dt>
-        <dd>{{ bear.updated_at | datetimeformat(format="short") }}</dd>
-        <dt>Default model</dt>
-        <dd>{% if bear.default_model %}{{ bear.default_model | e }}{% else %}<em>none</em>{% endif %}</dd>
-        <dt>Letta agent type (Den)</dt>
-        <dd>{% if bear.letta_agent_type %}{{ bear.letta_agent_type | e }}{% else %}<em>none (Letta default)</em>{% endif %}</dd>
-        <dt>Letta tool ids (Den)</dt>
-        <dd>{% if letta_tool_ids_display %}<code>{{ letta_tool_ids_display | e }}</code>{% else %}<em>none</em>{% endif %}</dd>
-        <dt>Legacy tools JSON</dt>
-        <dd>{% if tools_json_display %}<pre style="white-space: pre-wrap; max-height: 16rem; overflow: auto;">{{ tools_json_display | e }}</pre>{% else %}<em>none</em>{% endif %}</dd>
-    </dl>
-
-    <h3>Letta agent</h3>
-    {% if not letta_configured %}
-    <p><em>Letta is not configured</em> (<code>LETTA_BASE_URL</code> empty).</p>
-    {% endif %}
-    {% if bear.letta_agent_id %}
-    <p><strong>Stored agent id:</strong> <code>{{ bear.letta_agent_id | e }}</code></p>
-    {% if letta_api_base %}
-    <p class="form-hint">Chat uses Letta <code>POST …/v1/agents/{{ bear.letta_agent_id | e }}/messages/stream</code> (SSE).</p>
-    {% endif %}
-    {% if letta_agent_summary %}
-    <p><em>Summary from Letta</em> <code>GET /v1/agents/{{ bear.letta_agent_id | e }}</code>.</p>
-    <dl>
-        {% if letta_agent_summary.name %}
-        <dt>Name</dt>
-        <dd>{{ letta_agent_summary.name | e }}</dd>
-        {% endif %}
-        {% if letta_agent_summary.agent_type %}
-        <dt>Agent type</dt>
-        <dd><code>{{ letta_agent_summary.agent_type | e }}</code></dd>
-        {% endif %}
-        {% if letta_agent_summary.model %}
-        <dt>Model (Letta)</dt>
-        <dd>{{ letta_agent_summary.model | e }}</dd>
-        {% endif %}
-        {% if letta_memory_blocks_label %}
-        <dt>Memory blocks (count)</dt>
-        <dd>{{ letta_memory_blocks_label | e }}</dd>
-        {% endif %}
-        {% if letta_tools_count_label %}
-        <dt>Tools (count)</dt>
-        <dd>{{ letta_tools_count_label | e }}</dd>
-        {% endif %}
-    </dl>
-    {% endif %}
-    {% else %}
-    <p><em>No Letta agent linked yet.</em></p>
-    {% endif %}
-
-    {% if letta_diagnostics %}
-    <h3>Memory blocks (Letta)</h3>
-    {% if letta_diagnostics.blocks and letta_diagnostics.blocks | length > 0 %}
-    <div class="den-letta-memory-blocks">
-        {% for b in letta_diagnostics.blocks %}
-        <details class="den-letta-memory-block">
-            <summary class="den-letta-memory-block-summary">
-                {% if b.label %}<span class="den-letta-memory-block-label"><strong>{{ b.label | e }}</strong></span>{% else %}<span class="den-letta-memory-block-label"><em>(no label)</em></span>{% endif %}
-                {% if b.id %}<span class="den-letta-memory-block-id"><code>{{ b.id | e }}</code></span>{% endif %}
-                {% if b.char_count %}<span class="den-letta-memory-block-meta">~{{ b.char_count }} chars</span>{% endif %}
-            </summary>
-            <div class="den-letta-memory-block-body">
-                {% if b.content %}
-                <pre class="den-letta-memory-block-pre">{{ b.content | e }}</pre>
-                {% else %}
-                <p class="form-hint"><em>No value in the Letta payload for this block.</em></p>
-                {% endif %}
-            </div>
-        </details>
-        {% endfor %}
-    </div>
-    {% else %}
-    <p><em>No blocks in the Letta response.</em></p>
-    {% endif %}
-    {% elif letta_diag_error %}
-    <p class="form-errors">Could not load Letta diagnostics: {{ letta_diag_error | e }}</p>
-    {% endif %}
+    <section>
+        <div id="memory" class="box full-width">
+            <h3>Memory</h3>
+            {% if letta_diag_error %}
+            <p class="form-errors">Could not load memory from Letta: {{ letta_diag_error | e }}</p>
+            {% elif letta_diagnostics and letta_diagnostics.blocks and letta_diagnostics.blocks | length > 0 %}
+            <ul class="den-bear-memory-summary">
+                {% for b in letta_diagnostics.blocks %}
+                <li>{% if b.label %}{{ b.label | e }}{% else %}<em>(no label)</em>{% endif %}{% if b.char_count %} — ~{{ b.char_count }} chars{% endif %}</li>
+                {% endfor %}
+            </ul>
+            {% else %}
+            <p class="form-hint">No memory blocks in the Letta response.</p>
+            {% endif %}
+            <ul class="button-row">
+                <li><a class="button-link" href="/bear/{{ bear.slug | e }}/details/memory">Details</a></li>
+            </ul>
+        </div>
+    </section>
 </section>
 {% endblock %}

@@ -186,36 +186,65 @@ pub fn validate_default_model_for_letta(
     }
 }
 
-/// Subset of [`NewBearForm`] for inline edits on the bear details page (name, description, model, system prompt).
-/// Slug, Letta agent type, and tool ids are unchanged; use `/bear/{slug}/details/edit` for those.
-#[derive(Validate, Serialize, Deserialize, Debug, Default, Clone)]
-pub struct BearDetailsQuickUpdateForm {
+#[derive(Validate, Serialize, Deserialize, Debug, Clone)]
+pub struct BearOverviewEditForm {
+    #[validate(length(min = 1, max = 120))]
+    pub slug: String,
     #[validate(length(max = 255))]
     pub name: String,
     #[validate(length(max = 2000))]
     pub description: String,
-    #[validate(length(max = 100_000))]
-    pub system_prompt: String,
-    #[validate(length(max = 255))]
-    pub default_model: String,
 }
 
-impl From<&Bear> for BearDetailsQuickUpdateForm {
+impl From<&Bear> for BearOverviewEditForm {
     fn from(bear: &Bear) -> Self {
         Self {
+            slug: bear.slug.clone(),
             name: bear.name.clone(),
             description: bear.description.clone(),
-            system_prompt: bear.system_prompt.clone(),
-            default_model: bear.default_model.clone().unwrap_or_default(),
         }
     }
 }
 
-/// Letta model list for the bear details quick-edit form (same merge rules as the full edit page).
-pub async fn bear_details_quick_edit_context(
+#[derive(Validate, Serialize, Deserialize, Debug, Clone)]
+pub struct BearPromptEditForm {
+    #[validate(length(max = 100_000))]
+    pub system_prompt: String,
+}
+
+impl From<&Bear> for BearPromptEditForm {
+    fn from(bear: &Bear) -> Self {
+        Self {
+            system_prompt: bear.system_prompt.clone(),
+        }
+    }
+}
+
+#[derive(Validate, Serialize, Deserialize, Debug, Clone)]
+pub struct BearConfigurationEditForm {
+    #[validate(length(max = 255))]
+    pub default_model: String,
+    #[validate(length(max = 64))]
+    pub letta_agent_type: String,
+    #[serde(default)]
+    pub letta_tool_ids: Vec<String>,
+}
+
+impl From<&Bear> for BearConfigurationEditForm {
+    fn from(bear: &Bear) -> Self {
+        Self {
+            default_model: bear.default_model.clone().unwrap_or_default(),
+            letta_agent_type: bear.letta_agent_type.clone().unwrap_or_default(),
+            letta_tool_ids: bear.letta_tool_ids.0.clone(),
+        }
+    }
+}
+
+/// Model + tool `<select>`s for `/bear/{slug}/details/edit/configuration`.
+pub async fn bear_configuration_page_context(
     state: &AppState,
-    _bear: &Bear,
-    form: &BearDetailsQuickUpdateForm,
+    bear: &Bear,
+    form: &BearConfigurationEditForm,
 ) -> minijinja::Value {
     let (letta_configured, letta_model_options, letta_models_fetch_error) =
         letta_model_select_context(state).await;
@@ -226,10 +255,47 @@ pub async fn bear_details_quick_edit_context(
     } else {
         letta_model_options
     };
+    let form_tool_ids: Vec<String> = form
+        .letta_tool_ids
+        .iter()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect();
+    let (letta_tools_configured, mut letta_tool_options, letta_tools_fetch_error) =
+        letta_tool_select_context(state).await;
+    if letta_tools_configured {
+        letta_tool_options = ensure_stored_tools_in_options_ids(&form_tool_ids, letta_tool_options);
+    }
+
+    let (letta_diagnostics, letta_agent_fetch_warn): (Option<LettaAgentDiagnostics>, Option<String>) =
+        if state.letta.is_enabled() {
+            if let Some(agent_id) = bear
+                .letta_agent_id
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+            {
+                match state.letta.fetch_agent(agent_id).await {
+                    Ok(v) => (Some(LettaAgentDiagnostics::from_agent_json(&v)), None),
+                    Err(e) => (None, Some(e.to_string())),
+                }
+            } else {
+                (None, None)
+            }
+        } else {
+            (None, None)
+        };
+
     context! {
         letta_configured,
         letta_model_options,
         letta_models_fetch_error,
+        letta_tools_configured,
+        letta_tool_options,
+        letta_tools_fetch_error,
+        letta_agent_type_rows => LETTA_AGENT_TYPE_ROWS,
+        letta_diagnostics => letta_diagnostics,
+        letta_agent_fetch_warn => letta_agent_fetch_warn,
     }
 }
 

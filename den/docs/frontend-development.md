@@ -97,10 +97,25 @@ If a third-party snippet truly requires a tiny inline or embedded style and cann
 src/web/templates/
 ├── base.html              # Base layout
 ├── [feature]/
-│   ├── view.html         # Main template
-│   └── edit.html         # Form template
-└── admin/                # Admin interface
+│   ├── view.html          # Main template (example name)
+│   └── edit.html          # Single-form edit (example name)
+├── bear/                  # Member-facing bear UI (example of split edits)
+│   ├── details.html       # “Home” for a bear: boxed sections
+│   ├── edit_overview.html
+│   ├── edit_prompt.html
+│   ├── edit_configuration.html
+│   ├── access.html
+│   ├── conversations.html
+│   └── memory.html
+├── bear_chat.html         # Standalone document (see [Bear chat](#bear-chat-deep-chat))
+└── admin/                 # Admin interface
 ```
+
+Prefer **several small templates** (each with a clear `POST` target) over one monolithic edit page when the domain splits into overview / prompt / configuration / access. Reuse [`forms.jinja`](../src/web/templates/forms.jinja) macros for labelled fields and validation messages.
+
+### Bear member pages (extends `base.html`)
+
+The [`bear/`](../src/web/templates/bear/) templates illustrate the **boxed** layout: [`common.css`](../src/web/assets/css/common.css) `.box` (often `.full-width` inside a column), `section.two-columns` from [`layout.css`](../src/web/assets/css/layout.css), and `.button-row` + `.button-link` for “Edit” / “Details” actions. Bear-specific layout tweaks use scoped classes in [`specifics.css`](../src/web/assets/css/specifics.css) (for example `den-bear-*`), not page-local `<style>` blocks.
 
 ## Bear chat (Deep Chat)
 
@@ -109,6 +124,8 @@ End-user chat is a **standalone MiniJinja document** (it does not extend `base.h
 | Route | Source |
 |-------|--------|
 | `GET /bear/{slug}` | [`src/web/templates/bear_chat.html`](../src/web/templates/bear_chat.html) (handler in [`bear_chat.rs`](../src/web/bear_chat.rs)) |
+
+Optional query **`conversation_id`** — when set (for example `conv-…` from bear details links), the page script selects that Letta thread instead of `default`.
 
 **Behavior to preserve**
 
@@ -140,6 +157,7 @@ End-user chat is a **standalone MiniJinja document** (it does not extend `base.h
 4. ✅ Add styles using CSS variables in `src/web/assets/css/` — not in template `<style>` blocks
 5. ✅ Add minimal JavaScript if needed
 6. ✅ Test without JavaScript
+7. ✅ For new **web routes**, update [`ROUTES.md`](../src/web/ROUTES.md) in the same change
 
 ### Code Review Checklist
 - [ ] No inline CSS styles on elements
@@ -150,6 +168,7 @@ End-user chat is a **standalone MiniJinja document** (it does not extend `base.h
 - [ ] Minimal JavaScript
 - [ ] Descriptive CSS comments
 - [ ] Semantic HTML
+- [ ] New or changed **web routes** documented in [`ROUTES.md`](../src/web/ROUTES.md)
 
 ## Design System
 
@@ -194,7 +213,8 @@ Follow existing admin template patterns in `src/web/templates/admin/`
 
 **CSS Variables**: Check `src/web/assets/css/style.css` for complete list
 **Existing Classes**: Browse `src/web/assets/css/` files before creating new ones
-**Template Examples**: Look at `src/web/templates/` for patterns
+**Template Examples**: Look at `src/web/templates/` for patterns; member-facing **boxed** flows: [`src/web/templates/bear/`](../src/web/templates/bear/)
+**Web routes index**: [`ROUTES.md`](../src/web/ROUTES.md)
 **MiniJinja limits**: [`minijinja-template-limitations.md`](minijinja-template-limitations.md)
 
 **Remember**: When in doubt, keep it simple and follow existing patterns!

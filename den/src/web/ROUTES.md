@@ -24,9 +24,15 @@ Axum routes for the web server (`RUN_WEB=true`). Update this file when you add o
 ## Member bear management (`src/web/bear_management.rs`)
 
 - `GET|POST /bears/new` — create a bear; creator is granted `user_bear.role = admin` and Letta is provisioned like operator create (`src/web/bear_create_support.rs` shared form context)
-- `GET /bear/{slug}/details` — bear overview for any member: Den fields, members (roles), Letta agent summary + memory block list when configured; bear admins see an inline form for name, description, default model, and system prompt (Letta queried each visit)
-- `POST /bear/{slug}/details/update` — save inline fields from the details page (bear admins only); slug / Letta agent type / tools unchanged (use `/bear/{slug}/details/edit` for those)
-- `GET|POST /bear/{slug}/details/edit` — edit bear (bear admins only); same fields as operator edit
+- `GET /bear/{slug}/details` — bear home: boxed overview (name, slug, description), usage (members + active conversations, all **Web** for now), system prompt (Den copy + optional resync), configuration (model, agent type, tools), memory summary; optional query `letta_resync=ok|error` after resync attempts
+- `POST /bear/{slug}/details/resync-letta` — push Den registry to Letta (`PATCH` agent + recompile); bear admins only; redirects back to details
+- `GET /bear/{slug}/details/edit` — redirect to `/bear/{slug}/details/edit/overview`
+- `GET|POST /bear/{slug}/details/edit/overview` — edit slug, name, description; delete bear form (POST still targets `/bear/{slug}/details/delete`)
+- `GET|POST /bear/{slug}/details/edit/prompt` — edit system prompt only (bear admins)
+- `GET|POST /bear/{slug}/details/edit/configuration` — edit model, Letta agent type, tool ids (bear admins)
+- `GET /bear/{slug}/details/access` — manage members (add/remove); bear admins only
+- `GET /bear/{slug}/details/conversations` — all conversations including archived (Letta); membership required
+- `GET /bear/{slug}/details/memory` — memory block details from Letta
 - `POST /bear/{slug}/details/delete` — delete bear row (bear admins only); form field `confirm_slug` must match the slug
 - `POST /bear/{slug}/details/members/add` — add or update a user by username (`username`, `role` = `member` or `admin`) — bear admins only
 - `POST /bear/{slug}/details/members/remove` — remove membership (`remove_user_id`) — bear admins only; cannot remove the last admin

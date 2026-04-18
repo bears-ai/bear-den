@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+
+{% block title %}Bear access · {{ bear.name | e }}{% endblock %}
+
+{% block content %}
+<section>
+    <h2>Manage access</h2>
+    <p><a href="/bear/{{ bear.slug | e }}/details">Back to bear</a></p>
+
+    <div class="box full-width">
+        <h3>Members</h3>
+        {% if members and members | length > 0 %}
+        <ul>
+            {% for m in members %}
+            <li>
+                <strong>{{ m.username | e }}</strong>
+                — {% if m.role == 'admin' %}admin{% elif m.role == 'member' %}member{% elif m.role %}{{ m.role | e }}{% else %}member{% endif %}
+                <form method="post" action="/bear/{{ bear.slug | e }}/details/members/remove" style="display:inline;">
+                    <input type="hidden" name="remove_user_id" value="{{ m.user_id }}" />
+                    <button type="submit" onclick="return confirm('Remove this user from the bear?');">Remove</button>
+                </form>
+            </li>
+            {% endfor %}
+        </ul>
+        {% else %}
+        <p><em>No members listed.</em></p>
+        {% endif %}
+
+        <h4>Add user by username</h4>
+        <form method="post" action="/bear/{{ bear.slug | e }}/details/members/add" class="form-field">
+            <label for="username_add">Username</label>
+            <input id="username_add" name="username" type="text" required maxlength="120" autocomplete="username" />
+            <label for="role_add">Role</label>
+            <select id="role_add" name="role">
+                <option value="member" selected>member</option>
+                <option value="admin">admin</option>
+            </select>
+            <button type="submit">Add or update member</button>
+        </form>
+    </div>
+</section>
+{% endblock %}

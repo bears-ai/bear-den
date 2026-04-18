@@ -1,8 +1,6 @@
 // ROUTES: When modifying routes in this file, update /src/web/ROUTES.md
 //! End-user JSON + SSE under `/v1/*` (session cookie, same origin as Deep Chat).
 
-use std::cmp::Ordering;
-
 use axum::{
     Json, Router,
     body::Body,
@@ -20,10 +18,7 @@ use uuid::Uuid;
 use crate::{
     auth_backend::{AuthSession, Backend},
     core::bears::db::{self as bears_db, role_is_bear_admin},
-    core::letta::{
-        LettaClient, display_conversation_title, first_user_message_text_for_title,
-        is_acceptable_derived_title, is_meaningful_conversation_title, UNTITLED_THREAD,
-    },
+    core::letta::load_agent_conversations,
     errors::CustomError,
     web::AppState,
 };
@@ -117,78 +112,6 @@ pub struct ChatHistoryResponse {
     pub next_before: Option<String>,
 }
 
-fn letta_conversations_top_array<'a>(v: &'a serde_json::Value) -> &'a [serde_json::Value] {
-    if let Some(a) = v.as_array() {
-        return a.as_slice();
-    }
-    if let Some(a) = v.get("conversations").and_then(|x| x.as_array()) {
-        return a.as_slice();
-    }
-    if let Some(a) = v.get("data").and_then(|x| x.as_array()) {
-        return a.as_slice();
-    }
-    if let Some(a) = v.get("items").and_then(|x| x.as_array()) {
-        return a.as_slice();
-    }
-    &[]
-}
-
-/// Hide rows that look archived (Letta may extend the schema; Den may add flags later).
-fn conversation_is_archived(v: &serde_json::Value) -> bool {
-    v.get("archived").and_then(|x| x.as_bool()) == Some(true)
-        || v.get("is_archived").and_then(|x| x.as_bool()) == Some(true)
-        || v.get("deleted").and_then(|x| x.as_bool()) == Some(true)
-        || v.get("hidden").and_then(|x| x.as_bool()) == Some(true)
-        || v.get("status").and_then(|x| x.as_str()) == Some("archived")
-}
-
-fn cmp_conversation_row_newest_first(a: &ChatConversationRow, b: &ChatConversationRow) -> Ordering {
-    match (&a.last_message_at, &b.last_message_at) {
-        (Some(al), Some(bl)) => bl.cmp(al),
-        (None, Some(_)) => Ordering::Greater,
-        (None, None) => a.id.cmp(&b.id),
-        (Some(_), None) => Ordering::Less,
-    }
-}
-
-/// Thread label for `conv-…` rows: Letta `summary` when human-usable, else derived from the first
-/// meaningful user message; persists a generated title via Letta when appropriate.
-async fn resolve_conversation_row_title(
-    letta: &LettaClient,
-    item: &serde_json::Value,
-    conv_id: &str,
-) -> String {
-    let summary = item.get("summary").and_then(|x| x.as_str());
-    if is_meaningful_conversation_title(summary, conv_id) {
-        return summary.unwrap().trim().to_string();
-    }
-
-    let body = match letta
-        .list_conversation_messages(conv_id, None, 100, None, true)
-        .await
-    {
-        Ok(b) => b,
-        Err(e) => {
-            tracing::warn!(%e, %conv_id, "list messages for conversation title failed");
-            return display_conversation_title(summary, conv_id, None);
-        }
-    };
-
-    let first_user = first_user_message_text_for_title(&body);
-    let title = display_conversation_title(summary, conv_id, first_user.as_deref());
-
-    let should_persist =
-        title != UNTITLED_THREAD && is_acceptable_derived_title(&title, conv_id);
-
-    if should_persist {
-        if let Err(e) = letta.patch_conversation_summary(conv_id, &title).await {
-            tracing::warn!(%e, %conv_id, "patch conversation summary (title) failed");
-        }
-    }
-
-    title
-}
-
 /// `None` / empty / `default` → agent main thread. Otherwise must be `conv-` + hex / hyphen (Letta id).
 fn normalize_client_conversation_id(raw: Option<&str>) -> Result<String, CustomError> {
     let s = raw.map(str::trim).filter(|s| !s.is_empty()).unwrap_or("default");
@@ -254,77 +177,18 @@ async fn chat_conversations(
         return Ok(default_only());
     };
 
-    let mut rows: Vec<ChatConversationRow> = Vec::new();
+    let snap = load_agent_conversations(state.letta.as_ref(), agent_id).await;
+    let conversations: Vec<ChatConversationRow> = snap
+        .active
+        .into_iter()
+        .map(|r| ChatConversationRow {
+            id: r.id,
+            title: r.title,
+            last_message_at: r.last_message_at,
+        })
+        .collect();
 
-    let default_last = match state
-        .letta
-        .list_conversation_messages("default", Some(agent_id), 1, None, false)
-        .await
-    {
-        Ok(peek) => letta_messages_top_array(&peek)
-            .first()
-            .and_then(|m| {
-                m.get("date")
-                    .or_else(|| m.get("created_at"))
-                    .and_then(|x| x.as_str())
-                    .map(|s| s.to_string())
-            }),
-        Err(e) => {
-            tracing::warn!(%e, "default conversation activity peek failed");
-            None
-        }
-    };
-
-    rows.push(ChatConversationRow {
-        id: "default".to_string(),
-        title: "Main chat".to_string(),
-        last_message_at: default_last,
-    });
-
-    match state.letta.list_conversations_for_agent(agent_id, 100).await {
-        Ok(list_body) => {
-            for item in letta_conversations_top_array(&list_body) {
-                if conversation_is_archived(item) {
-                    continue;
-                }
-                let Some(id) = item
-                    .get("id")
-                    .and_then(|x| x.as_str())
-                    .map(str::trim)
-                    .filter(|s| !s.is_empty())
-                else {
-                    continue;
-                };
-                if !id.starts_with("conv-") {
-                    continue;
-                }
-                let last_message_at = item
-                    .get("last_message_at")
-                    .and_then(|x| x.as_str())
-                    .map(|s| s.to_string())
-                    .or_else(|| {
-                        item.get("updated_at")
-                            .and_then(|x| x.as_str())
-                            .map(|s| s.to_string())
-                    });
-                let title = resolve_conversation_row_title(&state.letta, item, id).await;
-                rows.push(ChatConversationRow {
-                    id: id.to_string(),
-                    title,
-                    last_message_at,
-                });
-            }
-        }
-        Err(e) => {
-            tracing::warn!(%e, "list conversations failed; returning Main chat only");
-        }
-    }
-
-    rows.sort_by(cmp_conversation_row_newest_first);
-
-    Ok(Json(ChatConversationsResponse {
-        conversations: rows,
-    }))
+    Ok(Json(ChatConversationsResponse { conversations }))
 }
 
 async fn chat_history(

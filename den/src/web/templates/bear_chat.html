@@ -37,7 +37,10 @@
     var BEAR_ID   = "{{ bear_id | e }}";
     var BEAR_NAME = "{{ bear_name | e }}";
     /** Letta conversation id (`default` = agent main thread, or `conv-…`). */
-    var CONVERSATION_ID = 'default';
+    var CONVERSATION_ID = (function () {
+      var p = new URLSearchParams(window.location.search).get('conversation_id');
+      return p && p.trim() ? p.trim() : 'default';
+    })();
     var errEl = document.getElementById('err');
     /** Page size for Letta `GET …/messages` (newest page first; scroll up loads older). */
     var DEN_HISTORY_PAGE = 50;
