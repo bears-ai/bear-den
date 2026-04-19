@@ -42,7 +42,7 @@
 
 <h3>Letta agent</h3>
 {% if not letta_configured %}
-<p><em>Letta is not configured on this Den instance</em> (<code>LETTA_BASE_URL</code> empty). Stored agent id, if any, is not verified against Letta.</p>
+<p><em>Letta API is not configured on this Den instance</em> (<code>LETTA_API_BASE_URL</code> empty). Stored agent id, if any, is not verified against Letta.</p>
 {% endif %}
 
 {% if bear.letta_agent_id %}

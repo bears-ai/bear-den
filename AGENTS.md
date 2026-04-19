@@ -41,6 +41,7 @@ When proposing gateways, proxies, or operators, **favor file- or repo-driven con
 | Phase 1 Den build (bootstrap → operator console) | [docs/planning/PHASE1_BOOTSTRAP.md](docs/planning/PHASE1_BOOTSTRAP.md) |
 | Coolify deployment | [docs/deployment/DEPLOYMENT.md](docs/deployment/DEPLOYMENT.md) |
 | Garage (S3 object storage) | [services/garage/COOLIFY_DEPLOY.md](services/garage/COOLIFY_DEPLOY.md) |
+| Letta Code harness (`letta server`, `LETTA_CODE_BASE_URL`) | [services/letta-code/COOLIFY_DEPLOY.md](services/letta-code/COOLIFY_DEPLOY.md) |
 | Stack one-pager | [docs/architecture/ARCHITECTURE_NOTES.md](docs/architecture/ARCHITECTURE_NOTES.md) |
 | Den + self-hosted Letta (multi-user web) | [docs/architecture/DEN_ARCHITECTURE.md](docs/architecture/DEN_ARCHITECTURE.md) |
 | Dynamic skills & reflection subagents | [docs/dynamic-skills-subagents-adr.md](docs/dynamic-skills-subagents-adr.md) |

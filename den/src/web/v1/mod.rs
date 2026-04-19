@@ -164,7 +164,7 @@ async fn chat_conversations(
         })
     };
 
-    if !state.letta.is_enabled() {
+    if !state.letta.is_code_runtime_configured() {
         return Ok(default_only());
     }
 
@@ -221,7 +221,7 @@ async fn chat_history(
         })
     };
 
-    if !state.letta.is_enabled() {
+    if !state.letta.is_code_runtime_configured() {
         return Ok(empty());
     }
 
@@ -445,9 +445,9 @@ async fn chat_send(
         ));
     }
 
-    if !state.letta.is_enabled() {
+    if !state.letta.is_code_runtime_configured() {
         return Err(CustomError::System(
-            "Chat is unavailable: LETTA_BASE_URL is not set".to_string(),
+            "Chat is unavailable: LETTA_CODE_BASE_URL is not set (web chat uses only Letta Code; set LETTA_API_BASE_URL separately for provisioning)".to_string(),
         ));
     }
 

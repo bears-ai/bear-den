@@ -13,7 +13,7 @@
 - Coolify v4+
 - A **PostgreSQL** instance (Coolify managed database, external managed Postgres, or another service on a shared Docker network).
 - **Git** access to this monorepo if you use the **Dockerfile** build pack (recommended for GitOps).
-- **Letta** (and **Bifrost**) when you enable bear provisioning and chat proxying — set `LETTA_BASE_URL` (and `LETTA_API_KEY` when Letta enforces auth). Cross-service hostnames follow your Coolify stack naming (for example the internal hostname shown on the Letta resource).
+- **Letta** (and **Bifrost**) when you enable bear provisioning and chat — set **`LETTA_API_BASE_URL`** (Letta HTTP API for agents/provisioning) and **`LETTA_CODE_BASE_URL`** (Letta Code harness for web chat; required for `/v1/chat/*`), plus **`LETTA_API_KEY`** when Letta enforces auth. Cross-service hostnames follow your Coolify stack naming (for example the internal hostname shown on the Letta resource).
 
 ---
 
@@ -83,8 +83,10 @@ Integrations (set when you wire the rest of the stack):
 
 | Variable | Notes |
 | -------- | ----- |
-| `LETTA_BASE_URL` | Internal base URL for Letta (no trailing slash), for example `http://bears-letta:8283`. |
+| `LETTA_API_BASE_URL` | Internal base URL for the **Letta HTTP API** (no trailing slash), e.g. `http://bears-letta:8283`. Provisioning, agent CRUD, operator health, memory/agent inspection — **not** used for browser chat. |
 | `LETTA_API_KEY` | Bearer token when Letta is configured with `LETTA_SERVER_PASS` / API auth. |
+| `LETTA_CODE_BASE_URL` | **Required for web chat.** Base URL for the **Letta Code** harness endpoints Den calls for `/v1/conversations/...` (list, history, SSE). Den does **not** fall back to `LETTA_API_BASE_URL` for chat. |
+| `LETTA_CODE_API_KEY` | Optional Bearer token for `LETTA_CODE_BASE_URL` (defaults to `LETTA_API_KEY` when empty). |
 
 Mail, OAuth, and other keys are documented in [`.env.example`](.env.example) and [`docs/deploy.md`](docs/deploy.md).
 
@@ -124,7 +126,7 @@ Use **Deploy** / **Redeploy** on the resource. Watch **Build logs** for compile 
 ### 10. Networking with Letta and Bifrost
 
 - If Den and Letta are **different** Coolify resources, attach them to a **shared Docker network** (Coolify’s “connect to predefined network” / equivalent) so internal DNS names resolve.
-- Set `LETTA_BASE_URL` to Letta’s **internal** URL (scheme + host + port, no path suffix).
+- Set **`LETTA_API_BASE_URL`** to the Letta server’s **internal** URL (scheme + host + port, no path suffix). Set **`LETTA_CODE_BASE_URL`** to the **`letta server`** harness HTTP base — a **separate** deployment ([`../services/letta-code/COOLIFY_DEPLOY.md`](../services/letta-code/COOLIFY_DEPLOY.md)); pin versions so the harness exposes the `/v1/conversations/*` contract Den expects.
 - Operator-facing Bifrost integration (when present in your build) is configured via env keys documented in [`.env.example`](.env.example); align hostnames with your Bifrost service name inside Coolify.
 
 ---
@@ -183,7 +185,8 @@ After deploy:
 | **Build killed / exit 255 with no compiler error** | Likely OOM during the Rust link step. Switch to **Option B** (CI-built image) or add swap / RAM to the build host. |
 | **Container exits immediately** | **Logs** — missing or invalid `DATABASE_URL`, or a **migration error** (DDL permissions, broken migration, incompatible existing schema). |
 | **Running but `/health/ready` is 503** | Database credentials or network from the Den container to Postgres; if the process exits instead, check logs for migration failures. |
-| **Letta provisioning fails** | `LETTA_BASE_URL` scheme/host/port; shared network with Letta; `LETTA_API_KEY` matches Letta’s server password / auth configuration. |
+| **Letta provisioning fails** | `LETTA_API_BASE_URL` scheme/host/port; shared network with Letta; `LETTA_API_KEY` matches Letta’s server password / auth configuration. |
+| **Web chat fails / “LETTA_CODE_BASE_URL not set”** | Set `LETTA_CODE_BASE_URL` (and optional `LETTA_CODE_API_KEY`); chat does not use `LETTA_API_BASE_URL`. |
 | **Sessions or redirects wrong** | `WEB_SERVER_URL` / `API_SERVER_URL` and (if used) `SESSION_COOKIE_DOMAIN` must match the URLs users actually use. |
 
 ---

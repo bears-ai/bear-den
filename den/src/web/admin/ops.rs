@@ -34,11 +34,11 @@ struct LettaHealthJson {
 }
 
 async fn letta_health_json(State(state): State<AppState>) -> Json<LettaHealthJson> {
-    if !state.letta.is_enabled() {
+    if !state.letta.is_api_configured() {
         return Json(LettaHealthJson {
             ok: false,
             status: "disabled",
-            detail: "LETTA_BASE_URL is not set — provisioning and chat proxy are off.".to_string(),
+            detail: "LETTA_API_BASE_URL is not set — Letta API (provisioning, agent CRUD) is off.".to_string(),
         });
     }
     match state.letta.check_health().await {
@@ -65,10 +65,10 @@ async fn letta_code_harness_page(
         .filter(|r| r.letta_agent_id.is_none())
         .count();
     let yaml = letta_code_harness::render_letta_code_harness_yaml(
-        state.config.letta_base_url.as_str(),
+        state.config.letta_api_base_url.as_str(),
         &rows,
     )?;
-    let letta_configured = state.letta.is_enabled();
+    let letta_configured = state.letta.is_api_configured();
 
     web::render_template(
         &state,
@@ -86,7 +86,7 @@ async fn letta_code_harness_page(
 async fn letta_code_harness_yaml_download(State(state): State<AppState>) -> Result<Response, CustomError> {
     let rows = bears_db::list_letta_code_harness_rows(state.sqlx_pool()).await?;
     let yaml = letta_code_harness::render_letta_code_harness_yaml(
-        state.config.letta_base_url.as_str(),
+        state.config.letta_api_base_url.as_str(),
         &rows,
     )?;
 

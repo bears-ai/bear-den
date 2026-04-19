@@ -51,13 +51,13 @@ struct ChannelUsers {
 /// Build YAML for Letta Code harness deployment. One `agents[]` entry per `(user, bear)` membership where the bear
 /// has a Letta agent id.
 pub fn render_letta_code_harness_yaml(
-    letta_base_url: &str,
+    letta_api_base_url: &str,
     rows: &[LettaCodeHarnessRow],
 ) -> Result<String, CustomError> {
-    let base_url = if letta_base_url.trim().is_empty() {
+    let base_url = if letta_api_base_url.trim().is_empty() {
         "http://bears-letta:8283"
     } else {
-        letta_base_url.trim_end_matches('/')
+        letta_api_base_url.trim_end_matches('/')
     };
 
     let mut agents: Vec<AgentEntry> = rows

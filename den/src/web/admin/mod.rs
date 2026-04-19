@@ -32,17 +32,17 @@ async fn admin_home(
 ) -> Result<Response, CustomError> {
     let users = user::db::get_users(&state.sqlx_pool).await?;
 
-    let (letta_status, letta_detail) = if !state.letta.is_enabled() {
+    let (letta_status, letta_detail) = if !state.letta.is_api_configured() {
         (
             "not_configured",
-            "Set LETTA_BASE_URL (and LETTA_API_KEY if required) for provisioning and chat."
+            "Set LETTA_API_BASE_URL (and LETTA_API_KEY if required) for provisioning and agent APIs; set LETTA_CODE_BASE_URL for web chat."
                 .to_string(),
         )
     } else {
         match state.letta.check_health().await {
             Ok(_) => (
                 "ok",
-                "GET /v1/health succeeded — same check Den uses before provisioning.".to_string(),
+                "GET /v1/health on Letta API succeeded — same check Den uses before provisioning.".to_string(),
             ),
             Err(e) => ("error", e.to_string()),
         }

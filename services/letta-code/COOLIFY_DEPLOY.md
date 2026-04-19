@@ -28,7 +28,22 @@ Self-hosted Letta: set **`LETTA_BASE_URL`** to your Letta API origin (see below)
 ## Prerequisites
 
 - **Letta** reachable at an internal URL (e.g. `http://bears-letta:8283`) with auth configured (`LETTA_SERVER_PASS` or your image’s equivalent).
-- Coolify (or equivalent) with a **shared network** so **Den** can HTTP(S) to **`bears-letta-code`** at **`LETTA_CODE_BASE_URL`**.
+- Coolify (or equivalent) with a **shared network** so **Den**, **Letta**, and **`bears-letta-code`** share DNS names on the same project/network.
+
+## Ports and validation (Coolify)
+
+**BEARS rule:** browser chat is **only** **Den → Letta Code (harness HTTP) → Letta**. **`LETTA_CODE_BASE_URL`** must be the **harness** origin that serves Den’s conversation/streaming calls — **not** a shortcut to the Letta container for chat, even if the Letta image also implements similar paths for other clients.
+
+Use this table to separate **ops checks** from **chat-path checks**:
+
+| Service | Role | Inbound HTTP? | Typical validation |
+|---------|------|----------------|---------------------|
+| **Letta** (`bears-letta`) | Persistence + **Letta API** for provisioning (`LETTA_API_BASE_URL`): health, agents, tools, blocks. | **Yes** — **8283** | `curl …/v1/health` against **`LETTA_API_BASE_URL`**. Use this to confirm Letta is up — **not** to substitute for the harness chat contract. |
+| **Letta Code** (`bears-letta-code`) | **Harness** Den uses for web chat (`LETTA_CODE_BASE_URL`): **`/v1/conversations/…`**, SSE, etc. | **Must** expose the HTTP listener Den expects on a **harness-only** host/port (e.g. `bears-letta-code:<port>`). | From the **same network as Den**: `curl` the **harness** base URL + `/v1/conversations/?…` (see **Integration contract**). Publish **that** port in Coolify if you need access from outside the stack (prefer internal-only + VPN). |
+
+**Why a published port on `bears-letta-code` might still refuse connections:** the pinned **`@letta-ai/letta-code`** build may not yet bind an HTTP server for those routes (the CLI’s `letta server` path also maintains **outbound** WebSocket / registration to **`LETTA_BASE_URL`**). That does **not** change the architecture: chat still **must** go through the harness layer. Close the gap by **upgrading** to a Letta Code release that exposes the harness HTTP surface Den’s client expects, or by a **BEARS-side adapter** in front of the harness process — **do not** point **`LETTA_CODE_BASE_URL`** at the Letta service to “make curl work”; that would bypass the harness and violate the pipeline above.
+
+**Until the harness listens on HTTP:** validate the container with **logs** (registration, `Connected`, `--debug` WebSocket lines) and track the integration in your release notes; **`LETTA_CODE_BASE_URL`** remains the URL you will assign to the **harness HTTP** listener once it is available.
 
 ## Deployment options
 
@@ -101,6 +116,7 @@ See [`den/.env.example`](../../den/.env.example) and [`den/COOLIFY_DEPLOY.md`](.
 
 | Symptom | What to check |
 |---------|----------------|
+| **Connection refused** curling **`bears-letta-code`** | Harness HTTP may not be bound yet for this CLI version, or the wrong **port** is published. Confirm **logs**; align **`LETTA_CODE_BASE_URL`** with the **harness** listener only — do not use Letta **8283** for chat. Use **`LETTA_API_BASE_URL`** + `/v1/health` only to check the Letta server. |
 | Den: “`LETTA_CODE_BASE_URL` not set” | Set harness URL on Den; chat never uses `LETTA_API_BASE_URL`. |
 | 401/403 from harness | Align **`LETTA_API_KEY`** on the Letta Code container with Letta’s **`LETTA_SERVER_PASS`** (or your auth scheme). |
 | Harness cannot reach Letta | **`LETTA_BASE_URL`** must use the **internal** Docker hostname of the Letta service; no `localhost` inside the container unless using host networking. |

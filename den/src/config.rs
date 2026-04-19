@@ -54,10 +54,17 @@ pub struct Config {
     /// Public base URL for the **API** service (no trailing slash).
     pub api_server_url: String,
 
-    /// Letta server base URL (no trailing slash), e.g. `http://letta:8283`. Empty = provisioning/chat proxy disabled.
-    pub letta_base_url: String,
-    /// Optional `Authorization: Bearer` value for Letta (omit when local Letta has no auth).
+    /// Self-hosted **Letta HTTP API** base URL (no trailing slash), e.g. `http://letta:8283`.
+    /// Used for agent provisioning, CRUD, models/tools, operator health, and memory/agent inspection — **not** for browser chat (see [`letta_code_base_url`](Self::letta_code_base_url)).
+    pub letta_api_base_url: String,
+    /// Optional `Authorization: Bearer` value for [`letta_api_base_url`](Self::letta_api_base_url) (omit when Letta has no auth).
     pub letta_api_key: String,
+
+    /// **Letta Code** (harness) base URL for **web chat only**: conversations list, message history, SSE `POST /v1/chat/send`.
+    /// Required for `/v1/chat/*` and conversation UIs; Den does **not** fall back to [`letta_api_base_url`](Self::letta_api_base_url) for chat.
+    pub letta_code_base_url: String,
+    /// Optional Bearer token for `letta_code_base_url` (falls back to `letta_api_key` when empty).
+    pub letta_code_api_key: String,
 
     /// S3-compatible endpoint (e.g. `http://bears-garage:3900`). Empty = media upload disabled.
     pub s3_endpoint: String,
@@ -220,11 +227,27 @@ impl Config {
             })
         });
 
-        let letta_base_url = std::env::var("LETTA_BASE_URL")
+        let mut letta_api_base_url = std::env::var("LETTA_API_BASE_URL")
             .unwrap_or_default()
             .trim_end_matches('/')
             .to_string();
+        if letta_api_base_url.is_empty() {
+            letta_api_base_url = std::env::var("LETTA_BASE_URL")
+                .unwrap_or_default()
+                .trim_end_matches('/')
+                .to_string();
+            if !letta_api_base_url.is_empty() {
+                tracing::warn!(
+                    "LETTA_BASE_URL is deprecated; rename to LETTA_API_BASE_URL (same value — Letta HTTP API for provisioning and agent APIs only)"
+                );
+            }
+        }
         let letta_api_key = std::env::var("LETTA_API_KEY").unwrap_or_default();
+        let letta_code_base_url = std::env::var("LETTA_CODE_BASE_URL")
+            .unwrap_or_default()
+            .trim_end_matches('/')
+            .to_string();
+        let letta_code_api_key = std::env::var("LETTA_CODE_API_KEY").unwrap_or_default();
 
         let s3_endpoint = std::env::var("S3_ENDPOINT")
             .unwrap_or_default()
@@ -287,8 +310,10 @@ impl Config {
             api_port,
             web_server_url,
             api_server_url,
-            letta_base_url,
+            letta_api_base_url,
             letta_api_key,
+            letta_code_base_url,
+            letta_code_api_key,
             s3_endpoint,
             s3_bucket,
             s3_region,
@@ -344,8 +369,10 @@ impl Config {
             api_port: 3001,
             web_server_url: "http://localhost:3000".into(),
             api_server_url: "http://localhost:3001".into(),
-            letta_base_url: String::new(),
+            letta_api_base_url: String::new(),
             letta_api_key: String::new(),
+            letta_code_base_url: String::new(),
+            letta_code_api_key: String::new(),
             s3_endpoint: String::new(),
             s3_bucket: String::new(),
             s3_region: "garage".into(),

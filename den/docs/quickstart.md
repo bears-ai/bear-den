@@ -43,3 +43,13 @@ The schema is applied automatically on startup from `migrations/`. For **`SQLX_O
 ## Shutdown
 
 **Ctrl+C** is honored on all platforms; **SIGTERM** triggers graceful shutdown on **Unix** only.
+
+## Periodic integration smoke (web chat)
+
+Run this occasionally after meaningful changes to auth, `/v1/chat/*`, or Letta wiring.
+
+1. Start the web server (`RUN_WEB=true`, valid `DATABASE_URL`). For real chat replies, set **`LETTA_CODE_BASE_URL`** (web chat only) and typically **`LETTA_API_BASE_URL`** (provisioning / agent APIs); see [`.env.example`](../.env.example).
+2. **`GET /health`** and **`GET /health/ready`** should return **200**.
+3. **Session + chat:** log in (e.g. bootstrap `admin` / password from [migrations README](../migrations/README.md)), ensure the account is a **member** of a bear with a non-empty **`letta_agent_id`**, then **`POST /v1/chat/send`** with JSON `{ "bear_id", "message", "conversation_id": "default" }` and the session cookie — expect **200** and **`text/event-stream`** with `data:` JSON lines (see [`src/web/templates/bear_chat.html`](../src/web/templates/bear_chat.html)). If you only have operator access, use **`GET /su/{user_id}`** as site admin to act as a member user for the check.
+
+Without **`LETTA_CODE_BASE_URL`**, chat endpoints return a clear configuration error (Den does not use **`LETTA_API_BASE_URL`** for chat). Without **`LETTA_API_BASE_URL`**, provisioning and agent-memory views against Letta are disabled — that is still useful to confirm routing and membership checks.

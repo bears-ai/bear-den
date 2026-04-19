@@ -64,7 +64,7 @@ async fn bear_detail_response(
 
     let member_count = bears_db::count_bear_members(state.sqlx_pool(), id).await?;
 
-    let letta_api_base = state.config.letta_base_url.trim().to_string();
+    let letta_api_base = state.config.letta_api_base_url.trim().to_string();
     let letta_configured = state.letta.is_enabled();
 
     let (letta_agent_summary, letta_agent_fetch_error): (Option<AgentSummary>, Option<String>) =
@@ -217,7 +217,7 @@ async fn unlinked_letta_agents_view(
 
     if !state.letta.is_enabled() {
         letta_list_error = Some(
-            "Letta is not configured (set LETTA_BASE_URL). Listing requires Letta."
+            "Letta is not configured (set LETTA_API_BASE_URL). Listing requires Letta."
                 .to_string(),
         );
     } else {
@@ -623,7 +623,7 @@ async fn retry_letta_action(
         .ok_or_else(|| CustomError::NotFound("bear not found".to_string()))?;
 
     let letta_retry_message = if !state.letta.is_enabled() {
-        "Letta is not configured (set LETTA_BASE_URL).".to_string()
+        "Letta is not configured (set LETTA_API_BASE_URL).".to_string()
     } else if bear.letta_agent_id.is_some() {
         format!(
             "This bear already has a Letta agent ({}). No new agent was created.",

@@ -28,12 +28,16 @@ pub struct LettaAgentListItem {
     pub name: Option<String>,
 }
 
-/// Thin Letta REST client (create agent, stream chat). Disabled when `letta_base_url` is empty.
+/// Letta HTTP client: **Letta API** ([`Self::api_base_url`]) for provisioning and agent state;
+/// **Letta Code** ([`Self::code_base_url`]) for chat/conversation traffic only (no fallback to the API URL).
 #[derive(Clone)]
 pub struct LettaClient {
     http: reqwest::Client,
-    base_url: String,
+    api_base_url: String,
     api_key: String,
+    /// Letta Code harness — `GET/POST /v1/conversations/...` for web chat (required when using chat routes).
+    code_base_url: String,
+    code_api_key: String,
 }
 
 impl LettaClient {
@@ -43,36 +47,88 @@ impl LettaClient {
             .connect_timeout(Duration::from_secs(15))
             .build()
             .expect("reqwest client");
+        let api_base_url = config.letta_api_base_url.trim_end_matches('/').to_string();
+        let api_key = config.letta_api_key.trim().to_string();
+        let code_base_url = config.letta_code_base_url.trim_end_matches('/').to_string();
+        let code_api_key = config.letta_code_api_key.trim().to_string();
+
+        if !api_base_url.is_empty()
+            && !code_base_url.is_empty()
+            && code_base_url != api_base_url
+        {
+            tracing::info!(
+                letta_api_url = %api_base_url,
+                letta_code_url = %code_base_url,
+                "Letta API vs Letta Code: provisioning uses LETTA_API_BASE_URL; web chat uses LETTA_CODE_BASE_URL"
+            );
+        }
+
         Self {
             http,
-            base_url: config.letta_base_url.trim_end_matches('/').to_string(),
-            api_key: config.letta_api_key.trim().to_string(),
+            api_base_url,
+            api_key,
+            code_base_url,
+            code_api_key,
         }
     }
 
-    pub fn is_enabled(&self) -> bool {
-        !self.base_url.is_empty()
+    /// `LETTA_API_BASE_URL` is set — provisioning, models, agent CRUD, health against Letta.
+    pub fn is_api_configured(&self) -> bool {
+        !self.api_base_url.is_empty()
     }
 
-    fn auth_headers(&self) -> HeaderMap {
+    /// `LETTA_CODE_BASE_URL` is set — required for `/v1/chat/*` and conversation streaming.
+    pub fn is_code_runtime_configured(&self) -> bool {
+        !self.code_base_url.is_empty()
+    }
+
+    /// Back-compat alias for [`Self::is_api_configured`].
+    pub fn is_enabled(&self) -> bool {
+        self.is_api_configured()
+    }
+
+    fn auth_headers_with_key(api_key: &str) -> HeaderMap {
         let mut h = HeaderMap::new();
-        if !self.api_key.is_empty() {
-            if let Ok(v) = HeaderValue::from_str(&format!("Bearer {}", self.api_key)) {
+        if !api_key.is_empty() {
+            if let Ok(v) = HeaderValue::from_str(&format!("Bearer {}", api_key)) {
                 h.insert(AUTHORIZATION, v);
             }
         }
         h
     }
 
+    fn auth_headers(&self) -> HeaderMap {
+        Self::auth_headers_with_key(&self.api_key)
+    }
+
+    fn code_auth_headers(&self) -> HeaderMap {
+        let key = if !self.code_api_key.is_empty() {
+            self.code_api_key.as_str()
+        } else {
+            self.api_key.as_str()
+        };
+        Self::auth_headers_with_key(key)
+    }
+
+    fn require_code_runtime(&self) -> Result<(), CustomError> {
+        if !self.is_code_runtime_configured() {
+            return Err(CustomError::System(
+                "Letta Code is not configured (set LETTA_CODE_BASE_URL for chat and conversations; web chat does not use LETTA_API_BASE_URL)"
+                    .to_string(),
+            ));
+        }
+        Ok(())
+    }
+
     /// `GET /v1/models/` — LLM handles for agent creation (`model` must be set for provisioning).
     pub async fn list_llm_models(&self) -> Result<Vec<LettaModelOption>, CustomError> {
-        if !self.is_enabled() {
+        if !self.is_api_configured() {
             return Err(CustomError::System(
-                "Letta is not configured (set LETTA_BASE_URL)".to_string(),
+                "Letta API is not configured (set LETTA_API_BASE_URL)".to_string(),
             ));
         }
 
-        let url = format!("{}/v1/models/", self.base_url);
+        let url = format!("{}/v1/models/", self.api_base_url);
         let resp = self
             .http
             .get(url)
@@ -102,13 +158,13 @@ impl LettaClient {
 
     /// `GET /v1/tools/` — tool ids for agent `tool_ids`.
     pub async fn list_tools(&self) -> Result<Vec<LettaToolOption>, CustomError> {
-        if !self.is_enabled() {
+        if !self.is_api_configured() {
             return Err(CustomError::System(
-                "Letta is not configured (set LETTA_BASE_URL)".to_string(),
+                "Letta API is not configured (set LETTA_API_BASE_URL)".to_string(),
             ));
         }
 
-        let url = format!("{}/v1/tools/", self.base_url);
+        let url = format!("{}/v1/tools/", self.api_base_url);
         let resp = self
             .http
             .get(url)
@@ -145,9 +201,9 @@ impl LettaClient {
         agent_type: Option<&str>,
         tool_ids: &[String],
     ) -> Result<String, CustomError> {
-        if !self.is_enabled() {
+        if !self.is_api_configured() {
             return Err(CustomError::System(
-                "Letta is not configured (set LETTA_BASE_URL)".to_string(),
+                "Letta API is not configured (set LETTA_API_BASE_URL)".to_string(),
             ));
         }
 
@@ -164,7 +220,7 @@ impl LettaClient {
             body.insert("tool_ids".to_string(), json!(tool_ids));
         }
 
-        let url = format!("{}/v1/agents", self.base_url);
+        let url = format!("{}/v1/agents", self.api_base_url);
         let resp = self
             .http
             .post(&url)
@@ -217,11 +273,7 @@ impl LettaClient {
         agent_id: &str,
         user_input: &str,
     ) -> Result<reqwest::Response, CustomError> {
-        if !self.is_enabled() {
-            return Err(CustomError::System(
-                "Letta is not configured (set LETTA_BASE_URL)".to_string(),
-            ));
-        }
+        self.require_code_runtime()?;
 
         let body = json!({
             "messages": [{
@@ -231,12 +283,12 @@ impl LettaClient {
             "stream_tokens": true,
         });
 
-        let url = format!("{}/v1/agents/{agent_id}/messages/stream", self.base_url);
+        let url = format!("{}/v1/agents/{agent_id}/messages/stream", self.code_base_url);
 
         let resp = self
             .http
             .post(url)
-            .headers(self.auth_headers())
+            .headers(self.code_auth_headers())
             .header(CONTENT_TYPE, "application/json")
             .json(&body)
             .send()
@@ -263,19 +315,15 @@ impl LettaClient {
         agent_id: &str,
         limit: u32,
     ) -> Result<serde_json::Value, CustomError> {
-        if !self.is_enabled() {
-            return Err(CustomError::System(
-                "Letta is not configured (set LETTA_BASE_URL)".to_string(),
-            ));
-        }
+        self.require_code_runtime()?;
 
         let limit = limit.clamp(1, 200);
         let limit_str = limit.to_string();
-        let url = format!("{}/v1/conversations/", self.base_url);
+        let url = format!("{}/v1/conversations/", self.code_base_url);
         let resp = self
             .http
             .get(url)
-            .headers(self.auth_headers())
+            .headers(self.code_auth_headers())
             .query(&[
                 ("agent_id", agent_id),
                 ("limit", limit_str.as_str()),
@@ -316,25 +364,21 @@ impl LettaClient {
         before: Option<&str>,
         oldest_first: bool,
     ) -> Result<serde_json::Value, CustomError> {
-        if !self.is_enabled() {
-            return Err(CustomError::System(
-                "Letta is not configured (set LETTA_BASE_URL)".to_string(),
-            ));
-        }
+        self.require_code_runtime()?;
 
         let limit = limit.clamp(1, 100);
         let limit_str = limit.to_string();
         let order = if oldest_first { "asc" } else { "desc" };
         let url = format!(
             "{}/v1/conversations/{}/messages",
-            self.base_url,
+            self.code_base_url,
             conversation_id
         );
 
         let mut req = self
             .http
             .get(url)
-            .headers(self.auth_headers())
+            .headers(self.code_auth_headers())
             .query(&[("order", order), ("limit", limit_str.as_str())]);
 
         if let Some(a) = agent_id.map(str::trim).filter(|s| !s.is_empty()) {
@@ -374,21 +418,17 @@ impl LettaClient {
         conversation_id: &str,
         summary: &str,
     ) -> Result<(), CustomError> {
-        if !self.is_enabled() {
-            return Err(CustomError::System(
-                "Letta is not configured (set LETTA_BASE_URL)".to_string(),
-            ));
-        }
+        self.require_code_runtime()?;
 
         let url = format!(
             "{}/v1/conversations/{}",
-            self.base_url, conversation_id
+            self.code_base_url, conversation_id
         );
         let body = json!({ "summary": summary });
         let resp = self
             .http
             .patch(url)
-            .headers(self.auth_headers())
+            .headers(self.code_auth_headers())
             .header(CONTENT_TYPE, "application/json")
             .json(&body)
             .send()
@@ -419,11 +459,7 @@ impl LettaClient {
         agent_id: Option<&str>,
         user_input: &str,
     ) -> Result<reqwest::Response, CustomError> {
-        if !self.is_enabled() {
-            return Err(CustomError::System(
-                "Letta is not configured (set LETTA_BASE_URL)".to_string(),
-            ));
-        }
+        self.require_code_runtime()?;
 
         let mut body = serde_json::Map::new();
         body.insert(
@@ -441,13 +477,13 @@ impl LettaClient {
 
         let url = format!(
             "{}/v1/conversations/{}/messages",
-            self.base_url, conversation_id
+            self.code_base_url, conversation_id
         );
 
         let resp = self
             .http
             .post(url)
-            .headers(self.auth_headers())
+            .headers(self.code_auth_headers())
             .header(CONTENT_TYPE, "application/json")
             .json(&body)
             .send()
@@ -476,15 +512,15 @@ impl LettaClient {
         limit: u32,
         before: Option<&str>,
     ) -> Result<serde_json::Value, CustomError> {
-        if !self.is_enabled() {
+        if !self.is_api_configured() {
             return Err(CustomError::System(
-                "Letta is not configured (set LETTA_BASE_URL)".to_string(),
+                "Letta API is not configured (set LETTA_API_BASE_URL)".to_string(),
             ));
         }
 
         let limit = limit.clamp(1, 100);
         let limit_str = limit.to_string();
-        let url = format!("{}/v1/agents/{agent_id}/messages", self.base_url);
+        let url = format!("{}/v1/agents/{agent_id}/messages", self.api_base_url);
 
         let mut req = self
             .http
@@ -520,13 +556,13 @@ impl LettaClient {
 
     /// `GET /v1/health` — used by operator console and deploy health checks.
     pub async fn check_health(&self) -> Result<String, CustomError> {
-        if !self.is_enabled() {
+        if !self.is_api_configured() {
             return Err(CustomError::System(
-                "Letta is not configured (set LETTA_BASE_URL)".to_string(),
+                "Letta API is not configured (set LETTA_API_BASE_URL)".to_string(),
             ));
         }
 
-        let url = format!("{}/v1/health", self.base_url);
+        let url = format!("{}/v1/health", self.api_base_url);
         let resp = self
             .http
             .get(url)
@@ -555,13 +591,13 @@ impl LettaClient {
     /// Requests `include=agent.blocks` and `include=agent.tools` because current Letta
     /// APIs omit those relationships by default unless asked (see Letta retrieve-agent docs).
     pub async fn fetch_agent(&self, agent_id: &str) -> Result<serde_json::Value, CustomError> {
-        if !self.is_enabled() {
+        if !self.is_api_configured() {
             return Err(CustomError::System(
-                "Letta is not configured (set LETTA_BASE_URL)".to_string(),
+                "Letta API is not configured (set LETTA_API_BASE_URL)".to_string(),
             ));
         }
 
-        let url = format!("{}/v1/agents/{agent_id}", self.base_url);
+        let url = format!("{}/v1/agents/{agent_id}", self.api_base_url);
         let resp = self
             .http
             .get(url)
@@ -593,13 +629,13 @@ impl LettaClient {
 
     /// `GET /v1/agents` — list agents (shape varies by server; ids required).
     pub async fn list_agents(&self) -> Result<Vec<LettaAgentListItem>, CustomError> {
-        if !self.is_enabled() {
+        if !self.is_api_configured() {
             return Err(CustomError::System(
-                "Letta is not configured (set LETTA_BASE_URL)".to_string(),
+                "Letta API is not configured (set LETTA_API_BASE_URL)".to_string(),
             ));
         }
 
-        let url = format!("{}/v1/agents", self.base_url);
+        let url = format!("{}/v1/agents", self.api_base_url);
         let resp = self
             .http
             .get(url)
@@ -638,9 +674,9 @@ impl LettaClient {
         agent_type: Option<&str>,
         tool_ids: &[String],
     ) -> Result<(), CustomError> {
-        if !self.is_enabled() {
+        if !self.is_api_configured() {
             return Err(CustomError::System(
-                "Letta is not configured (set LETTA_BASE_URL)".to_string(),
+                "Letta API is not configured (set LETTA_API_BASE_URL)".to_string(),
             ));
         }
 
@@ -656,7 +692,7 @@ impl LettaClient {
         }
         body.insert("tool_ids".to_string(), json!(tool_ids));
 
-        let url = format!("{}/v1/agents/{agent_id}", self.base_url);
+        let url = format!("{}/v1/agents/{agent_id}", self.api_base_url);
         let resp = self
             .http
             .patch(url)
@@ -685,13 +721,13 @@ impl LettaClient {
     /// `POST /v1/agents/{agent_id}/recompile` — materialize the compiled system prompt after PATCH
     /// (Letta treats this as a separate step from updating stored `system` / blocks).
     pub async fn recompile_agent(&self, agent_id: &str) -> Result<(), CustomError> {
-        if !self.is_enabled() {
+        if !self.is_api_configured() {
             return Err(CustomError::System(
-                "Letta is not configured (set LETTA_BASE_URL)".to_string(),
+                "Letta API is not configured (set LETTA_API_BASE_URL)".to_string(),
             ));
         }
 
-        let url = format!("{}/v1/agents/{agent_id}/recompile", self.base_url);
+        let url = format!("{}/v1/agents/{agent_id}/recompile", self.api_base_url);
         let resp = self
             .http
             .post(url)
@@ -914,9 +950,9 @@ mod tests {
     #[test]
     fn disabled_when_base_empty() {
         let mut c = Config::test_stub();
-        c.letta_base_url = String::new();
+        c.letta_api_base_url = String::new();
         let client = LettaClient::new(&c);
-        assert!(!client.is_enabled());
+        assert!(!client.is_api_configured());
     }
 
     #[test]

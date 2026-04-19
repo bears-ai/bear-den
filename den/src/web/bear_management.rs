@@ -342,7 +342,7 @@ async fn render_bear_details_page(
     letta_resync_query: Option<String>,
 ) -> Result<Response, CustomError> {
     let letta_configured = state.letta.is_enabled();
-    let letta_api_base = state.config.letta_base_url.trim().to_string();
+    let letta_api_base = state.config.letta_api_base_url.trim().to_string();
     let slug = bear.slug.clone();
 
     let (letta_agent_summary, letta_agent_fetch_error, letta_diagnostics, letta_diag_error, letta_drift) =

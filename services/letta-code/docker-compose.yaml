@@ -30,10 +30,8 @@ services:
       LETTA_DEBUG: ${LETTA_DEBUG:-}
     volumes:
       - letta-code-data:/root
-    # When the pinned @letta-ai/letta-code exposes a fixed HTTP port for Den, map it here and
-    # set Den LETTA_CODE_BASE_URL to http://bears-letta-code:<port>
-    # ports:
-    #   - "9292:9292"
+    # Publish the harness HTTP port here once your Letta Code version binds it (Den → LETTA_CODE_BASE_URL).
+    # If nothing listens yet, see COOLIFY_DEPLOY.md "Ports and validation" (harness HTTP vs outbound WS).
 
 volumes:
   letta-code-data:
