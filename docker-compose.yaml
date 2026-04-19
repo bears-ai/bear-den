@@ -1,0 +1,152 @@
+# BEARS stack — single Docker Compose project with one shared network (`bear-stack`).
+#
+# Recommended for Coolify: Add Resource → Docker Compose → this repository,
+# Base Directory: `.` (repo root), Compose file: `docker-compose.yaml`.
+#
+# Service DNS names (use these in env defaults and cross-service URLs):
+#   bear-postgres (optional, profile `bundled`), bear-bifrost, bear-letta, bear-codepool, bear-den
+#
+# PostgreSQL: use a managed database (set `DATABASE_URL` for `bear-den`) or enable the bundled
+# container by activating the `bundled` profile:
+#   COMPOSE_PROFILES=bundled
+#   docker compose --profile bundled up -d
+#
+# See docs/deployment/DEPLOYMENT.md and per-service COOLIFY_DEPLOY.md files.
+
+name: bear-stack
+
+services:
+  bear-postgres:
+    profiles:
+      - bundled
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-bears}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-bears}
+      POSTGRES_DB: ${POSTGRES_DB:-den}
+    volumes:
+      - bear-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      # Defaults must match POSTGRES_USER / POSTGRES_DB above (or adjust both).
+      test: ["CMD-SHELL", "pg_isready -U bears -d den"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  bear-bifrost:
+    image: maximhq/bifrost:v1.4.22
+    restart: unless-stopped
+    environment:
+      APP_HOST: "0.0.0.0"
+      APP_PORT: "8080"
+      LOG_LEVEL: info
+      LOG_STYLE: json
+    volumes:
+      - ./services/bifrost/config.json:/app/data/config.json:ro
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "wget",
+          "--no-verbose",
+          "--tries=1",
+          "--spider",
+          "http://127.0.0.1:8080/health",
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  bear-letta:
+    image: letta/letta:latest
+    restart: unless-stopped
+    depends_on:
+      bear-bifrost:
+        condition: service_healthy
+    environment:
+      LLM_API_URL: http://bear-bifrost:8080/v1
+      MODEL_NAME: ${MODEL_NAME:-gpt-4}
+      LETTA_SERVER_PORT: "8283"
+      LETTA_SERVER_HOST: "0.0.0.0"
+      LETTA_SERVER_PASS: ${LETTA_SERVER_PASS:?set LETTA_SERVER_PASS}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+    volumes:
+      - bear-letta-data:/root/.letta
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "curl -sf http://127.0.0.1:8283/v1/health || exit 1",
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  bear-codepool:
+    build:
+      context: ./codepool
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      bear-letta:
+        condition: service_healthy
+    environment:
+      PORT: "3030"
+      LETTA_BASE_URL: ${LETTA_BASE_URL:-http://bear-letta:8283}
+      # Same credential Letta uses as `LETTA_SERVER_PASS` (Bearer for Letta HTTP API).
+      LETTA_API_KEY: ${LETTA_SERVER_PASS}
+      CODEPOOL_INTERNAL_TOKEN: ${CODEPOOL_INTERNAL_TOKEN:-}
+      POOL_TTL_SECS: ${POOL_TTL_SECS:-600}
+      POOL_MAX_ENTRIES: ${POOL_MAX_ENTRIES:-256}
+    volumes:
+      - bear-codepool-letta-home:/home/node/.letta
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "wget -q -O- http://127.0.0.1:3030/health || exit 1",
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  bear-den:
+    build:
+      context: ./den
+      dockerfile: Dockerfile
+      args:
+        SQLX_OFFLINE: "true"
+        DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/postgres?sslmode=disable
+    restart: unless-stopped
+    depends_on:
+      bear-letta:
+        condition: service_healthy
+      bear-codepool:
+        condition: service_healthy
+    environment:
+      # Managed Postgres: set `DATABASE_URL` in `.env` (or Coolify secrets). With `--profile bundled`,
+      # this defaults to the bundled `bear-postgres` service (same host/user/db as below).
+      DATABASE_URL: ${DATABASE_URL:-postgres://${POSTGRES_USER:-bears}:${POSTGRES_PASSWORD:-bears}@bear-postgres:5432/${POSTGRES_DB:-den}?sslmode=disable}
+      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET}
+      RUN_WEB: ${RUN_WEB:-true}
+      RUN_API: ${RUN_API:-false}
+      RUN_WORKERS: ${RUN_WORKERS:-false}
+      PORT: ${DEN_PORT:-3000}
+      WEB_SERVER_URL: ${WEB_SERVER_URL:-http://localhost:3000}
+      LETTA_BASE_URL: ${LETTA_BASE_URL:-http://bear-letta:8283}
+      LETTA_API_KEY: ${LETTA_SERVER_PASS}
+      CODEPOOL_BASE_URL: ${CODEPOOL_BASE_URL:-http://bear-codepool:3030}
+      CODEPOOL_INTERNAL_TOKEN: ${CODEPOOL_INTERNAL_TOKEN:-}
+    ports:
+      - "${DEN_PUBLISH_PORT:-3000}:3000"
+
+volumes:
+  # Used only when `bear-postgres` runs (`--profile bundled`).
+  bear-postgres-data:
+  bear-letta-data:
+  bear-codepool-letta-home:

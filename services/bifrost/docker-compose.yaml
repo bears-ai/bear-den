@@ -7,22 +7,24 @@
 #   - Enable **Preserve Repository During Deployment** so `./config.json` binds from the clone.
 #   - Set secrets (e.g. OPENAI_API_KEY) in Coolify → Environment Variables for this resource.
 #
+# Prefer the **repository root** [`docker-compose.yaml`](../../docker-compose.yaml) for a single shared
+# network with Letta, Codepool, and Den (`bear-bifrost`, …).
+#
 # See COOLIFY_DEPLOY.md for full steps and links.
 
 services:
-  bears-bifrost:
+  bear-bifrost:
     image: maximhq/bifrost:v1.4.22
     restart: unless-stopped
     environment:
       APP_HOST: "0.0.0.0"
-      APP_PORT: "4000"
+      APP_PORT: "8080"
       LOG_LEVEL: info
       LOG_STYLE: json
     volumes:
       - ./config.json:/app/data/config.json:ro
     ports:
-      - "4000:4000"
-    # BusyBox wget (present in upstream image); keep port in sync with APP_PORT / ports.
+      - "8080:8080"
     healthcheck:
       test:
         [

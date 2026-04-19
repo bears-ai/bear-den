@@ -83,9 +83,9 @@ Integrations (set when you wire the rest of the stack):
 
 | Variable | Notes |
 | -------- | ----- |
-| `LETTA_BASE_URL` | Internal base URL for Letta (no trailing slash), for example `http://bears-letta:8283`. |
+| `LETTA_BASE_URL` | Internal base URL for Letta (no trailing slash). **Production** images default to **`http://bear-letta:8283`** when unset (override for local dev; see `den/.env.example`). |
 | `LETTA_API_KEY` | Bearer token when Letta is configured with `LETTA_SERVER_PASS` / API auth. |
-| `CODEPOOL_BASE_URL` | **Required** when `RUN_WEB=true`. **Codepool** harness (e.g. `http://bears-codepool:3030`). Den refuses to start the web server without it. |
+| `CODEPOOL_BASE_URL` | When `RUN_WEB=true`, must be non-empty. **Production** images default to **`http://bear-codepool:3030`** when unset. **Codepool** harness (repository root `codepool/`). |
 | `CODEPOOL_INTERNAL_TOKEN` | Optional shared secret; Den sends `Authorization: Bearer …` to Codepool (must match the pool service). |
 
 Mail, OAuth, and other keys are documented in [`.env.example`](.env.example) and [`docs/deploy.md`](docs/deploy.md).

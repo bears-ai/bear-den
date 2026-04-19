@@ -15,6 +15,43 @@ const DEFAULT_APP_SLUG: &str = "bears";
 const DEFAULT_PROD_WEB_ORIGIN: &str = "https://bears.artificial.design";
 const DEFAULT_PROD_API_ORIGIN: &str = "https://api.bears.artificial.design";
 
+/// Letta HTTP API when `LETTA_BASE_URL` is unset — matches Docker Compose service `bear-letta` (repository root `docker-compose.yaml`).
+pub const DEFAULT_LETTA_BASE_URL: &str = "http://bear-letta:8283";
+/// Codepool harness when `CODEPOOL_BASE_URL` is unset — matches Docker Compose service `bear-codepool`.
+pub const DEFAULT_CODEPOOL_BASE_URL: &str = "http://bear-codepool:3030";
+
+fn letta_base_url_from_env() -> String {
+    let raw = std::env::var("LETTA_BASE_URL").unwrap_or_default();
+    let trimmed = raw.trim_end_matches('/').to_string();
+    if !trimmed.is_empty() {
+        return trimmed;
+    }
+    #[cfg(feature = "production")]
+    {
+        DEFAULT_LETTA_BASE_URL.to_string()
+    }
+    #[cfg(not(feature = "production"))]
+    {
+        String::new()
+    }
+}
+
+fn codepool_base_url_from_env() -> String {
+    let raw = std::env::var("CODEPOOL_BASE_URL").unwrap_or_default();
+    let trimmed = raw.trim_end_matches('/').to_string();
+    if !trimmed.is_empty() {
+        return trimmed;
+    }
+    #[cfg(feature = "production")]
+    {
+        DEFAULT_CODEPOOL_BASE_URL.to_string()
+    }
+    #[cfg(not(feature = "production"))]
+    {
+        String::new()
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct Config {
     pub templates_dir: String,
@@ -59,13 +96,13 @@ pub struct Config {
     /// Optional `Authorization: Bearer` value for Letta (omit when local Letta has no auth).
     pub letta_api_key: String,
 
-    /// **Codepool** harness base URL (no trailing slash), e.g. `http://bears-codepool:3030`.
+    /// **Codepool** harness base URL (no trailing slash), e.g. `http://bear-codepool:3030`.
     /// Required when `run_web` is true — [`crate::startup::validate_runtime_config`] enforces this.
     pub codepool_base_url: String,
     /// Optional `Authorization: Bearer` for Codepool (must match `CODEPOOL_INTERNAL_TOKEN` on the pool).
     pub codepool_internal_token: String,
 
-    /// S3-compatible endpoint (e.g. `http://bears-garage:3900`). Empty = media upload disabled.
+    /// S3-compatible endpoint (e.g. `http://bear-garage:3900`). Empty = media upload disabled.
     pub s3_endpoint: String,
     /// S3 bucket for chat media and generated images.
     pub s3_bucket: String,
@@ -226,16 +263,10 @@ impl Config {
             })
         });
 
-        let letta_base_url = std::env::var("LETTA_BASE_URL")
-            .unwrap_or_default()
-            .trim_end_matches('/')
-            .to_string();
+        let letta_base_url = letta_base_url_from_env();
         let letta_api_key = std::env::var("LETTA_API_KEY").unwrap_or_default();
 
-        let codepool_base_url = std::env::var("CODEPOOL_BASE_URL")
-            .unwrap_or_default()
-            .trim_end_matches('/')
-            .to_string();
+        let codepool_base_url = codepool_base_url_from_env();
         let codepool_internal_token =
             std::env::var("CODEPOOL_INTERNAL_TOKEN").unwrap_or_default();
 

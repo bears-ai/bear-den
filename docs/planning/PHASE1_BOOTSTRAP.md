@@ -2,7 +2,7 @@
 
 **Trestle** is only a **short-lived bootstrap codename** for the first milestone: bare-bones **Axum + PostgreSQL + self-building Docker**. It is **not** a service directory in this repo and does not persist after you have a working skeleton. The **lasting** binary, crate, and deploy artifact are **Den** (see [PLAN.md](PLAN.md), [DEN_ARCHITECTURE.md](../architecture/DEN_ARCHITECTURE.md)).
 
-Put the Rust project at repo-root **`den/`** with package/binary name **`den`**, Coolify service e.g. **`bears-den`**.
+Put the Rust project at repo-root **`den/`** with package/binary name **`den`**, Coolify service e.g. **`bear-den`**.
 
 **Phase 1 success** (from PLAN): **operator console** usable for full provisioning; web users chat via **Den's chat UI → Den → Letta Code → Letta** as the **only** first-party browser path; bear registry + **users↔bears** many-to-many; **first-class routines** (schedules + UI; file outputs → **Garage** per [artifacts-garage-adr.md](../artifacts-garage-adr.md)); **Letta Code** is the **required** agent runtime (channels and web); **Den** owns bear provisioning on Letta, **Letta Code config**, **skills catalog + per-bear attachments**, and **MCP catalog + per-bear MCP attachments** (materialized for Letta Code; same patterns as skills; **Coolify** runs MCP server processes); **Garage** for **artifacts** (+ separate **Cabinet** bucket when Outline ships); optional **read-only** Bifrost observability; **no Cabinet** app until Phase 2.
 
@@ -281,7 +281,7 @@ den/
 
 ## 9. Bifrost observability (optional Milestone 1.5)
 
-- Env: `BIFROST_BASE_URL` (e.g. `http://bears-bifrost:8080`). Management auth, if any, depends on your Bifrost config (file-only GitOps setups often expose `GET /health` without extra headers).
+- Env: `BIFROST_BASE_URL` (e.g. `http://bear-bifrost:8080`). Management auth, if any, depends on your Bifrost config (file-only GitOps setups often expose `GET /health` without extra headers).
 - Endpoints to call: `GET /health`, Prometheus scrape target if enabled, or log export per [Bifrost observability](https://docs.getbifrost.ai/features/observability/default).
 - **No** forwarding of chat completions through Den.
 - **Attribution:** Document gap: correlating gateway logs to `user_id` may need Letta extra headers — out of Den unless you add Letta config change.
@@ -296,7 +296,7 @@ den/
    - Use **cargo-chef** or **cache mount** (`--mount=type=cache`) to speed rebuilds.
 2. **Runtime:** `debian:bookworm-slim`, install `ca-certificates`, copy binary from builder, non-root user.
 3. **Entrypoint:** `/usr/local/bin/den` or run migrations then exec (choose one strategy and document).
-4. **Coolify:** Service e.g. **`bears-den`**, internal port e.g. `8080`, env from secrets, link to Postgres + network to `bears-letta`.
+4. **Coolify:** Service e.g. **`bear-den`**, internal port e.g. `8080`, env from secrets, link to Postgres + network to `bear-letta`.
 
 **`.dockerignore`:** `target/`, `.git/`, etc.
 
@@ -315,7 +315,7 @@ den/
 | `ADMIN_API_KEY` | yes (prod) | Machine/automation access to admin JSON API; **browser uses operator session** |
 | `BOOTSTRAP_ADMIN_EMAIL` | no | First-run: promote this user to `is_admin` on registration (homelab) |
 | `RUST_LOG` | no | `den=info,tower_http=info` |
-| `BIFROST_BASE_URL` | no | Observability only (e.g. `http://bears-bifrost:8080`) |
+| `BIFROST_BASE_URL` | no | Observability only (e.g. `http://bear-bifrost:8080`) |
 
 ---
 

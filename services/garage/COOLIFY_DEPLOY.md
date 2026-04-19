@@ -72,7 +72,7 @@ The compose file defines two named volumes:
 
 ### 6. Deploy
 
-**Deploy** / **Redeploy**. On success, services on the same Coolify network resolve `http://bears-garage:3900` for the S3 API.
+**Deploy** / **Redeploy**. On success, services on the same Coolify network resolve `http://bear-garage:3900` for the S3 API.
 
 ---
 
@@ -129,7 +129,7 @@ The output of step 8 gives you the **Key ID** and **Secret key** to use as Den's
 Set these on the **Den** service (see [`../../den/COOLIFY_DEPLOY.md`](../../den/COOLIFY_DEPLOY.md)):
 
 ```bash
-S3_ENDPOINT=http://bears-garage:3900
+S3_ENDPOINT=http://bear-garage:3900
 # Ephemeral artifacts + uploads (see ../../docs/artifacts-garage-adr.md). Den currently uses S3_BUCKET.
 S3_BUCKET=bears-artifacts
 # Phase 2+ Cabinet / Outline: separate bucket in Garage; wire when Den Cabinet adapter needs direct S3
@@ -154,10 +154,10 @@ From a container on the same Docker network:
 
 ```bash
 # Admin health
-curl -sf http://bears-garage:3903/health && echo OK
+curl -sf http://bear-garage:3903/health && echo OK
 
 # S3 endpoint (expects 403 without auth — that's fine, proves the port is up)
-curl -sI http://bears-garage:3900
+curl -sI http://bear-garage:3900
 ```
 
 Or with `awscli`:
@@ -166,7 +166,7 @@ Or with `awscli`:
 export AWS_ACCESS_KEY_ID=<key-id>
 export AWS_SECRET_ACCESS_KEY=<secret>
 export AWS_DEFAULT_REGION=garage
-export AWS_ENDPOINT_URL=http://bears-garage:3900
+export AWS_ENDPOINT_URL=http://bear-garage:3900
 
 aws s3 ls s3://bears-artifacts/
 aws s3 ls s3://bears-cabinet/

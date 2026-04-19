@@ -8,14 +8,14 @@ This repo is a **light monorepo**: `docs/`, Coolify-oriented **`services/`**, **
 
 | If you want to… | Open |
 |-----------------|------|
-| **Deploy** (Coolify order, services) | [docs/deployment/DEPLOYMENT.md](docs/deployment/DEPLOYMENT.md) |
+| **Deploy** (Coolify; **recommended:** root Docker Compose `bear-*` stack) | [docs/deployment/DEPLOYMENT.md](docs/deployment/DEPLOYMENT.md), [docker-compose.yaml](docker-compose.yaml) |
 | **Roadmap & architecture** | [docs/planning/PLAN.md](docs/planning/PLAN.md), [docs/architecture/ARCHITECTURE_NOTES.md](docs/architecture/ARCHITECTURE_NOTES.md) |
 | **Den + Letta + web chat** | [docs/architecture/DEN_ARCHITECTURE.md](docs/architecture/DEN_ARCHITECTURE.md) |
 | **Every doc in one place** | [docs/README.md](docs/README.md) |
 
 **Stack (high level):** Letta → Bifrost for models; **Letta Code** harness for channels/web; **Den** for operators and browser chat; **Garage** for S3 artifacts; **Outline** + Den for Cabinet when you add shared knowledge. Self-hosted Letta only.
 
-**Quick deploy order:** Bifrost → Garage → Letta → Den → Outline/Cabinet when ready — details in [DEPLOYMENT.md](docs/deployment/DEPLOYMENT.md).
+**Quick deploy order:** use the root [`docker-compose.yaml`](docker-compose.yaml) for Bifrost + Letta + Codepool + Den on one network; add **`COMPOSE_PROFILES=bundled`** if you want the compose-bundled Postgres instead of a managed database — details in [DEPLOYMENT.md](docs/deployment/DEPLOYMENT.md) (Garage for S3, Outline/Cabinet when ready).
 
 ---
 

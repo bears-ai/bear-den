@@ -6,10 +6,12 @@
 #   - Docker Compose file: `docker-compose.yaml`
 #   - Set secrets via Coolify → Environment Variables (see .env.example).
 #
+# Prefer aligning the **service name** with [`docker-compose.yaml`](../../docker-compose.yaml) conventions (`bear-garage`).
+#
 # See COOLIFY_DEPLOY.md for full steps and links.
 
 services:
-  bears-garage:
+  bear-garage:
     image: dxflrs/garage:v2.2.0
     restart: unless-stopped
     volumes:

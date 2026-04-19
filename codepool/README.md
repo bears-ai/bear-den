@@ -5,6 +5,8 @@
 - **Not** the Letta server — persistence stays at **`LETTA_BASE_URL`** (same Letta API Den uses for provisioning and history).
 - **Not** under `services/` — first-class app at the repo root (alongside **`den/`**).
 
+**Coolify / production:** Prefer the monorepo root [`docker-compose.yaml`](../docker-compose.yaml) (`bear-codepool` + `bear-letta` + `bear-den` on one network; optional **`bear-postgres`** via profile **`bundled`**). See [COOLIFY_DEPLOY.md](./COOLIFY_DEPLOY.md).
+
 ## Run locally
 
 ```bash

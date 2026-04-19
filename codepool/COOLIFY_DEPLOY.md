@@ -4,6 +4,8 @@
 
 **Stack order:** Deploy **after** [Letta](../services/letta/COOLIFY_DEPLOY.md) (persistence API). Deploy **before or with** [Den](../den/COOLIFY_DEPLOY.md). See [DEPLOYMENT.md](../docs/deployment/DEPLOYMENT.md).
 
+**Recommended:** use the **repository root** [`docker-compose.yaml`](../docker-compose.yaml) so **`bear-codepool`** shares the **`bear-stack`** network with **`bear-letta`**, **`bear-den`**, and **Bifrost**. Postgres is usually **managed** outside compose (`DATABASE_URL` on Den); optional **`bear-postgres`** uses profile **`bundled`** (see [DEPLOYMENT.md](../docs/deployment/DEPLOYMENT.md)).
+
 ## What this service is
 
 - **Not** the Letta server container — Codepool calls **`LETTA_BASE_URL`** (same Letta API Den uses for provisioning and history).
@@ -13,7 +15,7 @@
 
 | Den env | Purpose |
 |--------|---------|
-| `CODEPOOL_BASE_URL` | `http://bears-codepool:3030` (internal, no trailing slash) |
+| `CODEPOOL_BASE_URL` | `http://bear-codepool:3030` (internal, no trailing slash) |
 | `CODEPOOL_INTERNAL_TOKEN` | Optional; must match `CODEPOOL_INTERNAL_TOKEN` here |
 
 Den uses **`LETTA_BASE_URL`** for conversation list/history; **streaming sends** go to **Codepool** when `CODEPOOL_BASE_URL` is set.
@@ -23,7 +25,7 @@ Den uses **`LETTA_BASE_URL`** for conversation list/history; **streaming sends**
 1. **Add Resource** → **Docker Compose** → this repository.
 2. **Base Directory:** `codepool` · **Compose file:** [`docker-compose.yaml`](docker-compose.yaml).
 3. Set **`LETTA_BASE_URL`**, **`LETTA_API_KEY`**, optional **`CODEPOOL_INTERNAL_TOKEN`**.
-4. Attach the **same Docker network** as Den and Letta.
+4. If you did **not** use the root compose file, attach the **same Docker network** as Den and Letta so **`bear-codepool`** resolves.
 
 ## Health
 

@@ -43,7 +43,7 @@ High‑level, ops‑oriented plan and architecture: MVP **without Cabinet first*
    - **Bifrost (Phase 1 and bear chat paths):** On the **end-user bear inference path**, Den does **not** proxy model traffic: **Letta → Bifrost** (via `LLM_API_URL`). Den may still connect to Bifrost for **metrics, health checks, Prometheus scrapes, or log exports** (per your Bifrost version and config), and join that with Den’s `user_id` / `bear_id` / channel data where your logging pipeline allows. **Future flexibility:** Den may call models or gateways **directly** for **control-plane or operational** LLM work without changing the **Letta → Bifrost** path for bear chat.
    - Auth‑aware proxy: frontends ↔ **Letta Code** ↔ **Letta** for chat (not through Bifrost on Den); **bear** tool calls ↔ Cabinet.
 
-2. **Letta** (**self‑hosted only** in BEARS—e.g. Coolify `bears-letta:8283`, not Letta Cloud)
+2. **Letta** (**self‑hosted only** in BEARS—e.g. Coolify `bear-letta:8283`, not Letta Cloud)
    - **Bear runtime:** conversation loop + tools for each Letta agent (each **bear**).
    - **Model calls:** **Letta → Bifrost** directly (`LLM_API_URL`). No Den in that path.
    - Per‑**bear** configuration: system prompts, tools, memory adapters.

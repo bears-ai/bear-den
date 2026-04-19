@@ -1,21 +1,25 @@
 # Coolify: Base Directory `codepool`, Compose file `docker-compose.yaml`
+#
+# Prefer the **repository root** [`docker-compose.yaml`](../docker-compose.yaml) so Codepool shares
+# the `bear-stack` network with Den and Letta (`bear-codepool`, `bear-letta`, …).
+
 services:
-  bears-codepool:
+  bear-codepool:
     build:
       context: .
       dockerfile: Dockerfile
     restart: unless-stopped
     environment:
       PORT: ${PORT:-3030}
-      LETTA_BASE_URL: ${LETTA_BASE_URL:-http://bears-letta:8283}
+      LETTA_BASE_URL: ${LETTA_BASE_URL:-http://bear-letta:8283}
       LETTA_API_KEY: ${LETTA_API_KEY:-}
       CODEPOOL_INTERNAL_TOKEN: ${CODEPOOL_INTERNAL_TOKEN:-}
       POOL_TTL_SECS: ${POOL_TTL_SECS:-600}
       POOL_MAX_ENTRIES: ${POOL_MAX_ENTRIES:-256}
     volumes:
-      - codepool-letta-home:/home/node/.letta
+      - bear-codepool-letta-home:/home/node/.letta
     # ports:
     #   - "3030:3030"
 
 volumes:
-  codepool-letta-home:
+  bear-codepool-letta-home:

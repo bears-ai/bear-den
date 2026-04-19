@@ -39,7 +39,7 @@ When proposing gateways, proxies, or operators, **favor file- or repo-driven con
 | Doc index, monorepo clone notes | [docs/README.md](docs/README.md) |
 | Roadmap and contracts | [docs/planning/PLAN.md](docs/planning/PLAN.md) |
 | Phase 1 Den build (bootstrap → operator console) | [docs/planning/PHASE1_BOOTSTRAP.md](docs/planning/PHASE1_BOOTSTRAP.md) |
-| Coolify deployment | [docs/deployment/DEPLOYMENT.md](docs/deployment/DEPLOYMENT.md) |
+| Coolify deployment (root **`docker-compose.yaml`**: **`bear-stack`**, **`bear-postgres`** optional via profile **`bundled`**, …) | [docs/deployment/DEPLOYMENT.md](docs/deployment/DEPLOYMENT.md), [docker-compose.yaml](docker-compose.yaml) |
 | Garage (S3 object storage) | [services/garage/COOLIFY_DEPLOY.md](services/garage/COOLIFY_DEPLOY.md) |
 | Stack one-pager | [docs/architecture/ARCHITECTURE_NOTES.md](docs/architecture/ARCHITECTURE_NOTES.md) |
 | Den + self-hosted Letta (multi-user web) | [docs/architecture/DEN_ARCHITECTURE.md](docs/architecture/DEN_ARCHITECTURE.md) |
