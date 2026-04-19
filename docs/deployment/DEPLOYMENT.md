@@ -16,7 +16,7 @@ The repository root **[`docker-compose.yaml`](../../docker-compose.yaml)** defin
 
 **Database:** Prefer a **managed** Postgres (Coolify database, RDS, etc.). Set **`DATABASE_URL`** for **`bear-den`** to that instance (full connection string). If you do **not** use the bundled container, **omit** the `bundled` profile and do **not** set `COMPOSE_PROFILES` to `bundled`.
 
-**Bundled Postgres:** set **`COMPOSE_PROFILES=bundled`** (or `docker compose --profile bundled up`) so **`bear-postgres`** starts; **`DATABASE_URL`** on Den defaults to `postgres://…@bear-postgres:5432/…` and can be overridden.
+**Bundled Postgres:** set **`COMPOSE_PROFILES=bundled`** (or `docker compose --profile bundled up`) so **`bear-postgres`** starts. Its credentials are **fixed in `docker-compose.yaml`** (no `POSTGRES_*` env vars — so Coolify won’t surface them). **`DATABASE_URL`** on **`bear-den`** defaults to match that bundled service; override **`DATABASE_URL`** whenever you use managed Postgres.
 
 **Coolify:** **Add Resource** → **Docker Compose** → this repository → **Base Directory** `.` (repo root) → **Compose file** `docker-compose.yaml`. Set at least **`JWT_SECRET`**, **`LETTA_SERVER_PASS`**, and **`OPENAI_API_KEY`** (and optional **`CODEPOOL_INTERNAL_TOKEN`**). Den and Codepool default internal URLs (`http://bear-letta:8283`, `http://bear-codepool:3030`) match these service names; see [`den/COOLIFY_DEPLOY.md`](../../den/COOLIFY_DEPLOY.md).
 

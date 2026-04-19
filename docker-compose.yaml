@@ -6,8 +6,10 @@
 # Service DNS names (use these in env defaults and cross-service URLs):
 #   bear-postgres (optional, profile `bundled`), bear-bifrost, bear-letta, bear-codepool, bear-den
 #
-# PostgreSQL: use a managed database (set `DATABASE_URL` for `bear-den`) or enable the bundled
-# container by activating the `bundled` profile:
+# PostgreSQL: set **`DATABASE_URL`** for `bear-den` (managed DB — preferred in Coolify). Optional
+# bundled Postgres uses **fixed** credentials in this file (no `POSTGRES_*` env interpolation) so
+# orchestrators do not invent separate `POSTGRES_USER` / `POSTGRES_PASSWORD` / `POSTGRES_DB` fields.
+# Enable the bundled container with profile `bundled`:
 #   COMPOSE_PROFILES=bundled
 #   docker compose --profile bundled up -d
 #
@@ -22,13 +24,14 @@ services:
     image: postgres:16-alpine
     restart: unless-stopped
     environment:
-      POSTGRES_USER: ${POSTGRES_USER:-bears}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-bears}
-      POSTGRES_DB: ${POSTGRES_DB:-den}
+      # Fixed dev defaults (match `DATABASE_URL` default on `bear-den`). For production, prefer a
+      # managed database and `DATABASE_URL` only; or fork and change these literals.
+      POSTGRES_USER: bears
+      POSTGRES_PASSWORD: bears
+      POSTGRES_DB: den
     volumes:
       - bear-postgres-data:/var/lib/postgresql/data
     healthcheck:
-      # Defaults must match POSTGRES_USER / POSTGRES_DB above (or adjust both).
       test: ["CMD-SHELL", "pg_isready -U bears -d den"]
       interval: 5s
       timeout: 5s
@@ -129,9 +132,9 @@ services:
       bear-codepool:
         condition: service_healthy
     environment:
-      # Managed Postgres: set `DATABASE_URL` in `.env` (or Coolify secrets). With `--profile bundled`,
-      # this defaults to the bundled `bear-postgres` service (same host/user/db as below).
-      DATABASE_URL: ${DATABASE_URL:-postgres://${POSTGRES_USER:-bears}:${POSTGRES_PASSWORD:-bears}@bear-postgres:5432/${POSTGRES_DB:-den}?sslmode=disable}
+      # Set `DATABASE_URL` in Coolify / `.env` for managed Postgres. Omitted → default matches bundled
+      # `bear-postgres` literals above (`bears`/`bears`/`den` on host `bear-postgres`).
+      DATABASE_URL: ${DATABASE_URL:-postgres://bears:bears@bear-postgres:5432/den?sslmode=disable}
       JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET}
       RUN_WEB: ${RUN_WEB:-true}
       RUN_API: ${RUN_API:-false}
