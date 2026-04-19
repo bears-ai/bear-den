@@ -119,12 +119,10 @@ services:
       start_period: 40s
 
   bear-den:
-    build:
-      context: ./den
-      dockerfile: Dockerfile
-      args:
-        SQLX_OFFLINE: "true"
-        DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/postgres?sslmode=disable
+    # Pre-built image (Rust is not compiled on the Coolify host — avoids OOM / timeouts). Build in CI:
+    # `.github/workflows/den-image.yml` → GHCR. Override for forks: `DEN_IMAGE=ghcr.io/<org>/den:latest`
+    # To build Den from source locally: `docker compose -f docker-compose.yaml -f docker-compose.den-src.yaml build bear-den`
+    image: ${DEN_IMAGE:-ghcr.io/theartificial/den:latest}
     restart: unless-stopped
     depends_on:
       bear-letta:

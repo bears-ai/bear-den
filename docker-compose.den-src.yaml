@@ -1,0 +1,15 @@
+# Optional merge: build `bear-den` from `./den` instead of pulling GHCR (local dev or large CI only).
+#
+#   docker compose -f docker-compose.yaml -f docker-compose.den-src.yaml up --build
+#
+# Do not use this merge on small Coolify hosts — `cargo build` often OOMs; use the default image pull.
+
+services:
+  bear-den:
+    image: bear-den:local
+    build:
+      context: ./den
+      dockerfile: Dockerfile
+      args:
+        SQLX_OFFLINE: "true"
+        DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/postgres?sslmode=disable
