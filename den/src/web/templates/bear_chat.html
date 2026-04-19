@@ -4,6 +4,10 @@
 
 {% block subnav %}
 <li><a class="button-link" href="/bear/{{ bear_slug | e }}/details">Bear details</a></li>
+<li>
+  <label for="den-conv">Conversation</label>
+  <select id="den-conv" aria-label="Conversation"></select>
+</li>
 {% endblock %}
 
 {% block head %}
@@ -14,17 +18,6 @@
 
 {% block content %}
 <div class="den-wrap">
-    <div class="den-toolbar den-chat-toolbar">
-        <div class="den-chat-toolbar-links">
-            <a href="/">Home</a>
-            · <a href="/bear/{{ bear_slug | e }}/details">Bear details</a>
-            <span class="den-bear-meta">Chatting with <strong>{{ bear_name | e }}</strong> (<code>{{ bear_slug | e }}</code>)</span>
-        </div>
-        <div class="den-chat-conv-wrap" id="den-chat-conv-wrap" hidden>
-            <label for="den-conv">Conversation</label>
-            <select id="den-conv" class="den-chat-conv-select" aria-label="Conversation"></select>
-        </div>
-    </div>
     <p id="err" class="den-err" hidden></p>
     <div id="chat-wrap">
         <deep-chat id="chat"></deep-chat>

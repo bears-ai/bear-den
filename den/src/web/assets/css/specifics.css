@@ -43,62 +43,6 @@ body.bear_chat .den-wrap {
     box-sizing: border-box;
 }
 
-body.bear_chat .den-toolbar {
-  display: flex;
-  gap: calc(var(--spacing-unit) * 2);
-  align-items: center;
-  margin-bottom: calc(var(--spacing-unit) * 1.5);
-  flex-wrap: wrap;
-}
-
-body.bear_chat .den-chat-toolbar {
-  justify-content: space-between;
-}
-
-body.bear_chat .den-chat-toolbar-links {
-  display: flex;
-  flex-wrap: wrap;
-  gap: calc(var(--spacing-unit) * 2);
-  align-items: center;
-  min-width: 0;
-}
-
-body.bear_chat .den-chat-conv-wrap {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: calc(var(--spacing-unit) * 0.75);
-  flex: 0 0 auto;
-  margin-left: auto;
-}
-
-body.bear_chat .den-chat-conv-wrap label {
-  font-size: smaller;
-  color: var(--meta-color);
-}
-
-body.bear_chat .den-chat-conv-select {
-  font: inherit;
-  font-size: smaller;
-  color: var(--text-color);
-  background: var(--field-fill-color);
-  border: var(--thin-line-unit) solid var(--border-color);
-  border-radius: 0;
-  padding: calc(var(--spacing-unit) * 0.35) calc(var(--spacing-unit) * 0.75);
-  max-width: min(22rem, 100vw);
-}
-
-body.bear_chat .den-toolbar .den-bear-meta {
-    font-size: smaller;
-}
-
-body.bear_chat .den-toolbar code {
-    font-size: smaller;
-    font-family: var(--data-font-family);
-    font-weight: var(--data-font-weight);
-    font-style: var(--data-font-style);
-}
-
 body.bear_chat .den-err {
     color: var(--error-color);
     font-size: smaller;
