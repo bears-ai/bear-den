@@ -1,7 +1,7 @@
 //! Startup validation, SQLx migration runner, and structured errors for [`crate::run`].
 
 use crate::config::Config;
-use crate::core::code_pool::CodePoolClient;
+use crate::core::codepool::CodePoolClient;
 use crate::core::letta::LettaClient;
 use sqlx::PgPool;
 use thiserror::Error;
@@ -78,11 +78,11 @@ pub fn validate_runtime_config(config: &Config) -> Result<(), StartupError> {
             ));
         }
     }
-    if config.run_web && config.code_pool_base_url.trim().is_empty() {
+    if config.run_web && config.codepool_base_url.trim().is_empty() {
         return Err(StartupError::Message(
-            "CODE_POOL_BASE_URL must be set when RUN_WEB=true. Den streams bear chat through the \
-             code-pool service (Letta Code SDK), not directly to the Letta HTTP API. Example \
-             (internal URL): http://bears-code-pool:3030 — see code-pool/COOLIFY_DEPLOY.md."
+            "CODEPOOL_BASE_URL must be set when RUN_WEB=true. Den streams bear chat through \
+             Codepool (Letta Code SDK), not directly to the Letta HTTP API. Example \
+             (internal URL): http://bears-codepool:3030 — see codepool/COOLIFY_DEPLOY.md."
                 .into(),
         ));
     }
@@ -91,19 +91,19 @@ pub fn validate_runtime_config(config: &Config) -> Result<(), StartupError> {
 
 /// Verify configured upstream HTTP services respond before accepting traffic.
 ///
-/// Checks **code-pool** (`GET /health`) when [`Config::code_pool_base_url`] is non-empty,
+/// Checks **Codepool** (`GET /health`) when [`Config::codepool_base_url`] is non-empty,
 /// and **Letta** (`GET /v1/health`) when [`Config::letta_base_url`] is non-empty (same auth as runtime).
 pub async fn validate_upstream_connections(config: &Config) -> Result<(), StartupError> {
-    if !config.code_pool_base_url.trim().is_empty() {
+    if !config.codepool_base_url.trim().is_empty() {
         tracing::info!(
-            url = %config.code_pool_base_url,
-            "Checking code-pool connectivity"
+            url = %config.codepool_base_url,
+            "Checking Codepool connectivity"
         );
         CodePoolClient::new(config)
             .check_health()
             .await
             .map_err(|e| StartupError::Message(e.to_string()))?;
-        tracing::info!("code-pool health check passed");
+        tracing::info!("Codepool health check passed");
     }
 
     if !config.letta_base_url.trim().is_empty() {
@@ -159,15 +159,15 @@ mod tests {
     }
 
     #[test]
-    fn validate_requires_code_pool_when_run_web() {
+    fn validate_requires_codepool_when_run_web() {
         let mut web_on = Config::test_stub();
         web_on.run_web = true;
-        web_on.code_pool_base_url = String::new();
+        web_on.codepool_base_url = String::new();
         assert!(
             validate_runtime_config(&web_on).is_err(),
-            "RUN_WEB=true requires CODE_POOL_BASE_URL"
+            "RUN_WEB=true requires CODEPOOL_BASE_URL"
         );
-        web_on.code_pool_base_url = "http://localhost:3030".into();
-        validate_runtime_config(&web_on).expect("RUN_WEB with code pool should pass");
+        web_on.codepool_base_url = "http://localhost:3030".into();
+        validate_runtime_config(&web_on).expect("RUN_WEB with Codepool should pass");
     }
 }

@@ -36,14 +36,14 @@ struct LettaHealthJson {
 }
 
 async fn harness_pool_json(State(state): State<AppState>) -> Json<serde_json::Value> {
-    if !state.code_pool.is_enabled() {
+    if !state.codepool.is_enabled() {
         return Json(serde_json::json!({
             "ok": false,
             "status": "disabled",
-            "detail": "CODE_POOL_BASE_URL is not set — required when RUN_WEB=true (Den should not start in this state)."
+            "detail": "CODEPOOL_BASE_URL is not set — required when RUN_WEB=true (Den should not start in this state)."
         }));
     }
-    match state.code_pool.fetch_pool_stats().await {
+    match state.codepool.fetch_pool_stats().await {
         Ok(body) => match serde_json::from_str::<serde_json::Value>(&body) {
             Ok(v) => Json(serde_json::json!({ "ok": true, "status": "ok", "pool": v })),
             Err(_) => Json(serde_json::json!({ "ok": true, "status": "ok", "raw": body })),
@@ -60,16 +60,16 @@ async fn harness_pool_page(
     State(state): State<AppState>,
     auth_session: AuthSession,
 ) -> Result<Response, CustomError> {
-    let (code_pool_status, code_pool_detail, code_pool_json_pretty) =
-        if !state.code_pool.is_enabled() {
+    let (codepool_status, codepool_detail, codepool_json_pretty) =
+        if !state.codepool.is_enabled() {
             (
                 "disabled",
-                "CODE_POOL_BASE_URL is not set — required when RUN_WEB=true."
+                "CODEPOOL_BASE_URL is not set — required when RUN_WEB=true."
                     .to_string(),
                 String::new(),
             )
         } else {
-            match state.code_pool.fetch_pool_stats().await {
+            match state.codepool.fetch_pool_stats().await {
                 Ok(body) => {
                     let pretty = serde_json::to_string_pretty(
                         &serde_json::from_str::<serde_json::Value>(&body)
@@ -87,9 +87,9 @@ async fn harness_pool_page(
         "admin/harness_pool.html",
         auth_session,
         context! {
-            code_pool_status => code_pool_status,
-            code_pool_detail => code_pool_detail,
-            code_pool_json_pretty => code_pool_json_pretty,
+            codepool_status => codepool_status,
+            codepool_detail => codepool_detail,
+            codepool_json_pretty => codepool_json_pretty,
         },
     )
     .await

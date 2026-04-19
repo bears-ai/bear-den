@@ -1,6 +1,6 @@
-# Coolify: Base Directory `code-pool`, Compose file `docker-compose.yaml`
+# Coolify: Base Directory `codepool`, Compose file `docker-compose.yaml`
 services:
-  bears-code-pool:
+  bears-codepool:
     build:
       context: .
       dockerfile: Dockerfile
@@ -9,13 +9,13 @@ services:
       PORT: ${PORT:-3030}
       LETTA_BASE_URL: ${LETTA_BASE_URL:-http://bears-letta:8283}
       LETTA_API_KEY: ${LETTA_API_KEY:-}
-      CODE_POOL_INTERNAL_TOKEN: ${CODE_POOL_INTERNAL_TOKEN:-}
+      CODEPOOL_INTERNAL_TOKEN: ${CODEPOOL_INTERNAL_TOKEN:-}
       POOL_TTL_SECS: ${POOL_TTL_SECS:-600}
       POOL_MAX_ENTRIES: ${POOL_MAX_ENTRIES:-256}
     volumes:
-      - code-pool-letta-home:/home/node/.letta
+      - codepool-letta-home:/home/node/.letta
     # ports:
     #   - "3030:3030"
 
 volumes:
-  code-pool-letta-home:
+  codepool-letta-home:

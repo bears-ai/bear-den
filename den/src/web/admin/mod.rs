@@ -48,17 +48,17 @@ async fn admin_home(
         }
     };
 
-    let (code_pool_status, code_pool_detail) = if !state.code_pool.is_enabled() {
+    let (codepool_status, codepool_detail) = if !state.codepool.is_enabled() {
         (
             "not_configured",
-            "Set CODE_POOL_BASE_URL for Letta Code SDK streaming (required when RUN_WEB=true)."
+            "Set CODEPOOL_BASE_URL for Letta Code SDK streaming (required when RUN_WEB=true)."
                 .to_string(),
         )
     } else {
-        match state.code_pool.check_health().await {
+        match state.codepool.check_health().await {
             Ok(_) => (
                 "ok",
-                "GET /health on code-pool succeeded.".to_string(),
+                "GET /health on Codepool succeeded.".to_string(),
             ),
             Err(e) => ("error", e.to_string()),
         }
@@ -70,8 +70,8 @@ async fn admin_home(
             users => users,
             letta_status => letta_status,
             letta_detail => letta_detail,
-            code_pool_status => code_pool_status,
-            code_pool_detail => code_pool_detail,
+            codepool_status => codepool_status,
+            codepool_detail => codepool_detail,
         },
     )
     .await

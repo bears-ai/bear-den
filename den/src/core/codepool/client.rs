@@ -5,7 +5,7 @@ use serde_json::json;
 
 use crate::{config::Config, errors::CustomError};
 
-/// HTTP client for **code-pool** (Letta Code SDK harness). Disabled when `code_pool_base_url` is empty.
+/// HTTP client for **Codepool** (Letta Code SDK harness). Disabled when `codepool_base_url` is empty.
 #[derive(Clone)]
 pub struct CodePoolClient {
     http: reqwest::Client,
@@ -22,8 +22,8 @@ impl CodePoolClient {
             .expect("reqwest client");
         Self {
             http,
-            base_url: config.code_pool_base_url.trim_end_matches('/').to_string(),
-            internal_token: config.code_pool_internal_token.trim().to_string(),
+            base_url: config.codepool_base_url.trim_end_matches('/').to_string(),
+            internal_token: config.codepool_internal_token.trim().to_string(),
         }
     }
 
@@ -45,7 +45,7 @@ impl CodePoolClient {
     pub async fn fetch_pool_stats(&self) -> Result<String, CustomError> {
         if !self.is_enabled() {
             return Err(CustomError::System(
-                "CODE_POOL_BASE_URL is not set".to_string(),
+                "CODEPOOL_BASE_URL is not set".to_string(),
             ));
         }
         let url = format!("{}/internal/pool", self.base_url);
@@ -55,15 +55,15 @@ impl CodePoolClient {
             .headers(self.auth_headers())
             .send()
             .await
-            .map_err(|e| CustomError::System(format!("code-pool pool stats request failed: {e}")))?;
+            .map_err(|e| CustomError::System(format!("Codepool pool stats request failed: {e}")))?;
         let status = resp.status();
         let text = resp
             .text()
             .await
-            .map_err(|e| CustomError::System(format!("code-pool pool stats body: {e}")))?;
+            .map_err(|e| CustomError::System(format!("Codepool pool stats body: {e}")))?;
         if !status.is_success() {
             return Err(CustomError::System(format!(
-                "code-pool pool stats HTTP {status}: {text}"
+                "Codepool pool stats HTTP {status}: {text}"
             )));
         }
         Ok(text)
@@ -73,7 +73,7 @@ impl CodePoolClient {
     pub async fn check_health(&self) -> Result<String, CustomError> {
         if !self.is_enabled() {
             return Err(CustomError::System(
-                "CODE_POOL_BASE_URL is not set".to_string(),
+                "CODEPOOL_BASE_URL is not set".to_string(),
             ));
         }
         let url = format!("{}/health", self.base_url);
@@ -83,15 +83,15 @@ impl CodePoolClient {
             .headers(self.auth_headers())
             .send()
             .await
-            .map_err(|e| CustomError::System(format!("code-pool health request failed: {e}")))?;
+            .map_err(|e| CustomError::System(format!("Codepool health request failed: {e}")))?;
         let status = resp.status();
         let text = resp
             .text()
             .await
-            .map_err(|e| CustomError::System(format!("code-pool health body: {e}")))?;
+            .map_err(|e| CustomError::System(format!("Codepool health body: {e}")))?;
         if !status.is_success() {
             return Err(CustomError::System(format!(
-                "code-pool health HTTP {status}: {text}"
+                "Codepool health HTTP {status}: {text}"
             )));
         }
         Ok(text)
@@ -106,7 +106,7 @@ impl CodePoolClient {
     ) -> Result<reqwest::Response, CustomError> {
         if !self.is_enabled() {
             return Err(CustomError::System(
-                "code-pool is not configured (set CODE_POOL_BASE_URL)".to_string(),
+                "Codepool is not configured (set CODEPOOL_BASE_URL)".to_string(),
             ));
         }
 
@@ -138,7 +138,7 @@ impl CodePoolClient {
             .send()
             .await
             .map_err(|e| {
-                CustomError::System(format!("code-pool conversation messages request failed: {e}"))
+                CustomError::System(format!("Codepool conversation messages request failed: {e}"))
             })?;
 
         if !resp.status().is_success() {
@@ -148,7 +148,7 @@ impl CodePoolClient {
                 .await
                 .unwrap_or_else(|_| "(no body)".to_string());
             return Err(CustomError::System(format!(
-                "code-pool conversation messages HTTP {status}: {text}"
+                "Codepool conversation messages HTTP {status}: {text}"
             )));
         }
 

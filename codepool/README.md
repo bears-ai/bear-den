@@ -1,4 +1,4 @@
-# code-pool
+# Codepool
 
 **BEARS harness runtime** (Letta Code SDK): warm **conversation** session pool, streaming endpoints for **Den**, optional **channel listener** hooks (see `src/channel-listeners.ts`), and **`GET /internal/pool`** metrics.
 
@@ -8,7 +8,7 @@
 ## Run locally
 
 ```bash
-cd code-pool
+cd codepool
 npm install
 cp .env.example .env   # set LETTA_BASE_URL, LETTA_API_KEY
 npm run build && npm start
@@ -19,7 +19,7 @@ npm run build && npm start
 | Method | Path | Notes |
 |--------|------|--------|
 | GET | `/health` | Liveness |
-| GET | `/internal/pool` | Conversation + channel listener stats (Bearer if `CODE_POOL_INTERNAL_TOKEN`) |
+| GET | `/internal/pool` | Conversation + channel listener stats (Bearer if `CODEPOOL_INTERNAL_TOKEN`) |
 | POST | `/v1/conversations/:id/messages` | Letta-compatible streaming (body: `messages`, `agent_id`, …) |
 | POST | `/v1/chat/completions` | OpenWebUI-style (`metadata.bear_agent_id`, optional `metadata.conversation_id`) |
 

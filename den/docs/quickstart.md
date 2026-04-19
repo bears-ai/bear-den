@@ -4,7 +4,7 @@
 
 1. Copy [`.env.example`](../.env.example) to `.env` (or set env another way) and set **`DATABASE_URL`** to a PostgreSQL database that exists on your machine or network (empty database is fine).
 2. Enable at least one service, for example **`RUN_WEB=true`** (and optionally `RUN_API`, `RUN_WORKERS`).
-3. With **`RUN_WEB=true`**, set **`CODE_POOL_BASE_URL`** to your [code-pool](../../code-pool/README.md) service (for example `http://localhost:3030`). Den will not start the web server without it.
+3. With **`RUN_WEB=true`**, set **`CODEPOOL_BASE_URL`** to your [Codepool](../../codepool/README.md) service (for example `http://localhost:3030`). Den will not start the web server without it.
 4. Run:
 
    ```bash

@@ -39,7 +39,7 @@ export function attachRoutes(
   const guard = authMiddleware(ctx.internalToken);
 
   app.get("/health", (_req, res) => {
-    res.json({ ok: true, service: "bears-code-pool" });
+    res.json({ ok: true, service: "bears-codepool" });
   });
 
   app.get("/internal/pool", guard, (_req, res) => {
