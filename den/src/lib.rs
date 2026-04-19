@@ -11,7 +11,9 @@ pub mod startup;
 pub mod web;
 
 use crate::config::Config;
-use crate::startup::{StartupError, run_sqlx_migrations, validate_runtime_config};
+use crate::startup::{
+    StartupError, run_sqlx_migrations, validate_runtime_config, validate_upstream_connections,
+};
 use tokio::{signal, task::JoinSet};
 use tokio_util::sync::CancellationToken;
 use tracing_subscriber::{EnvFilter, layer::SubscriberExt, util::SubscriberInitExt};
@@ -63,6 +65,7 @@ pub async fn run() -> Result<(), StartupError> {
 
     let config = Arc::new(Config::load());
     validate_runtime_config(config.as_ref())?;
+    validate_upstream_connections(config.as_ref()).await?;
     email::init_mailgun(config.as_ref());
     tracing::info!(
         app = %config.app_display_name,

@@ -1,6 +1,8 @@
 //! Startup validation, SQLx migration runner, and structured errors for [`crate::run`].
 
 use crate::config::Config;
+use crate::core::code_pool::CodePoolClient;
+use crate::core::letta::LettaClient;
 use sqlx::PgPool;
 use thiserror::Error;
 
@@ -84,6 +86,38 @@ pub fn validate_runtime_config(config: &Config) -> Result<(), StartupError> {
                 .into(),
         ));
     }
+    Ok(())
+}
+
+/// Verify configured upstream HTTP services respond before accepting traffic.
+///
+/// Checks **code-pool** (`GET /health`) when [`Config::code_pool_base_url`] is non-empty,
+/// and **Letta** (`GET /v1/health`) when [`Config::letta_base_url`] is non-empty (same auth as runtime).
+pub async fn validate_upstream_connections(config: &Config) -> Result<(), StartupError> {
+    if !config.code_pool_base_url.trim().is_empty() {
+        tracing::info!(
+            url = %config.code_pool_base_url,
+            "Checking code-pool connectivity"
+        );
+        CodePoolClient::new(config)
+            .check_health()
+            .await
+            .map_err(|e| StartupError::Message(e.to_string()))?;
+        tracing::info!("code-pool health check passed");
+    }
+
+    if !config.letta_base_url.trim().is_empty() {
+        tracing::info!(
+            url = %config.letta_base_url,
+            "Checking Letta connectivity"
+        );
+        LettaClient::new(config)
+            .check_health()
+            .await
+            .map_err(|e| StartupError::Message(e.to_string()))?;
+        tracing::info!("Letta health check passed");
+    }
+
     Ok(())
 }
 
