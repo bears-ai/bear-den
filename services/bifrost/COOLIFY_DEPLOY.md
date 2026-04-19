@@ -63,7 +63,7 @@ Edit `[docker-compose.yaml](docker-compose.yaml)` and replace `maximhq/bifrost:l
 ### 6. Ports, health check, restart
 
 - **Ports:** `docker-compose.yaml` maps **`8080:8080`**. Adjust in the compose file if Coolify should publish a different host port, or remove the `ports:` section if you only need internal access and will reach the service by stack DNS (advanced—see Coolify networking docs).
-- **Health check:** defined in **`docker-compose.yaml`** (`healthcheck` → BusyBox **`wget --spider`** against `/health` on port **8080**). Docker / Coolify use it for container readiness. If you change **`APP_PORT`** or the published port, update the **`healthcheck`** URL to match (or remove it and configure health in Coolify only).
+- **Health check:** `GET /health` — Bifrost may **503** if internal store pings fail. The repo’s **[`config.json`](config.json)** sets **`disable_db_pings_in_health`** so file-based GitOps stacks stay **200** without SQLite/log/vector probes. Compose uses **`CMD-SHELL`** + **`wget`** (same as the upstream image) with a **long `start_period`** for slow ARM hosts.
 - **Restart:** `restart: unless-stopped` is already set on the service.
 
 ### 7. Deploy
@@ -174,6 +174,7 @@ Set `**LLM_API_URL=http://bear-bifrost:8080/v1**` on Letta (adjust host if you r
 | --------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
 | Compose deploy: “cannot mount … config.json” / empty file | **Preserve Repository During Deployment** enabled; **Base Directory** is `services/bifrost` so `./config.json` exists in the compose context |
 | Container exits on start                                  | **Logs** — invalid JSON, missing `env.`* variables in Coolify                                                                                |
+| **`bear-bifrost` unhealthy** (health check never passes)  | **`GET /health`** returns **503** when config/log/vector store pings fail — set **`disable_db_pings_in_health`** in `client` (see repo `config.json`); ensure **`OPENAI_API_KEY`** is set if providers use `env.*`; allow a long **`start_period`** on ARM |
 | Letta cannot resolve `bear-bifrost`                      | Same **Docker network** (Option A §8), or use Coolify-generated hostname for the stack                                                       |
 
 

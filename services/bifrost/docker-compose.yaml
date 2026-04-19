@@ -28,15 +28,10 @@ services:
     healthcheck:
       test:
         [
-          "CMD",
-          "wget",
-          "--no-verbose",
-          "--tries=1",
-          "-O",
-          "/dev/null",
-          "http://127.0.0.1:8080/health",
+          "CMD-SHELL",
+          "wget --no-verbose --tries=1 -O /dev/null http://127.0.0.1:8080/health || exit 1",
         ]
       interval: 30s
-      timeout: 10s
+      timeout: 15s
       retries: 5
-      start_period: 60s
+      start_period: 120s

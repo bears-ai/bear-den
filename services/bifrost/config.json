@@ -1,6 +1,7 @@
 {
   "client": {
-    "drop_excess_requests": false
+    "drop_excess_requests": false,
+    "disable_db_pings_in_health": true
   },
   "providers": {
     "openai": {
