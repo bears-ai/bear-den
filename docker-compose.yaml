@@ -48,6 +48,7 @@ services:
       LOG_STYLE: json
     volumes:
       - ./services/bifrost/config.json:/app/data/config.json:ro
+    # Match Bifrost docs (docker-tuning): BusyBox wget often lacks GNU `--spider` (probe would fail).
     healthcheck:
       test:
         [
@@ -55,13 +56,14 @@ services:
           "wget",
           "--no-verbose",
           "--tries=1",
-          "--spider",
+          "-O",
+          "/dev/null",
           "http://127.0.0.1:8080/health",
         ]
       interval: 30s
       timeout: 10s
-      retries: 3
-      start_period: 40s
+      retries: 5
+      start_period: 60s
 
   bear-letta:
     image: letta/letta:latest

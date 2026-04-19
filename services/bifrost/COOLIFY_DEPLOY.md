@@ -111,10 +111,12 @@ Under **Storages** / **Volumes**, mount **`config.json`** at **`/app/data/config
 The upstream Bifrost image includes BusyBox **`wget`** (not `curl`). Use the same probe as in [`docker-compose.yaml`](docker-compose.yaml):
 
 ```bash
-wget --no-verbose --tries=1 --spider http://127.0.0.1:8080/health || exit 1
+wget --no-verbose --tries=1 -O /dev/null http://127.0.0.1:8080/health || exit 1
 ```
 
-- **Interval:** `30s` · **Timeout:** `10s` · **Retries:** `3` · **Start period:** `40s`
+Use **`-O /dev/null`**, not GNU **`--spider`** — BusyBox `wget` in the image often does not support `--spider`, so the health check would fail every time.
+
+- **Interval:** `30s` · **Timeout:** `10s` · **Retries:** `5` · **Start period:** `60s`
 
 ### 7. Restart policy
 
