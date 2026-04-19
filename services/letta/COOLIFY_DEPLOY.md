@@ -281,11 +281,9 @@ CPU: 1-2 cores
 
 Factors: model choice, context size, tool latency (e.g. Cabinet). Use streaming where supported.
 
-## Third-party chat UIs (not part of BEARS)
+## Letta Code harness (separate service)
 
-BEARS does **not** include **Open WebUI** or similar parallel web chat stacks. First-party browser chat is **Den embedded Deep Chat** ([DEN_ARCHITECTURE.md](../../docs/architecture/DEN_ARCHITECTURE.md)).
-
-Historical notes and pipe examples for Open WebUI ↔ Letta live under [`OPENWEBUI_INTEGRATION.md`](OPENWEBUI_INTEGRATION.md) and [`OPENWEBUI_SESSIONS.md`](OPENWEBUI_SESSIONS.md) (**deprecated** for this stack; not maintained as a deployment path).
+First-party web chat is **Den embedded Deep Chat** → **Den** → **`letta server` (Letta Code)** → **Letta** — see [DEN_ARCHITECTURE.md](../../docs/architecture/DEN_ARCHITECTURE.md). This directory documents only the **Letta API server** (`letta/letta`). You **must** also deploy the **Letta Code** harness per [`../letta-code/COOLIFY_DEPLOY.md`](../letta-code/COOLIFY_DEPLOY.md); Den’s **`LETTA_CODE_BASE_URL`** targets that process, not a shortcut alias of this service.
 
 ## Advanced Configuration
 
@@ -325,7 +323,7 @@ Shared team context: **Cabinet (Outline)**, Letta shared blocks, or a **shared b
 ## Deployment completion
 
 - [ ] Bifrost healthy; Letta reaches `LLM_API_URL`
-- [ ] **Den** (when deployed) can reach Letta for provisioning and chat via **Letta Code**; end users chat through Den’s web UI
+- [ ] **Letta Code** (`bears-letta-code`, `letta server`) is deployed and Den can reach it at **`LETTA_CODE_BASE_URL`**; **Den** can reach Letta for provisioning via **`LETTA_API_BASE_URL`**; end users chat through Den’s web UI
 - [ ] Den + Outline + Cabinet tools when rolled out ([PLAN.md](../../docs/planning/PLAN.md))
 
 **Services:** `bears-bifrost`, `bears-letta`, UI; later **Outline + Den**.
