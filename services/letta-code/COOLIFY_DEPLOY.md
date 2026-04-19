@@ -39,10 +39,10 @@ This is the **least work** for Coolify + GitOps: same pattern as [`services/bifr
 1. **Add New Resource** → **Docker Compose** (build pack) → connect this repository.
 2. **Base Directory:** `services/letta-code` · **Compose file:** [`docker-compose.yaml`](docker-compose.yaml).
 3. Enable **Preserve Repository During Deployment** (or your platform equivalent) so the compose file stays tied to the branch you deploy.
-4. In **Environment Variables**, set at least `LETTA_BASE_URL`, `LETTA_API_KEY`, and optionally `ENV_NAME` / `LETTA_DEBUG` (see table below). Prefer Coolify secrets over committing `.env`.
+4. In **Environment Variables**, set **`LETTA_API_KEY`** (required) and adjust **`LETTA_BASE_URL`** if your Letta service name differs. The compose file lists `LETTA_BASE_URL`, `LETTA_API_KEY`, `ENV_NAME`, and `LETTA_DEBUG` under `environment` so Coolify can **prefill / show** those keys; optional vars have defaults in compose (see [`docker-compose.yaml`](docker-compose.yaml)). Prefer Coolify secrets for `LETTA_API_KEY` — do not commit real values.
 5. Ensure the **`letta-code-data`** volume (or your override) mounts **`/root`** — already declared in compose; add persistent storage in the UI if your platform requires an explicit volume binding.
 
-You can skip a checked-in `.env` if the platform injects everything as env vars (remove or adjust `env_file` in compose if it conflicts).
+For **local** `docker compose`, put the same keys in a **`.env`** file beside the compose file (Compose uses it for `${…}` substitution); see [`.env.example`](.env.example).
 
 ### Environment (both options)
 
