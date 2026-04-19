@@ -21,6 +21,8 @@ use crate::{
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/health/letta", get(letta_health_json))
+        .route("/harness-pool", get(harness_pool_page))
+        .route("/harness-pool.json", get(harness_pool_json))
         .route("/letta-code", get(letta_code_harness_page))
         .route("/letta-code.yaml", get(letta_code_harness_yaml_download))
 }
@@ -33,12 +35,72 @@ struct LettaHealthJson {
     detail: String,
 }
 
+async fn harness_pool_json(State(state): State<AppState>) -> Json<serde_json::Value> {
+    if !state.code_pool.is_enabled() {
+        return Json(serde_json::json!({
+            "ok": false,
+            "status": "disabled",
+            "detail": "CODE_POOL_BASE_URL is not set — required when RUN_WEB=true (Den should not start in this state)."
+        }));
+    }
+    match state.code_pool.fetch_pool_stats().await {
+        Ok(body) => match serde_json::from_str::<serde_json::Value>(&body) {
+            Ok(v) => Json(serde_json::json!({ "ok": true, "status": "ok", "pool": v })),
+            Err(_) => Json(serde_json::json!({ "ok": true, "status": "ok", "raw": body })),
+        },
+        Err(e) => Json(serde_json::json!({
+            "ok": false,
+            "status": "error",
+            "detail": e.to_string()
+        })),
+    }
+}
+
+async fn harness_pool_page(
+    State(state): State<AppState>,
+    auth_session: AuthSession,
+) -> Result<Response, CustomError> {
+    let (code_pool_status, code_pool_detail, code_pool_json_pretty) =
+        if !state.code_pool.is_enabled() {
+            (
+                "disabled",
+                "CODE_POOL_BASE_URL is not set — required when RUN_WEB=true."
+                    .to_string(),
+                String::new(),
+            )
+        } else {
+            match state.code_pool.fetch_pool_stats().await {
+                Ok(body) => {
+                    let pretty = serde_json::to_string_pretty(
+                        &serde_json::from_str::<serde_json::Value>(&body)
+                            .unwrap_or(serde_json::Value::String(body.clone())),
+                    )
+                    .unwrap_or(body.clone());
+                    ("ok", "GET /internal/pool succeeded.".to_string(), pretty)
+                }
+                Err(e) => ("error", e.to_string(), String::new()),
+            }
+        };
+
+    web::render_template(
+        &state,
+        "admin/harness_pool.html",
+        auth_session,
+        context! {
+            code_pool_status => code_pool_status,
+            code_pool_detail => code_pool_detail,
+            code_pool_json_pretty => code_pool_json_pretty,
+        },
+    )
+    .await
+}
+
 async fn letta_health_json(State(state): State<AppState>) -> Json<LettaHealthJson> {
     if !state.letta.is_enabled() {
         return Json(LettaHealthJson {
             ok: false,
             status: "disabled",
-            detail: "LETTA_BASE_URL is not set — provisioning and chat proxy are off.".to_string(),
+            detail: "LETTA_BASE_URL is not set — provisioning and Letta-backed history are off.".to_string(),
         });
     }
     match state.letta.check_health().await {

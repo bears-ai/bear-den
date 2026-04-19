@@ -1,0 +1,13 @@
+{
+  "lastAgent": "agent-b44ed8f7-dffc-4bf3-a86d-fa12c512c7f2",
+  "sessionsByServer": {
+    "letta.bears.artificial.design": {
+      "agentId": "agent-b44ed8f7-dffc-4bf3-a86d-fa12c512c7f2",
+      "conversationId": "default"
+    }
+  },
+  "lastSession": {
+    "agentId": "agent-b44ed8f7-dffc-4bf3-a86d-fa12c512c7f2",
+    "conversationId": "default"
+  }
+}

@@ -2,7 +2,7 @@
 
 **BEARS** is the stack name. Each product assistant is a **bear** (one [Letta](https://github.com/letta-ai/letta) agent). **Den** (Rust, in `den/`) is the control plane: provisioning, **users↔bears** membership, first-party web chat (Deep Chat), and Cabinet when Outline is deployed.
 
-This repo is a **light monorepo**: `docs/`, Coolify-oriented **`services/`**, and **`den/`** for the Den application (not under `services/`).
+This repo is a **light monorepo**: `docs/`, Coolify-oriented **`services/`**, **`den/`** for the Den application (not under `services/`), and **`code-pool/`** for the Letta Code SDK harness (warm pool, streaming for Den, optional Slack/channel workers).
 
 ## Start here
 

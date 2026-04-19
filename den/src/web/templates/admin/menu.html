@@ -18,6 +18,19 @@
   &nbsp;(<a href="/admin/health/letta"><code>GET /admin/health/letta</code></a> JSON)
 </p>
 
+<h4>Code pool (Letta Code SDK)</h4>
+<p>
+  {% if code_pool_status == "not_configured" %}
+  <strong>Not configured</strong> — {{ code_pool_detail }}
+  {% elif code_pool_status == "ok" %}
+  <strong style="color: var(--color-success, #1a7f37)">Reachable</strong> — {{ code_pool_detail }}
+  {% else %}
+  <strong style="color: var(--color-danger, #b00020)">Check failed</strong> — {{ code_pool_detail }}
+  {% endif %}
+  &nbsp;(<a href="/admin/harness-pool">pool UI</a>,
+  <a href="/admin/harness-pool.json"><code>GET /admin/harness-pool.json</code></a>)
+</p>
+
 <ul>
   <li><a href="/admin/users/">User management</a></li>
   <li><a href="/admin/bears/">Bears</a> — registry + prompt/model (Letta id when provisioned); <a href="/admin/bears/unlinked-letta-agents">unlinked Letta agents</a></li>

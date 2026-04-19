@@ -76,6 +76,14 @@ pub fn validate_runtime_config(config: &Config) -> Result<(), StartupError> {
             ));
         }
     }
+    if config.run_web && config.code_pool_base_url.trim().is_empty() {
+        return Err(StartupError::Message(
+            "CODE_POOL_BASE_URL must be set when RUN_WEB=true. Den streams bear chat through the \
+             code-pool service (Letta Code SDK), not directly to the Letta HTTP API. Example \
+             (internal URL): http://bears-code-pool:3030 — see code-pool/COOLIFY_DEPLOY.md."
+                .into(),
+        ));
+    }
     Ok(())
 }
 
@@ -114,5 +122,18 @@ mod tests {
             Some(v) => unsafe { std::env::set_var("JWT_SECRET", v) },
             None => unsafe { std::env::remove_var("JWT_SECRET") },
         }
+    }
+
+    #[test]
+    fn validate_requires_code_pool_when_run_web() {
+        let mut web_on = Config::test_stub();
+        web_on.run_web = true;
+        web_on.code_pool_base_url = String::new();
+        assert!(
+            validate_runtime_config(&web_on).is_err(),
+            "RUN_WEB=true requires CODE_POOL_BASE_URL"
+        );
+        web_on.code_pool_base_url = "http://localhost:3030".into();
+        validate_runtime_config(&web_on).expect("RUN_WEB with code pool should pass");
     }
 }

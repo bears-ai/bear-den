@@ -4,13 +4,14 @@
 
 1. Copy [`.env.example`](../.env.example) to `.env` (or set env another way) and set **`DATABASE_URL`** to a PostgreSQL database that exists on your machine or network (empty database is fine).
 2. Enable at least one service, for example **`RUN_WEB=true`** (and optionally `RUN_API`, `RUN_WORKERS`).
-3. Run:
+3. With **`RUN_WEB=true`**, set **`CODE_POOL_BASE_URL`** to your [code-pool](../../code-pool/README.md) service (for example `http://localhost:3030`). Den will not start the web server without it.
+4. Run:
 
    ```bash
    cargo run
    ```
 
-   On startup the app applies SQLx migrations from [`migrations/`](../migrations/) automatically. A migration seeds a **bootstrap operator** on empty databases: username **`admin`**, password **`Never deploy with default passwords.`** (see [`migrations/README.md`](../migrations/README.md) § *Default operator account*). Replace that password before any real deployment.
+   The app applies SQLx migrations from [`migrations/`](../migrations/) automatically. A migration seeds a **bootstrap operator** on empty databases: username **`admin`**, password **`Never deploy with default passwords.`** (see [`migrations/README.md`](../migrations/README.md) § *Default operator account*). Replace that password before any real deployment.
 
    When you add new migration files, use `sqlx migrate add` / `sqlx migrate run` from the `den/` directory as described in [sqlx-patterns.md](sqlx-patterns.md).
 

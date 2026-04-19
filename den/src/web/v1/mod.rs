@@ -479,8 +479,15 @@ async fn chat_send(
         None
     };
 
+    if !state.code_pool.is_enabled() {
+        return Err(CustomError::System(
+            "Chat is unavailable: CODE_POOL_BASE_URL is not set (code-pool is required for \
+             streaming when RUN_WEB=true)."
+                .to_string(),
+        ));
+    }
     let upstream = state
-        .letta
+        .code_pool
         .post_conversation_messages_streaming(&conv_id, agent_for_stream, body.message.trim())
         .await?;
 

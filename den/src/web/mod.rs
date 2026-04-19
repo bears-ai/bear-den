@@ -77,6 +77,7 @@ pub struct AppState {
     asset_router: Arc<Router<AppState>>,
     pub config: Arc<Config>,
     pub letta: std::sync::Arc<crate::core::letta::LettaClient>,
+    pub code_pool: std::sync::Arc<crate::core::code_pool::CodePoolClient>,
     pub media: Option<crate::core::s3::MediaStore>,
 }
 
@@ -150,6 +151,9 @@ pub async fn server_with_state(
         MemoryServe::new(load_assets!("src/web/assets")).cache_control(CacheControl::Short);
 
     let letta = std::sync::Arc::new(crate::core::letta::LettaClient::new(config.as_ref()));
+    let code_pool = std::sync::Arc::new(crate::core::code_pool::CodePoolClient::new(
+        config.as_ref(),
+    ));
     let media = crate::core::s3::MediaStore::new(config.as_ref());
     server(
         AppState {
@@ -158,6 +162,7 @@ pub async fn server_with_state(
             asset_router: Arc::new(memory_serve.into_router()),
             config: config.clone(),
             letta,
+            code_pool,
             media,
         },
         session_store,

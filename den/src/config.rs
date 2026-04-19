@@ -59,6 +59,12 @@ pub struct Config {
     /// Optional `Authorization: Bearer` value for Letta (omit when local Letta has no auth).
     pub letta_api_key: String,
 
+    /// **code-pool** harness base URL (no trailing slash), e.g. `http://bears-code-pool:3030`.
+    /// Required when `run_web` is true — [`crate::startup::validate_runtime_config`] enforces this.
+    pub code_pool_base_url: String,
+    /// Optional `Authorization: Bearer` for code-pool (must match `CODE_POOL_INTERNAL_TOKEN` on the pool).
+    pub code_pool_internal_token: String,
+
     /// S3-compatible endpoint (e.g. `http://bears-garage:3900`). Empty = media upload disabled.
     pub s3_endpoint: String,
     /// S3 bucket for chat media and generated images.
@@ -226,6 +232,13 @@ impl Config {
             .to_string();
         let letta_api_key = std::env::var("LETTA_API_KEY").unwrap_or_default();
 
+        let code_pool_base_url = std::env::var("CODE_POOL_BASE_URL")
+            .unwrap_or_default()
+            .trim_end_matches('/')
+            .to_string();
+        let code_pool_internal_token =
+            std::env::var("CODE_POOL_INTERNAL_TOKEN").unwrap_or_default();
+
         let s3_endpoint = std::env::var("S3_ENDPOINT")
             .unwrap_or_default()
             .trim_end_matches('/')
@@ -289,6 +302,8 @@ impl Config {
             api_server_url,
             letta_base_url,
             letta_api_key,
+            code_pool_base_url,
+            code_pool_internal_token,
             s3_endpoint,
             s3_bucket,
             s3_region,
@@ -346,6 +361,8 @@ impl Config {
             api_server_url: "http://localhost:3001".into(),
             letta_base_url: String::new(),
             letta_api_key: String::new(),
+            code_pool_base_url: String::new(),
+            code_pool_internal_token: String::new(),
             s3_endpoint: String::new(),
             s3_bucket: String::new(),
             s3_region: "garage".into(),

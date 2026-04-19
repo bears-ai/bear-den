@@ -48,12 +48,30 @@ async fn admin_home(
         }
     };
 
+    let (code_pool_status, code_pool_detail) = if !state.code_pool.is_enabled() {
+        (
+            "not_configured",
+            "Set CODE_POOL_BASE_URL for Letta Code SDK streaming (required when RUN_WEB=true)."
+                .to_string(),
+        )
+    } else {
+        match state.code_pool.check_health().await {
+            Ok(_) => (
+                "ok",
+                "GET /health on code-pool succeeded.".to_string(),
+            ),
+            Err(e) => ("error", e.to_string()),
+        }
+    };
+
     web::render_template(&state, "admin/menu.html",
         auth_session,
         context! {
             users => users,
             letta_status => letta_status,
             letta_detail => letta_detail,
+            code_pool_status => code_pool_status,
+            code_pool_detail => code_pool_detail,
         },
     )
     .await

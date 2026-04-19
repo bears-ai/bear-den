@@ -9,7 +9,7 @@ BEARS uses **only self-hosted Letta** (e.g. `letta/letta:latest` on Coolify). **
 | Layer | Product | Role |
 |-------|---------|------|
 | **Persistence** | **Letta** (self-hosted server) | Agent state: memory blocks, conversations, tool registration, model calls **Letta → Bifrost**. This is Letta’s **memory and persistence** API. |
-| **Harness** | **[Letta Code](https://docs.letta.com/letta-code)** (`letta` CLI, `letta server`) | **Agent execution**: skills, tool loops, local tools, [Channels](https://docs.letta.com/letta-code/channels/) (e.g. Slack), [scheduling](https://docs.letta.com/letta-code/scheduling) (`letta cron` with `letta server`). Sits **between** Den and Letta’s persistence. |
+| **Harness** | **[Letta Code](https://docs.letta.com/letta-code)** (SDK / CLI) | **Agent execution**: skills, tool loops, local tools, [Channels](https://docs.letta.com/letta-code/channels/) (e.g. Slack), [scheduling](https://docs.letta.com/letta-code/scheduling). In BEARS, the primary runtime is **`code-pool/`** (repo root): a **Node** service using **`@letta-ai/letta-code-sdk`** with a **warm session pool** for web traffic from Den; **channel listeners** (e.g. Slack) may run as **separate workers in the same container**, with metrics/APIs distinguishing **conversation handlers** from **channel listeners**. Letta remains the persistence API the harness calls. |
 | **Control plane** | **Den** | **Operations**: identity, bears, membership, skill and MCP catalogs, materialized config, **Den meta tools**, first-party **web chat UI**. (You can also call this the **operations layer**—same thing.) |
 
 **Artifact files ([Garage](https://garagehq.deuxfleurs.fr/), S3):** Bytes produced or consumed **during** agent turns (tools, skills, uploads) are read/written on paths executed by the **harness**—often **via** Den-issued presigned URLs or Den APIs. **Bucket layout, GC, and metadata policy** are **control-plane** (Den) concerns; **Garage** is infrastructure, not a fourth product layer. Letta does **not** store artifact blobs. See [artifacts-garage-adr.md](../artifacts-garage-adr.md).
@@ -69,14 +69,14 @@ For a concise list of **Letta agent knobs that Den’s bear UI does not yet driv
 ## System architecture
 
 ```
-  Den chat UI ──────────────────────────► Den ──────► Letta Code ───► Letta ───► Bifrost ───► providers
-                                          (v1 web: Den auth + membership, then harness)
+  Den chat UI ──────────────────────────► Den ──────► code-pool (Letta Code SDK) ───► Letta ───► Bifrost ───► providers
+                                          (v1 web: Den auth + membership, then harness pool)
 
-  Slack (Channels) ────────────────────► Letta Code ───► Letta ───► Bifrost ───► providers
+  Slack (Channels) ────────────────────► code-pool (channel listener workers) ───► Letta ───► Bifrost ───► providers
   WhatsApp — not in Letta Code Channels yet (desired; see text above)
 ```
 
-**Web** chat is **never** Den → Letta for messages: **Web → Den → Letta Code → Letta**. **Slack** uses the **Letta Code** harness ([Channels](https://docs.letta.com/letta-code/channels/), beta). Den may call Bifrost separately for **metrics/health** on the **bear inference** path (not bear chat inference through Den). Older notes in [PLAN.md](../planning/PLAN.md) that described optional **harness → Den → Letta** are superseded here by **Den → Letta Code → Letta** for web; Letta remains the persistence API the harness calls.
+**Web** chat is **not** Den → Letta HTTP for the **streaming agent loop**: **Web → Den → `code-pool/` → Letta**. Den still uses **Letta’s REST API** (`LETTA_BASE_URL`) for **provisioning**, **conversation list**, and **message history**. **Slack** may attach via **channel listener** workers **colocated** in **`code-pool/`** (same image / process supervision as **conversation handlers**) so one deployment owns SDK version, pool TTL, and **`~/.letta/`** state—see **Letta Code (harness layer)** below for risks of colocation. Den may call Bifrost separately for **metrics/health** on the **bear inference** path. Letta remains the persistence API the harness calls.
 
 ### Cabinet (Outline)
 
@@ -89,7 +89,7 @@ Long-lived shared knowledge: **bears** via **Den** Cabinet tools; humans in **Ou
 1. **Authenticate** end users (OAuth, session, API key, etc.).
 2. **Register bears** and **`(user_id, bear_id)`** membership (many‑to‑many); optional `letta_identity` metadata if you use identities.
 3. **Provision bears:** create/update Letta agents via Letta’s API (state backend); keep registry and clients in sync (**Letta Code** harness config).
-4. **Route** chat: resolve **bear** + conversation, call the **Letta Code** harness (not Letta’s HTTP message APIs directly from Den for end users), **stream** the response back to the browser or client.
+4. **Route** chat: resolve **bear** + conversation, call **`code-pool/`** for the **streaming** agent loop (not Letta’s HTTP message APIs directly from Den for end-user sends); **stream** the response back to the browser or client. **History/list** may still use **Letta**’s REST API from Den.
 5. **Enforce** membership: the authenticated user may only invoke **bears** they belong to (on web paths Den controls before the harness).
 6. **Cabinet (later):** enforce per‑user, per‑bear permissions on Cabinet tools.
 7. **Channel users ↔ Den `user_id`:** optional but valuable for a unified directory—map `(channel, external_id)` to `user_id` for operator views, analytics, and config; Letta Code still owns real-time Slack I/O.
@@ -123,23 +123,29 @@ Cabinet tool endpoints are internal or agent-facing per PLAN.
 
 **Letta Code is required** for BEARS: it is the **[harness](https://docs.letta.com/letta-code)** that runs the agent loop—skills, tool execution, [Channels](https://docs.letta.com/letta-code/channels/) (Slack), [scheduling](https://docs.letta.com/letta-code/scheduling), streaming to Den for web. **Letta** is the **persistence and server API** the harness uses—agents, blocks, conversations, and model calls **through Letta → Bifrost**.
 
+**BEARS app:** **`code-pool/`** (repository root, next to **`den/`**) is the **Node**-based service that embeds **`@letta-ai/letta-code-sdk`**, maintains a **warm session pool** (TTL eviction, `resumeSession` on miss) for **conversation handlers**, and may host **channel listener** workers (e.g. Slack) in the **same deployment** with **separate** health/metrics labels so operators see **conversation** vs **channel** status. It is **not** the Letta server container; it talks **outbound** to **`LETTA_BASE_URL`** like any harness.
+
 **Routines (Phase 1):** **Den** stores **first-class** scheduled work (**routines**) each **bound to one bear**; execution is delegated to the harness/Letta per [routines-automation-adr.md](../routines-automation-adr.md). **File outputs** go to **Garage** (artifacts bucket), not Letta — [artifacts-garage-adr.md](../artifacts-garage-adr.md). **no** automatic skill-learning from unattended runs by default ([PHASE1_DECISIONS.md](../planning/PHASE1_DECISIONS.md) decision **10**).
 
 **Artifacts (Garage):** Agent outputs, uploads, and routine files use **S3** in a dedicated **artifacts** bucket; **Cabinet** attachments use a **separate** bucket (Outline). See [artifacts-garage-adr.md](../artifacts-garage-adr.md).
 
-- **Letta Code → Letta:** The harness uses the self-hosted **Letta HTTP API** for persistence (configure **`LETTA_API_BASE_URL`** in Den for provisioning/agent APIs). **`LETTA_CODE_BASE_URL`** is what Den uses for **web chat** (`/v1/chat/*`) only — it does not fall back to `LETTA_API_BASE_URL`.
-- **Den → Letta Code:** Den bridges **browser and operator-initiated** traffic so web chat matches Slack. Implementation detail (HTTP adapter, sidecar, shared network) belongs in `den/` and deployment docs; the **contract** is **Web → Den → Letta Code → Letta**.
+- **Letta Code → Letta:** The harness uses the self-hosted **Letta HTTP API** for persistence. **Den** uses **`LETTA_BASE_URL`** (and **`LETTA_API_KEY`**) for **provisioning**, **conversation list**, and **history** (`LettaClient` in `den/`).
+- **Den → `code-pool/`:** Den bridges **browser** traffic for the **streaming send** path only: **`CODE_POOL_BASE_URL`** points at the internal **`code-pool`** HTTP listener. When **`RUN_WEB=true`**, Den **refuses to start** without **`CODE_POOL_BASE_URL`** set. This replaces treating a remote **`letta server`** process as the **HTTP façade** for web chat.
+- **Colocating Slack listeners with conversation handlers** shares one SDK version and volume but increases **blast radius** (restart affects both) and can **contend** for CPU/memory (always-on sockets vs bursty web). Mitigate with per-kind limits, separate subprocess isolation where possible, and **split deployments** only if SLOs require it.
 - **Tools:** For BEARS-defined capabilities (below), **Letta Code is the execution broker** between agents and **Den**—not a place to embed ad hoc tool scripts. See [Den meta tools](#den-meta-tools-bears-control-plane-tools).
 
-Example **environment** (illustrative; confirm against [Letta Code docs](https://docs.letta.com/letta-code) and [`services/letta-code/COOLIFY_DEPLOY.md`](../../services/letta-code/COOLIFY_DEPLOY.md)):
+Example **environment** (illustrative; confirm against [Letta Code docs](https://docs.letta.com/letta-code) and **`code-pool/`** deploy docs when added):
 
 ```bash
-LETTA_API_BASE_URL=http://bears-letta:8283
-# Harness HTTP base — always a dedicated Letta Code (`letta server`) deployment in BEARS, not the Letta container:
-LETTA_CODE_BASE_URL=http://bears-letta-code:<harness-http-port>
+# Den → Letta (persistence API: agents, conversations, history)
+LETTA_BASE_URL=http://bears-letta:8283
 LETTA_API_KEY=${LETTA_SERVER_PASS}
-# Slack (Channels): run `letta server --channels slack` on the harness host and:
-#   letta channels bind --channel slack --agent <letta-agent-id>
+
+# Den → code-pool (required for web: harness execution, streaming agent loop, optional OpenAI shim)
+CODE_POOL_BASE_URL=http://bears-code-pool:<port>
+
+# code-pool → Letta (same Letta origin as Den uses for persistence)
+# plus Slack / channel tokens only in code-pool as required by Channels
 ```
 
 Regenerate **harness deploy artifacts** (e.g. `letta-code.yaml` from the operator console) from Den’s DB when **bears** or **users↔bears** membership changes.

@@ -413,6 +413,9 @@ impl LettaClient {
     /// `POST /v1/conversations/{conversation_id}/messages` with `streaming: true` (SSE).
     ///
     /// For the agent default thread, pass `conversation_id == "default"` and `Some(agent_id)` in the body.
+    ///
+    /// **Den web chat** does not call this for end-user streaming: it uses [`crate::core::code_pool::CodePoolClient`]
+    /// (`CODE_POOL_BASE_URL`). This method remains for tests, tooling, or non-web callers.
     pub async fn post_conversation_messages_streaming(
         &self,
         conversation_id: &str,

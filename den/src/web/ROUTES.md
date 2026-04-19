@@ -43,13 +43,13 @@ Axum routes for the web server (`RUN_WEB=true`). Update this file when you add o
 - `GET /v1/bears` — JSON list of bears the signed-in user may use (membership-filtered; includes `is_bear_admin`; no Letta ids exposed) (`src/web/v1/mod.rs`).
 - `GET /v1/chat/conversations` — query `bear_id` (required). Membership-checked; returns `{ "conversations": [ { "id", "title", "last_message_at" } ] }` for the bear’s Letta agent (`default` = main thread + `conv-…` rows), sorted by most recent activity, excluding conversations that look archived in Letta JSON.
 - `GET /v1/chat/history` — query `bear_id` (required), optional `conversation_id` (`default` or `conv-…`; default when omitted), optional `before` (Letta message id cursor), optional `limit` (default 50, max 100). Membership-checked; proxies Letta `GET /v1/conversations/{id}/messages?order=desc` (with `agent_id` when `conversation_id=default`) for Deep Chat `loadHistory`.
-- `POST /v1/chat/send` — JSON body `bear_id`, `message`, optional `conversation_id` (`default` or `conv-…`). Membership-checked; proxies Letta `POST /v1/conversations/{id}/messages` with streaming (SSE); the browser parses `data:` lines and shows `reasoning_message` (HTML “Thinking” strip), `assistant_message` text, and `error_message` payloads in Deep Chat (see `bear_chat.html`).
+- `POST /v1/chat/send` — JSON body `bear_id`, `message`, optional `conversation_id` (`default` or `conv-…`). Membership-checked; proxies **`code-pool`** `POST /v1/conversations/{id}/messages` (Letta Code SDK; **`CODE_POOL_BASE_URL`** required at startup when `RUN_WEB=true`). The browser parses `data:` lines and shows `reasoning_message` (HTML “Thinking” strip), `assistant_message` text, and `error_message` payloads in Deep Chat (see `bear_chat.html`).
 
 `/v1/*` uses `login_required!(…)` (same session as the rest of the web app).
 
 ## Admin (`src/web/admin/mod.rs`)
 
-- `GET /admin/` — admin menu (includes Letta `/v1/health` status when `LETTA_BASE_URL` is set)
+- `GET /admin/` — admin menu (includes Letta `/v1/health` and **code-pool** `/health` when configured)
 - `GET|POST /admin/users/*` — user management
 - `GET|POST /admin/bears/*` — bear registry (create bear with prompt/model fields)
 - `GET /admin/bears/unlinked-letta-agents` — Letta agents with no Den bear (`letta_agent_id`); link to new-bear-from-agent flow
@@ -59,6 +59,8 @@ Axum routes for the web server (`RUN_WEB=true`). Update this file when you add o
 - `POST /admin/bears/{id}/retry-letta` — create Letta agent when `letta_agent_id` is unset (responds with detail HTML including a status line)
 - `GET|POST /admin/membership/*` — list and grant `user_bear` membership
 - `GET /admin/health/letta` — JSON: Letta reachable + auth (`GET /v1/health` on Letta) (`src/web/admin/ops.rs`)
+- `GET /admin/harness-pool` — **code-pool** warm session / channel listener stats (HTML)
+- `GET /admin/harness-pool.json` — same as JSON (`conversationHandlers`, `channelListeners`)
 - `GET /admin/letta-code` — Letta Code harness deploy preview + checklist (operator HTML)
 - `GET /admin/letta-code.yaml` — download `letta-code.yaml` (`text/yaml`; membership → agents)
 - `GET|POST /admin/api/*` — JSON admin API (bears, membership; operator session cookie)

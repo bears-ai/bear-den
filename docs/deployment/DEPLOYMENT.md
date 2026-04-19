@@ -28,22 +28,22 @@ Deploy the BEARS stack as separate services in Coolify. Shared knowledge uses **
 ## Architecture
 
 ```
-Den chat UI ──► Den ──► Letta Code ──► Letta ──► Bifrost ──► model providers
+Den chat UI ──► Den ──► code-pool (Letta Code SDK) ──► Letta ──► Bifrost ──► model providers
                     │                      ▲
                     │                      │
                     └── Garage (S3) ←──────┘ (presigned upload/download for chat media)
 (Optional: Outline/Cabinet with Den per PLAN.md)
 ```
 
-**Web chat:** **Den embedded Deep Chat** → **Den** → **Letta Code** → **Letta** — [PLAN.md](../planning/PLAN.md), [DEN_ARCHITECTURE.md](../architecture/DEN_ARCHITECTURE.md).
+**Web chat:** **Den embedded Deep Chat** → **Den** → **`code-pool/`** (harness) → **Letta** — [PLAN.md](../planning/PLAN.md), [DEN_ARCHITECTURE.md](../architecture/DEN_ARCHITECTURE.md).
 
 ## Deployment order
 
 1. **Bifrost** — model gateway  
 2. **Garage** — S3-compatible object storage (chat media, generated images, artifacts)  
 3. **Letta** — must reach Bifrost (Letta HTTP API / persistence)  
-4. **Letta Code** — mandatory `letta server` harness ([`../../services/letta-code/COOLIFY_DEPLOY.md`](../../services/letta-code/COOLIFY_DEPLOY.md)); chat always Den → harness → Letta  
-5. **Den** — control plane + first-party web chat (bridge to **`LETTA_CODE_BASE_URL`**, membership, operator console)  
+4. **code-pool** — Letta Code SDK harness ([`../../code-pool/COOLIFY_DEPLOY.md`](../../code-pool/COOLIFY_DEPLOY.md)); streaming chat Den → **code-pool** → Letta  
+5. **Den** — control plane + first-party web chat (bridge to **`CODE_POOL_BASE_URL`**, membership, operator console)  
 6. **Outline + Den Cabinet wiring** — when enabling Cabinet ([PLAN.md](../planning/PLAN.md)); Den needs Garage credentials  
 
 ## Step-by-step deployment
@@ -78,19 +78,20 @@ See [`../../services/letta/COOLIFY_DEPLOY.md`](../../services/letta/COOLIFY_DEPL
 - Volume: `bears-letta-data` → `/root/.letta`  
 - Health: `GET http://bears-letta:8283/v1/health`
 
-### Step 4: Letta Code (mandatory harness)
+### Step 4: code-pool (Letta Code SDK harness)
 
-See [`../../services/letta-code/COOLIFY_DEPLOY.md`](../../services/letta-code/COOLIFY_DEPLOY.md).
+See [`../../code-pool/COOLIFY_DEPLOY.md`](../../code-pool/COOLIFY_DEPLOY.md).
 
-- Deploy **`bears-letta-code`** running **`letta server`** (`@letta-ai/letta-code`), with **`LETTA_BASE_URL=http://bears-letta:8283`** and **`LETTA_API_KEY`** matching Letta’s server credential.  
-- Persist **`/root`** on a volume (auth and local harness state).  
-- **`LETTA_CODE_BASE_URL`** in Den must point at this harness’s **HTTP** base for `/v1/conversations/*` (not at Letta alone — see the guide).
+- Deploy **`bears-code-pool`** from **`code-pool/`** (Node, **`@letta-ai/letta-code-sdk`**).  
+- **`LETTA_BASE_URL=http://bears-letta:8283`** and **`LETTA_API_KEY`** matching Letta’s server credential (same as Den uses for provisioning).  
+- Persist **`~/.letta`** on a volume (CLI auth and local state).  
+- **`CODE_POOL_BASE_URL`** in Den must point at this service (e.g. `http://bears-code-pool:3030`). Optional shared secret: **`CODE_POOL_INTERNAL_TOKEN`** on both sides.
 
 ### Step 5: Den
 
-Build and deploy Den from repo root **`den/`** (Rust/Axum) — see [PHASE1_BOOTSTRAP.md](../planning/PHASE1_BOOTSTRAP.md) for routes and env expectations. Den serves the **embedded Deep Chat** UI and proxies chat **Den → Letta Code → Letta** per [DEN_ARCHITECTURE.md](../architecture/DEN_ARCHITECTURE.md).
+Build and deploy Den from repo root **`den/`** (Rust/Axum) — see [PHASE1_BOOTSTRAP.md](../planning/PHASE1_BOOTSTRAP.md) for routes and env expectations. Den serves the **embedded Deep Chat** UI and proxies streaming chat **Den → code-pool → Letta** per [DEN_ARCHITECTURE.md](../architecture/DEN_ARCHITECTURE.md).
 
-- **`LETTA_CODE_BASE_URL`** — harness from Step 4; **`LETTA_API_BASE_URL`** — Letta from Step 3 (see `den/.env.example`).  
+- **`LETTA_BASE_URL`** — Letta from Step 3 (persistence, history, provisioning). **`CODE_POOL_BASE_URL`** — harness from Step 4 (streaming agent loop).  
 - Garage: bucket + credentials for presigned URLs when media upload is enabled  
 
 ### Step 6: Outline & Den (Cabinet)
@@ -99,7 +100,7 @@ Follow [PLAN.md](../planning/PLAN.md) when you deploy the control plane and Outl
 
 ## Post-deployment
 
-- **Den chat UI:** end users chat at Den’s **`/bear/{slug}`** (or equivalent) routes — **Den → Letta Code → Letta**  
+- **Den chat UI:** end users chat at Den’s **`/bear/{slug}`** (or equivalent) routes — **Den → code-pool → Letta**  
 - Letta UI (internal): **bear** / agent and memory management at `:8283`  
 - Add **Outline** for shared knowledge, **users↔bears** membership, and channel routing  
 
@@ -117,7 +118,7 @@ End-to-end: create a **bear** in Letta (or via Den when deployed), open the bear
 ## Troubleshooting
 
 - **Letta ↔ Bifrost:** `LLM_API_URL` must match Bifrost’s internal URL and `/v1` suffix; provider keys must be valid on the Bifrost service.  
-- **Den ↔ Letta Code:** confirm harness URL, credentials, and Docker network DNS names match your Coolify service names.  
+- **Den ↔ code-pool:** confirm `CODE_POOL_BASE_URL`, optional `CODE_POOL_INTERNAL_TOKEN`, and Docker network DNS names match your Coolify service names.  
 
 Service-specific detail: `services/*/COOLIFY_DEPLOY.md`.
 

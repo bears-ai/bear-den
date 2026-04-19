@@ -8,6 +8,7 @@ Human-oriented docs for the **Basic Environment for Agents Runtime Server (BEARS
 
 | Path | Contents |
 |------|----------|
+| [../code-pool/](../code-pool/) | Letta Code SDK harness (warm pool, Den streaming, optional channel listeners) — app at repo root, not under `services/` |
 | [planning/](planning/) | Roadmap, phased delivery, Phase 1 Den bootstrap, [locked Phase 1 decisions](planning/PHASE1_DECISIONS.md) |
 | [deployment/](deployment/) | Coolify deployment order and steps |
 | [architecture/](architecture/) | Stack notes, Den + multi-user Letta; [Letta vs bear UI coverage](architecture/LETTA_BEAR_UI_EXPOSURE.md); [Den meta tools](architecture/DEN_ARCHITECTURE.md#den-meta-tools-bears-control-plane-tools) (Den-defined control-plane tools and APIs; **Letta Code** brokers execution; not ad hoc scripts in Letta) |
@@ -17,7 +18,7 @@ Human-oriented docs for the **Basic Environment for Agents Runtime Server (BEARS
 
 Service-specific runbooks stay next to their configs: `services/*/COOLIFY_DEPLOY.md` and related `.md` under each service tree.
 
-**Den (Rust)** — application code lives at repo root in **`den/`** (not under `services/`). `services/` holds images, compose-oriented assets, and integration docs for Letta, Bifrost, Garage, etc.
+**Den (Rust)** — application code lives at repo root in **`den/`** (not under `services/`). **`code-pool/`** (repo root) is the **Node** Letta Code SDK service (harness pool for Den; optional channel listeners). `services/` holds images, compose-oriented assets, and integration docs for Letta, Bifrost, Garage, etc.
 
 ## Cloning and automation
 

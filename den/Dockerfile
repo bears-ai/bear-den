@@ -59,6 +59,13 @@ USER appuser
 
 COPY --from=build /bin/server /bin/
 
+# Runtime env (set in Coolify / compose — not baked into the image):
+# When RUN_WEB=true (default for production web):
+#   CODE_POOL_BASE_URL — required. Internal URL of the code-pool service, e.g. http://bears-code-pool:3030
+#     (Letta Code SDK harness; bear chat streaming does not use the Letta server HTTP API directly).
+#   CODE_POOL_INTERNAL_TOKEN — optional; must match the code-pool container if set.
+# See ../../code-pool/COOLIFY_DEPLOY.md and den/COOLIFY_DEPLOY.md.
+
 EXPOSE 3000
 
 CMD ["/bin/server"]
