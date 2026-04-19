@@ -3,11 +3,11 @@
 {% block title %}{{ bear_name | e }}{% endblock %}
 
 {% block subnav %}
-<li><a class="button-link" href="/bear/{{ bear_slug | e }}/details">Bear details</a></li>
 <li>
   <label for="den-conv">Conversation</label>
   <select id="den-conv" aria-label="Conversation"></select>
 </li>
+<li><a class="button-link" href="/bear/{{ bear_slug | e }}/details">Bear details</a></li>
 {% endblock %}
 
 {% block head %}
@@ -501,9 +501,8 @@
         })
         .then(function (data) {
           if (data && data.__den_skip) return 'skip-boot';
-          var wrap = document.getElementById('den-chat-conv-wrap');
           var sel = document.getElementById('den-conv');
-          if (!wrap || !sel) return;
+          if (!sel) return;
           var list = data && data.conversations ? data.conversations : [];
           sel.innerHTML = '';
           var i;
@@ -521,7 +520,6 @@
             o.textContent = 'Main chat';
             sel.appendChild(o);
           }
-          wrap.hidden = false;
           var firstId = list[0] && list[0].id ? list[0].id : 'default';
           sel.value = firstId;
           CONVERSATION_ID = sel.value;
@@ -533,15 +531,13 @@
         })
         .catch(function (err) {
           showErr(String(err.message || err));
-          var wrap = document.getElementById('den-chat-conv-wrap');
           var sel = document.getElementById('den-conv');
-          if (wrap && sel) {
+          if (sel) {
             sel.innerHTML = '';
             var o = document.createElement('option');
             o.value = 'default';
             o.textContent = 'Main chat';
             sel.appendChild(o);
-            wrap.hidden = false;
             sel.onchange = function () {
               CONVERSATION_ID = sel.value;
               remountDeepChat();
