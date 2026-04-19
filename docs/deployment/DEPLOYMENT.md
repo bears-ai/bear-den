@@ -41,9 +41,10 @@ Den chat UI ──► Den ──► Letta Code ──► Letta ──► Bifrost
 
 1. **Bifrost** — model gateway  
 2. **Garage** — S3-compatible object storage (chat media, generated images, artifacts)  
-3. **Letta** — must reach Bifrost  
-4. **Den** — control plane + first-party web chat (Letta Code bridge, membership, operator console)  
-5. **Outline + Den Cabinet wiring** — when enabling Cabinet ([PLAN.md](../planning/PLAN.md)); Den needs Garage credentials
+3. **Letta** — must reach Bifrost (Letta HTTP API / persistence)  
+4. **Letta Code** — mandatory `letta server` harness ([`../../services/letta-code/COOLIFY_DEPLOY.md`](../../services/letta-code/COOLIFY_DEPLOY.md)); chat always Den → harness → Letta  
+5. **Den** — control plane + first-party web chat (bridge to **`LETTA_CODE_BASE_URL`**, membership, operator console)  
+6. **Outline + Den Cabinet wiring** — when enabling Cabinet ([PLAN.md](../planning/PLAN.md)); Den needs Garage credentials  
 
 ## Step-by-step deployment
 
@@ -77,15 +78,22 @@ See [`../../services/letta/COOLIFY_DEPLOY.md`](../../services/letta/COOLIFY_DEPL
 - Volume: `bears-letta-data` → `/root/.letta`  
 - Health: `GET http://bears-letta:8283/v1/health`
 
-### Step 4: Den
+### Step 4: Letta Code (mandatory harness)
+
+See [`../../services/letta-code/COOLIFY_DEPLOY.md`](../../services/letta-code/COOLIFY_DEPLOY.md).
+
+- Deploy **`bears-letta-code`** running **`letta server`** (`@letta-ai/letta-code`), with **`LETTA_BASE_URL=http://bears-letta:8283`** and **`LETTA_API_KEY`** matching Letta’s server credential.  
+- Persist **`/root`** on a volume (auth and local harness state).  
+- **`LETTA_CODE_BASE_URL`** in Den must point at this harness’s **HTTP** base for `/v1/conversations/*` (not at Letta alone — see the guide).
+
+### Step 5: Den
 
 Build and deploy Den from repo root **`den/`** (Rust/Axum) — see [PHASE1_BOOTSTRAP.md](../planning/PHASE1_BOOTSTRAP.md) for routes and env expectations. Den serves the **embedded Deep Chat** UI and proxies chat **Den → Letta Code → Letta** per [DEN_ARCHITECTURE.md](../architecture/DEN_ARCHITECTURE.md).
 
-- **Letta Code** harness must be reachable from Den (same Docker network as Letta, or documented sidecar layout)  
-- `LETTA_BASE_URL` / admin credential aligned with self-hosted Letta  
+- **`LETTA_CODE_BASE_URL`** — harness from Step 4; **`LETTA_API_BASE_URL`** — Letta from Step 3 (see `den/.env.example`).  
 - Garage: bucket + credentials for presigned URLs when media upload is enabled  
 
-### Step 5: Outline & Den (Cabinet)
+### Step 6: Outline & Den (Cabinet)
 
 Follow [PLAN.md](../planning/PLAN.md) when you deploy the control plane and Outline-backed Cabinet.
 

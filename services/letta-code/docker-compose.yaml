@@ -1,0 +1,30 @@
+# Letta Code harness for BEARS — use with Coolify **Docker Compose** build pack from Git.
+#
+# Coolify UI (summary):
+#   - Add Resource → Git → Build Pack: **Docker Compose**
+#   - Base Directory: `services/letta-code`
+#   - Docker Compose file: `docker-compose.yaml`
+#   - Set LETTA_BASE_URL, LETTA_API_KEY, and optional ENV_NAME in Environment Variables.
+#   - Add a persistent volume for service "letta-code-data" → /root (auth + local state).
+#
+# See COOLIFY_DEPLOY.md for full steps and Den wiring (LETTA_CODE_BASE_URL).
+
+services:
+  bears-letta-code:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      ENV_NAME: ${ENV_NAME:-bears-prod}
+    volumes:
+      - letta-code-data:/root
+    # When the pinned @letta-ai/letta-code exposes a fixed HTTP port for Den, map it here and
+    # set Den LETTA_CODE_BASE_URL to http://bears-letta-code:<port>
+    # ports:
+    #   - "9292:9292"
+
+volumes:
+  letta-code-data:

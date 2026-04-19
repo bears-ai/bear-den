@@ -127,16 +127,18 @@ Cabinet tool endpoints are internal or agent-facing per PLAN.
 
 **Artifacts (Garage):** Agent outputs, uploads, and routine files use **S3** in a dedicated **artifacts** bucket; **Cabinet** attachments use a **separate** bucket (Outline). See [artifacts-garage-adr.md](../artifacts-garage-adr.md).
 
-- **Letta Code → Letta:** Point `LETTA_BASE_URL` at the self-hosted Letta HTTP API (e.g. `http://bears-letta:8283`) and use the Letta admin API key—this is the normal harness ↔ persistence link, not a shortcut to bypass Den for policy reasons.
+- **Letta Code → Letta:** The harness uses the self-hosted **Letta HTTP API** for persistence (configure **`LETTA_API_BASE_URL`** in Den for provisioning/agent APIs). **`LETTA_CODE_BASE_URL`** is what Den uses for **web chat** (`/v1/chat/*`) only — it does not fall back to `LETTA_API_BASE_URL`.
 - **Den → Letta Code:** Den bridges **browser and operator-initiated** traffic so web chat matches Slack. Implementation detail (HTTP adapter, sidecar, shared network) belongs in `den/` and deployment docs; the **contract** is **Web → Den → Letta Code → Letta**.
 - **Tools:** For BEARS-defined capabilities (below), **Letta Code is the execution broker** between agents and **Den**—not a place to embed ad hoc tool scripts. See [Den meta tools](#den-meta-tools-bears-control-plane-tools).
 
-Example **environment** (illustrative; confirm against [Letta Code docs](https://docs.letta.com/letta-code)):
+Example **environment** (illustrative; confirm against [Letta Code docs](https://docs.letta.com/letta-code) and [`services/letta-code/COOLIFY_DEPLOY.md`](../../services/letta-code/COOLIFY_DEPLOY.md)):
 
 ```bash
-LETTA_BASE_URL=http://bears-letta:8283
+LETTA_API_BASE_URL=http://bears-letta:8283
+# Harness HTTP base — always a dedicated Letta Code (`letta server`) deployment in BEARS, not the Letta container:
+LETTA_CODE_BASE_URL=http://bears-letta-code:<harness-http-port>
 LETTA_API_KEY=${LETTA_SERVER_PASS}
-# Slack (Channels): run `letta server --channels slack` and:
+# Slack (Channels): run `letta server --channels slack` on the harness host and:
 #   letta channels bind --channel slack --agent <letta-agent-id>
 ```
 
@@ -239,19 +241,20 @@ See [PLAN.md](../planning/PLAN.md) Phase 1 for the phased implementation checkli
 | Component | Notes |
 |-----------|--------|
 | **Self-hosted Letta** | Coolify service; volume for `/root/.letta`; `LETTA_SERVER_PASS`; `LLM_API_URL` → Bifrost |
-| **Den** | Axum service; `LETTA_BASE_URL=http://bears-letta:8283`; Letta admin credential; `DATABASE_URL`; `SESSION_SECRET`; Outline/Cabinet credentials when Phase 3+ |
+| **Den** | Axum service; `LETTA_API_BASE_URL` / `LETTA_CODE_BASE_URL` (see `den/.env.example`); Letta admin credential; `DATABASE_URL`; `SESSION_SECRET`; Outline/Cabinet credentials when Phase 3+ |
 | **PostgreSQL** | Den users, **bears**, **users↔bears** membership, sessions |
 | **Letta Code** | **Required** harness (`letta server`); Slack via [Channels](https://docs.letta.com/letta-code/channels/); tokens and `~/.letta/channels/` state; connects to Letta for persistence |
 | **Den chat UI** | Served by Den (Deep Chat web component); **only** first-party browser chat — **same origin** to Den; chat traffic **Den → Letta Code** |
 
 ```bash
 # Den (example)
-LETTA_BASE_URL=http://bears-letta:8283
+LETTA_API_BASE_URL=http://bears-letta:8283
+LETTA_CODE_BASE_URL=http://bears-letta-code:<harness-http-port>
 LETTA_AUTH=<LETTA_SERVER_PASS or Bearer token per your Letta version>
 DATABASE_URL=postgresql://...
 SESSION_SECRET=...
 
-# Letta Code harness (example — see Letta Code docs)
+# Letta Code harness — separate deploy (`bears-letta-code`); see services/letta-code/COOLIFY_DEPLOY.md
 # Slack: configure via `letta channels configure slack`, `letta server --channels slack`
 ```
 
