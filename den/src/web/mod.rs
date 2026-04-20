@@ -203,7 +203,18 @@ pub async fn server(
 
     let asset_router = Arc::as_ref(&state.asset_router).clone();
 
+    // Register liveness/readiness, manifest, and BEARS aggregate health **first** (before admin,
+    // `/bear/*`, and `public::router()`'s fallback) so `/health/*` always resolves to these handlers.
     let router = Router::new()
+        .merge(
+            Router::new()
+                .route("/manifest.json", get(web_manifest))
+                .route("/health", get(|| async { "OK" }))
+                .route("/healthcheck", get(|| async { "OK" }))
+                .route("/health/ready", get(web_readiness))
+                .route("/health/bears", get(bears_health::page))
+                .route("/health/bears.json", get(bears_health::json_endpoint)),
+        )
         .nest("/admin", admin::router())
         .route_layer(permission_required!(Backend, login_url = "/login", "admin"))
         .merge(
@@ -234,12 +245,6 @@ pub async fn server(
                 )
             }),
         )
-        .route("/manifest.json", get(web_manifest))
-        .route("/health", get(|| async { "OK" }))
-        .route("/healthcheck", get(|| async { "OK" }))
-        .route("/health/ready", get(web_readiness))
-        .route("/health/bears", get(bears_health::page))
-        .route("/health/bears.json", get(bears_health::json_endpoint))
         .with_state(state);
 
     Ok(router)

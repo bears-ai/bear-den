@@ -105,6 +105,49 @@ async fn web_readiness_returns_ok_when_db_up() {
     assert_eq!(res.status(), StatusCode::OK);
 }
 
+#[tokio::test]
+async fn web_health_bears_json_is_routed() {
+    let app = web_app().await;
+    let res = app
+        .oneshot(
+            Request::builder()
+                .uri("/health/bears.json")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_ne!(
+        res.status(),
+        StatusCode::NOT_FOUND,
+        "GET /health/bears.json must be registered (aggregate health, not public 404 fallback)"
+    );
+    assert!(
+        matches!(res.status(), StatusCode::OK | StatusCode::SERVICE_UNAVAILABLE),
+        "expected 200 or 503 from aggregate health JSON, got {}",
+        res.status()
+    );
+}
+
+#[tokio::test]
+async fn web_health_bears_page_is_routed() {
+    let app = web_app().await;
+    let res = app
+        .oneshot(
+            Request::builder()
+                .uri("/health/bears")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_ne!(
+        res.status(),
+        StatusCode::NOT_FOUND,
+        "GET /health/bears must be registered (aggregate health HTML)"
+    );
+}
+
 /// Bear chat (`/bear/{slug}`) loads Deep Chat from `/assets/deep-chat/*`; these must not 404.
 #[tokio::test]
 async fn web_deep_chat_vendor_assets_are_served() {
