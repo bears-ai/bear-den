@@ -12,12 +12,9 @@
 /* Within-chat styles are defined via script in that page */
 
 body.bear_chat {
-    margin: 0;
     min-height: 100vh;
     display: flex;
     flex-direction: column;
-    padding-left: 0;
-    padding-right: 0;
 }
 
 body.bear_chat > section#content {

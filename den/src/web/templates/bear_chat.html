@@ -355,6 +355,36 @@
               },
             },
           },
+          /** `small` = scroll-to-top pagination; `full` = first paint. Defaults are a large ring — very noticeable. */
+          history: {
+            full: {
+              styles: {
+                outerContainer: { justifyContent: 'flex-start', marginTop: 'calc(var(--spacing-unit) * 0.75)' },
+                bubble: {
+                  height: '36px',
+                  width: '36px',
+                  margin: '4px 0',
+                  border: '3px solid ' + met,
+                },
+              },
+            },
+            small: {
+              styles: {
+                outerContainer: {
+                  justifyContent: 'flex-start',
+                  marginTop: 'calc(var(--spacing-unit) * 0.35)',
+                  marginBottom: 'calc(var(--spacing-unit) * 1)',
+                },
+                bubble: {
+                  border: 'none',
+                  backgroundColor: 'transparent',
+                  minHeight: '0',
+                  padding: 'calc(var(--spacing-unit) * 0.35) 0',
+                },
+              },
+              html: '<span class="den-history-loading">Loading earlier messages\u2026</span>',
+            },
+          },
         },
       };
 
@@ -403,7 +433,8 @@
         '#chat-view.deep-chat-downwards-mode #messages{min-height:0!important}' +
         '#chat-view.deep-chat-downwards-mode #input{margin-top:0!important}' +
         '#text-input{background-color:var(--field-fill-color)!important}' +
-        '#messages{padding-top:var(--chat-messages-padding-top)!important;background-color:var(--surface-color)!important}' +
+        '#messages{padding-top:var(--chat-messages-padding-top)!important;background-color:var(--surface-color)!important;scroll-behavior:auto}' +
+        '.den-history-loading{display:inline-block;font-size:smaller;font-style:italic;color:var(--meta-color);opacity:0.88}' +
         '.den-reasoning-wrap{font-size:smaller;color:inherit;opacity:0.92}' +
         '.den-reasoning-head{display:flex;align-items:center;gap:calc(var(--spacing-unit) * 0.9);min-width:0}' +
         '.den-reasoning-kicker{flex:0 0 auto;font-variant:small-caps;letter-spacing:0.06em;font-size:smaller;opacity:0.8}' +
