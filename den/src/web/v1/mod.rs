@@ -473,11 +473,6 @@ async fn chat_send(
         })?;
 
     let conv_id = normalize_client_conversation_id(body.conversation_id.as_deref())?;
-    let agent_for_stream = if conv_id == "default" {
-        Some(agent_id)
-    } else {
-        None
-    };
 
     if !state.codepool.is_enabled() {
         return Err(CustomError::System(
@@ -488,7 +483,7 @@ async fn chat_send(
     }
     let upstream = state
         .codepool
-        .post_conversation_messages_streaming(&conv_id, agent_for_stream, body.message.trim())
+        .post_conversation_messages_streaming(&conv_id, Some(agent_id), body.message.trim())
         .await?;
 
     let stream = upstream.bytes_stream().map(|res| {
