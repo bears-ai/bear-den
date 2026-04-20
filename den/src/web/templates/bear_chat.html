@@ -31,6 +31,15 @@
       var p = new URLSearchParams(window.location.search).get('conversation_id');
       return p && p.trim() ? p.trim() : 'default';
     })();
+    /**
+     * Show raw `<system-reminder>…</system-reminder>` in the chat only when
+     * `?debug=true` or `?debug=verbose` (no UI toggle).
+     */
+    var DEN_CHAT_DEBUG_VERBOSE = (function () {
+      var q = new URLSearchParams(window.location.search);
+      var v = (q.get('debug') || '').trim().toLowerCase();
+      return v === 'true' || v === 'verbose';
+    })();
     var errEl = document.getElementById('err');
     /** Page size for Letta `GET …/messages` (newest page first; scroll up loads older). */
     var DEN_HISTORY_PAGE = 50;
@@ -127,6 +136,60 @@
         .replace(/"/g, '&quot;');
     }
 
+    /** Strip model-injected `<system-reminder>…</system-reminder>` blocks from visible text. */
+    function stripSystemReminderBlocks(text) {
+      if (DEN_CHAT_DEBUG_VERBOSE || typeof text !== 'string') return text;
+      var s = text.replace(/<system-reminder\b[^>]*>[\s\S]*?<\/system-reminder>/gi, '');
+      var partial = /<system-reminder\b[^>]*$/i;
+      var m = s.match(partial);
+      if (m && m.index != null) s = s.slice(0, m.index);
+      return s;
+    }
+
+    function escapeHtmlWithBreaks(s) {
+      var n = String(s).replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+      return escapeHtml(n).replace(/\n/g, '<br>');
+    }
+
+    /**
+     * When `?debug=true|verbose`, wrap each `<system-reminder>…</system-reminder>` in a collapsed
+     * `<details>` (meta-colored); plain segments keep normal bubble color.
+     */
+    function buildInterleavedSystemReminderHtml(raw) {
+      var parts = [];
+      var lastIndex = 0;
+      var re = /<system-reminder\b[^>]*>([\s\S]*?)<\/system-reminder>/gi;
+      var m;
+      while ((m = re.exec(raw)) !== null) {
+        if (m.index > lastIndex) {
+          parts.push(
+            '<span class="den-assistant-plain">' +
+              escapeHtmlWithBreaks(raw.slice(lastIndex, m.index)) +
+              '</span>'
+          );
+        }
+        parts.push(
+          '<details class="den-system-reminder">' +
+            '<summary class="den-system-reminder-summary">System reminder</summary>' +
+            '<div class="den-system-reminder-body">' +
+              escapeHtmlWithBreaks(m[1]) +
+            '</div>' +
+          '</details>'
+        );
+        lastIndex = re.lastIndex;
+      }
+      var tail = raw.slice(lastIndex);
+      var partial = /<system-reminder\b[^>]*$/i;
+      var pm = tail.match(partial);
+      if (pm) tail = tail.slice(0, pm.index);
+      parts.push('<span class="den-assistant-plain">' + escapeHtmlWithBreaks(tail) + '</span>');
+      return parts.join('');
+    }
+
+    function formatAssistantDebugHtml(raw) {
+      return '<div class="den-assistant-html">' + buildInterleavedSystemReminderHtml(raw) + '</div>';
+    }
+
     /** Letta sometimes wraps the real payload in `contents` (same pattern as `error_message`). */
     function lettaInnerForStream(obj) {
       if (!obj || typeof obj !== 'object') return obj;
@@ -136,15 +199,28 @@
       return obj;
     }
 
-    /** HTML ai-bubble: single-line horizontal scroll; Expand toggles full wrapped text (plain only — no Markdown in html). */
+    /**
+     * HTML ai-bubble: single-line horizontal scroll; Expand toggles full wrapped text (plain only — no Markdown in html).
+     * With `?debug=…`, system-reminder segments use collapsed `<details>` + meta color.
+     */
     function buildReasoningHtml(fullText) {
-      var esc = escapeHtml(fullText);
+      var core;
+      if (DEN_CHAT_DEBUG_VERBOSE && /<system-reminder/i.test(fullText)) {
+        core =
+          '<div class="den-assistant-html den-reasoning-embedded">' +
+            buildInterleavedSystemReminderHtml(fullText) +
+          '</div>';
+      } else if (DEN_CHAT_DEBUG_VERBOSE) {
+        core = escapeHtml(fullText);
+      } else {
+        core = escapeHtml(stripSystemReminderBlocks(fullText));
+      }
       return (
         '<div class="den-reasoning-wrap" data-den-reasoning="1">' +
           '<div class="den-reasoning-head">' +
             '<span class="den-reasoning-kicker">Thinking</span>' +
             '<div class="den-reasoning-scroll">' +
-              esc +
+              core +
             '</div>' +
             '<button type="button" class="den-reasoning-toggle" aria-expanded="false">Expand</button>' +
           '</div>' +
@@ -195,7 +271,12 @@
             return m && typeof m === 'object' && (m.role === 'user' || m.role === 'ai');
           })
           .map(function (m) {
-            return { role: m.role, text: String(m.text != null ? m.text : '') };
+            var t = String(m.text != null ? m.text : '');
+            if (m.role !== 'ai') return { role: m.role, text: t };
+            if (DEN_CHAT_DEBUG_VERBOSE && /<system-reminder/i.test(t)) {
+              return { role: 'ai', html: formatAssistantDebugHtml(t) };
+            }
+            return { role: 'ai', text: stripSystemReminderBlocks(t) };
           });
         // Deep Chat expects `false` only after real messages; `[false]` alone can break the component.
         if (data.has_more && out.length > 0) {
@@ -261,7 +342,13 @@
           message: {
             styles: {
               outerContainer: { justifyContent: 'flex-start' },
-              bubble: { backgroundColor: pg, color: met, borderRadius: '0', padding: bubblePad },
+              bubble: {
+                backgroundColor: srf,
+                color: met,
+                borderRadius: '0',
+                padding: '0',
+                border: 'none',
+              },
             },
           },
         },
@@ -319,7 +406,14 @@
         '.den-reasoning-scroll{flex:1 1 auto;min-width:0;overflow-x:auto;overflow-y:hidden;max-height:calc(1em * var(--chat-line-height));line-height:var(--chat-line-height);font-family:var(--data-font-family),ui-monospace,monospace;font-size:smaller;white-space:nowrap;-webkit-overflow-scrolling:touch}' +
         '.den-reasoning-wrap.den-reasoning-expanded .den-reasoning-scroll{white-space:pre-wrap;overflow-x:visible;overflow-y:auto;max-height:calc(var(--spacing-unit) * 36)}' +
         '.den-reasoning-toggle{flex:0 0 auto;margin:0;padding:calc(var(--spacing-unit) * 0.24) calc(var(--spacing-unit) * 0.7);border:none;background:transparent;color:inherit;opacity:0.72;cursor:pointer;font:inherit;font-size:smaller;text-decoration:underline;text-underline-offset:calc(var(--thin-line-unit) * 2)}' +
-        '.den-reasoning-toggle:hover{opacity:1}';
+        '.den-reasoning-toggle:hover{opacity:1}' +
+        '.den-assistant-html{color:inherit}' +
+        '.den-assistant-html .den-assistant-plain{color:inherit}' +
+        '.den-system-reminder{display:block;margin:calc(var(--spacing-unit) * 0.6) 0 0 0;padding:calc(var(--spacing-unit) * 0.5) 0 0 0;border-top:var(--thin-line-unit) solid var(--border-color);color:var(--meta-color);font-size:smaller}' +
+        '.den-system-reminder-summary{cursor:pointer;font:inherit;list-style-position:outside}' +
+        '.den-system-reminder-body{margin:calc(var(--spacing-unit) * 0.45) 0 0 0;padding:0;white-space:pre-wrap;word-break:break-word;font-family:var(--data-font-family),ui-monospace,monospace}' +
+        '.den-reasoning-scroll .den-assistant-html{white-space:normal!important}' +
+        '.den-reasoning-scroll .den-assistant-html .den-system-reminder-body{white-space:pre-wrap!important}';
 
       chat.remarkable = { html: false, breaks: true };
 
@@ -451,10 +545,17 @@
                 } else {
                   assistantBuf += inner.content;
                 }
-                signals.onResponse({
-                  text: assistantBuf,
-                  overwrite: hadReasoning || sameAssistant,
-                });
+                if (DEN_CHAT_DEBUG_VERBOSE && /<system-reminder/i.test(assistantBuf)) {
+                  signals.onResponse({
+                    html: formatAssistantDebugHtml(assistantBuf),
+                    overwrite: hadReasoning || sameAssistant,
+                  });
+                } else {
+                  signals.onResponse({
+                    text: DEN_CHAT_DEBUG_VERBOSE ? assistantBuf : stripSystemReminderBlocks(assistantBuf),
+                    overwrite: hadReasoning || sameAssistant,
+                  });
+                }
                 if (hadReasoning) hadReasoning = false;
               }
             }
