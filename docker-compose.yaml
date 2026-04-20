@@ -130,6 +130,8 @@ services:
     # `.github/workflows/codepool-image.yml` → GHCR. Override for forks: `CODEPOOL_IMAGE=ghcr.io/<org>/codepool:latest`
     # Local build: `docker compose -f docker-compose.yaml -f docker-compose.codepool-src.yaml build bear-codepool`
     image: ${CODEPOOL_IMAGE:-ghcr.io/theartificial/codepool:latest}
+    # CI pushes :latest to GHCR; default Compose pull is "missing" — redeploy would reuse a stale local tag.
+    pull_policy: always
     restart: unless-stopped
     depends_on:
       bear-letta:
@@ -161,6 +163,8 @@ services:
     # `.github/workflows/den-image.yml` → GHCR. Override for forks: `DEN_IMAGE=ghcr.io/<org>/den:latest`
     # To build Den from source locally: `docker compose -f docker-compose.yaml -f docker-compose.den-src.yaml build bear-den`
     image: ${DEN_IMAGE:-ghcr.io/theartificial/den:latest}
+    # Same as bear-codepool: always pull so webhook redeploys pick up new GHCR :latest.
+    pull_policy: always
     restart: unless-stopped
     depends_on:
       bear-letta:
