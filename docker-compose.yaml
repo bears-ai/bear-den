@@ -82,6 +82,9 @@ services:
       LETTA_SERVER_PORT: "8283"
       LETTA_SERVER_HOST: "0.0.0.0"
       LETTA_SERVER_PASS: ${LETTA_SERVER_PASS:?set LETTA_SERVER_PASS}
+      # Required when using an external Postgres (recommended in Coolify DB resource mode).
+      # Include sslmode in the URI when your provider requires TLS.
+      LETTA_PG_URI: ${LETTA_PG_URI:-}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
     volumes:
       - bear-letta-data:/root/.letta

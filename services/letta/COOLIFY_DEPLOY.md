@@ -44,6 +44,7 @@ Letta is the BEARS **bear runtime**: each **bear** is a **Letta agent** (convers
    # Letta Server Configuration
    LETTA_SERVER_PORT=8283
    LETTA_SERVER_PASS=<generate-secure-password>
+   LETTA_PG_URI=postgresql://<user>:<pass>@<host>:5432/<db>?sslmode=require
 
    # OpenAI API Key (for embeddings)
    OPENAI_API_KEY=<your-openai-api-key>
@@ -106,6 +107,7 @@ curl http://bear-letta:8283/v1/agents
 | `MODEL_NAME` | ✅ Yes | `gpt-4` | Default model for new Letta agents (**bears**) |
 | `LETTA_SERVER_PORT` | No | `8283` | Web UI and API port |
 | `LETTA_SERVER_PASS` | ✅ Yes | - | Admin password for Letta |
+| `LETTA_PG_URI` | Recommended | - | External Postgres URI (`postgresql://...`). Add `sslmode=require` when your provider requires TLS. |
 | `OPENAI_API_KEY` | ✅ Yes | - | For embeddings and direct OpenAI calls; chat completions use `LLM_API_URL` |
 | `LETTA_SERVER_HOST` | No | `0.0.0.0` | Bind address |
 | `LOG_LEVEL` | No | `INFO` | Logging verbosity |
