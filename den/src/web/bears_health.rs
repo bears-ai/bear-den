@@ -40,7 +40,7 @@ pub struct HealthCheck {
     pub detail: String,
 }
 
-#[derive(Clone, Copy, Serialize)]
+#[derive(Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum CheckState {
     Ok,
