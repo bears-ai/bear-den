@@ -126,6 +126,7 @@ export class ConversationSessionPool {
     this.evictIdle();
     const session = resumeSession(rt, {
       includePartialMessages: this.includePartialMessages,
+      systemInfoReminder: false,
     });
     this.map.set(key, { session, lastUsed: now });
     return session;
