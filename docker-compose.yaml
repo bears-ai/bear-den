@@ -47,7 +47,15 @@ services:
       LOG_LEVEL: info
       LOG_STYLE: json
     volumes:
-      - ./services/bifrost/config.json:/app/data/config.json:ro
+      # Bifrost reads a *file* at this path. If the host source is missing, Docker creates an empty
+      # directory named `config.json` and the app fails with `read .../config.json: is a directory`.
+      # `create_host_path: false` makes the deploy fail instead of silently creating that directory.
+      - type: bind
+        source: ./services/bifrost/config.json
+        target: /app/data/config.json
+        read_only: true
+        bind:
+          create_host_path: false
     # Shell form like upstream Dockerfile. Long `start_period`: Bifrost can be slow on ARM; image default is 5s.
     # `/health` may 503 if config/log/vector store pings fail — set `disable_db_pings_in_health` in config.json.
     # Probe uses `$APP_PORT` (same as the upstream image) so a custom `APP_PORT` still matches the server.

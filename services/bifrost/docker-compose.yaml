@@ -22,7 +22,14 @@ services:
       LOG_LEVEL: info
       LOG_STYLE: json
     volumes:
-      - ./config.json:/app/data/config.json:ro
+      # See root `docker-compose.yaml`: missing host file + default bind behavior can create a
+      # directory at `config.json`. `create_host_path: false` avoids that footgun.
+      - type: bind
+        source: ./config.json
+        target: /app/data/config.json
+        read_only: true
+        bind:
+          create_host_path: false
     ports:
       - "8080:8080"
     healthcheck:
