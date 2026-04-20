@@ -200,32 +200,36 @@
     }
 
     /**
-     * HTML ai-bubble: single-line horizontal scroll; Expand toggles full wrapped text (plain only — no Markdown in html).
-     * With `?debug=…`, system-reminder segments use collapsed `<details>` + meta color.
+     * Markdown for the live stream only. Deep Chat forbids mixing `{ html: … }` (reasoning) and
+     * `{ text: … }` (assistant) in one streamed bubble — assistant replies were dropped after Thinking.
+     * Use `text` for both; remarkable renders **Thinking** + body.
      */
-    function buildReasoningHtml(fullText) {
-      var core;
-      if (DEN_CHAT_DEBUG_VERBOSE && /<system-reminder/i.test(fullText)) {
-        core =
-          '<div class="den-assistant-html den-reasoning-embedded">' +
-            buildInterleavedSystemReminderHtml(fullText) +
-          '</div>';
-      } else if (DEN_CHAT_DEBUG_VERBOSE) {
-        core = escapeHtml(fullText);
+    function buildReasoningMarkdown(fullText) {
+      var body;
+      if (DEN_CHAT_DEBUG_VERBOSE) {
+        body = fullText;
       } else {
-        core = escapeHtml(stripSystemReminderBlocks(fullText));
+        body = stripSystemReminderBlocks(fullText);
       }
-      return (
-        '<div class="den-reasoning-wrap" data-den-reasoning="1">' +
-          '<div class="den-reasoning-head">' +
-            '<span class="den-reasoning-kicker">Thinking</span>' +
-            '<div class="den-reasoning-scroll">' +
-              core +
-            '</div>' +
-            '<button type="button" class="den-reasoning-toggle" aria-expanded="false">Expand</button>' +
-          '</div>' +
-        '</div>'
-      );
+      return '**Thinking**\n\n' + body;
+    }
+
+    /** Letta may send `content` as a string or structured parts (same idea as Code SDK `extractTextFromContent`). */
+    function assistantChunkText(inner) {
+      var c = inner.content;
+      if (typeof c === 'string') return c;
+      if (Array.isArray(c)) {
+        var pieces = [];
+        var j;
+        for (j = 0; j < c.length; j++) {
+          var part = c[j];
+          if (typeof part === 'string') pieces.push(part);
+          else if (part && typeof part === 'object' && typeof part.text === 'string') pieces.push(part.text);
+        }
+        return pieces.join('');
+      }
+      if (c && typeof c === 'object' && typeof c.text === 'string') return c.text;
+      return '';
     }
 
     /**
@@ -519,20 +523,21 @@
               if (inner.message_type === 'reasoning_message') {
                 var piece = '';
                 if (typeof inner.reasoning === 'string') piece = inner.reasoning;
-                else if (typeof inner.content === 'string') piece = inner.content;
+                else piece = assistantChunkText(inner);
                 if (!piece) continue;
                 var wasEmpty = reasoningFull.length === 0;
                 reasoningFull += piece;
                 hadReasoning = true;
                 signals.onResponse({
-                  html: buildReasoningHtml(reasoningFull),
+                  text: buildReasoningMarkdown(reasoningFull),
                   role: 'ai',
                   overwrite: !wasEmpty,
                 });
                 continue;
               }
 
-              if (inner.message_type === 'assistant_message' && typeof inner.content === 'string') {
+              if (inner.message_type === 'assistant_message') {
+                var chunk = assistantChunkText(inner);
                 var aid =
                   inner.id != null && String(inner.id) !== '' ? String(inner.id) : null;
                 var sameAssistant =
@@ -541,18 +546,20 @@
                     : assistantLastId === NO_ID;
                 if (!sameAssistant) {
                   assistantLastId = aid != null ? aid : NO_ID;
-                  assistantBuf = inner.content;
+                  assistantBuf = chunk;
                 } else {
-                  assistantBuf += inner.content;
+                  assistantBuf += chunk;
                 }
                 if (DEN_CHAT_DEBUG_VERBOSE && /<system-reminder/i.test(assistantBuf)) {
                   signals.onResponse({
-                    html: formatAssistantDebugHtml(assistantBuf),
+                    text: assistantBuf,
+                    role: 'ai',
                     overwrite: hadReasoning || sameAssistant,
                   });
                 } else {
                   signals.onResponse({
                     text: DEN_CHAT_DEBUG_VERBOSE ? assistantBuf : stripSystemReminderBlocks(assistantBuf),
+                    role: 'ai',
                     overwrite: hadReasoning || sameAssistant,
                   });
                 }
