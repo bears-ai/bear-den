@@ -8,6 +8,7 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
+    "postinstall": "patch-package",
     "start": "node dist/index.js",
     "dev": "node --watch dist/index.js",
     "typecheck": "tsc -p tsconfig.json --noEmit"
@@ -20,6 +21,10 @@
   "devDependencies": {
     "@types/express": "^4.17.21",
     "@types/node": "^22.10.0",
+    "patch-package": "^8.0.1",
     "typescript": "^5.7.2"
+  },
+  "overrides": {
+    "@letta-ai/letta-code": "0.23.8"
   }
 }

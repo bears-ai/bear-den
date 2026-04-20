@@ -26,3 +26,7 @@ npm run build && npm start
 | POST | `/v1/chat/completions` | OpenWebUI-style (`metadata.bear_agent_id`, optional `metadata.conversation_id`) |
 
 Architecture: [docs/architecture/DEN_ARCHITECTURE.md](../docs/architecture/DEN_ARCHITECTURE.md). Deploy: [COOLIFY_DEPLOY.md](./COOLIFY_DEPLOY.md).
+
+## Letta Code vendored patch
+
+`@letta-ai/letta-code` is **patch-package**’d so `--no-system-info-reminder` also suppresses **agent-info** harness reminders after process restarts. When bumping `letta-code` or `letta-code-sdk`, read [docs/letta-code-patch-and-upstream.md](./docs/letta-code-patch-and-upstream.md) (upgrade checklist and how to contribute the same change upstream).
