@@ -117,11 +117,12 @@ services:
       POOL_MAX_ENTRIES: ${POOL_MAX_ENTRIES:-256}
     volumes:
       - bear-codepool-letta-home:/home/node/.letta
+    # bookworm-slim has no wget/curl; use Node (same runtime as the app).
     healthcheck:
       test:
         [
           "CMD-SHELL",
-          "wget -q -O- http://127.0.0.1:3030/health || exit 1",
+          "node -e \"fetch('http://127.0.0.1:3030/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\"",
         ]
       interval: 30s
       timeout: 10s
