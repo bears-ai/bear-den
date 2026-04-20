@@ -180,6 +180,10 @@ services:
       LETTA_API_KEY: ${LETTA_SERVER_PASS}
       CODEPOOL_BASE_URL: ${CODEPOOL_BASE_URL:-http://bear-codepool:3030}
       CODEPOOL_INTERNAL_TOKEN: ${CODEPOOL_INTERNAL_TOKEN:-}
+      # Optional on Den: `/health/bears` probes Letta’s DB and Bifrost when set (see den/docs/infrastructure-and-ops.md).
+      LETTA_PG_URI: ${LETTA_PG_URI:-}
+      BIFROST_BASE_URL: ${BIFROST_BASE_URL:-http://bear-bifrost:8080}
+      LLM_API_URL: ${LLM_API_URL:-http://bear-bifrost:8080/v1}
     ports:
       - "${DEN_PUBLISH_PORT:-3000}:3000"
 

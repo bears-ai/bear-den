@@ -54,7 +54,8 @@ pub async fn run_sqlx_migrations(pool: &PgPool) -> Result<(), sqlx::migrate::Mig
     }
 }
 
-fn requires_jwt_secret(config: &Config) -> bool {
+/// Whether [`validate_runtime_config`] requires a non-empty `JWT_SECRET` (production builds or `RUN_API`).
+pub fn requires_jwt_secret(config: &Config) -> bool {
     #[cfg(feature = "production")]
     {
         let _ = config;

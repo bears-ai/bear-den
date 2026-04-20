@@ -102,6 +102,13 @@ pub struct Config {
     /// Optional `Authorization: Bearer` for Codepool (must match `CODEPOOL_INTERNAL_TOKEN` on the pool).
     pub codepool_internal_token: String,
 
+    /// Letta’s Postgres URI when external DB is used (`LETTA_PG_URI`). Empty = not checked on Den.
+    /// Shape rules match deploy docs and `services/preflight` (prefer `postgresql://`).
+    pub letta_pg_uri: String,
+
+    /// Bifrost gateway base URL (no trailing slash), e.g. `http://bear-bifrost:8080`. Empty = skip HTTP check.
+    pub bifrost_base_url: String,
+
     /// S3-compatible endpoint (e.g. `http://bear-garage:3900`). Empty = media upload disabled.
     pub s3_endpoint: String,
     /// S3 bucket for chat media and generated images.
@@ -270,6 +277,12 @@ impl Config {
         let codepool_internal_token =
             std::env::var("CODEPOOL_INTERNAL_TOKEN").unwrap_or_default();
 
+        let letta_pg_uri = std::env::var("LETTA_PG_URI").unwrap_or_default();
+        let letta_pg_uri = letta_pg_uri.trim().to_string();
+
+        let bifrost_base_url = std::env::var("BIFROST_BASE_URL").unwrap_or_default();
+        let bifrost_base_url = bifrost_base_url.trim_end_matches('/').to_string();
+
         let s3_endpoint = std::env::var("S3_ENDPOINT")
             .unwrap_or_default()
             .trim_end_matches('/')
@@ -335,6 +348,8 @@ impl Config {
             letta_api_key,
             codepool_base_url,
             codepool_internal_token,
+            letta_pg_uri,
+            bifrost_base_url,
             s3_endpoint,
             s3_bucket,
             s3_region,
@@ -394,6 +409,8 @@ impl Config {
             letta_api_key: String::new(),
             codepool_base_url: String::new(),
             codepool_internal_token: String::new(),
+            letta_pg_uri: String::new(),
+            bifrost_base_url: String::new(),
             s3_endpoint: String::new(),
             s3_bucket: String::new(),
             s3_region: "garage".into(),

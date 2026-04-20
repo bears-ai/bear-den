@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""One-shot env validation for the BEARS compose stack (URI syntax + required secrets)."""
+"""One-shot env validation for the BEARS compose stack (URI syntax + required secrets).
+
+Runtime aggregation of similar checks (plus live DB/HTTP probes) is exposed on Den as
+``GET /health/bears`` and ``GET /health/bears.json`` when the web server is enabled.
+"""
 
 from __future__ import annotations
 

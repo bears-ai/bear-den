@@ -42,6 +42,15 @@ Structured logging via **tracing** with default filters wired in [`src/lib.rs`](
 | Web (`RUN_WEB`) | `GET /healthcheck` → `OK` | `GET /health/ready` → `OK` or **503** |
 | API (`RUN_API`) | `GET /healthcheck` → `API OK` | `GET /health/ready` → `OK` or **503** |
 
+### BEARS stack aggregate (web)
+
+For a **single watch point** across the stack (databases, Codepool, Letta, Bifrost, and low-cost env validation aligned with `services/preflight`), use:
+
+- `GET /health/bears` — human-readable HTML table.
+- `GET /health/bears.json` — JSON for scripts and monitors (**503** when any check is in the `fail` state; `warn` and `skipped` do not fail the HTTP status).
+
+Optional env for richer probes: **`LETTA_PG_URI`** (Letta Postgres `SELECT 1`), **`BIFROST_BASE_URL`** (e.g. `http://bear-bifrost:8080` for `GET /health`), **`LLM_API_URL`** (shape-only check when set on Den). This is **not** a substitute for **`GET /health`** (process liveness) or **`GET /health/ready`** (Den-only DB readiness).
+
 ## Workers
 
 When `RUN_WORKERS=true`, long-running and periodic tasks run in-process. See [`src/lib.rs`](../src/lib.rs) for the worker slot; this slim starter keeps workers idle until shutdown.

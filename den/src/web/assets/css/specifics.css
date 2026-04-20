@@ -141,3 +141,58 @@ body.bear_chat #chat-wrap {
 .den-bear-resync-form {
     margin-bottom: var(--spacing-unit);
 }
+
+/* ---- BEARS health (/health/bears) — body class page-bears-health ---- */
+body.page-bears-health .bears-health-lede {
+    max-width: var(--medium-width);
+    margin-bottom: var(--spacing-unit);
+}
+
+body.page-bears-health .bears-health-meta {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: var(--spacing-unit);
+    margin-bottom: calc(var(--spacing-unit) * 1.5);
+}
+
+body.page-bears-health .bears-health-status-ok {
+    color: var(--text-color);
+    font-weight: bold;
+}
+
+body.page-bears-health .bears-health-status-fail {
+    font-weight: bold;
+}
+
+body.page-bears-health .bears-health-table {
+    width: 100%;
+    max-width: var(--wide-width);
+    border-collapse: collapse;
+}
+
+body.page-bears-health .bears-health-table th,
+body.page-bears-health .bears-health-table td {
+    border: solid var(--thin-line-unit) var(--border-color);
+    padding: calc(var(--spacing-unit) * 0.5);
+    text-align: left;
+    vertical-align: top;
+}
+
+body.page-bears-health .bears-health-table thead th {
+    background: var(--surface-color);
+}
+
+body.page-bears-health .bears-health-detail {
+    word-break: break-word;
+    font-family: var(--data-font-family);
+    font-size: smaller;
+}
+
+body.page-bears-health .bears-health-row-warn td:first-of-type {
+    border-left: solid calc(var(--thin-line-unit) * 3) var(--border-color);
+}
+
+body.page-bears-health .bears-health-row-fail td:first-of-type {
+    border-left: solid calc(var(--thin-line-unit) * 3) var(--text-color);
+}
