@@ -5,9 +5,8 @@
 
 services:
   bear-codepool:
-    build:
-      context: .
-      dockerfile: Dockerfile
+    # Pre-built in CI (`.github/workflows/codepool-image.yml`). Override: `CODEPOOL_IMAGE=ghcr.io/<org>/codepool:latest`
+    image: ${CODEPOOL_IMAGE:-ghcr.io/theartificial/codepool:latest}
     restart: unless-stopped
     environment:
       PORT: ${PORT:-3030}

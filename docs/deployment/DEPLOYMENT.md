@@ -102,7 +102,7 @@ See [`../../services/letta/COOLIFY_DEPLOY.md`](../../services/letta/COOLIFY_DEPL
 
 See [`../../codepool/COOLIFY_DEPLOY.md`](../../codepool/COOLIFY_DEPLOY.md).
 
-- Deploy **`bear-codepool`** from **`codepool/`** (Node, **`@letta-ai/letta-code-sdk`**).  
+- Deploy **`bear-codepool`** — Node (**`@letta-ai/letta-code-sdk`**). The root compose file pulls a **pre-built image** from GHCR (built by [`.github/workflows/codepool-image.yml`](../../.github/workflows/codepool-image.yml)); override **`CODEPOOL_IMAGE`** for forks or pin a SHA tag.  
 - **`LETTA_BASE_URL=http://bear-letta:8283`** and **`LETTA_API_KEY`** matching Letta’s server credential (same as Den uses for provisioning).  
 - Persist **`~/.letta`** on a volume (CLI auth and local state).  
 - **`CODEPOOL_BASE_URL`** in Den must point at this service (e.g. `http://bear-codepool:3030`). Optional shared secret: **`CODEPOOL_INTERNAL_TOKEN`** on both sides.

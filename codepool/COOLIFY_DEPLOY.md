@@ -20,10 +20,23 @@
 
 Den uses **`LETTA_BASE_URL`** for conversation list/history; **streaming sends** go to **Codepool** when `CODEPOOL_BASE_URL` is set.
 
+## Pre-built image (recommended)
+
+A GitHub Actions workflow ([`.github/workflows/codepool-image.yml`](../.github/workflows/codepool-image.yml)) builds on every push to `main` that touches `codepool/` and pushes to GHCR:
+
+- Tags: **`ghcr.io/<github-org>/codepool:latest`** and **`ghcr.io/<github-org>/codepool:<short-sha>`** (use `github.repository_owner` in the workflow; override **`CODEPOOL_IMAGE`** in compose for forks).
+- **Path filter:** only `codepool/**` (and the workflow file) — same idea as [Den’s workflow](../.github/workflows/den-image.yml).
+- After a successful push, the workflow calls the same **Coolify webhook** as Den (`COOLIFY_WEBHOOK` + `COOLIFY_TOKEN` repository secrets) so the stack can redeploy and pull the new image.
+
+If the GHCR package is **private**, authenticate on the Coolify host (`docker login ghcr.io` with a PAT that has `read:packages`), same as [Den’s guide](../den/COOLIFY_DEPLOY.md#coolify-setup).
+
+**Build locally instead of GHCR:** from the repo root,  
+`docker compose -f docker-compose.yaml -f docker-compose.codepool-src.yaml build bear-codepool`
+
 ## Coolify (Docker Compose from Git)
 
 1. **Add Resource** → **Docker Compose** → this repository.
-2. **Base Directory:** `codepool` · **Compose file:** [`docker-compose.yaml`](docker-compose.yaml).
+2. **Base Directory:** `.` (repo root) and **[`docker-compose.yaml`](../docker-compose.yaml)** — recommended — **or** base directory **`codepool`** with [`docker-compose.yaml`](docker-compose.yaml) (both use the **`CODEPOOL_IMAGE`** pull by default).
 3. Set **`LETTA_BASE_URL`**, **`LETTA_API_KEY`**, optional **`CODEPOOL_INTERNAL_TOKEN`**.
 4. If you did **not** use the root compose file, attach the **same Docker network** as Den and Letta so **`bear-codepool`** resolves.
 

@@ -126,9 +126,10 @@ services:
       start_period: 60s
 
   bear-codepool:
-    build:
-      context: ./codepool
-      dockerfile: Dockerfile
+    # Pre-built image (native deps compile in CI). Build in CI:
+    # `.github/workflows/codepool-image.yml` → GHCR. Override for forks: `CODEPOOL_IMAGE=ghcr.io/<org>/codepool:latest`
+    # Local build: `docker compose -f docker-compose.yaml -f docker-compose.codepool-src.yaml build bear-codepool`
+    image: ${CODEPOOL_IMAGE:-ghcr.io/theartificial/codepool:latest}
     restart: unless-stopped
     depends_on:
       bear-letta:
