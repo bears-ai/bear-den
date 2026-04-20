@@ -217,8 +217,11 @@ pub async fn server(
                 .route("/health/bears", get(bears_health::page))
                 .route("/health/bears.json", get(bears_health::json_endpoint)),
         )
-        .nest("/admin", admin::router())
-        .route_layer(permission_required!(Backend, login_url = "/login", "admin"))
+        .merge(
+            Router::new()
+                .nest("/admin", admin::router())
+                .route_layer(permission_required!(Backend, login_url = "/login", "admin")),
+        )
         .merge(
             Router::new()
                 .merge(bear_management::router())
