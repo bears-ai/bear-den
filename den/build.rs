@@ -2,8 +2,17 @@ use std::env;
 use std::path::Path;
 use std::time::Instant;
 
+/// Env-based SHA first (Docker/CI often lack `.git` in the build context).
+/// Common CI variables are fallbacks when `GIT_COMMIT` is not passed explicitly.
 fn resolve_git_commit() -> String {
-    for key in ["GIT_COMMIT", "SOURCE_COMMIT"] {
+    for key in [
+        "GIT_COMMIT",
+        "SOURCE_COMMIT",
+        "GITHUB_SHA",
+        "CI_COMMIT_SHA",
+        "CIRCLE_SHA1",
+        "BUILDKITE_COMMIT",
+    ] {
         if let Ok(v) = env::var(key) {
             let t = v.trim();
             if !t.is_empty() {
@@ -34,11 +43,36 @@ fn git_rev_parse_head() -> Option<String> {
 }
 
 fn emit_git_commit_rerun_hints(manifest_dir: &str) {
-    println!("cargo:rerun-if-env-changed=GIT_COMMIT");
-    println!("cargo:rerun-if-env-changed=SOURCE_COMMIT");
-    let head = Path::new(manifest_dir).join("../.git/HEAD");
-    if head.exists() {
-        println!("cargo:rerun-if-changed={}", head.display());
+    for key in [
+        "GIT_COMMIT",
+        "SOURCE_COMMIT",
+        "GITHUB_SHA",
+        "CI_COMMIT_SHA",
+        "CIRCLE_SHA1",
+        "BUILDKITE_COMMIT",
+    ] {
+        println!("cargo:rerun-if-env-changed={}", key);
+    }
+
+    // When HEAD is `ref: refs/heads/...`, `.git/HEAD` does not change on new commits — only the
+    // branch ref (or reflog) does. Watching those avoids a stale `DEN_GIT_COMMIT` under incremental builds.
+    let git_dir = Path::new(manifest_dir).join("../.git");
+    let head_path = git_dir.join("HEAD");
+    if head_path.exists() {
+        println!("cargo:rerun-if-changed={}", head_path.display());
+        if let Ok(contents) = std::fs::read_to_string(&head_path) {
+            let line = contents.trim();
+            if let Some(rest) = line.strip_prefix("ref: ") {
+                let ref_path = git_dir.join(rest);
+                if ref_path.exists() {
+                    println!("cargo:rerun-if-changed={}", ref_path.display());
+                }
+            }
+        }
+    }
+    let logs_head = git_dir.join("logs/HEAD");
+    if logs_head.exists() {
+        println!("cargo:rerun-if-changed={}", logs_head.display());
     }
 }
 

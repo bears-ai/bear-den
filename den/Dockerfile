@@ -33,9 +33,14 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry/,id=den-cargo-registry \
 
 FROM rust-base AS build
 ARG APP_NAME=den
-# Optional: pass `$(git rev-parse HEAD)` from CI — `.git` is excluded from the build context.
+# Optional: pass commit SHA from CI — `.git` is usually absent from the Docker context.
+# `build.rs` also accepts GITHUB_SHA, CI_COMMIT_SHA, etc. (see `den/build.rs`).
 ARG GIT_COMMIT=
+ARG GITHUB_SHA=
+ARG CI_COMMIT_SHA=
 ENV GIT_COMMIT=${GIT_COMMIT}
+ENV GITHUB_SHA=${GITHUB_SHA}
+ENV CI_COMMIT_SHA=${CI_COMMIT_SHA}
 ARG DATABASE_URL=postgres://postgres:postgres@127.0.0.1:5432/postgres?sslmode=disable
 ARG SQLX_OFFLINE=false
 COPY --from=cacher /app/target target

@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 
-{% block title %}BEARS health{% endblock %}
+{% block title %}BEARS status{% endblock %}
 
 {% block subnav %}
   <li>
@@ -9,14 +9,6 @@
 {% endblock %}
 
 {% block content %}
-  <h2>BEARS stack health</h2>
-  <p class="bears-health-lede">
-    Aggregated probes for Den’s database, Letta’s Postgres (when <code>LETTA_PG_URI</code> is set),
-    Codepool, Letta API, and Bifrost, plus lightweight env checks aligned with
-    <code>services/preflight</code> (JWT, URI shapes, <code>OPENAI_API_KEY</code>).
-    Use <a href="{{ json_path }}"><code>{{ json_path }}</code></a> for monitors and scripts.
-    This does not replace <code>GET /health</code> (liveness) or <code>GET /health/ready</code> (Den readiness).
-  </p>
   <p class="bears-health-meta">
     <span class="bears-health-status {% if overall_ok %}bears-health-status-ok{% else %}bears-health-status-fail{% endif %}">
       {% if overall_ok %}All required checks passed{% else %}One or more checks failed{% endif %}
