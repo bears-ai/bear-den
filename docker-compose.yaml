@@ -14,13 +14,36 @@
 #   docker compose --profile bundled up -d
 #
 # See docs/deployment/DEPLOYMENT.md and per-service COOLIFY_DEPLOY.md files.
+#
+# **`bear-preflight`** runs once at deploy time and validates secrets + URI-shaped env vars before
+# other services start (`depends_on` + `service_completed_successfully`). Requires Docker Compose
+# **v2.20+**. Run manually: `docker compose run --rm bear-preflight`.
 
 name: bear-stack
 
 services:
+  bear-preflight:
+    build:
+      context: ./services/preflight
+      dockerfile: Dockerfile
+    restart: "no"
+    environment:
+      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET}
+      LETTA_SERVER_PASS: ${LETTA_SERVER_PASS:?set LETTA_SERVER_PASS}
+      DATABASE_URL: ${DATABASE_URL:-postgres://bears:bears@bear-postgres:5432/den?sslmode=disable}
+      LETTA_PG_URI: ${LETTA_PG_URI:-}
+      LLM_API_URL: ${LLM_API_URL:-http://bear-bifrost:8080/v1}
+      LETTA_BASE_URL: ${LETTA_BASE_URL:-http://bear-letta:8283}
+      CODEPOOL_BASE_URL: ${CODEPOOL_BASE_URL:-http://bear-codepool:3030}
+      WEB_SERVER_URL: ${WEB_SERVER_URL:-http://localhost:3000}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+
   bear-postgres:
     profiles:
       - bundled
+    depends_on:
+      bear-preflight:
+        condition: service_completed_successfully
     image: postgres:16-alpine
     restart: unless-stopped
     environment:
@@ -39,6 +62,9 @@ services:
       start_period: 10s
 
   bear-bifrost:
+    depends_on:
+      bear-preflight:
+        condition: service_completed_successfully
     image: maximhq/bifrost:v1.4.22
     restart: unless-stopped
     environment:
@@ -77,7 +103,7 @@ services:
       bear-bifrost:
         condition: service_healthy
     environment:
-      LLM_API_URL: http://bear-bifrost:8080/v1
+      LLM_API_URL: ${LLM_API_URL:-http://bear-bifrost:8080/v1}
       MODEL_NAME: ${MODEL_NAME:-gpt-4}
       LETTA_SERVER_PORT: "8283"
       LETTA_SERVER_HOST: "0.0.0.0"
