@@ -127,7 +127,6 @@ export class ConversationSessionPool {
     const session = resumeSession(rt, {
       includePartialMessages: this.includePartialMessages,
       systemInfoReminder: false,
-      sleeptime: { trigger: "off" },
     });
     this.map.set(key, { session, lastUsed: now });
     return session;
