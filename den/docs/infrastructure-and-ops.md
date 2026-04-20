@@ -42,6 +42,8 @@ Structured logging via **tracing** with default filters wired in [`src/lib.rs`](
 | Web (`RUN_WEB`) | `GET /healthcheck` → `OK` | `GET /health/ready` → `OK` or **503** |
 | API (`RUN_API`) | `GET /healthcheck` → `API OK` | `GET /health/ready` → `OK` or **503** |
 
+**Build identity:** `GET /version` (web and API) returns JSON with `git_commit` baked in at compile time. Docker builds should pass `--build-arg GIT_COMMIT="$(git rev-parse HEAD)"` (or your CI’s SHA) because `.git` is not in the image build context.
+
 ### BEARS stack aggregate (web)
 
 For a **single watch point** across the stack (databases, Codepool, Letta, Bifrost, and low-cost env validation aligned with `services/preflight`), use:

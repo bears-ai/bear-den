@@ -107,6 +107,7 @@ pub async fn create_api_app(
     let router = Router::new()
         // Health check endpoint (no authentication required)
         .route("/health", get(|| async { "OK" }))
+        .route("/version", get(crate::build_info::json_handler))
         .route("/healthcheck", get(|| async { "API OK" }))
         .route("/health/ready", get(api_readiness))
         // API v1.0 endpoints with Bearer token authentication (no session auth layer needed)

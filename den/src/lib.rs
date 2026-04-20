@@ -4,6 +4,7 @@
 //! prefer fixing warnings locally and shrinking those module allows over time.
 pub mod api;
 pub mod auth_backend;
+pub mod build_info;
 pub mod config;
 pub mod core;
 pub mod errors;

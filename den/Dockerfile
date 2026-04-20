@@ -33,6 +33,9 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry/,id=den-cargo-registry \
 
 FROM rust-base AS build
 ARG APP_NAME=den
+# Optional: pass `$(git rev-parse HEAD)` from CI — `.git` is excluded from the build context.
+ARG GIT_COMMIT=
+ENV GIT_COMMIT=${GIT_COMMIT}
 ARG DATABASE_URL=postgres://postgres:postgres@127.0.0.1:5432/postgres?sslmode=disable
 ARG SQLX_OFFLINE=false
 COPY --from=cacher /app/target target

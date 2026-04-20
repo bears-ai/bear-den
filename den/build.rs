@@ -1,9 +1,55 @@
 use std::env;
+use std::path::Path;
 use std::time::Instant;
+
+fn resolve_git_commit() -> String {
+    for key in ["GIT_COMMIT", "SOURCE_COMMIT"] {
+        if let Ok(v) = env::var(key) {
+            let t = v.trim();
+            if !t.is_empty() {
+                return t.to_string();
+            }
+        }
+    }
+    if let Some(sha) = git_rev_parse_head() {
+        return sha;
+    }
+    "unknown".to_string()
+}
+
+fn git_rev_parse_head() -> Option<String> {
+    let manifest = env::var_os("CARGO_MANIFEST_DIR")?;
+    let out = std::process::Command::new("git")
+        .current_dir(manifest)
+        .args(["rev-parse", "HEAD"])
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    String::from_utf8(out.stdout)
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+}
+
+fn emit_git_commit_rerun_hints(manifest_dir: &str) {
+    println!("cargo:rerun-if-env-changed=GIT_COMMIT");
+    println!("cargo:rerun-if-env-changed=SOURCE_COMMIT");
+    let head = Path::new(manifest_dir).join("../.git/HEAD");
+    if head.exists() {
+        println!("cargo:rerun-if-changed={}", head.display());
+    }
+}
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let build_start = Instant::now();
     println!("cargo:warning=Build script starting...");
+
+    let manifest_dir = env::var("CARGO_MANIFEST_DIR")?;
+    let git_commit = resolve_git_commit();
+    println!("cargo:rustc-env=DEN_GIT_COMMIT={}", git_commit);
+    emit_git_commit_rerun_hints(&manifest_dir);
 
     // Only run expensive embedding & DB migration steps when the `production`
     // feature is enabled. Cargo exposes enabled features to build scripts via

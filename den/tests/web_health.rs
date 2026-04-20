@@ -74,6 +74,27 @@ async fn web_health_returns_ok() {
 }
 
 #[tokio::test]
+async fn web_version_returns_json() {
+    let app = web_app().await;
+    let res = app
+        .oneshot(
+            Request::builder()
+                .uri("/version")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let body = res.into_body().collect().await.unwrap().to_bytes();
+    let v: serde_json::Value = serde_json::from_slice(&body).expect("JSON body");
+    assert_eq!(v["service"], "den");
+    assert!(v["version"].as_str().is_some());
+    let gc = v["git_commit"].as_str().expect("git_commit string");
+    assert!(gc == "unknown" || gc.len() >= 7);
+}
+
+#[tokio::test]
 async fn web_healthcheck_returns_ok() {
     let app = web_app().await;
     let res = app
@@ -177,6 +198,27 @@ async fn web_deep_chat_vendor_assets_are_served() {
             body.len()
         );
     }
+}
+
+#[tokio::test]
+async fn api_version_returns_json() {
+    let app = api_app().await;
+    let res = app
+        .oneshot(
+            Request::builder()
+                .uri("/version")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let body = res.into_body().collect().await.unwrap().to_bytes();
+    let v: serde_json::Value = serde_json::from_slice(&body).expect("JSON body");
+    assert_eq!(v["service"], "den");
+    assert!(v["version"].as_str().is_some());
+    let gc = v["git_commit"].as_str().expect("git_commit string");
+    assert!(gc == "unknown" || gc.len() >= 7);
 }
 
 #[tokio::test]

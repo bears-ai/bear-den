@@ -13,6 +13,7 @@ pub mod v1;
 use indexmap::IndexMap;
 use std::sync::OnceLock;
 
+use crate::build_info;
 use crate::errors::CustomError;
 use crate::{auth_backend::Backend, config::Config};
 
@@ -210,6 +211,7 @@ pub async fn server(
             Router::new()
                 .route("/manifest.json", get(web_manifest))
                 .route("/health", get(|| async { "OK" }))
+                .route("/version", get(build_info::json_handler))
                 .route("/healthcheck", get(|| async { "OK" }))
                 .route("/health/ready", get(web_readiness))
                 .route("/health/bears", get(bears_health::page))

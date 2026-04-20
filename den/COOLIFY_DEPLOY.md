@@ -50,6 +50,7 @@ Open **Build Arguments** / **Docker Build Args** (wording varies by Coolify vers
 | ---- | ------- |
 | `DATABASE_URL` | Used at **image build** for SQLx when **`SQLX_OFFLINE` is unset or `false`**. Must reach PostgreSQL from the build environment (disposable compile-only DB is fine). The Dockerfile defaults to a dummy URL when you use offline mode instead. |
 | `SQLX_OFFLINE` | Set to **`true`** to compile against committed [`.sqlx/`](.sqlx/) query metadata (no live Postgres during `cargo build`). The image build copies `.sqlx/` from the Git checkout into the build context. Regenerate metadata with `cargo sqlx prepare` when queries change. |
+| `GIT_COMMIT` (optional) | Full git SHA baked into **`GET /version`** on the running binary. The Docker context excludes `.git`, so without this you get `"unknown"`. Pass the commit Coolify is building (some UIs expose this as a build-arg or you can use a static placeholder). |
 
 If you omit `SQLX_OFFLINE=true`, the build needs a reachable Postgres so SQLx can verify queries against a database that has applied the current migrations (same as before). Offline builds are the usual **CI / air-gapped** approach (see [`docs/deploy.md`](docs/deploy.md)).
 
