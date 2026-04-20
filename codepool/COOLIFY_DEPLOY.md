@@ -26,9 +26,12 @@ A GitHub Actions workflow ([`.github/workflows/codepool-image.yml`](../.github/w
 
 - Tags: **`ghcr.io/<github-org>/codepool:latest`** and **`ghcr.io/<github-org>/codepool:<short-sha>`** (use `github.repository_owner` in the workflow; override **`CODEPOOL_IMAGE`** in compose for forks).
 - **Path filter:** only `codepool/**` (and the workflow file) — same idea as [Den’s workflow](../.github/workflows/den-image.yml).
-- After a successful push, the workflow calls the same **Coolify webhook** as Den (`COOLIFY_WEBHOOK` + `COOLIFY_TOKEN` repository secrets) so the stack can redeploy and pull the new image.
+- After a successful push, the workflow calls the **Coolify deploy webhook** (`COOLIFY_WEBHOOK` + `COOLIFY_TOKEN` GitHub secrets). That URL must come from the **same** Coolify application that runs this compose stack (Coolify: resource → **Webhook** → *Deploy webhook*). Den and Codepool workflows typically share one webhook if they deploy **one** Docker Compose project.
+- The webhook step is **non-failing** in CI (`continue-on-error`) so a bad webhook does not block the image push; fix secrets and redeploy from Coolify or re-run the workflow after updating them.
 
-If the GHCR package is **private**, authenticate on the Coolify host (`docker login ghcr.io` with a PAT that has `read:packages`), same as [Den’s guide](../den/COOLIFY_DEPLOY.md#coolify-setup).
+**GitHub Actions `curl: (22) … 404`:** Coolify returned **Not Found** for that webhook URL — usually **wrong or outdated `COOLIFY_WEBHOOK`** (copied from another resource, old deployment, or typo). Open the **bear-stack** (or your compose) application in Coolify, copy the current **Deploy webhook** URL, and update the repo secret. Confirm **`COOLIFY_TOKEN`** is a Coolify API token with **Deploy** permission ([Coolify: GitHub Actions](https://coolify.io/docs/applications/ci-cd/github/actions)).
+
+**Coolify `error from registry: unauthorized` when pulling `ghcr.io/.../codepool`:** The Docker daemon on the Coolify server cannot read the image. For **private** GHCR packages, SSH to the host and run `docker login ghcr.io` with a GitHub PAT that has **`read:packages`** (as **root**, since Coolify’s daemon uses root’s config — same as [Den’s GHCR steps](../den/COOLIFY_DEPLOY.md#coolify-setup)). Alternatively, in GitHub → **Packages** → **codepool** → **Package settings**, set visibility to **public** so pulls need no login.
 
 **Build locally instead of GHCR:** from the repo root,  
 `docker compose -f docker-compose.yaml -f docker-compose.codepool-src.yaml build bear-codepool`

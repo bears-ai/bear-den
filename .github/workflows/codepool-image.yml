@@ -52,8 +52,12 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+      # Uses the Deploy webhook from the Coolify **application** that runs this compose stack (one URL per resource).
+      # HTTP 404 usually means COOLIFY_WEBHOOK is wrong, stale, or from a different Coolify project — fix in repo secrets.
+      # Image push above still succeeded; Coolify can redeploy manually after pulling GHCR.
       - name: Trigger Coolify deploy
         if: success()
+        continue-on-error: true
         run: |
           curl -X GET "${{ secrets.COOLIFY_WEBHOOK }}" \
             -H "Authorization: Bearer ${{ secrets.COOLIFY_TOKEN }}" \

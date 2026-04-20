@@ -53,8 +53,10 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+      # Same webhook caveats as codepool-image.yml (404 = wrong/stale COOLIFY_WEBHOOK for this stack).
       - name: Trigger Coolify deploy
         if: success()
+        continue-on-error: true
         run: |
           curl -X GET "${{ secrets.COOLIFY_WEBHOOK }}" \
             -H "Authorization: Bearer ${{ secrets.COOLIFY_TOKEN }}" \
