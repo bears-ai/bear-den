@@ -20,7 +20,8 @@
 <div class="den-wrap">
     <p id="err" class="den-err" hidden></p>
     <div id="chat-wrap">
-        <deep-chat id="chat"></deep-chat>
+        {# Deep Chat reads errorMessages when the messages controller is constructed; set here so displayServiceErrorMessages is true before first paint (boot used to configure after loadConversations, too late). #}
+        <deep-chat id="chat" errorMessages='{"displayServiceErrorMessages":true}'></deep-chat>
     </div>
 </div>
 <script>
@@ -749,7 +750,8 @@
       var wrap = document.getElementById('chat-wrap');
       if (!wrap) return;
       historyNextBefore = null;
-      wrap.innerHTML = '<deep-chat id="chat"></deep-chat>';
+      wrap.innerHTML =
+        '<deep-chat id="chat" errorMessages=\'{"displayServiceErrorMessages":true}\'></deep-chat>';
       customElements.whenDefined('deep-chat').then(configureDenChat);
     }
 
@@ -822,20 +824,17 @@
     }
 
     function boot() {
-      loadConversations()
-        .then(function (tag) {
-          if (tag === 'skip-boot') return false;
-          return customElements.whenDefined('deep-chat').then(function () {
-            return true;
-          });
-        })
-        .then(function (doConfigure) {
-          if (doConfigure) configureDenChat();
-        })
-        .catch(function (err) {
-          showErr(String(err.message || err));
-          customElements.whenDefined('deep-chat').then(configureDenChat);
-        });
+      /**
+       * Configure chat UI as soon as the component is defined — do not wait for
+       * loadConversations(). Otherwise Deep Chat constructs its message stack with
+       * displayServiceErrorMessages false and service errors never show as text (silent thread).
+       */
+      customElements.whenDefined('deep-chat').then(configureDenChat);
+
+      loadConversations().catch(function (err) {
+        showErr(String(err.message || err));
+        customElements.whenDefined('deep-chat').then(configureDenChat);
+      });
     }
 
     boot();
