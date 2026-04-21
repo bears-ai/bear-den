@@ -530,72 +530,87 @@
         var NO_ID = '___den_letta_assistant_no_id___';
         signals.onOpen();
 
+        function consumeSseDataLine(raw) {
+          var line = raw.replace(/\r$/, '');
+          if (!line.startsWith('data: ')) return;
+          var payload = line.slice(6).trim();
+          if (payload === '' || payload === '[DONE]') return;
+          try { var obj = JSON.parse(payload); } catch (_) { return; }
+          var errSig = lettaStreamEventErrorSignal(obj);
+          if (errSig) {
+            signals.onResponse(errSig);
+            return;
+          }
+          var inner = lettaInnerForStream(obj);
+          if (!inner || typeof inner !== 'object') return;
+
+          if (inner.message_type === 'reasoning_message') {
+            var pieceR = '';
+            if (typeof inner.reasoning === 'string') pieceR = inner.reasoning;
+            else pieceR = assistantChunkText(inner);
+            if (!pieceR) return;
+            var wasEmpty = reasoningFull.length === 0;
+            reasoningFull += pieceR;
+            hadReasoning = true;
+            signals.onResponse({
+              text: buildReasoningMarkdown(reasoningFull),
+              role: 'ai',
+              overwrite: !wasEmpty,
+            });
+            return;
+          }
+
+          if (inner.message_type === 'assistant_message') {
+            var chunk = assistantChunkText(inner);
+            var aid =
+              inner.id != null && String(inner.id) !== '' ? String(inner.id) : null;
+            var sameAssistant =
+              aid != null
+                ? aid === assistantLastId
+                : assistantLastId === NO_ID;
+            if (!sameAssistant) {
+              assistantLastId = aid != null ? aid : NO_ID;
+              assistantBuf = chunk;
+            } else {
+              assistantBuf += chunk;
+            }
+            if (DEN_CHAT_DEBUG_VERBOSE && /<system-reminder/i.test(assistantBuf)) {
+              signals.onResponse({
+                text: assistantBuf,
+                role: 'ai',
+                overwrite: hadReasoning || sameAssistant,
+              });
+            } else {
+              signals.onResponse({
+                text: DEN_CHAT_DEBUG_VERBOSE ? assistantBuf : stripSystemReminderBlocks(assistantBuf),
+                role: 'ai',
+                overwrite: hadReasoning || sameAssistant,
+              });
+            }
+            if (hadReasoning) hadReasoning = false;
+          }
+        }
+
         function pump() {
           return reader.read().then(function (result) {
-            if (result.done) { signals.onClose(); return; }
-            lineBuf += decoder.decode(result.value, { stream: true });
+            lineBuf += decoder.decode(
+              result.value ? result.value : new Uint8Array(0),
+              { stream: !result.done }
+            );
             var nl;
             while ((nl = lineBuf.indexOf('\n')) >= 0) {
               var raw = lineBuf.slice(0, nl);
               lineBuf = lineBuf.slice(nl + 1);
-              var line = raw.replace(/\r$/, '');
-              if (!line.startsWith('data: ')) continue;
-              var payload = line.slice(6).trim();
-              if (payload === '' || payload === '[DONE]') continue;
-              try { var obj = JSON.parse(payload); } catch (_) { continue; }
-              var errSig = lettaStreamEventErrorSignal(obj);
-              if (errSig) {
-                signals.onResponse(errSig);
-                continue;
+              consumeSseDataLine(raw);
+            }
+            if (result.done) {
+              /* Last SSE event often has no trailing newline; it would stay in lineBuf and was dropped. */
+              if (lineBuf.length > 0) {
+                consumeSseDataLine(lineBuf);
+                lineBuf = '';
               }
-              var inner = lettaInnerForStream(obj);
-              if (!inner || typeof inner !== 'object') continue;
-
-              if (inner.message_type === 'reasoning_message') {
-                var piece = '';
-                if (typeof inner.reasoning === 'string') piece = inner.reasoning;
-                else piece = assistantChunkText(inner);
-                if (!piece) continue;
-                var wasEmpty = reasoningFull.length === 0;
-                reasoningFull += piece;
-                hadReasoning = true;
-                signals.onResponse({
-                  text: buildReasoningMarkdown(reasoningFull),
-                  role: 'ai',
-                  overwrite: !wasEmpty,
-                });
-                continue;
-              }
-
-              if (inner.message_type === 'assistant_message') {
-                var chunk = assistantChunkText(inner);
-                var aid =
-                  inner.id != null && String(inner.id) !== '' ? String(inner.id) : null;
-                var sameAssistant =
-                  aid != null
-                    ? aid === assistantLastId
-                    : assistantLastId === NO_ID;
-                if (!sameAssistant) {
-                  assistantLastId = aid != null ? aid : NO_ID;
-                  assistantBuf = chunk;
-                } else {
-                  assistantBuf += chunk;
-                }
-                if (DEN_CHAT_DEBUG_VERBOSE && /<system-reminder/i.test(assistantBuf)) {
-                  signals.onResponse({
-                    text: assistantBuf,
-                    role: 'ai',
-                    overwrite: hadReasoning || sameAssistant,
-                  });
-                } else {
-                  signals.onResponse({
-                    text: DEN_CHAT_DEBUG_VERBOSE ? assistantBuf : stripSystemReminderBlocks(assistantBuf),
-                    role: 'ai',
-                    overwrite: hadReasoning || sameAssistant,
-                  });
-                }
-                if (hadReasoning) hadReasoning = false;
-              }
+              signals.onClose();
+              return;
             }
             return pump();
           });
