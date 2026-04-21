@@ -1,8 +1,13 @@
+import { readFileSync } from "node:fs";
 import express from "express";
 import type { ConversationSessionPool } from "./pool.js";
 import { sdkMessageToSseDataLine } from "./sse.js";
 import { handleOpenAIChatCompletions } from "./openai.js";
 import type { ChannelListenerRegistry } from "./channel-listeners.js";
+
+const packageJson = JSON.parse(
+  readFileSync(new URL("../package.json", import.meta.url), "utf8")
+) as { version?: string };
 
 export type ServerContext = {
   pool: ConversationSessionPool;
@@ -40,6 +45,15 @@ export function attachRoutes(
 
   app.get("/health", (_req, res) => {
     res.json({ ok: true, service: "bear-codepool" });
+  });
+
+  app.get("/version", (_req, res) => {
+    const gitSha = process.env.CODEPOOL_GIT_SHA?.trim() || "unknown";
+    res.json({
+      service: "bear-codepool",
+      version: packageJson.version ?? "0.0.0",
+      git_sha: gitSha,
+    });
   });
 
   app.get("/internal/pool", guard, (_req, res) => {

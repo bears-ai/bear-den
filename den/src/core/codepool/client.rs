@@ -69,6 +69,34 @@ impl CodePoolClient {
         Ok(text)
     }
 
+    /// `GET /version` — npm `version`, `git_sha` from image (same auth pattern as health).
+    pub async fn fetch_version_json(&self) -> Result<String, CustomError> {
+        if !self.is_enabled() {
+            return Err(CustomError::System(
+                "CODEPOOL_BASE_URL is not set".to_string(),
+            ));
+        }
+        let url = format!("{}/version", self.base_url);
+        let resp = self
+            .http
+            .get(url)
+            .headers(self.auth_headers())
+            .send()
+            .await
+            .map_err(|e| CustomError::System(format!("Codepool version request failed: {e}")))?;
+        let status = resp.status();
+        let text = resp
+            .text()
+            .await
+            .map_err(|e| CustomError::System(format!("Codepool version body: {e}")))?;
+        if !status.is_success() {
+            return Err(CustomError::System(format!(
+                "Codepool version HTTP {status}: {text}"
+            )));
+        }
+        Ok(text)
+    }
+
     /// `GET /health`
     pub async fn check_health(&self) -> Result<String, CustomError> {
         if !self.is_enabled() {

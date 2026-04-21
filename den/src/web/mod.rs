@@ -1,6 +1,7 @@
 // ROUTES: When modifying routes in this file, update /src/web/ROUTES.md if present.
 pub mod admin;
 pub mod bears_health;
+pub mod status;
 pub mod bear_chat;
 pub mod bear_create_support;
 pub mod bear_management;
@@ -204,8 +205,8 @@ pub async fn server(
 
     let asset_router = Arc::as_ref(&state.asset_router).clone();
 
-    // Register liveness/readiness, manifest, and BEARS aggregate health **first** (before admin,
-    // `/bear/*`, and `public::router()`'s fallback) so `/health/*` always resolves to these handlers.
+    // Register liveness/readiness, manifest, and BEARS `/status` **first** (before admin,
+    // `/bear/*`, and `public::router()`'s fallback) so `/health/*` and `/status*` resolve before fallbacks.
     let router = Router::new()
         .merge(
             Router::new()
@@ -214,6 +215,8 @@ pub async fn server(
                 .route("/version", get(build_info::json_handler))
                 .route("/healthcheck", get(|| async { "OK" }))
                 .route("/health/ready", get(web_readiness))
+                .route("/status", get(status::page))
+                .route("/status.json", get(status::json_endpoint))
                 .route("/health/bears", get(bears_health::page))
                 .route("/health/bears.json", get(bears_health::json_endpoint)),
         )

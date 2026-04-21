@@ -139,7 +139,17 @@ body.bear_chat #chat-wrap {
     margin-bottom: var(--spacing-unit);
 }
 
-/* ---- BEARS health (/health/bears) — body class page-bears-health ---- */
+/* ---- BEARS status (/status); body class page-bears-health ---- */
+body.page-bears-health .status-section-heading {
+    margin-top: calc(var(--spacing-unit) * 2);
+    margin-bottom: var(--spacing-unit);
+    font-size: 1.1rem;
+}
+
+body.page-bears-health .bears-health-ghcr-note {
+    max-width: var(--wide-width);
+    margin-bottom: var(--spacing-unit);
+}
 body.page-bears-health .bears-health-lede {
     max-width: var(--medium-width);
     margin-bottom: var(--spacing-unit);

@@ -5,11 +5,13 @@ Axum routes for the web server (`RUN_WEB=true`). Update this file when you add o
 ## Top-level (`src/web/mod.rs`)
 
 - `GET /health` — liveness (BEARS Phase 1 M0 canonical path)
-- `GET /version` — JSON build identity (`service`, `version` from Cargo.toml, `built_at_utc` RFC 3339 UTC from when `build.rs` last ran; optional `SOURCE_DATE_EPOCH` for reproducible builds)
+- `GET /version` — JSON build identity (`service`, `version` from Cargo.toml, `built_at_utc`, `git_sha` from `GIT_SHA` Docker build-arg or `unknown`)
 - `GET /healthcheck` — liveness (legacy alias)
 - `GET /health/ready` — readiness (DB ping)
-- `GET /health/bears` — **BEARS stack** aggregate health (HTML; probes Den DB, optional `LETTA_PG_URI`, Codepool, Letta, Bifrost, plus env checks aligned with `services/preflight`)
-- `GET /health/bears.json` — same as JSON (**200** if no failing checks, **503** if any check is `fail`; warnings do not fail the status)
+- `GET /status` — **BEARS stack** status page: aggregate health (same probes as legacy `/health/bears`) plus **deployed vs GHCR** when `GITHUB_PACKAGES_TOKEN` + `GHCR_PACKAGES_OWNER` are set
+- `GET /status.json` — combined JSON (`health`, `den_version`, `codepool_version`, optional `ghcr_*`) — **503** if any health check is `fail`
+- `GET /health/bears` — **301** redirect to `/status` (legacy alias)
+- `GET /health/bears.json` — **301** redirect to `/status.json` (legacy alias)
 - `GET /manifest.json` — Web App Manifest (`APP_DISPLAY_NAME`, `APP_SLUG`, icons)
 - `GET /assets/*` — static assets (memory-serve)
 - `GET /*` — fallback 404 (`src/web/public.rs`) for unmatched paths

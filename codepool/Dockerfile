@@ -17,6 +17,9 @@ RUN npm run build && npm prune --omit=dev
 FROM node:22-bookworm-slim
 WORKDIR /app
 
+ARG CODEPOOL_GIT_SHA=unknown
+ENV CODEPOOL_GIT_SHA=${CODEPOOL_GIT_SHA}
+
 COPY --from=builder /app /app
 
 ENV NODE_ENV=production

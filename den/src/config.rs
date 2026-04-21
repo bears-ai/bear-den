@@ -133,6 +133,13 @@ pub struct Config {
     /// Seconds a connection can sit idle before being closed (`DB_IDLE_TIMEOUT_SECS`, default 600).
     /// Set to 0 to disable idle reaping.
     pub db_idle_timeout_secs: u64,
+
+    /// PAT with `read:packages` for [`crate::web::status`] GHCR comparison (optional; when empty, registry columns show "not configured").
+    pub github_packages_token: String,
+    /// GitHub org or username that owns `den` / `codepool` images on GHCR (e.g. `theartificial`).
+    pub ghcr_packages_owner: String,
+    /// `org` or `user` — used with GitHub Packages REST paths.
+    pub ghcr_packages_owner_kind: String,
 }
 
 impl Config {
@@ -319,6 +326,28 @@ impl Config {
                 600
             });
 
+        let github_packages_token =
+            std::env::var("GITHUB_PACKAGES_TOKEN").unwrap_or_default();
+        let ghcr_packages_owner = std::env::var("GHCR_PACKAGES_OWNER")
+            .unwrap_or_default()
+            .trim()
+            .to_string();
+        let ghcr_packages_owner_kind = std::env::var("GHCR_PACKAGES_OWNER_KIND")
+            .unwrap_or_else(|_| "org".to_string())
+            .trim()
+            .to_lowercase();
+        let ghcr_packages_owner_kind = if matches!(
+            ghcr_packages_owner_kind.as_str(),
+            "org" | "user"
+        ) {
+            ghcr_packages_owner_kind
+        } else {
+            tracing::warn!(
+                "Invalid GHCR_PACKAGES_OWNER_KIND (expected org|user). Defaulting to org."
+            );
+            "org".to_string()
+        };
+
         Config {
             templates_dir: std::env::var("TEMPLATES_DIR")
                 .unwrap_or("src/web/templates".to_string()),
@@ -360,6 +389,9 @@ impl Config {
             db_max_connections,
             db_acquire_timeout_secs,
             db_idle_timeout_secs,
+            github_packages_token,
+            ghcr_packages_owner,
+            ghcr_packages_owner_kind,
         }
     }
 }
@@ -421,6 +453,9 @@ impl Config {
             db_max_connections: 5,
             db_acquire_timeout_secs: 3,
             db_idle_timeout_secs: 600,
+            github_packages_token: String::new(),
+            ghcr_packages_owner: String::new(),
+            ghcr_packages_owner_kind: "org".to_string(),
         }
     }
 }

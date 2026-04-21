@@ -95,6 +95,7 @@ async fn web_version_returns_json() {
         built.len() >= 20 && built.ends_with('Z'),
         "expected RFC3339 UTC, got {built:?}"
     );
+    assert!(v["git_sha"].as_str().is_some());
 }
 
 #[tokio::test]
@@ -130,12 +131,12 @@ async fn web_readiness_returns_ok_when_db_up() {
 }
 
 #[tokio::test]
-async fn web_health_bears_json_is_routed() {
+async fn web_status_json_is_routed() {
     let app = web_app().await;
     let res = app
         .oneshot(
             Request::builder()
-                .uri("/health/bears.json")
+                .uri("/status.json")
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -144,17 +145,32 @@ async fn web_health_bears_json_is_routed() {
     assert_ne!(
         res.status(),
         StatusCode::NOT_FOUND,
-        "GET /health/bears.json must be registered (aggregate health, not public 404 fallback)"
+        "GET /status.json must be registered"
     );
     assert!(
         matches!(res.status(), StatusCode::OK | StatusCode::SERVICE_UNAVAILABLE),
-        "expected 200 or 503 from aggregate health JSON, got {}",
+        "expected 200 or 503 from status JSON, got {}",
         res.status()
     );
 }
 
 #[tokio::test]
-async fn web_health_bears_page_is_routed() {
+async fn web_status_page_is_routed() {
+    let app = web_app().await;
+    let res = app
+        .oneshot(
+            Request::builder()
+                .uri("/status")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_ne!(res.status(), StatusCode::NOT_FOUND, "GET /status must be registered");
+}
+
+#[tokio::test]
+async fn web_health_bears_redirects_to_status() {
     let app = web_app().await;
     let res = app
         .oneshot(
@@ -165,11 +181,9 @@ async fn web_health_bears_page_is_routed() {
         )
         .await
         .unwrap();
-    assert_ne!(
-        res.status(),
-        StatusCode::NOT_FOUND,
-        "GET /health/bears must be registered (aggregate health HTML)"
-    );
+    assert_eq!(res.status(), StatusCode::MOVED_PERMANENTLY);
+    let loc = res.headers().get(axum::http::header::LOCATION);
+    assert_eq!(loc.map(|v| v.to_str().unwrap()), Some("/status"));
 }
 
 /// Bear chat (`/bear/{slug}`) loads Deep Chat from `/assets/deep-chat/*`; these must not 404.
@@ -225,6 +239,7 @@ async fn api_version_returns_json() {
         built.len() >= 20 && built.ends_with('Z'),
         "expected RFC3339 UTC, got {built:?}"
     );
+    assert!(v["git_sha"].as_str().is_some());
 }
 
 #[tokio::test]

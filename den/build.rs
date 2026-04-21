@@ -25,6 +25,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let built_at = build_time_utc_rfc3339();
     println!("cargo:rustc-env=DEN_BUILT_AT_UTC={}", built_at);
 
+    let git_sha = env::var("GIT_SHA")
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "unknown".to_string());
+    println!("cargo:rustc-env=DEN_GIT_SHA={}", git_sha);
+    println!("cargo:rerun-if-env-changed=GIT_SHA");
     println!("cargo:rerun-if-env-changed=SOURCE_DATE_EPOCH");
 
     // Only run expensive embedding & DB migration steps when the `production`

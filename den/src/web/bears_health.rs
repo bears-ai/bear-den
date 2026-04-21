@@ -6,12 +6,7 @@
 
 use std::time::Duration;
 
-use axum::{
-    Json,
-    extract::State,
-    http::StatusCode,
-    response::{Html, IntoResponse, Response},
-};
+use axum::response::Redirect;
 use serde::Serialize;
 use sqlx::{PgPool, postgres::PgPoolOptions};
 use time::OffsetDateTime;
@@ -63,65 +58,21 @@ impl BearsHealthReport {
     }
 }
 
+/// Row shape for `/status` template (public for [`crate::web::status`]).
 #[derive(Serialize)]
-struct BearsHealthRow {
-    id: &'static str,
-    label: &'static str,
-    state: &'static str,
-    detail: String,
+pub struct BearsHealthTemplateRow {
+    pub id: &'static str,
+    pub label: &'static str,
+    pub state: &'static str,
+    pub detail: String,
 }
 
-pub async fn page(State(state): State<AppState>) -> Result<Response, crate::errors::CustomError> {
-    let report = gather(&state).await;
-    let status = if report.ok {
-        StatusCode::OK
-    } else {
-        StatusCode::SERVICE_UNAVAILABLE
-    };
-    let rows: Vec<BearsHealthRow> = report
-        .checks
-        .iter()
-        .map(|c| BearsHealthRow {
-            id: c.id,
-            label: c.label,
-            state: match c.state {
-                CheckState::Ok => "ok",
-                CheckState::Warn => "warn",
-                CheckState::Fail => "fail",
-                CheckState::Skipped => "skipped",
-            },
-            detail: c.detail.clone(),
-        })
-        .collect();
-    let ctx = minijinja::context! {
-        title => "BEARS health",
-        template_tag => "page-bears-health",
-        app_display_name => state.config.app_display_name.clone(),
-        app_slug => state.config.app_slug.clone(),
-        public_web_origin => state.config.web_public_origin(),
-        rows => rows,
-        overall_ok => report.ok,
-        checked_at => report.checked_at.clone(),
-        json_path => "/health/bears.json",
-    };
-    let template = state
-        .template_env
-        .get_template("bears_health.html")
-        .map_err(|e| crate::errors::CustomError::Render(format!("bears_health template: {e}")))?;
-    let body = template
-        .render(ctx)
-        .map_err(|e| crate::errors::CustomError::Render(format!("bears_health render: {e}")))?;
-    Ok((status, Html(body)).into_response())
+pub async fn page() -> Redirect {
+    Redirect::permanent("/status")
 }
 
-pub async fn json_endpoint(State(state): State<AppState>) -> impl IntoResponse {
-    let report = gather(&state).await;
-    let status = if report.ok {
-        StatusCode::OK
-    } else {
-        StatusCode::SERVICE_UNAVAILABLE
-    };
-    (status, Json(report))
+pub async fn json_endpoint() -> Redirect {
+    Redirect::permanent("/status.json")
 }
 
 pub async fn gather(state: &AppState) -> BearsHealthReport {

@@ -33,8 +33,10 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry/,id=den-cargo-registry \
 
 FROM rust-base AS build
 ARG APP_NAME=den
+ARG GIT_SHA=
 ARG DATABASE_URL=postgres://postgres:postgres@127.0.0.1:5432/postgres?sslmode=disable
 ARG SQLX_OFFLINE=false
+ENV GIT_SHA=${GIT_SHA}
 COPY --from=cacher /app/target target
 COPY . .
 RUN export DATABASE_URL="${DATABASE_URL}" SQLX_OFFLINE="${SQLX_OFFLINE}" && \
