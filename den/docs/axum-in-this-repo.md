@@ -13,7 +13,7 @@ Short map for Rust developers who are new to [Axum](https://docs.rs/axum). For e
 - Router assembly:
   - Subrouters from [`admin`](../src/web/admin/mod.rs), [`user`](../src/web/user/mod.rs), [`home`](../src/web/home.rs), [`public`](../src/web/public.rs).
   - [`SessionManagerLayer`](https://docs.rs/tower-sessions/latest/tower_sessions/struct.SessionManagerLayer.html) + [`AuthManagerLayer`](https://docs.rs/axum-login/latest/axum_login/struct.AuthManagerLayerBuilder.html) wrap authenticated areas.
-  - **Layer order:** liveness/manifest/`/version`/aggregate health are merged **first**; `/admin` is a **separate** merge wrapped with `permission_required!(…, "admin")`; bear routes and the rest follow. Outer `layer(auth_layer)` + `TraceLayer` apply to the whole tree—probes stay reachable because they are not behind the admin gate.
+  - **Layer order:** liveness/manifest/`/version`/`/status` are merged **first**; `/admin` is a **separate** merge wrapped with `permission_required!(…, "admin")`; bear routes and the rest follow. Outer `layer(auth_layer)` + `TraceLayer` apply to the whole tree—probes stay reachable because they are not behind the admin gate.
 - **State:** `.with_state(state)` installs [`AppState`](../src/web/mod.rs) for handlers that use [`State`](https://docs.rs/axum/latest/axum/extract/struct.State.html).
 
 ## Standalone API (OAuth provider + versioned JSON API)

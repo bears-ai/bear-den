@@ -139,7 +139,7 @@ body.bear_chat #chat-wrap {
     margin-bottom: var(--spacing-unit);
 }
 
-/* ---- BEARS status (/status); body class page-bears-health ---- */
+/* ---- BEARS /status page — body class page-bears-health ---- */
 body.page-bears-health .status-section-heading {
     margin-top: calc(var(--spacing-unit) * 2);
     margin-bottom: var(--spacing-unit);

@@ -1,4 +1,4 @@
-//! Aggregated **BEARS stack** health for operators and monitors.
+//! Runtime probes and config checks for the public **`/status`** page ([`crate::web::status`]).
 //!
 //! Combines **runtime probes** (PostgreSQL, upstream HTTP) with **low-cost config sanity**
 //! aligned with the repo’s **`services/preflight`** script: JWT when
@@ -6,7 +6,6 @@
 
 use std::time::Duration;
 
-use axum::response::Redirect;
 use serde::Serialize;
 use sqlx::{PgPool, postgres::PgPoolOptions};
 use time::OffsetDateTime;
@@ -20,7 +19,7 @@ use crate::web::AppState;
 const HTTP_PROBE_TIMEOUT: Duration = Duration::from_secs(8);
 
 #[derive(Clone, Serialize)]
-pub struct BearsHealthReport {
+pub struct StackHealthReport {
     /// `true` when no check has [`CheckState::Fail`]. Warnings still yield `true`.
     pub ok: bool,
     pub checked_at: String,
@@ -44,7 +43,7 @@ pub enum CheckState {
     Skipped,
 }
 
-impl BearsHealthReport {
+impl StackHealthReport {
     fn from_checks(checks: Vec<HealthCheck>) -> Self {
         let ok = checks.iter().all(|c| c.state != CheckState::Fail);
         let checked_at = OffsetDateTime::now_utc()
@@ -58,24 +57,16 @@ impl BearsHealthReport {
     }
 }
 
-/// Row shape for `/status` template (public for [`crate::web::status`]).
+/// Row shape for the `/status` HTML table.
 #[derive(Serialize)]
-pub struct BearsHealthTemplateRow {
+pub struct StackHealthTemplateRow {
     pub id: &'static str,
     pub label: &'static str,
     pub state: &'static str,
     pub detail: String,
 }
 
-pub async fn page() -> Redirect {
-    Redirect::permanent("/status")
-}
-
-pub async fn json_endpoint() -> Redirect {
-    Redirect::permanent("/status.json")
-}
-
-pub async fn gather(state: &AppState) -> BearsHealthReport {
+pub async fn gather(state: &AppState) -> StackHealthReport {
     let cfg = state.config.as_ref();
 
     let mut checks: Vec<HealthCheck> = Vec::new();
@@ -111,7 +102,7 @@ pub async fn gather(state: &AppState) -> BearsHealthReport {
     checks.push(letta_h);
     checks.push(bifrost_h);
 
-    BearsHealthReport::from_checks(checks)
+    StackHealthReport::from_checks(checks)
 }
 
 fn jwt_check(cfg: &crate::config::Config) -> HealthCheck {

@@ -169,23 +169,6 @@ async fn web_status_page_is_routed() {
     assert_ne!(res.status(), StatusCode::NOT_FOUND, "GET /status must be registered");
 }
 
-#[tokio::test]
-async fn web_health_bears_redirects_to_status() {
-    let app = web_app().await;
-    let res = app
-        .oneshot(
-            Request::builder()
-                .uri("/health/bears")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(res.status(), StatusCode::MOVED_PERMANENTLY);
-    let loc = res.headers().get(axum::http::header::LOCATION);
-    assert_eq!(loc.map(|v| v.to_str().unwrap()), Some("/status"));
-}
-
 /// Bear chat (`/bear/{slug}`) loads Deep Chat from `/assets/deep-chat/*`; these must not 404.
 #[tokio::test]
 async fn web_deep_chat_vendor_assets_are_served() {

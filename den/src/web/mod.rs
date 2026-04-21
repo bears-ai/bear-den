@@ -1,6 +1,6 @@
 // ROUTES: When modifying routes in this file, update /src/web/ROUTES.md if present.
 pub mod admin;
-pub mod bears_health;
+pub mod stack_health;
 pub mod status;
 pub mod bear_chat;
 pub mod bear_create_support;
@@ -216,9 +216,7 @@ pub async fn server(
                 .route("/healthcheck", get(|| async { "OK" }))
                 .route("/health/ready", get(web_readiness))
                 .route("/status", get(status::page))
-                .route("/status.json", get(status::json_endpoint))
-                .route("/health/bears", get(bears_health::page))
-                .route("/health/bears.json", get(bears_health::json_endpoint)),
+                .route("/status.json", get(status::json_endpoint)),
         )
         .merge(
             Router::new()

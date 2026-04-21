@@ -1,4 +1,4 @@
-//! Public **`/status`** — aggregate stack health ([`super::bears_health`] [`super::bears_health::gather`]) plus Den/Codepool versions vs optional GHCR (GitHub Packages API).
+//! Public **`/status`** — aggregate stack health ([`super::stack_health::gather`]) plus Den/Codepool versions vs optional GHCR (GitHub Packages API).
 
 use std::time::Duration;
 
@@ -12,14 +12,14 @@ use reqwest::header::{ACCEPT, AUTHORIZATION, HeaderValue, USER_AGENT};
 use serde::Deserialize;
 
 use crate::build_info;
-use crate::web::bears_health::{self, BearsHealthReport, CheckState};
+use crate::web::stack_health::{self, CheckState, StackHealthReport, StackHealthTemplateRow};
 use crate::web::AppState;
 
 const GITHUB_FETCH_TIMEOUT: Duration = Duration::from_secs(12);
 
 #[derive(Clone, serde::Serialize)]
 pub struct StatusPayload {
-    pub health: BearsHealthReport,
+    pub health: StackHealthReport,
     pub den_version: build_info::VersionBody,
     pub codepool_version: Option<serde_json::Value>,
     pub codepool_error: Option<String>,
@@ -59,11 +59,11 @@ pub async fn page(State(state): State<AppState>) -> Result<Response, crate::erro
         StatusCode::SERVICE_UNAVAILABLE
     };
 
-    let rows: Vec<bears_health::BearsHealthTemplateRow> = payload
+    let rows: Vec<StackHealthTemplateRow> = payload
         .health
         .checks
         .iter()
-        .map(|c| bears_health::BearsHealthTemplateRow {
+        .map(|c| StackHealthTemplateRow {
             id: c.id,
             label: c.label,
             state: match c.state {
@@ -229,7 +229,7 @@ pub async fn json_endpoint(State(state): State<AppState>) -> impl IntoResponse {
 }
 
 async fn gather_status(state: &AppState) -> StatusPayload {
-    let health = bears_health::gather(state).await;
+    let health = stack_health::gather(state).await;
     let den_version = build_info::snapshot();
 
     let (codepool_version, codepool_error) = if state.codepool.is_enabled() {
