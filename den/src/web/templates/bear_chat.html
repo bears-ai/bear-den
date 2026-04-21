@@ -154,6 +154,11 @@
       return parts.join('\n');
     }
 
+    /** Deep Chat expects `role: 'error'` for error bubbles; see `errorMessages.displayServiceErrorMessages`. */
+    function denChatSignalError(signals, errorText) {
+      signals.onResponse({ error: errorText, role: 'error' });
+    }
+
     /** Prefer JSON `{ error, request_id }` from `POST /v1/chat/send`; strip noisy Den prefixes. */
     function denChatParseSendError(text, httpStatus, requestIdFromHeader) {
       var trimmed = (text || '').trim();
@@ -355,6 +360,15 @@
 
       chat.names = false;
 
+      /**
+       * Deep Chat default is displayServiceErrorMessages: false — then `signals.onResponse({ error })`
+       * does not show the real string from Codepool/Den (SSE error_message or HTTP JSON), which looks
+       * like silence in the thread. Enable full service errors for harness/proxy failures (e.g. EACCES).
+       */
+      chat.errorMessages = {
+        displayServiceErrorMessages: true,
+      };
+
       chat.messageStyles = {
         default: {
           shared: {
@@ -534,7 +548,7 @@
           : requestRef || '';
       if (ref) lines.push('Reference: ' + ref);
       var msg = lines.length ? lines.join('\n\n') : 'An error occurred.';
-      return { error: msg };
+      return { error: msg, role: 'error' };
     }
 
     function lettaSseHandler(body, signals) {
@@ -543,7 +557,10 @@
         .map(function (m) { return m.text || ''; })
         .pop() || '';
 
-      if (!BEAR_ID) { signals.onResponse({ error: 'Missing bear.' }); return; }
+      if (!BEAR_ID) {
+        denChatSignalError(signals, 'Missing bear.');
+        return;
+      }
       errEl.hidden = true;
 
       var abortCtl = new AbortController();
@@ -573,9 +590,10 @@
         }
         if (!response.ok) {
           return response.text().then(function (t) {
-            signals.onResponse({
-              error: denChatParseSendError(t, response.status, requestRef),
-            });
+            denChatSignalError(
+              signals,
+              denChatParseSendError(t, response.status, requestRef)
+            );
           });
         }
         var reader = response.body.getReader();
@@ -602,13 +620,14 @@
           } catch (_) {
             if (!sseParseWarned) {
               sseParseWarned = true;
-              signals.onResponse({
-                error: formatChatError(
+              denChatSignalError(
+                signals,
+                formatChatError(
                   'Invalid response from server',
                   'Could not parse streamed data from the assistant service.',
                   requestRef
-                ),
-              });
+                )
+              );
             }
             return;
           }
@@ -693,13 +712,14 @@
                 !sawStreamError &&
                 !sseParseWarned
               ) {
-                signals.onResponse({
-                  error: formatChatError(
+                denChatSignalError(
+                  signals,
+                  formatChatError(
                     'No response received',
                     'The assistant did not return any text. You can retry, or share the reference below if the problem continues.',
                     requestRef
-                  ),
-                });
+                  )
+                );
               }
               signals.onClose();
               return;
@@ -713,13 +733,14 @@
           signals.onResponse({ text: '\n[stopped]' });
           signals.onClose();
         } else {
-          signals.onResponse({
-            error: formatChatError(
+          denChatSignalError(
+            signals,
+            formatChatError(
               'Connection problem',
               String(x.message || x),
               ''
-            ),
-          });
+            )
+          );
         }
       });
     }
