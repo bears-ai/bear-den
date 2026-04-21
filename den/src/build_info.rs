@@ -3,7 +3,7 @@
 use axum::{Json, response::IntoResponse};
 use serde::Serialize;
 
-#[derive(Debug, Serialize)]
+#[derive(Clone, Debug, Serialize)]
 pub struct VersionBody {
     pub service: &'static str,
     pub version: &'static str,
