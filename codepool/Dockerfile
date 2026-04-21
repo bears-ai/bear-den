@@ -15,7 +15,7 @@ COPY src ./src
 RUN npm run build && npm prune --omit=dev
 
 FROM node:22-bookworm-slim
-RUN apt-get update && apt-get install -y --no-install-recommends git \
+RUN apt-get update && apt-get install -y --no-install-recommends git gosu \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 
@@ -28,8 +28,12 @@ ENV NODE_ENV=production
 ENV PATH="/app/node_modules/.bin:${PATH}"
 ENV HOME=/home/node
 
-RUN mkdir -p /home/node/.letta && chown -R node:node /app /home/node
-USER node
+COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh \
+    && mkdir -p /home/node/.letta && chown -R node:node /app /home/node
 
+# Start as root so the entrypoint can chown named volumes, then gosu → node.
+USER root
 EXPOSE 3030
+ENTRYPOINT ["docker-entrypoint.sh"]
 CMD ["node", "dist/index.js"]

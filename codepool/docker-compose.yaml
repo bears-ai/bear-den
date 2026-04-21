@@ -15,10 +15,14 @@ services:
       CODEPOOL_INTERNAL_TOKEN: ${CODEPOOL_INTERNAL_TOKEN:-}
       POOL_TTL_SECS: ${POOL_TTL_SECS:-600}
       POOL_MAX_ENTRIES: ${POOL_MAX_ENTRIES:-256}
+      # Keep in sync with the bear-codepool-memory volume mount (see root `docker-compose.yaml`).
+      BEAR_MEMORY_ROOT: /var/lib/bear-memory
     volumes:
       - bear-codepool-letta-home:/home/node/.letta
+      - bear-codepool-memory:/var/lib/bear-memory
     # ports:
     #   - "3030:3030"
 
 volumes:
   bear-codepool-letta-home:
+  bear-codepool-memory:
