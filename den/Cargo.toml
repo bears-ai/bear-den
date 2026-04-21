@@ -110,3 +110,4 @@ tower = { version = "0.5.2", features = ["util"] }
 tokio = { version = "1", features = ["rt-multi-thread"] }
 sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "postgres"] }
 minijinja-embed = "2.7.0"
+time = { version = "0.3.37", features = ["formatting"] }

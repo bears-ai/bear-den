@@ -90,8 +90,11 @@ async fn web_version_returns_json() {
     let v: serde_json::Value = serde_json::from_slice(&body).expect("JSON body");
     assert_eq!(v["service"], "den");
     assert!(v["version"].as_str().is_some());
-    let gc = v["git_commit"].as_str().expect("git_commit string");
-    assert!(gc == "unknown" || gc.len() >= 7);
+    let built = v["built_at_utc"].as_str().expect("built_at_utc string");
+    assert!(
+        built.len() >= 20 && built.ends_with('Z'),
+        "expected RFC3339 UTC, got {built:?}"
+    );
 }
 
 #[tokio::test]
@@ -217,8 +220,11 @@ async fn api_version_returns_json() {
     let v: serde_json::Value = serde_json::from_slice(&body).expect("JSON body");
     assert_eq!(v["service"], "den");
     assert!(v["version"].as_str().is_some());
-    let gc = v["git_commit"].as_str().expect("git_commit string");
-    assert!(gc == "unknown" || gc.len() >= 7);
+    let built = v["built_at_utc"].as_str().expect("built_at_utc string");
+    assert!(
+        built.len() >= 20 && built.ends_with('Z'),
+        "expected RFC3339 UTC, got {built:?}"
+    );
 }
 
 #[tokio::test]

@@ -5,7 +5,7 @@ Axum routes for the web server (`RUN_WEB=true`). Update this file when you add o
 ## Top-level (`src/web/mod.rs`)
 
 - `GET /health` — liveness (BEARS Phase 1 M0 canonical path)
-- `GET /version` — JSON build identity (`service`, `version` from Cargo.toml, `git_commit` from `GIT_COMMIT` / `SOURCE_COMMIT` at build time or `git rev-parse`, else `unknown`)
+- `GET /version` — JSON build identity (`service`, `version` from Cargo.toml, `built_at_utc` RFC 3339 UTC from when `build.rs` last ran; optional `SOURCE_DATE_EPOCH` for reproducible builds)
 - `GET /healthcheck` — liveness (legacy alias)
 - `GET /health/ready` — readiness (DB ping)
 - `GET /health/bears` — **BEARS stack** aggregate health (HTML; probes Den DB, optional `LETTA_PG_URI`, Codepool, Letta, Bifrost, plus env checks aligned with `services/preflight`)

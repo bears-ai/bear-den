@@ -1,89 +1,31 @@
 use std::env;
-use std::path::Path;
 use std::time::Instant;
+use time::format_description::well_known::Rfc3339;
+use time::OffsetDateTime;
 
-/// Env-based SHA first (Docker/CI often lack `.git` in the build context).
-/// Common CI variables are fallbacks when `GIT_COMMIT` is not passed explicitly.
-fn resolve_git_commit() -> String {
-    for key in [
-        "GIT_COMMIT",
-        "SOURCE_COMMIT",
-        "GITHUB_SHA",
-        "CI_COMMIT_SHA",
-        "CIRCLE_SHA1",
-        "BUILDKITE_COMMIT",
-    ] {
-        if let Ok(v) = env::var(key) {
-            let t = v.trim();
-            if !t.is_empty() {
-                return t.to_string();
+/// UTC time when the build script ran, RFC 3339 (e.g. `2026-04-21T12:34:56Z`).
+/// If `SOURCE_DATE_EPOCH` is set (seconds since Unix epoch), use that for reproducible builds.
+fn build_time_utc_rfc3339() -> String {
+    if let Ok(epoch) = env::var("SOURCE_DATE_EPOCH") {
+        if let Ok(secs) = epoch.trim().parse::<i64>() {
+            if let Ok(dt) = OffsetDateTime::from_unix_timestamp(secs) {
+                return dt.format(&Rfc3339).expect("RFC3339 format");
             }
         }
     }
-    if let Some(sha) = git_rev_parse_head() {
-        return sha;
-    }
-    "unknown".to_string()
-}
-
-fn git_rev_parse_head() -> Option<String> {
-    let manifest = env::var_os("CARGO_MANIFEST_DIR")?;
-    let out = std::process::Command::new("git")
-        .current_dir(manifest)
-        .args(["rev-parse", "HEAD"])
-        .output()
-        .ok()?;
-    if !out.status.success() {
-        return None;
-    }
-    String::from_utf8(out.stdout)
-        .ok()
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
-}
-
-fn emit_git_commit_rerun_hints(manifest_dir: &str) {
-    for key in [
-        "GIT_COMMIT",
-        "SOURCE_COMMIT",
-        "GITHUB_SHA",
-        "CI_COMMIT_SHA",
-        "CIRCLE_SHA1",
-        "BUILDKITE_COMMIT",
-    ] {
-        println!("cargo:rerun-if-env-changed={}", key);
-    }
-
-    // When HEAD is `ref: refs/heads/...`, `.git/HEAD` does not change on new commits — only the
-    // branch ref (or reflog) does. Watching those avoids a stale `DEN_GIT_COMMIT` under incremental builds.
-    let git_dir = Path::new(manifest_dir).join("../.git");
-    let head_path = git_dir.join("HEAD");
-    if head_path.exists() {
-        println!("cargo:rerun-if-changed={}", head_path.display());
-        if let Ok(contents) = std::fs::read_to_string(&head_path) {
-            let line = contents.trim();
-            if let Some(rest) = line.strip_prefix("ref: ") {
-                let ref_path = git_dir.join(rest);
-                if ref_path.exists() {
-                    println!("cargo:rerun-if-changed={}", ref_path.display());
-                }
-            }
-        }
-    }
-    let logs_head = git_dir.join("logs/HEAD");
-    if logs_head.exists() {
-        println!("cargo:rerun-if-changed={}", logs_head.display());
-    }
+    OffsetDateTime::now_utc()
+        .format(&Rfc3339)
+        .expect("RFC3339 format")
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let build_start = Instant::now();
     println!("cargo:warning=Build script starting...");
 
-    let manifest_dir = env::var("CARGO_MANIFEST_DIR")?;
-    let git_commit = resolve_git_commit();
-    println!("cargo:rustc-env=DEN_GIT_COMMIT={}", git_commit);
-    emit_git_commit_rerun_hints(&manifest_dir);
+    let built_at = build_time_utc_rfc3339();
+    println!("cargo:rustc-env=DEN_BUILT_AT_UTC={}", built_at);
+
+    println!("cargo:rerun-if-env-changed=SOURCE_DATE_EPOCH");
 
     // Only run expensive embedding & DB migration steps when the `production`
     // feature is enabled. Cargo exposes enabled features to build scripts via

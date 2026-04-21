@@ -7,14 +7,15 @@ use serde::Serialize;
 pub struct VersionBody {
     pub service: &'static str,
     pub version: &'static str,
-    pub git_commit: &'static str,
+    /// RFC 3339 UTC timestamp from when `build.rs` last ran (`SOURCE_DATE_EPOCH` overrides for reproducible builds).
+    pub built_at_utc: &'static str,
 }
 
 pub fn snapshot() -> VersionBody {
     VersionBody {
         service: "den",
         version: env!("CARGO_PKG_VERSION"),
-        git_commit: env!("DEN_GIT_COMMIT"),
+        built_at_utc: env!("DEN_BUILT_AT_UTC"),
     }
 }
 

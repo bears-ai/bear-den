@@ -42,7 +42,7 @@ Structured logging via **tracing** with default filters wired in [`src/lib.rs`](
 | Web (`RUN_WEB`) | `GET /healthcheck` → `OK` | `GET /health/ready` → `OK` or **503** |
 | API (`RUN_API`) | `GET /healthcheck` → `API OK` | `GET /health/ready` → `OK` or **503** |
 
-**Build identity:** `GET /version` (web and API) returns JSON with `git_commit` baked in at compile time. Docker builds should pass `--build-arg GIT_COMMIT="$(git rev-parse HEAD)"` (or your CI’s SHA) because `.git` is not in the image build context.
+**Build identity:** `GET /version` (web and API) returns JSON with `built_at_utc` (RFC 3339 UTC) from when the build script last ran. Set `SOURCE_DATE_EPOCH` during the image build if you need a deterministic timestamp (reproducible builds).
 
 ### BEARS stack aggregate (web)
 
