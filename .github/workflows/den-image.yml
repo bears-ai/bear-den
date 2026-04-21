@@ -52,8 +52,14 @@ jobs:
           build-args: |
             SQLX_OFFLINE=true
             GIT_SHA=${{ github.sha }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          # GHA cache alone often misses or evicts large Rust layers; registry
+          # cache persists dependency compile layers on GHCR alongside the app image.
+          cache-from: |
+            type=gha,scope=den-image
+            type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:buildcache
+          cache-to: |
+            type=gha,scope=den-image,mode=max
+            type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:buildcache,mode=max
 
       # Same webhook caveats as codepool-image.yml (404 = wrong/stale COOLIFY_WEBHOOK for this stack).
       - name: Trigger Coolify deploy

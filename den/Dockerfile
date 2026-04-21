@@ -16,7 +16,12 @@ FROM rust-base AS chef-base
 RUN cargo install cargo-chef --version 0.1.71 --locked
 
 FROM chef-base AS planner
-COPY . .
+# Only copy inputs that affect `cargo metadata` / the dependency recipe. Omitting
+# docs, migrations, .sqlx, templates, assets, etc. keeps this layer (and thus the
+# cacher stage) stable when those files change — so CI reuses compiled deps.
+COPY Cargo.toml Cargo.lock build.rs ./
+COPY src ./src
+COPY tests ./tests
 RUN cargo chef prepare --recipe-path recipe.json
 
 FROM chef-base AS cacher
@@ -39,7 +44,11 @@ ARG SQLX_OFFLINE=false
 ENV GIT_SHA=${GIT_SHA}
 COPY --from=cacher /app/target target
 COPY . .
-RUN export DATABASE_URL="${DATABASE_URL}" SQLX_OFFLINE="${SQLX_OFFLINE}" && \
+# Same registry/target cache mount IDs as cacher so this step does not
+# re-download crates.io sources that chef already populated in one build.
+RUN --mount=type=cache,target=/usr/local/cargo/registry/,id=den-cargo-registry \
+    --mount=type=cache,target=/usr/local/cargo/git/db,id=den-cargo-git \
+    export DATABASE_URL="${DATABASE_URL}" SQLX_OFFLINE="${SQLX_OFFLINE}" && \
     echo "DATABASE_URL=$DATABASE_URL" && echo "SQLX_OFFLINE=$SQLX_OFFLINE" && \
     cargo build --locked --release --features=production --message-format=short && \
     cp "./target/release/${APP_NAME}" /bin/server
