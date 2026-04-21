@@ -155,9 +155,14 @@
       return parts.join('\n');
     }
 
-    /** Deep Chat expects `role: 'error'` for error bubbles; see `errorMessages.displayServiceErrorMessages`. */
+    /**
+     * Surface failures in stream mode. Deep Chat's stream handler only treats a top-level `error`
+     * string as `streamError()` + `finaliseStreamedMessage()` with no prior stream chunks — that
+     * throws "No valid stream events" (see deepChat.bundle finaliseStreamedMessage). Use `text` +
+     * `role: 'error'` so events go through the normal upsert path ({text} is valid).
+     */
     function denChatSignalError(signals, errorText) {
-      signals.onResponse({ error: errorText, role: 'error' });
+      signals.onResponse({ text: errorText, role: 'error' });
     }
 
     /** Prefer JSON `{ error, request_id }` from `POST /v1/chat/send`; strip noisy Den prefixes. */
@@ -535,7 +540,7 @@
       });
     }
 
-    /** Map one Letta SSE JSON object to `{ error: string }` or null. */
+    /** Map one Letta SSE JSON object to a stream Response (see denChatSignalError — use `text`, not `error`). */
     function lettaStreamEventErrorSignal(obj, requestRef) {
       var inner = lettaInnerForStream(obj);
       if (!inner || inner.message_type !== 'error_message') return null;
@@ -549,7 +554,7 @@
           : requestRef || '';
       if (ref) lines.push('Reference: ' + ref);
       var msg = lines.length ? lines.join('\n\n') : 'An error occurred.';
-      return { error: msg, role: 'error' };
+      return { text: msg, role: 'error' };
     }
 
     function lettaSseHandler(body, signals) {
