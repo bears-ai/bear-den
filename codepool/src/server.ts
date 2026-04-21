@@ -10,6 +10,7 @@ import {
   recordStreamFinishedEmptyFallback,
   recordStreamFinishedError,
   recordStreamFinishedOk,
+  recordStreamFinishedUpstreamError,
   renderPrometheusText,
 } from "./metrics.js";
 import {
@@ -155,7 +156,8 @@ export function attachRoutes(
         })
       );
 
-      let hadUserVisibleLine = false;
+      let hadAssistantOrReasoning = false;
+      let sawUpstreamErrorMessage = false;
       let sseDataLines = 0;
 
       try {
@@ -172,20 +174,26 @@ export function attachRoutes(
             try {
               const parsed = JSON.parse(line) as { message_type?: string };
               const mt = parsed.message_type;
-              if (
-                mt === "assistant_message" ||
-                mt === "reasoning_message" ||
-                mt === "error_message"
-              ) {
-                hadUserVisibleLine = true;
+              if (mt === "assistant_message" || mt === "reasoning_message") {
+                hadAssistantOrReasoning = true;
+              } else if (mt === "error_message") {
+                sawUpstreamErrorMessage = true;
               }
             } catch {
               /* ignore */
             }
           }
         }
-        if (!hadUserVisibleLine) {
+        let outcome: "ok" | "upstream_error" | "empty_fallback";
+        if (hadAssistantOrReasoning) {
+          recordStreamFinishedOk();
+          outcome = "ok";
+        } else if (sawUpstreamErrorMessage) {
+          recordStreamFinishedUpstreamError();
+          outcome = "upstream_error";
+        } else {
           recordStreamFinishedEmptyFallback();
+          outcome = "empty_fallback";
           res.write(
             `data: ${JSON.stringify({
               message_type: "error_message",
@@ -195,8 +203,6 @@ export function attachRoutes(
               support_ref: requestId,
             })}\n\n`
           );
-        } else {
-          recordStreamFinishedOk();
         }
         res.end();
         const ms = Date.now() - t0;
@@ -205,7 +211,7 @@ export function attachRoutes(
             event: "conversation_messages_end",
             service: "bear-codepool",
             request_id: requestId,
-            outcome: hadUserVisibleLine ? "ok" : "empty_fallback",
+            outcome,
             duration_ms: ms,
             sse_data_lines: sseDataLines,
           })
