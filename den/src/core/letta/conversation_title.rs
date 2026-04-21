@@ -1,7 +1,13 @@
 //! Human-facing titles for Letta `conv-*` threads: `summary` when usable, else derived from
-//! the first meaningful user message, else a generic label. Used by `/v1/chat/conversations`.
+//! the first meaningful **human-entered** user message, else a generic label. Used by
+//! `/v1/chat/conversations`.
+//!
+//! Harness/model-injected text (e.g. `<system-reminder>…</system-reminder>`) is stripped before
+//! title derivation; structured `role: system` user rows are skipped when present.
 
+use regex::Regex;
 use serde_json::Value;
+use std::sync::OnceLock;
 
 /// Generic UI label when nothing better is available (not persisted to Letta).
 pub const UNTITLED_THREAD: &str = "Untitled thread";
@@ -57,8 +63,12 @@ pub fn first_user_message_text_for_title(messages_body: &Value) -> Option<String
         if mt != "user_message" {
             continue;
         }
+        if !user_message_role_is_human(inner, msg) {
+            continue;
+        }
         let text = message_text(inner).or_else(|| message_text(msg))?;
-        let cleaned = strip_noise_for_title_source(&text);
+        let without_harness = strip_system_reminder_markup(&text);
+        let cleaned = strip_noise_for_title_source(&without_harness);
         if cleaned.trim().is_empty() {
             continue;
         }
@@ -140,6 +150,49 @@ fn message_type<'a>(msg: &'a Value, inner: &'a Value) -> &'a str {
         .and_then(|x| x.as_str())
         .or_else(|| msg.get("message_type").and_then(|x| x.as_str()))
         .unwrap_or("")
+}
+
+/// Skip structured rows that are not end-user input (when Letta exposes `role` on the message).
+fn user_message_role_is_human(inner: &Value, msg: &Value) -> bool {
+    for v in [inner, msg] {
+        let Some(role) = v.get("role").and_then(|x| x.as_str()) else {
+            continue;
+        };
+        let r = role.trim();
+        if r.eq_ignore_ascii_case("system") || r.eq_ignore_ascii_case("developer") {
+            return false;
+        }
+    }
+    true
+}
+
+/// Remove `<system-reminder>…</system-reminder>` blocks and a trailing incomplete opener (streaming shape).
+fn strip_system_reminder_markup(s: &str) -> String {
+    static BLOCKS: OnceLock<Regex> = OnceLock::new();
+    let blocks = BLOCKS.get_or_init(|| {
+        Regex::new(r"(?is)<system-reminder\b[^>]*>.*?</system-reminder>")
+            .expect("system-reminder strip regex")
+    });
+    let mut t = blocks.replace_all(s, "").to_string();
+    if let Some(start) = find_ascii_case_insensitive(&t, "<system-reminder") {
+        let rest = &t[start..];
+        if find_ascii_case_insensitive(rest, "</system-reminder>").is_none() {
+            t.truncate(start);
+        }
+    }
+    t
+}
+
+fn find_ascii_case_insensitive(haystack: &str, needle: &str) -> Option<usize> {
+    let hn = needle.len();
+    if hn == 0 || haystack.len() < hn {
+        return None;
+    }
+    let nb = needle.as_bytes();
+    haystack
+        .as_bytes()
+        .windows(hn)
+        .position(|w| w.eq_ignore_ascii_case(nb))
 }
 
 fn message_text(inner: &Value) -> Option<String> {
@@ -469,6 +522,62 @@ mod tests {
         assert_eq!(
             first_user_message_text_for_title(&body).as_deref(),
             Some("Hello there")
+        );
+    }
+
+    #[test]
+    fn first_user_skips_harness_only_system_reminder_then_uses_human() {
+        let body = serde_json::json!([
+            {
+                "id": "1",
+                "message_type": "user_message",
+                "content": "<system-reminder>The user has just initiated a new connection via the Letta Code CLI client.</system-reminder>"
+            },
+            {
+                "id": "2",
+                "message_type": "user_message",
+                "content": "Plan the Q2 roadmap"
+            }
+        ]);
+        assert_eq!(
+            first_user_message_text_for_title(&body).as_deref(),
+            Some("Plan the Q2 roadmap")
+        );
+    }
+
+    #[test]
+    fn first_user_strips_inline_reminder_keeps_human_text() {
+        let body = serde_json::json!([
+            {
+                "id": "1",
+                "message_type": "user_message",
+                "content": "<system-reminder>context</system-reminder>\n\nSummarize this doc"
+            }
+        ]);
+        assert_eq!(
+            first_user_message_text_for_title(&body).as_deref(),
+            Some("Summarize this doc")
+        );
+    }
+
+    #[test]
+    fn first_user_skips_role_system() {
+        let body = serde_json::json!([
+            {
+                "id": "1",
+                "role": "system",
+                "message_type": "user_message",
+                "content": "You are a helpful assistant."
+            },
+            {
+                "id": "2",
+                "message_type": "user_message",
+                "content": "What is 2+2?"
+            }
+        ]);
+        assert_eq!(
+            first_user_message_text_for_title(&body).as_deref(),
+            Some("What is 2+2?")
         );
     }
 }
