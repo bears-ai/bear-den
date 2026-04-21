@@ -809,6 +809,11 @@ fn build_create_agent_body(
     body.insert("include_base_tools".to_string(), json!(false));
     if git_enabled {
         body.insert("git_enabled".to_string(), json!(true));
+        // With local memfs (`LETTA_MEMFS_SERVICE_URL=local`), Letta Code expects git-backed agents.
+        body.insert(
+            "tags".to_string(),
+            json!(vec!["git-memory-enabled".to_string()]),
+        );
     }
     if let Some(m) = model.filter(|s| !s.is_empty()) {
         body.insert("model".to_string(), json!(m));

@@ -108,6 +108,8 @@ services:
       LETTA_SERVER_PORT: "8283"
       LETTA_SERVER_HOST: "0.0.0.0"
       LETTA_SERVER_PASS: ${LETTA_SERVER_PASS:?set LETTA_SERVER_PASS}
+      # Canonical git-backed (memfs) store on this server; Letta Code clients use LETTA_MEMFS_LOCAL=1.
+      LETTA_MEMFS_SERVICE_URL: ${LETTA_MEMFS_SERVICE_URL:-local}
       # Required when using an external Postgres (recommended in Coolify DB resource mode).
       # Use postgresql:// (not postgres://) so Alembic can load the SQLAlchemy driver.
       LETTA_PG_URI: ${LETTA_PG_URI:-}
@@ -141,13 +143,13 @@ services:
       LETTA_BASE_URL: ${LETTA_BASE_URL:-http://bear-letta:8283}
       # Same credential Letta uses as `LETTA_SERVER_PASS` (Bearer for Letta HTTP API).
       LETTA_API_KEY: ${LETTA_SERVER_PASS}
+      # Letta Code: allow memfs sync against self-hosted Letta (`LETTA_MEMFS_SERVICE_URL=local` on server).
+      LETTA_MEMFS_LOCAL: ${LETTA_MEMFS_LOCAL:-1}
       CODEPOOL_INTERNAL_TOKEN: ${CODEPOOL_INTERNAL_TOKEN:-}
       POOL_TTL_SECS: ${POOL_TTL_SECS:-600}
       POOL_MAX_ENTRIES: ${POOL_MAX_ENTRIES:-256}
-      BEAR_MEMORY_ROOT: /var/lib/bear-memory
     volumes:
       - bear-codepool-letta-home:/home/node/.letta
-      - bear-codepool-memory:/var/lib/bear-memory
     # bookworm-slim has no wget/curl; use Node (same runtime as the app).
     healthcheck:
       test:
@@ -159,6 +161,27 @@ services:
       timeout: 10s
       retries: 3
       start_period: 40s
+
+  # Optional: `docker compose --profile volume-backup up -d` — archive Letta server memfs (`/root/.letta`) to S3-compatible storage (e.g. Scaleway).
+  # Set SCALEWAY_BACKUP_* (or generic AWS_* below) in Coolify / `.env`.
+  bear-letta-data-backup:
+    profiles:
+      - volume-backup
+    image: offen/docker-volume-backup:v2
+    restart: unless-stopped
+    environment:
+      BACKUP_CRON_EXPRESSION: ${LETTA_VOLUME_BACKUP_CRON:-0 4 * * *}
+      BACKUP_FILENAME: "bear-letta-data-%Y-%m-%dT%H-%M-%S.{{ .Extension }}"
+      TZ: UTC
+      AWS_S3_BUCKET_NAME: ${SCALEWAY_BACKUP_BUCKET:-}
+      AWS_S3_PATH: ${SCALEWAY_BACKUP_PREFIX:-bear-stack/volumes/bear-letta-data}
+      AWS_ACCESS_KEY_ID: ${SCALEWAY_ACCESS_KEY:-}
+      AWS_SECRET_ACCESS_KEY: ${SCALEWAY_SECRET_KEY:-}
+      AWS_ENDPOINT: ${SCALEWAY_S3_ENDPOINT:-s3.fr-par.scw.cloud}
+      AWS_ENDPOINT_PROTO: https
+      AWS_DEFAULT_REGION: ${SCALEWAY_REGION:-fr-par}
+    volumes:
+      - bear-letta-data:/backup:ro
 
   bear-den:
     # Pre-built image (Rust is not compiled on the Coolify host — avoids OOM / timeouts). Build in CI:
@@ -199,4 +222,3 @@ volumes:
   bear-postgres-data:
   bear-letta-data:
   bear-codepool-letta-home:
-  bear-codepool-memory:

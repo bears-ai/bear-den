@@ -12,17 +12,14 @@ services:
       PORT: ${PORT:-3030}
       LETTA_BASE_URL: ${LETTA_BASE_URL:-http://bear-letta:8283}
       LETTA_API_KEY: ${LETTA_API_KEY:-}
+      LETTA_MEMFS_LOCAL: ${LETTA_MEMFS_LOCAL:-1}
       CODEPOOL_INTERNAL_TOKEN: ${CODEPOOL_INTERNAL_TOKEN:-}
       POOL_TTL_SECS: ${POOL_TTL_SECS:-600}
       POOL_MAX_ENTRIES: ${POOL_MAX_ENTRIES:-256}
-      # Keep in sync with the bear-codepool-memory volume mount (see root `docker-compose.yaml`).
-      BEAR_MEMORY_ROOT: /var/lib/bear-memory
     volumes:
       - bear-codepool-letta-home:/home/node/.letta
-      - bear-codepool-memory:/var/lib/bear-memory
     # ports:
     #   - "3030:3030"
 
 volumes:
   bear-codepool-letta-home:
-  bear-codepool-memory:

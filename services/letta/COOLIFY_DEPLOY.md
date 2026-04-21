@@ -109,8 +109,11 @@ curl http://bear-letta:8283/v1/agents
 | `LETTA_SERVER_PASS` | ✅ Yes | - | Admin password for Letta |
 | `LETTA_PG_URI` | Recommended | - | External Postgres URI — use **`postgresql://`** (not `postgres://`). The short form can break Alembic with `NoSuchModuleError: ... postgres.pg8000`. |
 | `OPENAI_API_KEY` | ✅ Yes | - | For embeddings and direct OpenAI calls; chat completions use `LLM_API_URL` |
+| `LETTA_MEMFS_SERVICE_URL` | No | `local` (in root [`docker-compose.yaml`](../../docker-compose.yaml)) | Set to **`local`** so the server keeps the **canonical** git-backed memfs store under `/root/.letta` (volume **`bear-letta-data`**). Pair with **`LETTA_MEMFS_LOCAL=1`** on **codepool**. Omit or override only if you use a separate memfs service URL. |
 | `LETTA_SERVER_HOST` | No | `0.0.0.0` | Bind address |
 | `LOG_LEVEL` | No | `INFO` | Logging verbosity |
+
+**Durability:** Back up **`bear-letta-data`** (and Letta Postgres) — see [`docs/deployment/DEPLOYMENT.md`](../../docs/deployment/DEPLOYMENT.md). Optional **`redis_host` / `redis_port`** in Letta settings apply to some deployments; confirm against your **pinned** `letta/letta` image if memfs git paths fail in staging.
 
 ### Service Dependencies
 

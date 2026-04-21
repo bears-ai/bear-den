@@ -1,6 +1,7 @@
 /**
- * Versioned snapshot from Den (`bears.runtime_plan`) for runtime provisioning.
- * Keep in sync with Den `effective_runtime_plan` / `default_runtime_plan`.
+ * Versioned snapshot from Den (`bears.runtime_plan`). Optional overrides; default
+ * upstream path uses Letta server memfs — `memory.git_remote` is only for
+ * exceptional cases, not the primary BEARS + local memfs flow.
  */
 export const RUNTIME_PLAN_VERSION = 1;
 
@@ -21,8 +22,8 @@ export type RuntimeProvisioningContext = {
 
 export type EnsureResult = {
   memoryDir: string;
-  /** Working directory for Letta Code SDK (`resumeSession`). */
-  cwd: string;
+  /** If set, passed to `resumeSession`; omit so Letta Code uses default memfs layout under `$HOME/.letta`. */
+  cwd?: string;
   /** Extra env vars to merge for the SDK subprocess (if supported). */
   env: Record<string, string>;
   metadata: Record<string, string>;

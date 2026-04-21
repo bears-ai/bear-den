@@ -4,6 +4,6 @@
 //!    so each linked agent receives `include_base_tools: false`, `git_enabled: true`, filtered `tool_ids`,
 //!    and default `letta_v1_agent` when the DB had an empty agent type. The sync also seeds
 //!    [`runtime_plan`](super::model::Bear) when it was NULL.
-//! 2. **Codepool runtime:** Mount a persistent volume at `BEAR_MEMORY_ROOT` and ensure the `git`
-//!    package is installed in the codepool image. The first chat per bear runs local provisioning
-//!    (git init or clone + seeds) under `${BEAR_MEMORY_ROOT}/{bear_id}/`.
+//! 2. **Upstream local memfs:** Set `LETTA_MEMFS_SERVICE_URL=local` on the Letta server and
+//!    `LETTA_MEMFS_LOCAL=1` on codepool. Canonical git-backed memory lives on **Letta** (`bear-letta-data`);
+//!    Letta Code mirrors under `/home/node/.letta` in the codepool container.

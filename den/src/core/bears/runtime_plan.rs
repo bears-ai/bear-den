@@ -1,4 +1,7 @@
 //! Default [`runtime_plan`](super::model::Bear) JSON for Den → codepool (versioned snapshot).
+//!
+//! With upstream local memfs (`LETTA_MEMFS_SERVICE_URL=local`), canonical git memory is on the
+//! **Letta server**; optional `memory.git_remote` / `git_ref` remain for uncommon overrides only.
 
 use serde_json::{json, Value};
 

@@ -1,4 +1,6 @@
 import { readFileSync, accessSync, constants as FsConstants } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import express from "express";
 import type { ConversationSessionPool } from "./pool.js";
@@ -57,21 +59,24 @@ export function attachRoutes(
   const guard = authMiddleware(ctx.internalToken);
 
   app.get("/health", (_req, res) => {
-    const memRoot = process.env.BEAR_MEMORY_ROOT?.trim();
-    let memory_root_ok: boolean | undefined;
-    if (memRoot) {
-      try {
-        accessSync(memRoot, FsConstants.R_OK | FsConstants.W_OK);
-        memory_root_ok = true;
-      } catch {
-        memory_root_ok = false;
-      }
+    const lettaCliHome = join(homedir(), ".letta");
+    let letta_cli_home_writable: boolean | undefined;
+    try {
+      accessSync(lettaCliHome, FsConstants.R_OK | FsConstants.W_OK);
+      letta_cli_home_writable = true;
+    } catch {
+      letta_cli_home_writable = false;
     }
+    const v = (process.env.CODEPOOL_DISABLE_MEMFS ?? "").trim().toLowerCase();
+    const session_memfs_disabled =
+      v === "1" || v === "true" || v === "yes";
     res.json({
       ok: true,
       service: "bear-codepool",
-      bear_memory_root: memRoot ?? null,
-      bear_memory_root_writable: memory_root_ok,
+      letta_memfs_local: process.env.LETTA_MEMFS_LOCAL ?? null,
+      session_memfs_disabled,
+      letta_cli_home: lettaCliHome,
+      letta_cli_home_writable,
     });
   });
 

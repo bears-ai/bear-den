@@ -10,9 +10,10 @@ The repository root **[`docker-compose.yaml`](../../docker-compose.yaml)** defin
 | ------- | ---- |
 | **`bear-postgres`** | Optional PostgreSQL for Den — **only** when profile **`bundled`** is enabled (`COMPOSE_PROFILES=bundled` or `docker compose --profile bundled up`). |
 | **`bear-bifrost`** | Model gateway (`8080`) |
-| **`bear-letta`** | Letta API (`8283`) |
-| **`bear-codepool`** | Letta Code SDK harness (`3030`) |
+| **`bear-letta`** | Letta API (`8283`); set **`LETTA_MEMFS_SERVICE_URL=local`** (default in root compose) for canonical git-backed memfs under `/root/.letta`. |
+| **`bear-codepool`** | Letta Code SDK harness (`3030`); **`LETTA_MEMFS_LOCAL=1`** so the CLI syncs with self-hosted memfs. |
 | **`bear-den`** | Den control plane + web UI (`3000`) |
+| **`bear-letta-data-backup`** | Optional profile **`volume-backup`**: [`offen/docker-volume-backup`](https://offen.github.io/docker-volume-backup) archives **`bear-letta-data`** to S3-compatible storage (e.g. Scaleway). Enable with `COMPOSE_PROFILES=volume-backup` (can combine: `bundled,volume-backup`). |
 
 **Database:** Prefer a **managed** Postgres (Coolify database, RDS, etc.). Set **`DATABASE_URL`** for **`bear-den`** to that instance (full connection string). If you do **not** use the bundled container, **omit** the `bundled` profile and do **not** set `COMPOSE_PROFILES` to `bundled`.
 
@@ -95,7 +96,8 @@ See [`../../services/letta/COOLIFY_DEPLOY.md`](../../services/letta/COOLIFY_DEPL
 
 - `LLM_API_URL=http://bear-bifrost:8080/v1`  
 - `LETTA_SERVER_PASS`, `OPENAI_API_KEY` (embeddings; chat completions go through Bifrost)  
-- Volume: `bear-letta-data` → `/root/.letta`  
+- **`LETTA_MEMFS_SERVICE_URL=local`** (default in root [`docker-compose.yaml`](../../docker-compose.yaml)) — canonical git/memfs data on the server volume.  
+- Volume: **`bear-letta-data`** → `/root/.letta` — **back up** (managed Letta Postgres + this volume; optional S3 archive via profile **`volume-backup`**).  
 - Health: `GET http://bear-letta:8283/v1/health`
 
 ### Step 4: Codepool (Letta Code SDK harness)
@@ -104,7 +106,8 @@ See [`../../codepool/COOLIFY_DEPLOY.md`](../../codepool/COOLIFY_DEPLOY.md).
 
 - Deploy **`bear-codepool`** — Node (**`@letta-ai/letta-code-sdk`**). The root compose file pulls a **pre-built image** from GHCR (built by [`.github/workflows/codepool-image.yml`](../../.github/workflows/codepool-image.yml)); override **`CODEPOOL_IMAGE`** for forks or pin a SHA tag.  
 - **`LETTA_BASE_URL=http://bear-letta:8283`** and **`LETTA_API_KEY`** matching Letta’s server credential (same as Den uses for provisioning).  
-- Persist **`~/.letta`** on a volume (CLI auth and local state).  
+- **`LETTA_MEMFS_LOCAL=1`** (default in compose) — Letta Code treats self-hosted memfs like upstream local mode (`~/.letta` client cache).  
+- Persist **`bear-codepool-letta-home` → `/home/node/.letta`** (CLI cache; not the primary backup target). The former **`bear-codepool-memory`** volume for bespoke per-bear git trees is **removed**; data there is **not** migrated automatically — re-provision bears or restore from your own exports if needed.  
 - **`CODEPOOL_BASE_URL`** in Den must point at this service (e.g. `http://bear-codepool:3030`). Optional shared secret: **`CODEPOOL_INTERNAL_TOKEN`** on both sides.
 - **`GET /metrics`** — hand-rolled Prometheus text (conversation stream counters). Scrape from the internal network only; no auth on the endpoint (protect with network policy or reverse-proxy rules).
 
@@ -125,6 +128,18 @@ Follow [PLAN.md](../planning/PLAN.md) when you deploy the control plane and Outl
 - **Den chat UI:** end users chat at Den’s **`/bear/{slug}`** (or equivalent) routes — **Den → Codepool → Letta**  
 - Letta UI (internal): **bear** / agent and memory management at `:8283`  
 - Add **Outline** for shared knowledge, **users↔bears** membership, and channel routing  
+
+### Letta server volume backup (S3 / Scaleway)
+
+Enable the Compose profile **`volume-backup`** (e.g. **`COMPOSE_PROFILES=volume-backup`** alongside any other profiles you use). Set S3-compatible credentials for the **`bear-letta-data-backup`** service in Coolify or `.env`, for example:
+
+- **`SCALEWAY_BACKUP_BUCKET`** — bucket name  
+- **`SCALEWAY_ACCESS_KEY`**, **`SCALEWAY_SECRET_KEY`** — API keys  
+- **`SCALEWAY_S3_ENDPOINT`** — e.g. `s3.fr-par.scw.cloud` (region-specific)  
+- **`SCALEWAY_REGION`** — e.g. `fr-par`  
+- **`SCALEWAY_BACKUP_PREFIX`** — object key prefix (default `bear-stack/volumes/bear-letta-data`)  
+
+Optional: **`LETTA_VOLUME_BACKUP_CRON`** for schedule (default daily at 04:00 UTC). Archives **`bear-letta-data`** read-only at `/backup` inside the backup container. Use the same bucket as DB backups with a different prefix if you prefer a single object-store destination.
 
 ## Verification
 
@@ -152,4 +167,4 @@ Service-specific detail: `services/*/COOLIFY_DEPLOY.md`.
 
 ---
 
-*Last updated: 2026-04-19*
+*Last updated: 2026-04-21*
