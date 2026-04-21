@@ -34,12 +34,19 @@ export type ConversationPoolStats = {
   keys: string[];
 };
 
+/** Self-hosted Letta cannot use Letta Cloud git sync (`--memfs`); local cwd repos use `--no-memfs`. */
+function useLettaCloudMemfsFromEnv(): boolean {
+  const v = (process.env.CODEPOOL_USE_LETTA_CLOUD_MEMFS ?? "").trim().toLowerCase();
+  return v === "1" || v === "true" || v === "yes";
+}
+
 export class ConversationSessionPool {
   private readonly map = new Map<PoolKey, Entry>();
   private readonly ttlMs: number;
   private readonly maxEntries: number;
   private readonly includePartialMessages: boolean;
   private readonly provisioner: BearRuntimeProvisioner;
+  private readonly lettaCloudMemfs: boolean;
   /** One ensure result per bear (shared across conversations). */
   private readonly ensureByBear = new Map<string, EnsureResult>();
   private sweepTimer: ReturnType<typeof setInterval> | undefined;
@@ -51,11 +58,19 @@ export class ConversationSessionPool {
     maxEntries: number;
     includePartialMessages?: boolean;
     provisioner: BearRuntimeProvisioner;
+    /** Only for Letta Cloud (`api.letta.com`); self-hosted must stay false. */
+    lettaCloudMemfs?: boolean;
   }) {
     this.ttlMs = opts.ttlSecs * 1000;
     this.maxEntries = opts.maxEntries;
     this.includePartialMessages = opts.includePartialMessages ?? true;
     this.provisioner = opts.provisioner;
+    this.lettaCloudMemfs = opts.lettaCloudMemfs ?? useLettaCloudMemfsFromEnv();
+    if (this.lettaCloudMemfs) {
+      console.warn(
+        "bear-codepool: Letta Cloud memfs (--memfs) is enabled; use only with api.letta.com. Self-hosted Letta needs the default (no CODEPOOL_USE_LETTA_CLOUD_MEMFS)."
+      );
+    }
     this.sweepTimer = setInterval(() => this.evictIdle(), Math.min(60_000, this.ttlMs / 2));
     this.sweepTimer.unref?.();
   }
@@ -164,7 +179,7 @@ export class ConversationSessionPool {
     const session = resumeSession(rt, {
       includePartialMessages: this.includePartialMessages,
       systemInfoReminder: false,
-      memfs: true,
+      memfs: this.lettaCloudMemfs,
       cwd: ensure.cwd,
     } as Parameters<typeof resumeSession>[1]);
     this.map.set(key, { session, lastUsed: now });
