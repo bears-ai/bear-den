@@ -3,6 +3,7 @@ import { ConversationSessionPool } from "./pool.js";
 import { attachRoutes } from "./server.js";
 import { createChannelListenerRegistry } from "./channel-listeners.js";
 import { verifyLettaReachableAtStartup } from "./letta-upstream.js";
+import { createBearRuntimeProvisionerFromEnv } from "./provisioning/index.js";
 
 async function main(): Promise<void> {
   const port = Number(process.env.PORT || "3030");
@@ -33,10 +34,12 @@ async function main(): Promise<void> {
 
   const internalToken = process.env.CODEPOOL_INTERNAL_TOKEN?.trim() ?? "";
 
+  const provisioner = createBearRuntimeProvisionerFromEnv();
   const pool = new ConversationSessionPool({
     ttlSecs,
     maxEntries,
     includePartialMessages: true,
+    provisioner,
   });
 
   const channelListeners = createChannelListenerRegistry();

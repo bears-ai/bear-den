@@ -2,6 +2,7 @@ use std::time::Duration;
 
 use reqwest::header::{AUTHORIZATION, CONTENT_TYPE, HeaderMap, HeaderValue};
 use serde_json::json;
+use uuid::Uuid;
 
 use crate::{config::Config, errors::CustomError};
 
@@ -125,12 +126,15 @@ impl CodePoolClient {
         Ok(text)
     }
 
-    /// Same contract as [`crate::core::letta::LettaClient::post_conversation_messages_streaming`].
+    /// Same contract as [`crate::core::letta::LettaClient::post_conversation_messages_streaming`],
+    /// plus `bear_id` and `runtime_plan` for codepool memfs provisioning.
     pub async fn post_conversation_messages_streaming(
         &self,
         conversation_id: &str,
         agent_id: Option<&str>,
         user_input: &str,
+        bear_id: Uuid,
+        runtime_plan: &serde_json::Value,
     ) -> Result<reqwest::Response, CustomError> {
         if !self.is_enabled() {
             return Err(CustomError::System(
@@ -148,6 +152,8 @@ impl CodePoolClient {
         );
         body.insert("streaming".to_string(), json!(true));
         body.insert("stream_tokens".to_string(), json!(true));
+        body.insert("bear_id".to_string(), json!(bear_id.to_string()));
+        body.insert("runtime_plan".to_string(), runtime_plan.clone());
         if let Some(a) = agent_id.map(str::trim).filter(|s| !s.is_empty()) {
             body.insert("agent_id".to_string(), json!(a));
         }

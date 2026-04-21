@@ -1,9 +1,13 @@
-import { readFileSync } from "node:fs";
+import { readFileSync, accessSync, constants as FsConstants } from "node:fs";
 import express from "express";
 import type { ConversationSessionPool } from "./pool.js";
 import { sdkMessageToSseDataLine } from "./sse.js";
 import { handleOpenAIChatCompletions } from "./openai.js";
 import type { ChannelListenerRegistry } from "./channel-listeners.js";
+import {
+  parseBearRuntimePlan,
+  type BearRuntimePlan,
+} from "./provisioning/types.js";
 
 const packageJson = JSON.parse(
   readFileSync(new URL("../package.json", import.meta.url), "utf8")
@@ -44,7 +48,22 @@ export function attachRoutes(
   const guard = authMiddleware(ctx.internalToken);
 
   app.get("/health", (_req, res) => {
-    res.json({ ok: true, service: "bear-codepool" });
+    const memRoot = process.env.BEAR_MEMORY_ROOT?.trim();
+    let memory_root_ok: boolean | undefined;
+    if (memRoot) {
+      try {
+        accessSync(memRoot, FsConstants.R_OK | FsConstants.W_OK);
+        memory_root_ok = true;
+      } catch {
+        memory_root_ok = false;
+      }
+    }
+    res.json({
+      ok: true,
+      service: "bear-codepool",
+      bear_memory_root: memRoot ?? null,
+      bear_memory_root_writable: memory_root_ok,
+    });
   });
 
   app.get("/version", (_req, res) => {
@@ -73,12 +92,20 @@ export function attachRoutes(
         messages?: Array<{ role?: string; content?: unknown }>;
         streaming?: boolean;
         agent_id?: string;
+        bear_id?: string;
+        runtime_plan?: unknown;
       };
       const agentId = (body.agent_id as string | undefined)?.trim();
       if (!agentId) {
         res.status(400).json({ error: "agent_id is required" });
         return;
       }
+      const bearId = (body.bear_id as string | undefined)?.trim();
+      if (!bearId) {
+        res.status(400).json({ error: "bear_id is required" });
+        return;
+      }
+      const plan = parseBearRuntimePlan(body.runtime_plan);
       const userMsg = (body.messages ?? [])
         .filter((m) => m.role === "user")
         .map((m) =>
@@ -99,7 +126,8 @@ export function attachRoutes(
         for await (const msg of ctx.pool.streamUserMessage(
           agentId,
           conversationId,
-          userMsg.trim()
+          userMsg.trim(),
+          { bearId, plan }
         )) {
           const line = sdkMessageToSseDataLine(msg);
           if (line) {

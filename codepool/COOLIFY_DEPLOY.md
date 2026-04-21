@@ -51,3 +51,5 @@ A GitHub Actions workflow ([`.github/workflows/codepool-image.yml`](../.github/w
 ## Volume
 
 Mount a persistent volume on **`/home/node/.letta`** (or `/root/.letta` if running as root) for Letta Code CLI auth and agent-local state — align with your image `USER` (this Dockerfile runs as **`node`**; data under `/home/node/.letta`).
+
+**Per-bear memfs workspace:** set **`BEAR_MEMORY_ROOT`** (e.g. `/var/lib/bear-memory`) and mount a **named volume** there so git-backed bear workspaces survive restarts. Root compose wires this in [`docker-compose.yaml`](../docker-compose.yaml) (`bear-codepool-memory`). The image includes **`git`** for `git init` / `git clone` during provisioning.

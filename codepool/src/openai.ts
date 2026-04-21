@@ -1,6 +1,7 @@
 import type { Request, Response } from "express";
 import type { ConversationSessionPool } from "./pool.js";
 import { sdkMessageToSseDataLine } from "./sse.js";
+import { parseBearRuntimePlan } from "./provisioning/types.js";
 
 /**
  * Minimal OpenAI-compatible chat completions for OpenWebUI.
@@ -15,7 +16,12 @@ export async function handleOpenAIChatCompletions(
     model?: string;
     messages?: Array<{ role: string; content: string | null }>;
     stream?: boolean;
-    metadata?: { bear_agent_id?: string; conversation_id?: string };
+    metadata?: {
+      bear_agent_id?: string;
+      conversation_id?: string;
+      bear_id?: string;
+      runtime_plan?: unknown;
+    };
     user?: string;
   };
 
@@ -33,6 +39,10 @@ export async function handleOpenAIChatCompletions(
 
   const conversationId =
     body.metadata?.conversation_id?.trim() || "default";
+
+  const bearId =
+    body.metadata?.bear_id?.trim() || `legacy-agent-${agentId}`;
+  const plan = parseBearRuntimePlan(body.metadata?.runtime_plan);
 
   const userText = [...(body.messages ?? [])]
     .reverse()
@@ -56,7 +66,8 @@ export async function handleOpenAIChatCompletions(
       for await (const msg of pool.streamUserMessage(
         agentId,
         conversationId,
-        text
+        text,
+        { bearId, plan }
       )) {
         const line = sdkMessageToSseDataLine(msg);
         if (!line) continue;
@@ -91,7 +102,8 @@ export async function handleOpenAIChatCompletions(
     for await (const msg of pool.streamUserMessage(
       agentId,
       conversationId,
-      text
+      text,
+      { bearId, plan }
     )) {
       const line = sdkMessageToSseDataLine(msg);
       if (!line) continue;

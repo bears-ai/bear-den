@@ -481,9 +481,18 @@ async fn chat_send(
                 .to_string(),
         ));
     }
+    let runtime_plan = crate::core::bears::effective_runtime_plan(
+        bear.runtime_plan.as_ref().map(|j| j.as_ref()),
+    );
     let upstream = state
         .codepool
-        .post_conversation_messages_streaming(&conv_id, Some(agent_id), body.message.trim())
+        .post_conversation_messages_streaming(
+            &conv_id,
+            Some(agent_id),
+            body.message.trim(),
+            body.bear_id,
+            &runtime_plan,
+        )
         .await?;
 
     let stream = upstream.bytes_stream().map(|res| {

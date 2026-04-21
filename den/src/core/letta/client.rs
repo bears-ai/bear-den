@@ -1,6 +1,7 @@
 use std::time::Duration;
 
 use reqwest::header::{AUTHORIZATION, CONTENT_TYPE, HeaderMap, HeaderValue};
+use reqwest::StatusCode;
 use serde_json::json;
 
 use crate::{config::Config, errors::CustomError};
@@ -137,6 +138,12 @@ impl LettaClient {
     }
 
     /// `POST /v1/agents` — returns Letta agent id (e.g. `agent-…`).
+    ///
+    /// Sends a **modern BEARS** profile aligned with `letta --new-agent` / memfs-oriented agents:
+    /// - `include_base_tools: false` — do not attach legacy core_memory-style tools automatically.
+    /// - `git_enabled: true` when accepted — enable git-backed / Context Repository memory on the Letta server.
+    ///   If Letta returns **400/422** (validation / unknown field), Den **retries once without** `git_enabled`
+    ///   so older servers still provision; success is logged at `warn` when the fallback path is used.
     pub async fn create_agent(
         &self,
         name: &str,
@@ -151,57 +158,57 @@ impl LettaClient {
             ));
         }
 
-        let mut body = serde_json::Map::new();
-        body.insert("name".to_string(), json!(name));
-        body.insert("system".to_string(), json!(system_prompt));
-        if let Some(m) = model.filter(|s| !s.is_empty()) {
-            body.insert("model".to_string(), json!(m));
-        }
-        if let Some(t) = agent_type.map(str::trim).filter(|s| !s.is_empty()) {
-            body.insert("agent_type".to_string(), json!(t));
-        }
-        if !tool_ids.is_empty() {
-            body.insert("tool_ids".to_string(), json!(tool_ids));
+        let body_with_git = build_create_agent_body(
+            name,
+            system_prompt,
+            model,
+            agent_type,
+            tool_ids,
+            true,
+        );
+        let (status, text) = self.post_create_agent_raw(&body_with_git).await?;
+
+        if status.is_success() {
+            return parse_create_agent_id(&text);
         }
 
-        let url = format!("{}/v1/agents", self.base_url);
-        let resp = self
-            .http
-            .post(&url)
-            .headers(self.auth_headers())
-            .header(CONTENT_TYPE, "application/json")
-            .json(&body)
-            .send()
-            .await
-            .map_err(|e| CustomError::System(format!("Letta create agent request failed: {e}")))?;
-
-        let status = resp.status();
-        let text = resp
-            .text()
-            .await
-            .map_err(|e| CustomError::System(format!("Letta create agent body: {e}")))?;
-
-        if !status.is_success() {
+        if letta_status_suggests_retry_without_git(status) {
+            tracing::warn!(
+                %status,
+                "Letta rejected POST /v1/agents with git_enabled; retrying without git_enabled"
+            );
+            let body_no_git = build_create_agent_body(
+                name,
+                system_prompt,
+                model,
+                agent_type,
+                tool_ids,
+                false,
+            );
+            let (status2, text2) = self.post_create_agent_raw(&body_no_git).await?;
+            if status2.is_success() {
+                tracing::warn!(
+                    "Letta create agent succeeded without git_enabled (server may not support Context Repository on this endpoint)"
+                );
+                return parse_create_agent_id(&text2);
+            }
             return Err(CustomError::System(format!(
-                "Letta create agent HTTP {status}: {text}"
+                "Letta create agent HTTP {status2}: {text2}\n\
+                 (Earlier attempt with git_enabled returned HTTP {status}: {text})"
             )));
         }
 
-        let v: serde_json::Value = serde_json::from_str(&text).map_err(|e| {
-            CustomError::Parsing(format!("Letta create agent JSON: {e}; body: {text}"))
-        })?;
+        Err(CustomError::System(format!(
+            "Letta create agent HTTP {status}: {text}"
+        )))
+    }
 
-        let id = v
-            .get("id")
-            .and_then(|x| x.as_str())
-            .ok_or_else(|| {
-                CustomError::Parsing(format!(
-                    "Letta create agent response missing id: {text}"
-                ))
-            })?
-            .to_string();
-
-        Ok(id)
+    /// Resolve `tool_ids` using `GET /v1/tools/` and remove legacy memory mutation tools by name.
+    pub async fn filtered_tool_ids(&self, selected: &[String]) -> Result<Vec<String>, CustomError> {
+        let catalog = self.list_tools().await?;
+        Ok(super::tool_policy::filter_legacy_memory_tool_ids(
+            &catalog, selected,
+        ))
     }
 
     /// `POST /v1/agents/{id}/messages/stream` (Letta API v1 / SDK-style streaming).
@@ -631,6 +638,8 @@ impl LettaClient {
     }
 
     /// `PATCH /v1/agents/{agent_id}` — align Letta agent with Den bear fields.
+    ///
+    /// Like [`Self::create_agent`], retries once **without** `git_enabled` on **400/422** responses.
     pub async fn patch_agent(
         &self,
         agent_id: &str,
@@ -647,25 +656,94 @@ impl LettaClient {
             ));
         }
 
-        let mut body = serde_json::Map::new();
-        body.insert("name".to_string(), json!(name));
-        body.insert("description".to_string(), json!(description));
-        body.insert("system".to_string(), json!(system));
-        if let Some(m) = model.map(str::trim).filter(|s| !s.is_empty()) {
-            body.insert("model".to_string(), json!(m));
-        }
-        if let Some(t) = agent_type.map(str::trim).filter(|s| !s.is_empty()) {
-            body.insert("agent_type".to_string(), json!(t));
-        }
-        body.insert("tool_ids".to_string(), json!(tool_ids));
+        let body_with_git = build_patch_agent_body(
+            name,
+            description,
+            system,
+            model,
+            agent_type,
+            tool_ids,
+            true,
+        );
+        let (status, text) = self
+            .post_patch_agent_raw(agent_id, &body_with_git)
+            .await?;
 
+        if status.is_success() {
+            return Ok(());
+        }
+
+        if letta_status_suggests_retry_without_git(status) {
+            tracing::warn!(
+                %status,
+                agent_id,
+                "Letta rejected PATCH /v1/agents with git_enabled; retrying without git_enabled"
+            );
+            let body_no_git = build_patch_agent_body(
+                name,
+                description,
+                system,
+                model,
+                agent_type,
+                tool_ids,
+                false,
+            );
+            let (status2, text2) = self
+                .post_patch_agent_raw(agent_id, &body_no_git)
+                .await?;
+            if status2.is_success() {
+                tracing::warn!(
+                    agent_id,
+                    "Letta patch agent succeeded without git_enabled (server may not support Context Repository on this endpoint)"
+                );
+                return Ok(());
+            }
+            return Err(CustomError::System(format!(
+                "Letta patch agent HTTP {status2}: {text2}\n\
+                 (Earlier attempt with git_enabled returned HTTP {status}: {text})"
+            )));
+        }
+
+        Err(CustomError::System(format!(
+            "Letta patch agent HTTP {status}: {text}"
+        )))
+    }
+
+    async fn post_create_agent_raw(
+        &self,
+        body: &serde_json::Map<String, serde_json::Value>,
+    ) -> Result<(StatusCode, String), CustomError> {
+        let url = format!("{}/v1/agents", self.base_url);
+        let resp = self
+            .http
+            .post(url)
+            .headers(self.auth_headers())
+            .header(CONTENT_TYPE, "application/json")
+            .json(body)
+            .send()
+            .await
+            .map_err(|e| CustomError::System(format!("Letta create agent request failed: {e}")))?;
+
+        let status = resp.status();
+        let text = resp
+            .text()
+            .await
+            .map_err(|e| CustomError::System(format!("Letta create agent body: {e}")))?;
+        Ok((status, text))
+    }
+
+    async fn post_patch_agent_raw(
+        &self,
+        agent_id: &str,
+        body: &serde_json::Map<String, serde_json::Value>,
+    ) -> Result<(StatusCode, String), CustomError> {
         let url = format!("{}/v1/agents/{agent_id}", self.base_url);
         let resp = self
             .http
             .patch(url)
             .headers(self.auth_headers())
             .header(CONTENT_TYPE, "application/json")
-            .json(&body)
+            .json(body)
             .send()
             .await
             .map_err(|e| CustomError::System(format!("Letta patch agent request failed: {e}")))?;
@@ -675,14 +753,7 @@ impl LettaClient {
             .text()
             .await
             .map_err(|e| CustomError::System(format!("Letta patch agent body: {e}")))?;
-
-        if !status.is_success() {
-            return Err(CustomError::System(format!(
-                "Letta patch agent HTTP {status}: {text}"
-            )));
-        }
-
-        Ok(())
+        Ok((status, text))
     }
 
     /// `POST /v1/agents/{agent_id}/recompile` — materialize the compiled system prompt after PATCH
@@ -717,6 +788,83 @@ impl LettaClient {
 
         Ok(())
     }
+}
+
+/// 400/422 usually mean validation or unknown fields (e.g. Letta build without `git_enabled` on this route).
+fn letta_status_suggests_retry_without_git(status: StatusCode) -> bool {
+    matches!(status.as_u16(), 400 | 422)
+}
+
+fn build_create_agent_body(
+    name: &str,
+    system_prompt: &str,
+    model: Option<&str>,
+    agent_type: Option<&str>,
+    tool_ids: &[String],
+    git_enabled: bool,
+) -> serde_json::Map<String, serde_json::Value> {
+    let mut body = serde_json::Map::new();
+    body.insert("name".to_string(), json!(name));
+    body.insert("system".to_string(), json!(system_prompt));
+    body.insert("include_base_tools".to_string(), json!(false));
+    if git_enabled {
+        body.insert("git_enabled".to_string(), json!(true));
+    }
+    if let Some(m) = model.filter(|s| !s.is_empty()) {
+        body.insert("model".to_string(), json!(m));
+    }
+    if let Some(t) = agent_type.map(str::trim).filter(|s| !s.is_empty()) {
+        body.insert("agent_type".to_string(), json!(t));
+    }
+    if !tool_ids.is_empty() {
+        body.insert("tool_ids".to_string(), json!(tool_ids));
+    }
+    body
+}
+
+fn parse_create_agent_id(text: &str) -> Result<String, CustomError> {
+    let v: serde_json::Value = serde_json::from_str(text).map_err(|e| {
+        CustomError::Parsing(format!("Letta create agent JSON: {e}; body: {text}"))
+    })?;
+
+    let id = v
+        .get("id")
+        .and_then(|x| x.as_str())
+        .ok_or_else(|| {
+            CustomError::Parsing(format!(
+                "Letta create agent response missing id: {text}"
+            ))
+        })?
+        .to_string();
+
+    Ok(id)
+}
+
+fn build_patch_agent_body(
+    name: &str,
+    description: &str,
+    system: &str,
+    model: Option<&str>,
+    agent_type: Option<&str>,
+    tool_ids: &[String],
+    git_enabled: bool,
+) -> serde_json::Map<String, serde_json::Value> {
+    let mut body = serde_json::Map::new();
+    body.insert("name".to_string(), json!(name));
+    body.insert("description".to_string(), json!(description));
+    body.insert("system".to_string(), json!(system));
+    body.insert("include_base_tools".to_string(), json!(false));
+    if git_enabled {
+        body.insert("git_enabled".to_string(), json!(true));
+    }
+    if let Some(m) = model.map(str::trim).filter(|s| !s.is_empty()) {
+        body.insert("model".to_string(), json!(m));
+    }
+    if let Some(t) = agent_type.map(str::trim).filter(|s| !s.is_empty()) {
+        body.insert("agent_type".to_string(), json!(t));
+    }
+    body.insert("tool_ids".to_string(), json!(tool_ids));
+    body
 }
 
 fn parse_letta_llm_model_list(v: &serde_json::Value) -> Vec<LettaModelOption> {

@@ -11,7 +11,7 @@ pub async fn list_bears(pool: &PgPool) -> Result<Vec<Bear>, CustomError> {
     sqlx::query_as::<_, Bear>(
         r#"
         SELECT id, slug, name, description, letta_agent_id, default_model, tools_enabled,
-               letta_agent_type, letta_tool_ids, system_prompt, created_at, updated_at
+               letta_agent_type, letta_tool_ids, runtime_plan, system_prompt, created_at, updated_at
         FROM bears
         ORDER BY slug
         "#,
@@ -25,7 +25,7 @@ pub async fn get_bear(pool: &PgPool, id: Uuid) -> Result<Option<Bear>, CustomErr
     sqlx::query_as::<_, Bear>(
         r#"
         SELECT id, slug, name, description, letta_agent_id, default_model, tools_enabled,
-               letta_agent_type, letta_tool_ids, system_prompt, created_at, updated_at
+               letta_agent_type, letta_tool_ids, runtime_plan, system_prompt, created_at, updated_at
         FROM bears
         WHERE id = $1
         "#,
@@ -290,7 +290,7 @@ pub async fn list_bears_for_user(
     sqlx::query_as::<_, BearWithMembership>(
         r#"
         SELECT b.id, b.slug, b.name, b.description, b.letta_agent_id, b.default_model, b.tools_enabled,
-               b.letta_agent_type, b.letta_tool_ids, b.system_prompt, b.created_at, b.updated_at,
+               b.letta_agent_type, b.letta_tool_ids, b.runtime_plan, b.system_prompt, b.created_at, b.updated_at,
                ub.role AS membership_role
         FROM bears b
         INNER JOIN user_bear ub ON ub.bear_id = b.id
@@ -313,7 +313,7 @@ pub async fn bear_for_user_by_slug(
     sqlx::query_as::<_, Bear>(
         r#"
         SELECT b.id, b.slug, b.name, b.description, b.letta_agent_id, b.default_model, b.tools_enabled,
-               b.letta_agent_type, b.letta_tool_ids, b.system_prompt, b.created_at, b.updated_at
+               b.letta_agent_type, b.letta_tool_ids, b.runtime_plan, b.system_prompt, b.created_at, b.updated_at
         FROM bears b
         INNER JOIN user_bear ub ON ub.bear_id = b.id
         WHERE ub.user_id = $1 AND b.slug = $2
@@ -386,6 +386,50 @@ pub async fn set_letta_agent_id(
     )
     .bind(agent_id)
     .bind(bear_id)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+/// When the operator left `letta_agent_type` empty, persist the default used for Letta (`letta_v1_agent`).
+pub async fn backfill_default_letta_agent_type(
+    pool: &PgPool,
+    bear_id: Uuid,
+    default: &str,
+) -> Result<(), CustomError> {
+    sqlx::query(
+        r#"
+        UPDATE bears
+        SET letta_agent_type = $2,
+            updated_at = NOW()
+        WHERE id = $1
+          AND (letta_agent_type IS NULL OR btrim(letta_agent_type) = '')
+        "#,
+    )
+    .bind(bear_id)
+    .bind(default)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+/// Seed `runtime_plan` once so codepool always has a BearRuntimePlan v1 snapshot.
+pub async fn ensure_default_runtime_plan(
+    pool: &PgPool,
+    bear_id: Uuid,
+    default_json: &serde_json::Value,
+) -> Result<(), CustomError> {
+    sqlx::query(
+        r#"
+        UPDATE bears
+        SET runtime_plan = $2::jsonb,
+            updated_at = NOW()
+        WHERE id = $1
+          AND runtime_plan IS NULL
+        "#,
+    )
+    .bind(bear_id)
+    .bind(default_json)
     .execute(pool)
     .await?;
     Ok(())

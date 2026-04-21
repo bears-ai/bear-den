@@ -1,5 +1,10 @@
 import { resumeSession, type Session } from "@letta-ai/letta-code-sdk";
 import type { SDKMessage } from "@letta-ai/letta-code-sdk";
+import type {
+  BearRuntimePlan,
+  BearRuntimeProvisioner,
+  EnsureResult,
+} from "./provisioning/types.js";
 
 export type PoolKey = string;
 
@@ -16,6 +21,11 @@ type Entry = {
   lastUsed: number;
 };
 
+export type StreamUserOpts = {
+  bearId: string;
+  plan: BearRuntimePlan;
+};
+
 export type ConversationPoolStats = {
   kind: "conversation";
   warm: number;
@@ -29,6 +39,9 @@ export class ConversationSessionPool {
   private readonly ttlMs: number;
   private readonly maxEntries: number;
   private readonly includePartialMessages: boolean;
+  private readonly provisioner: BearRuntimeProvisioner;
+  /** One ensure result per bear (shared across conversations). */
+  private readonly ensureByBear = new Map<string, EnsureResult>();
   private sweepTimer: ReturnType<typeof setInterval> | undefined;
   /** Exclusive lock per conversation (one active run at a time). */
   private tail = new Map<PoolKey, Promise<void>>();
@@ -37,10 +50,12 @@ export class ConversationSessionPool {
     ttlSecs: number;
     maxEntries: number;
     includePartialMessages?: boolean;
+    provisioner: BearRuntimeProvisioner;
   }) {
     this.ttlMs = opts.ttlSecs * 1000;
     this.maxEntries = opts.maxEntries;
     this.includePartialMessages = opts.includePartialMessages ?? true;
+    this.provisioner = opts.provisioner;
     this.sweepTimer = setInterval(() => this.evictIdle(), Math.min(60_000, this.ttlMs / 2));
     this.sweepTimer.unref?.();
   }
@@ -65,6 +80,7 @@ export class ConversationSessionPool {
       }
     }
     this.map.clear();
+    this.ensureByBear.clear();
   }
 
   private async acquireLock(key: PoolKey): Promise<() => void> {
@@ -114,7 +130,28 @@ export class ConversationSessionPool {
     }
   }
 
-  private getOrCreateSession(agentId: string, conversationId: string): Session {
+  private async ensureRuntime(
+    bearId: string,
+    agentId: string,
+    conversationId: string,
+    plan: BearRuntimePlan
+  ): Promise<EnsureResult> {
+    let e = this.ensureByBear.get(bearId);
+    if (!e) {
+      e = await this.provisioner.ensure(
+        { bearId, agentId, conversationId },
+        plan
+      );
+      this.ensureByBear.set(bearId, e);
+    }
+    return e;
+  }
+
+  private getOrCreateSession(
+    agentId: string,
+    conversationId: string,
+    ensure: EnsureResult
+  ): Session {
     const key = makePoolKey(agentId, conversationId);
     const rt = resumeTargetFor(agentId, conversationId);
     let entry = this.map.get(key);
@@ -127,7 +164,9 @@ export class ConversationSessionPool {
     const session = resumeSession(rt, {
       includePartialMessages: this.includePartialMessages,
       systemInfoReminder: false,
-    });
+      memfs: true,
+      cwd: ensure.cwd,
+    } as Parameters<typeof resumeSession>[1]);
     this.map.set(key, { session, lastUsed: now });
     return session;
   }
@@ -138,12 +177,19 @@ export class ConversationSessionPool {
   async *streamUserMessage(
     agentId: string,
     conversationId: string,
-    userText: string
+    userText: string,
+    opts: StreamUserOpts
   ): AsyncGenerator<SDKMessage, void, unknown> {
     const key = makePoolKey(agentId, conversationId);
     const unlock = await this.acquireLock(key);
     try {
-      const session = this.getOrCreateSession(agentId, conversationId);
+      const ensure = await this.ensureRuntime(
+        opts.bearId,
+        agentId,
+        conversationId,
+        opts.plan
+      );
+      const session = this.getOrCreateSession(agentId, conversationId, ensure);
       await session.send(userText);
       for await (const msg of session.stream()) {
         yield msg as SDKMessage;

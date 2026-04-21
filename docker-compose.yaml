@@ -144,8 +144,10 @@ services:
       CODEPOOL_INTERNAL_TOKEN: ${CODEPOOL_INTERNAL_TOKEN:-}
       POOL_TTL_SECS: ${POOL_TTL_SECS:-600}
       POOL_MAX_ENTRIES: ${POOL_MAX_ENTRIES:-256}
+      BEAR_MEMORY_ROOT: /var/lib/bear-memory
     volumes:
       - bear-codepool-letta-home:/home/node/.letta
+      - bear-codepool-memory:/var/lib/bear-memory
     # bookworm-slim has no wget/curl; use Node (same runtime as the app).
     healthcheck:
       test:
@@ -197,3 +199,4 @@ volumes:
   bear-postgres-data:
   bear-letta-data:
   bear-codepool-letta-home:
+  bear-codepool-memory:

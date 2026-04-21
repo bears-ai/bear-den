@@ -170,3 +170,31 @@ async fn m1c_bears_letta_sync_columns_exist() {
 
     assert_eq!(n, 2, "bears missing letta_agent_type or letta_tool_ids");
 }
+
+#[tokio::test]
+async fn m1d_bears_runtime_plan_column_exists() {
+    dotenvy::dotenv().ok();
+    let url = std::env::var("DATABASE_URL").expect("DATABASE_URL for integration test");
+    let pool = PgPoolOptions::new()
+        .max_connections(2)
+        .connect(&url)
+        .await
+        .expect("connect postgres");
+
+    apply_migrations(&pool).await;
+
+    let n: i64 = sqlx::query_scalar(
+        r#"
+        SELECT COUNT(*)::bigint
+        FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND table_name = 'bears'
+          AND column_name = 'runtime_plan'
+        "#,
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("information_schema query");
+
+    assert_eq!(n, 1, "bears missing runtime_plan");
+}

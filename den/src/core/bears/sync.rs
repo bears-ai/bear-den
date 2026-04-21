@@ -4,7 +4,10 @@
 use sqlx::PgPool;
 use uuid::Uuid;
 
-use crate::core::{bears::db as bears_db, letta::LettaClient};
+use crate::core::{
+    bears::{db as bears_db, runtime_plan::default_runtime_plan},
+    letta::LettaClient,
+};
 use crate::errors::CustomError;
 
 /// When Letta is configured and the bear has `letta_agent_id`, PATCH Letta to match Den, then
@@ -37,6 +40,15 @@ pub async fn sync_bear_to_letta(
         .map(str::trim)
         .filter(|s| !s.is_empty());
 
+    let agent_type = bear
+        .letta_agent_type
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .unwrap_or("letta_v1_agent");
+
+    let tool_ids = letta.filtered_tool_ids(&bear.letta_tool_ids.0).await?;
+
     letta
         .patch_agent(
             agent_id,
@@ -44,12 +56,15 @@ pub async fn sync_bear_to_letta(
             bear.description.as_str(),
             bear.system_prompt.as_str(),
             model,
-            bear.letta_agent_type.as_deref(),
-            &bear.letta_tool_ids.0,
+            Some(agent_type),
+            &tool_ids,
         )
         .await?;
 
     letta.recompile_agent(agent_id).await?;
+
+    bears_db::backfill_default_letta_agent_type(pool, bear_id, "letta_v1_agent").await?;
+    bears_db::ensure_default_runtime_plan(pool, bear_id, &default_runtime_plan()).await?;
 
     Ok(())
 }
