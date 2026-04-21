@@ -532,6 +532,7 @@ dependencies = [
  "axum-extra",
  "axum-login",
  "base64",
+ "bytes",
  "dotenvy",
  "futures",
  "http-body-util",

@@ -106,12 +106,14 @@ See [`../../codepool/COOLIFY_DEPLOY.md`](../../codepool/COOLIFY_DEPLOY.md).
 - **`LETTA_BASE_URL=http://bear-letta:8283`** and **`LETTA_API_KEY`** matching Letta’s server credential (same as Den uses for provisioning).  
 - Persist **`~/.letta`** on a volume (CLI auth and local state).  
 - **`CODEPOOL_BASE_URL`** in Den must point at this service (e.g. `http://bear-codepool:3030`). Optional shared secret: **`CODEPOOL_INTERNAL_TOKEN`** on both sides.
+- **`GET /metrics`** — hand-rolled Prometheus text (conversation stream counters). Scrape from the internal network only; no auth on the endpoint (protect with network policy or reverse-proxy rules).
 
 ### Step 5: Den
 
 Build and deploy Den from repo root **`den/`** (Rust/Axum) — see [PHASE1_BOOTSTRAP.md](../planning/PHASE1_BOOTSTRAP.md) for routes and env expectations. Den serves the **embedded Deep Chat** UI and proxies streaming chat **Den → Codepool → Letta** per [DEN_ARCHITECTURE.md](../architecture/DEN_ARCHITECTURE.md).
 
 - **`LETTA_BASE_URL`** — Letta from Step 3 (persistence, history, provisioning). **`CODEPOOL_BASE_URL`** — harness from Step 4 (streaming agent loop).  
+- **`GET /metrics`** on Den (same as Step 4: internal Prometheus scrape; in-memory chat counters).  
 - Garage: bucket + credentials for presigned URLs when media upload is enabled  
 
 ### Step 6: Outline & Den (Cabinet)

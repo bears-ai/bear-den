@@ -1,6 +1,6 @@
 # Codepool
 
-**BEARS harness runtime** (Letta Code SDK): warm **conversation** session pool, streaming endpoints for **Den**, optional **channel listener** hooks (see `src/channel-listeners.ts`), and **`GET /internal/pool`** metrics.
+**BEARS harness runtime** (Letta Code SDK): warm **conversation** session pool, streaming endpoints for **Den**, optional **channel listener** hooks (see `src/channel-listeners.ts`), **`GET /internal/pool`** stats, and **`GET /metrics`** (Prometheus text, in-process counters).
 
 - **Not** the Letta server — persistence stays at **`LETTA_BASE_URL`** (same Letta API Den uses for provisioning and history).
 - **Not** under `services/` — first-class app at the repo root (alongside **`den/`**).
@@ -21,6 +21,7 @@ npm run build && npm start
 | Method | Path | Notes |
 |--------|------|--------|
 | GET | `/health` | Liveness |
+| GET | `/metrics` | Prometheus text (internal scrape; protect with network policy) |
 | GET | `/internal/pool` | Conversation + channel listener stats (Bearer if `CODEPOOL_INTERNAL_TOKEN`) |
 | POST | `/v1/conversations/:id/messages` | Letta-compatible streaming (body: `messages`, `agent_id`, …) |
 | POST | `/v1/chat/completions` | OpenWebUI-style (`metadata.bear_agent_id`, optional `metadata.conversation_id`) |

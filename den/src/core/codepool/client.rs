@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use reqwest::header::{AUTHORIZATION, CONTENT_TYPE, HeaderMap, HeaderValue};
+use reqwest::header::{AUTHORIZATION, CONTENT_TYPE, HeaderMap, HeaderName, HeaderValue};
 use serde_json::json;
 use uuid::Uuid;
 
@@ -135,6 +135,7 @@ impl CodePoolClient {
         user_input: &str,
         bear_id: Uuid,
         runtime_plan: &serde_json::Value,
+        request_id: Uuid,
     ) -> Result<reqwest::Response, CustomError> {
         if !self.is_enabled() {
             return Err(CustomError::System(
@@ -163,10 +164,18 @@ impl CodePoolClient {
             self.base_url, conversation_id
         );
 
+        let mut headers = self.auth_headers();
+        if let Ok(v) = HeaderValue::from_str(&request_id.to_string()) {
+            headers.insert(HeaderName::from_static("x-request-id"), v);
+        }
+        if let Ok(v) = HeaderValue::from_str(&bear_id.to_string()) {
+            headers.insert(HeaderName::from_static("x-bear-id"), v);
+        }
+
         let resp = self
             .http
             .post(url)
-            .headers(self.auth_headers())
+            .headers(headers)
             .header(CONTENT_TYPE, "application/json")
             .json(&body)
             .send()

@@ -8,6 +8,7 @@ pub mod build_info;
 pub mod config;
 pub mod core;
 pub mod errors;
+pub mod observability;
 pub mod startup;
 pub mod web;
 

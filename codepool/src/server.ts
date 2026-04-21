@@ -1,9 +1,17 @@
 import { readFileSync, accessSync, constants as FsConstants } from "node:fs";
+import { randomUUID } from "node:crypto";
 import express from "express";
 import type { ConversationSessionPool } from "./pool.js";
 import { sdkMessageToSseDataLine } from "./sse.js";
 import { handleOpenAIChatCompletions } from "./openai.js";
 import type { ChannelListenerRegistry } from "./channel-listeners.js";
+import {
+  recordConversationMessagesRequest,
+  recordStreamFinishedEmptyFallback,
+  recordStreamFinishedError,
+  recordStreamFinishedOk,
+  renderPrometheusText,
+} from "./metrics.js";
 import {
   parseBearRuntimePlan,
   type BearRuntimePlan,
@@ -82,6 +90,11 @@ export function attachRoutes(
     });
   });
 
+  app.get("/metrics", (_req, res) => {
+    res.type("text/plain; version=0.0.4; charset=utf-8");
+    res.send(renderPrometheusText());
+  });
+
   app.post(
     "/v1/conversations/:conversationId/messages",
     express.json({ limit: "2mb" }),
@@ -122,6 +135,29 @@ export function attachRoutes(
       res.setHeader("Cache-Control", "no-cache");
       res.setHeader("Connection", "keep-alive");
 
+      const rawReqId = req.headers["x-request-id"];
+      const requestId =
+        typeof rawReqId === "string" && rawReqId.trim()
+          ? rawReqId.trim()
+          : randomUUID();
+      res.setHeader("X-Request-Id", requestId);
+
+      recordConversationMessagesRequest();
+      const t0 = Date.now();
+      console.log(
+        JSON.stringify({
+          event: "conversation_messages_start",
+          service: "bear-codepool",
+          request_id: requestId,
+          conversation_id: conversationId,
+          agent_id: agentId,
+          bear_id: bearId,
+        })
+      );
+
+      let hadUserVisibleLine = false;
+      let sseDataLines = 0;
+
       try {
         for await (const msg of ctx.pool.streamUserMessage(
           agentId,
@@ -131,16 +167,65 @@ export function attachRoutes(
         )) {
           const line = sdkMessageToSseDataLine(msg);
           if (line) {
+            sseDataLines += 1;
             res.write(`data: ${line}\n\n`);
+            try {
+              const parsed = JSON.parse(line) as { message_type?: string };
+              const mt = parsed.message_type;
+              if (
+                mt === "assistant_message" ||
+                mt === "reasoning_message" ||
+                mt === "error_message"
+              ) {
+                hadUserVisibleLine = true;
+              }
+            } catch {
+              /* ignore */
+            }
           }
         }
+        if (!hadUserVisibleLine) {
+          recordStreamFinishedEmptyFallback();
+          res.write(
+            `data: ${JSON.stringify({
+              message_type: "error_message",
+              message: "No response from the assistant.",
+              detail:
+                "The stream ended without any assistant output. Check Codepool and Letta logs.",
+              support_ref: requestId,
+            })}\n\n`
+          );
+        } else {
+          recordStreamFinishedOk();
+        }
         res.end();
+        const ms = Date.now() - t0;
+        console.log(
+          JSON.stringify({
+            event: "conversation_messages_end",
+            service: "bear-codepool",
+            request_id: requestId,
+            outcome: hadUserVisibleLine ? "ok" : "empty_fallback",
+            duration_ms: ms,
+            sse_data_lines: sseDataLines,
+          })
+        );
       } catch (e) {
+        recordStreamFinishedError();
         const err = e instanceof Error ? e.message : String(e);
+        console.log(
+          JSON.stringify({
+            event: "conversation_messages_error",
+            service: "bear-codepool",
+            request_id: requestId,
+            error: err,
+          })
+        );
         res.write(
           `data: ${JSON.stringify({
             message_type: "error_message",
             message: err,
+            support_ref: requestId,
           })}\n\n`
         );
         res.end();

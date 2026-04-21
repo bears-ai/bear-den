@@ -146,6 +146,37 @@
       return s;
     }
 
+    /** Multi-line error string for Deep Chat `connect` `{ error: string }` (readable + optional support ref). */
+    function formatChatError(title, detail, requestId) {
+      var parts = [title];
+      if (detail) parts.push('', detail);
+      if (requestId) parts.push('', 'Reference: ' + requestId);
+      return parts.join('\n');
+    }
+
+    /** Prefer JSON `{ error, request_id }` from `POST /v1/chat/send`; strip noisy Den prefixes. */
+    function denChatParseSendError(text, httpStatus, requestIdFromHeader) {
+      var trimmed = (text || '').trim();
+      try {
+        var j = JSON.parse(trimmed);
+        if (j && typeof j === 'object' && j.error != null) {
+          var rid = j.request_id || requestIdFromHeader;
+          return formatChatError(
+            'Couldn\u2019t send message',
+            String(j.error),
+            rid || ''
+          );
+        }
+      } catch (_) { /* use plain text */ }
+      var fallback = trimmed || ('HTTP ' + httpStatus);
+      fallback = fallback
+        .replace(/^Server Error:\s*/i, '')
+        .replace(/^Validation Error:\s*/i, '')
+        .replace(/^Authentication Error:\s*/i, '')
+        .replace(/^Authorization Error:\s*/i, '');
+      return formatChatError('Couldn\u2019t send message', fallback, requestIdFromHeader || '');
+    }
+
     function escapeHtmlWithBreaks(s) {
       var n = String(s).replace(/\r\n/g, '\n').replace(/\r/g, '\n');
       return escapeHtml(n).replace(/\n/g, '<br>');
@@ -306,7 +337,9 @@
       var bubblePad = tok.bubblePad;
       var lh = tok.lh;
       var bodyFont = cv('--body-font-family');
+      var errFg = cv('--error-color');
       var border1 = tln + ' solid ' + brd;
+      var borderErr = tln + ' solid ' + errFg;
       var submitScale = 'scale(' + cv('--chat-submit-button-scale') + ')';
 
       chat.style.cssText =
@@ -340,6 +373,17 @@
           user: {
             outerContainer: { justifyContent: 'flex-end' },
             bubble: { backgroundColor: pg, border: border1 },
+          },
+          error: {
+            outerContainer: { justifyContent: 'flex-start' },
+            bubble: {
+              backgroundColor: ff,
+              color: errFg,
+              border: borderErr,
+              borderLeftWidth: 'calc(var(--spacing-unit) * 0.35)',
+              borderLeftStyle: 'solid',
+              borderLeftColor: errFg,
+            },
           },
         },
         loading: {
@@ -477,13 +521,18 @@
     }
 
     /** Map one Letta SSE JSON object to `{ error: string }` or null. */
-    function lettaStreamEventErrorSignal(obj) {
+    function lettaStreamEventErrorSignal(obj, requestRef) {
       var inner = lettaInnerForStream(obj);
       if (!inner || inner.message_type !== 'error_message') return null;
       var lines = [];
       if (inner.error_type) lines.push('[' + String(inner.error_type) + ']');
       if (inner.message) lines.push(String(inner.message));
       if (inner.detail) lines.push(String(inner.detail));
+      var ref =
+        inner.support_ref != null && String(inner.support_ref).trim()
+          ? String(inner.support_ref).trim()
+          : requestRef || '';
+      if (ref) lines.push('Reference: ' + ref);
       var msg = lines.length ? lines.join('\n\n') : 'An error occurred.';
       return { error: msg };
     }
@@ -503,7 +552,10 @@
       fetch('/v1/chat/send', {
         method: 'POST',
         credentials: 'same-origin',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          Accept: 'application/json',
+        },
         body: JSON.stringify({
           bear_id: BEAR_ID,
           message: userText,
@@ -511,13 +563,19 @@
         }),
         signal: abortCtl.signal,
       }).then(function (response) {
+        var requestRef =
+          response.headers.get('x-request-id') ||
+          response.headers.get('X-Request-Id') ||
+          '';
         if (response.status === 401) {
           window.location.href = '/login?next=' + encodeURIComponent(window.location.pathname);
           return;
         }
         if (!response.ok) {
           return response.text().then(function (t) {
-            signals.onResponse({ error: t || 'HTTP ' + response.status });
+            signals.onResponse({
+              error: denChatParseSendError(t, response.status, requestRef),
+            });
           });
         }
         var reader = response.body.getReader();
@@ -528,6 +586,9 @@
         var assistantBuf = '';
         var assistantLastId = null;
         var NO_ID = '___den_letta_assistant_no_id___';
+        var sawAssistantOrReasoning = false;
+        var sawStreamError = false;
+        var sseParseWarned = false;
         signals.onOpen();
 
         function consumeSseDataLine(raw) {
@@ -535,9 +596,25 @@
           if (!line.startsWith('data: ')) return;
           var payload = line.slice(6).trim();
           if (payload === '' || payload === '[DONE]') return;
-          try { var obj = JSON.parse(payload); } catch (_) { return; }
-          var errSig = lettaStreamEventErrorSignal(obj);
+          var obj;
+          try {
+            obj = JSON.parse(payload);
+          } catch (_) {
+            if (!sseParseWarned) {
+              sseParseWarned = true;
+              signals.onResponse({
+                error: formatChatError(
+                  'Invalid response from server',
+                  'Could not parse streamed data from the assistant service.',
+                  requestRef
+                ),
+              });
+            }
+            return;
+          }
+          var errSig = lettaStreamEventErrorSignal(obj, requestRef);
           if (errSig) {
+            sawStreamError = true;
             signals.onResponse(errSig);
             return;
           }
@@ -545,6 +622,7 @@
           if (!inner || typeof inner !== 'object') return;
 
           if (inner.message_type === 'reasoning_message') {
+            sawAssistantOrReasoning = true;
             var pieceR = '';
             if (typeof inner.reasoning === 'string') pieceR = inner.reasoning;
             else pieceR = assistantChunkText(inner);
@@ -561,6 +639,7 @@
           }
 
           if (inner.message_type === 'assistant_message') {
+            sawAssistantOrReasoning = true;
             var chunk = assistantChunkText(inner);
             var aid =
               inner.id != null && String(inner.id) !== '' ? String(inner.id) : null;
@@ -609,6 +688,19 @@
                 consumeSseDataLine(lineBuf);
                 lineBuf = '';
               }
+              if (
+                !sawAssistantOrReasoning &&
+                !sawStreamError &&
+                !sseParseWarned
+              ) {
+                signals.onResponse({
+                  error: formatChatError(
+                    'No response received',
+                    'The assistant did not return any text. You can retry, or share the reference below if the problem continues.',
+                    requestRef
+                  ),
+                });
+              }
               signals.onClose();
               return;
             }
@@ -621,7 +713,13 @@
           signals.onResponse({ text: '\n[stopped]' });
           signals.onClose();
         } else {
-          signals.onResponse({ error: String(x.message || x) });
+          signals.onResponse({
+            error: formatChatError(
+              'Connection problem',
+              String(x.message || x),
+              ''
+            ),
+          });
         }
       });
     }

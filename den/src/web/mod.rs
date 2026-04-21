@@ -20,6 +20,7 @@ use crate::{auth_backend::Backend, config::Config};
 
 use axum::{
     Router,
+    body::Body,
     extract::{MatchedPath, State},
     http::{header, Request, StatusCode},
     response::{Html, IntoResponse, Response},
@@ -215,6 +216,20 @@ pub async fn server(
                 .route("/version", get(build_info::json_handler))
                 .route("/healthcheck", get(|| async { "OK" }))
                 .route("/health/ready", get(web_readiness))
+                .route(
+                    "/metrics",
+                    get(|| async {
+                        let text = crate::observability::metrics::render_prometheus_text();
+                        Response::builder()
+                            .status(StatusCode::OK)
+                            .header(
+                                header::CONTENT_TYPE,
+                                "text/plain; version=0.0.4; charset=utf-8",
+                            )
+                            .body(Body::from(text))
+                            .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())
+                    }),
+                )
                 .route("/status", get(status::page))
                 .route("/status.json", get(status::json_endpoint)),
         )

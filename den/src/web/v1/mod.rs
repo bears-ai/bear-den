@@ -5,14 +5,14 @@ use axum::{
     Json, Router,
     body::Body,
     extract::State,
-    http::{StatusCode, header},
-    response::Response,
+    http::{HeaderName, HeaderValue, StatusCode, header},
+    response::{IntoResponse, Response},
     routing::{get, post},
 };
 use axum_extra::extract::Query;
 use axum_login::login_required;
-use futures::StreamExt;
 use serde::{Deserialize, Serialize};
+use tracing::Instrument;
 use uuid::Uuid;
 
 use crate::{
@@ -20,6 +20,7 @@ use crate::{
     core::bears::db::{self as bears_db, role_is_bear_admin},
     core::letta::load_agent_conversations,
     errors::CustomError,
+    observability::chat_proxy_stream::ChatSseProxyStream,
     web::AppState,
 };
 
@@ -428,10 +429,69 @@ pub struct ChatSendRequest {
     pub conversation_id: Option<String>,
 }
 
+fn chat_send_api_status_message(err: &CustomError) -> (StatusCode, String) {
+    match err {
+        CustomError::Anyhow(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("{e:#}")),
+        CustomError::System(s) => (StatusCode::UNPROCESSABLE_ENTITY, s.clone()),
+        CustomError::Database(s) => (StatusCode::UNPROCESSABLE_ENTITY, s.clone()),
+        CustomError::DatabaseUnavailable(s) => (StatusCode::SERVICE_UNAVAILABLE, s.clone()),
+        CustomError::Session(s) => (StatusCode::INTERNAL_SERVER_ERROR, s.clone()),
+        CustomError::Authentication(s) => (StatusCode::UNAUTHORIZED, s.clone()),
+        CustomError::Authorization(s) => (StatusCode::FORBIDDEN, s.clone()),
+        CustomError::Render(s) => (StatusCode::INTERNAL_SERVER_ERROR, s.clone()),
+        CustomError::Parsing(s) => (StatusCode::UNPROCESSABLE_ENTITY, s.clone()),
+        CustomError::Email(s) => (StatusCode::FAILED_DEPENDENCY, s.clone()),
+        CustomError::NotFound(s) => (StatusCode::NOT_FOUND, s.clone()),
+        CustomError::ValidationError(s) => (StatusCode::BAD_REQUEST, s.clone()),
+    }
+}
+
+fn chat_send_error_response(err: CustomError, request_id: Uuid) -> Response {
+    tracing::error!(%request_id, error = %err, "chat_send rejected");
+    let (status, message) = chat_send_api_status_message(&err);
+    let body = serde_json::json!({
+        "error": message,
+        "request_id": request_id,
+    });
+    let request_id_header = HeaderValue::from_str(&request_id.to_string())
+        .unwrap_or_else(|_| HeaderValue::from_static("invalid"));
+    match Response::builder()
+        .status(status)
+        .header(header::CONTENT_TYPE, "application/json; charset=utf-8")
+        .header(HeaderName::from_static("x-request-id"), request_id_header)
+        .body(Body::from(body.to_string()))
+    {
+        Ok(r) => r,
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("response build: {e}"),
+        )
+            .into_response(),
+    }
+}
+
 async fn chat_send(
     State(state): State<AppState>,
     auth_session: AuthSession,
     Json(body): Json<ChatSendRequest>,
+) -> impl IntoResponse {
+    let request_id = Uuid::new_v4();
+    let result = async {
+        chat_send_inner(state, auth_session, body, request_id).await
+    }
+    .instrument(tracing::info_span!("chat_send", request_id = %request_id))
+    .await;
+    match result {
+        Ok(r) => r.into_response(),
+        Err(e) => chat_send_error_response(e, request_id),
+    }
+}
+
+async fn chat_send_inner(
+    state: AppState,
+    auth_session: AuthSession,
+    body: ChatSendRequest,
+    request_id: Uuid,
 ) -> Result<Response, CustomError> {
     let user_id = auth_session
         .user
@@ -484,6 +544,7 @@ async fn chat_send(
     let runtime_plan = crate::core::bears::effective_runtime_plan(
         bear.runtime_plan.as_ref().map(|j| j.as_ref()),
     );
+
     let upstream = state
         .codepool
         .post_conversation_messages_streaming(
@@ -492,18 +553,30 @@ async fn chat_send(
             body.message.trim(),
             body.bear_id,
             &runtime_plan,
+            request_id,
         )
         .await?;
 
-    let stream = upstream.bytes_stream().map(|res| {
-        res.map_err(|e| std::io::Error::other(e.to_string()))
-    });
+    crate::observability::metrics::chat_send_started();
+
+    let stream = ChatSseProxyStream::new(
+        upstream.bytes_stream(),
+        request_id,
+        user_id,
+        body.bear_id,
+        conv_id,
+    );
+
+    let request_id_header = HeaderValue::from_str(&request_id.to_string()).map_err(|_| {
+        CustomError::System("invalid request id for response header".to_string())
+    })?;
 
     Response::builder()
         .status(StatusCode::OK)
         .header(header::CONTENT_TYPE, "text/event-stream; charset=utf-8")
         .header(header::CACHE_CONTROL, "no-cache")
         .header(header::CONNECTION, "keep-alive")
+        .header(HeaderName::from_static("x-request-id"), request_id_header)
         .body(Body::from_stream(stream))
         .map_err(|e| CustomError::System(format!("response build: {e}")))
 }

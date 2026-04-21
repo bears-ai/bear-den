@@ -134,6 +134,10 @@ Optional query **`conversation_id`** — when set (for example `conv-…` from b
 3. **Slack-style layout** — messages are left-aligned (both user and AI), with name labels above and a bottom border divider instead of speech bubbles.
 4. **Letta stream** — `POST /v1/chat/send` returns SSE; the chat handler uses `connect.handler` + `connect.stream` to parse `data:` JSON lines. It surfaces **`error_message`** (including nested `contents`) as Deep Chat errors; streams **`reasoning_message`** into a dedicated **HTML** ai bubble (single-line horizontal scroll, optional Expand for full text — plain text only, no Markdown in that bubble per Deep Chat’s `html` vs `text` tradeoff, see [deep-chat#429](https://github.com/OvidijusParsiunas/deep-chat/issues/429)); then **`assistant_message`** as **`text`** (Markdown-friendly). **`overwrite: true`** follows [Deep Chat’s connect `Response` docs](https://deepchat.dev/docs/connect#Stream): overwrite the last ai bubble while reasoning streams, replace reasoning with the first assistant chunk when `hadReasoning`, and concatenate token-streamed assistant chunks that share an `id` (or lack one). See `lettaSseHandler` in `bear_chat.html`.
 
+5. **Errors & support refs** — Non-OK responses use JSON `{ "error", "request_id" }` with header **`X-Request-Id`**. The template formats user-facing strings with `formatChatError` (title, detail, reference). **`messageStyles.default.error`** styles connect error bubbles with **`--error-color`** and a left accent border. Empty streams and malformed SSE lines get explicit error bubbles instead of failing silently.
+
+6. **Metrics** — Den exposes **`GET /metrics`** (Prometheus text, in-process counters for chat send). Codepool exposes the same path for harness counters. Intended for internal scrape targets only.
+
 **Local dev:** After changing anything under `src/web/assets/`, rebuild and restart `den` so `memory-serve` picks up routes and paths ([`quickstart.md`](quickstart.md) § *Static assets*).
 
 ## JavaScript Guidelines
