@@ -5,9 +5,7 @@
 //! Harness/model-injected text (e.g. `<system-reminder>…</system-reminder>`) is stripped before
 //! title derivation; structured `role: system` user rows are skipped when present.
 
-use regex::Regex;
 use serde_json::Value;
-use std::sync::OnceLock;
 
 /// Generic UI label when nothing better is available (not persisted to Letta).
 pub const UNTITLED_THREAD: &str = "Untitled thread";
@@ -67,7 +65,7 @@ pub fn first_user_message_text_for_title(messages_body: &Value) -> Option<String
             continue;
         }
         let text = message_text(inner).or_else(|| message_text(msg))?;
-        let without_harness = strip_system_reminder_markup(&text);
+        let without_harness = super::strip_letta_harness_for_user(&text);
         let cleaned = strip_noise_for_title_source(&without_harness);
         if cleaned.trim().is_empty() {
             continue;
@@ -164,35 +162,6 @@ fn user_message_role_is_human(inner: &Value, msg: &Value) -> bool {
         }
     }
     true
-}
-
-/// Remove `<system-reminder>…</system-reminder>` blocks and a trailing incomplete opener (streaming shape).
-fn strip_system_reminder_markup(s: &str) -> String {
-    static BLOCKS: OnceLock<Regex> = OnceLock::new();
-    let blocks = BLOCKS.get_or_init(|| {
-        Regex::new(r"(?is)<system-reminder\b[^>]*>.*?</system-reminder>")
-            .expect("system-reminder strip regex")
-    });
-    let mut t = blocks.replace_all(s, "").to_string();
-    if let Some(start) = find_ascii_case_insensitive(&t, "<system-reminder") {
-        let rest = &t[start..];
-        if find_ascii_case_insensitive(rest, "</system-reminder>").is_none() {
-            t.truncate(start);
-        }
-    }
-    t
-}
-
-fn find_ascii_case_insensitive(haystack: &str, needle: &str) -> Option<usize> {
-    let hn = needle.len();
-    if hn == 0 || haystack.len() < hn {
-        return None;
-    }
-    let nb = needle.as_bytes();
-    haystack
-        .as_bytes()
-        .windows(hn)
-        .position(|w| w.eq_ignore_ascii_case(nb))
 }
 
 fn message_text(inner: &Value) -> Option<String> {

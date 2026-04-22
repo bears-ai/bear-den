@@ -140,27 +140,42 @@
     }
 
     /**
-     * Strip model-injected `<system-reminder>…</system-reminder>` blocks from visible text.
-     * Use full variant for **complete** messages (e.g. history), where an unclosed tag at EOF is impossible.
+     * Subagent / fork instructions sometimes appear as plain text (not only in system-reminder XML).
+     * Must match [strip_letta_harness_for_user] in `core/letta/assistant_display.rs` (used for /v1/chat/history).
+     */
+    function stripSubagentForkBoilerplate(text) {
+      if (DEN_CHAT_DEBUG_VERBOSE || typeof text !== 'string') return text;
+      return text.replace(
+        /(?:\r?\n|^)\s*You have been forked from the primary conversational thread to run as an independent subagent\.[\s\S]*?provided\s+upfront\.?/gim,
+        ''
+      );
+    }
+
+    /**
+     * Strip model-injected `<system-reminder>…` / `<system_reminder>…` blocks and subagent fork
+     * boilerplate. Full variant: history + end-of-stream correction (complete messages).
      */
     function stripSystemReminderBlocks(text) {
       if (DEN_CHAT_DEBUG_VERBOSE || typeof text !== 'string') return text;
-      var s = text.replace(/<system-reminder\b[^>]*>[\s\S]*?<\/system-reminder>/gi, '');
-      var partial = /<system-reminder\b[^>]*$/i;
+      var s = text.replace(/<\s*system[-_]reminder\b[^>]*>[\s\S]*?<\s*\/\s*system[-_]reminder\s*>/gi, '');
+      var partial = /<\s*system[-_]reminder\b[^>]*$/i;
       var m = s.match(partial);
       if (m && m.index != null) s = s.slice(0, m.index);
+      s = stripSubagentForkBoilerplate(s);
       return s;
     }
 
     /**
      * Live stream only: remove **closed** reminder blocks. Do not strip at a partial
-     * `<system-reminder` at the end of the buffer — that would drop the whole tail of the
+     * `system[-_]reminder` at the end of the buffer — that would drop the whole tail of the
      * reply until more chunks arrive (or forever if the model never closed the tag), i.e. fake
-     * "truncation" in the chat UI with full text still in Letta.
+     * "truncation" in the chat UI with full text still in Letta. Fork blob is only removed when
+     * the full phrase is present in the buffer.
      */
     function stripSystemReminderBlocksLive(text) {
       if (DEN_CHAT_DEBUG_VERBOSE || typeof text !== 'string') return text;
-      return text.replace(/<system-reminder\b[^>]*>[\s\S]*?<\/system-reminder>/gi, '');
+      var s = text.replace(/<\s*system[-_]reminder\b[^>]*>[\s\S]*?<\s*\/\s*system[-_]reminder\s*>/gi, '');
+      return stripSubagentForkBoilerplate(s);
     }
 
     /** Multi-line error string for Deep Chat `connect` `{ error: string }` (readable + optional support ref). */
@@ -216,7 +231,7 @@
     function buildInterleavedSystemReminderHtml(raw) {
       var parts = [];
       var lastIndex = 0;
-      var re = /<system-reminder\b[^>]*>([\s\S]*?)<\/system-reminder>/gi;
+      var re = /<\s*system[-_]reminder\b[^>]*>([\s\S]*?)<\s*\/\s*system[-_]reminder\s*>/gi;
       var m;
       while ((m = re.exec(raw)) !== null) {
         if (m.index > lastIndex) {
@@ -237,7 +252,7 @@
         lastIndex = re.lastIndex;
       }
       var tail = raw.slice(lastIndex);
-      var partial = /<system-reminder\b[^>]*$/i;
+      var partial = /<\s*system[-_]reminder\b[^>]*$/i;
       var pm = tail.match(partial);
       if (pm) tail = tail.slice(0, pm.index);
       parts.push('<span class="den-assistant-plain">' + escapeHtmlWithBreaks(tail) + '</span>');

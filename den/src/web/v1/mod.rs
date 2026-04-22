@@ -18,7 +18,7 @@ use uuid::Uuid;
 use crate::{
     auth_backend::{AuthSession, Backend},
     core::bears::db::{self as bears_db, role_is_bear_admin},
-    core::letta::load_agent_conversations,
+    core::letta::{load_agent_conversations, strip_letta_harness_for_user},
     errors::CustomError,
     observability::chat_proxy_stream::ChatSseProxyStream,
     web::AppState,
@@ -389,9 +389,12 @@ fn map_letta_history_page(body: &serde_json::Value, page_limit: u32) -> (Vec<Cha
             "assistant_message" => "ai",
             _ => continue,
         };
-        let Some(text) = letta_message_text(inner).or_else(|| letta_message_text(msg)) else {
+        let Some(mut text) = letta_message_text(inner).or_else(|| letta_message_text(msg)) else {
             continue;
         };
+        if mt == "assistant_message" {
+            text = strip_letta_harness_for_user(&text);
+        }
         let (d, s) = letta_message_sort_key(msg);
         rows.push(Row {
             sort: (d, s, raw_idx),
@@ -733,6 +736,24 @@ mod chat_history_map_tests {
         assert_eq!(nb.as_deref(), Some("older"));
         assert_eq!(msgs[0].text, "first");
         assert_eq!(msgs[1].text, "second");
+    }
+
+    #[test]
+    fn assistant_strips_harness_subagent_and_reminder() {
+        let body = serde_json::json!([{
+            "id": "a1",
+            "date": "2025-01-01T00:00:00Z",
+            "message_type": "assistant_message",
+            "content": concat!(
+                "If you want, I can help.\n",
+                "<system-reminder>\n",
+                "You have been forked from the primary conversational thread to run as an independent subagent.\n",
+                "You CANNOT ask questions mid-execution - all instructions are provided upfront.\n",
+                "</system-reminder>"
+            )
+        }]);
+        let (msgs, _, _) = map_letta_history_page(&body, 10);
+        assert_eq!(msgs[0].text, "If you want, I can help.");
     }
 }
 

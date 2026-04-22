@@ -4,12 +4,14 @@ mod agent_diagnostics;
 mod agent_document;
 mod agent_prefill;
 mod agent_summary;
+mod assistant_display;
 mod client;
 mod conversation_title;
 mod conversations_list;
 pub mod tool_policy;
 
 pub use agent_diagnostics::{LettaAgentDiagnostics, LettaBlockRow, LettaToolRow};
+pub use assistant_display::strip_letta_harness_for_user;
 pub use agent_document::unwrap_letta_agent_document;
 pub use agent_prefill::AgentBearPrefill;
 pub use agent_summary::AgentSummary;
