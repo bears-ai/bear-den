@@ -1,5 +1,9 @@
 import { resumeSession, type Session } from "@letta-ai/letta-code-sdk";
 import type { SDKMessage } from "@letta-ai/letta-code-sdk";
+import {
+  isLikelyLettaCodeMemfsCorruption,
+  removeLettaCodeAgentMemoryWorktree,
+} from "./memfsLocalRepair.js";
 import type {
   BearRuntimePlan,
   BearRuntimeProvisioner,
@@ -203,10 +207,38 @@ export class ConversationSessionPool {
         conversationId,
         opts.plan
       );
-      const session = this.getOrCreateSession(agentId, conversationId, ensure);
-      await session.send(userText);
-      for await (const msg of session.stream()) {
-        yield msg as SDKMessage;
+      for (let attempt = 0; attempt < 2; attempt++) {
+        try {
+          const session = this.getOrCreateSession(
+            agentId,
+            conversationId,
+            ensure
+          );
+          await session.send(userText);
+          for await (const msg of session.stream()) {
+            yield msg as SDKMessage;
+          }
+          return;
+        } catch (e) {
+          if (
+            attempt === 0 &&
+            isLikelyLettaCodeMemfsCorruption(e) &&
+            this.sessionMemfs
+          ) {
+            const ent = this.map.get(key);
+            if (ent) {
+              try {
+                ent.session.close();
+              } catch {
+                /* ignore */
+              }
+              this.map.delete(key);
+            }
+            removeLettaCodeAgentMemoryWorktree(agentId);
+            continue;
+          }
+          throw e;
+        }
       }
     } finally {
       unlock();
