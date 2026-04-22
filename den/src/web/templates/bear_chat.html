@@ -27,11 +27,13 @@
 <script>
     var BEAR_ID   = "{{ bear_id | e }}";
     var BEAR_NAME = "{{ bear_name | e }}";
-    /** Letta conversation id (`default` = agent main thread, or `conv-…`). */
-    var CONVERSATION_ID = (function () {
+    /** Letta conversation id from URL (`default` = agent main thread, or `conv-…`). Immutable after parse — used to sync `<select>` with history on load. */
+    var PREFERRED_CONVERSATION_ID = (function () {
       var p = new URLSearchParams(window.location.search).get('conversation_id');
       return p && p.trim() ? p.trim() : 'default';
     })();
+    /** Active thread; set to match `#den-conv` after `loadConversations()` and on change. */
+    var CONVERSATION_ID = PREFERRED_CONVERSATION_ID;
     /**
      * Show raw `<system-reminder>…</system-reminder>` in the chat only when
      * `?debug=true` or `?debug=verbose` (no UI toggle).
@@ -825,9 +827,20 @@
             o.textContent = 'Main chat';
             sel.appendChild(o);
           }
-          var firstId = list[0] && list[0].id ? list[0].id : 'default';
-          sel.value = firstId;
-          CONVERSATION_ID = sel.value;
+          var optionIds = [];
+          for (i = 0; i < sel.options.length; i++) {
+            optionIds.push(sel.options[i].value);
+          }
+          var firstId = list[0] && list[0].id ? list[0].id : (optionIds[0] || 'default');
+          var pick =
+            PREFERRED_CONVERSATION_ID && optionIds.indexOf(PREFERRED_CONVERSATION_ID) >= 0
+              ? PREFERRED_CONVERSATION_ID
+              : firstId;
+          if (optionIds.indexOf(pick) < 0) {
+            pick = optionIds[0] || 'default';
+          }
+          sel.value = pick;
+          CONVERSATION_ID = pick;
           sel.onchange = function () {
             CONVERSATION_ID = sel.value;
             remountDeepChat();
@@ -855,16 +868,23 @@
 
     function boot() {
       /**
-       * Configure chat UI as soon as the component is defined — do not wait for
-       * loadConversations(). Otherwise Deep Chat constructs its message stack with
-       * displayServiceErrorMessages false and service errors never show as text (silent thread).
+       * Run `loadConversations()` before `configureDenChat()` so `CONVERSATION_ID` and
+       * `#den-conv` match `?conversation_id=` and `loadHistory` uses the same id (avoids
+       * race where the select was forced to the first thread while history used the URL).
+       * `errorMessages` on `<deep-chat>` in markup + `configureDenChat` keep
+       * `displayServiceErrorMessages` true before the message stack is built.
        */
-      customElements.whenDefined('deep-chat').then(configureDenChat);
-
-      loadConversations().catch(function (err) {
-        showErr(String(err.message || err));
-        customElements.whenDefined('deep-chat').then(configureDenChat);
-      });
+      loadConversations()
+        .then(function () {
+          return customElements.whenDefined('deep-chat');
+        })
+        .catch(function (err) {
+          showErr(String(err.message || err));
+          return customElements.whenDefined('deep-chat');
+        })
+        .then(function () {
+          configureDenChat();
+        });
     }
 
     boot();

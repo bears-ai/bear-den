@@ -1,4 +1,4 @@
-# 🐻 BEARS — Basic Environment for Agents Runtime Server
+# 🐻 BEARS — Basic Environment for Agent Runtimes Stack
 
 **BEARS** is the stack name. Each product assistant is a **bear** (one [Letta](https://github.com/letta-ai/letta) agent). **Den** (Rust, in `den/`) is the control plane: provisioning, **users↔bears** membership, first-party web chat (Deep Chat), and Cabinet when Outline is deployed.
 
