@@ -137,7 +137,10 @@
         .replace(/"/g, '&quot;');
     }
 
-    /** Strip model-injected `<system-reminder>…</system-reminder>` blocks from visible text. */
+    /**
+     * Strip model-injected `<system-reminder>…</system-reminder>` blocks from visible text.
+     * Use full variant for **complete** messages (e.g. history), where an unclosed tag at EOF is impossible.
+     */
     function stripSystemReminderBlocks(text) {
       if (DEN_CHAT_DEBUG_VERBOSE || typeof text !== 'string') return text;
       var s = text.replace(/<system-reminder\b[^>]*>[\s\S]*?<\/system-reminder>/gi, '');
@@ -145,6 +148,17 @@
       var m = s.match(partial);
       if (m && m.index != null) s = s.slice(0, m.index);
       return s;
+    }
+
+    /**
+     * Live stream only: remove **closed** reminder blocks. Do not strip at a partial
+     * `<system-reminder` at the end of the buffer — that would drop the whole tail of the
+     * reply until more chunks arrive (or forever if the model never closed the tag), i.e. fake
+     * "truncation" in the chat UI with full text still in Letta.
+     */
+    function stripSystemReminderBlocksLive(text) {
+      if (DEN_CHAT_DEBUG_VERBOSE || typeof text !== 'string') return text;
+      return text.replace(/<system-reminder\b[^>]*>[\s\S]*?<\/system-reminder>/gi, '');
     }
 
     /** Multi-line error string for Deep Chat `connect` `{ error: string }` (readable + optional support ref). */
@@ -608,8 +622,6 @@
         var reasoningFull = '';
         var hadReasoning = false;
         var assistantBuf = '';
-        var assistantLastId = null;
-        var NO_ID = '___den_letta_assistant_no_id___';
         var sawAssistantOrReasoning = false;
         var sawStreamError = false;
         var sseParseWarned = false;
@@ -666,29 +678,26 @@
           if (inner.message_type === 'assistant_message') {
             sawAssistantOrReasoning = true;
             var chunk = assistantChunkText(inner);
-            var aid =
-              inner.id != null && String(inner.id) !== '' ? String(inner.id) : null;
-            var sameAssistant =
-              aid != null
-                ? aid === assistantLastId
-                : assistantLastId === NO_ID;
-            if (!sameAssistant) {
-              assistantLastId = aid != null ? aid : NO_ID;
-              assistantBuf = chunk;
-            } else {
-              assistantBuf += chunk;
-            }
+            /**
+             * Accumulate all assistant tokens for this HTTP response. Codepool / Letta may
+             * change `id` between stream_event chunks; resetting the buffer on id change dropped
+             * the start of the reply in the UI while Letta and history still had the full text.
+             */
+            var isFirstAssistantChunk = assistantBuf.length === 0;
+            assistantBuf += chunk;
             if (DEN_CHAT_DEBUG_VERBOSE && /<system-reminder/i.test(assistantBuf)) {
               signals.onResponse({
                 text: assistantBuf,
                 role: 'ai',
-                overwrite: hadReasoning || sameAssistant,
+                overwrite: !isFirstAssistantChunk || hadReasoning,
               });
             } else {
               signals.onResponse({
-                text: DEN_CHAT_DEBUG_VERBOSE ? assistantBuf : stripSystemReminderBlocks(assistantBuf),
+                text: DEN_CHAT_DEBUG_VERBOSE
+                  ? assistantBuf
+                  : stripSystemReminderBlocksLive(assistantBuf),
                 role: 'ai',
-                overwrite: hadReasoning || sameAssistant,
+                overwrite: !isFirstAssistantChunk || hadReasoning,
               });
             }
             if (hadReasoning) hadReasoning = false;
@@ -712,6 +721,22 @@
               if (lineBuf.length > 0) {
                 consumeSseDataLine(lineBuf);
                 lineBuf = '';
+              }
+              /* After all chunks, apply full reminder strip (incl. partial unclosed tag at EOF). */
+              if (
+                sawAssistantOrReasoning &&
+                assistantBuf.length > 0 &&
+                !DEN_CHAT_DEBUG_VERBOSE
+              ) {
+                var finalClean = stripSystemReminderBlocks(assistantBuf);
+                var liveClean = stripSystemReminderBlocksLive(assistantBuf);
+                if (finalClean !== liveClean) {
+                  signals.onResponse({
+                    text: finalClean,
+                    role: 'ai',
+                    overwrite: true,
+                  });
+                }
               }
               if (
                 !sawAssistantOrReasoning &&
