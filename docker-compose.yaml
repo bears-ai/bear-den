@@ -4,7 +4,8 @@
 # Base Directory: `.` (repo root), Compose file: `docker-compose.yaml`.
 #
 # Service DNS names (use these in env defaults and cross-service URLs):
-#   bear-postgres (optional, profile `bundled`), bear-bifrost, bear-letta, bear-codepool, bear-den
+#   bear-postgres (optional, profile `bundled`), bear-bifrost, bear-redis, bear-memfs,
+#   bear-letta, bear-codepool, bear-den
 #
 # PostgreSQL: set **`DATABASE_URL`** for `bear-den` (managed DB — preferred in Coolify). Optional
 # bundled Postgres uses **fixed** credentials in this file (no `POSTGRES_*` env interpolation) so
@@ -96,11 +97,55 @@ services:
       retries: 5
       start_period: 120s
 
+  # Redis: required by Letta for memory-repo git locking (used with git-backed memfs).
+  bear-redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    depends_on:
+      bear-preflight:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+
+  # Serves the same on-disk layout as Letta’s LocalStorageBackend: ~/.letta/memfs/repository/...
+  # (shares `bear-letta-data`). The Letta API proxies /v1/git/* here; a bare URL (not `local`) is required.
+  bear-memfs:
+    build:
+      context: ./services/memfs-sidecar
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      bear-preflight:
+        condition: service_completed_successfully
+    environment:
+      PORT: "8285"
+      MEMFS_BASE: /root/.letta/memfs/repository
+    volumes:
+      - bear-letta-data:/root/.letta
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8285/health').read()\"",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
   bear-letta:
     image: letta/letta:latest
     restart: unless-stopped
     depends_on:
       bear-bifrost:
+        condition: service_healthy
+      bear-redis:
+        condition: service_healthy
+      bear-memfs:
         condition: service_healthy
     environment:
       LLM_API_URL: ${LLM_API_URL:-http://bear-bifrost:8080/v1}
@@ -108,8 +153,10 @@ services:
       LETTA_SERVER_PORT: "8283"
       LETTA_SERVER_HOST: "0.0.0.0"
       LETTA_SERVER_PASS: ${LETTA_SERVER_PASS:?set LETTA_SERVER_PASS}
-      # Canonical git-backed (memfs) store on this server; Letta Code clients use LETTA_MEMFS_LOCAL=1.
-      LETTA_MEMFS_SERVICE_URL: ${LETTA_MEMFS_SERVICE_URL:-local}
+      # httpx to bear-memfs:8285; must be a real URL (not `local`). See services/memfs-sidecar/.
+      LETTA_MEMFS_SERVICE_URL: ${LETTA_MEMFS_SERVICE_URL:-http://bear-memfs:8285}
+      LETTA_REDIS_HOST: ${LETTA_REDIS_HOST:-bear-redis}
+      LETTA_REDIS_PORT: ${LETTA_REDIS_PORT:-6379}
       # Required when using an external Postgres (recommended in Coolify DB resource mode).
       # Use postgresql:// (not postgres://) so Alembic can load the SQLAlchemy driver.
       LETTA_PG_URI: ${LETTA_PG_URI:-}
@@ -143,7 +190,7 @@ services:
       LETTA_BASE_URL: ${LETTA_BASE_URL:-http://bear-letta:8283}
       # Same credential Letta uses as `LETTA_SERVER_PASS` (Bearer for Letta HTTP API).
       LETTA_API_KEY: ${LETTA_SERVER_PASS}
-      # Letta Code: allow memfs sync against self-hosted Letta (`LETTA_MEMFS_SERVICE_URL=local` on server).
+      # Letta Code: use local mirror under ~/.letta; server uses LETTA_MEMFS_SERVICE_URL (bear-memfs) for git HTTP.
       LETTA_MEMFS_LOCAL: ${LETTA_MEMFS_LOCAL:-1}
       CODEPOOL_INTERNAL_TOKEN: ${CODEPOOL_INTERNAL_TOKEN:-}
       POOL_TTL_SECS: ${POOL_TTL_SECS:-600}

@@ -2,7 +2,7 @@
 
 **BEARS harness runtime** (Letta Code SDK): warm **conversation** session pool, streaming endpoints for **Den**, optional **channel listener** hooks (see `src/channel-listeners.ts`), **`GET /internal/pool`** stats, and **`GET /metrics`** (Prometheus text, in-process counters).
 
-- **Not** the Letta server — canonical git memfs lives on Letta when **`LETTA_MEMFS_SERVICE_URL=local`**; this process uses **`LETTA_MEMFS_LOCAL=1`** and **`~/.letta`** in the container for the Letta Code CLI mirror.
+- **Not** the Letta server — canonical git memfs is on the Letta volume, with Letta’s **`LETTA_MEMFS_SERVICE_URL`** pointing at **`bear-memfs`**; this process uses **`LETTA_MEMFS_LOCAL=1`** and **`~/.letta`** in the container for the Letta Code CLI mirror.
 - **Not** under `services/` — first-class app at the repo root (alongside **`den/`**).
 
 **Coolify / production:** Prefer the monorepo root [`docker-compose.yaml`](../docker-compose.yaml) (`bear-codepool` + `bear-letta` + `bear-den` on one network; optional **`bear-postgres`** via profile **`bundled`**). See [COOLIFY_DEPLOY.md](./COOLIFY_DEPLOY.md).

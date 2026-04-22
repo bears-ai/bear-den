@@ -40,7 +40,7 @@ A GitHub Actions workflow ([`.github/workflows/codepool-image.yml`](../.github/w
 
 1. **Add Resource** → **Docker Compose** → this repository.
 2. **Base Directory:** `.` (repo root) and **[`docker-compose.yaml`](../docker-compose.yaml)** — recommended — **or** base directory **`codepool`** with [`docker-compose.yaml`](docker-compose.yaml) (both use the **`CODEPOOL_IMAGE`** pull by default).
-3. Set **`LETTA_BASE_URL`**, **`LETTA_API_KEY`** (same as Letta admin password), **`LETTA_MEMFS_LOCAL=1`** (default in root compose; pairs with **`LETTA_MEMFS_SERVICE_URL=local`** on **Letta**), optional **`CODEPOOL_INTERNAL_TOKEN`**.
+3. Set **`LETTA_BASE_URL`**, **`LETTA_API_KEY`** (same as Letta admin password), **`LETTA_MEMFS_LOCAL=1`** (default; pairs with **`LETTA_MEMFS_SERVICE_URL`** → **`http://bear-memfs:8285`** on **Letta** in root compose), optional **`CODEPOOL_INTERNAL_TOKEN`**.
 4. If you did **not** use the root compose file, attach the **same Docker network** as Den and Letta so **`bear-codepool`** resolves.
 
 ## Health
@@ -50,7 +50,7 @@ A GitHub Actions workflow ([`.github/workflows/codepool-image.yml`](../.github/w
 
 ## Volumes and memory model
 
-**Git-backed memory (upstream):** The **canonical** memfs/git state lives on the **Letta server** volume (**`bear-letta-data`** → `/root/.letta`) when **`LETTA_MEMFS_SERVICE_URL=local`** — see [Letta Coolify deploy](../services/letta/COOLIFY_DEPLOY.md) and [DEPLOYMENT.md](../docs/deployment/DEPLOYMENT.md). Back up that volume (and Letta Postgres).
+**Git-backed memory (upstream):** The **canonical** memfs/git state is on the **Letta** volume **`bear-letta-data`** (under `/root/.letta/memfs/repository/…`); **Letta** and **`bear-memfs`** share that volume, and **Letta**’s **`LETTA_MEMFS_SERVICE_URL`** points at the sidecar. See [Letta Coolify deploy](../services/letta/COOLIFY_DEPLOY.md) and [DEPLOYMENT.md](../docs/deployment/DEPLOYMENT.md). Back up that volume (and Letta Postgres).
 
 **This service:** Mount **`bear-codepool-letta-home` → `/home/node/.letta`** for the Letta Code **CLI** (client-side cache / mirror under your image `USER` **`node`**). It is **not** the primary durability surface.
 
