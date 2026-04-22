@@ -109,7 +109,7 @@ curl http://bear-letta:8283/v1/agents
 | `LETTA_SERVER_PASS` | ✅ Yes | - | Admin password for Letta |
 | `LETTA_PG_URI` | Recommended | - | External Postgres URI — use **`postgresql://`** (not `postgres://`). The short form can break Alembic with `NoSuchModuleError: ... postgres.pg8000`. |
 | `OPENAI_API_KEY` | ✅ Yes | - | For embeddings and direct OpenAI calls; chat completions use `LLM_API_URL` |
-| `LETTA_MEMFS_SERVICE_URL` | No | `http://bear-memfs:8285` (root [`docker-compose.yaml`](../../docker-compose.yaml)) | Letta proxies `/v1/git/*` to this **http(s)** base; the literal string **`local` is invalid** (httpx). Default stack uses **`bear-memfs`** + shared **`bear-letta-data`**. Pair with **`LETTA_MEMFS_LOCAL=1`** on **codepool**. |
+| `LETTA_MEMFS_SERVICE_URL` | No | Hardcoded `http://bear-memfs:8285` in root [`docker-compose.yaml`](../../docker-compose.yaml) (no env interpolation) | Letta proxies `/v1/git/*` to **`bear-memfs`**, which shares **`bear-letta-data`**. Pair with **`LETTA_MEMFS_LOCAL=1`** on **codepool**. To use a different base URL, add a Compose **override** file (or fork the compose line) — do not rely on a broken `http://` string. |
 | `LETTA_SERVER_HOST` | No | `0.0.0.0` | Bind address |
 | `LOG_LEVEL` | No | `INFO` | Logging verbosity |
 

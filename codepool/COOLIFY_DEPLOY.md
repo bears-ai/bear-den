@@ -40,7 +40,7 @@ A GitHub Actions workflow ([`.github/workflows/codepool-image.yml`](../.github/w
 
 1. **Add Resource** → **Docker Compose** → this repository.
 2. **Base Directory:** `.` (repo root) and **[`docker-compose.yaml`](../docker-compose.yaml)** — recommended — **or** base directory **`codepool`** with [`docker-compose.yaml`](docker-compose.yaml) (both use the **`CODEPOOL_IMAGE`** pull by default).
-3. Set **`LETTA_BASE_URL`**, **`LETTA_API_KEY`** (same as Letta admin password), **`LETTA_MEMFS_LOCAL=1`** (default; pairs with **`LETTA_MEMFS_SERVICE_URL`** → **`http://bear-memfs:8285`** on **Letta** in root compose), optional **`CODEPOOL_INTERNAL_TOKEN`**.
+3. Set **`LETTA_BASE_URL`**, **`LETTA_API_KEY`** (same as Letta admin password), **`LETTA_MEMFS_LOCAL=1`** (default; **Letta** in root compose uses **`bear-memfs`** for git HTTP), optional **`CODEPOOL_INTERNAL_TOKEN`**.
 4. If you did **not** use the root compose file, attach the **same Docker network** as Den and Letta so **`bear-codepool`** resolves.
 
 ## Health

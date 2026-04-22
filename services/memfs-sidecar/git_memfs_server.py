@@ -1,12 +1,11 @@
 #!/usr/bin/env python3
 """
 Git smart-HTTP sidecar for self-hosted Letta. Letta proxies /v1/git/* to
-LETTa_MEMFS_SERVICE_URL (e.g. http://bear-memfs:8285); this process implements
+LETTA_MEMFS_SERVICE_URL (e.g. http://bear-memfs:8285); this process implements
 the /git/.../state.git path expected by the Letta server.
 
-The literal value "local" is not a valid URL. Upstream builds
-f"{LETTA_MEMFS_SERVICE_URL}/git/{path}" (httpx), so the base must be a reachable
-http(s) URL. Mount the same path as Letta’s LocalStorageBackend: under
+Upstream builds f"{LETTA_MEMFS_SERVICE_URL}/git/{path}" (httpx), so the base must be
+a full http(s) URL. Mount the same path as Letta’s LocalStorageBackend: under
 `~/.letta/memfs/repository/` (see MEMFS_BASE), sharing the `bear-letta` data volume.
 """
 from __future__ import annotations
