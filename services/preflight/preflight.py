@@ -84,6 +84,10 @@ def main() -> None:
     validate_http_url("LETTA_BASE_URL", letta_base)
     info(f"LETTA_BASE_URL OK ({letta_base})")
 
+    memfs = os.environ.get("LETTA_MEMFS_SERVICE_URL", "").strip() or "http://bear-memfs:8285"
+    validate_http_url("LETTA_MEMFS_SERVICE_URL", memfs)
+    info(f"LETTA_MEMFS_SERVICE_URL OK ({memfs})")
+
     codepool_base = os.environ.get("CODEPOOL_BASE_URL", "").strip() or "http://bear-codepool:3030"
     validate_http_url("CODEPOOL_BASE_URL", codepool_base)
     info(f"CODEPOOL_BASE_URL OK ({codepool_base})")

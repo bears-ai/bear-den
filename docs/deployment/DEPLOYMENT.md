@@ -12,7 +12,7 @@ The repository root **[`docker-compose.yaml`](../../docker-compose.yaml)** defin
 | **`bear-bifrost`** | Model gateway (`8080`) |
 | **`bear-redis`** | Redis for Letta memory-repo **git locking** (required with git-backed memfs). |
 | **`bear-memfs`** | Git **smart-HTTP** sidecar (`8285`); shares **`bear-letta-data`** at `/root/.letta` so repos match Letta’s `LocalStorageBackend` layout. |
-| **`bear-letta`** | Letta API (`8283`); **`LETTA_MEMFS_SERVICE_URL`** is **`http://bear-memfs:8285`** in root compose (hardcoded). Canonical memfs files under `/root/.letta/memfs/repository/…` on **`bear-letta-data`**. |
+| **`bear-letta`** | Letta API (`8283`); **`LETTA_MEMFS_SERVICE_URL`** defaults to **`http://bear-memfs:8285`** in root compose (same env pattern as other internal service URLs). Canonical memfs files under `/root/.letta/memfs/repository/…` on **`bear-letta-data`**. |
 | **`bear-codepool`** | Letta Code SDK harness (`3030`); **`LETTA_MEMFS_LOCAL=1`** so the CLI syncs with self-hosted memfs. |
 | **`bear-den`** | Den control plane + web UI (`3000`) |
 | **`bear-letta-data-backup`** | Optional profile **`volume-backup`**: [`offen/docker-volume-backup`](https://offen.github.io/docker-volume-backup) archives **`bear-letta-data`** to S3-compatible storage (e.g. Scaleway). Enable with `COMPOSE_PROFILES=volume-backup` (can combine: `bundled,volume-backup`). |
@@ -98,7 +98,7 @@ See [`../../services/letta/COOLIFY_DEPLOY.md`](../../services/letta/COOLIFY_DEPL
 
 - `LLM_API_URL=http://bear-bifrost:8080/v1`  
 - `LETTA_SERVER_PASS`, `OPENAI_API_KEY` (embeddings; chat completions go through Bifrost)  
-- **`LETTA_MEMFS_SERVICE_URL`** — set to **`http://bear-memfs:8285`** in root [`docker-compose.yaml`](../../docker-compose.yaml) (hardcoded on **`bear-letta`**). **Redis** (`bear-redis`) is required for git locks. Data stays on **`bear-letta-data`** (shared with **`bear-memfs`**).  
+- **`LETTA_MEMFS_SERVICE_URL`** — default **`http://bear-memfs:8285`** in root [`docker-compose.yaml`](../../docker-compose.yaml) (overridable like `LETTA_BASE_URL`, `LLM_API_URL`, …). **Redis** (`bear-redis`) is required for git locks. Data stays on **`bear-letta-data`** (shared with **`bear-memfs`**).  
 - Volume: **`bear-letta-data`** → `/root/.letta` — **back up** (managed Letta Postgres + this volume; optional S3 archive via profile **`volume-backup`**).  
 - Health: `GET http://bear-letta:8283/v1/health`
 

@@ -38,6 +38,7 @@ services:
       CODEPOOL_BASE_URL: ${CODEPOOL_BASE_URL:-http://bear-codepool:3030}
       WEB_SERVER_URL: ${WEB_SERVER_URL:-http://localhost:3000}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      LETTA_MEMFS_SERVICE_URL: ${LETTA_MEMFS_SERVICE_URL:-http://bear-memfs:8285}
 
   bear-postgres:
     profiles:
@@ -153,8 +154,7 @@ services:
       LETTA_SERVER_PORT: "8283"
       LETTA_SERVER_HOST: "0.0.0.0"
       LETTA_SERVER_PASS: ${LETTA_SERVER_PASS:?set LETTA_SERVER_PASS}
-      # No ${LETTA_MEMFS_SERVICE_URL} — hardcode avoids host env / UI overrides and bad legacy values.
-      LETTA_MEMFS_SERVICE_URL: http://bear-memfs:8285
+      LETTA_MEMFS_SERVICE_URL: ${LETTA_MEMFS_SERVICE_URL:-http://bear-memfs:8285}
       LETTA_REDIS_HOST: ${LETTA_REDIS_HOST:-bear-redis}
       LETTA_REDIS_PORT: ${LETTA_REDIS_PORT:-6379}
       # Required when using an external Postgres (recommended in Coolify DB resource mode).

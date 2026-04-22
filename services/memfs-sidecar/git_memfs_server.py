@@ -11,7 +11,9 @@ a full http(s) URL. Mount the same path as Letta’s LocalStorageBackend: under
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
+import tempfile
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from urllib.parse import urlparse
@@ -23,26 +25,112 @@ DEFAULT_ORG = os.environ.get("MEMFS_DEFAULT_ORG", "org-default")
 BIND = os.environ.get("BIND", "0.0.0.0")
 
 
-def find_or_create_repo(agent_id: str, org_id: str) -> Path:
-    repo = MEMFS_BASE / org_id / agent_id / "repo.git"
+def _commit_count_in_repo(repo: Path) -> int | None:
+    r = subprocess.run(
+        ["git", "-C", str(repo), "rev-list", "--all", "--count"],
+        capture_output=True,
+        text=True,
+    )
+    if r.returncode != 0:
+        return None
+    try:
+        return int((r.stdout or "0").strip() or 0)
+    except ValueError:
+        return None
+
+
+def _is_usable_bare_repo(repo: Path) -> bool:
+    if not repo.is_dir():
+        return False
+    c = _commit_count_in_repo(repo)
+    return c is not None and c > 0
+
+
+def _remove_bare_if_empty_or_broken(repo: Path) -> None:
     if not repo.exists():
-        if MEMFS_BASE.exists():
-            for org_dir in MEMFS_BASE.iterdir():
-                if not org_dir.is_dir():
-                    continue
-                candidate = org_dir / agent_id / "repo.git"
-                if candidate.exists():
-                    return candidate
-        repo.parent.mkdir(parents=True, exist_ok=True)
-        subprocess.run(
-            ["git", "init", "--bare", str(repo)], check=True, capture_output=True
+        return
+    c = _commit_count_in_repo(repo)
+    if c is None or c == 0:
+        print(
+            f"[git-memfs] removing empty or invalid bare repo {repo} (commit_count={c})",
+            flush=True,
         )
+        shutil.rmtree(repo, ignore_errors=True)
+
+
+def _create_bare_with_letta_initial_commit(repo: Path) -> None:
+    """Match letta `GitOperations.create_repo`: at least one commit on `main` (clone/checkout safe)."""
+    if repo.exists():
+        shutil.rmtree(repo, ignore_errors=True)
+    repo.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory() as tmp:
+        work = Path(tmp) / "w"
+        work.mkdir()
         subprocess.run(
-            ["git", "-C", str(repo), "config", "http.receivepack", "true"],
+            ["git", "init", "-b", "main"],
+            cwd=work,
             check=True,
             capture_output=True,
         )
-        print(f"[git-memfs] created bare repo {repo}", flush=True)
+        letta_dir = work / ".letta"
+        letta_dir.mkdir()
+        (letta_dir / "config.json").write_text('{"version": 1}', encoding="utf-8")
+        subprocess.run(
+            ["git", "add", ".letta/config.json"],
+            cwd=work,
+            check=True,
+            capture_output=True,
+        )
+        subprocess.run(
+            ["git", "-C", str(work), "config", "user.name", "Letta System"],
+            check=True,
+            capture_output=True,
+        )
+        subprocess.run(
+            ["git", "-C", str(work), "config", "user.email", "system@letta.ai"],
+            check=True,
+            capture_output=True,
+        )
+        subprocess.run(
+            ["git", "commit", "-m", "Initial commit"],
+            cwd=work,
+            check=True,
+            capture_output=True,
+        )
+        subprocess.run(
+            ["git", "clone", "--bare", str(work), str(repo)],
+            check=True,
+            capture_output=True,
+        )
+    subprocess.run(
+        ["git", "-C", str(repo), "config", "http.receivepack", "true"],
+        check=True,
+        capture_output=True,
+    )
+
+
+def find_or_create_repo(agent_id: str, org_id: str) -> Path:
+    """Resolve bare repo; align with local storage and Letta’s on-disk layout."""
+    repo = MEMFS_BASE / org_id / agent_id / "repo.git"
+    _remove_bare_if_empty_or_broken(repo)
+    if _is_usable_bare_repo(repo):
+        return repo
+    if MEMFS_BASE.exists():
+        for org_dir in sorted(MEMFS_BASE.iterdir()):
+            if not org_dir.is_dir():
+                continue
+            candidate = org_dir / agent_id / "repo.git"
+            if not candidate.exists():
+                continue
+            if _is_usable_bare_repo(candidate):
+                return candidate
+            _remove_bare_if_empty_or_broken(candidate)
+    if not repo.parent.exists():
+        repo.parent.mkdir(parents=True, exist_ok=True)
+    elif not repo.parent.is_dir():
+        raise OSError(f"not a directory: {repo.parent}")
+    _create_bare_with_letta_initial_commit(repo)
+    print(f"[git-memfs] created seeded bare repo {repo}", flush=True)
     return repo
 
 
@@ -141,11 +229,15 @@ class GitHTTPHandler(BaseHTTPRequestHandler):
             if ":" in line:
                 k, _, v = line.partition(":")
                 k, v = k.strip(), v.strip()
-                if k.lower() == "status":
+                lk = k.lower()
+                if lk == "status":
                     try:
                         status = int(v.split()[0])
                     except (ValueError, IndexError):
                         pass
+                elif lk == "content-length":
+                    # We set Content-Length once below from body_out; do not forward CGI duplicate.
+                    pass
                 else:
                     headers.append((k, v))
 
