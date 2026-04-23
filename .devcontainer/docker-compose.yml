@@ -1,10 +1,5 @@
 volumes:
-  postgres-data:
-    driver: local
-    driver_opts:
-      type: none
-      o: bind # Bind mount into the workspace so capacity matches host disk
-      device: ../.postgres-data
+  postgres-data: {}
 
 services:
   app:
@@ -20,10 +15,19 @@ services:
     env_file:
       - path: .env
         required: false
+    environment:
+      DATABASE_URL: ${DATABASE_URL:-postgres://postgres:postgres@db:5432/postgres}
+      PGHOST: ${PGHOST:-db}
+      PGPORT: ${PGPORT:-5432}
+      PGUSER: ${PGUSER:-postgres}
+      PGPASSWORD: ${PGPASSWORD:-postgres}
+      PGDATABASE: ${PGDATABASE:-postgres}
     volumes:
       - ..:/workspaces:cached
     command: sleep infinity
-    network_mode: service:db
+    depends_on:
+      db:
+        condition: service_healthy
 
   db:
     image: pgautoupgrade/pgautoupgrade:16-alpine
@@ -33,3 +37,14 @@ services:
     env_file:
       - path: .env
         required: false
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-postgres}
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - pg_isready -U $${POSTGRES_USER:-postgres} -d $${POSTGRES_DB:-postgres}
+      interval: 5s
+      timeout: 5s
+      retries: 20

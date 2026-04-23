@@ -4,8 +4,9 @@ Memory Manager: git smart-HTTP for self-hosted Letta. Letta proxies /v1/git/* to
 LETTA_MEMFS_SERVICE_URL (e.g. http://bear-mem-manager:8285); this process implements
 the /git/.../state.git path expected by the Letta server.
 
-Also exposes GET /v1/management/agents/{agent_id}/head (JSON) for operator UIs (read-only;
-does not create repositories).
+Also exposes management endpoints for operator UIs (read-only; does not create repositories):
+- GET /v1/management/agents/{agent_id}/head
+- GET /v1/management/agents/{agent_id}/files
 
 Upstream builds f"{LETTA_MEMFS_SERVICE_URL}/git/{path}" (httpx), so the base must be
 a full http(s) URL. Mount the same path as Letta’s LocalStorageBackend: under
@@ -168,6 +169,98 @@ def git_head_info(repo: Path) -> dict:
     }
 
 
+def _git_last_commit_for_path(repo: Path, rel_path: str) -> tuple[str | None, str | None]:
+    r = subprocess.run(
+        [
+            "git",
+            "-C",
+            str(repo),
+            "log",
+            "-1",
+            "--format=%cI\x1f%s",
+            "HEAD",
+            "--",
+            rel_path,
+        ],
+        capture_output=True,
+        text=True,
+    )
+    if r.returncode != 0:
+        return None, None
+    out = (r.stdout or "").rstrip("\n")
+    if not out or "\x1f" not in out:
+        return None, None
+    date, message = out.split("\x1f", 1)
+    return (date or None), (message or None)
+
+
+def _sort_tree_nodes(nodes: list[dict]) -> None:
+    nodes.sort(
+        key=lambda n: (
+            0 if n.get("type") == "directory" else 1,
+            str(n.get("name", "")).lower(),
+        )
+    )
+    for n in nodes:
+        children = n.get("children")
+        if isinstance(children, list) and children:
+            _sort_tree_nodes(children)
+
+
+def git_repository_file_tree(repo: Path) -> list[dict]:
+    r = subprocess.run(
+        ["git", "-C", str(repo), "ls-tree", "-r", "--name-only", "HEAD"],
+        capture_output=True,
+        text=True,
+    )
+    if r.returncode != 0:
+        msg = (r.stderr or r.stdout or "").strip()
+        raise RuntimeError(f"git ls-tree: {msg}")
+
+    files = sorted({line.strip() for line in (r.stdout or "").splitlines() if line.strip()})
+    if not files:
+        return []
+
+    dir_paths: set[str] = set()
+    for f in files:
+        parts = [p for p in f.split("/") if p]
+        for i in range(1, len(parts)):
+            dir_paths.add("/".join(parts[:i]))
+
+    all_paths = set(files) | dir_paths
+    ordered_paths = sorted(all_paths, key=lambda p: (p.count("/"), p.lower()))
+
+    nodes: dict[str, dict] = {}
+    for path in ordered_paths:
+        is_dir = path in dir_paths
+        lookup_path = f"{path}/" if is_dir else path
+        last_date, last_message = _git_last_commit_for_path(repo, lookup_path)
+        nodes[path] = {
+            "name": path.rsplit("/", 1)[-1],
+            "path": path,
+            "type": "directory" if is_dir else "file",
+            "last_commit_date": last_date,
+            "last_commit_message": last_message,
+            "children": [],
+        }
+
+    roots: list[dict] = []
+    for path in ordered_paths:
+        node = nodes[path]
+        if "/" in path:
+            parent_path = path.rsplit("/", 1)[0]
+            parent = nodes.get(parent_path)
+            if parent is None:
+                roots.append(node)
+            else:
+                parent["children"].append(node)
+        else:
+            roots.append(node)
+
+    _sort_tree_nodes(roots)
+    return roots
+
+
 def find_or_create_repo(agent_id: str, org_id: str) -> Path:
     """Resolve bare repo; align with local storage and Letta’s on-disk layout."""
     repo = MEMFS_BASE / org_id / agent_id / "repo.git"
@@ -228,7 +321,7 @@ class GitHTTPHandler(BaseHTTPRequestHandler):
         return agent_id, git_op, parsed.query or ""
 
     def _try_management(self) -> bool:
-        """Handle GET /v1/management/agents/{id}/head. Return True if handled."""
+        """Handle GET /v1/management/agents/{id}/head|files. Return True if handled."""
         if self.command != "GET":
             return False
         parsed = urlparse(self.path)
@@ -238,24 +331,35 @@ class GitHTTPHandler(BaseHTTPRequestHandler):
             and parts[0] == "v1"
             and parts[1] == "management"
             and parts[2] == "agents"
-            and parts[4] == "head"
         ):
             return False
+
+        endpoint = parts[4]
+        if endpoint not in {"head", "files"}:
+            return False
+
         agent_id = parts[3]
         if not agent_id:
             return False
+
         org_id = self.headers.get("X-Organization-Id", DEFAULT_ORG) or DEFAULT_ORG
         repo = find_existing_repo_only(agent_id, org_id)
         if repo is None:
             self._send_json(404, {"error": "no_repository"})
             return True
+
         try:
-            info = git_head_info(repo)
+            if endpoint == "head":
+                info = git_head_info(repo)
+                self._send_json(200, info)
+                return True
+
+            files = git_repository_file_tree(repo)
+            self._send_json(200, {"files": files})
+            return True
         except (subprocess.CalledProcessError, OSError, RuntimeError) as e:
             self._send_json(500, {"error": str(e) or "git failed"})
             return True
-        self._send_json(200, info)
-        return True
 
     def _send_json(self, status: int, body: object) -> None:
         data = json.dumps(body).encode("utf-8")

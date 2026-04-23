@@ -1,7 +1,11 @@
 {
   "name": "bears",
+  "dockerComposeProjectName": "bears_zed",
   "dockerComposeFile": "docker-compose.yml",
   "service": "app",
+  "runServices": ["app", "db"],
   "workspaceFolder": "/workspaces",
+  "shutdownAction": "stopCompose",
   "forwardPorts": [3000, 3001, 5432],
+  "postCreateCommand": "rustc --version && cargo --version && sqlx --version && node --version && npm --version && rustfmt --version && cargo clippy --version"
 }

@@ -1,18 +1,22 @@
-# FROM mcr.microsoft.com/devcontainers/rust:1-1-bullseye
+# Root devcontainer image for BEARS:
+# - Den (Rust + SQLx + Postgres client)
+# - Codepool (Node.js 20 + npm)
+
 FROM rust:1.92-bookworm
 
-# Include lld linker to improve build times either by using environment variable
-# RUSTFLAGS="-C link-arg=-fuse-ld=lld" or with Cargo's configuration file (i.e see .cargo/config.toml).
-RUN apt-get update && export DEBIAN_FRONTEND=noninteractive \
-    && apt-get -y install clang lld \
-    && apt-get autoremove -y && apt-get clean -y
-
+# Base OS packages and Rust build tooling.
 RUN apt-get update \
-    && apt-get install -qq --no-install-recommends \
-    curl \
-    coreutils \
-    postgresql-client \
-    locales \
+    && export DEBIAN_FRONTEND=noninteractive \
+    && apt-get install -y --no-install-recommends \
+        ca-certificates \
+        curl \
+        gnupg \
+        dirmngr \
+        coreutils \
+        postgresql-client \
+        locales \
+        clang \
+        lld \
     && sed -i '/en_US.UTF-8/s/^# *//' /etc/locale.gen \
     && locale-gen \
     && rm -rf /var/lib/apt/lists/*
@@ -20,6 +24,24 @@ RUN apt-get update \
 ENV LANG=en_US.UTF-8
 ENV LC_ALL=en_US.UTF-8
 
+# Install Node.js 20 (for Codepool).
+RUN mkdir -p /etc/apt/keyrings \
+    && curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key \
+      | gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg \
+    && echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_20.x nodistro main" \
+      > /etc/apt/sources.list.d/nodesource.list \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends nodejs \
+    && node --version \
+    && npm --version \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install SQLx CLI (for Den migrations/dev workflows) and Rust components used in CI/dev checks.
 RUN --mount=type=cache,target=/usr/local/cargo/target/ \
-    cargo install --target-dir /usr/local/cargo/target sqlx-cli --no-default-features --features rustls,postgres && \
-    chmod -R a+w /usr/local/cargo/
+    cargo install \
+      --target-dir /usr/local/cargo/target \
+      sqlx-cli \
+      --no-default-features \
+      --features rustls,postgres \
+    && rustup component add rustfmt clippy \
+    && chmod -R a+w /usr/local/cargo/

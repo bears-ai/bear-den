@@ -145,6 +145,60 @@ body.bear_chat #chat-wrap {
     margin-bottom: var(--spacing-unit);
 }
 
+/* ---- Bear details private memory hierarchy ---- */
+#private-memory .den-bear-memory-summary {
+    margin: 0;
+    padding-left: 0;
+    list-style: none;
+}
+
+#private-memory .den-bear-memory-summary > li {
+    margin-bottom: calc(var(--spacing-unit) * 0.5);
+}
+
+#private-memory details {
+    margin: 0;
+}
+
+#private-memory summary {
+    cursor: pointer;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: calc(var(--spacing-unit) * 0.5);
+}
+
+#private-memory summary::-webkit-details-marker {
+    margin-right: calc(var(--spacing-unit) * 0.5);
+}
+
+#private-memory summary code,
+#private-memory .den-bear-memory-summary li > code {
+    font-family: var(--data-font-family);
+    font-size: smaller;
+    background: var(--field-fill-color);
+    border: solid var(--thin-line-unit) var(--border-color);
+    padding: calc(var(--spacing-unit) * 0.25) calc(var(--spacing-unit) * 0.5);
+    max-width: 100%;
+    word-break: break-word;
+}
+
+#private-memory .den-private-mem-children {
+    margin-top: calc(var(--spacing-unit) * 0.5);
+    padding-left: calc(var(--spacing-unit) * 1.5);
+    list-style: none;
+}
+
+#private-memory .den-private-mem-children > li {
+    margin-bottom: calc(var(--spacing-unit) * 0.5);
+}
+
+#private-memory .den-bear-memory-summary .caption {
+    color: var(--meta-color);
+    font-size: smaller;
+    word-break: break-word;
+}
+
 /* ---- BEARS /status page — body class page-bears-health ---- */
 body.page-bears-health .status-section-heading {
     margin-top: calc(var(--spacing-unit) * 2);

@@ -27,7 +27,7 @@ use crate::{
             Bear,
         },
         letta::{load_agent_conversations, AgentSummary, LettaAgentDiagnostics},
-        memory_manager_head::{fetch_memory_manager_head, PrivateMemoryHeadView},
+        memory_manager_head::fetch_memory_manager_repository_files,
         user,
         user::db as user_db,
     },
@@ -433,7 +433,7 @@ async fn render_bear_details_page(
 
     let memfs_url = state.config.letta_memfs_service_url.as_str();
     let (
-        mem_private_head,
+        mem_private_files,
         mem_private_error,
         mem_private_skipped,
         mem_private_no_repo,
@@ -441,9 +441,11 @@ async fn render_bear_details_page(
         if let Some(agent_id) =
             bear.letta_agent_id.as_deref().map(str::trim).filter(|s| !s.is_empty())
         {
-            match fetch_memory_manager_head(state.letta.http(), memfs_url, agent_id).await {
+            match fetch_memory_manager_repository_files(state.letta.http(), memfs_url, agent_id)
+                .await
+            {
                 Ok(None) => (None, None, false, true),
-                Ok(Some(h)) => (Some(PrivateMemoryHeadView::from(h)), None, false, false),
+                Ok(Some(files)) => (Some(files), None, false, false),
                 Err(e) => (None, Some(e.to_string()), false, false),
             }
         } else {
@@ -472,7 +474,7 @@ async fn render_bear_details_page(
             conversation_rows,
             has_archived_conversations,
             letta_resync_notice,
-            mem_private_head,
+            mem_private_files,
             mem_private_error,
             mem_private_skipped,
             mem_private_no_repo,
