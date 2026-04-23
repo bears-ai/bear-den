@@ -63,7 +63,7 @@ jobs:
             type=gha,scope=den-image
             type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:buildcache
           cache-to: |
-            type=gha,scope=den-image,mode=max
+            type=gha,scope=den-image,mode=max,ignore-error=true
             type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:buildcache,mode=max
 
       # Same webhook caveats as codepool-image.yml (404 = wrong/stale COOLIFY_WEBHOOK for this stack).
