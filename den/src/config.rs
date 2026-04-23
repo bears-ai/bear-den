@@ -102,6 +102,9 @@ pub struct Config {
     /// Optional `Authorization: Bearer` for Codepool (must match `CODEPOOL_INTERNAL_TOKEN` on the pool).
     pub codepool_internal_token: String,
 
+    /// **Memory Manager** (Letta `LETTA_MEMFS_SERVICE_URL` — git sidecar) base URL (no trailing slash), e.g. `http://bear-mem-manager:8285`. Empty = skip private-memory readout in Den.
+    pub letta_memfs_service_url: String,
+
     /// Letta’s Postgres URI when external DB is used (`LETTA_PG_URI`). Empty = not checked on Den.
     /// Shape rules match deploy docs and `services/preflight` (prefer `postgresql://`).
     pub letta_pg_uri: String,
@@ -284,6 +287,11 @@ impl Config {
         let codepool_internal_token =
             std::env::var("CODEPOOL_INTERNAL_TOKEN").unwrap_or_default();
 
+        let letta_memfs_service_url = std::env::var("LETTA_MEMFS_SERVICE_URL")
+            .unwrap_or_default()
+            .trim_end_matches('/')
+            .to_string();
+
         let letta_pg_uri = std::env::var("LETTA_PG_URI").unwrap_or_default();
         let letta_pg_uri = letta_pg_uri.trim().to_string();
 
@@ -377,6 +385,7 @@ impl Config {
             letta_api_key,
             codepool_base_url,
             codepool_internal_token,
+            letta_memfs_service_url,
             letta_pg_uri,
             bifrost_base_url,
             s3_endpoint,
@@ -441,6 +450,7 @@ impl Config {
             letta_api_key: String::new(),
             codepool_base_url: String::new(),
             codepool_internal_token: String::new(),
+            letta_memfs_service_url: String::new(),
             letta_pg_uri: String::new(),
             bifrost_base_url: String::new(),
             s3_endpoint: String::new(),

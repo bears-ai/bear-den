@@ -8,7 +8,7 @@ import type {
 
 /**
  * Self-hosted memfs: canonical git state is on the Letta data volume; Letta uses
- * `LETTA_MEMFS_SERVICE_URL` (e.g. `http://bear-memfs:8285`). Letta Code mirrors under
+ * `LETTA_MEMFS_SERVICE_URL` (e.g. `http://bear-mem-manager:8285`). Letta Code mirrors under
  * `$HOME/.letta` with `LETTA_MEMFS_LOCAL=1`. No per-bear directory provisioning in codepool.
  */
 export function createNoopMemoryProvisioner(): BearRuntimeProvisioner {

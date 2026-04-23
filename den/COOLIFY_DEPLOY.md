@@ -88,6 +88,7 @@ Integrations (set when you wire the rest of the stack):
 | `LETTA_API_KEY` | Bearer token when Letta is configured with `LETTA_SERVER_PASS` / API auth. |
 | `CODEPOOL_BASE_URL` | When `RUN_WEB=true`, must be non-empty. **Production** images default to **`http://bear-codepool:3030`** when unset. **Codepool** harness (repository root `codepool/`). |
 | `CODEPOOL_INTERNAL_TOKEN` | Optional shared secret; Den sends `Authorization: Bearer …` to Codepool (must match the pool service). |
+| `LETTA_MEMFS_SERVICE_URL` | Optional; same **Memory Manager** base URL as Letta (no trailing slash), e.g. **`http://bear-mem-manager:8285`**. When set, **bear details** shows **Private memory (git)** — latest commit on the agent’s context repo. **Production** images do not default this; root [`docker-compose.yaml`](../docker-compose.yaml) sets it for `bear-den` when you use the full stack. |
 
 Mail, OAuth, and other keys are documented in [`.env.example`](.env.example) and [`docs/deploy.md`](docs/deploy.md).
 

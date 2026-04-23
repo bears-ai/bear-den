@@ -84,7 +84,7 @@ def main() -> None:
     validate_http_url("LETTA_BASE_URL", letta_base)
     info(f"LETTA_BASE_URL OK ({letta_base})")
 
-    memfs = os.environ.get("LETTA_MEMFS_SERVICE_URL", "").strip() or "http://bear-memfs:8285"
+    memfs = os.environ.get("LETTA_MEMFS_SERVICE_URL", "").strip() or "http://bear-mem-manager:8285"
     validate_http_url("LETTA_MEMFS_SERVICE_URL", memfs)
     info(f"LETTA_MEMFS_SERVICE_URL OK ({memfs})")
 

@@ -124,5 +124,35 @@
             </ul>
         </div>
     </section>
+
+    <section>
+        <div id="private-memory" class="box full-width">
+            <h3>Private memory (git)</h3>
+            {% if mem_private_skipped %}
+            {% if not letta_configured %}
+            <p class="form-hint">Letta is not configured.</p>
+            {% elif not bear.letta_agent_id %}
+            <p class="form-hint">Link a Letta agent to see private git memory status.</p>
+            {% else %}
+            <p class="form-hint">Set <code>LETTA_MEMFS_SERVICE_URL</code> (Memory Manager) for Den to show the latest commit on this agent’s context repository.</p>
+            {% endif %}
+            {% elif mem_private_error %}
+            <p class="form-errors">Could not load git memory: {{ mem_private_error | e }}</p>
+            {% elif mem_private_no_repo %}
+            <p class="form-hint">No context repository on disk for this agent yet, or it has not been created.</p>
+            {% elif mem_private_head %}
+            <dl class="fields-grid">
+                <dt>Commit</dt>
+                <dd><code title="{{ mem_private_head.commit | e }}">{{ mem_private_head.commit_short | e }}</code></dd>
+                <dt>Ref</dt>
+                <dd><code>{{ mem_private_head.ref_name | e }}</code></dd>
+                <dt>Date</dt>
+                <dd>{{ mem_private_head.date | e }}</dd>
+                <dt>Message</dt>
+                <dd class="den-private-mem-msg">{{ mem_private_head.message | e }}</dd>
+            </dl>
+            {% endif %}
+        </div>
+    </section>
 </section>
 {% endblock %}

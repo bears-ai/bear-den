@@ -6,7 +6,7 @@ export { createNoopMemoryProvisioner } from "./noop.js";
 
 /**
  * `BEAR_RUNTIME_PROVISIONER=local` (default) — canonical memfs is on the Letta volume; set
- * `LETTA_MEMFS_SERVICE_URL` on the server (e.g. `http://bear-memfs:8285`). Letta Code uses
+ * `LETTA_MEMFS_SERVICE_URL` on the server (e.g. `http://bear-mem-manager:8285`). Letta Code uses
  * `$HOME/.letta` with `LETTA_MEMFS_LOCAL=1`.
  * Future: `http` — external provisioning service.
  */
