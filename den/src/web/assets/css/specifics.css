@@ -208,6 +208,10 @@ body.bear_chat #chat-wrap {
     margin-bottom: calc(var(--spacing-unit) * 0.5);
 }
 
+#private-memory .den-private-mem-tree summary .den-private-mem-path {
+    padding-left: calc(var(--spacing-unit) * 1);
+}
+
 @media (max-width: 860px) {
     #private-memory .den-private-mem-columns,
     #private-memory .den-private-mem-row {
