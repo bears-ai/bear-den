@@ -3,7 +3,7 @@ block subnav %}
 <li><a class="button-link" href="/bear/{{ bear.slug | e }}">Chat</a></li>
 {% endblock %} {% block content %} {% macro render_commit_columns(node) -%}
 <span class="den-private-mem-commit-date"
-    >{% if node.last_commit_date %}{{ node.last_commit_date | e }}{% else %}—{% endif %}</span
+    >{% if node.last_commit_date %}{% set last_update = node.last_commit_date | trim %}{% if last_update | length >= 16 %}{{ (last_update | replace("T", " "))[:16] | e }}{% else %}{{ last_update | e }}{% endif %}{% else %}—{% endif %}</span
 >
 <span class="den-private-mem-commit-message"
     >{% if node.last_commit_message %}{{ node.last_commit_message | e }}{% else
@@ -56,12 +56,10 @@ block subnav %}
             <div id="overview" class="box full-width">
                 <!-- created: {{ bear.created_at | datetimeformat(format="short") }} -->
                 <!-- updated: {{ bear.updated_at | datetimeformat(format="short") }} -->
-                <h3 class="bear-overview-name">{{ bear.name | e }}</h3>
-                <p>
-                    <code id="bear-slug" title="{{ bear.id }}"
-                        >{{ bear.slug | e }}</code
-                    >
-                </p>
+                <h3 class="bear-overview-name">
+                    {{ bear.name | e }}
+                    <code id="bear-slug" title="{{ bear.id }}">{{ bear.slug | e }}</code>
+                </h3>
                 <p>
                     {% if bear.description %}{{ bear.description | e }}{% else
                     %}<em>No description.</em>{% endif %}
@@ -228,7 +226,7 @@ block subnav %}
 
     <section>
         <div id="private-memory" class="box full-width">
-            <h3>Private memory (git)</h3>
+            <h3>Agent memory</h3>
             {% if mem_private_skipped %} {% if not letta_configured %}
             <p class="form-hint">Letta is not configured.</p>
             {% elif not bear.letta_agent_id %}
@@ -252,7 +250,7 @@ block subnav %}
             </p>
             {% elif mem_private_files and mem_private_files | length > 0 %}
             <div class="den-private-mem-columns caption">
-                <span>Path</span><span>Last commit date</span><span>Message</span>
+                <span aria-hidden="true"></span><span>Last update</span><span aria-hidden="true"></span>
             </div>
             {{ render_private_memory_nodes(mem_private_files, true) }}
             {% else %}
