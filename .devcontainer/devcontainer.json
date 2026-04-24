@@ -1,21 +1,7 @@
 {
-  "name": "bears",
-  "dockerComposeProjectName": "bears_zed",
-  "dockerComposeFile": "docker-compose.yml",
-  "service": "app",
-  "runServices": ["app", "db"],
-  "workspaceFolder": "/workspaces",
-  "shutdownAction": "stopCompose",
-  "forwardPorts": [3000, 3001, 5432],
-  "remoteEnv": {
-    "PATH": "/usr/local/cargo/bin:${containerEnv:PATH}"
-  },
-  "postCreateCommand": "bash /workspaces/.devcontainer/post-create.sh",
-  "mounts": [
-    {
-      "source": "${localWorkspaceFolder}/.opencode/auth.json",
-      "target": "/root/.opencode/auth.json",
-      "type": "bind",
-    },
-  ],
+  "name": "Workspace",
+  "dockerComposeFile": "../docker-compose.yaml",
+  "service": "workspace",
+  "workspaceFolder": "/workspace",
+  "postStartCommand": "docker compose --profile bundled up -d bear-postgres bears-memfs-manager bears-den bears-pool"
 }

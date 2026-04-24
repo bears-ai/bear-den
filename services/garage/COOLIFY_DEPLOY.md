@@ -126,7 +126,7 @@ The output of step 8 gives you the **Key ID** and **Secret key** to use as Den's
 
 ## Den configuration
 
-Set these on the **Den** service (see [`../../den/COOLIFY_DEPLOY.md`](../../den/COOLIFY_DEPLOY.md)):
+Set these on the **Den** service (see [`../../services/worker/COOLIFY_DEPLOY.md`](../../services/worker/COOLIFY_DEPLOY.md)):
 
 ```bash
 S3_ENDPOINT=http://bear-garage:3900
@@ -189,4 +189,4 @@ aws s3 ls s3://bears-cabinet/
 - Secrets checklist: [`.env.example`](.env.example)
 - Garage docs: [garagehq.deuxfleurs.fr](https://garagehq.deuxfleurs.fr/documentation/)
 - S3 compatibility: [Garage S3 compatibility table](https://garagehq.deuxfleurs.fr/documentation/reference-manual/s3-compatibility/)
-- Den S3 config: [`../../den/.env.example`](../../den/.env.example)
+- Den S3 config: [`../../services/worker/.env.example`](../../services/worker/.env.example)

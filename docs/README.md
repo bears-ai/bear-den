@@ -8,7 +8,7 @@ Human-oriented docs for the **Basic Environment for Agents Runtime Server (BEARS
 
 | Path | Contents |
 |------|----------|
-| [../codepool/](../codepool/) | **Codepool** — Letta Code SDK harness (warm pool, Den streaming, optional channel listeners) — app at repo root, not under `services/` |
+| [../services/frontend/](../services/frontend/) | **Codepool** — Letta Code SDK harness (warm pool, Den streaming, optional channel listeners) |
 | [planning/](planning/) | Roadmap, phased delivery, Phase 1 Den bootstrap, [locked Phase 1 decisions](planning/PHASE1_DECISIONS.md) |
 | [deployment/](deployment/) | Coolify deployment order and steps |
 | [architecture/](architecture/) | Stack notes, Den + multi-user Letta; [Letta vs bear UI coverage](architecture/LETTA_BEAR_UI_EXPOSURE.md); [Den meta tools](architecture/DEN_ARCHITECTURE.md#den-meta-tools-bears-control-plane-tools) (Den-defined control-plane tools and APIs; **Letta Code** brokers execution; not ad hoc scripts in Letta) |
@@ -18,7 +18,7 @@ Human-oriented docs for the **Basic Environment for Agents Runtime Server (BEARS
 
 Service-specific runbooks stay next to their configs: `services/*/COOLIFY_DEPLOY.md` and related `.md` under each service tree.
 
-**Den (Rust)** — application code lives at repo root in **`den/`** (not under `services/`). **`codepool/`** (repo root) is **Codepool**, the **Node** Letta Code SDK service (harness pool for Den; optional channel listeners). `services/` holds images, compose-oriented assets, and integration docs for Letta, Bifrost, Garage, etc.
+**Den (Rust)** lives in **`services/worker/`**. **Codepool** (Node / Letta Code SDK harness) lives in **`services/frontend/`**. The Python Memory Manager lives in **`services/api/`**. Supporting service assets live alongside them under `services/`.
 
 ## Cloning and automation
 
@@ -30,7 +30,7 @@ This repo is a **light monorepo**: documentation, `services/*` deploy artifacts,
   git clone --depth 1 <repo-url>
   ```
 
-- **Sparse checkout** (optional) materializes only chosen paths after clone; use it when machines must not see `den/` or large paths at all:
+- **Sparse checkout** (optional) materializes only chosen paths after clone; use it when machines must not see `services/worker/` or large paths at all:
 
   ```bash
   git clone --filter=blob:none <repo-url> bears-depoy
@@ -39,7 +39,7 @@ This repo is a **light monorepo**: documentation, `services/*` deploy artifacts,
   git sparse-checkout set services/bifrost docs README.md AGENTS.md
   ```
 
-  Adjust the path list to match what that host needs. Den builds should include `den/` (and typically `docs/` for context). On older Git versions, run `git sparse-checkout init` before `set` if `set` does not enable sparse checkout automatically.
+  Adjust the path list to match what that host needs. Den builds should include `services/worker/` (and typically `docs/` for context). On older Git versions, run `git sparse-checkout init` before `set` if `set` does not enable sparse checkout automatically.
 
 ## Assistant-oriented material
 
