@@ -61,6 +61,26 @@ fn pick_str(v: &Value, keys: &[&str]) -> Option<String> {
     None
 }
 
+fn tool_rows_from_array(arr: &[Value]) -> Vec<LettaToolRow> {
+    let mut out = Vec::new();
+    let mut seen = std::collections::HashSet::<String>::new();
+    for t in arr {
+        let (id, name) = if let Some(s) = t.as_str() {
+            (s.trim().to_string(), None)
+        } else {
+            (
+                pick_str(t, &["id", "tool_id"]).unwrap_or_default(),
+                pick_str(t, &["name", "tool_name"]),
+            )
+        };
+        if id.is_empty() || !seen.insert(id.clone()) {
+            continue;
+        }
+        out.push(LettaToolRow { id, name });
+    }
+    out
+}
+
 /// Top-level `blocks`, or deprecated `memory.blocks` on older agent payloads.
 fn agent_blocks_array(v: &Value) -> Option<&Vec<Value>> {
     v.get("blocks")
@@ -97,19 +117,15 @@ impl LettaAgentDiagnostics {
             }
         }
 
-        let mut tools = Vec::new();
-        if let Some(arr) = v.get("tools").and_then(|x| x.as_array()) {
-            for t in arr {
-                let id = pick_str(t, &["id"]).unwrap_or_default();
-                if id.is_empty() {
-                    continue;
-                }
-                tools.push(LettaToolRow {
-                    id,
-                    name: pick_str(t, &["name", "tool_name"]),
-                });
-            }
-        }
+        let tools = if let Some(arr) = v.get("tools").and_then(|x| x.as_array()) {
+            tool_rows_from_array(arr)
+        } else if let Some(arr) = v.get("tool_ids").and_then(|x| x.as_array()) {
+            tool_rows_from_array(arr)
+        } else if let Some(arr) = v.get("tool_rules").and_then(|x| x.as_array()) {
+            tool_rows_from_array(arr)
+        } else {
+            Vec::new()
+        };
 
         Self {
             blocks,
@@ -162,5 +178,18 @@ mod tests {
         });
         let d = LettaAgentDiagnostics::from_agent_json(&v);
         assert!(d.blocks[0].content.as_ref().unwrap().contains("\"k\""));
+    }
+
+    #[test]
+    fn parses_tool_ids_fallback_and_string_tools() {
+        let v = json!({
+            "id": "agent-x",
+            "tools": ["tool-1", {"tool_id": "tool-2", "tool_name": "grep"}, "tool-1"]
+        });
+        let d = LettaAgentDiagnostics::from_agent_json(&v);
+        assert_eq!(d.tools.len(), 2);
+        assert_eq!(d.tools[0].id, "tool-1");
+        assert_eq!(d.tools[1].id, "tool-2");
+        assert_eq!(d.tools[1].name.as_deref(), Some("grep"));
     }
 }

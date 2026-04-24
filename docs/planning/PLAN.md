@@ -91,7 +91,7 @@ Aligned with [multi-user-memory-adr.md](../multi-user-memory-adr.md) (Scenario A
 - **User-facing promise:** The bear keeps a **small, curated** set of facts in **always-in-context memory blocks** (e.g. `persona`, isolated `human` per conversation/user). **Longer or older material** is **findable when needed** via Letta’s **archival memory** and related tools — not implied to sit in the prompt on every turn. (Letta typically exposes archival as **vector-backed retrieval** the agent invokes **on demand** via tools; confirm behavior against your deployed Letta/Letta Code version.)
 - **Persistence:** Phase 1 adds **no second memory store in Den**. All memory semantics remain **Letta-native** (blocks, conversations, archival as Letta implements them). Den surfaces **state** for UX only.
 - **UX (two surfaces):**
-  - **Memory dashboard (end-user):** Besides read access to **`human`** (and related content per [multi-user-memory-adr.md](../multi-user-memory-adr.md)), show a **holistic memory weight** per bear the user can access — a **cross-bear** view of which assistants have accumulated the most learned material (users, projects, archival — whatever Letta’s APIs allow aggregating). Frame this as **weight** (richness / how much is stored), **not** “pressure” or how close to a limit; **no** capacity warnings or alerts in Den. Purpose: **assurance and comparison**, not memory management (Letta owns automation).
+  - **Memory dashboard (end-user):** Show read access to **`human`** (and related content per [multi-user-memory-adr.md](../multi-user-memory-adr.md)) for bears the user can access. Do **not** add aggregate scoring, capacity, or pressure metrics in Phase 1; purpose is assurance that Letta-native memory exists, not memory management (Letta owns automation).
   - **Bear detail (operator):** Full **Letta-native state summary** for one bear — **all** memory blocks and **archival** indicators/stats **where the API exposes them**; prefer **tokens** (or whatever the API returns). Read-only **assurance** that Letta has things under control; **not** an affordance to edit or consolidate memory in Den. See **Phase 1 memory visibility (Idea 2)** in [PHASE1_DECISIONS.md](PHASE1_DECISIONS.md).
 - **Scope:** Phase 1 stays **1:1 per (user, bear)** for web; **no** new shared “household memory” layer in Den (group-mode / `person:{name}` extras remain as in the ADR).
 
@@ -317,7 +317,7 @@ Deliverables:
      - **Bears:** `agents[bear_id]` `= { name, description, letta_agent_id, tools_enabled, default_model, … }` (public JSON uses **`bear_id`** per [PHASE1_DECISIONS.md](PHASE1_DECISIONS.md)).
      - **Membership:** which `user_id`s may use which `bear_id` (and optional roles). A user has many bears; a bear can have many users.
    - **Den’s** job:
-     - **Provision** bears in Letta (create/update agents) when admins or workflows add or change a bear.
+     - **Provision** bears in Letta (create/update agents) when admins or workflows add or change a bear; support **duplicate bear** when operators want to start a new bear from an existing configuration.
      - **Publish** bear lists via Den APIs and regenerate **harness** config snippets / `letta-code.yaml` as needed so **web** and **Slack** expose the right bears.
      - Validate `bear_id` on every request; deny if the user is not a member.
 
@@ -330,7 +330,7 @@ Deliverables:
      - Streams response back.
 
 4. **Web UIs → Den** (v1 release targets)
-   - **Operator console (priority):** Den serves a browser UI for **user** accounts, **operator auth**, **bear** CRUD and **Letta provision**, **membership**, **skills and MCP servers per bear**, and **Letta Code** harness deploy preview/download (`/admin/letta-code`, `letta-code.yaml`; see [PHASE1_BOOTSTRAP.md](PHASE1_BOOTSTRAP.md)).
+   - **Operator console (priority):** Den serves a browser UI for **user** accounts, **operator auth**, **bear** CRUD including **duplicate bear**, **Letta provision**, **membership**, **skills and MCP servers per bear**, and **Letta Code** harness deploy preview/download (`/admin/letta-code`, `letta-code.yaml`; see [PHASE1_BOOTSTRAP.md](PHASE1_BOOTSTRAP.md)).
    - **Den native chat:** **end-user** chat page at `/bear/{slug}` — **after** the operator console and chat API are stable; same-origin with Den by default.
    - **Letta Code:** required for **all** chat traffic; Den **updates harness config** and **materializes skills and MCP attachments** so each bear’s binding matches Den’s registry; **Slack** uses Letta Code [Channels](https://docs.letta.com/letta-code/channels/); optional **channel-only** Den proxy later (see [Canonical paths vs optional channel proxy](#canonical-paths-vs-optional-channel-proxy)).
 
@@ -354,14 +354,14 @@ Deliverables:
 
 **Phase 1 success (v1):**
 
-- **Operator console:** provision users, bears (Letta agents), membership, **skills and MCP servers per bear** (each: catalog + attach; materialization may ship shortly after core chat), and harness deploy config from the browser.
+- **Operator console:** provision users, create/duplicate bears (Letta agents), membership, **skills and MCP servers per bear** (each: catalog + attach; materialization may ship shortly after core chat), and harness deploy config from the browser.
 - Web users chat **Den’s chat UI → Den → Letta Code → Letta**; Den resolves `user_id`, enforces **bear** membership, streams replies.
 - **Slack** uses **Letta Code → Letta** for messages; **WhatsApp** is not in Letta Code Channels yet. Den still drives **which bears**, **which skills**, **which MCP servers**, and harness config.
 - Conversation behavior is channel/thread-aware with one canonical owner: Letta Code + Letta. A bear stays consistent across channels while each channel/thread remains a distinct conversation context.
 - Bear registry, **users↔bears** membership, and basic RBAC for **web** users.
 - No Cabinet/Outline yet: **Letta native memory** only; shared knowledge in later phases.
 - **User onboarding:** new account → Personal Bear auto-provisioned → user lands in chat with onboarding prompt.
-- **Memory dashboard and bear memory UX:** **Dashboard:** **`human`** (and per-conversation isolation as the Letta API exposes for 1:1 web) plus a **holistic weight** summary per member bear for **cross-bear comparison** (which bear has learned / stored the most — **weight**, not pressure). **`person:{name}`** blocks appear **when they already exist** (mostly **group-mode**, post–Phase 1). **Bear detail** (operator): full **Letta-native** summary — **all** blocks + archival hints; assurance-only, not a management UI. Copy follows the **Phase 1 memory model** ([§ Knowledge model](#knowledge-model-letta-memory-vs-cabinet)): curated blocks vs **findable** longer history — **not** a Den-side memory layer and **not** “everything always in context.”
+- **Memory dashboard and bear memory UX:** **Dashboard:** **`human`** (and per-conversation isolation as the Letta API exposes for 1:1 web); **`person:{name}`** blocks appear **when they already exist** (mostly **group-mode**, post–Phase 1). No aggregate scoring, capacity, or pressure metric. **Bear detail** (operator): full **Letta-native** summary — **all** blocks + archival hints; assurance-only, not a management UI. Copy follows the **Phase 1 memory model** ([§ Knowledge model](#knowledge-model-letta-memory-vs-cabinet)): curated blocks vs **findable** longer history — **not** a Den-side memory layer and **not** “everything always in context.”
 - **Org policy:** operator sets a shared `org_policy` Letta block (default from `den/defaults/org_policy.md`) applied to all bears.
 - **Routines:** **first-class** schedules + management UI in Den; each routine **assigned to a bear**; inherited policy/membership; **file outputs** in **Garage** per [artifacts-garage-adr.md](../artifacts-garage-adr.md) and [routines-automation-adr.md](../routines-automation-adr.md); **no** automatic skill learning from unattended routine runs ([PHASE1_DECISIONS.md](PHASE1_DECISIONS.md) decision **10**).
 
@@ -486,7 +486,7 @@ This is the “make it livable and reliable” phase.
 
 ## Summary
 
-**Knowledge:** **Letta memory** is per‑**bear** (per Letta agent) context — **blocks** (curated, bounded) plus **archival** and tools as Letta provides. **Files** (uploads, agent outputs, routines) live in **Garage**, not Letta ([§ Artifacts and object storage](#artifacts-and-object-storage-garage)). **Shared blocks** under multi-writer concurrency need explicit patterns ([§ Shared memory blocks and concurrency](#shared-memory-blocks-and-concurrency-letta)). **Phase 1:** no Den memory store; **dashboard** shows **weight** (holistic, cross-bear); **bear detail** shows full state ([§ Phase 1 memory model](#phase-1-memory-model-user-promise-persistence-and-ux)). **Cabinet (Outline)** is the shared knowledgebase for humans and bears (post–Phase 1); **Cabinet attachments** use a **separate S3 bucket** from **artifacts**.
+**Knowledge:** **Letta memory** is per‑**bear** (per Letta agent) context — **blocks** (curated, bounded) plus **archival** and tools as Letta provides. **Files** (uploads, agent outputs, routines) live in **Garage**, not Letta ([§ Artifacts and object storage](#artifacts-and-object-storage-garage)). **Shared blocks** under multi-writer concurrency need explicit patterns ([§ Shared memory blocks and concurrency](#shared-memory-blocks-and-concurrency-letta)). **Phase 1:** no Den memory store; **dashboard** shows Letta-native `human` memory without aggregate scoring; **bear detail** shows full state ([§ Phase 1 memory model](#phase-1-memory-model-user-promise-persistence-and-ux)). **Cabinet (Outline)** is the shared knowledgebase for humans and bears (post–Phase 1); **Cabinet attachments** use a **separate S3 bucket** from **artifacts**.
 
 **Bears:** Each **primary agent** in the product sense is a **bear**; **subagents** (e.g. reflection) are **part of bear configuration** where used ([dynamic-skills-subagents-adr.md](../dynamic-skills-subagents-adr.md)). **Users ↔ bears** is **many‑to‑many**.
 

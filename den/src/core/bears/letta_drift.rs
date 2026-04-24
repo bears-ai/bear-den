@@ -51,7 +51,7 @@ fn block_str_from_value(b: &Value) -> Option<String> {
     None
 }
 
-/// When Letta omits top-level `system`, MemGPT-style agents often store instructions in blocks.
+/// When Letta omits top-level `system`, some payloads keep instructions in blocks.
 fn fallback_system_from_blocks(v: &Value) -> Option<String> {
     let blocks = v
         .get("blocks")
@@ -61,13 +61,7 @@ fn fallback_system_from_blocks(v: &Value) -> Option<String> {
                 .and_then(|m| m.get("blocks"))
                 .and_then(|x| x.as_array())
         })?;
-    let preferred = [
-        "persona",
-        "human",
-        "system",
-        "instructions",
-        "core_memory",
-    ];
+    let preferred = ["system", "system_prompt", "instructions", "prompt"];
     for label in preferred {
         for b in blocks {
             let lbl = b
@@ -85,27 +79,37 @@ fn fallback_system_from_blocks(v: &Value) -> Option<String> {
     None
 }
 
-/// Best-effort Letta instruction text for drift (top-level `system`, else common blocks).
+/// Best-effort Letta instruction text for drift.
+///
+/// Returns `None` when we cannot reliably identify Letta's instruction text.
 fn letta_instruction_text_for_drift(
     summary: Option<&AgentSummary>,
     raw_agent_json: Option<&Value>,
-) -> String {
+) -> Option<String> {
     let from_summary = summary
         .and_then(|s| s.system.as_deref())
         .map(|s| normalize_drift_text(s));
 
     if let Some(t) = from_summary.filter(|s| !s.is_empty()) {
-        return t;
+        return Some(t);
     }
 
     if let Some(v) = raw_agent_json {
         let root = unwrap_letta_agent_document(v);
+        let from_root = ["system", "system_prompt", "instructions", "instruction"]
+            .into_iter()
+            .find_map(|k| root.get(k).and_then(|x| x.as_str()))
+            .map(normalize_drift_text)
+            .filter(|s| !s.is_empty());
+        if from_root.is_some() {
+            return from_root;
+        }
         if let Some(s) = fallback_system_from_blocks(root) {
-            return normalize_drift_text(&s);
+            return Some(normalize_drift_text(&s));
         }
     }
 
-    String::new()
+    None
 }
 
 /// Returns `None` when there is no linked agent or Letta data is unavailable (fetch failed).
@@ -131,8 +135,8 @@ pub fn compute_letta_drift(
     let diagnostics = diagnostics?;
 
     let db_sys = normalize_drift_text(&bear.system_prompt);
-    let letta_sys = letta_instruction_text_for_drift(Some(summary), raw_agent_json);
-    let system_prompt = db_sys != letta_sys;
+    let system_prompt = letta_instruction_text_for_drift(Some(summary), raw_agent_json)
+        .is_some_and(|letta_sys| db_sys != letta_sys);
 
     let model = norm_opt_trim(bear.default_model.as_deref()) != norm_opt_trim(summary.model.as_deref());
 
@@ -232,6 +236,22 @@ mod tests {
             "agent_type": "memgpt_agent",
             "tools": [{"id": "t1"}],
             "blocks": [{"label": "persona", "value": "edited in letta only"}]
+        });
+        let s = AgentSummary::from_letta_agent_state(&v);
+        let d = LettaAgentDiagnostics::from_agent_json(&v);
+        let flags = compute_letta_drift(&b, Some(&s), Some(&d), Some(&v)).expect("drift");
+        assert!(!flags.system_prompt);
+    }
+
+    #[test]
+    fn drift_system_when_instructions_key_differs() {
+        let b = sample_bear();
+        let v = json!({
+            "id": "agent-1",
+            "instructions": "edited in letta only",
+            "model": "gpt-4o",
+            "agent_type": "memgpt_agent",
+            "tools": [{"id": "t1"}]
         });
         let s = AgentSummary::from_letta_agent_state(&v);
         let d = LettaAgentDiagnostics::from_agent_json(&v);

@@ -38,7 +38,7 @@ References:
 
 **Phase 1 product promise (blocks vs archival):** End-user and operator copy should reflect **curated, bounded memory blocks** as “always in mind” and **archival memory** (Letta-native, typically tool-mediated retrieval) as “findable when needed” — not a second store in Den. See [PLAN.md](planning/PLAN.md) § Phase 1 memory model.
 
-**Memory dashboard metric:** The dashboard should expose a **holistic memory weight** per bear (cross-bear comparison — which assistants have accumulated the most learned material), framed as **weight** not **pressure**; operators get the full per-bear **state** summary in **bear detail**. See [PHASE1_DECISIONS.md](planning/PHASE1_DECISIONS.md) decision 8.
+**Memory dashboard metric:** Phase 1 does **not** expose an aggregate memory score; the dashboard shows Letta-native **`human`** memory for member bears. Operators get the full per-bear **state** summary in **bear detail**. See [PHASE1_DECISIONS.md](planning/PHASE1_DECISIONS.md) decision 8.
 
 **Skills and subagents (separate ADR):** Procedural **skills** lifecycle (catalog, bear-created, reflection subagents) is covered in [dynamic-skills-subagents-adr.md](dynamic-skills-subagents-adr.md), not in this ADR.
 

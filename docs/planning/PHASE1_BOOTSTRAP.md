@@ -28,9 +28,9 @@ Use whatever **one-off** scaffold you prefer (`cargo new`, an internal template,
 |------|-------------|
 | Runtime | Axum HTTP server, structured logging, graceful shutdown |
 | Data | PostgreSQL schema + migrations; Den is system of record for users, bears, membership |
-| **Operator console (priority)** | **Browser UI** served by Den for: operator login; **create/edit users** (and end-user login/register as policy allows); **create/provision bears** (Letta agent create/update); **grant/revoke membership**; **skills** (org catalog, attach/detach per bear, optional paste-from-URL); **MCP servers** (local catalog, optional official-registry import, attach/detach per bear—same UX patterns as skills); **Letta health** indicator; **Letta Code** panel (rendered YAML, download, short deploy checklist). Same actions backed by JSON admin API; **no `curl` required** for happy-path setup. |
+| **Operator console (priority)** | **Browser UI** served by Den for: operator login; **create/edit users** (and end-user login/register as policy allows); **create/duplicate/provision bears** (Letta agent create/update); **grant/revoke membership**; **skills** (org catalog, attach/detach per bear, optional paste-from-URL); **MCP servers** (local catalog, optional official-registry import, attach/detach per bear—same UX patterns as skills); **Letta health** indicator; **Letta Code** panel (rendered YAML, download, short deploy checklist). Same actions backed by JSON admin API; **no `curl` required** for happy-path setup. |
 | Auth (web-first) | Session cookie after email+password **or** long-lived API token for automation; **operators** use a distinct **admin/operator** session or role (e.g. `users.is_admin`, bootstrap admin email) — **do not** expose `ADMIN_API_KEY` to browser JavaScript |
-| Bears | CRUD (admin API + operator UI), `letta_agent_id` linkage, provision via Letta REST API; **predefined subagents** (e.g. reflection) per [dynamic-skills-subagents-adr.md](../dynamic-skills-subagents-adr.md) when that ADR is accepted and Letta API fields are known (may trail core CRUD) |
+| Bears | CRUD + **duplicate bear** action (admin API + operator UI), `letta_agent_id` linkage, provision via Letta REST API; **predefined subagents** (e.g. reflection) per [dynamic-skills-subagents-adr.md](../dynamic-skills-subagents-adr.md) when that ADR is accepted and Letta API fields are known (may trail core CRUD) |
 | Membership | Many-to-many `user_bear`; enforce on every chat; managed in operator UI |
 | Chat | `POST /v1/chat/send` (and/or optional OpenAI-compatible shim for non-browser API clients) → validate → **Letta Code** bridge → Letta with **SSE streaming** back to client |
 | Den chat UI (first-party, priority after M5) | Deep Chat page (`GET /bear/{slug}`); **only** first-party end-user web path — same chat + discovery endpoints as automation clients; same-origin with Den |
@@ -39,7 +39,7 @@ Use whatever **one-off** scaffold you prefer (`cargo new`, an internal template,
 | Policy | RBAC-lite: membership check + optional per-bear `can_use` + basic rate limit |
 | Bifrost | Optional: fetch metrics/health **read-only**; no proxying completions |
 | **User onboarding** | On new account creation, auto-provision a **Personal Bear** (slug: `personal-{name-slug}`) from a configurable default template set in the admin UI; immediately redirect the new user into chat with that bear using a standard onboarding prompt that invites the bear to learn about them |
-| **Memory dashboard + bear memory UX** | **Dashboard:** read **`human`** (per bear / per-conversation as Letta returns for 1:1 web) and show a **holistic memory weight** per member bear so users can **compare** which bears have accumulated the most learned material (users, projects, archival — per Letta APIs). Frame as **weight** (richness), **not** capacity pressure; no warnings. **`person:{name}`** rows only when such blocks exist (mostly **group-mode**, post–Phase 1 per [multi-user-memory-adr.md](../multi-user-memory-adr.md)). **Bear detail (operator):** full read-only **Letta state summary** for one bear — **all** blocks + archival where exposed; assurance only ([PLAN.md](PLAN.md) § Phase 1 memory model, [PHASE1_DECISIONS.md](PHASE1_DECISIONS.md) decision 8). **Product promise:** small curated **always-on** blocks; longer history **findable** via archival/tools — Den does **not** add a second memory store. |
+| **Memory dashboard + bear memory UX** | **Dashboard:** read **`human`** (per bear / per-conversation as Letta returns for 1:1 web) and show **`person:{name}`** rows only when such blocks exist (mostly **group-mode**, post–Phase 1 per [multi-user-memory-adr.md](../multi-user-memory-adr.md)); no aggregate scoring, capacity, or pressure metric. **Bear detail (operator):** full read-only **Letta state summary** for one bear — **all** blocks + archival where exposed; assurance only ([PLAN.md](PLAN.md) § Phase 1 memory model, [PHASE1_DECISIONS.md](PHASE1_DECISIONS.md) decision 8). **Product promise:** small curated **always-on** blocks; longer history **findable** via archival/tools — Den does **not** add a second memory store. |
 | **Org policy block** | Admin UI panel to view and edit the `org_policy` Letta block applied to all bears; seed content from **`den/defaults/org_policy.md`** (in-repo) when no policy has been set and the first bear is provisioned |
 | **Routines** | **First-class** DB-backed **schedules** + management UI; each routine **assigned to one bear** (inherits tools, MCP, membership like chat). Execution via **Letta Code** / harness; **file outputs** → **Garage** artifacts ([artifacts-garage-adr.md](../artifacts-garage-adr.md), [routines-automation-adr.md](../routines-automation-adr.md)). **No** automatic skill-learning from unattended runs ([PHASE1_DECISIONS.md](PHASE1_DECISIONS.md) decision **10**) |
 | **Artifacts / Garage** | Agent outputs, **user uploads**, routine files → **S3** (**artifacts** bucket); **metadata** + **GC** per [artifacts-garage-adr.md](../artifacts-garage-adr.md) ([PHASE1_DECISIONS.md](PHASE1_DECISIONS.md) decision **11**). **Cabinet** attachments → **different bucket** (Outline). May trail core chat; presigned URLs + GC worker as milestones allow |
@@ -188,7 +188,7 @@ den/
 | POST | `/auth/logout` | Invalidate session |
 | GET | `/v1/bears` or `/agents` | List bears for **authenticated** user (membership filter) |
 | POST | `/v1/chat/send` | Body: `{ message, bear_id?, conversation_id?, stream?, channel?, channel_thread_id? }` — **`bear_id`** selects the bear ([PHASE1_DECISIONS.md](PHASE1_DECISIONS.md)) |
-| GET | `/v1/me/memory` | Return current user’s **`human`** memory (per bear, as Letta exposes it), any existing **`person:{name}`** blocks on member bears, and aggregates needed for **holistic memory weight** per bear (cross-bear comparison — see [PHASE1_DECISIONS.md](PHASE1_DECISIONS.md) decision 8) — for the memory dashboard (see **Memory dashboard** row in §1 in-scope table) |
+| GET | `/v1/me/memory` | Return current user’s **`human`** memory (per bear, as Letta exposes it) and any existing **`person:{name}`** blocks on member bears — for the memory dashboard (see **Memory dashboard** row in §1 in-scope table); no aggregate score metric |
 
 **Chat contract** (align with [PLAN.md](PLAN.md) §2.1):
 
@@ -205,6 +205,7 @@ den/
 |--------|------|---------|
 | POST | `/admin/bears` | Create bear: optionally `provision=true` → create Letta agent then insert row |
 | PATCH | `/admin/bears/:id` | Update metadata; optional re-sync Letta |
+| POST | `/admin/bears/:id/duplicate` | Copy a bear’s configurable fields into a new bear draft/row; provision separately so it receives its own Letta agent |
 | POST | `/admin/bears/:id/provision` | Idempotent: create or update Letta agent from Den template |
 | POST | `/admin/users` | Create user (operator); optional `set_password` / invite flow |
 | PATCH | `/admin/users/:id` | Update user flags (e.g. `is_admin`), reset password if implemented |
@@ -261,7 +262,7 @@ den/
 
 1. **Sign in** — operator vs normal user (or single login + role gate on `/console/*`).
 2. **Users** — list, create, optional password set; link to membership.
-3. **Bears** — list, create, **Provision to Letta** / re-sync, show `letta_agent_id` and errors inline; **bear detail** includes **Letta-native memory state** (blocks + archival hints per API) per [PLAN.md](PLAN.md) § Phase 1 memory model.
+3. **Bears** — list, create, **duplicate**, **Provision to Letta** / re-sync, show `letta_agent_id` and errors inline; **bear detail** includes **Letta-native memory state** (blocks + archival hints per API) per [PLAN.md](PLAN.md) § Phase 1 memory model.
 4. **Membership** — assign bears ↔ users (checkbox grid or paired selects).
 5. **Letta Code** — live YAML/config preview, download button, bullet list: where to paste, restart **`letta server`** (or equivalent), Letta **`LETTA_API_BASE_URL`** hint (persistence API for the harness).
 6. **Skills** — catalog (add from URL or upload), attach to bear, enable/disable; show materialization status when Den syncs trees for Letta Code.
@@ -352,9 +353,9 @@ den/
 | M0 | **Trestle bootstrap → Den** | Throwaway scaffold merged into `den/`; Axum `GET /health`, config, tracing, Dockerfile |
 | M1 | Postgres | Migrations applied (`users.is_admin`, …); no business logic |
 | M2 | Auth | Register/login gated; session or API token; **operator login** with `is_admin` (or bootstrap admin) |
-| M3 | Admin API: users, bears, membership | JSON CRUD + user sees only member bears on `GET /v1/bears`; non-member 403 on chat (stub ok until M5) |
+| M3 | Admin API: users, bears, membership | JSON CRUD + duplicate bear action; user sees only member bears on `GET /v1/bears`; non-member 403 on chat (stub ok until M5) |
 | M4 | Letta provision | `POST /admin/bears` (+ provision) creates Letta agent + row; errors returned to client |
-| **M4b** | **Operator console v1** | **Browser UI** covers: users, bears + provision trigger, membership, Letta Code YAML view/download, Letta health — **no curl for setup** |
+| **M4b** | **Operator console v1** | **Browser UI** covers: users, bears + duplicate/provision trigger, membership, Letta Code YAML view/download, Letta health — **no curl for setup** |
 | **M4c** | **Onboarding + org policy** | Admin configures `org_policy` block (seeded from `den/defaults/org_policy.md`) and Personal Bear default template; new user account creation auto-provisions their Personal Bear |
 | M5 | Chat proxy | Streaming `POST /v1/chat/send` end-to-end; conversation/thread context forwarded to Letta Code; validated with **curl**, integration test, or console “try it” |
 | **M6** | **Den chat UI (first-party)** | Den serves chat at `/bear/{slug}`; demo user chats in browser — **reference client** for streaming contract |
@@ -369,7 +370,7 @@ den/
 
 ## 15. Acceptance criteria (Phase 1 complete)
 
-- [ ] **Operator console:** create users, provision bears to Letta, manage membership, **manage skills per bear**, view/download Letta Code yaml — all in browser
+- [ ] **Operator console:** create users, create/duplicate/provision bears to Letta, manage membership, **manage skills per bear**, view/download Letta Code yaml — all in browser
 - [ ] Den-hosted **chat UI** sends chat **Den → Letta Code → Letta** with streaming responses
 - [ ] Conversation behavior proven for one shared bear across at least two channels/threads: same bear identity, distinct Letta threads per channel/thread policy, with Letta Code as canonical mapper
 - [ ] At least two users and two bears with **many-to-many** membership verified (user A: bears 1+2; user B: bear 2 only)
@@ -379,7 +380,7 @@ den/
 - [ ] Deployed via **single Dockerfile** build on Coolify (or CI → registry)
 - [ ] No Cabinet calls required
 - [ ] New user registration auto-provisions their Personal Bear in Letta and redirects them into chat with the onboarding prompt
-- [ ] `GET /v1/me/memory` returns the current user’s **`human`** content (per member bear as Letta exposes it); **`person:{name}`** included only when present on the agent; **holistic memory weight** per bear for dashboard comparison; where Letta exposes archival **metadata**, bear-detail views surface enough for the full **state** summary in [PLAN.md](PLAN.md) § Phase 1 memory model and [PHASE1_DECISIONS.md](PHASE1_DECISIONS.md) decision 8 (no Den-owned memory store)
+- [ ] `GET /v1/me/memory` returns the current user’s **`human`** content (per member bear as Letta exposes it); **`person:{name}`** included only when present on the agent; no aggregate score metric; where Letta exposes archival **metadata**, bear-detail views surface enough for the full **state** summary in [PLAN.md](PLAN.md) § Phase 1 memory model and [PHASE1_DECISIONS.md](PHASE1_DECISIONS.md) decision 8 (no Den-owned memory store)
 - [ ] Admin can view and edit the `org_policy` block via the console; `den/defaults/org_policy.md` is applied on first bear creation when no policy exists
 - [ ] **Routines:** CRUD + list UI for schedules **bound to a bear** per [routines-automation-adr.md](../routines-automation-adr.md) and [PHASE1_DECISIONS.md](PHASE1_DECISIONS.md) decision **10**; execution path to Letta Code validated; **file outputs** stored in **Garage** per [artifacts-garage-adr.md](../artifacts-garage-adr.md)
 - [ ] **Artifacts:** **Garage** artifacts bucket + presigned upload/download from Den; **metadata** (incl. `conversation_id`, provenance); **GC** job or policy for stale objects — per [artifacts-garage-adr.md](../artifacts-garage-adr.md) decision **11** (may trail M6)
