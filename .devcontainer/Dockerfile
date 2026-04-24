@@ -2,7 +2,7 @@
 # - Den (Rust + SQLx + Postgres client)
 # - Codepool (Node.js 20 + npm)
 
-FROM rust:1.92-bookworm
+FROM rust:1.92-bookworm AS dev_containers_target_stage
 
 # Base OS packages and Rust build tooling.
 RUN apt-get update \
@@ -32,16 +32,16 @@ RUN mkdir -p /etc/apt/keyrings \
       > /etc/apt/sources.list.d/nodesource.list \
     && apt-get update \
     && apt-get install -y --no-install-recommends nodejs \
-    && node --version \
-    && npm --version \
     && rm -rf /var/lib/apt/lists/*
 
+ENV PATH="/usr/local/bin:/root/.cargo/bin:${PATH}"
+ENV CARGO_HOME="/usr/local/cargo"
+ENV RUSTUP_HOME="/usr/local/rustup"
+
 # Install SQLx CLI (for Den migrations/dev workflows) and Rust components used in CI/dev checks.
-RUN --mount=type=cache,target=/usr/local/cargo/target/ \
-    cargo install \
+RUN cargo install \
       --target-dir /usr/local/cargo/target \
       sqlx-cli \
       --no-default-features \
       --features rustls,postgres \
-    && rustup component add rustfmt clippy \
-    && chmod -R a+w /usr/local/cargo/
+    && rustup component add rustfmt clippy

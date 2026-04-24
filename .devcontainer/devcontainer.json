@@ -1,21 +1,21 @@
 {
-    "name": "bears",
-    "dockerComposeProjectName": "bears_zed",
-    "dockerComposeFile": "docker-compose.yml",
-    "service": "app",
-    "runServices": ["app", "db"],
-    "workspaceFolder": "/workspaces",
-    "shutdownAction": "stopCompose",
-    "forwardPorts": [3000, 3001, 5432],
-    "postCreateCommand": "rustc --version && cargo --version && sqlx --version && node --version && npm --version && rustfmt --version && cargo clippy --version",
-    "features": {
-        "ghcr.io/danzilberdan/devcontainers/opencode:0": {}
+  "name": "bears",
+  "dockerComposeProjectName": "bears_zed",
+  "dockerComposeFile": "docker-compose.yml",
+  "service": "app",
+  "runServices": ["app", "db"],
+  "workspaceFolder": "/workspaces",
+  "shutdownAction": "stopCompose",
+  "forwardPorts": [3000, 3001, 5432],
+  "remoteEnv": {
+    "PATH": "/usr/local/cargo/bin:${containerEnv:PATH}"
+  },
+  "postCreateCommand": "bash /workspaces/.devcontainer/post-create.sh",
+  "mounts": [
+    {
+      "source": "${localWorkspaceFolder}/.opencode/auth.json",
+      "target": "/root/.opencode/auth.json",
+      "type": "bind",
     },
-    "mounts": [
-        {
-            "source": "${localWorkspaceFolder}/.opencode/auth.json",
-            "target": "/mnt/opencode-auth.json",
-            "type": "bind"
-        }
-    ]
+  ],
 }
