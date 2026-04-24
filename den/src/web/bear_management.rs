@@ -346,7 +346,7 @@ async fn render_bear_details_page(
     let letta_api_base = state.config.letta_base_url.trim().to_string();
     let slug = bear.slug.clone();
 
-    let (letta_agent_summary, letta_agent_fetch_error, letta_diagnostics, letta_diag_error, letta_drift) =
+    let (letta_agent_summary, letta_agent_fetch_error, letta_drift) =
         if letta_configured {
             if let Some(agent_id) =
                 bear.letta_agent_id.as_deref().map(str::trim).filter(|s| !s.is_empty())
@@ -364,21 +364,19 @@ async fn render_bear_details_page(
                         (
                             Some(summary),
                             None,
-                            Some(diagnostics),
-                            None,
                             drift,
                         )
                     }
                     Err(e) => {
                         let msg = e.to_string();
-                        (None, Some(msg.clone()), None, Some(msg), None)
+                        (None, Some(msg), None)
                     }
                 }
             } else {
-                (None, None, None, None, None)
+                (None, None, None)
             }
         } else {
-            (None, None, None, None, None)
+            (None, None, None)
         };
 
     let (conversation_rows, has_archived_conversations) =
@@ -467,8 +465,6 @@ async fn render_bear_details_page(
             letta_api_base,
             letta_agent_summary,
             letta_agent_fetch_error,
-            letta_diagnostics,
-            letta_diag_error,
             letta_drift,
             letta_tool_ids_display,
             conversation_rows,

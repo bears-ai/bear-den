@@ -162,24 +162,39 @@ body.bear_chat #chat-wrap {
 
 #private-memory summary {
     cursor: pointer;
-    display: flex;
-    flex-wrap: wrap;
-    align-items: baseline;
-    gap: calc(var(--spacing-unit) * 0.5);
+    display: block;
 }
 
 #private-memory summary::-webkit-details-marker {
     margin-right: calc(var(--spacing-unit) * 0.5);
 }
 
-#private-memory summary code,
-#private-memory .den-bear-memory-summary li > code {
+#private-memory .den-private-mem-columns,
+#private-memory .den-private-mem-row {
+    display: grid;
+    grid-template-columns: minmax(0, 2.2fr) minmax(10rem, 1fr) minmax(0, 2fr);
+    align-items: baseline;
+    gap: calc(var(--spacing-unit) * 0.75);
+}
+
+#private-memory .den-private-mem-columns {
+    margin: 0 0 calc(var(--spacing-unit) * 0.5);
+}
+
+#private-memory .den-private-mem-path {
     font-family: var(--data-font-family);
     font-size: smaller;
     background: var(--field-fill-color);
     border: solid var(--thin-line-unit) var(--border-color);
     padding: calc(var(--spacing-unit) * 0.25) calc(var(--spacing-unit) * 0.5);
     max-width: 100%;
+    word-break: break-word;
+}
+
+#private-memory .den-private-mem-commit-date,
+#private-memory .den-private-mem-commit-message {
+    color: var(--meta-color);
+    font-size: smaller;
     word-break: break-word;
 }
 
@@ -193,10 +208,16 @@ body.bear_chat #chat-wrap {
     margin-bottom: calc(var(--spacing-unit) * 0.5);
 }
 
-#private-memory .den-bear-memory-summary .caption {
-    color: var(--meta-color);
-    font-size: smaller;
-    word-break: break-word;
+@media (max-width: 860px) {
+    #private-memory .den-private-mem-columns,
+    #private-memory .den-private-mem-row {
+        grid-template-columns: minmax(0, 1fr);
+        gap: calc(var(--spacing-unit) * 0.25);
+    }
+
+    #private-memory .den-private-mem-columns {
+        display: none;
+    }
 }
 
 /* ---- BEARS /status page — body class page-bears-health ---- */

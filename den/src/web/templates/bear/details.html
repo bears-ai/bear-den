@@ -1,7 +1,44 @@
 {% extends "base.html" %} {% block title %}{{ bear.name | e }}{% endblock %} {%
 block subnav %}
 <li><a class="button-link" href="/bear/{{ bear.slug | e }}">Chat</a></li>
-{% endblock %} {% block content %}
+{% endblock %} {% block content %} {% macro render_commit_columns(node) -%}
+<span class="den-private-mem-commit-date"
+    >{% if node.last_commit_date %}{{ node.last_commit_date | e }}{% else %}—{% endif %}</span
+>
+<span class="den-private-mem-commit-message"
+    >{% if node.last_commit_message %}{{ node.last_commit_message | e }}{% else
+    %}<span class="caption">No commit metadata.</span>{% endif %}</span
+>
+{%- endmacro %} {% macro render_private_memory_nodes(nodes, open_dirs=false)
+-%}
+<ul class="den-bear-memory-summary den-private-mem-tree">
+    {% for node in nodes %}
+    <li>
+        {% if node.is_dir %}
+        <details{% if open_dirs %} open{% endif %}>
+            <summary>
+                <span class="den-private-mem-row">
+                    <code class="den-private-mem-path" title="{{ node.path | e }}"
+                        >📁 {{ node.name | e }}</code
+                    >
+                    {{ render_commit_columns(node) }}
+                </span>
+            </summary>
+            {% if node.children and node.children | length > 0 %}{{
+            render_private_memory_nodes(node.children, false) }}{% endif %}
+        </details>
+        {% else %}
+        <div class="den-private-mem-row">
+            <code class="den-private-mem-path" title="{{ node.path | e }}"
+                >📄 {{ node.name | e }}</code
+            >
+            {{ render_commit_columns(node) }}
+        </div>
+        {% endif %}
+    </li>
+    {% endfor %}
+</ul>
+{%- endmacro %}
 <section>
     {% if letta_resync_notice == 'ok' %}
     <p class="form-hint">
@@ -190,40 +227,6 @@ block subnav %}
     </section>
 
     <section>
-        <div id="memory" class="box full-width">
-            <h3>Memory</h3>
-            {% if letta_diag_error %}
-            <p class="form-errors">
-                Could not load memory from Letta: {{ letta_diag_error | e }}
-            </p>
-            {% elif letta_diagnostics and letta_diagnostics.blocks and
-            letta_diagnostics.blocks | length > 0 %}
-            <ul class="den-bear-memory-summary">
-                {% for b in letta_diagnostics.blocks %}
-                <li>
-                    {% if b.label %}{{ b.label | e }}{% else %}<em
-                        >(no label)</em
-                    >{% endif %}{% if b.char_count %} — ~{{ b.char_count }}
-                    chars{% endif %}
-                </li>
-                {% endfor %}
-            </ul>
-            {% else %}
-            <p class="form-hint">No memory blocks in the Letta response.</p>
-            {% endif %}
-            <ul class="button-row">
-                <li>
-                    <a
-                        class="button-link"
-                        href="/bear/{{ bear.slug | e }}/details/memory"
-                        >Details</a
-                    >
-                </li>
-            </ul>
-        </div>
-    </section>
-
-    <section>
         <div id="private-memory" class="box full-width">
             <h3>Private memory (git)</h3>
             {% if mem_private_skipped %} {% if not letta_configured %}
@@ -248,287 +251,10 @@ block subnav %}
                 been created.
             </p>
             {% elif mem_private_files and mem_private_files | length > 0 %}
-            <ul class="den-bear-memory-summary">
-                {% for n0 in mem_private_files %}
-                <li>
-                    {% if n0.is_dir %}
-                    <details open>
-                        <summary>
-                            <code>📁 {{ n0.path | e }}</code>
-                            {% if n0.last_commit_date or n0.last_commit_message
-                            %} —
-                            <span class="caption"
-                                >{% if n0.last_commit_date %}{{
-                                n0.last_commit_date | e }}{% endif %}{% if
-                                n0.last_commit_message %}{% if
-                                n0.last_commit_date %} — {% endif %}{{
-                                n0.last_commit_message | e }}{% endif %}</span
-                            >
-                            {% else %} —
-                            <span class="caption">No commit metadata.</span>
-                            {% endif %}
-                        </summary>
-                        {% if n0.children and n0.children | length > 0 %}
-                        <ul
-                            class="den-bear-memory-summary den-private-mem-children"
-                        >
-                            {% for n1 in n0.children %}
-                            <li>
-                                {% if n1.is_dir %}
-                                <details>
-                                    <summary>
-                                        <code>📁 {{ n1.path | e }}</code>
-                                        {% if n1.last_commit_date or
-                                        n1.last_commit_message %} —
-                                        <span class="caption"
-                                            >{% if n1.last_commit_date %}{{
-                                            n1.last_commit_date | e }}{% endif
-                                            %}{% if n1.last_commit_message %}{%
-                                            if n1.last_commit_date %} — {% endif
-                                            %}{{ n1.last_commit_message | e }}{%
-                                            endif %}</span
-                                        >
-                                        {% else %} —
-                                        <span class="caption"
-                                            >No commit metadata.</span
-                                        >
-                                        {% endif %}
-                                    </summary>
-                                    {% if n1.children and n1.children | length >
-                                    0 %}
-                                    <ul
-                                        class="den-bear-memory-summary den-private-mem-children"
-                                    >
-                                        {% for n2 in n1.children %}
-                                        <li>
-                                            {% if n2.is_dir %}
-                                            <details>
-                                                <summary>
-                                                    <code
-                                                        >📁 {{ n2.path | e
-                                                        }}</code
-                                                    >
-                                                    {% if n2.last_commit_date or
-                                                    n2.last_commit_message %} —
-                                                    <span class="caption"
-                                                        >{% if
-                                                        n2.last_commit_date %}{{
-                                                        n2.last_commit_date | e
-                                                        }}{% endif %}{% if
-                                                        n2.last_commit_message
-                                                        %}{% if
-                                                        n2.last_commit_date %} —
-                                                        {% endif %}{{
-                                                        n2.last_commit_message |
-                                                        e }}{% endif %}</span
-                                                    >
-                                                    {% else %} —
-                                                    <span class="caption"
-                                                        >No commit
-                                                        metadata.</span
-                                                    >
-                                                    {% endif %}
-                                                </summary>
-                                                {% if n2.children and
-                                                n2.children | length > 0 %}
-                                                <ul
-                                                    class="den-bear-memory-summary den-private-mem-children"
-                                                >
-                                                    {% for n3 in n2.children %}
-                                                    <li>
-                                                        {% if n3.is_dir %}
-                                                        <details>
-                                                            <summary>
-                                                                <code
-                                                                    >📁 {{
-                                                                    n3.path | e
-                                                                    }}</code
-                                                                >
-                                                                {% if
-                                                                n3.last_commit_date
-                                                                or
-                                                                n3.last_commit_message
-                                                                %} —
-                                                                <span
-                                                                    class="caption"
-                                                                    >{% if
-                                                                    n3.last_commit_date
-                                                                    %}{{
-                                                                    n3.last_commit_date
-                                                                    | e }}{%
-                                                                    endif %}{%
-                                                                    if
-                                                                    n3.last_commit_message
-                                                                    %}{% if
-                                                                    n3.last_commit_date
-                                                                    %} — {%
-                                                                    endif %}{{
-                                                                    n3.last_commit_message
-                                                                    | e }}{%
-                                                                    endif
-                                                                    %}</span
-                                                                >
-                                                                {% else %} —
-                                                                <span
-                                                                    class="caption"
-                                                                    >No commit
-                                                                    metadata.</span
-                                                                >
-                                                                {% endif %}
-                                                            </summary>
-                                                            {% if n3.children
-                                                            and n3.children |
-                                                            length > 0 %}
-                                                            <ul
-                                                                class="den-bear-memory-summary den-private-mem-children"
-                                                            >
-                                                                {% for n4 in
-                                                                n3.children %}
-                                                                <li>
-                                                                    <code
-                                                                        >{% if
-                                                                        n4.is_dir
-                                                                        %}📁{%
-                                                                        else
-                                                                        %}📄{%
-                                                                        endif %}
-                                                                        {{
-                                                                        n4.path
-                                                                        | e
-                                                                        }}</code
-                                                                    >
-                                                                    {% if
-                                                                    n4.last_commit_date
-                                                                    or
-                                                                    n4.last_commit_message
-                                                                    %} —
-                                                                    <span
-                                                                        class="caption"
-                                                                        >{% if
-                                                                        n4.last_commit_date
-                                                                        %}{{
-                                                                        n4.last_commit_date
-                                                                        | e }}{%
-                                                                        endif
-                                                                        %}{% if
-                                                                        n4.last_commit_message
-                                                                        %}{% if
-                                                                        n4.last_commit_date
-                                                                        %} — {%
-                                                                        endif
-                                                                        %}{{
-                                                                        n4.last_commit_message
-                                                                        | e }}{%
-                                                                        endif
-                                                                        %}</span
-                                                                    >
-                                                                    {% else %} —
-                                                                    <span
-                                                                        class="caption"
-                                                                        >No
-                                                                        commit
-                                                                        metadata.</span
-                                                                    >
-                                                                    {% endif %}
-                                                                </li>
-                                                                {% endfor %}
-                                                            </ul>
-                                                            {% endif %}
-                                                        </details>
-                                                        {% else %}
-                                                        <code
-                                                            >📄 {{ n3.path | e
-                                                            }}</code
-                                                        >
-                                                        {% if
-                                                        n3.last_commit_date or
-                                                        n3.last_commit_message
-                                                        %} —
-                                                        <span class="caption"
-                                                            >{% if
-                                                            n3.last_commit_date
-                                                            %}{{
-                                                            n3.last_commit_date
-                                                            | e }}{% endif %}{%
-                                                            if
-                                                            n3.last_commit_message
-                                                            %}{% if
-                                                            n3.last_commit_date
-                                                            %} — {% endif %}{{
-                                                            n3.last_commit_message
-                                                            | e }}{% endif
-                                                            %}</span
-                                                        >
-                                                        {% else %} —
-                                                        <span class="caption"
-                                                            >No commit
-                                                            metadata.</span
-                                                        >
-                                                        {% endif %} {% endif %}
-                                                    </li>
-                                                    {% endfor %}
-                                                </ul>
-                                                {% endif %}
-                                            </details>
-                                            {% else %}
-                                            <code>📄 {{ n2.path | e }}</code>
-                                            {% if n2.last_commit_date or
-                                            n2.last_commit_message %} —
-                                            <span class="caption"
-                                                >{% if n2.last_commit_date %}{{
-                                                n2.last_commit_date | e }}{%
-                                                endif %}{% if
-                                                n2.last_commit_message %}{% if
-                                                n2.last_commit_date %} — {%
-                                                endif %}{{
-                                                n2.last_commit_message | e }}{%
-                                                endif %}</span
-                                            >
-                                            {% else %} —
-                                            <span class="caption"
-                                                >No commit metadata.</span
-                                            >
-                                            {% endif %} {% endif %}
-                                        </li>
-                                        {% endfor %}
-                                    </ul>
-                                    {% endif %}
-                                </details>
-                                {% else %}
-                                <code>📄 {{ n1.path | e }}</code>
-                                {% if n1.last_commit_date or
-                                n1.last_commit_message %} —
-                                <span class="caption"
-                                    >{% if n1.last_commit_date %}{{
-                                    n1.last_commit_date | e }}{% endif %}{% if
-                                    n1.last_commit_message %}{% if
-                                    n1.last_commit_date %} — {% endif %}{{
-                                    n1.last_commit_message | e }}{% endif
-                                    %}</span
-                                >
-                                {% else %} —
-                                <span class="caption">No commit metadata.</span>
-                                {% endif %} {% endif %}
-                            </li>
-                            {% endfor %}
-                        </ul>
-                        {% endif %}
-                    </details>
-                    {% else %}
-                    <code>📄 {{ n0.path | e }}</code>
-                    {% if n0.last_commit_date or n0.last_commit_message %} —
-                    <span class="caption"
-                        >{% if n0.last_commit_date %}{{ n0.last_commit_date | e
-                        }}{% endif %}{% if n0.last_commit_message %}{% if
-                        n0.last_commit_date %} — {% endif %}{{
-                        n0.last_commit_message | e }}{% endif %}</span
-                    >
-                    {% else %} —
-                    <span class="caption">No commit metadata.</span>
-                    {% endif %} {% endif %}
-                </li>
-                {% endfor %}
-            </ul>
+            <div class="den-private-mem-columns caption">
+                <span>Path</span><span>Last commit date</span><span>Message</span>
+            </div>
+            {{ render_private_memory_nodes(mem_private_files, true) }}
             {% else %}
             <p class="form-hint">No files found in this context repository.</p>
             {% endif %}
