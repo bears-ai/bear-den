@@ -1,36 +1,40 @@
-{% extends "base.html" %}
-
-{% block title %}{{ bear_name | e }}{% endblock %}
-
-{% block subnav %}
+{% extends "base.html" %} {% block title %}{{ bear_name | e }}{% endblock %} {%
+block subnav %}
 <li>
-  <label for="den-conv">Conversation</label>
-  <select id="den-conv" aria-label="Conversation"></select>
+    <label for="den-conv">Conversation</label>
+    <select id="den-conv" aria-label="Conversation"></select>
 </li>
-<li><a class="button-link" href="/bear/{{ bear_slug | e }}/details">Bear details</a></li>
-{% endblock %}
-
-{% block head %}
-{{ super() }}
+<li>
+    <a class="button-link" href="/bear/{{ bear_slug | e }}/details"
+        >Bear details</a
+    >
+</li>
+{% endblock %} {% block head %} {{ super() }}
 <link rel="modulepreload" href="/assets/deep-chat/deepChat.bundle.js" />
 <script type="module" src="/assets/deep-chat/deepChat.bundle.js"></script>
-{% endblock %}
-
-{% block content %}
+{% endblock %} {% block content %}
 <div class="den-wrap">
     <p id="err" class="den-err" hidden></p>
     <div id="chat-wrap">
-        {# Deep Chat reads errorMessages when the messages controller is constructed; set here so displayServiceErrorMessages is true before first paint (boot used to configure after loadConversations, too late). #}
-        <deep-chat id="chat" errorMessages='{"displayServiceErrorMessages":true}'></deep-chat>
+        {# Deep Chat reads errorMessages when the messages controller is
+        constructed; set here so displayServiceErrorMessages is true before
+        first paint (boot used to configure after loadConversations, too late).
+        #}
+        <deep-chat
+            id="chat"
+            errorMessages='{"displayServiceErrorMessages":true}'
+        ></deep-chat>
     </div>
 </div>
 <script>
-    var BEAR_ID   = "{{ bear_id | e }}";
+    var BEAR_ID = "{{ bear_id | e }}";
     var BEAR_NAME = "{{ bear_name | e }}";
     /** Letta conversation id from URL (`default` = agent main thread, or `conv-…`). Immutable after parse — used to sync `<select>` with history on load. */
     var PREFERRED_CONVERSATION_ID = (function () {
-      var p = new URLSearchParams(window.location.search).get('conversation_id');
-      return p && p.trim() ? p.trim() : 'default';
+        var p = new URLSearchParams(window.location.search).get(
+            "conversation_id",
+        );
+        return p && p.trim() ? p.trim() : "default";
     })();
     /** Active thread; set to match `#den-conv` after `loadConversations()` and on change. */
     var CONVERSATION_ID = PREFERRED_CONVERSATION_ID;
@@ -39,22 +43,24 @@
      * `?debug=true` or `?debug=verbose` (no UI toggle).
      */
     var DEN_CHAT_DEBUG_VERBOSE = (function () {
-      var q = new URLSearchParams(window.location.search);
-      var v = (q.get('debug') || '').trim().toLowerCase();
-      return v === 'true' || v === 'verbose';
+        var q = new URLSearchParams(window.location.search);
+        var v = (q.get("debug") || "").trim().toLowerCase();
+        return v === "true" || v === "verbose";
     })();
-    var errEl = document.getElementById('err');
+    var errEl = document.getElementById("err");
     /** Page size for Letta `GET …/messages` (newest page first; scroll up loads older). */
     var DEN_HISTORY_PAGE = 50;
     var historyNextBefore = null;
 
     function showErr(msg) {
-      errEl.textContent = msg;
-      errEl.hidden = false;
+        errEl.textContent = msg;
+        errEl.hidden = false;
     }
 
     function cv(name) {
-      return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+        return getComputedStyle(document.documentElement)
+            .getPropertyValue(name)
+            .trim();
     }
 
     /**
@@ -62,81 +68,90 @@
      * in prior commits). Batches setProperty + getComputedStyle to avoid many forced layouts.
      */
     function resolveDeepChatLayoutTokens() {
-      var p = document.getElementById('den-cv-probe');
-      if (!p) {
-        p = document.createElement('div');
-        p.id = 'den-cv-probe';
-        p.setAttribute('aria-hidden', 'true');
-        p.style.cssText =
-          'box-sizing:border-box;position:absolute!important;left:-9999px!important;top:0!important;' +
-          'visibility:hidden!important;pointer-events:none!important;margin:0!important;padding:0!important;' +
-          'border:none!important;width:auto!important;height:auto!important;font-size:16px!important;' +
-          'line-height:normal!important;font-family:inherit!important;';
-        document.body.appendChild(p);
-      }
-      function readBatch(setters, propNames) {
-        var i;
-        for (i = 0; i < setters.length; i++) {
-          p.style.setProperty(setters[i][0], 'var(' + setters[i][1] + ')');
+        var p = document.getElementById("den-cv-probe");
+        if (!p) {
+            p = document.createElement("div");
+            p.id = "den-cv-probe";
+            p.setAttribute("aria-hidden", "true");
+            p.style.cssText =
+                "box-sizing:border-box;position:absolute!important;left:-9999px!important;top:0!important;" +
+                "visibility:hidden!important;pointer-events:none!important;margin:0!important;padding:0!important;" +
+                "border:none!important;width:auto!important;height:auto!important;font-size:16px!important;" +
+                "line-height:normal!important;font-family:inherit!important;";
+            document.body.appendChild(p);
         }
-        var cs = getComputedStyle(p);
-        var out = {};
-        for (i = 0; i < propNames.length; i++) {
-          out[propNames[i]] = cs.getPropertyValue(propNames[i]).trim();
+        function readBatch(setters, propNames) {
+            var i;
+            for (i = 0; i < setters.length; i++) {
+                p.style.setProperty(
+                    setters[i][0],
+                    "var(" + setters[i][1] + ")",
+                );
+            }
+            var cs = getComputedStyle(p);
+            var out = {};
+            for (i = 0; i < propNames.length; i++) {
+                out[propNames[i]] = cs.getPropertyValue(propNames[i]).trim();
+            }
+            for (i = 0; i < setters.length; i++) {
+                p.style.removeProperty(setters[i][0]);
+            }
+            return out;
         }
-        for (i = 0; i < setters.length; i++) {
-          p.style.removeProperty(setters[i][0]);
-        }
-        return out;
-      }
 
-      var input = readBatch(
-        [
-          ['padding-top', '--chat-input-pad-top'],
-          ['padding-bottom', '--chat-input-pad-bottom'],
-          ['padding-left', '--chat-input-pad-left'],
-          ['padding-right', '--chat-input-pad-right'],
-          ['font-size', '--chat-input-font-size'],
-        ],
-        ['padding-top', 'padding-bottom', 'padding-left', 'padding-right', 'font-size']
-      );
+        var input = readBatch(
+            [
+                ["padding-top", "--chat-input-pad-top"],
+                ["padding-bottom", "--chat-input-pad-bottom"],
+                ["padding-left", "--chat-input-pad-left"],
+                ["padding-right", "--chat-input-pad-right"],
+                ["font-size", "--chat-input-font-size"],
+            ],
+            [
+                "padding-top",
+                "padding-bottom",
+                "padding-left",
+                "padding-right",
+                "font-size",
+            ],
+        );
 
-      var bubble = readBatch(
-        [
-          ['padding-top', '--chat-bubble-padding-block'],
-          ['padding-left', '--chat-bubble-padding-inline'],
-          ['line-height', '--chat-line-height'],
-        ],
-        ['padding-top', 'padding-left', 'line-height']
-      );
+        var bubble = readBatch(
+            [
+                ["padding-top", "--chat-bubble-padding-block"],
+                ["padding-left", "--chat-bubble-padding-inline"],
+                ["line-height", "--chat-line-height"],
+            ],
+            ["padding-top", "padding-left", "line-height"],
+        );
 
-      var submit = readBatch(
-        [
-          ['margin-bottom', '--chat-submit-nudge-y'],
-          ['margin-right', '--chat-submit-margin-right'],
-        ],
-        ['margin-bottom', 'margin-right']
-      );
+        var submit = readBatch(
+            [
+                ["margin-bottom", "--chat-submit-nudge-y"],
+                ["margin-right", "--chat-submit-margin-right"],
+            ],
+            ["margin-bottom", "margin-right"],
+        );
 
-      return {
-        bubblePad: bubble['padding-top'] + ' ' + bubble['padding-left'],
-        lh: bubble['line-height'],
-        inputFont: input['font-size'],
-        inputPadT: input['padding-top'],
-        inputPadB: input['padding-bottom'],
-        inputPadL: input['padding-left'],
-        inputPadR: input['padding-right'],
-        submitMb: submit['margin-bottom'],
-        submitMr: submit['margin-right'],
-      };
+        return {
+            bubblePad: bubble["padding-top"] + " " + bubble["padding-left"],
+            lh: bubble["line-height"],
+            inputFont: input["font-size"],
+            inputPadT: input["padding-top"],
+            inputPadB: input["padding-bottom"],
+            inputPadL: input["padding-left"],
+            inputPadR: input["padding-right"],
+            submitMb: submit["margin-bottom"],
+            submitMr: submit["margin-right"],
+        };
     }
 
     function escapeHtml(t) {
-      return String(t)
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;');
+        return String(t)
+            .replace(/&/g, "&amp;")
+            .replace(/</g, "&lt;")
+            .replace(/>/g, "&gt;")
+            .replace(/"/g, "&quot;");
     }
 
     /**
@@ -144,11 +159,11 @@
      * Must match [strip_letta_harness_for_user] in `core/letta/assistant_display.rs` (used for /v1/chat/history).
      */
     function stripSubagentForkBoilerplate(text) {
-      if (DEN_CHAT_DEBUG_VERBOSE || typeof text !== 'string') return text;
-      return text.replace(
-        /(?:\r?\n|^)\s*You have been forked from the primary conversational thread to run as an independent subagent\.[\s\S]*?provided\s+upfront\.?/gim,
-        ''
-      );
+        if (DEN_CHAT_DEBUG_VERBOSE || typeof text !== "string") return text;
+        return text.replace(
+            /(?:\r?\n|^)\s*You have been forked from the primary conversational thread to run as an independent subagent\.[\s\S]*?provided\s+upfront\.?/gim,
+            "",
+        );
     }
 
     /**
@@ -156,13 +171,16 @@
      * boilerplate. Full variant: history + end-of-stream correction (complete messages).
      */
     function stripSystemReminderBlocks(text) {
-      if (DEN_CHAT_DEBUG_VERBOSE || typeof text !== 'string') return text;
-      var s = text.replace(/<\s*system[-_]reminder\b[^>]*>[\s\S]*?<\s*\/\s*system[-_]reminder\s*>/gi, '');
-      var partial = /<\s*system[-_]reminder\b[^>]*$/i;
-      var m = s.match(partial);
-      if (m && m.index != null) s = s.slice(0, m.index);
-      s = stripSubagentForkBoilerplate(s);
-      return s;
+        if (DEN_CHAT_DEBUG_VERBOSE || typeof text !== "string") return text;
+        var s = text.replace(
+            /<\s*system[-_]reminder\b[^>]*>[\s\S]*?<\s*\/\s*system[-_]reminder\s*>/gi,
+            "",
+        );
+        var partial = /<\s*system[-_]reminder\b[^>]*$/i;
+        var m = s.match(partial);
+        if (m && m.index != null) s = s.slice(0, m.index);
+        s = stripSubagentForkBoilerplate(s);
+        return s;
     }
 
     /**
@@ -173,17 +191,20 @@
      * the full phrase is present in the buffer.
      */
     function stripSystemReminderBlocksLive(text) {
-      if (DEN_CHAT_DEBUG_VERBOSE || typeof text !== 'string') return text;
-      var s = text.replace(/<\s*system[-_]reminder\b[^>]*>[\s\S]*?<\s*\/\s*system[-_]reminder\s*>/gi, '');
-      return stripSubagentForkBoilerplate(s);
+        if (DEN_CHAT_DEBUG_VERBOSE || typeof text !== "string") return text;
+        var s = text.replace(
+            /<\s*system[-_]reminder\b[^>]*>[\s\S]*?<\s*\/\s*system[-_]reminder\s*>/gi,
+            "",
+        );
+        return stripSubagentForkBoilerplate(s);
     }
 
     /** Multi-line error string for Deep Chat `connect` `{ error: string }` (readable + optional support ref). */
     function formatChatError(title, detail, requestId) {
-      var parts = [title];
-      if (detail) parts.push('', detail);
-      if (requestId) parts.push('', 'Reference: ' + requestId);
-      return parts.join('\n');
+        var parts = [title];
+        if (detail) parts.push("", detail);
+        if (requestId) parts.push("", "Reference: " + requestId);
+        return parts.join("\n");
     }
 
     /**
@@ -193,35 +214,41 @@
      * `role: 'error'` so events go through the normal upsert path ({text} is valid).
      */
     function denChatSignalError(signals, errorText) {
-      signals.onResponse({ text: errorText, role: 'error' });
+        signals.onResponse({ text: errorText, role: "error" });
     }
 
     /** Prefer JSON `{ error, request_id }` from `POST /v1/chat/send`; strip noisy Den prefixes. */
     function denChatParseSendError(text, httpStatus, requestIdFromHeader) {
-      var trimmed = (text || '').trim();
-      try {
-        var j = JSON.parse(trimmed);
-        if (j && typeof j === 'object' && j.error != null) {
-          var rid = j.request_id || requestIdFromHeader;
-          return formatChatError(
-            'Couldn\u2019t send message',
-            String(j.error),
-            rid || ''
-          );
+        var trimmed = (text || "").trim();
+        try {
+            var j = JSON.parse(trimmed);
+            if (j && typeof j === "object" && j.error != null) {
+                var rid = j.request_id || requestIdFromHeader;
+                return formatChatError(
+                    "Couldn\u2019t send message",
+                    String(j.error),
+                    rid || "",
+                );
+            }
+        } catch (_) {
+            /* use plain text */
         }
-      } catch (_) { /* use plain text */ }
-      var fallback = trimmed || ('HTTP ' + httpStatus);
-      fallback = fallback
-        .replace(/^Server Error:\s*/i, '')
-        .replace(/^Validation Error:\s*/i, '')
-        .replace(/^Authentication Error:\s*/i, '')
-        .replace(/^Authorization Error:\s*/i, '');
-      return formatChatError('Couldn\u2019t send message', fallback, requestIdFromHeader || '');
+        var fallback = trimmed || "HTTP " + httpStatus;
+        fallback = fallback
+            .replace(/^Server Error:\s*/i, "")
+            .replace(/^Validation Error:\s*/i, "")
+            .replace(/^Authentication Error:\s*/i, "")
+            .replace(/^Authorization Error:\s*/i, "");
+        return formatChatError(
+            "Couldn\u2019t send message",
+            fallback,
+            requestIdFromHeader || "",
+        );
     }
 
     function escapeHtmlWithBreaks(s) {
-      var n = String(s).replace(/\r\n/g, '\n').replace(/\r/g, '\n');
-      return escapeHtml(n).replace(/\n/g, '<br>');
+        var n = String(s).replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+        return escapeHtml(n).replace(/\n/g, "<br>");
     }
 
     /**
@@ -229,80 +256,99 @@
      * `<details>` (meta-colored); plain segments keep normal bubble color.
      */
     function buildInterleavedSystemReminderHtml(raw) {
-      var parts = [];
-      var lastIndex = 0;
-      var re = /<\s*system[-_]reminder\b[^>]*>([\s\S]*?)<\s*\/\s*system[-_]reminder\s*>/gi;
-      var m;
-      while ((m = re.exec(raw)) !== null) {
-        if (m.index > lastIndex) {
-          parts.push(
-            '<span class="den-assistant-plain">' +
-              escapeHtmlWithBreaks(raw.slice(lastIndex, m.index)) +
-              '</span>'
-          );
+        var parts = [];
+        var lastIndex = 0;
+        var re =
+            /<\s*system[-_]reminder\b[^>]*>([\s\S]*?)<\s*\/\s*system[-_]reminder\s*>/gi;
+        var m;
+        while ((m = re.exec(raw)) !== null) {
+            if (m.index > lastIndex) {
+                parts.push(
+                    '<span class="den-assistant-plain">' +
+                        escapeHtmlWithBreaks(raw.slice(lastIndex, m.index)) +
+                        "</span>",
+                );
+            }
+            parts.push(
+                '<details class="den-system-reminder">' +
+                    '<summary class="den-system-reminder-summary">System reminder</summary>' +
+                    '<div class="den-system-reminder-body">' +
+                    escapeHtmlWithBreaks(m[1]) +
+                    "</div>" +
+                    "</details>",
+            );
+            lastIndex = re.lastIndex;
         }
+        var tail = raw.slice(lastIndex);
+        var partial = /<\s*system[-_]reminder\b[^>]*$/i;
+        var pm = tail.match(partial);
+        if (pm) tail = tail.slice(0, pm.index);
         parts.push(
-          '<details class="den-system-reminder">' +
-            '<summary class="den-system-reminder-summary">System reminder</summary>' +
-            '<div class="den-system-reminder-body">' +
-              escapeHtmlWithBreaks(m[1]) +
-            '</div>' +
-          '</details>'
+            '<span class="den-assistant-plain">' +
+                escapeHtmlWithBreaks(tail) +
+                "</span>",
         );
-        lastIndex = re.lastIndex;
-      }
-      var tail = raw.slice(lastIndex);
-      var partial = /<\s*system[-_]reminder\b[^>]*$/i;
-      var pm = tail.match(partial);
-      if (pm) tail = tail.slice(0, pm.index);
-      parts.push('<span class="den-assistant-plain">' + escapeHtmlWithBreaks(tail) + '</span>');
-      return parts.join('');
+        return parts.join("");
     }
 
     function formatAssistantDebugHtml(raw) {
-      return '<div class="den-assistant-html">' + buildInterleavedSystemReminderHtml(raw) + '</div>';
+        return (
+            '<div class="den-assistant-html">' +
+            buildInterleavedSystemReminderHtml(raw) +
+            "</div>"
+        );
     }
 
     /** Letta sometimes wraps the real payload in `contents` (same pattern as `error_message`). */
     function lettaInnerForStream(obj) {
-      if (!obj || typeof obj !== 'object') return obj;
-      if (obj.contents && typeof obj.contents === 'object' && obj.contents.message_type) {
-        return obj.contents;
-      }
-      return obj;
+        if (!obj || typeof obj !== "object") return obj;
+        if (
+            obj.contents &&
+            typeof obj.contents === "object" &&
+            obj.contents.message_type
+        ) {
+            return obj.contents;
+        }
+        return obj;
     }
 
     /**
-     * Markdown for the live stream only. Deep Chat forbids mixing `{ html: … }` (reasoning) and
-     * `{ text: … }` (assistant) in one streamed bubble — assistant replies were dropped after Thinking.
-     * Use `text` for both; remarkable renders **Thinking** + body.
+     * Return plain text for the live stream only. Re-rendering markdown on every token can cause
+     * Deep Chat / remarkable to replace the bubble mid-stream and truncate visible output; keep
+     * streaming updates as plain text, then let history / reload show the final formatted version.
      */
-    function buildReasoningMarkdown(fullText) {
-      var body;
-      if (DEN_CHAT_DEBUG_VERBOSE) {
-        body = fullText;
-      } else {
-        body = stripSystemReminderBlocks(fullText);
-      }
-      return '**Thinking**\n\n' + body;
+    function buildReasoningText(fullText) {
+        var body;
+        if (DEN_CHAT_DEBUG_VERBOSE) {
+            body = fullText;
+        } else {
+            body = stripSystemReminderBlocks(fullText);
+        }
+        return "Thinking\n\n" + body;
     }
 
     /** Letta may send `content` as a string or structured parts (same idea as Code SDK `extractTextFromContent`). */
     function assistantChunkText(inner) {
-      var c = inner.content;
-      if (typeof c === 'string') return c;
-      if (Array.isArray(c)) {
-        var pieces = [];
-        var j;
-        for (j = 0; j < c.length; j++) {
-          var part = c[j];
-          if (typeof part === 'string') pieces.push(part);
-          else if (part && typeof part === 'object' && typeof part.text === 'string') pieces.push(part.text);
+        var c = inner.content;
+        if (typeof c === "string") return c;
+        if (Array.isArray(c)) {
+            var pieces = [];
+            var j;
+            for (j = 0; j < c.length; j++) {
+                var part = c[j];
+                if (typeof part === "string") pieces.push(part);
+                else if (
+                    part &&
+                    typeof part === "object" &&
+                    typeof part.text === "string"
+                )
+                    pieces.push(part.text);
+            }
+            return pieces.join("");
         }
-        return pieces.join('');
-      }
-      if (c && typeof c === 'object' && typeof c.text === 'string') return c.text;
-      return '';
+        if (c && typeof c === "object" && typeof c.text === "string")
+            return c.text;
+        return "";
     }
 
     /**
@@ -310,596 +356,686 @@
      * with `false`, scrolling to the top requests older messages (see deepchat.dev/docs/interceptors).
      */
     function loadDenHistory(index) {
-      if (!BEAR_ID) {
-        return Promise.resolve([]);
-      }
-      if (index === 0) {
-        historyNextBefore = null;
-      } else if (!historyNextBefore) {
-        return Promise.resolve([]);
-      }
-      var params = new URLSearchParams();
-      params.set('bear_id', BEAR_ID);
-      params.set('conversation_id', CONVERSATION_ID);
-      params.set('limit', String(DEN_HISTORY_PAGE));
-      if (index > 0 && historyNextBefore) {
-        params.set('before', historyNextBefore);
-      }
-      return fetch('/v1/chat/history?' + params.toString(), {
-        credentials: 'same-origin',
-      }).then(function (response) {
-        if (response.status === 401) {
-          window.location.href = '/login?next=' + encodeURIComponent(window.location.pathname);
-          return { messages: [], has_more: false, next_before: null };
+        if (!BEAR_ID) {
+            return Promise.resolve([]);
         }
-        if (!response.ok) {
-          return response.text().then(function (t) {
-            throw new Error(t || 'HTTP ' + response.status);
-          });
+        if (index === 0) {
+            historyNextBefore = null;
+        } else if (!historyNextBefore) {
+            return Promise.resolve([]);
         }
-        return response.json();
-      }).then(function (data) {
-        if (!data || typeof data !== 'object') {
-          return [];
+        var params = new URLSearchParams();
+        params.set("bear_id", BEAR_ID);
+        params.set("conversation_id", CONVERSATION_ID);
+        params.set("limit", String(DEN_HISTORY_PAGE));
+        if (index > 0 && historyNextBefore) {
+            params.set("before", historyNextBefore);
         }
-        historyNextBefore = data.next_before || null;
-        var out = (data.messages || [])
-          .filter(function (m) {
-            return m && typeof m === 'object' && (m.role === 'user' || m.role === 'ai');
-          })
-          .map(function (m) {
-            var t = String(m.text != null ? m.text : '');
-            if (m.role !== 'ai') return { role: m.role, text: t };
-            if (DEN_CHAT_DEBUG_VERBOSE && /<system-reminder/i.test(t)) {
-              return { role: 'ai', html: formatAssistantDebugHtml(t) };
-            }
-            return { role: 'ai', text: stripSystemReminderBlocks(t) };
-          });
-        // Deep Chat expects `false` only after real messages; `[false]` alone can break the component.
-        if (data.has_more && out.length > 0) {
-          out.push(false);
-        }
-        return out;
-      }).catch(function (err) {
-        showErr(String(err.message || err));
-        return [];
-      });
+        return fetch("/v1/chat/history?" + params.toString(), {
+            credentials: "same-origin",
+        })
+            .then(function (response) {
+                if (response.status === 401) {
+                    window.location.href =
+                        "/login?next=" +
+                        encodeURIComponent(window.location.pathname);
+                    return { messages: [], has_more: false, next_before: null };
+                }
+                if (!response.ok) {
+                    return response.text().then(function (t) {
+                        throw new Error(t || "HTTP " + response.status);
+                    });
+                }
+                return response.json();
+            })
+            .then(function (data) {
+                if (!data || typeof data !== "object") {
+                    return [];
+                }
+                historyNextBefore = data.next_before || null;
+                var out = (data.messages || [])
+                    .filter(function (m) {
+                        return (
+                            m &&
+                            typeof m === "object" &&
+                            (m.role === "user" || m.role === "ai")
+                        );
+                    })
+                    .map(function (m) {
+                        var t = String(m.text != null ? m.text : "");
+                        if (m.role !== "ai") return { role: m.role, text: t };
+                        if (
+                            DEN_CHAT_DEBUG_VERBOSE &&
+                            /<system-reminder/i.test(t)
+                        ) {
+                            return {
+                                role: "ai",
+                                html: formatAssistantDebugHtml(t),
+                            };
+                        }
+                        return {
+                            role: "ai",
+                            text: stripSystemReminderBlocks(t),
+                        };
+                    });
+                // Deep Chat expects `false` only after real messages; `[false]` alone can break the component.
+                if (data.has_more && out.length > 0) {
+                    out.push(false);
+                }
+                return out;
+            })
+            .catch(function (err) {
+                showErr(String(err.message || err));
+                return [];
+            });
     }
 
     function configureDenChat() {
-      var chat = document.getElementById('chat');
-      var tok = resolveDeepChatLayoutTokens();
-      var pg  = cv('--page-color');
-      var ff  = cv('--field-fill-color');
-      var fg  = cv('--text-color');
-      var brd = cv('--border-color');
-      var met = cv('--meta-color');
-      var srf = cv('--surface-color');
-      var tln = cv('--thin-line-unit');
-      var bubblePad = tok.bubblePad;
-      var lh = tok.lh;
-      var bodyFont = cv('--body-font-family');
-      var errFg = cv('--error-color');
-      var border1 = tln + ' solid ' + brd;
-      var borderErr = tln + ' solid ' + errFg;
-      var submitScale = 'scale(' + cv('--chat-submit-button-scale') + ')';
+        var chat = document.getElementById("chat");
+        var tok = resolveDeepChatLayoutTokens();
+        var pg = cv("--page-color");
+        var ff = cv("--field-fill-color");
+        var fg = cv("--text-color");
+        var brd = cv("--border-color");
+        var met = cv("--meta-color");
+        var srf = cv("--surface-color");
+        var tln = cv("--thin-line-unit");
+        var bubblePad = tok.bubblePad;
+        var lh = tok.lh;
+        var bodyFont = cv("--body-font-family");
+        var errFg = cv("--error-color");
+        var border1 = tln + " solid " + brd;
+        var borderErr = tln + " solid " + errFg;
+        var submitScale = "scale(" + cv("--chat-submit-button-scale") + ")";
 
-      chat.style.cssText =
-        'position:absolute; top:0; left:0; width:100%; height:100%;' +
-        ' box-sizing:border-box; border:solid var(--thin-line-unit) var(--border-color);' +
-        ' border-radius:0; font-family: var(--body-font-family);' +
-        ' font-size: var(--chat-font-size); background: var(--page-color);';
+        chat.style.cssText =
+            "position:absolute; top:0; left:0; width:100%; height:100%;" +
+            " box-sizing:border-box; border:solid var(--thin-line-unit) var(--border-color);" +
+            " border-radius:0; font-family: var(--body-font-family);" +
+            " font-size: var(--chat-font-size); background: var(--page-color);";
 
-      chat.avatars = {
-        ai:   { src: '', styles: { avatar: { display: 'none' } } },
-        user: { src: '', styles: { avatar: { display: 'none' } } },
-      };
+        chat.avatars = {
+            ai: { src: "", styles: { avatar: { display: "none" } } },
+            user: { src: "", styles: { avatar: { display: "none" } } },
+        };
 
-      chat.names = false;
+        chat.names = false;
 
-      /**
-       * Deep Chat default is displayServiceErrorMessages: false — then `signals.onResponse({ error })`
-       * does not show the real string from Codepool/Den (SSE error_message or HTTP JSON), which looks
-       * like silence in the thread. Enable full service errors for harness/proxy failures (e.g. EACCES).
-       */
-      chat.errorMessages = {
-        displayServiceErrorMessages: true,
-      };
+        /**
+         * Deep Chat default is displayServiceErrorMessages: false — then `signals.onResponse({ error })`
+         * does not show the real string from Codepool/Den (SSE error_message or HTTP JSON), which looks
+         * like silence in the thread. Enable full service errors for harness/proxy failures (e.g. EACCES).
+         */
+        chat.errorMessages = {
+            displayServiceErrorMessages: true,
+        };
 
-      chat.messageStyles = {
-        default: {
-          shared: {
-            bubble: {
-              borderRadius: '0',
-              padding: bubblePad,
-              maxWidth: '100%',
-              lineHeight: lh,
-              color: fg,
+        chat.messageStyles = {
+            default: {
+                shared: {
+                    bubble: {
+                        borderRadius: "0",
+                        padding: bubblePad,
+                        maxWidth: "100%",
+                        lineHeight: lh,
+                        color: fg,
+                    },
+                },
+                ai: {
+                    outerContainer: { justifyContent: "flex-start" },
+                    bubble: { backgroundColor: srf },
+                },
+                user: {
+                    outerContainer: { justifyContent: "flex-end" },
+                    bubble: { backgroundColor: pg, border: border1 },
+                },
+                error: {
+                    outerContainer: { justifyContent: "flex-start" },
+                    bubble: {
+                        backgroundColor: ff,
+                        color: errFg,
+                        border: borderErr,
+                        borderLeftWidth: "calc(var(--spacing-unit) * 0.35)",
+                        borderLeftStyle: "solid",
+                        borderLeftColor: errFg,
+                    },
+                },
             },
-          },
-          ai: {
-            outerContainer: { justifyContent: 'flex-start' },
-            bubble: { backgroundColor: srf },
-          },
-          user: {
-            outerContainer: { justifyContent: 'flex-end' },
-            bubble: { backgroundColor: pg, border: border1 },
-          },
-          error: {
-            outerContainer: { justifyContent: 'flex-start' },
-            bubble: {
-              backgroundColor: ff,
-              color: errFg,
-              border: borderErr,
-              borderLeftWidth: 'calc(var(--spacing-unit) * 0.35)',
-              borderLeftStyle: 'solid',
-              borderLeftColor: errFg,
+            loading: {
+                message: {
+                    styles: {
+                        outerContainer: { justifyContent: "flex-start" },
+                        bubble: {
+                            backgroundColor: srf,
+                            color: met,
+                            borderRadius: "0",
+                            padding: "0",
+                            border: "none",
+                        },
+                    },
+                },
+                /** `small` = scroll-to-top pagination; `full` = first paint. Defaults are a large ring — very noticeable. */
+                history: {
+                    full: {
+                        styles: {
+                            outerContainer: {
+                                justifyContent: "flex-start",
+                                marginTop: "calc(var(--spacing-unit) * 0.75)",
+                            },
+                            bubble: {
+                                height: "36px",
+                                width: "36px",
+                                margin: "4px 0",
+                                border: "3px solid " + met,
+                            },
+                        },
+                    },
+                    small: {
+                        styles: {
+                            outerContainer: {
+                                justifyContent: "flex-start",
+                                marginTop: "calc(var(--spacing-unit) * 0.35)",
+                                marginBottom: "calc(var(--spacing-unit) * 1)",
+                            },
+                            bubble: {
+                                border: "none",
+                                backgroundColor: "transparent",
+                                minHeight: "0",
+                                padding: "calc(var(--spacing-unit) * 0.35) 0",
+                            },
+                        },
+                        html: '<span class="den-history-loading">Loading earlier messages\u2026</span>',
+                    },
+                },
             },
-          },
-        },
-        loading: {
-          message: {
+        };
+
+        chat.textInput = {
             styles: {
-              outerContainer: { justifyContent: 'flex-start' },
-              bubble: {
-                backgroundColor: srf,
-                color: met,
-                borderRadius: '0',
-                padding: '0',
-                border: 'none',
-              },
-            },
-          },
-          /** `small` = scroll-to-top pagination; `full` = first paint. Defaults are a large ring — very noticeable. */
-          history: {
-            full: {
-              styles: {
-                outerContainer: { justifyContent: 'flex-start', marginTop: 'calc(var(--spacing-unit) * 0.75)' },
-                bubble: {
-                  height: '36px',
-                  width: '36px',
-                  margin: '4px 0',
-                  border: '3px solid ' + met,
+                container: {
+                    width: "100%",
+                    margin: "0",
+                    border: "unset",
+                    borderTop: border1,
+                    borderRadius: "0px",
+                    boxShadow: "unset",
+                    backgroundColor: ff,
+                    color: fg,
                 },
-              },
-            },
-            small: {
-              styles: {
-                outerContainer: {
-                  justifyContent: 'flex-start',
-                  marginTop: 'calc(var(--spacing-unit) * 0.35)',
-                  marginBottom: 'calc(var(--spacing-unit) * 1)',
+                text: {
+                    color: fg,
+                    fontFamily: bodyFont,
+                    fontSize: tok.inputFont,
+                    paddingTop: tok.inputPadT,
+                    paddingBottom: tok.inputPadB,
+                    paddingLeft: tok.inputPadL,
+                    paddingRight: tok.inputPadR,
                 },
-                bubble: {
-                  border: 'none',
-                  backgroundColor: 'transparent',
-                  minHeight: '0',
-                  padding: 'calc(var(--spacing-unit) * 0.35) 0',
-                },
-              },
-              html: '<span class="den-history-loading">Loading earlier messages\u2026</span>',
+                focus: {},
             },
-          },
-        },
-      };
+            placeholder: {
+                text: "Message your bear\u2026",
+                style: { color: met },
+            },
+        };
 
-      chat.textInput = {
-        styles: {
-          container: {
-            width: '100%',
-            margin: '0',
-            border: 'unset',
-            borderTop: border1,
-            borderRadius: '0px',
-            boxShadow: 'unset',
-            backgroundColor: ff,
-            color: fg,
-          },
-          text: {
-            color: fg,
-            fontFamily: bodyFont,
-            fontSize: tok.inputFont,
-            paddingTop: tok.inputPadT,
-            paddingBottom: tok.inputPadB,
-            paddingLeft: tok.inputPadL,
-            paddingRight: tok.inputPadR,
-          },
-          focus: {},
-        },
-        placeholder: { text: 'Message your bear\u2026', style: { color: met } },
-      };
+        chat.submitButtonStyles = {
+            submit: {
+                container: {
+                    default: {
+                        transform: submitScale,
+                        marginBottom: tok.submitMb,
+                        marginRight: tok.submitMr,
+                    },
+                },
+            },
+            loading: {
+                container: {
+                    default: {
+                        transform: submitScale,
+                        marginBottom: tok.submitMb,
+                        marginRight: tok.submitMr,
+                    },
+                },
+            },
+            stop: {
+                container: {
+                    default: {
+                        transform: submitScale,
+                        marginBottom: tok.submitMb,
+                        marginRight: tok.submitMr,
+                    },
+                },
+            },
+        };
 
-      chat.submitButtonStyles = {
-        submit:  { container: { default: { transform: submitScale, marginBottom: tok.submitMb, marginRight: tok.submitMr } } },
-        loading: { container: { default: { transform: submitScale, marginBottom: tok.submitMb, marginRight: tok.submitMr } } },
-        stop:    { container: { default: { transform: submitScale, marginBottom: tok.submitMb, marginRight: tok.submitMr } } },
-      };
+        chat.inputAreaStyle = { backgroundColor: ff };
 
-      chat.inputAreaStyle = { backgroundColor: ff };
-
-      chat.auxiliaryStyle =
-        '::-webkit-scrollbar{width:var(--chat-scrollbar-size)}' +
-        '::-webkit-scrollbar-thumb{background:var(--meta-color);border-radius:0}' +
-        '::-webkit-scrollbar-track{background:transparent}' +
-        /* Default Deep Chat downwards layout is display:grid with implicit auto rows; after
+        chat.auxiliaryStyle =
+            "::-webkit-scrollbar{width:var(--chat-scrollbar-size)}" +
+            "::-webkit-scrollbar-thumb{background:var(--meta-color);border-radius:0}" +
+            "::-webkit-scrollbar-track{background:transparent}" +
+            /* Default Deep Chat downwards layout is display:grid with implicit auto rows; after
            loadHistory the message list can steal all height and clip #input until a reflow
            (e.g. window focus). Pin messages to a flexible scroll row and keep the composer row. */
-        '#chat-view.deep-chat-downwards-mode{grid-template-rows:minmax(0,1fr) auto!important;min-height:0!important}' +
-        '#chat-view.deep-chat-downwards-mode #messages{min-height:0!important}' +
-        '#chat-view.deep-chat-downwards-mode #input{margin-top:0!important}' +
-        '#text-input{background-color:var(--field-fill-color)!important}' +
-        '#messages{padding-top:var(--chat-messages-padding-top)!important;background-color:var(--surface-color)!important;scroll-behavior:auto}' +
-        '.den-history-loading{display:inline-block;font-size:smaller;font-style:italic;color:var(--meta-color);opacity:0.88}' +
-        '.den-reasoning-wrap{font-size:smaller;color:inherit;opacity:0.92}' +
-        '.den-reasoning-head{display:flex;align-items:center;gap:calc(var(--spacing-unit) * 0.9);min-width:0}' +
-        '.den-reasoning-kicker{flex:0 0 auto;font-variant:small-caps;letter-spacing:0.06em;font-size:smaller;opacity:0.8}' +
-        '.den-reasoning-scroll{flex:1 1 auto;min-width:0;overflow-x:auto;overflow-y:hidden;max-height:calc(1em * var(--chat-line-height));line-height:var(--chat-line-height);font-family:var(--data-font-family),ui-monospace,monospace;font-size:smaller;white-space:nowrap;-webkit-overflow-scrolling:touch}' +
-        '.den-reasoning-wrap.den-reasoning-expanded .den-reasoning-scroll{white-space:pre-wrap;overflow-x:visible;overflow-y:auto;max-height:calc(var(--spacing-unit) * 36)}' +
-        '.den-reasoning-toggle{flex:0 0 auto;margin:0;padding:calc(var(--spacing-unit) * 0.24) calc(var(--spacing-unit) * 0.7);border:none;background:transparent;color:inherit;opacity:0.72;cursor:pointer;font:inherit;font-size:smaller;text-decoration:underline;text-underline-offset:calc(var(--thin-line-unit) * 2)}' +
-        '.den-reasoning-toggle:hover{opacity:1}' +
-        '.den-assistant-html{color:inherit}' +
-        '.den-assistant-html .den-assistant-plain{color:inherit}' +
-        '.den-system-reminder{display:block;margin:calc(var(--spacing-unit) * 0.6) 0 0 0;padding:calc(var(--spacing-unit) * 0.5) 0 0 0;border-top:var(--thin-line-unit) solid var(--border-color);color:var(--meta-color);font-size:smaller}' +
-        '.den-system-reminder-summary{cursor:pointer;font:inherit;list-style-position:outside}' +
-        '.den-system-reminder-body{margin:calc(var(--spacing-unit) * 0.45) 0 0 0;padding:0;white-space:pre-wrap;word-break:break-word;font-family:var(--data-font-family),ui-monospace,monospace}' +
-        '.den-reasoning-scroll .den-assistant-html{white-space:normal!important}' +
-        '.den-reasoning-scroll .den-assistant-html .den-system-reminder-body{white-space:pre-wrap!important}';
+            "#chat-view.deep-chat-downwards-mode{grid-template-rows:minmax(0,1fr) auto!important;min-height:0!important}" +
+            "#chat-view.deep-chat-downwards-mode #messages{min-height:0!important}" +
+            "#chat-view.deep-chat-downwards-mode #input{margin-top:0!important}" +
+            "#text-input{background-color:var(--field-fill-color)!important}" +
+            "#messages{padding-top:var(--chat-messages-padding-top)!important;background-color:var(--surface-color)!important;scroll-behavior:auto}" +
+            ".den-history-loading{display:inline-block;font-size:smaller;font-style:italic;color:var(--meta-color);opacity:0.88}" +
+            ".den-reasoning-wrap{font-size:smaller;color:inherit;opacity:0.92}" +
+            ".den-reasoning-head{display:flex;align-items:center;gap:calc(var(--spacing-unit) * 0.9);min-width:0}" +
+            ".den-reasoning-kicker{flex:0 0 auto;font-variant:small-caps;letter-spacing:0.06em;font-size:smaller;opacity:0.8}" +
+            ".den-reasoning-scroll{flex:1 1 auto;min-width:0;overflow-x:auto;overflow-y:hidden;max-height:calc(1em * var(--chat-line-height));line-height:var(--chat-line-height);font-family:var(--data-font-family),ui-monospace,monospace;font-size:smaller;white-space:nowrap;-webkit-overflow-scrolling:touch}" +
+            ".den-reasoning-wrap.den-reasoning-expanded .den-reasoning-scroll{white-space:pre-wrap;overflow-x:visible;overflow-y:auto;max-height:calc(var(--spacing-unit) * 36)}" +
+            ".den-reasoning-toggle{flex:0 0 auto;margin:0;padding:calc(var(--spacing-unit) * 0.24) calc(var(--spacing-unit) * 0.7);border:none;background:transparent;color:inherit;opacity:0.72;cursor:pointer;font:inherit;font-size:smaller;text-decoration:underline;text-underline-offset:calc(var(--thin-line-unit) * 2)}" +
+            ".den-reasoning-toggle:hover{opacity:1}" +
+            ".den-assistant-html{color:inherit}" +
+            ".den-assistant-html .den-assistant-plain{color:inherit}" +
+            ".den-system-reminder{display:block;margin:calc(var(--spacing-unit) * 0.6) 0 0 0;padding:calc(var(--spacing-unit) * 0.5) 0 0 0;border-top:var(--thin-line-unit) solid var(--border-color);color:var(--meta-color);font-size:smaller}" +
+            ".den-system-reminder-summary{cursor:pointer;font:inherit;list-style-position:outside}" +
+            ".den-system-reminder-body{margin:calc(var(--spacing-unit) * 0.45) 0 0 0;padding:0;white-space:pre-wrap;word-break:break-word;font-family:var(--data-font-family),ui-monospace,monospace}" +
+            ".den-reasoning-scroll .den-assistant-html{white-space:normal!important}" +
+            ".den-reasoning-scroll .den-assistant-html .den-system-reminder-body{white-space:pre-wrap!important}";
 
-      chat.remarkable = { html: false, breaks: true };
+        chat.remarkable = { html: false, breaks: true };
 
-      chat.connect = { handler: lettaSseHandler, stream: true };
+        chat.connect = { handler: lettaSseHandler, stream: true };
 
-      chat.loadHistory = loadDenHistory;
+        chat.loadHistory = loadDenHistory;
 
-      chat.addEventListener('click', function (ev) {
-        var path = typeof ev.composedPath === 'function' ? ev.composedPath() : [ev.target];
-        var btn = null;
-        for (var i = 0; i < path.length; i++) {
-          var n = path[i];
-          if (n && n.nodeType === 1 && n.classList && n.classList.contains('den-reasoning-toggle')) {
-            btn = n;
-            break;
-          }
-        }
-        if (!btn) return;
-        var w = btn.closest('[data-den-reasoning]');
-        if (!w) return;
-        var on = !w.classList.contains('den-reasoning-expanded');
-        w.classList.toggle('den-reasoning-expanded', on);
-        btn.setAttribute('aria-expanded', on ? 'true' : 'false');
-        btn.textContent = on ? 'Collapse' : 'Expand';
-      });
+        chat.addEventListener("click", function (ev) {
+            var path =
+                typeof ev.composedPath === "function"
+                    ? ev.composedPath()
+                    : [ev.target];
+            var btn = null;
+            for (var i = 0; i < path.length; i++) {
+                var n = path[i];
+                if (
+                    n &&
+                    n.nodeType === 1 &&
+                    n.classList &&
+                    n.classList.contains("den-reasoning-toggle")
+                ) {
+                    btn = n;
+                    break;
+                }
+            }
+            if (!btn) return;
+            var w = btn.closest("[data-den-reasoning]");
+            if (!w) return;
+            var on = !w.classList.contains("den-reasoning-expanded");
+            w.classList.toggle("den-reasoning-expanded", on);
+            btn.setAttribute("aria-expanded", on ? "true" : "false");
+            btn.textContent = on ? "Collapse" : "Expand";
+        });
     }
 
     /** Map one Letta SSE JSON object to a stream Response (see denChatSignalError — use `text`, not `error`). */
     function lettaStreamEventErrorSignal(obj, requestRef) {
-      var inner = lettaInnerForStream(obj);
-      if (!inner || inner.message_type !== 'error_message') return null;
-      var lines = [];
-      if (inner.error_type) lines.push('[' + String(inner.error_type) + ']');
-      if (inner.message) lines.push(String(inner.message));
-      if (inner.detail) lines.push(String(inner.detail));
-      var ref =
-        inner.support_ref != null && String(inner.support_ref).trim()
-          ? String(inner.support_ref).trim()
-          : requestRef || '';
-      if (ref) lines.push('Reference: ' + ref);
-      var msg = lines.length ? lines.join('\n\n') : 'An error occurred.';
-      return { text: msg, role: 'error' };
+        var inner = lettaInnerForStream(obj);
+        if (!inner || inner.message_type !== "error_message") return null;
+        var lines = [];
+        if (inner.error_type) lines.push("[" + String(inner.error_type) + "]");
+        if (inner.message) lines.push(String(inner.message));
+        if (inner.detail) lines.push(String(inner.detail));
+        var ref =
+            inner.support_ref != null && String(inner.support_ref).trim()
+                ? String(inner.support_ref).trim()
+                : requestRef || "";
+        if (ref) lines.push("Reference: " + ref);
+        var msg = lines.length ? lines.join("\n\n") : "An error occurred.";
+        return { text: msg, role: "error" };
     }
 
     function lettaSseHandler(body, signals) {
-      var userText = (body.messages || [])
-        .filter(function (m) { return m.role === 'user'; })
-        .map(function (m) { return m.text || ''; })
-        .pop() || '';
+        var userText =
+            (body.messages || [])
+                .filter(function (m) {
+                    return m.role === "user";
+                })
+                .map(function (m) {
+                    return m.text || "";
+                })
+                .pop() || "";
 
-      if (!BEAR_ID) {
-        denChatSignalError(signals, 'Missing bear.');
-        return;
-      }
-      errEl.hidden = true;
-
-      var abortCtl = new AbortController();
-      signals.stopClicked.listener = function () { abortCtl.abort(); };
-
-      fetch('/v1/chat/send', {
-        method: 'POST',
-        credentials: 'same-origin',
-        headers: {
-          'Content-Type': 'application/json',
-          Accept: 'application/json',
-        },
-        body: JSON.stringify({
-          bear_id: BEAR_ID,
-          message: userText,
-          conversation_id: CONVERSATION_ID,
-        }),
-        signal: abortCtl.signal,
-      }).then(function (response) {
-        var requestRef =
-          response.headers.get('x-request-id') ||
-          response.headers.get('X-Request-Id') ||
-          '';
-        if (response.status === 401) {
-          window.location.href = '/login?next=' + encodeURIComponent(window.location.pathname);
-          return;
-        }
-        if (!response.ok) {
-          return response.text().then(function (t) {
-            denChatSignalError(
-              signals,
-              denChatParseSendError(t, response.status, requestRef)
-            );
-          });
-        }
-        var reader = response.body.getReader();
-        var decoder = new TextDecoder();
-        var lineBuf = '';
-        var reasoningFull = '';
-        var hadReasoning = false;
-        var assistantBuf = '';
-        var sawAssistantOrReasoning = false;
-        var sawStreamError = false;
-        var sseParseWarned = false;
-        signals.onOpen();
-
-        function consumeSseDataLine(raw) {
-          var line = raw.replace(/\r$/, '');
-          if (!line.startsWith('data: ')) return;
-          var payload = line.slice(6).trim();
-          if (payload === '' || payload === '[DONE]') return;
-          var obj;
-          try {
-            obj = JSON.parse(payload);
-          } catch (_) {
-            if (!sseParseWarned) {
-              sseParseWarned = true;
-              denChatSignalError(
-                signals,
-                formatChatError(
-                  'Invalid response from server',
-                  'Could not parse streamed data from the assistant service.',
-                  requestRef
-                )
-              );
-            }
+        if (!BEAR_ID) {
+            denChatSignalError(signals, "Missing bear.");
             return;
-          }
-          var errSig = lettaStreamEventErrorSignal(obj, requestRef);
-          if (errSig) {
-            sawStreamError = true;
-            signals.onResponse(errSig);
-            return;
-          }
-          var inner = lettaInnerForStream(obj);
-          if (!inner || typeof inner !== 'object') return;
-
-          if (inner.message_type === 'reasoning_message') {
-            sawAssistantOrReasoning = true;
-            var pieceR = '';
-            if (typeof inner.reasoning === 'string') pieceR = inner.reasoning;
-            else pieceR = assistantChunkText(inner);
-            if (!pieceR) return;
-            var wasEmpty = reasoningFull.length === 0;
-            reasoningFull += pieceR;
-            hadReasoning = true;
-            signals.onResponse({
-              text: buildReasoningMarkdown(reasoningFull),
-              role: 'ai',
-              overwrite: !wasEmpty,
-            });
-            return;
-          }
-
-          if (inner.message_type === 'assistant_message') {
-            sawAssistantOrReasoning = true;
-            var chunk = assistantChunkText(inner);
-            /**
-             * Accumulate all assistant tokens for this HTTP response. Codepool / Letta may
-             * change `id` between stream_event chunks; resetting the buffer on id change dropped
-             * the start of the reply in the UI while Letta and history still had the full text.
-             */
-            var isFirstAssistantChunk = assistantBuf.length === 0;
-            assistantBuf += chunk;
-            if (DEN_CHAT_DEBUG_VERBOSE && /<system-reminder/i.test(assistantBuf)) {
-              signals.onResponse({
-                text: assistantBuf,
-                role: 'ai',
-                overwrite: !isFirstAssistantChunk || hadReasoning,
-              });
-            } else {
-              signals.onResponse({
-                text: DEN_CHAT_DEBUG_VERBOSE
-                  ? assistantBuf
-                  : stripSystemReminderBlocksLive(assistantBuf),
-                role: 'ai',
-                overwrite: !isFirstAssistantChunk || hadReasoning,
-              });
-            }
-            if (hadReasoning) hadReasoning = false;
-          }
         }
+        errEl.hidden = true;
 
-        function pump() {
-          return reader.read().then(function (result) {
-            lineBuf += decoder.decode(
-              result.value ? result.value : new Uint8Array(0),
-              { stream: !result.done }
-            );
-            var nl;
-            while ((nl = lineBuf.indexOf('\n')) >= 0) {
-              var raw = lineBuf.slice(0, nl);
-              lineBuf = lineBuf.slice(nl + 1);
-              consumeSseDataLine(raw);
-            }
-            if (result.done) {
-              /* Last SSE event often has no trailing newline; it would stay in lineBuf and was dropped. */
-              if (lineBuf.length > 0) {
-                consumeSseDataLine(lineBuf);
-                lineBuf = '';
-              }
-              /* After all chunks, apply full reminder strip (incl. partial unclosed tag at EOF). */
-              if (
-                sawAssistantOrReasoning &&
-                assistantBuf.length > 0 &&
-                !DEN_CHAT_DEBUG_VERBOSE
-              ) {
-                var finalClean = stripSystemReminderBlocks(assistantBuf);
-                var liveClean = stripSystemReminderBlocksLive(assistantBuf);
-                if (finalClean !== liveClean) {
-                  signals.onResponse({
-                    text: finalClean,
-                    role: 'ai',
-                    overwrite: true,
-                  });
+        var abortCtl = new AbortController();
+        signals.stopClicked.listener = function () {
+            abortCtl.abort();
+        };
+
+        fetch("/v1/chat/send", {
+            method: "POST",
+            credentials: "same-origin",
+            headers: {
+                "Content-Type": "application/json",
+                Accept: "application/json",
+            },
+            body: JSON.stringify({
+                bear_id: BEAR_ID,
+                message: userText,
+                conversation_id: CONVERSATION_ID,
+            }),
+            signal: abortCtl.signal,
+        })
+            .then(function (response) {
+                var requestRef =
+                    response.headers.get("x-request-id") ||
+                    response.headers.get("X-Request-Id") ||
+                    "";
+                if (response.status === 401) {
+                    window.location.href =
+                        "/login?next=" +
+                        encodeURIComponent(window.location.pathname);
+                    return;
                 }
-              }
-              if (
-                !sawAssistantOrReasoning &&
-                !sawStreamError &&
-                !sseParseWarned
-              ) {
-                denChatSignalError(
-                  signals,
-                  formatChatError(
-                    'No response received',
-                    'The assistant did not return any text. You can retry, or share the reference below if the problem continues.',
-                    requestRef
-                  )
-                );
-              }
-              signals.onClose();
-              return;
-            }
-            return pump();
-          });
-        }
-        return pump();
-      }).catch(function (x) {
-        if (x.name === 'AbortError') {
-          signals.onResponse({ text: '\n[stopped]' });
-          signals.onClose();
-        } else {
-          denChatSignalError(
-            signals,
-            formatChatError(
-              'Connection problem',
-              String(x.message || x),
-              ''
-            )
-          );
-        }
-      });
+                if (!response.ok) {
+                    return response.text().then(function (t) {
+                        denChatSignalError(
+                            signals,
+                            denChatParseSendError(
+                                t,
+                                response.status,
+                                requestRef,
+                            ),
+                        );
+                    });
+                }
+                var reader = response.body.getReader();
+                var decoder = new TextDecoder();
+                var lineBuf = "";
+                var reasoningFull = "";
+                var hadReasoning = false;
+                var assistantBuf = "";
+                var sawAssistantOrReasoning = false;
+                var sawStreamError = false;
+                var sseParseWarned = false;
+                signals.onOpen();
+
+                function consumeSseDataLine(raw) {
+                    var line = raw.replace(/\r$/, "");
+                    if (!line.startsWith("data: ")) return;
+                    var payload = line.slice(6).trim();
+                    if (payload === "" || payload === "[DONE]") return;
+                    var obj;
+                    try {
+                        obj = JSON.parse(payload);
+                    } catch (_) {
+                        if (!sseParseWarned) {
+                            sseParseWarned = true;
+                            denChatSignalError(
+                                signals,
+                                formatChatError(
+                                    "Invalid response from server",
+                                    "Could not parse streamed data from the assistant service.",
+                                    requestRef,
+                                ),
+                            );
+                        }
+                        return;
+                    }
+                    var errSig = lettaStreamEventErrorSignal(obj, requestRef);
+                    if (errSig) {
+                        sawStreamError = true;
+                        signals.onResponse(errSig);
+                        return;
+                    }
+                    var inner = lettaInnerForStream(obj);
+                    if (!inner || typeof inner !== "object") return;
+
+                    if (inner.message_type === "reasoning_message") {
+                        sawAssistantOrReasoning = true;
+                        var pieceR = "";
+                        if (typeof inner.reasoning === "string")
+                            pieceR = inner.reasoning;
+                        else pieceR = assistantChunkText(inner);
+                        if (!pieceR) return;
+                        var wasEmpty = reasoningFull.length === 0;
+                        reasoningFull += pieceR;
+                        hadReasoning = true;
+                        signals.onResponse({
+                            text: buildReasoningText(reasoningFull),
+                            role: "ai",
+                            overwrite: !wasEmpty,
+                        });
+                        return;
+                    }
+
+                    if (inner.message_type === "assistant_message") {
+                        sawAssistantOrReasoning = true;
+                        var chunk = assistantChunkText(inner);
+                        /**
+                         * Accumulate all assistant tokens for this HTTP response. Codepool / Letta may
+                         * change `id` between stream_event chunks; resetting the buffer on id change dropped
+                         * the start of the reply in the UI while Letta and history still had the full text.
+                         */
+                        var isFirstAssistantChunk = assistantBuf.length === 0;
+                        assistantBuf += chunk;
+                        if (
+                            DEN_CHAT_DEBUG_VERBOSE &&
+                            /<system-reminder/i.test(assistantBuf)
+                        ) {
+                            signals.onResponse({
+                                text: assistantBuf,
+                                role: "ai",
+                                overwrite:
+                                    !isFirstAssistantChunk || hadReasoning,
+                            });
+                        } else {
+                            signals.onResponse({
+                                text: DEN_CHAT_DEBUG_VERBOSE
+                                    ? assistantBuf
+                                    : stripSystemReminderBlocksLive(
+                                          assistantBuf,
+                                      ),
+                                role: "ai",
+                                overwrite:
+                                    !isFirstAssistantChunk || hadReasoning,
+                            });
+                        }
+                        if (hadReasoning) hadReasoning = false;
+                    }
+                }
+
+                function pump() {
+                    return reader.read().then(function (result) {
+                        lineBuf += decoder.decode(
+                            result.value ? result.value : new Uint8Array(0),
+                            { stream: !result.done },
+                        );
+                        var nl;
+                        while ((nl = lineBuf.indexOf("\n")) >= 0) {
+                            var raw = lineBuf.slice(0, nl);
+                            lineBuf = lineBuf.slice(nl + 1);
+                            consumeSseDataLine(raw);
+                        }
+                        if (result.done) {
+                            /* Last SSE event often has no trailing newline; it would stay in lineBuf and was dropped. */
+                            if (lineBuf.length > 0) {
+                                consumeSseDataLine(lineBuf);
+                                lineBuf = "";
+                            }
+                            /* After all chunks, apply full reminder strip (incl. partial unclosed tag at EOF). */
+                            if (
+                                sawAssistantOrReasoning &&
+                                assistantBuf.length > 0 &&
+                                !DEN_CHAT_DEBUG_VERBOSE
+                            ) {
+                                var finalClean =
+                                    stripSystemReminderBlocks(assistantBuf);
+                                var liveClean =
+                                    stripSystemReminderBlocksLive(assistantBuf);
+                                if (finalClean !== liveClean) {
+                                    signals.onResponse({
+                                        text: finalClean,
+                                        role: "ai",
+                                        overwrite: true,
+                                    });
+                                }
+                            }
+                            if (
+                                !sawAssistantOrReasoning &&
+                                !sawStreamError &&
+                                !sseParseWarned
+                            ) {
+                                denChatSignalError(
+                                    signals,
+                                    formatChatError(
+                                        "No response received",
+                                        "The assistant did not return any text. You can retry, or share the reference below if the problem continues.",
+                                        requestRef,
+                                    ),
+                                );
+                            }
+                            signals.onClose();
+                            return;
+                        }
+                        return pump();
+                    });
+                }
+                return pump();
+            })
+            .catch(function (x) {
+                if (x.name === "AbortError") {
+                    signals.onResponse({ text: "\n[stopped]" });
+                    signals.onClose();
+                } else {
+                    denChatSignalError(
+                        signals,
+                        formatChatError(
+                            "Connection problem",
+                            String(x.message || x),
+                            "",
+                        ),
+                    );
+                }
+            });
     }
 
     function remountDeepChat() {
-      var wrap = document.getElementById('chat-wrap');
-      if (!wrap) return;
-      historyNextBefore = null;
-      wrap.innerHTML =
-        '<deep-chat id="chat" errorMessages=\'{"displayServiceErrorMessages":true}\'></deep-chat>';
-      customElements.whenDefined('deep-chat').then(configureDenChat);
+        var wrap = document.getElementById("chat-wrap");
+        if (!wrap) return;
+        historyNextBefore = null;
+        wrap.innerHTML =
+            '<deep-chat id="chat" errorMessages=\'{"displayServiceErrorMessages":true}\'></deep-chat>';
+        customElements.whenDefined("deep-chat").then(configureDenChat);
     }
 
     function loadConversations() {
-      if (!BEAR_ID) {
-        return Promise.resolve();
-      }
-      return fetch('/v1/chat/conversations?bear_id=' + encodeURIComponent(BEAR_ID), {
-        credentials: 'same-origin',
-      })
-        .then(function (response) {
-          if (response.status === 401) {
-            window.location.href = '/login?next=' + encodeURIComponent(window.location.pathname);
-            return { __den_skip: true };
-          }
-          if (!response.ok) {
-            return response.text().then(function (t) {
-              throw new Error(t || 'HTTP ' + response.status);
+        if (!BEAR_ID) {
+            return Promise.resolve();
+        }
+        return fetch(
+            "/v1/chat/conversations?bear_id=" + encodeURIComponent(BEAR_ID),
+            {
+                credentials: "same-origin",
+            },
+        )
+            .then(function (response) {
+                if (response.status === 401) {
+                    window.location.href =
+                        "/login?next=" +
+                        encodeURIComponent(window.location.pathname);
+                    return { __den_skip: true };
+                }
+                if (!response.ok) {
+                    return response.text().then(function (t) {
+                        throw new Error(t || "HTTP " + response.status);
+                    });
+                }
+                return response.json();
+            })
+            .then(function (data) {
+                if (data && data.__den_skip) return "skip-boot";
+                var sel = document.getElementById("den-conv");
+                if (!sel) return;
+                var list = data && data.conversations ? data.conversations : [];
+                sel.innerHTML = "";
+                var i;
+                for (i = 0; i < list.length; i++) {
+                    var c = list[i];
+                    if (!c || !c.id) continue;
+                    var opt = document.createElement("option");
+                    opt.value = c.id;
+                    opt.textContent = c.title || c.id;
+                    sel.appendChild(opt);
+                }
+                if (sel.options.length === 0) {
+                    var o = document.createElement("option");
+                    o.value = "default";
+                    o.textContent = "Main chat";
+                    sel.appendChild(o);
+                }
+                var optionIds = [];
+                for (i = 0; i < sel.options.length; i++) {
+                    optionIds.push(sel.options[i].value);
+                }
+                var firstId =
+                    list[0] && list[0].id
+                        ? list[0].id
+                        : optionIds[0] || "default";
+                var pick =
+                    PREFERRED_CONVERSATION_ID &&
+                    optionIds.indexOf(PREFERRED_CONVERSATION_ID) >= 0
+                        ? PREFERRED_CONVERSATION_ID
+                        : firstId;
+                if (optionIds.indexOf(pick) < 0) {
+                    pick = optionIds[0] || "default";
+                }
+                sel.value = pick;
+                CONVERSATION_ID = pick;
+                sel.onchange = function () {
+                    CONVERSATION_ID = sel.value;
+                    remountDeepChat();
+                };
+                return "ok";
+            })
+            .catch(function (err) {
+                showErr(String(err.message || err));
+                var sel = document.getElementById("den-conv");
+                if (sel) {
+                    sel.innerHTML = "";
+                    var o = document.createElement("option");
+                    o.value = "default";
+                    o.textContent = "Main chat";
+                    sel.appendChild(o);
+                    sel.onchange = function () {
+                        CONVERSATION_ID = sel.value;
+                        remountDeepChat();
+                    };
+                }
+                CONVERSATION_ID = "default";
+                return "ok";
             });
-          }
-          return response.json();
-        })
-        .then(function (data) {
-          if (data && data.__den_skip) return 'skip-boot';
-          var sel = document.getElementById('den-conv');
-          if (!sel) return;
-          var list = data && data.conversations ? data.conversations : [];
-          sel.innerHTML = '';
-          var i;
-          for (i = 0; i < list.length; i++) {
-            var c = list[i];
-            if (!c || !c.id) continue;
-            var opt = document.createElement('option');
-            opt.value = c.id;
-            opt.textContent = c.title || c.id;
-            sel.appendChild(opt);
-          }
-          if (sel.options.length === 0) {
-            var o = document.createElement('option');
-            o.value = 'default';
-            o.textContent = 'Main chat';
-            sel.appendChild(o);
-          }
-          var optionIds = [];
-          for (i = 0; i < sel.options.length; i++) {
-            optionIds.push(sel.options[i].value);
-          }
-          var firstId = list[0] && list[0].id ? list[0].id : (optionIds[0] || 'default');
-          var pick =
-            PREFERRED_CONVERSATION_ID && optionIds.indexOf(PREFERRED_CONVERSATION_ID) >= 0
-              ? PREFERRED_CONVERSATION_ID
-              : firstId;
-          if (optionIds.indexOf(pick) < 0) {
-            pick = optionIds[0] || 'default';
-          }
-          sel.value = pick;
-          CONVERSATION_ID = pick;
-          sel.onchange = function () {
-            CONVERSATION_ID = sel.value;
-            remountDeepChat();
-          };
-          return 'ok';
-        })
-        .catch(function (err) {
-          showErr(String(err.message || err));
-          var sel = document.getElementById('den-conv');
-          if (sel) {
-            sel.innerHTML = '';
-            var o = document.createElement('option');
-            o.value = 'default';
-            o.textContent = 'Main chat';
-            sel.appendChild(o);
-            sel.onchange = function () {
-              CONVERSATION_ID = sel.value;
-              remountDeepChat();
-            };
-          }
-          CONVERSATION_ID = 'default';
-          return 'ok';
-        });
     }
 
     function boot() {
-      /**
-       * Run `loadConversations()` before `configureDenChat()` so `CONVERSATION_ID` and
-       * `#den-conv` match `?conversation_id=` and `loadHistory` uses the same id (avoids
-       * race where the select was forced to the first thread while history used the URL).
-       * `errorMessages` on `<deep-chat>` in markup + `configureDenChat` keep
-       * `displayServiceErrorMessages` true before the message stack is built.
-       */
-      loadConversations()
-        .then(function () {
-          return customElements.whenDefined('deep-chat');
-        })
-        .catch(function (err) {
-          showErr(String(err.message || err));
-          return customElements.whenDefined('deep-chat');
-        })
-        .then(function () {
-          configureDenChat();
-        });
+        /**
+         * Run `loadConversations()` before `configureDenChat()` so `CONVERSATION_ID` and
+         * `#den-conv` match `?conversation_id=` and `loadHistory` uses the same id (avoids
+         * race where the select was forced to the first thread while history used the URL).
+         * `errorMessages` on `<deep-chat>` in markup + `configureDenChat` keep
+         * `displayServiceErrorMessages` true before the message stack is built.
+         */
+        loadConversations()
+            .then(function () {
+                return customElements.whenDefined("deep-chat");
+            })
+            .catch(function (err) {
+                showErr(String(err.message || err));
+                return customElements.whenDefined("deep-chat");
+            })
+            .then(function () {
+                configureDenChat();
+            });
     }
 
     boot();
