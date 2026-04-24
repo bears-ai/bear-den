@@ -9,7 +9,7 @@ block subnav %}
     >{% if node.last_commit_message %}{{ node.last_commit_message | e }}{% else
     %}<span class="caption">No commit metadata.</span>{% endif %}</span
 >
-{%- endmacro %} {% macro render_private_memory_nodes(nodes, open_dirs=false)
+{%- endmacro %} {% macro render_private_memory_nodes(nodes, open_dirs=false, depth=0)
 -%}
 <ul class="den-bear-memory-summary den-private-mem-tree">
     {% for node in nodes %}
@@ -18,18 +18,18 @@ block subnav %}
         <details{% if open_dirs %} open{% endif %}>
             <summary>
                 <span class="den-private-mem-row">
-                    <code class="den-private-mem-path" title="{{ node.path | e }}"
+                    <code class="den-private-mem-path den-private-mem-depth-{{ depth }}" title="{{ node.path | e }}"
                         >📁 {{ node.name | e }}</code
                     >
                     {{ render_commit_columns(node) }}
                 </span>
             </summary>
             {% if node.children and node.children | length > 0 %}{{
-            render_private_memory_nodes(node.children, false) }}{% endif %}
+            render_private_memory_nodes(node.children, false, depth + 1) }}{% endif %}
         </details>
         {% else %}
         <div class="den-private-mem-row">
-            <code class="den-private-mem-path" title="{{ node.path | e }}"
+            <code class="den-private-mem-path den-private-mem-depth-{{ depth }}" title="{{ node.path | e }}"
                 >📄 {{ node.name | e }}</code
             >
             {{ render_commit_columns(node) }}

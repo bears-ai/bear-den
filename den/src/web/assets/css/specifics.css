@@ -191,6 +191,58 @@ body.bear_chat #chat-wrap {
     word-break: break-word;
 }
 
+#private-memory .den-private-mem-depth-0 {
+    padding-left: calc(var(--spacing-unit) * 0.5);
+}
+
+#private-memory .den-private-mem-depth-1 {
+    padding-left: calc(var(--spacing-unit) * 1.5);
+}
+
+#private-memory .den-private-mem-depth-2 {
+    padding-left: calc(var(--spacing-unit) * 2.5);
+}
+
+#private-memory .den-private-mem-depth-3 {
+    padding-left: calc(var(--spacing-unit) * 3.5);
+}
+
+#private-memory .den-private-mem-depth-4 {
+    padding-left: calc(var(--spacing-unit) * 4.5);
+}
+
+#private-memory .den-private-mem-depth-5 {
+    padding-left: calc(var(--spacing-unit) * 5.5);
+}
+
+#private-memory .den-private-mem-depth-6 {
+    padding-left: calc(var(--spacing-unit) * 6.5);
+}
+
+#private-memory .den-private-mem-depth-7 {
+    padding-left: calc(var(--spacing-unit) * 7.5);
+}
+
+#private-memory .den-private-mem-depth-8 {
+    padding-left: calc(var(--spacing-unit) * 8.5);
+}
+
+#private-memory .den-private-mem-depth-9 {
+    padding-left: calc(var(--spacing-unit) * 9.5);
+}
+
+#private-memory .den-private-mem-depth-10 {
+    padding-left: calc(var(--spacing-unit) * 10.5);
+}
+
+#private-memory .den-private-mem-depth-11 {
+    padding-left: calc(var(--spacing-unit) * 11.5);
+}
+
+#private-memory .den-private-mem-depth-12 {
+    padding-left: calc(var(--spacing-unit) * 12.5);
+}
+
 #private-memory .den-private-mem-commit-date,
 #private-memory .den-private-mem-commit-message {
     color: var(--meta-color);
@@ -206,10 +258,6 @@ body.bear_chat #chat-wrap {
 
 #private-memory .den-private-mem-children > li {
     margin-bottom: calc(var(--spacing-unit) * 0.5);
-}
-
-#private-memory .den-private-mem-tree summary .den-private-mem-path {
-    padding-left: calc(var(--spacing-unit) * 1);
 }
 
 @media (max-width: 860px) {
