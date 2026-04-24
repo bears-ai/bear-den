@@ -17,6 +17,18 @@ Den is **not only** “configuration”: it **hosts** product surfaces (for exam
 
 **Den builds:** In environments with Rust installed (dev container, CI), run `cargo build` / `cargo test` from **`den/`** to verify changes. See [`den/AGENTS.md`](den/AGENTS.md) (“Verifying Rust changes”).
 
+**Codepool builds:** From **`codepool/`** (TypeScript/Node), run:
+- `npm run build` — compile TypeScript
+- `npm run typecheck` — type-check only
+- `npm run dev` — run with node --watch
+- Tests are bundled in the Letta Code SDK; the app is verified via integration in the Docker stack.
+
+**Services:** The `services/` directory holds deploy configs for Bifrost, Letta, Garage, MemManager, and Preflight — each has its own `COOLIFY_DEPLOY.md`. Services are not built from this repo (except Codepool, which uses Letta Code SDK).
+
+**Stack deploy:** Full stack via root `docker-compose.yaml`:
+- `docker compose --profile bear-stack up` — Letta + Codepool + Den + Bifrost (prod)
+- Add `COMPOSE_PROFILES=bundled` for bundled PostgreSQL (`bear-postgres` profile), otherwise uses managed DB
+
 ## GitOps and reproducibility
 
 **Strict GitOps is the default assumption:** configuration that affects how the stack runs should live in **this repository** (or be generated from files in-repo in CI), go through normal review, and avoid **silent drift** from one-off edits in hosting UIs or production consoles. Prefer declarative assets under `services/*`, env templates, and docs over “remember to click this in Coolify.”
