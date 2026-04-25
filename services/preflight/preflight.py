@@ -42,7 +42,7 @@ def parse_sql_uri(name: str, value: str) -> None:
         fail(f"{name} must include a host name")
 
 
-def validate_sql_tcp_reachable(name: str, value: str) -> None:
+def validate_sql_tcp_reachable(name: str, value: str, hint: str) -> None:
     u = urlparse(value)
     host = u.hostname
     port = u.port or 5432
@@ -65,8 +65,7 @@ def validate_sql_tcp_reachable(name: str, value: str) -> None:
 
     fail(
         f"{name} host is not reachable at {host}:{port} after {retries} attempts: {last_error}. "
-        "If you want the compose-bundled Postgres, enable COMPOSE_PROFILES=bundled; "
-        "otherwise set DATABASE_URL to your managed Postgres."
+        f"{hint}"
     )
 
 
@@ -83,6 +82,11 @@ def validate_optional_let_pg_uri() -> None:
             "the SQLAlchemy driver (see services/letta/COOLIFY_DEPLOY.md)"
         )
     info("LETTA_PG_URI parses as PostgreSQL URI")
+    validate_sql_tcp_reachable(
+        "LETTA_PG_URI",
+        value,
+        "Deploy/attach Letta's Postgres/pgvector database and set LETTA_PG_URI to its reachable internal URL.",
+    )
 
 
 def validate_http_url(name: str, value: str) -> None:
@@ -103,7 +107,11 @@ def main() -> None:
     database_url = require_non_empty("DATABASE_URL")
     parse_sql_uri("DATABASE_URL", database_url)
     info("DATABASE_URL parses as PostgreSQL URI")
-    validate_sql_tcp_reachable("DATABASE_URL", database_url)
+    validate_sql_tcp_reachable(
+        "DATABASE_URL",
+        database_url,
+        "If you want the compose-bundled Postgres, enable COMPOSE_PROFILES=bundled; otherwise set DATABASE_URL to your managed Postgres.",
+    )
 
     validate_optional_let_pg_uri()
 
