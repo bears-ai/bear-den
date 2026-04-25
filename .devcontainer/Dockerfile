@@ -1,7 +1,9 @@
 FROM debian:bookworm-slim
 
+ARG RUST_VERSION=1.92.0
+
 RUN apt-get update && apt-get install -y \
-    curl git bash ca-certificates \
+    curl git bash ca-certificates build-essential pkg-config libssl-dev \
     python3 python3-pytest python3-requests \
     docker.io \
     && rm -rf /var/lib/apt/lists/* \
@@ -15,3 +17,14 @@ RUN apt-get update && apt-get install -y \
     && curl -fsSL "https://github.com/docker/compose/releases/download/v2.29.7/docker-compose-linux-${compose_arch}" \
       -o /usr/local/lib/docker/cli-plugins/docker-compose \
     && chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
+
+ENV RUSTUP_HOME=/usr/local/rustup \
+    CARGO_HOME=/usr/local/cargo \
+    PATH=/usr/local/cargo/bin:${PATH}
+
+RUN curl --proto '=https' --tlsv1.2 -fsSL https://sh.rustup.rs \
+    | bash -s -- -y --no-modify-path --profile minimal --default-toolchain ${RUST_VERSION} \
+    && rustup component add clippy rustfmt \
+    && for bin in ${CARGO_HOME}/bin/*; do ln -sf "$bin" /usr/local/bin/"$(basename "$bin")"; done \
+    && printf 'export PATH="%s/bin:$PATH"\n' "${CARGO_HOME}" > /etc/profile.d/cargo.sh \
+    && chmod -R a+w ${RUSTUP_HOME} ${CARGO_HOME}
