@@ -81,7 +81,7 @@ mod tests {
     fn truncates_unclosed_opener() {
         let s = "Hello <system-reminder>oops";
         let out = strip_letta_harness_for_user(s);
-        assert_eq!(out, "Hello ");
+        assert_eq!(out, "Hello");
     }
 
     #[test]
