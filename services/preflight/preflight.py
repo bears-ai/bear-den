@@ -8,7 +8,9 @@ Runtime aggregation of similar checks (plus live DB/HTTP probes) is exposed on D
 from __future__ import annotations
 
 import os
+import socket
 import sys
+import time
 from urllib.parse import urlparse
 
 
@@ -38,6 +40,34 @@ def parse_sql_uri(name: str, value: str) -> None:
         fail(f"{name} must use postgres:// or postgresql:// (got scheme {u.scheme!r})")
     if not u.hostname:
         fail(f"{name} must include a host name")
+
+
+def validate_sql_tcp_reachable(name: str, value: str) -> None:
+    u = urlparse(value)
+    host = u.hostname
+    port = u.port or 5432
+    if not host:
+        fail(f"{name} must include a host name")
+
+    timeout_secs = float(os.environ.get("PREFLIGHT_DB_CONNECT_TIMEOUT_SECS", "3"))
+    retries = int(os.environ.get("PREFLIGHT_DB_CONNECT_RETRIES", "5"))
+    last_error = None
+
+    for attempt in range(1, retries + 1):
+        try:
+            with socket.create_connection((host, port), timeout=timeout_secs):
+                info(f"{name} TCP reachable ({host}:{port})")
+                return
+        except OSError as exc:
+            last_error = exc
+            if attempt < retries:
+                time.sleep(1)
+
+    fail(
+        f"{name} host is not reachable at {host}:{port} after {retries} attempts: {last_error}. "
+        "If you want the compose-bundled Postgres, enable COMPOSE_PROFILES=bundled; "
+        "otherwise set DATABASE_URL to your managed Postgres."
+    )
 
 
 def validate_optional_let_pg_uri() -> None:
@@ -73,6 +103,7 @@ def main() -> None:
     database_url = require_non_empty("DATABASE_URL")
     parse_sql_uri("DATABASE_URL", database_url)
     info("DATABASE_URL parses as PostgreSQL URI")
+    validate_sql_tcp_reachable("DATABASE_URL", database_url)
 
     validate_optional_let_pg_uri()
 

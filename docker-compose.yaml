@@ -37,6 +37,10 @@ services:
       context: ./services/preflight
       dockerfile: Dockerfile
     restart: "no"
+    depends_on:
+      bear-postgres:
+        condition: service_healthy
+        required: false
     environment:
       JWT_SECRET: ${JWT_SECRET:-}
       LETTA_SERVER_PASS: ${LETTA_SERVER_PASS:-}
@@ -52,9 +56,6 @@ services:
   bear-postgres:
     profiles:
       - bundled
-    depends_on:
-      bear-preflight:
-        condition: service_completed_successfully
     image: postgres:16-alpine
     restart: unless-stopped
     environment:
