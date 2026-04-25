@@ -303,8 +303,8 @@ services:
       GITHUB_PACKAGES_TOKEN: ${GITHUB_PACKAGES_TOKEN:-}
       GHCR_PACKAGES_OWNER: ${GHCR_PACKAGES_OWNER:-}
       GHCR_PACKAGES_OWNER_KIND: ${GHCR_PACKAGES_OWNER_KIND:-org}
-    ports:
-      - "${DEN_PUBLISH_PORT:-3030}:3000"
+    expose:
+      - "3000"
 
 volumes:
   # Used only when `bear-postgres` runs (`--profile bundled`).
