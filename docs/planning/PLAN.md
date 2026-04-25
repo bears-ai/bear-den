@@ -299,7 +299,7 @@ Deliverables:
 
 ### Phase 1 – **Den**: auth‑aware proxy & **bear** manager (no Cabinet yet)
 
-**Implementation plan:** [PHASE1_BOOTSTRAP.md](PHASE1_BOOTSTRAP.md) — Den (Rust) lives in repo-root **`services/worker/`**; **Trestle** is only an ephemeral bootstrap codename for M0 (not a repo path).
+**Implementation plan:** [PHASE1_BOOTSTRAP.md](PHASE1_BOOTSTRAP.md) — Den (Rust) lives in repo-root **`services/den/`**; **Trestle** is only an ephemeral bootstrap codename for M0 (not a repo path).
 
 **Goal:** **Web chat** follows **browser → Den → Letta Code → Letta**, with identity and policy in Den and a single agent stack for web and channels. The **browser client** is **Den's embedded Deep Chat** UI. **Letta Code** is **in scope** as the required agent runtime; **optional channel-only Den proxy** (Letta Code → Den for audit) stays out of scope unless you explicitly adopt it (see [Canonical paths vs optional channel proxy](#canonical-paths-vs-optional-channel-proxy)).
 
@@ -362,7 +362,7 @@ Deliverables:
 - No Cabinet/Outline yet: **Letta native memory** only; shared knowledge in later phases.
 - **User onboarding:** new account → Personal Bear auto-provisioned → user lands in chat with onboarding prompt.
 - **Memory dashboard and bear memory UX:** **Dashboard:** **`human`** (and per-conversation isolation as the Letta API exposes for 1:1 web); **`person:{name}`** blocks appear **when they already exist** (mostly **group-mode**, post–Phase 1). No aggregate scoring, capacity, or pressure metric. **Bear detail** (operator): full **Letta-native** summary — **all** blocks + archival hints; assurance-only, not a management UI. Copy follows the **Phase 1 memory model** ([§ Knowledge model](#knowledge-model-letta-memory-vs-cabinet)): curated blocks vs **findable** longer history — **not** a Den-side memory layer and **not** “everything always in context.”
-- **Org policy:** operator sets a shared `org_policy` Letta block (default from `services/worker/defaults/org_policy.md`) applied to all bears.
+- **Org policy:** operator sets a shared `org_policy` Letta block (default from `services/den/defaults/org_policy.md`) applied to all bears.
 - **Routines:** **first-class** schedules + management UI in Den; each routine **assigned to a bear**; inherited policy/membership; **file outputs** in **Garage** per [artifacts-garage-adr.md](../artifacts-garage-adr.md) and [routines-automation-adr.md](../routines-automation-adr.md); **no** automatic skill learning from unattended routine runs ([PHASE1_DECISIONS.md](PHASE1_DECISIONS.md) decision **10**).
 
 ---

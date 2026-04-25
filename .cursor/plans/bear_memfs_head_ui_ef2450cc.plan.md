@@ -51,7 +51,7 @@ flowchart LR
 
 | Heavier shape | Lighter shape |
 |---------------|---------------|
-| New `MemfsManagementClient` + `Option<Arc<...>>` in `AppState` | Reuse **existing** `reqwest::Client` from [`LettaClient`](services/worker/src/core/letta/client.rs) (add a small `http_client()` if missing) and a **single** `async fn fetch_memfs_head(...)` (or `fetch_memory_manager_head`, Rust `snake_case`) in a small module (e.g. [`mem_manager_head.rs`](services/worker/src/core/mem_manager_head.rs)) or co-located with the bear page — **no** extra Arc in app state. |
+| New `MemfsManagementClient` + `Option<Arc<...>>` in `AppState` | Reuse **existing** `reqwest::Client` from [`LettaClient`](services/den/src/core/letta/client.rs) (add a small `http_client()` if missing) and a **single** `async fn fetch_memfs_head(...)` (or `fetch_memory_manager_head`, Rust `snake_case`) in a small module (e.g. [`mem_manager_head.rs`](services/den/src/core/mem_manager_head.rs)) or co-located with the bear page — **no** extra Arc in app state. |
 | Second env var `MEMFS_MANAGEMENT_BASE_URL` | **Only** `LETTA_MEMFS_SERVICE_URL` (already used for Letta ↔ Memory Manager); append fixed path in code, e.g. `/v1/management/agents/{id}/head`. |
 | `MEMFS_MANAGEMENT_TOKEN` on v1 | **Omit** until you need auth beyond Docker private network; add later with no API shape change. |
 | Bearer + Den-side token plumbing | Dropped for v1. |
@@ -70,11 +70,11 @@ flowchart LR
 
 ## Den: config, fetch, page
 
-- **Config** ([`services/worker/src/config.rs`](services/worker/src/config.rs)): optional `letta_memfs_service_url` (or reuse existing name used by preflight) — **same** variable the stack already has; default host after rename is `http://bears-memfs-manager:8285`, nothing new to invent as long as Den reads that env. When empty, skip the call (UI shows “not configured”).
-- **HTTP:** add `fetch_memory_manager_head` / `MemoryManagerHead` (Rust `PascalCase` for types, `snake_case` for fns) in one file under [`services/worker/src/core/`](services/worker/src/core/) plus a serde row for JSON; wire `http` from [`LettaClient`](services/worker/src/core/letta/client.rs) (expose `&reqwest::Client` with a one-line getter if it is not public today). Shorter `fetch_memfs_head` is fine if you prefer to match `LETTA_MEMFS_*` env names in comments.
+- **Config** ([`services/den/src/config.rs`](services/den/src/config.rs)): optional `letta_memfs_service_url` (or reuse existing name used by preflight) — **same** variable the stack already has; default host after rename is `http://bears-memfs-manager:8285`, nothing new to invent as long as Den reads that env. When empty, skip the call (UI shows “not configured”).
+- **HTTP:** add `fetch_memory_manager_head` / `MemoryManagerHead` (Rust `PascalCase` for types, `snake_case` for fns) in one file under [`services/den/src/core/`](services/den/src/core/) plus a serde row for JSON; wire `http` from [`LettaClient`](services/den/src/core/letta/client.rs) (expose `&reqwest::Client` with a one-line getter if it is not public today). Shorter `fetch_memfs_head` is fine if you prefer to match `LETTA_MEMFS_*` env names in comments.
 - **No** new `AppState` field: pass `&state.letta` into the fetch or call a helper on `AppState` that uses `self.letta.http_client()`.
-- **Wire in** [`render_bear_details_page`](services/worker/src/web/bear_management.rs): if Letta is enabled, `agent_id` present, and `letta_memfs_service_url` set, `await` head (soft failure to `memfs_error` string). Pass `memfs_head` / `memfs_error` / `memfs_skipped` as needed.
-- **UI** ([`services/worker/src/web/templates/bear/details.html`](services/worker/src/web/templates/bear/details.html)): new subsection **"Private memory (git)"** or under the existing **Memory** card:
+- **Wire in** [`render_bear_details_page`](services/den/src/web/bear_management.rs): if Letta is enabled, `agent_id` present, and `letta_memfs_service_url` set, `await` head (soft failure to `memfs_error` string). Pass `memfs_head` / `memfs_error` / `memfs_skipped` as needed.
+- **UI** ([`services/den/src/web/templates/bear/details.html`](services/den/src/web/templates/bear/details.html)): new subsection **"Private memory (git)"** or under the existing **Memory** card:
   - If URL not configured: short hint (same pattern as "Letta is not configured").
   - If error: one line error.
   - If 404 / no data: "No repository yet" (Letta on-disk `memfs` path never seeded for this agent—optional link to deploy docs).
@@ -83,8 +83,8 @@ flowchart LR
 ## Compose and docs
 
 - **[`docker-compose.yaml`](docker-compose.yaml):** on **`bears-den`**, set `LETTA_MEMFS_SERVICE_URL=http://bears-memfs-manager:8285` (same as preflight / Letta / Memory Manager — one variable for the whole stack).
-- **[`services/worker/.env.example`](services/worker/.env.example)** / deploy docs: document that **Den** can read `LETTA_MEMFS_SERVICE_URL` for this readout; feature is **optional** if unset.
-- **[`services/worker/src/web/ROUTES.md`](services/worker/src/web/ROUTES.md):** no new route; bear details only.
+- **[`services/den/.env.example`](services/den/.env.example)** / deploy docs: document that **Den** can read `LETTA_MEMFS_SERVICE_URL` for this readout; feature is **optional** if unset.
+- **[`services/den/src/web/ROUTES.md`](services/den/src/web/ROUTES.md):** no new route; bear details only.
 
 ## Explicitly out of scope (later iteration)
 

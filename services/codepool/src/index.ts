@@ -19,18 +19,18 @@ async function main(): Promise<void> {
   const lettaBaseUrl = process.env.LETTA_BASE_URL;
   if (!lettaBaseUrl) {
     console.error(
-      "bears-pool: LETTA_BASE_URL is not set — cannot start without Letta API"
+      "bear-codepool: LETTA_BASE_URL is not set — cannot start without Letta API"
     );
     process.exit(1);
   }
 
   const lettaApiKey = process.env.LETTA_API_KEY?.trim() ?? "";
-  console.log("bears-pool: verifying Letta connectivity (GET /v1/health)...");
+  console.log("bear-codepool: verifying Letta connectivity (GET /v1/health)...");
   await verifyLettaReachableAtStartup({
     baseUrl: lettaBaseUrl,
     apiKey: lettaApiKey,
   });
-  console.log("bears-pool: Letta health check passed");
+  console.log("bear-codepool: Letta health check passed");
 
   const internalToken = process.env.CODEPOOL_INTERNAL_TOKEN?.trim() ?? "";
 
@@ -48,7 +48,7 @@ async function main(): Promise<void> {
   attachRoutes(app, { pool, channelListeners, internalToken });
 
   const server = app.listen(port, () => {
-    console.log(`bears-pool listening on ${port}`);
+    console.log(`bear-codepool listening on ${port}`);
   });
 
   function shutdown() {
@@ -62,6 +62,6 @@ async function main(): Promise<void> {
 }
 
 void main().catch((err) => {
-  console.error("bears-pool:", err);
+  console.error("bear-codepool:", err);
   process.exit(1);
 });

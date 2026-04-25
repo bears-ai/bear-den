@@ -3,14 +3,14 @@
 **BEARS harness runtime** (Letta Code SDK): warm **conversation** session pool, streaming endpoints for **Den**, optional **channel listener** hooks (see `src/channel-listeners.ts`), **`GET /internal/pool`** stats, and **`GET /metrics`** (Prometheus text, in-process counters).
 
 - **Not** the Letta server — canonical git memfs is on the Letta volume, with Letta’s **`LETTA_MEMFS_SERVICE_URL`** pointing at **Memory Manager** / **`bears-memfs-manager`**; this process uses **`LETTA_MEMFS_LOCAL=1`** and **`~/.letta`** in the container for the Letta Code CLI mirror.
-- First-class app service under **`services/frontend/`** (alongside **`services/worker/`**).
+- First-class app service under **`services/codepool/`** (alongside **`services/den/`**).
 
-**Coolify / production:** Prefer the monorepo root [`docker-compose.yaml`](../../docker-compose.yaml) (`bears-pool` + `bear-letta` + `bears-den` on one network; optional **`bear-postgres`** via profile **`bundled`**). See [COOLIFY_DEPLOY.md](./COOLIFY_DEPLOY.md).
+**Coolify / production:** Prefer the monorepo root [`docker-compose.yaml`](../../docker-compose.yaml) (`bear-codepool` + `bear-letta` + `bears-den` on one network; optional **`bear-postgres`** via profile **`bundled`**). See [COOLIFY_DEPLOY.md](./COOLIFY_DEPLOY.md).
 
 ## Run locally
 
 ```bash
-cd services/frontend
+cd services/codepool
 npm install
 cp .env.example .env   # set LETTA_BASE_URL, LETTA_API_KEY
 npm run build && npm start

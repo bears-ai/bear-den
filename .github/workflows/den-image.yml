@@ -5,7 +5,7 @@ on:
   push:
     branches: [main]
     paths:
-      - "services/worker/**"
+      - "services/den/**"
       - ".github/workflows/den-image.yml"
   workflow_dispatch:
 
@@ -49,7 +49,7 @@ jobs:
       - name: Build and push
         uses: docker/build-push-action@v6
         with:
-          context: services/worker
+          context: services/den
           push: true
           platforms: linux/arm64
           tags: ${{ steps.meta.outputs.tags }}

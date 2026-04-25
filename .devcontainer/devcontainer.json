@@ -12,5 +12,5 @@
     "OPENCODE_AUTH_PATH": "/root/.local/share/opencode/auth.json"
   },
   "postCreateCommand": "/workspace/.devcontainer/install-workspace-tools.sh",
-  "postStartCommand": "JWT_SECRET=dev-placeholder LETTA_SERVER_PASS=dev-placeholder OPENAI_API_KEY=dev-placeholder docker compose --profile bundled up -d bear-postgres bears-memfs-manager bears-den bears-pool"
+  "postStartCommand": "JWT_SECRET=dev-placeholder LETTA_SERVER_PASS=dev-placeholder OPENAI_API_KEY=dev-placeholder docker compose --profile bundled up -d bear-postgres bears-memfs-manager bears-den bear-codepool"
 }

@@ -35,4 +35,4 @@ Index of agent- and contributor-oriented docs for **this project**.
 
 ## Plans (BEARS / Den)
 
-Product roadmap and Phase 1 decisions: **[`docs/planning/`](../../docs/planning/)** in the monorepo. [../plans/README.md](../plans/README.md) links there from inside `services/worker/`.
+Product roadmap and Phase 1 decisions: **[`docs/planning/`](../../docs/planning/)** in the monorepo. [../plans/README.md](../plans/README.md) links there from inside `services/den/`.

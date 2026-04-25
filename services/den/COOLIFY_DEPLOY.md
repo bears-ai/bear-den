@@ -30,17 +30,17 @@
 2. Connect **this** repository (public or private, per your hosting setup).
 3. Choose the **Dockerfile** build pack (not “Docker Image” alone — you want Coolify to **build** from the repo).
 
-### 3. Point Coolify at `services/worker/`
+### 3. Point Coolify at `services/den/`
 
 In the Dockerfile deployment settings, set:
 
 | Field | Value |
 | ----- | ----- |
 | **Branch** | Your production branch (for example `main`). |
-| **Base Directory** | `den` |
+| **Base Directory** | `services/den` |
 | **Dockerfile** | `Dockerfile` (path is relative to the base directory). |
 
-Coolify should clone the repo and run `docker build` with context rooted at `services/worker/`.
+Coolify should clone the repo and run `docker build` with context rooted at `services/den/`.
 
 ### 4. Build arguments (required for the current `Dockerfile`)
 
@@ -84,9 +84,9 @@ Integrations (set when you wire the rest of the stack):
 
 | Variable | Notes |
 | -------- | ----- |
-| `LETTA_BASE_URL` | Internal base URL for Letta (no trailing slash). **Production** images default to **`http://bear-letta:8283`** when unset (override for local dev; see `services/worker/.env.example`). |
+| `LETTA_BASE_URL` | Internal base URL for Letta (no trailing slash). **Production** images default to **`http://bear-letta:8283`** when unset (override for local dev; see `services/den/.env.example`). |
 | `LETTA_API_KEY` | Bearer token when Letta is configured with `LETTA_SERVER_PASS` / API auth. |
-| `CODEPOOL_BASE_URL` | When `RUN_WEB=true`, must be non-empty. **Production** images default to **`http://bears-pool:3030`** when unset. **Codepool** harness (repository root `services/frontend/`). |
+| `CODEPOOL_BASE_URL` | When `RUN_WEB=true`, must be non-empty. **Production** images default to **`http://bear-codepool:3030`** when unset. **Codepool** harness (repository root `services/codepool/`). |
 | `CODEPOOL_INTERNAL_TOKEN` | Optional shared secret; Den sends `Authorization: Bearer …` to Codepool (must match the pool service). |
 | `LETTA_MEMFS_SERVICE_URL` | Optional; same **Memory Manager** base URL as Letta (no trailing slash), e.g. **`http://bears-memfs-manager:8285`**. When set, **bear details** shows **Private memory (git)** — latest commit on the agent’s context repo. **Production** images do not default this; root [`docker-compose.yaml`](../../docker-compose.yaml) sets it for `bears-den` when you use the full stack. |
 
@@ -135,7 +135,7 @@ Use **Deploy** / **Redeploy** on the resource. Watch **Build logs** for compile 
 
 ## Option B (recommended): Pre-built image from CI — “Docker Image” resource
 
-A GitHub Actions workflow ([`.github/workflows/den-image.yml`](../../.github/workflows/den-image.yml)) builds the Docker image on every push to `main` that touches `services/worker/` and pushes it to GHCR. This avoids compiling Rust on the Coolify host (which can OOM on small servers).
+A GitHub Actions workflow ([`.github/workflows/den-image.yml`](../../.github/workflows/den-image.yml)) builds the Docker image on every push to `main` that touches `services/den/` and pushes it to GHCR. This avoids compiling Rust on the Coolify host (which can OOM on small servers).
 
 The workflow:
 

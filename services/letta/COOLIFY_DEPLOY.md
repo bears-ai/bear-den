@@ -304,7 +304,7 @@ Factors: model choice, context size, tool latency (e.g. Cabinet). Use streaming 
 
 ## Codepool harness (separate service)
 
-First-party web chat is **Den embedded Deep Chat** → **Den** → **`services/frontend/`** (Letta Code SDK) → **Letta** — see [DEN_ARCHITECTURE.md](../../docs/architecture/DEN_ARCHITECTURE.md). This directory documents only the **Letta API server** (`letta/letta`). You **must** also deploy **Codepool** per [`../../services/frontend/COOLIFY_DEPLOY.md`](../../services/frontend/COOLIFY_DEPLOY.md); Den’s **`CODEPOOL_BASE_URL`** targets that HTTP service, not an alias of this Letta container.
+First-party web chat is **Den embedded Deep Chat** → **Den** → **`services/codepool/`** (Letta Code SDK) → **Letta** — see [DEN_ARCHITECTURE.md](../../docs/architecture/DEN_ARCHITECTURE.md). This directory documents only the **Letta API server** (`letta/letta`). You **must** also deploy **Codepool** per [`../../services/codepool/COOLIFY_DEPLOY.md`](../../services/codepool/COOLIFY_DEPLOY.md); Den’s **`CODEPOOL_BASE_URL`** targets that HTTP service, not an alias of this Letta container.
 
 ## Advanced Configuration
 
@@ -344,7 +344,7 @@ Shared team context: **Cabinet (Outline)**, Letta shared blocks, or a **shared b
 ## Deployment completion
 
 - [ ] Bifrost healthy; Letta reaches `LLM_API_URL`
-- [ ] **Codepool** (`services/frontend/`, `bears-pool`) is deployed and Den can reach it at **`CODEPOOL_BASE_URL`**; **Den** can reach Letta for provisioning via **`LETTA_BASE_URL`**; end users chat through Den’s web UI
+- [ ] **Codepool** (`services/codepool/`, `bear-codepool`) is deployed and Den can reach it at **`CODEPOOL_BASE_URL`**; **Den** can reach Letta for provisioning via **`LETTA_BASE_URL`**; end users chat through Den’s web UI
 - [ ] Den + Outline + Cabinet tools when rolled out ([PLAN.md](../../docs/planning/PLAN.md))
 
 **Services:** `bear-bifrost`, `bear-letta`, UI; later **Outline + Den**.

@@ -4,7 +4,7 @@
 
 1. Copy [`.env.example`](../.env.example) to `.env` (or set env another way) and set **`DATABASE_URL`** to a PostgreSQL database that exists on your machine or network (empty database is fine).
 2. Enable at least one service, for example **`RUN_WEB=true`** (and optionally `RUN_API`, `RUN_WORKERS`).
-3. With **`RUN_WEB=true`**, set **`CODEPOOL_BASE_URL`** to your [Codepool](../../services/frontend/README.md) service (for example `http://localhost:3030`) unless you run a **production** build, which defaults to **`http://bears-pool:3030`** when unset (Docker stack). Den will not start the web server without a non-empty Codepool URL.
+3. With **`RUN_WEB=true`**, set **`CODEPOOL_BASE_URL`** to your [Codepool](../../services/codepool/README.md) service (for example `http://localhost:3030`) unless you run a **production** build, which defaults to **`http://bear-codepool:3030`** when unset (Docker stack). Den will not start the web server without a non-empty Codepool URL.
 4. Run:
 
    ```bash
@@ -13,7 +13,7 @@
 
    The app applies SQLx migrations from [`migrations/`](../migrations/) automatically. A migration seeds a **bootstrap operator** on empty databases: username **`admin`**, password **`Never deploy with default passwords.`** (see [`migrations/README.md`](../migrations/README.md) § *Default operator account*). Replace that password before any real deployment.
 
-   When you add new migration files, use `sqlx migrate add` / `sqlx migrate run` from the `services/worker/` directory as described in [sqlx-patterns.md](sqlx-patterns.md).
+   When you add new migration files, use `sqlx migrate add` / `sqlx migrate run` from the `services/den/` directory as described in [sqlx-patterns.md](sqlx-patterns.md).
 
    **Static assets (`src/web/assets/`):** In a **debug** `cargo run`, `memory-serve` registers routes when the binary is **compiled** and reads file bytes from **disk** at request time using those recorded paths. If you add or change files under `src/web/assets/` (for example Deep Chat under `assets/deep-chat/`), run a **fresh build** and **restart** the `den` process; a long-lived or stale process can otherwise return **404** for `/assets/...` even though the files exist in the tree. Release builds embed assets in the binary instead.
 

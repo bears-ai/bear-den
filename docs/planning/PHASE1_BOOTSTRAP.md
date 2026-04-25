@@ -2,7 +2,7 @@
 
 **Trestle** is only a **short-lived bootstrap codename** for the first milestone: bare-bones **Axum + PostgreSQL + self-building Docker**. It is **not** a service directory in this repo and does not persist after you have a working skeleton. The **lasting** binary, crate, and deploy artifact are **Den** (see [PLAN.md](PLAN.md), [DEN_ARCHITECTURE.md](../architecture/DEN_ARCHITECTURE.md)).
 
-Put the Rust project at repo-root **`services/worker/`** with package/binary name **`den`**, Coolify service e.g. **`bears-den`**.
+Put the Rust project at repo-root **`services/den/`** with package/binary name **`den`**, Coolify service e.g. **`bears-den`**.
 
 **Phase 1 success** (from PLAN): **operator console** usable for full provisioning; web users chat via **Den's chat UI → Den → Letta Code → Letta** as the **only** first-party browser path; bear registry + **users↔bears** many-to-many; **first-class routines** (schedules + UI; file outputs → **Garage** per [artifacts-garage-adr.md](../artifacts-garage-adr.md)); **Letta Code** is the **required** agent runtime (channels and web); **Den** owns bear provisioning on Letta, **Letta Code config**, **skills catalog + per-bear attachments**, and **MCP catalog + per-bear MCP attachments** (materialized for Letta Code; same patterns as skills; **Coolify** runs MCP server processes); **Garage** for **artifacts** (+ separate **Cabinet** bucket when Outline ships); optional **read-only** Bifrost observability; **no Cabinet** app until Phase 2.
 
@@ -14,9 +14,9 @@ Put the Rust project at repo-root **`services/worker/`** with package/binary nam
 
 ## 0. Trestle bootstrap (M0 only)
 
-Use whatever **one-off** scaffold you prefer (`cargo new`, an internal template, or a throwaway repo named “trestle”). **Do not** add `services/trestle/` here. When the skeleton has health + config + Dockerfile + migrations wiring, **merge into `services/worker/`** and drop the Trestle name from paths and binary.
+Use whatever **one-off** scaffold you prefer (`cargo new`, an internal template, or a throwaway repo named “trestle”). **Do not** add `services/trestle/` here. When the skeleton has health + config + Dockerfile + migrations wiring, **merge into `services/den/`** and drop the Trestle name from paths and binary.
 
-**M0 exit:** `services/worker/` exists with Axum `GET /health`, env-based config, tracing, and a multi-stage `Dockerfile`.
+**M0 exit:** `services/den/` exists with Axum `GET /health`, env-based config, tracing, and a multi-stage `Dockerfile`.
 
 ---
 
@@ -40,7 +40,7 @@ Use whatever **one-off** scaffold you prefer (`cargo new`, an internal template,
 | Bifrost | Optional: fetch metrics/health **read-only**; no proxying completions |
 | **User onboarding** | On new account creation, auto-provision a **Personal Bear** (slug: `personal-{name-slug}`) from a configurable default template set in the admin UI; immediately redirect the new user into chat with that bear using a standard onboarding prompt that invites the bear to learn about them |
 | **Memory dashboard + bear memory UX** | **Dashboard:** read **`human`** (per bear / per-conversation as Letta returns for 1:1 web) and show **`person:{name}`** rows only when such blocks exist (mostly **group-mode**, post–Phase 1 per [multi-user-memory-adr.md](../multi-user-memory-adr.md)); no aggregate scoring, capacity, or pressure metric. **Bear detail (operator):** full read-only **Letta state summary** for one bear — **all** blocks + archival where exposed; assurance only ([PLAN.md](PLAN.md) § Phase 1 memory model, [PHASE1_DECISIONS.md](PHASE1_DECISIONS.md) decision 8). **Product promise:** small curated **always-on** blocks; longer history **findable** via archival/tools — Den does **not** add a second memory store. |
-| **Org policy block** | Admin UI panel to view and edit the `org_policy` Letta block applied to all bears; seed content from **`services/worker/defaults/org_policy.md`** (in-repo) when no policy has been set and the first bear is provisioned |
+| **Org policy block** | Admin UI panel to view and edit the `org_policy` Letta block applied to all bears; seed content from **`services/den/defaults/org_policy.md`** (in-repo) when no policy has been set and the first bear is provisioned |
 | **Routines** | **First-class** DB-backed **schedules** + management UI; each routine **assigned to one bear** (inherits tools, MCP, membership like chat). Execution via **Letta Code** / harness; **file outputs** → **Garage** artifacts ([artifacts-garage-adr.md](../artifacts-garage-adr.md), [routines-automation-adr.md](../routines-automation-adr.md)). **No** automatic skill-learning from unattended runs ([PHASE1_DECISIONS.md](PHASE1_DECISIONS.md) decision **10**) |
 | **Artifacts / Garage** | Agent outputs, **user uploads**, routine files → **S3** (**artifacts** bucket); **metadata** + **GC** per [artifacts-garage-adr.md](../artifacts-garage-adr.md) ([PHASE1_DECISIONS.md](PHASE1_DECISIONS.md) decision **11**). **Cabinet** attachments → **different bucket** (Outline). May trail core chat; presigned URLs + GC worker as milestones allow |
 | Deploy | **Self-building Docker image** (multi-stage: build Rust in container, runtime image with binary + `ca-certificates`) |
@@ -60,7 +60,7 @@ Use whatever **one-off** scaffold you prefer (`cargo new`, an internal template,
 This plan lives in **`docs/planning/PHASE1_BOOTSTRAP.md`**. The Rust tree:
 
 ```
-services/worker/
+services/den/
 ├── Cargo.toml
 ├── Dockerfile
 ├── .dockerignore
@@ -81,7 +81,7 @@ services/worker/
     └── middleware/
 ```
 
-**Recommendation:** one binary crate **`den`** under `services/worker/` (no workspace split until needed).
+**Recommendation:** one binary crate **`den`** under `services/den/` (no workspace split until needed).
 
 ---
 
@@ -247,7 +247,7 @@ services/worker/
 
 **Pieces:** Primary chat route **`/bear/{slug}`** (same origin as Den); **`/`** is operator console unless you add a landing page.
 
-1. **Static assets** — Deep Chat bundle in `services/worker/src/web/assets/deep-chat/`.
+1. **Static assets** — Deep Chat bundle in `services/den/src/web/assets/deep-chat/`.
 2. **Axum** — `memory-serve` for assets, MiniJinja template for the chat page; **same-origin** with Den avoids CORS for cookie sessions.
 3. **Browser → Den** — SSE streaming via `POST /v1/chat/send`; **this contract is the reference** shape.
 4. **Auth** — end-user session (not operator) for chat.
@@ -276,7 +276,7 @@ services/worker/
 - **Delivery:**
   - **Pull:** `GET /admin/letta-code.yaml` (also surfaced in **operator console** at `/admin/letta-code`)
   - **Push (optional):** Write to shared volume if Den has mount (Coolify volume)
-- **Reload:** Operator UI should link to this doc: restart **`letta server`** / harness process if no hot reload — `services/worker/README.md`.
+- **Reload:** Operator UI should link to this doc: restart **`letta server`** / harness process if no hot reload — `services/den/README.md`.
 
 ---
 
@@ -291,7 +291,7 @@ services/worker/
 
 ## 10. Docker (self-building image)
 
-**Pattern:** multi-stage `Dockerfile` in **`services/worker/`**.
+**Pattern:** multi-stage `Dockerfile` in **`services/den/`**.
 
 1. **Builder:** `rust:1.xx-bookworm`, install deps, `cargo build --release`.
    - Use **cargo-chef** or **cache mount** (`--mount=type=cache`) to speed rebuilds.
@@ -350,13 +350,13 @@ services/worker/
 
 | # | Milestone | Exit criteria |
 |---|-----------|----------------|
-| M0 | **Trestle bootstrap → Den** | Throwaway scaffold merged into `services/worker/`; Axum `GET /health`, config, tracing, Dockerfile |
+| M0 | **Trestle bootstrap → Den** | Throwaway scaffold merged into `services/den/`; Axum `GET /health`, config, tracing, Dockerfile |
 | M1 | Postgres | Migrations applied (`users.is_admin`, …); no business logic |
 | M2 | Auth | Register/login gated; session or API token; **operator login** with `is_admin` (or bootstrap admin) |
 | M3 | Admin API: users, bears, membership | JSON CRUD + duplicate bear action; user sees only member bears on `GET /v1/bears`; non-member 403 on chat (stub ok until M5) |
 | M4 | Letta provision | `POST /admin/bears` (+ provision) creates Letta agent + row; errors returned to client |
 | **M4b** | **Operator console v1** | **Browser UI** covers: users, bears + duplicate/provision trigger, membership, Letta Code YAML view/download, Letta health — **no curl for setup** |
-| **M4c** | **Onboarding + org policy** | Admin configures `org_policy` block (seeded from `services/worker/defaults/org_policy.md`) and Personal Bear default template; new user account creation auto-provisions their Personal Bear |
+| **M4c** | **Onboarding + org policy** | Admin configures `org_policy` block (seeded from `services/den/defaults/org_policy.md`) and Personal Bear default template; new user account creation auto-provisions their Personal Bear |
 | M5 | Chat proxy | Streaming `POST /v1/chat/send` end-to-end; conversation/thread context forwarded to Letta Code; validated with **curl**, integration test, or console “try it” |
 | **M6** | **Den chat UI (first-party)** | Den serves chat at `/bear/{slug}`; demo user chats in browser — **reference client** for streaming contract |
 | M7 | Letta Code yaml + skills polish | Generated yaml matches real bot configs; **skills** catalog + per-bear materialization tested; copy-paste / volume deploy tested from console |
@@ -381,7 +381,7 @@ services/worker/
 - [ ] No Cabinet calls required
 - [ ] New user registration auto-provisions their Personal Bear in Letta and redirects them into chat with the onboarding prompt
 - [ ] `GET /v1/me/memory` returns the current user’s **`human`** content (per member bear as Letta exposes it); **`person:{name}`** included only when present on the agent; no aggregate score metric; where Letta exposes archival **metadata**, bear-detail views surface enough for the full **state** summary in [PLAN.md](PLAN.md) § Phase 1 memory model and [PHASE1_DECISIONS.md](PHASE1_DECISIONS.md) decision 8 (no Den-owned memory store)
-- [ ] Admin can view and edit the `org_policy` block via the console; `services/worker/defaults/org_policy.md` is applied on first bear creation when no policy exists
+- [ ] Admin can view and edit the `org_policy` block via the console; `services/den/defaults/org_policy.md` is applied on first bear creation when no policy exists
 - [ ] **Routines:** CRUD + list UI for schedules **bound to a bear** per [routines-automation-adr.md](../routines-automation-adr.md) and [PHASE1_DECISIONS.md](PHASE1_DECISIONS.md) decision **10**; execution path to Letta Code validated; **file outputs** stored in **Garage** per [artifacts-garage-adr.md](../artifacts-garage-adr.md)
 - [ ] **Artifacts:** **Garage** artifacts bucket + presigned upload/download from Den; **metadata** (incl. `conversation_id`, provenance); **GC** job or policy for stale objects — per [artifacts-garage-adr.md](../artifacts-garage-adr.md) decision **11** (may trail M6)
 
@@ -390,7 +390,7 @@ services/worker/
 ## 16. Documentation updates after code exists
 
 - [ ] [DEPLOYMENT.md](../deployment/DEPLOYMENT.md) — add Step for Den + Postgres
-- [ ] [DEN_ARCHITECTURE.md](../architecture/DEN_ARCHITECTURE.md) — `services/worker/README.md` for ports/env
+- [ ] [DEN_ARCHITECTURE.md](../architecture/DEN_ARCHITECTURE.md) — `services/den/README.md` for ports/env
 - [ ] [PLAN.md](PLAN.md) — Phase 1 already links this bootstrap plan
 
 ---
@@ -407,7 +407,7 @@ services/worker/
 
 Record new or changed decisions in **[PHASE1_DECISIONS.md](PHASE1_DECISIONS.md)** (monorepo `docs/planning/`).
 
-The planning file **`services/worker/DECISIONS.md`** is **not** used; keep a single source under `docs/planning/`.
+The planning file **`services/den/DECISIONS.md`** is **not** used; keep a single source under `docs/planning/`.
 
 ---
 

@@ -83,7 +83,7 @@ pub fn validate_runtime_config(config: &Config) -> Result<(), StartupError> {
         return Err(StartupError::Message(
             "CODEPOOL_BASE_URL must be set when RUN_WEB=true. Den streams bear chat through \
              Codepool (Letta Code SDK), not directly to the Letta HTTP API. Example \
-             (internal URL): http://bears-pool:3030 — see services/frontend/COOLIFY_DEPLOY.md."
+             (internal URL): http://bear-codepool:3030 — see services/codepool/COOLIFY_DEPLOY.md."
                 .into(),
         ));
     }

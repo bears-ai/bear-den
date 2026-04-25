@@ -17,8 +17,8 @@ const DEFAULT_PROD_API_ORIGIN: &str = "https://api.bears.artificial.design";
 
 /// Letta HTTP API when `LETTA_BASE_URL` is unset — matches Docker Compose service `bear-letta` (repository root `docker-compose.yaml`).
 pub const DEFAULT_LETTA_BASE_URL: &str = "http://bear-letta:8283";
-/// Codepool harness when `CODEPOOL_BASE_URL` is unset — matches Docker Compose service `bears-pool`.
-pub const DEFAULT_CODEPOOL_BASE_URL: &str = "http://bears-pool:3030";
+/// Codepool harness when `CODEPOOL_BASE_URL` is unset — matches Docker Compose service `bear-codepool`.
+pub const DEFAULT_CODEPOOL_BASE_URL: &str = "http://bear-codepool:3030";
 
 fn letta_base_url_from_env() -> String {
     let raw = std::env::var("LETTA_BASE_URL").unwrap_or_default();
@@ -96,7 +96,7 @@ pub struct Config {
     /// Optional `Authorization: Bearer` value for Letta (omit when local Letta has no auth).
     pub letta_api_key: String,
 
-    /// **Codepool** harness base URL (no trailing slash), e.g. `http://bears-pool:3030`.
+    /// **Codepool** harness base URL (no trailing slash), e.g. `http://bear-codepool:3030`.
     /// Required when `run_web` is true — [`crate::startup::validate_runtime_config`] enforces this.
     pub codepool_base_url: String,
     /// Optional `Authorization: Bearer` for Codepool (must match `CODEPOOL_INTERNAL_TOKEN` on the pool).

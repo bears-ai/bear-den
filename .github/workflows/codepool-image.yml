@@ -5,7 +5,7 @@ on:
   push:
     branches: [main]
     paths:
-      - "services/frontend/**"
+      - "services/codepool/**"
       - ".github/workflows/codepool-image.yml"
   workflow_dispatch:
 
@@ -49,7 +49,7 @@ jobs:
       - name: Build and push
         uses: docker/build-push-action@v6
         with:
-          context: services/frontend
+          context: services/codepool
           push: true
           platforms: linux/arm64
           tags: ${{ steps.meta.outputs.tags }}

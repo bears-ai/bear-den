@@ -2,11 +2,11 @@
 
 How to orient in **this project**: a Rust web **starter** (Axum, SQLx, MiniJinja, PostgreSQL, optional split web/API/workers). For **running locally**, see [`docs/quickstart.md`](docs/quickstart.md). For **deploy** (env, migrations, Docker build), see [`docs/deploy.md`](docs/deploy.md). **Service toggles** (`RUN_WEB`, `RUN_API`, `RUN_WORKERS`) and health checks are covered in [`docs/infrastructure-and-ops.md`](docs/infrastructure-and-ops.md).
 
-In the **BEARS** monorepo, **Den** is the **provisioning controller** and **orchestrator** for the stack: it **configures** downstream services (especially the **Letta API server**), **runs** first-party surfaces such as the **web chat UI**, and exposes **control-plane tools** (for example **Den meta tools**). **Streaming harness execution** (Letta Code SDK) is implemented in **`services/frontend/`** (**Codepool**) at the repo root; Den calls it over the private network. With **`RUN_WEB=true`**, **`CODEPOOL_BASE_URL`** must be non-empty at startup (**production** images default to **`http://bears-pool:3030`** when unset; override for local dev — see [`docs/quickstart.md`](docs/quickstart.md)). **Its own** PostgreSQL state exists so Den can **enforce policy**, **validate** operations, and **rebuild** consistent outward configuration from **repo + backups**—not to hold Letta’s runtime agent memory, which stays on the **Letta** side. See [`../../docs/architecture/DEN_ARCHITECTURE.md`](../../docs/architecture/DEN_ARCHITECTURE.md) and the root [`../../AGENTS.md`](../../AGENTS.md) (“Den’s role”).
+In the **BEARS** monorepo, **Den** is the **provisioning controller** and **orchestrator** for the stack: it **configures** downstream services (especially the **Letta API server**), **runs** first-party surfaces such as the **web chat UI**, and exposes **control-plane tools** (for example **Den meta tools**). **Streaming harness execution** (Letta Code SDK) is implemented in **`services/codepool/`** (**Codepool**) at the repo root; Den calls it over the private network. With **`RUN_WEB=true`**, **`CODEPOOL_BASE_URL`** must be non-empty at startup (**production** images default to **`http://bear-codepool:3030`** when unset; override for local dev — see [`docs/quickstart.md`](docs/quickstart.md)). **Its own** PostgreSQL state exists so Den can **enforce policy**, **validate** operations, and **rebuild** consistent outward configuration from **repo + backups**—not to hold Letta’s runtime agent memory, which stays on the **Letta** side. See [`../../docs/architecture/DEN_ARCHITECTURE.md`](../../docs/architecture/DEN_ARCHITECTURE.md) and the root [`../../AGENTS.md`](../../AGENTS.md) (“Den’s role”).
 
 ## Verifying Rust changes (agents + dev containers)
 
-**`cargo` is available** in typical dev containers and CI images that include the Rust toolchain. After editing this crate, **run checks from the `services/worker/` directory** (package root), for example:
+**`cargo` is available** in typical dev containers and CI images that include the Rust toolchain. After editing this crate, **run checks from the `services/den/` directory** (package root), for example:
 
 - `cargo build` or `cargo check` — compile the library + binary.
 - `cargo test` — unit tests; integration tests that need Postgres require `DATABASE_URL` and applied migrations (see [`docs/quickstart.md`](docs/quickstart.md)).
@@ -14,7 +14,7 @@ In the **BEARS** monorepo, **Den** is the **provisioning controller** and **orch
 
 Do not assume the environment is “simulated only”: prefer **running `cargo` yourself** to catch compile errors before handing work back.
 
-**Docker build:** Do not treat a change as **complete** until a **`docker build`** of [`Dockerfile`](Dockerfile) from the `services/worker/` directory succeeds. Release images use **`--features production`**, Alpine/musl, and SQLx at build time in ways a local glibc `cargo check` does not fully replicate. When Docker is unavailable locally, say so explicitly; otherwise run the image build (build-time env: [`docs/deploy.md`](docs/deploy.md), [`COOLIFY_DEPLOY.md`](COOLIFY_DEPLOY.md)).
+**Docker build:** Do not treat a change as **complete** until a **`docker build`** of [`Dockerfile`](Dockerfile) from the `services/den/` directory succeeds. Release images use **`--features production`**, Alpine/musl, and SQLx at build time in ways a local glibc `cargo check` does not fully replicate. When Docker is unavailable locally, say so explicitly; otherwise run the image build (build-time env: [`docs/deploy.md`](docs/deploy.md), [`COOLIFY_DEPLOY.md`](COOLIFY_DEPLOY.md)).
 
 ## Start here
 
@@ -60,4 +60,4 @@ Do not assume the environment is “simulated only”: prefer **running `cargo` 
 
 ## Planning docs (BEARS)
 
-Monorepo **[`docs/planning/`](../../docs/planning/)**: [Phase 1 bootstrap](../../docs/planning/PHASE1_BOOTSTRAP.md), [Phase 1 decisions](../../docs/planning/PHASE1_DECISIONS.md), [PLAN](../../docs/planning/PLAN.md). The [`plans/`](plans/) folder here is only a **pointer** to those paths; do not duplicate planning markdown under `services/worker/plans/`.
+Monorepo **[`docs/planning/`](../../docs/planning/)**: [Phase 1 bootstrap](../../docs/planning/PHASE1_BOOTSTRAP.md), [Phase 1 decisions](../../docs/planning/PHASE1_DECISIONS.md), [PLAN](../../docs/planning/PLAN.md). The [`plans/`](plans/) folder here is only a **pointer** to those paths; do not duplicate planning markdown under `services/den/plans/`.

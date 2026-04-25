@@ -26,7 +26,7 @@ isProject: false
 
 - **Human name:** Memory Manager
 - **Path / service slug (kebab-case):** `mem-manager` → service lives under [`services/api/`](services/api/) (replaces `services/memfs-sidecar/`)
-- **Docker Compose service name:** `bears-memfs-manager` (matches `bears-pool`, `bear-bifrost`; resolvable as `http://bears-memfs-manager:8285` on the stack network)
+- **Docker Compose service name:** `bears-memfs-manager` (matches `bear-codepool`, `bear-bifrost`; resolvable as `http://bears-memfs-manager:8285` on the stack network)
 
 **Naming convention:** Use **hyphens** in directory names, compose services, URLs, and log tags (`mem-manager`). In **Rust**, use normal **snake_case** for variables and modules (e.g. `mem_manager`, `fetch_memory_manager_head`)—do not force kebab-case into identifiers where the language forbids it.
 
@@ -45,20 +45,20 @@ isProject: false
 | [docker-compose.yaml](docker-compose.yaml) | Service key `bear-memfs` → `bears-memfs-manager`; `context: ./services/api`; all `http://bear-memfs:8285` → `http://bears-memfs-manager:8285`; `depends_on` for Letta |
 | [services/memfs-sidecar/](services/memfs-sidecar/) | **Move** tree to `services/api/`; [Dockerfile](services/memfs-sidecar/Dockerfile) paths; [git_memfs_server.py](services/memfs-sidecar/git_memfs_server.py) — rename file if desired, update module docstring, `SERVER_NAME`, log prefix (`[git-memfs]` → e.g. `[mem-manager]`) |
 | [services/preflight/preflight.py](services/preflight/preflight.py) | Default URL host `bear-memfs` → `bears-memfs-manager` |
-| [services/worker/src/core/bears/rollout.rs](services/worker/src/core/bears/rollout.rs) | URL in comment |
+| [services/den/src/core/bears/rollout.rs](services/den/src/core/bears/rollout.rs) | URL in comment |
 | [codepool](codepool) | Comments and `.env.example` that cite `bear-memfs:8285` |
 | [services/letta/.env.example](services/letta/.env.example) | Example URL host |
 | [docs/deployment/DEPLOYMENT.md](docs/deployment/DEPLOYMENT.md) | Table row for service; all `bear-memfs` mentions |
-| [services/frontend/COOLIFY_DEPLOY.md](services/frontend/COOLIFY_DEPLOY.md), [services/letta/COOLIFY_DEPLOY.md](services/letta/COOLIFY_DEPLOY.md) | Service name + URLs |
-| [services/frontend/README.md](services/frontend/README.md) | Same |
+| [services/codepool/COOLIFY_DEPLOY.md](services/codepool/COOLIFY_DEPLOY.md), [services/letta/COOLIFY_DEPLOY.md](services/letta/COOLIFY_DEPLOY.md) | Service name + URLs |
+| [services/codepool/README.md](services/codepool/README.md) | Same |
 
 ### Light touch (clarity only)
 
 | Area | Action |
 |------|--------|
-| [services/worker/src/core/letta/client.rs](services/worker/src/core/letta/client.rs) | Comment: `LETTA_MEMFS_SERVICE_URL` + "Memory Manager (`bears-memfs-manager`)" |
-| [services/frontend/src/provisioning/noop.ts](services/frontend/src/provisioning/noop.ts), [index.ts](services/frontend/src/provisioning/index.ts) | Example URL host in comments |
-| [services/worker/migrations/20260421120000_bear_runtime_plan.up.sql](services/worker/migrations/20260421120000_bear_runtime_plan.up.sql) | Optional: comment only — "memfs" in comment refers to plan JSON field / Letta, not service rename |
+| [services/den/src/core/letta/client.rs](services/den/src/core/letta/client.rs) | Comment: `LETTA_MEMFS_SERVICE_URL` + "Memory Manager (`bears-memfs-manager`)" |
+| [services/codepool/src/provisioning/noop.ts](services/codepool/src/provisioning/noop.ts), [index.ts](services/codepool/src/provisioning/index.ts) | Example URL host in comments |
+| [services/den/migrations/20260421120000_bear_runtime_plan.up.sql](services/den/migrations/20260421120000_bear_runtime_plan.up.sql) | Optional: comment only — "memfs" in comment refers to plan JSON field / Letta, not service rename |
 
 ### Cursor / planning docs
 
