@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% import "forms.jinja" as forms %}
+
+{% block title %}Login{% endblock %}
+
+{% block content %}
+<form method="post" action="/login/password" class="box">
+    <div class="fields-grid">
+        {% if message is defined %}
+        <div class="form-message">⚠️ {{ message }}</div>
+        {% endif %}
+        {{ forms.input("username", "Username or Email", "text", 'autocomplete="username" required minlength="3"') }}
+        {{ forms.input("password", "Password", "password", 'required minlength="8"') }}
+        <input type="hidden" name="next" value="{{ next }}">
+    </div>
+    <ul class="button-row">
+        <li><button>Login</button></li>
+    </ul>
+</form>
+{% if not next %}
+<script>
+    // update "next" form input with http referer
+    const referer = document.referrer;
+    if (referer && referer !== window.location.href) {
+        const nextInput = document.querySelector('input[name="next"]');
+        if (nextInput) {
+            nextInput.value = referer;
+        }
+    }
+</script>
+{% endif %}
+{% endblock %}

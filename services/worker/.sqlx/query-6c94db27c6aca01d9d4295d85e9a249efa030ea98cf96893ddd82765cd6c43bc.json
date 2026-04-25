@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        UPDATE oauth_access_tokens\n        SET revoked = true\n        WHERE id = $1\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int4"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "6c94db27c6aca01d9d4295d85e9a249efa030ea98cf96893ddd82765cd6c43bc"
+}

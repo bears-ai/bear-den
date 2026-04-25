@@ -1,0 +1,54 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            INSERT INTO email_configs (user_id, email_address, active)\n            VALUES ($1, $2, $3)\n            RETURNING\n                user_id,\n                COALESCE((SELECT display_name FROM users WHERE id = $1), 'Anonymous') AS \"display_name!\",\n                email_address AS email,\n                email_configs.id AS email_config_id,\n                email_configs.verified_at,\n                active\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "user_id",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 1,
+        "name": "display_name!",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 2,
+        "name": "email",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "email_config_id",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 4,
+        "name": "verified_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 5,
+        "name": "active",
+        "type_info": "Bool"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int4",
+        "Text",
+        "Bool"
+      ]
+    },
+    "nullable": [
+      false,
+      null,
+      false,
+      false,
+      true,
+      false
+    ]
+  },
+  "hash": "5298f38bdbdb54ef4975cc972f1f9a5e5b19b3fe9435a4ac57fa668241268440"
+}

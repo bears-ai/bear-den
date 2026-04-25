@@ -1,0 +1,80 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT id, client_id, client_secret, name, redirect_uris, scopes,\n               active as \"active!\", trusted as \"trusted!\", public as \"public!\", created_at, updated_at\n        FROM oauth_clients\n        WHERE active = true\n        ORDER BY created_at DESC\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 1,
+        "name": "client_id",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 2,
+        "name": "client_secret",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 3,
+        "name": "name",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 4,
+        "name": "redirect_uris",
+        "type_info": "Jsonb"
+      },
+      {
+        "ordinal": 5,
+        "name": "scopes",
+        "type_info": "Jsonb"
+      },
+      {
+        "ordinal": 6,
+        "name": "active!",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 7,
+        "name": "trusted!",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 8,
+        "name": "public!",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 9,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 10,
+        "name": "updated_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      false,
+      false,
+      true,
+      false,
+      false,
+      false,
+      true,
+      true,
+      true,
+      true,
+      true
+    ]
+  },
+  "hash": "fcd7f4424ccaf700dfc9013b64f18155dc82c5180758ee61b4451a02cc2ea496"
+}

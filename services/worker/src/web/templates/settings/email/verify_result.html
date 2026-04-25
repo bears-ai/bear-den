@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% import "forms.jinja" as forms %}
+
+{% block breadcrumb %}<a href="/settings">Settings</a> > <a href="/settings/email">Email</a> > {% endblock %}
+{% block title %}Verify Email{% endblock %}
+
+{% block content %}
+<p>
+    {%- set messages = {
+        'success': "Your email address has been verified. You're all set.",
+        'redundant': "This verification link has already been used.",
+        'expired': 'This verification link has expired. Please <a href=\"/settings/email/verify\">request a new one</a>.',
+        'invalid': "You've used an invalid verification link. Please <a href=\"/settings/email/verify\">request a new one</a>.",
+    } -%}
+    {%- set message = messages[verify_message_key] -%}
+    {{- message | safe if message is defined else '<div class="error">Undefined status</div>' | safe -}}
+</p>
+<a class="button-link" href="/">Continue to Dashboard</a>
+{% endblock %}

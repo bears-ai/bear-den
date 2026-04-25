@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% import "forms.jinja" as forms %}
+
+{% block breadcrumb %}<a href="/settings">Settings</a> > <a href="/settings/email">Email</a> > {% endblock %}
+{% block title %}Verify Email{% endblock %}
+
+{% block content %}
+<p>
+    You must verify your email address before you can use the site. When you click the "Send Verification Message" button below, an email will be sent to {{ email_address}} with a link you can use to complete this process.
+</p>
+<p>
+    (If this is not your correct email address, please <a href="/settings/email/edit">provide a new one</a>).
+<form method="post">
+    <input type="hidden" name="token" value="{{ token }}">
+    <button>Send Verification Message</button>
+</form>
+{% endblock %}

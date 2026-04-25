@@ -1,0 +1,69 @@
+{% extends "base.html" %}
+
+{% block title %}BEARS status{% endblock %}
+
+{% block subnav %}
+  <li>
+    <a class="button-link" href="{{ json_path }}">JSON</a>
+  </li>
+{% endblock %}
+
+{% block content %}
+  <p class="bears-health-meta">
+    <span class="bears-health-status {% if overall_ok %}bears-health-status-ok{% else %}bears-health-status-fail{% endif %}">
+      {% if overall_ok %}All required checks passed{% else %}One or more checks failed{% endif %}
+    </span>
+    <span class="bears-health-time"><code>{{ checked_at }}</code></span>
+  </p>
+  {% if ghcr_note %}
+  <p class="bears-health-ghcr-note"><em>{{ ghcr_note }}</em></p>
+  {% endif %}
+
+  <h3 class="status-section-heading">Stack checks</h3>
+  <table class="bears-health-table">
+    <thead>
+      <tr>
+        <th scope="col">Check</th>
+        <th scope="col">State</th>
+        <th scope="col">Detail</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in rows %}
+        <tr class="bears-health-row bears-health-row-{{ row.state }}">
+          <th scope="row">{{ row.label }}</th>
+          <td><code>{{ row.state }}</code></td>
+          <td class="bears-health-detail">{{ row.detail }}</td>
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+
+  <h3 class="status-section-heading">Deployed vs GHCR</h3>
+  <table class="bears-health-table bears-health-table-deploy">
+    <thead>
+      <tr>
+        <th scope="col">Component</th>
+        <th scope="col">Running git SHA</th>
+        <th scope="col">Version</th>
+        <th scope="col">Built (Den)</th>
+        <th scope="col">GHCR tags</th>
+        <th scope="col">GHCR updated</th>
+        <th scope="col">Match</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for d in deploy_rows %}
+        <tr>
+          <th scope="row">{{ d.component }}</th>
+          <td><code>{{ d.git_sha }}</code></td>
+          <td><code>{{ d.semver }}</code></td>
+          <td><code>{{ d.built_at }}</code></td>
+          <td>{{ d.ghcr_tags }}</td>
+          <td><code>{{ d.ghcr_updated }}</code></td>
+          <td><code>{{ d.in_sync }}</code></td>
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+{% endblock %}

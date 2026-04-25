@@ -1,0 +1,110 @@
+{% extends "base.html" %}
+
+{% block title %}Authorize Application{% endblock %}
+
+{% block content %}
+<div class="text-center">
+    <h1>Authorize Application</h1>
+    <p class="text-muted">An application is requesting access to your account</p>
+</div>
+
+<div class="form-container">
+    <div class="form-field">
+        <label><strong>Application:</strong></label>
+        <p class="code">{{ client_name | default(client_id) }}</p>
+    </div>
+
+    {% if client_description %}
+    <div class="form-field">
+        <label><strong>Description:</strong></label>
+        <p>{{ client_description }}</p>
+    </div>
+    {% endif %}
+
+    <div class="form-field">
+        <label><strong>User Account:</strong></label>
+        <p>{{ user.display_name | default(user.username) }} ({{ user.email }})</p>
+    </div>
+
+    {% if scopes %}
+    <div class="form-field">
+        <label><strong>Requested Permissions:</strong></label>
+        <ul style="margin-left: 1.5rem; margin-top: 0.5rem;">
+            {% for scope in scopes %}
+            <li>
+                {% if scope == "profile:read" %}
+                    <strong>Profile access:</strong> View your basic profile information (username, display name)
+                {% elif scope == "profile:email" %}
+                    <strong>Email access:</strong> View your email address
+                {% elif scope == "data:read" %}
+                    <strong>Data (read):</strong> Read your data via the API as defined by this application
+                {% elif scope == "data:write" %}
+                    <strong>Data (write):</strong> Create or update your data via the API as defined by this application
+                {% else %}
+                    <strong>{{ scope }}:</strong> Access to {{ scope }} functionality
+                {% endif %}
+            </li>
+            {% endfor %}
+        </ul>
+    </div>
+    {% endif %}
+
+    <div class="alert alert-warning">
+        <strong>Security Notice:</strong> Only authorize applications you trust. This application will be able to access your data according to the permissions listed above.
+    </div>
+
+    {% if redirect_uri %}
+    <div class="form-field">
+        <label><strong>Will redirect to:</strong></label>
+        <p class="code">{{ redirect_uri }}</p>
+    </div>
+    {% endif %}
+
+    <form method="post" action="/oauth/authorize">
+        <!-- CSRF protection -->
+        {% if csrf_token %}
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        {% endif %}
+
+        <!-- OAuth parameters -->
+        <input type="hidden" name="client_id" value="{{ client_id }}">
+        <input type="hidden" name="response_type" value="{{ response_type }}">
+        <input type="hidden" name="redirect_uri" value="{{ redirect_uri }}">
+        {% if scope %}
+        <input type="hidden" name="scope" value="{{ scope }}">
+        {% endif %}
+        {% if state %}
+        <input type="hidden" name="state" value="{{ state }}">
+        {% endif %}
+        {% if code_challenge %}
+        <input type="hidden" name="code_challenge" value="{{ code_challenge }}">
+        {% endif %}
+        {% if code_challenge_method %}
+        <input type="hidden" name="code_challenge_method" value="{{ code_challenge_method }}">
+        {% endif %}
+
+        <div class="button-group">
+            <button type="submit" name="action" value="allow" class="button-primary">
+                Allow Access
+            </button>
+            <button type="submit" name="action" value="deny" class="button-danger">
+                Deny Access
+            </button>
+        </div>
+    </form>
+</div>
+
+<div class="text-center text-muted">
+    <p>
+        By clicking "Allow Access", you authorize this application to access your account
+        with the permissions listed above. You can revoke this access at any time from your
+        <a href="/data/sync">account settings</a>.
+    </p>
+</div>
+
+{% if error %}
+<div class="alert alert-error">
+    <strong>Error:</strong> {{ error }}
+</div>
+{% endif %}
+{% endblock %}

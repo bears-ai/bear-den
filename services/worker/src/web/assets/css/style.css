@@ -1,0 +1,116 @@
+/*
+ * FRONTEND DEVELOPMENT GUIDELINES
+ *
+ * IMPORTANT: Read docs/frontend-development.md before making changes.
+ *
+ * CSS RULES:
+ * - Never use inline styles on elements in templates
+ * - Do not add authored <style> blocks in HTML templates; standalone pages
+ *   still link this file and put page rules in specifics.css (scope with a
+ *   class on html/body). See docs/frontend-development.md § "Standalone HTML".
+ * - Use existing classes first before creating new ones
+ * - Always use CSS variables (see below) for colors, spacing, typography
+ * - No rounded corners or gradients - maintain geometric design
+ *
+ * ADDING NEW STYLES:
+ * - Single class: Add to bottom of specifics.css with descriptive comment
+ * - Multiple classes: Create new CSS file and import here
+ *
+ * CSS VARIABLES: Use these predefined variables for consistency
+ */
+
+@import url("reset.css");
+@import url("layout.css");
+@import url("menu.css");
+@import url("common.css");
+@import url("specifics.css");
+
+:root {
+    --narrow-width: 700px;
+    --medium-width: 1100px;
+
+    --thin-line-unit: 1px;
+    --spacing-unit: 0.5em;
+
+    --logo-font-family: "Geist", sans-serif;
+    --logo-font-weight: 700;
+    --logo-font-style: normal;
+
+    --body-font-family: "Geist", sans-serif;
+    --body-font-weight: 400;
+    --body-font-style: normal;
+
+    --data-font-family: "Geist Mono", monospace;
+    --data-font-weight: 400;
+    --data-font-style: normal;
+
+    --meta-color: #aaaaaa;
+    --accent-color: #cc11dd;
+    --error-color: #CC0000;
+    --warning-color: #ee7700;
+    --success-color: #009900;
+
+    --page-color: #EEEEEE;
+    --text-color: #121212;
+    --border-color: #121212;
+    --selected-color: #121212;
+    --selected-text-color: #EEEEEE;
+    /* Panels / alternate message surfaces (bear chat, etc.) */
+    --surface-color: #DDDDDD;
+    /* Text fields, textareas, selects, chat composer — high-contrast fill vs --page-color */
+    --field-fill-color: #ffffff;
+
+    /*
+     * Deep Chat (bear_chat.html) reads these via getComputedStyle for the
+     * component style API; keep in sync with body.bear_chat rules in specifics.css.
+     */
+    --chat-font-size: calc(15 / 16 * 1rem);
+    --chat-line-height: 1.6;
+    --chat-bubble-padding-block: calc(var(--spacing-unit) * 1.25);
+    --chat-bubble-padding-inline: calc(var(--spacing-unit) * 1.75);
+    --chat-messages-padding-top: calc(var(--spacing-unit) * 2);
+    --chat-input-font-size: calc(var(--spacing-unit) * 2.1);
+    --chat-input-pad-top: calc(var(--spacing-unit) * 1.375);
+    --chat-input-pad-bottom: calc(var(--spacing-unit) * 1.625);
+    --chat-input-pad-left: calc(var(--spacing-unit) * 1.5);
+    --chat-input-pad-right: calc(var(--spacing-unit) * 4.8);
+    --chat-scrollbar-size: calc(var(--thin-line-unit) * 6);
+    /* Standalone bear chat column width */
+    --chat-shell-max-width: 56rem;
+    /* Deep Chat send / stop control alignment */
+    --chat-submit-button-scale: 1.21;
+    --chat-submit-nudge-y: calc(var(--thin-line-unit) * -3);
+    --chat-submit-margin-right: calc(var(--spacing-unit) * 0.8);
+}
+
+html.theme-dark {
+    --page-color: #121212;
+    --text-color: #DDDDDD;
+    --border-color: #DDDDDD;
+    --selected-color: #DDDDDD;
+    --selected-text-color: #121212;
+    --surface-color: #1a1a1a;
+    --field-fill-color: #ffffff;
+}
+
+@media (prefers-color-scheme: dark) {
+    :root {
+        --page-color: #121212;
+        --text-color: #DDDDDD;
+        --border-color: #DDDDDD;
+        --selected-color: #DDDDDD;
+        --selected-text-color: #121212;
+        --surface-color: #1a1a1a;
+        --field-fill-color: #ffffff;
+    }
+
+    html.theme-light {
+        --page-color: #DDDDDD;
+        --text-color: #121212;
+        --border-color: #121212;
+        --selected-color: #121212;
+        --selected-text-color: #DDDDDD;
+        --surface-color: #cccccc;
+        --field-fill-color: #ffffff;
+    }
+}

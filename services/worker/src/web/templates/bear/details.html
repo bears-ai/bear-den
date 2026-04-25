@@ -1,0 +1,262 @@
+{% extends "base.html" %} {% block title %}{{ bear.name | e }}{% endblock %} {%
+block subnav %}
+<li><a class="button-link" href="/bear/{{ bear.slug | e }}">Chat</a></li>
+{% endblock %} {% block content %} {% macro render_commit_columns(node) -%}
+<span class="den-private-mem-commit-date"
+    >{% if node.last_commit_date %}{% set last_update = node.last_commit_date | trim %}{% if last_update | length >= 16 %}{{ (last_update | replace("T", " "))[:16] | e }}{% else %}{{ last_update | e }}{% endif %}{% else %}—{% endif %}</span
+>
+<span class="den-private-mem-commit-message"
+    >{% if node.last_commit_message %}{{ node.last_commit_message | e }}{% else
+    %}<span class="caption">No commit metadata.</span>{% endif %}</span
+>
+{%- endmacro %} {% macro render_private_memory_nodes(nodes, open_dirs=false, depth=0)
+-%}
+<ul class="den-bear-memory-summary den-private-mem-tree">
+    {% for node in nodes %}
+    <li>
+        {% if node.is_dir %}
+        <details{% if open_dirs %} open{% endif %}>
+            <summary>
+                <span class="den-private-mem-row">
+                    <code class="den-private-mem-path den-private-mem-depth-{{ depth }}" title="{{ node.path | e }}"
+                        >📁 {{ node.name | e }}</code
+                    >
+                    {{ render_commit_columns(node) }}
+                </span>
+            </summary>
+            {% if node.children and node.children | length > 0 %}{{
+            render_private_memory_nodes(node.children, false, depth + 1) }}{% endif %}
+        </details>
+        {% else %}
+        <div class="den-private-mem-row">
+            <code class="den-private-mem-path den-private-mem-depth-{{ depth }}" title="{{ node.path | e }}"
+                >📄 {{ node.name | e }}</code
+            >
+            {{ render_commit_columns(node) }}
+        </div>
+        {% endif %}
+    </li>
+    {% endfor %}
+</ul>
+{%- endmacro %}
+<section>
+    {% if letta_resync_notice == 'ok' %}
+    <p class="form-hint">
+        <span class="success">Letta was updated from Den.</span>
+    </p>
+    {% elif letta_resync_notice == 'error' %}
+    <p class="form-errors">
+        Could not resync Letta. Check that Letta is reachable and the agent is
+        linked.
+    </p>
+    {% endif %}
+
+    <section class="two-columns">
+        <div>
+            <div id="overview" class="box full-width">
+                <!-- created: {{ bear.created_at | datetimeformat(format="short") }} -->
+                <!-- updated: {{ bear.updated_at | datetimeformat(format="short") }} -->
+                <h3 class="bear-overview-name">
+                    {{ bear.name | e }}
+                    <code id="bear-slug" title="{{ bear.id }}">{{ bear.slug | e }}</code>
+                </h3>
+                <p>
+                    {% if bear.description %}{{ bear.description | e }}{% else
+                    %}<em>No description.</em>{% endif %}
+                </p>
+                {% if can_manage_bear %}
+                <ul class="button-row">
+                    <li>
+                        <a
+                            class="button-link"
+                            href="/bear/{{ bear.slug | e }}/details/edit/overview"
+                            >Edit</a
+                        >
+                    </li>
+                </ul>
+                {% endif %}
+            </div>
+        </div>
+        <div>
+            <div id="usage" class="box full-width">
+                <p class="caption">People</p>
+                <p class="den-bear-inline-list">
+                    {% if members and members | length > 0 %}{% for m in members
+                    %}{% if not loop.first %}, {% endif %}{% if m.role ==
+                    'admin' %}<strong>{{ m.username | e }}</strong>{% else %}{{
+                    m.username | e }}{% endif %}{% endfor %}{% if
+                    can_manage_bear %},
+                    <a href="/bear/{{ bear.slug | e }}/details/access"
+                        >Manage access</a
+                    >{% endif %}{% else %}<em>No members.</em>{% if
+                    can_manage_bear %}
+                    <a href="/bear/{{ bear.slug | e }}/details/access"
+                        >Manage access</a
+                    >{% endif %}{% endif %}
+                </p>
+                <p class="caption">Active conversations</p>
+                {% if not letta_configured or not bear.letta_agent_id %}
+                <p class="form-hint">
+                    Link a Letta agent to list conversations.
+                </p>
+                {% else %}
+                <ul class="den-bear-conv-list">
+                    {% for c in conversation_rows %}
+                    <li>
+                        {{ c.title | e }} —
+                        <span class="caption">{{ c.channel_label }}</span>{% if
+                        c.last_message_at %} —
+                        <span class="caption">{{ c.last_message_at }}</span>{%
+                        endif %} — <a href="{{ c.web_href | e }}">Open</a>
+                    </li>
+                    {% else %}
+                    <li class="caption">No conversations yet.</li>
+                    {% endfor %}
+                </ul>
+                {% if has_archived_conversations %}
+                <p class="form-hint">
+                    <a href="/bear/{{ bear.slug | e }}/details/conversations"
+                        >All conversations</a
+                    >
+                    (includes archived)
+                </p>
+                {% endif %} {% endif %}
+            </div>
+        </div>
+    </section>
+
+    <section class="two-columns">
+        <div>
+            <div id="prompt" class="box full-width">
+                <h3>System prompt</h3>
+                {% if letta_resync_notice == 'ok' %}
+                <p class="form-hint">
+                    <span class="success">Letta was updated from Den.</span>
+                </p>
+                {% elif letta_resync_notice == 'error' %}
+                <p class="form-errors">
+                    Could not resync Letta. Check that Letta is reachable and
+                    the agent is linked.
+                </p>
+                {% endif %} {% if letta_agent_fetch_error %}
+                <p class="form-errors">
+                    Could not load agent from Letta: {{ letta_agent_fetch_error
+                    | e }}
+                </p>
+                {% endif %} {% if letta_drift and letta_drift.drift_any %}
+                <p class="form-errors">
+                    <strong>Letta is out of sync.</strong>{% if not
+                    can_manage_bear %} Ask a bear admin to resync or edit.{%
+                    else %} Force sync to update.{% endif %}
+                </p>
+                {% if letta_agent_summary and letta_agent_summary.system_excerpt
+                %}
+                <p class="caption">
+                    Letta instructions (excerpt from API): {{
+                    letta_agent_summary.system_excerpt | e }}
+                </p>
+                {% endif %} {% if can_manage_bear %}
+                <form
+                    method="post"
+                    action="/bear/{{ bear.slug | e }}/details/resync-letta"
+                    class="den-bear-resync-form"
+                >
+                    <p><button type="submit">Force Sync</button></p>
+                </form>
+                {% endif %} {% endif %}
+                <pre class="den-bear-prompt-pre">
+{{ bear.system_prompt | e }}</pre
+                >
+                {% if can_manage_bear %}
+                <ul class="button-row">
+                    <li>
+                        <a
+                            class="button-link"
+                            href="/bear/{{ bear.slug | e }}/details/edit/prompt"
+                            >Edit</a
+                        >
+                    </li>
+                </ul>
+                {% endif %}
+            </div>
+        </div>
+        <div>
+            <div id="configuration" class="box full-width">
+                <h3>Configuration</h3>
+                <dl class="fields-grid">
+                    <dt>Model</dt>
+                    <dd>
+                        {% if bear.default_model %}{{ bear.default_model | e
+                        }}{% else %}<em>none</em>{% endif %}
+                    </dd>
+                    <dt>Agent type</dt>
+                    <dd>
+                        {% if bear.letta_agent_type %}{{ bear.letta_agent_type |
+                        e }}{% else %}<em>Letta default</em>{% endif %}
+                    </dd>
+                    <dt>Tools</dt>
+                    <dd>
+                        {% if letta_tool_ids_display %}<code
+                            >{{ letta_tool_ids_display | e }}</code
+                        >{% else %}<em>none</em>{% endif %}
+                    </dd>
+                </dl>
+                {% if letta_drift and letta_drift.drift_any %}
+                <p class="form-hint">
+                    {% if letta_drift.system_prompt %}System prompt differs from
+                    Letta. {% endif %}{% if letta_drift.model %}Model differs
+                    from Letta. {% endif %}{% if letta_drift.agent_type %}Agent
+                    type differs from Letta. {% endif %}{% if letta_drift.tools
+                    %}Tools differ from Letta.{% endif %}
+                </p>
+                {% endif %} {% if can_manage_bear %}
+                <ul class="button-row">
+                    <li>
+                        <a
+                            class="button-link"
+                            href="/bear/{{ bear.slug | e }}/details/edit/configuration"
+                            >Edit</a
+                        >
+                    </li>
+                </ul>
+                {% endif %}
+            </div>
+        </div>
+    </section>
+
+    <section>
+        <div id="private-memory" class="box full-width">
+            <h3>Agent memory</h3>
+            {% if mem_private_skipped %} {% if not letta_configured %}
+            <p class="form-hint">Letta is not configured.</p>
+            {% elif not bear.letta_agent_id %}
+            <p class="form-hint">
+                Link a Letta agent to see private git memory status.
+            </p>
+            {% else %}
+            <p class="form-hint">
+                Set <code>LETTA_MEMFS_SERVICE_URL</code> (Memory Manager) for
+                Den to show this agent’s private memory repository files as a
+                hierarchy with last commit date and message.
+            </p>
+            {% endif %} {% elif mem_private_error %}
+            <p class="form-errors">
+                Could not load git memory: {{ mem_private_error | e }}
+            </p>
+            {% elif mem_private_no_repo %}
+            <p class="form-hint">
+                No context repository on disk for this agent yet, or it has not
+                been created.
+            </p>
+            {% elif mem_private_files and mem_private_files | length > 0 %}
+            <div class="den-private-mem-columns caption">
+                <span aria-hidden="true"></span><span>Last update</span><span aria-hidden="true"></span>
+            </div>
+            {{ render_private_memory_nodes(mem_private_files, true) }}
+            {% else %}
+            <p class="form-hint">No files found in this context repository.</p>
+            {% endif %}
+        </div>
+    </section>
+</section>
+{% endblock %}

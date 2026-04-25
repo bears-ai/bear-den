@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        UPDATE oauth_access_tokens\n        SET revoked = true\n        WHERE user_id = $1 AND client_id = $2 AND NOT revoked\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int4",
+        "Int4"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "1bfff9600a12b4544756fda36c574ecd57562b3a5ea08fff9e3d5b60de098016"
+}

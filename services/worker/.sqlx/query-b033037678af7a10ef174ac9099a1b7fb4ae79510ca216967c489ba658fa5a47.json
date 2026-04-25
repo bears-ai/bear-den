@@ -1,0 +1,56 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT id, email, username, display_name, passhash, admin_flag as \"admin_flag!\", theme FROM users",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 1,
+        "name": "email",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 2,
+        "name": "username",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 3,
+        "name": "display_name",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 4,
+        "name": "passhash",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 5,
+        "name": "admin_flag!",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 6,
+        "name": "theme",
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      false
+    ]
+  },
+  "hash": "b033037678af7a10ef174ac9099a1b7fb4ae79510ca216967c489ba658fa5a47"
+}

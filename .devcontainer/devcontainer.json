@@ -3,5 +3,6 @@
   "dockerComposeFile": "../docker-compose.yaml",
   "service": "workspace",
   "workspaceFolder": "/workspace",
-  "postStartCommand": "docker compose --profile bundled up -d bear-postgres bears-memfs-manager bears-den bears-pool"
+  "initializeCommand": "touch .env && grep -q '^COMPOSE_PROFILES=' .env || printf '\nCOMPOSE_PROFILES=dev,bundled\nJWT_SECRET=dev-placeholder\nLETTA_SERVER_PASS=dev-placeholder\nOPENAI_API_KEY=dev-placeholder\n' >> .env",
+  "postStartCommand": "JWT_SECRET=dev-placeholder LETTA_SERVER_PASS=dev-placeholder OPENAI_API_KEY=dev-placeholder docker compose --profile bundled up -d bear-postgres bears-memfs-manager bears-den bears-pool"
 }

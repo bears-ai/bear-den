@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% import "forms.jinja" as forms %}
+
+{% block breadcrumb %}<a href="/settings">Settings</a> > {% endblock %}
+{% block title %}Change Email{% endblock %}
+
+{% block content %}
+<div class="box">
+<form method="post">
+  {{ forms.input("email", "Email", 'email', 'required', form) }}
+  <button>Update</button>
+</form>
+</div>
+{% endblock %}

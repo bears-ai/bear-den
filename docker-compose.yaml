@@ -38,8 +38,8 @@ services:
       dockerfile: Dockerfile
     restart: "no"
     environment:
-      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET}
-      LETTA_SERVER_PASS: ${LETTA_SERVER_PASS:?set LETTA_SERVER_PASS}
+      JWT_SECRET: ${JWT_SECRET:-}
+      LETTA_SERVER_PASS: ${LETTA_SERVER_PASS:-}
       DATABASE_URL: ${DATABASE_URL:-postgres://bears:bears@bear-postgres:5432/den?sslmode=disable}
       LETTA_PG_URI: ${LETTA_PG_URI:-}
       LLM_API_URL: ${LLM_API_URL:-http://bear-bifrost:8080/v1}
@@ -164,7 +164,7 @@ services:
       MODEL_NAME: ${MODEL_NAME:-gpt-4}
       LETTA_SERVER_PORT: ${LETTA_SERVER_PORT:-8283}
       LETTA_SERVER_HOST: ${LETTA_SERVER_HOST:-0.0.0.0}
-      LETTA_SERVER_PASS: ${LETTA_SERVER_PASS:?set LETTA_SERVER_PASS}
+      LETTA_SERVER_PASS: ${LETTA_SERVER_PASS:-}
       LETTA_MEMFS_SERVICE_URL: ${LETTA_MEMFS_SERVICE_URL:-http://bears-memfs-manager:8285}
       LETTA_REDIS_HOST: ${LETTA_REDIS_HOST:-bear-redis}
       LETTA_REDIS_PORT: ${LETTA_REDIS_PORT:-6379}
@@ -201,7 +201,7 @@ services:
       LETTA_BASE_URL: ${LETTA_BASE_URL:-http://bear-letta:8283}
       LETTA_API_BASE_URL: ${LETTA_API_BASE_URL:-}
       # Same credential Letta uses as `LETTA_SERVER_PASS` (Bearer for Letta HTTP API).
-      LETTA_API_KEY: ${LETTA_SERVER_PASS}
+      LETTA_API_KEY: ${LETTA_SERVER_PASS:-}
       # Letta Code: use local mirror under ~/.letta; server uses LETTA_MEMFS_SERVICE_URL (Memory Manager) for git HTTP.
       LETTA_MEMFS_LOCAL: ${LETTA_MEMFS_LOCAL:-1}
       BEAR_RUNTIME_PROVISIONER: ${BEAR_RUNTIME_PROVISIONER:-local}
@@ -261,7 +261,7 @@ services:
       # Set `DATABASE_URL` in Coolify / `.env` for managed Postgres. Omitted → default matches bundled
       # `bear-postgres` literals above (`bears`/`bears`/`den` on host `bear-postgres`).
       DATABASE_URL: ${DATABASE_URL:-postgres://bears:bears@bear-postgres:5432/den?sslmode=disable}
-      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET}
+      JWT_SECRET: ${JWT_SECRET:-}
       RUN_WEB: ${RUN_WEB:-true}
       RUN_API: ${RUN_API:-false}
       RUN_WORKERS: ${RUN_WORKERS:-false}
@@ -278,7 +278,7 @@ services:
       MAILGUN_DOMAIN: ${MAILGUN_DOMAIN:-}
       TEMPLATES_DIR: ${TEMPLATES_DIR:-src/web/templates}
       LETTA_BASE_URL: ${LETTA_BASE_URL:-http://bear-letta:8283}
-      LETTA_API_KEY: ${LETTA_SERVER_PASS}
+      LETTA_API_KEY: ${LETTA_SERVER_PASS:-}
       CODEPOOL_BASE_URL: ${CODEPOOL_BASE_URL:-http://bears-pool:3030}
       CODEPOOL_INTERNAL_TOKEN: ${CODEPOOL_INTERNAL_TOKEN:-}
       SQLX_MIGRATE_IGNORE_MISSING: ${SQLX_MIGRATE_IGNORE_MISSING:-false}

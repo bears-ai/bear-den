@@ -1,0 +1,94 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT\n            t.id as token_id,\n            t.token,\n            t.client_id,\n            t.user_id,\n            t.scopes,\n            t.expires_at,\n            t.revoked as \"revoked!\",\n            t.created_at as token_created_at,\n            c.client_id as client_identifier,\n            c.name as client_name,\n            u.username,\n            u.email,\n            u.display_name\n        FROM oauth_access_tokens t\n        INNER JOIN oauth_clients c ON t.client_id = c.id\n        INNER JOIN users u ON t.user_id = u.id\n        WHERE t.id = $1\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "token_id",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 1,
+        "name": "token",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "client_id",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 3,
+        "name": "user_id",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 4,
+        "name": "scopes",
+        "type_info": "Jsonb"
+      },
+      {
+        "ordinal": 5,
+        "name": "expires_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 6,
+        "name": "revoked!",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 7,
+        "name": "token_created_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 8,
+        "name": "client_identifier",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 9,
+        "name": "client_name",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 10,
+        "name": "username",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 11,
+        "name": "email",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 12,
+        "name": "display_name",
+        "type_info": "Varchar"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int4"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      true,
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "66bab2c3b47b37fcf102f7573838aeab345498f6cbc455bcce51c4abca0fc536"
+}

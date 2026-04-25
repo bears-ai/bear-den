@@ -1,0 +1,25 @@
+{% extends "admin/base.html" %}
+
+{% block title %}Code pool{% endblock %}
+
+{% block admin_content %}
+<h3>Letta Code — Codepool</h3>
+
+<p>
+  Warm session pool and worker stats from <strong>Codepool</strong> (<code>GET /internal/pool</code>).
+  <a href="/admin/harness-pool.json"><code>GET /admin/harness-pool.json</code></a> (JSON).
+</p>
+
+{% if codepool_status == "disabled" %}
+<p><strong>Disabled</strong> — {{ codepool_detail }}</p>
+{% elif codepool_status == "ok" %}
+<p><strong>Reachable</strong> — {{ codepool_detail }}</p>
+{% else %}
+<p class="form-errors"><strong>Error</strong> — {{ codepool_detail }}</p>
+{% endif %}
+
+{% if codepool_json_pretty %}
+<h4>Pool snapshot</h4>
+<pre class="letta-code-harness-yaml">{{ codepool_json_pretty }}</pre>
+{% endif %}
+{% endblock %}

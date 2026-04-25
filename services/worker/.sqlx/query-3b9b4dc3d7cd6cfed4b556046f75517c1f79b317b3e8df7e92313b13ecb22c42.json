@@ -1,0 +1,52 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT\n            users.id AS user_id,\n            email_configs.id AS email_config_id,\n            email_configs.email_address AS email_address,\n            users.username,\n            users.display_name,\n            users.week_start_day\n        FROM email_configs\n            JOIN users ON email_configs.user_id = users.id\n                AND email_configs.active = true\n        WHERE user_id = $1\n        LIMIT 1\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "user_id",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 1,
+        "name": "email_config_id",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 2,
+        "name": "email_address",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "username",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 4,
+        "name": "display_name",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 5,
+        "name": "week_start_day",
+        "type_info": "Int4"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int4"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "3b9b4dc3d7cd6cfed4b556046f75517c1f79b317b3e8df7e92313b13ecb22c42"
+}

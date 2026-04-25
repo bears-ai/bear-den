@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+
+{% block title %}Settings{% endblock %}
+
+{% block content %}
+<section class="two-columns">
+<div>
+    <div class="box full-width">
+        <dl class="fields-grid">
+            <dt>Username</dt>
+            <dd>{{ username }}</dd>
+            <dt>Status</dt>
+            <dd>TODO: "explorer" status?</dd>
+            {% if invite_count %}
+                <dt>Invites left</dt>
+                <dd>{{ invite_count }}</dd>
+            {% endif %}
+        </dl>
+        <ul class="button-row">
+            <li><a class="button-link" href="/account">Account Details</a></li>
+        </ul>
+    </div>
+
+    <div class="box full-width">
+        <dl class="fields-grid">
+            <dt>Email</dt>
+            <dd>{{ email }} {{ '<span class="success">&#10003;<span>' | safe if email_verified else '<span class="warning">&#9888;</span>' | safe }}</dd>
+        </dl>
+        <ul class="button-row">
+            {% if not email_verified %}
+                <li><a class="button-link" href="/settings/email/verify">Verify Email</a></li>
+            {% endif %}
+            <li><a class="button-link" href="/settings/email/edit">Edit</a></li>
+        </ul>
+    </div>
+</div>
+
+<div class="box">
+    <dl class="fields-grid">
+        <dt>Display Name</dt>
+        <dd>{{ display_name }}</dd>
+        <dt>Theme</dt>
+        <dd>{{ theme_descriptions[theme] }}</dd>
+        <dt>First Day of Week</dt>
+        <dd>{{ day_of_week_names[week_start_day] }}</dd>
+    </dl>
+    <ul class="button-row">
+        <li><a class="button-link" href="/settings/edit">Change Settings</a></li>
+    </ul>
+</div>
+</section>
+{% endblock %}

@@ -1,0 +1,201 @@
+{% extends "admin/base.html" %}
+
+{% block title %}OAuth Token: {{ token.token_id }}{% endblock %}
+
+{% block admin_content %}
+<h2>OAuth Access Token Details</h2>
+
+<div class="token-details">
+  <div class="detail-section">
+    <h3>Token Information</h3>
+    <table class="details-table">
+      <tr>
+        <td><strong>Token ID:</strong></td>
+        <td>{{ token.token_id }}</td>
+      </tr>
+      <tr>
+        <td><strong>Token:</strong></td>
+        <td><code>{{ token.token }}</code></td>
+      </tr>
+      <tr>
+        <td><strong>Status:</strong></td>
+        <td>
+          {% if token.revoked %}
+            <span class="status-revoked">Revoked</span>
+          {% elif token.expires_at < now() %}
+            <span class="status-expired">Expired</span>
+          {% else %}
+            <span class="status-active">Active</span>
+          {% endif %}
+        </td>
+      </tr>
+      <tr>
+        <td><strong>Created:</strong></td>
+        <td>{{ token.token_created_at | datetimeformat(format="short") }}</td>
+      </tr>
+      <tr>
+        <td><strong>Expires:</strong></td>
+        <td>{{ token.expires_at | datetimeformat(format="short") }}</td>
+      </tr>
+    </table>
+  </div>
+
+  <div class="detail-section">
+    <h3>User Information</h3>
+    <table class="details-table">
+      <tr>
+        <td><strong>User ID:</strong></td>
+        <td>{{ token.user_id }}</td>
+      </tr>
+      <tr>
+        <td><strong>Username:</strong></td>
+        <td>{{ token.username }}</td>
+      </tr>
+      <tr>
+        <td><strong>Display Name:</strong></td>
+        <td>{{ token.display_name }}</td>
+      </tr>
+      <tr>
+        <td><strong>Email:</strong></td>
+        <td>{{ token.email }}</td>
+      </tr>
+    </table>
+  </div>
+
+  <div class="detail-section">
+    <h3>Client Information</h3>
+    <table class="details-table">
+      <tr>
+        <td><strong>Client ID:</strong></td>
+        <td>{{ token.client_id }}</td>
+      </tr>
+      <tr>
+        <td><strong>Client Identifier:</strong></td>
+        <td><code>{{ token.client_identifier }}</code></td>
+      </tr>
+      <tr>
+        <td><strong>Client Name:</strong></td>
+        <td>{{ token.client_name }}</td>
+      </tr>
+    </table>
+  </div>
+
+  <div class="detail-section">
+    <h3>Scopes</h3>
+    <div class="scopes-list">
+      {% for scope in token.parse_scopes() %}
+        <span class="scope">{{ scope.as_str() }}</span>
+      {% endfor %}
+    </div>
+  </div>
+</div>
+
+<div class="actions">
+  <a class="navigate" href="../">← Back to Tokens List</a>
+  {% if not token.revoked and token.expires_at > now() %}
+    <form method="post" action="./revoke" style="display: inline;">
+      <button type="submit" class="action-danger" onclick="return confirm('Are you sure you want to revoke this token?')">Revoke Token</button>
+    </form>
+  {% endif %}
+</div>
+
+<style>
+.token-details {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 20px;
+  margin-bottom: 20px;
+}
+
+.detail-section {
+  background-color: #f8f9fa;
+  padding: 15px;
+  border-radius: 5px;
+}
+
+.detail-section h3 {
+  margin-top: 0;
+  margin-bottom: 10px;
+  color: #333;
+}
+
+.details-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.details-table td {
+  padding: 8px 0;
+  border-bottom: 1px solid #ddd;
+}
+
+.details-table td:first-child {
+  font-weight: bold;
+  width: 140px;
+}
+
+.status-active {
+  color: #28a745;
+  font-weight: bold;
+}
+
+.status-expired {
+  color: #ffc107;
+  font-weight: bold;
+}
+
+.status-revoked {
+  color: #dc3545;
+  font-weight: bold;
+}
+
+code {
+  background-color: #e9ecef;
+  padding: 2px 4px;
+  border-radius: 3px;
+  font-family: monospace;
+  font-size: 0.9em;
+  word-break: break-all;
+}
+
+.scopes-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.scope {
+  background-color: #e9ecef;
+  padding: 4px 8px;
+  border-radius: 3px;
+  font-size: 0.9em;
+}
+
+.actions {
+  margin-top: 20px;
+  padding-top: 15px;
+  border-top: 1px solid #ddd;
+}
+
+.action-danger {
+  background-color: #dc3545;
+  color: white;
+  border: none;
+  padding: 8px 16px;
+  border-radius: 3px;
+  cursor: pointer;
+  font-size: 0.9em;
+  margin-left: 10px;
+}
+
+.action-danger:hover {
+  background-color: #c82333;
+}
+
+@media (max-width: 768px) {
+  .token-details {
+    grid-template-columns: 1fr;
+  }
+}
+</style>
+{% endblock %}

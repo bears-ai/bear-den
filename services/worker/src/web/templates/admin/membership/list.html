@@ -1,0 +1,22 @@
+{% extends "admin/base.html" %}
+
+{% block title %}Membership{% endblock %}
+
+{% block admin_content %}
+<h3>User ↔ bear membership</h3>
+<p><a class="action" href="./grant">Grant access</a></p>
+<table>
+  <thead>
+    <tr><th>User</th><th>Bear</th><th>Role</th></tr>
+  </thead>
+  <tbody>
+  {% for m in memberships %}
+    <tr>
+      <td>{{ m.username }} <small>({{ m.user_id }})</small></td>
+      <td><code>{{ m.bear_slug }}</code> — {{ m.bear_name }}</td>
+      <td>{% if m.role %}{{ m.role }}{% else %}—{% endif %}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endblock %}

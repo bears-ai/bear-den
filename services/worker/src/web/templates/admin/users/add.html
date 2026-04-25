@@ -1,0 +1,17 @@
+{% extends "admin/base.html" %}
+{% import "forms.jinja" as forms %}
+
+{% block title %}Add New User{% endblock %}
+
+{% block admin_content %}
+<div class="box">
+<form method="post">
+  {{ forms.input("username", "Username", "text", 'required minlength="3" maxlength="30"', user) }}
+  {{ forms.input("display_name", "Display Name", "text", 'required maxlength="255"', user) }}
+  {{ forms.input("email", "Email", "email", 'required', user) }}
+  {{ forms.input("password", "Password", "password", 'required minlength="8"') }}
+  {{ forms.input("password_check", "Password again", "password", 'required') }}
+  <button>Create</button>
+</form>
+</div>
+{% endblock %}

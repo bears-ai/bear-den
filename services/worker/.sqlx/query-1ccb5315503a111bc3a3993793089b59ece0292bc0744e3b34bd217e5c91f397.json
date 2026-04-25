@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        UPDATE email_configs\n        SET active = false, updated_at = now()\n        WHERE id IN (\n            SELECT id\n            FROM email_configs\n            WHERE\n                user_id = $1\n            AND active = true\n        )\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int4"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "1ccb5315503a111bc3a3993793089b59ece0292bc0744e3b34bd217e5c91f397"
+}
