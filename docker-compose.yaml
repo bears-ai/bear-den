@@ -16,11 +16,36 @@
 #
 # See docs/deployment/DEPLOYMENT.md and per-service COOLIFY_DEPLOY.md files.
 #
-# **`bear-preflight`** runs once at deploy time and validates secrets + URI-shaped env vars before
-# other services start (`depends_on` + `service_completed_successfully`). Requires Docker Compose
-# **v2.20+**. Run manually: `docker compose run --rm bear-preflight`.
+# **Preflight** services run once at deploy time and validate config before other services start
+# (`depends_on` + `service_completed_successfully`). They are split so detached deploy logs identify
+# the failing check, e.g. `bear-preflight-den-db` or `bear-preflight-letta-pg`. Requires Docker
+# Compose **v2.20+**. Run manually: `docker compose run --rm bear-preflight-config`.
 
 name: bear-stack
+
+x-preflight-build: &preflight-build
+  context: ./services/preflight
+  dockerfile: Dockerfile
+
+x-preflight-environment: &preflight-environment
+  JWT_SECRET: ${JWT_SECRET:-}
+  LETTA_SERVER_PASS: ${LETTA_SERVER_PASS:-}
+  DATABASE_URL: ${DATABASE_URL:-postgres://bears:bears@bear-postgres:5432/den?sslmode=disable}
+  LETTA_PG_URI: ${LETTA_PG_URI:-}
+  LLM_API_URL: ${LLM_API_URL:-http://bear-bifrost:8080/v1}
+  LETTA_BASE_URL: ${LETTA_BASE_URL:-http://bear-letta:8283}
+  CODEPOOL_BASE_URL: ${CODEPOOL_BASE_URL:-http://bear-codepool:3030}
+  WEB_SERVER_URL: ${WEB_SERVER_URL:-http://localhost:3000}
+  OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+  LETTA_MEMFS_SERVICE_URL: ${LETTA_MEMFS_SERVICE_URL:-http://bears-memfs-manager:8285}
+
+x-preflight-depends: &preflight-depends
+  bear-preflight-config:
+    condition: service_completed_successfully
+  bear-preflight-den-db:
+    condition: service_completed_successfully
+  bear-preflight-letta-pg:
+    condition: service_completed_successfully
 
 services:
   workspace:
@@ -32,26 +57,31 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
     command: sleep infinity
 
-  bear-preflight:
-    build:
-      context: ./services/preflight
-      dockerfile: Dockerfile
+  bear-preflight-config:
+    build: *preflight-build
+    restart: "no"
+    command: ["config"]
+    environment: *preflight-environment
+
+  bear-preflight-den-db:
+    build: *preflight-build
     restart: "no"
     depends_on:
       bear-postgres:
         condition: service_healthy
         required: false
-    environment:
-      JWT_SECRET: ${JWT_SECRET:-}
-      LETTA_SERVER_PASS: ${LETTA_SERVER_PASS:-}
-      DATABASE_URL: ${DATABASE_URL:-postgres://bears:bears@bear-postgres:5432/den?sslmode=disable}
-      LETTA_PG_URI: ${LETTA_PG_URI:-}
-      LLM_API_URL: ${LLM_API_URL:-http://bear-bifrost:8080/v1}
-      LETTA_BASE_URL: ${LETTA_BASE_URL:-http://bear-letta:8283}
-      CODEPOOL_BASE_URL: ${CODEPOOL_BASE_URL:-http://bear-codepool:3030}
-      WEB_SERVER_URL: ${WEB_SERVER_URL:-http://localhost:3000}
-      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
-      LETTA_MEMFS_SERVICE_URL: ${LETTA_MEMFS_SERVICE_URL:-http://bears-memfs-manager:8285}
+    command: ["den-db"]
+    environment: *preflight-environment
+
+  bear-preflight-letta-pg:
+    build: *preflight-build
+    restart: "no"
+    depends_on:
+      bear-postgres:
+        condition: service_healthy
+        required: false
+    command: ["letta-pg"]
+    environment: *preflight-environment
 
   bear-postgres:
     profiles:
@@ -75,8 +105,7 @@ services:
 
   bear-bifrost:
     depends_on:
-      bear-preflight:
-        condition: service_completed_successfully
+      <<: *preflight-depends
     image: maximhq/bifrost:v1.4.22
     restart: unless-stopped
     environment:
@@ -114,8 +143,7 @@ services:
     image: redis:7-alpine
     restart: unless-stopped
     depends_on:
-      bear-preflight:
-        condition: service_completed_successfully
+      <<: *preflight-depends
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -131,8 +159,7 @@ services:
       dockerfile: Dockerfile
     restart: unless-stopped
     depends_on:
-      bear-preflight:
-        condition: service_completed_successfully
+      <<: *preflight-depends
     environment:
       PORT: ${MEMFS_MANAGER_PORT:-8285}
       BIND: ${MEMFS_MANAGER_BIND:-0.0.0.0}

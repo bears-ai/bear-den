@@ -18,6 +18,10 @@ def err(msg: str) -> None:
     print(f"preflight: ERROR: {msg}", file=sys.stderr)
 
 
+def warn(msg: str) -> None:
+    print(f"preflight: WARNING: {msg}", file=sys.stderr)
+
+
 def info(msg: str) -> None:
     print(f"preflight: {msg}", file=sys.stderr)
 
@@ -69,7 +73,7 @@ def validate_sql_tcp_reachable(name: str, value: str, hint: str) -> None:
     )
 
 
-def validate_optional_let_pg_uri() -> None:
+def validate_optional_let_pg_uri(reachable: bool = True) -> None:
     raw = os.environ.get("LETTA_PG_URI", "") or ""
     value = raw.strip()
     if not value:
@@ -82,11 +86,12 @@ def validate_optional_let_pg_uri() -> None:
             "the SQLAlchemy driver (see services/letta/COOLIFY_DEPLOY.md)"
         )
     info("LETTA_PG_URI parses as PostgreSQL URI")
-    validate_sql_tcp_reachable(
-        "LETTA_PG_URI",
-        value,
-        "Deploy/attach Letta's Postgres/pgvector database and set LETTA_PG_URI to its reachable internal URL.",
-    )
+    if reachable:
+        validate_sql_tcp_reachable(
+            "LETTA_PG_URI",
+            value,
+            "Deploy/attach Letta's Postgres/pgvector database and set LETTA_PG_URI to its reachable internal URL.",
+        )
 
 
 def validate_http_url(name: str, value: str) -> None:
@@ -97,23 +102,27 @@ def validate_http_url(name: str, value: str) -> None:
         fail(f"{name} must include a host (netloc)")
 
 
-def main() -> None:
+def validate_database_url(reachable: bool = True) -> None:
+    database_url = require_non_empty("DATABASE_URL")
+    parse_sql_uri("DATABASE_URL", database_url)
+    info("DATABASE_URL parses as PostgreSQL URI")
+    if reachable:
+        validate_sql_tcp_reachable(
+            "DATABASE_URL",
+            database_url,
+            "If you want the compose-bundled Postgres, enable COMPOSE_PROFILES=bundled; otherwise set DATABASE_URL to your managed Postgres.",
+        )
+
+
+def validate_config_shape() -> None:
     info("checking required secrets and URI-shaped environment variables")
 
     require_non_empty("JWT_SECRET")
     require_non_empty("LETTA_SERVER_PASS")
     info("JWT_SECRET and LETTA_SERVER_PASS are set")
 
-    database_url = require_non_empty("DATABASE_URL")
-    parse_sql_uri("DATABASE_URL", database_url)
-    info("DATABASE_URL parses as PostgreSQL URI")
-    validate_sql_tcp_reachable(
-        "DATABASE_URL",
-        database_url,
-        "If you want the compose-bundled Postgres, enable COMPOSE_PROFILES=bundled; otherwise set DATABASE_URL to your managed Postgres.",
-    )
-
-    validate_optional_let_pg_uri()
+    validate_database_url(reachable=False)
+    validate_optional_let_pg_uri(reachable=False)
 
     llm = os.environ.get("LLM_API_URL", "").strip() or "http://bear-bifrost:8080/v1"
     validate_http_url("LLM_API_URL", llm)
@@ -136,9 +145,27 @@ def main() -> None:
     info(f"WEB_SERVER_URL OK ({web})")
 
     if not (os.environ.get("OPENAI_API_KEY") or "").strip():
-        err("OPENAI_API_KEY is empty — embeddings and direct OpenAI calls may fail")
+        warn("OPENAI_API_KEY is empty — embeddings and direct OpenAI calls may fail")
 
-    info("all preflight checks passed")
+    info("configuration shape checks passed")
+
+
+def main() -> None:
+    mode = sys.argv[1] if len(sys.argv) > 1 else "all"
+
+    if mode == "config":
+        validate_config_shape()
+    elif mode == "den-db":
+        validate_database_url(reachable=True)
+    elif mode == "letta-pg":
+        validate_optional_let_pg_uri(reachable=True)
+    elif mode == "all":
+        validate_config_shape()
+        validate_database_url(reachable=True)
+        validate_optional_let_pg_uri(reachable=True)
+        info("all preflight checks passed")
+    else:
+        fail(f"unknown preflight mode {mode!r}; expected config, den-db, letta-pg, or all")
 
 
 if __name__ == "__main__":
