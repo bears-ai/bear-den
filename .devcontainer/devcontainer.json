@@ -1,5 +1,5 @@
 {
-  "name": "Workspace",
+  "name": "BEARS dev",
   "dockerComposeFile": "../docker-compose.yaml",
   "service": "workspace",
   "workspaceFolder": "/workspace",
