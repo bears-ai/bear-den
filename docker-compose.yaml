@@ -212,6 +212,10 @@ services:
       POOL_MAX_ENTRIES: ${POOL_MAX_ENTRIES:-256}
     volumes:
       - bears-pool-letta-home:/home/node/.letta
+    networks:
+      default:
+        aliases:
+          - bear-codepool
     # bookworm-slim has no wget/curl; use Node (same runtime as the app).
     healthcheck:
       test:
