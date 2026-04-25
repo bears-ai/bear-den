@@ -30,7 +30,6 @@ services:
     volumes:
       - .:/workspace
       - /var/run/docker.sock:/var/run/docker.sock
-      - ~/.local/share/opencode:/root/.local/share/opencode
     command: sleep infinity
 
   bear-preflight:
