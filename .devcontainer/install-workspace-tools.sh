@@ -8,11 +8,15 @@ export CARGO_HOME=/usr/local/cargo
 export PATH="${CARGO_HOME}/bin:${PATH}"
 
 needs_apt=0
-for cmd in bash curl git docker python3; do
+for cmd in bash curl git docker python3 clang ld.lld node npm; do
   if ! command -v "$cmd" >/dev/null 2>&1; then
     needs_apt=1
   fi
 done
+
+if ! command -v node >/dev/null 2>&1 || ! node -e 'process.exit(Number(process.versions.node.split(".")[0]) >= 22 ? 0 : 1)' >/dev/null 2>&1; then
+  needs_apt=1
+fi
 
 if ! python3 - <<'PY' >/dev/null 2>&1
 import pytest
@@ -25,9 +29,13 @@ fi
 if [ "$needs_apt" = "1" ]; then
   apt-get update
   apt-get install -y \
-    curl git bash ca-certificates build-essential pkg-config libssl-dev \
+    curl git bash ca-certificates build-essential clang lld pkg-config libssl-dev \
     python3 python3-pytest python3-requests \
     docker.io
+  if ! command -v node >/dev/null 2>&1 || ! node -e 'process.exit(Number(process.versions.node.split(".")[0]) >= 22 ? 0 : 1)' >/dev/null 2>&1; then
+    curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
+    apt-get install -y nodejs
+  fi
   rm -rf /var/lib/apt/lists/*
 fi
 

@@ -3,9 +3,11 @@ FROM debian:bookworm-slim
 ARG RUST_VERSION=1.92.0
 
 RUN apt-get update && apt-get install -y \
-    curl git bash ca-certificates build-essential pkg-config libssl-dev \
+    curl git bash ca-certificates build-essential clang lld pkg-config libssl-dev \
     python3 python3-pytest python3-requests \
     docker.io \
+    && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
+    && apt-get install -y nodejs \
     && rm -rf /var/lib/apt/lists/* \
     && mkdir -p /usr/local/lib/docker/cli-plugins \
     && arch="$(uname -m)" \
