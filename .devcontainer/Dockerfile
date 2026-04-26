@@ -3,7 +3,7 @@ FROM debian:bookworm-slim
 ARG RUST_VERSION=1.92.0
 
 RUN apt-get update && apt-get install -y \
-    curl git bash ca-certificates build-essential clang lld pkg-config libssl-dev \
+    curl git bash ca-certificates build-essential clang lld pkg-config libssl-dev openssh-client \
     python3 python3-pytest python3-requests \
     docker.io \
     && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
