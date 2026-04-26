@@ -18,6 +18,10 @@ def err(msg: str) -> None:
     print(f"preflight: ERROR: {msg}", file=sys.stderr)
 
 
+def warn(msg: str) -> None:
+    print(f"preflight: WARNING: {msg}", file=sys.stderr)
+
+
 def info(msg: str) -> None:
     print(f"preflight: {msg}", file=sys.stderr)
 
@@ -43,6 +47,25 @@ def parse_sql_uri(name: str, value: str) -> None:
         fail(f"{name} must include a host name")
 
 
+def redacted_sql_uri(value: str) -> str:
+    u = urlparse(value)
+    if not u.netloc:
+        return "<unparseable>"
+    auth = ""
+    if u.username:
+        auth = u.username
+        if u.password:
+            auth += ":***"
+        auth += "@"
+    host = u.hostname or ""
+    if ":" in host and not host.startswith("["):
+        host = f"[{host}]"
+    port = f":{u.port}" if u.port else ""
+    path = u.path or ""
+    query = f"?{u.query}" if u.query else ""
+    return f"{u.scheme}://{auth}{host}{port}{path}{query}"
+
+
 def validate_sql_tcp_reachable(name: str, value: str, hint: str) -> None:
     u = urlparse(value)
     host = u.hostname
@@ -54,13 +77,27 @@ def validate_sql_tcp_reachable(name: str, value: str, hint: str) -> None:
     retries = int(os.environ.get("PREFLIGHT_DB_CONNECT_RETRIES", "5"))
     last_error = None
 
+    info(
+        f"{name} target {redacted_sql_uri(value)} "
+        f"(host={host}, port={port}, connect_timeout={timeout_secs}s, retries={retries})"
+    )
+
+    try:
+        addrs = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
+        rendered = sorted({f"{family.name if hasattr(family, 'name') else family}:{addr[0]}:{addr[1]}" for family, _, _, _, addr in addrs})
+        info(f"{name} DNS resolved {host} -> {', '.join(rendered)}")
+    except OSError as exc:
+        warn(f"{name} DNS lookup failed for {host}: {exc}")
+
     for attempt in range(1, retries + 1):
         try:
+            info(f"{name} TCP connect attempt {attempt}/{retries} to {host}:{port}")
             with socket.create_connection((host, port), timeout=timeout_secs):
                 info(f"{name} TCP reachable ({host}:{port})")
                 return
         except OSError as exc:
             last_error = exc
+            warn(f"{name} TCP connect attempt {attempt}/{retries} failed: {exc}")
             if attempt < retries:
                 time.sleep(1)
 
