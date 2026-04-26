@@ -72,7 +72,7 @@ COPY --from=build /bin/server /bin/
 
 # Runtime env (set in Coolify / compose — not baked into the image):
 # When RUN_WEB=true (default for production web):
-#   CODEPOOL_BASE_URL — optional in image; production builds default to http://bear-codepool:3030 when unset.
+#   CODEPOOL_BASE_URL — optional in image; production builds default to http://bears-codepool:3030 when unset.
 #     (Letta Code SDK harness; bear chat streaming does not use the Letta server HTTP API directly).
 #   CODEPOOL_INTERNAL_TOKEN — optional; must match the Codepool container if set.
 # See ../../services/codepool/COOLIFY_DEPLOY.md and services/den/COOLIFY_DEPLOY.md.

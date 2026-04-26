@@ -1,16 +1,16 @@
 {
-  "name": "bears-dev",
-  "initializeCommand": "docker build -t bears-devcontainer:latest -f .devcontainer/Dockerfile .devcontainer",
-  "image": "bears-devcontainer:latest",
-  "workspaceFolder": "/workspace",
-  "workspaceMount": "source=${localWorkspaceFolder},target=/workspace,type=bind,consistency=cached",
-  "mounts": [
-    "source=/var/run/docker.sock,target=/var/run/docker.sock,type=bind",
-    "source=${localEnv:HOME}/.local/share/opencode,target=/root/.local/share/opencode,type=bind,consistency=cached"
-  ],
-  "containerEnv": {
-    "OPENCODE_AUTH_PATH": "/root/.local/share/opencode/auth.json"
-  },
-  "postCreateCommand": "/workspace/.devcontainer/install-workspace-tools.sh",
-  "postStartCommand": "JWT_SECRET=dev-placeholder LETTA_SERVER_PASS=dev-placeholder OPENAI_API_KEY=dev-placeholder WEB_SERVER_URL=http://localhost:3000 DATABASE_URL=postgres://bears:bears@bear-postgres:5432/den?sslmode=disable LETTA_PG_URI=postgresql://bears:bears@bear-postgres:5432/den?sslmode=disable docker compose --profile bundled up -d bear-postgres bears-memfs-manager bears-den bear-codepool"
+    "name": "bears-dev",
+    "initializeCommand": "docker build -t bears-devcontainer:latest -f .devcontainer/Dockerfile .devcontainer",
+    "image": "bears-devcontainer:latest",
+    "workspaceFolder": "/workspace",
+    "workspaceMount": "source=${localWorkspaceFolder},target=/workspace,type=bind,consistency=cached",
+    "mounts": [
+        "source=/var/run/docker.sock,target=/var/run/docker.sock,type=bind",
+        "source=${localEnv:HOME}/.local/share/opencode,target=/root/.local/share/opencode,type=bind,consistency=cached"
+    ],
+    "containerEnv": {
+        "OPENCODE_AUTH_PATH": "/root/.local/share/opencode/auth.json"
+    },
+    "postCreateCommand": "/workspace/.devcontainer/install-workspace-tools.sh",
+    "postStartCommand": "JWT_SECRET=dev-placeholder LETTA_SERVER_PASS=dev-placeholder OPENAI_API_KEY=dev-placeholder WEB_SERVER_URL=http://localhost:3000 DATABASE_URL=postgres://bears:bears@bears-postgres:5432/den?sslmode=disable LETTA_PG_URI=postgresql://bears:bears@bears-postgres:5432/den?sslmode=disable docker compose --profile bundled up -d bears-postgres bears-memfs-manager bears-den bears-codepool"
 }

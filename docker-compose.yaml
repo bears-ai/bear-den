@@ -24,312 +24,312 @@
 name: bears-stack
 
 x-preflight-build: &preflight-build
-  context: ./services/preflight
-  dockerfile: Dockerfile
+    context: ./services/preflight
+    dockerfile: Dockerfile
 
 x-preflight-environment: &preflight-environment
-  JWT_SECRET: ${JWT_SECRET:-SETME}
-  LETTA_SERVER_PASS: ${LETTA_SERVER_PASS:-SETME}
-  OPENAI_API_KEY: ${OPENAI_API_KEY:-SETME}
-  DATABASE_URL: ${DATABASE_URL:-SETME}
-  LETTA_PG_URI: ${LETTA_PG_URI:-SETME}
-  WEB_SERVER_URL: ${WEB_SERVER_URL:-${SERVICE_URL_BEARS_DEN:-SETME}}
-  LLM_API_URL: ${LLM_API_URL:-http://bears-bifrost:8080/v1}
-  LETTA_BASE_URL: ${LETTA_BASE_URL:-http://bears-letta:8283}
-  CODEPOOL_BASE_URL: ${CODEPOOL_BASE_URL:-http://bears-codepool:3030}
-  LETTA_MEMFS_SERVICE_URL: ${LETTA_MEMFS_SERVICE_URL:-http://bears-memfs-manager:8285}
+    JWT_SECRET: ${JWT_SECRET:-SETME}
+    LETTA_SERVER_PASS: ${LETTA_SERVER_PASS:-SETME}
+    OPENAI_API_KEY: ${OPENAI_API_KEY:-SETME}
+    DATABASE_URL: ${DATABASE_URL:-SETME}
+    LETTA_PG_URI: ${LETTA_PG_URI:-SETME}
+    WEB_SERVER_URL: ${WEB_SERVER_URL:-${SERVICE_URL_BEARS_DEN:-SETME}}
+    LLM_API_URL: ${LLM_API_URL:-http://bears-bifrost:8080/v1}
+    LETTA_BASE_URL: ${LETTA_BASE_URL:-http://bears-letta:8283}
+    CODEPOOL_BASE_URL: ${CODEPOOL_BASE_URL:-http://bears-codepool:3030}
+    LETTA_MEMFS_SERVICE_URL: ${LETTA_MEMFS_SERVICE_URL:-http://bears-memfs-manager:8285}
 
 x-preflight-depends: &preflight-depends
-  bears-preflight-config:
-    condition: service_completed_successfully
-  bears-preflight-den-db:
-    condition: service_completed_successfully
-  bears-preflight-letta-pg:
-    condition: service_completed_successfully
+    bears-preflight-config:
+        condition: service_completed_successfully
+    bears-preflight-den-db:
+        condition: service_completed_successfully
+    bears-preflight-letta-pg:
+        condition: service_completed_successfully
 
 services:
-  workspace:
-    profiles:
-      - dev
-    build: .devcontainer
-    volumes:
-      - .:/workspace
-      - /var/run/docker.sock:/var/run/docker.sock
-    command: sleep infinity
+    workspace:
+        profiles:
+            - dev
+        build: .devcontainer
+        volumes:
+            - .:/workspace
+            - /var/run/docker.sock:/var/run/docker.sock
+        command: sleep infinity
 
-  bears-preflight-config:
-    build: *preflight-build
-    restart: "no"
-    command: ["config"]
-    environment: *preflight-environment
+    bears-preflight-config:
+        build: *preflight-build
+        restart: "no"
+        command: ["config"]
+        environment: *preflight-environment
 
-  bears-preflight-den-db:
-    build: *preflight-build
-    restart: "no"
-    depends_on:
-      bears-postgres:
-        condition: service_healthy
-        required: false
-    command: ["den-db"]
-    environment: *preflight-environment
+    bears-preflight-den-db:
+        build: *preflight-build
+        restart: "no"
+        depends_on:
+            bears-postgres:
+                condition: service_healthy
+                required: false
+        command: ["den-db"]
+        environment: *preflight-environment
 
-  bears-preflight-letta-pg:
-    build: *preflight-build
-    restart: "no"
-    depends_on:
-      bears-postgres:
-        condition: service_healthy
-        required: false
-    command: ["letta-pg"]
-    environment: *preflight-environment
+    bears-preflight-letta-pg:
+        build: *preflight-build
+        restart: "no"
+        depends_on:
+            bears-postgres:
+                condition: service_healthy
+                required: false
+        command: ["letta-pg"]
+        environment: *preflight-environment
 
-  bears-postgres:
-    profiles:
-      - bundled
-    image: postgres:16-alpine
-    restart: unless-stopped
-    environment:
-      # Fixed dev defaults. For production, prefer a managed database and set `DATABASE_URL`.
-      POSTGRES_USER: bears
-      POSTGRES_PASSWORD: bears
-      POSTGRES_DB: den
-    volumes:
-      - bears-postgres-data:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U bears -d den"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
-      start_period: 10s
+    bears-postgres:
+        profiles:
+            - bundled
+        image: postgres:16-alpine
+        restart: unless-stopped
+        environment:
+            # Fixed dev defaults. For production, prefer a managed database and set `DATABASE_URL`.
+            POSTGRES_USER: bears
+            POSTGRES_PASSWORD: bears
+            POSTGRES_DB: den
+        volumes:
+            - bears-postgres-data:/var/lib/postgresql/data
+        healthcheck:
+            test: ["CMD-SHELL", "pg_isready -U bears -d den"]
+            interval: 5s
+            timeout: 5s
+            retries: 5
+            start_period: 10s
 
-  bears-bifrost:
-    depends_on:
-      <<: *preflight-depends
-    image: maximhq/bifrost:v1.4.22
-    restart: unless-stopped
-    environment:
-      APP_HOST: ${BIFROST_APP_HOST:-0.0.0.0}
-      APP_PORT: ${BIFROST_APP_PORT:-8080}
-      LOG_LEVEL: ${BIFROST_LOG_LEVEL:-info}
-      LOG_STYLE: ${BIFROST_LOG_STYLE:-json}
-      OPENAI_API_KEY: ${OPENAI_API_KEY:-SETME}
-    volumes:
-      # Bifrost reads a *file* at this path. If the host source is missing, Docker creates an empty
-      # directory named `config.json` and the app fails with `read .../config.json: is a directory`.
-      # `create_host_path: false` makes the deploy fail instead of silently creating that directory.
-      - type: bind
-        source: ./services/bifrost/config.json
-        target: /app/data/config.json
-        read_only: true
-        bind:
-          create_host_path: false
-    # Shell form like upstream Dockerfile. Long `start_period`: Bifrost can be slow on ARM; image default is 5s.
-    # `/health` may 503 if config/log/vector store pings fail — set `disable_db_pings_in_health` in config.json.
-    # Probe uses `$APP_PORT` (same as the upstream image) so a custom `APP_PORT` still matches the server.
-    healthcheck:
-      test:
-        [
-          "CMD-SHELL",
-          "wget --no-verbose --tries=1 -O /dev/null http://127.0.0.1:$${APP_PORT:-8080}/health || exit 1",
-        ]
-      interval: 30s
-      timeout: 15s
-      retries: 5
-      start_period: 120s
+    bears-bifrost:
+        depends_on:
+            <<: *preflight-depends
+        image: maximhq/bifrost:v1.4.22
+        restart: unless-stopped
+        environment:
+            APP_HOST: ${BIFROST_APP_HOST:-0.0.0.0}
+            APP_PORT: ${BIFROST_APP_PORT:-8080}
+            LOG_LEVEL: ${BIFROST_LOG_LEVEL:-info}
+            LOG_STYLE: ${BIFROST_LOG_STYLE:-json}
+            OPENAI_API_KEY: ${OPENAI_API_KEY:-SETME}
+        volumes:
+            # Bifrost reads a *file* at this path. If the host source is missing, Docker creates an empty
+            # directory named `config.json` and the app fails with `read .../config.json: is a directory`.
+            # `create_host_path: false` makes the deploy fail instead of silently creating that directory.
+            - type: bind
+              source: ${BIFROST_CONFIG_PATH:-./services/bifrost/config.json}
+              target: /app/data/config.json
+              read_only: true
+              bind:
+                  create_host_path: false
+        # Shell form like upstream Dockerfile. Long `start_period`: Bifrost can be slow on ARM; image default is 5s.
+        # `/health` may 503 if config/log/vector store pings fail — set `disable_db_pings_in_health` in config.json.
+        # Probe uses `$APP_PORT` (same as the upstream image) so a custom `APP_PORT` still matches the server.
+        healthcheck:
+            test:
+                [
+                    "CMD-SHELL",
+                    "wget --no-verbose --tries=1 -O /dev/null http://127.0.0.1:$${APP_PORT:-8080}/health || exit 1",
+                ]
+            interval: 30s
+            timeout: 15s
+            retries: 5
+            start_period: 120s
 
-  # Redis: required by Letta for memory-repo git locking (used with git-backed memfs).
-  bears-redis:
-    image: redis:7-alpine
-    restart: unless-stopped
-    depends_on:
-      <<: *preflight-depends
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 5s
-      timeout: 3s
-      retries: 5
-      start_period: 5s
+    # Redis: required by Letta for memory-repo git locking (used with git-backed memfs).
+    bears-redis:
+        image: redis:7-alpine
+        restart: unless-stopped
+        depends_on:
+            <<: *preflight-depends
+        healthcheck:
+            test: ["CMD", "redis-cli", "ping"]
+            interval: 5s
+            timeout: 3s
+            retries: 5
+            start_period: 5s
 
-  # Serves the same on-disk layout as Letta’s LocalStorageBackend: ~/.letta/memfs/repository/...
-  # (shares `bears-letta-data`). The Letta API proxies /v1/git/* here.
-  bears-memfs-manager:
-    build:
-      context: ./services/api
-      dockerfile: Dockerfile
-    restart: unless-stopped
-    depends_on:
-      <<: *preflight-depends
-    environment:
-      PORT: ${MEMFS_MANAGER_PORT:-8285}
-      BIND: ${MEMFS_MANAGER_BIND:-0.0.0.0}
-      MEMFS_BASE: ${MEMFS_BASE:-/root/.letta/memfs/repository}
-      MEMFS_DEFAULT_ORG: ${MEMFS_DEFAULT_ORG:-org-default}
-    volumes:
-      - bears-letta-data:/root/.letta
-    healthcheck:
-      test:
-        [
-          "CMD-SHELL",
-          "python -c \"import os, urllib.request; urllib.request.urlopen('http://127.0.0.1:%s/health' % os.environ.get('PORT', '8285')).read()\"",
-        ]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 15s
+    # Serves the same on-disk layout as Letta’s LocalStorageBackend: ~/.letta/memfs/repository/...
+    # (shares `bears-letta-data`). The Letta API proxies /v1/git/* here.
+    bears-memfs-manager:
+        build:
+            context: ./services/api
+            dockerfile: Dockerfile
+        restart: unless-stopped
+        depends_on:
+            <<: *preflight-depends
+        environment:
+            PORT: ${MEMFS_MANAGER_PORT:-8285}
+            BIND: ${MEMFS_MANAGER_BIND:-0.0.0.0}
+            MEMFS_BASE: ${MEMFS_BASE:-/root/.letta/memfs/repository}
+            MEMFS_DEFAULT_ORG: ${MEMFS_DEFAULT_ORG:-org-default}
+        volumes:
+            - bears-letta-data:/root/.letta
+        healthcheck:
+            test:
+                [
+                    "CMD-SHELL",
+                    'python -c "import os, urllib.request; urllib.request.urlopen(''http://127.0.0.1:%s/health'' % os.environ.get(''PORT'', ''8285'')).read()"',
+                ]
+            interval: 10s
+            timeout: 5s
+            retries: 5
+            start_period: 15s
 
-  bears-letta:
-    image: letta/letta:latest
-    restart: unless-stopped
-    depends_on:
-      bears-bifrost:
-        condition: service_healthy
-      bears-redis:
-        condition: service_healthy
-      bears-memfs-manager:
-        condition: service_healthy
-    environment:
-      LLM_API_URL: ${LLM_API_URL:-http://bears-bifrost:8080/v1}
-      MODEL_NAME: ${MODEL_NAME:-gpt-4}
-      LETTA_SERVER_PORT: ${LETTA_SERVER_PORT:-8283}
-      LETTA_SERVER_HOST: ${LETTA_SERVER_HOST:-0.0.0.0}
-      LETTA_SERVER_PASS: ${LETTA_SERVER_PASS:-SETME}
-      LETTA_PG_URI: ${LETTA_PG_URI:-SETME}
-      LETTA_MEMFS_SERVICE_URL: ${LETTA_MEMFS_SERVICE_URL:-http://bears-memfs-manager:8285}
-      LETTA_REDIS_HOST: ${LETTA_REDIS_HOST:-bears-redis}
-      LETTA_REDIS_PORT: ${LETTA_REDIS_PORT:-6379}
-      OPENAI_API_KEY: ${OPENAI_API_KEY:-SETME}
-    volumes:
-      - bears-letta-data:/root/.letta
-    healthcheck:
-      test:
-        [
-          "CMD-SHELL",
-          "curl -sf http://127.0.0.1:$${LETTA_SERVER_PORT:-8283}/v1/health || exit 1",
-        ]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 60s
+    bears-letta:
+        image: letta/letta:latest
+        restart: unless-stopped
+        depends_on:
+            bears-bifrost:
+                condition: service_healthy
+            bears-redis:
+                condition: service_healthy
+            bears-memfs-manager:
+                condition: service_healthy
+        environment:
+            LLM_API_URL: ${LLM_API_URL:-http://bears-bifrost:8080/v1}
+            MODEL_NAME: ${MODEL_NAME:-gpt-4}
+            LETTA_SERVER_PORT: ${LETTA_SERVER_PORT:-8283}
+            LETTA_SERVER_HOST: ${LETTA_SERVER_HOST:-0.0.0.0}
+            LETTA_SERVER_PASS: ${LETTA_SERVER_PASS:-SETME}
+            LETTA_PG_URI: ${LETTA_PG_URI:-SETME}
+            LETTA_MEMFS_SERVICE_URL: ${LETTA_MEMFS_SERVICE_URL:-http://bears-memfs-manager:8285}
+            LETTA_REDIS_HOST: ${LETTA_REDIS_HOST:-bears-redis}
+            LETTA_REDIS_PORT: ${LETTA_REDIS_PORT:-6379}
+            OPENAI_API_KEY: ${OPENAI_API_KEY:-SETME}
+        volumes:
+            - bears-letta-data:/root/.letta
+        healthcheck:
+            test:
+                [
+                    "CMD-SHELL",
+                    "curl -sf http://127.0.0.1:$${LETTA_SERVER_PORT:-8283}/v1/health || exit 1",
+                ]
+            interval: 30s
+            timeout: 10s
+            retries: 3
+            start_period: 60s
 
-  bears-codepool:
-    # Pre-built image (native deps compile in CI). Build in CI:
-    # `.github/workflows/codepool-image.yml` → GHCR. Override for forks: `CODEPOOL_IMAGE=ghcr.io/<org>/codepool:latest`
-    # Local build from source: set `image` aside and use `build.context: ./services/codepool`.
-    image: ${CODEPOOL_IMAGE:-ghcr.io/theartificial/codepool:latest}
-    # CI pushes :latest to GHCR; default Compose pull is "missing" — redeploy would reuse a stale local tag.
-    pull_policy: always
-    restart: unless-stopped
-    depends_on:
-      bears-letta:
-        condition: service_healthy
-    environment:
-      PORT: ${POOL_PORT:-3030}
-      LETTA_BASE_URL: ${LETTA_BASE_URL:-http://bears-letta:8283}
-      # Same credential Letta uses as `LETTA_SERVER_PASS` (Bearer for Letta HTTP API).
-      LETTA_API_KEY: ${LETTA_SERVER_PASS:-SETME}
-      # Letta Code: use local mirror under ~/.letta; server uses LETTA_MEMFS_SERVICE_URL (Memory Manager) for git HTTP.
-      LETTA_MEMFS_LOCAL: ${LETTA_MEMFS_LOCAL:-1}
-      BEAR_RUNTIME_PROVISIONER: ${BEAR_RUNTIME_PROVISIONER:-local}
-      CODEPOOL_INTERNAL_TOKEN: ${CODEPOOL_INTERNAL_TOKEN:-}
-      POOL_TTL_SECS: ${POOL_TTL_SECS:-600}
-      POOL_MAX_ENTRIES: ${POOL_MAX_ENTRIES:-256}
-    volumes:
-      - bears-codepool-letta-home:/home/node/.letta
-    # bookworm-slim has no wget/curl; use Node (same runtime as the app).
-    healthcheck:
-      test:
-        [
-          "CMD-SHELL",
-          "node -e \"fetch('http://127.0.0.1:'+(process.env.PORT||3030)+'/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\"",
-        ]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 40s
+    bears-codepool:
+        # Pre-built image (native deps compile in CI). Build in CI:
+        # `.github/workflows/codepool-image.yml` → GHCR. Override for forks: `CODEPOOL_IMAGE=ghcr.io/<org>/codepool:latest`
+        # Local build from source: set `image` aside and use `build.context: ./services/codepool`.
+        image: ${CODEPOOL_IMAGE:-ghcr.io/theartificial/codepool:latest}
+        # CI pushes :latest to GHCR; default Compose pull is "missing" — redeploy would reuse a stale local tag.
+        pull_policy: always
+        restart: unless-stopped
+        depends_on:
+            bears-letta:
+                condition: service_healthy
+        environment:
+            PORT: ${POOL_PORT:-3030}
+            LETTA_BASE_URL: ${LETTA_BASE_URL:-http://bears-letta:8283}
+            # Same credential Letta uses as `LETTA_SERVER_PASS` (Bearer for Letta HTTP API).
+            LETTA_API_KEY: ${LETTA_SERVER_PASS:-SETME}
+            # Letta Code: use local mirror under ~/.letta; server uses LETTA_MEMFS_SERVICE_URL (Memory Manager) for git HTTP.
+            LETTA_MEMFS_LOCAL: ${LETTA_MEMFS_LOCAL:-1}
+            BEAR_RUNTIME_PROVISIONER: ${BEAR_RUNTIME_PROVISIONER:-local}
+            CODEPOOL_INTERNAL_TOKEN: ${CODEPOOL_INTERNAL_TOKEN:-}
+            POOL_TTL_SECS: ${POOL_TTL_SECS:-600}
+            POOL_MAX_ENTRIES: ${POOL_MAX_ENTRIES:-256}
+        volumes:
+            - bears-codepool-letta-home:/home/node/.letta
+        # bookworm-slim has no wget/curl; use Node (same runtime as the app).
+        healthcheck:
+            test:
+                [
+                    "CMD-SHELL",
+                    'node -e "fetch(''http://127.0.0.1:''+(process.env.PORT||3030)+''/health'').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"',
+                ]
+            interval: 30s
+            timeout: 10s
+            retries: 3
+            start_period: 40s
 
-  # Optional: `docker compose --profile volume-backup up -d` — archive Letta server memfs (`/root/.letta`) to S3-compatible storage (e.g. Scaleway).
-  # Set SCALEWAY_BACKUP_* (or generic AWS_* below) in Coolify / `.env`.
-  bears-letta-data-backup:
-    profiles:
-      - volume-backup
-    image: offen/docker-volume-backup:v2
-    restart: unless-stopped
-    environment:
-      BACKUP_CRON_EXPRESSION: ${LETTA_VOLUME_BACKUP_CRON:-0 4 * * *}
-      BACKUP_FILENAME: "bears-letta-data-%Y-%m-%dT%H-%M-%S.{{ .Extension }}"
-      TZ: UTC
-      AWS_S3_BUCKET_NAME: ${SCALEWAY_BACKUP_BUCKET:-}
-      AWS_S3_PATH: ${SCALEWAY_BACKUP_PREFIX:-bears-stack/volumes/bears-letta-data}
-      AWS_ACCESS_KEY_ID: ${SCALEWAY_ACCESS_KEY:-}
-      AWS_SECRET_ACCESS_KEY: ${SCALEWAY_SECRET_KEY:-}
-      AWS_ENDPOINT: ${SCALEWAY_S3_ENDPOINT:-s3.fr-par.scw.cloud}
-      AWS_ENDPOINT_PROTO: https
-      AWS_DEFAULT_REGION: ${SCALEWAY_REGION:-fr-par}
-    volumes:
-      - bears-letta-data:/backup:ro
+    # Optional: `docker compose --profile volume-backup up -d` — archive Letta server memfs (`/root/.letta`) to S3-compatible storage (e.g. Scaleway).
+    # Set SCALEWAY_BACKUP_* (or generic AWS_* below) in Coolify / `.env`.
+    bears-letta-data-backup:
+        profiles:
+            - volume-backup
+        image: offen/docker-volume-backup:v2
+        restart: unless-stopped
+        environment:
+            BACKUP_CRON_EXPRESSION: ${LETTA_VOLUME_BACKUP_CRON:-0 4 * * *}
+            BACKUP_FILENAME: "bears-letta-data-%Y-%m-%dT%H-%M-%S.{{ .Extension }}"
+            TZ: UTC
+            AWS_S3_BUCKET_NAME: ${SCALEWAY_BACKUP_BUCKET:-}
+            AWS_S3_PATH: ${SCALEWAY_BACKUP_PREFIX:-bears-stack/volumes/bears-letta-data}
+            AWS_ACCESS_KEY_ID: ${SCALEWAY_ACCESS_KEY:-}
+            AWS_SECRET_ACCESS_KEY: ${SCALEWAY_SECRET_KEY:-}
+            AWS_ENDPOINT: ${SCALEWAY_S3_ENDPOINT:-s3.fr-par.scw.cloud}
+            AWS_ENDPOINT_PROTO: https
+            AWS_DEFAULT_REGION: ${SCALEWAY_REGION:-fr-par}
+        volumes:
+            - bears-letta-data:/backup:ro
 
-  bears-den:
-    # Pre-built image (Rust is not compiled on the Coolify host — avoids OOM / timeouts). Build in CI:
-    # `.github/workflows/den-image.yml` → GHCR. Override for forks: `DEN_IMAGE=ghcr.io/<org>/den:latest`
-    # To build Den from source locally: set `image` aside and use `build.context: ./services/den`.
-    image: ${DEN_IMAGE:-ghcr.io/theartificial/den:latest}
-    # Same as bears-codepool: always pull so webhook redeploys pick up new GHCR :latest.
-    pull_policy: always
-    restart: unless-stopped
-    depends_on:
-      bears-letta:
-        condition: service_healthy
-      bears-codepool:
-        condition: service_healthy
-    environment:
-      # Set `DATABASE_URL` in Coolify / `.env` for Den's Postgres.
-      DATABASE_URL: ${DATABASE_URL:-SETME}
-      DB_MAX_CONNECTIONS: ${DB_MAX_CONNECTIONS:-5}
-      DB_ACQUIRE_TIMEOUT_SECS: ${DB_ACQUIRE_TIMEOUT_SECS:-3}
-      DB_IDLE_TIMEOUT_SECS: ${DB_IDLE_TIMEOUT_SECS:-600}
-      SQLX_MIGRATE_IGNORE_MISSING: ${SQLX_MIGRATE_IGNORE_MISSING:-false}
-      JWT_SECRET: ${JWT_SECRET:-SETME}
-      RUN_WEB: ${RUN_WEB:-true}
-      RUN_API: ${RUN_API:-false}
-      RUN_WORKERS: ${RUN_WORKERS:-false}
-      RUST_LOG: ${RUST_LOG:-info}
-      PORT: ${DEN_PORT:-3000}
-      API_PORT: ${DEN_API_PORT:-3001}
-      APP_DISPLAY_NAME: ${APP_DISPLAY_NAME:-BEARS}
-      APP_SLUG: ${APP_SLUG:-bears-den}
-      WEB_SERVER_URL: ${WEB_SERVER_URL:-${SERVICE_URL_BEARS_DEN:-SETME}}
-      API_SERVER_URL: ${API_SERVER_URL:-https://api.bears.artificial.design}
-      SESSION_COOKIE_DOMAIN: ${SESSION_COOKIE_DOMAIN:-}
-      MAIL_FROM_ADDRESS: ${MAIL_FROM_ADDRESS:-noreply@bears.artificial.design}
-      MAILGUN_API_KEY: ${MAILGUN_API_KEY:-}
-      MAILGUN_DOMAIN: ${MAILGUN_DOMAIN:-}
-      TEMPLATES_DIR: ${TEMPLATES_DIR:-src/web/templates}
-      LETTA_BASE_URL: ${LETTA_BASE_URL:-http://bears-letta:8283}
-      LETTA_API_KEY: ${LETTA_SERVER_PASS:-SETME}
-      CODEPOOL_BASE_URL: ${CODEPOOL_BASE_URL:-http://bears-codepool:3030}
-      CODEPOOL_INTERNAL_TOKEN: ${CODEPOOL_INTERNAL_TOKEN:-}
-      # Optional on Den: `/status` probes Letta’s DB and Bifrost when set (see services/den/docs/infrastructure-and-ops.md).
-      LETTA_PG_URI: ${LETTA_PG_URI:-SETME}
-      BIFROST_BASE_URL: ${BIFROST_BASE_URL:-http://bears-bifrost:8080}
-      LLM_API_URL: ${LLM_API_URL:-http://bears-bifrost:8080/v1}
-      OPENAI_API_KEY: ${OPENAI_API_KEY:-SETME}
-      # Same as Letta / preflight: Memory Manager (git smart-HTTP + JSON management API) for private-memory UI.
-      LETTA_MEMFS_SERVICE_URL: ${LETTA_MEMFS_SERVICE_URL:-http://bears-memfs-manager:8285}
-      S3_ENDPOINT: ${S3_ENDPOINT:-}
-      S3_BUCKET: ${S3_BUCKET:-}
-      S3_REGION: ${S3_REGION:-garage}
-      S3_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID:-}
-      S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY:-}
-      S3_PUBLIC_URL: ${S3_PUBLIC_URL:-}
-      S3_FORCE_PATH_STYLE: ${S3_FORCE_PATH_STYLE:-true}
-      GITHUB_PACKAGES_TOKEN: ${GITHUB_PACKAGES_TOKEN:-}
-      GHCR_PACKAGES_OWNER: ${GHCR_PACKAGES_OWNER:-}
-      GHCR_PACKAGES_OWNER_KIND: ${GHCR_PACKAGES_OWNER_KIND:-}
-    expose:
-      - "3000"
+    bears-den:
+        # Pre-built image (Rust is not compiled on the Coolify host — avoids OOM / timeouts). Build in CI:
+        # `.github/workflows/den-image.yml` → GHCR. Override for forks: `DEN_IMAGE=ghcr.io/<org>/den:latest`
+        # To build Den from source locally: set `image` aside and use `build.context: ./services/den`.
+        image: ${DEN_IMAGE:-ghcr.io/theartificial/den:latest}
+        # Same as bears-codepool: always pull so webhook redeploys pick up new GHCR :latest.
+        pull_policy: always
+        restart: unless-stopped
+        depends_on:
+            bears-letta:
+                condition: service_healthy
+            bears-codepool:
+                condition: service_healthy
+        environment:
+            # Set `DATABASE_URL` in Coolify / `.env` for Den's Postgres.
+            DATABASE_URL: ${DATABASE_URL:-SETME}
+            DB_MAX_CONNECTIONS: ${DB_MAX_CONNECTIONS:-5}
+            DB_ACQUIRE_TIMEOUT_SECS: ${DB_ACQUIRE_TIMEOUT_SECS:-3}
+            DB_IDLE_TIMEOUT_SECS: ${DB_IDLE_TIMEOUT_SECS:-600}
+            SQLX_MIGRATE_IGNORE_MISSING: ${SQLX_MIGRATE_IGNORE_MISSING:-false}
+            JWT_SECRET: ${JWT_SECRET:-SETME}
+            RUN_WEB: ${RUN_WEB:-true}
+            RUN_API: ${RUN_API:-false}
+            RUN_WORKERS: ${RUN_WORKERS:-false}
+            RUST_LOG: ${RUST_LOG:-info}
+            PORT: ${DEN_PORT:-3000}
+            API_PORT: ${DEN_API_PORT:-3001}
+            APP_DISPLAY_NAME: ${APP_DISPLAY_NAME:-BEARS}
+            APP_SLUG: ${APP_SLUG:-bears-den}
+            WEB_SERVER_URL: ${WEB_SERVER_URL:-${SERVICE_URL_BEARS_DEN:-SETME}}
+            API_SERVER_URL: ${API_SERVER_URL:-https://api.bears.artificial.design}
+            SESSION_COOKIE_DOMAIN: ${SESSION_COOKIE_DOMAIN:-}
+            MAIL_FROM_ADDRESS: ${MAIL_FROM_ADDRESS:-noreply@bears.artificial.design}
+            MAILGUN_API_KEY: ${MAILGUN_API_KEY:-}
+            MAILGUN_DOMAIN: ${MAILGUN_DOMAIN:-}
+            TEMPLATES_DIR: ${TEMPLATES_DIR:-src/web/templates}
+            LETTA_BASE_URL: ${LETTA_BASE_URL:-http://bears-letta:8283}
+            LETTA_API_KEY: ${LETTA_SERVER_PASS:-SETME}
+            CODEPOOL_BASE_URL: ${CODEPOOL_BASE_URL:-http://bears-codepool:3030}
+            CODEPOOL_INTERNAL_TOKEN: ${CODEPOOL_INTERNAL_TOKEN:-}
+            # Optional on Den: `/status` probes Letta’s DB and Bifrost when set (see services/den/docs/infrastructure-and-ops.md).
+            LETTA_PG_URI: ${LETTA_PG_URI:-SETME}
+            BIFROST_BASE_URL: ${BIFROST_BASE_URL:-http://bears-bifrost:8080}
+            LLM_API_URL: ${LLM_API_URL:-http://bears-bifrost:8080/v1}
+            OPENAI_API_KEY: ${OPENAI_API_KEY:-SETME}
+            # Same as Letta / preflight: Memory Manager (git smart-HTTP + JSON management API) for private-memory UI.
+            LETTA_MEMFS_SERVICE_URL: ${LETTA_MEMFS_SERVICE_URL:-http://bears-memfs-manager:8285}
+            S3_ENDPOINT: ${S3_ENDPOINT:-}
+            S3_BUCKET: ${S3_BUCKET:-}
+            S3_REGION: ${S3_REGION:-garage}
+            S3_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID:-}
+            S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY:-}
+            S3_PUBLIC_URL: ${S3_PUBLIC_URL:-}
+            S3_FORCE_PATH_STYLE: ${S3_FORCE_PATH_STYLE:-true}
+            GITHUB_PACKAGES_TOKEN: ${GITHUB_PACKAGES_TOKEN:-}
+            GHCR_PACKAGES_OWNER: ${GHCR_PACKAGES_OWNER:-}
+            GHCR_PACKAGES_OWNER_KIND: ${GHCR_PACKAGES_OWNER_KIND:-}
+        expose:
+            - "3000"
 
 volumes:
-  # Used only when `bears-postgres` runs (`--profile bundled`).
-  bears-postgres-data:
-  bears-letta-data:
-  bears-codepool-letta-home:
+    # Used only when `bears-postgres` runs (`--profile bundled`).
+    bears-postgres-data:
+    bears-letta-data:
+    bears-codepool-letta-home:

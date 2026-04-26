@@ -10,8 +10,9 @@ Also exposes management endpoints for operator UIs (read-only; does not create r
 
 Upstream builds f"{LETTA_MEMFS_SERVICE_URL}/git/{path}" (httpx), so the base must be
 a full http(s) URL. Mount the same path as Letta’s LocalStorageBackend: under
-`~/.letta/memfs/repository/` (see MEMFS_BASE), sharing the `bear-letta` data volume.
+`~/.letta/memfs/repository/` (see MEMFS_BASE), sharing the `bears-letta` data volume.
 """
+
 from __future__ import annotations
 
 import json
@@ -169,7 +170,9 @@ def git_head_info(repo: Path) -> dict:
     }
 
 
-def _git_last_commit_for_path(repo: Path, rel_path: str) -> tuple[str | None, str | None]:
+def _git_last_commit_for_path(
+    repo: Path, rel_path: str
+) -> tuple[str | None, str | None]:
     r = subprocess.run(
         [
             "git",
@@ -217,7 +220,9 @@ def git_repository_file_tree(repo: Path) -> list[dict]:
         msg = (r.stderr or r.stdout or "").strip()
         raise RuntimeError(f"git ls-tree: {msg}")
 
-    files = sorted({line.strip() for line in (r.stdout or "").splitlines() if line.strip()})
+    files = sorted(
+        {line.strip() for line in (r.stdout or "").splitlines() if line.strip()}
+    )
     if not files:
         return []
 

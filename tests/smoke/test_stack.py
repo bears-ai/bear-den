@@ -12,5 +12,5 @@ def test_den_reachable():
 
 
 def test_pool_health():
-    response = requests.get("http://bear-codepool:3030/health", timeout=5)
+    response = requests.get("http://bears-codepool:3030/health", timeout=5)
     assert response.status_code == 200

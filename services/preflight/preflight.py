@@ -84,7 +84,12 @@ def validate_sql_tcp_reachable(name: str, value: str, hint: str) -> None:
 
     try:
         addrs = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
-        rendered = sorted({f"{family.name if hasattr(family, 'name') else family}:{addr[0]}:{addr[1]}" for family, _, _, _, addr in addrs})
+        rendered = sorted(
+            {
+                f"{family.name if hasattr(family, 'name') else family}:{addr[0]}:{addr[1]}"
+                for family, _, _, _, addr in addrs
+            }
+        )
         info(f"{name} DNS resolved {host} -> {', '.join(rendered)}")
     except OSError as exc:
         warn(f"{name} DNS lookup failed for {host}: {exc}")
@@ -154,19 +159,26 @@ def validate_config_shape() -> None:
     validate_database_url(reachable=False)
     validate_letta_pg_uri(reachable=False)
 
-    llm = os.environ.get("LLM_API_URL", "").strip() or "http://bear-bifrost:8080/v1"
+    llm = os.environ.get("LLM_API_URL", "").strip() or "http://bears-bifrost:8080/v1"
     validate_http_url("LLM_API_URL", llm)
     info(f"LLM_API_URL OK ({llm})")
 
-    letta_base = os.environ.get("LETTA_BASE_URL", "").strip() or "http://bear-letta:8283"
+    letta_base = (
+        os.environ.get("LETTA_BASE_URL", "").strip() or "http://bears-letta:8283"
+    )
     validate_http_url("LETTA_BASE_URL", letta_base)
     info(f"LETTA_BASE_URL OK ({letta_base})")
 
-    memfs = os.environ.get("LETTA_MEMFS_SERVICE_URL", "").strip() or "http://bears-memfs-manager:8285"
+    memfs = (
+        os.environ.get("LETTA_MEMFS_SERVICE_URL", "").strip()
+        or "http://bears-memfs-manager:8285"
+    )
     validate_http_url("LETTA_MEMFS_SERVICE_URL", memfs)
     info(f"LETTA_MEMFS_SERVICE_URL OK ({memfs})")
 
-    codepool_base = os.environ.get("CODEPOOL_BASE_URL", "").strip() or "http://bear-codepool:3030"
+    codepool_base = (
+        os.environ.get("CODEPOOL_BASE_URL", "").strip() or "http://bears-codepool:3030"
+    )
     validate_http_url("CODEPOOL_BASE_URL", codepool_base)
     info(f"CODEPOOL_BASE_URL OK ({codepool_base})")
 
@@ -195,7 +207,9 @@ def main() -> None:
         validate_letta_pg_uri(reachable=True)
         info("all preflight checks passed")
     else:
-        fail(f"unknown preflight mode {mode!r}; expected config, den-db, letta-pg, or all")
+        fail(
+            f"unknown preflight mode {mode!r}; expected config, den-db, letta-pg, or all"
+        )
 
 
 if __name__ == "__main__":

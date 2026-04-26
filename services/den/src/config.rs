@@ -112,7 +112,7 @@ pub struct Config {
     /// Bifrost gateway base URL (no trailing slash), e.g. `http://bears-bifrost:8080`. Empty = skip HTTP check.
     pub bifrost_base_url: String,
 
-    /// S3-compatible endpoint (e.g. `http://bear-garage:3900`). Empty = media upload disabled.
+    /// S3-compatible endpoint (e.g. `http://bears-garage:3900`). Empty = media upload disabled.
     pub s3_endpoint: String,
     /// S3 bucket for chat media and generated images.
     pub s3_bucket: String,
