@@ -1,6 +1,6 @@
 ---
 description: Deep Chat web component styling reference for bear chat UI
-globs: den/src/web/templates/bear_chat.html
+globs: services/den/src/web/templates/bear_chat.html
 alwaysApply: false
 ---
 
@@ -29,8 +29,8 @@ Design examples (including "full width input"): <https://deepchat.dev/examples/d
 
 ## Conventions
 
-- Page chrome and layout live in [`den/src/web/assets/css/specifics.css`](../../den/src/web/assets/css/specifics.css) under `html.den-bear-chat-page` (imported via `style.css`).
-- Colours and spacing for the Deep Chat host and bubbles are driven by tokens in [`den/src/web/assets/css/style.css`](../../den/src/web/assets/css/style.css) (`--surface-color`, `--chat-*`, etc.). The host may use `var(--…)` in `chat.style`; `auxiliaryStyle` also prefers `var(--…)`. For `messageStyles` / `textInput` / `submitButtonStyles`, pass **computed** lengths from `resolveDeepChatLayoutTokens()` in `bear_chat.html` (batched light-DOM probe): `getPropertyValue` on `:root` for `calc(var(--spacing-unit)…)` tokens often returns the raw `calc`, which does not resolve inside Deep Chat’s Shadow DOM and can **collapse the text input**.
+- Page chrome and layout live in [`services/den/src/web/assets/css/specifics.css`](../../services/den/src/web/assets/css/specifics.css) under `html.den-bear-chat-page` (imported via `style.css`).
+- Colours and spacing for the Deep Chat host and bubbles are driven by tokens in [`services/den/src/web/assets/css/style.css`](../../services/den/src/web/assets/css/style.css) (`--surface-color`, `--chat-*`, etc.). The host may use `var(--…)` in `chat.style`; `auxiliaryStyle` also prefers `var(--…)`. For `messageStyles` / `textInput` / `submitButtonStyles`, pass **computed** lengths from `resolveDeepChatLayoutTokens()` in `bear_chat.html` (batched light-DOM probe): `getPropertyValue` on `:root` for `calc(var(--spacing-unit)…)` tokens often returns the raw `calc`, which does not resolve inside Deep Chat’s Shadow DOM and can **collapse the text input**.
 - No rounded corners (`borderRadius: '0'`) per the Den design system.
 - User bubbles: right-aligned, page-colour background with thin border.
 - AI bubbles: left-aligned, surface-colour background.

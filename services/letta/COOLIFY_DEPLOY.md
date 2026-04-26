@@ -109,7 +109,7 @@ curl http://bear-letta:8283/v1/agents
 | `LETTA_SERVER_PASS` | ✅ Yes | - | Admin password for Letta |
 | `LETTA_PG_URI` | Recommended | - | External Postgres URI — use **`postgresql://`** (not `postgres://`). The short form can break Alembic with `NoSuchModuleError: ... postgres.pg8000`. |
 | `OPENAI_API_KEY` | ✅ Yes | - | For embeddings and direct OpenAI calls; chat completions use `LLM_API_URL` |
-| `LETTA_MEMFS_SERVICE_URL` | No | `http://bear-mem-manager:8285` (default in root [`docker-compose.yaml`](../../docker-compose.yaml), same pattern as `LETTA_BASE_URL` / `LLM_API_URL`) | Letta proxies `/v1/git/*` to **Memory Manager** (**`bear-mem-manager`**), which shares **`bear-letta-data`**. Pair with **`LETTA_MEMFS_LOCAL=1`** on **codepool**. Override if your memfs service has another internal URL. |
+| `LETTA_MEMFS_SERVICE_URL` | No | `http://bears-memfs-manager:8285` (default in root [`docker-compose.yaml`](../../docker-compose.yaml), same pattern as `LETTA_BASE_URL` / `LLM_API_URL`) | Letta proxies `/v1/git/*` to **Memory Manager** (**`bears-memfs-manager`**), which shares **`bear-letta-data`**. Pair with **`LETTA_MEMFS_LOCAL=1`** on **codepool**. Override if your memfs service has another internal URL. |
 | `LETTA_SERVER_HOST` | No | `0.0.0.0` | Bind address |
 | `LOG_LEVEL` | No | `INFO` | Logging verbosity |
 
@@ -304,7 +304,7 @@ Factors: model choice, context size, tool latency (e.g. Cabinet). Use streaming 
 
 ## Codepool harness (separate service)
 
-First-party web chat is **Den embedded Deep Chat** → **Den** → **`codepool/`** (Letta Code SDK) → **Letta** — see [DEN_ARCHITECTURE.md](../../docs/architecture/DEN_ARCHITECTURE.md). This directory documents only the **Letta API server** (`letta/letta`). You **must** also deploy **Codepool** per [`../../codepool/COOLIFY_DEPLOY.md`](../../codepool/COOLIFY_DEPLOY.md); Den’s **`CODEPOOL_BASE_URL`** targets that HTTP service, not an alias of this Letta container.
+First-party web chat is **Den embedded Deep Chat** → **Den** → **`services/codepool/`** (Letta Code SDK) → **Letta** — see [DEN_ARCHITECTURE.md](../../docs/architecture/DEN_ARCHITECTURE.md). This directory documents only the **Letta API server** (`letta/letta`). You **must** also deploy **Codepool** per [`../../services/codepool/COOLIFY_DEPLOY.md`](../../services/codepool/COOLIFY_DEPLOY.md); Den’s **`CODEPOOL_BASE_URL`** targets that HTTP service, not an alias of this Letta container.
 
 ## Advanced Configuration
 
@@ -344,7 +344,7 @@ Shared team context: **Cabinet (Outline)**, Letta shared blocks, or a **shared b
 ## Deployment completion
 
 - [ ] Bifrost healthy; Letta reaches `LLM_API_URL`
-- [ ] **Codepool** (`codepool/`, `bear-codepool`) is deployed and Den can reach it at **`CODEPOOL_BASE_URL`**; **Den** can reach Letta for provisioning via **`LETTA_BASE_URL`**; end users chat through Den’s web UI
+- [ ] **Codepool** (`services/codepool/`, `bear-codepool`) is deployed and Den can reach it at **`CODEPOOL_BASE_URL`**; **Den** can reach Letta for provisioning via **`LETTA_BASE_URL`**; end users chat through Den’s web UI
 - [ ] Den + Outline + Cabinet tools when rolled out ([PLAN.md](../../docs/planning/PLAN.md))
 
 **Services:** `bear-bifrost`, `bear-letta`, UI; later **Outline + Den**.

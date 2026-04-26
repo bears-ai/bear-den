@@ -1,14 +1,14 @@
 # 🐻 BEARS — Basic Environment for Agent Runtimes Stack
 
-**BEARS** is the stack name. Each product assistant is a **bear** (one [Letta](https://github.com/letta-ai/letta) agent). **Den** (Rust, in `den/`) is the control plane: provisioning, **users↔bears** membership, first-party web chat (Deep Chat), and Cabinet when Outline is deployed.
+**BEARS** is the stack name. Each product assistant is a **bear** (one [Letta](https://github.com/letta-ai/letta) agent). **Den** (Rust, in `services/den/`) is the control plane: provisioning, **users↔bears** membership, first-party web chat (Deep Chat), and Cabinet when Outline is deployed.
 
-This repo is a **light monorepo**: `docs/`, Coolify-oriented **`services/`**, **`den/`** for the Den application (not under `services/`), and **`codepool/`** (**Codepool**) for the Letta Code SDK harness (warm pool, streaming for Den, optional Slack/channel workers).
+This repo is a **light monorepo**: `docs/`, `services/den/` for Den, `services/codepool/` for Codepool, `services/api/` for the Memory Manager, and supporting service assets under `services/`.
 
 ## Start here
 
 | If you want to… | Open |
 |-----------------|------|
-| **Deploy** (Coolify; **recommended:** root Docker Compose `bear-*` stack) | [docs/deployment/DEPLOYMENT.md](docs/deployment/DEPLOYMENT.md), [docker-compose.yaml](docker-compose.yaml) |
+| **Deploy** (Coolify; **recommended:** root Docker Compose `bears-*` app stack) | [docs/deployment/DEPLOYMENT.md](docs/deployment/DEPLOYMENT.md), [docker-compose.yaml](docker-compose.yaml) |
 | **Roadmap & architecture** | [docs/planning/PLAN.md](docs/planning/PLAN.md), [docs/architecture/ARCHITECTURE_NOTES.md](docs/architecture/ARCHITECTURE_NOTES.md) |
 | **Den + Letta + web chat** | [docs/architecture/DEN_ARCHITECTURE.md](docs/architecture/DEN_ARCHITECTURE.md) |
 | **Every doc in one place** | [docs/README.md](docs/README.md) |

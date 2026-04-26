@@ -1,74 +1,50 @@
-# Agent notes (BEARS / bears-depoy)
+# Agent Guide
 
-Use this file for **repository conventions** when editing or generating changes.
+## Stack
 
-**vs [README.md](README.md):** The README is the **human** landing page (short overview, links out). **This file** holds what agents need repeatedly: terminology, GitOps, migration immutability, doc map, cloning, and link rules. Do not duplicate long narrative architecture in README—summarize there and keep detail here and under `docs/`.
+Three application services run via `docker-compose.yaml`:
 
-## What this repo is
+- `bears-memfs-manager` is the Python service on port `8285`.
+- `bears-den` is the Rust service on port `3000`.
+- `bear-codepool` is the TypeScript service on port `3030`.
 
-- **Light monorepo:** docs under `docs/`, Coolify-oriented assets under `services/*`, the **Den** Rust service at repo root in **`den/`** (add the `cargo` tree there; it is not under `services/`), and **`codepool/`** (**Codepool**) — the **Letta Code SDK** harness app (session pool, Den-facing streaming, optional channel listeners). See [docs/architecture/DEN_ARCHITECTURE.md](docs/architecture/DEN_ARCHITECTURE.md).
-- **Terminology:** **Bear** = the primary assistant backed by a Letta agent; **subagents** (e.g. reflection) are configured per bear when used ([docs/dynamic-skills-subagents-adr.md](docs/dynamic-skills-subagents-adr.md)). **Den** = **control plane**: **provisioning controller** for downstream services (notably the **Letta API server**) and **orchestrator** of user-facing flows (first-party web chat UI, harness bridging, **Den meta tools** and related APIs), plus **users↔bears** membership, routing, Cabinet API when deployed. **BEARS** = the deployment stack name. For persistence boundaries and what belongs in Den’s database, see [Den’s role](#dens-role-provisioning-controller-orchestrator-and-what-den-stores) below.
+The workspace container has access to the Docker socket and can manage the stack.
 
-### Den’s role: provisioning controller, orchestrator, and what Den stores
+Services are reachable by their compose service names over the internal Docker network, for example `http://bears-den:3000`.
 
-Den is **not only** “configuration”: it **hosts** product surfaces (for example the **chat UI**) and **implements control-plane tools** (for example **Den meta tools**) that **coordinate** with Letta and the harness. Separately, as **provisioning controller**, it **applies** desired state to downstream services—especially **Letta** (agents, tools, blocks, and related provisioning)—and **orchestrates** how authenticated users reach bears under policy.
+## Scripts
 
-**Den’s PostgreSQL** holds **Den-owned** records—registry, membership, credentials pointers, materialized deploy/config snapshots—so the control plane can **validate** operations and **reconstitute** the same outward configuration after a deploy or restore. That database is **not** a second system of record for Letta’s in-server conversational memory and agent state; **Letta** remains the persistence API for that runtime data. Deeper architecture: [docs/architecture/DEN_ARCHITECTURE.md](docs/architecture/DEN_ARCHITECTURE.md).
+Run smoke tests:
 
-**Den builds:** In environments with Rust installed (dev container, CI), run `cargo build` / `cargo test` from **`den/`** to verify changes. See [`den/AGENTS.md`](den/AGENTS.md) (“Verifying Rust changes”).
+```bash
+./scripts/smoke.sh
+```
 
-**Codepool builds:** From **`codepool/`** (TypeScript/Node), run:
-- `npm run build` — compile TypeScript
-- `npm run typecheck` — type-check only
-- `npm run dev` — run with node --watch
-- Tests are bundled in the Letta Code SDK; the app is verified via integration in the Docker stack.
+Restart a single service after code changes:
 
-**Services:** The `services/` directory holds deploy configs for Bifrost, Letta, Garage, MemManager, and Preflight — each has its own `COOLIFY_DEPLOY.md`. Services are not built from this repo (except Codepool, which uses Letta Code SDK).
+```bash
+./scripts/restart.sh bears-den
+```
 
-**Stack deploy:** Full stack via root `docker-compose.yaml`:
-- `docker compose --profile bear-stack up` — Letta + Codepool + Den + Bifrost (prod)
-- Add `COMPOSE_PROFILES=bundled` for bundled PostgreSQL (`bear-postgres` profile), otherwise uses managed DB
+Tail logs for a service:
 
-## GitOps and reproducibility
+```bash
+./scripts/logs.sh bears-den
+```
 
-**Strict GitOps is the default assumption:** configuration that affects how the stack runs should live in **this repository** (or be generated from files in-repo in CI), go through normal review, and avoid **silent drift** from one-off edits in hosting UIs or production consoles. Prefer declarative assets under `services/*`, env templates, and docs over “remember to click this in Coolify.”
+## Smoke Tests
 
-**Den SQL migrations:** Files under `den/migrations/` are **immutable once applied**. SQLx stores a checksum per version in `public._sqlx_migrations`; editing an existing `*_up.sql` (even comments) breaks verification and can stop Den from starting. **Add a new migration** for any schema change. Rules and checksum repair steps: [`den/migrations/README.md`](den/migrations/README.md).
+`tests/smoke/test_stack.py` hits the running stack over HTTP.
 
-**Production should be reconstructible** from three inputs only:
+Run with:
 
-1. **This repository** (configs, compose/Coolify definitions, migrations or schema notes as applicable).
-2. **Database backups** — use **as few distinct database products and backup scopes as practical**; do not treat ad-hoc dumps or undocumented DBs as part of the contract unless they are called out in `docs/`.
-3. **External object storage** — assume **S3-compatible** buckets (or equivalent) for blobs and large artifacts; credentials are environment/secret injected, not the source of truth for *what* to deploy.
+```bash
+./scripts/smoke.sh
+```
 
-When proposing gateways, proxies, or operators, **favor file- or repo-driven config** over mutable runtime-only admin UIs unless the project explicitly opts in. If a component requires a DB or UI-managed state, document what must be in backups versus what is disposable.
+## Notes
 
-## Where to read
-
-| Topic | Path |
-|-------|------|
-| Human-oriented overview (short) | [README.md](README.md) |
-| Doc index, monorepo clone notes | [docs/README.md](docs/README.md) |
-| Roadmap and contracts | [docs/planning/PLAN.md](docs/planning/PLAN.md) |
-| Phase 1 Den build (bootstrap → operator console) | [docs/planning/PHASE1_BOOTSTRAP.md](docs/planning/PHASE1_BOOTSTRAP.md) |
-| Coolify deployment (root **`docker-compose.yaml`**: **`bear-stack`**, **`bear-postgres`** optional via profile **`bundled`**, …) | [docs/deployment/DEPLOYMENT.md](docs/deployment/DEPLOYMENT.md), [docker-compose.yaml](docker-compose.yaml) |
-| Garage (S3 object storage) | [services/garage/COOLIFY_DEPLOY.md](services/garage/COOLIFY_DEPLOY.md) |
-| Stack one-pager | [docs/architecture/ARCHITECTURE_NOTES.md](docs/architecture/ARCHITECTURE_NOTES.md) |
-| Den + self-hosted Letta (multi-user web) | [docs/architecture/DEN_ARCHITECTURE.md](docs/architecture/DEN_ARCHITECTURE.md) |
-| Dynamic skills & reflection subagents | [docs/dynamic-skills-subagents-adr.md](docs/dynamic-skills-subagents-adr.md) |
-| Routines & scheduling (Phase 1) | [docs/routines-automation-adr.md](docs/routines-automation-adr.md) |
-| Artifacts & Garage (S3) | [docs/artifacts-garage-adr.md](docs/artifacts-garage-adr.md) |
-| Den meta tools (Den facade, Letta Code–brokered) | [DEN_ARCHITECTURE.md — Den meta tools](docs/architecture/DEN_ARCHITECTURE.md#den-meta-tools-bears-control-plane-tools) |
-| Den web UI (templates, CSS: no page-local `<style>`) | [den/docs/frontend-development.md](den/docs/frontend-development.md), [den/AGENTS.md](den/AGENTS.md) |
-| Den SQL migrations (immutability, checksum repair) | [den/migrations/README.md](den/migrations/README.md) |
-| Assistant memory / project brief | [.kilocode/memory_bank/](.kilocode/memory_bank/) |
-
-Prefer **updating existing docs** under `docs/` rather than adding new top-level `.md` files. Root should stay limited to **README.md** and **AGENTS.md** unless the project explicitly expands that rule.
-
-## Cloning
-
-For CI or hosts that only need configs, **`git clone --depth 1`** is recommended in docs. Prefer **sparse checkout** only when a machine must exclude paths (see [docs/README.md](docs/README.md)).
-
-## Links
-
-When linking from `services/*`, use paths relative to the file (for example `../../docs/planning/PLAN.md` from `services/letta/`).
+- Do not run `docker compose down`; restart individual services instead.
+- Do not modify `docker-compose.yaml` without confirming with the user.
+- Environment variables are managed via `.env`; do not hardcode values.
+- Keep deployment compatible with a single root `docker-compose.yaml`.
