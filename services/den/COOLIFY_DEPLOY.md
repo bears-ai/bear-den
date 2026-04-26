@@ -65,6 +65,10 @@ In the resource → **Environment Variables** / **Production Variables**, set at
 | Variable | Notes |
 | -------- | ----- |
 | `DATABASE_URL` | **Required.** The database Den serves at runtime; migrations run against this URL on startup (connection string as accepted by SQLx / `tokio-postgres`). |
+| `DB_MAX_CONNECTIONS` | Optional SQLx pool size for `DATABASE_URL` (default **5**). |
+| `DB_ACQUIRE_TIMEOUT_SECS` | Optional SQLx pool acquire timeout for `DATABASE_URL` (default **3**). |
+| `DB_IDLE_TIMEOUT_SECS` | Optional SQLx idle connection timeout for `DATABASE_URL` (default **600**; set **0** to disable). |
+| `SQLX_MIGRATE_IGNORE_MISSING` | Optional migration recovery switch for `DATABASE_URL`; leave **false** in normal deployments. |
 | `JWT_SECRET` | **Required for release images** (Dockerfile builds with `--features production`). Use a long random value. Also required whenever `RUN_API=true` in dev builds so OAuth access tokens can be signed (HS256). |
 | `RUN_WEB` | `true` to serve the web UI (recommended first smoke). |
 | `RUN_API` | `true` if you need the standalone API listener. |

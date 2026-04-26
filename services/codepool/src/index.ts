@@ -13,9 +13,7 @@ async function main(): Promise<void> {
   const defaultLettaBase =
     process.env.NODE_ENV === "production" ? "http://bear-letta:8283" : "";
   process.env.LETTA_BASE_URL =
-    process.env.LETTA_BASE_URL?.trim() ||
-    process.env.LETTA_API_BASE_URL?.trim() ||
-    defaultLettaBase;
+    process.env.LETTA_BASE_URL?.trim() || defaultLettaBase;
   const lettaBaseUrl = process.env.LETTA_BASE_URL;
   if (!lettaBaseUrl) {
     console.error(

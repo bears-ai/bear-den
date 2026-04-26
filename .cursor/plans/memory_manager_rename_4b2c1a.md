@@ -34,7 +34,7 @@ isProject: false
 
 - **`LETTA_MEMFS_SERVICE_URL`** — Still the single env var **Letta** and **BEARS** use for the **base URL of the git smart-HTTP** endpoint. The value’s **hostname** changes to `bears-memfs-manager`; the **variable name** stays (upstream docs and existing deployments expect it).
 - **Paths like `/root/.letta/memfs/repository`** and env **`MEMFS_BASE`** (optional: add a one-line comment in the Dockerfile that this is Letta’s *LocalStorageBackend* path name, not the service’s display name).
-- **Letta Code / Codepool flags** — e.g. `LETTA_MEMFS_LOCAL`, `CODEPOOL_DISABLE_MEMFS`, CLI `--memfs` — these are **upstream** product terms; do not rename identifiers in TypeScript unless we only touch **comment strings** that refer to *our* container hostname (`bear-memfs` → `bears-memfs-manager`).
+- **Letta Code / Codepool flags** — e.g. `LETTA_MEMFS_LOCAL`, CLI `--memfs` — these are **upstream** product terms; do not rename identifiers in TypeScript unless we only touch **comment strings** that refer to *our* container hostname (`bear-memfs` → `bears-memfs-manager`).
 
 ## Concrete inventory (files to touch)
 

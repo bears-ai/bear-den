@@ -18,10 +18,6 @@ def err(msg: str) -> None:
     print(f"preflight: ERROR: {msg}", file=sys.stderr)
 
 
-def warn(msg: str) -> None:
-    print(f"preflight: WARNING: {msg}", file=sys.stderr)
-
-
 def info(msg: str) -> None:
     print(f"preflight: {msg}", file=sys.stderr)
 
@@ -33,9 +29,10 @@ def fail(msg: str) -> None:
 
 def require_non_empty(name: str) -> str:
     raw = os.environ.get(name)
-    if raw is None or not str(raw).strip():
-        fail(f"{name} must be set and non-empty")
-    return str(raw).strip()
+    value = "" if raw is None else str(raw).strip()
+    if not value or value == "SETME":
+        fail(f"{name} must be set (current value is {value or 'empty'})")
+    return value
 
 
 def parse_sql_uri(name: str, value: str) -> None:
@@ -73,12 +70,8 @@ def validate_sql_tcp_reachable(name: str, value: str, hint: str) -> None:
     )
 
 
-def validate_optional_let_pg_uri(reachable: bool = True) -> None:
-    raw = os.environ.get("LETTA_PG_URI", "") or ""
-    value = raw.strip()
-    if not value:
-        info("LETTA_PG_URI unset (optional; Letta may use embedded defaults)")
-        return
+def validate_letta_pg_uri(reachable: bool = True) -> None:
+    value = require_non_empty("LETTA_PG_URI")
     parse_sql_uri("LETTA_PG_URI", value)
     if urlparse(value).scheme == "postgres":
         fail(
@@ -122,7 +115,7 @@ def validate_config_shape() -> None:
     info("JWT_SECRET and LETTA_SERVER_PASS are set")
 
     validate_database_url(reachable=False)
-    validate_optional_let_pg_uri(reachable=False)
+    validate_letta_pg_uri(reachable=False)
 
     llm = os.environ.get("LLM_API_URL", "").strip() or "http://bear-bifrost:8080/v1"
     validate_http_url("LLM_API_URL", llm)
@@ -140,12 +133,12 @@ def validate_config_shape() -> None:
     validate_http_url("CODEPOOL_BASE_URL", codepool_base)
     info(f"CODEPOOL_BASE_URL OK ({codepool_base})")
 
-    web = os.environ.get("WEB_SERVER_URL", "").strip() or "http://localhost:3000"
+    web = require_non_empty("WEB_SERVER_URL")
     validate_http_url("WEB_SERVER_URL", web)
     info(f"WEB_SERVER_URL OK ({web})")
 
-    if not (os.environ.get("OPENAI_API_KEY") or "").strip():
-        warn("OPENAI_API_KEY is empty — embeddings and direct OpenAI calls may fail")
+    require_non_empty("OPENAI_API_KEY")
+    info("OPENAI_API_KEY is set")
 
     info("configuration shape checks passed")
 
@@ -158,11 +151,11 @@ def main() -> None:
     elif mode == "den-db":
         validate_database_url(reachable=True)
     elif mode == "letta-pg":
-        validate_optional_let_pg_uri(reachable=True)
+        validate_letta_pg_uri(reachable=True)
     elif mode == "all":
         validate_config_shape()
         validate_database_url(reachable=True)
-        validate_optional_let_pg_uri(reachable=True)
+        validate_letta_pg_uri(reachable=True)
         info("all preflight checks passed")
     else:
         fail(f"unknown preflight mode {mode!r}; expected config, den-db, letta-pg, or all")

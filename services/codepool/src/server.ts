@@ -67,14 +67,11 @@ export function attachRoutes(
     } catch {
       letta_cli_home_writable = false;
     }
-    const v = (process.env.CODEPOOL_DISABLE_MEMFS ?? "").trim().toLowerCase();
-    const session_memfs_disabled =
-      v === "1" || v === "true" || v === "yes";
     res.json({
       ok: true,
       service: "bear-codepool",
       letta_memfs_local: process.env.LETTA_MEMFS_LOCAL ?? null,
-      session_memfs_disabled,
+      session_memfs: true,
       letta_cli_home: lettaCliHome,
       letta_cli_home_writable,
     });

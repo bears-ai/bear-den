@@ -51,7 +51,7 @@ For a **single watch point** across the stack (databases, Codepool, Letta, Bifro
 - `GET /status` — human-readable HTML (stack checks + deployed vs registry hints when configured).
 - `GET /status.json` — JSON for scripts and monitors (**503** when any health check is in the `fail` state; `warn` and `skipped` do not fail the HTTP status).
 
-Optional **`GITHUB_PACKAGES_TOKEN`** (PAT with `read:packages`) and **`GHCR_PACKAGES_OWNER`** (GitHub org or user that owns the images) populate GHCR tag / updated-at columns. Use **`GHCR_PACKAGES_OWNER_KIND=user`** when packages live under a user, not an org.
+Optional **`GITHUB_PACKAGES_TOKEN`** (PAT with `read:packages`), **`GHCR_PACKAGES_OWNER`** (GitHub org or user that owns the images), and **`GHCR_PACKAGES_OWNER_KIND`** (`org` or `user`) populate GHCR tag / updated-at columns.
 
 Optional env for richer probes: **`LETTA_PG_URI`** (Letta Postgres `SELECT 1`), **`BIFROST_BASE_URL`** (e.g. `http://bear-bifrost:8080` for `GET /health`), **`LLM_API_URL`** (shape-only check when set on Den). This is **not** a substitute for **`GET /health`** (process liveness) or **`GET /health/ready`** (Den-only DB readiness).
 

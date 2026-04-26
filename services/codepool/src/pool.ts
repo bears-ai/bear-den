@@ -20,12 +20,6 @@ function resumeTargetFor(agentId: string, conversationId: string): string {
   return conversationId === "default" ? agentId : conversationId;
 }
 
-/** Default on; set `CODEPOOL_DISABLE_MEMFS=1` for emergency off. */
-function sessionMemfsEnabledFromEnv(): boolean {
-  const v = (process.env.CODEPOOL_DISABLE_MEMFS ?? "").trim().toLowerCase();
-  return v !== "1" && v !== "true" && v !== "yes";
-}
-
 type Entry = {
   session: Session;
   lastUsed: number;
@@ -50,7 +44,6 @@ export class ConversationSessionPool {
   private readonly maxEntries: number;
   private readonly includePartialMessages: boolean;
   private readonly provisioner: BearRuntimeProvisioner;
-  private readonly sessionMemfs: boolean;
   /** One ensure result per bear (shared across conversations). */
   private readonly ensureByBear = new Map<string, EnsureResult>();
   private sweepTimer: ReturnType<typeof setInterval> | undefined;
@@ -62,14 +55,11 @@ export class ConversationSessionPool {
     maxEntries: number;
     includePartialMessages?: boolean;
     provisioner: BearRuntimeProvisioner;
-    /** Pass `--memfs` / `--no-memfs` to Letta Code; default from env. */
-    sessionMemfs?: boolean;
   }) {
     this.ttlMs = opts.ttlSecs * 1000;
     this.maxEntries = opts.maxEntries;
     this.includePartialMessages = opts.includePartialMessages ?? true;
     this.provisioner = opts.provisioner;
-    this.sessionMemfs = opts.sessionMemfs ?? sessionMemfsEnabledFromEnv();
     this.sweepTimer = setInterval(() => this.evictIdle(), Math.min(60_000, this.ttlMs / 2));
     this.sweepTimer.unref?.();
   }
@@ -178,7 +168,7 @@ export class ConversationSessionPool {
     const sessionOpts: Parameters<typeof resumeSession>[1] = {
       includePartialMessages: this.includePartialMessages,
       systemInfoReminder: false,
-      memfs: this.sessionMemfs,
+      memfs: true,
     };
     const cwd = ensure.cwd?.trim();
     if (cwd) {
@@ -222,8 +212,7 @@ export class ConversationSessionPool {
         } catch (e) {
           if (
             attempt === 0 &&
-            isLikelyLettaCodeMemfsCorruption(e) &&
-            this.sessionMemfs
+            isLikelyLettaCodeMemfsCorruption(e)
           ) {
             const ent = this.map.get(key);
             if (ent) {

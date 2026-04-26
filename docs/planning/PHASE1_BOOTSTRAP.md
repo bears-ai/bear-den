@@ -228,7 +228,7 @@ services/den/
 
 ## 6. Letta and Letta Code integration
 
-1. **Config (Letta):** `LETTA_API_BASE_URL` (Letta HTTP API for agents/provisioning), `LETTA_CODE_BASE_URL` (Letta Code harness for web chat — required for `/v1/chat/*`; no fallback to the API URL), `LETTA_AUTH` / `LETTA_API_KEY` (Bearer `LETTA_SERVER_PASS` or as per your Letta version).
+1. **Config (Letta):** `LETTA_BASE_URL` (Letta HTTP API for agents/provisioning), `CODEPOOL_BASE_URL` (Codepool harness for web chat — required for `/v1/chat/*`; no fallback to the API URL), `LETTA_AUTH` / `LETTA_API_KEY` (Bearer `LETTA_SERVER_PASS` or as per your Letta version).
 2. **Provision (Den → Letta):**
    - `POST /v1/agents` with JSON body (name, model, system prompt — store template in Den or env).
    - On success, persist `letta_agent_id` on `bears` row.
@@ -264,7 +264,7 @@ services/den/
 2. **Users** — list, create, optional password set; link to membership.
 3. **Bears** — list, create, **duplicate**, **Provision to Letta** / re-sync, show `letta_agent_id` and errors inline; **bear detail** includes **Letta-native memory state** (blocks + archival hints per API) per [PLAN.md](PLAN.md) § Phase 1 memory model.
 4. **Membership** — assign bears ↔ users (checkbox grid or paired selects).
-5. **Letta Code** — live YAML/config preview, download button, bullet list: where to paste, restart **`letta server`** (or equivalent), Letta **`LETTA_API_BASE_URL`** hint (persistence API for the harness).
+5. **Letta Code** — live YAML/config preview, download button, bullet list: where to paste, restart **`letta server`** (or equivalent), Letta **`LETTA_BASE_URL`** hint (persistence API for the harness).
 6. **Skills** — catalog (add from URL or upload), attach to bear, enable/disable; show materialization status when Den syncs trees for Letta Code.
 
 ---
@@ -310,8 +310,8 @@ services/den/
 | `DATABASE_URL` | yes | Postgres connection string |
 | `BIND_ADDR` | no | Default `0.0.0.0:8080` |
 | `SESSION_SECRET` | yes | HMAC/signing for cookies |
-| `LETTA_API_BASE_URL` | yes | Letta HTTP API root URL (agents, provisioning, operator health) |
-| `LETTA_CODE_BASE_URL` | yes | Letta Code harness base URL for web chat (`/v1/chat/*`); not interchangeable with `LETTA_API_BASE_URL` in Den |
+| `LETTA_BASE_URL` | yes | Letta HTTP API root URL (agents, provisioning, operator health) |
+| `CODEPOOL_BASE_URL` | yes | Codepool harness base URL for web chat; not interchangeable with `LETTA_BASE_URL` in Den |
 | `LETTA_API_KEY` / `LETTA_AUTH` | yes | Bearer token for Letta (and defaults for code URL when `LETTA_CODE_API_KEY` unset) |
 | `ADMIN_API_KEY` | yes (prod) | Machine/automation access to admin JSON API; **browser uses operator session** |
 | `BOOTSTRAP_ADMIN_EMAIL` | no | First-run: promote this user to `is_admin` on registration (homelab) |

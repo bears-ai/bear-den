@@ -341,19 +341,20 @@ impl Config {
             .trim()
             .to_string();
         let ghcr_packages_owner_kind = std::env::var("GHCR_PACKAGES_OWNER_KIND")
-            .unwrap_or_else(|_| "org".to_string())
+            .unwrap_or_default()
             .trim()
             .to_lowercase();
-        let ghcr_packages_owner_kind = if matches!(
+        let ghcr_packages_owner_kind = if ghcr_packages_owner_kind.is_empty()
+            || matches!(
             ghcr_packages_owner_kind.as_str(),
             "org" | "user"
         ) {
             ghcr_packages_owner_kind
         } else {
             tracing::warn!(
-                "Invalid GHCR_PACKAGES_OWNER_KIND (expected org|user). Defaulting to org."
+                "Invalid GHCR_PACKAGES_OWNER_KIND (expected org|user). Leaving empty."
             );
-            "org".to_string()
+            String::new()
         };
 
         Config {
@@ -465,7 +466,7 @@ impl Config {
             db_idle_timeout_secs: 600,
             github_packages_token: String::new(),
             ghcr_packages_owner: String::new(),
-            ghcr_packages_owner_kind: "org".to_string(),
+            ghcr_packages_owner_kind: String::new(),
         }
     }
 }

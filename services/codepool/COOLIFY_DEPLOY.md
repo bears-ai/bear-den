@@ -53,6 +53,4 @@ A GitHub Actions workflow ([`.github/workflows/codepool-image.yml`](../../.githu
 
 **This service:** Mount **`bear-codepool-letta-home` → `/home/node/.letta`** for the Letta Code **CLI** (client-side cache / mirror under your image `USER` **`node`**). It is **not** the primary durability surface.
 
-**Optional:** set **`CODEPOOL_DISABLE_MEMFS=1`** to force `--no-memfs` for debugging (not the normal BEARS path).
-
 The Docker image includes **`git`** for any CLI git operations Letta Code requires.
