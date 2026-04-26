@@ -45,6 +45,6 @@ Run with:
 ## Notes
 
 - Do not run `docker compose down`; restart individual services instead.
-- Do not modify `docker-compose.yaml` without confirming with the user.
+- Modify `docker-compose.yaml` only after explicit user approval.
 - Environment variables are managed via `.env`; do not hardcode values.
 - Keep deployment compatible with a single root `docker-compose.yaml`.
