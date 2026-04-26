@@ -1,5 +1,5 @@
 use minijinja::context;
-use sqlx::{PgPool, query, query_as};
+use sqlx::{query, query_as, PgPool};
 
 use crate::{config::Config, core::email, errors::CustomError};
 

@@ -2,7 +2,7 @@ pub mod time;
 
 use ammonia;
 use minijinja::Value;
-use pulldown_cmark::{Options, Parser, html::push_html};
+use pulldown_cmark::{html::push_html, Options, Parser};
 
 pub fn hexadecimal(value: Value) -> String {
     if let Some(number) = value.as_i64() {

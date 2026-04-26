@@ -1,10 +1,10 @@
 // ROUTES: When modifying routes in this file, update src/web/ROUTES.md
 use axum::{
-    Router,
     extract::State,
     http::{StatusCode, Uri},
     response::Html,
     routing::get,
+    Router,
 };
 
 use crate::web::AppState;

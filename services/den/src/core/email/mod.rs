@@ -2,7 +2,7 @@ use std::sync::OnceLock;
 
 use mailgun_rs::{Attachment, EmailAddress, Mailgun, MailgunRegion, Message};
 use minijinja::Environment;
-use sqlx::{PgPool, query, query_as};
+use sqlx::{query, query_as, PgPool};
 
 use crate::{config::Config, errors::CustomError};
 

@@ -1,6 +1,6 @@
 //! Default [`runtime_plan`](super::model::Bear) JSON for Den → codepool (versioned snapshot).
 //!
-//! With self-hosted memfs, canonical git state lives on the **Letta volume** (`bear-letta-data` →
+//! With self-hosted memfs, canonical git state lives on the **Letta volume** (`bears-letta-data` →
 //! `~/.letta/memfs/repository/…`); optional `memory.git_remote` / `git_ref` remain for uncommon overrides only.
 
 use serde_json::{json, Value};

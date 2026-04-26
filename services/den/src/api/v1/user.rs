@@ -1,4 +1,4 @@
-use axum::{Router, extract::State, response::Json, routing::post};
+use axum::{extract::State, response::Json, routing::post, Router};
 use password_auth;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
@@ -204,7 +204,7 @@ async fn login(
         use password_auth::verify_password;
         if verify_password(request.password, &user_auth.passhash).is_ok() {
             // Generate access token
-            use crate::api::oauth::{OAuthScope, jwt::create_jwt_manager, utils};
+            use crate::api::oauth::{jwt::create_jwt_manager, utils, OAuthScope};
 
             let jwt_manager = create_jwt_manager();
             let scopes = vec![OAuthScope::ProfileRead, OAuthScope::ProfileEmail];

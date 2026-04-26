@@ -1,9 +1,9 @@
 use axum::{
-    Router,
     extract::State,
-    http::{HeaderMap, HeaderValue, StatusCode, header::AUTHORIZATION},
+    http::{header::AUTHORIZATION, HeaderMap, HeaderValue, StatusCode},
     response::{IntoResponse, Json, Response},
     routing::get,
+    Router,
 };
 use serde::Serialize;
 use utoipa::ToSchema;

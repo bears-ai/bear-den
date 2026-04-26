@@ -2,12 +2,12 @@
 //! End-user JSON + SSE under `/v1/*` (session cookie, same origin as Deep Chat).
 
 use axum::{
-    Json, Router,
     body::Body,
-    extract::State,
-    http::{HeaderName, HeaderValue, StatusCode, header},
+    extract::{Path, State},
+    http::{header, HeaderName, HeaderValue, StatusCode},
     response::{IntoResponse, Response},
-    routing::{get, post},
+    routing::{get, patch, post},
+    Json, Router,
 };
 use axum_extra::extract::Query;
 use axum_login::login_required;
@@ -28,6 +28,10 @@ pub fn router() -> Router<AppState> {
     Router::new()
         .route("/bears", get(list_my_bears))
         .route("/chat/conversations", get(chat_conversations))
+        .route(
+            "/chat/conversations/{conversation_id}",
+            patch(chat_conversation_patch),
+        )
         .route("/chat/history", get(chat_history))
         .route("/chat/send", post(chat_send))
         .route_layer(login_required!(Backend, login_url = "/login"))
@@ -99,6 +103,20 @@ pub struct ChatConversationsResponse {
     pub conversations: Vec<ChatConversationRow>,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct ChatConversationPatchBody {
+    pub bear_id: Uuid,
+    #[serde(default)]
+    pub title: Option<String>,
+    #[serde(default)]
+    pub archived: Option<bool>,
+}
+
+#[derive(Serialize)]
+pub struct ChatConversationPatchResponse {
+    pub ok: bool,
+}
+
 #[derive(Serialize)]
 pub struct ChatHistoryMessage {
     pub role: String,
@@ -115,14 +133,16 @@ pub struct ChatHistoryResponse {
 
 /// `None` / empty / `default` → agent main thread. Otherwise must be `conv-` + hex / hyphen (Letta id).
 fn normalize_client_conversation_id(raw: Option<&str>) -> Result<String, CustomError> {
-    let s = raw.map(str::trim).filter(|s| !s.is_empty()).unwrap_or("default");
+    let s = raw
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .unwrap_or("default");
     if s == "default" {
         return Ok("default".to_string());
     }
     let ok = s.starts_with("conv-")
         && s.len() > 8
-        && s
-            .chars()
+        && s.chars()
             .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_');
     if ok {
         Ok(s.to_string())
@@ -190,6 +210,93 @@ async fn chat_conversations(
         .collect();
 
     Ok(Json(ChatConversationsResponse { conversations }))
+}
+
+async fn chat_conversation_patch(
+    State(state): State<AppState>,
+    auth_session: AuthSession,
+    Path(conversation_id): Path<String>,
+    Json(body): Json<ChatConversationPatchBody>,
+) -> Result<Json<ChatConversationPatchResponse>, CustomError> {
+    let user_id = auth_session
+        .user
+        .as_ref()
+        .map(|u| u.id)
+        .ok_or_else(|| CustomError::Authentication("login required".to_string()))?;
+
+    let allowed = bears_db::user_may_use_bear(state.sqlx_pool(), user_id, body.bear_id).await?;
+    if !allowed {
+        return Err(CustomError::Authorization(
+            "you do not have access to this bear".to_string(),
+        ));
+    }
+
+    let conv_id = normalize_client_conversation_id(Some(&conversation_id))?;
+    if conv_id == "default" {
+        return Err(CustomError::ValidationError(
+            "the main chat cannot be renamed or archived".to_string(),
+        ));
+    }
+
+    let bear = bears_db::get_bear(state.sqlx_pool(), body.bear_id)
+        .await?
+        .ok_or_else(|| CustomError::NotFound("bear not found".to_string()))?;
+
+    if !state.letta.is_enabled() {
+        return Err(CustomError::System(
+            "Letta is not configured (set LETTA_BASE_URL)".to_string(),
+        ));
+    }
+
+    let Some(agent_id) = bear
+        .letta_agent_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    else {
+        return Err(CustomError::ValidationError(
+            "this bear is not linked to a Letta agent".to_string(),
+        ));
+    };
+
+    let snap = load_agent_conversations(state.letta.as_ref(), agent_id).await;
+    let found = snap.all.iter().any(|r| r.id == conv_id);
+    if !found {
+        return Err(CustomError::NotFound("conversation not found".to_string()));
+    }
+
+    let title = body
+        .title
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
+    if body.title.is_some() && title.is_none() {
+        return Err(CustomError::ValidationError(
+            "conversation title cannot be empty".to_string(),
+        ));
+    }
+    if body.title.is_none() && body.archived.is_none() {
+        return Err(CustomError::ValidationError(
+            "no conversation update requested".to_string(),
+        ));
+    }
+
+    if let Some(title) = title {
+        let title = title.chars().take(120).collect::<String>();
+        state
+            .letta
+            .patch_conversation_summary(&conv_id, &title)
+            .await?;
+    }
+
+    if let Some(archived) = body.archived {
+        state
+            .letta
+            .patch_conversation_archived(&conv_id, archived)
+            .await?;
+    }
+
+    Ok(Json(ChatConversationPatchResponse { ok: true }))
 }
 
 async fn chat_history(
@@ -309,7 +416,11 @@ fn letta_message_text(inner: &serde_json::Value) -> Option<String> {
     }
     if let Some(s) = content.as_str() {
         let s = s.trim();
-        return if s.is_empty() { None } else { Some(s.to_string()) };
+        return if s.is_empty() {
+            None
+        } else {
+            Some(s.to_string())
+        };
     }
     // Single structured part, e.g. `{ "type": "text", "text": "..." }`
     if let Some(obj) = content.as_object() {
@@ -367,7 +478,10 @@ fn oldest_raw_message_id(raw: &[serde_json::Value]) -> Option<String> {
     best.map(|(_, _, id)| id)
 }
 
-fn map_letta_history_page(body: &serde_json::Value, page_limit: u32) -> (Vec<ChatHistoryMessage>, bool, Option<String>) {
+fn map_letta_history_page(
+    body: &serde_json::Value,
+    page_limit: u32,
+) -> (Vec<ChatHistoryMessage>, bool, Option<String>) {
     let raw = letta_messages_top_array(body);
     let next_before = oldest_raw_message_id(raw);
     let has_more = raw.len() >= page_limit as usize;
@@ -479,11 +593,9 @@ async fn chat_send(
     Json(body): Json<ChatSendRequest>,
 ) -> impl IntoResponse {
     let request_id = Uuid::new_v4();
-    let result = async {
-        chat_send_inner(state, auth_session, body, request_id).await
-    }
-    .instrument(tracing::info_span!("chat_send", request_id = %request_id))
-    .await;
+    let result = async { chat_send_inner(state, auth_session, body, request_id).await }
+        .instrument(tracing::info_span!("chat_send", request_id = %request_id))
+        .await;
     match result {
         Ok(r) => r.into_response(),
         Err(e) => chat_send_error_response(e, request_id),
@@ -544,9 +656,8 @@ async fn chat_send_inner(
                 .to_string(),
         ));
     }
-    let runtime_plan = crate::core::bears::effective_runtime_plan(
-        bear.runtime_plan.as_ref().map(|j| j.as_ref()),
-    );
+    let runtime_plan =
+        crate::core::bears::effective_runtime_plan(bear.runtime_plan.as_ref().map(|j| j.as_ref()));
 
     let upstream = state
         .codepool
@@ -570,9 +681,8 @@ async fn chat_send_inner(
         conv_id,
     );
 
-    let request_id_header = HeaderValue::from_str(&request_id.to_string()).map_err(|_| {
-        CustomError::System("invalid request id for response header".to_string())
-    })?;
+    let request_id_header = HeaderValue::from_str(&request_id.to_string())
+        .map_err(|_| CustomError::System("invalid request id for response header".to_string()))?;
 
     Response::builder()
         .status(StatusCode::OK)
@@ -763,10 +873,7 @@ mod conversation_id_tests {
 
     #[test]
     fn normalizes_default_aliases() {
-        assert_eq!(
-            normalize_client_conversation_id(None).unwrap(),
-            "default"
-        );
+        assert_eq!(normalize_client_conversation_id(None).unwrap(), "default");
         assert_eq!(
             normalize_client_conversation_id(Some("")).unwrap(),
             "default"

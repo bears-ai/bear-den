@@ -7,7 +7,7 @@
 use std::time::Duration;
 
 use serde::Serialize;
-use sqlx::{PgPool, postgres::PgPoolOptions};
+use sqlx::{postgres::PgPoolOptions, PgPool};
 use time::OffsetDateTime;
 use tokio::time::timeout;
 use url::Url;
@@ -82,13 +82,7 @@ pub async fn gather(state: &AppState) -> StackHealthReport {
     checks.push(openai_key_warn());
     checks.push(web_server_url_shape(cfg));
 
-    let (
-        den_pg,
-        letta_pg,
-        codepool_h,
-        letta_h,
-        bifrost_h,
-    ) = tokio::join!(
+    let (den_pg, letta_pg, codepool_h, letta_h, bifrost_h) = tokio::join!(
         check_den_postgres(state.sqlx_pool()),
         check_letta_postgres(&cfg.letta_pg_uri),
         check_codepool(&state),
@@ -120,8 +114,9 @@ fn jwt_check(cfg: &crate::config::Config) -> HealthCheck {
             id: "jwt_secret",
             label: "JWT_SECRET",
             state: CheckState::Fail,
-            detail: "empty but required (production build or RUN_API); preflight also requires this"
-                .into(),
+            detail:
+                "empty but required (production build or RUN_API); preflight also requires this"
+                    .into(),
         }
     } else {
         HealthCheck {
@@ -193,7 +188,10 @@ fn letta_pg_uri_shape(uri: &str) -> HealthCheck {
                     id: "letta_pg_uri_shape",
                     label: "LETTA_PG_URI (shape)",
                     state: CheckState::Warn,
-                    detail: format!("expected postgres or postgresql scheme, got {:?}", u.scheme()),
+                    detail: format!(
+                        "expected postgres or postgresql scheme, got {:?}",
+                        u.scheme()
+                    ),
                 }
             }
         }
@@ -247,8 +245,9 @@ fn openai_key_warn() -> HealthCheck {
             id: "openai_api_key",
             label: "OPENAI_API_KEY",
             state: CheckState::Warn,
-            detail: "empty — embeddings and direct OpenAI calls may fail (preflight warns similarly)"
-                .into(),
+            detail:
+                "empty — embeddings and direct OpenAI calls may fail (preflight warns similarly)"
+                    .into(),
         }
     } else {
         HealthCheck {
@@ -263,8 +262,7 @@ fn openai_key_warn() -> HealthCheck {
 fn web_server_url_shape(cfg: &crate::config::Config) -> HealthCheck {
     match Url::parse(cfg.web_server_url.trim()) {
         Ok(u) => {
-            let ok =
-                (u.scheme() == "http" || u.scheme() == "https") && u.host_str().is_some();
+            let ok = (u.scheme() == "http" || u.scheme() == "https") && u.host_str().is_some();
             if ok {
                 HealthCheck {
                     id: "web_server_url_shape",
@@ -291,7 +289,10 @@ fn web_server_url_shape(cfg: &crate::config::Config) -> HealthCheck {
 }
 
 async fn check_den_postgres(pool: &PgPool) -> HealthCheck {
-    match sqlx::query_scalar::<_, i32>("SELECT 1").fetch_one(pool).await {
+    match sqlx::query_scalar::<_, i32>("SELECT 1")
+        .fetch_one(pool)
+        .await
+    {
         Ok(_) => HealthCheck {
             id: "den_postgres",
             label: "Den PostgreSQL",
@@ -313,7 +314,8 @@ async fn check_letta_postgres(uri: &str) -> HealthCheck {
             id: "letta_postgres",
             label: "Letta PostgreSQL",
             state: CheckState::Skipped,
-            detail: "LETTA_PG_URI unset — optional; Letta may use embedded defaults (preflight)".into(),
+            detail: "LETTA_PG_URI unset — optional; Letta may use embedded defaults (preflight)"
+                .into(),
         };
     }
 
@@ -363,17 +365,15 @@ async fn check_codepool(state: &AppState) -> HealthCheck {
             detail: "CODEPOOL_BASE_URL empty".into(),
         };
     }
-    match timeout(
-        HTTP_PROBE_TIMEOUT,
-        state.codepool.check_health(),
-    )
-    .await
-    {
+    match timeout(HTTP_PROBE_TIMEOUT, state.codepool.check_health()).await {
         Err(_) => HealthCheck {
             id: "codepool",
             label: "Codepool",
             state: CheckState::Fail,
-            detail: format!("timeout after {}s (GET /health)", HTTP_PROBE_TIMEOUT.as_secs()),
+            detail: format!(
+                "timeout after {}s (GET /health)",
+                HTTP_PROBE_TIMEOUT.as_secs()
+            ),
         },
         Ok(Ok(body)) => HealthCheck {
             id: "codepool",
@@ -404,7 +404,10 @@ async fn check_letta_api(state: &AppState) -> HealthCheck {
             id: "letta_api",
             label: "Letta API",
             state: CheckState::Fail,
-            detail: format!("timeout after {}s (GET /v1/health)", HTTP_PROBE_TIMEOUT.as_secs()),
+            detail: format!(
+                "timeout after {}s (GET /v1/health)",
+                HTTP_PROBE_TIMEOUT.as_secs()
+            ),
         },
         Ok(Ok(body)) => HealthCheck {
             id: "letta_api",
@@ -427,8 +430,9 @@ async fn check_bifrost_http(base: &str) -> HealthCheck {
             id: "bifrost",
             label: "Bifrost",
             state: CheckState::Skipped,
-            detail: "BIFROST_BASE_URL unset — set e.g. http://bear-bifrost:8080 to probe the gateway"
-                .into(),
+            detail:
+                "BIFROST_BASE_URL unset — set e.g. http://bears-bifrost:8080 to probe the gateway"
+                    .into(),
         };
     }
 

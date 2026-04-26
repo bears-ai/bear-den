@@ -5,11 +5,11 @@ use std::cmp::Ordering;
 use serde::Serialize;
 use serde_json::Value;
 
-use super::LettaClient;
 use super::conversation_title::{
     display_conversation_title, first_user_message_text_for_title, is_acceptable_derived_title,
     is_meaningful_conversation_title, UNTITLED_THREAD,
 };
+use super::LettaClient;
 
 /// One thread (default main chat or `conv-…`), including archive state from Letta.
 #[derive(Debug, Clone, Serialize)]
@@ -72,7 +72,10 @@ pub fn conversation_is_archived(v: &Value) -> bool {
         || v.get("status").and_then(|x| x.as_str()) == Some("archived")
 }
 
-pub fn cmp_conversation_row_newest_first(a: &LettaConversationRow, b: &LettaConversationRow) -> Ordering {
+pub fn cmp_conversation_row_newest_first(
+    a: &LettaConversationRow,
+    b: &LettaConversationRow,
+) -> Ordering {
     match (&a.last_message_at, &b.last_message_at) {
         (Some(al), Some(bl)) => bl.cmp(al),
         (None, Some(_)) => Ordering::Greater,
@@ -118,7 +121,10 @@ async fn resolve_conversation_row_title(
 
 /// Loads and sorts conversations for a Letta agent: main thread plus `conv-…` rows from
 /// `GET /v1/conversations/`. Used by `/v1/chat/conversations` and bear details pages.
-pub async fn load_agent_conversations(letta: &LettaClient, agent_id: &str) -> AgentConversationsSnapshot {
+pub async fn load_agent_conversations(
+    letta: &LettaClient,
+    agent_id: &str,
+) -> AgentConversationsSnapshot {
     let mut rows: Vec<LettaConversationRow> = Vec::new();
     let mut has_archived = false;
 
@@ -126,14 +132,12 @@ pub async fn load_agent_conversations(letta: &LettaClient, agent_id: &str) -> Ag
         .list_conversation_messages("default", Some(agent_id), 1, None, false)
         .await
     {
-        Ok(peek) => letta_messages_top_array(&peek)
-            .first()
-            .and_then(|m| {
-                m.get("date")
-                    .or_else(|| m.get("created_at"))
-                    .and_then(|x| x.as_str())
-                    .map(|s| s.to_string())
-            }),
+        Ok(peek) => letta_messages_top_array(&peek).first().and_then(|m| {
+            m.get("date")
+                .or_else(|| m.get("created_at"))
+                .and_then(|x| x.as_str())
+                .map(|s| s.to_string())
+        }),
         Err(e) => {
             tracing::warn!(%e, "default conversation activity peek failed");
             None

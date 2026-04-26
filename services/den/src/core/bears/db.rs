@@ -1,6 +1,6 @@
 //! SQL for bears and `user_bear` (runtime `query_as` — see `model.rs`).
 
-use sqlx::{PgPool, types::Json};
+use sqlx::{types::Json, PgPool};
 use uuid::Uuid;
 
 use crate::errors::CustomError;
@@ -37,12 +37,10 @@ pub async fn get_bear(pool: &PgPool, id: Uuid) -> Result<Option<Bear>, CustomErr
 }
 
 pub async fn bear_slug_exists(pool: &PgPool, slug: &str) -> Result<bool, CustomError> {
-    let n: (i64,) = sqlx::query_as(
-        "SELECT COUNT(*)::bigint FROM bears WHERE slug = $1",
-    )
-    .bind(slug)
-    .fetch_one(pool)
-    .await?;
+    let n: (i64,) = sqlx::query_as("SELECT COUNT(*)::bigint FROM bears WHERE slug = $1")
+        .bind(slug)
+        .fetch_one(pool)
+        .await?;
     Ok(n.0 > 0)
 }
 
@@ -51,13 +49,12 @@ pub async fn bear_slug_exists_excluding(
     slug: &str,
     exclude_id: Uuid,
 ) -> Result<bool, CustomError> {
-    let n: (i64,) = sqlx::query_as(
-        "SELECT COUNT(*)::bigint FROM bears WHERE slug = $1 AND id <> $2",
-    )
-    .bind(slug)
-    .bind(exclude_id)
-    .fetch_one(pool)
-    .await?;
+    let n: (i64,) =
+        sqlx::query_as("SELECT COUNT(*)::bigint FROM bears WHERE slug = $1 AND id <> $2")
+            .bind(slug)
+            .bind(exclude_id)
+            .fetch_one(pool)
+            .await?;
     Ok(n.0 > 0)
 }
 
@@ -248,13 +245,12 @@ pub async fn membership_role_for_user(
     user_id: i32,
     bear_id: Uuid,
 ) -> Result<Option<Option<String>>, CustomError> {
-    let row: Option<(Option<String>,)> = sqlx::query_as(
-        "SELECT role FROM user_bear WHERE user_id = $1 AND bear_id = $2",
-    )
-    .bind(user_id)
-    .bind(bear_id)
-    .fetch_optional(pool)
-    .await?;
+    let row: Option<(Option<String>,)> =
+        sqlx::query_as("SELECT role FROM user_bear WHERE user_id = $1 AND bear_id = $2")
+            .bind(user_id)
+            .bind(bear_id)
+            .fetch_optional(pool)
+            .await?;
     Ok(row.map(|r| r.0))
 }
 
@@ -327,16 +323,18 @@ pub async fn bear_for_user_by_slug(
 }
 
 pub async fn count_bear_members(pool: &PgPool, bear_id: Uuid) -> Result<i64, CustomError> {
-    let n: (i64,) = sqlx::query_as(
-        "SELECT COUNT(*)::bigint FROM user_bear WHERE bear_id = $1",
-    )
-    .bind(bear_id)
-    .fetch_one(pool)
-    .await?;
+    let n: (i64,) = sqlx::query_as("SELECT COUNT(*)::bigint FROM user_bear WHERE bear_id = $1")
+        .bind(bear_id)
+        .fetch_one(pool)
+        .await?;
     Ok(n.0)
 }
 
-pub async fn user_may_use_bear(pool: &PgPool, user_id: i32, bear_id: Uuid) -> Result<bool, CustomError> {
+pub async fn user_may_use_bear(
+    pool: &PgPool,
+    user_id: i32,
+    bear_id: Uuid,
+) -> Result<bool, CustomError> {
     let n: (i64,) = sqlx::query_as(
         r#"
         SELECT COUNT(*)::bigint FROM user_bear WHERE user_id = $1 AND bear_id = $2
@@ -367,12 +365,10 @@ pub async fn bear_exists_for_letta_agent_id(
     pool: &PgPool,
     agent_id: &str,
 ) -> Result<bool, CustomError> {
-    let n: (i64,) = sqlx::query_as(
-        "SELECT COUNT(*)::bigint FROM bears WHERE letta_agent_id = $1",
-    )
-    .bind(agent_id)
-    .fetch_one(pool)
-    .await?;
+    let n: (i64,) = sqlx::query_as("SELECT COUNT(*)::bigint FROM bears WHERE letta_agent_id = $1")
+        .bind(agent_id)
+        .fetch_one(pool)
+        .await?;
     Ok(n.0 > 0)
 }
 
@@ -381,13 +377,11 @@ pub async fn set_letta_agent_id(
     bear_id: Uuid,
     agent_id: &str,
 ) -> Result<(), CustomError> {
-    sqlx::query(
-        "UPDATE bears SET letta_agent_id = $1, updated_at = NOW() WHERE id = $2",
-    )
-    .bind(agent_id)
-    .bind(bear_id)
-    .execute(pool)
-    .await?;
+    sqlx::query("UPDATE bears SET letta_agent_id = $1, updated_at = NOW() WHERE id = $2")
+        .bind(agent_id)
+        .bind(bear_id)
+        .execute(pool)
+        .await?;
     Ok(())
 }
 

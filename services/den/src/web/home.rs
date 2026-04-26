@@ -1,9 +1,9 @@
 // ROUTES: When modifying routes in this file, update /src/web/ROUTES.md if present.
 use axum::{
-    Router,
     extract::State,
     response::{IntoResponse, Redirect, Response},
     routing::get,
+    Router,
 };
 
 use serde::Serialize;
@@ -51,16 +51,8 @@ async fn home(
                     is_admin: role_is_bear_admin(row.membership_role.as_deref()),
                 })
                 .collect();
-            web::render_template(
-                &state,
-                "dashboard.html",
-                auth_session,
-                context! { bears },
-            )
-            .await
+            web::render_template(&state, "dashboard.html", auth_session, context! { bears }).await
         }
-        None => {
-            web::render_template(&state, "home.html", auth_session, context! {}).await
-        }
+        None => web::render_template(&state, "home.html", auth_session, context! {}).await,
     }
 }

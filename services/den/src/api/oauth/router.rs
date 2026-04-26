@@ -6,15 +6,15 @@
 //! provides CORS support for cross-origin OAuth flows.
 
 use axum::{
-    Router,
     http::HeaderValue,
     routing::{get, post},
+    Router,
 };
 use tower_http::cors::CorsLayer;
 
 use crate::config::Config;
 
-use super::endpoints::{OAuthState, authorize_get, authorize_post, token_post, userinfo_get};
+use super::endpoints::{authorize_get, authorize_post, token_post, userinfo_get, OAuthState};
 
 /// Create the OAuth router with all OAuth 2.0 endpoints
 ///
@@ -69,9 +69,7 @@ fn create_oauth_cors_layer(config: &Config) -> CorsLayer {
             .filter_map(|o| HeaderValue::from_str(&o).ok())
             .collect();
         if origins.is_empty() {
-            tracing::error!(
-                "OAuth CORS: no allowed origins from WEB_SERVER_URL / API_SERVER_URL."
-            );
+            tracing::error!("OAuth CORS: no allowed origins from WEB_SERVER_URL / API_SERVER_URL.");
         }
         CorsLayer::new()
             .allow_origin(origins)

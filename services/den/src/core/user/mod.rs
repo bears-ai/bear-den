@@ -3,7 +3,7 @@ pub mod email_settings;
 pub mod invites;
 
 use serde::Serialize;
-use sqlx::{PgPool, query_as};
+use sqlx::{query_as, PgPool};
 use time::PrimitiveDateTime;
 
 use crate::errors::CustomError;

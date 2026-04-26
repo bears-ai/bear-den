@@ -4,10 +4,10 @@
 //! and access tokens using SQLx following the project patterns.
 
 use crate::api::oauth::{
-    AccessTokenWithContext, OAuthAccessToken, OAuthAuthorizationCode, OAuthClient,
-    OAuthRefreshToken, OAuthScope, UserAccessToken,
     error::OAuthError,
     utils::{is_expired, scopes_to_json},
+    AccessTokenWithContext, OAuthAccessToken, OAuthAuthorizationCode, OAuthClient,
+    OAuthRefreshToken, OAuthScope, UserAccessToken,
 };
 use crate::errors::CustomError;
 use sqlx::PgPool;

@@ -12,10 +12,8 @@ static SUBAGENT_FORK_BLOB: OnceLock<Regex> = OnceLock::new();
 /// Human-visible assistant (and title-derived) text: remove reminder markup and subagent fork noise.
 pub fn strip_letta_harness_for_user(s: &str) -> String {
     let blocks = SYSTEM_REMINDER_BLOCKS.get_or_init(|| {
-        Regex::new(
-            r"(?is)<\s*system[-_]reminder\b[^>]*>.*?</\s*system[-_]reminder\s*>",
-        )
-        .expect("system[-_]reminder block regex")
+        Regex::new(r"(?is)<\s*system[-_]reminder\b[^>]*>.*?</\s*system[-_]reminder\s*>")
+            .expect("system[-_]reminder block regex")
     });
     let mut t = blocks.replace_all(s, "").to_string();
 

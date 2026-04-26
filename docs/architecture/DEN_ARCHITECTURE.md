@@ -25,7 +25,7 @@ BEARS uses **only self-hosted Letta** (e.g. `letta/letta:latest` on Coolify). **
 ### Den implementation (Axum)
 
 - **Stack:** Axum + reqwest (no official Letta Rust SDK).
-- **Letta base URL:** e.g. `http://bear-letta:8283` on Coolify internal network. Use **`LETTA_SERVER_PASS`** (or your Letta version’s admin auth) for server-to-server calls—never expose to browsers.
+- **Letta base URL:** e.g. `http://bears-letta:8283` on Coolify internal network. Use **`LETTA_SERVER_PASS`** (or your Letta version’s admin auth) for server-to-server calls—never expose to browsers.
 - **OpenAPI:** Generate typed clients from **your** Letta server’s spec if published (path varies by version; check [Letta docs](https://docs.letta.com)); otherwise call REST paths you verify against the running image.
 - **Streaming:** Expose **SSE** (or NDJSON) to the browser by forwarding or adapting the **Letta Code** harness streaming response; use `reqwest-eventsource`, `eventsource-stream`, or equivalent from Axum handlers (Den's chat UI is the reference client). Confirm stream shapes against your deployed **Letta Code** version when implementing the Den bridge.
 
@@ -130,7 +130,7 @@ Cabinet tool endpoints are internal or agent-facing per PLAN.
 **Artifacts (Garage):** Agent outputs, uploads, and routine files use **S3** in a dedicated **artifacts** bucket; **Cabinet** attachments use a **separate** bucket (Outline). See [artifacts-garage-adr.md](../artifacts-garage-adr.md).
 
 - **Letta Code → Letta:** The harness uses the self-hosted **Letta HTTP API** for persistence. **Den** uses **`LETTA_BASE_URL`** (and **`LETTA_API_KEY`**) for **provisioning**, **conversation list**, and **history** (`LettaClient` in `services/den/`).
-- **Den → `services/codepool/`:** Den bridges **browser** traffic for the **streaming send** path only: **`CODEPOOL_BASE_URL`** points at the internal **Codepool** HTTP listener. When **`RUN_WEB=true`**, Den requires a non-empty Codepool URL (production **release** images default to **`http://bear-codepool:3030`** when unset; override for local dev). This replaces treating a remote **`letta server`** process as the **HTTP façade** for web chat.
+- **Den → `services/codepool/`:** Den bridges **browser** traffic for the **streaming send** path only: **`CODEPOOL_BASE_URL`** points at the internal **Codepool** HTTP listener. When **`RUN_WEB=true`**, Den requires a non-empty Codepool URL (production **release** images default to **`http://bears-codepool:3030`** when unset; override for local dev). This replaces treating a remote **`letta server`** process as the **HTTP façade** for web chat.
 - **Colocating Slack listeners with conversation handlers** shares one SDK version and volume but increases **blast radius** (restart affects both) and can **contend** for CPU/memory (always-on sockets vs bursty web). Mitigate with per-kind limits, separate subprocess isolation where possible, and **split deployments** only if SLOs require it.
 - **Tools:** For BEARS-defined capabilities (below), **Letta Code is the execution broker** between agents and **Den**—not a place to embed ad hoc tool scripts. See [Den meta tools](#den-meta-tools-bears-control-plane-tools).
 
@@ -138,11 +138,11 @@ Example **environment** (illustrative; confirm against [Letta Code docs](https:/
 
 ```bash
 # Den → Letta (persistence API: agents, conversations, history)
-LETTA_BASE_URL=http://bear-letta:8283
+LETTA_BASE_URL=http://bears-letta:8283
 LETTA_API_KEY=${LETTA_SERVER_PASS}
 
 # Den → Codepool (required for web: harness execution, streaming agent loop, optional OpenAI shim)
-CODEPOOL_BASE_URL=http://bear-codepool:3030
+CODEPOOL_BASE_URL=http://bears-codepool:3030
 
 # Codepool → Letta (same Letta origin as Den uses for persistence)
 # plus Slack / channel tokens only in Codepool as required by Channels
@@ -254,8 +254,8 @@ See [PLAN.md](../planning/PLAN.md) Phase 1 for the phased implementation checkli
 
 ```bash
 # Den (example)
-LETTA_BASE_URL=http://bear-letta:8283
-CODEPOOL_BASE_URL=http://bear-codepool:3030
+LETTA_BASE_URL=http://bears-letta:8283
+CODEPOOL_BASE_URL=http://bears-codepool:3030
 LETTA_API_KEY=<same as LETTA_SERVER_PASS when using bearer auth>
 DATABASE_URL=postgresql://...
 JWT_SECRET=...

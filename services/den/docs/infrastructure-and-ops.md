@@ -53,7 +53,7 @@ For a **single watch point** across the stack (databases, Codepool, Letta, Bifro
 
 Optional **`GITHUB_PACKAGES_TOKEN`** (PAT with `read:packages`), **`GHCR_PACKAGES_OWNER`** (GitHub org or user that owns the images), and **`GHCR_PACKAGES_OWNER_KIND`** (`org` or `user`) populate GHCR tag / updated-at columns.
 
-Optional env for richer probes: **`LETTA_PG_URI`** (Letta Postgres `SELECT 1`), **`BIFROST_BASE_URL`** (e.g. `http://bear-bifrost:8080` for `GET /health`), **`LLM_API_URL`** (shape-only check when set on Den). This is **not** a substitute for **`GET /health`** (process liveness) or **`GET /health/ready`** (Den-only DB readiness).
+Optional env for richer probes: **`LETTA_PG_URI`** (Letta Postgres `SELECT 1`), **`BIFROST_BASE_URL`** (e.g. `http://bears-bifrost:8080` for `GET /health`), **`LLM_API_URL`** (shape-only check when set on Den). This is **not** a substitute for **`GET /health`** (process liveness) or **`GET /health/ready`** (Den-only DB readiness).
 
 ## Workers
 

@@ -52,6 +52,102 @@ body.bear_chat #chat-wrap {
     min-height: 0;
 }
 
+body.bear_chat .den-conv-nav-item {
+    max-width: min(60vw, 44rem);
+}
+
+body.bear_chat .den-conv-tabs-shell {
+    display: flex;
+    align-items: flex-end;
+    gap: var(--spacing-unit);
+    min-width: 0;
+}
+
+body.bear_chat .den-conv-tabs {
+    display: flex;
+    align-items: stretch;
+    max-width: 100%;
+    overflow-x: auto;
+    border: solid var(--thin-line-unit) var(--border-color);
+    background-color: var(--page-color);
+}
+
+body.bear_chat .den-conv-tab {
+    display: flex;
+    align-items: stretch;
+    flex: 0 0 auto;
+    border-right: solid var(--thin-line-unit) var(--border-color);
+}
+
+body.bear_chat .den-conv-tab:last-child {
+    border-right: none;
+}
+
+body.bear_chat .den-conv-tab-selected {
+    background-color: var(--selected-color);
+    color: var(--selected-text-color);
+}
+
+body.bear_chat .den-conv-tab-main,
+body.bear_chat .den-conv-tab-action,
+body.bear_chat .den-conv-new {
+    border: none;
+    background-color: transparent;
+    color: inherit;
+    font: inherit;
+    text-transform: uppercase;
+    white-space: nowrap;
+}
+
+body.bear_chat .den-conv-tab-main {
+    max-width: 16rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+body.bear_chat .den-conv-tab-action {
+    padding-left: calc(var(--spacing-unit) * 0.7);
+    padding-right: calc(var(--spacing-unit) * 0.7);
+    font-size: smaller;
+    border-left: solid var(--thin-line-unit) currentColor;
+}
+
+body.bear_chat .den-conv-new {
+    border: solid var(--thin-line-unit) var(--border-color);
+    background-color: var(--page-color);
+    color: var(--text-color);
+}
+
+body.bear_chat .den-conv-tab-main:hover,
+body.bear_chat .den-conv-tab-action:hover,
+body.bear_chat .den-conv-new:hover {
+    background-color: var(--accent-color);
+    color: var(--page-color);
+}
+
+@media (max-width: 699px) {
+    body.bear_chat section#content header .title-bar {
+        align-items: flex-start;
+        flex-direction: column;
+    }
+
+    body.bear_chat section#content header .title-bar nav,
+    body.bear_chat section#content header .title-bar nav ul,
+    body.bear_chat section#content header .title-bar nav li.den-conv-nav-item {
+        width: 100%;
+        max-width: 100%;
+    }
+
+    body.bear_chat .den-conv-tabs-shell,
+    body.bear_chat .den-conv-tabs {
+        width: 100%;
+    }
+
+    body.bear_chat .den-conv-tab-main {
+        max-width: 11rem;
+    }
+}
+
 /* ---- Letta memory blocks (bear details / edit snapshots) ---- */
 .den-letta-memory-blocks {
     display: flex;

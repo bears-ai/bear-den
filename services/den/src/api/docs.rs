@@ -1,4 +1,4 @@
-use axum::{Router, response::Json, routing::get};
+use axum::{response::Json, routing::get, Router};
 use utoipa::OpenApi;
 
 use crate::api::service::ApiState;

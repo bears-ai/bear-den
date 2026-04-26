@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use reqwest::header::{AUTHORIZATION, CONTENT_TYPE, HeaderMap, HeaderName, HeaderValue};
+use reqwest::header::{HeaderMap, HeaderName, HeaderValue, AUTHORIZATION, CONTENT_TYPE};
 use serde_json::json;
 use uuid::Uuid;
 
@@ -181,7 +181,9 @@ impl CodePoolClient {
             .send()
             .await
             .map_err(|e| {
-                CustomError::System(format!("Codepool conversation messages request failed: {e}"))
+                CustomError::System(format!(
+                    "Codepool conversation messages request failed: {e}"
+                ))
             })?;
 
         if !resp.status().is_success() {

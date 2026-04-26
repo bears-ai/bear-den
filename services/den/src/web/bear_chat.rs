@@ -38,7 +38,9 @@ pub async fn bear_page(
 
     let bear = bears_db::bear_for_user_by_slug(state.sqlx_pool(), user_id, slug)
         .await?
-        .ok_or_else(|| CustomError::NotFound("Bear not found or you do not have access.".to_string()))?;
+        .ok_or_else(|| {
+            CustomError::NotFound("Bear not found or you do not have access.".to_string())
+        })?;
 
     web::render_template(
         &state,

@@ -21,7 +21,7 @@ Letta is the BEARS **bear runtime**: each **bear** is a **Letta agent** (convers
 1. **Add New Resource** → **Docker Image**
 
 2. **Basic Configuration**:
-   - **Service Name**: `bear-letta`
+   - **Service Name**: `bears-letta`
    - **Image**: `letta/letta:latest` (or pin a tag; root [`docker-compose.yaml`](../../docker-compose.yaml) uses this image)
    - **Deployment Type**: Public Docker Image
 
@@ -33,7 +33,7 @@ Letta is the BEARS **bear runtime**: each **bear** is a **Letta agent** (convers
 
   ```bash
   # Bifrost (OpenAI-compatible gateway)
-  LLM_API_URL=http://bear-bifrost:8080/v1
+  LLM_API_URL=http://bears-bifrost:8080/v1
 
   # The stock BEARS Bifrost config is file-based GitOps without a client gateway key.
   # Keep OPENAI_API_KEY set for embeddings and any Letta features that call OpenAI directly.
@@ -58,7 +58,7 @@ Letta is the BEARS **bear runtime**: each **bear** is a **Letta agent** (convers
 
    Create a volume for Letta configuration:
 
-   - **Volume Name**: `bear-letta-data`
+   - **Volume Name**: `bears-letta-data`
    - **Mount Path**: `/root/.letta`
 
 6. **Health Check**:
@@ -80,7 +80,7 @@ Letta is the BEARS **bear runtime**: each **bear** is a **Letta agent** (convers
 Check health:
 
 ```bash
-curl http://bear-letta:8283/v1/health
+curl http://bears-letta:8283/v1/health
 ```
 
 Access the Web UI:
@@ -94,7 +94,7 @@ http://localhost:8283 (if exposed)
 Test API:
 
 ```bash
-curl http://bear-letta:8283/v1/agents
+curl http://bears-letta:8283/v1/agents
 ```
 
 ## Configuration Reference
@@ -103,17 +103,17 @@ curl http://bear-letta:8283/v1/agents
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `LLM_API_URL` | ✅ Yes | - | Bifrost URL (`http://bear-bifrost:8080/v1`) |
+| `LLM_API_URL` | ✅ Yes | - | Bifrost URL (`http://bears-bifrost:8080/v1`) |
 | `MODEL_NAME` | ✅ Yes | `gpt-4` | Default model for new Letta agents (**bears**) |
 | `LETTA_SERVER_PORT` | No | `8283` | Web UI and API port |
 | `LETTA_SERVER_PASS` | ✅ Yes | - | Admin password for Letta |
 | `LETTA_PG_URI` | Recommended | - | External Postgres URI — use **`postgresql://`** (not `postgres://`). The short form can break Alembic with `NoSuchModuleError: ... postgres.pg8000`. |
 | `OPENAI_API_KEY` | ✅ Yes | - | For embeddings and direct OpenAI calls; chat completions use `LLM_API_URL` |
-| `LETTA_MEMFS_SERVICE_URL` | No | `http://bears-memfs-manager:8285` (default in root [`docker-compose.yaml`](../../docker-compose.yaml), same pattern as `LETTA_BASE_URL` / `LLM_API_URL`) | Letta proxies `/v1/git/*` to **Memory Manager** (**`bears-memfs-manager`**), which shares **`bear-letta-data`**. Pair with **`LETTA_MEMFS_LOCAL=1`** on **codepool**. Override if your memfs service has another internal URL. |
+| `LETTA_MEMFS_SERVICE_URL` | No | `http://bears-memfs-manager:8285` (default in root [`docker-compose.yaml`](../../docker-compose.yaml), same pattern as `LETTA_BASE_URL` / `LLM_API_URL`) | Letta proxies `/v1/git/*` to **Memory Manager** (**`bears-memfs-manager`**), which shares **`bears-letta-data`**. Pair with **`LETTA_MEMFS_LOCAL=1`** on **codepool**. Override if your memfs service has another internal URL. |
 | `LETTA_SERVER_HOST` | No | `0.0.0.0` | Bind address |
 | `LOG_LEVEL` | No | `INFO` | Logging verbosity |
 
-**Durability:** Back up **`bear-letta-data`** (and Letta Postgres) — see [`docs/deployment/DEPLOYMENT.md`](../../docs/deployment/DEPLOYMENT.md). Root compose sets **`LETTA_REDIS_HOST` / `LETTA_REDIS_PORT`** for memory-repo locking (required for git-backed memfs).
+**Durability:** Back up **`bears-letta-data`** (and Letta Postgres) — see [`docs/deployment/DEPLOYMENT.md`](../../docs/deployment/DEPLOYMENT.md). Root compose sets **`LETTA_REDIS_HOST` / `LETTA_REDIS_PORT`** for memory-repo locking (required for git-backed memfs).
 
 ### Service Dependencies
 
@@ -130,7 +130,7 @@ End-user chat in BEARS is **Den embedded Deep Chat** → Den → Letta Code → 
 
 ### Admin Web UI (Optional)
 
-For advanced **bear** (Letta agent) management and development, access the Letta Web UI at `http://bear-letta:8283` (internal only):
+For advanced **bear** (Letta agent) management and development, access the Letta Web UI at `http://bears-letta:8283` (internal only):
 
 1. **Login** with `LETTA_SERVER_PASS`
 2. **Create a bear** (Letta: “create agent”):
@@ -146,11 +146,11 @@ In production, prefer **Den** as the system of record for which bears exist and 
 
 ```bash
 # List bears (Letta API: GET /v1/agents)
-curl http://bear-letta:8283/v1/agents \
+curl http://bears-letta:8283/v1/agents \
   -H "Authorization: Bearer $LETTA_SERVER_PASS"
 
 # Create a bear (Letta API: POST /v1/agents)
-curl -X POST http://bear-letta:8283/v1/agents \
+curl -X POST http://bears-letta:8283/v1/agents \
   -H "Authorization: Bearer $LETTA_SERVER_PASS" \
   -H "Content-Type: application/json" \
   -d '{
@@ -159,7 +159,7 @@ curl -X POST http://bear-letta:8283/v1/agents \
   }'
 
 # Send message ({agent_id} = Letta’s id for that bear)
-curl -X POST http://bear-letta:8283/v1/agents/{agent_id}/messages \
+curl -X POST http://bears-letta:8283/v1/agents/{agent_id}/messages \
   -H "Authorization: Bearer $LETTA_SERVER_PASS" \
   -H "Content-Type: application/json" \
   -d '{
@@ -178,17 +178,17 @@ curl -X POST http://bear-letta:8283/v1/agents/{agent_id}/messages \
 ### Health Check
 
 ```bash
-curl http://bear-letta:8283/v1/health
+curl http://bears-letta:8283/v1/health
 ```
 
 ### Bear / agent status (Letta API)
 
 ```bash
 # List all bears (same as Letta agents)
-curl http://bear-letta:8283/v1/agents
+curl http://bears-letta:8283/v1/agents
 
 # Get one bear’s details
-curl http://bear-letta:8283/v1/agents/{agent_id}
+curl http://bears-letta:8283/v1/agents/{agent_id}
 ```
 
 ### Logs
@@ -233,8 +233,8 @@ Coolify’s database UI sometimes copies `postgres://`; replace it with `postgre
 **Problem**: Model requests failing
 
 **Solutions**:
-- Verify `LLM_API_URL=http://bear-bifrost:8080/v1` (include the `/v1` suffix).
-- Check the Bifrost service: `curl http://bear-bifrost:8080/health` and `curl http://bear-bifrost:8080/v1/models`
+- Verify `LLM_API_URL=http://bears-bifrost:8080/v1` (include the `/v1` suffix).
+- Check the Bifrost service: `curl http://bears-bifrost:8080/health` and `curl http://bears-bifrost:8080/v1/models`
 - Confirm Bifrost has valid provider keys in its environment and `services/bifrost/config.json` mounted at `/app/data/config.json` ([`../bifrost/COOLIFY_DEPLOY.md`](../bifrost/COOLIFY_DEPLOY.md)).
 
 ### Gateway authentication (Letta)
@@ -246,7 +246,7 @@ If you enable **Bifrost governance / virtual keys**, align Letta’s outbound cr
 Quick test:
 
 ```bash
-curl -sS http://bear-bifrost:8080/v1/models
+curl -sS http://bears-bifrost:8080/v1/models
 ```
 
 If your Letta build exposes a different configuration name for forwarding LLM credentials, consult the Letta documentation. See `services/letta/.env.example` for the variables used in this repository.
@@ -344,7 +344,7 @@ Shared team context: **Cabinet (Outline)**, Letta shared blocks, or a **shared b
 ## Deployment completion
 
 - [ ] Bifrost healthy; Letta reaches `LLM_API_URL`
-- [ ] **Codepool** (`services/codepool/`, `bear-codepool`) is deployed and Den can reach it at **`CODEPOOL_BASE_URL`**; **Den** can reach Letta for provisioning via **`LETTA_BASE_URL`**; end users chat through Den’s web UI
+- [ ] **Codepool** (`services/codepool/`, `bears-codepool`) is deployed and Den can reach it at **`CODEPOOL_BASE_URL`**; **Den** can reach Letta for provisioning via **`LETTA_BASE_URL`**; end users chat through Den’s web UI
 - [ ] Den + Outline + Cabinet tools when rolled out ([PLAN.md](../../docs/planning/PLAN.md))
 
-**Services:** `bear-bifrost`, `bear-letta`, UI; later **Outline + Den**.
+**Services:** `bears-bifrost`, `bears-letta`, UI; later **Outline + Den**.

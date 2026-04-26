@@ -15,10 +15,10 @@ const DEFAULT_APP_SLUG: &str = "bears";
 const DEFAULT_PROD_WEB_ORIGIN: &str = "https://bears.artificial.design";
 const DEFAULT_PROD_API_ORIGIN: &str = "https://api.bears.artificial.design";
 
-/// Letta HTTP API when `LETTA_BASE_URL` is unset — matches Docker Compose service `bear-letta` (repository root `docker-compose.yaml`).
-pub const DEFAULT_LETTA_BASE_URL: &str = "http://bear-letta:8283";
-/// Codepool harness when `CODEPOOL_BASE_URL` is unset — matches Docker Compose service `bear-codepool`.
-pub const DEFAULT_CODEPOOL_BASE_URL: &str = "http://bear-codepool:3030";
+/// Letta HTTP API when `LETTA_BASE_URL` is unset — matches Docker Compose service `bears-letta` (repository root `docker-compose.yaml`).
+pub const DEFAULT_LETTA_BASE_URL: &str = "http://bears-letta:8283";
+/// Codepool harness when `CODEPOOL_BASE_URL` is unset — matches Docker Compose service `bears-codepool`.
+pub const DEFAULT_CODEPOOL_BASE_URL: &str = "http://bears-codepool:3030";
 
 fn letta_base_url_from_env() -> String {
     let raw = std::env::var("LETTA_BASE_URL").unwrap_or_default();
@@ -96,7 +96,7 @@ pub struct Config {
     /// Optional `Authorization: Bearer` value for Letta (omit when local Letta has no auth).
     pub letta_api_key: String,
 
-    /// **Codepool** harness base URL (no trailing slash), e.g. `http://bear-codepool:3030`.
+    /// **Codepool** harness base URL (no trailing slash), e.g. `http://bears-codepool:3030`.
     /// Required when `run_web` is true — [`crate::startup::validate_runtime_config`] enforces this.
     pub codepool_base_url: String,
     /// Optional `Authorization: Bearer` for Codepool (must match `CODEPOOL_INTERNAL_TOKEN` on the pool).
@@ -109,7 +109,7 @@ pub struct Config {
     /// Shape rules match deploy docs and `services/preflight` (prefer `postgresql://`).
     pub letta_pg_uri: String,
 
-    /// Bifrost gateway base URL (no trailing slash), e.g. `http://bear-bifrost:8080`. Empty = skip HTTP check.
+    /// Bifrost gateway base URL (no trailing slash), e.g. `http://bears-bifrost:8080`. Empty = skip HTTP check.
     pub bifrost_base_url: String,
 
     /// S3-compatible endpoint (e.g. `http://bear-garage:3900`). Empty = media upload disabled.
@@ -163,9 +163,9 @@ impl Config {
                         out.push(origin);
                     }
                 }
-                Err(e) => tracing::warn!(
-                    "Could not parse URL for CORS origin (value={raw:?}): {e}"
-                ),
+                Err(e) => {
+                    tracing::warn!("Could not parse URL for CORS origin (value={raw:?}): {e}")
+                }
             }
         }
         out
@@ -275,17 +275,15 @@ impl Config {
             .filter(|s| !s.is_empty());
 
         let mail_from_address = std::env::var("MAIL_FROM_ADDRESS").unwrap_or_else(|_| {
-            derive_default_mail_from(&web_server_url).unwrap_or_else(|| {
-                "noreply@bears.artificial.design".to_string()
-            })
+            derive_default_mail_from(&web_server_url)
+                .unwrap_or_else(|| "noreply@bears.artificial.design".to_string())
         });
 
         let letta_base_url = letta_base_url_from_env();
         let letta_api_key = std::env::var("LETTA_API_KEY").unwrap_or_default();
 
         let codepool_base_url = codepool_base_url_from_env();
-        let codepool_internal_token =
-            std::env::var("CODEPOOL_INTERNAL_TOKEN").unwrap_or_default();
+        let codepool_internal_token = std::env::var("CODEPOOL_INTERNAL_TOKEN").unwrap_or_default();
 
         let letta_memfs_service_url = std::env::var("LETTA_MEMFS_SERVICE_URL")
             .unwrap_or_default()
@@ -334,8 +332,7 @@ impl Config {
                 600
             });
 
-        let github_packages_token =
-            std::env::var("GITHUB_PACKAGES_TOKEN").unwrap_or_default();
+        let github_packages_token = std::env::var("GITHUB_PACKAGES_TOKEN").unwrap_or_default();
         let ghcr_packages_owner = std::env::var("GHCR_PACKAGES_OWNER")
             .unwrap_or_default()
             .trim()
@@ -345,15 +342,11 @@ impl Config {
             .trim()
             .to_lowercase();
         let ghcr_packages_owner_kind = if ghcr_packages_owner_kind.is_empty()
-            || matches!(
-            ghcr_packages_owner_kind.as_str(),
-            "org" | "user"
-        ) {
+            || matches!(ghcr_packages_owner_kind.as_str(), "org" | "user")
+        {
             ghcr_packages_owner_kind
         } else {
-            tracing::warn!(
-                "Invalid GHCR_PACKAGES_OWNER_KIND (expected org|user). Leaving empty."
-            );
+            tracing::warn!("Invalid GHCR_PACKAGES_OWNER_KIND (expected org|user). Leaving empty.");
             String::new()
         };
 

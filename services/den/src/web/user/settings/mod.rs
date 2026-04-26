@@ -4,10 +4,10 @@ pub mod email;
 use std::borrow::Cow::Borrowed;
 
 use axum::{
-    Form, Router,
     extract::State,
     response::{IntoResponse, Redirect, Response},
     routing::get,
+    Form, Router,
 };
 use axum_extra::routing::RouterExt;
 use minijinja::context;
@@ -84,7 +84,9 @@ async fn settings_home(
         .await?
         .unwrap();
 
-    web::render_template(&state, "settings/view.html",
+    web::render_template(
+        &state,
+        "settings/view.html",
         auth_session,
         context! {
 
@@ -117,7 +119,9 @@ async fn settings_form_view(
         .unwrap();
     let settings_form = SettingsForm::from(user_settings);
 
-    web::render_template(&state, "settings/edit.html",
+    web::render_template(
+        &state,
+        "settings/edit.html",
         auth_session,
         context! {
 
@@ -135,7 +139,9 @@ async fn settings_form_action(
     Form(settings_form): Form<SettingsForm>,
 ) -> Result<Response, CustomError> {
     if let Err(form_validation_errors) = settings_form.validate() {
-        return Ok(web::render_template(&state, "settings/edit.html",
+        return Ok(web::render_template(
+            &state,
+            "settings/edit.html",
             auth_session,
             context! {
 

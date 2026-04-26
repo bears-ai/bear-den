@@ -5,14 +5,14 @@
 //! API service that can run separately from or alongside the web service.
 
 use axum::{
-    Router,
     extract::{MatchedPath, State},
     http::{HeaderValue, Request, StatusCode},
     routing::get,
+    Router,
 };
 use axum_login::{
+    tower_sessions::{cookie::SameSite, Expiry, SessionManagerLayer},
     AuthManagerLayerBuilder,
-    tower_sessions::{Expiry, SessionManagerLayer, cookie::SameSite},
 };
 use sqlx::PgPool;
 use time::Duration;

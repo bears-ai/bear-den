@@ -5,10 +5,10 @@
 //! axum-login authentication system and renders authorization pages using MiniJinja templates.
 
 use axum::{
-    Form, Json,
     extract::{Query, State},
-    http::{HeaderMap, HeaderValue, StatusCode, header::AUTHORIZATION},
+    http::{header::AUTHORIZATION, HeaderMap, HeaderValue, StatusCode},
     response::{IntoResponse, Redirect, Response},
+    Form, Json,
 };
 use serde::Deserialize;
 use sqlx::PgPool;
@@ -18,14 +18,15 @@ use url::Url;
 use crate::{
     api::{
         oauth::{
-            AuthorizationRequest, OAuthScope, TokenRequest, TokenResponse, UserInfoResponse, db,
+            db,
             error::OAuthError,
-            jwt::{JwtManager, create_jwt_manager},
-            scopes_from_json, scopes_to_string, utils,
+            jwt::{create_jwt_manager, JwtManager},
+            scopes_from_json, scopes_to_string, utils, AuthorizationRequest, OAuthScope,
+            TokenRequest, TokenResponse, UserInfoResponse,
         },
         templates::{
-            AuthorizeContext, ErrorContext, UserContext, generate_csrf_token, parse_scopes,
-            render_authorize_page, render_error_page,
+            generate_csrf_token, parse_scopes, render_authorize_page, render_error_page,
+            AuthorizeContext, ErrorContext, UserContext,
         },
     },
     auth_backend::AuthSession,

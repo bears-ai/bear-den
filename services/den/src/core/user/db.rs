@@ -1,4 +1,4 @@
-use sqlx::{PgPool, query, query_as};
+use sqlx::{query, query_as, PgPool};
 
 use crate::errors::CustomError;
 

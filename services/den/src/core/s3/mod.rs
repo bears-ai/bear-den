@@ -100,9 +100,7 @@ impl MediaStore {
     /// If clients upload from outside the network, use `presign_upload_public` instead.
     pub fn presign_upload(&self, object_key: &str, content_type: &str) -> PresignedUpload {
         let mut action = self.bucket.put_object(Some(&self.credentials), object_key);
-        action
-            .headers_mut()
-            .insert("content-type", content_type);
+        action.headers_mut().insert("content-type", content_type);
         let url = action.sign(UPLOAD_EXPIRY);
 
         PresignedUpload {
@@ -117,9 +115,7 @@ impl MediaStore {
         let mut action = self
             .public_bucket
             .put_object(Some(&self.credentials), object_key);
-        action
-            .headers_mut()
-            .insert("content-type", content_type);
+        action.headers_mut().insert("content-type", content_type);
         let url = action.sign(UPLOAD_EXPIRY);
 
         PresignedUpload {

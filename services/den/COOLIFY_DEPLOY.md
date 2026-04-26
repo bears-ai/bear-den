@@ -88,9 +88,9 @@ Integrations (set when you wire the rest of the stack):
 
 | Variable | Notes |
 | -------- | ----- |
-| `LETTA_BASE_URL` | Internal base URL for Letta (no trailing slash). **Production** images default to **`http://bear-letta:8283`** when unset (override for local dev; see `services/den/.env.example`). |
+| `LETTA_BASE_URL` | Internal base URL for Letta (no trailing slash). **Production** images default to **`http://bears-letta:8283`** when unset (override for local dev; see `services/den/.env.example`). |
 | `LETTA_API_KEY` | Bearer token when Letta is configured with `LETTA_SERVER_PASS` / API auth. |
-| `CODEPOOL_BASE_URL` | When `RUN_WEB=true`, must be non-empty. **Production** images default to **`http://bear-codepool:3030`** when unset. **Codepool** harness (repository root `services/codepool/`). |
+| `CODEPOOL_BASE_URL` | When `RUN_WEB=true`, must be non-empty. **Production** images default to **`http://bears-codepool:3030`** when unset. **Codepool** harness (repository root `services/codepool/`). |
 | `CODEPOOL_INTERNAL_TOKEN` | Optional shared secret; Den sends `Authorization: Bearer …` to Codepool (must match the pool service). |
 | `LETTA_MEMFS_SERVICE_URL` | Optional; same **Memory Manager** base URL as Letta (no trailing slash), e.g. **`http://bears-memfs-manager:8285`**. When set, **bear details** shows **Private memory (git)** — latest commit on the agent’s context repo. **Production** images do not default this; root [`docker-compose.yaml`](../../docker-compose.yaml) sets it for `bears-den` when you use the full stack. |
 

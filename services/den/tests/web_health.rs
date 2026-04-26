@@ -3,8 +3,8 @@ use axum::{
     body::Body,
     http::{Request, StatusCode},
 };
-use http_body_util::BodyExt;
 use den::{api, config::Config, startup::run_sqlx_migrations, web};
+use http_body_util::BodyExt;
 use sqlx::postgres::PgPoolOptions;
 use std::sync::Arc;
 use tower::ServiceExt;
@@ -148,7 +148,10 @@ async fn web_status_json_is_routed() {
         "GET /status.json must be registered"
     );
     assert!(
-        matches!(res.status(), StatusCode::OK | StatusCode::SERVICE_UNAVAILABLE),
+        matches!(
+            res.status(),
+            StatusCode::OK | StatusCode::SERVICE_UNAVAILABLE
+        ),
         "expected 200 or 503 from status JSON, got {}",
         res.status()
     );
@@ -166,31 +169,24 @@ async fn web_status_page_is_routed() {
         )
         .await
         .unwrap();
-    assert_ne!(res.status(), StatusCode::NOT_FOUND, "GET /status must be registered");
+    assert_ne!(
+        res.status(),
+        StatusCode::NOT_FOUND,
+        "GET /status must be registered"
+    );
 }
 
 /// Bear chat (`/bear/{slug}`) loads Deep Chat from `/assets/deep-chat/*`; these must not 404.
 #[tokio::test]
 async fn web_deep_chat_vendor_assets_are_served() {
     let app = web_app().await;
-    for path in [
-        "/assets/deep-chat/deepChat.bundle.js",
-    ] {
+    for path in ["/assets/deep-chat/deepChat.bundle.js"] {
         let res = app
             .clone()
-            .oneshot(
-                Request::builder()
-                    .uri(path)
-                    .body(Body::empty())
-                    .unwrap(),
-            )
+            .oneshot(Request::builder().uri(path).body(Body::empty()).unwrap())
             .await
             .unwrap();
-        assert_eq!(
-            res.status(),
-            StatusCode::OK,
-            "expected 200 for {path}"
-        );
+        assert_eq!(res.status(), StatusCode::OK, "expected 200 for {path}");
         let body = res.into_body().collect().await.unwrap().to_bytes();
         assert!(
             body.len() > 100,

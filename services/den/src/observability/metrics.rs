@@ -68,11 +68,7 @@ pub fn render_prometheus_text() -> String {
         "# HELP den_chat_send_finished_proxy_error_total SSE proxy failures (chunk error or drop before completion)."
     )
     .unwrap();
-    writeln!(
-        s,
-        "# TYPE den_chat_send_finished_proxy_error_total counter"
-    )
-    .unwrap();
+    writeln!(s, "# TYPE den_chat_send_finished_proxy_error_total counter").unwrap();
     writeln!(s, "den_chat_send_finished_proxy_error_total {d}").unwrap();
 
     s

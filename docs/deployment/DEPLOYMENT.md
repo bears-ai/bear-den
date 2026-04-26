@@ -1,172 +1,138 @@
 # BEARS Stack — Coolify Deployment Guide
 
-Deploy the BEARS stack on Coolify. Shared knowledge uses **Outline (Cabinet)** via **Den** when you add them—see [PLAN.md](../planning/PLAN.md).
+Deploy BEARS on Coolify from the repository root `docker-compose.yaml`. This is the supported path for operators: one Compose resource, one shared network, and service names that resolve internally as `bears-*`.
 
-## Recommended: root `docker-compose.yaml` (shared network)
+## What You Deploy
 
-The repository root **[`docker-compose.yaml`](../../docker-compose.yaml)** defines one Compose project (`name: bear-stack`) with:
+Use the root [`docker-compose.yaml`](../../docker-compose.yaml). It starts the application services:
 
-| Service | Role |
-| ------- | ---- |
-| **`bear-postgres`** | Optional PostgreSQL for Den — **only** when profile **`bundled`** is enabled (`COMPOSE_PROFILES=bundled` or `docker compose --profile bundled up`). |
-| **`bear-bifrost`** | Model gateway (`8080`) |
-| **`bear-redis`** | Redis for Letta memory-repo **git locking** (required with git-backed memfs). |
-| **`bears-memfs-manager`** | **Memory Manager** — git **smart-HTTP** + JSON management API (`8285`); shares **`bear-letta-data`** at `/root/.letta` so repos match Letta’s `LocalStorageBackend` layout. |
-| **`bear-letta`** | Letta API (`8283`); **`LETTA_MEMFS_SERVICE_URL`** defaults to **`http://bears-memfs-manager:8285`** in root compose (same env pattern as other internal service URLs). Canonical memfs files under `/root/.letta/memfs/repository/…` on **`bear-letta-data`**. |
-| **`bear-codepool`** | Letta Code SDK harness (`3030`); **`LETTA_MEMFS_LOCAL=1`** so the CLI syncs with self-hosted memfs. |
-| **`bears-den`** | Den control plane + web UI (`3000`) |
-| **`bear-letta-data-backup`** | Optional profile **`volume-backup`**: [`offen/docker-volume-backup`](https://offen.github.io/docker-volume-backup) archives **`bear-letta-data`** to S3-compatible storage (e.g. Scaleway). Enable with `COMPOSE_PROFILES=volume-backup` (can combine: `bundled,volume-backup`). |
+| Service | Purpose |
+| ------- | ------- |
+| `bears-bifrost` | Model gateway on port `8080` |
+| `bears-redis` | Redis for Letta git/memfs locking |
+| `bears-memfs-manager` | Memory Manager on port `8285` |
+| `bears-letta` | Letta API on port `8283` |
+| `bears-codepool` | Letta Code SDK harness on port `3030` |
+| `bears-den` | Den web UI and control plane on port `3000` |
 
-**Databases:** Prefer managed Postgres resources. Set **`DATABASE_URL`** for **Den** and **`LETTA_PG_URI`** for Letta’s Postgres/pgvector database. Both are deployment-specific and default to **`SETME`** so preflight fails clearly if they are missing.
+Databases are separate Coolify resources:
 
-**Bundled Postgres:** set **`COMPOSE_PROFILES=bundled`** (or `docker compose --profile bundled up`) so **`bear-postgres`** starts. Its credentials are **fixed in `docker-compose.yaml`** (no `POSTGRES_*` env vars — so Coolify won’t surface them). If you use it for Den, set **`DATABASE_URL=postgres://bears:bears@bear-postgres:5432/den?sslmode=disable`**. Letta still needs a reachable **`LETTA_PG_URI`** suitable for pgvector.
+| Database | Used By | Environment Variable |
+| -------- | ------- | -------------------- |
+| Postgres | Den | `DATABASE_URL` |
+| PGVector/Postgres | Letta | `LETTA_PG_URI` |
 
-**Coolify:** **Add Resource** → **Docker Compose** → this repository → **Base Directory** `.` (repo root) → **Compose file** `docker-compose.yaml`. Set at least **`JWT_SECRET`**, **`LETTA_SERVER_PASS`**, **`OPENAI_API_KEY`**, **`WEB_SERVER_URL`**, **`DATABASE_URL`**, and **`LETTA_PG_URI`** (and optional **`CODEPOOL_INTERNAL_TOKEN`**). Den and Codepool default internal URLs (`http://bear-letta:8283`, `http://bear-codepool:3030`) match these service names; see [`services/den/COOLIFY_DEPLOY.md`](../../services/den/COOLIFY_DEPLOY.md).
-
-**Alternative:** deploy each component from its subdirectory (see [Step-by-step](#step-by-step-deployment)) and attach every service to the **same Docker network** so the same **`bear-*`** hostnames resolve.
-
-## Table of contents
-
-1. [Overview](#overview)
-2. [Prerequisites](#prerequisites)
-3. [Architecture](#architecture)
-4. [Deployment order](#deployment-order)
-5. [Step-by-step](#step-by-step-deployment)
-6. [Post-deployment](#post-deployment)
-7. [Verification](#verification)
-8. [Troubleshooting](#troubleshooting)
-
-## Overview
-
-- **This repo** (`bears-depoy`) — configs and docs for Letta, Bifrost, Garage, Den, etc.
-- **Letta** — **bear** runtime: one Letta agent per bear; native memory (blocks, conversations).
-- **Cabinet** — shared knowledge in **Outline**, exposed to **bears** through **Den** ([PLAN.md](../planning/PLAN.md)).
-
-## Prerequisites
+## Requirements
 
 - Coolify v4+
-- ~4 GB RAM minimum (Letta + Bifrost + Den; add headroom for Garage and operator workloads)
-- API keys: OpenAI and/or Anthropic (and others per `services/bifrost/config.json`)
+- One Postgres database for Den
+- One PGVector/Postgres database for Letta
+- An OpenAI API key
+- Public domains for Den and Letta
 
-## Architecture
+## 1. Create The Databases
 
-```
-Den chat UI ──► Den ──► Codepool (Letta Code SDK) ──► Letta ──► Bifrost ──► model providers
-                    │                      ▲
-                    │                      │
-                    └── Garage (S3) ←──────┘ (presigned upload/download for chat media)
-(Optional: Outline/Cabinet with Den per PLAN.md)
-```
+Create these first in Coolify:
 
-**Web chat:** **Den embedded Deep Chat** → **Den** → **`services/codepool/`** (harness) → **Letta** — [PLAN.md](../planning/PLAN.md), [DEN_ARCHITECTURE.md](../architecture/DEN_ARCHITECTURE.md).
+1. Postgres for Den.
+2. PGVector/Postgres for Letta.
 
-## Deployment order
+Copy each database's **Postgres URL (internal)** value. You will paste those into the Compose resource environment variables.
 
-1. **Bifrost** — model gateway  
-2. **Garage** — S3-compatible object storage (chat media, generated images, artifacts)  
-3. **Letta** — must reach Bifrost (Letta HTTP API / persistence)  
-4. **Codepool** — Letta Code SDK harness ([`../../services/codepool/COOLIFY_DEPLOY.md`](../../services/codepool/COOLIFY_DEPLOY.md)); streaming chat Den → **Codepool** → Letta  
-5. **Den** — control plane + first-party web chat (bridge to **`CODEPOOL_BASE_URL`**, membership, operator console)  
-6. **Outline + Den Cabinet wiring** — when enabling Cabinet ([PLAN.md](../planning/PLAN.md)); Den needs Garage credentials  
+## 2. Create The Compose Resource
 
-## Step-by-step deployment
+In Coolify:
 
-### Step 1: Bifrost
+1. Go to **Add Resource**.
+2. Choose **Docker Compose**.
+3. Select this repository.
+4. Set **Build Pack** to `Docker Compose`.
+5. Set **Base Directory** to `.`.
+6. Set **Compose File** to `docker-compose.yaml`.
 
-Part of the overall order in this guide; details: [`../../services/bifrost/COOLIFY_DEPLOY.md`](../../services/bifrost/COOLIFY_DEPLOY.md).
+## 3. Configure Domains
 
-**Recommended:** use the **repository root** [`docker-compose.yaml`](../../docker-compose.yaml) for a single shared network, or deploy from **Git** with Coolify’s **Docker Compose** build pack using [`../../services/bifrost/docker-compose.yaml`](../../services/bifrost/docker-compose.yaml) so `config.json` is taken from the repository on each deploy (enable **Preserve Repository During Deployment** in Coolify).
+In the Compose resource general configuration:
 
-Otherwise (plain **Docker Image**): service name e.g. `bear-bifrost`, port `8080` (`APP_HOST=0.0.0.0`, `APP_PORT=8080`), provider keys in Coolify env, mount `services/bifrost/config.json` → `/app/data/config.json` (read-only).
+1. Set a domain for `bears-letta` with port suffix `:8283`.
+2. Set a domain for `bears-den` with port suffix `:3000`.
+3. Under **Build**, enable **Preserve Repository During Deployment**.
+4. Save.
 
-- Health: `GET http://bear-bifrost:8080/health`
+Only Den is normally user-facing. Letta can be public or restricted depending on your operator workflow, but it still needs a configured domain if you want to access the Letta UI/API from outside the Docker network.
 
-### Step 2: Garage
+## 4. Connect The Network
 
-See [`../../services/garage/COOLIFY_DEPLOY.md`](../../services/garage/COOLIFY_DEPLOY.md).
+In the Compose resource advanced settings:
 
-[Garage](https://garagehq.deuxfleurs.fr/) is the BEARS object store (S3-compatible, self-hosted, Rust). Deploy before Den.
+1. Open **Docker Compose**.
+2. Enable **Connect To Predefined Network**.
+3. Save.
 
-- Image: `dxflrs/garage:v2.2.0`, config via `garage.toml`  
-- S3 API port: `3900` (internal), admin: `3903`  
-- After deploy: create bucket `bears-media` + service key for Den  
-- Health: `garage stats -a` or `GET http://bear-garage:3903/health`
+This keeps the `bears-*` service names stable for internal URLs such as `http://bears-letta:8283` and `http://bears-codepool:3030`.
 
-### Step 3: Letta
+## 5. Set Environment Variables
 
-See [`../../services/letta/COOLIFY_DEPLOY.md`](../../services/letta/COOLIFY_DEPLOY.md).
+Set these on the Compose resource:
 
-- `LLM_API_URL=http://bear-bifrost:8080/v1`  
-- `LETTA_SERVER_PASS`, `OPENAI_API_KEY` (embeddings; chat completions go through Bifrost)  
-- **`LETTA_MEMFS_SERVICE_URL`** — default **`http://bears-memfs-manager:8285`** in root [`docker-compose.yaml`](../../docker-compose.yaml) (overridable like `LETTA_BASE_URL`, `LLM_API_URL`, …). **Redis** (`bear-redis`) is required for git locks. Data stays on **`bear-letta-data`** (shared with **Memory Manager** / **`bears-memfs-manager`**). **Den** can use the same value for the bear-details private-memory (git) readout.  
-- Volume: **`bear-letta-data`** → `/root/.letta` — **back up** (managed Letta Postgres + this volume; optional S3 archive via profile **`volume-backup`**).  
-- Health: `GET http://bear-letta:8283/v1/health`
+| Variable | Value |
+| -------- | ----- |
+| `JWT_SECRET` | Random secret string |
+| `LETTA_SERVER_PASS` | Random secret string; also used as the Letta API key by Den and Codepool |
+| `OPENAI_API_KEY` | Your OpenAI API key |
+| `DATABASE_URL` | Den Postgres **Postgres URL (internal)** from Coolify |
+| `LETTA_PG_URI` | Letta PGVector/Postgres **Postgres URL (internal)** from Coolify |
 
-### Step 4: Codepool (Letta Code SDK harness)
+Optional:
 
-See [`../../services/codepool/COOLIFY_DEPLOY.md`](../../services/codepool/COOLIFY_DEPLOY.md).
+| Variable | Value |
+| -------- | ----- |
+| `CODEPOOL_INTERNAL_TOKEN` | Random shared token if you want Den to authenticate to Codepool |
+| `WEB_SERVER_URL` | Override Coolify's `SERVICE_URL_BEARS_DEN` shortcut if needed |
+| `DEN_IMAGE` | Override the prebuilt Den image |
+| `CODEPOOL_IMAGE` | Override the prebuilt Codepool image |
 
-- Deploy **`bear-codepool`** — Node (**`@letta-ai/letta-code-sdk`**). The root compose file pulls a **pre-built image** from GHCR (built by [`.github/workflows/codepool-image.yml`](../../.github/workflows/codepool-image.yml)); override **`CODEPOOL_IMAGE`** for forks or pin a SHA tag.  
-- **`LETTA_BASE_URL=http://bear-letta:8283`** and **`LETTA_API_KEY`** matching Letta’s server credential (same as Den uses for provisioning).  
-- **`LETTA_MEMFS_LOCAL=1`** (default in compose) — Letta Code treats self-hosted memfs like upstream local mode (`~/.letta` client cache).  
-- Persist **`bear-codepool-letta-home` → `/home/node/.letta`** (CLI cache; not the primary backup target). The former bespoke per-bear git volume is **removed**; data there is **not** migrated automatically — re-provision bears or restore from your own exports if needed.  
-- **`CODEPOOL_BASE_URL`** in Den must point at this service (e.g. `http://bear-codepool:3030`). Optional shared secret: **`CODEPOOL_INTERNAL_TOKEN`** on both sides.
-- **`GET /metrics`** — hand-rolled Prometheus text (conversation stream counters). Scrape from the internal network only; no auth on the endpoint (protect with network policy or reverse-proxy rules).
+You usually do not need to set internal service URLs. The compose file already defaults to:
 
-### Step 5: Den
+| Variable | Default |
+| -------- | ------- |
+| `LETTA_BASE_URL` | `http://bears-letta:8283` |
+| `CODEPOOL_BASE_URL` | `http://bears-codepool:3030` |
+| `LLM_API_URL` | `http://bears-bifrost:8080/v1` |
+| `LETTA_MEMFS_SERVICE_URL` | `http://bears-memfs-manager:8285` |
 
-Build and deploy Den from repo root **`services/den/`** (Rust/Axum) — see [PHASE1_BOOTSTRAP.md](../planning/PHASE1_BOOTSTRAP.md) for routes and env expectations. Den serves the **embedded Deep Chat** UI and proxies streaming chat **Den → Codepool → Letta** per [DEN_ARCHITECTURE.md](../architecture/DEN_ARCHITECTURE.md).
+## 6. Deploy
 
-- **`LETTA_BASE_URL`** — Letta from Step 3 (persistence, history, provisioning). **`CODEPOOL_BASE_URL`** — harness from Step 4 (streaming agent loop).  
-- **`GET /metrics`** on Den (same as Step 4: internal Prometheus scrape; in-memory chat counters).  
-- Garage: bucket + credentials for presigned URLs when media upload is enabled  
+Click **Deploy**.
 
-### Step 6: Outline & Den (Cabinet)
-
-Follow [PLAN.md](../planning/PLAN.md) when you deploy the control plane and Outline-backed Cabinet.
-
-## Post-deployment
-
-- **Den chat UI:** end users chat at Den’s **`/bear/{slug}`** (or equivalent) routes — **Den → Codepool → Letta**  
-- Letta UI (internal): **bear** / agent and memory management at `:8283`  
-- Add **Outline** for shared knowledge, **users↔bears** membership, and channel routing  
-
-### Letta server volume backup (S3 / Scaleway)
-
-Enable the Compose profile **`volume-backup`** (e.g. **`COMPOSE_PROFILES=volume-backup`** alongside any other profiles you use). Set S3-compatible credentials for the **`bear-letta-data-backup`** service in Coolify or `.env`, for example:
-
-- **`SCALEWAY_BACKUP_BUCKET`** — bucket name  
-- **`SCALEWAY_ACCESS_KEY`**, **`SCALEWAY_SECRET_KEY`** — API keys  
-- **`SCALEWAY_S3_ENDPOINT`** — e.g. `s3.fr-par.scw.cloud` (region-specific)  
-- **`SCALEWAY_REGION`** — e.g. `fr-par`  
-- **`SCALEWAY_BACKUP_PREFIX`** — object key prefix (default `bear-stack/volumes/bear-letta-data`)  
-
-Optional: **`LETTA_VOLUME_BACKUP_CRON`** for schedule (default daily at 04:00 UTC). Archives **`bear-letta-data`** read-only at `/backup` inside the backup container. Use the same bucket as DB backups with a different prefix if you prefer a single object-store destination.
+If deploy preflight fails, check the missing environment variable in the logs first. The compose file intentionally defaults required secrets and database URLs to `SETME` so bad deploys fail early.
 
 ## Verification
 
-| Check | Command / action |
-|-------|------------------|
-| Bifrost | `curl http://bear-bifrost:8080/health` |
-| Garage | `curl http://bear-garage:3903/health` |
-| Letta | `curl http://bear-letta:8283/v1/health` |
-| Den | `curl` your Den health or `/` per deploy (see `services/den/` docs) |
+From Coolify's terminal for a service on the same network:
 
-End-to-end: create a **bear** in Letta (or via Den when deployed), open the bear’s chat page on Den, send a message.
+| Check | Command |
+| ----- | ------- |
+| Bifrost | `curl http://bears-bifrost:8080/health` |
+| Letta | `curl http://bears-letta:8283/v1/health` |
+| Codepool | `curl http://bears-codepool:3030/health` |
+| Den | Open the public Den URL |
+
+End-to-end check: create or open a bear in Den, go to its chat page, and send a message.
 
 ## Troubleshooting
 
-- **Letta ↔ Bifrost:** `LLM_API_URL` must match Bifrost’s internal URL and `/v1` suffix; provider keys must be valid on the Bifrost service.  
-- **Den ↔ Codepool:** confirm `CODEPOOL_BASE_URL`, optional `CODEPOOL_INTERNAL_TOKEN`, and Docker network DNS names match your Coolify service names.  
+- If Den cannot start, confirm `DATABASE_URL`, `JWT_SECRET`, `WEB_SERVER_URL`, and `CODEPOOL_BASE_URL`.
+- If Letta cannot start, confirm `LETTA_PG_URI`, `LETTA_SERVER_PASS`, `OPENAI_API_KEY`, and `LLM_API_URL`.
+- If chat does not stream, confirm `bears-den` can reach `http://bears-codepool:3030` and `bears-codepool` can reach `http://bears-letta:8283`.
+- If Bifrost is unhealthy, confirm `OPENAI_API_KEY` and `services/bifrost/config.json`.
 
-Service-specific detail: `services/*/COOLIFY_DEPLOY.md`.
+## Optional Backups
 
-## Support
+The root compose file includes `bears-letta-data-backup` behind the `volume-backup` profile for backing up the Letta data volume to S3-compatible storage. Enable it only after the base stack is healthy.
 
-- [ARCHITECTURE_NOTES.md](../architecture/ARCHITECTURE_NOTES.md)  
-- [PLAN.md](../planning/PLAN.md) — Den, Cabinet, Outline  
-- [DEN_ARCHITECTURE.md](../architecture/DEN_ARCHITECTURE.md)  
+Set `COMPOSE_PROFILES=volume-backup` and provide the `SCALEWAY_*` backup variables if you use that profile.
 
 ---
 
-*Last updated: 2026-04-21*
+Last updated: 2026-04-26

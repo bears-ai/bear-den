@@ -171,7 +171,11 @@ fn message_text(inner: &Value) -> Option<String> {
     }
     if let Some(s) = content.as_str() {
         let s = s.trim();
-        return if s.is_empty() { None } else { Some(s.to_string()) };
+        return if s.is_empty() {
+            None
+        } else {
+            Some(s.to_string())
+        };
     }
     if let Some(obj) = content.as_object() {
         if let Some(t) = obj.get("text").and_then(|x| x.as_str()) {
@@ -300,8 +304,10 @@ fn truncate_to_title_length(s: &str) -> String {
 }
 
 fn trim_trailing_punct(mut s: String) -> String {
-    while matches!(s.chars().last(), Some('.') | Some(',') | Some(';') | Some(':') | Some('!'))
-    {
+    while matches!(
+        s.chars().last(),
+        Some('.') | Some(',') | Some(';') | Some(':') | Some('!')
+    ) {
         s.pop();
     }
     s
@@ -334,16 +340,15 @@ fn looks_like_machine_or_opaque_title(s: &str, conversation_id: &str) -> bool {
         return true;
     }
     if conversation_id.starts_with("conv-") {
-        let suf = conversation_id.strip_prefix("conv-").unwrap_or(conversation_id);
+        let suf = conversation_id
+            .strip_prefix("conv-")
+            .unwrap_or(conversation_id);
         if t == suf {
             return true;
         }
     }
     // Legacy UI fallback: "Chat (uuid-fragment)"
-    if let Some(inner) = t
-        .strip_prefix("Chat (")
-        .and_then(|x| x.strip_suffix(')'))
-    {
+    if let Some(inner) = t.strip_prefix("Chat (").and_then(|x| x.strip_suffix(')')) {
         let inner = inner.trim();
         if is_uuid_like(inner) || inner == conversation_id.strip_prefix("conv-").unwrap_or("") {
             return true;
@@ -423,11 +428,7 @@ mod tests {
     #[test]
     fn derived_title_can_be_new_conversation_when_user_typed_it() {
         let id = "conv-550e8400-e29b-41d4-a716-446655440000";
-        let d = display_conversation_title(
-            Some(id),
-            id,
-            Some("New conversation about Rust"),
-        );
+        let d = display_conversation_title(Some(id), id, Some("New conversation about Rust"));
         assert_eq!(d, "New conversation about Rust");
     }
 
@@ -463,11 +464,7 @@ mod tests {
     #[test]
     fn display_falls_back_from_bad_summary_to_derived() {
         let id = "conv-550e8400-e29b-41d4-a716-446655440000";
-        let d = display_conversation_title(
-            Some(id),
-            id,
-            Some("Fix UUID thread summaries please"),
-        );
+        let d = display_conversation_title(Some(id), id, Some("Fix UUID thread summaries please"));
         assert_eq!(d, "Fix UUID thread summaries please");
     }
 

@@ -53,14 +53,11 @@ fn block_str_from_value(b: &Value) -> Option<String> {
 
 /// When Letta omits top-level `system`, some payloads keep instructions in blocks.
 fn fallback_system_from_blocks(v: &Value) -> Option<String> {
-    let blocks = v
-        .get("blocks")
-        .and_then(|x| x.as_array())
-        .or_else(|| {
-            v.get("memory")
-                .and_then(|m| m.get("blocks"))
-                .and_then(|x| x.as_array())
-        })?;
+    let blocks = v.get("blocks").and_then(|x| x.as_array()).or_else(|| {
+        v.get("memory")
+            .and_then(|m| m.get("blocks"))
+            .and_then(|x| x.as_array())
+    })?;
     let preferred = ["system", "system_prompt", "instructions", "prompt"];
     for label in preferred {
         for b in blocks {
@@ -138,7 +135,8 @@ pub fn compute_letta_drift(
     let system_prompt = letta_instruction_text_for_drift(Some(summary), raw_agent_json)
         .is_some_and(|letta_sys| db_sys != letta_sys);
 
-    let model = norm_opt_trim(bear.default_model.as_deref()) != norm_opt_trim(summary.model.as_deref());
+    let model =
+        norm_opt_trim(bear.default_model.as_deref()) != norm_opt_trim(summary.model.as_deref());
 
     let db_at = norm_opt_trim(bear.letta_agent_type.as_deref());
     let letta_at = norm_opt_trim(summary.agent_type.as_deref());

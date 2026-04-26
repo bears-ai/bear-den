@@ -2,9 +2,9 @@
 //! JSON admin API (same operator session as HTML console; not for browser JS with API keys).
 
 use axum::{
-    Json, Router,
     extract::{Path, State},
     routing::get,
+    Json, Router,
 };
 use serde::{Deserialize, Serialize};
 use sqlx::types::Json as SqlxJson;
@@ -95,7 +95,10 @@ async fn create_bear(
         body.name.trim(),
         body.description.trim(),
         body.system_prompt.trim(),
-        body.default_model.as_deref().map(str::trim).filter(|s| !s.is_empty()),
+        body.default_model
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty()),
         tools,
         letta_agent_type.as_deref(),
         SqlxJson(letta_tool_ids),
@@ -146,12 +149,6 @@ async fn grant_membership(
         .as_deref()
         .map(str::trim)
         .filter(|s| !s.is_empty());
-    bears_db::grant_membership(
-        state.sqlx_pool(),
-        body.user_id,
-        body.bear_id,
-        role,
-    )
-    .await?;
+    bears_db::grant_membership(state.sqlx_pool(), body.user_id, body.bear_id, role).await?;
     Ok(axum::http::StatusCode::NO_CONTENT)
 }

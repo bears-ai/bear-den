@@ -1,9 +1,9 @@
 // ROUTES: When modifying routes in this file, update /src/web/ROUTES.md
 use axum::{
-    Router,
     extract::State,
     response::{IntoResponse, Redirect, Response},
     routing::get,
+    Router,
 };
 use axum_extra::extract::Form;
 use axum_extra::routing::RouterExt;
@@ -85,31 +85,24 @@ pub async fn grant_action(
         );
     }
 
-    if user_db::get_user_by_id(state.sqlx_pool(), form.user_id).await?.is_none() {
-        validation_errors.add(
-            "user_id",
-            ValidationError::new("User not found."),
-        );
+    if user_db::get_user_by_id(state.sqlx_pool(), form.user_id)
+        .await?
+        .is_none()
+    {
+        validation_errors.add("user_id", ValidationError::new("User not found."));
     }
 
     if validation_errors.is_empty() {
         let bid = bear_id.expect("checked");
         if bears_db::get_bear(state.sqlx_pool(), bid).await?.is_none() {
-            validation_errors.add(
-                "bear_id",
-                ValidationError::new("Bear not found."),
-            );
+            validation_errors.add("bear_id", ValidationError::new("Bear not found."));
         }
     }
 
     if validation_errors.is_empty() {
         let bid = bear_id.expect("checked");
         let role = form.role.trim();
-        let role_opt = if role.is_empty() {
-            None
-        } else {
-            Some(role)
-        };
+        let role_opt = if role.is_empty() { None } else { Some(role) };
         bears_db::grant_membership(state.sqlx_pool(), form.user_id, bid, role_opt).await?;
         Ok(Redirect::to("/admin/membership/").into_response())
     } else {

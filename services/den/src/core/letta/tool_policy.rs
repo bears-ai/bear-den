@@ -47,11 +47,9 @@ pub fn filter_legacy_memory_tool_ids(
         .iter()
         .map(|s| s.trim())
         .filter(|s| !s.is_empty())
-        .filter(|id| {
-            match map.get(*id) {
-                Some(name) => !is_legacy_memory_tool_name(name),
-                None => true,
-            }
+        .filter(|id| match map.get(*id) {
+            Some(name) => !is_legacy_memory_tool_name(name),
+            None => true,
         })
         .map(|s| s.to_string())
         .collect()

@@ -2,10 +2,11 @@
 use serde::{Deserialize, Serialize};
 
 use axum::{
-    Router, debug_handler,
+    debug_handler,
     extract::{Path, State},
     response::{IntoResponse, Redirect, Response},
     routing::{get, post},
+    Router,
 };
 use axum_extra::extract::Form;
 use axum_extra::routing::RouterExt;
@@ -95,7 +96,9 @@ async fn users_list(
 ) -> Result<Response, CustomError> {
     let users = user_db::get_users(&state.sqlx_pool).await?;
 
-    web::render_template(&state, "admin/users/list.html",
+    web::render_template(
+        &state,
+        "admin/users/list.html",
         auth_session,
         context! {
             users
@@ -108,11 +111,7 @@ async fn add_user_view(
     State(state): State<AppState>,
     auth_session: AuthSession,
 ) -> Result<Response, CustomError> {
-    web::render_template(&state, "admin/users/add.html",
-        auth_session,
-        context! {},
-    )
-    .await
+    web::render_template(&state, "admin/users/add.html", auth_session, context! {}).await
 }
 
 #[debug_handler]
@@ -151,7 +150,9 @@ pub async fn add_user_action(
         // add_user_view
         // TODO: abstract to share with add_user_view
 
-        web::render_template(&state, "admin/users/add.html",
+        web::render_template(
+            &state,
+            "admin/users/add.html",
             auth_session,
             context! {
                 errors => validation_errors,
@@ -173,7 +174,9 @@ async fn view_user(
 
     let invites = user::invites::db::by_user_id(&state.sqlx_pool, id).await?;
 
-    web::render_template(&state, "admin/users/view.html",
+    web::render_template(
+        &state,
+        "admin/users/view.html",
         auth_session,
         context! {
             id,
@@ -193,7 +196,9 @@ async fn edit_user_view(
 
     let user_form: UserForm = user.into();
 
-    web::render_template(&state, "admin/users/edit.html",
+    web::render_template(
+        &state,
+        "admin/users/edit.html",
         auth_session,
         context! {
             id,
@@ -229,12 +234,8 @@ pub async fn edit_user_action(
         )
         .await?;
 
-        email_settings::set_admin_email_verified(
-            &state.sqlx_pool,
-            id,
-            form.email_verified == 1,
-        )
-        .await?;
+        email_settings::set_admin_email_verified(&state.sqlx_pool, id, form.email_verified == 1)
+            .await?;
 
         Ok(Redirect::to("/admin/users/").into_response())
     } else {
@@ -271,7 +272,9 @@ pub async fn change_user_password_view(
         .await?
         .ok_or_else(|| CustomError::NotFound("User not found".to_string()))?;
 
-    web::render_template(&state, "admin/users/change_password.html",
+    web::render_template(
+        &state,
+        "admin/users/change_password.html",
         auth_session,
         context! {
             id,
@@ -293,7 +296,9 @@ pub async fn change_user_password_action(
             .await?
             .ok_or_else(|| CustomError::NotFound("User not found".to_string()))?;
 
-        Ok(web::render_template(&state, "admin/users/change_password.html",
+        Ok(web::render_template(
+            &state,
+            "admin/users/change_password.html",
             auth_session,
             context! {
                 id,

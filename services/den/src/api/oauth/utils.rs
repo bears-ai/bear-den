@@ -4,7 +4,7 @@
 //! secure random generation, client secret hashing, scope validation,
 //! and redirect URI validation.
 
-use crate::api::oauth::{OAuthScope, error::OAuthError};
+use crate::api::oauth::{error::OAuthError, OAuthScope};
 use password_auth::{generate_hash, verify_password};
 use std::collections::HashSet;
 use time::{Duration, OffsetDateTime};
@@ -831,11 +831,9 @@ mod tests {
         assert!(!encoded.contains('='));
 
         // Should be valid base64url
-        assert!(
-            encoded
-                .chars()
-                .all(|c| c.is_alphanumeric() || c == '-' || c == '_')
-        );
+        assert!(encoded
+            .chars()
+            .all(|c| c.is_alphanumeric() || c == '-' || c == '_'));
     }
 
     #[test]

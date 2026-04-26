@@ -83,13 +83,11 @@ fn tool_rows_from_array(arr: &[Value]) -> Vec<LettaToolRow> {
 
 /// Top-level `blocks`, or deprecated `memory.blocks` on older agent payloads.
 fn agent_blocks_array(v: &Value) -> Option<&Vec<Value>> {
-    v.get("blocks")
-        .and_then(|x| x.as_array())
-        .or_else(|| {
-            v.get("memory")
-                .and_then(|m| m.get("blocks"))
-                .and_then(|x| x.as_array())
-        })
+    v.get("blocks").and_then(|x| x.as_array()).or_else(|| {
+        v.get("memory")
+            .and_then(|m| m.get("blocks"))
+            .and_then(|x| x.as_array())
+    })
 }
 
 impl LettaAgentDiagnostics {
@@ -103,10 +101,7 @@ impl LettaAgentDiagnostics {
                 let char_count = b
                     .get("value")
                     .map(block_value_char_count)
-                    .or_else(|| {
-                        b.get("content")
-                            .map(block_value_char_count)
-                    });
+                    .or_else(|| b.get("content").map(block_value_char_count));
                 let content = block_body_text(b);
                 blocks.push(LettaBlockRow {
                     id: pick_str(b, &["id"]),

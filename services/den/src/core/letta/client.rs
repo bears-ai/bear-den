@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use reqwest::header::{AUTHORIZATION, CONTENT_TYPE, HeaderMap, HeaderValue};
+use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, CONTENT_TYPE};
 use reqwest::StatusCode;
 use serde_json::json;
 
@@ -163,14 +163,8 @@ impl LettaClient {
             ));
         }
 
-        let body_with_git = build_create_agent_body(
-            name,
-            system_prompt,
-            model,
-            agent_type,
-            tool_ids,
-            true,
-        );
+        let body_with_git =
+            build_create_agent_body(name, system_prompt, model, agent_type, tool_ids, true);
         let (status, text) = self.post_create_agent_raw(&body_with_git).await?;
 
         if status.is_success() {
@@ -182,14 +176,8 @@ impl LettaClient {
                 %status,
                 "Letta rejected POST /v1/agents with git_enabled; retrying without git_enabled"
             );
-            let body_no_git = build_create_agent_body(
-                name,
-                system_prompt,
-                model,
-                agent_type,
-                tool_ids,
-                false,
-            );
+            let body_no_git =
+                build_create_agent_body(name, system_prompt, model, agent_type, tool_ids, false);
             let (status2, text2) = self.post_create_agent_raw(&body_no_git).await?;
             if status2.is_success() {
                 tracing::warn!(
@@ -296,7 +284,9 @@ impl LettaClient {
             ])
             .send()
             .await
-            .map_err(|e| CustomError::System(format!("Letta list conversations request failed: {e}")))?;
+            .map_err(|e| {
+                CustomError::System(format!("Letta list conversations request failed: {e}"))
+            })?;
 
         let status = resp.status();
         let text = resp
@@ -339,8 +329,7 @@ impl LettaClient {
         let order = if oldest_first { "asc" } else { "desc" };
         let url = format!(
             "{}/v1/conversations/{}/messages",
-            self.base_url,
-            conversation_id
+            self.base_url, conversation_id
         );
 
         let mut req = self
@@ -356,16 +345,14 @@ impl LettaClient {
             req = req.query(&[("before", b)]);
         }
 
-        let resp = req
-            .send()
-            .await
-            .map_err(|e| CustomError::System(format!("Letta list conversation messages failed: {e}")))?;
+        let resp = req.send().await.map_err(|e| {
+            CustomError::System(format!("Letta list conversation messages failed: {e}"))
+        })?;
 
         let status = resp.status();
-        let text = resp
-            .text()
-            .await
-            .map_err(|e| CustomError::System(format!("Letta list conversation messages body: {e}")))?;
+        let text = resp.text().await.map_err(|e| {
+            CustomError::System(format!("Letta list conversation messages body: {e}"))
+        })?;
 
         if !status.is_success() {
             return Err(CustomError::System(format!(
@@ -392,11 +379,47 @@ impl LettaClient {
             ));
         }
 
-        let url = format!(
-            "{}/v1/conversations/{}",
-            self.base_url, conversation_id
-        );
+        let url = format!("{}/v1/conversations/{}", self.base_url, conversation_id);
         let body = json!({ "summary": summary });
+        let resp = self
+            .http
+            .patch(url)
+            .headers(self.auth_headers())
+            .header(CONTENT_TYPE, "application/json")
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| CustomError::System(format!("Letta patch conversation failed: {e}")))?;
+
+        let status = resp.status();
+        let text = resp
+            .text()
+            .await
+            .map_err(|e| CustomError::System(format!("Letta patch conversation body: {e}")))?;
+
+        if !status.is_success() {
+            return Err(CustomError::System(format!(
+                "Letta patch conversation HTTP {status}: {text}"
+            )));
+        }
+
+        Ok(())
+    }
+
+    /// `PATCH /v1/conversations/{conversation_id}` — mark a conversation archived/unarchived.
+    pub async fn patch_conversation_archived(
+        &self,
+        conversation_id: &str,
+        archived: bool,
+    ) -> Result<(), CustomError> {
+        if !self.is_enabled() {
+            return Err(CustomError::System(
+                "Letta is not configured (set LETTA_BASE_URL)".to_string(),
+            ));
+        }
+
+        let url = format!("{}/v1/conversations/{}", self.base_url, conversation_id);
+        let body = json!({ "archived": archived });
         let resp = self
             .http
             .patch(url)
@@ -467,7 +490,9 @@ impl LettaClient {
             .json(&body)
             .send()
             .await
-            .map_err(|e| CustomError::System(format!("Letta conversation messages request failed: {e}")))?;
+            .map_err(|e| {
+                CustomError::System(format!("Letta conversation messages request failed: {e}"))
+            })?;
 
         if !resp.status().is_success() {
             let status = resp.status();
@@ -580,10 +605,7 @@ impl LettaClient {
         let resp = self
             .http
             .get(url)
-            .query(&[
-                ("include", "agent.blocks"),
-                ("include", "agent.tools"),
-            ])
+            .query(&[("include", "agent.blocks"), ("include", "agent.tools")])
             .headers(self.auth_headers())
             .send()
             .await
@@ -601,9 +623,8 @@ impl LettaClient {
             )));
         }
 
-        serde_json::from_str(&text).map_err(|e| {
-            CustomError::Parsing(format!("Letta get agent JSON: {e}; body: {text}"))
-        })
+        serde_json::from_str(&text)
+            .map_err(|e| CustomError::Parsing(format!("Letta get agent JSON: {e}; body: {text}")))
     }
 
     /// `GET /v1/agents` — list agents (shape varies by server; ids required).
@@ -661,18 +682,9 @@ impl LettaClient {
             ));
         }
 
-        let body_with_git = build_patch_agent_body(
-            name,
-            description,
-            system,
-            model,
-            agent_type,
-            tool_ids,
-            true,
-        );
-        let (status, text) = self
-            .post_patch_agent_raw(agent_id, &body_with_git)
-            .await?;
+        let body_with_git =
+            build_patch_agent_body(name, description, system, model, agent_type, tool_ids, true);
+        let (status, text) = self.post_patch_agent_raw(agent_id, &body_with_git).await?;
 
         if status.is_success() {
             return Ok(());
@@ -693,9 +705,7 @@ impl LettaClient {
                 tool_ids,
                 false,
             );
-            let (status2, text2) = self
-                .post_patch_agent_raw(agent_id, &body_no_git)
-                .await?;
+            let (status2, text2) = self.post_patch_agent_raw(agent_id, &body_no_git).await?;
             if status2.is_success() {
                 tracing::warn!(
                     agent_id,
@@ -777,7 +787,9 @@ impl LettaClient {
             .headers(self.auth_headers())
             .send()
             .await
-            .map_err(|e| CustomError::System(format!("Letta recompile agent request failed: {e}")))?;
+            .map_err(|e| {
+                CustomError::System(format!("Letta recompile agent request failed: {e}"))
+            })?;
 
         let status = resp.status();
         let text = resp
@@ -833,17 +845,14 @@ fn build_create_agent_body(
 }
 
 fn parse_create_agent_id(text: &str) -> Result<String, CustomError> {
-    let v: serde_json::Value = serde_json::from_str(text).map_err(|e| {
-        CustomError::Parsing(format!("Letta create agent JSON: {e}; body: {text}"))
-    })?;
+    let v: serde_json::Value = serde_json::from_str(text)
+        .map_err(|e| CustomError::Parsing(format!("Letta create agent JSON: {e}; body: {text}")))?;
 
     let id = v
         .get("id")
         .and_then(|x| x.as_str())
         .ok_or_else(|| {
-            CustomError::Parsing(format!(
-                "Letta create agent response missing id: {text}"
-            ))
+            CustomError::Parsing(format!("Letta create agent response missing id: {text}"))
         })?
         .to_string();
 

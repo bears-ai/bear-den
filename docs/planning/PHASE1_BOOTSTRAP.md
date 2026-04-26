@@ -282,7 +282,7 @@ services/den/
 
 ## 9. Bifrost observability (optional Milestone 1.5)
 
-- Env: `BIFROST_BASE_URL` (e.g. `http://bear-bifrost:8080`). Management auth, if any, depends on your Bifrost config (file-only GitOps setups often expose `GET /health` without extra headers).
+- Env: `BIFROST_BASE_URL` (e.g. `http://bears-bifrost:8080`). Management auth, if any, depends on your Bifrost config (file-only GitOps setups often expose `GET /health` without extra headers).
 - Endpoints to call: `GET /health`, Prometheus scrape target if enabled, or log export per [Bifrost observability](https://docs.getbifrost.ai/features/observability/default).
 - **No** forwarding of chat completions through Den.
 - **Attribution:** Document gap: correlating gateway logs to `user_id` may need Letta extra headers — out of Den unless you add Letta config change.
@@ -297,7 +297,7 @@ services/den/
    - Use **cargo-chef** or **cache mount** (`--mount=type=cache`) to speed rebuilds.
 2. **Runtime:** `debian:bookworm-slim`, install `ca-certificates`, copy binary from builder, non-root user.
 3. **Entrypoint:** `/usr/local/bin/den` or run migrations then exec (choose one strategy and document).
-4. **Coolify:** Service e.g. **`bears-den`**, internal port e.g. `8080`, env from secrets, link to Postgres + network to `bear-letta`.
+4. **Coolify:** Service e.g. **`bears-den`**, internal port e.g. `8080`, env from secrets, link to Postgres + network to `bears-letta`.
 
 **`.dockerignore`:** `target/`, `.git/`, etc.
 
@@ -316,7 +316,7 @@ services/den/
 | `ADMIN_API_KEY` | yes (prod) | Machine/automation access to admin JSON API; **browser uses operator session** |
 | `BOOTSTRAP_ADMIN_EMAIL` | no | First-run: promote this user to `is_admin` on registration (homelab) |
 | `RUST_LOG` | no | `den=info,tower_http=info` |
-| `BIFROST_BASE_URL` | no | Observability only (e.g. `http://bear-bifrost:8080`) |
+| `BIFROST_BASE_URL` | no | Observability only (e.g. `http://bears-bifrost:8080`) |
 
 ---
 

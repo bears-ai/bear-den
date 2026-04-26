@@ -3,12 +3,12 @@
 use std::time::Duration;
 
 use axum::{
-    Json,
     extract::State,
     http::StatusCode,
     response::{Html, IntoResponse, Response},
+    Json,
 };
-use reqwest::header::{ACCEPT, AUTHORIZATION, HeaderValue, USER_AGENT};
+use reqwest::header::{HeaderValue, ACCEPT, AUTHORIZATION, USER_AGENT};
 use serde::Deserialize;
 
 use crate::build_info;
@@ -77,10 +77,7 @@ pub async fn page(State(state): State<AppState>) -> Result<Response, crate::erro
         .collect();
 
     let deploy_rows = build_deploy_rows(&payload);
-    let ghcr_note = payload
-        .ghcr_config_note
-        .clone()
-        .unwrap_or_default();
+    let ghcr_note = payload.ghcr_config_note.clone().unwrap_or_default();
 
     let ctx = minijinja::context! {
         title => "BEARS status",
@@ -249,47 +246,44 @@ async fn gather_status(state: &AppState) -> StatusPayload {
 
     let cfg = state.config.as_ref();
     let mut ghcr_config_note: Option<String> = None;
-    let (ghcr_den, ghcr_codepool) =
-        if cfg.github_packages_token.trim().is_empty()
-            || cfg.ghcr_packages_owner.trim().is_empty()
-        {
-            ghcr_config_note = Some(
+    let (ghcr_den, ghcr_codepool) = if cfg.github_packages_token.trim().is_empty()
+        || cfg.ghcr_packages_owner.trim().is_empty()
+    {
+        ghcr_config_note = Some(
                 "Set GITHUB_PACKAGES_TOKEN and GHCR_PACKAGES_OWNER to compare running images with GHCR."
                     .to_string(),
             );
-            (None, None)
-        } else {
-            match reqwest::Client::builder()
-                .timeout(GITHUB_FETCH_TIMEOUT)
-                .connect_timeout(Duration::from_secs(8))
-                .build()
-            {
-                Ok(client) => {
-                    let token = cfg.github_packages_token.trim();
-                    let owner = cfg.ghcr_packages_owner.trim();
-                    let kind = cfg.ghcr_packages_owner_kind.as_str();
-                    let (d, err_d) =
-                        fetch_ghcr_package(&client, token, kind, owner, "den").await;
-                    let (c, err_c) =
-                        fetch_ghcr_package(&client, token, kind, owner, "codepool").await;
-                    let mut notes = Vec::new();
-                    if let Some(e) = err_d {
-                        notes.push(format!("den GHCR: {e}"));
-                    }
-                    if let Some(e) = err_c {
-                        notes.push(format!("codepool GHCR: {e}"));
-                    }
-                    if !notes.is_empty() {
-                        ghcr_config_note = Some(notes.join(" "));
-                    }
-                    (d, c)
+        (None, None)
+    } else {
+        match reqwest::Client::builder()
+            .timeout(GITHUB_FETCH_TIMEOUT)
+            .connect_timeout(Duration::from_secs(8))
+            .build()
+        {
+            Ok(client) => {
+                let token = cfg.github_packages_token.trim();
+                let owner = cfg.ghcr_packages_owner.trim();
+                let kind = cfg.ghcr_packages_owner_kind.as_str();
+                let (d, err_d) = fetch_ghcr_package(&client, token, kind, owner, "den").await;
+                let (c, err_c) = fetch_ghcr_package(&client, token, kind, owner, "codepool").await;
+                let mut notes = Vec::new();
+                if let Some(e) = err_d {
+                    notes.push(format!("den GHCR: {e}"));
                 }
-                Err(e) => {
-                    ghcr_config_note = Some(format!("Could not build HTTP client: {e}"));
-                    (None, None)
+                if let Some(e) = err_c {
+                    notes.push(format!("codepool GHCR: {e}"));
                 }
+                if !notes.is_empty() {
+                    ghcr_config_note = Some(notes.join(" "));
+                }
+                (d, c)
             }
-        };
+            Err(e) => {
+                ghcr_config_note = Some(format!("Could not build HTTP client: {e}"));
+                (None, None)
+            }
+        }
+    };
 
     StatusPayload {
         health,
@@ -317,8 +311,8 @@ async fn fetch_ghcr_package(
     let url = format!("{host}{path}?per_page=100");
 
     let ua = HeaderValue::from_static("den/BEARS-status-dashboard");
-    let auth =
-        HeaderValue::from_str(&format!("Bearer {token}")).unwrap_or_else(|_| HeaderValue::from_static(""));
+    let auth = HeaderValue::from_str(&format!("Bearer {token}"))
+        .unwrap_or_else(|_| HeaderValue::from_static(""));
     let accept = HeaderValue::from_static("application/vnd.github+json");
 
     let resp = match client
@@ -332,19 +326,13 @@ async fn fetch_ghcr_package(
     {
         Ok(r) => r,
         Err(e) => {
-            return (
-                None,
-                Some(format!("request failed: {e}")),
-            );
+            return (None, Some(format!("request failed: {e}")));
         }
     };
     let status_code = resp.status();
     if !status_code.is_success() {
         let txt = resp.text().await.unwrap_or_default();
-        return (
-            None,
-            Some(format!("HTTP {status_code} — {txt}")),
-        );
+        return (None, Some(format!("HTTP {status_code} — {txt}")));
     }
     let body = match resp.text().await {
         Ok(t) => t,

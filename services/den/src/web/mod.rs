@@ -1,13 +1,13 @@
 // ROUTES: When modifying routes in this file, update /src/web/ROUTES.md if present.
 pub mod admin;
-pub mod stack_health;
-pub mod status;
 pub mod bear_chat;
 pub mod bear_create_support;
 pub mod bear_management;
 pub mod filters;
 pub mod home;
 pub mod public;
+pub mod stack_health;
+pub mod status;
 pub mod user;
 pub mod v1;
 
@@ -19,23 +19,24 @@ use crate::errors::CustomError;
 use crate::{auth_backend::Backend, config::Config};
 
 use axum::{
-    Router,
     body::Body,
     extract::{MatchedPath, State},
     http::{header, Request, StatusCode},
     response::{Html, IntoResponse, Response},
     routing::get,
+    Router,
 };
 use axum_extra::routing::RouterExt;
 
-use memory_serve::{CacheControl, MemoryServe, load_assets};
+use memory_serve::{load_assets, CacheControl, MemoryServe};
 
 use axum_login::{
-    AuthManagerLayerBuilder, AuthSession, login_required, permission_required,
+    login_required, permission_required,
     tower_sessions::{
         cookie::SameSite,
         {Expiry, SessionManagerLayer},
     },
+    AuthManagerLayerBuilder, AuthSession,
 };
 use sqlx::postgres::PgPool;
 use tower_sessions_sqlx_store::PostgresStore;
@@ -155,9 +156,7 @@ pub async fn server_with_state(
         MemoryServe::new(load_assets!("src/web/assets")).cache_control(CacheControl::Short);
 
     let letta = std::sync::Arc::new(crate::core::letta::LettaClient::new(config.as_ref()));
-    let codepool = std::sync::Arc::new(crate::core::codepool::CodePoolClient::new(
-        config.as_ref(),
-    ));
+    let codepool = std::sync::Arc::new(crate::core::codepool::CodePoolClient::new(config.as_ref()));
     let media = crate::core::s3::MediaStore::new(config.as_ref());
     server(
         AppState {

@@ -2,10 +2,10 @@
 //! When changing routes, update `src/web/ROUTES.md`.
 
 use axum::{
-    Router,
     extract::{Path, Query, State},
     response::{IntoResponse, Redirect, Response},
     routing::{get, post},
+    Router,
 };
 use axum_extra::extract::Form;
 use axum_extra::routing::RouterExt;
@@ -19,12 +19,9 @@ use crate::{
     auth_backend::{AuthSession, SessionUser},
     core::{
         bears::{
-            compute_letta_drift,
-            db as bears_db,
-            db::{BearMemberRow, BEAR_ROLE_ADMIN, BEAR_ROLE_MEMBER, role_is_bear_admin},
-            provision,
-            sync,
-            Bear,
+            compute_letta_drift, db as bears_db,
+            db::{role_is_bear_admin, BearMemberRow, BEAR_ROLE_ADMIN, BEAR_ROLE_MEMBER},
+            provision, sync, Bear,
         },
         letta::{load_agent_conversations, AgentSummary, LettaAgentDiagnostics},
         memory_manager_head::fetch_memory_manager_repository_files,
@@ -51,10 +48,7 @@ pub fn router() -> Router<AppState> {
             "/bear/{slug}/details/resync-letta",
             post(bear_resync_letta_post),
         )
-        .route_with_tsr(
-            "/bear/{slug}/details/edit",
-            get(bear_edit_redirect_get),
-        )
+        .route_with_tsr("/bear/{slug}/details/edit", get(bear_edit_redirect_get))
         .route_with_tsr(
             "/bear/{slug}/details/edit/overview",
             get(bear_edit_overview_get).post(bear_edit_overview_post),
@@ -74,10 +68,7 @@ pub fn router() -> Router<AppState> {
         )
         .route_with_tsr("/bear/{slug}/details/memory", get(bear_memory_get))
         .route_with_tsr("/bear/{slug}/details/delete", post(bear_delete_post))
-        .route_with_tsr(
-            "/bear/{slug}/details/members/add",
-            post(member_add_post),
-        )
+        .route_with_tsr("/bear/{slug}/details/members/add", post(member_add_post))
         .route_with_tsr(
             "/bear/{slug}/details/members/remove",
             post(member_remove_post),
@@ -106,7 +97,9 @@ async fn load_bear_member(
     }
     bears_db::bear_for_user_by_slug(pool, user_id, slug)
         .await?
-        .ok_or_else(|| CustomError::NotFound("Bear not found or you do not have access.".to_string()))
+        .ok_or_else(|| {
+            CustomError::NotFound("Bear not found or you do not have access.".to_string())
+        })
 }
 
 async fn viewer_is_bear_admin(
@@ -192,17 +185,11 @@ async fn new_bear_post(
     form.attach_letta_agent_id.clear();
 
     let letta_fetch = if state.letta.is_enabled() {
-        Some(
-            state
-                .letta
-                .list_llm_models()
-                .await
-                .map(|opts| {
-                    let model_trim = form.default_model.trim();
-                    let h = (!model_trim.is_empty()).then_some(model_trim);
-                    ensure_stored_model_in_options_for_handle(h, opts)
-                }),
-        )
+        Some(state.letta.list_llm_models().await.map(|opts| {
+            let model_trim = form.default_model.trim();
+            let h = (!model_trim.is_empty()).then_some(model_trim);
+            ensure_stored_model_in_options_for_handle(h, opts)
+        }))
     } else {
         None
     };
@@ -254,20 +241,11 @@ async fn new_bear_post(
         )
         .await?;
 
-        bears_db::grant_membership(
-            state.sqlx_pool(),
-            user_id,
-            id,
-            Some(BEAR_ROLE_ADMIN),
-        )
-        .await?;
+        bears_db::grant_membership(state.sqlx_pool(), user_id, id, Some(BEAR_ROLE_ADMIN)).await?;
 
-        if let Err(e) = provision::provision_bear_if_configured(
-            state.sqlx_pool(),
-            state.letta.as_ref(),
-            id,
-        )
-        .await
+        if let Err(e) =
+            provision::provision_bear_if_configured(state.sqlx_pool(), state.letta.as_ref(), id)
+                .await
         {
             if state.letta.is_enabled() {
                 tracing::warn!(%id, "Letta provision failed: {e}");
@@ -346,76 +324,72 @@ async fn render_bear_details_page(
     let letta_api_base = state.config.letta_base_url.trim().to_string();
     let slug = bear.slug.clone();
 
-    let (letta_agent_summary, letta_agent_fetch_error, letta_drift) =
-        if letta_configured {
-            if let Some(agent_id) =
-                bear.letta_agent_id.as_deref().map(str::trim).filter(|s| !s.is_empty())
-            {
-                match state.letta.fetch_agent(agent_id).await {
-                    Ok(v) => {
-                        let summary = AgentSummary::from_letta_agent_state(&v);
-                        let diagnostics = LettaAgentDiagnostics::from_agent_json(&v);
-                        let drift = compute_letta_drift(
-                            &bear,
-                            Some(&summary),
-                            Some(&diagnostics),
-                            Some(&v),
-                        );
-                        (
-                            Some(summary),
-                            None,
-                            drift,
-                        )
-                    }
-                    Err(e) => {
-                        let msg = e.to_string();
-                        (None, Some(msg), None)
-                    }
+    let (letta_agent_summary, letta_agent_fetch_error, letta_drift) = if letta_configured {
+        if let Some(agent_id) = bear
+            .letta_agent_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        {
+            match state.letta.fetch_agent(agent_id).await {
+                Ok(v) => {
+                    let summary = AgentSummary::from_letta_agent_state(&v);
+                    let diagnostics = LettaAgentDiagnostics::from_agent_json(&v);
+                    let drift =
+                        compute_letta_drift(&bear, Some(&summary), Some(&diagnostics), Some(&v));
+                    (Some(summary), None, drift)
                 }
-            } else {
-                (None, None, None)
+                Err(e) => {
+                    let msg = e.to_string();
+                    (None, Some(msg), None)
+                }
             }
         } else {
             (None, None, None)
-        };
+        }
+    } else {
+        (None, None, None)
+    };
 
-    let (conversation_rows, has_archived_conversations) =
-        if letta_configured {
-            if let Some(agent_id) =
-                bear.letta_agent_id.as_deref().map(str::trim).filter(|s| !s.is_empty())
-            {
-                let snap = load_agent_conversations(state.letta.as_ref(), agent_id).await;
-                let has_archived = snap.has_archived;
-                let rows: Vec<DetailsConvRow> = snap
-                    .active
-                    .into_iter()
-                    .map(|r| {
-                        let web_href = if r.id == "default" {
-                            format!("/bear/{}/", slug)
-                        } else {
-                            format!(
-                                "/bear/{}/?conversation_id={}",
-                                slug,
-                                urlencoding::encode(&r.id)
-                            )
-                        };
-                        DetailsConvRow {
-                            id: r.id,
-                            title: r.title,
-                            last_message_at: r.last_message_at,
-                            channel_label: "Web",
-                            web_href,
-                            archived: false,
-                        }
-                    })
-                    .collect();
-                (rows, has_archived)
-            } else {
-                (Vec::new(), false)
-            }
+    let (conversation_rows, has_archived_conversations) = if letta_configured {
+        if let Some(agent_id) = bear
+            .letta_agent_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        {
+            let snap = load_agent_conversations(state.letta.as_ref(), agent_id).await;
+            let has_archived = snap.has_archived;
+            let rows: Vec<DetailsConvRow> = snap
+                .active
+                .into_iter()
+                .map(|r| {
+                    let web_href = if r.id == "default" {
+                        format!("/bear/{}/", slug)
+                    } else {
+                        format!(
+                            "/bear/{}/?conversation_id={}",
+                            slug,
+                            urlencoding::encode(&r.id)
+                        )
+                    };
+                    DetailsConvRow {
+                        id: r.id,
+                        title: r.title,
+                        last_message_at: r.last_message_at,
+                        channel_label: "Web",
+                        web_href,
+                        archived: false,
+                    }
+                })
+                .collect();
+            (rows, has_archived)
         } else {
             (Vec::new(), false)
-        };
+        }
+    } else {
+        (Vec::new(), false)
+    };
 
     let letta_tool_ids_display = if bear.letta_tool_ids.0.is_empty() {
         None
@@ -430,28 +404,27 @@ async fn render_bear_details_page(
     };
 
     let memfs_url = state.config.letta_memfs_service_url.as_str();
-    let (
-        mem_private_files,
-        mem_private_error,
-        mem_private_skipped,
-        mem_private_no_repo,
-    ) = if !memfs_url.is_empty() && letta_configured {
-        if let Some(agent_id) =
-            bear.letta_agent_id.as_deref().map(str::trim).filter(|s| !s.is_empty())
-        {
-            match fetch_memory_manager_repository_files(state.letta.http(), memfs_url, agent_id)
-                .await
+    let (mem_private_files, mem_private_error, mem_private_skipped, mem_private_no_repo) =
+        if !memfs_url.is_empty() && letta_configured {
+            if let Some(agent_id) = bear
+                .letta_agent_id
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
             {
-                Ok(None) => (None, None, false, true),
-                Ok(Some(files)) => (Some(files), None, false, false),
-                Err(e) => (None, Some(e.to_string()), false, false),
+                match fetch_memory_manager_repository_files(state.letta.http(), memfs_url, agent_id)
+                    .await
+                {
+                    Ok(None) => (None, None, false, true),
+                    Ok(Some(files)) => (Some(files), None, false, false),
+                    Err(e) => (None, Some(e.to_string()), false, false),
+                }
+            } else {
+                (None, None, true, false)
             }
         } else {
             (None, None, true, false)
-        }
-    } else {
-        (None, None, true, false)
-    };
+        };
 
     render_template(
         state,
@@ -531,12 +504,19 @@ async fn bear_resync_letta_post(
     }
 
     let target = format!("/bear/{}/details", bear.slug);
-    if !state.letta.is_enabled() || bear.letta_agent_id.as_deref().map(str::trim).filter(|s| !s.is_empty()).is_none()
+    if !state.letta.is_enabled()
+        || bear
+            .letta_agent_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .is_none()
     {
         return Ok(Redirect::to(&format!("{target}?letta_resync=error")).into_response());
     }
 
-    if let Err(e) = sync::sync_bear_to_letta(state.sqlx_pool(), state.letta.as_ref(), bear.id).await {
+    if let Err(e) = sync::sync_bear_to_letta(state.sqlx_pool(), state.letta.as_ref(), bear.id).await
+    {
         tracing::warn!(bear_id = %bear.id, "Letta resync from details failed: {e}");
         return Ok(Redirect::to(&format!("{target}?letta_resync=error")).into_response());
     }
@@ -645,7 +625,9 @@ async fn bear_edit_overview_post(
         )
         .await?;
 
-        if let Err(e) = sync::sync_bear_to_letta(state.sqlx_pool(), state.letta.as_ref(), bear.id).await {
+        if let Err(e) =
+            sync::sync_bear_to_letta(state.sqlx_pool(), state.letta.as_ref(), bear.id).await
+        {
             tracing::warn!(bear_id = %bear.id, "Letta sync after overview edit failed: {e}");
             let bear = bears_db::get_bear(state.sqlx_pool(), bear.id)
                 .await?
@@ -759,7 +741,9 @@ async fn bear_edit_prompt_post(
         )
         .await?;
 
-        if let Err(e) = sync::sync_bear_to_letta(state.sqlx_pool(), state.letta.as_ref(), bear.id).await {
+        if let Err(e) =
+            sync::sync_bear_to_letta(state.sqlx_pool(), state.letta.as_ref(), bear.id).await
+        {
             tracing::warn!(bear_id = %bear.id, "Letta sync after prompt edit failed: {e}");
             return render_template(
                 &state,
@@ -852,17 +836,11 @@ async fn bear_edit_configuration_post(
     }
 
     let letta_fetch = if state.letta.is_enabled() {
-        Some(
-            state
-                .letta
-                .list_llm_models()
-                .await
-                .map(|opts| {
-                    let model_trim = form.default_model.trim();
-                    let h = (!model_trim.is_empty()).then_some(model_trim);
-                    ensure_stored_model_in_options_for_handle(h, opts)
-                }),
-        )
+        Some(state.letta.list_llm_models().await.map(|opts| {
+            let model_trim = form.default_model.trim();
+            let h = (!model_trim.is_empty()).then_some(model_trim);
+            ensure_stored_model_in_options_for_handle(h, opts)
+        }))
     } else {
         None
     };
@@ -912,7 +890,9 @@ async fn bear_edit_configuration_post(
         )
         .await?;
 
-        if let Err(e) = sync::sync_bear_to_letta(state.sqlx_pool(), state.letta.as_ref(), bear.id).await {
+        if let Err(e) =
+            sync::sync_bear_to_letta(state.sqlx_pool(), state.letta.as_ref(), bear.id).await
+        {
             tracing::warn!(bear_id = %bear.id, "Letta sync after configuration edit failed: {e}");
             let bear = bears_db::get_bear(state.sqlx_pool(), bear.id)
                 .await?
@@ -1004,7 +984,12 @@ async fn bear_conversations_get(
     let letta_configured = state.letta.is_enabled();
 
     let (rows, list_error) = if letta_configured {
-        if let Some(agent_id) = bear.letta_agent_id.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        if let Some(agent_id) = bear
+            .letta_agent_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        {
             let snap = load_agent_conversations(state.letta.as_ref(), agent_id).await;
             let rows: Vec<DetailsConvRow> = snap
                 .all
@@ -1031,7 +1016,10 @@ async fn bear_conversations_get(
                 .collect();
             (rows, None)
         } else {
-            (Vec::new(), Some("No Letta agent is linked to this bear.".to_string()))
+            (
+                Vec::new(),
+                Some("No Letta agent is linked to this bear.".to_string()),
+            )
         }
     } else {
         (Vec::new(), Some("Letta is not configured.".to_string()))
@@ -1068,7 +1056,12 @@ async fn bear_memory_get(
     let letta_configured = state.letta.is_enabled();
 
     let (letta_diagnostics, letta_diag_error) = if letta_configured {
-        if let Some(agent_id) = bear.letta_agent_id.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        if let Some(agent_id) = bear
+            .letta_agent_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        {
             match state.letta.fetch_agent(agent_id).await {
                 Ok(v) => (Some(LettaAgentDiagnostics::from_agent_json(&v)), None),
                 Err(e) => (None, Some(e.to_string())),
@@ -1212,9 +1205,12 @@ async fn member_remove_post(
         ));
     }
 
-    let target_role = bears_db::membership_role_for_user(state.sqlx_pool(), body.remove_user_id, bear.id)
-        .await?
-        .ok_or_else(|| CustomError::NotFound("user is not a member of this bear".to_string()))?;
+    let target_role =
+        bears_db::membership_role_for_user(state.sqlx_pool(), body.remove_user_id, bear.id)
+            .await?
+            .ok_or_else(|| {
+                CustomError::NotFound("user is not a member of this bear".to_string())
+            })?;
 
     if role_is_bear_admin(target_role.as_deref()) {
         let n = bears_db::count_bear_admins(state.sqlx_pool(), bear.id).await?;

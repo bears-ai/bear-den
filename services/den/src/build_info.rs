@@ -1,6 +1,6 @@
 //! Compile-time build metadata (see `build.rs`) exposed for `GET /version` on web and API.
 
-use axum::{Json, response::IntoResponse};
+use axum::{response::IntoResponse, Json};
 use serde::Serialize;
 
 #[derive(Clone, Debug, Serialize)]

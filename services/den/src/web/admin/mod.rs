@@ -7,7 +7,7 @@ pub mod ops;
 pub mod users;
 
 use axum::response::Response;
-use axum::{Router, extract::State, routing::get};
+use axum::{extract::State, routing::get, Router};
 
 use minijinja::context;
 
@@ -56,15 +56,14 @@ async fn admin_home(
         )
     } else {
         match state.codepool.check_health().await {
-            Ok(_) => (
-                "ok",
-                "GET /health on Codepool succeeded.".to_string(),
-            ),
+            Ok(_) => ("ok", "GET /health on Codepool succeeded.".to_string()),
             Err(e) => ("error", e.to_string()),
         }
     };
 
-    web::render_template(&state, "admin/menu.html",
+    web::render_template(
+        &state,
+        "admin/menu.html",
         auth_session,
         context! {
             users => users,

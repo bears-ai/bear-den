@@ -69,7 +69,7 @@ export function attachRoutes(
     }
     res.json({
       ok: true,
-      service: "bear-codepool",
+      service: "bears-codepool",
       letta_memfs_local: process.env.LETTA_MEMFS_LOCAL ?? null,
       session_memfs: true,
       letta_cli_home: lettaCliHome,
@@ -80,7 +80,7 @@ export function attachRoutes(
   app.get("/version", (_req, res) => {
     const gitSha = process.env.CODEPOOL_GIT_SHA?.trim() || "unknown";
     res.json({
-      service: "bear-codepool",
+      service: "bears-codepool",
       version: packageJson.version ?? "0.0.0",
       git_sha: gitSha,
     });
@@ -150,7 +150,7 @@ export function attachRoutes(
       console.log(
         JSON.stringify({
           event: "conversation_messages_start",
-          service: "bear-codepool",
+          service: "bears-codepool",
           request_id: requestId,
           conversation_id: conversationId,
           agent_id: agentId,
@@ -211,7 +211,7 @@ export function attachRoutes(
         console.log(
           JSON.stringify({
             event: "conversation_messages_end",
-            service: "bear-codepool",
+            service: "bears-codepool",
             request_id: requestId,
             outcome,
             duration_ms: ms,
@@ -224,7 +224,7 @@ export function attachRoutes(
         console.log(
           JSON.stringify({
             event: "conversation_messages_error",
-            service: "bear-codepool",
+            service: "bears-codepool",
             request_id: requestId,
             error: err,
           })

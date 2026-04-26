@@ -55,7 +55,7 @@ pub fn render_letta_code_harness_yaml(
     rows: &[LettaCodeHarnessRow],
 ) -> Result<String, CustomError> {
     let base_url = if letta_base_url.trim().is_empty() {
-        "http://bear-letta:8283"
+        "http://bears-letta:8283"
     } else {
         letta_base_url.trim_end_matches('/')
     };
@@ -157,6 +157,6 @@ mod tests {
     #[test]
     fn placeholder_base_when_unconfigured() {
         let y = render_letta_code_harness_yaml("", &[]).unwrap();
-        assert!(y.contains("bear-letta:8283"));
+        assert!(y.contains("bears-letta:8283"));
     }
 }

@@ -2,10 +2,11 @@
 use serde::{Deserialize, Serialize};
 
 use axum::{
-    Router, debug_handler,
+    debug_handler,
     extract::{Path, Query, State},
     response::{IntoResponse, Redirect, Response},
     routing::{get, post},
+    Router,
 };
 use axum_extra::extract::Form;
 use axum_extra::routing::RouterExt;
@@ -16,13 +17,14 @@ use minijinja::context;
 
 use crate::{
     api::oauth::{
-        AccessTokenWithContext, OAuthScope, db as oauth_db,
+        db as oauth_db,
         utils::{
             generate_access_token, generate_client_id, generate_client_secret,
             generate_pkce_code_challenge, generate_pkce_code_verifier, hash_client_secret,
             scopes_from_json, validate_code_challenge_method, validate_pkce, validate_redirect_uri,
             validate_scopes_with_conflict_detection,
         },
+        AccessTokenWithContext, OAuthScope,
     },
     auth_backend::AuthSession,
     errors::CustomError,
@@ -190,7 +192,9 @@ async fn oauth_clients_list(
 ) -> Result<Response, CustomError> {
     let clients = oauth_db::list_oauth_clients(&state.sqlx_pool).await?;
 
-    web::render_template(&state, "admin/oauth_clients/list.html",
+    web::render_template(
+        &state,
+        "admin/oauth_clients/list.html",
         auth_session,
         context! {
             clients
@@ -208,7 +212,9 @@ async fn add_oauth_client_view(
         .map(|s| s.as_str().to_string())
         .collect();
 
-    web::render_template(&state, "admin/oauth_clients/add.html",
+    web::render_template(
+        &state,
+        "admin/oauth_clients/add.html",
         auth_session,
         context! {
             available_scopes
@@ -353,7 +359,9 @@ pub async fn add_oauth_client_action(
             })
             .unwrap_or_default();
 
-        web::render_template(&state, "admin/oauth_clients/add.html",
+        web::render_template(
+            &state,
+            "admin/oauth_clients/add.html",
             auth_session,
             context! {
                 errors => validation_errors,
@@ -403,7 +411,9 @@ async fn view_oauth_client(
     let show_regenerated = params.regenerated.as_deref() == Some("true");
     let client_secret = params.client_secret;
 
-    web::render_template(&state, "admin/oauth_clients/view.html",
+    web::render_template(
+        &state,
+        "admin/oauth_clients/view.html",
         auth_session,
         context! {
             client,
@@ -432,7 +442,9 @@ async fn edit_oauth_client_view(
         .map(|s| s.as_str().to_string())
         .collect();
 
-    web::render_template(&state, "admin/oauth_clients/edit.html",
+    web::render_template(
+        &state,
+        "admin/oauth_clients/edit.html",
         auth_session,
         context! {
             id,
@@ -531,7 +543,9 @@ pub async fn edit_oauth_client_action(
             })
             .unwrap_or_default();
 
-        web::render_template(&state, "admin/oauth_clients/edit.html",
+        web::render_template(
+            &state,
+            "admin/oauth_clients/edit.html",
             auth_session,
             context! {
                 id,
@@ -560,7 +574,9 @@ async fn pkce_test_view(
     let sample_verifier = generate_pkce_code_verifier();
     let sample_challenge = generate_pkce_code_challenge(&sample_verifier);
 
-    web::render_template(&state, "admin/oauth_clients/pkce_test.html",
+    web::render_template(
+        &state,
+        "admin/oauth_clients/pkce_test.html",
         auth_session,
         context! {
             client_id,
@@ -629,7 +645,9 @@ pub async fn pkce_test_action(
             },
         };
 
-        web::render_template(&state, "admin/oauth_clients/pkce_test.html",
+        web::render_template(
+            &state,
+            "admin/oauth_clients/pkce_test.html",
             auth_session,
             context! {
                 client_id,
@@ -694,7 +712,9 @@ pub async fn pkce_test_action(
             })
             .unwrap_or_default();
 
-        web::render_template(&state, "admin/oauth_clients/pkce_test.html",
+        web::render_template(
+            &state,
+            "admin/oauth_clients/pkce_test.html",
             auth_session,
             context! {
                 client_id,
@@ -773,7 +793,9 @@ async fn oauth_tokens_list(
 ) -> Result<Response, CustomError> {
     let tokens = oauth_db::list_all_access_tokens_with_context(&state.sqlx_pool).await?;
 
-    web::render_template(&state, "admin/oauth_tokens/list.html",
+    web::render_template(
+        &state,
+        "admin/oauth_tokens/list.html",
         auth_session,
         context! {
             tokens
@@ -817,7 +839,9 @@ async fn view_oauth_token(
         .await?
         .ok_or_else(|| CustomError::NotFound("OAuth token not found".to_string()))?;
 
-    web::render_template(&state, "admin/oauth_tokens/view.html",
+    web::render_template(
+        &state,
+        "admin/oauth_tokens/view.html",
         auth_session,
         context! {
             token
@@ -861,7 +885,9 @@ async fn generate_token_view(
         .map(|s| s.as_str().to_string())
         .collect();
 
-    web::render_template(&state, "admin/oauth_tokens/generate.html",
+    web::render_template(
+        &state,
+        "admin/oauth_tokens/generate.html",
         auth_session,
         context! {
             clients,

@@ -267,24 +267,26 @@ pub async fn bear_configuration_page_context(
         letta_tool_options = ensure_stored_tools_in_options_ids(&form_tool_ids, letta_tool_options);
     }
 
-    let (letta_diagnostics, letta_agent_fetch_warn): (Option<LettaAgentDiagnostics>, Option<String>) =
-        if state.letta.is_enabled() {
-            if let Some(agent_id) = bear
-                .letta_agent_id
-                .as_deref()
-                .map(str::trim)
-                .filter(|s| !s.is_empty())
-            {
-                match state.letta.fetch_agent(agent_id).await {
-                    Ok(v) => (Some(LettaAgentDiagnostics::from_agent_json(&v)), None),
-                    Err(e) => (None, Some(e.to_string())),
-                }
-            } else {
-                (None, None)
+    let (letta_diagnostics, letta_agent_fetch_warn): (
+        Option<LettaAgentDiagnostics>,
+        Option<String>,
+    ) = if state.letta.is_enabled() {
+        if let Some(agent_id) = bear
+            .letta_agent_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        {
+            match state.letta.fetch_agent(agent_id).await {
+                Ok(v) => (Some(LettaAgentDiagnostics::from_agent_json(&v)), None),
+                Err(e) => (None, Some(e.to_string())),
             }
         } else {
             (None, None)
-        };
+        }
+    } else {
+        (None, None)
+    };
 
     context! {
         letta_configured,
@@ -360,8 +362,7 @@ pub async fn bear_new_form_context(state: &AppState, form: &NewBearForm) -> mini
     let (letta_tools_configured, mut letta_tool_options, letta_tools_fetch_error) =
         letta_tool_select_context(state).await;
     if letta_tools_configured {
-        letta_tool_options =
-            ensure_stored_tools_in_options_ids(&form_tool_ids, letta_tool_options);
+        letta_tool_options = ensure_stored_tools_in_options_ids(&form_tool_ids, letta_tool_options);
     }
 
     context! {
@@ -376,7 +377,11 @@ pub async fn bear_new_form_context(state: &AppState, form: &NewBearForm) -> mini
 }
 
 /// Edit bear template: merged model/tool lists + optional Letta agent diagnostics.
-pub async fn bear_edit_page_context(state: &AppState, bear: &Bear, form: &NewBearForm) -> minijinja::Value {
+pub async fn bear_edit_page_context(
+    state: &AppState,
+    bear: &Bear,
+    form: &NewBearForm,
+) -> minijinja::Value {
     let (letta_configured, letta_model_options, letta_models_fetch_error) =
         letta_model_select_context(state).await;
     let model_trim = form.default_model.trim();
@@ -398,24 +403,26 @@ pub async fn bear_edit_page_context(state: &AppState, bear: &Bear, form: &NewBea
         letta_tool_options = ensure_stored_tools_in_options_ids(&form_tool_ids, letta_tool_options);
     }
 
-    let (letta_diagnostics, letta_agent_fetch_warn): (Option<LettaAgentDiagnostics>, Option<String>) =
-        if state.letta.is_enabled() {
-            if let Some(agent_id) = bear
-                .letta_agent_id
-                .as_deref()
-                .map(str::trim)
-                .filter(|s| !s.is_empty())
-            {
-                match state.letta.fetch_agent(agent_id).await {
-                    Ok(v) => (Some(LettaAgentDiagnostics::from_agent_json(&v)), None),
-                    Err(e) => (None, Some(e.to_string())),
-                }
-            } else {
-                (None, None)
+    let (letta_diagnostics, letta_agent_fetch_warn): (
+        Option<LettaAgentDiagnostics>,
+        Option<String>,
+    ) = if state.letta.is_enabled() {
+        if let Some(agent_id) = bear
+            .letta_agent_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        {
+            match state.letta.fetch_agent(agent_id).await {
+                Ok(v) => (Some(LettaAgentDiagnostics::from_agent_json(&v)), None),
+                Err(e) => (None, Some(e.to_string())),
             }
         } else {
             (None, None)
-        };
+        }
+    } else {
+        (None, None)
+    };
 
     context! {
         letta_configured,

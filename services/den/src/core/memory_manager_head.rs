@@ -39,8 +39,6 @@ pub struct PrivateMemoryRepoNodeView {
     pub children: Vec<PrivateMemoryRepoNodeView>,
 }
 
-
-
 impl From<MemoryManagerRepoNode> for PrivateMemoryRepoNodeView {
     fn from(node: MemoryManagerRepoNode) -> Self {
         let is_dir = matches!(
@@ -73,8 +71,6 @@ impl From<MemoryManagerRepoNode> for PrivateMemoryRepoNodeView {
         }
     }
 }
-
-
 
 /// Accepted response shapes from Memory Manager.
 #[derive(Debug, Clone, serde::Deserialize)]

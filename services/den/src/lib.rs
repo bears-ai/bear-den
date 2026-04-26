@@ -14,19 +14,19 @@ pub mod web;
 
 use crate::config::Config;
 use crate::startup::{
-    StartupError, run_sqlx_migrations, validate_runtime_config, validate_upstream_connections,
+    run_sqlx_migrations, validate_runtime_config, validate_upstream_connections, StartupError,
 };
 use tokio::{signal, task::JoinSet};
 use tokio_util::sync::CancellationToken;
-use tracing_subscriber::{EnvFilter, layer::SubscriberExt, util::SubscriberInitExt};
+use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
 use crate::core::email;
 use axum_login::tower_sessions::session_store::ExpiredDeletion;
 use sqlx::postgres::PgPoolOptions;
 use tower_sessions_sqlx_store::PostgresStore;
 
-use std::sync::Arc;
 use std::net::SocketAddr;
+use std::sync::Arc;
 
 /// Run all enabled services until a shutdown signal (Ctrl+C, or SIGTERM on Unix).
 pub async fn run() -> Result<(), StartupError> {
@@ -116,7 +116,9 @@ pub async fn run() -> Result<(), StartupError> {
 
     let sqlx_pool = PgPoolOptions::new()
         .max_connections(config.db_max_connections)
-        .acquire_timeout(std::time::Duration::from_secs(config.db_acquire_timeout_secs))
+        .acquire_timeout(std::time::Duration::from_secs(
+            config.db_acquire_timeout_secs,
+        ))
         .idle_timeout(idle_timeout)
         .connect(&config.database_url)
         .await

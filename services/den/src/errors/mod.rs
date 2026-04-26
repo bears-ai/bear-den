@@ -83,9 +83,11 @@ impl IntoResponse for CustomError {
             CustomError::Database(message) => {
                 ("Database", message, StatusCode::UNPROCESSABLE_ENTITY)
             }
-            CustomError::DatabaseUnavailable(message) => {
-                ("Database Unavailable", message, StatusCode::SERVICE_UNAVAILABLE)
-            }
+            CustomError::DatabaseUnavailable(message) => (
+                "Database Unavailable",
+                message,
+                StatusCode::SERVICE_UNAVAILABLE,
+            ),
             CustomError::Session(message) => {
                 ("Session", message, StatusCode::INTERNAL_SERVER_ERROR)
             }

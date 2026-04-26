@@ -6,7 +6,7 @@ Three application services run via `docker-compose.yaml`:
 
 - `bears-memfs-manager` is the Python service on port `8285`.
 - `bears-den` is the Rust service on port `3000`.
-- `bear-codepool` is the TypeScript service on port `3030`.
+- `bears-codepool` is the TypeScript service on port `3030`.
 
 The workspace container has access to the Docker socket and can manage the stack.
 

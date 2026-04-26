@@ -4,7 +4,7 @@
 
 1. Copy [`.env.example`](../.env.example) to `.env` (or set env another way) and set **`DATABASE_URL`** to a PostgreSQL database that exists on your machine or network (empty database is fine).
 2. Enable at least one service, for example **`RUN_WEB=true`** (and optionally `RUN_API`, `RUN_WORKERS`).
-3. With **`RUN_WEB=true`**, set **`CODEPOOL_BASE_URL`** to your [Codepool](../../services/codepool/README.md) service (for example `http://localhost:3030`) unless you run a **production** build, which defaults to **`http://bear-codepool:3030`** when unset (Docker stack). Den will not start the web server without a non-empty Codepool URL.
+3. With **`RUN_WEB=true`**, set **`CODEPOOL_BASE_URL`** to your [Codepool](../../services/codepool/README.md) service (for example `http://localhost:3030`) unless you run a **production** build, which defaults to **`http://bears-codepool:3030`** when unset (Docker stack). Den will not start the web server without a non-empty Codepool URL.
 4. Run:
 
    ```bash

@@ -1,8 +1,12 @@
 {% extends "base.html" %} {% block title %}{{ bear_name | e }}{% endblock %} {%
 block subnav %}
-<li>
-    <label for="den-conv">Conversation</label>
-    <select id="den-conv" aria-label="Conversation"></select>
+<li class="den-conv-nav-item">
+    <div class="den-conv-tabs-shell" aria-label="Conversations">
+        <button id="den-conv-new" class="den-conv-new" type="button">
+            + New
+        </button>
+        <div id="den-conv-tabs" class="den-conv-tabs" role="tablist"></div>
+    </div>
 </li>
 <li>
     <a class="button-link" href="/bear/{{ bear_slug | e }}/details"
@@ -29,15 +33,17 @@ block subnav %}
 <script>
     var BEAR_ID = "{{ bear_id | e }}";
     var BEAR_NAME = "{{ bear_name | e }}";
-    /** Letta conversation id from URL (`default` = agent main thread, or `conv-…`). Immutable after parse — used to sync `<select>` with history on load. */
+    /** Letta conversation id from URL (`default` = agent main thread, or `conv-…`). */
     var PREFERRED_CONVERSATION_ID = (function () {
         var p = new URLSearchParams(window.location.search).get(
             "conversation_id",
         );
         return p && p.trim() ? p.trim() : "default";
     })();
-    /** Active thread; set to match `#den-conv` after `loadConversations()` and on change. */
+    /** Active thread; set to match the conversation tab UI after `loadConversations()` and on change. */
     var CONVERSATION_ID = PREFERRED_CONVERSATION_ID;
+    var DEN_CONVERSATIONS = [];
+    var DEN_PENDING_CONVERSATION = null;
     /**
      * Show raw `<system-reminder>…</system-reminder>` in the chat only when
      * `?debug=true` or `?debug=verbose` (no UI toggle).
@@ -896,6 +902,7 @@ block subnav %}
                                 );
                             }
                             signals.onClose();
+                            loadConversations();
                             return;
                         }
                         return pump();
@@ -929,6 +936,177 @@ block subnav %}
         customElements.whenDefined("deep-chat").then(configureDenChat);
     }
 
+    function syncConversationUrl(id) {
+        var url = new URL(window.location.href);
+        if (id && id !== "default") {
+            url.searchParams.set("conversation_id", id);
+        } else {
+            url.searchParams.delete("conversation_id");
+        }
+        window.history.replaceState({}, "", url.toString());
+    }
+
+    function makeNewConversationId() {
+        if (window.crypto && typeof window.crypto.randomUUID === "function") {
+            return "conv-" + window.crypto.randomUUID();
+        }
+        return (
+            "conv-" +
+            Date.now().toString(36) +
+            "-" +
+            Math.random().toString(36).slice(2, 12)
+        );
+    }
+
+    function setConversation(id, shouldRemount) {
+        CONVERSATION_ID = id || "default";
+        PREFERRED_CONVERSATION_ID = CONVERSATION_ID;
+        syncConversationUrl(CONVERSATION_ID);
+        renderConversationTabs();
+        if (shouldRemount !== false) remountDeepChat();
+    }
+
+    function patchConversation(id, body) {
+        body.bear_id = BEAR_ID;
+        return fetch(
+            "/v1/chat/conversations/" + encodeURIComponent(id),
+            {
+                method: "PATCH",
+                credentials: "same-origin",
+                headers: {
+                    "Content-Type": "application/json",
+                    Accept: "application/json",
+                },
+                body: JSON.stringify(body),
+            },
+        ).then(function (response) {
+            if (response.status === 401) {
+                window.location.href =
+                    "/login?next=" + encodeURIComponent(window.location.pathname);
+                return { __den_skip: true };
+            }
+            if (!response.ok) {
+                return response.text().then(function (t) {
+                    throw new Error(t || "HTTP " + response.status);
+                });
+            }
+            return response.json();
+        });
+    }
+
+    function renderConversationTabs() {
+        var tabs = document.getElementById("den-conv-tabs");
+        if (!tabs) return;
+        var list = DEN_CONVERSATIONS.length
+            ? DEN_CONVERSATIONS.slice()
+            : [{ id: "default", title: "Main chat" }];
+        tabs.innerHTML = "";
+        for (var i = 0; i < list.length; i++) {
+            var c = list[i];
+            if (!c || !c.id) continue;
+
+            var item = document.createElement("div");
+            item.className = "den-conv-tab";
+            if (c.id === CONVERSATION_ID) {
+                item.className += " den-conv-tab-selected";
+            }
+
+            var selectBtn = document.createElement("button");
+            selectBtn.type = "button";
+            selectBtn.className = "den-conv-tab-main";
+            selectBtn.setAttribute("role", "tab");
+            selectBtn.setAttribute(
+                "aria-selected",
+                c.id === CONVERSATION_ID ? "true" : "false",
+            );
+            selectBtn.textContent = c.title || c.id;
+            selectBtn.onclick = (function (id) {
+                return function () {
+                    if (id !== CONVERSATION_ID) setConversation(id, true);
+                };
+            })(c.id);
+            item.appendChild(selectBtn);
+
+            if (c.id !== "default" && !c.pending) {
+                var renameBtn = document.createElement("button");
+                renameBtn.type = "button";
+                renameBtn.className = "den-conv-tab-action";
+                renameBtn.title = "Rename conversation";
+                renameBtn.setAttribute("aria-label", "Rename conversation");
+                renameBtn.textContent = "Rename";
+                renameBtn.onclick = (function (row) {
+                    return function () {
+                        var next = window.prompt(
+                            "Rename conversation",
+                            row.title || row.id,
+                        );
+                        if (next == null) return;
+                        next = next.trim();
+                        if (!next) return;
+                        patchConversation(row.id, { title: next }).then(
+                            function (data) {
+                                if (data && data.__den_skip) return;
+                                row.title = next;
+                                renderConversationTabs();
+                            },
+                            function (err) {
+                                showErr(String(err.message || err));
+                            },
+                        );
+                    };
+                })(c);
+                item.appendChild(renameBtn);
+
+                var archiveBtn = document.createElement("button");
+                archiveBtn.type = "button";
+                archiveBtn.className = "den-conv-tab-action den-conv-tab-archive";
+                archiveBtn.title = "Archive conversation";
+                archiveBtn.setAttribute("aria-label", "Archive conversation");
+                archiveBtn.textContent = "Archive";
+                archiveBtn.onclick = (function (row) {
+                    return function () {
+                        patchConversation(row.id, { archived: true }).then(
+                            function (data) {
+                                if (data && data.__den_skip) return;
+                                if (row.id === CONVERSATION_ID) {
+                                    PREFERRED_CONVERSATION_ID = "default";
+                                    loadConversations().then(function () {
+                                        remountDeepChat();
+                                    });
+                                } else {
+                                    loadConversations();
+                                }
+                            },
+                            function (err) {
+                                showErr(String(err.message || err));
+                            },
+                        );
+                    };
+                })(c);
+                item.appendChild(archiveBtn);
+            }
+
+            tabs.appendChild(item);
+        }
+    }
+
+    function bindConversationControls() {
+        var newBtn = document.getElementById("den-conv-new");
+        if (!newBtn || newBtn.dataset.denBound === "true") return;
+        newBtn.dataset.denBound = "true";
+        newBtn.onclick = function () {
+            var id = makeNewConversationId();
+            DEN_PENDING_CONVERSATION = {
+                id: id,
+                title: "New chat",
+                last_message_at: null,
+                pending: true,
+            };
+            DEN_CONVERSATIONS.unshift(DEN_PENDING_CONVERSATION);
+            setConversation(id, true);
+        };
+    }
+
     function loadConversations() {
         if (!BEAR_ID) {
             return Promise.resolve();
@@ -955,28 +1133,32 @@ block subnav %}
             })
             .then(function (data) {
                 if (data && data.__den_skip) return "skip-boot";
-                var sel = document.getElementById("den-conv");
-                if (!sel) return;
                 var list = data && data.conversations ? data.conversations : [];
-                sel.innerHTML = "";
+                var rows = [];
+                var optionIds = [];
                 var i;
                 for (i = 0; i < list.length; i++) {
                     var c = list[i];
                     if (!c || !c.id) continue;
-                    var opt = document.createElement("option");
-                    opt.value = c.id;
-                    opt.textContent = c.title || c.id;
-                    sel.appendChild(opt);
+                    rows.push(c);
+                    optionIds.push(c.id);
                 }
-                if (sel.options.length === 0) {
-                    var o = document.createElement("option");
-                    o.value = "default";
-                    o.textContent = "Main chat";
-                    sel.appendChild(o);
+                if (rows.length === 0) {
+                    rows.push({ id: "default", title: "Main chat" });
+                    optionIds.push("default");
                 }
-                var optionIds = [];
-                for (i = 0; i < sel.options.length; i++) {
-                    optionIds.push(sel.options[i].value);
+                if (
+                    DEN_PENDING_CONVERSATION &&
+                    optionIds.indexOf(DEN_PENDING_CONVERSATION.id) < 0 &&
+                    DEN_PENDING_CONVERSATION.id === CONVERSATION_ID
+                ) {
+                    rows.unshift(DEN_PENDING_CONVERSATION);
+                    optionIds.unshift(DEN_PENDING_CONVERSATION.id);
+                } else if (
+                    DEN_PENDING_CONVERSATION &&
+                    optionIds.indexOf(DEN_PENDING_CONVERSATION.id) >= 0
+                ) {
+                    DEN_PENDING_CONVERSATION = null;
                 }
                 var firstId =
                     list[0] && list[0].id
@@ -990,29 +1172,20 @@ block subnav %}
                 if (optionIds.indexOf(pick) < 0) {
                     pick = optionIds[0] || "default";
                 }
-                sel.value = pick;
+                DEN_CONVERSATIONS = rows;
                 CONVERSATION_ID = pick;
-                sel.onchange = function () {
-                    CONVERSATION_ID = sel.value;
-                    remountDeepChat();
-                };
+                bindConversationControls();
+                renderConversationTabs();
+                syncConversationUrl(CONVERSATION_ID);
                 return "ok";
             })
             .catch(function (err) {
                 showErr(String(err.message || err));
-                var sel = document.getElementById("den-conv");
-                if (sel) {
-                    sel.innerHTML = "";
-                    var o = document.createElement("option");
-                    o.value = "default";
-                    o.textContent = "Main chat";
-                    sel.appendChild(o);
-                    sel.onchange = function () {
-                        CONVERSATION_ID = sel.value;
-                        remountDeepChat();
-                    };
-                }
+                DEN_CONVERSATIONS = [{ id: "default", title: "Main chat" }];
                 CONVERSATION_ID = "default";
+                bindConversationControls();
+                renderConversationTabs();
+                syncConversationUrl(CONVERSATION_ID);
                 return "ok";
             });
     }

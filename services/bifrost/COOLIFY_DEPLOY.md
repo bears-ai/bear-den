@@ -68,7 +68,7 @@ Edit `[docker-compose.yaml](docker-compose.yaml)` and replace `maximhq/bifrost:l
 
 ### 7. Deploy
 
-**Deploy** / **Redeploy**. On success, other services on the **same Coolify network** should resolve `**http://bear-bifrost:8080`** (the **service name** in `[docker-compose.yaml](docker-compose.yaml)`).
+**Deploy** / **Redeploy**. On success, other services on the **same Coolify network** should resolve `**http://bears-bifrost:8080`** (the **service name** in `[docker-compose.yaml](docker-compose.yaml)`).
 
 ### 8. Connecting Letta across stacks (if needed)
 
@@ -90,7 +90,7 @@ Use this when you **cannot** use the Git-backed compose flow (for example, no Gi
 
 | Coolify field | Suggested value                                                                                                   |
 | ------------- | ----------------------------------------------------------------------------------------------------------------- |
-| **Name**      | `bear-bifrost`                                                                                                   |
+| **Name**      | `bears-bifrost`                                                                                                  |
 | **Image**     | `maximhq/bifrost` — **pin a tag** in production; see [Docker Hub](https://hub.docker.com/r/maximhq/bifrost/tags). |
 
 
@@ -142,24 +142,24 @@ Every config change requires an **image rebuild**—good for immutability, less 
 
 ## Verify (after deploy)
 
-From a container on the **same Docker network** as `bear-bifrost` (or Coolify **Terminal** on that service):
+From a container on the **same Docker network** as `bears-bifrost` (or Coolify **Terminal** on that service):
 
 ```bash
-curl -sS http://bear-bifrost:8080/health
-curl -sS http://bear-bifrost:8080/v1/models
+curl -sS http://bears-bifrost:8080/health
+curl -sS http://bears-bifrost:8080/v1/models
 ```
 
 Optional smoke test:
 
 ```bash
-curl -sS http://bear-bifrost:8080/v1/chat/completions \
+curl -sS http://bears-bifrost:8080/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d '{"model":"openai/gpt-4o-mini","messages":[{"role":"user","content":"ping"}]}'
 ```
 
 ## Letta (next service)
 
-Set `**LLM_API_URL=http://bear-bifrost:8080/v1**` on Letta (adjust host if you renamed the compose service). Keep `**OPENAI_API_KEY**` on Letta for **embeddings**. Details: `[../letta/COOLIFY_DEPLOY.md](../letta/COOLIFY_DEPLOY.md)`.
+Set `**LLM_API_URL=http://bears-bifrost:8080/v1**` on Letta (adjust host if you renamed the compose service). Keep `**OPENAI_API_KEY**` on Letta for **embeddings**. Details: `[../letta/COOLIFY_DEPLOY.md](../letta/COOLIFY_DEPLOY.md)`.
 
 ## Observability
 
@@ -175,8 +175,8 @@ Set `**LLM_API_URL=http://bear-bifrost:8080/v1**` on Letta (adjust host if you r
 | Compose deploy: “cannot mount … config.json” / empty file | **Preserve Repository During Deployment** enabled; **Base Directory** is `services/bifrost` so `./config.json` exists in the compose context (or use repo root + root `[docker-compose.yaml](../../docker-compose.yaml)` so `./services/bifrost/config.json` exists) |
 | Logs: `read /app/data/config.json: is a directory` | Host path for the bind mount was missing, so Docker created a **directory** named `config.json`. Remove that bad path on the server, ensure the real file exists in the checkout, and match **Base Directory** to the compose path (see above). Repo compose sets **`create_host_path: false`** so this fails fast instead of creating a directory. |
 | Container exits on start                                  | **Logs** — invalid JSON, missing `env.`* variables in Coolify                                                                                |
-| **`bear-bifrost` unhealthy** (health check never passes)  | **`GET /health`** returns **503** when config/log/vector store pings fail — set **`disable_db_pings_in_health`** in `client` (see repo `config.json`); ensure **`OPENAI_API_KEY`** is set if providers use `env.*`; allow a long **`start_period`** on ARM |
-| Letta cannot resolve `bear-bifrost`                      | Same **Docker network** (Option A §8), or use Coolify-generated hostname for the stack                                                       |
+| **`bears-bifrost` unhealthy** (health check never passes) | **`GET /health`** returns **503** when config/log/vector store pings fail — set **`disable_db_pings_in_health`** in `client` (see repo `config.json`); ensure **`OPENAI_API_KEY`** is set if providers use `env.*`; allow a long **`start_period`** on ARM |
+| Letta cannot resolve `bears-bifrost`                     | Same **Docker network** (Option A §8), or use Coolify-generated hostname for the stack                                                       |
 
 
 ## Reference
@@ -184,4 +184,3 @@ Set `**LLM_API_URL=http://bear-bifrost:8080/v1**` on Letta (adjust host if you r
 - Compose stack for Coolify: `[docker-compose.yaml](docker-compose.yaml)`
 - Example env keys: `[.env.example](.env.example)`
 - Bifrost provider config: [Provider configuration](https://docs.getbifrost.ai/quickstart/gateway/provider-configuration)
-
