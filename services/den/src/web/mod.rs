@@ -3,6 +3,7 @@ pub mod admin;
 pub mod bear_chat;
 pub mod bear_create_support;
 pub mod bear_management;
+pub mod design;
 pub mod filters;
 pub mod home;
 pub mod public;
@@ -246,6 +247,7 @@ pub async fn server(
         )
         .nest("/v1", v1::router())
         .merge(user::router())
+        .merge(design::router())
         .merge(home::router())
         .merge(public::router())
         .nest("/assets", asset_router)

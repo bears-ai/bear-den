@@ -11,6 +11,8 @@ Axum routes for the web server (`RUN_WEB=true`). Update this file when you add o
 - `GET /metrics` — Prometheus text exposition (in-memory counters for chat send outcomes; scrape on the internal network; no auth — protect with firewall / reverse proxy as for other metrics endpoints)
 - `GET /status` — **BEARS stack** status page: aggregate health probes plus **deployed vs GHCR** when `GITHUB_PACKAGES_TOKEN` + `GHCR_PACKAGES_OWNER` are set
 - `GET /status.json` — combined JSON (`health`, `den_version`, `codepool_version`, optional `ghcr_*`) — **503** if any health check is `fail`
+- `GET /design` — CSS fixture page for text, forms, and two-column layout
+- `GET /design/chat` — static chat UI fixture for iterating on chat styling
 - `GET /manifest.json` — Web App Manifest (`APP_DISPLAY_NAME`, `APP_SLUG`, icons)
 - `GET /assets/*` — static assets (memory-serve)
 - `GET /*` — fallback 404 (`src/web/public.rs`) for unmatched paths

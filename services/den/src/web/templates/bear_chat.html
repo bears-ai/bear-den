@@ -1,12 +1,11 @@
 {% extends "base.html" %} {% block title %}{{ bear_name | e }}{% endblock %} {%
 block subnav %}
-<li class="den-conv-nav-item">
-    <div class="den-conv-tabs-shell" aria-label="Conversations">
-        <button id="den-conv-new" class="den-conv-new" type="button">
-            + New
-        </button>
-        <div id="den-conv-tabs" class="den-conv-tabs" role="tablist"></div>
-    </div>
+<li class="den-conv-nav-item menu-item-submenu">
+    <input id="den-conv-toggle" class="den-conv-toggle" type="checkbox" />
+    <label class="den-conv-button-container" for="den-conv-toggle">
+        <span id="den-conv-current">Conversation</span>
+    </label>
+    <ul id="den-conv-menu" class="submenu den-conv-menu" aria-label="Conversations"></ul>
 </li>
 <li>
     <a class="button-link" href="/bear/{{ bear_slug | e }}/details"
@@ -966,6 +965,11 @@ block subnav %}
         if (shouldRemount !== false) remountDeepChat();
     }
 
+    function closeConversationMenu() {
+        var toggle = document.getElementById("den-conv-toggle");
+        if (toggle) toggle.checked = false;
+    }
+
     function patchConversation(id, body) {
         body.bear_id = BEAR_ID;
         return fetch(
@@ -995,34 +999,59 @@ block subnav %}
     }
 
     function renderConversationTabs() {
-        var tabs = document.getElementById("den-conv-tabs");
-        if (!tabs) return;
+        var menu = document.getElementById("den-conv-menu");
+        var current = document.getElementById("den-conv-current");
+        if (!menu) return;
         var list = DEN_CONVERSATIONS.length
             ? DEN_CONVERSATIONS.slice()
             : [{ id: "default", title: "Main chat" }];
-        tabs.innerHTML = "";
+        var currentTitle = "Conversation";
+        menu.innerHTML = "";
+
+        var newItem = document.createElement("li");
+        newItem.className = "den-conv-menu-row den-conv-menu-new-row";
+        var newBtn = document.createElement("button");
+        newBtn.type = "button";
+        newBtn.className = "den-conv-menu-main";
+        newBtn.textContent = "+ New conversation";
+        newBtn.onclick = function () {
+            var id = makeNewConversationId();
+            DEN_PENDING_CONVERSATION = {
+                id: id,
+                title: "New chat",
+                last_message_at: null,
+                pending: true,
+            };
+            DEN_CONVERSATIONS.unshift(DEN_PENDING_CONVERSATION);
+            setConversation(id, true);
+            closeConversationMenu();
+        };
+        newItem.appendChild(newBtn);
+        menu.appendChild(newItem);
+
         for (var i = 0; i < list.length; i++) {
             var c = list[i];
             if (!c || !c.id) continue;
 
-            var item = document.createElement("div");
-            item.className = "den-conv-tab";
+            var item = document.createElement("li");
+            item.className = "den-conv-menu-row";
             if (c.id === CONVERSATION_ID) {
-                item.className += " den-conv-tab-selected";
+                item.className += " den-conv-menu-row-selected";
+                currentTitle = c.title || c.id;
             }
 
             var selectBtn = document.createElement("button");
             selectBtn.type = "button";
-            selectBtn.className = "den-conv-tab-main";
-            selectBtn.setAttribute("role", "tab");
+            selectBtn.className = "den-conv-menu-main";
             selectBtn.setAttribute(
-                "aria-selected",
+                "aria-current",
                 c.id === CONVERSATION_ID ? "true" : "false",
             );
             selectBtn.textContent = c.title || c.id;
             selectBtn.onclick = (function (id) {
                 return function () {
                     if (id !== CONVERSATION_ID) setConversation(id, true);
+                    closeConversationMenu();
                 };
             })(c.id);
             item.appendChild(selectBtn);
@@ -1030,7 +1059,7 @@ block subnav %}
             if (c.id !== "default" && !c.pending) {
                 var renameBtn = document.createElement("button");
                 renameBtn.type = "button";
-                renameBtn.className = "den-conv-tab-action";
+                renameBtn.className = "den-conv-menu-action";
                 renameBtn.title = "Rename conversation";
                 renameBtn.setAttribute("aria-label", "Rename conversation");
                 renameBtn.textContent = "Rename";
@@ -1048,6 +1077,7 @@ block subnav %}
                                 if (data && data.__den_skip) return;
                                 row.title = next;
                                 renderConversationTabs();
+                                closeConversationMenu();
                             },
                             function (err) {
                                 showErr(String(err.message || err));
@@ -1059,7 +1089,7 @@ block subnav %}
 
                 var archiveBtn = document.createElement("button");
                 archiveBtn.type = "button";
-                archiveBtn.className = "den-conv-tab-action den-conv-tab-archive";
+                archiveBtn.className = "den-conv-menu-action den-conv-menu-archive";
                 archiveBtn.title = "Archive conversation";
                 archiveBtn.setAttribute("aria-label", "Archive conversation");
                 archiveBtn.textContent = "Archive";
@@ -1076,6 +1106,7 @@ block subnav %}
                                 } else {
                                     loadConversations();
                                 }
+                                closeConversationMenu();
                             },
                             function (err) {
                                 showErr(String(err.message || err));
@@ -1086,25 +1117,9 @@ block subnav %}
                 item.appendChild(archiveBtn);
             }
 
-            tabs.appendChild(item);
+            menu.appendChild(item);
         }
-    }
-
-    function bindConversationControls() {
-        var newBtn = document.getElementById("den-conv-new");
-        if (!newBtn || newBtn.dataset.denBound === "true") return;
-        newBtn.dataset.denBound = "true";
-        newBtn.onclick = function () {
-            var id = makeNewConversationId();
-            DEN_PENDING_CONVERSATION = {
-                id: id,
-                title: "New chat",
-                last_message_at: null,
-                pending: true,
-            };
-            DEN_CONVERSATIONS.unshift(DEN_PENDING_CONVERSATION);
-            setConversation(id, true);
-        };
+        if (current) current.textContent = currentTitle;
     }
 
     function loadConversations() {
@@ -1174,7 +1189,6 @@ block subnav %}
                 }
                 DEN_CONVERSATIONS = rows;
                 CONVERSATION_ID = pick;
-                bindConversationControls();
                 renderConversationTabs();
                 syncConversationUrl(CONVERSATION_ID);
                 return "ok";
@@ -1183,7 +1197,6 @@ block subnav %}
                 showErr(String(err.message || err));
                 DEN_CONVERSATIONS = [{ id: "default", title: "Main chat" }];
                 CONVERSATION_ID = "default";
-                bindConversationControls();
                 renderConversationTabs();
                 syncConversationUrl(CONVERSATION_ID);
                 return "ok";

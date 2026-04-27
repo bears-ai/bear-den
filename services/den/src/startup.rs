@@ -67,6 +67,17 @@ pub fn requires_jwt_secret(config: &Config) -> bool {
     }
 }
 
+fn allow_standalone_web_from_env() -> bool {
+    std::env::var("DEN_ALLOW_STANDALONE_WEB")
+        .map(|v| {
+            matches!(
+                v.trim().to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes" | "on"
+            )
+        })
+        .unwrap_or(false)
+}
+
 /// Validate secrets and other invariants before connecting to the database.
 pub fn validate_runtime_config(config: &Config) -> Result<(), StartupError> {
     if requires_jwt_secret(config) {
@@ -79,11 +90,15 @@ pub fn validate_runtime_config(config: &Config) -> Result<(), StartupError> {
             ));
         }
     }
-    if config.run_web && config.codepool_base_url.trim().is_empty() {
+    if config.run_web
+        && config.codepool_base_url.trim().is_empty()
+        && !allow_standalone_web_from_env()
+    {
         return Err(StartupError::Message(
             "CODEPOOL_BASE_URL must be set when RUN_WEB=true. Den streams bear chat through \
-             Codepool (Letta Code SDK), not directly to the Letta HTTP API. Example \
-             (internal URL): http://bears-codepool:3030 — see services/codepool/COOLIFY_DEPLOY.md."
+             Codepool (Letta Code SDK), not directly to the Letta HTTP API. Set \
+             DEN_ALLOW_STANDALONE_WEB=true only for local UI/dev runs without the rest of the stack. \
+             Example internal URL: http://bears-codepool:3030 — see services/codepool/COOLIFY_DEPLOY.md."
                 .into(),
         ));
     }
@@ -167,5 +182,23 @@ mod tests {
         );
         web_on.codepool_base_url = "http://localhost:3030".into();
         validate_runtime_config(&web_on).expect("RUN_WEB with Codepool should pass");
+    }
+
+    #[test]
+    fn standalone_web_allows_missing_codepool() {
+        let prev = std::env::var("DEN_ALLOW_STANDALONE_WEB").ok();
+        unsafe {
+            std::env::set_var("DEN_ALLOW_STANDALONE_WEB", "true");
+        }
+
+        let mut web_on = Config::test_stub();
+        web_on.run_web = true;
+        web_on.codepool_base_url = String::new();
+        validate_runtime_config(&web_on).expect("standalone web skips Codepool requirement");
+
+        match prev {
+            Some(v) => unsafe { std::env::set_var("DEN_ALLOW_STANDALONE_WEB", v) },
+            None => unsafe { std::env::remove_var("DEN_ALLOW_STANDALONE_WEB") },
+        }
     }
 }

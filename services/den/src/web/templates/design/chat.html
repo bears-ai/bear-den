@@ -1,0 +1,58 @@
+{% extends "base.html" %} {% block title %}Design Chat{% endblock %} {% block
+subnav %}
+<li><a class="button-link" href="/design">Design index</a></li>
+{% endblock %} {% block content %}
+<div class="den-design-chat-shell">
+    <div class="den-design-chat-toolbar">
+        <div class="den-design-conversation-picker">
+            <button class="den-design-conversation-current" type="button">
+                Product direction
+            </button>
+            <button type="button">Rename</button>
+            <button type="button">Archive</button>
+        </div>
+        <a class="button-link" href="/design">Bear details</a>
+    </div>
+
+    <section class="den-design-chat-panel" aria-label="Dummy chat transcript">
+        <div class="den-design-message den-design-message-user">
+            <p>
+                I want the chat view to feel more deliberate and easier to scan.
+            </p>
+        </div>
+        <div class="den-design-message den-design-message-assistant">
+            <p>
+                We can tighten the line length, make the composer feel anchored,
+                and keep utility controls visually secondary.
+            </p>
+        </div>
+        <div class="den-design-message den-design-message-user">
+            <p>Show me how thinking or status messages might appear.</p>
+        </div>
+        <div class="den-design-message den-design-message-system">
+            <p class="caption">Thinking</p>
+            <p>
+                Comparing the current Deep Chat surface against the BEARS base
+                navigation and form controls.
+            </p>
+        </div>
+        <div class="den-design-message den-design-message-assistant">
+            <p>
+                This is a static design fixture. Later, we can point the real
+                chat template at these same classes once the shape is right.
+            </p>
+        </div>
+    </section>
+
+    <form class="den-design-composer" method="get" action="/design/chat">
+        <label for="design-chat-input" class="caption">Message</label>
+        <textarea
+            id="design-chat-input"
+            name="message"
+            rows="3"
+            placeholder="Message your bear..."
+        ></textarea>
+        <button type="submit">Send</button>
+    </form>
+</div>
+{% endblock %}

@@ -1,0 +1,102 @@
+{% extends "base.html" %} {% block title %}Design{% endblock %} {% block subnav
+%}
+<li><a class="button-link" href="/design/chat">Chat mock</a></li>
+{% endblock %} {% block content %}
+<section class="two-columns">
+    <div>
+        <div class="box full-width">
+            <h3>Text Styles</h3>
+            <p>
+                The default paragraph style uses the site body font, spacing, and
+                foreground color. This page exists to make CSS changes visible
+                without depending on a live bear or Letta.
+            </p>
+            <p>
+                <strong>Strong text</strong>, <em>emphasis</em>,
+                <a href="/design">links</a>, <code>inline code</code>, and
+                <span class="caption">caption text</span> should all remain
+                legible in light and dark themes.
+            </p>
+            <h1>Heading One</h1>
+            <h2>Heading Two</h2>
+            <h3>Heading Three</h3>
+            <p class="caption">Caption: smaller metadata text.</p>
+            <p><span class="success">Success</span></p>
+            <p><span class="warning">Warning</span></p>
+            <p><span class="error">Error</span></p>
+        </div>
+    </div>
+    <div>
+        <div class="box full-width">
+            <h3>Sample Form</h3>
+            <form method="get" action="/design">
+                <div class="fields-grid">
+                    <label for="design-name">Name</label>
+                    <div class="form-field">
+                        <input
+                            id="design-name"
+                            name="name"
+                            type="text"
+                            value="Maple"
+                        />
+                        <span class="form-hint">Text input hint.</span>
+                    </div>
+
+                    <label for="design-tone">Tone</label>
+                    <div class="form-field">
+                        <select id="design-tone" name="tone">
+                            <option>Calm</option>
+                            <option selected>Direct</option>
+                            <option>Playful</option>
+                        </select>
+                    </div>
+
+                    <label for="design-notes">Notes</label>
+                    <div class="form-field">
+                        <textarea id="design-notes" name="notes" rows="4">
+Use this textarea to test line height, fill color, and focus states.</textarea
+                        >
+                    </div>
+                </div>
+                <ul class="button-row">
+                    <li><button type="submit">Save</button></li>
+                    <li><a class="button-link" href="/design">Cancel</a></li>
+                </ul>
+            </form>
+        </div>
+    </div>
+</section>
+
+<section class="two-columns">
+    <div>
+        <div class="box full-width">
+            <h3>Overview Box</h3>
+            <p>
+                This mirrors the first column in bear details. A single
+                <code>.box</code> inside a two-column child stretches to match
+                the adjacent column height.
+            </p>
+            <dl class="fields-grid">
+                <dt>Slug</dt>
+                <dd><code>design-bear</code></dd>
+                <dt>Status</dt>
+                <dd><span class="success">Ready</span></dd>
+                <dt>Updated</dt>
+                <dd><span class="caption">just now</span></dd>
+            </dl>
+        </div>
+    </div>
+    <div>
+        <div class="box full-width">
+            <h3>Usage Box</h3>
+            <p class="caption">People</p>
+            <p>alex, <strong>sam</strong>, taylor</p>
+            <p class="caption">Active Conversations</p>
+            <ul class="den-bear-conv-list">
+                <li>Planning thread — <span class="caption">Web</span></li>
+                <li>Design review — <span class="caption">Web</span></li>
+            </ul>
+        </div>
+    </div>
+</section>
+{% endblock %}

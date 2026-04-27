@@ -460,6 +460,20 @@ fn letta_message_id_string(m: &serde_json::Value) -> Option<String> {
     }
 }
 
+/// Skip structured rows that are not end-user input (when Letta exposes `role` on the message).
+fn letta_user_message_role_is_human(inner: &serde_json::Value, msg: &serde_json::Value) -> bool {
+    for v in [inner, msg] {
+        let Some(role) = v.get("role").and_then(|x| x.as_str()) else {
+            continue;
+        };
+        let r = role.trim();
+        if r.eq_ignore_ascii_case("system") || r.eq_ignore_ascii_case("developer") {
+            return false;
+        }
+    }
+    true
+}
+
 /// Cursor for `before=` on the next page: chronologically oldest id in this Letta batch (any type).
 fn oldest_raw_message_id(raw: &[serde_json::Value]) -> Option<String> {
     let mut best: Option<(String, i64, String)> = None;
@@ -503,11 +517,15 @@ fn map_letta_history_page(
             "assistant_message" => "ai",
             _ => continue,
         };
+        if mt == "user_message" && !letta_user_message_role_is_human(inner, msg) {
+            continue;
+        }
         let Some(mut text) = letta_message_text(inner).or_else(|| letta_message_text(msg)) else {
             continue;
         };
-        if mt == "assistant_message" {
-            text = strip_letta_harness_for_user(&text);
+        text = strip_letta_harness_for_user(&text);
+        if text.trim().is_empty() {
+            continue;
         }
         let (d, s) = letta_message_sort_key(msg);
         rows.push(Row {
@@ -864,6 +882,66 @@ mod chat_history_map_tests {
         }]);
         let (msgs, _, _) = map_letta_history_page(&body, 10);
         assert_eq!(msgs[0].text, "If you want, I can help.");
+    }
+
+    #[test]
+    fn user_harness_only_reminder_is_not_shown() {
+        let body = serde_json::json!([
+            {
+                "id": "u1",
+                "date": "2025-01-01T00:00:00Z",
+                "message_type": "user_message",
+                "content": "<system-reminder>The user has just initiated a new connection via the Letta Code CLI client.</system-reminder>"
+            },
+            {
+                "id": "u2",
+                "date": "2025-01-02T00:00:00Z",
+                "message_type": "user_message",
+                "content": "Real user question"
+            }
+        ]);
+
+        let (msgs, _, _) = map_letta_history_page(&body, 10);
+        assert_eq!(msgs.len(), 1);
+        assert_eq!(msgs[0].role, "user");
+        assert_eq!(msgs[0].text, "Real user question");
+    }
+
+    #[test]
+    fn user_inline_reminder_is_stripped_from_history() {
+        let body = serde_json::json!([{
+            "id": "u1",
+            "date": "2025-01-01T00:00:00Z",
+            "message_type": "user_message",
+            "content": "<system-reminder>context</system-reminder>\n\nSummarize this doc"
+        }]);
+
+        let (msgs, _, _) = map_letta_history_page(&body, 10);
+        assert_eq!(msgs.len(), 1);
+        assert_eq!(msgs[0].text, "Summarize this doc");
+    }
+
+    #[test]
+    fn user_role_system_is_not_shown() {
+        let body = serde_json::json!([
+            {
+                "id": "u1",
+                "role": "system",
+                "date": "2025-01-01T00:00:00Z",
+                "message_type": "user_message",
+                "content": "You are a helpful assistant."
+            },
+            {
+                "id": "u2",
+                "date": "2025-01-02T00:00:00Z",
+                "message_type": "user_message",
+                "content": "What is 2+2?"
+            }
+        ]);
+
+        let (msgs, _, _) = map_letta_history_page(&body, 10);
+        assert_eq!(msgs.len(), 1);
+        assert_eq!(msgs[0].text, "What is 2+2?");
     }
 }
 
