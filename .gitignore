@@ -2,3 +2,4 @@
 .postgres-data/
 .opencode
 .DS_Store
+.devcontainer/logs/

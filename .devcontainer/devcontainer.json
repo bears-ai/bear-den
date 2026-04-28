@@ -6,7 +6,8 @@
     "workspaceMount": "source=${localWorkspaceFolder},target=/workspace,type=bind,consistency=cached",
     "mounts": [
         "source=/var/run/docker.sock,target=/var/run/docker.sock,type=bind",
-        "source=${localEnv:HOME}/.local/share/opencode,target=/root/.local/share/opencode,type=bind,consistency=cached"
+        "source=${localEnv:HOME}/.local/share/opencode,target=/root/.local/share/opencode,type=bind,consistency=cached",
+        "source=bears-gh-auth,target=/root/.config/gh,type=volume"
     ],
     "containerEnv": {
         "OPENCODE_AUTH_PATH": "/root/.local/share/opencode/auth.json"
