@@ -1,0 +1,24 @@
+{# Reusable inline SVG symbols.
+
+   Keep SVGs here when the rendered markup needs CSS inheritance (`currentColor`),
+   hover states, or accessibility semantics. Use `/assets/...` files for large or
+   purely decorative images where inline markup is not needed.
+
+   Usage:
+     {% import "icons.jinja" as icons %}
+     {{ icons.logo("logo-symbol", "") }}
+#}
+
+{% macro bear(class, extra_attrs) %}
+  <svg class="{{ class }}" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" aria-hidden="true" focusable="false" {{ extra_attrs | safe }}>
+    <path fill="currentColor" d="M10 17.5a2.5 2.5 0 1 1-5 0 2.5 2.5 0 0 1 5 0M24.5 15a2.5 2.5 0 1 0 0 5 2.5 2.5 0 0 0 0-5m-1 9a3.5 3.5 0 1 0 0 7 3.5 3.5 0 0 0 0-7m-15 0a3.5 3.5 0 1 0 0 7 3.5 3.5 0 0 0 0-7M16 12a1 1 0 1 0 0 2 1 1 0 0 0 0-2m9.07-3.4q.43 1.56.43 3.4 0 1.07-.15 2.09v.03a3.5 3.5 0 1 0-.13 6.81c.13.5.24 1.29.27 2.56q-.9-.47-1.99-.49a4.45 4.45 0 0 0-3.95 6.6 17 17 0 0 1-7.1 0A4.45 4.45 0 0 0 8.5 23c-.72 0-1.39.19-2 .49a11 11 0 0 1 .29-2.56q.35.07.71.07a3.5 3.5 0 0 0 0-7q-.44.01-.84.11a14 14 0 0 1 .27-5.5A3.5 3.5 0 0 1 5 5.5 3.5 3.5 0 0 1 8.5 2c1.02 0 1.92.46 2.56 1.16Q13.14 2.02 16 2c2.86-.02 3.56.4 4.94 1.16A3.5 3.5 0 0 1 23.5 2 3.5 3.5 0 0 1 27 5.5c0 1.37-.79 2.53-1.93 3.1M13 9a1 1 0 1 0-2 0 1 1 0 0 0 2 0m5 4a2 2 0 1 0-4 0 2 2 0 0 0 4 0m3-4a1 1 0 1 0-2 0 1 1 0 0 0 2 0"/>
+  </svg>
+{% endmacro %}
+
+{% macro logo(class, extra_attrs) %}
+  <svg class="{{ class }}" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 22 16" aria-hidden="true" focusable="false" {{ extra_attrs | safe }}>
+    <path fill="currentColor" fill-rule="nonzero" d="M25.29 14.5a13.7 13.7 0 0 1-9.27 3.46c-3.4 0-6.81-1.15-9.3-3.46l-.06-.35a14 14 0 0 1 .27-5.54A3.5 3.5 0 0 1 5 5.5 3.5 3.5 0 0 1 8.5 2c1.02 0 1.92.46 2.56 1.16A10 10 0 0 1 16 2q2.86.01 4.94 1.16A3.5 3.5 0 0 1 23.5 2 3.5 3.5 0 0 1 27 5.5c0 1.37-.79 2.53-1.93 3.1q.43 1.56.43 3.4c0 .71-.21 2.5-.21 2.5m-3.5-10.8a8.4 8.4 0 0 1 2.97 3.94A2.48 2.48 0 1 0 21.8 3.7M7.25 7.64A8.4 8.4 0 0 1 10.2 3.7 2.5 2.5 0 0 0 8.5 3a2.48 2.48 0 0 0-1.26 4.64M7.65 14s3.6 3 8.38 3 8.33-3.06 8.33-3.06q.15-.94.14-1.94c0-5.55-3.26-9-8.5-9s-8.5 3.45-8.5 9q0 1.02.15 2M18 13a2 2 0 1 1-4 0 2 2 0 0 1 4 0m-1 0a1 1 0 1 0-2 0 1 1 0 0 0 2 0" transform="translate(-5 -2)"/>
+    <path fill="currentColor" fill-rule="nonzero" d="M13 9a1 1 0 0 1-2 0l-.01-1c0-.57.5-1 1.01-1 .54-.02.99.39 1 1z" transform="translate(3 -2)"/>
+    <path fill="currentColor" fill-rule="nonzero" d="M13 9a1 1 0 0 1-2 0l-.01-1c0-.57.5-1 1.01-1 .54-.02.99.39 1 1z" transform="translate(-5 -2)"/>
+  </svg>
+{% endmacro %}
