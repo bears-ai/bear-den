@@ -37,10 +37,16 @@ The initial `smoke` profile is idempotent and creates/reuses:
 
 The profile also verifies Alice’s email and grants her membership on `test-bear`, so `/bear/test-bear` can be used by smoke tests and manual UI checks. `minimal` currently aliases `smoke`.
 
-In the repo devcontainer, `/workspace/scripts/devcontainer-start.sh` starts bundled Postgres, runs `/workspace/scripts/seed-dev.sh smoke`, then attempts to start the rest of the stack. Startup seeding and full-stack startup are non-fatal: the container remains usable if either step fails. Check `.devcontainer/logs/startup.status` and `.devcontainer/logs/startup.log` for details, then rerun manually with:
+In the repo devcontainer, `/workspace/scripts/devcontainer-start.sh` builds local Bifrost, Den, and Codepool images, starts bundled Postgres services, runs `/workspace/scripts/seed-dev.sh smoke`, then attempts to start the rest of the stack with those local images. Startup builds, seeding, and full-stack startup are non-fatal: the container remains usable if any step fails. Check `.devcontainer/logs/startup.status` and `.devcontainer/logs/startup.log` for details, then rerun manually with:
 
 ```bash
 ./scripts/seed-dev.sh smoke
+```
+
+To run source-aware stack smoke tests end to end, use the root script:
+
+```bash
+./scripts/smoke-stack.sh
 ```
 
 ## Development-only link prefix

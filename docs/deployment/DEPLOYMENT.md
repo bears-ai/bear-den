@@ -39,6 +39,8 @@ Create these first in Coolify:
 
 Copy each database's **Postgres URL (internal)** value. You will paste those into the Compose resource environment variables.
 
+For local/devcontainer runs, the `bundled` compose profile provides two separate databases: `bears-postgres` for Den and `bears-letta-postgres` with PGVector enabled for Letta. Production should still prefer managed databases.
+
 ## 2. Create The Compose Resource
 
 In Coolify:
@@ -91,6 +93,7 @@ Optional:
 | `WEB_SERVER_URL` | Override Coolify's `SERVICE_URL_BEARS_DEN` shortcut if needed |
 | `DEN_IMAGE` | Override the prebuilt Den image |
 | `CODEPOOL_IMAGE` | Override the prebuilt Codepool image |
+| `DEN_PULL_POLICY` / `CODEPOOL_PULL_POLICY` | Leave as `always` in production; dev/smoke sets `never` with locally built images |
 
 You usually do not need to set internal service URLs. The compose file already defaults to:
 

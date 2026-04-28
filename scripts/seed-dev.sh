@@ -16,7 +16,7 @@ export LETTA_SERVER_PASS="${LETTA_SERVER_PASS:-dev-placeholder}"
 export OPENAI_API_KEY="${OPENAI_API_KEY:-dev-placeholder}"
 export WEB_SERVER_URL="${WEB_SERVER_URL:-http://localhost:3000}"
 database_url="${DATABASE_URL:-postgres://bears:bears@bears-postgres:5432/den?sslmode=disable}"
-export LETTA_PG_URI="${LETTA_PG_URI:-postgresql://bears:bears@bears-postgres:5432/den?sslmode=disable}"
+export LETTA_PG_URI="${LETTA_PG_URI:-postgresql://bears:bears@bears-letta-postgres:5432/letta}"
 
 if [[ "${database_url}" == *"@bears-postgres:"* ]] && ! getent hosts bears-postgres >/dev/null 2>&1; then
   postgres_container="$(docker compose --profile bundled ps -q bears-postgres)"

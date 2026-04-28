@@ -4,13 +4,13 @@
 # Base Directory: `.` (repo root), Compose file: `docker-compose.yaml`.
 #
 # Service DNS names (use these in env defaults and cross-service URLs):
-#   bears-postgres (optional, profile `bundled`), bears-bifrost, bears-redis, bears-memfs-manager,
-#   bears-letta, bears-codepool, bears-den
+#   bears-postgres (optional Den DB, profile `bundled`), bears-letta-postgres (optional PGVector DB,
+#   profile `bundled`), bears-bifrost, bears-redis, bears-memfs-manager, bears-letta, bears-codepool, bears-den
 #
 # PostgreSQL: set **`DATABASE_URL`** for `bears-den` (managed DB — preferred in Coolify) and
-# **`LETTA_PG_URI`** for Letta's pgvector database. Optional bundled Postgres uses **fixed**
-# credentials in this file (no `POSTGRES_*` env interpolation) so orchestrators do not invent fields.
-# Enable the bundled container with profile `bundled`:
+# **`LETTA_PG_URI`** for Letta's pgvector database. Optional bundled Postgres services use
+# **fixed** credentials in this file (no `POSTGRES_*` env interpolation) so orchestrators do not invent fields.
+# Enable bundled databases with profile `bundled`:
 #   COMPOSE_PROFILES=bundled
 #   docker compose --profile bundled up -d
 #
@@ -77,7 +77,7 @@ services:
         build: *preflight-build
         restart: "no"
         depends_on:
-            bears-postgres:
+            bears-letta-postgres:
                 condition: service_healthy
                 required: false
         command: ["letta-pg"]
@@ -102,10 +102,35 @@ services:
             retries: 5
             start_period: 10s
 
+    bears-letta-postgres:
+        profiles:
+            - bundled
+        build:
+            context: ./services/letta/postgres
+            dockerfile: Dockerfile
+        image: ${LETTA_POSTGRES_IMAGE:-bears-letta-postgres:pg16-vector}
+        restart: unless-stopped
+        environment:
+            # Fixed dev defaults. For production, prefer a managed PGVector database and set `LETTA_PG_URI`.
+            POSTGRES_USER: bears
+            POSTGRES_PASSWORD: bears
+            POSTGRES_DB: letta
+        volumes:
+            - bears-letta-postgres-data:/var/lib/postgresql/data
+        healthcheck:
+            test: ["CMD-SHELL", "pg_isready -U bears -d letta"]
+            interval: 5s
+            timeout: 5s
+            retries: 5
+            start_period: 10s
+
     bears-bifrost:
         depends_on:
             <<: *preflight-depends
-        image: maximhq/bifrost:v1.4.22
+        build:
+            context: ./services/bifrost
+            dockerfile: Dockerfile
+        image: ${BIFROST_IMAGE:-bears-bifrost:configured}
         restart: unless-stopped
         environment:
             APP_HOST: ${BIFROST_APP_HOST:-0.0.0.0}
@@ -113,16 +138,8 @@ services:
             LOG_LEVEL: ${BIFROST_LOG_LEVEL:-info}
             LOG_STYLE: ${BIFROST_LOG_STYLE:-json}
             OPENAI_API_KEY: ${OPENAI_API_KEY:-SETME}
-        volumes:
-            # Bifrost reads a *file* at this path. If the host source is missing, Docker creates an empty
-            # directory named `config.json` and the app fails with `read .../config.json: is a directory`.
-            # `create_host_path: false` makes the deploy fail instead of silently creating that directory.
-            - type: bind
-              source: ${BIFROST_CONFIG_PATH:-./services/bifrost/config.json}
-              target: /app/data/config.json
-              read_only: true
-              bind:
-                  create_host_path: false
+        # `services/bifrost/Dockerfile` bakes config.json into the image. This avoids host bind-mount
+        # path mismatches when Compose is driven from a devcontainer or remote Docker daemon.
         # Shell form like upstream Dockerfile. Long `start_period`: Bifrost can be slow on ARM; image default is 5s.
         # `/health` may 503 if config/log/vector store pings fail — set `disable_db_pings_in_health` in config.json.
         # Probe uses `$APP_PORT` (same as the upstream image) so a custom `APP_PORT` still matches the server.
@@ -214,10 +231,11 @@ services:
     bears-codepool:
         # Pre-built image (native deps compile in CI). Build in CI:
         # `.github/workflows/codepool-image.yml` → GHCR. Override for forks: `CODEPOOL_IMAGE=ghcr.io/<org>/codepool:latest`
-        # Local build from source: set `image` aside and use `build.context: ./services/codepool`.
+        # Local smoke/dev build from source: set CODEPOOL_IMAGE=bears-codepool-dev:latest and CODEPOOL_PULL_POLICY=never.
         image: ${CODEPOOL_IMAGE:-ghcr.io/theartificial/codepool:latest}
-        # CI pushes :latest to GHCR; default Compose pull is "missing" — redeploy would reuse a stale local tag.
-        pull_policy: always
+        # CI pushes :latest to GHCR; production pulls always. Dev/smoke sets CODEPOOL_PULL_POLICY=never
+        # with CODEPOOL_IMAGE=bears-codepool-dev:latest so source changes are tested.
+        pull_policy: ${CODEPOOL_PULL_POLICY:-always}
         restart: unless-stopped
         depends_on:
             bears-letta:
@@ -271,10 +289,11 @@ services:
     bears-den:
         # Pre-built image (Rust is not compiled on the Coolify host — avoids OOM / timeouts). Build in CI:
         # `.github/workflows/den-image.yml` → GHCR. Override for forks: `DEN_IMAGE=ghcr.io/<org>/den:latest`
-        # To build Den from source locally: set `image` aside and use `build.context: ./services/den`.
+        # Local smoke/dev build from source: set DEN_IMAGE=bears-den-dev:latest and DEN_PULL_POLICY=never.
         image: ${DEN_IMAGE:-ghcr.io/theartificial/den:latest}
-        # Same as bears-codepool: always pull so webhook redeploys pick up new GHCR :latest.
-        pull_policy: always
+        # Same as bears-codepool: production pulls always. Dev/smoke sets DEN_PULL_POLICY=never
+        # with DEN_IMAGE=bears-den-dev:latest so source changes are tested.
+        pull_policy: ${DEN_PULL_POLICY:-always}
         restart: unless-stopped
         depends_on:
             bears-letta:
@@ -300,6 +319,7 @@ services:
             WEB_SERVER_URL: ${WEB_SERVER_URL:-${SERVICE_URL_BEARS_DEN:-SETME}}
             API_SERVER_URL: ${API_SERVER_URL:-https://api.bears.artificial.design}
             SESSION_COOKIE_DOMAIN: ${SESSION_COOKIE_DOMAIN:-}
+            SESSION_COOKIE_SECURE: ${SESSION_COOKIE_SECURE:-true}
             MAIL_FROM_ADDRESS: ${MAIL_FROM_ADDRESS:-noreply@bears.artificial.design}
             MAILGUN_API_KEY: ${MAILGUN_API_KEY:-}
             MAILGUN_DOMAIN: ${MAILGUN_DOMAIN:-}
@@ -331,5 +351,6 @@ services:
 volumes:
     # Used only when `bears-postgres` runs (`--profile bundled`).
     bears-postgres-data:
+    bears-letta-postgres-data:
     bears-letta-data:
     bears-codepool-letta-home:

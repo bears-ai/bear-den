@@ -184,7 +184,8 @@ pub async fn server(
 
     #[cfg(feature = "production")]
     {
-        session_layer = session_layer.with_secure(true);
+        session_layer =
+            session_layer.with_secure(crate::config::session_cookie_secure_from_env(true));
         let session_cookie_domain: Option<String> = state
             .config
             .session_cookie_domain
@@ -198,7 +199,8 @@ pub async fn server(
 
     #[cfg(not(feature = "production"))]
     {
-        session_layer = session_layer.with_secure(false);
+        session_layer =
+            session_layer.with_secure(crate::config::session_cookie_secure_from_env(false));
     }
 
     let backend = Backend::new(state.sqlx_pool.clone());

@@ -26,31 +26,66 @@ export JWT_SECRET="${JWT_SECRET:-dev-placeholder}"
 export LETTA_SERVER_PASS="${LETTA_SERVER_PASS:-dev-placeholder}"
 export OPENAI_API_KEY="${OPENAI_API_KEY:-dev-placeholder}"
 export WEB_SERVER_URL="${WEB_SERVER_URL:-http://localhost:3000}"
+export SESSION_COOKIE_SECURE="${SESSION_COOKIE_SECURE:-false}"
 export DATABASE_URL="${DATABASE_URL:-postgres://bears:bears@bears-postgres:5432/den?sslmode=disable}"
-export LETTA_PG_URI="${LETTA_PG_URI:-postgresql://bears:bears@bears-postgres:5432/den?sslmode=disable}"
+export LETTA_PG_URI="${LETTA_PG_URI:-postgresql://bears:bears@bears-letta-postgres:5432/letta}"
+export BIFROST_IMAGE="${BIFROST_IMAGE:-bears-bifrost-dev:latest}"
+export DEN_IMAGE="${DEN_IMAGE:-bears-den-dev:latest}"
+export DEN_PULL_POLICY="${DEN_PULL_POLICY:-never}"
+export CODEPOOL_IMAGE="${CODEPOOL_IMAGE:-bears-codepool-dev:latest}"
+export CODEPOOL_PULL_POLICY="${CODEPOOL_PULL_POLICY:-never}"
+
+wait_postgres_service() {
+  service="$1"
+  user="$2"
+  db="$3"
+  label="$4"
+  log "Waiting for ${label} readiness"
+  for _ in $(seq 1 30); do
+    if docker compose --profile bundled exec -T "${service}" pg_isready -U "${user}" -d "${db}" >>"${LOG_FILE}" 2>&1; then
+      return 0
+    fi
+    sleep 2
+  done
+  return 1
+}
 
 set_status "starting"
 log "Starting BEARS devcontainer stack"
 
-if ! run_logged docker compose --profile bundled up -d bears-postgres; then
+build_ok=1
+if ! run_logged docker build -t "${BIFROST_IMAGE}" "${ROOT}/services/bifrost"; then
+  build_ok=0
+  log "Bifrost image build failed"
+fi
+if ! run_logged docker build --build-arg SQLX_OFFLINE=true -t "${DEN_IMAGE}" "${ROOT}/services/den"; then
+  build_ok=0
+  log "Den image build failed"
+fi
+if ! run_logged docker build -t "${CODEPOOL_IMAGE}" "${ROOT}/services/codepool"; then
+  build_ok=0
+  log "Codepool image build failed"
+fi
+
+if ! run_logged docker compose --profile bundled up -d bears-postgres bears-letta-postgres; then
   set_status "postgres_start_failed"
-  log "Postgres startup failed; devcontainer remains usable. See ${LOG_FILE}."
+  log "Bundled Postgres startup failed; devcontainer remains usable. See ${LOG_FILE}."
   exit 0
 fi
 
-log "Waiting for bundled Postgres readiness"
-postgres_ready=0
-for _ in $(seq 1 30); do
-  if docker compose --profile bundled exec -T bears-postgres pg_isready -U bears -d den >>"${LOG_FILE}" 2>&1; then
-    postgres_ready=1
-    break
-  fi
-  sleep 2
-done
+postgres_ready=1
+if ! wait_postgres_service bears-postgres bears den "Den Postgres"; then
+  postgres_ready=0
+fi
+
+letta_postgres_ready=1
+if ! wait_postgres_service bears-letta-postgres bears letta "Letta PGVector Postgres"; then
+  letta_postgres_ready=0
+fi
 
 if [ "${postgres_ready}" != "1" ]; then
   set_status "postgres_unready"
-  log "Postgres did not become ready before seeding; devcontainer remains usable. See ${LOG_FILE}."
+  log "Den Postgres did not become ready before seeding; devcontainer remains usable. See ${LOG_FILE}."
   exit 0
 fi
 
@@ -66,14 +101,21 @@ fi
 
 log "Starting remaining BEARS services"
 stack_ok=0
-if ! run_logged docker compose --profile bundled up -d --no-recreate bears-memfs-manager bears-den bears-codepool; then
+if [ "${build_ok}" != "1" ]; then
+  log "Skipping full stack startup because one or more local source image builds failed"
+elif [ "${letta_postgres_ready}" != "1" ]; then
+  log "Skipping full stack startup because Letta PGVector Postgres is not ready"
+elif ! run_logged docker compose --profile bundled up -d --force-recreate bears-memfs-manager bears-den bears-codepool; then
   stack_ok=0
   log "Full stack startup failed; devcontainer remains usable. See ${LOG_FILE}."
 else
   stack_ok=1
 fi
 
-if [ "${seed_ok}" = "1" ] && [ "${stack_ok}" = "1" ]; then
+if [ "${build_ok}" != "1" ]; then
+  set_status "local_image_build_failed"
+  log "Local Den/Codepool/Bifrost image build failed; full stack was not started"
+elif [ "${seed_ok}" = "1" ] && [ "${stack_ok}" = "1" ]; then
   set_status "ok"
   log "Devcontainer stack started and seed profile applied successfully"
 elif [ "${seed_ok}" = "1" ]; then

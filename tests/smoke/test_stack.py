@@ -1,6 +1,7 @@
 import os
 import socket
 import subprocess
+import time
 
 import requests
 
@@ -40,25 +41,42 @@ SEEDED_PASSWORD = "Never deploy seed passwords."
 SEEDED_BEAR_SLUG = "test-bear"
 
 
+def request_with_retries(method, url, **kwargs):
+    session = kwargs.pop("session", requests)
+    last_error = None
+    for _ in range(20):
+        try:
+            response = session.request(method, url, **kwargs)
+            if response.status_code < 500:
+                return response
+            last_error = AssertionError(f"{url} returned {response.status_code}: {response.text}")
+        except requests.RequestException as exc:
+            last_error = exc
+        time.sleep(2)
+    raise AssertionError(f"request failed after retries: {url}: {last_error}")
+
+
 def test_memfs_manager_health():
-    response = requests.get(f"{MEMFS_MANAGER}/health", timeout=5)
+    response = request_with_retries("GET", f"{MEMFS_MANAGER}/health", timeout=5)
     assert response.status_code == 200
 
 
 def test_den_reachable():
-    response = requests.get(f"{DEN}/health", timeout=5)
+    response = request_with_retries("GET", f"{DEN}/health", timeout=5)
     assert response.status_code == 200
 
 
 def test_pool_health():
-    response = requests.get(f"{CODEPOOL}/health", timeout=5)
+    response = request_with_retries("GET", f"{CODEPOOL}/health", timeout=5)
     assert response.status_code == 200
 
 
 def test_seeded_user_can_open_seeded_bear_page():
     session = requests.Session()
-    login = session.post(
+    login = request_with_retries(
+        "POST",
         f"{DEN}/login/password",
+        session=session,
         data={"username": SEEDED_USERNAME, "password": SEEDED_PASSWORD},
         timeout=5,
         allow_redirects=False,

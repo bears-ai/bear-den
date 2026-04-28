@@ -20,6 +20,16 @@ pub const DEFAULT_LETTA_BASE_URL: &str = "http://bears-letta:8283";
 /// Codepool harness when `CODEPOOL_BASE_URL` is unset — matches Docker Compose service `bears-codepool`.
 pub const DEFAULT_CODEPOOL_BASE_URL: &str = "http://bears-codepool:3030";
 
+pub fn session_cookie_secure_from_env(default: bool) -> bool {
+    std::env::var("SESSION_COOKIE_SECURE")
+        .map(|v| match v.trim().to_ascii_lowercase().as_str() {
+            "0" | "false" | "no" | "off" => false,
+            "1" | "true" | "yes" | "on" => true,
+            _ => default,
+        })
+        .unwrap_or(default)
+}
+
 fn letta_base_url_from_env() -> String {
     let raw = std::env::var("LETTA_BASE_URL").unwrap_or_default();
     let trimmed = raw.trim_end_matches('/').to_string();

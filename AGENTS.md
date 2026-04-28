@@ -42,6 +42,12 @@ Run with:
 ./scripts/smoke.sh
 ```
 
+Build local Den/Codepool/Bifrost images, start/recreate the dev stack, seed, and run smoke tests:
+
+```bash
+./scripts/smoke-stack.sh
+```
+
 ## Notes
 
 - Do not run `docker compose down`; restart individual services instead.

@@ -154,7 +154,7 @@ fn create_session_layer(
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty());
         let mut session_layer = SessionManagerLayer::new(session_store)
-            .with_secure(true)
+            .with_secure(crate::config::session_cookie_secure_from_env(true))
             .with_same_site(SameSite::Lax)
             .with_expiry(Expiry::OnInactivity(Duration::days(1)));
         if let Some(domain) = session_cookie_domain {
@@ -166,7 +166,7 @@ fn create_session_layer(
     {
         let _ = config;
         SessionManagerLayer::new(session_store)
-            .with_secure(true)
+            .with_secure(crate::config::session_cookie_secure_from_env(true))
             .with_same_site(SameSite::Lax)
             .with_expiry(Expiry::OnInactivity(Duration::days(1)))
     }
