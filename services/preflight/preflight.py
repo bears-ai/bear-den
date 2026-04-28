@@ -176,6 +176,17 @@ def validate_config_shape() -> None:
     validate_http_url("LETTA_MEMFS_SERVICE_URL", memfs)
     info(f"LETTA_MEMFS_SERVICE_URL OK ({memfs})")
 
+    memfs_org = os.environ.get(
+        "MEMFS_DEFAULT_ORG", "org-00000000-0000-4000-8000-000000000000"
+    ).strip()
+    if memfs_org == "org-default":
+        fail(
+            "MEMFS_DEFAULT_ORG must not use the old placeholder 'org-default'; set it to Letta's org id or leave it unset for the default self-hosted org."
+        )
+    if not memfs_org.startswith("org-"):
+        fail("MEMFS_DEFAULT_ORG must look like a Letta org id (prefix 'org-')")
+    info(f"MEMFS_DEFAULT_ORG OK ({memfs_org})")
+
     codepool_base = (
         os.environ.get("CODEPOOL_BASE_URL", "").strip() or "http://bears-codepool:3030"
     )

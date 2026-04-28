@@ -31,7 +31,8 @@ from urllib.parse import parse_qs, urlparse
 PORT = int(os.environ.get("PORT", "8285"))
 _MEMFS = os.environ.get("MEMFS_BASE", "/root/.letta/memfs/repository")
 MEMFS_BASE = Path(_MEMFS)
-DEFAULT_ORG = os.environ.get("MEMFS_DEFAULT_ORG", "org-default")
+LETTA_DEFAULT_ORG_ID = "org-00000000-0000-4000-8000-000000000000"
+DEFAULT_ORG = os.environ.get("MEMFS_DEFAULT_ORG", LETTA_DEFAULT_ORG_ID)
 BIND = os.environ.get("BIND", "0.0.0.0")
 ACTIVITY_LOG = Path(
     os.environ.get("MEMFS_ACTIVITY_LOG", str(MEMFS_BASE.parent / "activity.jsonl"))
@@ -49,7 +50,10 @@ def log_activity(event: str, **fields: object) -> None:
     print(f"[mem-manager] activity {line}", flush=True)
     try:
         ACTIVITY_LOG.parent.mkdir(parents=True, exist_ok=True)
-        if ACTIVITY_LOG.exists() and ACTIVITY_LOG.stat().st_size > ACTIVITY_LOG_MAX_BYTES:
+        if (
+            ACTIVITY_LOG.exists()
+            and ACTIVITY_LOG.stat().st_size > ACTIVITY_LOG_MAX_BYTES
+        ):
             ACTIVITY_LOG.replace(ACTIVITY_LOG.with_suffix(".jsonl.1"))
         with ACTIVITY_LOG.open("a", encoding="utf-8") as f:
             f.write(line + "\n")
@@ -167,6 +171,25 @@ def _create_bare_with_letta_initial_commit(repo: Path) -> None:
     log_activity("repo_created_seeded", repo=str(repo), commit_count=commit_count)
 
 
+def discover_single_org_id() -> str | None:
+    """Return the only existing org directory when the memfs layout is unambiguous."""
+    if not MEMFS_BASE.exists():
+        return None
+    orgs = sorted(p.name for p in MEMFS_BASE.iterdir() if p.is_dir())
+    return orgs[0] if len(orgs) == 1 else None
+
+
+def resolve_org_id(header_org_id: str | None = None) -> str:
+    """Resolve org id for git clients that do not send X-Organization-Id."""
+    explicit = (header_org_id or "").strip()
+    if explicit:
+        return explicit
+    discovered = discover_single_org_id()
+    if discovered:
+        return discovered
+    return DEFAULT_ORG
+
+
 def find_existing_repo_only(agent_id: str, org_id: str) -> Path | None:
     """Resolve a bare repo if it already exists and is usable. Never creates a repository."""
     repo = MEMFS_BASE / org_id / agent_id / "repo.git"
@@ -225,7 +248,9 @@ def git_head_info(repo: Path) -> dict:
         "message": message,
         "ref": ref,
         "commit_count": commit_count,
-        "warning": "Repository only has initial commit - memory may not be synced" if commit_count is not None and commit_count <= 1 else None,
+        "warning": "Repository only has initial commit - memory may not be synced"
+        if commit_count is not None and commit_count <= 1
+        else None,
     }
 
 
@@ -334,7 +359,9 @@ def git_repository_file_paths(repo: Path) -> list[str]:
     if r.returncode != 0:
         msg = (r.stderr or r.stdout or "").strip()
         raise RuntimeError(f"git ls-tree: {msg}")
-    return sorted({line.strip() for line in (r.stdout or "").splitlines() if line.strip()})
+    return sorted(
+        {line.strip() for line in (r.stdout or "").splitlines() if line.strip()}
+    )
 
 
 def repository_status(agent_id: str, org_id: str) -> dict:
@@ -362,7 +389,9 @@ def repository_status(agent_id: str, org_id: str) -> dict:
         warning = "Repository only contains the seeded .letta/config.json commit; agent memory has not synced to memfs."
     elif not memory_files:
         state = "no_memory_files"
-        warning = "Repository has commits but no memory files other than .letta/config.json."
+        warning = (
+            "Repository has commits but no memory files other than .letta/config.json."
+        )
 
     return {
         "agent_id": agent_id,
@@ -460,7 +489,7 @@ class GitHTTPHandler(BaseHTTPRequestHandler):
         if not agent_id:
             return False
 
-        org_id = self.headers.get("X-Organization-Id", DEFAULT_ORG) or DEFAULT_ORG
+        org_id = resolve_org_id(self.headers.get("X-Organization-Id"))
         if endpoint == "status":
             try:
                 status = repository_status(agent_id, org_id)
@@ -546,10 +575,15 @@ class GitHTTPHandler(BaseHTTPRequestHandler):
 
         agent_id, git_op, query = self._parse_path()
         if not agent_id or not git_op:
-            self.send_error(400, "expected /git/{agent_id}/state.git/...".encode('latin-1', errors='replace').decode('latin-1'))
+            self.send_error(
+                400,
+                "expected /git/{agent_id}/state.git/...".encode(
+                    "latin-1", errors="replace"
+                ).decode("latin-1"),
+            )
             return
 
-        org_id = self.headers.get("X-Organization-Id", DEFAULT_ORG) or DEFAULT_ORG
+        org_id = resolve_org_id(self.headers.get("X-Organization-Id"))
 
         repo_path = find_or_create_repo(agent_id, org_id)
         body = self._read_body()
@@ -683,6 +717,10 @@ class GitHTTPHandler(BaseHTTPRequestHandler):
         result = {
             "memfs_base": str(MEMFS_BASE),
             "memfs_base_exists": MEMFS_BASE.exists(),
+            "default_org": DEFAULT_ORG,
+            "discovered_single_org": discover_single_org_id(),
+            "letta_default_org_id": LETTA_DEFAULT_ORG_ID,
+            "sync_note": "This service verifies git repository state only; Letta's Postgres block cache must still be checked through the Letta API.",
             "activity_log": str(ACTIVITY_LOG),
             "activity_log_exists": ACTIVITY_LOG.exists(),
             "timestamp": time.time(),
@@ -704,12 +742,16 @@ class GitHTTPHandler(BaseHTTPRequestHandler):
                     info = {
                         "agent_id": agent_dir.name,
                         "repo_exists": repo.exists(),
-                        "repo_usable": _is_usable_bare_repo(repo) if repo.exists() else False,
+                        "repo_usable": _is_usable_bare_repo(repo)
+                        if repo.exists()
+                        else False,
                     }
                     if repo.exists() and _is_usable_bare_repo(repo):
                         commit_count = _commit_count_in_repo(repo)
                         info["commit_count"] = commit_count
-                        info["has_only_initial_commit"] = commit_count == 1 if commit_count else False
+                        info["has_only_initial_commit"] = (
+                            commit_count == 1 if commit_count else False
+                        )
                         try:
                             files = git_repository_file_paths(repo)
                             info["file_count"] = len(files)

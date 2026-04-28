@@ -180,7 +180,8 @@ services:
             PORT: ${MEMFS_MANAGER_PORT:-8285}
             BIND: ${MEMFS_MANAGER_BIND:-0.0.0.0}
             MEMFS_BASE: ${MEMFS_BASE:-/root/.letta/memfs/repository}
-            MEMFS_DEFAULT_ORG: ${MEMFS_DEFAULT_ORG:-org-default}
+            # Default Letta self-hosted org id; Memory Manager auto-discovers a sole existing org dir when present.
+            MEMFS_DEFAULT_ORG: ${MEMFS_DEFAULT_ORG:-org-00000000-0000-4000-8000-000000000000}
         volumes:
             - bears-letta-data:/root/.letta
         healthcheck:
