@@ -9,6 +9,7 @@ pub mod config;
 pub mod core;
 pub mod errors;
 pub mod observability;
+pub mod seeds;
 pub mod startup;
 pub mod web;
 

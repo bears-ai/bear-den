@@ -19,6 +19,30 @@
 
 You can use the devcontainer in this repo instead of a manual local Postgres setup if that matches your workflow.
 
+## Development and smoke seeds
+
+Schema migrations stay environment-agnostic. Disposable development and smoke-test data is seeded separately with:
+
+```bash
+cargo run -- seed --profile smoke
+```
+
+The initial `smoke` profile is idempotent and creates/reuses:
+
+| Fixture | Value |
+|---------|-------|
+| Username | `alice` |
+| Password | `Never deploy seed passwords.` |
+| Bear slug | `test-bear` |
+
+The profile also verifies Alice’s email and grants her membership on `test-bear`, so `/bear/test-bear` can be used by smoke tests and manual UI checks. `minimal` currently aliases `smoke`.
+
+In the repo devcontainer, `/workspace/scripts/devcontainer-start.sh` starts bundled Postgres, runs `/workspace/scripts/seed-dev.sh smoke`, then attempts to start the rest of the stack. Startup seeding and full-stack startup are non-fatal: the container remains usable if either step fails. Check `.devcontainer/logs/startup.status` and `.devcontainer/logs/startup.log` for details, then rerun manually with:
+
+```bash
+./scripts/seed-dev.sh smoke
+```
+
 ## Development-only link prefix
 
 Without `--features production`, [`src/config.rs`](../src/config.rs) sets `URL_PREFIX` to `https://redirectmeto.com/http://localhost:3000/`. Generated absolute links (email verification, telemetry) therefore go through the third-party redirect service [redirectmeto.com](https://redirectmeto.com) before hitting your local app. Edit `URL_PREFIX` in that file if you prefer plain `http://localhost:…`, a tunnel URL, or another approach.
