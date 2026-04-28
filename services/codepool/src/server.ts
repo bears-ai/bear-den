@@ -1,7 +1,10 @@
+import { execFile as execFileCb } from "node:child_process";
 import { readFileSync, accessSync, constants as FsConstants } from "node:fs";
+import { mkdtemp, rm } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
+import { promisify } from "node:util";
 import express from "express";
 import type { ConversationSessionPool } from "./pool.js";
 import { sdkMessageToSseDataLine } from "./sse.js";
@@ -23,6 +26,61 @@ import {
 const packageJson = JSON.parse(
   readFileSync(new URL("../package.json", import.meta.url), "utf8")
 ) as { version?: string };
+
+const execFile = promisify(execFileCb);
+
+function memfsRemoteUrlForAgent(agentId: string): {
+  url: string;
+  source: "LETTA_MEMFS_SERVICE_URL" | "LETTA_BASE_URL";
+} {
+  const memfsBase = process.env.LETTA_MEMFS_SERVICE_URL?.trim().replace(/\/+$/, "");
+  if (memfsBase) {
+    return {
+      url: `${memfsBase}/git/${agentId}/state.git`,
+      source: "LETTA_MEMFS_SERVICE_URL",
+    };
+  }
+  const lettaBase = process.env.LETTA_BASE_URL?.trim().replace(/\/+$/, "") ?? "";
+  return {
+    url: `${lettaBase}/v1/git/${agentId}/state.git`,
+    source: "LETTA_BASE_URL",
+  };
+}
+
+function gitAuthArgs(): string[] {
+  const token = process.env.LETTA_API_KEY?.trim();
+  if (!token) return [];
+  const basic = Buffer.from(`letta:${token}`).toString("base64");
+  return ["-c", `http.extraHeader=Authorization: Basic ${basic}`];
+}
+
+async function runGit(args: string[], cwd?: string): Promise<{
+  ok: boolean;
+  stdout: string;
+  stderr: string;
+  error?: string;
+}> {
+  try {
+    const result = await execFile("git", args, {
+      cwd,
+      timeout: 60_000,
+      maxBuffer: 10 * 1024 * 1024,
+    });
+    return {
+      ok: true,
+      stdout: result.stdout?.toString() ?? "",
+      stderr: result.stderr?.toString() ?? "",
+    };
+  } catch (e) {
+    const err = e as Error & { stdout?: Buffer | string; stderr?: Buffer | string };
+    return {
+      ok: false,
+      stdout: err.stdout?.toString() ?? "",
+      stderr: err.stderr?.toString() ?? "",
+      error: err.message,
+    };
+  }
+}
 
 export type ServerContext = {
   pool: ConversationSessionPool;
@@ -92,6 +150,68 @@ export function attachRoutes(
       conversationHandlers: ctx.pool.stats(),
       channelListeners: ctx.channelListeners.stats(),
     });
+  });
+
+  app.get("/internal/memfs/:agentId/check", guard, async (req, res) => {
+    const agentId = (req.params.agentId ?? "").trim();
+    if (!/^agent-[A-Za-z0-9_-]+$/.test(agentId)) {
+      res.status(400).json({ error: "invalid agent id" });
+      return;
+    }
+
+    const mode = req.query.mode === "clone" ? "clone" : "ls-remote";
+    const remote = memfsRemoteUrlForAgent(agentId);
+    const authArgs = gitAuthArgs();
+    const lsRemote = await runGit([...authArgs, "ls-remote", remote.url]);
+    const refs = lsRemote.stdout
+      .split("\n")
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .map((line) => {
+        const [sha, ref] = line.split(/\s+/, 2);
+        return { sha: sha ?? "", ref: ref ?? "" };
+      });
+
+    const body: Record<string, unknown> = {
+      ok: lsRemote.ok,
+      mode,
+      agent_id: agentId,
+      remote_url: remote.url,
+      remote_url_source: remote.source,
+      ls_remote: {
+        ok: lsRemote.ok,
+        refs,
+        stderr: lsRemote.stderr,
+        error: lsRemote.error ?? null,
+      },
+    };
+
+    if (mode === "clone" && lsRemote.ok) {
+      const tempRoot = await mkdtemp(join(homedir(), ".letta", "memfs-check-"));
+      const checkout = join(tempRoot, "checkout");
+      try {
+        const clone = await runGit([...authArgs, "clone", remote.url, checkout]);
+        const files = clone.ok
+          ? await runGit(["-C", checkout, "ls-tree", "-r", "--name-only", "HEAD"])
+          : { ok: false, stdout: "", stderr: "", error: "clone failed" };
+        body.ok = clone.ok && files.ok;
+        body.clone = {
+          ok: clone.ok,
+          stderr: clone.stderr,
+          error: clone.error ?? null,
+          file_count: files.ok
+            ? files.stdout.split("\n").filter((line) => line.trim()).length
+            : null,
+          files: files.ok
+            ? files.stdout.split("\n").filter((line) => line.trim()).slice(0, 50)
+            : [],
+        };
+      } finally {
+        await rm(tempRoot, { recursive: true, force: true });
+      }
+    }
+
+    res.status(body.ok ? 200 : 502).json(body);
   });
 
   app.get("/metrics", (_req, res) => {

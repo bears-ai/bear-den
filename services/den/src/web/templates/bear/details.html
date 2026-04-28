@@ -227,6 +227,7 @@ block subnav %}
     <section>
         <div id="private-memory" class="box full-width">
             <h3>Agent memory</h3>
+            <p><a href="/bear/{{ bear.slug | e }}/details/memory">Memory details</a></p>
             {% if mem_health %}
             <div class="den-memory-health{% if mem_health.is_ok %} den-memory-health-ok{% else %} den-memory-health-warn{% endif %}">
                 <div>

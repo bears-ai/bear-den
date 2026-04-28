@@ -4,8 +4,100 @@
 
 {% block content %}
 <section>
-    <h2>Memory blocks</h2>
+    <h2>Memory details</h2>
     <p><a href="/bear/{{ bear.slug | e }}/details">Back to bear</a></p>
+
+    <section class="box full-width">
+        <h3>Codepool memfs check</h3>
+        {% if codepool_memfs_check %}
+        <p>
+            <strong>{% if codepool_memfs_check.ok %}Reachable{% else %}Failed{% endif %}</strong>
+            via <code>{{ codepool_memfs_check.remote_url_source | e }}</code>
+        </p>
+        <dl>
+            <dt>Remote</dt>
+            <dd><code>{{ codepool_memfs_check.remote_url | e }}</code></dd>
+            <dt>Mode</dt>
+            <dd>{{ codepool_memfs_check.mode | e }}</dd>
+            <dt>Refs</dt>
+            <dd>{{ codepool_memfs_check.ls_remote.refs | length }}</dd>
+            {% if codepool_memfs_check.clone %}
+            <dt>Clone files</dt>
+            <dd>{% if codepool_memfs_check.clone.file_count %}{{ codepool_memfs_check.clone.file_count }}{% else %}0{% endif %}</dd>
+            {% endif %}
+        </dl>
+        {% if codepool_memfs_check.ls_remote.error %}
+        <p class="form-errors">ls-remote: {{ codepool_memfs_check.ls_remote.error | e }}</p>
+        {% endif %}
+        {% if codepool_memfs_check.clone and codepool_memfs_check.clone.error %}
+        <p class="form-errors">clone: {{ codepool_memfs_check.clone.error | e }}</p>
+        {% endif %}
+        {% if codepool_memfs_check.ls_remote.refs and codepool_memfs_check.ls_remote.refs | length > 0 %}
+        <table>
+            <thead><tr><th>Ref</th><th>SHA</th></tr></thead>
+            <tbody>
+                {% for r in codepool_memfs_check.ls_remote.refs %}
+                <tr><td><code>{{ r.ref | e }}</code></td><td><code>{{ r.sha | e }}</code></td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% endif %}
+        {% elif codepool_memfs_error %}
+        <p class="form-errors">Could not run Codepool memfs check: {{ codepool_memfs_error | e }}</p>
+        {% elif not bear.letta_agent_id %}
+        <p class="form-hint">No Letta agent is linked to this bear.</p>
+        {% else %}
+        <p class="form-hint">No Codepool memfs check result.</p>
+        {% endif %}
+    </section>
+
+    <section class="box full-width">
+        <h3>Memfs health</h3>
+        {% if mem_health %}
+        <p>
+            <strong>{{ mem_health.label | e }}</strong>
+            <code>{{ mem_health.state | e }}</code>
+        </p>
+        {% if mem_health.warning %}<p>{{ mem_health.warning | e }}</p>{% endif %}
+        <dl>
+            <dt>Commits</dt><dd>{{ mem_health.commit_count_display | e }}</dd>
+            <dt>Memory files</dt><dd>{{ mem_health.memory_file_count_display | e }}</dd>
+            <dt>Total files</dt><dd>{{ mem_health.file_count_display | e }}</dd>
+            <dt>Recent mem-manager events</dt><dd>{{ mem_health.recent_activity_count }}</dd>
+        </dl>
+        {% elif mem_health_error %}
+        <p class="form-errors">Could not load memfs health: {{ mem_health_error | e }}</p>
+        {% elif not bear.letta_agent_id %}
+        <p class="form-hint">No Letta agent is linked to this bear.</p>
+        {% else %}
+        <p class="form-hint">No memfs health result.</p>
+        {% endif %}
+    </section>
+
+    <section class="box full-width">
+        <h3>Memfs file commit log</h3>
+        {% if mem_commit_error %}
+        <p class="form-errors">Could not load memfs commit metadata: {{ mem_commit_error | e }}</p>
+        {% elif mem_commit_rows and mem_commit_rows | length > 0 %}
+        <table>
+            <thead><tr><th>File</th><th>Last commit date</th><th>Message</th></tr></thead>
+            <tbody>
+                {% for row in mem_commit_rows %}
+                <tr>
+                    <td><code>{{ row.path | e }}</code></td>
+                    <td>{% if row.last_commit_date %}{{ (row.last_commit_date | replace("T", " "))[:16] | e }}{% else %}<em>unknown</em>{% endif %}</td>
+                    <td>{% if row.last_commit_message %}{{ row.last_commit_message | e }}{% else %}<em>unknown</em>{% endif %}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% else %}
+        <p class="form-hint">No file commit metadata found in memfs.</p>
+        {% endif %}
+    </section>
+
+    <section>
+    <h3>Memory blocks</h3>
 
     {% if not letta_configured %}
     <p class="form-hint">Letta is not configured.</p>
@@ -37,5 +129,6 @@
     {% else %}
     <p class="form-hint">No Letta agent is linked to this bear.</p>
     {% endif %}
+    </section>
 </section>
 {% endblock %}

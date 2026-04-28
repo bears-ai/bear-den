@@ -39,6 +39,13 @@ pub struct PrivateMemoryRepoNodeView {
     pub children: Vec<PrivateMemoryRepoNodeView>,
 }
 
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct PrivateMemoryCommitRowView {
+    pub path: String,
+    pub last_commit_date: Option<String>,
+    pub last_commit_message: Option<String>,
+}
+
 /// Template-friendly memory health summary returned by Memory Manager's status endpoint.
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct MemoryManagerStatusView {
@@ -194,6 +201,31 @@ impl From<MemoryManagerRepoNode> for PrivateMemoryRepoNodeView {
                 .collect(),
         }
     }
+}
+
+pub fn private_memory_commit_rows(
+    nodes: &[PrivateMemoryRepoNodeView],
+) -> Vec<PrivateMemoryCommitRowView> {
+    fn visit(node: &PrivateMemoryRepoNodeView, rows: &mut Vec<PrivateMemoryCommitRowView>) {
+        if node.is_dir {
+            for child in &node.children {
+                visit(child, rows);
+            }
+            return;
+        }
+        rows.push(PrivateMemoryCommitRowView {
+            path: node.path.clone(),
+            last_commit_date: node.last_commit_date.clone(),
+            last_commit_message: node.last_commit_message.clone(),
+        });
+    }
+
+    let mut rows = Vec::new();
+    for node in nodes {
+        visit(node, &mut rows);
+    }
+    rows.sort_by(|a, b| a.path.cmp(&b.path));
+    rows
 }
 
 /// Accepted response shapes from Memory Manager.

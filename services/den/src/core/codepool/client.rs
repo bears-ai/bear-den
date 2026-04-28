@@ -6,6 +6,58 @@ use uuid::Uuid;
 
 use crate::{config::Config, errors::CustomError};
 
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct CodepoolMemfsCheck {
+    #[serde(default)]
+    pub ok: bool,
+    #[serde(default)]
+    pub mode: String,
+    #[serde(default)]
+    pub agent_id: String,
+    #[serde(default)]
+    pub remote_url: String,
+    #[serde(default)]
+    pub remote_url_source: String,
+    #[serde(default)]
+    pub ls_remote: CodepoolMemfsLsRemote,
+    #[serde(default)]
+    pub clone: Option<CodepoolMemfsClone>,
+}
+
+#[derive(Debug, Default, Clone, serde::Serialize, serde::Deserialize)]
+pub struct CodepoolMemfsLsRemote {
+    #[serde(default)]
+    pub ok: bool,
+    #[serde(default)]
+    pub refs: Vec<CodepoolMemfsRef>,
+    #[serde(default)]
+    pub stderr: String,
+    #[serde(default)]
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Default, Clone, serde::Serialize, serde::Deserialize)]
+pub struct CodepoolMemfsRef {
+    #[serde(default)]
+    pub sha: String,
+    #[serde(default, rename = "ref")]
+    pub ref_: String,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct CodepoolMemfsClone {
+    #[serde(default)]
+    pub ok: bool,
+    #[serde(default)]
+    pub stderr: String,
+    #[serde(default)]
+    pub error: Option<String>,
+    #[serde(default)]
+    pub file_count: Option<i64>,
+    #[serde(default)]
+    pub files: Vec<String>,
+}
+
 /// HTTP client for **Codepool** (Letta Code SDK harness). Disabled when `codepool_base_url` is empty.
 #[derive(Clone)]
 pub struct CodePoolClient {
@@ -68,6 +120,48 @@ impl CodePoolClient {
             )));
         }
         Ok(text)
+    }
+
+    /// `GET /internal/memfs/{agent_id}/check` — non-mutating git remote validation.
+    pub async fn fetch_memfs_check(
+        &self,
+        agent_id: &str,
+        clone: bool,
+    ) -> Result<CodepoolMemfsCheck, CustomError> {
+        if !self.is_enabled() {
+            return Err(CustomError::System(
+                "CODEPOOL_BASE_URL is not set".to_string(),
+            ));
+        }
+        let mode = if clone { "clone" } else { "ls-remote" };
+        let url = format!(
+            "{}/internal/memfs/{}/check?mode={}",
+            self.base_url,
+            urlencoding::encode(agent_id.trim()),
+            mode
+        );
+        let resp = self
+            .http
+            .get(url)
+            .headers(self.auth_headers())
+            .send()
+            .await
+            .map_err(|e| {
+                CustomError::System(format!("Codepool memfs check request failed: {e}"))
+            })?;
+        let status = resp.status();
+        let text = resp
+            .text()
+            .await
+            .map_err(|e| CustomError::System(format!("Codepool memfs check body: {e}")))?;
+        if !(status.is_success() || status == reqwest::StatusCode::BAD_GATEWAY) {
+            return Err(CustomError::System(format!(
+                "Codepool memfs check HTTP {status}: {text}"
+            )));
+        }
+        serde_json::from_str(&text).map_err(|e| {
+            CustomError::Parsing(format!("Codepool memfs check JSON: {e}; body: {text}"))
+        })
     }
 
     /// `GET /version` — npm `version`, `git_sha` from image (same auth pattern as health).

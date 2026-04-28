@@ -26,6 +26,7 @@ use crate::{
         letta::{load_agent_conversations, AgentSummary, LettaAgentDiagnostics},
         memory_manager_head::{
             fetch_memory_manager_repository_files, fetch_memory_manager_repository_status,
+            private_memory_commit_rows,
         },
         user,
         user::db as user_db,
@@ -1085,14 +1086,14 @@ async fn bear_memory_get(
 
     let bear = load_bear_member(state.sqlx_pool(), user_id, &slug).await?;
     let letta_configured = state.letta.is_enabled();
+    let agent_id = bear
+        .letta_agent_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
 
     let (letta_diagnostics, letta_diag_error) = if letta_configured {
-        if let Some(agent_id) = bear
-            .letta_agent_id
-            .as_deref()
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-        {
+        if let Some(agent_id) = agent_id {
             match state.letta.fetch_agent(agent_id).await {
                 Ok(v) => (Some(LettaAgentDiagnostics::from_agent_json(&v)), None),
                 Err(e) => (None, Some(e.to_string())),
@@ -1104,6 +1105,52 @@ async fn bear_memory_get(
         (None, None)
     };
 
+    let memfs_url = state.config.letta_memfs_service_url.as_str();
+    let (mem_health, mem_health_error, mem_commit_rows, mem_commit_error) =
+        if letta_configured && !memfs_url.is_empty() {
+            if let Some(agent_id) = agent_id {
+                let health = match fetch_memory_manager_repository_status(
+                    state.letta.http(),
+                    memfs_url,
+                    agent_id,
+                )
+                .await
+                {
+                    Ok(v) => (v, None),
+                    Err(e) => (None, Some(e.to_string())),
+                };
+                let commits = match fetch_memory_manager_repository_files(
+                    state.letta.http(),
+                    memfs_url,
+                    agent_id,
+                )
+                .await
+                {
+                    Ok(Some(nodes)) => (private_memory_commit_rows(&nodes), None),
+                    Ok(None) => (Vec::new(), None),
+                    Err(e) => (Vec::new(), Some(e.to_string())),
+                };
+                (health.0, health.1, commits.0, commits.1)
+            } else {
+                (None, None, Vec::new(), None)
+            }
+        } else {
+            (None, None, Vec::new(), None)
+        };
+
+    let (codepool_memfs_check, codepool_memfs_error) = if state.codepool.is_enabled() {
+        if let Some(agent_id) = agent_id {
+            match state.codepool.fetch_memfs_check(agent_id, true).await {
+                Ok(v) => (Some(v), None),
+                Err(e) => (None, Some(e.to_string())),
+            }
+        } else {
+            (None, None)
+        }
+    } else {
+        (None, Some("Codepool is not configured.".to_string()))
+    };
+
     render_template(
         &state,
         "bear/memory.html",
@@ -1113,6 +1160,12 @@ async fn bear_memory_get(
             letta_configured,
             letta_diagnostics,
             letta_diag_error,
+            mem_health,
+            mem_health_error,
+            mem_commit_rows,
+            mem_commit_error,
+            codepool_memfs_check,
+            codepool_memfs_error,
         },
     )
     .await
