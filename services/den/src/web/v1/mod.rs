@@ -133,7 +133,9 @@ pub struct ChatHistoryResponse {
     pub next_before: Option<String>,
 }
 
-/// `None` / empty / `default` → agent main thread. Otherwise must be `conv-` + hex / hyphen (Letta id).
+/// `None` / empty / `default` → agent main thread. Existing Letta threads are `conv-...`.
+/// The web UI may also send a temporary `new-...` placeholder before Letta allocates the real
+/// conversation id; Codepool turns that into an SDK `createSession(agent_id)` call.
 fn normalize_client_conversation_id(raw: Option<&str>) -> Result<String, CustomError> {
     let s = raw
         .map(str::trim)
@@ -142,7 +144,7 @@ fn normalize_client_conversation_id(raw: Option<&str>) -> Result<String, CustomE
     if s == "default" {
         return Ok("default".to_string());
     }
-    let ok = s.starts_with("conv-")
+    let ok = (s.starts_with("conv-") || s.starts_with("new-"))
         && s.len() > 8
         && s.chars()
             .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_');
@@ -150,7 +152,7 @@ fn normalize_client_conversation_id(raw: Option<&str>) -> Result<String, CustomE
         Ok(s.to_string())
     } else {
         Err(CustomError::ValidationError(format!(
-            "invalid conversation_id (expected 'default' or a Letta conv- id): {s}"
+            "invalid conversation_id (expected 'default', a Letta conv- id, or a pending new- id): {s}"
         )))
     }
 }
@@ -234,9 +236,9 @@ async fn chat_conversation_patch(
     }
 
     let conv_id = normalize_client_conversation_id(Some(&conversation_id))?;
-    if conv_id == "default" {
+    if conv_id == "default" || conv_id.starts_with("new-") {
         return Err(CustomError::ValidationError(
-            "the main chat cannot be renamed or archived".to_string(),
+            "only saved conversations can be renamed or archived".to_string(),
         ));
     }
 
@@ -1063,6 +1065,14 @@ mod conversation_id_tests {
         assert_eq!(
             normalize_client_conversation_id(Some("conv-abc12345")).unwrap(),
             "conv-abc12345"
+        );
+    }
+
+    #[test]
+    fn accepts_pending_new_prefix_ids() {
+        assert_eq!(
+            normalize_client_conversation_id(Some("new-abc12345")).unwrap(),
+            "new-abc12345"
         );
     }
 

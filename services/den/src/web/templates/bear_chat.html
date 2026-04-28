@@ -878,6 +878,27 @@ block head %} {{ super() }}
                     var inner = lettaInnerForStream(obj);
                     if (!inner || typeof inner !== "object") return;
 
+                    if (inner.message_type === "conversation_resolved") {
+                        var resolvedId = String(
+                            inner.conversation_id || "",
+                        ).trim();
+                        if (
+                            resolvedId &&
+                            resolvedId !== CONVERSATION_ID &&
+                            CONVERSATION_ID.indexOf("new-") === 0
+                        ) {
+                            if (DEN_PENDING_CONVERSATION) {
+                                DEN_PENDING_CONVERSATION.id = resolvedId;
+                                DEN_PENDING_CONVERSATION.pending = false;
+                            }
+                            CONVERSATION_ID = resolvedId;
+                            PREFERRED_CONVERSATION_ID = resolvedId;
+                            syncConversationUrl(resolvedId);
+                            renderConversationTabs();
+                        }
+                        return;
+                    }
+
                     if (inner.message_type === "status_message") {
                         var statusText = assistantChunkText(inner);
                         if (statusText) {
@@ -1041,10 +1062,10 @@ block head %} {{ super() }}
 
     function makeNewConversationId() {
         if (window.crypto && typeof window.crypto.randomUUID === "function") {
-            return "conv-" + window.crypto.randomUUID();
+            return "new-" + window.crypto.randomUUID();
         }
         return (
-            "conv-" +
+            "new-" +
             Date.now().toString(36) +
             "-" +
             Math.random().toString(36).slice(2, 12)

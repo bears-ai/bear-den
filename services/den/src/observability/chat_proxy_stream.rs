@@ -180,6 +180,10 @@ fn bear_channel_event_to_deep_chat_sse(event: &serde_json::Value) -> Option<Byte
             "error_type": event.get("error_type").and_then(|v| v.as_str()),
             "support_ref": event.get("request_id").and_then(|v| v.as_str()),
         }),
+        "conversation_resolved" => serde_json::json!({
+            "message_type": "conversation_resolved",
+            "conversation_id": event.get("conversation_id").and_then(|v| v.as_str()),
+        }),
         // `done` is terminal control metadata, not user-visible status.
         "done" => return None,
         "server_tool_started"
