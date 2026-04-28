@@ -14,6 +14,10 @@ async function main(): Promise<void> {
     process.env.NODE_ENV === "production" ? "http://bears-letta:8283" : "";
   process.env.LETTA_BASE_URL =
     process.env.LETTA_BASE_URL?.trim() || defaultLettaBase;
+  if (!process.env.LETTA_MEMFS_SERVICE_URL?.trim()) {
+    process.env.LETTA_MEMFS_SERVICE_URL =
+      process.env.NODE_ENV === "production" ? "http://bears-memfs-manager:8285" : "";
+  }
   const lettaBaseUrl = process.env.LETTA_BASE_URL;
   if (!lettaBaseUrl) {
     console.error(

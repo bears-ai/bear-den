@@ -342,19 +342,40 @@ block head %} {{ super() }}
         return obj;
     }
 
-    /**
-     * Return plain text for the live stream only. Re-rendering markdown on every token can cause
-     * Deep Chat / remarkable to replace the bubble mid-stream and truncate visible output; keep
-     * streaming updates as plain text, then let history / reload show the final formatted version.
-     */
-    function buildReasoningText(fullText) {
-        var body;
-        if (DEN_CHAT_DEBUG_VERBOSE) {
-            body = fullText;
-        } else {
-            body = stripSystemReminderBlocks(fullText);
-        }
-        return "Thinking\n\n" + body;
+    function buildReasoningLogHtml(fullText) {
+        var body = DEN_CHAT_DEBUG_VERBOSE
+            ? fullText
+            : stripSystemReminderBlocks(fullText);
+        body = String(body || "").trim();
+        if (!body) return "";
+        return (
+            '<div class="den-reasoning-wrap" data-den-reasoning>' +
+            '<div class="den-reasoning-head">' +
+            '<span class="den-reasoning-kicker">Thinking</span>' +
+            '<div class="den-reasoning-scroll" data-den-reasoning-scroll>' +
+            escapeHtmlWithBreaks(body) +
+            "</div>" +
+            '<button type="button" class="den-reasoning-toggle" aria-expanded="false">Expand</button>' +
+            "</div>" +
+            "</div>"
+        );
+    }
+
+    function denReasoningLoadingToggle(config) {
+        var chat = document.getElementById("chat");
+        var loading = chat && chat.displayLoadingBubble;
+        if (!loading || typeof loading.toggle !== "function") return false;
+        loading.toggle(config);
+        return true;
+    }
+
+    function scrollReasoningLogToEnd() {
+        window.requestAnimationFrame(function () {
+            var chat = document.getElementById("chat");
+            var root = chat && chat.shadowRoot;
+            var el = root && root.querySelector("[data-den-reasoning-scroll]");
+            if (el) el.scrollTop = el.scrollHeight;
+        });
     }
 
     /** Letta may send `content` as a string or structured parts (same idea as Code SDK `extractTextFromContent`). */
@@ -679,11 +700,11 @@ block head %} {{ super() }}
             "#text-input{background-color:var(--field-fill-color)!important}" +
             "#messages{padding-top:var(--chat-messages-padding-top)!important;background-color:var(--surface-color)!important;scroll-behavior:auto}" +
             ".den-history-loading{display:inline-block;font-size:smaller;font-style:italic;color:var(--meta-color);opacity:0.88}" +
-            ".den-reasoning-wrap{font-size:smaller;color:inherit;opacity:0.92}" +
+            ".den-reasoning-wrap{box-sizing:border-box;width:min(100%,calc(var(--spacing-unit) * 72));padding:calc(var(--spacing-unit) * 0.65) calc(var(--spacing-unit) * 0.85);border:var(--thin-line-unit) solid var(--border-color);border-left:calc(var(--spacing-unit) * 0.28) solid var(--meta-color);background:var(--field-fill-color);font-size:smaller;color:inherit;opacity:0.92}" +
             ".den-reasoning-head{display:flex;align-items:center;gap:calc(var(--spacing-unit) * 0.9);min-width:0}" +
             ".den-reasoning-kicker{flex:0 0 auto;font-variant:small-caps;letter-spacing:0.06em;font-size:smaller;opacity:0.8}" +
-            ".den-reasoning-scroll{flex:1 1 auto;min-width:0;overflow-x:auto;overflow-y:hidden;max-height:calc(1em * var(--chat-line-height));line-height:var(--chat-line-height);font-family:var(--data-font-family),ui-monospace,monospace;font-size:smaller;white-space:nowrap;-webkit-overflow-scrolling:touch}" +
-            ".den-reasoning-wrap.den-reasoning-expanded .den-reasoning-scroll{white-space:pre-wrap;overflow-x:visible;overflow-y:auto;max-height:calc(var(--spacing-unit) * 36)}" +
+            ".den-reasoning-scroll{--den-reasoning-visible-lines:1;flex:1 1 auto;min-width:0;overflow-x:hidden;overflow-y:auto;max-height:calc(var(--den-reasoning-visible-lines) * 1em * var(--chat-line-height));line-height:var(--chat-line-height);font-family:var(--data-font-family),ui-monospace,monospace;font-size:smaller;white-space:pre-wrap;word-break:break-word;scrollbar-width:thin;-webkit-overflow-scrolling:touch}" +
+            ".den-reasoning-wrap.den-reasoning-expanded .den-reasoning-scroll{--den-reasoning-visible-lines:12;max-height:calc(var(--den-reasoning-visible-lines) * 1em * var(--chat-line-height))}" +
             ".den-reasoning-toggle{flex:0 0 auto;margin:0;padding:calc(var(--spacing-unit) * 0.24) calc(var(--spacing-unit) * 0.7);border:none;background:transparent;color:inherit;opacity:0.72;cursor:pointer;font:inherit;font-size:smaller;text-decoration:underline;text-underline-offset:calc(var(--thin-line-unit) * 2)}" +
             ".den-reasoning-toggle:hover{opacity:1}" +
             ".den-assistant-html{color:inherit}" +
@@ -766,7 +787,15 @@ block head %} {{ super() }}
         errEl.hidden = true;
 
         var abortCtl = new AbortController();
+        var reasoningVisible = false;
+        function hideReasoningLog() {
+            if (!reasoningVisible) return;
+            if (denReasoningLoadingToggle()) {
+                reasoningVisible = false;
+            }
+        }
         signals.stopClicked.listener = function () {
+            hideReasoningLog();
             abortCtl.abort();
         };
 
@@ -811,7 +840,6 @@ block head %} {{ super() }}
                 var decoder = new TextDecoder();
                 var lineBuf = "";
                 var reasoningFull = "";
-                var hadReasoning = false;
                 var assistantBuf = "";
                 var sawAssistantOrReasoning = false;
                 var sawStreamError = false;
@@ -843,6 +871,7 @@ block head %} {{ super() }}
                     var errSig = lettaStreamEventErrorSignal(obj, requestRef);
                     if (errSig) {
                         sawStreamError = true;
+                        hideReasoningLog();
                         signals.onResponse(errSig);
                         return;
                     }
@@ -856,19 +885,21 @@ block head %} {{ super() }}
                             pieceR = inner.reasoning;
                         else pieceR = assistantChunkText(inner);
                         if (!pieceR) return;
-                        var wasEmpty = reasoningFull.length === 0;
                         reasoningFull += pieceR;
-                        hadReasoning = true;
-                        signals.onResponse({
-                            text: buildReasoningText(reasoningFull),
-                            role: "ai",
-                            overwrite: !wasEmpty,
-                        });
+                        var html = buildReasoningLogHtml(reasoningFull);
+                        if (html) {
+                            reasoningVisible = denReasoningLoadingToggle({
+                                role: "reasoning",
+                                style: { html: html },
+                            });
+                            if (reasoningVisible) scrollReasoningLogToEnd();
+                        }
                         return;
                     }
 
                     if (inner.message_type === "assistant_message") {
                         sawAssistantOrReasoning = true;
+                        hideReasoningLog();
                         var chunk = assistantChunkText(inner);
                         /**
                          * Accumulate all assistant tokens for this HTTP response. Codepool / Letta may
@@ -884,8 +915,7 @@ block head %} {{ super() }}
                             signals.onResponse({
                                 text: assistantBuf,
                                 role: "ai",
-                                overwrite:
-                                    !isFirstAssistantChunk || hadReasoning,
+                                overwrite: !isFirstAssistantChunk,
                             });
                         } else {
                             signals.onResponse({
@@ -895,11 +925,9 @@ block head %} {{ super() }}
                                           assistantBuf,
                                       ),
                                 role: "ai",
-                                overwrite:
-                                    !isFirstAssistantChunk || hadReasoning,
+                                overwrite: !isFirstAssistantChunk,
                             });
                         }
-                        if (hadReasoning) hadReasoning = false;
                     }
                 }
 
@@ -921,6 +949,7 @@ block head %} {{ super() }}
                                 consumeSseDataLine(lineBuf);
                                 lineBuf = "";
                             }
+                            hideReasoningLog();
                             /* After all chunks, apply full reminder strip (incl. partial unclosed tag at EOF). */
                             if (
                                 sawAssistantOrReasoning &&
@@ -963,6 +992,7 @@ block head %} {{ super() }}
                 return pump();
             })
             .catch(function (x) {
+                hideReasoningLog();
                 if (x.name === "AbortError") {
                     signals.onResponse({ text: "\n[stopped]" });
                     signals.onClose();

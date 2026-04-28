@@ -71,6 +71,7 @@ export function attachRoutes(
       ok: true,
       service: "bears-codepool",
       letta_memfs_local: process.env.LETTA_MEMFS_LOCAL ?? null,
+      letta_memfs_service_url: process.env.LETTA_MEMFS_SERVICE_URL ?? null,
       session_memfs: true,
       letta_cli_home: lettaCliHome,
       letta_cli_home_writable,
