@@ -9,6 +9,12 @@ import express from "express";
 import type { ConversationSessionPool } from "./pool.js";
 import { sdkMessageToSseDataLine } from "./sse.js";
 import { handleOpenAIChatCompletions } from "./openai.js";
+import {
+    bearChannelEventToSseDataLine,
+    parseBearChannelRequest,
+    sdkMessageToBearChannelEvents,
+    type BearChannelRequest,
+} from "./bear-channel.js";
 import type { ChannelListenerRegistry } from "./channel-listeners.js";
 import {
     recordConversationMessagesRequest,
@@ -348,6 +354,144 @@ export function attachRoutes(
         res.type("text/plain; version=0.0.4; charset=utf-8");
         res.send(renderPrometheusText());
     });
+
+    app.post(
+        "/internal/bear_channel/sessions/:sessionId/messages",
+        express.json({ limit: "2mb" }),
+        guard,
+        async (req, res) => {
+            const sessionId = req.params.sessionId ?? "";
+            let parsed: ReturnType<typeof parseBearChannelRequest>;
+            try {
+                parsed = parseBearChannelRequest(
+                    req.body as BearChannelRequest,
+                );
+            } catch (e) {
+                const message = e instanceof Error ? e.message : String(e);
+                res.status(400).json({ error: message });
+                return;
+            }
+
+            res.status(200);
+            res.setHeader("Content-Type", "text/event-stream; charset=utf-8");
+            res.setHeader("Cache-Control", "no-cache");
+            res.setHeader("Connection", "keep-alive");
+
+            const rawReqId = req.headers["x-request-id"];
+            const requestId =
+                typeof rawReqId === "string" && rawReqId.trim()
+                    ? rawReqId.trim()
+                    : (req.body as BearChannelRequest).request_id?.trim() ||
+                      randomUUID();
+            res.setHeader("X-Request-Id", requestId);
+
+            recordConversationMessagesRequest();
+            const t0 = Date.now();
+            console.log(
+                JSON.stringify({
+                    event: "bear_channel_message_start",
+                    service: "bears-codepool",
+                    request_id: requestId,
+                    session_id: sessionId,
+                    conversation_id: parsed.conversationId,
+                    agent_id: parsed.agentId,
+                    bear_id: parsed.bearId,
+                }),
+            );
+
+            let hadAssistantOrReasoning = false;
+            let sawUpstreamErrorMessage = false;
+            let sseDataLines = 0;
+
+            try {
+                for await (const msg of ctx.pool.streamUserMessage(
+                    parsed.agentId,
+                    parsed.conversationId,
+                    parsed.userText,
+                    { bearId: parsed.bearId, plan: parsed.plan },
+                )) {
+                    for (const event of sdkMessageToBearChannelEvents(msg)) {
+                        sseDataLines += 1;
+                        res.write(
+                            `data: ${bearChannelEventToSseDataLine(event)}\n\n`,
+                        );
+                        if (
+                            event.type === "assistant_delta" ||
+                            event.type === "reasoning_delta"
+                        ) {
+                            hadAssistantOrReasoning = true;
+                        } else if (event.type === "error") {
+                            sawUpstreamErrorMessage = true;
+                        }
+                    }
+                }
+                let outcome: "ok" | "upstream_error" | "empty_fallback";
+                if (hadAssistantOrReasoning) {
+                    recordStreamFinishedOk();
+                    outcome = "ok";
+                } else if (sawUpstreamErrorMessage) {
+                    recordStreamFinishedUpstreamError();
+                    outcome = "upstream_error";
+                } else {
+                    recordStreamFinishedEmptyFallback();
+                    outcome = "empty_fallback";
+                    res.write(
+                        `data: ${bearChannelEventToSseDataLine({
+                            type: "error",
+                            message: "No response from the assistant.",
+                            detail: "The stream ended without any assistant output. Check Codepool and Letta logs.",
+                            request_id: requestId,
+                        })}\n\n`,
+                    );
+                }
+                res.write(
+                    `data: ${bearChannelEventToSseDataLine({ type: "done", outcome })}\n\n`,
+                );
+                res.end();
+                const ms = Date.now() - t0;
+                console.log(
+                    JSON.stringify({
+                        event: "bear_channel_message_end",
+                        service: "bears-codepool",
+                        request_id: requestId,
+                        outcome,
+                        duration_ms: ms,
+                        sse_data_lines: sseDataLines,
+                    }),
+                );
+            } catch (e) {
+                recordStreamFinishedError();
+                const err = e instanceof Error ? e.message : String(e);
+                console.log(
+                    JSON.stringify({
+                        event: "bear_channel_message_error",
+                        service: "bears-codepool",
+                        request_id: requestId,
+                        error: err,
+                    }),
+                );
+                res.write(
+                    `data: ${bearChannelEventToSseDataLine({
+                        type: "error",
+                        message: err,
+                        request_id: requestId,
+                    })}\n\n`,
+                );
+                res.end();
+            }
+        },
+    );
+
+    app.post(
+        "/internal/bear_channel/sessions/:sessionId/cancel",
+        express.json({ limit: "64kb" }),
+        guard,
+        (req, res) => {
+            res.status(501).json({
+                error: "bear_channel cancellation is reserved but not implemented by the current warm pool yet",
+            });
+        },
+    );
 
     app.post(
         "/v1/conversations/:conversationId/messages",

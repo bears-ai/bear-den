@@ -6,6 +6,8 @@ static CHAT_SEND_STARTED: AtomicU64 = AtomicU64::new(0);
 static CHAT_SEND_FINISHED_OK: AtomicU64 = AtomicU64::new(0);
 static CHAT_SEND_FINISHED_EMPTY: AtomicU64 = AtomicU64::new(0);
 static CHAT_SEND_FINISHED_PROXY_ERROR: AtomicU64 = AtomicU64::new(0);
+static CHAT_SEND_RUNTIME_LEGACY: AtomicU64 = AtomicU64::new(0);
+static CHAT_SEND_RUNTIME_BEAR_CHANNEL: AtomicU64 = AtomicU64::new(0);
 
 #[inline]
 pub fn chat_send_started() {
@@ -27,6 +29,16 @@ pub fn chat_send_finished_proxy_error() {
     CHAT_SEND_FINISHED_PROXY_ERROR.fetch_add(1, Ordering::Relaxed);
 }
 
+#[inline]
+pub fn chat_send_runtime_legacy() {
+    CHAT_SEND_RUNTIME_LEGACY.fetch_add(1, Ordering::Relaxed);
+}
+
+#[inline]
+pub fn chat_send_runtime_bear_channel() {
+    CHAT_SEND_RUNTIME_BEAR_CHANNEL.fetch_add(1, Ordering::Relaxed);
+}
+
 /// Prometheus text exposition 0.0.4.
 pub fn render_prometheus_text() -> String {
     let mut s = String::with_capacity(512);
@@ -34,6 +46,8 @@ pub fn render_prometheus_text() -> String {
     let b = CHAT_SEND_FINISHED_OK.load(Ordering::Relaxed);
     let c = CHAT_SEND_FINISHED_EMPTY.load(Ordering::Relaxed);
     let d = CHAT_SEND_FINISHED_PROXY_ERROR.load(Ordering::Relaxed);
+    let e = CHAT_SEND_RUNTIME_LEGACY.load(Ordering::Relaxed);
+    let f = CHAT_SEND_RUNTIME_BEAR_CHANNEL.load(Ordering::Relaxed);
 
     writeln!(
         s,
@@ -71,6 +85,22 @@ pub fn render_prometheus_text() -> String {
     writeln!(s, "# TYPE den_chat_send_finished_proxy_error_total counter").unwrap();
     writeln!(s, "den_chat_send_finished_proxy_error_total {d}").unwrap();
 
+    writeln!(
+        s,
+        "# HELP den_chat_send_runtime_legacy_total Chat send requests routed through the legacy Codepool conversation endpoint."
+    )
+    .unwrap();
+    writeln!(s, "# TYPE den_chat_send_runtime_legacy_total counter").unwrap();
+    writeln!(s, "den_chat_send_runtime_legacy_total {e}").unwrap();
+
+    writeln!(
+        s,
+        "# HELP den_chat_send_runtime_bear_channel_total Chat send requests routed through Codepool bear_channel."
+    )
+    .unwrap();
+    writeln!(s, "# TYPE den_chat_send_runtime_bear_channel_total counter").unwrap();
+    writeln!(s, "den_chat_send_runtime_bear_channel_total {f}").unwrap();
+
     s
 }
 
@@ -84,5 +114,7 @@ mod tests {
         assert!(s.contains("# HELP den_chat_send_started_total"));
         assert!(s.contains("# TYPE den_chat_send_started_total counter"));
         assert!(s.contains("den_chat_send_started_total "));
+        assert!(s.contains("# HELP den_chat_send_runtime_legacy_total"));
+        assert!(s.contains("# HELP den_chat_send_runtime_bear_channel_total"));
     }
 }

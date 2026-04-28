@@ -2,4 +2,4 @@
 
 mod client;
 
-pub use client::CodePoolClient;
+pub use client::{BearRuntimeClient, CodePoolClient};

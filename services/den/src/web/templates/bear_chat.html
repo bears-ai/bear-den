@@ -878,6 +878,17 @@ block head %} {{ super() }}
                     var inner = lettaInnerForStream(obj);
                     if (!inner || typeof inner !== "object") return;
 
+                    if (inner.message_type === "status_message") {
+                        var statusText = assistantChunkText(inner);
+                        if (statusText) {
+                            signals.onResponse({
+                                text: statusText,
+                                role: "system",
+                            });
+                        }
+                        return;
+                    }
+
                     if (inner.message_type === "reasoning_message") {
                         sawAssistantOrReasoning = true;
                         var pieceR = "";

@@ -169,17 +169,10 @@ body.bear_chat .den-conv-button-container:hover {
 }
 
 /* ---- Design fixtures (/design) ---- */
-section#content:has(.den-design-chat-shell) {
+.den-design-chat-shell {
     min-height: calc(100vh - 6rem);
     display: flex;
     flex-direction: column;
-}
-
-.den-design-chat-shell {
-    flex: 1 1 auto;
-    display: flex;
-    flex-direction: column;
-    min-height: 0;
     max-width: min(var(--chat-shell-max-width), var(--medium-width));
     width: 100%;
     margin: 0 auto;
@@ -286,6 +279,31 @@ section#content:has(.den-design-chat-shell) {
 .den-design-conversation-picker .den-conv-menu-action:hover {
     background-color: var(--accent-color);
     color: var(--page-color);
+}
+
+.den-design-activity-strip {
+    margin-bottom: var(--spacing-unit);
+    padding: var(--spacing-unit);
+    border: solid var(--thin-line-unit) var(--border-color);
+    background-color: var(--page-color);
+    font-size: smaller;
+}
+
+.den-design-activity-strip p,
+.den-design-activity-strip ul {
+    margin: 0;
+}
+
+.den-design-activity-strip ul {
+    display: flex;
+    flex-wrap: wrap;
+    gap: calc(var(--spacing-unit) * 0.75);
+    list-style: none;
+    padding: 0;
+}
+
+.den-design-activity-strip li::before {
+    content: "\\2022 ";
 }
 
 .den-design-chat-panel {

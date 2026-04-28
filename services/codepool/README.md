@@ -23,10 +23,12 @@ npm run build && npm start
 | GET | `/health` | Liveness |
 | GET | `/metrics` | Prometheus text (internal scrape; protect with network policy) |
 | GET | `/internal/pool` | Conversation + channel listener stats (Bearer if `CODEPOOL_INTERNAL_TOKEN`) |
-| POST | `/v1/conversations/:id/messages` | Letta-compatible streaming (body: `messages`, `agent_id`, …) |
+| POST | `/internal/bear_channel/sessions/:id/messages` | Canonical Den -> Codepool `bear_channel` streaming runtime endpoint (Bearer if `CODEPOOL_INTERNAL_TOKEN`) |
+| POST | `/internal/bear_channel/sessions/:id/cancel` | Reserved cancellation endpoint; currently returns `501` until warm-pool cancellation is implemented |
+| POST | `/v1/conversations/:id/messages` | Legacy Letta-compatible streaming (body: `messages`, `agent_id`, …) |
 | POST | `/v1/chat/completions` | OpenWebUI-style (`metadata.bear_agent_id`, optional `metadata.conversation_id`) |
 
-Architecture: [docs/architecture/DEN_ARCHITECTURE.md](../../docs/architecture/DEN_ARCHITECTURE.md). Deploy: [COOLIFY_DEPLOY.md](./COOLIFY_DEPLOY.md).
+Architecture: [docs/architecture/DEN_ARCHITECTURE.md](../../docs/architecture/DEN_ARCHITECTURE.md) and [`bear_channel` + ACP](../../docs/architecture/BEAR_CHANNEL_AND_ACP.md). Deploy: [COOLIFY_DEPLOY.md](./COOLIFY_DEPLOY.md).
 
 ## Letta Code vendored patch
 

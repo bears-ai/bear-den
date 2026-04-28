@@ -1,8 +1,11 @@
 use std::time::Duration;
 
+use async_trait::async_trait;
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue, AUTHORIZATION, CONTENT_TYPE};
 use serde_json::json;
 use uuid::Uuid;
+
+use crate::core::bears::model::Bear;
 
 use crate::{config::Config, errors::CustomError};
 
@@ -56,6 +59,26 @@ pub struct CodepoolMemfsClone {
     pub file_count: Option<i64>,
     #[serde(default)]
     pub files: Vec<String>,
+}
+
+/// Runtime abstraction for Den -> bear harness message streaming.
+///
+/// `CodePoolClient` is the first implementation. Keeping this trait near the concrete client
+/// lets Den introduce ACP/native test clients later without changing web chat handlers.
+#[async_trait]
+pub trait BearRuntimeClient {
+    async fn post_bear_channel_message_streaming(
+        &self,
+        session_id: &str,
+        conversation_id: &str,
+        bear: &Bear,
+        user_id: i32,
+        username: Option<&str>,
+        membership_role: Option<&str>,
+        user_input: &str,
+        runtime_plan: &serde_json::Value,
+        request_id: Uuid,
+    ) -> Result<reqwest::Response, CustomError>;
 }
 
 /// HTTP client for **Codepool** (Letta Code SDK harness). Disabled when `codepool_base_url` is empty.
@@ -220,8 +243,114 @@ impl CodePoolClient {
         Ok(text)
     }
 
+    /// `bear_channel` is the preferred Den → Codepool runtime boundary. Den keeps external
+    /// authentication and browser/API compatibility; Codepool receives trusted bear/user/channel
+    /// context and manages the warm Letta Code runtime.
+    pub async fn post_bear_channel_message_streaming(
+        &self,
+        session_id: &str,
+        conversation_id: &str,
+        bear: &Bear,
+        user_id: i32,
+        username: Option<&str>,
+        membership_role: Option<&str>,
+        user_input: &str,
+        runtime_plan: &serde_json::Value,
+        request_id: Uuid,
+    ) -> Result<reqwest::Response, CustomError> {
+        if !self.is_enabled() {
+            return Err(CustomError::System(
+                "Codepool is not configured (set CODEPOOL_BASE_URL)".to_string(),
+            ));
+        }
+
+        let agent_id = bear
+            .letta_agent_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .ok_or_else(|| {
+                CustomError::System(
+                    "This bear is not provisioned in Letta yet (missing letta_agent_id)."
+                        .to_string(),
+                )
+            })?;
+
+        let body = json!({
+            "session_id": session_id,
+            "conversation_id": conversation_id,
+            "bear": {
+                "id": bear.id.to_string(),
+                "slug": bear.slug,
+                "name": bear.name,
+                "letta_agent_id": agent_id,
+            },
+            "user": {
+                "id": user_id,
+                "username": username,
+                "membership_role": membership_role,
+            },
+            "channel": {
+                "family": "browser_chat",
+                "client": "den_web",
+                "protocol": "den_chat",
+            },
+            "message": {
+                "type": "text",
+                "content": user_input,
+            },
+            "capabilities": {
+                "client_tools": [],
+                "supports_cancellation": false,
+                "supports_rich_events": true,
+            },
+            "runtime_plan": runtime_plan,
+            "request_id": request_id.to_string(),
+        });
+
+        let url = format!(
+            "{}/internal/bear_channel/sessions/{}/messages",
+            self.base_url,
+            urlencoding::encode(session_id),
+        );
+
+        let mut headers = self.auth_headers();
+        if let Ok(v) = HeaderValue::from_str(&request_id.to_string()) {
+            headers.insert(HeaderName::from_static("x-request-id"), v);
+        }
+        if let Ok(v) = HeaderValue::from_str(&bear.id.to_string()) {
+            headers.insert(HeaderName::from_static("x-bear-id"), v);
+        }
+
+        let resp = self
+            .http
+            .post(url)
+            .headers(headers)
+            .header(CONTENT_TYPE, "application/json")
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| {
+                CustomError::System(format!("Codepool bear_channel request failed: {e}"))
+            })?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let text = resp
+                .text()
+                .await
+                .unwrap_or_else(|_| "(no body)".to_string());
+            return Err(CustomError::System(format!(
+                "Codepool bear_channel HTTP {status}: {text}"
+            )));
+        }
+
+        Ok(resp)
+    }
+
     /// Same contract as [`crate::core::letta::LettaClient::post_conversation_messages_streaming`],
-    /// plus `bear_id` and `runtime_plan` for codepool memfs provisioning.
+    /// plus `bear_id` and `runtime_plan` for codepool memfs provisioning. Kept for compatibility;
+    /// Den web chat should use [`Self::post_bear_channel_message_streaming`].
     pub async fn post_conversation_messages_streaming(
         &self,
         conversation_id: &str,
@@ -292,5 +421,35 @@ impl CodePoolClient {
         }
 
         Ok(resp)
+    }
+}
+
+#[async_trait]
+impl BearRuntimeClient for CodePoolClient {
+    async fn post_bear_channel_message_streaming(
+        &self,
+        session_id: &str,
+        conversation_id: &str,
+        bear: &Bear,
+        user_id: i32,
+        username: Option<&str>,
+        membership_role: Option<&str>,
+        user_input: &str,
+        runtime_plan: &serde_json::Value,
+        request_id: Uuid,
+    ) -> Result<reqwest::Response, CustomError> {
+        CodePoolClient::post_bear_channel_message_streaming(
+            self,
+            session_id,
+            conversation_id,
+            bear,
+            user_id,
+            username,
+            membership_role,
+            user_input,
+            runtime_plan,
+            request_id,
+        )
+        .await
     }
 }

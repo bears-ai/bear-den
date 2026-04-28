@@ -20,7 +20,7 @@ use crate::{
     core::bears::db::{self as bears_db, role_is_bear_admin},
     core::letta::{load_agent_conversations, strip_letta_harness_for_user},
     errors::CustomError,
-    observability::chat_proxy_stream::ChatSseProxyStream,
+    observability::chat_proxy_stream::BearChannelSseProxyStream,
     web::AppState,
 };
 
@@ -664,11 +664,12 @@ async fn chat_send_inner(
     body: ChatSendRequest,
     request_id: Uuid,
 ) -> Result<Response, CustomError> {
-    let user_id = auth_session
+    let session_user = auth_session
         .user
         .as_ref()
-        .map(|u| u.id)
         .ok_or_else(|| CustomError::Authentication("login required".to_string()))?;
+    let user_id = session_user.id;
+    let username = session_user.username.clone();
 
     if body.message.trim().is_empty() {
         return Err(CustomError::ValidationError(
@@ -693,15 +694,17 @@ async fn chat_send_inner(
         .await?
         .ok_or_else(|| CustomError::NotFound("bear not found".to_string()))?;
 
-    let agent_id = bear
+    if bear
         .letta_agent_id
         .as_deref()
+        .map(str::trim)
         .filter(|s| !s.is_empty())
-        .ok_or_else(|| {
-            CustomError::System(
-                "This bear is not provisioned in Letta yet (missing letta_agent_id).".to_string(),
-            )
-        })?;
+        .is_none()
+    {
+        return Err(CustomError::System(
+            "This bear is not provisioned in Letta yet (missing letta_agent_id).".to_string(),
+        ));
+    }
 
     let conv_id = normalize_client_conversation_id(body.conversation_id.as_deref())?;
 
@@ -714,14 +717,24 @@ async fn chat_send_inner(
     }
     let runtime_plan =
         crate::core::bears::effective_runtime_plan(bear.runtime_plan.as_ref().map(|j| j.as_ref()));
+    let membership_role =
+        bears_db::membership_role_for_user(state.sqlx_pool(), user_id, body.bear_id)
+            .await?
+            .flatten();
+    let session_id = format!("den-web:{}:{}", body.bear_id, conv_id);
+
+    crate::observability::metrics::chat_send_runtime_bear_channel();
 
     let upstream = state
         .codepool
-        .post_conversation_messages_streaming(
+        .post_bear_channel_message_streaming(
+            &session_id,
             &conv_id,
-            Some(agent_id),
+            &bear,
+            user_id,
+            Some(username.as_str()),
+            membership_role.as_deref(),
             body.message.trim(),
-            body.bear_id,
             &runtime_plan,
             request_id,
         )
@@ -729,7 +742,7 @@ async fn chat_send_inner(
 
     crate::observability::metrics::chat_send_started();
 
-    let stream = ChatSseProxyStream::new(
+    let stream = BearChannelSseProxyStream::new(
         upstream.bytes_stream(),
         request_id,
         user_id,
