@@ -24,7 +24,9 @@ use crate::{
             provision, sync, Bear,
         },
         letta::{load_agent_conversations, AgentSummary, LettaAgentDiagnostics},
-        memory_manager_head::fetch_memory_manager_repository_files,
+        memory_manager_head::{
+            fetch_memory_manager_repository_files, fetch_memory_manager_repository_status,
+        },
         user,
         user::db as user_db,
     },
@@ -404,27 +406,54 @@ async fn render_bear_details_page(
     };
 
     let memfs_url = state.config.letta_memfs_service_url.as_str();
-    let (mem_private_files, mem_private_error, mem_private_skipped, mem_private_no_repo) =
-        if !memfs_url.is_empty() && letta_configured {
-            if let Some(agent_id) = bear
-                .letta_agent_id
-                .as_deref()
-                .map(str::trim)
-                .filter(|s| !s.is_empty())
+    let (
+        mem_private_files,
+        mem_private_error,
+        mem_private_skipped,
+        mem_private_no_repo,
+        mem_health,
+        mem_health_error,
+    ) = if !memfs_url.is_empty() && letta_configured {
+        if let Some(agent_id) = bear
+            .letta_agent_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        {
+            let mem_health_result =
+                fetch_memory_manager_repository_status(state.letta.http(), memfs_url, agent_id)
+                    .await;
+            let (mem_health, mem_health_error) = match mem_health_result {
+                Ok(status) => (status, None),
+                Err(e) => (None, Some(e.to_string())),
+            };
+            match fetch_memory_manager_repository_files(state.letta.http(), memfs_url, agent_id)
+                .await
             {
-                match fetch_memory_manager_repository_files(state.letta.http(), memfs_url, agent_id)
-                    .await
-                {
-                    Ok(None) => (None, None, false, true),
-                    Ok(Some(files)) => (Some(files), None, false, false),
-                    Err(e) => (None, Some(e.to_string()), false, false),
-                }
-            } else {
-                (None, None, true, false)
+                Ok(None) => (None, None, false, true, mem_health, mem_health_error),
+                Ok(Some(files)) => (
+                    Some(files),
+                    None,
+                    false,
+                    false,
+                    mem_health,
+                    mem_health_error,
+                ),
+                Err(e) => (
+                    None,
+                    Some(e.to_string()),
+                    false,
+                    false,
+                    mem_health,
+                    mem_health_error,
+                ),
             }
         } else {
-            (None, None, true, false)
-        };
+            (None, None, true, false, None, None)
+        }
+    } else {
+        (None, None, true, false, None, None)
+    };
 
     render_template(
         state,
@@ -447,6 +476,8 @@ async fn render_bear_details_page(
             mem_private_error,
             mem_private_skipped,
             mem_private_no_repo,
+            mem_health,
+            mem_health_error,
         },
     )
     .await

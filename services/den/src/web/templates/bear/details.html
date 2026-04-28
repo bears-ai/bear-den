@@ -227,6 +227,39 @@ block subnav %}
     <section>
         <div id="private-memory" class="box full-width">
             <h3>Agent memory</h3>
+            {% if mem_health %}
+            <div class="den-memory-health{% if mem_health.is_ok %} den-memory-health-ok{% else %} den-memory-health-warn{% endif %}">
+                <div>
+                    <strong>Memory health:</strong>
+                    <span>{{ mem_health.label | e }}</span>
+                    <code>{{ mem_health.state | e }}</code>
+                </div>
+                {% if mem_health.warning %}
+                <p>{{ mem_health.warning | e }}</p>
+                {% endif %}
+                <dl class="den-memory-health-metrics">
+                    <dt>Commits</dt>
+                    <dd>{{ mem_health.commit_count_display | e }}</dd>
+                    <dt>Memory files</dt>
+                    <dd>{{ mem_health.memory_file_count_display | e }}</dd>
+                    <dt>Total files</dt>
+                    <dd>{{ mem_health.file_count_display | e }}</dd>
+                    <dt>Recent mem-manager events</dt>
+                    <dd>{{ mem_health.recent_activity_count }}</dd>
+                </dl>
+                {% if mem_health.head_message or mem_health.head_date %}
+                <p class="caption">
+                    Head:{% if mem_health.head_date %}
+                    {{ (mem_health.head_date | replace("T", " "))[:16] | e }}{% endif %}{% if mem_health.head_message %}
+                    · {{ mem_health.head_message | e }}{% endif %}
+                </p>
+                {% endif %}
+            </div>
+            {% elif mem_health_error %}
+            <p class="form-errors">
+                Could not load memory health: {{ mem_health_error | e }}
+            </p>
+            {% endif %}
             {% if mem_private_skipped %} {% if not letta_configured %}
             <p class="form-hint">Letta is not configured.</p>
             {% elif not bear.letta_agent_id %}

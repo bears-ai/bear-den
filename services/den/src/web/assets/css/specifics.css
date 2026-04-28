@@ -476,6 +476,41 @@ section#content:has(.den-design-chat-shell) {
 }
 
 /* ---- Bear details private memory hierarchy ---- */
+.den-memory-health {
+    border: solid var(--thin-line-unit) var(--border-color);
+    padding: var(--spacing-unit);
+    margin-bottom: var(--spacing-unit);
+    background: var(--field-fill-color);
+}
+
+.den-memory-health-ok {
+    border-color: var(--success-color);
+}
+
+.den-memory-health-warn {
+    border-color: var(--error-color);
+}
+
+.den-memory-health p {
+    margin: calc(var(--spacing-unit) * 0.5) 0 0;
+}
+
+.den-memory-health-metrics {
+    display: grid;
+    grid-template-columns: repeat(4, max-content);
+    gap: calc(var(--spacing-unit) * 0.25) var(--spacing-unit);
+    margin: calc(var(--spacing-unit) * 0.75) 0 0;
+}
+
+.den-memory-health-metrics dt {
+    color: var(--meta-color);
+}
+
+.den-memory-health-metrics dd {
+    margin: 0;
+    font-family: var(--data-font-family);
+}
+
 #private-memory .den-bear-memory-summary {
     margin: 0;
     padding-left: 0;
@@ -599,6 +634,10 @@ section#content:has(.den-design-chat-shell) {
 
     #private-memory .den-private-mem-columns {
         display: none;
+    }
+
+    .den-memory-health-metrics {
+        grid-template-columns: max-content max-content;
     }
 }
 
