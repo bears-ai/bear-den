@@ -1,22 +1,36 @@
 {% extends "base.html" %} {% block title %}{{ bear_name | e }}{% endblock %} {%
-block subnav %}
-<li class="den-conv-nav-item menu-item-submenu">
-    <input id="den-conv-toggle" class="den-conv-toggle" type="checkbox" />
-    <label class="den-conv-button-container" for="den-conv-toggle">
-        <span id="den-conv-current">Conversation</span>
-    </label>
-    <ul id="den-conv-menu" class="submenu den-conv-menu" aria-label="Conversations"></ul>
-</li>
-<li>
-    <a class="button-link" href="/bear/{{ bear_slug | e }}/details"
-        >Bear details</a
-    >
-</li>
-{% endblock %} {% block head %} {{ super() }}
+block head %} {{ super() }}
 <link rel="modulepreload" href="/assets/deep-chat/deepChat.bundle.js" />
 <script type="module" src="/assets/deep-chat/deepChat.bundle.js"></script>
 {% endblock %} {% block content %}
 <div class="den-wrap">
+    {# Keep this real chat toolbar/dropdown in sync with the design fixture at
+    src/web/templates/design/chat.html. #}
+    <div class="den-design-chat-toolbar den-chat-toolbar">
+        <div
+            class="den-design-conversation-picker den-conv-nav-item menu-item-submenu"
+        >
+            <input
+                id="den-conv-toggle"
+                class="den-conv-toggle"
+                type="checkbox"
+            />
+            <label
+                class="den-design-conversation-current den-conv-button-container"
+                for="den-conv-toggle"
+            >
+                <span id="den-conv-current">Conversation</span>
+            </label>
+            <ul
+                id="den-conv-menu"
+                class="submenu den-conv-menu"
+                aria-label="Conversations"
+            ></ul>
+        </div>
+        <a class="button-link" href="/bear/{{ bear_slug | e }}/details"
+            >Bear details</a
+        >
+    </div>
     <p id="err" class="den-err" hidden></p>
     <div id="chat-wrap">
         {# Deep Chat reads errorMessages when the messages controller is
@@ -972,21 +986,19 @@ block subnav %}
 
     function patchConversation(id, body) {
         body.bear_id = BEAR_ID;
-        return fetch(
-            "/v1/chat/conversations/" + encodeURIComponent(id),
-            {
-                method: "PATCH",
-                credentials: "same-origin",
-                headers: {
-                    "Content-Type": "application/json",
-                    Accept: "application/json",
-                },
-                body: JSON.stringify(body),
+        return fetch("/v1/chat/conversations/" + encodeURIComponent(id), {
+            method: "PATCH",
+            credentials: "same-origin",
+            headers: {
+                "Content-Type": "application/json",
+                Accept: "application/json",
             },
-        ).then(function (response) {
+            body: JSON.stringify(body),
+        }).then(function (response) {
             if (response.status === 401) {
                 window.location.href =
-                    "/login?next=" + encodeURIComponent(window.location.pathname);
+                    "/login?next=" +
+                    encodeURIComponent(window.location.pathname);
                 return { __den_skip: true };
             }
             if (!response.ok) {
@@ -1007,27 +1019,6 @@ block subnav %}
             : [{ id: "default", title: "Main chat" }];
         var currentTitle = "Conversation";
         menu.innerHTML = "";
-
-        var newItem = document.createElement("li");
-        newItem.className = "den-conv-menu-row den-conv-menu-new-row";
-        var newBtn = document.createElement("button");
-        newBtn.type = "button";
-        newBtn.className = "den-conv-menu-main";
-        newBtn.textContent = "+ New conversation";
-        newBtn.onclick = function () {
-            var id = makeNewConversationId();
-            DEN_PENDING_CONVERSATION = {
-                id: id,
-                title: "New chat",
-                last_message_at: null,
-                pending: true,
-            };
-            DEN_CONVERSATIONS.unshift(DEN_PENDING_CONVERSATION);
-            setConversation(id, true);
-            closeConversationMenu();
-        };
-        newItem.appendChild(newBtn);
-        menu.appendChild(newItem);
 
         for (var i = 0; i < list.length; i++) {
             var c = list[i];
@@ -1089,7 +1080,8 @@ block subnav %}
 
                 var archiveBtn = document.createElement("button");
                 archiveBtn.type = "button";
-                archiveBtn.className = "den-conv-menu-action den-conv-menu-archive";
+                archiveBtn.className =
+                    "den-conv-menu-action den-conv-menu-archive";
                 archiveBtn.title = "Archive conversation";
                 archiveBtn.setAttribute("aria-label", "Archive conversation");
                 archiveBtn.textContent = "Archive";
@@ -1119,6 +1111,28 @@ block subnav %}
 
             menu.appendChild(item);
         }
+
+        var newItem = document.createElement("li");
+        newItem.className = "den-conv-menu-row den-conv-menu-new-row";
+        var newBtn = document.createElement("button");
+        newBtn.type = "button";
+        newBtn.className = "den-conv-menu-main";
+        newBtn.textContent = "+ New conversation";
+        newBtn.onclick = function () {
+            var id = makeNewConversationId();
+            DEN_PENDING_CONVERSATION = {
+                id: id,
+                title: "New chat",
+                last_message_at: null,
+                pending: true,
+            };
+            DEN_CONVERSATIONS.unshift(DEN_PENDING_CONVERSATION);
+            setConversation(id, true);
+            closeConversationMenu();
+        };
+        newItem.appendChild(newBtn);
+        menu.appendChild(newItem);
+
         if (current) current.textContent = currentTitle;
     }
 

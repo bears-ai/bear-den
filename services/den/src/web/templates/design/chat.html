@@ -4,12 +4,58 @@ subnav %}
 {% endblock %} {% block content %}
 <div class="den-design-chat-shell">
     <div class="den-design-chat-toolbar">
-        <div class="den-design-conversation-picker">
-            <button class="den-design-conversation-current" type="button">
-                Product direction
-            </button>
-            <button type="button">Rename</button>
-            <button type="button">Archive</button>
+        <div class="den-design-conversation-picker menu-item-submenu">
+            <input
+                id="den-design-conv-toggle"
+                class="den-conv-toggle"
+                type="checkbox"
+            />
+            <label
+                class="den-design-conversation-current den-conv-button-container"
+                for="den-design-conv-toggle"
+            >
+                <span>Product direction</span>
+            </label>
+            <ul class="submenu den-conv-menu" aria-label="Conversations">
+                <li class="den-conv-menu-row den-conv-menu-row-selected">
+                    <a class="den-conv-menu-main" href="/design/chat"
+                        >Product direction</a
+                    >
+                    <button class="den-conv-menu-action" type="button">
+                        Rename
+                    </button>
+                    <button class="den-conv-menu-action" type="button">
+                        Archive
+                    </button>
+                </li>
+                <li class="den-conv-menu-row">
+                    <a class="den-conv-menu-main" href="/design/chat"
+                        >Launch plan</a
+                    >
+                    <button class="den-conv-menu-action" type="button">
+                        Rename
+                    </button>
+                    <button class="den-conv-menu-action" type="button">
+                        Archive
+                    </button>
+                </li>
+                <li class="den-conv-menu-row">
+                    <a class="den-conv-menu-main" href="/design/chat"
+                        >Support notes</a
+                    >
+                    <button class="den-conv-menu-action" type="button">
+                        Rename
+                    </button>
+                    <button class="den-conv-menu-action" type="button">
+                        Archive
+                    </button>
+                </li>
+                <li class="den-conv-menu-row den-conv-menu-new-row">
+                    <a class="den-conv-menu-main" href="/design/chat"
+                        >New conversation</a
+                    >
+                </li>
+            </ul>
         </div>
         <a class="button-link" href="/design">Bear details</a>
     </div>

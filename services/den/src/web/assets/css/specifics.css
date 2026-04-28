@@ -74,7 +74,7 @@ body.bear_chat .den-conv-button-container {
 }
 
 body.bear_chat .den-conv-button-container::after {
-    content: ' \25BE';
+    content: " \25BE";
 }
 
 body.bear_chat .den-conv-toggle:checked ~ .den-conv-menu {
@@ -82,7 +82,8 @@ body.bear_chat .den-conv-toggle:checked ~ .den-conv-menu {
 }
 
 body.bear_chat .den-conv-menu {
-    right: 0;
+    left: 0;
+    right: auto;
     min-width: min(92vw, 34rem);
     max-width: min(92vw, 42rem);
     max-height: min(70vh, 28rem);
@@ -168,13 +169,13 @@ body.bear_chat .den-conv-button-container:hover {
 }
 
 /* ---- Design fixtures (/design) ---- */
-body.design-chat > section#content {
+section#content:has(.den-design-chat-shell) {
     min-height: calc(100vh - 6rem);
     display: flex;
     flex-direction: column;
 }
 
-body.design-chat .den-design-chat-shell {
+.den-design-chat-shell {
     flex: 1 1 auto;
     display: flex;
     flex-direction: column;
@@ -186,7 +187,7 @@ body.design-chat .den-design-chat-shell {
     box-sizing: border-box;
 }
 
-body.design-chat .den-design-chat-toolbar {
+.den-design-chat-toolbar {
     display: flex;
     justify-content: space-between;
     align-items: flex-end;
@@ -194,27 +195,100 @@ body.design-chat .den-design-chat-toolbar {
     margin-bottom: var(--spacing-unit);
 }
 
-body.design-chat .den-design-conversation-picker {
-    display: flex;
-    align-items: stretch;
+.den-design-conversation-picker {
+    position: relative;
+    display: inline-block;
+}
+
+.den-design-conversation-picker .den-conv-toggle {
+    display: none;
+}
+
+.den-design-conversation-current {
+    display: block;
+    cursor: pointer;
+    max-width: min(42vw, 22rem);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    padding: 2px 1rem;
     border: solid var(--thin-line-unit) var(--border-color);
+    background-color: var(--page-color);
+    color: var(--text-color);
+    text-transform: uppercase;
 }
 
-body.design-chat .den-design-conversation-picker button {
-    border: none;
-    border-right: solid var(--thin-line-unit) var(--border-color);
+.den-design-conversation-current::after {
+    content: " \25BE";
 }
 
-body.design-chat .den-design-conversation-picker button:last-child {
-    border-right: none;
+.den-design-conversation-current:hover {
+    background-color: var(--accent-color);
+    color: var(--page-color);
 }
 
-body.design-chat .den-design-conversation-current {
+.den-design-conversation-picker .den-conv-toggle:checked ~ .den-conv-menu {
+    display: block;
+}
+
+.den-design-conversation-picker .den-conv-menu {
+    left: 0;
+    right: auto;
+    min-width: min(92vw, 34rem);
+    max-width: min(92vw, 42rem);
+    max-height: min(70vh, 28rem);
+    overflow-y: auto;
+}
+
+.den-design-conversation-picker .den-conv-menu > li.den-conv-menu-row {
+    display: grid;
+    grid-template-columns: minmax(12rem, 1fr) auto auto;
+    align-items: stretch;
+}
+
+.den-design-conversation-picker .den-conv-menu > li.den-conv-menu-new-row {
+    grid-template-columns: 1fr;
+}
+
+.den-design-conversation-picker .den-conv-menu-row-selected {
     background-color: var(--selected-color);
     color: var(--selected-text-color);
 }
 
-body.design-chat .den-design-chat-panel {
+.den-design-conversation-picker .den-conv-menu-main,
+.den-design-conversation-picker .den-conv-menu-action {
+    display: block;
+    width: 100%;
+    border: none;
+    background-color: transparent;
+    color: inherit;
+    font: inherit;
+    text-align: left;
+    text-transform: uppercase;
+    white-space: nowrap;
+}
+
+.den-design-conversation-picker .den-conv-menu-main {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.den-design-conversation-picker .den-conv-menu-action {
+    width: auto;
+    padding-left: calc(var(--spacing-unit) * 0.7);
+    padding-right: calc(var(--spacing-unit) * 0.7);
+    border-left: solid var(--thin-line-unit) currentColor;
+    font-size: smaller;
+}
+
+.den-design-conversation-picker .den-conv-menu-main:hover,
+.den-design-conversation-picker .den-conv-menu-action:hover {
+    background-color: var(--accent-color);
+    color: var(--page-color);
+}
+
+.den-design-chat-panel {
     flex: 1 1 auto;
     min-height: 20rem;
     overflow-y: auto;
@@ -226,7 +300,7 @@ body.design-chat .den-design-chat-panel {
     background-color: var(--surface-color);
 }
 
-body.design-chat .den-design-message {
+.den-design-message {
     max-width: 72%;
     padding: var(--chat-bubble-padding-block) var(--chat-bubble-padding-inline);
     border: solid var(--thin-line-unit) var(--border-color);
@@ -234,26 +308,26 @@ body.design-chat .den-design-message {
     line-height: var(--chat-line-height);
 }
 
-body.design-chat .den-design-message p {
+.den-design-message p {
     margin: 0;
 }
 
-body.design-chat .den-design-message-user {
+.den-design-message-user {
     align-self: flex-end;
     background-color: var(--selected-color);
     color: var(--selected-text-color);
 }
 
-body.design-chat .den-design-message-assistant,
-body.design-chat .den-design-message-system {
+.den-design-message-assistant,
+.den-design-message-system {
     align-self: flex-start;
 }
 
-body.design-chat .den-design-message-system {
+.den-design-message-system {
     font-size: smaller;
 }
 
-body.design-chat .den-design-composer {
+.den-design-composer {
     display: grid;
     grid-template-columns: 1fr auto;
     align-items: stretch;
@@ -262,12 +336,12 @@ body.design-chat .den-design-composer {
     background-color: var(--field-fill-color);
 }
 
-body.design-chat .den-design-composer label {
+.den-design-composer label {
     position: absolute;
     left: -9999px;
 }
 
-body.design-chat .den-design-composer textarea {
+.den-design-composer textarea {
     width: 100%;
     resize: vertical;
     border: none;
@@ -277,23 +351,33 @@ body.design-chat .den-design-composer textarea {
     box-sizing: border-box;
 }
 
-body.design-chat .den-design-composer button {
+.den-design-composer button {
     align-self: end;
     margin: var(--spacing-unit);
 }
 
 @media (max-width: 699px) {
-    body.design-chat .den-design-chat-toolbar,
-    body.design-chat .den-design-conversation-picker {
+    .den-design-chat-toolbar {
         align-items: stretch;
         flex-direction: column;
     }
 
-    body.design-chat .den-design-message {
+    .den-design-conversation-picker,
+    .den-design-conversation-current,
+    .den-design-conversation-picker .den-conv-menu {
+        width: 100%;
+        max-width: 100%;
+    }
+
+    .den-design-conversation-picker .den-conv-menu > li.den-conv-menu-row {
+        grid-template-columns: minmax(8rem, 1fr) auto auto;
+    }
+
+    .den-design-message {
         max-width: 92%;
     }
 
-    body.design-chat .den-design-composer {
+    .den-design-composer {
         grid-template-columns: 1fr;
     }
 }

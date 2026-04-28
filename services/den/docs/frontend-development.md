@@ -127,6 +127,8 @@ End-user chat extends [`base.html`](../src/web/templates/base.html) like other m
 
 Optional query **`conversation_id`** — when set (for example `conv-…` from bear details links), the page script selects that Letta thread in `#den-conv` when it appears in `GET /v1/chat/conversations` (otherwise the first listed thread, or a single **Main chat** / `default` option).
 
+**Design fixture sync:** keep the real chat layout in [`bear_chat.html`](../src/web/templates/bear_chat.html) and the static design test page in [`design/chat.html`](../src/web/templates/design/chat.html) synchronized. When changing the conversation dropdown, toolbar structure, chat shell spacing, composer, or message layout in one template, update the other in the same change and verify `/design/chat` first as the fast visual fixture before checking the live `/bear/{slug}` page.
+
 **Behavior to preserve**
 
 1. **Same-origin asset** — `deepChat.bundle.js` lives under [`src/web/assets/deep-chat/`](../src/web/assets/deep-chat/) and is linked as `/assets/deep-chat/deepChat.bundle.js` so the shell works without a third-party CDN.
