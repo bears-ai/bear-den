@@ -1,4 +1,4 @@
-# Memory Manager: git http-backend for Letta /v1/git proxy; needs full git (not git-minimal) for http-backend
+# MemFS Manager: git http-backend for Letta /v1/git proxy; needs full git (not git-minimal) for http-backend
 FROM python:3.12-slim
 RUN apt-get update && apt-get install -y --no-install-recommends git \
     && rm -rf /var/lib/apt/lists/*

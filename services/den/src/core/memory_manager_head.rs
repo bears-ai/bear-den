@@ -1,4 +1,4 @@
-//! Read-only repository files for an agent’s git memfs repo via Memory Manager
+//! Read-only repository files for an agent’s git memfs repo via MemFS Manager
 //! (`GET .../v1/management/agents/{agent_id}/files`).
 
 use std::time::Duration;
@@ -7,10 +7,10 @@ use crate::errors::CustomError;
 
 const DEFAULT_ORG: &str = "org-default";
 
-/// Raw file/directory node returned by Memory Manager.
+/// Raw file/directory node returned by MemFS Manager.
 ///
 /// This model is intentionally permissive so Den can tolerate small response-shape
-/// differences across Memory Manager versions.
+/// differences across MemFS Manager versions.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct MemoryManagerRepoNode {
     #[serde(default)]
@@ -46,7 +46,7 @@ pub struct PrivateMemoryCommitRowView {
     pub last_commit_message: Option<String>,
 }
 
-/// Template-friendly memory health summary returned by Memory Manager's status endpoint.
+/// Template-friendly memory health summary returned by MemFS Manager's status endpoint.
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct MemoryManagerStatusView {
     pub state: String,
@@ -228,7 +228,7 @@ pub fn private_memory_commit_rows(
     rows
 }
 
-/// Accepted response shapes from Memory Manager.
+/// Accepted response shapes from MemFS Manager.
 #[derive(Debug, Clone, serde::Deserialize)]
 #[serde(untagged)]
 enum MemoryManagerFilesResponse {
@@ -252,7 +252,7 @@ impl MemoryManagerFilesResponse {
 /// Fetches repository files metadata for an agent.
 ///
 /// Returns:
-/// - `Ok(None)` if Memory Manager URL is empty, agent id is empty, or repo does not exist (HTTP 404)
+/// - `Ok(None)` if MemFS Manager URL is empty, agent id is empty, or repo does not exist (HTTP 404)
 /// - `Ok(Some(...))` with hierarchical nodes otherwise
 pub async fn fetch_memory_manager_repository_files(
     http: &reqwest::Client,
@@ -281,7 +281,7 @@ pub async fn fetch_memory_manager_repository_files(
         .timeout(Duration::from_secs(15))
         .send()
         .await
-        .map_err(|e| CustomError::System(format!("Memory Manager (git) request failed: {e}")))?;
+        .map_err(|e| CustomError::System(format!("MemFS Manager (git) request failed: {e}")))?;
 
     let status = resp.status();
     if status == reqwest::StatusCode::NOT_FOUND {
@@ -291,14 +291,14 @@ pub async fn fetch_memory_manager_repository_files(
     if !status.is_success() {
         let text = resp.text().await.unwrap_or_else(|_| String::new());
         return Err(CustomError::System(format!(
-            "Memory Manager (git) HTTP {status}: {text}"
+            "MemFS Manager (git) HTTP {status}: {text}"
         )));
     }
 
     let payload: MemoryManagerFilesResponse = resp
         .json()
         .await
-        .map_err(|e| CustomError::Parsing(format!("Memory Manager JSON: {e}")))?;
+        .map_err(|e| CustomError::Parsing(format!("MemFS Manager JSON: {e}")))?;
 
     let nodes = payload
         .into_nodes()
@@ -309,7 +309,7 @@ pub async fn fetch_memory_manager_repository_files(
     Ok(Some(nodes))
 }
 
-/// Fetches Memory Manager's self-reported sync health for an agent.
+/// Fetches MemFS Manager's self-reported sync health for an agent.
 pub async fn fetch_memory_manager_repository_status(
     http: &reqwest::Client,
     base_url: &str,
@@ -337,20 +337,20 @@ pub async fn fetch_memory_manager_repository_status(
         .timeout(Duration::from_secs(15))
         .send()
         .await
-        .map_err(|e| CustomError::System(format!("Memory Manager status request failed: {e}")))?;
+        .map_err(|e| CustomError::System(format!("MemFS Manager status request failed: {e}")))?;
 
     let status = resp.status();
     if !(status.is_success() || status == reqwest::StatusCode::NOT_FOUND) {
         let text = resp.text().await.unwrap_or_else(|_| String::new());
         return Err(CustomError::System(format!(
-            "Memory Manager status HTTP {status}: {text}"
+            "MemFS Manager status HTTP {status}: {text}"
         )));
     }
 
     let payload: MemoryManagerStatusResponse = resp
         .json()
         .await
-        .map_err(|e| CustomError::Parsing(format!("Memory Manager status JSON: {e}")))?;
+        .map_err(|e| CustomError::Parsing(format!("MemFS Manager status JSON: {e}")))?;
 
     Ok(Some(MemoryManagerStatusView::from(payload)))
 }

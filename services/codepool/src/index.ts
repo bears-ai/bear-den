@@ -16,7 +16,7 @@ async function main(): Promise<void> {
         process.env.LETTA_BASE_URL?.trim() || defaultLettaBase;
     // Codepool must not use LETTA_MEMFS_SERVICE_URL even if the deployment injects it globally.
     // Letta Code must push through Letta's `/v1/git/...` proxy so Letta updates its
-    // Postgres memory block cache; direct Memory Manager pushes update git only and are
+    // Postgres memory block cache; direct MemFS Manager pushes update git only and are
     // invisible to later conversations.
     if (process.env.LETTA_MEMFS_SERVICE_URL?.trim()) {
         console.warn(

@@ -112,7 +112,7 @@ pub struct Config {
     /// Optional `Authorization: Bearer` for Codepool (must match `CODEPOOL_INTERNAL_TOKEN` on the pool).
     pub codepool_internal_token: String,
 
-    /// **Memory Manager** (Letta `LETTA_MEMFS_SERVICE_URL` — git sidecar) base URL (no trailing slash), e.g. `http://bears-memfs-manager:8285`. Empty = skip private-memory readout in Den.
+    /// **MemFS Manager** (Letta `LETTA_MEMFS_SERVICE_URL` — git sidecar) base URL (no trailing slash), e.g. `http://bears-memfs-manager:8285`. Empty = skip private-memory readout in Den.
     pub letta_memfs_service_url: String,
 
     /// Letta’s Postgres URI when external DB is used (`LETTA_PG_URI`). Empty = not checked on Den.

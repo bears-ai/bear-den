@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Memory Manager: git smart-HTTP for self-hosted Letta. Letta proxies /v1/git/* to
+MemFS Manager: git smart-HTTP for self-hosted Letta. Letta proxies /v1/git/* to
 LETTA_MEMFS_SERVICE_URL (e.g. http://bears-memfs-manager:8285); this process implements
 the /git/.../state.git path expected by the Letta server.
 
@@ -47,7 +47,7 @@ def log_activity(event: str, **fields: object) -> None:
         **fields,
     }
     line = json.dumps(entry, sort_keys=True)
-    print(f"[mem-manager] activity {line}", flush=True)
+    print(f"[memfs-manager] activity {line}", flush=True)
     try:
         ACTIVITY_LOG.parent.mkdir(parents=True, exist_ok=True)
         if (
@@ -58,7 +58,7 @@ def log_activity(event: str, **fields: object) -> None:
         with ACTIVITY_LOG.open("a", encoding="utf-8") as f:
             f.write(line + "\n")
     except OSError as e:
-        print(f"[mem-manager] activity log write failed: {e}", flush=True)
+        print(f"[memfs-manager] activity log write failed: {e}", flush=True)
 
 
 def recent_activity(agent_id: str | None = None, limit: int = 100) -> list[dict]:
@@ -612,7 +612,7 @@ class GitHTTPHandler(BaseHTTPRequestHandler):
             "HTTP_GIT_PROTOCOL": self.headers.get("Git-Protocol", ""),
             "REMOTE_ADDR": "127.0.0.1",
             "REMOTE_USER": "",
-            "SERVER_NAME": "mem-manager",
+            "SERVER_NAME": "memfs-manager",
             "SERVER_PORT": str(PORT),
             "SERVER_PROTOCOL": "HTTP/1.1",
         }
@@ -769,10 +769,10 @@ class GitHTTPHandler(BaseHTTPRequestHandler):
         self._run_backend()
 
     def log_message(self, fmt: str, *args) -> None:
-        print(f"[mem-manager] {self.address_string()} {fmt % args}", flush=True)
+        print(f"[memfs-manager] {self.address_string()} {fmt % args}", flush=True)
 
 
 if __name__ == "__main__":
     MEMFS_BASE.mkdir(parents=True, exist_ok=True)
-    print(f"[mem-manager] listen http://{BIND}:{PORT} base={MEMFS_BASE}", flush=True)
+    print(f"[memfs-manager] listen http://{BIND}:{PORT} base={MEMFS_BASE}", flush=True)
     HTTPServer((BIND, PORT), GitHTTPHandler).serve_forever()

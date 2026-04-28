@@ -51,7 +51,7 @@ impl LettaClient {
         }
     }
 
-    /// Shared HTTP client (e.g. for Memory Manager requests that are not Letta `/v1/...`).
+    /// Shared HTTP client (e.g. for MemFS Manager requests that are not Letta `/v1/...`).
     pub fn http(&self) -> &reqwest::Client {
         &self.http
     }
@@ -826,7 +826,7 @@ fn build_create_agent_body(
     body.insert("include_base_tools".to_string(), json!(false));
     if git_enabled {
         body.insert("git_enabled".to_string(), json!(true));
-        // With self-hosted memfs, Letta Code expects git-backed agents (see `LETTA_MEMFS_SERVICE_URL` + Memory Manager).
+        // With self-hosted memfs, Letta Code expects git-backed agents (see `LETTA_MEMFS_SERVICE_URL` + MemFS Manager).
         body.insert(
             "tags".to_string(),
             json!(vec!["git-memory-enabled".to_string()]),

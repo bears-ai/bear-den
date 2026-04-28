@@ -18,7 +18,7 @@ Human-oriented docs for the **Basic Environment for Agents Runtime Server (BEARS
 
 Service-specific runbooks stay next to their configs: `services/*/COOLIFY_DEPLOY.md` and related `.md` under each service tree.
 
-**Den (Rust)** lives in **`services/den/`**. **Codepool** (Node / Letta Code SDK harness) lives in **`services/codepool/`**. The Python Memory Manager lives in **`services/api/`**. Supporting service assets live alongside them under `services/`.
+**Den (Rust)** lives in **`services/den/`**. **Codepool** (Node / Letta Code SDK harness) lives in **`services/codepool/`**. The Python MemFS Manager service lives in **`services/api/`**. Supporting service assets live alongside them under `services/`.
 
 ## Cloning and automation
 

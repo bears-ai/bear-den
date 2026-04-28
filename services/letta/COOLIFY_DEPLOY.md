@@ -109,7 +109,7 @@ curl http://bears-letta:8283/v1/agents
 | `LETTA_SERVER_PASS` | ✅ Yes | - | Admin password for Letta |
 | `LETTA_PG_URI` | Recommended | - | External Postgres URI — use **`postgresql://`** (not `postgres://`). The short form can break Alembic with `NoSuchModuleError: ... postgres.pg8000`. |
 | `OPENAI_API_KEY` | ✅ Yes | - | For embeddings and direct OpenAI calls; chat completions use `LLM_API_URL` |
-| `LETTA_MEMFS_SERVICE_URL` | No | `http://bears-memfs-manager:8285` (default in root [`docker-compose.yaml`](../../docker-compose.yaml), same pattern as `LETTA_BASE_URL` / `LLM_API_URL`) | Letta proxies `/v1/git/*` to **Memory Manager** (**`bears-memfs-manager`**), which shares **`bears-letta-data`**. Pair with **`LETTA_MEMFS_LOCAL=1`** on **codepool**. Override if your memfs service has another internal URL. |
+| `LETTA_MEMFS_SERVICE_URL` | No | `http://bears-memfs-manager:8285` (default in root [`docker-compose.yaml`](../../docker-compose.yaml), same pattern as `LETTA_BASE_URL` / `LLM_API_URL`) | Letta proxies `/v1/git/*` to **MemFS Manager** (**`bears-memfs-manager`**), which shares **`bears-letta-data`**. Pair with **`LETTA_MEMFS_LOCAL=1`** on **codepool**. Override if your memfs service has another internal URL. |
 | `LETTA_SERVER_HOST` | No | `0.0.0.0` | Bind address |
 | `LOG_LEVEL` | No | `INFO` | Logging verbosity |
 

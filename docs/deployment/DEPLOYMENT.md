@@ -10,7 +10,7 @@ Use the root [`docker-compose.yaml`](../../docker-compose.yaml). It starts the a
 | ------- | ------- |
 | `bears-bifrost` | Model gateway on port `8080` |
 | `bears-redis` | Redis for Letta git/memfs locking |
-| `bears-memfs-manager` | Memory Manager on port `8285` |
+| `bears-memfs-manager` | MemFS Manager git HTTP service on port `8285` |
 | `bears-letta` | Letta API on port `8283` |
 | `bears-codepool` | Letta Code SDK harness on port `3030` |
 | `bears-den` | Den web UI and control plane on port `3000` |

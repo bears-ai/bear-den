@@ -39,7 +39,7 @@ A GitHub Actions workflow ([`.github/workflows/codepool-image.yml`](../../.githu
 
 1. **Add Resource** → **Docker Compose** → this repository.
 2. **Base Directory:** `.` (repo root) and **[`docker-compose.yaml`](../../docker-compose.yaml)**.
-3. Set **`LETTA_BASE_URL`**, **`LETTA_API_KEY`** (same as Letta admin password), **`LETTA_MEMFS_LOCAL=1`** (default; **Letta** in root compose uses **Memory Manager** / **`bears-memfs-manager`** for git HTTP), optional **`CODEPOOL_INTERNAL_TOKEN`**.
+3. Set **`LETTA_BASE_URL`**, **`LETTA_API_KEY`** (same as Letta admin password), **`LETTA_MEMFS_LOCAL=1`** (default; **Letta** in root compose uses **MemFS Manager** / **`bears-memfs-manager`** for git HTTP), optional **`CODEPOOL_INTERNAL_TOKEN`**.
 4. If you did **not** use the root compose file, attach the **same Docker network** as Den and Letta so **`bears-codepool`** resolves.
 
 ## Health
@@ -49,7 +49,7 @@ A GitHub Actions workflow ([`.github/workflows/codepool-image.yml`](../../.githu
 
 ## Volumes and memory model
 
-**Git-backed memory (upstream):** The **canonical** memfs/git state is on the **Letta** volume **`bears-letta-data`** (under `/root/.letta/memfs/repository/…`); **Letta** and **Memory Manager** share that volume, and **Letta**’s **`LETTA_MEMFS_SERVICE_URL`** points at **`bears-memfs-manager`**. See [Letta Coolify deploy](../letta/COOLIFY_DEPLOY.md) and [DEPLOYMENT.md](../../docs/deployment/DEPLOYMENT.md). Back up that volume (and Letta Postgres).
+**Git-backed memory (upstream):** The **canonical** memfs/git state is on the **Letta** volume **`bears-letta-data`** (under `/root/.letta/memfs/repository/…`); **Letta** and **MemFS Manager** share that volume, and **Letta**’s **`LETTA_MEMFS_SERVICE_URL`** points at **`bears-memfs-manager`**. See [Letta Coolify deploy](../letta/COOLIFY_DEPLOY.md) and [DEPLOYMENT.md](../../docs/deployment/DEPLOYMENT.md). Back up that volume (and Letta Postgres).
 
 **This service:** Mount **`bears-codepool-letta-home` → `/home/node/.letta`** for the Letta Code **CLI** (client-side cache / mirror under your image `USER` **`node`**). It is **not** the primary durability surface.
 

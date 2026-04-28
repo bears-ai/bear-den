@@ -30,7 +30,7 @@ Axum routes for the web server (`RUN_WEB=true`). Update this file when you add o
 ## Member bear management (`src/web/bear_management.rs`)
 
 - `GET|POST /bears/new` — create a bear; creator is granted `user_bear.role = admin` and Letta is provisioned like operator create (`src/web/bear_create_support.rs` shared form context)
-- `GET /bear/{slug}/details` — bear home: boxed overview (name, slug, description), usage (members + active conversations, all **Web** for now), system prompt (Den copy + optional resync), configuration (model, agent type, tools), memory summary, **private memory (git)** (latest commit from Memory Manager when `LETTA_MEMFS_SERVICE_URL` is set on Den); optional query `letta_resync=ok|error` after resync attempts
+- `GET /bear/{slug}/details` — bear home: boxed overview (name, slug, description), usage (members + active conversations, all **Web** for now), system prompt (Den copy + optional resync), configuration (model, agent type, tools), memory summary, **private memory (git)** (latest commit from MemFS Manager when `LETTA_MEMFS_SERVICE_URL` is set on Den); optional query `letta_resync=ok|error` after resync attempts
 - `POST /bear/{slug}/details/resync-letta` — push Den registry to Letta (`PATCH` agent + recompile); bear admins only; redirects back to details
 - `GET /bear/{slug}/details/edit` — redirect to `/bear/{slug}/details/edit/overview`
 - `GET|POST /bear/{slug}/details/edit/overview` — edit slug, name, description; delete bear form (POST still targets `/bear/{slug}/details/delete`)
