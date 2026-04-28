@@ -247,7 +247,8 @@ services:
             LETTA_BASE_URL: ${LETTA_BASE_URL:-http://bears-letta:8283}
             # Same credential Letta uses as `LETTA_SERVER_PASS` (Bearer for Letta HTTP API).
             LETTA_API_KEY: ${LETTA_SERVER_PASS:-SETME}
-            # Letta Code: use local mirror under ~/.letta; server uses LETTA_MEMFS_SERVICE_URL (Memory Manager) for git HTTP.
+            # Letta Code: use local mirror under ~/.letta, but push through Letta's /v1/git proxy
+            # so Letta updates its Postgres memory block cache. Do not set LETTA_MEMFS_SERVICE_URL here.
             LETTA_MEMFS_LOCAL: ${LETTA_MEMFS_LOCAL:-1}
             BEAR_RUNTIME_PROVISIONER: ${BEAR_RUNTIME_PROVISIONER:-local}
             CODEPOOL_INTERNAL_TOKEN: ${CODEPOOL_INTERNAL_TOKEN:-}

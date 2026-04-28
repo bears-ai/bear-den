@@ -37,18 +37,8 @@ const execFile = promisify(execFileCb);
 
 function memfsRemoteUrlForAgent(agentId: string): {
     url: string;
-    source: "LETTA_MEMFS_SERVICE_URL" | "LETTA_BASE_URL";
+    source: "LETTA_BASE_URL";
 } {
-    const memfsBase = process.env.LETTA_MEMFS_SERVICE_URL?.trim().replace(
-        /\/+$/,
-        "",
-    );
-    if (memfsBase) {
-        return {
-            url: `${memfsBase}/git/${agentId}/state.git`,
-            source: "LETTA_MEMFS_SERVICE_URL",
-        };
-    }
     const lettaBase =
         process.env.LETTA_BASE_URL?.trim().replace(/\/+$/, "") ?? "";
     return {
@@ -216,8 +206,8 @@ export function attachRoutes(
             ok: true,
             service: "bears-codepool",
             letta_memfs_local: process.env.LETTA_MEMFS_LOCAL ?? null,
-            letta_memfs_service_url:
-                process.env.LETTA_MEMFS_SERVICE_URL ?? null,
+            // Intentionally null/ignored in Codepool: write-through sync goes via LETTA_BASE_URL /v1/git.
+            letta_memfs_service_url: null,
             session_memfs: true,
             letta_cli_home: lettaCliHome,
             letta_cli_home_writable,

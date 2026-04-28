@@ -6,64 +6,72 @@ import { verifyLettaReachableAtStartup } from "./letta-upstream.js";
 import { createBearRuntimeProvisionerFromEnv } from "./provisioning/index.js";
 
 async function main(): Promise<void> {
-  const port = Number(process.env.PORT || "3030");
-  const ttlSecs = Number(process.env.POOL_TTL_SECS || "600");
-  const maxEntries = Number(process.env.POOL_MAX_ENTRIES || "256");
+    const port = Number(process.env.PORT || "3030");
+    const ttlSecs = Number(process.env.POOL_TTL_SECS || "600");
+    const maxEntries = Number(process.env.POOL_MAX_ENTRIES || "256");
 
-  const defaultLettaBase =
-    process.env.NODE_ENV === "production" ? "http://bears-letta:8283" : "";
-  process.env.LETTA_BASE_URL =
-    process.env.LETTA_BASE_URL?.trim() || defaultLettaBase;
-  if (!process.env.LETTA_MEMFS_SERVICE_URL?.trim()) {
-    process.env.LETTA_MEMFS_SERVICE_URL =
-      process.env.NODE_ENV === "production" ? "http://bears-memfs-manager:8285" : "";
-  }
-  const lettaBaseUrl = process.env.LETTA_BASE_URL;
-  if (!lettaBaseUrl) {
-    console.error(
-      "bears-codepool: LETTA_BASE_URL is not set — cannot start without Letta API"
+    const defaultLettaBase =
+        process.env.NODE_ENV === "production" ? "http://bears-letta:8283" : "";
+    process.env.LETTA_BASE_URL =
+        process.env.LETTA_BASE_URL?.trim() || defaultLettaBase;
+    // Codepool must not use LETTA_MEMFS_SERVICE_URL even if the deployment injects it globally.
+    // Letta Code must push through Letta's `/v1/git/...` proxy so Letta updates its
+    // Postgres memory block cache; direct Memory Manager pushes update git only and are
+    // invisible to later conversations.
+    if (process.env.LETTA_MEMFS_SERVICE_URL?.trim()) {
+        console.warn(
+            "bears-codepool: ignoring LETTA_MEMFS_SERVICE_URL; memfs writes must route through LETTA_BASE_URL /v1/git so Letta syncs memory blocks",
+        );
+        delete process.env.LETTA_MEMFS_SERVICE_URL;
+    }
+    const lettaBaseUrl = process.env.LETTA_BASE_URL;
+    if (!lettaBaseUrl) {
+        console.error(
+            "bears-codepool: LETTA_BASE_URL is not set — cannot start without Letta API",
+        );
+        process.exit(1);
+    }
+
+    const lettaApiKey = process.env.LETTA_API_KEY?.trim() ?? "";
+    console.log(
+        "bears-codepool: verifying Letta connectivity (GET /v1/health)...",
     );
-    process.exit(1);
-  }
+    await verifyLettaReachableAtStartup({
+        baseUrl: lettaBaseUrl,
+        apiKey: lettaApiKey,
+    });
+    console.log("bears-codepool: Letta health check passed");
 
-  const lettaApiKey = process.env.LETTA_API_KEY?.trim() ?? "";
-  console.log("bears-codepool: verifying Letta connectivity (GET /v1/health)...");
-  await verifyLettaReachableAtStartup({
-    baseUrl: lettaBaseUrl,
-    apiKey: lettaApiKey,
-  });
-  console.log("bears-codepool: Letta health check passed");
+    const internalToken = process.env.CODEPOOL_INTERNAL_TOKEN?.trim() ?? "";
 
-  const internalToken = process.env.CODEPOOL_INTERNAL_TOKEN?.trim() ?? "";
+    const provisioner = createBearRuntimeProvisionerFromEnv();
+    const pool = new ConversationSessionPool({
+        ttlSecs,
+        maxEntries,
+        includePartialMessages: true,
+        provisioner,
+    });
 
-  const provisioner = createBearRuntimeProvisionerFromEnv();
-  const pool = new ConversationSessionPool({
-    ttlSecs,
-    maxEntries,
-    includePartialMessages: true,
-    provisioner,
-  });
+    const channelListeners = createChannelListenerRegistry();
 
-  const channelListeners = createChannelListenerRegistry();
+    const app = express();
+    attachRoutes(app, { pool, channelListeners, internalToken });
 
-  const app = express();
-  attachRoutes(app, { pool, channelListeners, internalToken });
+    const server = app.listen(port, () => {
+        console.log(`bears-codepool listening on ${port}`);
+    });
 
-  const server = app.listen(port, () => {
-    console.log(`bears-codepool listening on ${port}`);
-  });
+    function shutdown() {
+        pool.shutdown();
+        server.close(() => process.exit(0));
+        setTimeout(() => process.exit(0), 5_000).unref();
+    }
 
-  function shutdown() {
-    pool.shutdown();
-    server.close(() => process.exit(0));
-    setTimeout(() => process.exit(0), 5_000).unref();
-  }
-
-  process.on("SIGINT", shutdown);
-  process.on("SIGTERM", shutdown);
+    process.on("SIGINT", shutdown);
+    process.on("SIGTERM", shutdown);
 }
 
 void main().catch((err) => {
-  console.error("bears-codepool:", err);
-  process.exit(1);
+    console.error("bears-codepool:", err);
+    process.exit(1);
 });
