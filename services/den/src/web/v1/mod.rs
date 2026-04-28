@@ -83,6 +83,8 @@ pub struct ChatHistoryQuery {
     pub before: Option<String>,
     #[serde(default)]
     pub limit: Option<u32>,
+    #[serde(default)]
+    pub debug: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -357,7 +359,7 @@ async fn chat_history(
         .list_conversation_messages(&conv_id, agent_for_conv, limit, before, false)
         .await?;
 
-    let (messages, has_more, next_before) = map_letta_history_page(&body, limit);
+    let (messages, has_more, next_before) = map_letta_history_page(&body, limit, q.debug);
     Ok(Json(ChatHistoryResponse {
         messages,
         has_more,
@@ -474,6 +476,15 @@ fn letta_user_message_role_is_human(inner: &serde_json::Value, msg: &serde_json:
     true
 }
 
+fn text_contains_letta_harness(text: &str) -> bool {
+    let t = text.to_ascii_lowercase();
+    t.contains("<system-reminder")
+        || t.contains("<system_reminder")
+        || t.contains(
+            "you have been forked from the primary conversational thread to run as an independent subagent",
+        )
+}
+
 /// Cursor for `before=` on the next page: chronologically oldest id in this Letta batch (any type).
 fn oldest_raw_message_id(raw: &[serde_json::Value]) -> Option<String> {
     let mut best: Option<(String, i64, String)> = None;
@@ -495,6 +506,7 @@ fn oldest_raw_message_id(raw: &[serde_json::Value]) -> Option<String> {
 fn map_letta_history_page(
     body: &serde_json::Value,
     page_limit: u32,
+    debug: bool,
 ) -> (Vec<ChatHistoryMessage>, bool, Option<String>) {
     let raw = letta_messages_top_array(body);
     let next_before = oldest_raw_message_id(raw);
@@ -512,21 +524,47 @@ fn map_letta_history_page(
     for (raw_idx, msg) in raw.iter().enumerate() {
         let inner = letta_inner_for_history(msg);
         let mt = letta_message_type(msg, inner);
-        let role = match mt {
-            "user_message" => "user",
-            "assistant_message" => "ai",
-            _ => continue,
-        };
-        if mt == "user_message" && !letta_user_message_role_is_human(inner, msg) {
-            continue;
-        }
         let Some(mut text) = letta_message_text(inner).or_else(|| letta_message_text(msg)) else {
             continue;
         };
-        text = strip_letta_harness_for_user(&text);
-        if text.trim().is_empty() {
-            continue;
-        }
+        let role = if debug {
+            match mt {
+                "system_message" => "system",
+                "user_message" => {
+                    if letta_user_message_role_is_human(inner, msg)
+                        && !text_contains_letta_harness(&text)
+                    {
+                        "user"
+                    } else {
+                        "system"
+                    }
+                }
+                "assistant_message" => {
+                    if text_contains_letta_harness(&text)
+                        && strip_letta_harness_for_user(&text).trim().is_empty()
+                    {
+                        "system"
+                    } else {
+                        "ai"
+                    }
+                }
+                _ => continue,
+            }
+        } else {
+            let role = match mt {
+                "user_message" => "user",
+                "assistant_message" => "ai",
+                _ => continue,
+            };
+            if mt == "user_message" && !letta_user_message_role_is_human(inner, msg) {
+                continue;
+            }
+            text = strip_letta_harness_for_user(&text);
+            if text.trim().is_empty() {
+                continue;
+            }
+            role
+        };
         let (d, s) = letta_message_sort_key(msg);
         rows.push(Row {
             sort: (d, s, raw_idx),
@@ -732,7 +770,7 @@ mod chat_history_map_tests {
                 "content": "Hello"
             }
         ]);
-        let (msgs, has_more, next_before) = map_letta_history_page(&body, 3);
+        let (msgs, has_more, next_before) = map_letta_history_page(&body, 3, false);
         assert_eq!(next_before.as_deref(), Some("m-old"));
         assert!(!has_more);
         assert_eq!(msgs.len(), 2);
@@ -752,7 +790,7 @@ mod chat_history_map_tests {
                 "content": "x"
             }
         ]);
-        let (_msgs, has_more, _) = map_letta_history_page(&body, 1);
+        let (_msgs, has_more, _) = map_letta_history_page(&body, 1, false);
         assert!(has_more);
     }
 
@@ -768,7 +806,7 @@ mod chat_history_map_tests {
                 }
             }
         ]);
-        let (msgs, _, _) = map_letta_history_page(&body, 10);
+        let (msgs, _, _) = map_letta_history_page(&body, 10, false);
         assert_eq!(msgs.len(), 1);
         assert_eq!(msgs[0].text, "wrapped");
     }
@@ -789,7 +827,7 @@ mod chat_history_map_tests {
                 "content": "ok"
             }
         ]);
-        let (msgs, _, nb) = map_letta_history_page(&body, 10);
+        let (msgs, _, nb) = map_letta_history_page(&body, 10, false);
         assert_eq!(nb.as_deref(), Some("t"));
         assert_eq!(msgs.len(), 1);
         assert_eq!(msgs[0].text, "ok");
@@ -811,7 +849,7 @@ mod chat_history_map_tests {
                 "content": {"type": "text", "text": "hello back"}
             }
         ]);
-        let (msgs, _, _) = map_letta_history_page(&body, 10);
+        let (msgs, _, _) = map_letta_history_page(&body, 10, false);
         assert_eq!(msgs.len(), 2);
         assert_eq!(msgs[1].role, "ai");
         assert_eq!(msgs[1].text, "hello back");
@@ -830,7 +868,7 @@ mod chat_history_map_tests {
                 }
             }
         ]);
-        let (msgs, _, _) = map_letta_history_page(&body, 10);
+        let (msgs, _, _) = map_letta_history_page(&body, 10, false);
         assert_eq!(msgs.len(), 1);
         assert_eq!(msgs[0].text, "from envelope");
     }
@@ -860,7 +898,7 @@ mod chat_history_map_tests {
                 "content": "second"
             }
         ]);
-        let (msgs, _, nb) = map_letta_history_page(&body, 10);
+        let (msgs, _, nb) = map_letta_history_page(&body, 10, false);
         assert_eq!(nb.as_deref(), Some("older"));
         assert_eq!(msgs[0].text, "first");
         assert_eq!(msgs[1].text, "second");
@@ -880,7 +918,7 @@ mod chat_history_map_tests {
                 "</system-reminder>"
             )
         }]);
-        let (msgs, _, _) = map_letta_history_page(&body, 10);
+        let (msgs, _, _) = map_letta_history_page(&body, 10, false);
         assert_eq!(msgs[0].text, "If you want, I can help.");
     }
 
@@ -901,7 +939,7 @@ mod chat_history_map_tests {
             }
         ]);
 
-        let (msgs, _, _) = map_letta_history_page(&body, 10);
+        let (msgs, _, _) = map_letta_history_page(&body, 10, false);
         assert_eq!(msgs.len(), 1);
         assert_eq!(msgs[0].role, "user");
         assert_eq!(msgs[0].text, "Real user question");
@@ -916,7 +954,7 @@ mod chat_history_map_tests {
             "content": "<system-reminder>context</system-reminder>\n\nSummarize this doc"
         }]);
 
-        let (msgs, _, _) = map_letta_history_page(&body, 10);
+        let (msgs, _, _) = map_letta_history_page(&body, 10, false);
         assert_eq!(msgs.len(), 1);
         assert_eq!(msgs[0].text, "Summarize this doc");
     }
@@ -939,9 +977,54 @@ mod chat_history_map_tests {
             }
         ]);
 
-        let (msgs, _, _) = map_letta_history_page(&body, 10);
+        let (msgs, _, _) = map_letta_history_page(&body, 10, false);
         assert_eq!(msgs.len(), 1);
         assert_eq!(msgs[0].text, "What is 2+2?");
+    }
+
+    #[test]
+    fn debug_history_keeps_harness_user_rows_as_system() {
+        let body = serde_json::json!([
+            {
+                "id": "u1",
+                "date": "2025-01-01T00:00:00Z",
+                "message_type": "user_message",
+                "content": "<system-reminder>debug context</system-reminder>"
+            },
+            {
+                "id": "u2",
+                "date": "2025-01-02T00:00:00Z",
+                "message_type": "user_message",
+                "content": "Real user question"
+            }
+        ]);
+
+        let (msgs, _, _) = map_letta_history_page(&body, 10, true);
+        assert_eq!(msgs.len(), 2);
+        assert_eq!(msgs[0].role, "system");
+        assert_eq!(
+            msgs[0].text,
+            "<system-reminder>debug context</system-reminder>"
+        );
+        assert_eq!(msgs[1].role, "user");
+    }
+
+    #[test]
+    fn debug_history_keeps_role_system_user_rows_as_system() {
+        let body = serde_json::json!([
+            {
+                "id": "u1",
+                "role": "system",
+                "date": "2025-01-01T00:00:00Z",
+                "message_type": "user_message",
+                "content": "You are a helpful assistant."
+            }
+        ]);
+
+        let (msgs, _, _) = map_letta_history_page(&body, 10, true);
+        assert_eq!(msgs.len(), 1);
+        assert_eq!(msgs[0].role, "system");
+        assert_eq!(msgs[0].text, "You are a helpful assistant.");
     }
 }
 

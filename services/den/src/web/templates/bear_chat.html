@@ -318,6 +318,17 @@ block head %} {{ super() }}
         );
     }
 
+    function formatSystemDebugHtml(raw) {
+        return (
+            '<div class="den-system-message-html">' +
+            '<div class="den-system-message-label">System</div>' +
+            '<div class="den-system-message-body">' +
+            escapeHtmlWithBreaks(raw) +
+            "</div>" +
+            "</div>"
+        );
+    }
+
     /** Letta sometimes wraps the real payload in `contents` (same pattern as `error_message`). */
     function lettaInnerForStream(obj) {
         if (!obj || typeof obj !== "object") return obj;
@@ -387,6 +398,9 @@ block head %} {{ super() }}
         params.set("bear_id", BEAR_ID);
         params.set("conversation_id", CONVERSATION_ID);
         params.set("limit", String(DEN_HISTORY_PAGE));
+        if (DEN_CHAT_DEBUG_VERBOSE) {
+            params.set("debug", "true");
+        }
         if (index > 0 && historyNextBefore) {
             params.set("before", historyNextBefore);
         }
@@ -417,11 +431,19 @@ block head %} {{ super() }}
                         return (
                             m &&
                             typeof m === "object" &&
-                            (m.role === "user" || m.role === "ai")
+                            (m.role === "user" ||
+                                m.role === "ai" ||
+                                m.role === "system")
                         );
                     })
                     .map(function (m) {
                         var t = String(m.text != null ? m.text : "");
+                        if (m.role === "system") {
+                            return {
+                                role: "system",
+                                html: formatSystemDebugHtml(t),
+                            };
+                        }
                         if (m.role !== "ai") return { role: m.role, text: t };
                         if (
                             DEN_CHAT_DEBUG_VERBOSE &&
@@ -476,6 +498,7 @@ block head %} {{ super() }}
         chat.avatars = {
             ai: { src: "", styles: { avatar: { display: "none" } } },
             user: { src: "", styles: { avatar: { display: "none" } } },
+            system: { src: "", styles: { avatar: { display: "none" } } },
         };
 
         chat.names = false;
@@ -507,6 +530,19 @@ block head %} {{ super() }}
                 user: {
                     outerContainer: { justifyContent: "flex-end" },
                     bubble: { backgroundColor: pg, border: border1 },
+                },
+                system: {
+                    outerContainer: { justifyContent: "center" },
+                    bubble: {
+                        backgroundColor: ff,
+                        color: met,
+                        border: border1,
+                        borderLeftWidth: "calc(var(--spacing-unit) * 0.35)",
+                        borderLeftStyle: "solid",
+                        borderLeftColor: met,
+                        fontSize: "smaller",
+                        maxWidth: "88%",
+                    },
                 },
                 error: {
                     outerContainer: { justifyContent: "flex-start" },
@@ -652,6 +688,9 @@ block head %} {{ super() }}
             ".den-reasoning-toggle:hover{opacity:1}" +
             ".den-assistant-html{color:inherit}" +
             ".den-assistant-html .den-assistant-plain{color:inherit}" +
+            ".den-system-message-html{color:inherit}" +
+            ".den-system-message-label{margin:0 0 calc(var(--spacing-unit) * 0.35) 0;font-variant:small-caps;letter-spacing:0.06em;font-size:smaller;opacity:0.82}" +
+            ".den-system-message-body{margin:0;white-space:pre-wrap;word-break:break-word;font-family:var(--data-font-family),ui-monospace,monospace}" +
             ".den-system-reminder{display:block;margin:calc(var(--spacing-unit) * 0.6) 0 0 0;padding:calc(var(--spacing-unit) * 0.5) 0 0 0;border-top:var(--thin-line-unit) solid var(--border-color);color:var(--meta-color);font-size:smaller}" +
             ".den-system-reminder-summary{cursor:pointer;font:inherit;list-style-position:outside}" +
             ".den-system-reminder-body{margin:calc(var(--spacing-unit) * 0.45) 0 0 0;padding:0;white-space:pre-wrap;word-break:break-word;font-family:var(--data-font-family),ui-monospace,monospace}" +
