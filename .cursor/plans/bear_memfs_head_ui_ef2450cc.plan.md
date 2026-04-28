@@ -1,19 +1,19 @@
 ---
 name: Bear memfs head UI
-overview: "Add a read-only private memory overview on bear details showing only the latest git commit for that Letta agent, by extending MemFS Manager with a small JSON management API and having Den call it (no new Rust crates). Full file listing with sizes stays a follow-up."
+overview: "Retired: fulfilled/superseded by the implemented Agent memory and Memory details pages. MemFS Manager now exposes read-only management endpoints; Den reads LETTA_MEMFS_SERVICE_URL; docker-compose wires the URL; and the UI shows memory health plus repository metadata."
 todos:
   - id: sidecar-head-endpoint
     content: Add GET /v1/management/agents/{id}/head + read-only repo resolve; do not create repo on read
-    status: pending
+    status: completed
   - id: den-config-client
     content: Config (reuse LETTA_MEMFS_SERVICE_URL) + one fetch helper + types; no separate client struct in AppState unless needed
-    status: pending
+    status: completed
   - id: details-ui
     content: render_bear_details_page fetch + details.html subsection for latest commit only
-    status: pending
+    status: completed
   - id: compose-docs
     content: Wire bears-den LETTA_MEMFS_SERVICE_URL to bears-memfs-manager:8285; document env vars
-    status: pending
+    status: completed
 isProject: false
 ---
 
