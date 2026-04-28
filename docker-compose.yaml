@@ -38,6 +38,7 @@ x-preflight-environment: &preflight-environment
     LETTA_BASE_URL: ${LETTA_BASE_URL:-http://bears-letta:8283}
     CODEPOOL_BASE_URL: ${CODEPOOL_BASE_URL:-http://bears-codepool:3030}
     LETTA_MEMFS_SERVICE_URL: ${LETTA_MEMFS_SERVICE_URL:-http://bears-memfs-manager:8285}
+    MEMFS_DEFAULT_ORG: ${MEMFS_DEFAULT_ORG:-org-00000000-0000-4000-8000-000000000000}
 
 x-preflight-depends: &preflight-depends
     bears-preflight-config:
