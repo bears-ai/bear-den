@@ -45,7 +45,15 @@ export BEARS_BEAR_SLUG="test-bear"
 export BEARS_DEN_TOKEN="..."
 ```
 
-Use any Den API origin reachable from the process running the adapter. For Zed on macOS, this normally means a host-reachable HTTPS URL, a separate API hostname, or a published API port on the web host.
+Use any Den API origin reachable from the process running the adapter. For Zed on macOS, this normally means a host-reachable HTTPS URL, a separate API hostname, or a published API port on the web host. `BEARS_DEN_API_URL` must be the API origin only, not the full `/acp/bears/.../prompt` endpoint.
+
+You can validate configuration without starting ACP stdio:
+
+```bash
+bears-acp-adapter --check-config
+```
+
+If the adapter is started by an ACP client with missing or invalid configuration, it stays running and returns a JSON-RPC error on `session/prompt` with specific setup instructions. This avoids opaque client-side errors such as “server shut down unexpectedly” when, for example, `BEARS_DEN_API_URL` was never set.
 
 ## Zed custom agent config
 
@@ -115,6 +123,8 @@ Production distribution should add Developer ID signing and Apple notarization b
 
 ## Debugging
 
+- Run `bears-acp-adapter --check-config` from the same shell or wrapper environment used by your editor.
 - Open Zed command palette: `dev: open acp logs`.
 - The adapter writes logs only to stderr.
 - Stdout is reserved for JSON-RPC protocol messages.
+- HTTP failures include targeted hints for common cases: bad token (`401`), missing scope or membership (`403`), wrong API URL or disabled ACP gateway (`404`), wrong web/API origin (`405`), rate limits (`429`), and Den server errors (`5xx`).

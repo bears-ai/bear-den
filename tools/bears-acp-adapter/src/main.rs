@@ -1,6 +1,7 @@
 use anyhow::{anyhow, Context, Result};
 use futures_util::StreamExt;
 use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, CONTENT_TYPE};
+use reqwest::Url;
 use serde_json::{json, Value};
 use std::env;
 use tokio::io::{self, AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -12,6 +13,12 @@ struct Config {
     bear: String,
     token: String,
     client: String,
+}
+
+#[derive(Clone, Debug)]
+struct RuntimeConfig {
+    config: Option<Config>,
+    diagnostics: Vec<String>,
 }
 
 #[derive(Debug)]
@@ -30,9 +37,16 @@ async fn main() {
 }
 
 async fn run() -> Result<()> {
-    let config = Config::from_env_and_args()?;
+    let runtime = RuntimeConfig::from_env_and_args()?;
+    if runtime.is_configured() {
+        eprintln!("bears-acp-adapter: configuration looks valid");
+    } else {
+        eprintln!("{}", runtime.configuration_error_message());
+    }
+
     let http = reqwest::Client::builder()
         .connect_timeout(std::time::Duration::from_secs(15))
+        .timeout(std::time::Duration::from_secs(300))
         .build()
         .context("build HTTP client")?;
 
@@ -61,7 +75,7 @@ async fn run() -> Result<()> {
             }
         };
 
-        if let Err(err) = handle_request(&http, &config, request).await {
+        if let Err(err) = handle_request(&http, &runtime, request).await {
             eprintln!("bears-acp-adapter: request handling failed: {err:#}");
         }
     }
@@ -69,13 +83,14 @@ async fn run() -> Result<()> {
     Ok(())
 }
 
-impl Config {
+impl RuntimeConfig {
     fn from_env_and_args() -> Result<Self> {
         let mut api_url = env::var("BEARS_DEN_API_URL").unwrap_or_default();
         let mut bear = env::var("BEARS_BEAR_SLUG").unwrap_or_default();
         let mut token = env::var("BEARS_DEN_TOKEN").unwrap_or_default();
         let mut token_env = env::var("BEARS_DEN_TOKEN_ENV").unwrap_or_default();
         let mut client = env::var("BEARS_ACP_CLIENT").unwrap_or_else(|_| "zed".to_string());
+        let mut check_config = false;
 
         let mut args = env::args().skip(1);
         while let Some(arg) = args.next() {
@@ -85,6 +100,7 @@ impl Config {
                 "--token" => token = require_arg_value("--token", args.next())?,
                 "--token-env" => token_env = require_arg_value("--token-env", args.next())?,
                 "--client" => client = require_arg_value("--client", args.next())?,
+                "--check-config" => check_config = true,
                 "--help" | "-h" => {
                     print_help_to_stderr();
                     std::process::exit(0);
@@ -93,39 +109,117 @@ impl Config {
             }
         }
 
-        if !token_env.trim().is_empty() {
-            token = env::var(token_env.trim()).with_context(|| {
-                format!("read bearer token from environment variable {token_env:?}")
-            })?;
+        let mut diagnostics = Vec::new();
+        let token_env = token_env.trim().to_string();
+        if !token_env.is_empty() {
+            match env::var(&token_env) {
+                Ok(value) => token = value,
+                Err(_) => diagnostics.push(format!(
+                    "BEARS_DEN_TOKEN_ENV points at {token_env:?}, but that environment variable is not set. Export {token_env} or change --token-env."
+                )),
+            }
         }
 
-        api_url = api_url.trim_end_matches('/').to_string();
+        api_url = api_url.trim().trim_end_matches('/').to_string();
         bear = bear.trim().to_string();
         token = token.trim().to_string();
         client = normalize_client(&client);
 
-        if api_url.is_empty() {
-            return Err(anyhow!(
-                "missing Den API URL; set BEARS_DEN_API_URL or pass --api-url"
-            ));
-        }
+        validate_api_url(&api_url, &mut diagnostics);
         if bear.is_empty() {
-            return Err(anyhow!(
-                "missing bear slug; set BEARS_BEAR_SLUG or pass --bear"
-            ));
+            diagnostics
+                .push("Missing bear slug. Set BEARS_BEAR_SLUG or pass --bear <slug>.".to_string());
         }
         if token.is_empty() {
-            return Err(anyhow!(
-                "missing bearer token; set BEARS_DEN_TOKEN, BEARS_DEN_TOKEN_ENV, --token, or --token-env"
-            ));
+            diagnostics.push(
+                "Missing Den bearer token. Set BEARS_DEN_TOKEN, set BEARS_DEN_TOKEN_ENV to the name of an environment variable containing the token, pass --token <token>, or pass --token-env <env-var>. The token must have the acp:chat scope."
+                    .to_string(),
+            );
         }
 
-        Ok(Self {
-            api_url,
-            bear,
-            token,
-            client,
-        })
+        let config = if diagnostics.is_empty() {
+            Some(Config {
+                api_url,
+                bear,
+                token,
+                client,
+            })
+        } else {
+            None
+        };
+
+        let runtime = Self {
+            config,
+            diagnostics,
+        };
+        if check_config {
+            if runtime.is_configured() {
+                eprintln!("bears-acp-adapter: configuration looks valid");
+                std::process::exit(0);
+            }
+            eprintln!("{}", runtime.configuration_error_message());
+            std::process::exit(2);
+        }
+
+        Ok(runtime)
+    }
+
+    fn is_configured(&self) -> bool {
+        self.config.is_some()
+    }
+
+    fn configuration_error_message(&self) -> String {
+        let mut message = String::from(
+            "bears-acp-adapter: configuration is incomplete, so prompts cannot be sent to BEARS yet. The adapter will stay running so the ACP client can display this message instead of reporting that the server shut down unexpectedly.\n\nFix the following:",
+        );
+        for diagnostic in &self.diagnostics {
+            message.push_str("\n  - ");
+            message.push_str(diagnostic);
+        }
+        message.push_str(
+            "\n\nExample:\n  BEARS_DEN_API_URL=https://api.bears.example\n  BEARS_BEAR_SLUG=my-bear\n  BEARS_DEN_TOKEN=...\n\nFor Zed, put those values in the custom agent server env block, or run with --token-env BEARS_DEN_TOKEN so the token can stay outside editor settings.",
+        );
+        message
+    }
+}
+
+fn validate_api_url(api_url: &str, diagnostics: &mut Vec<String>) {
+    if api_url.is_empty() {
+        diagnostics.push(
+            "Missing Den API URL. Set BEARS_DEN_API_URL or pass --api-url <url>. Use the API origin reachable from your editor process, for example https://api.bears.example."
+                .to_string(),
+        );
+        return;
+    }
+
+    let parsed = match Url::parse(api_url) {
+        Ok(url) => url,
+        Err(err) => {
+            diagnostics.push(format!(
+                "Invalid Den API URL {api_url:?}: {err}. Include the scheme, for example https://api.bears.example."
+            ));
+            return;
+        }
+    };
+
+    match parsed.scheme() {
+        "http" | "https" => {}
+        scheme => diagnostics.push(format!(
+            "Invalid Den API URL scheme {scheme:?}. Use http:// for local development or https:// for deployed API servers."
+        )),
+    }
+
+    if parsed.host_str().is_none() {
+        diagnostics.push(format!(
+            "Invalid Den API URL {api_url:?}: it does not contain a host name."
+        ));
+    }
+
+    if parsed.path().contains("/acp/") {
+        diagnostics.push(
+            "BEARS_DEN_API_URL should be the Den API origin only, not the full ACP prompt endpoint. Use a value like https://api.bears.example, not a URL containing /acp/bears/..."
+                .to_string(),
+        );
     }
 }
 
@@ -136,7 +230,9 @@ fn require_arg_value(flag: &str, value: Option<String>) -> Result<String> {
 fn print_help_to_stderr() {
     eprintln!(
         "Usage: bears-acp-adapter --api-url <url> --bear <slug> [--client zed] [--token-env BEARS_DEN_TOKEN]\n\n\
-Environment fallbacks:\n  BEARS_DEN_API_URL\n  BEARS_BEAR_SLUG\n  BEARS_DEN_TOKEN\n  BEARS_DEN_TOKEN_ENV\n  BEARS_ACP_CLIENT"
+Options:\n  --api-url <url>        Den API origin, for example https://api.bears.example\n  --bear <slug>          Bear slug to chat with\n  --token <token>        Den bearer token with acp:chat scope\n  --token-env <env-var>  Read the Den bearer token from this environment variable\n  --client <name>        Client label: zed, opencode, or acp_adapter\n  --check-config         Validate configuration and exit without starting ACP stdio\n  --help                 Show this help\n\n\
+Environment fallbacks:\n  BEARS_DEN_API_URL\n  BEARS_BEAR_SLUG\n  BEARS_DEN_TOKEN\n  BEARS_DEN_TOKEN_ENV\n  BEARS_ACP_CLIENT\n\n\
+BEARS_DEN_API_URL should be the API origin only, not the full /acp/bears/... endpoint."
     );
 }
 
@@ -162,7 +258,7 @@ fn parse_request(line: &str) -> Result<JsonRpcRequest> {
 
 async fn handle_request(
     http: &reqwest::Client,
-    config: &Config,
+    runtime: &RuntimeConfig,
     request: JsonRpcRequest,
 ) -> Result<()> {
     match request.method.as_str() {
@@ -187,13 +283,29 @@ async fn handle_request(
         }
         "session/prompt" => {
             if let Some(id) = request.id {
+                let Some(config) = runtime.config.as_ref() else {
+                    write_response(
+                        id,
+                        Err(json_rpc_error(
+                            -32000,
+                            "BEARS adapter is not configured",
+                            Some(json!({
+                                "message": runtime.configuration_error_message(),
+                                "problems": runtime.diagnostics,
+                            })),
+                        )),
+                    )
+                    .await?;
+                    return Ok(());
+                };
+
                 if let Err(err) = handle_prompt(http, config, id.clone(), request.params).await {
                     write_response(
                         id,
                         Err(json_rpc_error(
                             -32000,
                             "BEARS prompt failed",
-                            Some(json!(err.to_string())),
+                            Some(json!({ "message": format!("{err:#}") })),
                         )),
                     )
                     .await?;
@@ -274,7 +386,7 @@ async fn handle_prompt(
     headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
 
     let response = http
-        .post(url)
+        .post(&url)
         .headers(headers)
         .json(&json!({
             "message": prompt,
@@ -283,12 +395,12 @@ async fn handle_prompt(
         }))
         .send()
         .await
-        .context("send prompt to Den API")?;
+        .with_context(|| den_request_context(&url))?;
 
     let status = response.status();
     if !status.is_success() {
         let text = response.text().await.unwrap_or_else(|_| "".to_string());
-        return Err(anyhow!("Den API returned {status}: {text}"));
+        return Err(anyhow!("{}", den_status_error_message(status, text.trim())));
     }
 
     let mut saw_done = false;
@@ -310,6 +422,30 @@ async fn handle_prompt(
     let stop_reason = if saw_done { "end_turn" } else { "end_turn" };
     write_response(response_id, Ok(json!({ "stopReason": stop_reason }))).await?;
     Ok(())
+}
+
+fn den_request_context(url: &str) -> String {
+    format!(
+        "could not connect to the BEARS Den API at {url}. Check that BEARS_DEN_API_URL is the Den API origin reachable from this editor process, that the API service is running with ACP_GATEWAY_ENABLED=true, and that the network/VPN/firewall permits the connection"
+    )
+}
+
+fn den_status_error_message(status: reqwest::StatusCode, body: &str) -> String {
+    let hint = match status.as_u16() {
+        401 => "The bearer token was rejected. Check BEARS_DEN_TOKEN or --token-env and make sure the token has the acp:chat scope.",
+        403 => "The token authenticated but is not allowed to use this bear or ACP. Check bear membership and the acp:chat scope.",
+        404 => "The ACP gateway endpoint was not found. Check BEARS_DEN_API_URL, BEARS_BEAR_SLUG, and that Den is running with ACP_GATEWAY_ENABLED=true on the API service.",
+        405 => "The server exists but did not accept the ACP prompt method. Check that BEARS_DEN_API_URL points to the Den API origin, not the web UI origin or a proxy route with method restrictions.",
+        429 => "The Den API rate limited this request. Wait and retry, or check service limits.",
+        500..=599 => "The Den API returned a server error. Check Den service logs for the request failure.",
+        _ => "The Den API rejected the prompt request. Check the response body and Den logs for details.",
+    };
+
+    if body.is_empty() {
+        format!("Den API returned HTTP {status}. {hint}")
+    } else {
+        format!("Den API returned HTTP {status}: {body}. {hint}")
+    }
 }
 
 fn prompt_text_from_params(params: &Value) -> Result<String> {
