@@ -258,6 +258,43 @@ impl CodePoolClient {
         runtime_plan: &serde_json::Value,
         request_id: Uuid,
     ) -> Result<reqwest::Response, CustomError> {
+        self.post_bear_channel_message_for_channel_streaming(
+            session_id,
+            conversation_id,
+            bear,
+            user_id,
+            username,
+            membership_role,
+            user_input,
+            runtime_plan,
+            request_id,
+            "browser_chat",
+            "den_web",
+            "den_chat",
+            false,
+            true,
+        )
+        .await
+    }
+
+    /// Lower-level `bear_channel` sender for non-browser clients such as ACP adapters.
+    pub async fn post_bear_channel_message_for_channel_streaming(
+        &self,
+        session_id: &str,
+        conversation_id: &str,
+        bear: &Bear,
+        user_id: i32,
+        username: Option<&str>,
+        membership_role: Option<&str>,
+        user_input: &str,
+        runtime_plan: &serde_json::Value,
+        request_id: Uuid,
+        channel_family: &str,
+        channel_client: &str,
+        channel_protocol: &str,
+        supports_cancellation: bool,
+        supports_rich_events: bool,
+    ) -> Result<reqwest::Response, CustomError> {
         if !self.is_enabled() {
             return Err(CustomError::System(
                 "Codepool is not configured (set CODEPOOL_BASE_URL)".to_string(),
@@ -291,9 +328,9 @@ impl CodePoolClient {
                 "membership_role": membership_role,
             },
             "channel": {
-                "family": "browser_chat",
-                "client": "den_web",
-                "protocol": "den_chat",
+                "family": channel_family,
+                "client": channel_client,
+                "protocol": channel_protocol,
             },
             "message": {
                 "type": "text",
@@ -301,8 +338,8 @@ impl CodePoolClient {
             },
             "capabilities": {
                 "client_tools": [],
-                "supports_cancellation": false,
-                "supports_rich_events": true,
+                "supports_cancellation": supports_cancellation,
+                "supports_rich_events": supports_rich_events,
             },
             "runtime_plan": runtime_plan,
             "request_id": request_id.to_string(),

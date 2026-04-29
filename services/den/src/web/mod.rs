@@ -1,4 +1,5 @@
 // ROUTES: When modifying routes in this file, update /src/web/ROUTES.md if present.
+pub mod acp;
 pub mod admin;
 pub mod bear_chat;
 pub mod bear_create_support;
@@ -248,6 +249,7 @@ pub async fn server(
                 .route_layer(login_required!(Backend, login_url = "/login")),
         )
         .nest("/v1", v1::router())
+        .nest("/acp", acp::router())
         .merge(user::router())
         .merge(design::router())
         .merge(home::router())
