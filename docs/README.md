@@ -9,7 +9,7 @@ Human-oriented docs for the **Basic Environment for Agents Runtime Server (BEARS
 | Path | Contents |
 |------|----------|
 | [../services/codepool/](../services/codepool/) | **Codepool** — Letta Code SDK harness (warm pool, Den streaming, optional channel listeners) |
-| [planning/](planning/) | Roadmap and implementation sequencing: [PLAN](planning/PLAN.md), [Phase 1 bootstrap](planning/PHASE1_BOOTSTRAP.md), [locked Phase 1 decisions](planning/PHASE1_DECISIONS.md), [`bear_channel` Phase 7+](planning/BEAR_CHANNEL_PHASE7_PLANS.md), ACP discovery notes |
+| [planning/](planning/) | Roadmap and implementation sequencing: [PLAN](planning/PLAN.md), [Phase 1 bootstrap](planning/PHASE1_BOOTSTRAP.md), [locked Phase 1 decisions](planning/PHASE1_DECISIONS.md), [`bear_channel` Phase 7+](planning/BEAR_CHANNEL_PHASE7_PLANS.md), [bear capability management](planning/BEAR_CAPABILITY_MANAGEMENT_PLAN.md), ACP discovery notes |
 | [deployment/](deployment/) | Coolify deployment order and steps |
 | [architecture/](architecture/) | System architecture and contracts: stack notes, Den + multi-user Letta, [`bear_channel` + ACP](architecture/BEAR_CHANNEL_AND_ACP.md), MemFS and memory UI, Letta vs bear UI coverage, Den meta tools |
 | [architecture/adr/](architecture/adr/) | Architecture Decision Records (ADRs) for cross-cutting product/architecture choices: artifacts/Garage, Cabinet ingestion, dynamic skills/subagents, multi-user memory, routines |
