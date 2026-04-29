@@ -416,6 +416,7 @@ async fn render_bear_details_page(
     let letta_resync_notice = match letta_resync_query.as_deref() {
         Some("ok") => Some("ok"),
         Some("error") => Some("error"),
+        Some("drift") => Some("drift"),
         _ => None,
     };
 
@@ -566,7 +567,47 @@ async fn bear_resync_letta_post(
         return Ok(Redirect::to(&format!("{target}?letta_resync=error")).into_response());
     }
 
-    Ok(Redirect::to(&format!("{target}?letta_resync=ok")).into_response())
+    let Some(agent_id) = bear
+        .letta_agent_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    else {
+        return Ok(Redirect::to(&format!("{target}?letta_resync=error")).into_response());
+    };
+
+    let still_drifted = match state.letta.fetch_agent(agent_id).await {
+        Ok(v) => {
+            let summary = AgentSummary::from_letta_agent_state(&v);
+            let diagnostics = LettaAgentDiagnostics::from_agent_json(&v);
+            let expected_tool_ids = state
+                .letta
+                .filtered_tool_ids(&bear.letta_tool_ids.0)
+                .await
+                .unwrap_or_else(|e| {
+                    tracing::warn!(bear_id = %bear.id, "Could not filter Letta tools after resync: {e}");
+                    bear.letta_tool_ids.0.clone()
+                });
+            compute_letta_drift_with_expected_tool_ids(
+                &bear,
+                Some(&summary),
+                Some(&diagnostics),
+                Some(&v),
+                Some(&expected_tool_ids),
+            )
+            .is_some_and(|flags| flags.drift_any)
+        }
+        Err(e) => {
+            tracing::warn!(bear_id = %bear.id, "Could not verify Letta state after resync: {e}");
+            true
+        }
+    };
+
+    if still_drifted {
+        Ok(Redirect::to(&format!("{target}?letta_resync=drift")).into_response())
+    } else {
+        Ok(Redirect::to(&format!("{target}?letta_resync=ok")).into_response())
+    }
 }
 
 async fn bear_edit_redirect_get(

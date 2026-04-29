@@ -44,6 +44,12 @@ block subnav %}
     <p class="form-hint">
         <span class="success">Letta was updated from Den.</span>
     </p>
+    {% elif letta_resync_notice == 'drift' %}
+    <p class="form-errors">
+        Den sent the update to Letta, but the API response still differs from
+        the Den registry. Review the fields below; this usually means Letta
+        ignored or rewrote at least one synced field.
+    </p>
     {% elif letta_resync_notice == 'error' %}
     <p class="form-errors">
         Could not resync Letta. Check that Letta is reachable and the agent is
@@ -133,6 +139,11 @@ block subnav %}
                 <p class="form-hint">
                     <span class="success">Letta was updated from Den.</span>
                 </p>
+                {% elif letta_resync_notice == 'drift' %}
+                <p class="form-errors">
+                    Den sent the update to Letta, but Letta still reports a
+                    different value for at least one synced field.
+                </p>
                 {% elif letta_resync_notice == 'error' %}
                 <p class="form-errors">
                     Could not resync Letta. Check that Letta is reachable and
@@ -147,7 +158,9 @@ block subnav %}
                 <p class="form-errors">
                     <strong>Letta is out of sync.</strong>{% if not
                     can_manage_bear %} Ask a bear admin to resync or edit.{%
-                    else %} Force sync to update.{% endif %}
+                    elif letta_resync_notice == 'drift' %} Letta did not report
+                    matching state after the last sync attempt.{% else %} Force
+                    sync to update.{% endif %}
                 </p>
                 {% if letta_agent_summary and letta_agent_summary.system_excerpt
                 %}
