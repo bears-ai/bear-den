@@ -172,7 +172,7 @@ services:
     # (shares `bears-letta-data`). The Letta API proxies /v1/git/* here.
     bears-memfs-manager:
         build:
-            context: ./services/api
+            context: ./services/memfs-manager
             dockerfile: Dockerfile
         restart: unless-stopped
         depends_on:
