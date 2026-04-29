@@ -20,7 +20,7 @@ Index of agent- and contributor-oriented docs for **this project**.
 | SQLx | [`sqlx-patterns.md`](sqlx-patterns.md) |
 | MiniJinja contexts | [`minijinja-context-patterns.md`](minijinja-context-patterns.md) |
 | MiniJinja vs Jinja2 | [`minijinja-template-limitations.md`](minijinja-template-limitations.md) |
-| Frontend (templates, CSS, JS) | [`frontend-development.md`](frontend-development.md) |
+| Frontend (templates, CSS, JS) | [`frontend-development.md`](frontend-development.md); [`deep-chat-styling.md`](deep-chat-styling.md) |
 
 ## Operations & deploy
 
