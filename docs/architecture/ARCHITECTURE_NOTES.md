@@ -27,7 +27,7 @@ Den (chat UI) ───────────────┐     Outline (huma
 | **Letta** | **Persistence** for the harness: tools, memory blocks, conversations per Letta agent (**bear**) |
 | **Bifrost** | Unified OpenAI-compatible model gateway (`/v1`) — see `services/bifrost/` |
 | **Den chat UI** | **Only** first-party web chat — Deep Chat web component served by Den; reference client for Den streaming APIs |
-| **Garage** | S3-compatible object storage — **artifacts** bucket (agent outputs, uploads, routines; **not** in Letta) + **separate** Cabinet bucket (Outline); GC on artifacts — [artifacts-garage-adr.md](../artifacts-garage-adr.md), [`services/garage/`](../../services/garage/) |
+| **Garage** | S3-compatible object storage — **artifacts** bucket (agent outputs, uploads, routines; **not** in Letta) + **separate** Cabinet bucket (Outline); GC on artifacts — [artifacts-garage.md](adr/artifacts-garage.md), [`services/garage/`](../../services/garage/) |
 | **Outline** | Cabinet storage and UI |
 
 ## Letta
@@ -68,7 +68,7 @@ Expose only what users need (e.g. Den behind Coolify proxy).
 - **Auth:** scoped service keys (Den for artifacts; Outline/Cabinet wiring separately).
 - **Backup:** Garage volumes remain part of the three-input contract (repo + DB backups + object storage).
 
-Architecture: [artifacts-garage-adr.md](../artifacts-garage-adr.md). Deploy: [`services/garage/COOLIFY_DEPLOY.md`](../../services/garage/COOLIFY_DEPLOY.md).
+Architecture: [artifacts-garage.md](adr/artifacts-garage.md). Deploy: [`services/garage/COOLIFY_DEPLOY.md`](../../services/garage/COOLIFY_DEPLOY.md).
 
 ## Multi-user
 

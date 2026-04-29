@@ -26,21 +26,21 @@ References:
 - [Letta memory blocks](https://docs.letta.com/guides/core-concepts/memory/memory-blocks)
 - [Letta shared memory](https://docs.letta.com/guides/core-concepts/memory/shared-memory/)
 - [Letta Conversations API](https://docs.letta.com/guides/agents/conversations/)
-- [DEN_ARCHITECTURE.md](architecture/DEN_ARCHITECTURE.md) — Den + self-hosted Letta
-- [PLAN.md](planning/PLAN.md) — roadmap and contracts
-- [PLAN.md § Shared memory blocks and concurrency](planning/PLAN.md#shared-memory-blocks-and-concurrency-letta) — write-path races, read staleness (e.g. LET-7893), memfs caveats (LET-8217, LET-8133), and team-oriented mitigations when **multiple agents** touch **shared** blocks
+- [DEN_ARCHITECTURE.md](../DEN_ARCHITECTURE.md) — Den + self-hosted Letta
+- [PLAN.md](../../planning/PLAN.md) — roadmap and contracts
+- [PLAN.md § Shared memory blocks and concurrency](../../planning/PLAN.md#shared-memory-blocks-and-concurrency-letta) — write-path races, read staleness (e.g. LET-7893), memfs caveats (LET-8217, LET-8133), and team-oriented mitigations when **multiple agents** touch **shared** blocks
 
 ---
 
 ## Decision
 
-**Relationship to Phase 1:** [Phase 1 planning](planning/PHASE1_BOOTSTRAP.md) is **web-first** and **1:1**-oriented; **Scenario A** below matches that near-term shape (per-user conversations and isolated `human` memory). **Scenario B** (multi-person group threads, `person:{name}` blocks, `group_context`, Den-managed per-person block lifecycle) is a **future / post–Phase 1 design target**—useful to decide early, **not** a commitment that Phase 1 will ship full group semantics or Den channel identity mapping. Where Phase 1 UI touches memory (for example a memory dashboard), it should stay aligned with **Letta-native** state for 1:1 flows and avoid implying group-mode completeness.
+**Relationship to Phase 1:** [Phase 1 planning](../../planning/PHASE1_BOOTSTRAP.md) is **web-first** and **1:1**-oriented; **Scenario A** below matches that near-term shape (per-user conversations and isolated `human` memory). **Scenario B** (multi-person group threads, `person:{name}` blocks, `group_context`, Den-managed per-person block lifecycle) is a **future / post–Phase 1 design target**—useful to decide early, **not** a commitment that Phase 1 will ship full group semantics or Den channel identity mapping. Where Phase 1 UI touches memory (for example a memory dashboard), it should stay aligned with **Letta-native** state for 1:1 flows and avoid implying group-mode completeness.
 
-**Phase 1 product promise (blocks vs archival):** End-user and operator copy should reflect **curated, bounded memory blocks** as “always in mind” and **archival memory** (Letta-native, typically tool-mediated retrieval) as “findable when needed” — not a second store in Den. See [PLAN.md](planning/PLAN.md) § Phase 1 memory model.
+**Phase 1 product promise (blocks vs archival):** End-user and operator copy should reflect **curated, bounded memory blocks** as “always in mind” and **archival memory** (Letta-native, typically tool-mediated retrieval) as “findable when needed” — not a second store in Den. See [PLAN.md](../../planning/PLAN.md) § Phase 1 memory model.
 
-**Memory dashboard metric:** Phase 1 does **not** expose an aggregate memory score; the dashboard shows Letta-native **`human`** memory for member bears. Operators get the full per-bear **state** summary in **bear detail**. See [PHASE1_DECISIONS.md](planning/PHASE1_DECISIONS.md) decision 8.
+**Memory dashboard metric:** Phase 1 does **not** expose an aggregate memory score; the dashboard shows Letta-native **`human`** memory for member bears. Operators get the full per-bear **state** summary in **bear detail**. See [PHASE1_DECISIONS.md](../../planning/PHASE1_DECISIONS.md) decision 8.
 
-**Skills and subagents (separate ADR):** Procedural **skills** lifecycle (catalog, bear-created, reflection subagents) is covered in [dynamic-skills-subagents-adr.md](dynamic-skills-subagents-adr.md), not in this ADR.
+**Skills and subagents (separate ADR):** Procedural **skills** lifecycle (catalog, bear-created, reflection subagents) is covered in [dynamic-skills-subagents.md](dynamic-skills-subagents.md), not in this ADR.
 
 ### Two Distinct Scenarios
 
@@ -150,7 +150,7 @@ Most bears will handle **both** scenarios: 1:1 chats via Den chat/web and group 
 
 The key design question is whether a bear should also have `person:{name}` blocks for 1:1 users (for consistency), or rely on isolated `human` blocks. The recommendation:
 
-- **Phase 1:** Use isolated `human` blocks for 1:1 (simpler, Letta handles it natively). Group chat is out of scope per [PHASE1_BOOTSTRAP.md](planning/PHASE1_BOOTSTRAP.md).
+- **Phase 1:** Use isolated `human` blocks for 1:1 (simpler, Letta handles it natively). Group chat is out of scope per [PHASE1_BOOTSTRAP.md](../../planning/PHASE1_BOOTSTRAP.md).
 - **Phase 2:** When group chat support lands, add `person:{name}` blocks. If the bear needs to cross-reference person knowledge between 1:1 and group contexts (e.g. "Alice told me in our private chat that she prefers dark mode"), consider migrating 1:1 to also use `person:{name}` blocks with a shared conversation instead.
 
 ### Memory Block Layout

@@ -4,7 +4,7 @@
 
 ## Overview
 
-[Garage](https://garagehq.deuxfleurs.fr/) is the BEARS **object store**: S3-compatible, self-hosted, written in Rust, maintained by the [Deuxfleurs](https://deuxfleurs.fr/) non-profit. **Den** uses it for **artifacts** (agent outputs, user uploads, routine files — **not** stored in Letta) and, in a **separate bucket**, **Cabinet / Outline** attachments. See [artifacts-garage-adr.md](../../docs/artifacts-garage-adr.md).
+[Garage](https://garagehq.deuxfleurs.fr/) is the BEARS **object store**: S3-compatible, self-hosted, written in Rust, maintained by the [Deuxfleurs](https://deuxfleurs.fr/) non-profit. **Den** uses it for **artifacts** (agent outputs, user uploads, routine files — **not** stored in Letta) and, in a **separate bucket**, **Cabinet / Outline** attachments. See [artifacts-garage.md](../../docs/architecture/adr/artifacts-garage.md).
 
 Garage is lightweight (≈1 GB RAM), includes built-in deduplication and compression, and is designed for small-to-medium self-hosted deployments.
 
@@ -130,7 +130,7 @@ Set these on the **Den** service (see [`../../services/den/COOLIFY_DEPLOY.md`](.
 
 ```bash
 S3_ENDPOINT=http://bears-garage:3900
-# Ephemeral artifacts + uploads (see ../../docs/artifacts-garage-adr.md). Den currently uses S3_BUCKET.
+# Ephemeral artifacts + uploads (see ../../docs/architecture/adr/artifacts-garage.md). Den currently uses S3_BUCKET.
 S3_BUCKET=bears-artifacts
 # Phase 2+ Cabinet / Outline: separate bucket in Garage; wire when Den Cabinet adapter needs direct S3
 # S3_BUCKET_CABINET=bears-cabinet

@@ -1,8 +1,22 @@
-# BEARS plan & architecture
+# BEARS roadmap
 
-High‑level, ops‑oriented plan and architecture: MVP **without Cabinet first**, then Cabinet/Outline in stages.
+High-level implementation roadmap for BEARS. This file is the planning hub: it should describe delivery order and link to canonical architecture docs rather than duplicate every contract.
 
-**Reading order:** Skim [§1](#1-system-architecture)–[§2](#2-capability-contracts-pseudo) for components and pseudo-contracts; use [§3](#3-phased-roadmap) for phased delivery.
+**Architecture sources of truth:**
+
+- [Architecture notes](../architecture/ARCHITECTURE_NOTES.md) — single-page stack view.
+- [Den architecture](../architecture/DEN_ARCHITECTURE.md) — control plane, harness, Den meta tools, skills, MCP.
+- [`bear_channel` and ACP](../architecture/BEAR_CHANNEL_AND_ACP.md) — canonical Den -> Codepool runtime boundary and planned ACP mapping.
+- [Architecture Decision Records](../architecture/adr/README.md) — durable cross-cutting decisions.
+
+**Active implementation plans:**
+
+- [Phase 1 bootstrap](PHASE1_BOOTSTRAP.md)
+- [Phase 1 locked decisions](PHASE1_DECISIONS.md)
+- [`bear_channel` Phase 7+](BEAR_CHANNEL_PHASE7_PLANS.md)
+- [ACP discovery prompt](ACP_DISCOVERY_PROMPT.md)
+
+**Reading order:** Use [§3](#3-phased-roadmap) for delivery sequencing. Use [§1](#1-system-architecture)–[§2](#2-capability-contracts-pseudo) only as historical planning context where the architecture docs do not yet cover a topic.
 
 ## Table of contents
 
@@ -16,10 +30,10 @@ High‑level, ops‑oriented plan and architecture: MVP **without Cabinet first*
 **Terminology**
 
 - **BEARS** — the **deployment stack** (acronym): Letta, Bifrost, Den, Outline, frontends, **Letta Code** harness, etc. Not the same as a single **bear**.
-- **Bear** — one **Letta-backed primary agent**: the distinct assistant users talk to; its own Letta agent id, prompts, memory, and tools. **Subagents** (e.g. Letta **`reflection`** type) are **configured per bear** where upstream supports them—see [dynamic-skills-subagents-adr.md](../dynamic-skills-subagents-adr.md). Den registers and provisions the bear **and** materializes predefined subagent configuration for reproducible deploys.
+- **Bear** — one **Letta-backed primary agent**: the distinct assistant users talk to; its own Letta agent id, prompts, memory, and tools. **Subagents** (e.g. Letta **`reflection`** type) are **configured per bear** where upstream supports them—see [dynamic-skills-subagents.md](../architecture/adr/dynamic-skills-subagents.md). Den registers and provisions the bear **and** materializes predefined subagent configuration for reproducible deploys.
 - **Harness binding (per bear)** — Den-generated mapping from a **bear** to its **`letta_agent_id`**, **Letta Code** skill paths, **subagent** definitions the harness/Letta expect, Slack [Channels](https://docs.letta.com/letta-code/channels/) bind, and related deploy config.
 - **Users ↔ bears (many‑to‑many)** — a **user** may access **many** bears (e.g. personal + household + project). A **bear** may be shared by **many** users (e.g. a household assistant). Den stores membership and enforces it on every chat and Cabinet call.
-- **Routine** — a **scheduled or triggered** unit of work managed in **Den** (Phase 1), **assigned to exactly one bear**; inherits that bear’s tools, policy, and membership context. **Where outputs are stored or shown** is **not yet fixed** — see [routines-automation-adr.md](../routines-automation-adr.md).
+- **Routine** — a **scheduled or triggered** unit of work managed in **Den** (Phase 1), **assigned to exactly one bear**; inherits that bear’s tools, policy, and membership context. **Where outputs are stored or shown** is **not yet fixed** — see [routines-automation.md](../architecture/adr/routines-automation.md).
 - **Den** — the **BEARS control plane and gateway** (also the **operations layer** in plain language): identity, **bear lifecycle** (provision Letta agents, surface bears in the **Den chat UI** and **Letta Code** harness config), **[routines](#routines-and-scheduled-work-phase-1-idea-5)** (DB-backed schedules + UI, Phase 1), **[skills catalog and per-bear attachments](https://docs.letta.com/letta-code/skills/)** (materialized for **Letta Code**; see [DEN_ARCHITECTURE.md](../architecture/DEN_ARCHITECTURE.md)), **local MCP server catalog and per-bear MCP attachments** (Phase 1, alongside skills; [DEN_ARCHITECTURE.md](../architecture/DEN_ARCHITECTURE.md)), routing, authz, Cabinet API, and **optional Bifrost observability reads** for the **Letta → Bifrost bear inference path** (details in [§2.5](#25-den-and-bifrost-observability-on-the-bear-path)). Den is the **system of record** for which users may use which bears, which skills each bear loads, **which MCP servers each bear may use**, and how they appear on **web** and **Slack** (**WhatsApp** desired upstream; not in Letta Code Channels yet).
 - **bear_id** / **letta_agent_id** — **`bear_id`** is Den’s **public** identifier for a bear in JSON APIs (**v1:** `bear_id` only; see [PHASE1_DECISIONS.md](PHASE1_DECISIONS.md)). **`letta_agent_id`** is Letta’s internal agent id (server-to-server provisioning and harness wiring). The word **agent** is still useful when reading **Letta** docs; in **Den-facing** contracts and examples, prefer **bear** / **`bear_id`**.
 
@@ -33,9 +47,9 @@ High‑level, ops‑oriented plan and architecture: MVP **without Cabinet first*
    - Maps **external identities** (Slack, WhatsApp, web, etc.) to **internal users**.
    - **Provisions and registers bears:** creates and updates **Letta agents** via API; keeps Den’s **bear registry** in sync (`bear_id` ↔ `letta_agent_id`); drives **which bears exist** and **who may use them**.
    - **Surfaces bears in clients:** emits or updates config so **Den's chat UI** (first-party browser chat) and **Letta Code** harness deploy artifacts (e.g. `letta-code.yaml`) list the correct bears per user/channel. The Den chat UI is the **only** first-party web client; *traffic path for web chat is* **Den chat UI → Den → Letta Code → Letta** (the harness is mandatory for agent interaction; see [DEN_ARCHITECTURE.md](../architecture/DEN_ARCHITECTURE.md)).
-   - **Manages skills for each bear:** catalog (URLs, pins, org library), attach/detach per bear, then **materialize** [Agent Skills](https://agentskills.io/)–compatible trees onto volumes/paths Letta Code reads; Letta Code remains the runtime that discovers and loads skills. **Dynamic** skills (bear-created / improved over time) and **reflection** subagents follow [dynamic-skills-subagents-adr.md](../dynamic-skills-subagents-adr.md) and [PHASE1_DECISIONS.md](PHASE1_DECISIONS.md) decision **9**.
+   - **Manages skills for each bear:** catalog (URLs, pins, org library), attach/detach per bear, then **materialize** [Agent Skills](https://agentskills.io/)–compatible trees onto volumes/paths Letta Code reads; Letta Code remains the runtime that discovers and loads skills. **Dynamic** skills (bear-created / improved over time) and **reflection** subagents follow [dynamic-skills-subagents.md](../architecture/adr/dynamic-skills-subagents.md) and [PHASE1_DECISIONS.md](PHASE1_DECISIONS.md) decision **9**.
    - **Manages MCP servers for each bear (Phase 1, with skills):** **local catalog** in Den (org-defined and curated third-party entries), optional **discovery** from the [official MCP Registry](https://modelcontextprotocol.io/registry) without requiring Den to proxy public servers; **per-bear attachments** using the **same catalog vs attachment pattern** as skills; **provisioning** of MCP server processes left to **Coolify** (Den stores connection metadata and policy, not generic process orchestration).
-   - **Manages routines (Phase 1):** **first-class** **schedules** and **routine** definitions in Den (Postgres + operator UI); each routine is **bound to one bear**; **tooling and membership** match that bear. Execution uses **Letta Code** / Letta as the harness; **delivery of outputs** (artifacts vs dedicated conversation vs hybrid) remains **open** — see [routines-automation-adr.md](../routines-automation-adr.md). **No automatic skill-learning** from unattended routine runs without explicit design ([PHASE1_DECISIONS.md](PHASE1_DECISIONS.md) decision **10**, [dynamic-skills-subagents-adr.md](../dynamic-skills-subagents-adr.md)).
+   - **Manages routines (Phase 1):** **first-class** **schedules** and **routine** definitions in Den (Postgres + operator UI); each routine is **bound to one bear**; **tooling and membership** match that bear. Execution uses **Letta Code** / Letta as the harness; **delivery of outputs** (artifacts vs dedicated conversation vs hybrid) remains **open** — see [routines-automation.md](../architecture/adr/routines-automation.md). **No automatic skill-learning** from unattended routine runs without explicit design ([PHASE1_DECISIONS.md](PHASE1_DECISIONS.md) decision **10**, [dynamic-skills-subagents.md](../architecture/adr/dynamic-skills-subagents.md)).
    - **User and Cabinet permissions:** membership tables (users↔bears); later, **Cabinet** ACLs per user and bear (decks, kinds, read/write)—enforced on Den’s Cabinet API.
    - **Routes** web chat through **Letta Code** to the correct Letta agent for the chosen bear; **channels** connect to Letta Code directly, still backed by the same Letta agent ids Den provisions.
    - **Auth** and **tool/model policies** (RBAC, gating, rate limits).
@@ -80,18 +94,18 @@ High‑level, ops‑oriented plan and architecture: MVP **without Cabinet first*
 
 **Files** (agent outputs, tool results, **skills**-mediated artifacts, **user uploads**, **routine** outputs) **do not** live in **Letta**. They are stored in **Garage** (S3-compatible) under a dedicated **artifacts bucket**, keyed and **metadata-tagged** with at least **`conversation_id`**, **bear**, **user**, and **provenance** (including `human_upload` vs `agent`). **Garbage collection** removes stale ephemeral objects per **Den** policy.
 
-- **Architecture record:** [artifacts-garage-adr.md](../artifacts-garage-adr.md).
+- **Architecture record:** [artifacts-garage.md](../architecture/adr/artifacts-garage.md).
 - **Cabinet vs artifacts:** **Cabinet attachments** (Outline) use a **separate bucket** and lifecycle—**not** subject to artifact GC. Optional future **UI** to promote an artifact into Cabinet.
 - **Deploy:** [services/garage/COOLIFY_DEPLOY.md](../../services/garage/COOLIFY_DEPLOY.md) — two buckets (artifacts + cabinet); Den credentials scoped accordingly.
 
 ### Phase 1 memory model (user promise, persistence, and UX)
 
-Aligned with [multi-user-memory-adr.md](../multi-user-memory-adr.md) (Scenario A for web-first 1:1) and the **Idea 3** product discussion:
+Aligned with [multi-user-memory.md](../architecture/adr/multi-user-memory.md) (Scenario A for web-first 1:1) and the **Idea 3** product discussion:
 
 - **User-facing promise:** The bear keeps a **small, curated** set of facts in **always-in-context memory blocks** (e.g. `persona`, isolated `human` per conversation/user). **Longer or older material** is **findable when needed** via Letta’s **archival memory** and related tools — not implied to sit in the prompt on every turn. (Letta typically exposes archival as **vector-backed retrieval** the agent invokes **on demand** via tools; confirm behavior against your deployed Letta/Letta Code version.)
 - **Persistence:** Phase 1 adds **no second memory store in Den**. All memory semantics remain **Letta-native** (blocks, conversations, archival as Letta implements them). Den surfaces **state** for UX only.
 - **UX (two surfaces):**
-  - **Memory dashboard (end-user):** Show read access to **`human`** (and related content per [multi-user-memory-adr.md](../multi-user-memory-adr.md)) for bears the user can access. Do **not** add aggregate scoring, capacity, or pressure metrics in Phase 1; purpose is assurance that Letta-native memory exists, not memory management (Letta owns automation).
+  - **Memory dashboard (end-user):** Show read access to **`human`** (and related content per [multi-user-memory.md](../architecture/adr/multi-user-memory.md)) for bears the user can access. Do **not** add aggregate scoring, capacity, or pressure metrics in Phase 1; purpose is assurance that Letta-native memory exists, not memory management (Letta owns automation).
   - **Bear detail (operator):** Full **Letta-native state summary** for one bear — **all** memory blocks and **archival** indicators/stats **where the API exposes them**; prefer **tokens** (or whatever the API returns). Read-only **assurance** that Letta has things under control; **not** an affordance to edit or consolidate memory in Den. See **Phase 1 memory visibility (Idea 2)** in [PHASE1_DECISIONS.md](PHASE1_DECISIONS.md).
 - **Scope:** Phase 1 stays **1:1 per (user, bear)** for web; **no** new shared “household memory” layer in Den (group-mode / `person:{name}` extras remain as in the ADR).
 
@@ -99,7 +113,7 @@ Aligned with [multi-user-memory-adr.md](../multi-user-memory-adr.md) (Scenario A
 
 **Goal:** **Catalog skills** from Den plus **bear-authored** skills that can **improve over time**, using **Letta Code** (including upstream **skills-creation** patterns where enabled) and Letta **subagents** such as **`reflection`** for auto-discovery—without Den reimplementing the harness.
 
-- **Architecture record:** [dynamic-skills-subagents-adr.md](../dynamic-skills-subagents-adr.md) (status **Proposed**). It records an **inspirational Letta expert sketch** (e.g. `skill-curator` subagent, memory policy, `SubagentStop` hook, git staging)—**not** a mandatory blueprint. **Product emphasis:** **users and operators stay in control** of promoted skills; conservatism in the sketch is one possible bias, not the BEARS default goal.
+- **Architecture record:** [dynamic-skills-subagents.md](../architecture/adr/dynamic-skills-subagents.md) (status **Proposed**). It records an **inspirational Letta expert sketch** (e.g. `skill-curator` subagent, memory policy, `SubagentStop` hook, git staging)—**not** a mandatory blueprint. **Product emphasis:** **users and operators stay in control** of promoted skills; conservatism in the sketch is one possible bias, not the BEARS default goal.
 - **Den’s role:** Keep **catalog attach + materialization** as today; **extend bear configuration** so operators define **predefined subagents** (types, parameters) provisioned with the primary agent. **Runtime** remains **Letta Code → Letta**.
 
 ### Routines and scheduled work (Phase 1, Idea 5)
@@ -107,7 +121,7 @@ Aligned with [multi-user-memory-adr.md](../multi-user-memory-adr.md) (Scenario A
 **Goal:** **First-class routines** in Den—not only host cron or Letta Code CLI scheduling in docs. Operators (and policy allowing, end users) define **recurring or triggered work** assigned to a **bear**.
 
 - **Decisions:** Each routine has an **assigned bear**; **tools, models, MCP, and membership** are **inherited** from that bear (same as interactive chat). **Skill creation / reflection / curator** must **not** automatically learn from these **background** runs—users stay in control of promoted skills.
-- **File outputs:** Routine outputs that are **files** are stored as **artifacts** in **Garage** (S3), **not** in Letta—see [artifacts-garage-adr.md](../artifacts-garage-adr.md). **How** users browse or open linked results in the web UI (thread list, artifact view, notifications) remains **product UX** on top of the same storage model.
+- **File outputs:** Routine outputs that are **files** are stored as **artifacts** in **Garage** (S3), **not** in Letta—see [artifacts-garage.md](../architecture/adr/artifacts-garage.md). **How** users browse or open linked results in the web UI (thread list, artifact view, notifications) remains **product UX** on top of the same storage model.
 - **Harness:** [Letta Code scheduling](https://docs.letta.com/letta-code/scheduling) and Den-driven triggers remain the execution path; exact invoke contract is implementation detail.
 
 ### Shared memory blocks and concurrency (Letta)
@@ -151,7 +165,7 @@ BEARS is **team-oriented**: several users (and sometimes **several concurrent ag
 
 - Exact **race window** size on Cloud’s Postgres path is **not** published—treat contention as **probabilistic**, not negligible.
 
-See also [multi-user-memory-adr.md](../multi-user-memory-adr.md) (per-user isolation vs shared blocks) and [DEN_ARCHITECTURE.md](../architecture/DEN_ARCHITECTURE.md) (memory blocks overview).
+See also [multi-user-memory.md](../architecture/adr/multi-user-memory.md) (per-user isolation vs shared blocks) and [DEN_ARCHITECTURE.md](../architecture/DEN_ARCHITECTURE.md) (memory blocks overview).
 
 ### Canonical paths vs optional channel proxy
 
@@ -363,7 +377,7 @@ Deliverables:
 - **User onboarding:** new account → Personal Bear auto-provisioned → user lands in chat with onboarding prompt.
 - **Memory dashboard and bear memory UX:** **Dashboard:** **`human`** (and per-conversation isolation as the Letta API exposes for 1:1 web); **`person:{name}`** blocks appear **when they already exist** (mostly **group-mode**, post–Phase 1). No aggregate scoring, capacity, or pressure metric. **Bear detail** (operator): full **Letta-native** summary — **all** blocks + archival hints; assurance-only, not a management UI. Copy follows the **Phase 1 memory model** ([§ Knowledge model](#knowledge-model-letta-memory-vs-cabinet)): curated blocks vs **findable** longer history — **not** a Den-side memory layer and **not** “everything always in context.”
 - **Org policy:** operator sets a shared `org_policy` Letta block (default from `services/den/defaults/org_policy.md`) applied to all bears.
-- **Routines:** **first-class** schedules + management UI in Den; each routine **assigned to a bear**; inherited policy/membership; **file outputs** in **Garage** per [artifacts-garage-adr.md](../artifacts-garage-adr.md) and [routines-automation-adr.md](../routines-automation-adr.md); **no** automatic skill learning from unattended routine runs ([PHASE1_DECISIONS.md](PHASE1_DECISIONS.md) decision **10**).
+- **Routines:** **first-class** schedules + management UI in Den; each routine **assigned to a bear**; inherited policy/membership; **file outputs** in **Garage** per [artifacts-garage.md](../architecture/adr/artifacts-garage.md) and [routines-automation.md](../architecture/adr/routines-automation.md); **no** automatic skill learning from unattended routine runs ([PHASE1_DECISIONS.md](PHASE1_DECISIONS.md) decision **10**).
 
 ---
 
@@ -488,7 +502,7 @@ This is the “make it livable and reliable” phase.
 
 **Knowledge:** **Letta memory** is per‑**bear** (per Letta agent) context — **blocks** (curated, bounded) plus **archival** and tools as Letta provides. **Files** (uploads, agent outputs, routines) live in **Garage**, not Letta ([§ Artifacts and object storage](#artifacts-and-object-storage-garage)). **Shared blocks** under multi-writer concurrency need explicit patterns ([§ Shared memory blocks and concurrency](#shared-memory-blocks-and-concurrency-letta)). **Phase 1:** no Den memory store; **dashboard** shows Letta-native `human` memory without aggregate scoring; **bear detail** shows full state ([§ Phase 1 memory model](#phase-1-memory-model-user-promise-persistence-and-ux)). **Cabinet (Outline)** is the shared knowledgebase for humans and bears (post–Phase 1); **Cabinet attachments** use a **separate S3 bucket** from **artifacts**.
 
-**Bears:** Each **primary agent** in the product sense is a **bear**; **subagents** (e.g. reflection) are **part of bear configuration** where used ([dynamic-skills-subagents-adr.md](../dynamic-skills-subagents-adr.md)). **Users ↔ bears** is **many‑to‑many**.
+**Bears:** Each **primary agent** in the product sense is a **bear**; **subagents** (e.g. reflection) are **part of bear configuration** where used ([dynamic-skills-subagents.md](../architecture/adr/dynamic-skills-subagents.md)). **Users ↔ bears** is **many‑to‑many**.
 
 We’re aiming for:
 
@@ -499,7 +513,7 @@ We’re aiming for:
   - **v1:** **Den chat UI** → **Den** → **Letta Code** → **Letta** as the **web chat** path. **Letta Code** is **required** for agent interaction; **channels** → Letta Code → Letta. **Optional channel-only Den proxy** for audit is a later value-add (see [Canonical paths vs optional channel proxy](#canonical-paths-vs-optional-channel-proxy)). Cabinet/Outline auth aligned with human auth when Cabinet ships.
 
 - **Phased delivery**:
-  - **MVP (Phase 1):** Den for **web** via **Letta Code**; bear lifecycle + membership + **first-class routines** (schedules + UI; files → **Garage** per [artifacts-garage-adr.md](../artifacts-garage-adr.md)) + **Den-managed skills** and **local MCP catalog** (optional official registry discovery), **per-bear MCP attachments** (same patterns as skills), **Coolify** for MCP server processes + **Garage** (**artifacts** + separate **Cabinet** bucket); first server example **GitHub repository access**; no Cabinet **app** yet.
-  - **Phase 2:** Cabinet abstraction defined and wired as tools (even if stubbed); Outline + **`bears-cabinet`** (or equivalent) for document attachments, distinct from **`bears-artifacts`** ([artifacts-garage-adr.md](../artifacts-garage-adr.md)).
+  - **MVP (Phase 1):** Den for **web** via **Letta Code**; bear lifecycle + membership + **first-class routines** (schedules + UI; files → **Garage** per [artifacts-garage.md](../architecture/adr/artifacts-garage.md)) + **Den-managed skills** and **local MCP catalog** (optional official registry discovery), **per-bear MCP attachments** (same patterns as skills), **Coolify** for MCP server processes + **Garage** (**artifacts** + separate **Cabinet** bucket); first server example **GitHub repository access**; no Cabinet **app** yet.
+  - **Phase 2:** Cabinet abstraction defined and wired as tools (even if stubbed); Outline + **`bears-cabinet`** (or equivalent) for document attachments, distinct from **`bears-artifacts`** ([artifacts-garage.md](../architecture/adr/artifacts-garage.md)).
   - **Phase 3:** Cabinet backed by Outline with properties + embeddings.
   - **Phase 4:** Refine memory policies, multi‑user ergonomics, RBAC, and workflows.

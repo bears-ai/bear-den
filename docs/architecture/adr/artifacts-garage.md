@@ -10,13 +10,13 @@
 
 **Artifacts** (files produced or consumed around agent work) **must not** be stored inside **Letta**. They belong in **object storage** with explicit lifecycle and provenance.
 
-**Garage** is the BEARS **S3-compatible** object store ([Garage Coolify deploy](../services/garage/COOLIFY_DEPLOY.md)). Den already plans to use it for presigned upload/download.
+**Garage** is the BEARS **S3-compatible** object store ([Garage Coolify deploy](../../../services/garage/COOLIFY_DEPLOY.md)). Den already plans to use it for presigned upload/download.
 
 **Cabinet** (Outline-backed, Phase 2+) uses object storage for **attachments** in a **different concern**: long-lived documents, human editing, deck policy—not ephemeral chat/run blobs.
 
 ### Harness vs control plane vs object storage
 
-BEARS uses three product layers ([DEN_ARCHITECTURE.md](architecture/DEN_ARCHITECTURE.md#three-layers-names)) plus **Garage** as infrastructure:
+BEARS uses three product layers ([DEN_ARCHITECTURE.md](../DEN_ARCHITECTURE.md#three-layers-names)) plus **Garage** as infrastructure:
 
 | Piece | Role for artifacts |
 |-------|-------------------|
@@ -91,14 +91,14 @@ Deploy: create **both** buckets in Garage; scope keys to least privilege (Den se
 
 - **Den:** S3 client, presigned URLs, artifact registry table (optional) for query/GC, **GC job** (cron or queue worker).
 - **Letta Code / harness:** Tools that “save a file” **upload to artifacts bucket** via Den API or presigned URL; never persist large blobs in Letta DB.
-- **Routines:** Routine outputs that are files **land in artifacts bucket** with `routine_id` (and bear) in metadata — see [routines-automation-adr.md](routines-automation-adr.md).
-- **Phase 1:** Garage + artifacts bucket + metadata + GC may trail **first** chat path; document order in [PHASE1_BOOTSTRAP.md](planning/PHASE1_BOOTSTRAP.md).
+- **Routines:** Routine outputs that are files **land in artifacts bucket** with `routine_id` (and bear) in metadata — see [routines-automation.md](routines-automation.md).
+- **Phase 1:** Garage + artifacts bucket + metadata + GC may trail **first** chat path; document order in [PHASE1_BOOTSTRAP.md](../../planning/PHASE1_BOOTSTRAP.md).
 
 ---
 
 ## References
 
-- [Garage Coolify deploy](../services/garage/COOLIFY_DEPLOY.md)
-- [PLAN.md — Artifacts and object storage](../planning/PLAN.md#artifacts-and-object-storage-garage)
-- [routines-automation-adr.md](routines-automation-adr.md)
-- [DEN_ARCHITECTURE.md](architecture/DEN_ARCHITECTURE.md)
+- [Garage Coolify deploy](../../../services/garage/COOLIFY_DEPLOY.md)
+- [PLAN.md — Artifacts and object storage](../../planning/PLAN.md#artifacts-and-object-storage-garage)
+- [routines-automation.md](routines-automation.md)
+- [DEN_ARCHITECTURE.md](../DEN_ARCHITECTURE.md)

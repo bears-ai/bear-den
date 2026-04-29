@@ -12,7 +12,7 @@
 
 **End goal:** Skills should be **dynamic**:
 
-- Operators (and users, where policy allows) attach **predefined skills** from a **catalog** (existing [Den-managed skills](architecture/DEN_ARCHITECTURE.md#den-managed-skills) pattern).
+- Operators (and users, where policy allows) attach **predefined skills** from a **catalog** (existing [Den-managed skills](../DEN_ARCHITECTURE.md#den-managed-skills) pattern).
 - A **bear** can also **create and refine its own** skills over time (procedural memory that evolves).
 
 **Upstream capability (Letta / Letta Code):** Recent upstream features align with this without Den reimplementing a skill runtime:
@@ -22,7 +22,7 @@
 
 **Concept model change:** A **bear** is still the primary user-facing assistant (one Letta **primary** agent in Den’s registry), but **bear configuration** must evolve to include **predefined subagents**—for example **reflection** agents or other Letta subagent types the operator enables per bear—so provisioning and GitOps remain reproducible.
 
-**Relationship to other ADRs:** [multi-user-memory-adr.md](multi-user-memory-adr.md) covers **blocks and conversations**; this ADR covers **skills lifecycle** and **subagent** topology. Cabinet (Outline) remains the long-lived shared knowledge layer in later phases ([PLAN.md](planning/PLAN.md)).
+**Relationship to other ADRs:** [multi-user-memory.md](multi-user-memory.md) covers **blocks and conversations**; this ADR covers **skills lifecycle** and **subagent** topology. Cabinet (Outline) remains the long-lived shared knowledge layer in later phases ([PLAN.md](../../planning/PLAN.md)).
 
 ---
 
@@ -30,7 +30,7 @@
 
 1. **Runtime ownership:** **Letta Code** remains the harness that loads skills, runs tool loops, and brokers subagent execution; **Letta** persists agent state. Den does **not** implement skill execution or reflection logic in Rust.
 
-2. **Catalog vs dynamic skills:** **Den** stays the **system of record** for **which catalog skills** are attached to which bear (materialization unchanged in spirit). **Bear-authored** and **improved** skills live where **Letta Code / Letta** write them (typically under agent-scoped paths on shared volumes); Den may **surface** existence/size in **bear detail** (read-only assurance) when APIs or filesystem layout allow—same spirit as memory visibility ([PHASE1_DECISIONS.md](planning/PHASE1_DECISIONS.md) decisions 7–8).
+2. **Catalog vs dynamic skills:** **Den** stays the **system of record** for **which catalog skills** are attached to which bear (materialization unchanged in spirit). **Bear-authored** and **improved** skills live where **Letta Code / Letta** write them (typically under agent-scoped paths on shared volumes); Den may **surface** existence/size in **bear detail** (read-only assurance) when APIs or filesystem layout allow—same spirit as memory visibility ([PHASE1_DECISIONS.md](../../planning/PHASE1_DECISIONS.md) decisions 7–8).
 
 3. **Subagents in bear configuration:** **Den’s bear model** and **provision/update** path must include **predefined subagent configuration**—at minimum which **subagent types** (e.g. `reflection`) are enabled and any **parameters** or **templates** Letta’s API requires. Exact schema is **TBD**; use [§ Inspirational wiring](#inspirational-wiring-letta-expert-sketch) as non-binding input.
 
@@ -38,7 +38,7 @@
 
 5. **Human / user control:** Automation should keep **people in the loop** for what merges into durable, deploy-visible skill trees—**not** “as little change as possible by default.” The expert sketch below leans **conservative** (bias toward `NO_ACTION`, branch-only writes). BEARS may adopt different thresholds per org: the invariant is **user and operator agency** over skill promotion, not maximal conservatism.
 
-6. **Routines excluded by default:** **Scheduled / unattended** runs ([routines-automation-adr.md](routines-automation-adr.md)) **must not** feed automatic skill-curator or reflection learning loops unless explicitly designed. That preserves **user control** and avoids polluting skills from background jobs.
+6. **Routines excluded by default:** **Scheduled / unattended** runs ([routines-automation.md](routines-automation.md)) **must not** feed automatic skill-curator or reflection learning loops unless explicitly designed. That preserves **user control** and avoids polluting skills from background jobs.
 
 ---
 
@@ -177,7 +177,7 @@ git diff main..skill-curator/20260418-0022
 
 - **Den schema / APIs:** Extend `bears` (or related tables) and provisioning payloads to store **subagent configuration**; extend operator **bear detail** and harness materialization (`letta-code.yaml` or equivalent) so the harness and Letta receive a **reproducible** definition.
 
-- **Documentation:** [DEN_ARCHITECTURE.md](architecture/DEN_ARCHITECTURE.md) and [PLAN.md](planning/PLAN.md) reference this ADR; terminology distinguishes **primary agent (bear)** from **subagents**.
+- **Documentation:** [DEN_ARCHITECTURE.md](../DEN_ARCHITECTURE.md) and [PLAN.md](../../planning/PLAN.md) reference this ADR; terminology distinguishes **primary agent (bear)** from **subagents**.
 
 - **Open questions:** Exact REST fields for subagents on self-hosted Letta; whether reflection runs in-process or as separate agent records; backup scope for agent-local skill files on volumes; **verify** `SubagentStop` + `matcher: reflection` on your build; map **.letta/** paths to Coolify volume layouts for BEARS.
 
@@ -185,6 +185,6 @@ git diff main..skill-curator/20260418-0022
 
 ## References
 
-- [Den-managed skills](architecture/DEN_ARCHITECTURE.md#den-managed-skills)
+- [Den-managed skills](../DEN_ARCHITECTURE.md#den-managed-skills)
 - [Agent Skills open standard](https://agentskills.io/)
 - Letta Code skills: [Letta Code — Skills](https://docs.letta.com/letta-code/skills/) (verify against your version)

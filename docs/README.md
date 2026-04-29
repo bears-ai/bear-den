@@ -9,12 +9,10 @@ Human-oriented docs for the **Basic Environment for Agents Runtime Server (BEARS
 | Path | Contents |
 |------|----------|
 | [../services/codepool/](../services/codepool/) | **Codepool** — Letta Code SDK harness (warm pool, Den streaming, optional channel listeners) |
-| [planning/](planning/) | Roadmap, phased delivery, Phase 1 Den bootstrap, [locked Phase 1 decisions](planning/PHASE1_DECISIONS.md) |
+| [planning/](planning/) | Roadmap and implementation sequencing: [PLAN](planning/PLAN.md), [Phase 1 bootstrap](planning/PHASE1_BOOTSTRAP.md), [locked Phase 1 decisions](planning/PHASE1_DECISIONS.md), [`bear_channel` Phase 7+](planning/BEAR_CHANNEL_PHASE7_PLANS.md), ACP discovery notes |
 | [deployment/](deployment/) | Coolify deployment order and steps |
-| [architecture/](architecture/) | Stack notes, Den + multi-user Letta; [`bear_channel` + ACP](architecture/BEAR_CHANNEL_AND_ACP.md); [MemFS and memory UI](architecture/MEMFS_AND_MEMORY_UI.md); [Letta vs bear UI coverage](architecture/LETTA_BEAR_UI_EXPOSURE.md); [Den meta tools](architecture/DEN_ARCHITECTURE.md#den-meta-tools-bears-control-plane-tools) (Den-defined control-plane tools and APIs; **Letta Code** brokers execution; not ad hoc scripts in Letta) |
-| [dynamic-skills-subagents-adr.md](dynamic-skills-subagents-adr.md) | Dynamic skills (catalog + bear-authored), **reflection** subagents, predefined subagents in **bear** configuration; inspirational expert sketch (`skill-curator`, hooks) — Proposed |
-| [routines-automation-adr.md](routines-automation-adr.md) | **Routines** (Phase 1): Den-managed schedules, bear-assigned; file outputs → Garage — Proposed |
-| [artifacts-garage-adr.md](artifacts-garage-adr.md) | **Artifacts** in Garage (not Letta); human + agent provenance; GC; **Cabinet** separate bucket — Proposed |
+| [architecture/](architecture/) | System architecture and contracts: stack notes, Den + multi-user Letta, [`bear_channel` + ACP](architecture/BEAR_CHANNEL_AND_ACP.md), MemFS and memory UI, Letta vs bear UI coverage, Den meta tools |
+| [architecture/adr/](architecture/adr/) | Architecture Decision Records (ADRs) for cross-cutting product/architecture choices: artifacts/Garage, Cabinet ingestion, dynamic skills/subagents, multi-user memory, routines |
 
 Service-specific runbooks stay next to their configs: `services/*/COOLIFY_DEPLOY.md` and related `.md` under each service tree.
 
