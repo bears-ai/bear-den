@@ -4,3 +4,6 @@
 .DS_Store
 .devcontainer/logs/
 .claude/
+__pycache__/
+*.py[cod]
+*$py.class
