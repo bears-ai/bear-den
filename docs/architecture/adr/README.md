@@ -9,6 +9,7 @@ Use ADRs for cross-cutting product and architecture decisions that are expected 
 | ADR | Status | Topic |
 |-----|--------|-------|
 | [artifacts-garage.md](artifacts-garage.md) | Proposed | Artifacts bucket, Garage/S3 storage, Cabinet attachment separation, GC policy |
+| [bear-memory-tool-boundary.md](bear-memory-tool-boundary.md) | Accepted | Boundary between Letta Code-native MemFS tools and Den-hosted bear tools |
 | [cabinet-reading-pipeline.md](cabinet-reading-pipeline.md) | Proposed | Cabinet document ingestion and reading pipeline |
 | [dynamic-skills-subagents.md](dynamic-skills-subagents.md) | Proposed | Dynamic skills, reflection subagents, bear-authored capability growth |
 | [multi-user-memory.md](multi-user-memory.md) | Proposed | Multi-user memory model and Letta-native memory visibility |
