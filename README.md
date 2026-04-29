@@ -2,7 +2,7 @@
 
 **BEARS** is the stack name. Each product assistant is a **bear** (one [Letta](https://github.com/letta-ai/letta) agent). **Den** (Rust, in `services/den/`) is the control plane: provisioning, **users↔bears** membership, first-party web chat (Deep Chat), and Cabinet when Outline is deployed.
 
-This repo is a **light monorepo**: `docs/`, `services/den/` for Den, `services/codepool/` for Codepool, `services/api/` for MemFS Manager, and supporting service assets under `services/`.
+This repo is a **light monorepo**: `docs/`, `services/den/` for Den, `services/codepool/` for Codepool, `services/memfs-manager/` for MemFS Manager, and supporting service assets under `services/`.
 
 ## Start here
 
