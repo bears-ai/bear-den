@@ -43,6 +43,33 @@ fn normalize_drift_text(s: &str) -> String {
         .to_string()
 }
 
+fn normalize_drift_text_collapsed(s: &str) -> String {
+    normalize_drift_text(s)
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn drift_text_matches_den_prompt(den_prompt: &str, letta_prompt: &str) -> bool {
+    let den = normalize_drift_text(den_prompt);
+    let letta = normalize_drift_text(letta_prompt);
+    if den == letta {
+        return true;
+    }
+
+    let den_collapsed = normalize_drift_text_collapsed(&den);
+    if den_collapsed.is_empty() {
+        return letta.is_empty();
+    }
+    let letta_collapsed = normalize_drift_text_collapsed(&letta);
+
+    // Current Letta versions may expose the materialized/compiled system prompt from
+    // `GET /v1/agents/{id}` after `/recompile`, not just the source `system` text Den patched.
+    // Treat an embedded Den source prompt as in-sync so generated wrappers, tool sections, or
+    // date headers do not make the details page permanently report drift immediately after sync.
+    letta_collapsed.contains(&den_collapsed)
+}
+
 fn block_str_from_value(b: &Value) -> Option<String> {
     let v = b.get("value").or_else(|| b.get("content"))?;
     if let Some(s) = v.as_str() {
@@ -119,6 +146,19 @@ pub fn compute_letta_drift(
     diagnostics: Option<&LettaAgentDiagnostics>,
     raw_agent_json: Option<&Value>,
 ) -> Option<LettaDriftFlags> {
+    compute_letta_drift_with_expected_tool_ids(bear, summary, diagnostics, raw_agent_json, None)
+}
+
+/// Same as [`compute_letta_drift`], but lets callers pass the exact tool ids Den attempted to
+/// materialize in Letta. This matters because sync filters out legacy memory tools before PATCHing,
+/// while the bear row keeps the operator's original selection for backwards-compatible forms.
+pub fn compute_letta_drift_with_expected_tool_ids(
+    bear: &Bear,
+    summary: Option<&AgentSummary>,
+    diagnostics: Option<&LettaAgentDiagnostics>,
+    raw_agent_json: Option<&Value>,
+    expected_tool_ids: Option<&[String]>,
+) -> Option<LettaDriftFlags> {
     if bear
         .letta_agent_id
         .as_deref()
@@ -131,9 +171,8 @@ pub fn compute_letta_drift(
     let summary = summary?;
     let diagnostics = diagnostics?;
 
-    let db_sys = normalize_drift_text(&bear.system_prompt);
     let system_prompt = letta_instruction_text_for_drift(Some(summary), raw_agent_json)
-        .is_some_and(|letta_sys| db_sys != letta_sys);
+        .is_some_and(|letta_sys| !drift_text_matches_den_prompt(&bear.system_prompt, &letta_sys));
 
     let model =
         norm_opt_trim(bear.default_model.as_deref()) != norm_opt_trim(summary.model.as_deref());
@@ -142,15 +181,19 @@ pub fn compute_letta_drift(
     let letta_at = norm_opt_trim(summary.agent_type.as_deref());
     let agent_type = db_at != letta_at;
 
-    let db_tools = sorted_tool_ids(&bear.letta_tool_ids.0);
-    let letta_tools: Vec<String> = sorted_tool_ids(
+    let desired_tool_source = expected_tool_ids.unwrap_or(&bear.letta_tool_ids.0);
+    let desired_tools = sorted_tool_ids(desired_tool_source);
+    let letta_tools = sorted_tool_ids(
         &diagnostics
             .tools
             .iter()
             .map(|t| t.id.clone())
             .collect::<Vec<_>>(),
     );
-    let tools = db_tools != letta_tools;
+    // Letta may attach server-managed/base tools that Den did not explicitly select. Those extras
+    // should not make the details page say Den is out of sync immediately after a successful sync.
+    // Drift here means a Den-managed desired tool is missing from Letta.
+    let tools = desired_tools.iter().any(|id| !letta_tools.contains(id));
 
     let drift_any = system_prompt || model || agent_type || tools;
     Some(LettaDriftFlags {
@@ -255,5 +298,65 @@ mod tests {
         let d = LettaAgentDiagnostics::from_agent_json(&v);
         let flags = compute_letta_drift(&b, Some(&s), Some(&d), Some(&v)).expect("drift");
         assert!(flags.system_prompt);
+    }
+
+    #[test]
+    fn drift_does_not_flag_compiled_system_that_contains_den_prompt() {
+        let b = sample_bear();
+        let v = json!({
+            "id": "agent-1",
+            "system": "Generated Letta wrapper\n\nSystem instructions:\nhello\n\nTool instructions...",
+            "model": "gpt-4o",
+            "agent_type": "memgpt_agent",
+            "tools": [{"id": "t1"}]
+        });
+        let s = AgentSummary::from_letta_agent_state(&v);
+        let d = LettaAgentDiagnostics::from_agent_json(&v);
+        let flags = compute_letta_drift(&b, Some(&s), Some(&d), Some(&v)).expect("drift");
+        assert!(!flags.drift_any);
+        assert!(!flags.system_prompt);
+    }
+
+    #[test]
+    fn drift_does_not_flag_extra_server_managed_tools() {
+        let b = sample_bear();
+        let v = json!({
+            "id": "agent-1",
+            "system": "hello",
+            "model": "gpt-4o",
+            "agent_type": "memgpt_agent",
+            "tools": [{"id": "server-tool"}, {"id": "t1"}]
+        });
+        let s = AgentSummary::from_letta_agent_state(&v);
+        let d = LettaAgentDiagnostics::from_agent_json(&v);
+        let flags = compute_letta_drift(&b, Some(&s), Some(&d), Some(&v)).expect("drift");
+        assert!(!flags.drift_any);
+        assert!(!flags.tools);
+    }
+
+    #[test]
+    fn drift_uses_filtered_expected_tools_when_provided() {
+        let mut b = sample_bear();
+        b.letta_tool_ids = Json(vec!["legacy-filtered-out".into(), "t1".into()]);
+        let v = json!({
+            "id": "agent-1",
+            "system": "hello",
+            "model": "gpt-4o",
+            "agent_type": "memgpt_agent",
+            "tools": [{"id": "t1"}]
+        });
+        let s = AgentSummary::from_letta_agent_state(&v);
+        let d = LettaAgentDiagnostics::from_agent_json(&v);
+        let expected = vec!["t1".to_string()];
+        let flags = compute_letta_drift_with_expected_tool_ids(
+            &b,
+            Some(&s),
+            Some(&d),
+            Some(&v),
+            Some(&expected),
+        )
+        .expect("drift");
+        assert!(!flags.drift_any);
+        assert!(!flags.tools);
     }
 }

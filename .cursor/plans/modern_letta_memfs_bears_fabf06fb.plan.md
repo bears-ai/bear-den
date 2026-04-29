@@ -1,25 +1,25 @@
 ---
 name: Modern Letta memfs bears
-overview: Align Den’s Letta provisioning with `letta --new-agent` semantics (memfs-oriented, no legacy block mutation tools), pass a versioned `BearRuntimePlan` from Den to codepool, implement runtime prep behind a `BearRuntimeProvisioner` interface (local adapter first; HTTP/extraction later), and keep Den as source of truth for control-plane concerns including tool configuration.
+overview: "Retired: fulfilled/superseded by the implemented modern Letta MemFS flow. Den creates/syncs git-enabled agents with base tools disabled and legacy memory tools filtered; Den stores and sends BearRuntimePlan snapshots; Codepool uses Letta Code with memfs enabled and routes git through Letta /v1/git; MemFS Manager remains the Letta-side git service and Den read-only UI source. Existing bears may still need an operational re-sync."
 todos:
   - id: verify-letta-api
     content: Confirm Create/PATCH agent JSON fields for memfs + include_base_tools against deployed Letta version
-    status: pending
+    status: completed
   - id: letta-client-modern
     content: Extend LettaClient create/patch + add legacy tool filter by name from GET /v1/tools
-    status: pending
+    status: completed
   - id: db-memory-metadata
     content: Add migration + Bear model fields for memory repo / seed pointers
-    status: pending
+    status: completed
   - id: den-codepool-body
     content: Pass bear_id + BearRuntimePlan snapshot from Den v1 chat to codepool (same contract a future provisioner service could use)
-    status: pending
+    status: completed
   - id: codepool-memfs-bootstrap
-    content: Implement memory init behind BearRuntimeProvisioner abstraction + local adapter; wire pool to interface only
-    status: pending
+    content: Superseded by the modern Letta Code memfs mirror/noop provisioner flow; Codepool does not own canonical per-bear memory directories.
+    status: completed
   - id: rollout-existing-bears
-    content: Define PATCH/re-sync + filesystem backfill for existing bears
-    status: pending
+    content: Existing bears may need operational PATCH/re-sync; implementation notes live in services/den/src/core/bears/rollout.rs.
+    status: completed
 isProject: false
 ---
 

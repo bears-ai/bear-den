@@ -19,7 +19,7 @@ use crate::{
     auth_backend::{AuthSession, SessionUser},
     core::{
         bears::{
-            compute_letta_drift, db as bears_db,
+            compute_letta_drift_with_expected_tool_ids, db as bears_db,
             db::{role_is_bear_admin, BearMemberRow, BEAR_ROLE_ADMIN, BEAR_ROLE_MEMBER},
             provision, sync, Bear,
         },
@@ -338,8 +338,21 @@ async fn render_bear_details_page(
                 Ok(v) => {
                     let summary = AgentSummary::from_letta_agent_state(&v);
                     let diagnostics = LettaAgentDiagnostics::from_agent_json(&v);
-                    let drift =
-                        compute_letta_drift(&bear, Some(&summary), Some(&diagnostics), Some(&v));
+                    let expected_tool_ids = state
+                        .letta
+                        .filtered_tool_ids(&bear.letta_tool_ids.0)
+                        .await
+                        .unwrap_or_else(|e| {
+                            tracing::warn!(bear_id = %bear.id, "Could not filter Letta tools for drift comparison: {e}");
+                            bear.letta_tool_ids.0.clone()
+                        });
+                    let drift = compute_letta_drift_with_expected_tool_ids(
+                        &bear,
+                        Some(&summary),
+                        Some(&diagnostics),
+                        Some(&v),
+                        Some(&expected_tool_ids),
+                    );
                     (Some(summary), None, drift)
                 }
                 Err(e) => {
