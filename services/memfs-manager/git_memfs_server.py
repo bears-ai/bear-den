@@ -34,6 +34,12 @@ MEMFS_BASE = Path(_MEMFS)
 LETTA_DEFAULT_ORG_ID = "org-00000000-0000-4000-8000-000000000000"
 DEFAULT_ORG = os.environ.get("MEMFS_DEFAULT_ORG", LETTA_DEFAULT_ORG_ID)
 BIND = os.environ.get("BIND", "0.0.0.0")
+LOG_HEALTHCHECKS = os.environ.get("MEMFS_LOG_HEALTHCHECKS", "").lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
 ACTIVITY_LOG = Path(
     os.environ.get("MEMFS_ACTIVITY_LOG", str(MEMFS_BASE.parent / "activity.jsonl"))
 )
@@ -769,6 +775,9 @@ class GitHTTPHandler(BaseHTTPRequestHandler):
         self._run_backend()
 
     def log_message(self, fmt: str, *args) -> None:
+        parsed = urlparse(self.path)
+        if parsed.path == "/health" and not LOG_HEALTHCHECKS:
+            return
         print(f"[memfs-manager] {self.address_string()} {fmt % args}", flush=True)
 
 
