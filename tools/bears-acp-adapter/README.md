@@ -88,6 +88,31 @@ For local development, prefer `--token-env` so the token is not written into Zed
 
 Then use Zed's agent panel to start a new custom external-agent thread for `BEARS`.
 
+## macOS downloaded binary warning
+
+GitHub release/artifact downloads are unsigned today. macOS may quarantine the downloaded adapter and show an error such as “Apple cannot check it for malicious software” or “developer cannot be verified”.
+
+For local testing, remove the quarantine flag and ensure the file is executable:
+
+```bash
+chmod +x /path/to/bears-acp-adapter-aarch64-apple-darwin
+xattr -d com.apple.quarantine /path/to/bears-acp-adapter-aarch64-apple-darwin
+```
+
+Use the Intel filename if you downloaded the x86_64 build. You can verify the binary after clearing quarantine with:
+
+```bash
+/path/to/bears-acp-adapter-aarch64-apple-darwin --help
+```
+
+Building locally with Cargo also avoids the browser download quarantine path:
+
+```bash
+cargo build --release --manifest-path tools/bears-acp-adapter/Cargo.toml
+```
+
+Production distribution should add Developer ID signing and Apple notarization before we ask non-developer users to install the adapter.
+
 ## Debugging
 
 - Open Zed command palette: `dev: open acp logs`.
