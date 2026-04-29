@@ -76,3 +76,41 @@ done
 
 printf 'export PATH="%s/bin:$PATH"\n' "${CARGO_HOME}" > /etc/profile.d/cargo.sh
 chmod -R a+w "${RUSTUP_HOME}" "${CARGO_HOME}"
+
+install_bears_acp_adapter() {
+  local version="${BEARS_ACP_ADAPTER_VERSION:-0.1.0}"
+  local install_dir="${BEARS_ACP_ADAPTER_INSTALL_DIR:-/usr/local/bin}"
+  local arch triple asset url tmp
+
+  arch="$(uname -m)"
+  case "${arch}" in
+    x86_64|amd64) triple="x86_64-unknown-linux-gnu" ;;
+    aarch64|arm64) triple="aarch64-unknown-linux-gnu" ;;
+    *) echo "bears-acp-adapter: unsupported Linux architecture: ${arch}" >&2; return 0 ;;
+  esac
+
+  asset="bears-acp-adapter-${triple}"
+  url="https://github.com/TheArtificial/BEARS/releases/download/bears-acp-adapter%2Fv${version}/${asset}"
+  tmp="$(mktemp)"
+
+  echo "bears-acp-adapter: installing ${asset} from ${url}"
+  if curl -fsSL "${url}" -o "${tmp}"; then
+    mkdir -p "${install_dir}"
+    install -m 0755 "${tmp}" "${install_dir}/bears-acp-adapter"
+    rm -f "${tmp}"
+    "${install_dir}/bears-acp-adapter" --help >/dev/null
+    echo "bears-acp-adapter: installed to ${install_dir}/bears-acp-adapter"
+  else
+    rm -f "${tmp}"
+    echo "bears-acp-adapter: release download failed for ${url}" >&2
+    if [ -f /workspace/tools/bears-acp-adapter/Cargo.toml ]; then
+      echo "bears-acp-adapter: falling back to local source build" >&2
+      cargo build --release --locked --manifest-path /workspace/tools/bears-acp-adapter/Cargo.toml
+      ln -sf /workspace/tools/bears-acp-adapter/target/release/bears-acp-adapter "${install_dir}/bears-acp-adapter"
+    else
+      echo "bears-acp-adapter: set BEARS_ACP_ADAPTER_VERSION to an existing release, or install manually" >&2
+    fi
+  fi
+}
+
+install_bears_acp_adapter
