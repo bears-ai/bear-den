@@ -70,7 +70,6 @@ Before deep implementation:
 2. **Prebuilt CLI releases**
    - Publish GitHub release artifacts for at least:
      - `aarch64-apple-darwin` (macOS Apple Silicon)
-     - `x86_64-apple-darwin` (macOS Intel)
      - `x86_64-unknown-linux-gnu` or `x86_64-unknown-linux-musl`
      - `x86_64-pc-windows-msvc.exe`
    - Add Linux ARM64 when demand appears.
