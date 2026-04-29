@@ -402,118 +402,311 @@ Runtime rules:
 - Den remains the owner of policy, authorization, approval, and audit.
 - Built-in server tools stay behind Den policy and should not be exposed as ACP client tools by default.
 
-## Implementation phases
+## Formal roadmap
 
-### Phase 1: Capability descriptor model
+This roadmap assumes ACP basic chat is already working. The goal is to make capability management useful incrementally: first prove one BEARS-native capability end-to-end, then generalize to per-bear management, then add progressively more dynamic capability sources.
 
-Define the canonical Den descriptor model.
+### Roadmap principles
+
+1. **Start with one BEARS-specific tool.** Do not build an abstract capability platform before at least one real BEARS tool works through the full path.
+2. **Den remains the authority.** Capability assignment, authorization, policy, approval, and audit stay in Den even when execution happens in Letta Code, Letta, an ACP client, or an MCP server.
+3. **Prove multiple execution targets early.** The first managed capability set should include at least one Den tool, one Letta Code tool, and one Letta-native tool so the model does not accidentally assume a single runtime.
+4. **Separate configured capabilities from runtime-discovered capabilities.** ACP local tools and some MCP tools are only known after connection or discovery. The registry must support both configured catalog entries and session-scoped discovered descriptors.
+5. **Keep the user model simple.** Users manage “Capabilities”; advanced views can explain Den, Letta Code, Letta, ACP, and MCP execution details.
+6. **Skills come after tools.** Skills should depend on normalized capabilities. They should not be the first abstraction implemented.
+
+### My read on the likely priority order
+
+This is the practical execution order across capability management and adjacent runtime work. It complements the formal phases below: the phases define the capability-management product roadmap, while this list captures the likely engineering priority order when ACP, `bear_channel`, Cabinet, runtime events, and observability are considered together.
+
+1. **ACP basic chat stabilization**
+   - Validate ACP with real clients such as Zed and OpenCode.
+   - Harden authentication, session start/resume, streaming deltas, reconnect/disconnect behavior, error propagation, and bear membership enforcement.
+   - Package `bears-acp-adapter` for source/dev install first, then prebuilt CLI releases, optional npm wrapper, and eventual ACP Registry submission.
+
+2. **Capability descriptor model**
+   - Normalize built-in tools, Letta Code runtime tools, Letta-native tools, ACP local tools, connected apps, and skills into one Den-owned descriptor model.
+   - Keep execution target, provider, scope, permissions, approval policy, availability, and audit policy explicit.
+   - Prove the model with at least one real BEARS-native capability instead of designing only in the abstract.
+
+3. **Runtime capability context into `bear_channel`**
+   - Den computes the effective capability set for the bear, user, channel, and session.
+   - Den passes only authorized capabilities into `bear_channel`.
+   - Codepool treats the Den-provided context as authoritative and does not invoke undeclared capabilities.
+
+4. **ACP client tool relay**
+   - Ingest ACP client-advertised tools at connection/session time.
+   - Normalize them as session-scoped `client_tool` capabilities.
+   - Add pending call persistence, timeouts, disconnect handling, cancellation semantics, result forwarding, and audit.
+   - Keep local ACP tools unavailable outside the active client/session unless a future explicit background model is designed.
+
+5. **Server tools over `bear_channel`**
+   - Enable Den-controlled server tools such as bear introspection, memory, Cabinet, artifacts, and future reflection/subagent tools.
+   - Keep BEARS server tools behind Den policy instead of exposing them as ACP client tools by default.
+   - Ensure every server tool call is authorized and audited by Den.
+
+6. **Richer runtime events**
+   - Extend runtime events beyond assistant text and reasoning deltas.
+   - Candidate events include server tool started/finished, client tool requested/completed, memory update proposed/recorded, artifact created, subagent started/finished, and skill invoked/completed.
+   - Preserve browser chat compatibility by dropping, translating, or gently surfacing richer events until the Den UI is ready for them.
+
+7. **Capability management UI**
+   - Add `Bear → Capabilities` so operators can understand and control what a bear can do.
+   - Start with Den, Letta Code, and Letta capabilities, then add ACP local tools, connected apps, and skills as those sources become available.
+   - Keep protocol names in advanced/developer views; primary UI should use user-facing concepts like Built-in tools, Runtime tools, Memory tools, Local app tools, Connected apps, and Skills.
+
+8. **Cabinet Phase 2/3 integration**
+   - Introduce Cabinet as a Den-controlled capability/tool surface once the basic capability framework exists.
+   - Start with Cabinet abstraction tools such as `cabinet.search`, `cabinet.read`, `cabinet.create`, and `cabinet.update`.
+   - Later back Cabinet with Outline and expose Cabinet read/write permissions through the same per-bear capability policy model.
+
+9. **Observability, audit, and policy hardening**
+   - Add comprehensive audit and metrics after multiple capability sources exist.
+   - Track capability usage by bear, user, provider, execution target, result, latency, denial reason, and failure mode.
+   - Add admin views for recent usage, denied requests, high-risk grants, tool failures, and approval decisions.
+
+### Phase 1: BEARS-native tool vertical slice
+
+Implement one BEARS-specific tool end-to-end before building broad UI or catalogs.
+
+Recommended first tool:
+
+- `bear.introspect_access`
+  - Purpose: let an authorized user or bear inspect who has access to the bear and what roles/memberships apply.
+  - Execution target: `den`.
+  - Permissions: membership read / admin-sensitive read.
+  - Approval policy: likely `never` for admins/operators, policy-controlled for normal members.
+  - Audit: record tool invocation, requesting user, target bear, and whether sensitive fields were included.
+
+Deliverables:
+
+- canonical descriptor schema sufficient for one tool
+- hardcoded or seeded built-in descriptor for `bear.introspect_access`
+- Den execution endpoint for the tool
+- authorization policy for who may invoke it
+- audit record for invocation
+- minimal runtime path so a bear can call or request the tool through the existing Den/Codepool boundary
+- test proving non-members cannot introspect a bear
+
+Exit criteria:
+
+- A member/admin can ask a bear who has access to it, and the answer is produced through a Den-authorized tool call.
+- Den denies the same tool for an unauthorized user.
+- The capability appears in an internal/developer listing, even if the user-facing UI is not finished.
+
+### Phase 2: Capability descriptor model and registry foundation
+
+Generalize from the first tool into the Den-owned registry.
 
 Deliverables:
 
 - descriptor schema/types
 - capability kind taxonomy
 - provider model
-- scope model
+- execution target model: `den`, `codepool`, `letta`, `acp_client`, `mcp_gateway`, `external_connector`, `skill_runner`
+- scope model: global, workspace/team, user, bear, session, client connection
 - permission model
 - approval policy model
 - availability model
-- dependency/requirement model
+- dependency/requirement model, initially minimal
+- registry storage for built-in descriptors
+- descriptor validation
+- admin/developer API for listing registered descriptors
 
-### Phase 2: Den capability registry
+Exit criteria:
 
-Build a Den-owned registry for known capabilities.
+- Den can list known capabilities from the registry.
+- `bear.introspect_access` is represented by the same descriptor model future tools will use.
+- The model can represent Den, Letta Code, and Letta execution targets without special-casing them in UI code.
+
+### Phase 3: Prove Den, Letta Code, and Letta tool sources
+
+Add at least one capability from each core BEARS runtime source.
+
+Candidate examples:
+
+| Source | Example capability | Execution target | Purpose |
+|--------|--------------------|------------------|---------|
+| Den | `bear.introspect_access` | `den` | Inspect bear membership and role policy |
+| Letta Code | `runtime.session_status` or `runtime.cancel_session` | `codepool` | Inspect or control the active runtime session |
+| Letta | `memory.read_summary` or `memory.search` | `letta` | Read Letta-native bear memory/state through policy |
+
+Implementation notes:
+
+- Den should normalize all three as capabilities, even if their execution adapters differ.
+- Letta-native tools must still be governed through Den policy when surfaced as BEARS capabilities.
+- Letta Code capabilities should expose runtime/harness behavior, not become a general bypass around Den.
 
 Deliverables:
 
-- registry storage
-- built-in tool descriptors
-- connected app descriptors
-- skill descriptors
-- descriptor validation
-- basic admin/developer inspection
+- execution adapter interface or equivalent service layer
+- Den adapter for `bear.introspect_access`
+- Codepool/Letta Code adapter for one runtime capability
+- Letta adapter for one memory/state capability
+- tests for descriptor validation and authorization across all three execution targets
 
-### Phase 3: Per-bear capability sets
+Exit criteria:
+
+- A single registry/API can show capabilities from Den, Letta Code, and Letta.
+- A per-bear effective capability set can include one capability from each source.
+- Den remains the authorization and audit point for all three.
+
+### Phase 4: Per-bear capability access model
 
 Allow each bear to have an explicit configured capability set.
 
 Deliverables:
 
-- bear capability assignment model
-- enable/disable support
-- inherited default/team/user capability handling
-- effective capability resolution
+- bear capability assignment table/model
+- enable/disable support per bear
+- inherited defaults for baseline capabilities
+- effective capability resolution for a bear
 - API endpoints for reading/updating bear capabilities
+- policy checks that runtime requests can only use enabled capabilities
+- audit records for capability grant/revoke/configuration changes
 
-### Phase 4: Catalog sources
+Exit criteria:
 
-Add catalog/import sources.
+- Operators can enable or disable the initial Den, Letta Code, and Letta capabilities per bear through APIs.
+- Runtime requests receive only the capabilities enabled for the target bear and allowed for the requesting user/session.
+- Disabled capabilities cannot be invoked even if the model/runtime asks for them.
+
+### Phase 5: Bear capability management UI
+
+Build the user-facing management surface once per-bear APIs exist.
+
+Primary location:
+
+> Bear → Capabilities
+
+Initial sections:
+
+1. Built-in tools
+2. Runtime tools
+3. Memory / Letta tools
+4. Advanced details
 
 Deliverables:
 
-- built-in catalog
-- skill catalog
-- connected app catalog
-- MCP discovery/import path
-- ACP client runtime discovery path
-- team-approved capability catalog
+- capability list for a bear
+- enabled/disabled controls
+- status badges
+- provider/source display using user-friendly labels
+- permissions summary
+- approval policy display
+- configure/test action where applicable
+- advanced/developer view showing execution target, raw descriptor id, schemas, scopes, and audit policy
 
-### Phase 5: Skill dependency resolution
+Exit criteria:
 
-Make skills depend on capability requirements.
-
-Deliverables:
-
-- required/optional capability requirements
-- dependency resolution
-- ready/partial/needs setup/unavailable states
-- user-facing setup guidance
-- provider-agnostic requirement matching
+- An operator can manage per-bear access for the initial Den, Letta Code, and Letta capabilities from the browser.
+- The UI does not require users to understand ACP or MCP terminology.
+- Changes in the UI affect the runtime capability context used by `bear_channel`.
 
 ### Phase 6: Runtime capability context for `bear_channel`
 
-Pass the effective capability context into `bear_channel`.
+Pass the effective capability context into `bear_channel` for every request.
 
 Deliverables:
 
 - Den runtime capability resolver
 - `bear_channel` capability payload mapping
 - tests for request construction
-- Codepool handling of declared capabilities
+- Codepool handling of declared server/runtime capabilities
 - server tool event surfacing
-- skill event surfacing
+- denial path when Codepool or the bear requests undeclared capabilities
 
-### Phase 7: ACP client tool relay
+Exit criteria:
 
-After ACP basic chat and runtime capability context are stable, add local client tool execution.
+- Codepool receives a trusted capability context assembled by Den.
+- Codepool can only request or orchestrate capabilities declared in that context.
+- Browser chat remains stable while richer capability events are introduced behind compatible event handling.
+
+### Phase 7: Local app tools via ACP
+
+Add ACP local tool capabilities after basic ACP chat and server-side capability context are stable.
+
+Important constraint:
+
+- The exact local tool set usually cannot be known until an ACP client connects and advertises its capabilities. Den therefore needs a two-layer model:
+  - **catalog/policy templates** for known client families or tool classes, such as editor read, editor write, test execution, shell execution, and user confirmation
+  - **session-scoped discovered descriptors** for the actual tools exposed by a specific ACP client connection
 
 Deliverables:
 
 - ACP client capability ingestion
+- mapping from advertised ACP tools to normalized `client_tool` descriptors
+- policy templates for local tool classes
+- per-bear/per-user allow rules for local tool classes or specific client tools
 - authorized `client_tools` declaration in `bear_channel`
 - `client_tool_request` handling
 - pending call persistence
 - timeout and disconnect handling
 - cancellation semantics
 - client tool result forwarding
-- audit records
+- audit records for request and result
 
-### Phase 8: Den UI
+Exit criteria:
 
-Build the user-facing capability management UI.
+- A bear in an ACP editor session can use an authorized local client tool.
+- The same bear in web chat does not see unavailable local tools.
+- A disconnected ACP client cannot be used for background local tool execution.
+- Den can show local tools as session-scoped capabilities, for example “Provided by Zed in this session.”
+
+### Phase 8: Connected apps via MCP servers
+
+Enable connected apps as MCP-backed capability providers.
 
 Deliverables:
 
-- Bear → Capabilities page
-- sections for Built-in, Connected Apps, Local App Tools, Skills
-- status badges
-- permission and approval display
-- setup flows
-- test/configure actions
-- advanced/developer details view
+- connected app catalog model
+- MCP server registration/import flow
+- MCP discovery/import path for tool descriptors
+- normalization from MCP tool descriptors to BEARS capability descriptors
+- per-bear connected app enable/disable and configuration
+- secret reference model; no hardcoded credentials
+- health/test flow for a connected app
+- runtime mapping into `bear_channel.capabilities.mcp_tools` or equivalent
+- audit records for connected app tool usage
 
-### Phase 9: Observability, audit, and policy hardening
+Implementation notes:
 
-Add production-grade controls.
+- The primary UI should say “Connected app” or “Connector”; MCP details belong in advanced/developer views.
+- Den catalogs and authorizes connected apps. Coolify or the deployment platform may still run the actual MCP server process.
+- Connected apps should support both globally configured connectors and user-authorized connectors where appropriate.
+
+Exit criteria:
+
+- At least one MCP-backed connected app can be enabled for a bear.
+- The connected app’s tools appear as normalized capabilities.
+- Den enforces per-bear access and audits usage.
+
+### Phase 9: Skills
+
+Add skills after underlying tool/capability sources are normalized.
+
+Deliverables:
+
+- skill descriptor model
+- skill catalog
+- required/optional capability requirements
+- dependency resolution
+- availability states: ready, partially available, needs setup, unavailable in this client, disabled
+- user-facing setup guidance
+- provider-agnostic requirement matching
+- per-bear skill enable/disable
+- runtime mapping into `bear_channel.capabilities.skills`
+- skill invocation audit records
+
+Exit criteria:
+
+- A skill can declare dependencies on generic capabilities instead of hardcoding a provider.
+- Den can show whether a skill is ready for a bear/session and explain missing requirements.
+- A skill can use a mix of built-in tools, connected apps, Letta tools, and ACP local tools when available and authorized.
+
+### Phase 10: Observability, audit, and policy hardening
+
+Add production-grade controls across all capability kinds.
 
 Deliverables:
 
@@ -525,6 +718,13 @@ Deliverables:
 - metrics by capability kind/provider/bear/user
 - failure and timeout tracking
 - policy enforcement tests
+- admin views for recent usage, denied requests, failures, and high-risk capability grants
+
+Exit criteria:
+
+- Operators can answer: which bear used which capability, on behalf of which user, against which target, and with what result.
+- Policy denials and runtime failures are visible and debuggable.
+- Sensitive capability classes have explicit approval/audit behavior.
 
 ## Guardrails and non-goals
 
