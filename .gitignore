@@ -3,3 +3,4 @@
 .opencode
 .DS_Store
 .devcontainer/logs/
+.claude/
