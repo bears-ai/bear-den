@@ -54,10 +54,6 @@ Axum routes for the web server (`RUN_WEB=true`). Update this file when you add o
 
 `/v1/*` uses `login_required!(…)` (same session as the rest of the web app).
 
-## ACP gateway (Phase 7 basic-chat slice)
-
-- `POST /acp/bears/{slug}/sessions/{session_id}/prompt` — bearer-token authenticated gateway for ACP adapter clients. JSON body: `message`, optional `conversation_id`, optional `client` (`zed`, `opencode`, or adapter default). Den validates the OAuth/JWT bearer token, membership-checks the bear by slug, injects trusted `bear_channel` context with `channel.family = coding_workspace`, `channel.protocol = agent_client_protocol`, and streams adapter-friendly SSE events (`agent_message_chunk`, `status`, `done`). Client-tool relay is intentionally not part of this first slice.
-
 ## Admin (`src/web/admin/mod.rs`)
 
 - `GET /admin/` — admin menu (includes Letta `/v1/health` and **Codepool** `/health` when configured)

@@ -221,6 +221,12 @@ pub fn generate_scope_preview(scopes: &[OAuthScope]) -> String {
             OAuthScope::DataWrite => {
                 preview_parts.push("write access to your data via the API".to_string());
             }
+            OAuthScope::AcpChat => {
+                preview_parts.push("send chat prompts through the ACP gateway".to_string());
+            }
+            OAuthScope::AcpTools => {
+                preview_parts.push("relay client tool calls through the ACP gateway".to_string());
+            }
         }
     }
 

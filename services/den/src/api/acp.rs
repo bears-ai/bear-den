@@ -20,13 +20,16 @@ use tracing::Instrument;
 use uuid::Uuid;
 
 use crate::{
-    api::oauth::{error::OAuthError, jwt::create_jwt_manager},
+    api::{
+        auth::{self, ApiError},
+        oauth::OAuthScope,
+        service::ApiState,
+    },
     core::{bears::db as bears_db, user},
     errors::CustomError,
-    web::AppState,
 };
 
-pub fn router() -> Router<AppState> {
+pub fn router() -> Router<ApiState> {
     Router::new().route("/bears/{slug}/sessions/{session_id}/prompt", post(prompt))
 }
 
@@ -42,33 +45,43 @@ pub struct AcpPromptRequest {
 #[derive(Debug, Serialize)]
 struct AcpErrorResponse {
     error: String,
+    error_code: &'static str,
     request_id: String,
 }
 
-fn acp_error_status_message(err: &CustomError) -> (StatusCode, String) {
+fn acp_error_status_message(err: &CustomError) -> (StatusCode, &'static str, String) {
     match err {
-        CustomError::Authentication(s) => (StatusCode::UNAUTHORIZED, s.clone()),
-        CustomError::Authorization(s) => (StatusCode::FORBIDDEN, s.clone()),
-        CustomError::NotFound(s) => (StatusCode::NOT_FOUND, s.clone()),
-        CustomError::ValidationError(s) => (StatusCode::BAD_REQUEST, s.clone()),
-        CustomError::DatabaseUnavailable(s) => (StatusCode::SERVICE_UNAVAILABLE, s.clone()),
+        CustomError::Authentication(s) => (StatusCode::UNAUTHORIZED, "authentication", s.clone()),
+        CustomError::Authorization(s) => (StatusCode::FORBIDDEN, "authorization", s.clone()),
+        CustomError::NotFound(s) => (StatusCode::NOT_FOUND, "not_found", s.clone()),
+        CustomError::ValidationError(s) => (StatusCode::BAD_REQUEST, "validation", s.clone()),
+        CustomError::DatabaseUnavailable(s) => (
+            StatusCode::SERVICE_UNAVAILABLE,
+            "database_unavailable",
+            s.clone(),
+        ),
         CustomError::System(s)
         | CustomError::Database(s)
         | CustomError::Session(s)
-        | CustomError::Parsing(s) => (StatusCode::UNPROCESSABLE_ENTITY, s.clone()),
-        CustomError::Render(s) => (StatusCode::INTERNAL_SERVER_ERROR, s.clone()),
-        CustomError::Email(s) => (StatusCode::FAILED_DEPENDENCY, s.clone()),
-        CustomError::Anyhow(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("{e:#}")),
+        | CustomError::Parsing(s) => (StatusCode::UNPROCESSABLE_ENTITY, "unprocessable", s.clone()),
+        CustomError::Render(s) => (StatusCode::INTERNAL_SERVER_ERROR, "render", s.clone()),
+        CustomError::Email(s) => (StatusCode::FAILED_DEPENDENCY, "email", s.clone()),
+        CustomError::Anyhow(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "internal",
+            format!("{e:#}"),
+        ),
     }
 }
 
 fn acp_error_response(err: CustomError, request_id: Uuid) -> Response {
     tracing::error!(%request_id, error = %err, "ACP prompt rejected");
-    let (status, message) = acp_error_status_message(&err);
+    let (status, error_code, message) = acp_error_status_message(&err);
     let request_id_header = HeaderValue::from_str(&request_id.to_string())
         .unwrap_or_else(|_| HeaderValue::from_static("invalid"));
     let body = serde_json::to_string(&AcpErrorResponse {
         error: message,
+        error_code,
         request_id: request_id.to_string(),
     })
     .unwrap_or_else(|_| "{\"error\":\"response serialization failed\"}".to_string());
@@ -81,44 +94,28 @@ fn acp_error_response(err: CustomError, request_id: Uuid) -> Response {
         .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())
 }
 
-fn extract_bearer_token(headers: &HeaderMap) -> Result<String, CustomError> {
-    let value = headers
-        .get(header::AUTHORIZATION)
-        .ok_or_else(|| CustomError::Authentication("missing Authorization header".to_string()))?;
-    let value = value
-        .to_str()
-        .map_err(|_| CustomError::Authentication("invalid Authorization header".to_string()))?;
-    let Some(token) = value.strip_prefix("Bearer ") else {
-        return Err(CustomError::Authentication(
-            "Authorization header must use Bearer scheme".to_string(),
-        ));
-    };
-    let token = token.trim();
-    if token.is_empty() {
-        return Err(CustomError::Authentication(
-            "empty bearer token".to_string(),
-        ));
-    }
-    Ok(token.to_string())
-}
-
-fn authenticated_user_id(headers: &HeaderMap) -> Result<i32, CustomError> {
-    let access_token = extract_bearer_token(headers)?;
-    let jwt_manager = create_jwt_manager();
-    let claims = jwt_manager
-        .validate_access_token(&access_token)
-        .map_err(|err| match err {
-            OAuthError::InvalidToken | OAuthError::InvalidGrant => {
-                CustomError::Authentication("invalid or expired bearer token".to_string())
-            }
-            OAuthError::InsufficientScope => {
-                CustomError::Authorization("bearer token has insufficient scope".to_string())
-            }
-            other => CustomError::Authentication(other.error_description()),
-        })?;
-    claims.user_id().map_err(|_| {
-        CustomError::Authentication("bearer token does not contain a user id".to_string())
+fn api_auth_error_response(err: ApiError, request_id: Uuid) -> Response {
+    tracing::error!(
+        %request_id,
+        error_code = err.error_code,
+        error = %err.message,
+        "ACP prompt authentication rejected"
+    );
+    let request_id_header = HeaderValue::from_str(&request_id.to_string())
+        .unwrap_or_else(|_| HeaderValue::from_static("invalid"));
+    let body = serde_json::to_string(&AcpErrorResponse {
+        error: err.message,
+        error_code: err.error_code,
+        request_id: request_id.to_string(),
     })
+    .unwrap_or_else(|_| "{\"error\":\"response serialization failed\"}".to_string());
+
+    Response::builder()
+        .status(err.status)
+        .header(header::CONTENT_TYPE, "application/json; charset=utf-8")
+        .header(HeaderName::from_static("x-request-id"), request_id_header)
+        .body(Body::from(body))
+        .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())
 }
 
 fn normalize_conversation_id(raw: Option<&str>) -> Result<String, CustomError> {
@@ -156,7 +153,7 @@ fn normalize_acp_client(raw: Option<&str>) -> String {
 }
 
 async fn prompt(
-    State(state): State<AppState>,
+    State(state): State<ApiState>,
     Path((slug, session_id)): Path<(String, String)>,
     headers: HeaderMap,
     Json(body): Json<AcpPromptRequest>,
@@ -166,36 +163,50 @@ async fn prompt(
         .instrument(tracing::info_span!("acp_prompt", request_id = %request_id))
         .await;
     match result {
-        Ok(response) => response,
-        Err(err) => acp_error_response(err, request_id),
+        Ok(Ok(response)) => response,
+        Ok(Err(err)) => acp_error_response(err, request_id),
+        Err(err) => api_auth_error_response(err, request_id),
     }
 }
 
 async fn prompt_inner(
-    state: AppState,
+    state: ApiState,
     slug: String,
     session_id: String,
     headers: HeaderMap,
     body: AcpPromptRequest,
     request_id: Uuid,
-) -> Result<Response, CustomError> {
-    let user_id = authenticated_user_id(&headers)?;
+) -> Result<Result<Response, CustomError>, ApiError> {
+    let principal = auth::authenticate_bearer(&headers)?;
+    auth::require_scope(&principal, OAuthScope::AcpChat)?;
+    let user_id = principal.user_id;
     let prompt = body.message.trim();
     if prompt.is_empty() {
-        return Err(CustomError::ValidationError(
+        return Ok(Err(CustomError::ValidationError(
             "message must not be empty".to_string(),
-        ));
+        )));
     }
 
     let slug = slug.trim();
     if slug.is_empty() {
-        return Err(CustomError::NotFound("bear not found".to_string()));
+        return Ok(Err(CustomError::NotFound("bear not found".to_string())));
     }
 
-    let bear = bears_db::bear_for_user_by_slug(state.sqlx_pool(), user_id, slug)
-        .await?
+    let bear = bears_db::bear_for_user_by_slug(&state.sqlx_pool, user_id, slug)
+        .await
+        .map_err(|err| {
+            ApiError::new(
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "database",
+                err.to_string(),
+            )
+        })?
         .ok_or_else(|| {
-            CustomError::NotFound("bear not found or you do not have access".to_string())
+            ApiError::new(
+                StatusCode::NOT_FOUND,
+                "not_found",
+                "bear not found or you do not have access",
+            )
         })?;
 
     if bear
@@ -205,32 +216,42 @@ async fn prompt_inner(
         .filter(|s| !s.is_empty())
         .is_none()
     {
-        return Err(CustomError::System(
+        return Ok(Err(CustomError::System(
             "This bear is not provisioned in Letta yet (missing letta_agent_id).".to_string(),
-        ));
+        )));
     }
 
     let session_id = session_id.trim();
     if session_id.is_empty() {
-        return Err(CustomError::ValidationError(
+        return Ok(Err(CustomError::ValidationError(
             "session_id must not be empty".to_string(),
-        ));
+        )));
     }
 
-    let conversation_id = normalize_conversation_id(body.conversation_id.as_deref())?;
+    let conversation_id = match normalize_conversation_id(body.conversation_id.as_deref()) {
+        Ok(id) => id,
+        Err(err) => return Ok(Err(err)),
+    };
     let client = normalize_acp_client(body.client.as_deref());
-    let username = user::user_by_id(state.sqlx_pool(), user_id)
+    let username = user::user_by_id(&state.sqlx_pool, user_id)
         .await
         .ok()
         .map(|u| u.username);
-    let membership_role = bears_db::membership_role_for_user(state.sqlx_pool(), user_id, bear.id)
-        .await?
+    let membership_role = bears_db::membership_role_for_user(&state.sqlx_pool, user_id, bear.id)
+        .await
+        .map_err(|err| {
+            ApiError::new(
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "database",
+                err.to_string(),
+            )
+        })?
         .flatten();
     let runtime_plan =
         crate::core::bears::effective_runtime_plan(bear.runtime_plan.as_ref().map(|j| j.as_ref()));
 
     let channel_session_id = format!("acp:{client}:{}:{session_id}", bear.id);
-    let upstream = state
+    let upstream = match state
         .codepool
         .post_bear_channel_message_for_channel_streaming(
             &channel_session_id,
@@ -248,11 +269,20 @@ async fn prompt_inner(
             false,
             true,
         )
-        .await?;
+        .await
+    {
+        Ok(upstream) => upstream,
+        Err(err) => return Ok(Err(err)),
+    };
 
     let stream = AcpBearChannelSseStream::new(upstream.bytes_stream());
-    let request_id_header = HeaderValue::from_str(&request_id.to_string())
-        .map_err(|_| CustomError::System("invalid request id for response header".to_string()))?;
+    let request_id_header = HeaderValue::from_str(&request_id.to_string()).map_err(|_| {
+        ApiError::new(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "invalid_request_id",
+            "invalid request id for response header",
+        )
+    })?;
 
     Response::builder()
         .status(StatusCode::OK)
@@ -261,7 +291,14 @@ async fn prompt_inner(
         .header(header::CONNECTION, "keep-alive")
         .header(HeaderName::from_static("x-request-id"), request_id_header)
         .body(Body::from_stream(stream))
-        .map_err(|e| CustomError::System(format!("response build: {e}")))
+        .map_err(|e| {
+            ApiError::new(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "response_build",
+                format!("response build: {e}"),
+            )
+        })
+        .map(Ok)
 }
 
 fn map_bear_channel_event_to_acp_adapter_event(event: &serde_json::Value) -> Option<Bytes> {

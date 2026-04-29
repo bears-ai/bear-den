@@ -36,6 +36,7 @@ def service_url(env_name, service_name, port):
 DEN = service_url("BEARS_DEN_URL", "bears-den", 3000)
 MEMFS_MANAGER = service_url("BEARS_MEMFS_MANAGER_URL", "bears-memfs-manager", 8285)
 CODEPOOL = service_url("BEARS_CODEPOOL_URL", "bears-codepool", 3030)
+API = os.environ.get("BEARS_API_URL", "").rstrip("/")
 SEEDED_USERNAME = "alice"
 SEEDED_PASSWORD = "Never deploy seed passwords."
 SEEDED_BEAR_SLUG = "test-bear"
@@ -69,6 +70,27 @@ def test_den_reachable():
 def test_pool_health():
     response = request_with_retries("GET", f"{CODEPOOL}/health", timeout=5)
     assert response.status_code == 200
+
+
+def test_api_health_when_enabled():
+    if not API:
+        return
+    response = request_with_retries("GET", f"{API}/health", timeout=5)
+    assert response.status_code == 200
+
+
+def test_acp_requires_bearer_token_when_api_enabled():
+    if not API:
+        return
+    response = request_with_retries(
+        "POST",
+        f"{API}/acp/bears/{SEEDED_BEAR_SLUG}/sessions/smoke-session/prompt",
+        json={"message": "hello", "client": "zed"},
+        timeout=5,
+    )
+    assert response.status_code in (401, 404), response.text
+    if response.status_code == 401:
+        assert "error_code" in response.text
 
 
 def test_seeded_user_can_open_seeded_bear_page():

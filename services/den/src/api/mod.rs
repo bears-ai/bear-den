@@ -46,6 +46,8 @@
 //! - `SERVER_MODE=web` - Run only web service (port 3000)
 //! - `SERVER_MODE=both` - Run both services simultaneously
 
+pub mod acp;
+pub mod auth;
 pub mod docs;
 pub mod oauth;
 pub mod service;

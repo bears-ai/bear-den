@@ -93,6 +93,9 @@ pub struct Config {
     /// Background worker slot (`RUN_WORKERS`); this slim starter has no domain workers yet.
     pub run_workers: bool,
 
+    /// Enable the API-only ACP gateway (`ACP_GATEWAY_ENABLED`).
+    pub acp_gateway_enabled: bool,
+
     pub web_port: u16,
     pub api_port: u16,
 
@@ -234,6 +237,8 @@ impl Config {
                 parse_bool_env("RUN_WORKERS", false),
             )
         };
+
+        let acp_gateway_enabled = parse_bool_env("ACP_GATEWAY_ENABLED", false);
 
         let web_port = std::env::var("PORT")
             .unwrap_or_else(|_| "3000".to_string())
@@ -381,6 +386,7 @@ impl Config {
             run_web,
             run_api,
             run_workers,
+            acp_gateway_enabled,
             web_port,
             api_port,
             web_server_url,
@@ -446,6 +452,7 @@ impl Config {
             run_web: false,
             run_api: false,
             run_workers: false,
+            acp_gateway_enabled: false,
             web_port: 3000,
             api_port: 3001,
             web_server_url: "http://localhost:3000".into(),

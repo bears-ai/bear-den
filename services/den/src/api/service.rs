@@ -20,7 +20,11 @@ use tower_http::{cors::CorsLayer, trace::TraceLayer};
 use tower_sessions_sqlx_store::PostgresStore;
 use tracing::info_span;
 
-use crate::{auth_backend::Backend, config::Config};
+use crate::{
+    auth_backend::Backend,
+    config::Config,
+    core::{codepool::CodePoolClient, letta::LettaClient},
+};
 
 use super::oauth::{endpoints::OAuthState, router::create_oauth_router};
 
@@ -35,6 +39,10 @@ use std::sync::Arc;
 pub struct ApiState {
     /// Database connection pool for API operations
     pub sqlx_pool: PgPool,
+    /// Shared Letta client for API routes that need runtime context.
+    pub letta: Arc<LettaClient>,
+    /// Shared Codepool client for ACP -> bear_channel runtime traffic.
+    pub codepool: Arc<CodePoolClient>,
 }
 
 async fn api_readiness(State(state): State<ApiState>) -> Result<&'static str, StatusCode> {
@@ -92,6 +100,8 @@ pub async fn create_api_app(
     // Create API application state
     let api_state = ApiState {
         sqlx_pool: sqlx_pool.clone(),
+        letta: Arc::new(LettaClient::new(config.as_ref())),
+        codepool: Arc::new(CodePoolClient::new(config.as_ref())),
     };
 
     // Create OAuth state (separate from main API state for OAuth endpoints)
@@ -103,8 +113,8 @@ pub async fn create_api_app(
     // Configure authentication
     let auth_layer = create_auth_layer(sqlx_pool.clone(), session_layer);
 
-    // Build the main router with proper authentication layer ordering
-    let router = Router::new()
+    // Build the main router with proper authentication layer ordering.
+    let mut main_router = Router::new()
         // Health check endpoint (no authentication required)
         .route("/health", get(|| async { "OK" }))
         .route("/version", get(crate::build_info::json_handler))
@@ -113,7 +123,13 @@ pub async fn create_api_app(
         // API v1.0 endpoints with Bearer token authentication (no session auth layer needed)
         .nest("/v1.0", crate::api::v1::router())
         // API documentation (no authentication required)
-        .merge(crate::api::docs::router())
+        .merge(crate::api::docs::router());
+
+    if config.acp_gateway_enabled {
+        main_router = main_router.nest("/acp", crate::api::acp::router());
+    }
+
+    let router = main_router
         // Set main API state BEFORE adding middleware layers
         .with_state(api_state)
         // Add CORS middleware for cross-origin API requests
