@@ -5,13 +5,14 @@ use serde::{Deserialize, Serialize};
 
 use axum::{
     debug_handler,
-    extract::State,
+    extract::{Path, State},
     response::{IntoResponse, Redirect, Response},
-    routing::get,
+    routing::{get, post},
     Router,
 };
 use axum_extra::{extract::Form, routing::RouterExt};
 use tokio::runtime::Handle;
+use uuid::Uuid;
 use validator::{Validate, ValidateArgs, ValidationError, ValidationErrors};
 
 use password_auth::generate_hash;
@@ -22,7 +23,10 @@ use std::sync::OnceLock;
 
 use crate::{
     auth_backend::{AuthSession, Backend},
-    core::user::{self, email_settings},
+    core::{
+        acp_tokens,
+        user::{self, email_settings},
+    },
     errors::CustomError,
     web::{self, AppState},
 };
@@ -36,6 +40,10 @@ pub fn router() -> Router<AppState> {
         .route_with_tsr(
             "/password",
             get(change_password_view).post(change_password_action),
+        )
+        .route(
+            "/acp-tokens/{token_id}/revoke",
+            post(revoke_acp_token_action),
         )
         .route_layer(login_required!(Backend, login_url = "/login"))
         .route_with_tsr("/register", get(register_view).post(register_action))
@@ -283,6 +291,7 @@ async fn view_account(
     let user = crate::core::user::user_by_id(&state.sqlx_pool, user_id).await?;
 
     let invites = user::invites::db::by_user_id(&state.sqlx_pool, user_id).await?;
+    let acp_tokens = acp_tokens::list_for_user(&state.sqlx_pool, user_id).await?;
     let invite_contexts: Vec<_> = invites
         .iter()
         .map(|invite| {
@@ -302,9 +311,24 @@ async fn view_account(
             user => user,
             // premium_until => user.premium_until,
             invites => invite_contexts,
+            acp_tokens => acp_tokens,
         },
     )
     .await
+}
+
+async fn revoke_acp_token_action(
+    State(state): State<AppState>,
+    auth_session: AuthSession,
+    Path(token_id): Path<Uuid>,
+) -> Result<Redirect, CustomError> {
+    let user_id = auth_session
+        .user
+        .as_ref()
+        .map(|u| u.id)
+        .ok_or_else(|| CustomError::Authentication("login required".to_string()))?;
+    acp_tokens::revoke_for_user(&state.sqlx_pool, user_id, token_id).await?;
+    Ok(Redirect::to("/account"))
 }
 
 // async fn edit_account_view(

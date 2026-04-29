@@ -25,7 +25,7 @@ use crate::{
         oauth::OAuthScope,
         service::ApiState,
     },
-    core::{bears::db as bears_db, user},
+    core::{acp_tokens, bears::db as bears_db, user},
     errors::CustomError,
 };
 
@@ -177,9 +177,35 @@ async fn prompt_inner(
     body: AcpPromptRequest,
     request_id: Uuid,
 ) -> Result<Result<Response, CustomError>, ApiError> {
-    let principal = auth::authenticate_bearer(&headers)?;
-    auth::require_scope(&principal, OAuthScope::AcpChat)?;
-    let user_id = principal.user_id;
+    let token = auth::extract_bearer_token(&headers)?;
+    let slug = slug.trim().to_string();
+    let user_id = if acp_tokens::is_acp_token(&token) {
+        acp_tokens::authenticate_for_bear_slug(
+            &state.sqlx_pool,
+            &token,
+            &slug,
+            OAuthScope::AcpChat.as_str(),
+        )
+        .await
+        .map_err(|err| {
+            ApiError::new(
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "database",
+                err.to_string(),
+            )
+        })?
+        .ok_or_else(|| {
+            ApiError::new(
+                StatusCode::UNAUTHORIZED,
+                "invalid_token",
+                "invalid, expired, revoked, or unauthorized ACP token",
+            )
+        })?
+    } else {
+        let principal = auth::authenticate_bearer(&headers)?;
+        auth::require_scope(&principal, OAuthScope::AcpChat)?;
+        principal.user_id
+    };
     let prompt = body.message.trim();
     if prompt.is_empty() {
         return Ok(Err(CustomError::ValidationError(

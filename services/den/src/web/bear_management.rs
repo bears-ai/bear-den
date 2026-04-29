@@ -18,6 +18,7 @@ use validator::{Validate, ValidationError, ValidationErrors};
 use crate::{
     auth_backend::{AuthSession, SessionUser},
     core::{
+        acp_tokens,
         bears::{
             compute_letta_drift_with_expected_tool_ids, db as bears_db,
             db::{role_is_bear_admin, BearMemberRow, BEAR_ROLE_ADMIN, BEAR_ROLE_MEMBER},
@@ -65,6 +66,10 @@ pub fn router() -> Router<AppState> {
             get(bear_edit_configuration_get).post(bear_edit_configuration_post),
         )
         .route_with_tsr("/bear/{slug}/details/access", get(bear_access_get))
+        .route_with_tsr(
+            "/bear/{slug}/details/code-token",
+            get(bear_code_token_get).post(bear_code_token_post),
+        )
         .route_with_tsr(
             "/bear/{slug}/details/conversations",
             get(bear_conversations_get),
@@ -134,6 +139,11 @@ struct BearDetailsQuery {
     letta_resync: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+struct CodeTokenForm {
+    name: String,
+}
+
 #[derive(Serialize)]
 struct DetailsConvRow {
     id: String,
@@ -142,6 +152,68 @@ struct DetailsConvRow {
     channel_label: &'static str,
     web_href: String,
     archived: bool,
+}
+
+async fn bear_code_token_get(
+    Path(slug): Path<String>,
+    State(state): State<AppState>,
+    auth_session: AuthSession,
+) -> Result<Response, CustomError> {
+    let user_id = auth_session
+        .user
+        .as_ref()
+        .map(|u| u.id)
+        .ok_or_else(|| CustomError::Authentication("login required".to_string()))?;
+    if let Some(r) = email_verify_redirect(state.sqlx_pool(), user_id).await? {
+        return Ok(r.into_response());
+    }
+    let bear = load_bear_member(state.sqlx_pool(), user_id, &slug).await?;
+    render_template(
+        &state,
+        "bear/code_token.html",
+        auth_session,
+        context! {
+            bear,
+            token_name => format!("Zed - {}", bear.name),
+            raw_token => None::<String>,
+            api_server_url => state.config.api_server_url.clone(),
+        },
+    )
+    .await
+}
+
+async fn bear_code_token_post(
+    Path(slug): Path<String>,
+    State(state): State<AppState>,
+    auth_session: AuthSession,
+    Form(form): Form<CodeTokenForm>,
+) -> Result<Response, CustomError> {
+    let user_id = auth_session
+        .user
+        .as_ref()
+        .map(|u| u.id)
+        .ok_or_else(|| CustomError::Authentication("login required".to_string()))?;
+    if let Some(r) = email_verify_redirect(state.sqlx_pool(), user_id).await? {
+        return Ok(r.into_response());
+    }
+    let bear = load_bear_member(state.sqlx_pool(), user_id, &slug).await?;
+    let token_name = form.name.trim();
+    let created =
+        acp_tokens::create_for_bear(state.sqlx_pool(), user_id, bear.id, token_name).await?;
+
+    render_template(
+        &state,
+        "bear/code_token.html",
+        auth_session,
+        context! {
+            bear,
+            token_name => token_name,
+            raw_token => created.raw_token,
+            token_id => created.id.to_string(),
+            api_server_url => state.config.api_server_url.clone(),
+        },
+    )
+    .await
 }
 
 async fn new_bear_get(

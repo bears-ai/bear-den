@@ -70,8 +70,15 @@ block subnav %}
                     {% if bear.description %}{{ bear.description | e }}{% else
                     %}<em>No description.</em>{% endif %}
                 </p>
-                {% if can_manage_bear %}
                 <ul class="button-row">
+                    <li>
+                        <a
+                            class="button-link"
+                            href="/bear/{{ bear.slug | e }}/details/code-token"
+                            >Code with {{ bear.name | e }}</a
+                        >
+                    </li>
+                    {% if can_manage_bear %}
                     <li>
                         <a
                             class="button-link"
@@ -79,8 +86,8 @@ block subnav %}
                             >Edit</a
                         >
                     </li>
+                    {% endif %}
                 </ul>
-                {% endif %}
             </div>
         </div>
         <div>

@@ -1,38 +1,99 @@
-{% extends "base.html" %}
-{% import "forms.jinja" as forms %}
-
-{% block breadcrumb %}<a href="/settings">Settings</a> > {% endblock %}
-{% block title %}Account{% endblock %}
-{% block subnav %}
-{% endblock %}
-
-{% block content %}
+{% extends "base.html" %} {% import "forms.jinja" as forms %} {% block
+breadcrumb %}<a href="/settings">Settings</a> > {% endblock %} {% block title
+%}Account{% endblock %} {% block subnav %} {% endblock %} {% block content %}
 <section class="two-columns">
-<div>
-    Account created {{ user.created | dateformat(format="medium") }}
+    <div>
+        Account created {{ user.created | dateformat(format="medium") }}
 
-{% if invites %}
-    <h3>Invitations</h3>
-    <ul>
-    {% for invite in invites %}
-        <li>
-            {% if invite.new_username %}
-                <span class="key">{{ invite.key }}</span> was used by {{ invite.new_display_name }} ({{ invite.new_username }})
-            {% else %}
-                Link for <span class="key">{{ invite.key }}</span> (copy and share): <a href="{{ public_web_origin }}/account/register?invite={{ invite.key }}">{{ public_web_origin }}/account/register?invite={{ invite.key }}</a>
-            {% endif %}
-        </li>
-    {% endfor %}
-    </ul>
-{% endif %}
-
-</div>
-<div>
-    <div class="box full-width">
-        Password set (TODO: strength, last change)
-        <ul class="button-row">
-            <li><a class="button-link" href="/account/password">Change Password</a></li>
+        <h3>ACP tokens</h3>
+        {% if acp_tokens and acp_tokens | length > 0 %}
+        <table>
+            <thead>
+                <tr>
+                    <th>Name</th>
+                    <th>Bear</th>
+                    <th>Created</th>
+                    <th>Last used</th>
+                    <th>Status</th>
+                    <th></th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for token in acp_tokens %}
+                <tr>
+                    <td>{{ token.name | e }}</td>
+                    <td>
+                        <a href="/bear/{{ token.bear_slug | e }}/details"
+                            >{{ token.bear_name | e }}</a
+                        >
+                    </td>
+                    <td>
+                        {{ token.created_at | datetimeformat(format="medium") }}
+                    </td>
+                    <td>
+                        {% if token.last_used_at %}{{ token.last_used_at |
+                        datetimeformat(format="medium") }}{% else %}<span
+                            class="caption"
+                            >Never</span
+                        >{% endif %}
+                    </td>
+                    <td>
+                        {% if token.revoked_at %}<span class="warning"
+                            >Revoked</span
+                        >{% else %}<span class="success">Active</span>{% endif
+                        %}
+                    </td>
+                    <td>
+                        {% if not token.revoked_at %}
+                        <form
+                            method="post"
+                            action="/account/acp-tokens/{{ token.id }}/revoke"
+                        >
+                            <button type="submit">Revoke</button>
+                        </form>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% else %}
+        <p class="form-hint">
+            No ACP tokens yet. Open a bear and choose “Code with …” to create
+            one.
+        </p>
+        {% endif %} {% if invites %}
+        <h3>Invitations</h3>
+        <ul>
+            {% for invite in invites %}
+            <li>
+                {% if invite.new_username %}
+                <span class="key">{{ invite.key }}</span> was used by {{
+                invite.new_display_name }} ({{ invite.new_username }}) {% else
+                %} Link for <span class="key">{{ invite.key }}</span> (copy and
+                share):
+                <a
+                    href="{{ public_web_origin }}/account/register?invite={{ invite.key }}"
+                    >{{ public_web_origin }}/account/register?invite={{
+                    invite.key }}</a
+                >
+                {% endif %}
+            </li>
+            {% endfor %}
         </ul>
+        {% endif %}
     </div>
-</div>
+    <div>
+        <div class="box full-width">
+            Password set (TODO: strength, last change)
+            <ul class="button-row">
+                <li>
+                    <a class="button-link" href="/account/password"
+                        >Change Password</a
+                    >
+                </li>
+            </ul>
+        </div>
+    </div>
+</section>
 {% endblock %}
