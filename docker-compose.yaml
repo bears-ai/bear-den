@@ -312,15 +312,16 @@ services:
             SQLX_MIGRATE_IGNORE_MISSING: ${SQLX_MIGRATE_IGNORE_MISSING:-false}
             JWT_SECRET: ${JWT_SECRET:-SETME}
             RUN_WEB: ${RUN_WEB:-true}
-            RUN_API: ${RUN_API:-false}
+            RUN_API: ${RUN_API:-true}
             RUN_WORKERS: ${RUN_WORKERS:-false}
+            ACP_GATEWAY_ENABLED: ${ACP_GATEWAY_ENABLED:-true}
             RUST_LOG: ${RUST_LOG:-info}
             PORT: ${DEN_PORT:-3000}
             API_PORT: ${DEN_API_PORT:-3001}
             APP_DISPLAY_NAME: ${APP_DISPLAY_NAME:-BEARS}
             APP_SLUG: ${APP_SLUG:-bears-den}
             WEB_SERVER_URL: ${WEB_SERVER_URL:-${SERVICE_URL_BEARS_DEN:-SETME}}
-            API_SERVER_URL: ${API_SERVER_URL:-https://api.bears.artificial.design}
+            API_SERVER_URL: ${API_SERVER_URL:-SETME}
             SESSION_COOKIE_DOMAIN: ${SESSION_COOKIE_DOMAIN:-}
             SESSION_COOKIE_SECURE: ${SESSION_COOKIE_SECURE:-true}
             MAIL_FROM_ADDRESS: ${MAIL_FROM_ADDRESS:-noreply@bears.artificial.design}
@@ -350,6 +351,7 @@ services:
             GHCR_PACKAGES_OWNER_KIND: ${GHCR_PACKAGES_OWNER_KIND:-}
         expose:
             - "3000"
+            - "3001"
 
 volumes:
     # Used only when `bears-postgres` runs (`--profile bundled`).

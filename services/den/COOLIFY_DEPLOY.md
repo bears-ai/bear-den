@@ -71,7 +71,7 @@ In the resource → **Environment Variables** / **Production Variables**, set at
 | `SQLX_MIGRATE_IGNORE_MISSING` | Optional migration recovery switch for `DATABASE_URL`; leave **false** in normal deployments. |
 | `JWT_SECRET` | **Required for release images** (Dockerfile builds with `--features production`). Use a long random value. Also required whenever `RUN_API=true` in dev builds so OAuth access tokens can be signed (HS256). |
 | `RUN_WEB` | `true` to serve the web UI (recommended first smoke). |
-| `RUN_API` | `true` if you need the standalone API listener. |
+| `RUN_API` | `true` for the standalone API listener. In the root BEARS Compose stack this defaults to `true` so the ACP gateway is available. |
 | `RUN_WORKERS` | `true` when you want in-process workers enabled. |
 | `PORT` | Web listen port inside the container (default **3000**). |
 | `API_PORT` | API listen port when `RUN_API=true` (default **3001**). |
@@ -81,7 +81,7 @@ Strongly recommended for production:
 | Variable | Notes |
 | -------- | ----- |
 | `WEB_SERVER_URL` | Public origin of the web app (**no** trailing slash), for example `https://den.example.com`. |
-| `API_SERVER_URL` | Public origin of the API when `RUN_API=true`. |
+| `API_SERVER_URL` | Public origin of the API when `RUN_API=true`; for BEARS ACP this can be a subdomain such as `https://api.bears.[domain]`, another hostname, or a published port such as `https://bears.[domain]:3001`. |
 | `SESSION_COOKIE_DOMAIN` | Cookie `Domain` when sessions must span subdomains; omit for host-only cookies. |
 
 Integrations (set when you wire the rest of the stack):
@@ -92,6 +92,7 @@ Integrations (set when you wire the rest of the stack):
 | `LETTA_API_KEY` | Bearer token when Letta is configured with `LETTA_SERVER_PASS` / API auth. |
 | `CODEPOOL_BASE_URL` | When `RUN_WEB=true`, must be non-empty. **Production** images default to **`http://bears-codepool:3030`** when unset. **Codepool** harness (repository root `services/codepool/`). |
 | `CODEPOOL_INTERNAL_TOKEN` | Optional shared secret; Den sends `Authorization: Bearer …` to Codepool (must match the pool service). |
+| `ACP_GATEWAY_ENABLED` | Enables the API-only ACP gateway on `/acp/*`; requires `RUN_API=true` and `CODEPOOL_BASE_URL`. Root BEARS Compose defaults this to `true`. |
 | `LETTA_MEMFS_SERVICE_URL` | Optional; same **MemFS Manager** base URL as Letta (no trailing slash), e.g. **`http://bears-memfs-manager:8285`**. When set, **bear details** shows **Private memory (git)** — latest commit on the agent’s context repo. **Production** images do not default this; root [`docker-compose.yaml`](../../docker-compose.yaml) sets it for `bears-den` when you use the full stack. |
 
 Mail, OAuth, and other keys are documented in [`.env.example`](.env.example) and [`docs/deploy.md`](docs/deploy.md).
@@ -103,7 +104,7 @@ Mail, OAuth, and other keys are documented in [`.env.example`](.env.example) and
 ### 6. Ports
 
 - **Web only (`RUN_WEB=true`, `RUN_API=false`):** expose internal port **3000** and map it to HTTPS / your Coolify domain as usual.
-- **Web + API:** add a **second published port** in Coolify for **3001** (or change `API_PORT` and expose the matching port). The runtime image listens on whichever ports you configure via `PORT` / `API_PORT`.
+- **Web + API:** add a **second published port** in Coolify for **3001** (or change `API_PORT` and expose the matching port). Route whatever public API origin you choose to that port, e.g. `api.bears.[domain]` -> `bears-den:3001` or a published port on the web host. The runtime image listens on whichever ports you configure via `PORT` / `API_PORT`.
 
 The `Dockerfile` only declares `EXPOSE 3000`; publishing the API port is done in Coolify’s **Ports** / **Networking** UI when you enable the API.
 
@@ -192,7 +193,7 @@ After deploy:
 | **Container exits immediately** | **Logs** — missing or invalid `DATABASE_URL`, or a **migration error** (DDL permissions, broken migration, incompatible existing schema). |
 | **Running but `/health/ready` is 503** | Database credentials or network from the Den container to Postgres; if the process exits instead, check logs for migration failures. |
 | **Letta provisioning fails** | `LETTA_BASE_URL` scheme/host/port; shared network with Letta; `LETTA_API_KEY` matches Letta’s server password / auth configuration. |
-| **Sessions or redirects wrong** | `WEB_SERVER_URL` / `API_SERVER_URL` and (if used) `SESSION_COOKIE_DOMAIN` must match the URLs users actually use. |
+| **Sessions, redirects, or ACP adapter URL wrong** | `WEB_SERVER_URL` / `API_SERVER_URL` and (if used) `SESSION_COOKIE_DOMAIN` must match the URLs users and adapters actually use. For ACP, `API_SERVER_URL` should be the public API origin, whether that is `https://api.bears.[domain]`, another hostname, or a host+port URL. |
 
 ---
 

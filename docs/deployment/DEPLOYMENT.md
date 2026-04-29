@@ -13,7 +13,7 @@ Use the root [`docker-compose.yaml`](../../docker-compose.yaml). It starts the a
 | `bears-memfs-manager` | MemFS Manager git HTTP service on port `8285` |
 | `bears-letta` | Letta API on port `8283` |
 | `bears-codepool` | Letta Code SDK harness on port `3030` |
-| `bears-den` | Den web UI and control plane on port `3000` |
+| `bears-den` | Den web UI/control plane on port `3000` and Den API/ACP gateway on port `3001` |
 
 Databases are separate Coolify resources:
 
@@ -28,7 +28,7 @@ Databases are separate Coolify resources:
 - One Postgres database for Den
 - One PGVector/Postgres database for Letta
 - An OpenAI API key
-- Public domains for Den and Letta
+- Public access for Den web, Den API, and Letta. The API can be a subdomain such as `api.bears.[domain]`, a separate hostname, or a published port on the web host.
 
 ## 1. Create The Databases
 
@@ -57,11 +57,12 @@ In Coolify:
 In the Compose resource general configuration:
 
 1. Set a domain for `bears-letta` with port suffix `:8283`.
-2. Set a domain for `bears-den` with port suffix `:3000`.
-3. Under **Build**, enable **Preserve Repository During Deployment**.
-4. Save.
+2. Set the primary web domain for `bears-den` with port suffix `:3000`.
+3. Set public access for the Den API with port suffix `:3001`. A subdomain like `api.bears.[domain]` is the recommended convention, but not a requirement; you can also use another hostname or a published port on the web host.
+4. Under **Build**, enable **Preserve Repository During Deployment**.
+5. Save.
 
-Only Den is normally user-facing. Letta can be public or restricted depending on your operator workflow, but it still needs a configured domain if you want to access the Letta UI/API from outside the Docker network.
+Den web is the browser-facing UI. Den API is the bearer-token machine-client surface and hosts the ACP gateway used by local ACP adapters such as `bears-acp-adapter`. Letta can be public or restricted depending on your operator workflow, but it still needs a configured domain if you want to access the Letta UI/API from outside the Docker network.
 
 ## 4. Connect The Network
 
@@ -84,13 +85,15 @@ Set these on the Compose resource:
 | `OPENAI_API_KEY` | Your OpenAI API key |
 | `DATABASE_URL` | Den Postgres **Postgres URL (internal)** from Coolify |
 | `LETTA_PG_URI` | Letta PGVector/Postgres **Postgres URL (internal)** from Coolify |
+| `WEB_SERVER_URL` | Public Den web origin, e.g. `https://bears.[domain]` |
+| `API_SERVER_URL` | Public Den API origin, e.g. `https://api.bears.[domain]` or `https://bears.[domain]:3001` |
 
 Optional:
 
 | Variable | Value |
 | -------- | ----- |
 | `CODEPOOL_INTERNAL_TOKEN` | Random shared token if you want Den to authenticate to Codepool |
-| `WEB_SERVER_URL` | Override Coolify's `SERVICE_URL_BEARS_DEN` shortcut if needed |
+| `ACP_GATEWAY_ENABLED` | Defaults to `true`; set to `false` only if you do not want the Den API ACP gateway mounted |
 | `DEN_IMAGE` | Override the prebuilt Den image |
 | `CODEPOOL_IMAGE` | Override the prebuilt Codepool image |
 | `DEN_PULL_POLICY` / `CODEPOOL_PULL_POLICY` | Leave as `always` in production; dev/smoke sets `never` with locally built images |
@@ -119,13 +122,15 @@ From Coolify's terminal for a service on the same network:
 | Bifrost | `curl http://bears-bifrost:8080/health` |
 | Letta | `curl http://bears-letta:8283/v1/health` |
 | Codepool | `curl http://bears-codepool:3030/health` |
-| Den | Open the public Den URL |
+| Den web | Open the public Den URL |
+| Den API | `curl ${API_SERVER_URL}/health` |
+| ACP gateway auth check | `curl -i -X POST ${API_SERVER_URL}/acp/bears/test-bear/sessions/smoke-session/prompt -H 'Content-Type: application/json' -d '{"message":"hello"}'` should return `401` without a bearer token |
 
 End-to-end check: create or open a bear in Den, go to its chat page, and send a message.
 
 ## Troubleshooting
 
-- If Den cannot start, confirm `DATABASE_URL`, `JWT_SECRET`, `WEB_SERVER_URL`, and `CODEPOOL_BASE_URL`.
+- If Den cannot start, confirm `DATABASE_URL`, `JWT_SECRET`, `WEB_SERVER_URL`, `API_SERVER_URL`, and `CODEPOOL_BASE_URL`.
 - If Letta cannot start, confirm `LETTA_PG_URI`, `LETTA_SERVER_PASS`, `OPENAI_API_KEY`, and `LLM_API_URL`.
 - If chat does not stream, confirm `bears-den` can reach `http://bears-codepool:3030` and `bears-codepool` can reach `http://bears-letta:8283`.
 - If Bifrost is unhealthy, confirm `OPENAI_API_KEY` and `services/bifrost/config.json`.
