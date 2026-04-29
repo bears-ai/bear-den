@@ -49,6 +49,7 @@
 pub mod acp;
 pub mod auth;
 pub mod docs;
+pub mod internal;
 pub mod oauth;
 pub mod service;
 pub mod templates;

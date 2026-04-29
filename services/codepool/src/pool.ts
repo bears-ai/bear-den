@@ -13,6 +13,7 @@ import type {
     BearRuntimeProvisioner,
     EnsureResult,
 } from "./provisioning/types.js";
+import type { AnyAgentTool } from "@letta-ai/letta-code-sdk";
 
 export type PoolKey = string;
 
@@ -41,6 +42,7 @@ type Entry = {
 export type StreamUserOpts = {
     bearId: string;
     plan: BearRuntimePlan;
+    tools?: AnyAgentTool[];
 };
 
 export type ConversationPoolStats = {
@@ -174,6 +176,7 @@ export class ConversationSessionPool {
         agentId: string,
         conversationId: string,
         ensure: EnsureResult,
+        tools?: AnyAgentTool[],
     ): Session {
         const key = makePoolKey(agentId, conversationId);
         const rt = resumeTargetFor(agentId, conversationId);
@@ -189,6 +192,9 @@ export class ConversationSessionPool {
             systemInfoReminder: false,
             memfs: true,
         };
+        if (tools && tools.length > 0) {
+            sessionOpts.tools = tools;
+        }
         const cwd = ensure.cwd?.trim();
         if (cwd) {
             sessionOpts.cwd = cwd;
@@ -224,6 +230,7 @@ export class ConversationSessionPool {
                         agentId,
                         conversationId,
                         ensure,
+                        opts.tools,
                     );
                     await session.send(userText);
                     for await (const msg of session.stream()) {

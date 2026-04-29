@@ -337,6 +337,7 @@ impl CodePoolClient {
                 "content": user_input,
             },
             "capabilities": {
+                "server_tools": crate::core::den_tools::builtin_den_tool_descriptors(),
                 "client_tools": [],
                 "supports_cancellation": supports_cancellation,
                 "supports_rich_events": supports_rich_events,

@@ -201,6 +201,7 @@ pub async fn delete_bear(pool: &PgPool, bear_id: Uuid) -> Result<(), CustomError
 pub struct BearMemberRow {
     pub user_id: i32,
     pub username: String,
+    pub display_name: String,
     pub role: Option<String>,
 }
 
@@ -210,7 +211,7 @@ pub async fn list_members_for_bear(
 ) -> Result<Vec<BearMemberRow>, CustomError> {
     sqlx::query_as::<_, BearMemberRow>(
         r#"
-        SELECT ub.user_id, u.username, ub.role
+        SELECT ub.user_id, u.username, u.display_name, ub.role
         FROM user_bear ub
         INNER JOIN users u ON u.id = ub.user_id
         WHERE ub.bear_id = $1

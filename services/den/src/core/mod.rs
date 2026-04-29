@@ -2,6 +2,7 @@ pub mod acp_tokens;
 pub mod api_utils;
 pub mod bears;
 pub mod codepool;
+pub mod den_tools;
 pub mod email;
 pub mod letta;
 pub mod memory_manager_head;

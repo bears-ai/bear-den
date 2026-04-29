@@ -39,6 +39,8 @@ use std::sync::Arc;
 pub struct ApiState {
     /// Database connection pool for API operations
     pub sqlx_pool: PgPool,
+    /// Shared immutable runtime configuration.
+    pub config: Arc<Config>,
     /// Shared Letta client for API routes that need runtime context.
     pub letta: Arc<LettaClient>,
     /// Shared Codepool client for ACP -> bear_channel runtime traffic.
@@ -100,6 +102,7 @@ pub async fn create_api_app(
     // Create API application state
     let api_state = ApiState {
         sqlx_pool: sqlx_pool.clone(),
+        config: config.clone(),
         letta: Arc::new(LettaClient::new(config.as_ref())),
         codepool: Arc::new(CodePoolClient::new(config.as_ref())),
     };
@@ -122,6 +125,7 @@ pub async fn create_api_app(
         .route("/health/ready", get(api_readiness))
         // API v1.0 endpoints with Bearer token authentication (no session auth layer needed)
         .nest("/v1.0", crate::api::v1::router())
+        .nest("/internal", crate::api::internal::router())
         // API documentation (no authentication required)
         .merge(crate::api::docs::router());
 

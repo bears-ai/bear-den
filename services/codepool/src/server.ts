@@ -28,6 +28,11 @@ import {
     parseBearRuntimePlan,
     type BearRuntimePlan,
 } from "./provisioning/types.js";
+import {
+    buildDenToolRuntimeContext,
+    makeDenExternalTools,
+    parseDenServerTools,
+} from "./den-tools.js";
 
 const packageJson = JSON.parse(
     readFileSync(new URL("../package.json", import.meta.url), "utf8"),
@@ -351,11 +356,10 @@ export function attachRoutes(
         guard,
         async (req, res) => {
             const sessionId = req.params.sessionId ?? "";
+            const body = req.body as BearChannelRequest;
             let parsed: ReturnType<typeof parseBearChannelRequest>;
             try {
-                parsed = parseBearChannelRequest(
-                    req.body as BearChannelRequest,
-                );
+                parsed = parseBearChannelRequest(body);
             } catch (e) {
                 const message = e instanceof Error ? e.message : String(e);
                 res.status(400).json({ error: message });
@@ -371,8 +375,7 @@ export function attachRoutes(
             const requestId =
                 typeof rawReqId === "string" && rawReqId.trim()
                     ? rawReqId.trim()
-                    : (req.body as BearChannelRequest).request_id?.trim() ||
-                      randomUUID();
+                    : body.request_id?.trim() || randomUUID();
             res.setHeader("X-Request-Id", requestId);
 
             recordConversationMessagesRequest();
@@ -394,11 +397,25 @@ export function attachRoutes(
             let sseDataLines = 0;
 
             try {
+                const denToolContext = buildDenToolRuntimeContext(
+                    body,
+                    sessionId,
+                    parsed.conversationId,
+                    requestId,
+                );
+                const denTools = makeDenExternalTools({
+                    descriptors: parseDenServerTools(body.capabilities),
+                    getContext: () => denToolContext,
+                });
                 for await (const msg of ctx.pool.streamUserMessage(
                     parsed.agentId,
                     parsed.conversationId,
                     parsed.userText,
-                    { bearId: parsed.bearId, plan: parsed.plan },
+                    {
+                        bearId: parsed.bearId,
+                        plan: parsed.plan,
+                        tools: denTools,
+                    },
                 )) {
                     for (const event of sdkMessageToBearChannelEvents(msg)) {
                         sseDataLines += 1;

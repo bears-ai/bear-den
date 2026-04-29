@@ -51,6 +51,7 @@ export type BearChannelRequest = {
         content?: unknown;
     };
     capabilities?: {
+        server_tools?: unknown[];
         client_tools?: unknown[];
         supports_cancellation?: boolean;
         supports_rich_events?: boolean;
