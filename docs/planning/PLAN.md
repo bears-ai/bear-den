@@ -247,13 +247,13 @@ Two notable services:
 
 Pseudo‑contract:
 
-- `cabinet.search(query, filters) -> [doc_summary]`
+- `cabinet_search(query, filters) -> [doc_summary]`
   - `filters` might include `kind`, `project`, `tags`, etc.
   - Implemented as **Den** endpoints that call Outline search.
 
-- `cabinet.get(doc_id) -> full_doc`
-- `cabinet.create(kind, title, body, properties) -> doc_id`
-- `cabinet.update(doc_id, body?, properties?) -> doc_id`
+- `cabinet_get(doc_id) -> full_doc`
+- `cabinet_create(kind, title, body, properties) -> doc_id`
+- `cabinet_update(doc_id, body?, properties?) -> doc_id`
 
 Bears never talk directly to Outline; they call these tools, which **Den** implements on top of Outline APIs and policies.
 
@@ -395,7 +395,7 @@ Deliverables:
 
 2. **Cabinet API on Den (skeleton)**
    - Implement Cabinet endpoints (for **bears**):
-     - `cabinet.search`, `cabinet.get`, `cabinet.create`, `cabinet.update`.
+     - `cabinet_search`, `cabinet_get`, `cabinet_create`, `cabinet_update`.
    - Initially, these can return stub data or use a temporary in‑memory store while you finalize behavior.
 
 3. **Letta tools for Cabinet**
@@ -443,9 +443,9 @@ At the end of Phase 2, Cabinet is a defined, testable contract, even if Outline 
      - `outline.search` → Outline API.
      - `outline.get_doc`, `.create_doc`, `.update_doc`.
    - Implement Cabinet methods on top of that:
-     - `cabinet.search` → `outline.search` + property filters.
-     - `cabinet.create` → `outline.create_doc` with correct deck and props.
-     - `cabinet.update` → `outline.update_doc`.
+     - `cabinet_search` uses Outline search + property filters.
+     - `cabinet_create` uses Outline document creation with correct deck and props.
+     - `cabinet_update` uses Outline document updates.
 
 4. **Update bears to use Cabinet for real**
    - Pick one high‑value **bear** use case:

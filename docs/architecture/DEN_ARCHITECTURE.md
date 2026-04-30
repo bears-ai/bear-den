@@ -173,18 +173,18 @@ Regenerate **harness deploy artifacts** (e.g. `letta-code.yaml` from the operato
 
 ### Den-managed MCP servers (Phase 1)
 
-**Den is the system of record for which [Model Context Protocol](https://modelcontextprotocol.io/) (MCP) servers each bear may use.** Letta and **Letta Code** remain the **runtime** that opens MCP sessions and invokes tools; Den does not replace an MCP host. This mirrors **Den-managed skills**: same split between **catalog**, **per-bear attachment**, and **materialization** into config the runtime reads.
+**Den is the system of record for which [Model Context Protocol](https://modelcontextprotocol.io/) (MCP) servers each bear may use.** Letta and **Letta Code** remain the **runtime** that opens MCP sessions and invokes tools; Den does not replace an MCP host. The default model is **managed passthrough**: Den owns catalog, attachment, configuration, secrets references, coarse policy, and visibility, while the runtime may expose the provider's raw MCP tool names to the bear.
 
 **Responsibilities**
 
 - **Catalog (local registry):** Den stores MCP server metadata (display name, transport hints, org vs imported, optional link to the [official MCP Registry](https://modelcontextprotocol.io/registry), trust flags). Operators may **query or import** from the official registry for discovery; **cataloging a public server does not require Den to proxy** tool traffic.
 - **Attachment:** `(bear_id, mcp_server_id, enabled, order)` (or equivalent) defines which MCP servers a bear’s agent may use, analogous to skills.
-- **Materialization:** On change, Den updates generated **harness** config, sidecar env, or Letta agent fields (for example `tool_ids` or MCP transport blocks) as supported by your Letta and Letta Code versions—**exact wiring belongs in deploy docs** next to how the harness reaches each MCP URL or stdio command.
+- **Materialization:** On change, Den updates generated **harness** config, sidecar env, or Letta agent fields (for example `tool_ids` or MCP transport blocks) as supported by your Letta and Letta Code versions—**exact wiring belongs in deploy docs** next to how the harness reaches each MCP URL or stdio command. Den records discovered raw MCP tools and treats unexpected changes as drift.
 - **Provisioning:** **Coolify** (or your stack orchestrator) runs MCP server **containers or processes**; Den records **connection templates** (internal base URL, stdio command shape, required env **names**) and **policy**, not ad hoc process spawning inside Den.
 
 **Shared patterns with skills:** Operator console flows (catalog table, attach to bear, reorder, disable), GitOps or exported config driving the same inputs as the UI, reuse of trust and review habits.
 
-**Security:** Treat MCP servers like **network-exposed and executable-adjacent** capabilities: allowlists, secrets injected by the platform (Coolify → env), supply-chain review for imports, SSRF policy on any fetch-by-URL catalog path.
+**Security:** Treat MCP servers like **network-exposed and executable-adjacent** capabilities: allowlists, secrets injected by the platform (Coolify → env), supply-chain review for imports, SSRF policy on any fetch-by-URL catalog path. Den-brokered wrapper tools are reserved for cases where managed passthrough is insufficient for policy, audit, stability, or usability.
 
 See [PLAN.md](../planning/PLAN.md) Phase 1 for the phased implementation checklist (MCP alongside skills).
 

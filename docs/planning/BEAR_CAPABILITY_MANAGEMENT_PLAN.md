@@ -31,12 +31,12 @@ Built-in tools are capabilities provided by BEARS itself, typically owned and go
 
 Examples:
 
-- `memory.search`
-- `memory.remember`
-- `cabinet.search`
-- `cabinet.read`
-- `artifact.create`
-- `artifact.update`
+- `search_memory`
+- `remember_memory`
+- `cabinet_search`
+- `cabinet_read`
+- `create_artifact`
+- `update_artifact`
 - server-side reflection/subagent tools
 
 User-facing language:
@@ -72,7 +72,8 @@ Implementation notes:
 - The normal UI should say "Connected app" or "Connector", not "MCP server".
 - MCP details belong in advanced settings and developer docs.
 - Connected apps may be configured globally, per workspace, per user, per bear, or per environment.
-- Den should normalize connected app tools into capability descriptors before making them available to a bear.
+- By default, Den should manage MCP passthrough: catalog/attachment/configuration in Den, raw provider tools exposed by the runtime, and discovered tools recorded in the effective capability manifest.
+- Den-brokered wrapper tools should be added only when raw passthrough is insufficient for policy, audit, stability, or usability.
 
 ### 3. Local app tools
 
@@ -377,17 +378,17 @@ Conceptual shape:
 Example categories:
 
 - server tools:
-  - `memory.search`
-  - `memory.remember`
-  - `cabinet.search`
-  - `cabinet.read`
+  - `search_memory`
+  - `remember_memory`
+  - `cabinet_search`
+  - `cabinet_read`
 - client tools:
-  - `zed.read_file`
-  - `zed.apply_patch`
-  - `zed.run_tests`
+  - `zed_read_file`
+  - `zed_apply_patch`
+  - `zed_run_tests`
 - connected app tools:
-  - `github.search_issues`
-  - `linear.create_comment`
+  - `github_search_issues`
+  - `linear_create_comment`
 - skills:
   - `pr_review`
   - `bug_triage`
@@ -457,7 +458,7 @@ This is the practical execution order across capability management and adjacent 
 
 8. **Cabinet Phase 2/3 integration**
    - Introduce Cabinet as a Den-controlled capability/tool surface once the basic capability framework exists.
-   - Start with Cabinet abstraction tools such as `cabinet.search`, `cabinet.read`, `cabinet.create`, and `cabinet.update`.
+   - Start with Cabinet abstraction tools such as `cabinet_search`, `cabinet_read`, `cabinet_create`, and `cabinet_update`.
    - Later back Cabinet with Outline and expose Cabinet read/write permissions through the same per-bear capability policy model.
 
 9. **Observability, audit, and policy hardening**
@@ -471,7 +472,7 @@ Implement one BEARS-specific tool end-to-end before building broad UI or catalog
 
 Recommended first tool:
 
-- `bear.introspect_access`
+- `list_bear_members`
   - Purpose: let an authorized user or bear inspect who has access to the bear and what roles/memberships apply.
   - Execution target: `den`.
   - Permissions: membership read / admin-sensitive read.
@@ -481,7 +482,7 @@ Recommended first tool:
 Deliverables:
 
 - canonical descriptor schema sufficient for one tool
-- hardcoded or seeded built-in descriptor for `bear.introspect_access`
+- hardcoded or seeded built-in descriptor for `list_bear_members`
 - Den execution endpoint for the tool
 - authorization policy for who may invoke it
 - audit record for invocation
@@ -516,7 +517,7 @@ Deliverables:
 Exit criteria:
 
 - Den can list known capabilities from the registry.
-- `bear.introspect_access` is represented by the same descriptor model future tools will use.
+- `list_bear_members` is represented by the same descriptor model future tools will use.
 - The model can represent Den, Letta Code, and Letta execution targets without special-casing them in UI code.
 
 ### Phase 3: Prove Den, Letta Code, and Letta tool sources
@@ -527,9 +528,9 @@ Candidate examples:
 
 | Source | Example capability | Execution target | Purpose |
 |--------|--------------------|------------------|---------|
-| Den | `bear.introspect_access` | `den` | Inspect bear membership and role policy |
-| Letta Code | `runtime.session_status` or `runtime.cancel_session` | `codepool` | Inspect or control the active runtime session |
-| Letta | `memory.read_summary` or `memory.search` | `letta` | Read Letta-native bear memory/state through policy |
+| Den | `list_bear_members` | `den` | Inspect bear membership and role policy |
+| Letta Code | `runtime_session_status` or `runtime_cancel_session` | `codepool` | Inspect or control the active runtime session |
+| Letta | `memory_read_summary` or `search_memory` | `letta` | Read Letta-native bear memory/state through policy |
 
 Implementation notes:
 
@@ -540,7 +541,7 @@ Implementation notes:
 Deliverables:
 
 - execution adapter interface or equivalent service layer
-- Den adapter for `bear.introspect_access`
+- Den adapter for `list_bear_members`
 - Codepool/Letta Code adapter for one runtime capability
 - Letta adapter for one memory/state capability
 - tests for descriptor validation and authorization across all three execution targets
@@ -653,33 +654,38 @@ Exit criteria:
 - A disconnected ACP client cannot be used for background local tool execution.
 - Den can show local tools as session-scoped capabilities, for example “Provided by Zed in this session.”
 
-### Phase 8: Connected apps via MCP servers
+### Phase 8: Connected apps via managed MCP passthrough
 
-Enable connected apps as MCP-backed capability providers.
+Enable connected apps as Den-managed MCP-backed capability providers.
 
 Deliverables:
 
 - connected app catalog model
 - MCP server registration/import flow
-- MCP discovery/import path for tool descriptors
-- normalization from MCP tool descriptors to BEARS capability descriptors
 - per-bear connected app enable/disable and configuration
 - secret reference model; no hardcoded credentials
+- toolset, explicit tool allowlist, and read-only/write-mode settings where supported by the MCP provider
 - health/test flow for a connected app
-- runtime mapping into `bear_channel.capabilities.mcp_tools` or equivalent
-- audit records for connected app tool usage
+- runtime materialization into Letta/Letta Code MCP configuration
+- discovery records for raw MCP tools exposed by the runtime
+- capability manifest entries with raw MCP tool name, source server, provider, scope, and policy metadata
+- drift detection when the runtime-discovered tool set differs from Den's recorded expectation
+- coarse audit/diagnostics for connected app tool usage where available
 
 Implementation notes:
 
 - The primary UI should say “Connected app” or “Connector”; MCP details belong in advanced/developer views.
-- Den catalogs and authorizes connected apps. Coolify or the deployment platform may still run the actual MCP server process.
+- Den catalogs and authorizes connected app attachment. Coolify or the deployment platform may still run the actual MCP server process.
+- Raw MCP tools may be exposed to ordinary bears when the connector is enabled for that bear.
+- Den-brokered wrapper tools are exceptional and should be introduced only for specific policy, audit, stability, or usability needs.
 - Connected apps should support both globally configured connectors and user-authorized connectors where appropriate.
 
 Exit criteria:
 
 - At least one MCP-backed connected app can be enabled for a bear.
-- The connected app’s tools appear as normalized capabilities.
-- Den enforces per-bear access and audits usage.
+- The connected app’s raw MCP tools appear in the effective capability manifest with provenance.
+- Den can show connector configuration, discovered tools, and drift status.
+- Den enforces per-bear connector attachment and coarse policy.
 
 ### Phase 9: Skills
 

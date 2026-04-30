@@ -27,34 +27,36 @@ Implement these first:
 
 | Tool | Priority | Purpose |
 |---|---:|---|
-| `den.bear.get_self` | P0 | Return the Den view of the current bear. |
-| `den.user.get_current` | P0 | Return the Den-authenticated current user for this interaction. |
-| `den.bear.list_members` | P0 | List users who have access to the current bear, redacted by policy. |
-| `den.capabilities.list_self` | P0 | List Den-managed capabilities available to this bear/session. |
-| `den.channel.get_context` | P1 | Return current channel/session/client context. |
-| `den.policy.get_self` | P1 | Explain relevant policy for the current user + bear + channel. |
+| `get_current_bear` | P0 | Return the BEARS/Den view of the current bear. |
+| `get_current_user` | P0 | Return the BEARS-authenticated current user for this interaction. |
+| `list_bear_members` | P0 | List users who have access to the current bear, redacted by policy. |
+| `list_bear_capabilities` | P0 | List BEARS-managed capabilities available to this bear/session. |
+| `get_channel_context` | P1 | Return current channel/session/client context. |
+| `get_current_policy` | P1 | Explain relevant policy for the current user + bear + channel. |
 
 Defer:
 
 | Candidate | Reason |
 |---|---|
-| `den.bear.list_related` | Cross-bear relationship discovery can leak sensitive membership/topology information. Revisit after policy and audit mature. |
-| Arbitrary `den.user.get(id)` | Easy to leak profile information. Prefer current-user and current-bear-member queries first. |
+| `list_related_bears` | Cross-bear relationship discovery can leak sensitive membership/topology information. Revisit after policy and audit mature. |
+| Arbitrary user lookup such as `get_user` | Easy to leak profile information. Prefer current-user and current-bear-member queries first. |
 | Mutating membership/profile/policy tools | Keep the first slice read-only. |
 | Memory edit wrappers | Native Letta Code MemFS tools remain the default. |
 
 ## Naming
 
-Use dotted Den namespace names:
+Use model-safe snake_case runtime names. Do not use dotted names or implementation prefixes such as `den_` in model-visible tool names.
 
-- `den.bear.get_self`
-- `den.user.get_current`
-- `den.bear.list_members`
-- `den.capabilities.list_self`
-- `den.channel.get_context`
-- `den.policy.get_self`
+Initial names:
 
-Avoid taking arbitrary `bear_id` or `user_id` parameters for these first tools. Tool execution must be bound to trusted invocation context provided by Den/Codepool, not model-supplied identifiers.
+- `get_current_bear`
+- `get_current_user`
+- `list_bear_members`
+- `list_bear_capabilities`
+- `get_channel_context`
+- `get_current_policy`
+
+Den remains the provider and execution target in descriptor metadata. Avoid taking arbitrary `bear_id` or `user_id` parameters for these first tools. Tool execution must be bound to trusted invocation context provided by Den/Codepool, not model-supplied identifiers.
 
 ## Trusted invocation context
 
@@ -73,7 +75,7 @@ Every Den tool invocation is bound to context supplied by the runtime, not by th
 - `channel.client`
 - `channel.protocol`
 
-Tool inputs should be narrow. For example, `den.bear.list_members` may accept display options, but not an arbitrary bear identifier.
+Tool inputs should be narrow. For example, `list_bear_members` may accept display options, but not an arbitrary bear identifier.
 
 ## Transport design
 
@@ -89,7 +91,7 @@ Request shape:
 
 ```json
 {
-  "tool_name": "den.bear.get_self",
+  "tool_name": "get_current_bear",
   "arguments": {},
   "context": {
     "bear_id": "...",
@@ -115,7 +117,7 @@ Response shape:
 ```json
 {
   "ok": true,
-  "tool_name": "den.bear.get_self",
+  "tool_name": "get_current_bear",
   "result": {}
 }
 ```
@@ -159,12 +161,12 @@ Initial descriptors:
 
 | Name | Kind | Provider | Execution target | Scope | Approval |
 |---|---|---|---|---|---|
-| `den.bear.get_self` | `server_tool` | `den` | `den` | `bear` | `never` |
-| `den.user.get_current` | `server_tool` | `den` | `den` | `session` | `never` |
-| `den.bear.list_members` | `server_tool` | `den` | `den` | `bear` | `never` |
-| `den.capabilities.list_self` | `server_tool` | `den` | `den` | `session` | `never` |
-| `den.channel.get_context` | `server_tool` | `den` | `den` | `session` | `never` |
-| `den.policy.get_self` | `server_tool` | `den` | `den` | `session` | `never` |
+| `get_current_bear` | `server_tool` | `den` | `den` | `bear` | `never` |
+| `get_current_user` | `server_tool` | `den` | `den` | `session` | `never` |
+| `list_bear_members` | `server_tool` | `den` | `den` | `bear` | `never` |
+| `list_bear_capabilities` | `server_tool` | `den` | `den` | `session` | `never` |
+| `get_channel_context` | `server_tool` | `den` | `den` | `session` | `never` |
+| `get_current_policy` | `server_tool` | `den` | `den` | `session` | `never` |
 
 ## Authorization and redaction
 
@@ -172,12 +174,12 @@ Initial policy:
 
 | Tool | Member | Bear admin | Site/operator admin |
 |---|---:|---:|---:|
-| `den.bear.get_self` | allow | allow | allow when scoped to an accessible/current bear |
-| `den.user.get_current` | allow | allow | allow |
-| `den.bear.list_members` | allow redacted | allow roles | allow roles when scoped |
-| `den.capabilities.list_self` | allow | allow | allow |
-| `den.channel.get_context` | allow | allow | allow |
-| `den.policy.get_self` | allow | allow | allow |
+| `get_current_bear` | allow | allow | allow when scoped to an accessible/current bear |
+| `get_current_user` | allow | allow | allow |
+| `list_bear_members` | allow redacted | allow roles | allow roles when scoped |
+| `list_bear_capabilities` | allow | allow | allow |
+| `get_channel_context` | allow | allow | allow |
+| `get_current_policy` | allow | allow | allow |
 
 Redaction defaults:
 
@@ -189,13 +191,13 @@ Redaction defaults:
 
 ## Implementation slices
 
-### Slice 1 — `den.bear.get_self` vertical slice
+### Slice 1 — `get_current_bear` vertical slice
 
 Goal: prove the full Den → Codepool → Den tool path with one safe read-only tool.
 
 Deliverables:
 
-1. Den descriptor for `den.bear.get_self`.
+1. Den descriptor for `get_current_bear`.
 2. Den internal invocation endpoint and dispatcher.
 3. Membership authorization based on trusted `bear_id` and `user_id`.
 4. Codepool registration of the Den external tool for the Letta Code SDK session.
@@ -204,15 +206,15 @@ Deliverables:
 7. Logging/audit-style structured event for invocation.
 8. Test or smoke route proving non-members are denied.
 
-### Slice 2 — `den.user.get_current`
+### Slice 2 — `get_current_user`
 
 Add current-user lookup from Den's users table, with redacted output.
 
-### Slice 3 — `den.bear.list_members`
+### Slice 3 — `list_bear_members`
 
 Use Den membership state. Apply role-aware redaction. Verify normal member vs bear admin behavior.
 
-### Slice 4 — `den.capabilities.list_self`
+### Slice 4 — `list_bear_capabilities`
 
 Return the hardcoded effective Den server tools for the current context.
 
@@ -220,15 +222,15 @@ Return the hardcoded effective Den server tools for the current context.
 
 Add:
 
-- `den.channel.get_context`
-- `den.policy.get_self`
+- `get_channel_context`
+- `get_current_policy`
 
 ## Testing plan
 
 ### Den tests
 
-- Member can invoke `den.bear.get_self`.
-- Non-member cannot invoke `den.bear.get_self`.
+- Member can invoke `get_current_bear`.
+- Non-member cannot invoke `get_current_bear`.
 - Current user output is redacted.
 - Member list does not expose emails.
 - Unknown tool returns a structured error.
@@ -244,7 +246,7 @@ Add:
 ### Smoke test
 
 - Seed user + bear + membership.
-- Send a prompt through the runtime path that causes `den.bear.get_self` to be called.
+- Send a prompt through the runtime path that causes `get_current_bear` to be called.
 - Verify the result is generated through Den authorization.
 
 ## Non-goals for the first implementation

@@ -123,8 +123,8 @@ Initial events:
 Reserved richer events:
 
 ```json
-{"type":"server_tool_started","tool":"cabinet.search"}
-{"type":"server_tool_finished","tool":"cabinet.search","summary":"3 results"}
+{"type":"server_tool_started","tool":"cabinet_search"}
+{"type":"server_tool_finished","tool":"cabinet_search","summary":"3 results"}
 {"type":"client_tool_request","call":{"id":"call_1","name":"read_file","arguments":{}}}
 {"type":"subagent_started","name":"reflection"}
 {"type":"subagent_finished","name":"reflection","summary":"..."}

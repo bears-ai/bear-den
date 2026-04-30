@@ -126,10 +126,10 @@ Goal: BEARS catalog skills and Cabinet tools are active for every channel that u
 
 ### Initial server tools
 
-- `cabinet.search`
-- `cabinet.read`
-- `memory.search`
-- `memory.remember`
+- `cabinet_search`
+- `cabinet_read`
+- `search_memory`
+- `remember_memory`
 
 ### Design tasks
 
