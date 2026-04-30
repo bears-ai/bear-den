@@ -301,6 +301,51 @@ Indexes:
 
 Use this same table as the audit source for MVP, or add a separate append-only audit table if we want immutable events immediately.
 
+## Letta Code SDK research findings
+
+Current BEARS Codepool uses:
+
+- `@letta-ai/letta-code-sdk` `0.1.14`
+- `@letta-ai/letta-code` `0.23.8` via package override/patching
+
+The SDK already has the primitive we need for externally resolved tools. It does **not** expose a method literally named “pause”, but custom tools are asynchronous and the Letta Code CLI waits for the SDK process to return an external tool result.
+
+Relevant SDK surface:
+
+- `CreateSessionOptions.tools?: AnyAgentTool[]`
+- `AgentTool.execute(toolCallId, args, signal?, onUpdate?) => Promise<AgentToolResult>`
+- SDK registers tools with the CLI using a `register_external_tools` control request.
+- When the model calls an external tool, the CLI sends `execute_external_tool` back to the SDK.
+- The SDK calls `await tool.execute(...)`.
+- Only after the promise resolves does the SDK send `external_tool_result` back to the CLI.
+
+Current Codepool already uses this for Den server tools in `services/codepool/src/den-tools.ts`: `makeDenExternalTools` creates SDK `AnyAgentTool`s whose `execute` function awaits a Den HTTP call. This proves the SDK supports async external tool execution in the SDK process.
+
+Conclusion:
+
+- We do **not** need a new Letta Code SDK pause/resume feature for the MVP.
+- We can implement ACP client tools as SDK external tools whose `execute` promise blocks until Den/adapter returns a result or a timeout/cancel occurs.
+- The “pause” boundary is the external tool `execute` promise: Codepool waits inside that promise, the CLI/model turn is effectively paused, and then the returned `AgentToolResult` continues the turn.
+
+Caveats:
+
+- This is turn-local waiting, not durable pause/resume across Codepool process restarts.
+- If Codepool dies while waiting, the active tool call is lost unless we add higher-level recovery.
+- The SDK passes an optional `AbortSignal` into `execute`; Codepool should honor it once cancellation support is wired.
+- The SDK external tool response only sends `content` and `is_error` back to the CLI; `details` are useful to Codepool/Den but may not be visible to Letta Code unless rendered into text content.
+- Codepool currently creates sessions once and only passes `tools` when opening a new session. If a warm session already exists, newly authorized tools may not be registered unless we close/recreate the session or the SDK supports registering additional external tools after init. MVP should either key sessions by tool descriptor set or recreate the session when client tools change.
+
+Recommended implementation adjustment:
+
+- Implement a Codepool-side `makeAcpClientExternalTools(...)` alongside `makeDenExternalTools(...)`.
+- Each ACP external tool `execute` should:
+  1. create/record a pending waiter keyed by `request_id` and `toolCallId`,
+  2. emit a `client_tool_request` event to Den,
+  3. await the result posted back to Codepool's internal tool-result endpoint,
+  4. resolve to `AgentToolResult` on success,
+  5. resolve to an error result on timeout/cancel/error.
+- Because the SDK already awaits `execute`, no separate SDK pause API is required.
+
 ## Codepool contract changes
 
 ### `bear_channel` request
@@ -343,7 +388,7 @@ Request body:
 
 This endpoint should deliver the tool result to the active runtime loop waiting on the tool call.
 
-Important constraint: Codepool must support an active prompt turn waiting for a tool result. If the current Letta Code SDK cannot pause/resume on external tool results, implement a Codepool-side async bridge that exposes ACP tools to the SDK as async tools and blocks those tool invocations until Den posts the result or timeout occurs.
+Important constraint: Codepool must support an active prompt turn waiting for a tool result. Research confirms the current SDK supports this through async external tools: expose ACP tools to the SDK as `AnyAgentTool`s, emit `client_tool_request` from `execute`, and keep the `execute` promise pending until Den posts the result or timeout/cancel occurs.
 
 ## Adapter behavior
 
@@ -583,7 +628,7 @@ Metrics:
 
 1. Should first-slice file reads require ACP `session/request_permission`, or is Zed's external-agent trust boundary sufficient for MVP?
 2. Should `acp:tools` be required immediately, or introduced with a migration path for existing ACP tokens?
-3. Does the Letta Code SDK already support async externally-resolved tools, or do we need a Codepool-side blocking async tool shim?
+3. How should Codepool handle warm sessions when the authorized client tool descriptor set changes between ACP sessions or prompt turns?
 4. Should Den stream tool requests over the existing prompt SSE response, or split tool relay onto a dedicated bidirectional-ish long-poll/SSE channel?
 5. How much local file content should Den store in audit, if any, versus storing only hashes/summaries?
 6. Should absolute paths be allowed as-is, or should adapter enforce that paths stay under `cwd` before calling the ACP client?
