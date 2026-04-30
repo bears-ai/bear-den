@@ -1,0 +1,373 @@
+//! Integration coverage for the ACP API gateway. Requires `DATABASE_URL`.
+
+use axum::{
+    body::Body,
+    extract::{Path, State},
+    http::{header, Request, StatusCode},
+    response::{IntoResponse, Response},
+    routing::post,
+    Json, Router,
+};
+use den::{
+    api,
+    config::Config,
+    core::{acp_tokens, bears::db as bears_db},
+    startup::run_sqlx_migrations,
+};
+use http_body_util::BodyExt;
+use serde_json::{json, Value};
+use sqlx::postgres::PgPoolOptions;
+use std::{net::SocketAddr, sync::Arc};
+use tokio::sync::Mutex;
+use tower::ServiceExt;
+use tower_sessions_sqlx_store::PostgresStore;
+use uuid::Uuid;
+
+#[derive(Clone)]
+struct TestCodepoolState {
+    captured: Arc<Mutex<Option<Value>>>,
+}
+
+struct TestApp {
+    app: axum::Router,
+    pool: sqlx::PgPool,
+    captured_codepool_body: Arc<Mutex<Option<Value>>>,
+}
+
+struct TestUserBear {
+    user_id: i32,
+    username: String,
+    bear_id: Uuid,
+    bear_slug: String,
+    raw_token: String,
+}
+
+async fn apply_app_migrations(pool: &sqlx::PgPool) {
+    run_sqlx_migrations(pool)
+        .await
+        .expect("sqlx migrations for ACP integration test");
+}
+
+async fn start_fake_codepool() -> (String, Arc<Mutex<Option<Value>>>) {
+    let captured = Arc::new(Mutex::new(None));
+    let state = TestCodepoolState {
+        captured: captured.clone(),
+    };
+    let app = Router::new()
+        .route(
+            "/internal/bear_channel/sessions/{session_id}/messages",
+            post(fake_bear_channel),
+        )
+        .with_state(state);
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind fake codepool");
+    let addr: SocketAddr = listener.local_addr().expect("fake codepool local addr");
+    tokio::spawn(async move {
+        axum::serve(listener, app)
+            .await
+            .expect("fake codepool server");
+    });
+    (format!("http://{addr}"), captured)
+}
+
+async fn fake_bear_channel(
+    State(state): State<TestCodepoolState>,
+    Path(_session_id): Path<String>,
+    Json(body): Json<Value>,
+) -> Response {
+    *state.captured.lock().await = Some(body);
+    (
+        [(header::CONTENT_TYPE, "text/event-stream; charset=utf-8")],
+        concat!(
+            "data: {\"type\":\"assistant_delta\",\"text\":\"hello from fake codepool\"}\n\n",
+            "data: {\"type\":\"reasoning_delta\",\"text\":\"thinking\"}\n\n",
+            "data: {\"type\":\"done\",\"outcome\":\"ok\"}\n\n"
+        ),
+    )
+        .into_response()
+}
+
+async fn test_app() -> TestApp {
+    dotenvy::dotenv().ok();
+    let database_url =
+        std::env::var("DATABASE_URL").expect("DATABASE_URL for ACP integration test");
+    let pool = PgPoolOptions::new()
+        .max_connections(2)
+        .acquire_timeout(std::time::Duration::from_secs(5))
+        .connect(&database_url)
+        .await
+        .expect("connect postgres");
+    apply_app_migrations(&pool).await;
+
+    let (codepool_base_url, captured_codepool_body) = start_fake_codepool().await;
+    let mut config = Config::load();
+    config.database_url = database_url;
+    config.run_api = true;
+    config.acp_gateway_enabled = true;
+    config.codepool_base_url = codepool_base_url;
+    config.api_server_url = "http://localhost:3001".to_string();
+    config.web_server_url = "http://localhost:3000".to_string();
+
+    let store = PostgresStore::new(pool.clone());
+    store
+        .migrate()
+        .await
+        .expect("tower-sessions postgres migrate");
+    let app = api::create_api_app(pool.clone(), store, Arc::new(config))
+        .await
+        .expect("build api router");
+
+    TestApp {
+        app,
+        pool,
+        captured_codepool_body,
+    }
+}
+
+async fn create_test_user_bear(pool: &sqlx::PgPool, membership: bool) -> TestUserBear {
+    let suffix = Uuid::new_v4().simple().to_string();
+    let username = format!("u{}", &suffix[..20]);
+    let email = format!("{username}@example.test");
+    let bear_slug = format!("acp-test-{}", &suffix[..12]);
+
+    let (user_id,): (i32,) = sqlx::query_as(
+        r#"
+        INSERT INTO users (email, username, display_name, passhash)
+        VALUES ($1, $2, $3, $4)
+        RETURNING id
+        "#,
+    )
+    .bind(&email)
+    .bind(&username)
+    .bind(format!("ACP Test {username}"))
+    .bind("unused-in-acp-tests")
+    .fetch_one(pool)
+    .await
+    .expect("insert test user");
+
+    let bear_id = bears_db::create_bear(
+        pool,
+        &bear_slug,
+        "ACP Test Bear",
+        "ACP integration test bear",
+        "",
+        None,
+        None,
+        None,
+        sqlx::types::Json(Vec::<String>::new()),
+    )
+    .await
+    .expect("create test bear");
+    bears_db::set_letta_agent_id(pool, bear_id, "agent-acp-test")
+        .await
+        .expect("set letta agent id");
+    if membership {
+        bears_db::grant_membership(pool, user_id, bear_id, Some(bears_db::BEAR_ROLE_ADMIN))
+            .await
+            .expect("grant test membership");
+    }
+    let created = acp_tokens::create_for_bear(pool, user_id, bear_id, "ACP test token")
+        .await
+        .expect("create ACP token");
+
+    TestUserBear {
+        user_id,
+        username,
+        bear_id,
+        bear_slug,
+        raw_token: created.raw_token,
+    }
+}
+
+async fn post_prompt(
+    app: axum::Router,
+    slug: &str,
+    session_id: &str,
+    token: Option<&str>,
+    body: Value,
+) -> axum::response::Response {
+    let mut builder = Request::builder()
+        .method("POST")
+        .uri(format!("/acp/bears/{slug}/sessions/{session_id}/prompt"))
+        .header(header::CONTENT_TYPE, "application/json");
+    if let Some(token) = token {
+        builder = builder.header(header::AUTHORIZATION, format!("Bearer {token}"));
+    }
+    app.oneshot(builder.body(Body::from(body.to_string())).unwrap())
+        .await
+        .expect("ACP prompt response")
+}
+
+#[tokio::test]
+async fn acp_prompt_requires_bearer_auth() {
+    let fixture = test_app().await;
+    let res = post_prompt(
+        fixture.app,
+        "missing-auth-bear",
+        "session-1",
+        None,
+        json!({ "message": "hello" }),
+    )
+    .await;
+    assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
+    let body = res.into_body().collect().await.unwrap().to_bytes();
+    let value: Value = serde_json::from_slice(&body).expect("JSON error body");
+    assert_eq!(value["error_code"], "missing_authorization");
+}
+
+#[tokio::test]
+async fn acp_token_auth_failures_are_rejected() {
+    let fixture = test_app().await;
+    let user_bear = create_test_user_bear(&fixture.pool, true).await;
+
+    let invalid = post_prompt(
+        fixture.app.clone(),
+        &user_bear.bear_slug,
+        "session-invalid",
+        Some("bears_acp_invalid"),
+        json!({ "message": "hello" }),
+    )
+    .await;
+    assert_eq!(invalid.status(), StatusCode::UNAUTHORIZED);
+
+    let revoked_token = acp_tokens::create_for_bear(
+        &fixture.pool,
+        user_bear.user_id,
+        user_bear.bear_id,
+        "revoked ACP test token",
+    )
+    .await
+    .expect("create revoked token");
+    acp_tokens::revoke_for_user(&fixture.pool, user_bear.user_id, revoked_token.id)
+        .await
+        .expect("revoke token");
+    let revoked = post_prompt(
+        fixture.app.clone(),
+        &user_bear.bear_slug,
+        "session-revoked",
+        Some(&revoked_token.raw_token),
+        json!({ "message": "hello" }),
+    )
+    .await;
+    assert_eq!(revoked.status(), StatusCode::UNAUTHORIZED);
+
+    let expired_token = acp_tokens::create_for_bear(
+        &fixture.pool,
+        user_bear.user_id,
+        user_bear.bear_id,
+        "expired ACP test token",
+    )
+    .await
+    .expect("create expired token");
+    sqlx::query("UPDATE acp_tokens SET expires_at = NOW() - interval '1 hour' WHERE id = $1")
+        .bind(expired_token.id)
+        .execute(&fixture.pool)
+        .await
+        .expect("expire token");
+    let expired = post_prompt(
+        fixture.app.clone(),
+        &user_bear.bear_slug,
+        "session-expired",
+        Some(&expired_token.raw_token),
+        json!({ "message": "hello" }),
+    )
+    .await;
+    assert_eq!(expired.status(), StatusCode::UNAUTHORIZED);
+
+    let no_membership = create_test_user_bear(&fixture.pool, false).await;
+    let no_membership_response = post_prompt(
+        fixture.app,
+        &no_membership.bear_slug,
+        "session-no-membership",
+        Some(&no_membership.raw_token),
+        json!({ "message": "hello" }),
+    )
+    .await;
+    assert_eq!(no_membership_response.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn acp_prompt_rejects_empty_messages_before_codepool() {
+    let fixture = test_app().await;
+    let user_bear = create_test_user_bear(&fixture.pool, true).await;
+
+    let res = post_prompt(
+        fixture.app,
+        &user_bear.bear_slug,
+        "session-empty",
+        Some(&user_bear.raw_token),
+        json!({ "message": "   " }),
+    )
+    .await;
+    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+    let body = res.into_body().collect().await.unwrap().to_bytes();
+    let value: Value = serde_json::from_slice(&body).expect("JSON error body");
+    assert_eq!(value["error_code"], "validation");
+    assert!(fixture.captured_codepool_body.lock().await.is_none());
+}
+
+#[tokio::test]
+async fn acp_prompt_builds_bear_channel_request_and_maps_sse() {
+    let fixture = test_app().await;
+    let user_bear = create_test_user_bear(&fixture.pool, true).await;
+
+    let res = post_prompt(
+        fixture.app,
+        &user_bear.bear_slug,
+        "session-success",
+        Some(&user_bear.raw_token),
+        json!({
+            "message": "hello bear",
+            "conversation_id": "client-supplied-is-ignored-for-now",
+            "client": "zed"
+        }),
+    )
+    .await;
+    assert_eq!(res.status(), StatusCode::OK);
+    assert_eq!(
+        res.headers()
+            .get(header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok()),
+        Some("text/event-stream; charset=utf-8")
+    );
+    let body = res.into_body().collect().await.unwrap().to_bytes();
+    let text = String::from_utf8(body.to_vec()).expect("SSE body is UTF-8");
+    assert!(text.contains("\"type\":\"agent_message_chunk\""));
+    assert!(text.contains("hello from fake codepool"));
+    assert!(text.contains("\"type\":\"status\""));
+    assert!(text.contains("thinking"));
+    assert!(text.contains("\"type\":\"done\""));
+
+    let captured = fixture
+        .captured_codepool_body
+        .lock()
+        .await
+        .clone()
+        .expect("Codepool request captured");
+    assert_eq!(
+        captured["session_id"],
+        format!("acp:zed:{}:session-success", user_bear.bear_id)
+    );
+    assert_eq!(captured["conversation_id"], "default");
+    assert_eq!(captured["bear"]["id"], user_bear.bear_id.to_string());
+    assert_eq!(captured["bear"]["slug"], user_bear.bear_slug);
+    assert_eq!(captured["bear"]["letta_agent_id"], "agent-acp-test");
+    assert_eq!(captured["user"]["id"], user_bear.user_id);
+    assert_eq!(captured["user"]["username"], user_bear.username);
+    assert_eq!(
+        captured["user"]["membership_role"],
+        bears_db::BEAR_ROLE_ADMIN
+    );
+    assert_eq!(captured["channel"]["family"], "coding_workspace");
+    assert_eq!(captured["channel"]["client"], "zed");
+    assert_eq!(captured["channel"]["protocol"], "agent_client_protocol");
+    assert_eq!(
+        captured["message"],
+        json!({ "type": "text", "content": "hello bear" })
+    );
+    assert_eq!(captured["capabilities"]["client_tools"], json!([]));
+    assert_eq!(captured["capabilities"]["supports_cancellation"], false);
+    assert_eq!(captured["capabilities"]["supports_rich_events"], true);
+    assert!(captured["request_id"].as_str().is_some());
+}

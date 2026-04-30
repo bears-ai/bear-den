@@ -11,11 +11,13 @@ Deep Chat / browser clients
   -> Den calls Codepool `bear_channel`
   -> Codepool runs the Letta Code runtime
 
-Zed / OpenCode / coding clients (planned)
-  -> Agent Client Protocol (ACP) to Den
+Zed / OpenCode / coding clients
+  -> Agent Client Protocol (ACP) to local `bears-acp-adapter`
+  -> Adapter calls Den API ACP gateway over HTTPS/SSE
   -> Den validates auth, membership, and bear policy
   -> Den maps ACP sessions to `bear_channel`
-  -> Codepool runs the Letta Code runtime and delegates client tools back through Den
+  -> Codepool runs the Letta Code runtime
+  -> Future slices delegate client tools back through Den
 ```
 
 `bear_channel` is the internal Den -> Codepool channel contract. ACP is the planned external protocol for coding clients. OpenAI-compatible APIs remain compatibility/browser-facing surfaces, not the canonical Den -> Codepool runtime boundary.
@@ -61,13 +63,24 @@ Implemented:
   - `assistant_delta` -> `assistant_message`
   - `reasoning_delta` -> `reasoning_message`
   - `error` -> `error_message`
+- Den API ACP gateway route:
+  - `POST /acp/bears/{slug}/sessions/{session_id}/prompt`
+- ACP tokens with `acp:chat` scope, per-bear grants, hashing, last-used tracking, and revocation.
+- Local `bears-acp-adapter` for ACP JSON-RPC over stdio to Den HTTPS/SSE.
+- Basic ACP chat validated with Zed.
+
+In progress / next:
+
+- ACP gateway integration tests for auth, membership, validation, request construction, and SSE mapping.
 
 Reserved for later:
 
-- ACP gateway routes in Den.
 - ACP client tool relay.
 - Rich web UI rendering of server tool, sub-agent, and memory events.
 - Full cancellation.
+- Session resume/load/list.
+- MCP relay.
+- Adapter packaging polish.
 
 ## `bear_channel` request shape
 
@@ -135,7 +148,7 @@ The current Den browser bridge drops reserved richer events to preserve the exis
 
 ## ACP mapping spike
 
-Agent Client Protocol (ACP) is the planned external protocol for Zed/OpenCode-like agent clients.
+Agent Client Protocol (ACP) is the external protocol for Zed/OpenCode-like agent clients. BEARS currently supports the basic-chat slice through a local stdio adapter and Den's HTTPS/SSE ACP gateway.
 
 Expected mapping:
 
@@ -150,7 +163,7 @@ Expected mapping:
 | Client tool result | planned tool-result endpoint/event |
 | Cancel | planned cancellation endpoint |
 
-Den should be an ACP gateway, not a blind proxy. It will authenticate the ACP client, authorize bear access, inject trusted context, and broker client tool requests/results.
+Den is the ACP gateway, not a blind proxy. It authenticates the ACP client, authorizes bear access, injects trusted context, and will broker client tool requests/results in a later slice. The first slice intentionally sends `conversation_id = "default"` and ignores client-supplied non-default conversation ids until session load/resume semantics are implemented.
 
 ## Rollout approach
 

@@ -4,11 +4,11 @@ This document captures planned work after the initial `bear_channel` migration. 
 
 See also: [`../architecture/BEAR_CHANNEL_AND_ACP.md`](../architecture/BEAR_CHANNEL_AND_ACP.md).
 
-## Current recommendation
+## Current status
 
-Start Phase 7 with **Option A: ACP gateway basic chat mapped to `bear_channel`, without client-tool execution in the first slice**.
+Phase 7 slice 1, **ACP gateway basic chat mapped to `bear_channel`**, is implemented and has been manually validated with Zed: Zed can talk to bears through the local `bears-acp-adapter` and Den's API ACP gateway.
 
-Implementation direction: Den exposes ACP as an **API-only gateway** (`RUN_API=true`, `ACP_GATEWAY_ENABLED=true`). Stable ACP clients such as Zed launch a local stdio adapter (`bears-acp-adapter`) that speaks ACP JSON-RPC over stdin/stdout and bridges to Den's API over HTTPS/SSE.
+Implementation shape: Den exposes ACP as an **API-only gateway** (`RUN_API=true`, `ACP_GATEWAY_ENABLED=true`). Stable ACP clients such as Zed launch a local stdio adapter (`bears-acp-adapter`) that speaks ACP JSON-RPC over stdin/stdout and bridges to Den's API over HTTPS/SSE.
 
 Rationale:
 
@@ -28,13 +28,15 @@ Before deep implementation:
 
 ### Recommended vertical slices
 
-1. **ACP basic chat gateway**
+1. **ACP basic chat gateway — done / validating**
    - Den exposes an authenticated API-only ACP gateway route: `POST /acp/bears/{slug}/sessions/{session_id}/prompt`.
    - `bears-acp-adapter` runs locally beside Zed/OpenCode as the actual ACP stdio agent and calls Den's API gateway.
    - Den maps ACP session/user message fields to `bear_channel.session_id`, `conversation_id`, trusted `bear`, trusted `user`, and `channel` context.
    - Codepool remains the private runtime owner.
    - Assistant text and status/reasoning stream back through Den to the ACP adapter, which emits ACP `session/update` notifications.
    - No client tool calls are advertised or accepted yet.
+   - Manual validation: Zed can chat with bears through the adapter.
+   - Test coverage now tracks: authentication failures, invalid/expired/revoked ACP tokens, membership enforcement, empty prompt rejection, `bear_channel` request construction, and SSE event mapping.
 
 2. **Tool descriptor and capability registry**
    - Define Den-owned descriptors for all BEARS capabilities.
@@ -58,9 +60,16 @@ Before deep implementation:
    - Surface server tool, client tool, subagent, memory, and artifact events to clients that advertise support.
    - Keep the Den web chat readable with an activity strip or collapsible timeline.
 
-### ACP adapter distribution path
+### ACP adapter distribution path — backlog
 
-`bears-acp-adapter` should be distributed as a standalone CLI, not a full desktop app.
+`bears-acp-adapter` should be distributed as a standalone CLI, not a full desktop app. Packaging/distribution is intentionally backlogged while we harden gateway tests and then proceed toward capability/tool relay.
+
+Backlog notes:
+
+- Align GitHub release artifacts with npm installer expectations (`.tar.gz` / `.zip` vs raw binaries).
+- Add or remove platform targets so workflow, npm platform map, and Homebrew formula match.
+- Fill Homebrew `sha256` values from release output.
+- Decide when macOS Developer ID signing and notarization are required for non-developer users.
 
 1. **Source/dev install first**
    - Keep adapter source under `tools/bears-acp-adapter/`.
