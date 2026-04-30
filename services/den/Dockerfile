@@ -21,6 +21,10 @@ FROM chef-base AS planner
 # Only copy inputs that affect `cargo metadata` / the dependency recipe. Omitting
 # docs, migrations, .sqlx, templates, assets, etc. keeps this layer (and thus the
 # cacher stage) stable when those files change — so CI reuses compiled deps.
+# Keep Cargo config in the chef stages too: rustflags/linker settings affect
+# Cargo fingerprints, so dependencies cooked without this config are considered
+# stale when the final build runs after `COPY . .`.
+COPY .cargo ./.cargo
 COPY Cargo.toml Cargo.lock build.rs ./
 COPY src ./src
 COPY tests ./tests
@@ -28,6 +32,7 @@ RUN cargo chef prepare --recipe-path recipe.json
 
 FROM chef-base AS cacher
 COPY --from=planner /app/recipe.json recipe.json
+COPY .cargo ./.cargo
 COPY Cargo.toml Cargo.lock build.rs ./
 # Keep dependency build artifacts in the committed layer at /app/target. Do not
 # put CARGO_TARGET_DIR behind a cache mount here: doing so makes CI rerun
