@@ -19,9 +19,30 @@ pub const DEN_CAPABILITIES_LIST_SELF: &str = "den.capabilities.list_self";
 pub const DEN_CHANNEL_GET_CONTEXT: &str = "den.channel.get_context";
 pub const DEN_POLICY_GET_SELF: &str = "den.policy.get_self";
 
+pub fn provider_safe_tool_name(name: &str) -> String {
+    let safe: String = name
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '_' || c == '-' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    if safe.is_empty() {
+        "den_tool".to_string()
+    } else {
+        safe
+    }
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct DenToolDescriptor {
+    /// Canonical Den capability/tool name used for policy and invocation.
     pub name: &'static str,
+    /// Provider/API-safe alias exposed to LLM tool registries.
+    pub provider_name: String,
     pub label: &'static str,
     pub description: &'static str,
     pub kind: &'static str,
@@ -90,6 +111,7 @@ fn descriptor(
 ) -> DenToolDescriptor {
     DenToolDescriptor {
         name,
+        provider_name: provider_safe_tool_name(name),
         label,
         description,
         kind: "server_tool",

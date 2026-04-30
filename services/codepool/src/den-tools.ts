@@ -3,6 +3,7 @@ import type { BearChannelRequest } from "./bear-channel.js";
 
 export type DenToolDescriptor = {
     name?: unknown;
+    provider_name?: unknown;
     label?: unknown;
     description?: unknown;
     input_schema?: unknown;
@@ -90,15 +91,26 @@ export function makeDenExternalTools(opts: {
 const PROVIDER_TOOL_NAME_PATTERN = /^[a-zA-Z0-9_-]+$/;
 
 /**
- * OpenAI Responses rejects tool/function names containing dots, slashes, spaces,
- * etc. Den's internal capability namespace intentionally uses dotted names
- * (`den.bear.get_self`), so Codepool exposes a provider-safe alias to Letta Code
- * while invoking Den with the original trusted tool name.
+ * Fallback for older Den payloads that do not yet include `provider_name`.
+ * New Den descriptors should provide an explicit provider/API-safe alias.
  */
 export function providerSafeToolName(name: string): string {
     const safe = name.replace(/[^a-zA-Z0-9_-]/g, "_");
     if (safe && PROVIDER_TOOL_NAME_PATTERN.test(safe)) return safe;
     return "den_tool";
+}
+
+function providerToolName(
+    descriptor: DenToolDescriptor,
+    denName: string,
+): string {
+    if (
+        typeof descriptor.provider_name === "string" &&
+        PROVIDER_TOOL_NAME_PATTERN.test(descriptor.provider_name)
+    ) {
+        return descriptor.provider_name;
+    }
+    return providerSafeToolName(denName);
 }
 
 function toAgentTool(
@@ -108,7 +120,7 @@ function toAgentTool(
 ): AnyAgentTool | null {
     const denName = typeof descriptor.name === "string" ? descriptor.name : "";
     if (!denName.startsWith("den.")) return null;
-    const providerName = providerSafeToolName(denName);
+    const providerName = providerToolName(descriptor, denName);
     if (usedProviderNames.has(providerName)) {
         throw new Error(
             `Den tool provider-name collision: ${denName} maps to duplicate ${providerName}`,
