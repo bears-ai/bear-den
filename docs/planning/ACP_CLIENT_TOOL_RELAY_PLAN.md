@@ -53,6 +53,53 @@ The agent reports tool progress to the client with `session/update` notification
 
 `bears-acp-adapter` is the ACP agent from Zed's point of view, so it is responsible for sending these JSON-RPC requests/notifications to Zed and correlating responses.
 
+## ACP legibility / normal-provider guidance
+
+This design should look like a normal ACP agent to clients such as Zed. Den and Codepool are implementation details behind the local adapter.
+
+Normal ACP shape:
+
+- The ACP client starts a local agent process over stdio.
+- The client sends `initialize` with `clientCapabilities`.
+- The agent checks those capabilities before using client methods.
+- During `session/prompt`, the agent reports work with `session/update` notifications.
+- For local filesystem access, the agent calls standard client methods such as `fs/read_text_file` and `fs/write_text_file`.
+- For user approval, the agent calls standard `session/request_permission`.
+- Tool progress is represented with standard `tool_call` and `tool_call_update` updates.
+- The agent eventually replies to the original `session/prompt` with a standard `stopReason`.
+
+BEARS-specific pieces must remain below the adapter boundary during normal operation:
+
+- Den bearer tokens and `acp:chat` / `acp:tools` scopes are BEARS auth, not ACP protocol concepts.
+- Den SSE events and `tool-results/{call_id}` endpoints are adapter-to-Den internals, not ACP messages.
+- Codepool `bear_channel` and `client_tool_request` are internal runtime protocol, not ACP messages.
+- Internal capability names such as `acp_fs_read_text_file` are acceptable inside Den/Codepool, but ACP-facing updates should use normal titles/kinds and standard methods.
+
+Diagnostic exception:
+
+- It is appropriate to expose implementation details in structured error/debug metadata when they help operators identify the failing boundary.
+- Examples: Den `/version` metadata, `request_id`, `call_id`, HTTP status from Den, Codepool request id, adapter version/git SHA, and high-level failing component such as `adapter`, `den_api`, `codepool`, or `letta_code`.
+- These details should appear in JSON-RPC error `data`, adapter stderr logs, Den/Codepool structured logs, and user-facing troubleshooting text when useful.
+- They should not replace the normal ACP flow or become protocol requirements for the client.
+- Do not expose secrets, raw bearer tokens, full local file contents, or overly detailed internal URLs in client-visible errors.
+
+Legibility rule:
+
+> If someone opens Zed's ACP logs during a healthy flow, they should see ordinary ACP: `initialize`, `session/new`, `session/prompt`, `session/update` tool calls, optional `session/request_permission`, standard `fs/read_text_file` requests, and a final `session/prompt` response. They should not need to understand Den, Codepool, `bear_channel`, or BEARS token scopes to recognize the protocol flow. When something fails, structured diagnostic metadata may name those BEARS components so the user/operator can find the right logs.
+
+Implications for the implementation:
+
+- Store raw `initialize.clientCapabilities` and use them exactly as ACP defines them.
+- Do not call `fs/read_text_file` unless `clientCapabilities.fs.readTextFile` is true.
+- Do not present Den's internal `client_tool_request` event directly to the ACP client.
+- Adapter must translate internal requests into:
+  - `session/update` `tool_call` / `tool_call_update`
+  - optional `session/request_permission`
+  - `fs/read_text_file` or other standard client methods
+- Use ACP `ToolKind` values (`read`, `edit`, `execute`, etc.) and `ToolCallLocation` for UI legibility.
+- Keep BEARS auth failures as JSON-RPC errors on `session/prompt` or setup diagnostics, not as fake ACP tool failures.
+- Include correlation ids and component/version metadata in error `data` where useful, while keeping the top-level JSON-RPC error message concise and ACP-normal.
+
 ## High-level architecture
 
 1. Zed starts `bears-acp-adapter` over stdio.
@@ -71,13 +118,19 @@ The agent reports tool progress to the client with `session/update` notification
 
 Use a single read-only local file tool.
 
-Name in Den/Codepool capability descriptor:
+Internal name in Den/Codepool capability descriptor:
 
 - `acp_fs_read_text_file`
 
-ACP operation used by adapter:
+ACP-facing operation used by adapter:
 
-- `fs/read_text_file`
+- Standard client method `fs/read_text_file`
+
+ACP-facing tool-call UI:
+
+- `session/update` `tool_call` with a human title such as “Read file”
+- `kind: "read"`
+- `locations: [{ path, line? }]` when available
 
 Supported arguments:
 
@@ -392,6 +445,8 @@ Important constraint: Codepool must support an active prompt turn waiting for a 
 
 ## Adapter behavior
 
+The adapter is the ACP agent from the client's perspective. Its stdio transcript must remain standard ACP even though it bridges to Den internally.
+
 ### Initialization
 
 Store from ACP `initialize`:
@@ -418,15 +473,22 @@ When calling Den prompt endpoint, include:
 
 ### Handling Den `client_tool_request`
 
-For `acp_fs_read_text_file`:
+For internal request `acp_fs_read_text_file`:
 
-1. Emit ACP `session/update` `tool_call` with status `pending` or `in_progress`.
-2. If Den says approval is required, call ACP `session/request_permission`.
-3. If rejected/cancelled, POST Den tool result with `status = rejected` or `cancelled`.
-4. If approved or no approval required, send JSON-RPC request to client method `fs/read_text_file`.
-5. On success, emit ACP `tool_call_update` with status `completed` and a short content preview.
-6. POST result to Den.
-7. On error, emit ACP `tool_call_update` with status `failed` and POST structured error to Den.
+1. Emit ACP `session/update` `tool_call` with:
+   - `toolCallId = call_id`
+   - `title = "Read file"` or a path-specific title
+   - `kind = "read"`
+   - `status = "pending"`
+   - `rawInput = { path, line, limit }`
+   - `locations = [{ path, line }]` when available
+2. If Den says approval is required, call ACP `session/request_permission` with the same `toolCall` context.
+3. If rejected/cancelled, emit `tool_call_update` with `status = "failed"` or cancellation text, then POST Den tool result with `status = rejected` or `cancelled`.
+4. If approved or no approval required, emit `tool_call_update` with `status = "in_progress"`.
+5. Send JSON-RPC request to the client method `fs/read_text_file`.
+6. On success, emit ACP `tool_call_update` with `status = "completed"`, `rawOutput`, and a short content preview.
+7. POST result to Den.
+8. On error, emit ACP `tool_call_update` with `status = "failed"` and POST structured error to Den.
 
 Adapter must support concurrent JSON-RPC requests while a prompt is in progress. The current line-by-line handler will need a request dispatcher with pending response correlation by JSON-RPC id.
 
