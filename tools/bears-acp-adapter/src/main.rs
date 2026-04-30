@@ -390,7 +390,7 @@ async fn handle_prompt(
         .headers(headers)
         .json(&json!({
             "message": prompt,
-            "conversation_id": session_id,
+            "conversation_id": "default",
             "client": config.client,
         }))
         .send()

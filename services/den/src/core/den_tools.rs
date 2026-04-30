@@ -161,7 +161,10 @@ pub async fn invoke_den_tool(
     }
 }
 
-async fn authorize_context(pool: &PgPool, context: &DenToolInvocationContext) -> Result<(), CustomError> {
+async fn authorize_context(
+    pool: &PgPool,
+    context: &DenToolInvocationContext,
+) -> Result<(), CustomError> {
     if !bears_db::user_may_use_bear(pool, context.user_id, context.bear_id).await? {
         return Err(CustomError::Authorization(
             "user is not a member of this bear".to_string(),
@@ -170,7 +173,10 @@ async fn authorize_context(pool: &PgPool, context: &DenToolInvocationContext) ->
     Ok(())
 }
 
-async fn get_bear_self(pool: &PgPool, context: &DenToolInvocationContext) -> Result<Value, CustomError> {
+async fn get_bear_self(
+    pool: &PgPool,
+    context: &DenToolInvocationContext,
+) -> Result<Value, CustomError> {
     let bear = bears_db::get_bear(pool, context.bear_id)
         .await?
         .ok_or_else(|| CustomError::NotFound("bear not found".to_string()))?;
@@ -270,7 +276,10 @@ fn channel_context(context: &DenToolInvocationContext) -> Value {
     })
 }
 
-async fn policy_self(pool: &PgPool, context: &DenToolInvocationContext) -> Result<Value, CustomError> {
+async fn policy_self(
+    pool: &PgPool,
+    context: &DenToolInvocationContext,
+) -> Result<Value, CustomError> {
     let member_count = bears_db::count_bear_members(pool, context.bear_id).await?;
     let is_bear_admin = role_is_bear_admin(context.membership_role.as_deref());
     Ok(json!({
@@ -293,7 +302,5 @@ async fn policy_self(pool: &PgPool, context: &DenToolInvocationContext) -> Resul
 }
 
 fn format_rfc3339(value: time::OffsetDateTime) -> String {
-    value
-        .format(&Rfc3339)
-        .unwrap_or_else(|_| value.to_string())
+    value.format(&Rfc3339).unwrap_or_else(|_| value.to_string())
 }

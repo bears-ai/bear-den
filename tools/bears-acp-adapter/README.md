@@ -128,3 +128,4 @@ Production distribution should add Developer ID signing and Apple notarization b
 - The adapter writes logs only to stderr.
 - Stdout is reserved for JSON-RPC protocol messages.
 - HTTP failures include targeted hints for common cases: bad token (`401`), missing scope or membership (`403`), wrong API URL or disabled ACP gateway (`404`), wrong web/API origin (`405`), rate limits (`429`), and Den server errors (`5xx`).
+- ACP `sessionId` values identify the client-side ACP session. Den/Codepool starts the Letta Code runtime from the bear's configured `letta_agent_id`; it must not try to resume Letta using an `acp-...` session id as though it were an agent id.

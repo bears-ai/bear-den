@@ -126,11 +126,7 @@ fn map_tool_error(err: CustomError) -> Response {
     }
 }
 
-fn json_error(
-    status: StatusCode,
-    code: &'static str,
-    message: impl Into<String>,
-) -> Response {
+fn json_error(status: StatusCode, code: &'static str, message: impl Into<String>) -> Response {
     (
         status,
         Json(json!({

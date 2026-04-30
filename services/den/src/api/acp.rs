@@ -123,7 +123,7 @@ fn normalize_conversation_id(raw: Option<&str>) -> Result<String, CustomError> {
         .map(str::trim)
         .filter(|s| !s.is_empty())
         .unwrap_or("default");
-    if value == "default" {
+    if value == "default" || value.starts_with("acp-") {
         return Ok("default".to_string());
     }
     let ok = (value.starts_with("conv-") || value.starts_with("new-") || value.starts_with("acp-"))

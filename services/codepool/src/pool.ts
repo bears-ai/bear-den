@@ -34,6 +34,11 @@ function isMissingConversationError(err: unknown): boolean {
     return /Conversation\s+conv-[A-Za-z0-9_-]+\s+not found/i.test(s);
 }
 
+function isMissingAcpSessionAsAgentError(err: unknown): boolean {
+    const s = err instanceof Error ? err.message : String(err);
+    return /Agent\s+acp-[A-Za-z0-9_-]+\s+not found/i.test(s);
+}
+
 type Entry = {
     session: Session;
     lastUsed: number;
@@ -255,7 +260,8 @@ export class ConversationSessionPool {
                         attempt === 0 &&
                         conversationId !== "default" &&
                         !isPendingNewConversationId(conversationId) &&
-                        isMissingConversationError(e)
+                        (isMissingConversationError(e) ||
+                            isMissingAcpSessionAsAgentError(e))
                     ) {
                         const ent = this.map.get(key);
                         if (ent) {
