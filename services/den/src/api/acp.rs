@@ -118,28 +118,6 @@ fn api_auth_error_response(err: ApiError, request_id: Uuid) -> Response {
         .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())
 }
 
-fn normalize_conversation_id(raw: Option<&str>) -> Result<String, CustomError> {
-    let value = raw
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .unwrap_or("default");
-    if value == "default" {
-        return Ok("default".to_string());
-    }
-    let ok = (value.starts_with("conv-") || value.starts_with("new-") || value.starts_with("acp-"))
-        && value.len() > 8
-        && value
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_');
-    if ok {
-        Ok(value.to_string())
-    } else {
-        Err(CustomError::ValidationError(format!(
-            "invalid conversation_id for ACP session: {value}"
-        )))
-    }
-}
-
 fn normalize_acp_client(raw: Option<&str>) -> String {
     let value = raw
         .map(str::trim)
@@ -254,10 +232,20 @@ async fn prompt_inner(
         )));
     }
 
-    let conversation_id = match normalize_conversation_id(body.conversation_id.as_deref()) {
-        Ok(id) => id,
-        Err(err) => return Ok(Err(err)),
-    };
+    if let Some(raw_conversation_id) = body
+        .conversation_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty() && *s != "default")
+    {
+        tracing::info!(
+            %request_id,
+            acp_session_id = %session_id,
+            requested_conversation_id = %raw_conversation_id,
+            "ACP gateway ignoring client conversation_id; loadSession is not supported yet"
+        );
+    }
+    let conversation_id = "default".to_string();
     let client = normalize_acp_client(body.client.as_deref());
     let username = user::user_by_id(&state.sqlx_pool, user_id)
         .await
