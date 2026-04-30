@@ -53,6 +53,14 @@ You can validate configuration without starting ACP stdio:
 bears-acp-adapter --check-config
 ```
 
+You can also validate which Den server build the adapter reaches, without speaking ACP to the editor:
+
+```bash
+bears-acp-adapter --check-server
+```
+
+This fetches `GET /version` from `BEARS_DEN_API_URL` and prints Den's service name, package version, git SHA, and build timestamp when available.
+
 If the adapter is started by an ACP client with missing or invalid configuration, it stays running and returns a JSON-RPC error on `session/prompt` with specific setup instructions. This avoids opaque client-side errors such as “server shut down unexpectedly” when, for example, `BEARS_DEN_API_URL` was never set.
 
 ## Zed custom agent config
@@ -124,6 +132,7 @@ Production distribution should add Developer ID signing and Apple notarization b
 ## Debugging
 
 - Run `bears-acp-adapter --check-config` from the same shell or wrapper environment used by your editor.
+- Run `bears-acp-adapter --check-server` to print the Den `/version` response reached by `BEARS_DEN_API_URL`.
 - Open Zed command palette: `dev: open acp logs`.
 - The adapter writes logs only to stderr.
 - Stdout is reserved for JSON-RPC protocol messages.

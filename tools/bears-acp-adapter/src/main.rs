@@ -19,6 +19,7 @@ struct Config {
 struct RuntimeConfig {
     config: Option<Config>,
     diagnostics: Vec<String>,
+    check_server: bool,
 }
 
 #[derive(Debug)]
@@ -49,6 +50,14 @@ async fn run() -> Result<()> {
         .timeout(std::time::Duration::from_secs(300))
         .build()
         .context("build HTTP client")?;
+
+    if runtime.check_server {
+        let Some(config) = runtime.config.as_ref() else {
+            return Err(anyhow!(runtime.configuration_error_message()));
+        };
+        check_server_version(&http, config).await?;
+        return Ok(());
+    }
 
     let stdin = BufReader::new(io::stdin());
     let mut lines = stdin.lines();
@@ -91,6 +100,7 @@ impl RuntimeConfig {
         let mut token_env = env::var("BEARS_DEN_TOKEN_ENV").unwrap_or_default();
         let mut client = env::var("BEARS_ACP_CLIENT").unwrap_or_else(|_| "zed".to_string());
         let mut check_config = false;
+        let mut check_server = false;
 
         let mut args = env::args().skip(1);
         while let Some(arg) = args.next() {
@@ -101,6 +111,11 @@ impl RuntimeConfig {
                 "--token-env" => token_env = require_arg_value("--token-env", args.next())?,
                 "--client" => client = require_arg_value("--client", args.next())?,
                 "--check-config" => check_config = true,
+                "--check-server" => check_server = true,
+                "--version" | "-V" => {
+                    print_version_to_stderr();
+                    std::process::exit(0);
+                }
                 "--help" | "-h" => {
                     print_help_to_stderr();
                     std::process::exit(0);
@@ -151,6 +166,7 @@ impl RuntimeConfig {
         let runtime = Self {
             config,
             diagnostics,
+            check_server,
         };
         if check_config {
             if runtime.is_configured() {
@@ -227,12 +243,23 @@ fn require_arg_value(flag: &str, value: Option<String>) -> Result<String> {
     value.ok_or_else(|| anyhow!("{flag} requires a value"))
 }
 
+fn print_version_to_stderr() {
+    eprintln!(
+        "bears-acp-adapter {}\nBuild git SHA: {}\nACP conversation id mode: default",
+        env!("CARGO_PKG_VERSION"),
+        env!("BEARS_ACP_ADAPTER_GIT_SHA")
+    );
+}
+
 fn print_help_to_stderr() {
     eprintln!(
-        "Usage: bears-acp-adapter --api-url <url> --bear <slug> [--client zed] [--token-env BEARS_DEN_TOKEN]\n\n\
-Options:\n  --api-url <url>        Den API origin, for example https://api.bears.example\n  --bear <slug>          Bear slug to chat with\n  --token <token>        Den bearer token with acp:chat scope\n  --token-env <env-var>  Read the Den bearer token from this environment variable\n  --client <name>        Client label: zed, opencode, or acp_adapter\n  --check-config         Validate configuration and exit without starting ACP stdio\n  --help                 Show this help\n\n\
+        "bears-acp-adapter {}\nBuild git SHA: {}\nACP conversation id mode: default\n\n\
+Usage: bears-acp-adapter --api-url <url> --bear <slug> [--client zed] [--token-env BEARS_DEN_TOKEN]\n\n\
+Options:\n  --api-url <url>        Den API origin, for example https://api.bears.example\n  --bear <slug>          Bear slug to chat with\n  --token <token>        Den bearer token with acp:chat scope\n  --token-env <env-var>  Read the Den bearer token from this environment variable\n  --client <name>        Client label: zed, opencode, or acp_adapter\n  --check-config         Validate configuration and exit without starting ACP stdio\n  --check-server         Fetch Den /version and exit without starting ACP stdio\n  --version              Show version/build behavior and exit\n  --help                 Show this help\n\n\
 Environment fallbacks:\n  BEARS_DEN_API_URL\n  BEARS_BEAR_SLUG\n  BEARS_DEN_TOKEN\n  BEARS_DEN_TOKEN_ENV\n  BEARS_ACP_CLIENT\n\n\
-BEARS_DEN_API_URL should be the API origin only, not the full /acp/bears/... endpoint."
+BEARS_DEN_API_URL should be the API origin only, not the full /acp/bears/... endpoint.",
+        env!("CARGO_PKG_VERSION"),
+        env!("BEARS_ACP_ADAPTER_GIT_SHA")
     );
 }
 
@@ -421,6 +448,51 @@ async fn handle_prompt(
 
     let stop_reason = if saw_done { "end_turn" } else { "end_turn" };
     write_response(response_id, Ok(json!({ "stopReason": stop_reason }))).await?;
+    Ok(())
+}
+
+async fn check_server_version(http: &reqwest::Client, config: &Config) -> Result<()> {
+    let url = format!("{}/version", config.api_url);
+    let response = http
+        .get(&url)
+        .send()
+        .await
+        .with_context(|| format!("could not fetch Den server version from {url}"))?;
+    let status = response.status();
+    let body = response.text().await.unwrap_or_default();
+    if !status.is_success() {
+        return Err(anyhow!(
+            "Den server version check failed with HTTP {status}: {}",
+            body.trim()
+        ));
+    }
+
+    match serde_json::from_str::<Value>(&body) {
+        Ok(value) => {
+            eprintln!(
+                "Den server version:\n  service: {}\n  version: {}\n  git_sha: {}\n  built_at_utc: {}",
+                value
+                    .get("service")
+                    .and_then(Value::as_str)
+                    .unwrap_or("unknown"),
+                value
+                    .get("version")
+                    .and_then(Value::as_str)
+                    .unwrap_or("unknown"),
+                value
+                    .get("git_sha")
+                    .and_then(Value::as_str)
+                    .unwrap_or("unknown"),
+                value
+                    .get("built_at_utc")
+                    .and_then(Value::as_str)
+                    .unwrap_or("unknown"),
+            );
+        }
+        Err(_) => {
+            eprintln!("Den server version response from {url}:\n{}", body.trim());
+        }
+    }
     Ok(())
 }
 
