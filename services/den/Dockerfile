@@ -1,10 +1,12 @@
 # syntax=docker/dockerfile:1
 
 # Multi-stage build with cargo-chef so dependency compilation is cached in a
-# Docker layer that only invalidates when Cargo.lock (recipe) changes — not
-# when templates or other application sources change. GitHub Actions still
-# uses buildx cache (gha); this structure makes layer reuse reliable even when
-# mount caches miss.
+# Docker layer that only invalidates when Cargo.lock / Cargo.toml / build.rs
+# dependency metadata changes — not when templates or other application sources
+# change. GitHub Actions imports/exports buildx cache; this structure makes
+# dependency layer reuse visible as a BuildKit `CACHED` step instead of running
+# `cargo chef cook` on every build and merely reporting Cargo artifacts as
+# `Fresh`.
 
 ARG RUST_VERSION=1.92.0
 
@@ -27,14 +29,14 @@ RUN cargo chef prepare --recipe-path recipe.json
 FROM chef-base AS cacher
 COPY --from=planner /app/recipe.json recipe.json
 COPY Cargo.toml Cargo.lock build.rs ./
-# Target artifacts must live in the image layer (not only a cache mount) so a
-# later stage can `COPY --from=cacher /app/target`. Compile into a cache mount,
-# then snapshot into /app/target for the committed layer.
-RUN --mount=type=cache,target=/usr/local/cargo/registry/,id=den-cargo-registry \
-    --mount=type=cache,target=/usr/local/cargo/git/db,id=den-cargo-git \
-    --mount=type=cache,target=/mnt/cargo-target,id=den-cargo-target \
-    CARGO_TARGET_DIR=/mnt/cargo-target cargo chef cook --release --recipe-path recipe.json \
-    && mkdir -p /app/target && cp -a /mnt/cargo-target/. /app/target/
+# Keep dependency build artifacts in the committed layer at /app/target. Do not
+# put CARGO_TARGET_DIR behind a cache mount here: doing so makes CI rerun
+# `cargo chef cook` and print many `Fresh` lines instead of reusing this step as
+# a normal Docker layer. Registry/git cache mounts still avoid re-downloading
+# crates when this layer genuinely has to be rebuilt.
+RUN --mount=type=cache,target=/usr/local/cargo/registry/,id=den-cargo-registry,sharing=locked \
+    --mount=type=cache,target=/usr/local/cargo/git/db,id=den-cargo-git,sharing=locked \
+    cargo chef cook --release --recipe-path recipe.json
 
 FROM rust-base AS build
 ARG APP_NAME=den
@@ -44,10 +46,12 @@ ARG SQLX_OFFLINE=false
 ENV GIT_SHA=${GIT_SHA}
 COPY --from=cacher /app/target target
 COPY . .
-# Same registry/target cache mount IDs as cacher so this step does not
-# re-download crates.io sources that chef already populated in one build.
-RUN --mount=type=cache,target=/usr/local/cargo/registry/,id=den-cargo-registry \
-    --mount=type=cache,target=/usr/local/cargo/git/db,id=den-cargo-git \
+# Same registry/git cache mount IDs as cacher so this step does not re-download
+# crates.io sources that chef already populated in one build. The target dir is
+# copied from the dependency layer above, so dependencies should be `Fresh`; only
+# the Den crate itself should rebuild when source files or GIT_SHA change.
+RUN --mount=type=cache,target=/usr/local/cargo/registry/,id=den-cargo-registry,sharing=locked \
+    --mount=type=cache,target=/usr/local/cargo/git/db,id=den-cargo-git,sharing=locked \
     export DATABASE_URL="${DATABASE_URL}" SQLX_OFFLINE="${SQLX_OFFLINE}" && \
     echo "DATABASE_URL=$DATABASE_URL" && echo "SQLX_OFFLINE=$SQLX_OFFLINE" && \
     cargo build --locked --release --features=production --message-format=short && \
