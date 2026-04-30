@@ -186,65 +186,59 @@ Initial descriptor rules:
 
 ## Den product/UI changes
 
-Yes: enabling client tool relay must update Den's token generation and token listing UI so `acp:tools` is visible and intentionally granted.
+Yes: enabling client tool relay should update Den's token generation and token listing UI so users understand what a **Code token** can do.
 
-Current token UX creates bear-scoped ACP tokens for basic chat. For tool relay, Den should make scopes explicit.
+Product assumption for Den UI: a bear-scoped **Code token** authorizes both `acp:chat` and `acp:tools`. Users do not choose between separate “chat-only” and “tools-enabled” ACP tokens in the primary UI. The token is for coding clients such as Zed/OpenCode, and local tool access is governed by the active client/session, Den policy, and ACP permission flows.
 
 ### Token generation UI
 
-Update the bear “Code with …” token generation page to support at least two modes:
+Keep the bear “Code with …” token generation page focused on creating a single kind of token:
 
-1. **Chat only**
-   - Scope: `acp:chat`
-   - Copy: “Use this token to chat with this bear from Zed/OpenCode.”
-   - Default for safest compatibility.
-
-2. **Chat + local client tools**
-   - Scopes: `acp:chat`, `acp:tools`
-   - Copy: “Allow this bear to request approved local tools from your editor for this session, such as reading workspace files.”
-   - Include a warning that tool availability depends on the active client/session and Den policy.
+1. **Code token**
+   - Scopes stored by Den: `acp:chat`, `acp:tools`
+   - Copy: “Use this token to chat with this bear from Zed/OpenCode and allow approved local editor tools, such as reading workspace files.”
+   - Include a warning that tool availability depends on the active client/session and Den policy, and that the editor may still ask for permission before sensitive local actions.
 
 The UI should not imply that `acp:tools` grants every possible tool. It only authorizes Den to broker policy-approved client tools exposed by the active ACP client.
 
 Recommended controls:
 
 - Token name input, as today.
-- Scope choice:
-  - radio buttons: “Chat only” vs “Chat + local tools”, or
-  - checkbox: “Allow local editor tools”, with `acp:chat` always included.
-- A short permissions summary before generation.
+- A permissions summary for the Code token:
+  - chat with this bear from coding clients;
+  - broker approved local editor tools exposed by the active ACP client;
+  - tools are session-scoped and unavailable after the client disconnects.
 - After generation, show Zed config plus a reminder that the raw token is shown once.
 
 ### Token listing UI
 
-Update the account ACP token table to show scopes clearly.
+Update the account token table to make Code tokens easy to audit without forcing users to reason about internal scope names.
 
 Add or surface:
 
-- `Scopes` column or compact badges:
-  - `chat`
-  - `tools`
+- `Type` or compact badge: `Code`
+- Optional advanced/details view showing stored scopes: `acp:chat`, `acp:tools`
 - Bear restriction, as today.
 - Last used, as today.
 - Revoked status, as today.
 - Optional future: last tool use timestamp or tool-use count.
 
-For tokens with `acp:tools`, include visual affordance that the token can broker local editor tools. This helps users audit and revoke higher-privilege tokens.
+For Code tokens, include a visual affordance that the token can broker local editor tools. This helps users audit and revoke higher-privilege tokens.
 
 ### Token creation backend
 
-Current `acp_tokens::create_for_bear` uses a fixed default scope. Add a scope-aware creation path:
+Current `acp_tokens::create_for_bear` uses a fixed default scope. Update the Code-token creation path:
 
-- Validate requested scopes against an allowlist.
-- Always include `acp:chat` for ACP adapter tokens.
-- Include `acp:tools` only when explicitly selected.
+- Always store both `acp:chat` and `acp:tools` for Code tokens created by Den UI.
+- Keep scope validation against an allowlist so future token types or API-driven creation cannot persist unknown scopes.
 - Store scopes in the existing `acp_tokens.scopes` JSONB column.
 
 ### Token authorization behavior
 
 - Basic prompt route continues to require `acp:chat`.
 - Tool-enabled prompt requests and tool-result endpoints require `acp:tools`.
-- If a client advertises capabilities but the token lacks `acp:tools`, Den should omit all client tool descriptors or reject an explicitly tool-enabled request. Recommended MVP behavior: omit descriptors and log `acp_tools_scope_missing`, so chat still works.
+- Den UI-created Code tokens should satisfy both requirements because they include both scopes.
+- If Den sees a legacy/API-created token that has `acp:chat` but lacks `acp:tools`, Den should omit all client tool descriptors and log `acp_tools_scope_missing`, so chat still works.
 
 ## Den API changes
 
@@ -573,7 +567,8 @@ Mapping examples:
 - Den validates arguments before forwarding to adapter and again before forwarding results to Codepool.
 - Den enforces token scope:
   - `acp:chat` remains enough for basic chat.
-  - Add `acp:tools` before enabling client tool relay for user tokens.
+  - `acp:tools` is required before Den brokers client tools.
+  - Den UI-created Code tokens include both scopes by default.
 - Den checks membership at prompt and result time.
 - Den records enough context to answer: who requested what local tool, from which client, for which bear/session, with which arguments, and what result/error came back.
 - Den should redact or summarize large/sensitive result content in durable audit where appropriate. The full result may be forwarded to Codepool for the active turn, but audit storage should have size and sensitivity limits.
@@ -621,7 +616,9 @@ Metrics:
 
 - Prompt with `client_capabilities.fs.readTextFile = true` includes `acp_fs_read_text_file` in the Codepool request.
 - Prompt with missing/false read capability omits client tools.
-- Prompt with `acp:chat` but not `acp:tools` is rejected for tool-enabled requests once `acp:tools` is enforced.
+- Den UI-created Code tokens persist both `acp:chat` and `acp:tools`.
+- Prompt with a legacy/API-created `acp:chat` token but no `acp:tools` omits client tool descriptors and logs `acp_tools_scope_missing`.
+- Tool-result endpoint rejects tokens without `acp:tools`.
 - Den rejects Codepool `client_tool_request` for undeclared tool name.
 - Den persists a pending call for declared tool request.
 - Den streams adapter-facing `client_tool_request` with expected payload.
@@ -653,7 +650,7 @@ Metrics:
 1. **Descriptor groundwork in Den**
    - Add normalized `AcpClientCapabilities` parsing.
    - Add `acp_fs_read_text_file` descriptor construction.
-   - Add `acp:tools` scope support for ACP token creation or a feature flag to temporarily allow existing tokens in dev.
+   - Update Code-token creation so Den UI stores both `acp:chat` and `acp:tools`; keep legacy/API-created chat-only tokens from receiving tool descriptors.
 
 2. **Adapter capability forwarding**
    - Store `initialize.clientCapabilities`.
@@ -689,7 +686,7 @@ Metrics:
 ## Open questions
 
 1. Should first-slice file reads require ACP `session/request_permission`, or is Zed's external-agent trust boundary sufficient for MVP?
-2. Should `acp:tools` be required immediately, or introduced with a migration path for existing ACP tokens?
+2. Should existing chat-only ACP tokens be migrated to Code tokens with `acp:tools`, or remain chat-only until regenerated?
 3. How should Codepool handle warm sessions when the authorized client tool descriptor set changes between ACP sessions or prompt turns?
 4. Should Den stream tool requests over the existing prompt SSE response, or split tool relay onto a dedicated bidirectional-ish long-poll/SSE channel?
 5. How much local file content should Den store in audit, if any, versus storing only hashes/summaries?
@@ -698,8 +695,9 @@ Metrics:
 ## Recommended MVP decisions
 
 - First tool: `acp_fs_read_text_file` only.
-- Require `acp:tools` for tool relay; keep `acp:chat` for chat-only.
-- Existing ACP tokens remain chat-only until regenerated or explicitly upgraded.
+- Require `acp:tools` for tool relay.
+- Den UI-created Code tokens include both `acp:chat` and `acp:tools`.
+- Legacy/API-created ACP tokens without `acp:tools` remain chat-only until regenerated, migrated, or explicitly upgraded.
 - No terminal or write descriptors in MVP even if client supports them.
 - Use existing prompt SSE stream for Den -> adapter tool requests.
 - Add `POST /acp/bears/{slug}/sessions/{session_id}/tool-results/{call_id}` for adapter -> Den results.
