@@ -76,6 +76,39 @@ block head %} {{ super() }}
         errEl.hidden = false;
     }
 
+    function denLoginRedirectUrl() {
+        return (
+            "/login?next=" +
+            encodeURIComponent(
+                window.location.pathname + window.location.search,
+            )
+        );
+    }
+
+    function denRedirectToLogin() {
+        window.location.href = denLoginRedirectUrl();
+    }
+
+    function denResponseRequiresLogin(response) {
+        if (!response) return false;
+        if (response.status === 401) return true;
+        // Expired sessions on POST chat requests can be redirected to `/login` while
+        // preserving the original method, which resolves as HTTP 405 because `/login`
+        // only accepts GET. Treat that as an expired Den web session from chat APIs.
+        if (response.status === 405) return true;
+        if (response.redirected && response.url) {
+            try {
+                return (
+                    new URL(response.url, window.location.origin).pathname ===
+                    "/login"
+                );
+            } catch (_) {
+                return false;
+            }
+        }
+        return false;
+    }
+
     function cv(name) {
         return getComputedStyle(document.documentElement)
             .getPropertyValue(name)
@@ -429,10 +462,8 @@ block head %} {{ super() }}
             credentials: "same-origin",
         })
             .then(function (response) {
-                if (response.status === 401) {
-                    window.location.href =
-                        "/login?next=" +
-                        encodeURIComponent(window.location.pathname);
+                if (denResponseRequiresLogin(response)) {
+                    denRedirectToLogin();
                     return { messages: [], has_more: false, next_before: null };
                 }
                 if (!response.ok) {
@@ -836,10 +867,8 @@ block head %} {{ super() }}
                     response.headers.get("x-request-id") ||
                     response.headers.get("X-Request-Id") ||
                     "";
-                if (response.status === 401) {
-                    window.location.href =
-                        "/login?next=" +
-                        encodeURIComponent(window.location.pathname);
+                if (denResponseRequiresLogin(response)) {
+                    denRedirectToLogin();
                     return;
                 }
                 if (!response.ok) {
@@ -1114,10 +1143,8 @@ block head %} {{ super() }}
             },
             body: JSON.stringify(body),
         }).then(function (response) {
-            if (response.status === 401) {
-                window.location.href =
-                    "/login?next=" +
-                    encodeURIComponent(window.location.pathname);
+            if (denResponseRequiresLogin(response)) {
+                denRedirectToLogin();
                 return { __den_skip: true };
             }
             if (!response.ok) {
@@ -1266,10 +1293,8 @@ block head %} {{ super() }}
             },
         )
             .then(function (response) {
-                if (response.status === 401) {
-                    window.location.href =
-                        "/login?next=" +
-                        encodeURIComponent(window.location.pathname);
+                if (denResponseRequiresLogin(response)) {
+                    denRedirectToLogin();
                     return { __den_skip: true };
                 }
                 if (!response.ok) {
