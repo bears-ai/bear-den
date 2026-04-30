@@ -109,7 +109,15 @@ You usually do not need to set internal service URLs. The compose file already d
 
 ## 6. Deploy
 
-Click **Deploy**.
+For the initial deploy, click **Deploy** in Coolify.
+
+For ongoing `main` updates, prefer the GitHub-coordinated deployment flow:
+
+1. In Coolify, disable automatic deploys on Git push for this Compose resource if they are enabled.
+2. Keep the repository secrets `COOLIFY_WEBHOOK` and `COOLIFY_TOKEN` configured in GitHub.
+3. Let `.github/workflows/coolify-deploy.yml` trigger the Coolify deploy webhook.
+
+That workflow waits for the Den and/or Codepool image workflows when a push changes `services/den/**` or `services/codepool/**`, then triggers Coolify only after the required GHCR images are available. This avoids Coolify pulling stale `latest` image tags before GitHub has finished rebuilding them.
 
 If deploy preflight fails, check the missing environment variable in the logs first. The compose file intentionally defaults required secrets and database URLs to `SETME` so bad deploys fail early.
 

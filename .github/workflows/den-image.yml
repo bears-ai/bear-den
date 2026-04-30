@@ -2,75 +2,66 @@ name: Den – build & push image
 # inspired by https://nusendra.com/post/github-actions-ghcr-coolify-deployment
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - "services/den/**"
-      - ".github/workflows/den-image.yml"
-  workflow_dispatch:
+    push:
+        branches: [main]
+        paths:
+            - "services/den/**"
+            - ".github/workflows/den-image.yml"
+    workflow_dispatch:
 
 env:
-  REGISTRY: ghcr.io
-  # IMAGE_NAME is set in the job (GHCR / buildx require lowercase repository paths).
+    REGISTRY: ghcr.io
+    # IMAGE_NAME is set in the job (GHCR / buildx require lowercase repository paths).
 
 permissions:
-  contents: read
-  packages: write
+    contents: read
+    packages: write
 
 jobs:
-  build-and-push:
-    runs-on: ubuntu-24.04-arm
-    steps:
-      - uses: actions/checkout@v4
+    build-and-push:
+        runs-on: ubuntu-24.04-arm
+        steps:
+            - uses: actions/checkout@v4
 
-      - name: Set image name (GHCR requires lowercase)
-        run: |
-          owner_lc=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
-          echo "IMAGE_NAME=${owner_lc}/den" >> "$GITHUB_ENV"
+            - name: Set image name (GHCR requires lowercase)
+              run: |
+                  owner_lc=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+                  echo "IMAGE_NAME=${owner_lc}/den" >> "$GITHUB_ENV"
 
-      - uses: docker/setup-buildx-action@v3
+            - uses: docker/setup-buildx-action@v3
 
-      - name: Log in to GHCR
-        uses: docker/login-action@v3
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+            - name: Log in to GHCR
+              uses: docker/login-action@v3
+              with:
+                  registry: ${{ env.REGISTRY }}
+                  username: ${{ github.actor }}
+                  password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Extract metadata
-        id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
-          tags: |
-            type=sha,prefix=
-            type=raw,value=latest,enable={{is_default_branch}}
+            - name: Extract metadata
+              id: meta
+              uses: docker/metadata-action@v5
+              with:
+                  images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+                  tags: |
+                      type=sha,prefix=
+                      type=raw,value=latest,enable={{is_default_branch}}
 
-      - name: Build and push
-        uses: docker/build-push-action@v6
-        with:
-          context: services/den
-          push: true
-          platforms: linux/arm64
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          build-args: |
-            SQLX_OFFLINE=true
-            GIT_SHA=${{ github.sha }}
-          # GHA cache alone often misses or evicts large Rust layers; registry
-          # cache persists dependency compile layers on GHCR alongside the app image.
-          cache-from: |
-            type=gha,scope=den-image
-            type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:buildcache
-          cache-to: |
-            type=gha,scope=den-image,mode=max,ignore-error=true
-            type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:buildcache,mode=max
-
-      # Same webhook caveats as codepool-image.yml (404 = wrong/stale COOLIFY_WEBHOOK for this stack).
-      - name: Trigger Coolify deploy
-        if: success()
-        continue-on-error: true
-        run: |
-          curl -X GET "${{ secrets.COOLIFY_WEBHOOK }}" \
-            -H "Authorization: Bearer ${{ secrets.COOLIFY_TOKEN }}" \
-            --fail --silent --show-error
+            - name: Build and push
+              uses: docker/build-push-action@v6
+              with:
+                  context: services/den
+                  push: true
+                  platforms: linux/arm64
+                  tags: ${{ steps.meta.outputs.tags }}
+                  labels: ${{ steps.meta.outputs.labels }}
+                  build-args: |
+                      SQLX_OFFLINE=true
+                      GIT_SHA=${{ github.sha }}
+                  # GHA cache alone often misses or evicts large Rust layers; registry
+                  # cache persists dependency compile layers on GHCR alongside the app image.
+                  cache-from: |
+                      type=gha,scope=den-image
+                      type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:buildcache
+                  cache-to: |
+                      type=gha,scope=den-image,mode=max,ignore-error=true
+                      type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:buildcache,mode=max
