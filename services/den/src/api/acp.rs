@@ -265,6 +265,18 @@ async fn prompt_inner(
         crate::core::bears::effective_runtime_plan(bear.runtime_plan.as_ref().map(|j| j.as_ref()));
 
     let channel_session_id = format!("acp:{client}:{}:{session_id}", bear.id);
+    let letta_agent_id = bear.letta_agent_id.as_deref().unwrap_or("unknown");
+    tracing::info!(
+        %request_id,
+        acp_session_id = %session_id,
+        bear_slug = %bear.slug,
+        bear_id = %bear.id,
+        letta_agent_id = %letta_agent_id,
+        client = %client,
+        codepool_session_id = %channel_session_id,
+        codepool_conversation_id = %conversation_id,
+        "ACP gateway routing prompt to Codepool"
+    );
     let upstream = match state
         .codepool
         .post_bear_channel_message_for_channel_streaming(
@@ -326,11 +338,20 @@ fn map_bear_channel_event_to_acp_adapter_event(event: &serde_json::Value) -> Opt
             "type": "status",
             "content": { "type": "text", "text": event.get("text").and_then(|v| v.as_str()).unwrap_or("") },
         }),
-        "error" => serde_json::json!({
-            "type": "error",
-            "message": event.get("message").and_then(|v| v.as_str()).unwrap_or("Upstream error"),
-            "detail": event.get("detail").and_then(|v| v.as_str()),
-        }),
+        "error" => {
+            let mut mapped = serde_json::json!({
+                "type": "error",
+                "message": event.get("message").and_then(|v| v.as_str()).unwrap_or("Upstream error"),
+                "detail": event.get("detail").and_then(|v| v.as_str()),
+            });
+            if let Some(context) = event.get("context") {
+                mapped["context"] = context.clone();
+            }
+            if let Some(request_id) = event.get("request_id") {
+                mapped["request_id"] = request_id.clone();
+            }
+            mapped
+        }
         "done" => serde_json::json!({
             "type": "done",
             "outcome": event.get("outcome").and_then(|v| v.as_str()).unwrap_or("ok"),

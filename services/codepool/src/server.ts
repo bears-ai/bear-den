@@ -12,6 +12,7 @@ import { handleOpenAIChatCompletions } from "./openai.js";
 import {
     bearChannelEventToSseDataLine,
     parseBearChannelRequest,
+    runtimeErrorContext,
     sdkMessageToBearChannelEvents,
     type BearChannelRequest,
 } from "./bear-channel.js";
@@ -469,19 +470,29 @@ export function attachRoutes(
             } catch (e) {
                 recordStreamFinishedError();
                 const err = e instanceof Error ? e.message : String(e);
+                const context = runtimeErrorContext(
+                    sessionId,
+                    parsed.conversationId,
+                    parsed.agentId,
+                    parsed.bearId,
+                );
                 console.log(
                     JSON.stringify({
                         event: "bear_channel_message_error",
                         service: "bears-codepool",
                         request_id: requestId,
                         error: err,
+                        ...context,
                     }),
                 );
                 res.write(
                     `data: ${bearChannelEventToSseDataLine({
                         type: "error",
-                        message: err,
+                        message:
+                            "Letta Code failed to initialize or stream a session.",
+                        detail: err,
                         request_id: requestId,
+                        context,
                     })}\n\n`,
                 );
                 res.end();

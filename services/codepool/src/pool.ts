@@ -25,6 +25,14 @@ function resumeTargetFor(agentId: string, conversationId: string): string {
     return conversationId === "default" ? agentId : conversationId;
 }
 
+function sessionMethodFor(
+    conversationId: string,
+): "createSession" | "resumeSession" {
+    return isPendingNewConversationId(conversationId)
+        ? "createSession"
+        : "resumeSession";
+}
+
 function isPendingNewConversationId(conversationId: string): boolean {
     return conversationId.startsWith("new-");
 }
@@ -199,9 +207,22 @@ export class ConversationSessionPool {
         if (cwd) {
             sessionOpts.cwd = cwd;
         }
-        const session = isPendingNewConversationId(conversationId)
-            ? createSession(agentId, sessionOpts)
-            : resumeSession(rt, sessionOpts);
+        const method = sessionMethodFor(conversationId);
+        console.log(
+            JSON.stringify({
+                event: "letta_code_session_open",
+                service: "bears-codepool",
+                agent_id: agentId,
+                conversation_id: conversationId,
+                resume_target: rt,
+                session_method: method,
+                cwd: cwd || null,
+            }),
+        );
+        const session =
+            method === "createSession"
+                ? createSession(agentId, sessionOpts)
+                : resumeSession(rt, sessionOpts);
         this.map.set(key, { session, lastUsed: now });
         return session;
     }

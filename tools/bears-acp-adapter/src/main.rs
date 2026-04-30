@@ -666,10 +666,19 @@ fn format_den_event_error(event: &Value) -> String {
         .get("message")
         .and_then(Value::as_str)
         .unwrap_or("BEARS upstream error");
-    match event.get("detail").and_then(Value::as_str) {
+    let mut out = match event.get("detail").and_then(Value::as_str) {
         Some(detail) if !detail.trim().is_empty() => format!("{message}: {detail}"),
         _ => message.to_string(),
+    };
+    if let Some(context) = event.get("context") {
+        out.push_str("\nContext: ");
+        out.push_str(&context.to_string());
     }
+    if let Some(request_id) = event.get("request_id").and_then(Value::as_str) {
+        out.push_str("\nCodepool request_id: ");
+        out.push_str(request_id);
+    }
+    out
 }
 
 async fn handle_den_event(session_id: &str, event: &Value) -> Result<bool> {
@@ -697,11 +706,8 @@ async fn handle_den_event(session_id: &str, event: &Value) -> Result<bool> {
             Ok(false)
         }
         "error" => {
-            let message = event
-                .get("message")
-                .and_then(Value::as_str)
-                .unwrap_or("BEARS upstream error");
-            send_agent_thought_chunk(session_id, message).await?;
+            let message = format_den_event_error(event);
+            send_agent_thought_chunk(session_id, &message).await?;
             Ok(false)
         }
         "done" => Ok(true),

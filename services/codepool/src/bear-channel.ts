@@ -85,6 +85,7 @@ export type BearChannelEvent =
           detail?: string;
           error_type?: string;
           request_id?: string;
+          context?: BearChannelErrorContext;
       }
     | { type: "conversation_resolved"; conversation_id: string }
     | {
@@ -98,6 +99,15 @@ export type BearChannelToolCall = {
     arguments: unknown;
 };
 
+export type BearChannelErrorContext = {
+    session_id: string;
+    conversation_id: string;
+    agent_id: string;
+    bear_id: string;
+    resume_target: string;
+    session_method: "createSession" | "resumeSession";
+};
+
 export type ParsedBearChannelRequest = {
     conversationId: string;
     agentId: string;
@@ -105,6 +115,23 @@ export type ParsedBearChannelRequest = {
     userText: string;
     plan: BearRuntimePlan;
 };
+
+export function runtimeErrorContext(
+    sessionId: string,
+    conversationId: string,
+    agentId: string,
+    bearId: string,
+): BearChannelErrorContext {
+    const pendingNew = conversationId.startsWith("new-");
+    return {
+        session_id: sessionId,
+        conversation_id: conversationId,
+        agent_id: agentId,
+        bear_id: bearId,
+        resume_target: conversationId === "default" ? agentId : conversationId,
+        session_method: pendingNew ? "createSession" : "resumeSession",
+    };
+}
 
 export function parseBearChannelRequest(
     body: BearChannelRequest,
