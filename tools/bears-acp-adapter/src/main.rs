@@ -62,6 +62,11 @@ async fn main() {
 
 async fn run() -> Result<()> {
     let runtime = RuntimeConfig::from_env_and_args()?;
+    eprintln!(
+        "bears-acp-adapter: starting version={} git_sha={} conversation_id_mode=default",
+        env!("CARGO_PKG_VERSION"),
+        env!("BEARS_ACP_ADAPTER_GIT_SHA")
+    );
     if runtime.is_configured() {
         eprintln!("bears-acp-adapter: configuration looks valid");
     } else {
@@ -427,6 +432,11 @@ async fn handle_prompt(
         .and_then(Value::as_str)
         .ok_or_else(|| anyhow!("session/prompt params missing sessionId"))?;
     let prompt = prompt_text_from_params(&params)?;
+    let conversation_id = "default";
+    eprintln!(
+        "bears-acp-adapter: session/prompt session_id={} bear={} conversation_id={} client={}",
+        session_id, config.bear, conversation_id, config.client
+    );
 
     send_user_message_chunk(session_id, &prompt).await?;
 
@@ -449,7 +459,7 @@ async fn handle_prompt(
         .headers(headers)
         .json(&json!({
             "message": prompt,
-            "conversation_id": "default",
+            "conversation_id": conversation_id,
             "client": config.client,
         }))
         .send()
