@@ -36,6 +36,10 @@ import {
     makeDenExternalTools,
     parseDenServerTools,
 } from "./den-tools.js";
+import {
+    makeAcpClientExternalTools,
+    parseAcpClientTools,
+} from "./acp-client-tools.js";
 import { logger } from "./logger.js";
 
 const packageJson = JSON.parse(
@@ -408,9 +412,25 @@ export function attachRoutes(
                     parsed.conversationId,
                     requestId,
                 );
+                const emitBearChannelEvent = (
+                    event: import("./bear-channel.js").BearChannelEvent,
+                ) => {
+                    sseDataLines += 1;
+                    const line = bearChannelEventToSseDataLine(event);
+                    res.write(`data: ${line}\n\n`);
+                };
                 const denTools = makeDenExternalTools({
                     descriptors: parseDenServerTools(body.capabilities),
                     getContext: () => denToolContext,
+                });
+                const acpClientTools = makeAcpClientExternalTools({
+                    descriptors: parseAcpClientTools(body.capabilities),
+                    getContext: () => ({
+                        session_id: sessionId,
+                        conversation_id: parsed.conversationId,
+                        request_id: requestId,
+                    }),
+                    emit: emitBearChannelEvent,
                 });
                 for await (const msg of ctx.pool.streamUserMessage(
                     parsed.agentId,
@@ -419,7 +439,7 @@ export function attachRoutes(
                     {
                         bearId: parsed.bearId,
                         plan: parsed.plan,
-                        tools: denTools,
+                        tools: [...denTools, ...acpClientTools],
                     },
                 )) {
                     sdkMessageCount += 1;

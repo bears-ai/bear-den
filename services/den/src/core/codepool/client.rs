@@ -295,6 +295,45 @@ impl CodePoolClient {
         supports_cancellation: bool,
         supports_rich_events: bool,
     ) -> Result<reqwest::Response, CustomError> {
+        self.post_bear_channel_message_for_channel_with_client_tools_streaming(
+            session_id,
+            conversation_id,
+            bear,
+            user_id,
+            username,
+            membership_role,
+            user_input,
+            runtime_plan,
+            request_id,
+            channel_family,
+            channel_client,
+            channel_protocol,
+            supports_cancellation,
+            supports_rich_events,
+            Vec::new(),
+        )
+        .await
+    }
+
+    /// Lower-level `bear_channel` sender with ACP client tool descriptors.
+    pub async fn post_bear_channel_message_for_channel_with_client_tools_streaming(
+        &self,
+        session_id: &str,
+        conversation_id: &str,
+        bear: &Bear,
+        user_id: i32,
+        username: Option<&str>,
+        membership_role: Option<&str>,
+        user_input: &str,
+        runtime_plan: &serde_json::Value,
+        request_id: Uuid,
+        channel_family: &str,
+        channel_client: &str,
+        channel_protocol: &str,
+        supports_cancellation: bool,
+        supports_rich_events: bool,
+        client_tools: Vec<serde_json::Value>,
+    ) -> Result<reqwest::Response, CustomError> {
         if !self.is_enabled() {
             return Err(CustomError::System(
                 "Codepool is not configured (set CODEPOOL_BASE_URL)".to_string(),
@@ -338,7 +377,7 @@ impl CodePoolClient {
             },
             "capabilities": {
                 "server_tools": crate::core::den_tools::builtin_den_tool_descriptors(),
-                "client_tools": [],
+                "client_tools": client_tools,
                 "supports_cancellation": supports_cancellation,
                 "supports_rich_events": supports_rich_events,
             },

@@ -356,9 +356,13 @@ pub async fn new_action(
         .await?;
 
         if attach_trim.is_empty() {
-            if let Err(e) =
-                provision::provision_bear_if_configured(state.sqlx_pool(), state.letta.as_ref(), state.bifrost.as_ref(), id)
-                    .await
+            if let Err(e) = provision::provision_bear_if_configured(
+                state.sqlx_pool(),
+                state.letta.as_ref(),
+                state.bifrost.as_ref(),
+                id,
+            )
+            .await
             {
                 if state.letta.is_enabled() {
                     tracing::warn!(%id, "Letta provision failed: {e}");
@@ -382,8 +386,13 @@ pub async fn new_action(
                     .await?
                     .ok_or_else(|| CustomError::NotFound("bear not found".to_string()))?;
                 if bear.letta_agent_id.is_some() {
-                    if let Err(e) =
-                        sync::sync_bear_to_letta(state.sqlx_pool(), state.letta.as_ref(), state.bifrost.as_ref(), id).await
+                    if let Err(e) = sync::sync_bear_to_letta(
+                        state.sqlx_pool(),
+                        state.letta.as_ref(),
+                        state.bifrost.as_ref(),
+                        id,
+                    )
+                    .await
                     {
                         tracing::warn!(%id, "Letta sync after create failed: {e}");
                         let page = bear_new_form_context(&state, &form).await;
@@ -419,8 +428,13 @@ pub async fn new_action(
                 .await;
             }
             bears_db::set_letta_agent_id(state.sqlx_pool(), id, attach_trim).await?;
-            if let Err(e) =
-                sync::sync_bear_to_letta(state.sqlx_pool(), state.letta.as_ref(), state.bifrost.as_ref(), id).await
+            if let Err(e) = sync::sync_bear_to_letta(
+                state.sqlx_pool(),
+                state.letta.as_ref(),
+                state.bifrost.as_ref(),
+                id,
+            )
+            .await
             {
                 tracing::warn!(%id, "Letta sync after attach failed: {e}");
                 let page = bear_new_form_context(&state, &form).await;
@@ -552,7 +566,13 @@ async fn edit_action(
         )
         .await?;
 
-        if let Err(e) = sync::sync_bear_to_letta(state.sqlx_pool(), state.letta.as_ref(), state.bifrost.as_ref(), id).await
+        if let Err(e) = sync::sync_bear_to_letta(
+            state.sqlx_pool(),
+            state.letta.as_ref(),
+            state.bifrost.as_ref(),
+            id,
+        )
+        .await
         {
             tracing::warn!(%id, "Letta sync after bear edit failed: {e}");
             let bear = bears_db::get_bear(state.sqlx_pool(), id)
@@ -612,8 +632,13 @@ async fn retry_letta_action(
             bear.letta_agent_id.as_deref().unwrap_or("")
         )
     } else {
-        match provision::provision_bear_if_configured(state.sqlx_pool(), state.letta.as_ref(), state.bifrost.as_ref(), id)
-            .await
+        match provision::provision_bear_if_configured(
+            state.sqlx_pool(),
+            state.letta.as_ref(),
+            state.bifrost.as_ref(),
+            id,
+        )
+        .await
         {
             Ok(()) => {
                 let bear2 = bears_db::get_bear(state.sqlx_pool(), id)
@@ -621,8 +646,13 @@ async fn retry_letta_action(
                     .ok_or_else(|| CustomError::NotFound("bear not found".to_string()))?;
                 if let Some(agent) = bear2.letta_agent_id.as_deref() {
                     let mut msg = format!("Letta agent provisioned: {agent}.");
-                    if let Err(e) =
-                        sync::sync_bear_to_letta(state.sqlx_pool(), state.letta.as_ref(), state.bifrost.as_ref(), id).await
+                    if let Err(e) = sync::sync_bear_to_letta(
+                        state.sqlx_pool(),
+                        state.letta.as_ref(),
+                        state.bifrost.as_ref(),
+                        id,
+                    )
+                    .await
                     {
                         msg.push_str(&format!(
                             " Den saved the bear but a follow-up sync to Letta failed: {e}"

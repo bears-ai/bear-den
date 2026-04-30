@@ -5,13 +5,15 @@ breadcrumb %}<a href="/settings">Settings</a> > {% endblock %} {% block title
     <div>
         Account created {{ user.created | dateformat(format="medium") }}
 
-        <h3>ACP tokens</h3>
+        <h3>Code tokens</h3>
         {% if acp_tokens and acp_tokens | length > 0 %}
         <table>
             <thead>
                 <tr>
                     <th>Name</th>
+                    <th>Type</th>
                     <th>Bear</th>
+                    <th>Scopes</th>
                     <th>Created</th>
                     <th>Last used</th>
                     <th>Status</th>
@@ -22,10 +24,16 @@ breadcrumb %}<a href="/settings">Settings</a> > {% endblock %} {% block title
                 {% for token in acp_tokens %}
                 <tr>
                     <td>{{ token.name | e }}</td>
+                    <td>{{ token.token_type | e }}</td>
                     <td>
                         <a href="/bear/{{ token.bear_slug | e }}/details"
                             >{{ token.bear_name | e }}</a
                         >
+                    </td>
+                    <td>
+                        {% for scope in token.scope_labels %}<span class="key"
+                            >{{ scope | e }}</span
+                        >{% endfor %}
                     </td>
                     <td>
                         {{ token.created_at | datetimeformat(format="medium") }}
@@ -59,7 +67,7 @@ breadcrumb %}<a href="/settings">Settings</a> > {% endblock %} {% block title
         </table>
         {% else %}
         <p class="form-hint">
-            No ACP tokens yet. Open a bear and choose “Code with …” to create
+            No Code tokens yet. Open a bear and choose “Code with …” to create
             one.
         </p>
         {% endif %} {% if invites %}

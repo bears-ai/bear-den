@@ -9,7 +9,8 @@ use uuid::Uuid;
 use crate::errors::CustomError;
 
 const TOKEN_PREFIX: &str = "bears_acp_";
-const DEFAULT_SCOPE: &str = "acp:chat";
+const ACP_CHAT_SCOPE: &str = "acp:chat";
+const ACP_TOOLS_SCOPE: &str = "acp:tools";
 
 #[derive(Debug, Clone, Serialize)]
 pub struct AcpTokenListRow {
@@ -23,6 +24,8 @@ pub struct AcpTokenListRow {
     pub expires_at: Option<OffsetDateTime>,
     pub last_used_at: Option<OffsetDateTime>,
     pub revoked_at: Option<OffsetDateTime>,
+    pub token_type: String,
+    pub scope_labels: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -77,7 +80,7 @@ pub async fn create_for_bear(
     .bind(user_id)
     .bind(name)
     .bind(hash)
-    .bind(serde_json::json!([DEFAULT_SCOPE]))
+    .bind(serde_json::json!([ACP_CHAT_SCOPE, ACP_TOOLS_SCOPE]))
     .fetch_one(&mut *tx)
     .await?;
 
@@ -128,17 +131,23 @@ pub async fn list_for_user(
 
     Ok(rows
         .into_iter()
-        .map(|row| AcpTokenListRow {
-            id: row.get("id"),
-            name: row.get("name"),
-            scopes: row.get("scopes"),
-            bear_id: row.get("bear_id"),
-            bear_slug: row.get("bear_slug"),
-            bear_name: row.get("bear_name"),
-            created_at: row.get("created_at"),
-            expires_at: row.get("expires_at"),
-            last_used_at: row.get("last_used_at"),
-            revoked_at: row.get("revoked_at"),
+        .map(|row| {
+            let scopes: serde_json::Value = row.get("scopes");
+            let has_tools = scopes_contains(&scopes, ACP_TOOLS_SCOPE);
+            AcpTokenListRow {
+                id: row.get("id"),
+                name: row.get("name"),
+                scopes: scopes.clone(),
+                bear_id: row.get("bear_id"),
+                bear_slug: row.get("bear_slug"),
+                bear_name: row.get("bear_name"),
+                created_at: row.get("created_at"),
+                expires_at: row.get("expires_at"),
+                last_used_at: row.get("last_used_at"),
+                revoked_at: row.get("revoked_at"),
+                token_type: if has_tools { "Code" } else { "ACP chat" }.to_string(),
+                scope_labels: scope_labels(&scopes),
+            }
         })
         .collect())
 }
@@ -171,10 +180,32 @@ pub async fn authenticate_for_bear_slug(
     bear_slug: &str,
     required_scope: &str,
 ) -> Result<Option<i32>, CustomError> {
+    let Some(auth) = authenticate_for_bear_slug_with_scopes(pool, raw_token, bear_slug).await?
+    else {
+        return Ok(None);
+    };
+    if scopes_contains(&auth.scopes, required_scope) {
+        Ok(Some(auth.user_id))
+    } else {
+        Ok(None)
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct AcpTokenAuth {
+    pub user_id: i32,
+    pub scopes: serde_json::Value,
+}
+
+pub async fn authenticate_for_bear_slug_with_scopes(
+    pool: &PgPool,
+    raw_token: &str,
+    bear_slug: &str,
+) -> Result<Option<AcpTokenAuth>, CustomError> {
     let hash = token_hash(raw_token);
-    let row: Option<(Uuid, i32)> = sqlx::query_as(
+    let row: Option<(Uuid, i32, serde_json::Value)> = sqlx::query_as(
         r#"
-        SELECT t.id, t.user_id
+        SELECT t.id, t.user_id, t.scopes
         FROM acp_tokens t
         INNER JOIN acp_token_bears tb ON tb.token_id = t.id
         INNER JOIN bears b ON b.id = tb.bear_id
@@ -183,16 +214,14 @@ pub async fn authenticate_for_bear_slug(
           AND b.slug = $2
           AND t.revoked_at IS NULL
           AND (t.expires_at IS NULL OR t.expires_at > NOW())
-          AND t.scopes ? $3
         "#,
     )
     .bind(hash)
     .bind(bear_slug)
-    .bind(required_scope)
     .fetch_optional(pool)
     .await?;
 
-    let Some((token_id, user_id)) = row else {
+    let Some((token_id, user_id, scopes)) = row else {
         return Ok(None);
     };
 
@@ -201,5 +230,27 @@ pub async fn authenticate_for_bear_slug(
         .execute(pool)
         .await?;
 
-    Ok(Some(user_id))
+    Ok(Some(AcpTokenAuth { user_id, scopes }))
+}
+
+pub fn scopes_contains(scopes: &serde_json::Value, required_scope: &str) -> bool {
+    scopes
+        .as_array()
+        .map(|items| {
+            items
+                .iter()
+                .any(|item| item.as_str() == Some(required_scope))
+        })
+        .unwrap_or(false)
+}
+
+fn scope_labels(scopes: &serde_json::Value) -> Vec<String> {
+    let mut labels = Vec::new();
+    if scopes_contains(scopes, ACP_CHAT_SCOPE) {
+        labels.push("chat".to_string());
+    }
+    if scopes_contains(scopes, ACP_TOOLS_SCOPE) {
+        labels.push("tools".to_string());
+    }
+    labels
 }

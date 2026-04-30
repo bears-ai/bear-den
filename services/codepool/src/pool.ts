@@ -292,6 +292,9 @@ export class ConversationSessionPool {
                                 systemInfoReminder: false,
                                 memfs: true,
                             };
+                        if (opts.tools && opts.tools.length > 0) {
+                            sessionOpts.tools = opts.tools;
+                        }
                         const cwd = ensure.cwd?.trim();
                         if (cwd) {
                             sessionOpts.cwd = cwd;

@@ -3,7 +3,7 @@ use futures_util::StreamExt;
 use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, CONTENT_TYPE};
 use reqwest::Url;
 use serde_json::{json, Value};
-use std::env;
+use std::{collections::HashMap, env};
 use tokio::io::{self, AsyncBufReadExt, AsyncWriteExt, BufReader};
 use uuid::Uuid;
 
@@ -20,6 +20,12 @@ struct RuntimeConfig {
     config: Option<Config>,
     diagnostics: Vec<String>,
     check_server: bool,
+}
+
+#[derive(Default)]
+struct AdapterState {
+    client_capabilities: Value,
+    session_contexts: HashMap<String, Value>,
 }
 
 #[derive(Debug)]
@@ -90,6 +96,8 @@ async fn run() -> Result<()> {
     let stdin = BufReader::new(io::stdin());
     let mut lines = stdin.lines();
 
+    let mut adapter_state = AdapterState::default();
+
     while let Some(line) = lines.next_line().await.context("read stdin")? {
         let line = line.trim();
         if line.is_empty() {
@@ -112,7 +120,7 @@ async fn run() -> Result<()> {
             }
         };
 
-        if let Err(err) = handle_request(&http, &runtime, request).await {
+        if let Err(err) = handle_request(&http, &runtime, &mut adapter_state, request).await {
             eprintln!("bears-acp-adapter: request handling failed: {err:#}");
         }
     }
@@ -175,7 +183,7 @@ impl RuntimeConfig {
         }
         if token.is_empty() {
             diagnostics.push(
-                "Missing Den bearer token. Set BEARS_DEN_TOKEN, set BEARS_DEN_TOKEN_ENV to the name of an environment variable containing the token, pass --token <token>, or pass --token-env <env-var>. The token must have the acp:chat scope."
+                "Missing Den bearer token. Set BEARS_DEN_TOKEN, set BEARS_DEN_TOKEN_ENV to the name of an environment variable containing the token, pass --token <token>, or pass --token-env <env-var>. Den Code tokens include acp:chat and acp:tools scopes."
                     .to_string(),
             );
         }
@@ -283,7 +291,7 @@ fn print_help_to_stderr() {
     eprintln!(
         "bears-acp-adapter {}\nBuild git SHA: {}\nACP conversation id mode: default\n\n\
 Usage: bears-acp-adapter --api-url <url> --bear <slug> [--client zed] [--token-env BEARS_DEN_TOKEN]\n\n\
-Options:\n  --api-url <url>        Den API origin, for example https://api.bears.example\n  --bear <slug>          Bear slug to chat with\n  --token <token>        Den bearer token with acp:chat scope\n  --token-env <env-var>  Read the Den bearer token from this environment variable\n  --client <name>        Client label: zed, opencode, or acp_adapter\n  --check-config         Validate configuration and exit without starting ACP stdio\n  --check-server         Fetch Den /version and exit without starting ACP stdio\n  --version              Show version/build behavior and exit\n  --help                 Show this help\n\n\
+Options:\n  --api-url <url>        Den API origin, for example https://api.bears.example\n  --bear <slug>          Bear slug to chat with\n  --token <token>        Den Code token with acp:chat and acp:tools scopes\n  --token-env <env-var>  Read the Den bearer token from this environment variable\n  --client <name>        Client label: zed, opencode, or acp_adapter\n  --check-config         Validate configuration and exit without starting ACP stdio\n  --check-server         Fetch Den /version and exit without starting ACP stdio\n  --version              Show version/build behavior and exit\n  --help                 Show this help\n\n\
 Environment fallbacks:\n  BEARS_DEN_API_URL\n  BEARS_BEAR_SLUG\n  BEARS_DEN_TOKEN\n  BEARS_DEN_TOKEN_ENV\n  BEARS_ACP_CLIENT\n\n\
 BEARS_DEN_API_URL should be the API origin only, not the full /acp/bears/... endpoint.",
         env!("CARGO_PKG_VERSION"),
@@ -314,10 +322,17 @@ fn parse_request(line: &str) -> Result<JsonRpcRequest> {
 async fn handle_request(
     http: &reqwest::Client,
     runtime: &RuntimeConfig,
+    adapter_state: &mut AdapterState,
     request: JsonRpcRequest,
 ) -> Result<()> {
     match request.method.as_str() {
         "initialize" => {
+            adapter_state.client_capabilities = request
+                .params
+                .get("clientCapabilities")
+                .or_else(|| request.params.get("capabilities"))
+                .cloned()
+                .unwrap_or(Value::Null);
             if let Some(id) = request.id {
                 write_response(id, Ok(initialize_result())).await?;
             }
@@ -325,6 +340,10 @@ async fn handle_request(
         "session/new" => {
             if let Some(id) = request.id {
                 let session_id = format!("acp-{}", Uuid::new_v4());
+                let context = session_context_from_params(&request.params);
+                adapter_state
+                    .session_contexts
+                    .insert(session_id.clone(), context);
                 write_response(
                     id,
                     Ok(json!({
@@ -354,7 +373,9 @@ async fn handle_request(
                     return Ok(());
                 };
 
-                if let Err(err) = handle_prompt(http, config, id.clone(), request.params).await {
+                if let Err(err) =
+                    handle_prompt(http, config, adapter_state, id.clone(), request.params).await
+                {
                     let server_version = fetch_server_version(http, config).await.ok();
                     let mut message = format!("{err:#}");
                     if let Some(server_version) = &server_version {
@@ -396,6 +417,19 @@ async fn handle_request(
     Ok(())
 }
 
+fn session_context_from_params(params: &Value) -> Value {
+    let cwd = params
+        .get("cwd")
+        .or_else(|| params.get("workspaceUri"))
+        .or_else(|| params.pointer("/workspace/currentDirectory"))
+        .and_then(Value::as_str)
+        .unwrap_or("");
+    json!({
+        "cwd": cwd,
+        "adapter_version": env!("CARGO_PKG_VERSION"),
+    })
+}
+
 fn initialize_result() -> Value {
     json!({
         "protocolVersion": 1,
@@ -424,6 +458,7 @@ fn initialize_result() -> Value {
 async fn handle_prompt(
     http: &reqwest::Client,
     config: &Config,
+    adapter_state: &mut AdapterState,
     response_id: Value,
     params: Value,
 ) -> Result<()> {
@@ -433,6 +468,11 @@ async fn handle_prompt(
         .ok_or_else(|| anyhow!("session/prompt params missing sessionId"))?;
     let prompt = prompt_text_from_params(&params)?;
     let conversation_id = "default";
+    let client_context = adapter_state
+        .session_contexts
+        .get(session_id)
+        .cloned()
+        .unwrap_or_else(|| json!({}));
     eprintln!(
         "bears-acp-adapter: session/prompt session_id={} bear={} conversation_id={} client={}",
         session_id, config.bear, conversation_id, config.client
@@ -461,6 +501,8 @@ async fn handle_prompt(
             "message": prompt,
             "conversation_id": conversation_id,
             "client": config.client,
+            "client_capabilities": adapter_state.client_capabilities,
+            "client_context": client_context,
         }))
         .send()
         .await
@@ -584,8 +626,8 @@ fn den_request_context(url: &str) -> String {
 
 fn den_status_error_message(status: reqwest::StatusCode, body: &str) -> String {
     let hint = match status.as_u16() {
-        401 => "The bearer token was rejected. Check BEARS_DEN_TOKEN or --token-env and make sure the token has the acp:chat scope.",
-        403 => "The token authenticated but is not allowed to use this bear or ACP. Check bear membership and the acp:chat scope.",
+        401 => "The bearer token was rejected. Check BEARS_DEN_TOKEN or --token-env and make sure the token is an active Den Code token.",
+        403 => "The token authenticated but is not allowed to use this bear or ACP. Check bear membership and token scopes.",
         404 => "The ACP gateway endpoint was not found. Check BEARS_DEN_API_URL, BEARS_BEAR_SLUG, and that Den is running with ACP_GATEWAY_ENABLED=true on the API service.",
         405 => "The server exists but did not accept the ACP prompt method. Check that BEARS_DEN_API_URL points to the Den API origin, not the web UI origin or a proxy route with method restrictions.",
         429 => "The Den API rate limited this request. Wait and retry, or check service limits.",
@@ -710,9 +752,44 @@ async fn handle_den_event(session_id: &str, event: &Value) -> Result<bool> {
             send_agent_thought_chunk(session_id, &message).await?;
             Ok(false)
         }
+        "client_tool_request" => {
+            send_client_tool_call_update(session_id, event).await?;
+            Ok(false)
+        }
         "done" => Ok(true),
         _ => Ok(false),
     }
+}
+
+async fn send_client_tool_call_update(session_id: &str, event: &Value) -> Result<()> {
+    let call_id = event
+        .get("call_id")
+        .and_then(Value::as_str)
+        .unwrap_or("acp-client-tool-call");
+    let tool_name = event
+        .get("tool_name")
+        .and_then(Value::as_str)
+        .unwrap_or("acp_client_tool");
+    let args = event.get("arguments").cloned().unwrap_or_else(|| json!({}));
+    let summary = format!(
+        "Requested local editor tool `{}` with arguments {}",
+        tool_name, args
+    );
+    write_notification(
+        "session/update",
+        json!({
+            "sessionId": session_id,
+            "update": {
+                "sessionUpdate": "tool_call",
+                "toolCallId": call_id,
+                "title": tool_name,
+                "kind": "read",
+                "status": "pending",
+                "content": { "type": "text", "text": summary }
+            }
+        }),
+    )
+    .await
 }
 
 async fn send_user_message_chunk(session_id: &str, text: &str) -> Result<()> {

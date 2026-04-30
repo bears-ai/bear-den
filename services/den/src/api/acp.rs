@@ -40,6 +40,10 @@ pub struct AcpPromptRequest {
     pub conversation_id: Option<String>,
     #[serde(default)]
     pub client: Option<String>,
+    #[serde(default)]
+    pub client_capabilities: serde_json::Value,
+    #[serde(default)]
+    pub client_context: serde_json::Value,
 }
 
 #[derive(Debug, Serialize)]
@@ -130,6 +134,64 @@ fn normalize_acp_client(raw: Option<&str>) -> String {
     }
 }
 
+fn client_supports_read_text_file(client_capabilities: &serde_json::Value) -> bool {
+    client_capabilities
+        .pointer("/fs/readTextFile")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false)
+        || client_capabilities
+            .pointer("/filesystem/readTextFile")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false)
+}
+
+fn authorized_client_tool_descriptors(
+    has_acp_tools_scope: bool,
+    client: &str,
+    client_capabilities: &serde_json::Value,
+    client_context: &serde_json::Value,
+) -> Vec<serde_json::Value> {
+    if !has_acp_tools_scope || !client_supports_read_text_file(client_capabilities) {
+        return Vec::new();
+    }
+    vec![serde_json::json!({
+        "id": "acp_fs_read_text_file",
+        "name": "acp_fs_read_text_file",
+        "title": "Read text file from editor workspace",
+        "description": "Read a UTF-8 text file from the user's active editor workspace through the ACP client. Use this for inspecting project files that are available to the local editor session.",
+        "provider": "acp_client",
+        "execution_target": "acp_client",
+        "scope": "client_connection",
+        "client": client,
+        "permissions": ["filesystem", "read"],
+        "approval_policy": "on_sensitive_action",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "description": "Workspace-relative or client-accepted path to read."
+                }
+            },
+            "required": ["path"],
+            "additionalProperties": false
+        },
+        "output_schema": {
+            "type": "object",
+            "properties": {
+                "content": { "type": "string" }
+            },
+            "required": ["content"],
+            "additionalProperties": true
+        },
+        "acp": {
+            "method": "fs/read_text_file",
+            "requires_client_capability": "fs.readTextFile"
+        },
+        "client_context": client_context,
+    })]
+}
+
 async fn prompt(
     State(state): State<ApiState>,
     Path((slug, session_id)): Path<(String, String)>,
@@ -157,32 +219,42 @@ async fn prompt_inner(
 ) -> Result<Result<Response, CustomError>, ApiError> {
     let token = auth::extract_bearer_token(&headers)?;
     let slug = slug.trim().to_string();
-    let user_id = if acp_tokens::is_acp_token(&token) {
-        acp_tokens::authenticate_for_bear_slug(
-            &state.sqlx_pool,
-            &token,
-            &slug,
-            OAuthScope::AcpChat.as_str(),
-        )
-        .await
-        .map_err(|err| {
-            ApiError::new(
-                StatusCode::UNPROCESSABLE_ENTITY,
-                "database",
-                err.to_string(),
-            )
-        })?
-        .ok_or_else(|| {
-            ApiError::new(
+    let (user_id, has_acp_tools_scope) = if acp_tokens::is_acp_token(&token) {
+        let auth =
+            acp_tokens::authenticate_for_bear_slug_with_scopes(&state.sqlx_pool, &token, &slug)
+                .await
+                .map_err(|err| {
+                    ApiError::new(
+                        StatusCode::UNPROCESSABLE_ENTITY,
+                        "database",
+                        err.to_string(),
+                    )
+                })?
+                .ok_or_else(|| {
+                    ApiError::new(
+                        StatusCode::UNAUTHORIZED,
+                        "invalid_token",
+                        "invalid, expired, revoked, or unauthorized ACP token",
+                    )
+                })?;
+        if !acp_tokens::scopes_contains(&auth.scopes, OAuthScope::AcpChat.as_str()) {
+            return Err(ApiError::new(
                 StatusCode::UNAUTHORIZED,
                 "invalid_token",
                 "invalid, expired, revoked, or unauthorized ACP token",
-            )
-        })?
+            ));
+        }
+        (
+            auth.user_id,
+            acp_tokens::scopes_contains(&auth.scopes, OAuthScope::AcpTools.as_str()),
+        )
     } else {
         let principal = auth::authenticate_bearer(&headers)?;
         auth::require_scope(&principal, OAuthScope::AcpChat)?;
-        principal.user_id
+        (
+            principal.user_id,
+            principal.scopes.contains(&OAuthScope::AcpTools),
+        )
     };
     let prompt = body.message.trim();
     if prompt.is_empty() {
@@ -247,6 +319,21 @@ async fn prompt_inner(
     }
     let conversation_id = "default".to_string();
     let client = normalize_acp_client(body.client.as_deref());
+    let client_tools = authorized_client_tool_descriptors(
+        has_acp_tools_scope,
+        &client,
+        &body.client_capabilities,
+        &body.client_context,
+    );
+    if !has_acp_tools_scope && client_supports_read_text_file(&body.client_capabilities) {
+        tracing::info!(
+            %request_id,
+            acp_session_id = %session_id,
+            bear_slug = %slug,
+            client = %client,
+            "acp_tools_scope_missing; omitting ACP client tool descriptors"
+        );
+    }
     let username = user::user_by_id(&state.sqlx_pool, user_id)
         .await
         .ok()
@@ -279,7 +366,7 @@ async fn prompt_inner(
     );
     let upstream = match state
         .codepool
-        .post_bear_channel_message_for_channel_streaming(
+        .post_bear_channel_message_for_channel_with_client_tools_streaming(
             &channel_session_id,
             &conversation_id,
             &bear,
@@ -294,6 +381,7 @@ async fn prompt_inner(
             "agent_client_protocol",
             false,
             true,
+            client_tools,
         )
         .await
     {
@@ -360,6 +448,24 @@ fn map_bear_channel_event_to_acp_adapter_event(event: &serde_json::Value) -> Opt
             "type": "conversation_resolved",
             "conversation_id": event.get("conversation_id").and_then(|v| v.as_str()),
         }),
+        "client_tool_request" => {
+            let call = event
+                .get("call")
+                .cloned()
+                .unwrap_or_else(|| serde_json::json!({}));
+            serde_json::json!({
+                "type": "client_tool_request",
+                "request_id": event.get("request_id").cloned(),
+                "session_id": event.get("session_id").cloned(),
+                "conversation_id": event.get("conversation_id").cloned(),
+                "call_id": call.get("id").cloned(),
+                "tool_name": call.get("name").cloned(),
+                "arguments": call.get("arguments").cloned().unwrap_or_else(|| serde_json::json!({})),
+                "descriptor": call.get("descriptor").cloned(),
+                "approval_policy": call.get("approval_policy").cloned(),
+                "timeout_ms": call.get("timeout_ms").cloned().unwrap_or_else(|| serde_json::json!(30000)),
+            })
+        }
         _ => return None,
     };
     Some(Bytes::from(format!("data: {}\n\n", mapped)))
@@ -468,5 +574,44 @@ mod tests {
         );
         let text = String::from_utf8(out[0].to_vec()).unwrap();
         assert!(text.contains("\"type\":\"done\""));
+    }
+
+    #[test]
+    fn builds_read_text_file_descriptor_only_when_authorized_and_supported() {
+        let caps = serde_json::json!({ "fs": { "readTextFile": true } });
+        let context = serde_json::json!({ "cwd": "/tmp/workspace" });
+        let descriptors = authorized_client_tool_descriptors(true, "zed", &caps, &context);
+        assert_eq!(descriptors.len(), 1);
+        assert_eq!(descriptors[0]["name"], "acp_fs_read_text_file");
+        assert_eq!(descriptors[0]["acp"]["method"], "fs/read_text_file");
+
+        assert!(authorized_client_tool_descriptors(false, "zed", &caps, &context).is_empty());
+        assert!(authorized_client_tool_descriptors(
+            true,
+            "zed",
+            &serde_json::json!({ "fs": { "readTextFile": false } }),
+            &context
+        )
+        .is_empty());
+    }
+
+    #[test]
+    fn maps_client_tool_request_to_adapter_event() {
+        let out = map_bear_channel_frame_to_acp_adapter_events(
+            br#"data: {"type":"client_tool_request","request_id":"req-1","session_id":"s-1","conversation_id":"default","call":{"id":"call-1","name":"acp_fs_read_text_file","arguments":{"path":"README.md"},"timeout_ms":30000}}
+
+"#,
+        );
+        let value: serde_json::Value = serde_json::from_str(
+            String::from_utf8(out[0].to_vec())
+                .unwrap()
+                .trim_start_matches("data: ")
+                .trim(),
+        )
+        .unwrap();
+        assert_eq!(value["type"], "client_tool_request");
+        assert_eq!(value["call_id"], "call-1");
+        assert_eq!(value["tool_name"], "acp_fs_read_text_file");
+        assert_eq!(value["arguments"]["path"], "README.md");
     }
 }

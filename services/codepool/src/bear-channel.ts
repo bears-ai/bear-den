@@ -70,7 +70,13 @@ export type BearChannelEvent =
           label?: string;
           summary?: string;
       }
-    | { type: "client_tool_request"; call: BearChannelToolCall }
+    | {
+          type: "client_tool_request";
+          call: BearChannelToolCall;
+          request_id?: string;
+          session_id?: string;
+          conversation_id?: string;
+      }
     | { type: "subagent_started"; name: string; label?: string }
     | {
           type: "subagent_finished";
@@ -97,6 +103,9 @@ export type BearChannelToolCall = {
     id: string;
     name: string;
     arguments: unknown;
+    descriptor?: unknown;
+    approval_policy?: string;
+    timeout_ms?: number;
 };
 
 export type BearChannelErrorContext = {
