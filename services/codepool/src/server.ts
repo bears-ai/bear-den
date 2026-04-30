@@ -14,6 +14,7 @@ import {
     parseBearChannelRequest,
     runtimeErrorContext,
     sdkMessageToBearChannelEvents,
+    summarizeSdkMessageForDiagnostics,
     type BearChannelRequest,
 } from "./bear-channel.js";
 import type { ChannelListenerRegistry } from "./channel-listeners.js";
@@ -398,6 +399,7 @@ export function attachRoutes(
             let sseDataLines = 0;
             let sdkMessageCount = 0;
             const sdkMessageTypes: Record<string, number> = {};
+            const unmappedStreamEventSamples: unknown[] = [];
 
             try {
                 const denToolContext = buildDenToolRuntimeContext(
@@ -426,7 +428,17 @@ export function attachRoutes(
                     );
                     sdkMessageTypes[msgType] =
                         (sdkMessageTypes[msgType] ?? 0) + 1;
-                    for (const event of sdkMessageToBearChannelEvents(msg)) {
+                    const events = sdkMessageToBearChannelEvents(msg);
+                    if (
+                        events.length === 0 &&
+                        msgType === "stream_event" &&
+                        unmappedStreamEventSamples.length < 3
+                    ) {
+                        unmappedStreamEventSamples.push(
+                            summarizeSdkMessageForDiagnostics(msg),
+                        );
+                    }
+                    for (const event of events) {
                         sseDataLines += 1;
                         res.write(
                             `data: ${bearChannelEventToSseDataLine(event)}\n\n`,
@@ -465,6 +477,8 @@ export function attachRoutes(
                             sdk_message_count: sdkMessageCount,
                             sdk_message_types: sdkMessageTypes,
                             sse_data_lines: sseDataLines,
+                            unmapped_stream_event_samples:
+                                unmappedStreamEventSamples,
                             ...context,
                         }),
                     );
@@ -479,6 +493,8 @@ export function attachRoutes(
                                 sdk_message_count: sdkMessageCount,
                                 sdk_message_types: sdkMessageTypes,
                                 sse_data_lines: sseDataLines,
+                                unmapped_stream_event_samples:
+                                    unmappedStreamEventSamples,
                             },
                         })}\n\n`,
                     );
@@ -498,6 +514,8 @@ export function attachRoutes(
                         sdk_message_count: sdkMessageCount,
                         sdk_message_types: sdkMessageTypes,
                         sse_data_lines: sseDataLines,
+                        unmapped_stream_event_samples:
+                            unmappedStreamEventSamples,
                     }),
                 );
             } catch (e) {

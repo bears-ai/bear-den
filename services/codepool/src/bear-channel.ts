@@ -109,6 +109,7 @@ export type BearChannelErrorContext = {
     sdk_message_count?: number;
     sdk_message_types?: Record<string, number>;
     sse_data_lines?: number;
+    unmapped_stream_event_samples?: unknown[];
 };
 
 export type ParsedBearChannelRequest = {
@@ -168,6 +169,28 @@ export function parseBearChannelRequest(
         bearId,
         userText,
         plan: parseBearRuntimePlan(body.runtime_plan),
+    };
+}
+
+export function summarizeSdkMessageForDiagnostics(msg: SDKMessage): unknown {
+    if (msg.type !== "stream_event") {
+        return { type: msg.type };
+    }
+    const ev = msg.event as Record<string, unknown>;
+    return {
+        type: msg.type,
+        event_keys: Object.keys(ev).sort(),
+        message_type:
+            typeof ev.message_type === "string" ? ev.message_type : undefined,
+        event_type: typeof ev.type === "string" ? ev.type : undefined,
+        name: typeof ev.name === "string" ? ev.name : undefined,
+        role: typeof ev.role === "string" ? ev.role : undefined,
+        has_content: typeof ev.content === "string" && ev.content.length > 0,
+        has_delta: typeof ev.delta === "object" && ev.delta !== null,
+        preview:
+            typeof ev.content === "string"
+                ? ev.content.slice(0, 160)
+                : JSON.stringify(ev).slice(0, 240),
     };
 }
 
