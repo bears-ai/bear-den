@@ -29,6 +29,29 @@ struct JsonRpcRequest {
     params: Value,
 }
 
+#[derive(Clone, Debug)]
+struct ServerVersion {
+    service: String,
+    version: String,
+    git_sha: String,
+    built_at_utc: String,
+}
+
+impl ServerVersion {
+    fn summary(&self) -> String {
+        format!(
+            "Den server version: service={}, version={}, git_sha={}, built_at_utc={}",
+            self.service, self.version, self.git_sha, self.built_at_utc
+        )
+    }
+}
+
+#[derive(Default)]
+struct SseFrameOutcome {
+    saw_done: bool,
+    upstream_errors: Vec<String>,
+}
+
 #[tokio::main]
 async fn main() {
     if let Err(err) = run().await {
@@ -327,12 +350,21 @@ async fn handle_request(
                 };
 
                 if let Err(err) = handle_prompt(http, config, id.clone(), request.params).await {
+                    let server_version = fetch_server_version(http, config).await.ok();
+                    let mut message = format!("{err:#}");
+                    if let Some(server_version) = &server_version {
+                        message.push_str("\n\n");
+                        message.push_str(&server_version.summary());
+                    }
                     write_response(
                         id,
                         Err(json_rpc_error(
                             -32000,
                             "BEARS prompt failed",
-                            Some(json!({ "message": format!("{err:#}") })),
+                            Some(json!({
+                                "message": message,
+                                "server_version": server_version.map(server_version_json),
+                            })),
                         )),
                     )
                     .await?;
@@ -431,6 +463,7 @@ async fn handle_prompt(
     }
 
     let mut saw_done = false;
+    let mut upstream_errors = Vec::new();
     let mut buffer = Vec::<u8>::new();
     let mut stream = response.bytes_stream();
     while let Some(chunk) = stream.next().await {
@@ -438,12 +471,23 @@ async fn handle_prompt(
         buffer.extend_from_slice(&chunk);
         while let Some(pos) = buffer.windows(2).position(|w| w == b"\n\n") {
             let frame: Vec<u8> = buffer.drain(..pos + 2).collect();
-            saw_done |= handle_sse_frame(session_id, &frame).await?;
+            let outcome = handle_sse_frame(session_id, &frame).await?;
+            saw_done |= outcome.saw_done;
+            upstream_errors.extend(outcome.upstream_errors);
         }
     }
     if !buffer.is_empty() {
         let frame = std::mem::take(&mut buffer);
-        saw_done |= handle_sse_frame(session_id, &frame).await?;
+        let outcome = handle_sse_frame(session_id, &frame).await?;
+        saw_done |= outcome.saw_done;
+        upstream_errors.extend(outcome.upstream_errors);
+    }
+
+    if !upstream_errors.is_empty() {
+        return Err(anyhow!(
+            "BEARS upstream stream reported error: {}",
+            upstream_errors.join("; ")
+        ));
     }
 
     let stop_reason = if saw_done { "end_turn" } else { "end_turn" };
@@ -452,6 +496,18 @@ async fn handle_prompt(
 }
 
 async fn check_server_version(http: &reqwest::Client, config: &Config) -> Result<()> {
+    let server_version = fetch_server_version(http, config).await?;
+    eprintln!(
+        "Den server version:\n  service: {}\n  version: {}\n  git_sha: {}\n  built_at_utc: {}",
+        server_version.service,
+        server_version.version,
+        server_version.git_sha,
+        server_version.built_at_utc,
+    );
+    Ok(())
+}
+
+async fn fetch_server_version(http: &reqwest::Client, config: &Config) -> Result<ServerVersion> {
     let url = format!("{}/version", config.api_url);
     let response = http
         .get(&url)
@@ -467,33 +523,47 @@ async fn check_server_version(http: &reqwest::Client, config: &Config) -> Result
         ));
     }
 
-    match serde_json::from_str::<Value>(&body) {
-        Ok(value) => {
-            eprintln!(
-                "Den server version:\n  service: {}\n  version: {}\n  git_sha: {}\n  built_at_utc: {}",
-                value
-                    .get("service")
-                    .and_then(Value::as_str)
-                    .unwrap_or("unknown"),
-                value
-                    .get("version")
-                    .and_then(Value::as_str)
-                    .unwrap_or("unknown"),
-                value
-                    .get("git_sha")
-                    .and_then(Value::as_str)
-                    .unwrap_or("unknown"),
-                value
-                    .get("built_at_utc")
-                    .and_then(Value::as_str)
-                    .unwrap_or("unknown"),
-            );
-        }
-        Err(_) => {
-            eprintln!("Den server version response from {url}:\n{}", body.trim());
-        }
+    let value: Value = serde_json::from_str(&body).with_context(|| {
+        format!(
+            "Den server version response from {url} was not JSON: {}",
+            body.trim()
+        )
+    })?;
+    Ok(server_version_from_json(&value))
+}
+
+fn server_version_from_json(value: &Value) -> ServerVersion {
+    ServerVersion {
+        service: value
+            .get("service")
+            .and_then(Value::as_str)
+            .unwrap_or("unknown")
+            .to_string(),
+        version: value
+            .get("version")
+            .and_then(Value::as_str)
+            .unwrap_or("unknown")
+            .to_string(),
+        git_sha: value
+            .get("git_sha")
+            .and_then(Value::as_str)
+            .unwrap_or("unknown")
+            .to_string(),
+        built_at_utc: value
+            .get("built_at_utc")
+            .and_then(Value::as_str)
+            .unwrap_or("unknown")
+            .to_string(),
     }
-    Ok(())
+}
+
+fn server_version_json(server_version: ServerVersion) -> Value {
+    json!({
+        "service": server_version.service,
+        "version": server_version.version,
+        "git_sha": server_version.git_sha,
+        "built_at_utc": server_version.built_at_utc,
+    })
 }
 
 fn den_request_context(url: &str) -> String {
@@ -561,9 +631,9 @@ fn prompt_text_from_params(params: &Value) -> Result<String> {
     }
 }
 
-async fn handle_sse_frame(session_id: &str, frame: &[u8]) -> Result<bool> {
+async fn handle_sse_frame(session_id: &str, frame: &[u8]) -> Result<SseFrameOutcome> {
     let text = String::from_utf8_lossy(frame);
-    let mut saw_done = false;
+    let mut outcome = SseFrameOutcome::default();
     for line in text.lines() {
         let Some(data) = line.strip_prefix("data:") else {
             continue;
@@ -573,9 +643,23 @@ async fn handle_sse_frame(session_id: &str, frame: &[u8]) -> Result<bool> {
             continue;
         }
         let event: Value = serde_json::from_str(data).context("parse Den SSE event JSON")?;
-        saw_done |= handle_den_event(session_id, &event).await?;
+        if event.get("type").and_then(Value::as_str) == Some("error") {
+            outcome.upstream_errors.push(format_den_event_error(&event));
+        }
+        outcome.saw_done |= handle_den_event(session_id, &event).await?;
     }
-    Ok(saw_done)
+    Ok(outcome)
+}
+
+fn format_den_event_error(event: &Value) -> String {
+    let message = event
+        .get("message")
+        .and_then(Value::as_str)
+        .unwrap_or("BEARS upstream error");
+    match event.get("detail").and_then(Value::as_str) {
+        Some(detail) if !detail.trim().is_empty() => format!("{message}: {detail}"),
+        _ => message.to_string(),
+    }
 }
 
 async fn handle_den_event(session_id: &str, event: &Value) -> Result<bool> {
