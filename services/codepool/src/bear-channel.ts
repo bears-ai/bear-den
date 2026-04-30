@@ -277,6 +277,33 @@ export function sdkMessageToBearChannelEvents(
                         },
                     ];
                 }
+                if (ev.message_type === "stop_reason") {
+                    const stopReason =
+                        typeof ev.stop_reason === "string"
+                            ? ev.stop_reason
+                            : "unknown";
+                    if (stopReason === "llm_api_error") {
+                        return [
+                            {
+                                type: "error",
+                                message:
+                                    "Letta stopped because the LLM API returned an error.",
+                                detail: "Letta Code emitted stop_reason=llm_api_error before any assistant output. Check Letta, Bifrost, and model provider logs/configuration for the underlying model API failure.",
+                                error_type: stopReason,
+                            },
+                        ];
+                    }
+                    if (stopReason && stopReason !== "end_turn") {
+                        return [
+                            {
+                                type: "error",
+                                message: `Letta stopped before producing assistant output: ${stopReason}`,
+                                error_type: stopReason,
+                            },
+                        ];
+                    }
+                    return [];
+                }
             }
 
             const delta = extractStreamTextDelta(msg.event);
