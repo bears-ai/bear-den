@@ -44,10 +44,13 @@ Before deep implementation:
    - Keep BEARS server tools such as Cabinet and memory behind Den policy; do not expose them as ACP client tools by default.
    - Pass only allowed client tool descriptors into `bear_channel.capabilities.client_tools`.
 
-3. **Client tool relay**
+3. **Client tool relay — designed, next implementation slice**
+   - Detailed plan: [`ACP_CLIENT_TOOL_RELAY_PLAN.md`](ACP_CLIENT_TOOL_RELAY_PLAN.md).
+   - First tool: `acp_fs_read_text_file` mapped to ACP `fs/read_text_file`.
+   - Update Den token generation/listing UI so `acp:tools` is explicitly granted, visible, and revocable separately from chat-only tokens.
    - Codepool emits `client_tool_request` events only for declared client capabilities.
    - Den persists pending calls keyed by user, bear, session, request id, and call id.
-   - Den translates requests to ACP tool calls, waits for results, and forwards tool results back to Codepool through an explicit endpoint or stream continuation contract.
+   - Den translates requests to ACP tool calls, waits for results, and forwards tool results back to Codepool through explicit tool-result endpoints.
    - Add timeout, cancellation, disconnect, and error propagation semantics.
    - Audit every request and result.
 
@@ -96,7 +99,7 @@ Backlog notes:
 
 ## 1. ACP client tool relay
 
-Goal: Zed/OpenCode connect to Den using Agent Client Protocol (ACP), while the bear runtime can request client-side local tools. This is not the first implementation slice; it follows the basic ACP chat gateway and capability registry work above.
+Goal: Zed/OpenCode connect to Den using Agent Client Protocol (ACP), while the bear runtime can request client-side local tools. This is the next implementation slice after ACP basic chat validation. See [`ACP_CLIENT_TOOL_RELAY_PLAN.md`](ACP_CLIENT_TOOL_RELAY_PLAN.md) for the detailed contract, persistence model, error semantics, test plan, and recommended MVP decisions.
 
 ### Scope
 

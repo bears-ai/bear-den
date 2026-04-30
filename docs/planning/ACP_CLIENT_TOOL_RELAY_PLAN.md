@@ -1,0 +1,602 @@
+# ACP client tool relay plan
+
+Status: design-ready plan; not implemented.
+
+Owner boundary: Den remains the security, policy, and audit authority. `bears-acp-adapter` remains the local ACP stdio edge process. Codepool remains the private Letta Code runtime owner.
+
+Related docs:
+
+- [`BEAR_CHANNEL_PLANS.md`](BEAR_CHANNEL_PLANS.md)
+- [`BEAR_CAPABILITY_MANAGEMENT_PLAN.md`](BEAR_CAPABILITY_MANAGEMENT_PLAN.md)
+- [`../architecture/BEAR_CHANNEL_AND_ACP.md`](../architecture/BEAR_CHANNEL_AND_ACP.md)
+
+## Goal
+
+Let a bear running in Codepool request session-scoped tools from an ACP client such as Zed while preserving Den authorization, user approval semantics, auditability, and disconnect safety.
+
+The first implementation should prove one end-to-end local read-only tool before enabling writes, terminals, MCP relay, or background work.
+
+## Non-goals for the first relay slice
+
+- No arbitrary background local tool use after the ACP client disconnects.
+- No persisted durable local workspace credentials in Den.
+- No exposing BEARS built-in server tools as ACP client tools.
+- No terminal execution in the first tool slice.
+- No write/edit tools until read-only tool relay has tests and operator-visible audit.
+- No session resume/load dependency. Continue using `conversation_id = "default"` until the session lifecycle is designed separately.
+
+## ACP protocol facts this design depends on
+
+ACP is JSON-RPC over stdio between the client and agent process.
+
+The client sends `initialize` with `clientCapabilities`, including:
+
+- `fs.readTextFile`
+- `fs.writeTextFile`
+- `terminal`
+
+The agent can send JSON-RPC requests back to the client while handling `session/prompt`, including:
+
+- `fs/read_text_file`
+- `fs/write_text_file`
+- `terminal/create`
+- `terminal/output`
+- `terminal/wait_for_exit`
+- `terminal/kill`
+- `terminal/release`
+- `session/request_permission`
+
+The agent reports tool progress to the client with `session/update` notifications using:
+
+- `tool_call`
+- `tool_call_update`
+
+`bears-acp-adapter` is the ACP agent from Zed's point of view, so it is responsible for sending these JSON-RPC requests/notifications to Zed and correlating responses.
+
+## High-level architecture
+
+1. Zed starts `bears-acp-adapter` over stdio.
+2. Zed sends `initialize` with client capabilities.
+3. Adapter normalizes those capabilities and includes them in Den prompt requests.
+4. Den authenticates the token, authorizes bear access, applies policy, and forwards only allowed client tool descriptors to Codepool via `bear_channel.capabilities.client_tools`.
+5. Codepool/Letta Code may emit `client_tool_request` events only for declared tools.
+6. Den records a pending tool call and streams the request to the adapter.
+7. Adapter maps the request to ACP client methods, including optional `session/request_permission`.
+8. Zed executes the local operation or returns an error/cancelled response.
+9. Adapter sends the result to Den.
+10. Den audits the result and forwards it to Codepool through a tool-result continuation endpoint.
+11. Codepool resumes the model/tool loop and continues streaming assistant output.
+
+## First vertical slice
+
+Use a single read-only local file tool.
+
+Name in Den/Codepool capability descriptor:
+
+- `acp_fs_read_text_file`
+
+ACP operation used by adapter:
+
+- `fs/read_text_file`
+
+Supported arguments:
+
+- `path`: absolute path in the ACP client's workspace context
+- `line`: optional 1-based start line
+- `limit`: optional maximum lines
+
+Result shape returned to Codepool:
+
+- `ok: true`
+- `content`: file text
+- `metadata`: optional line range, truncation notes, byte count
+
+This slice proves:
+
+- capability discovery from `initialize`
+- Den policy filtering
+- Codepool tool request emission
+- Den pending-call persistence
+- adapter JSON-RPC request correlation
+- ACP client result mapping
+- Codepool continuation after the tool result
+- audit records for request and result
+
+## Capability descriptor shape
+
+Den should pass normalized descriptors into `bear_channel.capabilities.client_tools`. These are trusted by Codepool because Den constructs them.
+
+Required fields:
+
+- `id`: stable Den capability id, e.g. `acp_fs_read_text_file`
+- `name`: runtime callable name, initially same as `id`
+- `title`: human-readable label
+- `description`: model-facing description
+- `provider`: `acp_client`
+- `execution_target`: `acp_client`
+- `scope`: `client_connection` or `session`
+- `client`: `zed` or `opencode`
+- `permissions`: normalized permissions such as `filesystem`, `read`, `write`, `shell`
+- `approval_policy`: `never`, `on_write`, `on_sensitive_action`, or `always`
+- `input_schema`: JSON schema for runtime arguments
+- `output_schema`: JSON schema for results
+- `acp`: ACP mapping metadata
+  - `method`: e.g. `fs/read_text_file`
+  - `requires_client_capability`: e.g. `fs.readTextFile`
+
+Initial descriptor rules:
+
+- If `clientCapabilities.fs.readTextFile` is false, omit `acp_fs_read_text_file`.
+- If `clientCapabilities.fs.writeTextFile` is true, still omit write tools in slice 1.
+- If `clientCapabilities.terminal` is true, still omit terminal tools in slice 1.
+- Den may further filter by token scopes, bear policy, user role, and future per-bear capability settings.
+
+## Den product/UI changes
+
+Yes: enabling client tool relay must update Den's token generation and token listing UI so `acp:tools` is visible and intentionally granted.
+
+Current token UX creates bear-scoped ACP tokens for basic chat. For tool relay, Den should make scopes explicit.
+
+### Token generation UI
+
+Update the bear “Code with …” token generation page to support at least two modes:
+
+1. **Chat only**
+   - Scope: `acp:chat`
+   - Copy: “Use this token to chat with this bear from Zed/OpenCode.”
+   - Default for safest compatibility.
+
+2. **Chat + local client tools**
+   - Scopes: `acp:chat`, `acp:tools`
+   - Copy: “Allow this bear to request approved local tools from your editor for this session, such as reading workspace files.”
+   - Include a warning that tool availability depends on the active client/session and Den policy.
+
+The UI should not imply that `acp:tools` grants every possible tool. It only authorizes Den to broker policy-approved client tools exposed by the active ACP client.
+
+Recommended controls:
+
+- Token name input, as today.
+- Scope choice:
+  - radio buttons: “Chat only” vs “Chat + local tools”, or
+  - checkbox: “Allow local editor tools”, with `acp:chat` always included.
+- A short permissions summary before generation.
+- After generation, show Zed config plus a reminder that the raw token is shown once.
+
+### Token listing UI
+
+Update the account ACP token table to show scopes clearly.
+
+Add or surface:
+
+- `Scopes` column or compact badges:
+  - `chat`
+  - `tools`
+- Bear restriction, as today.
+- Last used, as today.
+- Revoked status, as today.
+- Optional future: last tool use timestamp or tool-use count.
+
+For tokens with `acp:tools`, include visual affordance that the token can broker local editor tools. This helps users audit and revoke higher-privilege tokens.
+
+### Token creation backend
+
+Current `acp_tokens::create_for_bear` uses a fixed default scope. Add a scope-aware creation path:
+
+- Validate requested scopes against an allowlist.
+- Always include `acp:chat` for ACP adapter tokens.
+- Include `acp:tools` only when explicitly selected.
+- Store scopes in the existing `acp_tokens.scopes` JSONB column.
+
+### Token authorization behavior
+
+- Basic prompt route continues to require `acp:chat`.
+- Tool-enabled prompt requests and tool-result endpoints require `acp:tools`.
+- If a client advertises capabilities but the token lacks `acp:tools`, Den should omit all client tool descriptors or reject an explicitly tool-enabled request. Recommended MVP behavior: omit descriptors and log `acp_tools_scope_missing`, so chat still works.
+
+## Den API changes
+
+### Extend ACP prompt request
+
+Current adapter request body contains `message`, `conversation_id`, and `client`.
+
+Add optional fields:
+
+- `client_capabilities`: raw ACP client capabilities as sent to adapter in `initialize`
+- `client_context`: normalized context from `session/new`
+  - `cwd`
+  - `client_name`
+  - `client_version`
+  - `adapter_version`
+- `client_tools`: adapter-normalized tool descriptors, if we prefer adapter-side normalization
+
+Recommended: send raw `client_capabilities` plus minimal `client_context` first, and let Den construct trusted descriptors. Adapter-side descriptors can be added later for MCP/custom extensions.
+
+### Stream tool requests to adapter
+
+Den already streams SSE from `/prompt` to adapter. Extend the Den adapter-facing SSE event set with:
+
+- `client_tool_request`
+- `client_tool_result_accepted`
+- `client_tool_result_rejected`
+
+A `client_tool_request` event should include:
+
+- `request_id`: Den request id for the prompt turn
+- `session_id`: ACP session id
+- `conversation_id`: currently `default`
+- `call_id`: Codepool call id
+- `tool_name`: normalized tool name
+- `arguments`: JSON arguments
+- `descriptor`: selected Den descriptor snapshot
+- `approval_policy`: effective approval policy
+- `timeout_ms`: Den-selected timeout
+
+### Add tool result endpoint
+
+Add an adapter-to-Den endpoint:
+
+- `POST /acp/bears/{slug}/sessions/{session_id}/tool-results/{call_id}`
+
+Request body fields:
+
+- `request_id`: original prompt request id
+- `conversation_id`: currently `default`
+- `status`: `ok`, `error`, `cancelled`, or `timeout`
+- `result`: JSON result for `ok`
+- `error`: structured error for non-ok statuses
+- `client_observation`: optional adapter/client metadata for audit/debugging
+
+Auth rules:
+
+- Same bearer token requirements as prompt.
+- Token must resolve to the same user and bear.
+- Tool result must match an active pending call for that user, bear, ACP session, request id, and call id.
+- Reject duplicate terminal results unless the previous result is in a retryable state.
+
+## Den persistence
+
+Add a pending-call table. Proposed name:
+
+- `acp_client_tool_calls`
+
+Columns:
+
+- `id UUID PRIMARY KEY`
+- `user_id INTEGER NOT NULL`
+- `bear_id UUID NOT NULL`
+- `bear_slug TEXT NOT NULL`
+- `acp_session_id TEXT NOT NULL`
+- `codepool_session_id TEXT NOT NULL`
+- `conversation_id TEXT NOT NULL`
+- `request_id UUID NOT NULL`
+- `call_id TEXT NOT NULL`
+- `tool_name TEXT NOT NULL`
+- `arguments JSONB NOT NULL`
+- `descriptor JSONB NOT NULL`
+- `status TEXT NOT NULL`
+  - `pending`
+  - `sent_to_client`
+  - `approved`
+  - `rejected`
+  - `result_received`
+  - `forwarded_to_codepool`
+  - `failed`
+  - `timed_out`
+  - `cancelled`
+- `result JSONB NULL`
+- `error JSONB NULL`
+- `approval_outcome JSONB NULL`
+- `created_at TIMESTAMPTZ NOT NULL DEFAULT now()`
+- `sent_at TIMESTAMPTZ NULL`
+- `approved_at TIMESTAMPTZ NULL`
+- `result_received_at TIMESTAMPTZ NULL`
+- `forwarded_at TIMESTAMPTZ NULL`
+- `expires_at TIMESTAMPTZ NOT NULL`
+
+Indexes:
+
+- unique `(request_id, call_id)`
+- `(user_id, bear_id, acp_session_id, status)`
+- `(expires_at)` for cleanup
+
+Use this same table as the audit source for MVP, or add a separate append-only audit table if we want immutable events immediately.
+
+## Codepool contract changes
+
+### `bear_channel` request
+
+Den sends non-empty `capabilities.client_tools` only after policy filtering.
+
+Each descriptor should be treated as authoritative. Codepool must not invent client tool names.
+
+### Runtime tool request event
+
+Codepool emits:
+
+- `type`: `client_tool_request`
+- `call.id`: unique within the prompt turn/session
+- `call.name`: one of the declared `capabilities.client_tools[*].name`
+- `call.arguments`: JSON arguments
+
+Recommended additions:
+
+- `call.title`: optional UI title
+- `call.kind`: normalized ACP `ToolKind`, e.g. `read`, `edit`, `execute`
+- `call.locations`: optional affected file locations
+- `call.requires_approval`: optional bool; Den remains final authority
+
+### Tool result continuation endpoint
+
+Add an internal Codepool endpoint for Den:
+
+- `POST /internal/bear_channel/sessions/{session_id}/tool-results`
+
+Request body:
+
+- `conversation_id`
+- `request_id`
+- `call_id`
+- `tool_name`
+- `status`
+- `result`
+- `error`
+
+This endpoint should deliver the tool result to the active runtime loop waiting on the tool call.
+
+Important constraint: Codepool must support an active prompt turn waiting for a tool result. If the current Letta Code SDK cannot pause/resume on external tool results, implement a Codepool-side async bridge that exposes ACP tools to the SDK as async tools and blocks those tool invocations until Den posts the result or timeout occurs.
+
+## Adapter behavior
+
+### Initialization
+
+Store from ACP `initialize`:
+
+- protocol version
+- client info
+- client capabilities
+- whether `fs/read_text_file` is available
+- whether `fs/write_text_file` is available
+- whether terminal methods are available
+
+Continue returning agent capabilities with current prompt support. Do not advertise `loadSession`, MCP, terminal, or write/edit support as agent capabilities unless implemented.
+
+### Prompt
+
+When calling Den prompt endpoint, include:
+
+- prompt text
+- `client`
+- `conversation_id`
+- `client_capabilities`
+- `client_context.cwd` from `session/new`
+- adapter version and git SHA if available
+
+### Handling Den `client_tool_request`
+
+For `acp_fs_read_text_file`:
+
+1. Emit ACP `session/update` `tool_call` with status `pending` or `in_progress`.
+2. If Den says approval is required, call ACP `session/request_permission`.
+3. If rejected/cancelled, POST Den tool result with `status = rejected` or `cancelled`.
+4. If approved or no approval required, send JSON-RPC request to client method `fs/read_text_file`.
+5. On success, emit ACP `tool_call_update` with status `completed` and a short content preview.
+6. POST result to Den.
+7. On error, emit ACP `tool_call_update` with status `failed` and POST structured error to Den.
+
+Adapter must support concurrent JSON-RPC requests while a prompt is in progress. The current line-by-line handler will need a request dispatcher with pending response correlation by JSON-RPC id.
+
+## Approval policy
+
+Initial Den defaults:
+
+- read-only filesystem: `never` or `on_sensitive_action` depending on product stance
+- write filesystem: `always` when introduced
+- terminal execution: `always` when introduced
+- delete/move: `always` when introduced
+
+For the first slice, choose one:
+
+- Safer default: require `session/request_permission` for every local file read.
+- Smoother developer default: allow reads without ACP permission if Zed has already granted the external agent access, but audit every read.
+
+Recommendation: use `on_sensitive_action` for file reads, where Den can later classify sensitive paths. For MVP, implement as `never` for reads but keep the descriptor field and audit policy in place.
+
+Sensitive-path policy should eventually force approval or deny for:
+
+- `.env`
+- private keys
+- credential files
+- SSH config/keys
+- large binary-looking files
+- paths outside the workspace root, if known
+
+## Timeout, cancellation, and disconnect semantics
+
+Timeouts:
+
+- Den sets a per-tool timeout, initially 30 seconds for file reads.
+- Adapter also applies a client request timeout slightly below Den timeout.
+- If timeout expires, adapter posts `status = timeout` when possible.
+- Den marks pending call timed out and forwards timeout to Codepool.
+
+Cancellation:
+
+- If ACP client sends `session/cancel`, adapter should:
+  - mark prompt turn as cancelling
+  - respond to pending `session/request_permission` as cancelled if possible
+  - stop issuing new client tool requests
+  - POST cancellation for pending calls to Den
+  - call future Den cancel endpoint when available
+- Until full runtime cancellation exists, Den should at least reject late tool results after cancellation/timeout.
+
+Disconnect:
+
+- If adapter process exits or stdio closes, pending calls eventually expire.
+- Den cleanup marks them `timed_out` or `cancelled`.
+- Codepool receives timeout/cancel result so the runtime can stop waiting.
+
+Duplicate/late results:
+
+- Den accepts only the first terminal result for a pending call.
+- Late results after `forwarded_to_codepool`, `timed_out`, or `cancelled` return `409 Conflict` with a structured error.
+
+## Error model
+
+Use structured errors consistently:
+
+- `kind`: `permission_denied`, `not_found`, `invalid_arguments`, `client_capability_missing`, `client_error`, `timeout`, `cancelled`, `transport_error`, `policy_denied`
+- `message`: short human-readable message
+- `detail`: optional detail safe for logs/UI
+- `retryable`: bool
+- `client_error_code`: optional ACP/JSON-RPC code
+
+Mapping examples:
+
+- ACP `-32002 Resource not found` -> `not_found`
+- JSON-RPC timeout -> `timeout`
+- permission rejected -> `permission_denied`
+- Den policy block -> `policy_denied`
+
+## Security and policy rules
+
+- Clients never send trusted bear/user context.
+- Den constructs all capability descriptors after authentication and membership checks.
+- Codepool can only request declared client tools.
+- Den rejects any requested tool name not in the descriptor snapshot for the prompt turn.
+- Den validates arguments before forwarding to adapter and again before forwarding results to Codepool.
+- Den enforces token scope:
+  - `acp:chat` remains enough for basic chat.
+  - Add `acp:tools` before enabling client tool relay for user tokens.
+- Den checks membership at prompt and result time.
+- Den records enough context to answer: who requested what local tool, from which client, for which bear/session, with which arguments, and what result/error came back.
+- Den should redact or summarize large/sensitive result content in durable audit where appropriate. The full result may be forwarded to Codepool for the active turn, but audit storage should have size and sensitivity limits.
+
+## Observability
+
+Add structured logs and metrics at each boundary.
+
+Den logs/events:
+
+- `acp_client_capabilities_received`
+- `acp_client_tools_authorized`
+- `acp_client_tool_request_received_from_codepool`
+- `acp_client_tool_request_sent_to_adapter`
+- `acp_client_tool_result_received`
+- `acp_client_tool_result_forwarded_to_codepool`
+- `acp_client_tool_call_failed`
+- `acp_client_tool_call_timed_out`
+
+Useful dimensions:
+
+- `request_id`
+- `call_id`
+- `user_id`
+- `bear_id`
+- `bear_slug`
+- `client`
+- `tool_name`
+- `status`
+- `duration_ms`
+- `error_kind`
+
+Metrics:
+
+- count tool requests by tool/status/client
+- duration histogram by tool/status/client
+- timeout count
+- policy denial count
+- rejected approval count
+- duplicate/late result count
+
+## Tests
+
+### Den tests
+
+- Prompt with `client_capabilities.fs.readTextFile = true` includes `acp_fs_read_text_file` in the Codepool request.
+- Prompt with missing/false read capability omits client tools.
+- Prompt with `acp:chat` but not `acp:tools` is rejected for tool-enabled requests once `acp:tools` is enforced.
+- Den rejects Codepool `client_tool_request` for undeclared tool name.
+- Den persists a pending call for declared tool request.
+- Den streams adapter-facing `client_tool_request` with expected payload.
+- Tool result endpoint rejects missing auth, wrong bear, wrong session, wrong request id, wrong call id, duplicate result, and expired call.
+- Tool result endpoint forwards successful result to fake Codepool endpoint.
+- Timeout cleanup marks pending calls and forwards timeout to fake Codepool.
+
+### Adapter tests
+
+- `initialize` stores client capabilities.
+- `session/new` stores `cwd` by ACP session id.
+- Prompt request to Den includes `client_capabilities` and `client_context`.
+- Den `client_tool_request` maps to ACP `fs/read_text_file` request.
+- JSON-RPC response correlation works while prompt streaming is active.
+- ACP read success posts Den result with expected shape.
+- ACP read error posts structured error.
+- Permission rejected maps to cancelled/rejected result.
+- Tool call and tool call update notifications are emitted with correct `toolCallId`, status, kind, title, raw input, and raw output summary.
+
+### Codepool tests
+
+- Codepool exposes only declared client tools to the runtime.
+- Undeclared client tool names are rejected before emitting events.
+- Tool-result continuation wakes the waiting runtime/tool bridge.
+- Tool-result timeout unblocks the runtime with a structured error.
+
+## Implementation sequence
+
+1. **Descriptor groundwork in Den**
+   - Add normalized `AcpClientCapabilities` parsing.
+   - Add `acp_fs_read_text_file` descriptor construction.
+   - Add `acp:tools` scope support for ACP token creation or a feature flag to temporarily allow existing tokens in dev.
+
+2. **Adapter capability forwarding**
+   - Store `initialize.clientCapabilities`.
+   - Store `session/new.cwd`.
+   - Include capability/context fields in Den prompt requests.
+
+3. **Den -> Codepool descriptor propagation**
+   - Pass authorized descriptors in `bear_channel.capabilities.client_tools`.
+   - Add integration tests around request construction.
+
+4. **Codepool runtime bridge**
+   - Expose declared client tools to Letta Code as async runtime tools.
+   - Emit `client_tool_request` and wait for result.
+   - Add internal `tool-results` endpoint.
+
+5. **Den pending-call and adapter-facing relay**
+   - Persist pending calls.
+   - Convert Codepool `client_tool_request` events to adapter SSE events.
+   - Add adapter-to-Den tool result endpoint.
+   - Forward result to Codepool.
+
+6. **Adapter JSON-RPC client calls**
+   - Refactor stdio loop into request/response dispatcher.
+   - Implement `fs/read_text_file` request, timeout, error handling, and result POST.
+   - Emit ACP tool call progress notifications.
+
+7. **Hardening**
+   - Add timeout cleanup.
+   - Add cancellation handling.
+   - Add audit redaction/size limits.
+   - Add user-visible debugging guidance.
+
+## Open questions
+
+1. Should first-slice file reads require ACP `session/request_permission`, or is Zed's external-agent trust boundary sufficient for MVP?
+2. Should `acp:tools` be required immediately, or introduced with a migration path for existing ACP tokens?
+3. Does the Letta Code SDK already support async externally-resolved tools, or do we need a Codepool-side blocking async tool shim?
+4. Should Den stream tool requests over the existing prompt SSE response, or split tool relay onto a dedicated bidirectional-ish long-poll/SSE channel?
+5. How much local file content should Den store in audit, if any, versus storing only hashes/summaries?
+6. Should absolute paths be allowed as-is, or should adapter enforce that paths stay under `cwd` before calling the ACP client?
+
+## Recommended MVP decisions
+
+- First tool: `acp_fs_read_text_file` only.
+- Require `acp:tools` for tool relay; keep `acp:chat` for chat-only.
+- Existing ACP tokens remain chat-only until regenerated or explicitly upgraded.
+- No terminal or write descriptors in MVP even if client supports them.
+- Use existing prompt SSE stream for Den -> adapter tool requests.
+- Add `POST /acp/bears/{slug}/sessions/{session_id}/tool-results/{call_id}` for adapter -> Den results.
+- Add Codepool internal `POST /internal/bear_channel/sessions/{session_id}/tool-results` for Den -> Codepool continuation.
+- Audit metadata and result summaries; do not persist full file contents by default.
+- Enforce a 30-second read timeout.
+- Treat adapter disconnect as timeout/cancel and unblock Codepool.

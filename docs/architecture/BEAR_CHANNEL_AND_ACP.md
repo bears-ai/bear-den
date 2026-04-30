@@ -75,7 +75,7 @@ In progress / next:
 
 Reserved for later:
 
-- ACP client tool relay.
+- ACP client tool relay implementation. The detailed design is in [`../planning/ACP_CLIENT_TOOL_RELAY_PLAN.md`](../planning/ACP_CLIENT_TOOL_RELAY_PLAN.md).
 - Rich web UI rendering of server tool, sub-agent, and memory events.
 - Full cancellation.
 - Session resume/load/list.
@@ -160,10 +160,10 @@ Expected mapping:
 | Reasoning/status | `reasoning_delta` or future status events |
 | Client capabilities | `capabilities.client_tools` |
 | Client tool request | `client_tool_request` |
-| Client tool result | planned tool-result endpoint/event |
+| Client tool result | adapter -> Den `tool-results/{call_id}` endpoint, then Den -> Codepool internal tool-result continuation endpoint |
 | Cancel | planned cancellation endpoint |
 
-Den is the ACP gateway, not a blind proxy. It authenticates the ACP client, authorizes bear access, injects trusted context, and will broker client tool requests/results in a later slice. The first slice intentionally sends `conversation_id = "default"` and ignores client-supplied non-default conversation ids until session load/resume semantics are implemented.
+Den is the ACP gateway, not a blind proxy. It authenticates the ACP client, authorizes bear access, injects trusted context, and will broker client tool requests/results using the design in [`../planning/ACP_CLIENT_TOOL_RELAY_PLAN.md`](../planning/ACP_CLIENT_TOOL_RELAY_PLAN.md). The first slice intentionally sends `conversation_id = "default"` and ignores client-supplied non-default conversation ids until session load/resume semantics are implemented.
 
 ## Rollout approach
 
