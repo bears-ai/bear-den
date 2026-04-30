@@ -93,6 +93,8 @@ Optional:
 | Variable | Value |
 | -------- | ----- |
 | `CODEPOOL_INTERNAL_TOKEN` | Random shared token if you want Den to authenticate to Codepool |
+| `CODEPOOL_LOG_STYLE` | Codepool log format: `pretty` by default for humans, or `json` for structured aggregation |
+| `CODEPOOL_LOG_LEVEL` | Codepool minimum log level: `info` by default; accepts `debug`, `info`, `warn`, `error` |
 | `ACP_GATEWAY_ENABLED` | Defaults to `true`; set to `false` only if you do not want the Den API ACP gateway mounted |
 | `DEN_IMAGE` | Override the prebuilt Den image |
 | `CODEPOOL_IMAGE` | Override the prebuilt Codepool image |

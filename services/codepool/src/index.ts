@@ -4,6 +4,7 @@ import { attachRoutes } from "./server.js";
 import { createChannelListenerRegistry } from "./channel-listeners.js";
 import { verifyLettaReachableAtStartup } from "./letta-upstream.js";
 import { createBearRuntimeProvisionerFromEnv } from "./provisioning/index.js";
+import { logger } from "./logger.js";
 
 async function main(): Promise<void> {
     const port = Number(process.env.PORT || "3030");
@@ -19,28 +20,31 @@ async function main(): Promise<void> {
     // Postgres memory block cache; direct MemFS Manager pushes update git only and are
     // invisible to later conversations.
     if (process.env.LETTA_MEMFS_SERVICE_URL?.trim()) {
-        console.warn(
-            "bears-codepool: ignoring LETTA_MEMFS_SERVICE_URL; memfs writes must route through LETTA_BASE_URL /v1/git so Letta syncs memory blocks",
+        logger.warn(
+            "ignoring LETTA_MEMFS_SERVICE_URL; memfs writes must route through LETTA_BASE_URL /v1/git so Letta syncs memory blocks",
         );
         delete process.env.LETTA_MEMFS_SERVICE_URL;
     }
     const lettaBaseUrl = process.env.LETTA_BASE_URL;
     if (!lettaBaseUrl) {
-        console.error(
-            "bears-codepool: LETTA_BASE_URL is not set — cannot start without Letta API",
+        logger.error(
+            "LETTA_BASE_URL is not set — cannot start without Letta API",
         );
         process.exit(1);
     }
 
     const lettaApiKey = process.env.LETTA_API_KEY?.trim() ?? "";
-    console.log(
-        "bears-codepool: verifying Letta connectivity (GET /v1/health)...",
-    );
+    logger.info("verifying Letta connectivity", {
+        event: "letta_health_check_start",
+        endpoint: "/v1/health",
+    });
     await verifyLettaReachableAtStartup({
         baseUrl: lettaBaseUrl,
         apiKey: lettaApiKey,
     });
-    console.log("bears-codepool: Letta health check passed");
+    logger.info("Letta health check passed", {
+        event: "letta_health_check_end",
+    });
 
     const internalToken = process.env.CODEPOOL_INTERNAL_TOKEN?.trim() ?? "";
 
@@ -58,7 +62,7 @@ async function main(): Promise<void> {
     attachRoutes(app, { pool, channelListeners, internalToken });
 
     const server = app.listen(port, () => {
-        console.log(`bears-codepool listening on ${port}`);
+        logger.info("listening", { port });
     });
 
     function shutdown() {
@@ -72,6 +76,6 @@ async function main(): Promise<void> {
 }
 
 void main().catch((err) => {
-    console.error("bears-codepool:", err);
+    logger.error("startup failed", err);
     process.exit(1);
 });

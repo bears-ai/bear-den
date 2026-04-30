@@ -26,8 +26,7 @@ A GitHub Actions workflow ([`.github/workflows/codepool-image.yml`](../../.githu
 
 - Tags: **`ghcr.io/<github-org>/codepool:latest`** and **`ghcr.io/<github-org>/codepool:<short-sha>`** (use `github.repository_owner` in the workflow; override **`CODEPOOL_IMAGE`** in compose for forks).
 - **Path filter:** only `services/codepool/**` (and the workflow file) — same idea as [Den’s workflow](../../.github/workflows/den-image.yml).
-- After a successful push, the workflow calls the **Coolify deploy webhook** (`COOLIFY_WEBHOOK` + `COOLIFY_TOKEN` GitHub secrets). That URL must come from the **same** Coolify application that runs this compose stack (Coolify: resource → **Webhook** → *Deploy webhook*). Den and Codepool workflows typically share one webhook if they deploy **one** Docker Compose project.
-- The webhook step is **non-failing** in CI (`continue-on-error`) so a bad webhook does not block the image push; fix secrets and redeploy from Coolify or re-run the workflow after updating them.
+- Deploys are coordinated by [`.github/workflows/coolify-deploy.yml`](../../.github/workflows/coolify-deploy.yml), which waits for required image builds before calling the **Coolify deploy webhook** (`COOLIFY_WEBHOOK` + `COOLIFY_TOKEN` GitHub secrets). That URL must come from the **same** Coolify application that runs this compose stack (Coolify: resource → **Webhook** → *Deploy webhook*). Den and Codepool share one webhook when they deploy **one** Docker Compose project.
 
 **GitHub Actions `curl: (22) … 404`:** Coolify returned **Not Found** for that webhook URL — usually **wrong or outdated `COOLIFY_WEBHOOK`** (copied from another resource, old deployment, or typo). Open the **bears-stack** (or your compose) application in Coolify, copy the current **Deploy webhook** URL, and update the repo secret. Confirm **`COOLIFY_TOKEN`** is a Coolify API token with **Deploy** permission ([Coolify: GitHub Actions](https://coolify.io/docs/applications/ci-cd/github/actions)).
 
@@ -40,7 +39,8 @@ A GitHub Actions workflow ([`.github/workflows/codepool-image.yml`](../../.githu
 1. **Add Resource** → **Docker Compose** → this repository.
 2. **Base Directory:** `.` (repo root) and **[`docker-compose.yaml`](../../docker-compose.yaml)**.
 3. Set **`LETTA_BASE_URL`**, **`LETTA_API_KEY`** (same as Letta admin password), **`LETTA_MEMFS_LOCAL=1`** (default; **Letta** in root compose uses **MemFS Manager** / **`bears-memfs-manager`** for git HTTP), optional **`CODEPOOL_INTERNAL_TOKEN`**.
-4. If you did **not** use the root compose file, attach the **same Docker network** as Den and Letta so **`bears-codepool`** resolves.
+4. Leave **`CODEPOOL_LOG_STYLE=pretty`** for human-readable logs, or set **`CODEPOOL_LOG_STYLE=json`** for structured log aggregation. Set **`CODEPOOL_LOG_LEVEL`** to `debug`, `info`, `warn`, or `error` as needed.
+5. If you did **not** use the root compose file, attach the **same Docker network** as Den and Letta so **`bears-codepool`** resolves.
 
 ## Health
 

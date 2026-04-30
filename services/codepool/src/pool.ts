@@ -14,6 +14,7 @@ import type {
     EnsureResult,
 } from "./provisioning/types.js";
 import type { AnyAgentTool } from "@letta-ai/letta-code-sdk";
+import { logger } from "./logger.js";
 
 export type PoolKey = string;
 
@@ -208,17 +209,14 @@ export class ConversationSessionPool {
             sessionOpts.cwd = cwd;
         }
         const method = sessionMethodFor(conversationId);
-        console.log(
-            JSON.stringify({
-                event: "letta_code_session_open",
-                service: "bears-codepool",
-                agent_id: agentId,
-                conversation_id: conversationId,
-                resume_target: rt,
-                session_method: method,
-                cwd: cwd || null,
-            }),
-        );
+        logger.info("Letta Code session opened", {
+            event: "letta_code_session_open",
+            agent_id: agentId,
+            conversation_id: conversationId,
+            resume_target: rt,
+            session_method: method,
+            cwd: cwd || null,
+        });
         const session =
             method === "createSession"
                 ? createSession(agentId, sessionOpts)

@@ -35,6 +35,7 @@ import {
     makeDenExternalTools,
     parseDenServerTools,
 } from "./den-tools.js";
+import { logger } from "./logger.js";
 
 const packageJson = JSON.parse(
     readFileSync(new URL("../package.json", import.meta.url), "utf8"),
@@ -382,17 +383,14 @@ export function attachRoutes(
 
             recordConversationMessagesRequest();
             const t0 = Date.now();
-            console.log(
-                JSON.stringify({
-                    event: "bear_channel_message_start",
-                    service: "bears-codepool",
-                    request_id: requestId,
-                    session_id: sessionId,
-                    conversation_id: parsed.conversationId,
-                    agent_id: parsed.agentId,
-                    bear_id: parsed.bearId,
-                }),
-            );
+            logger.info("bear channel message started", {
+                event: "bear_channel_message_start",
+                request_id: requestId,
+                session_id: sessionId,
+                conversation_id: parsed.conversationId,
+                agent_id: parsed.agentId,
+                bear_id: parsed.bearId,
+            });
 
             let hadAssistantOrReasoning = false;
             let sawUpstreamErrorMessage = false;
@@ -469,10 +467,10 @@ export function attachRoutes(
                 } else {
                     recordStreamFinishedEmptyFallback();
                     outcome = "empty_fallback";
-                    console.log(
-                        JSON.stringify({
+                    logger.warn(
+                        "bear channel stream ended without assistant output",
+                        {
                             event: "bear_channel_empty_stream",
-                            service: "bears-codepool",
                             request_id: requestId,
                             sdk_message_count: sdkMessageCount,
                             sdk_message_types: sdkMessageTypes,
@@ -480,7 +478,7 @@ export function attachRoutes(
                             unmapped_stream_event_samples:
                                 unmappedStreamEventSamples,
                             ...context,
-                        }),
+                        },
                     );
                     res.write(
                         `data: ${bearChannelEventToSseDataLine({
@@ -504,20 +502,16 @@ export function attachRoutes(
                 );
                 res.end();
                 const ms = Date.now() - t0;
-                console.log(
-                    JSON.stringify({
-                        event: "bear_channel_message_end",
-                        service: "bears-codepool",
-                        request_id: requestId,
-                        outcome,
-                        duration_ms: ms,
-                        sdk_message_count: sdkMessageCount,
-                        sdk_message_types: sdkMessageTypes,
-                        sse_data_lines: sseDataLines,
-                        unmapped_stream_event_samples:
-                            unmappedStreamEventSamples,
-                    }),
-                );
+                logger.info("bear channel message finished", {
+                    event: "bear_channel_message_end",
+                    request_id: requestId,
+                    outcome,
+                    duration_ms: ms,
+                    sdk_message_count: sdkMessageCount,
+                    sdk_message_types: sdkMessageTypes,
+                    sse_data_lines: sseDataLines,
+                    unmapped_stream_event_samples: unmappedStreamEventSamples,
+                });
             } catch (e) {
                 recordStreamFinishedError();
                 const err = e instanceof Error ? e.message : String(e);
@@ -527,15 +521,12 @@ export function attachRoutes(
                     parsed.agentId,
                     parsed.bearId,
                 );
-                console.log(
-                    JSON.stringify({
-                        event: "bear_channel_message_error",
-                        service: "bears-codepool",
-                        request_id: requestId,
-                        error: err,
-                        ...context,
-                    }),
-                );
+                logger.error("bear channel message failed", {
+                    event: "bear_channel_message_error",
+                    request_id: requestId,
+                    error: err,
+                    ...context,
+                });
                 res.write(
                     `data: ${bearChannelEventToSseDataLine({
                         type: "error",
@@ -613,16 +604,13 @@ export function attachRoutes(
 
             recordConversationMessagesRequest();
             const t0 = Date.now();
-            console.log(
-                JSON.stringify({
-                    event: "conversation_messages_start",
-                    service: "bears-codepool",
-                    request_id: requestId,
-                    conversation_id: conversationId,
-                    agent_id: agentId,
-                    bear_id: bearId,
-                }),
-            );
+            logger.info("conversation message stream started", {
+                event: "conversation_messages_start",
+                request_id: requestId,
+                conversation_id: conversationId,
+                agent_id: agentId,
+                bear_id: bearId,
+            });
 
             let hadAssistantOrReasoning = false;
             let sawUpstreamErrorMessage = false;
@@ -678,27 +666,21 @@ export function attachRoutes(
                 }
                 res.end();
                 const ms = Date.now() - t0;
-                console.log(
-                    JSON.stringify({
-                        event: "conversation_messages_end",
-                        service: "bears-codepool",
-                        request_id: requestId,
-                        outcome,
-                        duration_ms: ms,
-                        sse_data_lines: sseDataLines,
-                    }),
-                );
+                logger.info("conversation message stream finished", {
+                    event: "conversation_messages_end",
+                    request_id: requestId,
+                    outcome,
+                    duration_ms: ms,
+                    sse_data_lines: sseDataLines,
+                });
             } catch (e) {
                 recordStreamFinishedError();
                 const err = e instanceof Error ? e.message : String(e);
-                console.log(
-                    JSON.stringify({
-                        event: "conversation_messages_error",
-                        service: "bears-codepool",
-                        request_id: requestId,
-                        error: err,
-                    }),
-                );
+                logger.error("conversation message stream failed", {
+                    event: "conversation_messages_error",
+                    request_id: requestId,
+                    error: err,
+                });
                 res.write(
                     `data: ${JSON.stringify({
                         message_type: "error_message",

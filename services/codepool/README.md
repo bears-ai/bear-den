@@ -16,6 +16,16 @@ cp .env.example .env   # set LETTA_BASE_URL, LETTA_API_KEY
 npm run build && npm start
 ```
 
+## Logging
+
+Codepool logs in a Den-aligned human-readable format by default:
+
+```/dev/null/codepool-log.txt#L1-1
+2026-04-30T12:34:56.789Z  INFO bears-codepool bear_channel_message_end: bear channel message finished request_id=... outcome=ok duration_ms=1234
+```
+
+Set `LOG_STYLE=json` if you need the structured JSON stream for log aggregation. Set `LOG_LEVEL=debug|info|warn|error` to control verbosity. In the root compose stack these are exposed as `CODEPOOL_LOG_STYLE` and `CODEPOOL_LOG_LEVEL`.
+
 ## HTTP
 
 | Method | Path | Notes |
