@@ -396,6 +396,8 @@ export function attachRoutes(
             let hadAssistantOrReasoning = false;
             let sawUpstreamErrorMessage = false;
             let sseDataLines = 0;
+            let sdkMessageCount = 0;
+            const sdkMessageTypes: Record<string, number> = {};
 
             try {
                 const denToolContext = buildDenToolRuntimeContext(
@@ -418,6 +420,12 @@ export function attachRoutes(
                         tools: denTools,
                     },
                 )) {
+                    sdkMessageCount += 1;
+                    const msgType = String(
+                        (msg as { type?: unknown }).type ?? "unknown",
+                    );
+                    sdkMessageTypes[msgType] =
+                        (sdkMessageTypes[msgType] ?? 0) + 1;
                     for (const event of sdkMessageToBearChannelEvents(msg)) {
                         sseDataLines += 1;
                         res.write(
@@ -433,6 +441,12 @@ export function attachRoutes(
                         }
                     }
                 }
+                const context = runtimeErrorContext(
+                    sessionId,
+                    parsed.conversationId,
+                    parsed.agentId,
+                    parsed.bearId,
+                );
                 let outcome: "ok" | "upstream_error" | "empty_fallback";
                 if (hadAssistantOrReasoning) {
                     recordStreamFinishedOk();
@@ -443,12 +457,29 @@ export function attachRoutes(
                 } else {
                     recordStreamFinishedEmptyFallback();
                     outcome = "empty_fallback";
+                    console.log(
+                        JSON.stringify({
+                            event: "bear_channel_empty_stream",
+                            service: "bears-codepool",
+                            request_id: requestId,
+                            sdk_message_count: sdkMessageCount,
+                            sdk_message_types: sdkMessageTypes,
+                            sse_data_lines: sseDataLines,
+                            ...context,
+                        }),
+                    );
                     res.write(
                         `data: ${bearChannelEventToSseDataLine({
                             type: "error",
                             message: "No response from the assistant.",
-                            detail: "The stream ended without any assistant output. Check Codepool and Letta logs.",
+                            detail: "The stream ended without any assistant or reasoning output. See context for the Letta Code runtime target and check Codepool/Letta logs for bear_channel_empty_stream.",
                             request_id: requestId,
+                            context: {
+                                ...context,
+                                sdk_message_count: sdkMessageCount,
+                                sdk_message_types: sdkMessageTypes,
+                                sse_data_lines: sseDataLines,
+                            },
                         })}\n\n`,
                     );
                 }
@@ -464,6 +495,8 @@ export function attachRoutes(
                         request_id: requestId,
                         outcome,
                         duration_ms: ms,
+                        sdk_message_count: sdkMessageCount,
+                        sdk_message_types: sdkMessageTypes,
                         sse_data_lines: sseDataLines,
                     }),
                 );

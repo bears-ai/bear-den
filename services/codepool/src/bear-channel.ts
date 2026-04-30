@@ -106,6 +106,9 @@ export type BearChannelErrorContext = {
     bear_id: string;
     resume_target: string;
     session_method: "createSession" | "resumeSession";
+    sdk_message_count?: number;
+    sdk_message_types?: Record<string, number>;
+    sse_data_lines?: number;
 };
 
 export type ParsedBearChannelRequest = {
