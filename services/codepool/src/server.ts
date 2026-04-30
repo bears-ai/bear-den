@@ -11,6 +11,7 @@ import { sdkMessageToSseDataLine } from "./sse.js";
 import { handleOpenAIChatCompletions } from "./openai.js";
 import {
     bearChannelEventToSseDataLine,
+    extractUpstreamErrorSummary,
     parseBearChannelRequest,
     runtimeErrorContext,
     sdkMessageToBearChannelEvents,
@@ -398,6 +399,7 @@ export function attachRoutes(
             let sdkMessageCount = 0;
             const sdkMessageTypes: Record<string, number> = {};
             const unmappedStreamEventSamples: unknown[] = [];
+            const upstreamErrorSamples: unknown[] = [];
 
             try {
                 const denToolContext = buildDenToolRuntimeContext(
@@ -428,6 +430,15 @@ export function attachRoutes(
                         (sdkMessageTypes[msgType] ?? 0) + 1;
                     const events = sdkMessageToBearChannelEvents(msg);
                     if (
+                        msgType === "stream_event" &&
+                        upstreamErrorSamples.length < 3
+                    ) {
+                        const summary = extractUpstreamErrorSummary(
+                            (msg as { event?: unknown }).event,
+                        );
+                        if (summary) upstreamErrorSamples.push(summary);
+                    }
+                    if (
                         events.length === 0 &&
                         msgType === "stream_event" &&
                         unmappedStreamEventSamples.length < 3
@@ -451,12 +462,18 @@ export function attachRoutes(
                         }
                     }
                 }
-                const context = runtimeErrorContext(
-                    sessionId,
-                    parsed.conversationId,
-                    parsed.agentId,
-                    parsed.bearId,
-                );
+                const context = {
+                    ...runtimeErrorContext(
+                        sessionId,
+                        parsed.conversationId,
+                        parsed.agentId,
+                        parsed.bearId,
+                    ),
+                    upstream_error:
+                        upstreamErrorSamples.length > 0
+                            ? upstreamErrorSamples
+                            : undefined,
+                };
                 let outcome: "ok" | "upstream_error" | "empty_fallback";
                 if (hadAssistantOrReasoning) {
                     recordStreamFinishedOk();
@@ -493,6 +510,10 @@ export function attachRoutes(
                                 sse_data_lines: sseDataLines,
                                 unmapped_stream_event_samples:
                                     unmappedStreamEventSamples,
+                                upstream_error:
+                                    upstreamErrorSamples.length > 0
+                                        ? upstreamErrorSamples
+                                        : undefined,
                             },
                         })}\n\n`,
                     );
@@ -511,6 +532,10 @@ export function attachRoutes(
                     sdk_message_types: sdkMessageTypes,
                     sse_data_lines: sseDataLines,
                     unmapped_stream_event_samples: unmappedStreamEventSamples,
+                    upstream_error:
+                        upstreamErrorSamples.length > 0
+                            ? upstreamErrorSamples
+                            : undefined,
                 });
             } catch (e) {
                 recordStreamFinishedError();

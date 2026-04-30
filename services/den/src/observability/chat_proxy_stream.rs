@@ -179,6 +179,7 @@ fn bear_channel_event_to_deep_chat_sse(event: &serde_json::Value) -> Option<Byte
             "detail": event.get("detail").and_then(|v| v.as_str()),
             "error_type": event.get("error_type").and_then(|v| v.as_str()),
             "support_ref": event.get("request_id").and_then(|v| v.as_str()),
+            "context": event.get("context"),
         }),
         "conversation_resolved" => serde_json::json!({
             "message_type": "conversation_resolved",
@@ -435,10 +436,11 @@ mod tests {
 
     #[test]
     fn maps_error_to_deep_chat_sse() {
-        let out = mapped_text("data: {\"type\":\"error\",\"message\":\"Nope\",\"detail\":\"More\",\"request_id\":\"r1\"}\n\n");
+        let out = mapped_text("data: {\"type\":\"error\",\"message\":\"Nope\",\"detail\":\"More\",\"request_id\":\"r1\",\"context\":{\"upstream_error\":[{\"param\":\"tools[15].name\"}]}}\n\n");
         assert!(out.contains("\"message_type\":\"error_message\""));
         assert!(out.contains("\"message\":\"Nope\""));
         assert!(out.contains("\"support_ref\":\"r1\""));
+        assert!(out.contains("\"upstream_error\""));
     }
 
     #[test]

@@ -52,7 +52,8 @@ export function buildDenToolRuntimeContext(
     const agentId = body.bear?.letta_agent_id?.trim() ?? "";
     const userId = body.user?.id ?? "";
     if (!bearId) throw new Error("bear.id is required for Den tools");
-    if (!agentId) throw new Error("bear.letta_agent_id is required for Den tools");
+    if (!agentId)
+        throw new Error("bear.letta_agent_id is required for Den tools");
     if (userId === "" || userId === null || userId === undefined) {
         throw new Error("user.id is required for Den tools");
     }
@@ -78,36 +79,63 @@ export function makeDenExternalTools(opts: {
     descriptors: DenToolDescriptor[];
     getContext: () => DenToolRuntimeContext;
 }): AnyAgentTool[] {
+    const usedProviderNames = new Set<string>();
     return opts.descriptors
-        .map((descriptor) => toAgentTool(descriptor, opts.getContext))
+        .map((descriptor) =>
+            toAgentTool(descriptor, opts.getContext, usedProviderNames),
+        )
         .filter((tool): tool is AnyAgentTool => tool !== null);
+}
+
+const PROVIDER_TOOL_NAME_PATTERN = /^[a-zA-Z0-9_-]+$/;
+
+/**
+ * OpenAI Responses rejects tool/function names containing dots, slashes, spaces,
+ * etc. Den's internal capability namespace intentionally uses dotted names
+ * (`den.bear.get_self`), so Codepool exposes a provider-safe alias to Letta Code
+ * while invoking Den with the original trusted tool name.
+ */
+export function providerSafeToolName(name: string): string {
+    const safe = name.replace(/[^a-zA-Z0-9_-]/g, "_");
+    if (safe && PROVIDER_TOOL_NAME_PATTERN.test(safe)) return safe;
+    return "den_tool";
 }
 
 function toAgentTool(
     descriptor: DenToolDescriptor,
     getContext: () => DenToolRuntimeContext,
+    usedProviderNames: Set<string>,
 ): AnyAgentTool | null {
-    const name = typeof descriptor.name === "string" ? descriptor.name : "";
-    if (!name.startsWith("den.")) return null;
+    const denName = typeof descriptor.name === "string" ? descriptor.name : "";
+    if (!denName.startsWith("den.")) return null;
+    const providerName = providerSafeToolName(denName);
+    if (usedProviderNames.has(providerName)) {
+        throw new Error(
+            `Den tool provider-name collision: ${denName} maps to duplicate ${providerName}`,
+        );
+    }
+    usedProviderNames.add(providerName);
     const label =
         typeof descriptor.label === "string" && descriptor.label.trim()
             ? descriptor.label
-            : name;
-    const description =
-        typeof descriptor.description === "string" && descriptor.description.trim()
-            ? descriptor.description
-            : `Invoke Den server tool ${name}.`;
+            : denName;
+    const rawDescription =
+        typeof descriptor.description === "string" &&
+        descriptor.description.trim()
+            ? descriptor.description.trim()
+            : `Invoke Den server tool ${denName}.`;
+    const description = `${rawDescription}\n\nDen internal tool: ${denName}.`;
     const parameters = isJsonSchemaObject(descriptor.input_schema)
         ? descriptor.input_schema
         : EMPTY_SCHEMA;
 
     return {
-        name,
+        name: providerName,
         label,
         description,
         parameters,
         execute: async (_toolCallId: string, args: unknown) => {
-            const result = await invokeDenTool(name, args, getContext());
+            const result = await invokeDenTool(denName, args, getContext());
             return jsonTextResult(result);
         },
     };
@@ -156,7 +184,9 @@ async function invokeDenTool(
     }
     if (!response.ok) {
         const message = extractErrorMessage(body) || response.statusText;
-        throw new Error(`Den tool ${toolName} failed (${response.status}): ${message}`);
+        throw new Error(
+            `Den tool ${toolName} failed (${response.status}): ${message}`,
+        );
     }
     if (
         body &&
@@ -170,7 +200,10 @@ async function invokeDenTool(
 }
 
 function denInternalBaseUrl(): string {
-    const configured = process.env.DEN_INTERNAL_BASE_URL?.trim().replace(/\/+$/, "");
+    const configured = process.env.DEN_INTERNAL_BASE_URL?.trim().replace(
+        /\/+$/,
+        "",
+    );
     if (configured) return configured;
     return process.env.NODE_ENV === "production"
         ? "http://bears-den:3001"
@@ -191,4 +224,21 @@ function extractErrorMessage(body: unknown): string | null {
         if (typeof message === "string") return message;
     }
     return null;
+}
+
+if (process.env.NODE_ENV === "test") {
+    const assertProviderToolNames = () => {
+        const samples = [
+            ["den.bear.get_self", "den_bear_get_self"],
+            ["den.user/get current", "den_user_get_current"],
+        ] as const;
+        for (const [input, expected] of samples) {
+            if (providerSafeToolName(input) !== expected) {
+                throw new Error(
+                    `providerSafeToolName(${input}) expected ${expected}, got ${providerSafeToolName(input)}`,
+                );
+            }
+        }
+    };
+    assertProviderToolNames();
 }

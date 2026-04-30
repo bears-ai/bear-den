@@ -752,6 +752,23 @@ block head %} {{ super() }}
         });
     }
 
+    function compactJsonForError(value) {
+        try {
+            return JSON.stringify(value, null, 2);
+        } catch (_) {
+            return String(value);
+        }
+    }
+
+    function appendErrorContextLines(lines, context) {
+        if (!context || typeof context !== "object") return;
+        var upstream = context.upstream_error;
+        if (upstream) {
+            lines.push("Upstream error context:");
+            lines.push(compactJsonForError(upstream));
+        }
+    }
+
     /** Map one Letta SSE JSON object to a stream Response (see denChatSignalError — use `text`, not `error`). */
     function lettaStreamEventErrorSignal(obj, requestRef) {
         var inner = lettaInnerForStream(obj);
@@ -760,6 +777,7 @@ block head %} {{ super() }}
         if (inner.error_type) lines.push("[" + String(inner.error_type) + "]");
         if (inner.message) lines.push(String(inner.message));
         if (inner.detail) lines.push(String(inner.detail));
+        appendErrorContextLines(lines, inner.context);
         var ref =
             inner.support_ref != null && String(inner.support_ref).trim()
                 ? String(inner.support_ref).trim()

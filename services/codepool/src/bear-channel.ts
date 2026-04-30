@@ -110,6 +110,7 @@ export type BearChannelErrorContext = {
     sdk_message_types?: Record<string, number>;
     sse_data_lines?: number;
     unmapped_stream_event_samples?: unknown[];
+    upstream_error?: unknown;
 };
 
 export type ParsedBearChannelRequest = {
@@ -192,6 +193,67 @@ export function summarizeSdkMessageForDiagnostics(msg: SDKMessage): unknown {
                 ? ev.content.slice(0, 160)
                 : JSON.stringify(ev).slice(0, 240),
     };
+}
+
+function getStringField(
+    obj: Record<string, unknown>,
+    keys: string[],
+): string | undefined {
+    for (const key of keys) {
+        const value = obj[key];
+        if (typeof value === "string" && value.trim()) return value;
+    }
+    return undefined;
+}
+
+function findNestedError(value: unknown, depth = 0): unknown {
+    if (!value || typeof value !== "object" || depth > 4) return undefined;
+    const obj = value as Record<string, unknown>;
+    if (obj.error && typeof obj.error === "object") return obj.error;
+    for (const key of ["data", "response", "body", "detail", "cause"]) {
+        const found = findNestedError(obj[key], depth + 1);
+        if (found) return found;
+    }
+    return undefined;
+}
+
+export function extractUpstreamErrorSummary(value: unknown): {
+    message?: string;
+    detail?: string;
+    error_type?: string;
+    param?: string;
+    code?: string;
+} | null {
+    const err = findNestedError(value) ?? value;
+    if (!err || typeof err !== "object") return null;
+    const obj = err as Record<string, unknown>;
+    const message = getStringField(obj, ["message", "error", "detail"]);
+    const detail = getStringField(obj, ["detail", "body", "response"]);
+    const error_type = getStringField(obj, ["type", "error_type"]);
+    const param = getStringField(obj, ["param"]);
+    const code = getStringField(obj, ["code"]);
+    if (!message && !detail && !error_type && !param && !code) return null;
+    return { message, detail, error_type, param, code };
+}
+
+function llmApiErrorDetail(ev: Record<string, unknown>): string {
+    const summary = extractUpstreamErrorSummary(ev);
+    const parts = [
+        "Letta Code emitted stop_reason=llm_api_error before any assistant output.",
+    ];
+    if (summary?.message) parts.push(summary.message);
+    if (summary?.error_type) parts.push(`type=${summary.error_type}`);
+    if (summary?.param) parts.push(`param=${summary.param}`);
+    if (summary?.code) parts.push(`code=${summary.code}`);
+    if (summary?.detail && summary.detail !== summary.message) {
+        parts.push(summary.detail);
+    }
+    if (!summary) {
+        parts.push(
+            "Check Letta, Bifrost, and model provider logs/configuration for the underlying model API failure.",
+        );
+    }
+    return parts.join("\n");
 }
 
 export function sdkMessageToBearChannelEvents(
@@ -288,7 +350,7 @@ export function sdkMessageToBearChannelEvents(
                                 type: "error",
                                 message:
                                     "Letta stopped because the LLM API returned an error.",
-                                detail: "Letta Code emitted stop_reason=llm_api_error before any assistant output. Check Letta, Bifrost, and model provider logs/configuration for the underlying model API failure.",
+                                detail: llmApiErrorDetail(ev),
                                 error_type: stopReason,
                             },
                         ];
