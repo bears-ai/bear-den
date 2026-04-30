@@ -6,6 +6,7 @@ use uuid::Uuid;
 
 use crate::core::{
     bears::{db as bears_db, runtime_plan::default_runtime_plan},
+    bifrost::BifrostClient,
     letta::LettaClient,
 };
 use crate::errors::CustomError;
@@ -15,6 +16,7 @@ use crate::errors::CustomError;
 pub async fn sync_bear_to_letta(
     pool: &PgPool,
     letta: &LettaClient,
+    bifrost: &BifrostClient,
     bear_id: Uuid,
 ) -> Result<(), CustomError> {
     if !letta.is_enabled() {
@@ -48,6 +50,11 @@ pub async fn sync_bear_to_letta(
         .unwrap_or("letta_v1_agent");
 
     let tool_ids = letta.filtered_tool_ids(&bear.letta_tool_ids.0).await?;
+    let context_window = if let (Some(model), true) = (model, bifrost.is_enabled()) {
+        bifrost.get_model(model).await?.map(|m| m.context_window)
+    } else {
+        None
+    };
 
     letta
         .patch_agent(
@@ -56,6 +63,7 @@ pub async fn sync_bear_to_letta(
             bear.description.as_str(),
             bear.system_prompt.as_str(),
             model,
+            context_window,
             Some(agent_type),
             &tool_ids,
         )

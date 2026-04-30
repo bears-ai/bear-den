@@ -319,7 +319,7 @@ async fn new_bear_post(
         bears_db::grant_membership(state.sqlx_pool(), user_id, id, Some(BEAR_ROLE_ADMIN)).await?;
 
         if let Err(e) =
-            provision::provision_bear_if_configured(state.sqlx_pool(), state.letta.as_ref(), id)
+            provision::provision_bear_if_configured(state.sqlx_pool(), state.letta.as_ref(), state.bifrost.as_ref(), id)
                 .await
         {
             if state.letta.is_enabled() {
@@ -345,7 +345,7 @@ async fn new_bear_post(
                 .ok_or_else(|| CustomError::NotFound("bear not found".to_string()))?;
             if bear.letta_agent_id.is_some() {
                 if let Err(e) =
-                    sync::sync_bear_to_letta(state.sqlx_pool(), state.letta.as_ref(), id).await
+                    sync::sync_bear_to_letta(state.sqlx_pool(), state.letta.as_ref(), state.bifrost.as_ref(), id).await
                 {
                     tracing::warn!(%id, "Letta sync after create failed: {e}");
                     let page = bear_new_form_context(&state, &form).await;
@@ -633,7 +633,7 @@ async fn bear_resync_letta_post(
         return Ok(Redirect::to(&format!("{target}?letta_resync=error")).into_response());
     }
 
-    if let Err(e) = sync::sync_bear_to_letta(state.sqlx_pool(), state.letta.as_ref(), bear.id).await
+    if let Err(e) = sync::sync_bear_to_letta(state.sqlx_pool(), state.letta.as_ref(), state.bifrost.as_ref(), bear.id).await
     {
         tracing::warn!(bear_id = %bear.id, "Letta resync from details failed: {e}");
         return Ok(Redirect::to(&format!("{target}?letta_resync=error")).into_response());
@@ -784,7 +784,7 @@ async fn bear_edit_overview_post(
         .await?;
 
         if let Err(e) =
-            sync::sync_bear_to_letta(state.sqlx_pool(), state.letta.as_ref(), bear.id).await
+            sync::sync_bear_to_letta(state.sqlx_pool(), state.letta.as_ref(), state.bifrost.as_ref(), bear.id).await
         {
             tracing::warn!(bear_id = %bear.id, "Letta sync after overview edit failed: {e}");
             let bear = bears_db::get_bear(state.sqlx_pool(), bear.id)
@@ -900,7 +900,7 @@ async fn bear_edit_prompt_post(
         .await?;
 
         if let Err(e) =
-            sync::sync_bear_to_letta(state.sqlx_pool(), state.letta.as_ref(), bear.id).await
+            sync::sync_bear_to_letta(state.sqlx_pool(), state.letta.as_ref(), state.bifrost.as_ref(), bear.id).await
         {
             tracing::warn!(bear_id = %bear.id, "Letta sync after prompt edit failed: {e}");
             return render_template(
@@ -1049,7 +1049,7 @@ async fn bear_edit_configuration_post(
         .await?;
 
         if let Err(e) =
-            sync::sync_bear_to_letta(state.sqlx_pool(), state.letta.as_ref(), bear.id).await
+            sync::sync_bear_to_letta(state.sqlx_pool(), state.letta.as_ref(), state.bifrost.as_ref(), bear.id).await
         {
             tracing::warn!(bear_id = %bear.id, "Letta sync after configuration edit failed: {e}");
             let bear = bears_db::get_bear(state.sqlx_pool(), bear.id)

@@ -147,6 +147,7 @@ From a container on the **same Docker network** as `bears-bifrost` (or Coolify *
 ```bash
 curl -sS http://bears-bifrost:8080/health
 curl -sS http://bears-bifrost:8080/v1/models
+curl -sS http://bears-bifrost:8081/bears/models
 ```
 
 Optional smoke test:
@@ -154,7 +155,7 @@ Optional smoke test:
 ```bash
 curl -sS http://bears-bifrost:8080/v1/chat/completions \
   -H "Content-Type: application/json" \
-  -d '{"model":"openai/gpt-4o-mini","messages":[{"role":"user","content":"ping"}]}'
+  -d '{"model":"gpt-4o-mini","messages":[{"role":"user","content":"ping"}]}'
 ```
 
 ## Letta (next service)

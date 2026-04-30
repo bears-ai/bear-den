@@ -87,7 +87,7 @@ pub async fn gather(state: &AppState) -> StackHealthReport {
         check_letta_postgres(&cfg.letta_pg_uri),
         check_codepool(&state),
         check_letta_api(&state),
-        check_bifrost_http(&cfg.bifrost_base_url),
+        check_bifrost_http(&cfg.bifrost_base_url, &cfg.bifrost_metadata_url),
     );
 
     checks.push(den_pg);
@@ -424,7 +424,7 @@ async fn check_letta_api(state: &AppState) -> HealthCheck {
     }
 }
 
-async fn check_bifrost_http(base: &str) -> HealthCheck {
+async fn check_bifrost_http(base: &str, metadata_url: &str) -> HealthCheck {
     if base.trim().is_empty() {
         return HealthCheck {
             id: "bifrost",
@@ -469,11 +469,12 @@ async fn check_bifrost_http(base: &str) -> HealthCheck {
         Ok(Ok(resp)) => {
             let status = resp.status();
             if status.is_success() {
+                let metadata_detail = check_bifrost_metadata(&client, metadata_url).await;
                 HealthCheck {
                     id: "bifrost",
                     label: "Bifrost",
-                    state: CheckState::Ok,
-                    detail: format!("HTTP {status} from {url}"),
+                    state: metadata_detail.0,
+                    detail: format!("HTTP {status} from {url}; {}", metadata_detail.1),
                 }
             } else {
                 HealthCheck {
@@ -482,6 +483,67 @@ async fn check_bifrost_http(base: &str) -> HealthCheck {
                     state: CheckState::Fail,
                     detail: format!("HTTP {status} from {url}"),
                 }
+            }
+        }
+    }
+}
+
+async fn check_bifrost_metadata(
+    client: &reqwest::Client,
+    metadata_url: &str,
+) -> (CheckState, String) {
+    let url = metadata_url.trim();
+    if url.is_empty() {
+        return (
+            CheckState::Warn,
+            "BIFROST_METADATA_URL unset — model context windows cannot be verified".into(),
+        );
+    }
+
+    match timeout(HTTP_PROBE_TIMEOUT, client.get(url).send()).await {
+        Err(_) => (
+            CheckState::Warn,
+            format!(
+                "metadata timeout after {}s ({url})",
+                HTTP_PROBE_TIMEOUT.as_secs()
+            ),
+        ),
+        Ok(Err(e)) => (CheckState::Warn, format!("metadata request failed: {e}")),
+        Ok(Ok(resp)) => {
+            let status = resp.status();
+            if !status.is_success() {
+                return (
+                    CheckState::Warn,
+                    format!("metadata HTTP {status} from {url}"),
+                );
+            }
+            let text = match resp.text().await {
+                Ok(t) => t,
+                Err(e) => return (CheckState::Warn, format!("metadata body failed: {e}")),
+            };
+            let value: serde_json::Value = match serde_json::from_str(&text) {
+                Ok(v) => v,
+                Err(e) => return (CheckState::Warn, format!("metadata JSON parse failed: {e}")),
+            };
+            let models = value
+                .get("models")
+                .and_then(|x| x.as_array())
+                .map(|xs| {
+                    xs.iter()
+                        .filter(|m| m.get("enabled").and_then(|e| e.as_bool()).unwrap_or(true))
+                        .count()
+                })
+                .unwrap_or(0);
+            if models == 0 {
+                (
+                    CheckState::Warn,
+                    "metadata returned no enabled models".into(),
+                )
+            } else {
+                (
+                    CheckState::Ok,
+                    format!("metadata OK ({models} enabled models)"),
+                )
             }
         }
     }

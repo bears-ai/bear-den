@@ -1,18 +1,76 @@
 {
-  "client": {
-    "drop_excess_requests": false,
-    "disable_db_pings_in_health": true
-  },
-  "providers": {
-    "openai": {
-      "keys": [
-        {
-          "name": "openai-primary",
-          "value": "env.OPENAI_API_KEY",
-          "models": ["*"],
-          "weight": 1.0
+    "bears": {
+        "model_metadata_version": 1,
+        "models": [
+            {
+                "handle": "gpt-4o-mini",
+                "provider": "openai",
+                "model": "gpt-4o-mini",
+                "display_name": "OpenAI GPT-4o mini",
+                "context_window": 128000,
+                "max_output_tokens": 16384,
+                "supports_tools": true,
+                "supports_responses_api": true,
+                "supports_vision": true,
+                "enabled": true
+            },
+            {
+                "handle": "gpt-4o",
+                "provider": "openai",
+                "model": "gpt-4o",
+                "display_name": "OpenAI GPT-4o",
+                "context_window": 128000,
+                "max_output_tokens": 16384,
+                "supports_tools": true,
+                "supports_responses_api": true,
+                "supports_vision": true,
+                "enabled": true
+            },
+            {
+                "handle": "gpt-4.1-mini",
+                "provider": "openai",
+                "model": "gpt-4.1-mini",
+                "display_name": "OpenAI GPT-4.1 mini",
+                "context_window": 1047576,
+                "max_output_tokens": 32768,
+                "supports_tools": true,
+                "supports_responses_api": true,
+                "supports_vision": true,
+                "enabled": true
+            },
+            {
+                "handle": "gpt-4.1",
+                "provider": "openai",
+                "model": "gpt-4.1",
+                "display_name": "OpenAI GPT-4.1",
+                "context_window": 1047576,
+                "max_output_tokens": 32768,
+                "supports_tools": true,
+                "supports_responses_api": true,
+                "supports_vision": true,
+                "enabled": true
+            }
+        ]
+    },
+    "client": {
+        "drop_excess_requests": false,
+        "disable_db_pings_in_health": true
+    },
+    "providers": {
+        "openai": {
+            "keys": [
+                {
+                    "name": "openai-primary",
+                    "value": "env.OPENAI_API_KEY",
+                    "models": [
+                        "gpt-4o-mini",
+                        "gpt-4o",
+                        "gpt-4.1-mini",
+                        "gpt-4.1"
+                    ],
+                    "weight": 1.0
+                }
+            ]
         }
-      ]
     }
-  }
 }

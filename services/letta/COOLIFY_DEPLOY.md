@@ -38,8 +38,8 @@ Letta is the BEARS **bear runtime**: each **bear** is a **Letta agent** (convers
   # The stock BEARS Bifrost config is file-based GitOps without a client gateway key.
   # Keep OPENAI_API_KEY set for embeddings and any Letta features that call OpenAI directly.
 
-   # Model Configuration
-   MODEL_NAME=gpt-4
+   # Model Configuration (must be an enabled handle in services/bifrost/config.json → bears.models)
+   MODEL_NAME=gpt-4o-mini
 
    # Letta Server Configuration
    LETTA_SERVER_PORT=8283
@@ -104,7 +104,7 @@ curl http://bears-letta:8283/v1/agents
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
 | `LLM_API_URL` | ✅ Yes | - | Bifrost URL (`http://bears-bifrost:8080/v1`) |
-| `MODEL_NAME` | ✅ Yes | `gpt-4` | Default model for new Letta agents (**bears**) |
+| `MODEL_NAME` | ✅ Yes | `gpt-4o-mini` | Default Letta model; should match an enabled `bears.models[].handle` in Bifrost config |
 | `LETTA_SERVER_PORT` | No | `8283` | Web UI and API port |
 | `LETTA_SERVER_PASS` | ✅ Yes | - | Admin password for Letta |
 | `LETTA_PG_URI` | Recommended | - | External Postgres URI — use **`postgresql://`** (not `postgres://`). The short form can break Alembic with `NoSuchModuleError: ... postgres.pg8000`. |
@@ -114,6 +114,10 @@ curl http://bears-letta:8283/v1/agents
 | `LOG_LEVEL` | No | `INFO` | Logging verbosity |
 
 **Durability:** Back up **`bears-letta-data`** (and Letta Postgres) — see [`docs/deployment/DEPLOYMENT.md`](../../docs/deployment/DEPLOYMENT.md). Root compose sets **`LETTA_REDIS_HOST` / `LETTA_REDIS_PORT`** for memory-repo locking (required for git-backed memfs).
+
+**Git CLI requirement:** Letta's MemFS / Context Repository support shells out to `git` while handling `/v1/git/{agent_id}/state.git`. The root compose stack builds `bears-letta` from [`services/letta/Dockerfile`](Dockerfile), which wraps upstream `letta/letta` and installs `git`. This prevents `RuntimeError: git CLI is required for git operations but was not found in PATH`.
+
+**MemFS write routing:** Codepool must not set `LETTA_MEMFS_SERVICE_URL` or push directly to MemFS Manager. Codepool uses `LETTA_BASE_URL` and pushes to Letta's `/v1/git/{agent_id}/state.git` proxy so Letta updates both the git repository and its Postgres memory/block cache. Direct pushes to MemFS Manager update git only and can make later conversations see stale memory.
 
 ### Service Dependencies
 

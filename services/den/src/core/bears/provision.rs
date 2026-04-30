@@ -3,7 +3,7 @@
 use sqlx::PgPool;
 use uuid::Uuid;
 
-use crate::core::letta::LettaClient;
+use crate::core::{bifrost::BifrostClient, letta::LettaClient};
 
 use super::db as bears_db;
 use super::runtime_plan::default_runtime_plan;
@@ -13,6 +13,7 @@ use crate::errors::CustomError;
 pub async fn provision_bear_if_configured(
     pool: &PgPool,
     letta: &LettaClient,
+    bifrost: &BifrostClient,
     bear_id: Uuid,
 ) -> Result<(), CustomError> {
     if !letta.is_enabled() {
@@ -47,12 +48,18 @@ pub async fn provision_bear_if_configured(
         .unwrap_or("letta_v1_agent");
 
     let tool_ids = letta.filtered_tool_ids(&bear.letta_tool_ids.0).await?;
+    let context_window = if bifrost.is_enabled() {
+        bifrost.get_model(model).await?.map(|m| m.context_window)
+    } else {
+        None
+    };
 
     let agent_id = letta
         .create_agent(
             bear.name.as_str(),
             bear.system_prompt.as_str(),
             Some(model),
+            context_window,
             Some(agent_type),
             &tool_ids,
         )

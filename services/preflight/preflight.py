@@ -7,10 +7,12 @@ Runtime aggregation of similar checks (plus live DB/HTTP probes) is exposed on D
 
 from __future__ import annotations
 
+import json
 import os
 import socket
 import sys
 import time
+from pathlib import Path
 from urllib.parse import urlparse
 
 
@@ -137,6 +139,98 @@ def validate_http_url(name: str, value: str) -> None:
         fail(f"{name} must include a host (netloc)")
 
 
+def validate_bifrost_model_metadata_config() -> None:
+    path = Path(os.environ.get("BIFROST_CONFIG_PATH", "/app/bifrost/config.json"))
+    if not path.exists():
+        fail(
+            f"BIFROST_CONFIG_PATH does not exist: {path}. The preflight image should mount services/bifrost/config.json read-only."
+        )
+
+    try:
+        config = json.loads(path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        fail(f"BIFROST_CONFIG_PATH is not valid JSON: {exc}")
+
+    bears = config.get("bears")
+    if not isinstance(bears, dict):
+        fail("Bifrost config must include a top-level bears object with model metadata")
+
+    models = bears.get("models")
+    if not isinstance(models, list) or not models:
+        fail("Bifrost config bears.models must be a non-empty array")
+
+    providers = config.get("providers")
+    if not isinstance(providers, dict) or not providers:
+        fail("Bifrost config providers must be a non-empty object")
+
+    available_by_provider: dict[str, set[str]] = {}
+    wildcard_providers: set[str] = set()
+    for provider_name, provider in providers.items():
+        if not isinstance(provider, dict):
+            continue
+        for key in provider.get("keys", []) or []:
+            if not isinstance(key, dict):
+                continue
+            for model in key.get("models", []) or []:
+                if model == "*":
+                    wildcard_providers.add(provider_name)
+                elif isinstance(model, str) and model.strip():
+                    available_by_provider.setdefault(provider_name, set()).add(
+                        model.strip()
+                    )
+
+    seen_handles: set[str] = set()
+    enabled_count = 0
+    for idx, model in enumerate(models):
+        if not isinstance(model, dict):
+            fail(f"bears.models[{idx}] must be an object")
+        if model.get("enabled", True):
+            enabled_count += 1
+
+        handle = str(model.get("handle", "")).strip()
+        provider = str(model.get("provider", "")).strip()
+        upstream_model = str(model.get("model", "")).strip()
+        if not handle:
+            fail(f"bears.models[{idx}].handle is required")
+        if handle in seen_handles:
+            fail(f"duplicate Bifrost model handle in bears.models: {handle}")
+        seen_handles.add(handle)
+        if not provider:
+            fail(f"bears.models[{idx}].provider is required")
+        if not upstream_model:
+            fail(f"bears.models[{idx}].model is required")
+        if provider not in providers:
+            fail(f"bears.models[{idx}] references unknown provider {provider!r}")
+
+        context_window = model.get("context_window")
+        if not isinstance(context_window, int) or context_window < 1024:
+            fail(f"bears.models[{idx}].context_window must be an integer >= 1024")
+        max_output_tokens = model.get("max_output_tokens")
+        if not isinstance(max_output_tokens, int) or max_output_tokens < 1:
+            fail(f"bears.models[{idx}].max_output_tokens must be a positive integer")
+        if max_output_tokens >= context_window:
+            fail(
+                f"bears.models[{idx}] max_output_tokens must be smaller than context_window ({handle})"
+            )
+
+        if (
+            provider not in wildcard_providers
+            and upstream_model not in available_by_provider.get(provider, set())
+        ):
+            fail(
+                f"bears.models[{idx}] maps handle {handle!r} to {provider}/{upstream_model}, but that model is not listed under providers.{provider}.keys[].models"
+            )
+
+    if enabled_count == 0:
+        fail("Bifrost config bears.models has no enabled models")
+    if wildcard_providers:
+        warn(
+            "Bifrost provider keys still use models: ['*']; explicit provider model lists are recommended so preflight can validate availability"
+        )
+
+    info(f"Bifrost model metadata OK ({enabled_count} enabled models in {path})")
+
+
 def validate_database_url(reachable: bool = True) -> None:
     database_url = require_non_empty("DATABASE_URL")
     parse_sql_uri("DATABASE_URL", database_url)
@@ -199,6 +293,8 @@ def validate_config_shape() -> None:
 
     require_non_empty("OPENAI_API_KEY")
     info("OPENAI_API_KEY is set")
+
+    validate_bifrost_model_metadata_config()
 
     info("configuration shape checks passed")
 

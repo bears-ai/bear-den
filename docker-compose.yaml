@@ -28,6 +28,7 @@ x-preflight-build: &preflight-build
     dockerfile: Dockerfile
 
 x-preflight-environment: &preflight-environment
+    BIFROST_CONFIG_PATH: /app/bifrost/config.json
     JWT_SECRET: ${JWT_SECRET:-SETME}
     LETTA_SERVER_PASS: ${LETTA_SERVER_PASS:-SETME}
     OPENAI_API_KEY: ${OPENAI_API_KEY:-SETME}
@@ -63,6 +64,8 @@ services:
         restart: "no"
         command: ["config"]
         environment: *preflight-environment
+        volumes:
+            - ./services/bifrost/config.json:/app/bifrost/config.json:ro
 
     bears-preflight-den-db:
         build: *preflight-build
@@ -138,6 +141,7 @@ services:
             APP_PORT: ${BIFROST_APP_PORT:-8080}
             LOG_LEVEL: ${BIFROST_LOG_LEVEL:-info}
             LOG_STYLE: ${BIFROST_LOG_STYLE:-json}
+            BEARS_METADATA_PORT: ${BIFROST_METADATA_PORT:-8081}
             OPENAI_API_KEY: ${OPENAI_API_KEY:-SETME}
         # `services/bifrost/Dockerfile` bakes config.json into the image. This avoids host bind-mount
         # path mismatches when Compose is driven from a devcontainer or remote Docker daemon.
@@ -197,7 +201,14 @@ services:
             start_period: 15s
 
     bears-letta:
-        image: letta/letta:latest
+        # Wrap upstream Letta so the container includes `git`. Letta's MemFS /
+        # Context Repository path shells out to git for `/v1/git/...` operations.
+        build:
+            context: ./services/letta
+            dockerfile: Dockerfile
+            args:
+                LETTA_BASE_IMAGE: ${LETTA_BASE_IMAGE:-letta/letta:latest}
+        image: ${LETTA_IMAGE:-bears-letta:latest}
         restart: unless-stopped
         depends_on:
             bears-bifrost:
@@ -208,7 +219,7 @@ services:
                 condition: service_healthy
         environment:
             LLM_API_URL: ${LLM_API_URL:-http://bears-bifrost:8080/v1}
-            MODEL_NAME: ${MODEL_NAME:-gpt-4}
+            MODEL_NAME: ${MODEL_NAME:-gpt-4o-mini}
             LETTA_SERVER_PORT: ${LETTA_SERVER_PORT:-8283}
             LETTA_SERVER_HOST: ${LETTA_SERVER_HOST:-0.0.0.0}
             LETTA_SERVER_PASS: ${LETTA_SERVER_PASS:-SETME}
@@ -337,6 +348,7 @@ services:
             # Optional on Den: `/status` probes Letta’s DB and Bifrost when set (see services/den/docs/infrastructure-and-ops.md).
             LETTA_PG_URI: ${LETTA_PG_URI:-SETME}
             BIFROST_BASE_URL: ${BIFROST_BASE_URL:-http://bears-bifrost:8080}
+            BIFROST_METADATA_URL: ${BIFROST_METADATA_URL:-http://bears-bifrost:8081/bears/models}
             LLM_API_URL: ${LLM_API_URL:-http://bears-bifrost:8080/v1}
             OPENAI_API_KEY: ${OPENAI_API_KEY:-SETME}
             # Same as Letta / preflight: Memory Manager (git smart-HTTP + JSON management API) for private-memory UI.

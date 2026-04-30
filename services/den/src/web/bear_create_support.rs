@@ -57,19 +57,65 @@ pub const LETTA_AGENT_TYPE_ROWS: &[AgentTypeSelectRow] = &[
     },
 ];
 
-/// When Letta is enabled, `GET /v1/models/` populates the bear model `<select>`.
+/// When Bifrost/Letta is enabled, populate the bear model `<select>`.
+///
+/// Bifrost is the BEARS model gateway and owns provider/model metadata, so prefer
+/// its `/bears/models` catalog. Fall back to Letta only for older deployments.
 pub async fn letta_model_select_context(
     state: &AppState,
 ) -> (bool, Vec<LettaModelOption>, Option<String>) {
+    if state.bifrost.is_enabled() {
+        match state.bifrost.list_models().await {
+            Ok(models) if models.is_empty() => {
+                return (
+                    true,
+                    Vec::new(),
+                    Some("Bifrost returned no enabled BEARS models.".into()),
+                )
+            }
+            Ok(models) => {
+                return (
+                    true,
+                    models
+                        .into_iter()
+                        .map(|m| m.to_letta_model_option())
+                        .collect(),
+                    None,
+                )
+            }
+            Err(e) => {
+                if !state.letta.is_enabled() {
+                    return (
+                        true,
+                        Vec::new(),
+                        Some(format!("Could not load models from Bifrost metadata: {e}.")),
+                    );
+                }
+                let fallback_note = format!("Could not load models from Bifrost metadata: {e}. Falling back to Letta model list.");
+                return match state.letta.list_llm_models().await {
+                    Ok(models) if models.is_empty() => (
+                        true,
+                        models,
+                        Some(format!("{fallback_note} Letta returned no LLM models.")),
+                    ),
+                    Ok(models) => (true, models, Some(fallback_note)),
+                    Err(letta_e) => (
+                        true,
+                        Vec::new(),
+                        Some(format!(
+                            "{fallback_note} Could not load models from Letta either: {letta_e}."
+                        )),
+                    ),
+                };
+            }
+        }
+    }
+
     if !state.letta.is_enabled() {
         return (false, Vec::new(), None);
     }
     match state.letta.list_llm_models().await {
-        Ok(models) if models.is_empty() => (
-            true,
-            models,
-            Some("Letta returned no LLM models.".into()),
-        ),
+        Ok(models) if models.is_empty() => (true, models, Some("Letta returned no LLM models.".into())),
         Ok(models) => (true, models, None),
         Err(e) => (
             true,
@@ -93,6 +139,8 @@ pub fn ensure_stored_model_in_options_for_handle(
                 LettaModelOption {
                     handle: h.to_string(),
                     label: format!("{h} (stored on bear)"),
+                    context_window: None,
+                    max_output_tokens: None,
                 },
             );
         }

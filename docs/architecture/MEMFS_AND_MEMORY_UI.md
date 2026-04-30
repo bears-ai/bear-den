@@ -20,6 +20,8 @@ Do not introduce a separate `mem-manager` product slug. New docs and UI text sho
 
 Letta owns the canonical MemFS integration. In the root compose stack, `bears-letta` receives `LETTA_MEMFS_SERVICE_URL=http://bears-memfs-manager:8285` and proxies git smart-HTTP paths through its `/v1/git/...` API.
 
+Letta itself must have the `git` CLI in its container. Even though MemFS Manager serves the bare repositories, Letta's Context Repository code still performs git operations while handling `/v1/git/{agent_id}/state.git`. The root compose stack therefore builds `bears-letta` from `services/letta/Dockerfile`, which wraps the upstream `letta/letta` image and installs `git`.
+
 ### MemFS Manager
 
 MemFS Manager serves Letta's git repository storage. It supports:
@@ -43,7 +45,9 @@ Den is the control plane and read-only operator UI consumer:
 
 Codepool runs Letta Code sessions with `memfs: true`. It must **not** push directly to MemFS Manager. Git writes should route through Letta's `/v1/git/{agent_id}/state.git` endpoint so Letta can update its own memory/block cache.
 
-The root compose stack intentionally does not set `LETTA_MEMFS_SERVICE_URL` on `bears-codepool`. Codepool uses `LETTA_BASE_URL` plus `LETTA_MEMFS_LOCAL=1`, letting Letta Code maintain its local mirror under `$HOME/.letta`.
+The root compose stack intentionally does not set `LETTA_MEMFS_SERVICE_URL` on `bears-codepool`. Codepool uses `LETTA_BASE_URL` plus `LETTA_MEMFS_LOCAL=1`, letting Letta Code maintain its local mirror under `$HOME/.letta` and push to `LETTA_BASE_URL/v1/git/{agent_id}/state.git`.
+
+This routing is required for correctness: direct Codepool pushes to MemFS Manager would update the git repository only. They would bypass Letta's `/v1/git/...` proxy and can leave Letta's Postgres-backed memory/block cache stale for later conversations.
 
 ## Modern Letta agent profile
 

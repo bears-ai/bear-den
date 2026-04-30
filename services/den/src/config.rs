@@ -124,6 +124,9 @@ pub struct Config {
 
     /// Bifrost gateway base URL (no trailing slash), e.g. `http://bears-bifrost:8080`. Empty = skip HTTP check.
     pub bifrost_base_url: String,
+    /// BEARS model metadata URL served by the Bifrost image, e.g. `http://bears-bifrost:8081/bears/models`.
+    /// Empty = derive from `bifrost_base_url` where possible or skip Bifrost metadata.
+    pub bifrost_metadata_url: String,
 
     /// S3-compatible endpoint (e.g. `http://bears-garage:3900`). Empty = media upload disabled.
     pub s3_endpoint: String,
@@ -310,6 +313,16 @@ impl Config {
 
         let bifrost_base_url = std::env::var("BIFROST_BASE_URL").unwrap_or_default();
         let bifrost_base_url = bifrost_base_url.trim_end_matches('/').to_string();
+        let bifrost_metadata_url = std::env::var("BIFROST_METADATA_URL")
+            .unwrap_or_else(|_| {
+                if bifrost_base_url.is_empty() {
+                    String::new()
+                } else {
+                    bifrost_base_url.replace(":8080", ":8081") + "/bears/models"
+                }
+            })
+            .trim()
+            .to_string();
 
         let s3_endpoint = std::env::var("S3_ENDPOINT")
             .unwrap_or_default()
@@ -398,6 +411,7 @@ impl Config {
             letta_memfs_service_url,
             letta_pg_uri,
             bifrost_base_url,
+            bifrost_metadata_url,
             s3_endpoint,
             s3_bucket,
             s3_region,
@@ -464,6 +478,7 @@ impl Config {
             letta_memfs_service_url: String::new(),
             letta_pg_uri: String::new(),
             bifrost_base_url: String::new(),
+            bifrost_metadata_url: String::new(),
             s3_endpoint: String::new(),
             s3_bucket: String::new(),
             s3_region: "garage".into(),
