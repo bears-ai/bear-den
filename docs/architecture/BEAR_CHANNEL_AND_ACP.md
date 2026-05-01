@@ -48,6 +48,33 @@ Codepool remains intentionally simple:
 
 Codepool does not become the external security authority.
 
+## ACP session persistence model
+
+ACP sessions are **not** canonical BEARS conversations.
+
+Den may persist ACP session rows, but those rows are only protocol/client bindings that map an ACP client session to BEARS runtime state. They should be treated as lifecycle and routing metadata, not as chat history or the source of truth for conversations.
+
+The canonical conversation history remains the Letta/BEARS conversation identity:
+
+- `default` for the bear's main thread;
+- `conv-...` for saved Letta conversations;
+- temporary `new-...` ids only until Codepool/Letta resolves them.
+
+An ACP session binding may store:
+
+- ACP `sessionId`;
+- BEARS user and bear ids;
+- ACP client name, such as `zed`;
+- client working directory (`cwd`);
+- Codepool session id;
+- pending/generated conversation id;
+- resolved `conv-...` id when available;
+- protocol lifecycle timestamps such as closed or archived.
+
+Future development should not build conversation listing, history, memory, search, or archive semantics from ACP session rows directly. Those features should operate on canonical BEARS/Letta conversations and use ACP session bindings only to translate ACP lifecycle events, such as `session/close`, into the appropriate conversation operation.
+
+If this table/model is renamed later, prefer names that emphasize binding rather than conversation ownership, such as `acp_session_bindings` or `client_session_bindings`.
+
 ## Current implementation status
 
 Implemented:

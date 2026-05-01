@@ -411,6 +411,39 @@ async fn handle_request(
                 }
             }
         }
+        "session/close" => {
+            if let Some(id) = request.id {
+                let Some(config) = runtime.config.as_ref() else {
+                    write_response(
+                        id,
+                        Err(json_rpc_error(
+                            -32000,
+                            "BEARS adapter is not configured",
+                            Some(json!({
+                                "message": runtime.configuration_error_message(),
+                                "problems": runtime.diagnostics,
+                            })),
+                        )),
+                    )
+                    .await?;
+                    return Ok(());
+                };
+                match handle_session_close(http, config, request.params).await {
+                    Ok(()) => write_response(id, Ok(json!({}))).await?,
+                    Err(err) => {
+                        write_response(
+                            id,
+                            Err(json_rpc_error(
+                                -32000,
+                                "BEARS session close failed",
+                                Some(json!({ "message": format!("{err:#}") })),
+                            )),
+                        )
+                        .await?;
+                    }
+                }
+            }
+        }
         "session/cancel" => {
             eprintln!("bears-acp-adapter: session/cancel received; remote cancellation is not implemented yet");
         }
@@ -458,7 +491,9 @@ fn initialize_result() -> Value {
                 "audio": false,
                 "embeddedContext": true
             },
-            "sessionCapabilities": {}
+            "sessionCapabilities": {
+                "close": {}
+            }
         },
         "agentInfo": {
             "name": "bears",
@@ -467,6 +502,42 @@ fn initialize_result() -> Value {
         },
         "authMethods": []
     })
+}
+
+async fn handle_session_close(
+    http: &reqwest::Client,
+    config: &Config,
+    params: Value,
+) -> Result<()> {
+    let session_id = params
+        .get("sessionId")
+        .and_then(Value::as_str)
+        .ok_or_else(|| anyhow!("session/close params missing sessionId"))?;
+    let url = format!(
+        "{}/acp/bears/{}/sessions/{}/close",
+        config.api_url,
+        urlencoding::encode(&config.bear),
+        urlencoding::encode(session_id),
+    );
+    let response = http
+        .post(&url)
+        .header(
+            AUTHORIZATION,
+            HeaderValue::from_str(&format!("Bearer {}", config.token))?,
+        )
+        .header(CONTENT_TYPE, HeaderValue::from_static("application/json"))
+        .send()
+        .await
+        .with_context(|| format!("post ACP session close to Den at {url}"))?;
+    if !response.status().is_success() {
+        let status = response.status();
+        let body = response.text().await.unwrap_or_default();
+        return Err(anyhow!(
+            "Den session close endpoint returned HTTP {status}: {}",
+            body.trim()
+        ));
+    }
+    Ok(())
 }
 
 async fn handle_prompt(
