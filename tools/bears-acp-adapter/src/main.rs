@@ -938,37 +938,49 @@ fn normalize_client_capabilities(mut capabilities: Value) -> Value {
     if !capabilities.is_object() {
         return capabilities;
     }
-    let read_text_file = capabilities
-        .pointer("/fs/readTextFile")
-        .and_then(Value::as_bool)
-        .unwrap_or(false)
-        || capabilities
-            .pointer("/fs/read_text_file")
-            .and_then(Value::as_bool)
-            .unwrap_or(false)
-        || capabilities
-            .pointer("/filesystem/readTextFile")
-            .and_then(Value::as_bool)
-            .unwrap_or(false)
-        || capabilities
-            .pointer("/filesystem/read_text_file")
-            .and_then(Value::as_bool)
-            .unwrap_or(false)
-        || capabilities
-            .pointer("/fs/read_text_file/supported")
-            .and_then(Value::as_bool)
-            .unwrap_or(false)
-        || capabilities
-            .pointer("/filesystem/read_text_file/supported")
-            .and_then(Value::as_bool)
-            .unwrap_or(false);
-    if read_text_file {
+    let read_text_file = capability_bool(
+        &capabilities,
+        &[
+            "/fs/readTextFile",
+            "/fs/read_text_file",
+            "/filesystem/readTextFile",
+            "/filesystem/read_text_file",
+            "/fs/read_text_file/supported",
+            "/filesystem/read_text_file/supported",
+        ],
+    );
+    let write_text_file = capability_bool(
+        &capabilities,
+        &[
+            "/fs/writeTextFile",
+            "/fs/write_text_file",
+            "/filesystem/writeTextFile",
+            "/filesystem/write_text_file",
+            "/fs/write_text_file/supported",
+            "/filesystem/write_text_file/supported",
+        ],
+    );
+    if read_text_file || write_text_file {
         if capabilities.get("fs").is_none() {
             capabilities["fs"] = json!({});
         }
-        capabilities["fs"]["readTextFile"] = json!(true);
+        if read_text_file {
+            capabilities["fs"]["readTextFile"] = json!(true);
+        }
+        if write_text_file {
+            capabilities["fs"]["writeTextFile"] = json!(true);
+        }
     }
     capabilities
+}
+
+fn capability_bool(capabilities: &Value, pointers: &[&str]) -> bool {
+    pointers.iter().any(|pointer| {
+        capabilities
+            .pointer(pointer)
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+    })
 }
 
 fn workspace_roots_from_params(params: &Value) -> Vec<String> {
@@ -1278,9 +1290,13 @@ async fn execute_and_post_client_tool_result(
         .and_then(Value::as_str)
         .unwrap_or("acp_client_tool");
 
+    send_client_tool_progress_update(session_id, call_id, tool_name, event).await?;
     let tool_result = match tool_name {
         "acp_fs_read_text_file" => execute_fs_read_text_file(lines, session_id, cwd, event).await,
-        "acp_fs_write_text_file" => execute_fs_write_text_file(lines, session_id, cwd, event).await,
+        "acp_fs_write_text_file" => {
+            request_client_tool_permission(lines, session_id, call_id, tool_name, event).await?;
+            execute_fs_write_text_file(lines, session_id, cwd, event).await
+        }
         other => Err(anyhow!("unsupported ACP client tool: {other}")),
     };
 
@@ -1290,8 +1306,10 @@ async fn execute_and_post_client_tool_result(
                 session_id,
                 call_id,
                 tool_name,
+                event,
                 "completed",
                 Some(&result),
+                None,
             )
             .await?;
             json!({
@@ -1305,14 +1323,24 @@ async fn execute_and_post_client_tool_result(
             })
         }
         Err(err) => {
-            send_client_tool_result_update(session_id, call_id, tool_name, "failed", None).await?;
+            let error_message = format!("{err:#}");
+            send_client_tool_result_update(
+                session_id,
+                call_id,
+                tool_name,
+                event,
+                "failed",
+                None,
+                Some(&error_message),
+            )
+            .await?;
             json!({
                 "request_id": request_id,
                 "conversation_id": conversation_id,
                 "status": "error",
                 "error": {
                     "code": "adapter_client_tool_error",
-                    "message": format!("{err:#}")
+                    "message": error_message
                 },
                 "client_observation": {
                     "adapter_version": env!("CARGO_PKG_VERSION")
@@ -1321,6 +1349,102 @@ async fn execute_and_post_client_tool_result(
         }
     };
     post_tool_result_to_den(http, config, session_id, call_id, body).await
+}
+
+async fn request_client_tool_permission(
+    lines: &mut Lines<BufReader<Stdin>>,
+    session_id: &str,
+    call_id: &str,
+    tool_name: &str,
+    event: &Value,
+) -> Result<()> {
+    if event
+        .get("approval_policy")
+        .and_then(Value::as_str)
+        .unwrap_or("never")
+        != "always"
+    {
+        return Ok(());
+    }
+
+    let rpc_id = format!("bears-permission-{}", Uuid::new_v4());
+    write_json(build_permission_request(
+        rpc_id.clone(),
+        session_id,
+        call_id,
+        tool_name,
+        event,
+    ))
+    .await?;
+    let response = wait_for_json_rpc_response(lines, &rpc_id).await?;
+    if let Some(error) = response.get("error") {
+        return Err(anyhow!("ACP client permission request failed: {error}"));
+    }
+    let outcome = response
+        .pointer("/result/outcome/outcome")
+        .and_then(Value::as_str)
+        .unwrap_or("cancelled");
+    if outcome != "selected" {
+        return Err(anyhow!("ACP client permission request was {outcome}"));
+    }
+    Ok(())
+}
+
+fn build_permission_request(
+    rpc_id: impl Into<Value>,
+    session_id: &str,
+    call_id: &str,
+    tool_name: &str,
+    event: &Value,
+) -> Value {
+    let args = event.get("arguments").cloned().unwrap_or_else(|| json!({}));
+    json!({
+        "jsonrpc": "2.0",
+        "id": rpc_id.into(),
+        "method": "session/request_permission",
+        "params": {
+            "sessionId": session_id,
+            "toolCall": {
+                "toolCallId": call_id,
+                "title": tool_title(tool_name),
+                "kind": tool_kind_for_event(event),
+                "status": "pending",
+                "locations": tool_locations_for_event(event),
+                "rawInput": args,
+                "content": [{
+                    "type": "content",
+                    "content": {
+                        "type": "text",
+                        "text": permission_prompt_text(tool_name, event)
+                    }
+                }]
+            },
+            "options": [
+                {
+                    "optionId": "allow_once",
+                    "name": "Allow once",
+                    "kind": "allow_once"
+                },
+                {
+                    "optionId": "reject_once",
+                    "name": "Reject",
+                    "kind": "reject_once"
+                }
+            ]
+        }
+    })
+}
+
+fn permission_prompt_text(tool_name: &str, event: &Value) -> String {
+    let path = event
+        .get("arguments")
+        .and_then(|arguments| arguments.get("path"))
+        .and_then(Value::as_str)
+        .unwrap_or("file");
+    match tool_name {
+        "acp_fs_write_text_file" => format!("Allow BEARS to write text content to {path}?"),
+        _ => format!("Allow BEARS to run {}?", tool_title(tool_name)),
+    }
 }
 
 async fn execute_fs_read_text_file(
@@ -1364,6 +1488,29 @@ async fn execute_fs_write_text_file(
     cwd: &str,
     event: &Value,
 ) -> Result<Value> {
+    let arguments = write_text_file_arguments(event, cwd)?;
+    let rpc_id = format!("bears-tool-{}", Uuid::new_v4());
+    write_json(build_write_text_file_request(
+        rpc_id.clone(),
+        session_id,
+        &arguments.path,
+        &arguments.content,
+    ))
+    .await?;
+    let response = wait_for_json_rpc_response(lines, &rpc_id).await?;
+    if let Some(error) = response.get("error") {
+        return Err(anyhow!("ACP client fs/write_text_file failed: {error}"));
+    }
+    Ok(response.get("result").cloned().unwrap_or_else(|| json!({})))
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct WriteTextFileArguments {
+    path: String,
+    content: String,
+}
+
+fn write_text_file_arguments(event: &Value, cwd: &str) -> Result<WriteTextFileArguments> {
     let path = event
         .get("arguments")
         .and_then(|v| v.get("path"))
@@ -1375,24 +1522,28 @@ async fn execute_fs_write_text_file(
         .and_then(|v| v.get("content"))
         .and_then(Value::as_str)
         .ok_or_else(|| anyhow!("fs/write_text_file requires arguments.content"))?;
-    let absolute_path = absolutize_client_path(path, cwd);
-    let rpc_id = format!("bears-tool-{}", Uuid::new_v4());
-    write_json(json!({
+    Ok(WriteTextFileArguments {
+        path: absolutize_client_path(path, cwd),
+        content: content.to_string(),
+    })
+}
+
+fn build_write_text_file_request(
+    rpc_id: impl Into<Value>,
+    session_id: &str,
+    path: &str,
+    content: &str,
+) -> Value {
+    json!({
         "jsonrpc": "2.0",
-        "id": rpc_id,
+        "id": rpc_id.into(),
         "method": "fs/write_text_file",
         "params": {
             "sessionId": session_id,
-            "path": absolute_path,
+            "path": path,
             "content": content
         }
-    }))
-    .await?;
-    let response = wait_for_json_rpc_response(lines, &rpc_id).await?;
-    if let Some(error) = response.get("error") {
-        return Err(anyhow!("ACP client fs/write_text_file failed: {error}"));
-    }
-    Ok(response.get("result").cloned().unwrap_or_else(|| json!({})))
+    })
 }
 
 async fn wait_for_json_rpc_response(
@@ -1505,16 +1656,12 @@ async fn post_tool_result_to_den(
     Ok(())
 }
 
-async fn send_client_tool_result_update(
+async fn send_client_tool_progress_update(
     session_id: &str,
     call_id: &str,
     tool_name: &str,
-    status: &str,
-    result: Option<&Value>,
+    event: &Value,
 ) -> Result<()> {
-    let preview = result
-        .map(|value| value.to_string().chars().take(500).collect::<String>())
-        .unwrap_or_else(|| format!("{tool_name} failed"));
     write_notification(
         "session/update",
         json!({
@@ -1522,9 +1669,42 @@ async fn send_client_tool_result_update(
             "update": {
                 "sessionUpdate": "tool_call_update",
                 "toolCallId": call_id,
-                "title": tool_name,
+                "title": tool_title(tool_name),
+                "kind": tool_kind_for_event(event),
+                "status": "in_progress",
+                "rawInput": event.get("arguments").cloned().unwrap_or_else(|| json!({})),
+                "locations": tool_locations_for_event(event),
+            }
+        }),
+    )
+    .await
+}
+
+async fn send_client_tool_result_update(
+    session_id: &str,
+    call_id: &str,
+    tool_name: &str,
+    event: &Value,
+    status: &str,
+    result: Option<&Value>,
+    error_message: Option<&str>,
+) -> Result<()> {
+    let preview = tool_result_preview(tool_name, event, result, error_message);
+    write_notification(
+        "session/update",
+        json!({
+            "sessionId": session_id,
+            "update": {
+                "sessionUpdate": "tool_call_update",
+                "toolCallId": call_id,
+                "title": tool_title(tool_name),
+                "kind": tool_kind_for_event(event),
                 "status": status,
-                "rawOutput": result.cloned().unwrap_or_else(|| json!({})),
+                "locations": tool_locations_for_event(event),
+                "rawOutput": match error_message {
+                    Some(message) => json!({ "error": message }),
+                    None => result.cloned().unwrap_or_else(|| json!({})),
+                },
                 "content": [{
                     "type": "content",
                     "content": { "type": "text", "text": preview }
@@ -1540,6 +1720,63 @@ fn tool_kind_for_event(event: &Value) -> &'static str {
         "acp_fs_write_text_file" => "edit",
         "acp_fs_read_text_file" => "read",
         _ => "other",
+    }
+}
+
+fn tool_title(tool_name: &str) -> &'static str {
+    match tool_name {
+        "acp_fs_write_text_file" => "Write text file",
+        "acp_fs_read_text_file" => "Read text file",
+        _ => "ACP client tool",
+    }
+}
+
+fn tool_locations_for_event(event: &Value) -> Vec<Value> {
+    event
+        .get("arguments")
+        .and_then(|arguments| arguments.get("path"))
+        .and_then(Value::as_str)
+        .filter(|path| !path.trim().is_empty())
+        .map(|path| vec![json!({ "path": path })])
+        .unwrap_or_default()
+}
+
+fn tool_result_preview(
+    tool_name: &str,
+    event: &Value,
+    result: Option<&Value>,
+    error_message: Option<&str>,
+) -> String {
+    if let Some(message) = error_message {
+        return format!("{} failed: {}", tool_title(tool_name), message);
+    }
+    let path = event
+        .get("arguments")
+        .and_then(|arguments| arguments.get("path"))
+        .and_then(Value::as_str)
+        .unwrap_or("file");
+    match tool_name {
+        "acp_fs_write_text_file" => {
+            let bytes = event
+                .get("arguments")
+                .and_then(|arguments| arguments.get("content"))
+                .and_then(Value::as_str)
+                .map(str::len)
+                .unwrap_or(0);
+            format!("Wrote {bytes} bytes to {path}")
+        }
+        "acp_fs_read_text_file" => result
+            .and_then(|value| value.get("content"))
+            .and_then(Value::as_str)
+            .map(|content| format!("Read {} bytes from {}", content.len(), path))
+            .unwrap_or_else(|| {
+                result
+                    .map(|value| value.to_string().chars().take(500).collect::<String>())
+                    .unwrap_or_else(|| format!("{} completed", tool_title(tool_name)))
+            }),
+        _ => result
+            .map(|value| value.to_string().chars().take(500).collect::<String>())
+            .unwrap_or_else(|| format!("{} completed", tool_title(tool_name))),
     }
 }
 
@@ -1564,10 +1801,15 @@ async fn send_client_tool_call_update(session_id: &str, event: &Value) -> Result
             "update": {
                 "sessionUpdate": "tool_call",
                 "toolCallId": call_id,
-                "title": tool_name,
+                "title": tool_title(tool_name),
                 "kind": tool_kind_for_event(event),
                 "status": "pending",
-                "content": { "type": "text", "text": summary }
+                "locations": tool_locations_for_event(event),
+                "rawInput": args,
+                "content": [{
+                    "type": "content",
+                    "content": { "type": "text", "text": summary }
+                }]
             }
         }),
     )
@@ -1697,6 +1939,87 @@ mod tests {
             "fs": { "read_text_file": true }
         }));
         assert_eq!(normalized["fs"]["readTextFile"], true);
+    }
+
+    #[test]
+    fn normalize_client_capabilities_accepts_snake_case_write_file() {
+        let normalized = normalize_client_capabilities(json!({
+            "fs": { "write_text_file": true }
+        }));
+        assert_eq!(normalized["fs"]["writeTextFile"], true);
+    }
+
+    #[test]
+    fn normalize_client_capabilities_preserves_read_and_write_file() {
+        let normalized = normalize_client_capabilities(json!({
+            "filesystem": {
+                "read_text_file": { "supported": true },
+                "write_text_file": { "supported": true }
+            }
+        }));
+        assert_eq!(normalized["fs"]["readTextFile"], true);
+        assert_eq!(normalized["fs"]["writeTextFile"], true);
+    }
+
+    #[test]
+    fn build_write_text_file_request_uses_acp_shape() {
+        let request = build_write_text_file_request(
+            "rpc-1",
+            "session-1",
+            "/Users/bear/project/README.md",
+            "hello",
+        );
+        assert_eq!(request["jsonrpc"], "2.0");
+        assert_eq!(request["id"], "rpc-1");
+        assert_eq!(request["method"], "fs/write_text_file");
+        assert_eq!(request["params"]["sessionId"], "session-1");
+        assert_eq!(request["params"]["path"], "/Users/bear/project/README.md");
+        assert_eq!(request["params"]["content"], "hello");
+    }
+
+    #[test]
+    fn write_text_file_arguments_resolves_relative_path() {
+        let event = json!({
+            "arguments": {
+                "path": "src/main.rs",
+                "content": "fn main() {}"
+            }
+        });
+        assert_eq!(
+            write_text_file_arguments(&event, "/Users/bear/project").unwrap(),
+            WriteTextFileArguments {
+                path: "/Users/bear/project/src/main.rs".to_string(),
+                content: "fn main() {}".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn build_permission_request_uses_acp_request_permission_shape() {
+        let event = json!({
+            "tool_name": "acp_fs_write_text_file",
+            "arguments": {
+                "path": "README.md",
+                "content": "hello"
+            }
+        });
+        let request = build_permission_request(
+            "permission-1",
+            "session-1",
+            "call-1",
+            "acp_fs_write_text_file",
+            &event,
+        );
+        assert_eq!(request["method"], "session/request_permission");
+        assert_eq!(request["params"]["sessionId"], "session-1");
+        assert_eq!(request["params"]["toolCall"]["toolCallId"], "call-1");
+        assert_eq!(request["params"]["toolCall"]["kind"], "edit");
+        assert_eq!(
+            request["params"]["toolCall"]["locations"][0]["path"],
+            "README.md"
+        );
+        assert_eq!(request["params"]["options"][0]["kind"], "allow_once");
+        assert_eq!(request["params"]["options"][1]["kind"], "reject_once");
     }
 
     #[test]

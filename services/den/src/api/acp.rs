@@ -536,8 +536,13 @@ fn authorized_client_tool_descriptors(
             },
             "output_schema": {
                 "type": "object",
-                "properties": {},
-                "additionalProperties": true
+                "properties": {
+                    "_meta": {
+                        "type": ["object", "null"],
+                        "additionalProperties": true
+                    }
+                },
+                "additionalProperties": false
             },
             "acp": {
                 "method": "fs/write_text_file",
@@ -1160,8 +1165,9 @@ async fn prompt_inner(
         &body.client_capabilities,
         &body.client_context,
     );
-    let missing_tools_scope =
-        !has_acp_tools_scope && client_supports_read_text_file(&body.client_capabilities);
+    let missing_tools_scope = !has_acp_tools_scope
+        && (client_supports_read_text_file(&body.client_capabilities)
+            || client_supports_write_text_file(&body.client_capabilities));
     if missing_tools_scope {
         tracing::info!(
             %request_id,
@@ -1487,7 +1493,7 @@ fn initial_adapter_events(missing_tools_scope: bool) -> Vec<Bytes> {
             "type": "status",
             "content": {
                 "type": "text",
-                "text": "ACP local editor tools are unavailable because this token lacks the acp:tools scope. Chat will continue, but the bear cannot request local file reads from this editor session. Generate a new Den Code token to enable local tools."
+                "text": "ACP local editor tools are unavailable because this token lacks the acp:tools scope. Chat will continue, but the bear cannot request local file reads or writes from this editor session. Generate a new Den Code token to enable local tools."
             },
             "diagnostic": {
                 "code": "acp_tools_scope_missing",
@@ -1644,6 +1650,64 @@ mod tests {
             .len(),
             1
         );
+    }
+
+    #[test]
+    fn builds_write_text_file_descriptor_only_when_authorized_and_supported() {
+        let caps = serde_json::json!({ "fs": { "writeTextFile": true } });
+        let context = serde_json::json!({ "cwd": "/tmp/workspace" });
+        let descriptors = authorized_client_tool_descriptors(true, "zed", &caps, &context);
+        assert_eq!(descriptors.len(), 1);
+        assert_eq!(descriptors[0]["name"], "acp_fs_write_text_file");
+        assert_eq!(descriptors[0]["acp"]["method"], "fs/write_text_file");
+        assert_eq!(descriptors[0]["approval_policy"], "always");
+        assert_eq!(
+            descriptors[0]["permissions"],
+            serde_json::json!(["filesystem", "write"])
+        );
+
+        assert!(authorized_client_tool_descriptors(false, "zed", &caps, &context).is_empty());
+        assert!(authorized_client_tool_descriptors(
+            true,
+            "zed",
+            &serde_json::json!({ "fs": { "writeTextFile": false } }),
+            &context
+        )
+        .is_empty());
+        assert_eq!(
+            authorized_client_tool_descriptors(
+                true,
+                "zed",
+                &serde_json::json!({ "fs": { "write_text_file": true } }),
+                &context
+            )
+            .len(),
+            1
+        );
+    }
+
+    #[test]
+    fn builds_read_and_write_descriptors_together() {
+        let caps = serde_json::json!({ "fs": { "readTextFile": true, "writeTextFile": true } });
+        let context = serde_json::json!({ "cwd": "/tmp/workspace" });
+        let descriptors = authorized_client_tool_descriptors(true, "zed", &caps, &context);
+        let names = descriptors
+            .iter()
+            .map(|descriptor| descriptor["name"].as_str().unwrap_or_default())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            names,
+            vec!["acp_fs_read_text_file", "acp_fs_write_text_file"]
+        );
+    }
+
+    #[test]
+    fn initial_adapter_events_mentions_reads_and_writes_for_write_only_capability() {
+        let events = initial_adapter_events(true);
+        assert_eq!(events.len(), 1);
+        let text = String::from_utf8(events[0].to_vec()).unwrap();
+        assert!(text.contains("reads or writes"));
+        assert!(text.contains("acp_tools_scope_missing"));
     }
 
     #[test]

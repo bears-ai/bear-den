@@ -6,20 +6,27 @@ It speaks ACP JSON-RPC over stdin/stdout and calls the remote Den API ACP gatewa
 
 ## Current scope
 
-Implemented first slice:
+Implemented:
 
 - `initialize`
+- `authenticate`
 - `session/new`
 - `session/prompt`
+- `session/close`
 - Den SSE -> ACP `session/update` text/thought chunks
+- ACP client-tool relay for editor file-system tools:
+  - `fs/read_text_file`
+  - `fs/write_text_file`
+
+`fs/write_text_file` is a whole-file text create/replace operation. It is not a granular patch/edit API and does not cover directory creation, delete, move/rename, or copy operations.
 
 Not implemented yet:
 
-- client tools
 - cancellation forwarding
 - session resume/load/list
 - MCP relay
-- terminal/file-system tool execution
+- terminal tool execution
+- broader file mutation tools beyond ACP's standard read/write text-file requests
 
 ## Build
 
@@ -37,7 +44,7 @@ tools/bears-acp-adapter/target/debug/bears-acp-adapter
 
 ## Required environment
 
-The adapter needs a Den API URL, bear slug, and bearer token with `acp:chat` scope.
+The adapter needs a Den API URL, bear slug, and bearer token with `acp:chat` scope. Use a Den Code token with `acp:tools` as well if you want the bear to request local editor file reads or writes.
 
 ```bash
 export BEARS_DEN_API_URL="https://api.bears.[domain]" # or another public API origin, e.g. https://bears.[domain]:3001
@@ -139,3 +146,5 @@ Production distribution should add Developer ID signing and Apple notarization b
 - HTTP failures include targeted hints for common cases: bad token (`401`), missing scope or membership (`403`), wrong API URL or disabled ACP gateway (`404`), wrong web/API origin (`405`), rate limits (`429`), and Den server errors (`5xx`).
 - Prompt failures that successfully reached Den include Den `/version` metadata in the JSON-RPC error data when it can be fetched, which helps confirm the deployed server build while debugging.
 - ACP `sessionId` values identify the client-side ACP session. The adapter lets Den bind a new session to a BEARS conversation, stores Den `conversation_resolved` events, and sends the resolved `conv-...` id on future prompts when available.
+- Local editor file-system tools are only advertised to Den when the ACP client advertises matching capabilities and the token includes `acp:tools`.
+- Write requests use ACP `session/request_permission` before calling `fs/write_text_file`, then rely on the client to perform the actual workspace write.
