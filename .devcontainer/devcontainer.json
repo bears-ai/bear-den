@@ -10,7 +10,9 @@
         "source=bears-gh-auth,target=/root/.config/gh,type=volume"
     ],
     "containerEnv": {
-        "OPENCODE_AUTH_PATH": "/root/.local/share/opencode/auth.json"
+        "OPENCODE_AUTH_PATH": "/root/.local/share/opencode/auth.json",
+        "DATABASE_URL": "postgres://bears:bears@bears-postgres:5432/den?sslmode=disable",
+        "LETTA_PG_URI": "postgresql://bears:bears@bears-letta-postgres:5432/letta"
     },
     "postCreateCommand": "/workspace/.devcontainer/install-workspace-tools.sh",
     "postStartCommand": "/workspace/scripts/devcontainer-start.sh"

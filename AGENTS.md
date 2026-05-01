@@ -10,7 +10,7 @@ Three application services run via `docker-compose.yaml`:
 
 The workspace container has access to the Docker socket and can manage the stack.
 
-Services are reachable by their compose service names over the internal Docker network, for example `http://bears-den:3000`.
+Services are reachable by their compose service names over the internal Docker network, for example `http://bears-den:3000`. The root devcontainer startup script attaches the workspace container to `bears-stack_default` and exports dev defaults for `DATABASE_URL` and `LETTA_PG_URI`, so Den tests can resolve `bears-postgres` and `bears-letta-postgres` from inside the devcontainer.
 
 ## Scripts
 

@@ -22,6 +22,44 @@ run_logged() {
   "$@" >>"${LOG_FILE}" 2>&1
 }
 
+ensure_devcontainer_network() {
+  local network="${BEARS_DEVCONTAINER_NETWORK:-bears-stack_default}"
+  local container_id
+  container_id="$(hostname)"
+
+  if ! command -v docker >/dev/null 2>&1; then
+    log "Docker CLI is unavailable; skipping devcontainer network check"
+    return 0
+  fi
+
+  if ! docker info >/dev/null 2>&1; then
+    log "Docker daemon is unavailable; skipping devcontainer network check"
+    return 0
+  fi
+
+  if ! docker network inspect "${network}" >/dev/null 2>&1; then
+    log "Docker network ${network} is not present yet; creating it so service DNS can be attached"
+    if ! run_logged docker network create "${network}"; then
+      log "Could not create Docker network ${network}; tests may not resolve bears-postgres"
+      return 0
+    fi
+  fi
+
+  if docker inspect "${container_id}" --format "{{json .NetworkSettings.Networks}}" 2>/dev/null | grep -q "\"${network}\""; then
+    log "Devcontainer is already attached to ${network}"
+    return 0
+  fi
+
+  log "Attaching devcontainer ${container_id} to Docker network ${network}"
+  if run_logged docker network connect "${network}" "${container_id}"; then
+    log "Devcontainer attached to ${network}; bears-postgres/bears-letta-postgres DNS is available"
+  else
+    log "Could not attach devcontainer to ${network}; tests may not resolve bears-postgres"
+  fi
+}
+
+ensure_devcontainer_network
+
 export JWT_SECRET="${JWT_SECRET:-dev-placeholder}"
 export LETTA_SERVER_PASS="${LETTA_SERVER_PASS:-dev-placeholder}"
 export OPENAI_API_KEY="${OPENAI_API_KEY:-dev-placeholder}"
