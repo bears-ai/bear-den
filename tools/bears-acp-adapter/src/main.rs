@@ -478,6 +478,7 @@ async fn handle_prompt(
         .and_then(Value::as_str)
         .ok_or_else(|| anyhow!("session/prompt params missing sessionId"))?;
     let prompt = prompt_text_from_params(&params)?;
+    let display_prompt = prompt_display_text_from_params(&params).unwrap_or_else(|| prompt.clone());
     let conversation_id = "default";
     let client_context = adapter_state
         .session_contexts
@@ -489,7 +490,7 @@ async fn handle_prompt(
         session_id, config.bear, conversation_id, config.client
     );
 
-    send_user_message_chunk(session_id, &prompt).await?;
+    send_user_message_chunk(session_id, &display_prompt).await?;
 
     let url = format!(
         "{}/acp/bears/{}/sessions/{}/prompt",
@@ -654,6 +655,17 @@ fn den_status_error_message(status: reqwest::StatusCode, body: &str) -> String {
 }
 
 fn prompt_text_from_params(params: &Value) -> Result<String> {
+    prompt_text_from_params_with_resource_mode(params, true)
+}
+
+fn prompt_display_text_from_params(params: &Value) -> Option<String> {
+    prompt_text_from_params_with_resource_mode(params, false).ok()
+}
+
+fn prompt_text_from_params_with_resource_mode(
+    params: &Value,
+    include_resource_contents: bool,
+) -> Result<String> {
     let prompt = params
         .get("prompt")
         .and_then(Value::as_array)
@@ -677,8 +689,17 @@ fn prompt_text_from_params(params: &Value) -> Result<String> {
             "resource" => {
                 if let Some(resource) = block.get("resource") {
                     let uri = resource.get("uri").and_then(Value::as_str).unwrap_or("");
-                    if let Some(text) = resource.get("text").and_then(Value::as_str) {
-                        parts.push(format!("Resource {uri}:\n{text}"));
+                    let name = resource
+                        .get("name")
+                        .and_then(Value::as_str)
+                        .filter(|s| !s.trim().is_empty())
+                        .unwrap_or(uri);
+                    if include_resource_contents {
+                        if let Some(text) = resource.get("text").and_then(Value::as_str) {
+                            parts.push(format!("Resource {uri}:\n{text}"));
+                        }
+                    } else if !uri.is_empty() || !name.is_empty() {
+                        parts.push(format!("Referenced resource: {name} ({uri})"));
                     }
                 }
             }
