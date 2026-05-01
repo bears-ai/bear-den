@@ -460,6 +460,108 @@ body.bear_chat .den-conv-button-container:hover {
     margin-bottom: calc(var(--spacing-unit) * 0.75);
 }
 
+/* ---- All threads (/bear/:slug/details/conversations) ---- */
+.den-all-threads-page .den-design-chat-toolbar h2 {
+    margin: 0;
+}
+
+.den-all-threads-list {
+    list-style: none;
+    padding: 0;
+    margin: var(--spacing-unit) 0;
+    border: solid var(--thin-line-unit) var(--border-color);
+    background-color: var(--page-color);
+    max-width: min(92vw, 42rem);
+}
+
+.den-all-threads-list > li.den-conv-menu-row {
+    display: grid;
+    grid-template-columns: minmax(12rem, 1fr) auto;
+    align-items: stretch;
+    margin: 0;
+    padding: 0;
+    border-bottom: solid var(--thin-line-unit) var(--border-color);
+    color: var(--text-color);
+}
+
+.den-all-threads-list > li.den-conv-menu-row:last-child {
+    border-bottom: none;
+}
+
+.den-all-threads-list .den-conv-menu-main,
+.den-all-threads-list .den-conv-menu-action {
+    display: block;
+    border: none;
+    background-color: transparent;
+    color: inherit;
+    font: inherit;
+    text-align: left;
+    text-decoration: none;
+    text-transform: uppercase;
+    white-space: nowrap;
+}
+
+.den-all-threads-list .den-conv-menu-main {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    padding: var(--spacing-unit);
+}
+
+.den-all-threads-list .den-conv-menu-action {
+    width: auto;
+    padding: var(--spacing-unit) calc(var(--spacing-unit) * 0.7);
+    border-left: solid var(--thin-line-unit) currentColor;
+    font-size: smaller;
+}
+
+.den-all-threads-list .den-conv-menu-main:hover,
+.den-all-threads-list .den-conv-menu-action:hover {
+    background-color: var(--accent-color);
+    color: var(--page-color);
+}
+
+.den-all-threads-title,
+.den-all-threads-meta {
+    display: block;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.den-all-threads-meta {
+    margin-top: calc(var(--spacing-unit) * 0.25);
+    color: var(--meta-color);
+    font-size: smaller;
+    text-transform: none;
+}
+
+.den-all-threads-row-archived {
+    color: var(--meta-color);
+}
+
+.den-all-threads-row-archived .den-all-threads-title {
+    text-decoration: line-through;
+    text-decoration-thickness: var(--thin-line-unit);
+}
+
+@media (max-width: 699px) {
+    .den-all-threads-list {
+        max-width: 100%;
+    }
+
+    .den-all-threads-list > li.den-conv-menu-row {
+        grid-template-columns: 1fr;
+    }
+
+    .den-all-threads-list .den-conv-menu-action {
+        border-left: none;
+        border-top: solid var(--thin-line-unit) currentColor;
+        padding-top: calc(var(--spacing-unit) * 0.5);
+        padding-bottom: calc(var(--spacing-unit) * 0.5);
+    }
+}
+
 .den-bear-prompt-pre {
     white-space: pre-wrap;
     word-break: break-word;

@@ -1,24 +1,30 @@
-{% extends "base.html" %}
-
-{% block title %}Conversations · {{ bear.name | e }}{% endblock %}
-
-{% block content %}
-<section>
-    <h2>All conversations</h2>
-    <p><a href="/bear/{{ bear.slug | e }}/details">Back to bear</a></p>
+{% extends "base.html" %} {% block title %}All threads · {{ bear.name | e }}{%
+endblock %} {% block content %}
+<section class="den-all-threads-page">
+    <div class="den-design-chat-toolbar den-chat-toolbar">
+        <h2>All threads</h2>
+        <a class="button-link" href="/bear/{{ bear.slug | e }}/details"
+            >Back to bear</a
+        >
+    </div>
 
     {% if list_error %}
     <p class="form-errors">{{ list_error | e }}</p>
-    {% endif %}
-
-    {% if conversation_rows and conversation_rows | length > 0 %}
-    <ul class="den-bear-conv-list">
+    {% endif %} {% if conversation_rows and conversation_rows | length > 0 %}
+    <ul class="den-all-threads-list" aria-label="All threads">
         {% for c in conversation_rows %}
-        <li>
-            {{ c.title | e }} — <span class="caption">{{ c.channel_label }}</span>
-            {% if c.archived %} — <span class="caption">archived</span>{% endif %}
-            {% if c.last_message_at %} — <span class="caption">{{ c.last_message_at }}</span>{% endif %}
-            — <a href="{{ c.web_href | e }}">Open</a>
+        <li
+            class="den-conv-menu-row{% if c.archived %} den-all-threads-row-archived{% endif %}"
+        >
+            <a class="den-conv-menu-main" href="{{ c.web_href | e }}">
+                <span class="den-all-threads-title">{{ c.title | e }}</span>
+                <span class="den-all-threads-meta">
+                    {{ c.channel_label }}{% if c.archived %} · archived{% endif
+                    %}{% if c.last_message_at %} · {{ c.last_message_at }}{%
+                    endif %}
+                </span>
+            </a>
+            <a class="den-conv-menu-action" href="{{ c.web_href | e }}">Open</a>
         </li>
         {% endfor %}
     </ul>
