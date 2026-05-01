@@ -4,7 +4,7 @@ use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, CONTENT_TYPE};
 use reqwest::Url;
 use serde_json::{json, Value};
 use std::{collections::HashMap, env};
-use tokio::io::{self, AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{self, AsyncBufReadExt, AsyncWriteExt, BufReader, Lines, Stdin};
 use uuid::Uuid;
 
 #[derive(Clone, Debug)]
@@ -120,7 +120,9 @@ async fn run() -> Result<()> {
             }
         };
 
-        if let Err(err) = handle_request(&http, &runtime, &mut adapter_state, request).await {
+        if let Err(err) =
+            handle_request(&http, &runtime, &mut adapter_state, &mut lines, request).await
+        {
             eprintln!("bears-acp-adapter: request handling failed: {err:#}");
         }
     }
@@ -323,6 +325,7 @@ async fn handle_request(
     http: &reqwest::Client,
     runtime: &RuntimeConfig,
     adapter_state: &mut AdapterState,
+    lines: &mut Lines<BufReader<Stdin>>,
     request: JsonRpcRequest,
 ) -> Result<()> {
     match request.method.as_str() {
@@ -373,8 +376,15 @@ async fn handle_request(
                     return Ok(());
                 };
 
-                if let Err(err) =
-                    handle_prompt(http, config, adapter_state, id.clone(), request.params).await
+                if let Err(err) = handle_prompt(
+                    http,
+                    config,
+                    adapter_state,
+                    lines,
+                    id.clone(),
+                    request.params,
+                )
+                .await
                 {
                     let server_version = fetch_server_version(http, config).await.ok();
                     let mut message = format!("{err:#}");
@@ -459,6 +469,7 @@ async fn handle_prompt(
     http: &reqwest::Client,
     config: &Config,
     adapter_state: &mut AdapterState,
+    lines: &mut Lines<BufReader<Stdin>>,
     response_id: Value,
     params: Value,
 ) -> Result<()> {
@@ -523,14 +534,14 @@ async fn handle_prompt(
         buffer.extend_from_slice(&chunk);
         while let Some(pos) = buffer.windows(2).position(|w| w == b"\n\n") {
             let frame: Vec<u8> = buffer.drain(..pos + 2).collect();
-            let outcome = handle_sse_frame(http, config, session_id, &frame).await?;
+            let outcome = handle_sse_frame(http, config, lines, session_id, &frame).await?;
             saw_done |= outcome.saw_done;
             upstream_errors.extend(outcome.upstream_errors);
         }
     }
     if !buffer.is_empty() {
         let frame = std::mem::take(&mut buffer);
-        let outcome = handle_sse_frame(http, config, session_id, &frame).await?;
+        let outcome = handle_sse_frame(http, config, lines, session_id, &frame).await?;
         saw_done |= outcome.saw_done;
         upstream_errors.extend(outcome.upstream_errors);
     }
@@ -686,6 +697,7 @@ fn prompt_text_from_params(params: &Value) -> Result<String> {
 async fn handle_sse_frame(
     http: &reqwest::Client,
     config: &Config,
+    lines: &mut Lines<BufReader<Stdin>>,
     session_id: &str,
     frame: &[u8],
 ) -> Result<SseFrameOutcome> {
@@ -703,7 +715,7 @@ async fn handle_sse_frame(
         if event.get("type").and_then(Value::as_str) == Some("error") {
             outcome.upstream_errors.push(format_den_event_error(&event));
         }
-        outcome.saw_done |= handle_den_event(http, config, session_id, &event).await?;
+        outcome.saw_done |= handle_den_event(http, config, lines, session_id, &event).await?;
     }
     Ok(outcome)
 }
@@ -731,6 +743,7 @@ fn format_den_event_error(event: &Value) -> String {
 async fn handle_den_event(
     http: &reqwest::Client,
     config: &Config,
+    lines: &mut Lines<BufReader<Stdin>>,
     session_id: &str,
     event: &Value,
 ) -> Result<bool> {
@@ -764,7 +777,7 @@ async fn handle_den_event(
         }
         "client_tool_request" => {
             send_client_tool_call_update(session_id, event).await?;
-            post_placeholder_tool_result(http, config, session_id, event).await?;
+            execute_and_post_client_tool_result(http, config, lines, session_id, event).await?;
             Ok(false)
         }
         "done" => Ok(true),
@@ -772,9 +785,10 @@ async fn handle_den_event(
     }
 }
 
-async fn post_placeholder_tool_result(
+async fn execute_and_post_client_tool_result(
     http: &reqwest::Client,
     config: &Config,
+    lines: &mut Lines<BufReader<Stdin>>,
     session_id: &str,
     event: &Value,
 ) -> Result<()> {
@@ -794,6 +808,119 @@ async fn post_placeholder_tool_result(
         .get("tool_name")
         .and_then(Value::as_str)
         .unwrap_or("acp_client_tool");
+
+    let tool_result = match tool_name {
+        "acp_fs_read_text_file" => execute_fs_read_text_file(lines, event).await,
+        other => Err(anyhow!("unsupported ACP client tool: {other}")),
+    };
+
+    let body = match tool_result {
+        Ok(result) => json!({
+            "request_id": request_id,
+            "conversation_id": conversation_id,
+            "status": "ok",
+            "result": result,
+            "client_observation": {
+                "adapter_version": env!("CARGO_PKG_VERSION")
+            }
+        }),
+        Err(err) => json!({
+            "request_id": request_id,
+            "conversation_id": conversation_id,
+            "status": "error",
+            "error": {
+                "code": "adapter_client_tool_error",
+                "message": format!("{err:#}")
+            },
+            "client_observation": {
+                "adapter_version": env!("CARGO_PKG_VERSION")
+            }
+        }),
+    };
+    post_tool_result_to_den(http, config, session_id, call_id, body).await
+}
+
+async fn execute_fs_read_text_file(
+    lines: &mut Lines<BufReader<Stdin>>,
+    event: &Value,
+) -> Result<Value> {
+    let path = event
+        .get("arguments")
+        .and_then(|v| v.get("path"))
+        .and_then(Value::as_str)
+        .filter(|s| !s.trim().is_empty())
+        .ok_or_else(|| anyhow!("fs/read_text_file requires arguments.path"))?;
+    let rpc_id = format!("bears-tool-{}", Uuid::new_v4());
+    write_json(json!({
+        "jsonrpc": "2.0",
+        "id": rpc_id,
+        "method": "fs/read_text_file",
+        "params": { "path": path }
+    }))
+    .await?;
+    let response = wait_for_json_rpc_response(lines, &rpc_id).await?;
+    if let Some(error) = response.get("error") {
+        return Err(anyhow!("ACP client fs/read_text_file failed: {error}"));
+    }
+    let result = response
+        .get("result")
+        .cloned()
+        .ok_or_else(|| anyhow!("ACP client fs/read_text_file response missing result"))?;
+    Ok(normalize_read_text_file_result(result))
+}
+
+async fn wait_for_json_rpc_response(
+    lines: &mut Lines<BufReader<Stdin>>,
+    rpc_id: &str,
+) -> Result<Value> {
+    loop {
+        let Some(line) = lines
+            .next_line()
+            .await
+            .context("read stdin for ACP tool response")?
+        else {
+            return Err(anyhow!(
+                "ACP client closed stdin while waiting for {rpc_id}"
+            ));
+        };
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        let value: Value = serde_json::from_str(line).context("parse ACP client response JSON")?;
+        if value.get("id").and_then(Value::as_str) == Some(rpc_id) {
+            return Ok(value);
+        }
+        if value.get("id") == Some(&json!(rpc_id)) {
+            return Ok(value);
+        }
+        eprintln!(
+            "bears-acp-adapter: ignoring interleaved JSON-RPC message while waiting for tool response: {}",
+            value.get("method").and_then(Value::as_str).unwrap_or("response")
+        );
+    }
+}
+
+fn normalize_read_text_file_result(result: Value) -> Value {
+    if result.get("content").and_then(Value::as_str).is_some() {
+        return result;
+    }
+    if let Some(text) = result.get("text").and_then(Value::as_str) {
+        return json!({ "content": text });
+    }
+    if let Some(text) = result.as_str() {
+        return json!({ "content": text });
+    }
+    result
+}
+
+async fn post_tool_result_to_den(
+    http: &reqwest::Client,
+    config: &Config,
+    session_id: &str,
+    call_id: &str,
+    body: Value,
+) -> Result<()> {
     let url = format!(
         "{}/acp/bears/{}/sessions/{}/tool-results/{}",
         config.api_url,
@@ -803,20 +930,12 @@ async fn post_placeholder_tool_result(
     );
     let response = http
         .post(&url)
-        .header(AUTHORIZATION, HeaderValue::from_str(&format!("Bearer {}", config.token))?)
+        .header(
+            AUTHORIZATION,
+            HeaderValue::from_str(&format!("Bearer {}", config.token))?,
+        )
         .header(CONTENT_TYPE, HeaderValue::from_static("application/json"))
-        .json(&json!({
-            "request_id": request_id,
-            "conversation_id": conversation_id,
-            "status": "error",
-            "error": {
-                "code": "adapter_tool_execution_not_implemented",
-                "message": format!("Adapter received {tool_name}, but direct ACP client fs/read_text_file execution is not implemented in this build yet.")
-            },
-            "client_observation": {
-                "adapter_version": env!("CARGO_PKG_VERSION")
-            }
-        }))
+        .json(&body)
         .send()
         .await
         .with_context(|| format!("post ACP tool result to Den at {url}"))?;
