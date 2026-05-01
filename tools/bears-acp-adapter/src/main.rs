@@ -3,7 +3,11 @@ use futures_util::StreamExt;
 use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, CONTENT_TYPE};
 use reqwest::Url;
 use serde_json::{json, Value};
-use std::{collections::HashMap, env};
+use std::{
+    collections::HashMap,
+    env,
+    path::{Path, PathBuf},
+};
 use tokio::io::{self, AsyncBufReadExt, AsyncWriteExt, BufReader, Lines, Stdin};
 use uuid::Uuid;
 
@@ -485,6 +489,11 @@ async fn handle_prompt(
         .get(session_id)
         .cloned()
         .unwrap_or_else(|| json!({}));
+    let cwd = client_context
+        .get("cwd")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string();
     eprintln!(
         "bears-acp-adapter: session/prompt session_id={} bear={} conversation_id={} client={}",
         session_id, config.bear, conversation_id, config.client
@@ -535,14 +544,14 @@ async fn handle_prompt(
         buffer.extend_from_slice(&chunk);
         while let Some(pos) = buffer.windows(2).position(|w| w == b"\n\n") {
             let frame: Vec<u8> = buffer.drain(..pos + 2).collect();
-            let outcome = handle_sse_frame(http, config, lines, session_id, &frame).await?;
+            let outcome = handle_sse_frame(http, config, lines, session_id, &cwd, &frame).await?;
             saw_done |= outcome.saw_done;
             upstream_errors.extend(outcome.upstream_errors);
         }
     }
     if !buffer.is_empty() {
         let frame = std::mem::take(&mut buffer);
-        let outcome = handle_sse_frame(http, config, lines, session_id, &frame).await?;
+        let outcome = handle_sse_frame(http, config, lines, session_id, &cwd, &frame).await?;
         saw_done |= outcome.saw_done;
         upstream_errors.extend(outcome.upstream_errors);
     }
@@ -720,6 +729,7 @@ async fn handle_sse_frame(
     config: &Config,
     lines: &mut Lines<BufReader<Stdin>>,
     session_id: &str,
+    cwd: &str,
     frame: &[u8],
 ) -> Result<SseFrameOutcome> {
     let text = String::from_utf8_lossy(frame);
@@ -736,7 +746,7 @@ async fn handle_sse_frame(
         if event.get("type").and_then(Value::as_str) == Some("error") {
             outcome.upstream_errors.push(format_den_event_error(&event));
         }
-        outcome.saw_done |= handle_den_event(http, config, lines, session_id, &event).await?;
+        outcome.saw_done |= handle_den_event(http, config, lines, session_id, cwd, &event).await?;
     }
     Ok(outcome)
 }
@@ -766,6 +776,7 @@ async fn handle_den_event(
     config: &Config,
     lines: &mut Lines<BufReader<Stdin>>,
     session_id: &str,
+    cwd: &str,
     event: &Value,
 ) -> Result<bool> {
     match event.get("type").and_then(Value::as_str).unwrap_or("") {
@@ -798,7 +809,8 @@ async fn handle_den_event(
         }
         "client_tool_request" => {
             send_client_tool_call_update(session_id, event).await?;
-            execute_and_post_client_tool_result(http, config, lines, session_id, event).await?;
+            execute_and_post_client_tool_result(http, config, lines, session_id, cwd, event)
+                .await?;
             Ok(false)
         }
         "done" => Ok(true),
@@ -811,6 +823,7 @@ async fn execute_and_post_client_tool_result(
     config: &Config,
     lines: &mut Lines<BufReader<Stdin>>,
     session_id: &str,
+    cwd: &str,
     event: &Value,
 ) -> Result<()> {
     let call_id = event
@@ -831,7 +844,7 @@ async fn execute_and_post_client_tool_result(
         .unwrap_or("acp_client_tool");
 
     let tool_result = match tool_name {
-        "acp_fs_read_text_file" => execute_fs_read_text_file(lines, event).await,
+        "acp_fs_read_text_file" => execute_fs_read_text_file(lines, session_id, cwd, event).await,
         other => Err(anyhow!("unsupported ACP client tool: {other}")),
     };
 
@@ -863,6 +876,8 @@ async fn execute_and_post_client_tool_result(
 
 async fn execute_fs_read_text_file(
     lines: &mut Lines<BufReader<Stdin>>,
+    session_id: &str,
+    cwd: &str,
     event: &Value,
 ) -> Result<Value> {
     let path = event
@@ -871,12 +886,16 @@ async fn execute_fs_read_text_file(
         .and_then(Value::as_str)
         .filter(|s| !s.trim().is_empty())
         .ok_or_else(|| anyhow!("fs/read_text_file requires arguments.path"))?;
+    let absolute_path = absolutize_client_path(path, cwd);
     let rpc_id = format!("bears-tool-{}", Uuid::new_v4());
     write_json(json!({
         "jsonrpc": "2.0",
         "id": rpc_id,
         "method": "fs/read_text_file",
-        "params": { "path": path }
+        "params": {
+            "sessionId": session_id,
+            "path": absolute_path
+        }
     }))
     .await?;
     let response = wait_for_json_rpc_response(lines, &rpc_id).await?;
@@ -920,6 +939,17 @@ async fn wait_for_json_rpc_response(
             value.get("method").and_then(Value::as_str).unwrap_or("response")
         );
     }
+}
+
+fn absolutize_client_path(path: &str, cwd: &str) -> String {
+    let path = path.trim();
+    if path.starts_with("file://") || Path::new(path).is_absolute() || cwd.trim().is_empty() {
+        return path.to_string();
+    }
+    PathBuf::from(cwd.trim())
+        .join(path)
+        .to_string_lossy()
+        .to_string()
 }
 
 fn normalize_read_text_file_result(result: Value) -> Value {
