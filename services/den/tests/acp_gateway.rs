@@ -349,7 +349,7 @@ async fn acp_prompt_builds_bear_channel_request_and_maps_sse() {
         captured["session_id"],
         format!("acp:zed:{}:session-success", user_bear.bear_id)
     );
-    assert_eq!(captured["conversation_id"], "default");
+    assert_eq!(captured["conversation_id"], "new-acp-zed-session-success");
     assert_eq!(captured["bear"]["id"], user_bear.bear_id.to_string());
     assert_eq!(captured["bear"]["slug"], user_bear.bear_slug);
     assert_eq!(captured["bear"]["letta_agent_id"], "agent-acp-test");

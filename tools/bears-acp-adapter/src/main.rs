@@ -668,7 +668,29 @@ fn prompt_text_from_params(params: &Value) -> Result<String> {
 }
 
 fn prompt_display_text_from_params(params: &Value) -> Option<String> {
-    prompt_text_from_params_with_resource_mode(params, false).ok()
+    prompt_text_blocks_from_params(params).ok()
+}
+
+fn prompt_text_blocks_from_params(params: &Value) -> Result<String> {
+    let prompt = params
+        .get("prompt")
+        .and_then(Value::as_array)
+        .ok_or_else(|| anyhow!("session/prompt params missing prompt array"))?;
+
+    let text = prompt
+        .iter()
+        .filter(|block| block.get("type").and_then(Value::as_str) == Some("text"))
+        .filter_map(|block| block.get("text").and_then(Value::as_str))
+        .collect::<Vec<_>>()
+        .join("\n\n")
+        .trim()
+        .to_string();
+
+    if text.is_empty() {
+        Err(anyhow!("prompt did not contain text content for display"))
+    } else {
+        Ok(text)
+    }
 }
 
 fn prompt_text_from_params_with_resource_mode(
