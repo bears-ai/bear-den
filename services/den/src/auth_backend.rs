@@ -107,7 +107,7 @@ impl AuthnBackend for Backend {
                     id: db_user.id,
                     username: db_user.username,
                     passhash: db_user.passhash,
-                    is_admin: db_user.admin_flag,
+                    is_admin: db_user.is_admin,
                     theme: db_user.theme,
                 }));
             }
@@ -117,7 +117,7 @@ impl AuthnBackend for Backend {
                     id: db_user.id,
                     username: db_user.username,
                     passhash: db_user.passhash,
-                    is_admin: db_user.admin_flag,
+                    is_admin: db_user.is_admin,
                     theme: db_user.theme,
                 })),
                 Err(e) => {
@@ -147,7 +147,7 @@ impl AuthnBackend for Backend {
                     id: db_user.id,
                     username: db_user.username,
                     passhash: db_user.passhash,
-                    is_admin: db_user.admin_flag,
+                    is_admin: db_user.is_admin,
                     theme: db_user.theme,
                 };
 

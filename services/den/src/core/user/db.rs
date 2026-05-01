@@ -1,4 +1,4 @@
-use sqlx::{query, query_as, PgPool};
+use sqlx::{query, PgPool};
 
 use crate::errors::CustomError;
 
@@ -9,24 +9,23 @@ pub struct User {
     pub username: String,
     pub display_name: String,
     pub passhash: String,
-    pub admin_flag: bool,
+    pub is_admin: bool,
     pub theme: String,
 }
 
-/// For authentication purposes (`admin_flag` is effective operator flag: `COALESCE(is_admin, admin_flag)` in queries below).
+/// Authentication projection. `is_admin` is the canonical operator flag.
 #[derive(sqlx::FromRow)]
 pub struct UserAuth {
     pub id: i32,
     pub username: String,
     pub passhash: String,
-    pub admin_flag: bool,
+    pub is_admin: bool,
     pub theme: String,
 }
 
 pub async fn get_users(db_pool: &PgPool) -> Result<Vec<User>, CustomError> {
-    let users = query_as!(
-        User,
-        r#"SELECT id, email, username, display_name, passhash, admin_flag as "admin_flag!", theme FROM users"#
+    let users = sqlx::query_as::<_, User>(
+        r#"SELECT id, email, username, display_name, passhash, is_admin, theme FROM users"#,
     )
     .fetch_all(db_pool)
     .await?;
@@ -53,11 +52,10 @@ pub async fn create_user(
 }
 
 pub async fn get_user_by_id(db_pool: &PgPool, id: i32) -> Result<Option<User>, CustomError> {
-    let user = query_as!(
-        User,
-        r#"SELECT id, email, username, display_name, passhash, admin_flag as "admin_flag!", theme FROM users WHERE id = $1"#,
-        id
+    let user = sqlx::query_as::<_, User>(
+        r#"SELECT id, email, username, display_name, passhash, is_admin, theme FROM users WHERE id = $1"#,
     )
+    .bind(id)
     .fetch_optional(db_pool)
     .await?;
     Ok(user)
@@ -84,7 +82,7 @@ pub async fn get_user_by_username(
     let user = sqlx::query_as::<_, UserAuth>(
         r#"
         SELECT id, username, passhash,
-               COALESCE(is_admin, admin_flag) AS admin_flag,
+               is_admin,
                theme
         FROM users
         WHERE username = $1
@@ -97,11 +95,10 @@ pub async fn get_user_by_username(
 }
 
 pub async fn get_user_by_email(db_pool: &PgPool, email: &str) -> Result<Option<User>, CustomError> {
-    let user = query_as!(
-        User,
-        r#"SELECT id, email, username, display_name, passhash, admin_flag as "admin_flag!", theme FROM users WHERE email = $1"#,
-        email
+    let user = sqlx::query_as::<_, User>(
+        r#"SELECT id, email, username, display_name, passhash, is_admin, theme FROM users WHERE email = $1"#,
     )
+    .bind(email)
     .fetch_optional(db_pool)
     .await?;
     Ok(user)
@@ -114,7 +111,7 @@ pub async fn get_user_auth_by_email(
     let user = sqlx::query_as::<_, UserAuth>(
         r#"
         SELECT id, username, passhash,
-               COALESCE(is_admin, admin_flag) AS admin_flag,
+               is_admin,
                theme
         FROM users
         WHERE email = $1

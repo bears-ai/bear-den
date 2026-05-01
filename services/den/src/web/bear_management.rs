@@ -122,7 +122,7 @@ async fn viewer_is_bear_admin(
     })
 }
 
-/// Edit bear settings, resync, access, membership, delete: bear admins or site operators (`users.admin_flag`).
+/// Edit bear settings, resync, access, membership, delete: bear admins or site operators (`users.is_admin`).
 async fn viewer_can_manage_bear(
     pool: &sqlx::PgPool,
     user: &SessionUser,

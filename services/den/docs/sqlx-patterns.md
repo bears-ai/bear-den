@@ -120,7 +120,7 @@ query_builder.push(")");
 
 // Example optional clause:
 // if filter_admin {
-//     query_builder.push(" AND admin_flag = true");
+//     query_builder.push(" AND is_admin = true");
 // }
 
 let total_count: i64 = query_builder.build_query_scalar().fetch_one(pool).await?;

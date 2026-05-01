@@ -31,6 +31,7 @@ At **process startup**, `den` runs embedded migrations against `DATABASE_URL` (s
 | [`20260416120000_bear_chat_activity.up.sql`](20260416120000_bear_chat_activity.up.sql) | `bear_chat_activity` (later dropped) |
 | [`20260416120100_drop_bear_chat_activity.up.sql`](20260416120100_drop_bear_chat_activity.up.sql) | Drop `bear_chat_activity` |
 | [`20260418130000_drop_users_webui_account_id.up.sql`](20260418130000_drop_users_webui_account_id.up.sql) | Drop `users.webui_account_id` + index |
+| [`20260501121000_drop_users_admin_flag.up.sql`](20260501121000_drop_users_admin_flag.up.sql) | Backfill canonical `users.is_admin` and drop legacy `users.admin_flag` |
 
 ### Default operator account
 
@@ -46,6 +47,6 @@ After migrations have been applied (first container start or local `cargo run` o
 
 The stored `passhash` is Argon2id (PHC). If you change the password string in the migration, regenerate the hash with `password_auth::generate_hash` from the same `password-auth` version as in `Cargo.toml`, and update [`tests/bootstrap_admin_passhash.rs`](../tests/bootstrap_admin_passhash.rs).
 
-**Note:** Legacy `users.id` is still `serial`. `user_bear.user_id` is `INTEGER` FK to `users(id)` so the schema is consistent without a UUID cutover. A later milestone may migrate identity to UUID per [PHASE1_BOOTSTRAP.md](../../docs/planning/PHASE1_BOOTSTRAP.md). Prefer column **`is_admin`** for operators; legacy **`admin_flag`** remains for older queries until fully retired.
+**Note:** Legacy `users.id` is still `serial`. `user_bear.user_id` is `INTEGER` FK to `users(id)` so the schema is consistent without a UUID cutover. A later milestone may migrate identity to UUID per [PHASE1_BOOTSTRAP.md](../../docs/planning/PHASE1_BOOTSTRAP.md). Column **`is_admin`** is the canonical operator flag; legacy **`admin_flag`** is backfilled into it and dropped by the 20260501121000 migration.
 
 Production **container** runs apply the same migrations automatically on startup (`src/lib.rs`); you do not need a separate deploy-time migration step for normal hosting.
