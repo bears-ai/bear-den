@@ -188,7 +188,23 @@ fn client_supports_read_text_file(client_capabilities: &serde_json::Value) -> bo
         .and_then(|v| v.as_bool())
         .unwrap_or(false)
         || client_capabilities
+            .pointer("/fs/read_text_file")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false)
+        || client_capabilities
             .pointer("/filesystem/readTextFile")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false)
+        || client_capabilities
+            .pointer("/filesystem/read_text_file")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false)
+        || client_capabilities
+            .pointer("/fs/read_text_file/supported")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false)
+        || client_capabilities
+            .pointer("/filesystem/read_text_file/supported")
             .and_then(|v| v.as_bool())
             .unwrap_or(false)
 }
@@ -1024,6 +1040,16 @@ mod tests {
             &context
         )
         .is_empty());
+        assert_eq!(
+            authorized_client_tool_descriptors(
+                true,
+                "zed",
+                &serde_json::json!({ "fs": { "read_text_file": true } }),
+                &context
+            )
+            .len(),
+            1
+        );
     }
 
     #[test]

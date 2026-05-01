@@ -29,7 +29,14 @@ struct RuntimeConfig {
 #[derive(Default)]
 struct AdapterState {
     client_capabilities: Value,
-    session_contexts: HashMap<String, Value>,
+    session_contexts: HashMap<String, SessionContext>,
+}
+
+#[derive(Clone, Debug, Default)]
+struct SessionContext {
+    cwd: String,
+    roots: Vec<String>,
+    raw: Value,
 }
 
 #[derive(Debug)]
@@ -334,12 +341,14 @@ async fn handle_request(
 ) -> Result<()> {
     match request.method.as_str() {
         "initialize" => {
-            adapter_state.client_capabilities = request
-                .params
-                .get("clientCapabilities")
-                .or_else(|| request.params.get("capabilities"))
-                .cloned()
-                .unwrap_or(Value::Null);
+            adapter_state.client_capabilities = normalize_client_capabilities(
+                request
+                    .params
+                    .get("clientCapabilities")
+                    .or_else(|| request.params.get("capabilities"))
+                    .cloned()
+                    .unwrap_or(Value::Null),
+            );
             if let Some(id) = request.id {
                 write_response(id, Ok(initialize_result())).await?;
             }
@@ -348,6 +357,12 @@ async fn handle_request(
             if let Some(id) = request.id {
                 let session_id = format!("acp-{}", Uuid::new_v4());
                 let context = session_context_from_params(&request.params);
+                eprintln!(
+                    "bears-acp-adapter: session/new session_id={} cwd={} roots={}",
+                    session_id,
+                    context.cwd,
+                    context.roots.join(",")
+                );
                 adapter_state
                     .session_contexts
                     .insert(session_id.clone(), context);
@@ -464,17 +479,28 @@ async fn handle_request(
     Ok(())
 }
 
-fn session_context_from_params(params: &Value) -> Value {
+fn session_context_from_params(params: &Value) -> SessionContext {
+    let roots = workspace_roots_from_params(params);
     let cwd = params
         .get("cwd")
         .or_else(|| params.get("workspaceUri"))
         .or_else(|| params.pointer("/workspace/currentDirectory"))
+        .or_else(|| params.pointer("/workspace/cwd"))
+        .or_else(|| params.pointer("/workspace/root"))
+        .or_else(|| params.pointer("/workspace/folders/0/path"))
+        .or_else(|| params.pointer("/workspace/folders/0/uri"))
+        .or_else(|| params.pointer("/workspaceFolders/0/path"))
+        .or_else(|| params.pointer("/workspaceFolders/0/uri"))
         .and_then(Value::as_str)
-        .unwrap_or("");
-    json!({
+        .and_then(file_uri_or_path_to_path)
+        .or_else(|| roots.first().cloned())
+        .unwrap_or_default();
+    let raw = json!({
         "cwd": cwd,
+        "workspace_roots": roots,
         "adapter_version": env!("CARGO_PKG_VERSION"),
-    })
+    });
+    SessionContext { cwd, roots, raw }
 }
 
 fn initialize_result() -> Value {
@@ -559,12 +585,8 @@ async fn handle_prompt(
         .session_contexts
         .get(session_id)
         .cloned()
-        .unwrap_or_else(|| json!({}));
-    let cwd = client_context
-        .get("cwd")
-        .and_then(Value::as_str)
-        .unwrap_or("")
-        .to_string();
+        .unwrap_or_default();
+    let cwd = client_context.cwd.clone();
     eprintln!(
         "bears-acp-adapter: session/prompt session_id={} bear={} conversation_id={} client={}",
         session_id, config.bear, conversation_id, config.client
@@ -594,7 +616,7 @@ async fn handle_prompt(
             "conversation_id": conversation_id,
             "client": config.client,
             "client_capabilities": adapter_state.client_capabilities,
-            "client_context": client_context,
+            "client_context": client_context.raw,
         }))
         .send()
         .await
@@ -736,6 +758,121 @@ fn den_status_error_message(status: reqwest::StatusCode, body: &str) -> String {
 
 fn prompt_text_from_params(params: &Value) -> Result<String> {
     prompt_text_from_params_with_resource_mode(params, true)
+}
+
+fn normalize_client_capabilities(mut capabilities: Value) -> Value {
+    if !capabilities.is_object() {
+        return capabilities;
+    }
+    let read_text_file = capabilities
+        .pointer("/fs/readTextFile")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+        || capabilities
+            .pointer("/fs/read_text_file")
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+        || capabilities
+            .pointer("/filesystem/readTextFile")
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+        || capabilities
+            .pointer("/filesystem/read_text_file")
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+        || capabilities
+            .pointer("/fs/read_text_file/supported")
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+        || capabilities
+            .pointer("/filesystem/read_text_file/supported")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+    if read_text_file {
+        if capabilities.get("fs").is_none() {
+            capabilities["fs"] = json!({});
+        }
+        capabilities["fs"]["readTextFile"] = json!(true);
+    }
+    capabilities
+}
+
+fn workspace_roots_from_params(params: &Value) -> Vec<String> {
+    let mut roots = Vec::new();
+    push_path_value(&mut roots, params.get("workspaceUri"));
+    push_path_value(&mut roots, params.pointer("/workspace/currentDirectory"));
+    push_path_value(&mut roots, params.pointer("/workspace/cwd"));
+    push_path_value(&mut roots, params.pointer("/workspace/root"));
+    push_folder_array(&mut roots, params.get("workspaceFolders"));
+    push_folder_array(&mut roots, params.pointer("/workspace/folders"));
+    roots.sort();
+    roots.dedup();
+    roots
+}
+
+fn push_folder_array(roots: &mut Vec<String>, value: Option<&Value>) {
+    let Some(items) = value.and_then(Value::as_array) else {
+        return;
+    };
+    for item in items {
+        push_path_value(roots, item.get("path").or_else(|| item.get("uri")));
+        if item.as_str().is_some() {
+            push_path_value(roots, Some(item));
+        }
+    }
+}
+
+fn push_path_value(roots: &mut Vec<String>, value: Option<&Value>) {
+    if let Some(path) = value
+        .and_then(Value::as_str)
+        .and_then(file_uri_or_path_to_path)
+        .filter(|s| !s.trim().is_empty())
+    {
+        roots.push(path);
+    }
+}
+
+fn file_uri_or_path_to_path(raw: &str) -> Option<String> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    if !trimmed.starts_with("file://") {
+        return Some(trimmed.to_string());
+    }
+    let without_scheme = trimmed.trim_start_matches("file://");
+    #[cfg(windows)]
+    let path = without_scheme.trim_start_matches('/').to_string();
+    #[cfg(not(windows))]
+    let path = format!("/{}", without_scheme.trim_start_matches('/'));
+    Some(percent_decode_file_path(&path))
+}
+
+fn percent_decode_file_path(path: &str) -> String {
+    let bytes = path.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            if let (Some(hi), Some(lo)) = (hex_value(bytes[i + 1]), hex_value(bytes[i + 2])) {
+                out.push(hi * 16 + lo);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    String::from_utf8(out).unwrap_or_else(|_| path.to_string())
+}
+
+fn hex_value(byte: u8) -> Option<u8> {
+    match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'a'..=b'f' => Some(byte - b'a' + 10),
+        b'A'..=b'F' => Some(byte - b'A' + 10),
+        _ => None,
+    }
 }
 
 fn prompt_display_text_from_params(params: &Value) -> Option<String> {
@@ -1224,5 +1361,51 @@ fn json_rpc_error(code: i64, message: &str, data: Option<Value>) -> Value {
     match data {
         Some(data) => json!({ "code": code, "message": message, "data": data }),
         None => json!({ "code": code, "message": message }),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn session_context_extracts_zed_workspace_folder_uri() {
+        let context = session_context_from_params(&json!({
+            "workspaceFolders": [
+                { "uri": "file:///Users/bear/project%20space", "name": "project space" }
+            ]
+        }));
+        assert_eq!(context.cwd, "/Users/bear/project space");
+        assert_eq!(context.raw["cwd"], "/Users/bear/project space");
+        assert_eq!(
+            context.raw["workspace_roots"][0],
+            "/Users/bear/project space"
+        );
+    }
+
+    #[test]
+    fn session_context_prefers_explicit_cwd() {
+        let context = session_context_from_params(&json!({
+            "cwd": "/Users/bear/active",
+            "workspaceFolders": [{ "path": "/Users/bear/project" }]
+        }));
+        assert_eq!(context.cwd, "/Users/bear/active");
+        assert_eq!(context.roots, vec!["/Users/bear/project".to_string()]);
+    }
+
+    #[test]
+    fn normalize_client_capabilities_accepts_snake_case_read_file() {
+        let normalized = normalize_client_capabilities(json!({
+            "fs": { "read_text_file": true }
+        }));
+        assert_eq!(normalized["fs"]["readTextFile"], true);
+    }
+
+    #[test]
+    fn relative_tool_paths_are_resolved_against_client_cwd() {
+        assert_eq!(
+            absolutize_client_path("README.md", "/Users/bear/project"),
+            "/Users/bear/project/README.md"
+        );
     }
 }
