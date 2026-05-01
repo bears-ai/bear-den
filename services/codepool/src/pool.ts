@@ -50,6 +50,19 @@ function toolsSignature(tools?: AnyAgentTool[]): string {
         .join(",");
 }
 
+function canUseRegisteredTool(tools: AnyAgentTool[]) {
+    const allowed = new Set(tools.map((tool) => tool.name));
+    return async (toolName: string) => {
+        if (allowed.has(toolName)) {
+            return { behavior: "allow" as const };
+        }
+        return {
+            behavior: "deny" as const,
+            message: `Tool ${toolName} is not registered for this BEARS Codepool session`,
+        };
+    };
+}
+
 type Entry = {
     session: Session;
     lastUsed: number;
@@ -233,6 +246,7 @@ export class ConversationSessionPool {
             sessionOpts.tools = tools;
             sessionOpts.allowedTools = tools.map((tool) => tool.name);
             sessionOpts.permissionMode = "bypassPermissions";
+            sessionOpts.canUseTool = canUseRegisteredTool(tools);
         }
         const cwd = ensure.cwd?.trim();
         if (cwd) {
@@ -328,6 +342,9 @@ export class ConversationSessionPool {
                                 (tool) => tool.name,
                             );
                             sessionOpts.permissionMode = "bypassPermissions";
+                            sessionOpts.canUseTool = canUseRegisteredTool(
+                                opts.tools,
+                            );
                         }
                         const cwd = ensure.cwd?.trim();
                         if (cwd) {

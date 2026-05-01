@@ -364,6 +364,9 @@ export function sdkMessageToBearChannelEvents(
                             },
                         ];
                     }
+                    if (stopReason === "requires_approval") {
+                        return [];
+                    }
                     if (stopReason && stopReason !== "end_turn") {
                         return [
                             {
