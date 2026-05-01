@@ -18,7 +18,7 @@ use validator::{Validate, ValidationError, ValidationErrors};
 use crate::{
     auth_backend::{AuthSession, SessionUser},
     core::{
-        acp_tokens,
+        acp_tokens, archived_conversations,
         bears::{
             compute_letta_drift_with_expected_tool_ids, db as bears_db,
             db::{role_is_bear_admin, BearMemberRow, BEAR_ROLE_ADMIN, BEAR_ROLE_MEMBER},
@@ -455,11 +455,17 @@ async fn render_bear_details_page(
             .map(str::trim)
             .filter(|s| !s.is_empty())
         {
+            let archived_ids = archived_conversations::list_for_bear(state.sqlx_pool(), bear.id).await?;
             let snap = load_agent_conversations(state.letta.as_ref(), agent_id).await;
-            let archived_count = snap.archived_count;
+            let archived_count = snap
+                .all
+                .iter()
+                .filter(|r| r.archived || archived_ids.contains(&r.id))
+                .count();
             let rows: Vec<DetailsConvRow> = snap
-                .active
+                .all
                 .into_iter()
+                .filter(|r| !r.archived && !archived_ids.contains(&r.id))
                 .map(|r| {
                     let web_href = if r.id == "default" {
                         format!("/bear/{}/", slug)
@@ -1178,11 +1184,15 @@ async fn bear_conversations_get(
             .map(str::trim)
             .filter(|s| !s.is_empty())
         {
+            let archived_ids = archived_conversations::list_for_bear(state.sqlx_pool(), bear.id).await?;
             let snap = load_agent_conversations(state.letta.as_ref(), agent_id).await;
             let rows: Vec<DetailsConvRow> = snap
                 .all
                 .into_iter()
-                .map(|r| {
+                .map(|mut r| {
+                    if archived_ids.contains(&r.id) {
+                        r.archived = true;
+                    }
                     let web_href = if r.id == "default" {
                         format!("/bear/{}/", bear.slug)
                     } else {

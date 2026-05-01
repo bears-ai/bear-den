@@ -17,8 +17,11 @@ use uuid::Uuid;
 
 use crate::{
     auth_backend::{AuthSession, Backend},
-    core::bears::db::{self as bears_db, role_is_bear_admin},
-    core::letta::{load_agent_conversations, strip_letta_harness_for_user},
+    core::{
+        archived_conversations,
+        bears::db::{self as bears_db, role_is_bear_admin},
+        letta::{load_agent_conversations, strip_letta_harness_for_user},
+    },
     errors::CustomError,
     observability::chat_proxy_stream::BearChannelSseProxyStream,
     web::AppState,
@@ -202,10 +205,12 @@ async fn chat_conversations(
         return Ok(default_only());
     };
 
+    let archived_ids = archived_conversations::list_for_bear(state.sqlx_pool(), bear.id).await?;
     let snap = load_agent_conversations(state.letta.as_ref(), agent_id).await;
     let conversations: Vec<ChatConversationRow> = snap
-        .active
+        .all
         .into_iter()
+        .filter(|r| !r.archived && !archived_ids.contains(&r.id))
         .map(|r| ChatConversationRow {
             id: r.id,
             title: r.title,
@@ -298,6 +303,15 @@ async fn chat_conversation_patch(
             .letta
             .patch_conversation_archived(&conv_id, archived)
             .await?;
+        archived_conversations::set_archived(
+            state.sqlx_pool(),
+            bear.id,
+            &conv_id,
+            Some(user_id),
+            "web",
+            archived,
+        )
+        .await?;
     }
 
     Ok(Json(ChatConversationPatchResponse { ok: true }))

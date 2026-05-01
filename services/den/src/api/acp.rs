@@ -28,7 +28,7 @@ use crate::{
     core::{
         acp_client_tools::{self, NewAcpClientToolCall},
         acp_sessions::{self, UpsertAcpSession},
-        acp_tokens,
+        acp_tokens, archived_conversations,
         bears::db as bears_db,
         codepool::CodepoolToolResultRequest,
         letta::load_agent_conversations,
@@ -648,11 +648,23 @@ async fn conversations_inner(
         return Ok(default_only());
     };
 
+    let archived_ids = archived_conversations::list_for_bear(&state.sqlx_pool, bear.id).await?;
     let snap = load_agent_conversations(state.letta.as_ref(), agent_id).await;
-    let source = if query.include_archived {
+    let source: Vec<_> = if query.include_archived {
         snap.all
+            .into_iter()
+            .map(|mut row| {
+                if archived_ids.contains(&row.id) {
+                    row.archived = true;
+                }
+                row
+            })
+            .collect()
     } else {
-        snap.active
+        snap.all
+            .into_iter()
+            .filter(|row| !row.archived && !archived_ids.contains(&row.id))
+            .collect()
     };
     let conversations = source
         .into_iter()
@@ -804,6 +816,15 @@ async fn close_session_inner(
             .letta
             .patch_conversation_archived(archive_target, true)
             .await?;
+        archived_conversations::set_archived(
+            &state.sqlx_pool,
+            session.bear_id,
+            archive_target,
+            Some(auth.user_id),
+            "acp",
+            true,
+        )
+        .await?;
         acp_sessions::mark_archived(&state.sqlx_pool, session.id).await?;
         archived = true;
     }

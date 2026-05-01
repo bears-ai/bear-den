@@ -2,6 +2,7 @@ pub mod acp_client_tools;
 pub mod acp_sessions;
 pub mod acp_tokens;
 pub mod api_utils;
+pub mod archived_conversations;
 pub mod bears;
 pub mod bifrost;
 pub mod codepool;
