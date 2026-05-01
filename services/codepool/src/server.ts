@@ -40,6 +40,10 @@ import {
     makeAcpClientExternalTools,
     parseAcpClientTools,
 } from "./acp-client-tools.js";
+import {
+    AcpToolResultRegistry,
+    normalizeAcpToolResultStatus,
+} from "./acp-tool-results.js";
 import { logger } from "./logger.js";
 
 const packageJson = JSON.parse(
@@ -178,6 +182,7 @@ export type ServerContext = {
     pool: ConversationSessionPool;
     channelListeners: ChannelListenerRegistry;
     internalToken: string;
+    acpToolResults?: AcpToolResultRegistry;
 };
 
 function authMiddleware(internalToken: string) {
@@ -205,6 +210,7 @@ export function attachRoutes(
     ctx: ServerContext,
 ): void {
     const guard = authMiddleware(ctx.internalToken);
+    const acpToolResults = ctx.acpToolResults ?? new AcpToolResultRegistry();
 
     app.get("/health", (_req, res) => {
         const lettaCliHome = join(homedir(), ".letta");
@@ -235,6 +241,44 @@ export function attachRoutes(
             git_sha: gitSha,
         });
     });
+
+    app.post(
+        "/internal/bear_channel/sessions/:sessionId/tool-results",
+        express.json({ limit: "1mb" }),
+        guard,
+        (req, res) => {
+            const sessionId = req.params.sessionId ?? "";
+            const body = req.body as Record<string, unknown>;
+            const requestId =
+                typeof body.request_id === "string" ? body.request_id : "";
+            const callId = typeof body.call_id === "string" ? body.call_id : "";
+            const status = normalizeAcpToolResultStatus(body.status);
+            if (!sessionId || !requestId || !callId || !status) {
+                res.status(400).json({
+                    ok: false,
+                    delivered: false,
+                    error: "sessionId, request_id, call_id, and valid status are required",
+                });
+                return;
+            }
+            const delivered = acpToolResults.deliverResult(sessionId, {
+                conversation_id:
+                    typeof body.conversation_id === "string"
+                        ? body.conversation_id
+                        : undefined,
+                request_id: requestId,
+                call_id: callId,
+                tool_name:
+                    typeof body.tool_name === "string"
+                        ? body.tool_name
+                        : undefined,
+                status,
+                result: body.result,
+                error: body.error,
+            });
+            res.json({ ok: true, delivered });
+        },
+    );
 
     app.get("/internal/pool", guard, (_req, res) => {
         res.json({
@@ -431,6 +475,7 @@ export function attachRoutes(
                         request_id: requestId,
                     }),
                     emit: emitBearChannelEvent,
+                    results: acpToolResults,
                 });
                 for await (const msg of ctx.pool.streamUserMessage(
                     parsed.agentId,

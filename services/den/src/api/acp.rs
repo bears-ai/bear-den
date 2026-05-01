@@ -15,7 +15,7 @@ use axum::{
 use bytes::Bytes;
 use futures::{ready, Stream};
 use serde::{Deserialize, Serialize};
-use std::{pin::Pin, task::Poll};
+use std::{future::Future, pin::Pin, task::Poll};
 use tracing::Instrument;
 use uuid::Uuid;
 
@@ -25,12 +25,23 @@ use crate::{
         oauth::OAuthScope,
         service::ApiState,
     },
-    core::{acp_tokens, bears::db as bears_db, user},
+    core::{
+        acp_client_tools::{self, NewAcpClientToolCall},
+        acp_tokens,
+        bears::db as bears_db,
+        codepool::CodepoolToolResultRequest,
+        user,
+    },
     errors::CustomError,
 };
 
 pub fn router() -> Router<ApiState> {
-    Router::new().route("/bears/{slug}/sessions/{session_id}/prompt", post(prompt))
+    Router::new()
+        .route("/bears/{slug}/sessions/{session_id}/prompt", post(prompt))
+        .route(
+            "/bears/{slug}/sessions/{session_id}/tool-results/{call_id}",
+            post(tool_result),
+        )
 }
 
 #[derive(Debug, Deserialize)]
@@ -46,11 +57,36 @@ pub struct AcpPromptRequest {
     pub client_context: serde_json::Value,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct AcpToolResultRequest {
+    pub request_id: Uuid,
+    #[serde(default = "default_conversation_id")]
+    pub conversation_id: String,
+    pub status: String,
+    #[serde(default)]
+    pub result: Option<serde_json::Value>,
+    #[serde(default)]
+    pub error: Option<serde_json::Value>,
+    #[serde(default)]
+    pub client_observation: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Serialize)]
+struct AcpToolResultResponse {
+    ok: bool,
+    delivered: bool,
+    call_id: String,
+}
+
 #[derive(Debug, Serialize)]
 struct AcpErrorResponse {
     error: String,
     error_code: &'static str,
     request_id: String,
+}
+
+fn default_conversation_id() -> String {
+    "default".to_string()
 }
 
 fn acp_error_status_message(err: &CustomError) -> (StatusCode, &'static str, String) {
@@ -206,6 +242,111 @@ async fn prompt(
         Ok(Ok(response)) => response,
         Ok(Err(err)) => acp_error_response(err, request_id),
         Err(err) => api_auth_error_response(err, request_id),
+    }
+}
+
+async fn tool_result(
+    State(state): State<ApiState>,
+    Path((slug, session_id, call_id)): Path<(String, String, String)>,
+    headers: HeaderMap,
+    Json(body): Json<AcpToolResultRequest>,
+) -> Response {
+    let response_request_id = Uuid::new_v4();
+    match tool_result_inner(state, slug, session_id, call_id, headers, body).await {
+        Ok(response) => response,
+        Err(err) => acp_error_response(err, response_request_id),
+    }
+}
+
+async fn tool_result_inner(
+    state: ApiState,
+    slug: String,
+    session_id: String,
+    call_id: String,
+    headers: HeaderMap,
+    body: AcpToolResultRequest,
+) -> Result<Response, CustomError> {
+    let token = auth::extract_bearer_token(&headers)
+        .map_err(|err| CustomError::Authentication(err.message))?;
+    let auth = if acp_tokens::is_acp_token(&token) {
+        acp_tokens::authenticate_for_bear_slug_with_scopes(&state.sqlx_pool, &token, &slug)
+            .await?
+            .ok_or_else(|| {
+                CustomError::Authentication(
+                    "invalid, expired, revoked, or unauthorized ACP token".to_string(),
+                )
+            })?
+    } else {
+        return Err(CustomError::Authentication(
+            "ACP tool results require a bear-scoped ACP Code token".to_string(),
+        ));
+    };
+    if !acp_tokens::scopes_contains(&auth.scopes, OAuthScope::AcpTools.as_str()) {
+        return Err(CustomError::Authorization(
+            "ACP tool result requires acp:tools scope".to_string(),
+        ));
+    }
+    let status = normalize_tool_result_status(&body.status)?;
+    let pending = acp_client_tools::find_active_call_for_result(
+        &state.sqlx_pool,
+        auth.user_id,
+        &slug,
+        &session_id,
+        body.request_id,
+        &call_id,
+    )
+    .await?
+    .ok_or_else(|| CustomError::NotFound("pending ACP client tool call not found".to_string()))?;
+
+    acp_client_tools::mark_result_received(
+        &state.sqlx_pool,
+        pending.id,
+        status,
+        body.result.clone(),
+        body.error.clone(),
+        body.client_observation.clone(),
+    )
+    .await?;
+
+    let codepool_payload = CodepoolToolResultRequest {
+        conversation_id: body.conversation_id.trim().to_string(),
+        request_id: body.request_id.to_string(),
+        call_id: call_id.clone(),
+        tool_name: pending.tool_name.clone(),
+        status: status.to_string(),
+        result: body.result,
+        error: body.error,
+    };
+    let delivered = state
+        .codepool
+        .post_bear_channel_tool_result(
+            &pending.codepool_session_id,
+            &codepool_payload,
+            body.request_id,
+        )
+        .await
+        .map(|response| response.delivered)
+        .unwrap_or(false);
+    if delivered {
+        acp_client_tools::mark_forwarded(&state.sqlx_pool, pending.id).await?;
+    }
+    Ok(Json(AcpToolResultResponse {
+        ok: true,
+        delivered,
+        call_id,
+    })
+    .into_response())
+}
+
+fn normalize_tool_result_status(status: &str) -> Result<&'static str, CustomError> {
+    match status.trim() {
+        "ok" => Ok("result_received"),
+        "error" => Ok("failed"),
+        "cancelled" => Ok("cancelled"),
+        "timeout" => Ok("timed_out"),
+        other => Err(CustomError::ValidationError(format!(
+            "unsupported tool result status: {other}"
+        ))),
     }
 }
 
@@ -389,7 +530,19 @@ async fn prompt_inner(
         Err(err) => return Ok(Err(err)),
     };
 
-    let stream = AcpBearChannelSseStream::new(upstream.bytes_stream());
+    let stream = AcpBearChannelSseStream::new(
+        upstream.bytes_stream(),
+        AcpStreamContext {
+            pool: state.sqlx_pool.clone(),
+            user_id,
+            bear_id: bear.id,
+            bear_slug: bear.slug.clone(),
+            acp_session_id: session_id.to_string(),
+            codepool_session_id: channel_session_id.clone(),
+            conversation_id: conversation_id.clone(),
+            request_id,
+        },
+    );
     let request_id_header = HeaderValue::from_str(&request_id.to_string()).map_err(|_| {
         ApiError::new(
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -413,6 +566,76 @@ async fn prompt_inner(
             )
         })
         .map(Ok)
+}
+
+#[derive(Clone)]
+struct AcpStreamContext {
+    pool: sqlx::PgPool,
+    user_id: i32,
+    bear_id: Uuid,
+    bear_slug: String,
+    acp_session_id: String,
+    codepool_session_id: String,
+    conversation_id: String,
+    request_id: Uuid,
+}
+
+async fn persist_client_tool_request_event(
+    context: &AcpStreamContext,
+    event: &serde_json::Value,
+) -> Result<(), CustomError> {
+    if event.get("type").and_then(|v| v.as_str()) != Some("client_tool_request") {
+        return Ok(());
+    }
+    let call = event
+        .get("call")
+        .and_then(|v| v.as_object())
+        .ok_or_else(|| {
+            CustomError::ValidationError("client_tool_request missing call".to_string())
+        })?;
+    let call_id = call
+        .get("id")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.trim().is_empty())
+        .ok_or_else(|| {
+            CustomError::ValidationError("client_tool_request missing call.id".to_string())
+        })?;
+    let tool_name = call
+        .get("name")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.trim().is_empty())
+        .ok_or_else(|| {
+            CustomError::ValidationError("client_tool_request missing call.name".to_string())
+        })?;
+    let timeout_ms = call
+        .get("timeout_ms")
+        .and_then(|v| v.as_i64())
+        .filter(|v| *v > 0)
+        .unwrap_or(30_000);
+    acp_client_tools::persist_sent_call(
+        &context.pool,
+        NewAcpClientToolCall {
+            user_id: context.user_id,
+            bear_id: context.bear_id,
+            bear_slug: context.bear_slug.clone(),
+            acp_session_id: context.acp_session_id.clone(),
+            codepool_session_id: context.codepool_session_id.clone(),
+            conversation_id: context.conversation_id.clone(),
+            request_id: context.request_id,
+            call_id: call_id.to_string(),
+            tool_name: tool_name.to_string(),
+            arguments: call
+                .get("arguments")
+                .cloned()
+                .unwrap_or_else(|| serde_json::json!({})),
+            descriptor: call
+                .get("descriptor")
+                .cloned()
+                .unwrap_or_else(|| serde_json::json!({})),
+            timeout_ms,
+        },
+    )
+    .await
 }
 
 fn map_bear_channel_event_to_acp_adapter_event(event: &serde_json::Value) -> Option<Bytes> {
@@ -471,7 +694,7 @@ fn map_bear_channel_event_to_acp_adapter_event(event: &serde_json::Value) -> Opt
     Some(Bytes::from(format!("data: {}\n\n", mapped)))
 }
 
-fn map_bear_channel_frame_to_acp_adapter_events(frame: &[u8]) -> Vec<Bytes> {
+fn parse_bear_channel_frame_values(frame: &[u8]) -> Vec<serde_json::Value> {
     let text = String::from_utf8_lossy(frame);
     let mut out = Vec::new();
     for line in text.lines() {
@@ -483,26 +706,57 @@ fn map_bear_channel_frame_to_acp_adapter_events(frame: &[u8]) -> Vec<Bytes> {
             continue;
         }
         if let Ok(value) = serde_json::from_str::<serde_json::Value>(data) {
-            if let Some(bytes) = map_bear_channel_event_to_acp_adapter_event(&value) {
-                out.push(bytes);
-            }
+            out.push(value);
         }
     }
     out
+}
+
+#[cfg(test)]
+fn map_bear_channel_frame_to_acp_adapter_events(frame: &[u8]) -> Vec<Bytes> {
+    parse_bear_channel_frame_values(frame)
+        .into_iter()
+        .filter_map(|value| map_bear_channel_event_to_acp_adapter_event(&value))
+        .collect()
+}
+
+async fn map_bear_channel_frame_to_acp_adapter_events_with_persistence(
+    frame: Vec<u8>,
+    context: AcpStreamContext,
+) -> Result<Vec<Bytes>, std::io::Error> {
+    let values = parse_bear_channel_frame_values(&frame);
+    let mut out = Vec::new();
+    for value in values {
+        persist_client_tool_request_event(&context, &value)
+            .await
+            .map_err(|err| std::io::Error::other(err.to_string()))?;
+        if let Some(bytes) = map_bear_channel_event_to_acp_adapter_event(&value) {
+            out.push(bytes);
+        }
+    }
+    Ok(out)
 }
 
 struct AcpBearChannelSseStream {
     inner: Pin<Box<dyn Stream<Item = Result<Bytes, reqwest::Error>> + Send>>,
     buffer: Vec<u8>,
     pending: std::collections::VecDeque<Bytes>,
+    context: AcpStreamContext,
+    persist_future:
+        Option<Pin<Box<dyn Future<Output = Result<Vec<Bytes>, std::io::Error>> + Send>>>,
 }
 
 impl AcpBearChannelSseStream {
-    fn new(inner: impl Stream<Item = Result<Bytes, reqwest::Error>> + Send + 'static) -> Self {
+    fn new(
+        inner: impl Stream<Item = Result<Bytes, reqwest::Error>> + Send + 'static,
+        context: AcpStreamContext,
+    ) -> Self {
         Self {
             inner: Box::pin(inner),
             buffer: Vec::new(),
             pending: std::collections::VecDeque::new(),
+            context,
+            persist_future: None,
         }
     }
 }
@@ -519,15 +773,38 @@ impl Stream for AcpBearChannelSseStream {
             return Poll::Ready(Some(Ok(bytes)));
         }
 
+        if let Some(fut) = this.persist_future.as_mut() {
+            match ready!(fut.as_mut().poll(cx)) {
+                Ok(bytes) => {
+                    this.persist_future = None;
+                    for item in bytes {
+                        this.pending.push_back(item);
+                    }
+                    if let Some(bytes) = this.pending.pop_front() {
+                        return Poll::Ready(Some(Ok(bytes)));
+                    }
+                }
+                Err(err) => {
+                    this.persist_future = None;
+                    return Poll::Ready(Some(Err(err)));
+                }
+            }
+        }
+
         loop {
             match ready!(this.inner.as_mut().poll_next(cx)) {
                 Some(Ok(chunk)) => {
                     this.buffer.extend_from_slice(&chunk);
                     while let Some(pos) = this.buffer.windows(2).position(|w| w == b"\n\n") {
                         let frame: Vec<u8> = this.buffer.drain(..pos + 2).collect();
-                        for bytes in map_bear_channel_frame_to_acp_adapter_events(&frame) {
-                            this.pending.push_back(bytes);
-                        }
+                        let context = this.context.clone();
+                        this.persist_future = Some(Box::pin(async move {
+                            map_bear_channel_frame_to_acp_adapter_events_with_persistence(
+                                frame, context,
+                            )
+                            .await
+                        }));
+                        return self.poll_next(cx);
                     }
                     if let Some(bytes) = this.pending.pop_front() {
                         return Poll::Ready(Some(Ok(bytes)));
@@ -539,12 +816,14 @@ impl Stream for AcpBearChannelSseStream {
                 None => {
                     if !this.buffer.is_empty() {
                         let frame = std::mem::take(&mut this.buffer);
-                        for bytes in map_bear_channel_frame_to_acp_adapter_events(&frame) {
-                            this.pending.push_back(bytes);
-                        }
-                        if let Some(bytes) = this.pending.pop_front() {
-                            return Poll::Ready(Some(Ok(bytes)));
-                        }
+                        let context = this.context.clone();
+                        this.persist_future = Some(Box::pin(async move {
+                            map_bear_channel_frame_to_acp_adapter_events_with_persistence(
+                                frame, context,
+                            )
+                            .await
+                        }));
+                        return self.poll_next(cx);
                     }
                     return Poll::Ready(None);
                 }

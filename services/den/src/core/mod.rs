@@ -1,3 +1,4 @@
+pub mod acp_client_tools;
 pub mod acp_tokens;
 pub mod api_utils;
 pub mod bears;

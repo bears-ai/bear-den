@@ -523,14 +523,14 @@ async fn handle_prompt(
         buffer.extend_from_slice(&chunk);
         while let Some(pos) = buffer.windows(2).position(|w| w == b"\n\n") {
             let frame: Vec<u8> = buffer.drain(..pos + 2).collect();
-            let outcome = handle_sse_frame(session_id, &frame).await?;
+            let outcome = handle_sse_frame(http, config, session_id, &frame).await?;
             saw_done |= outcome.saw_done;
             upstream_errors.extend(outcome.upstream_errors);
         }
     }
     if !buffer.is_empty() {
         let frame = std::mem::take(&mut buffer);
-        let outcome = handle_sse_frame(session_id, &frame).await?;
+        let outcome = handle_sse_frame(http, config, session_id, &frame).await?;
         saw_done |= outcome.saw_done;
         upstream_errors.extend(outcome.upstream_errors);
     }
@@ -683,7 +683,12 @@ fn prompt_text_from_params(params: &Value) -> Result<String> {
     }
 }
 
-async fn handle_sse_frame(session_id: &str, frame: &[u8]) -> Result<SseFrameOutcome> {
+async fn handle_sse_frame(
+    http: &reqwest::Client,
+    config: &Config,
+    session_id: &str,
+    frame: &[u8],
+) -> Result<SseFrameOutcome> {
     let text = String::from_utf8_lossy(frame);
     let mut outcome = SseFrameOutcome::default();
     for line in text.lines() {
@@ -698,7 +703,7 @@ async fn handle_sse_frame(session_id: &str, frame: &[u8]) -> Result<SseFrameOutc
         if event.get("type").and_then(Value::as_str) == Some("error") {
             outcome.upstream_errors.push(format_den_event_error(&event));
         }
-        outcome.saw_done |= handle_den_event(session_id, &event).await?;
+        outcome.saw_done |= handle_den_event(http, config, session_id, &event).await?;
     }
     Ok(outcome)
 }
@@ -723,7 +728,12 @@ fn format_den_event_error(event: &Value) -> String {
     out
 }
 
-async fn handle_den_event(session_id: &str, event: &Value) -> Result<bool> {
+async fn handle_den_event(
+    http: &reqwest::Client,
+    config: &Config,
+    session_id: &str,
+    event: &Value,
+) -> Result<bool> {
     match event.get("type").and_then(Value::as_str).unwrap_or("") {
         "agent_message_chunk" => {
             let text = event
@@ -754,11 +764,71 @@ async fn handle_den_event(session_id: &str, event: &Value) -> Result<bool> {
         }
         "client_tool_request" => {
             send_client_tool_call_update(session_id, event).await?;
+            post_placeholder_tool_result(http, config, session_id, event).await?;
             Ok(false)
         }
         "done" => Ok(true),
         _ => Ok(false),
     }
+}
+
+async fn post_placeholder_tool_result(
+    http: &reqwest::Client,
+    config: &Config,
+    session_id: &str,
+    event: &Value,
+) -> Result<()> {
+    let call_id = event
+        .get("call_id")
+        .and_then(Value::as_str)
+        .ok_or_else(|| anyhow!("client_tool_request missing call_id"))?;
+    let request_id = event
+        .get("request_id")
+        .and_then(Value::as_str)
+        .ok_or_else(|| anyhow!("client_tool_request missing request_id"))?;
+    let conversation_id = event
+        .get("conversation_id")
+        .and_then(Value::as_str)
+        .unwrap_or("default");
+    let tool_name = event
+        .get("tool_name")
+        .and_then(Value::as_str)
+        .unwrap_or("acp_client_tool");
+    let url = format!(
+        "{}/acp/bears/{}/sessions/{}/tool-results/{}",
+        config.api_url,
+        urlencoding::encode(&config.bear),
+        urlencoding::encode(session_id),
+        urlencoding::encode(call_id),
+    );
+    let response = http
+        .post(&url)
+        .header(AUTHORIZATION, HeaderValue::from_str(&format!("Bearer {}", config.token))?)
+        .header(CONTENT_TYPE, HeaderValue::from_static("application/json"))
+        .json(&json!({
+            "request_id": request_id,
+            "conversation_id": conversation_id,
+            "status": "error",
+            "error": {
+                "code": "adapter_tool_execution_not_implemented",
+                "message": format!("Adapter received {tool_name}, but direct ACP client fs/read_text_file execution is not implemented in this build yet.")
+            },
+            "client_observation": {
+                "adapter_version": env!("CARGO_PKG_VERSION")
+            }
+        }))
+        .send()
+        .await
+        .with_context(|| format!("post ACP tool result to Den at {url}"))?;
+    if !response.status().is_success() {
+        let status = response.status();
+        let body = response.text().await.unwrap_or_default();
+        return Err(anyhow!(
+            "Den tool result endpoint returned HTTP {status}: {}",
+            body.trim()
+        ));
+    }
+    Ok(())
 }
 
 async fn send_client_tool_call_update(session_id: &str, event: &Value) -> Result<()> {

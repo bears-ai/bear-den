@@ -2,12 +2,36 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue, AUTHORIZATION, CONTENT_TYPE};
-use serde_json::json;
+use serde::{Deserialize, Serialize};
+use serde_json::{json, Value};
 use uuid::Uuid;
 
 use crate::core::bears::model::Bear;
 
 use crate::{config::Config, errors::CustomError};
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CodepoolToolResultRequest {
+    pub conversation_id: String,
+    pub request_id: String,
+    pub call_id: String,
+    pub tool_name: String,
+    pub status: String,
+    #[serde(default)]
+    pub result: Option<Value>,
+    #[serde(default)]
+    pub error: Option<Value>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CodepoolToolResultResponse {
+    #[serde(default)]
+    pub ok: bool,
+    #[serde(default)]
+    pub delivered: bool,
+    #[serde(default)]
+    pub error: Option<String>,
+}
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct CodepoolMemfsCheck {
@@ -213,6 +237,52 @@ impl CodePoolClient {
             )));
         }
         Ok(text)
+    }
+
+    pub async fn post_bear_channel_tool_result(
+        &self,
+        session_id: &str,
+        payload: &CodepoolToolResultRequest,
+        request_id: Uuid,
+    ) -> Result<CodepoolToolResultResponse, CustomError> {
+        if !self.is_enabled() {
+            return Err(CustomError::System(
+                "Codepool is not configured (set CODEPOOL_BASE_URL)".to_string(),
+            ));
+        }
+        let url = format!(
+            "{}/internal/bear_channel/sessions/{}/tool-results",
+            self.base_url,
+            urlencoding::encode(session_id),
+        );
+        let mut headers = self.auth_headers();
+        if let Ok(v) = HeaderValue::from_str(&request_id.to_string()) {
+            headers.insert(HeaderName::from_static("x-request-id"), v);
+        }
+        let resp = self
+            .http
+            .post(url)
+            .headers(headers)
+            .header(CONTENT_TYPE, "application/json")
+            .json(payload)
+            .send()
+            .await
+            .map_err(|e| {
+                CustomError::System(format!("Codepool tool result request failed: {e}"))
+            })?;
+        let status = resp.status();
+        let text = resp
+            .text()
+            .await
+            .map_err(|e| CustomError::System(format!("Codepool tool result body: {e}")))?;
+        if !status.is_success() {
+            return Err(CustomError::System(format!(
+                "Codepool tool result HTTP {status}: {text}"
+            )));
+        }
+        serde_json::from_str(&text).map_err(|e| {
+            CustomError::Parsing(format!("Codepool tool result JSON: {e}; body: {text}"))
+        })
     }
 
     /// `GET /health`

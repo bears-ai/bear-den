@@ -1,6 +1,7 @@
 import type { AnyAgentTool, AgentToolResult } from "@letta-ai/letta-code-sdk";
 import { randomUUID } from "node:crypto";
 import type { BearChannelEvent } from "./bear-channel.js";
+import type { AcpToolResultRegistry } from "./acp-tool-results.js";
 
 export type AcpClientToolDescriptor = {
     name?: unknown;
@@ -18,9 +19,13 @@ export type AcpClientToolRuntimeContext = {
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 
-export function parseAcpClientTools(capabilities: {
-    client_tools?: unknown[];
-} | undefined): AcpClientToolDescriptor[] {
+export function parseAcpClientTools(
+    capabilities:
+        | {
+              client_tools?: unknown[];
+          }
+        | undefined,
+): AcpClientToolDescriptor[] {
     const raw = capabilities?.client_tools;
     if (!Array.isArray(raw)) return [];
     return raw.filter(
@@ -33,10 +38,19 @@ export function makeAcpClientExternalTools(opts: {
     descriptors: AcpClientToolDescriptor[];
     getContext: () => AcpClientToolRuntimeContext;
     emit: (event: BearChannelEvent) => void;
+    results: AcpToolResultRegistry;
 }): AnyAgentTool[] {
     const used = new Set<string>();
     return opts.descriptors
-        .map((descriptor) => toAgentTool(descriptor, opts.getContext, opts.emit, used))
+        .map((descriptor) =>
+            toAgentTool(
+                descriptor,
+                opts.getContext,
+                opts.emit,
+                opts.results,
+                used,
+            ),
+        )
         .filter((tool): tool is AnyAgentTool => tool !== null);
 }
 
@@ -44,6 +58,7 @@ function toAgentTool(
     descriptor: AcpClientToolDescriptor,
     getContext: () => AcpClientToolRuntimeContext,
     emit: (event: BearChannelEvent) => void,
+    results: AcpToolResultRegistry,
     used: Set<string>,
 ): AnyAgentTool | null {
     const name = typeof descriptor.name === "string" ? descriptor.name : "";
@@ -58,7 +73,8 @@ function toAgentTool(
             ? descriptor.title.trim()
             : name;
     const description =
-        typeof descriptor.description === "string" && descriptor.description.trim()
+        typeof descriptor.description === "string" &&
+        descriptor.description.trim()
             ? descriptor.description.trim()
             : `Invoke ACP client tool ${name}.`;
     const parameters = isJsonSchemaObject(descriptor.input_schema)
@@ -74,7 +90,11 @@ function toAgentTool(
         label,
         description,
         parameters,
-        execute: async (toolCallId: string, args: unknown, signal?: AbortSignal) => {
+        execute: async (
+            toolCallId: string,
+            args: unknown,
+            signal?: AbortSignal,
+        ) => {
             const context = getContext();
             const callId = toolCallId?.trim() || randomUUID();
             emit({
@@ -94,23 +114,23 @@ function toAgentTool(
                     timeout_ms: DEFAULT_TIMEOUT_MS,
                 },
             });
-            // MVP bridge: expose the request in the stream, then return a structured
-            // diagnostic result so the model knows the user/client must provide the
-            // observed content through the ACP transcript. The durable continuation
-            // endpoint can replace this placeholder with a true wait in the next slice.
-            if (signal?.aborted) {
-                return jsonTextResult({
-                    status: "cancelled",
-                    call_id: callId,
-                    tool_name: name,
-                });
+            const payload = await results.waitForResult({
+                sessionId: context.session_id,
+                requestId: context.request_id,
+                callId,
+                timeoutMs: DEFAULT_TIMEOUT_MS,
+                signal,
+            });
+            if (payload.status === "ok") {
+                return jsonTextResult(payload.result ?? {});
             }
             return jsonTextResult({
-                status: "requested",
+                status: payload.status,
                 call_id: callId,
                 tool_name: name,
-                message:
-                    "ACP client tool request was emitted to the active editor session. Await user/client response in the ACP transcript.",
+                error: payload.error ?? {
+                    message: `ACP client tool ${name} did not return ok`,
+                },
             });
         },
     };
