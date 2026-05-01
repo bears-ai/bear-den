@@ -7,6 +7,7 @@ use std::{
     collections::HashMap,
     env,
     path::{Path, PathBuf},
+    process::Command,
 };
 use tokio::io::{self, AsyncBufReadExt, AsyncWriteExt, BufReader, Lines, Stdin};
 use uuid::Uuid;
@@ -88,7 +89,7 @@ async fn run() -> Result<()> {
         "bears-acp-adapter: starting version={} build_git_sha={} local_head_sha={} conversation_id_mode=default",
         env!("CARGO_PKG_VERSION"),
         env!("BEARS_ACP_ADAPTER_GIT_SHA"),
-        env!("BEARS_ACP_ADAPTER_LOCAL_HEAD_SHA")
+        local_head_sha()
     );
     if runtime.is_configured() {
         eprintln!("bears-acp-adapter: configuration looks valid");
@@ -307,8 +308,19 @@ fn print_version_to_stderr() {
         "bears-acp-adapter {}\nBuild git SHA: {}\nLocal HEAD SHA: {}\nACP conversation id mode: default",
         env!("CARGO_PKG_VERSION"),
         env!("BEARS_ACP_ADAPTER_GIT_SHA"),
-        env!("BEARS_ACP_ADAPTER_LOCAL_HEAD_SHA")
+        local_head_sha()
     );
+}
+
+fn local_head_sha() -> String {
+    Command::new("git")
+        .args(["rev-parse", "--short=12", "HEAD"])
+        .output()
+        .ok()
+        .filter(|output| output.status.success())
+        .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_string())
+        .filter(|sha| !sha.is_empty())
+        .unwrap_or_else(|| "unavailable".to_string())
 }
 
 fn print_help_to_stderr() {
@@ -320,7 +332,7 @@ Environment fallbacks:\n  BEARS_DEN_API_URL\n  BEARS_BEAR_SLUG\n  BEARS_DEN_TOKE
 BEARS_DEN_API_URL should be the API origin only, not the full /acp/bears/... endpoint.",
         env!("CARGO_PKG_VERSION"),
         env!("BEARS_ACP_ADAPTER_GIT_SHA"),
-        env!("BEARS_ACP_ADAPTER_LOCAL_HEAD_SHA")
+        local_head_sha()
     );
 }
 

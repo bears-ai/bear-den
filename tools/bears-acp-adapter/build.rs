@@ -18,10 +18,7 @@ fn main() {
         })
         .or_else(local_repo_head_sha)
         .unwrap_or_else(|| "unknown".to_string());
-    let local_head_sha = local_repo_head_sha().unwrap_or_else(|| "unavailable".to_string());
-
     println!("cargo:rustc-env=BEARS_ACP_ADAPTER_GIT_SHA={build_sha}");
-    println!("cargo:rustc-env=BEARS_ACP_ADAPTER_LOCAL_HEAD_SHA={local_head_sha}");
 }
 
 fn local_repo_head_sha() -> Option<String> {
