@@ -368,7 +368,7 @@ async fn handle_request(
                     write_response(
                         id,
                         Err(json_rpc_error(
-                            -32000,
+                            -32003,
                             "BEARS adapter is not configured",
                             Some(json!({
                                 "message": runtime.configuration_error_message(),
@@ -399,7 +399,7 @@ async fn handle_request(
                     write_response(
                         id,
                         Err(json_rpc_error(
-                            -32000,
+                            -32003,
                             "BEARS prompt failed",
                             Some(json!({
                                 "message": message,
@@ -417,7 +417,7 @@ async fn handle_request(
                     write_response(
                         id,
                         Err(json_rpc_error(
-                            -32000,
+                            -32003,
                             "BEARS adapter is not configured",
                             Some(json!({
                                 "message": runtime.configuration_error_message(),
@@ -434,7 +434,7 @@ async fn handle_request(
                         write_response(
                             id,
                             Err(json_rpc_error(
-                                -32000,
+                                -32003,
                                 "BEARS session close failed",
                                 Some(json!({ "message": format!("{err:#}") })),
                             )),
@@ -1021,6 +1021,10 @@ async fn wait_for_json_rpc_response(
             continue;
         }
         let value: Value = serde_json::from_str(line).context("parse ACP client response JSON")?;
+        if is_auth_required_noise(&value) {
+            eprintln!("bears-acp-adapter: ignoring ACP auth_required response while waiting for tool response");
+            continue;
+        }
         if value.get("id").and_then(Value::as_str) == Some(rpc_id) {
             return Ok(value);
         }
@@ -1032,6 +1036,20 @@ async fn wait_for_json_rpc_response(
             value.get("method").and_then(Value::as_str).unwrap_or("response")
         );
     }
+}
+
+fn is_auth_required_noise(value: &Value) -> bool {
+    value
+        .get("error")
+        .and_then(|error| error.get("code"))
+        .and_then(Value::as_i64)
+        == Some(-32000)
+        || value
+            .get("error")
+            .and_then(|error| error.get("message"))
+            .and_then(Value::as_str)
+            .map(|message| message.eq_ignore_ascii_case("authentication required"))
+            .unwrap_or(false)
 }
 
 fn absolutize_client_path(path: &str, cwd: &str) -> String {
