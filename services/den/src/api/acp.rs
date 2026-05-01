@@ -231,6 +231,33 @@ fn normalize_acp_client(raw: Option<&str>) -> String {
     }
 }
 
+fn client_supports_write_text_file(client_capabilities: &serde_json::Value) -> bool {
+    client_capabilities
+        .pointer("/fs/writeTextFile")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false)
+        || client_capabilities
+            .pointer("/fs/write_text_file")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false)
+        || client_capabilities
+            .pointer("/filesystem/writeTextFile")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false)
+        || client_capabilities
+            .pointer("/filesystem/write_text_file")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false)
+        || client_capabilities
+            .pointer("/fs/write_text_file/supported")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false)
+        || client_capabilities
+            .pointer("/filesystem/write_text_file/supported")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false)
+}
+
 fn client_supports_read_text_file(client_capabilities: &serde_json::Value) -> bool {
     client_capabilities
         .pointer("/fs/readTextFile")
@@ -438,10 +465,12 @@ fn authorized_client_tool_descriptors(
     client_capabilities: &serde_json::Value,
     client_context: &serde_json::Value,
 ) -> Vec<serde_json::Value> {
-    if !has_acp_tools_scope || !client_supports_read_text_file(client_capabilities) {
+    if !has_acp_tools_scope {
         return Vec::new();
     }
-    vec![serde_json::json!({
+    let mut descriptors = Vec::new();
+    if client_supports_read_text_file(client_capabilities) {
+        descriptors.push(serde_json::json!({
         "id": "acp_fs_read_text_file",
         "name": "acp_fs_read_text_file",
         "title": "Read text file from editor workspace",
@@ -476,7 +505,48 @@ fn authorized_client_tool_descriptors(
             "requires_client_capability": "fs.readTextFile"
         },
         "client_context": client_context,
-    })]
+    }));
+    }
+    if client_supports_write_text_file(client_capabilities) {
+        descriptors.push(serde_json::json!({
+            "id": "acp_fs_write_text_file",
+            "name": "acp_fs_write_text_file",
+            "title": "Write text file in editor workspace",
+            "description": "Write UTF-8 text content to a file in the user's active editor workspace through the ACP client. Use this only when you need to create or replace file contents.",
+            "provider": "acp_client",
+            "execution_target": "acp_client",
+            "scope": "client_connection",
+            "client": client,
+            "permissions": ["filesystem", "write"],
+            "approval_policy": "always",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "Workspace-relative or absolute path to write."
+                    },
+                    "content": {
+                        "type": "string",
+                        "description": "Complete UTF-8 text content to write."
+                    }
+                },
+                "required": ["path", "content"],
+                "additionalProperties": false
+            },
+            "output_schema": {
+                "type": "object",
+                "properties": {},
+                "additionalProperties": true
+            },
+            "acp": {
+                "method": "fs/write_text_file",
+                "requires_client_capability": "fs.writeTextFile"
+            },
+            "client_context": client_context,
+        }));
+    }
+    descriptors
 }
 
 async fn prompt(

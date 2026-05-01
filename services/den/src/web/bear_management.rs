@@ -455,7 +455,8 @@ async fn render_bear_details_page(
             .map(str::trim)
             .filter(|s| !s.is_empty())
         {
-            let archived_ids = archived_conversations::list_for_bear(state.sqlx_pool(), bear.id).await?;
+            let archived_ids =
+                archived_conversations::list_for_bear(state.sqlx_pool(), bear.id).await?;
             let snap = load_agent_conversations(state.letta.as_ref(), agent_id).await;
             let archived_count = snap
                 .all
@@ -1184,7 +1185,8 @@ async fn bear_conversations_get(
             .map(str::trim)
             .filter(|s| !s.is_empty())
         {
-            let archived_ids = archived_conversations::list_for_bear(state.sqlx_pool(), bear.id).await?;
+            let archived_ids =
+                archived_conversations::list_for_bear(state.sqlx_pool(), bear.id).await?;
             let snap = load_agent_conversations(state.letta.as_ref(), agent_id).await;
             let rows: Vec<DetailsConvRow> = snap
                 .all

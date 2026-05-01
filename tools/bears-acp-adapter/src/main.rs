@@ -1280,31 +1280,45 @@ async fn execute_and_post_client_tool_result(
 
     let tool_result = match tool_name {
         "acp_fs_read_text_file" => execute_fs_read_text_file(lines, session_id, cwd, event).await,
+        "acp_fs_write_text_file" => execute_fs_write_text_file(lines, session_id, cwd, event).await,
         other => Err(anyhow!("unsupported ACP client tool: {other}")),
     };
 
     let body = match tool_result {
-        Ok(result) => json!({
-            "request_id": request_id,
-            "conversation_id": conversation_id,
-            "status": "ok",
-            "result": result,
-            "client_observation": {
-                "adapter_version": env!("CARGO_PKG_VERSION")
-            }
-        }),
-        Err(err) => json!({
-            "request_id": request_id,
-            "conversation_id": conversation_id,
-            "status": "error",
-            "error": {
-                "code": "adapter_client_tool_error",
-                "message": format!("{err:#}")
-            },
-            "client_observation": {
-                "adapter_version": env!("CARGO_PKG_VERSION")
-            }
-        }),
+        Ok(result) => {
+            send_client_tool_result_update(
+                session_id,
+                call_id,
+                tool_name,
+                "completed",
+                Some(&result),
+            )
+            .await?;
+            json!({
+                "request_id": request_id,
+                "conversation_id": conversation_id,
+                "status": "ok",
+                "result": result,
+                "client_observation": {
+                    "adapter_version": env!("CARGO_PKG_VERSION")
+                }
+            })
+        }
+        Err(err) => {
+            send_client_tool_result_update(session_id, call_id, tool_name, "failed", None).await?;
+            json!({
+                "request_id": request_id,
+                "conversation_id": conversation_id,
+                "status": "error",
+                "error": {
+                    "code": "adapter_client_tool_error",
+                    "message": format!("{err:#}")
+                },
+                "client_observation": {
+                    "adapter_version": env!("CARGO_PKG_VERSION")
+                }
+            })
+        }
     };
     post_tool_result_to_den(http, config, session_id, call_id, body).await
 }
@@ -1342,6 +1356,43 @@ async fn execute_fs_read_text_file(
         .cloned()
         .ok_or_else(|| anyhow!("ACP client fs/read_text_file response missing result"))?;
     Ok(normalize_read_text_file_result(result))
+}
+
+async fn execute_fs_write_text_file(
+    lines: &mut Lines<BufReader<Stdin>>,
+    session_id: &str,
+    cwd: &str,
+    event: &Value,
+) -> Result<Value> {
+    let path = event
+        .get("arguments")
+        .and_then(|v| v.get("path"))
+        .and_then(Value::as_str)
+        .filter(|s| !s.trim().is_empty())
+        .ok_or_else(|| anyhow!("fs/write_text_file requires arguments.path"))?;
+    let content = event
+        .get("arguments")
+        .and_then(|v| v.get("content"))
+        .and_then(Value::as_str)
+        .ok_or_else(|| anyhow!("fs/write_text_file requires arguments.content"))?;
+    let absolute_path = absolutize_client_path(path, cwd);
+    let rpc_id = format!("bears-tool-{}", Uuid::new_v4());
+    write_json(json!({
+        "jsonrpc": "2.0",
+        "id": rpc_id,
+        "method": "fs/write_text_file",
+        "params": {
+            "sessionId": session_id,
+            "path": absolute_path,
+            "content": content
+        }
+    }))
+    .await?;
+    let response = wait_for_json_rpc_response(lines, &rpc_id).await?;
+    if let Some(error) = response.get("error") {
+        return Err(anyhow!("ACP client fs/write_text_file failed: {error}"));
+    }
+    Ok(response.get("result").cloned().unwrap_or_else(|| json!({})))
 }
 
 async fn wait_for_json_rpc_response(
@@ -1454,6 +1505,44 @@ async fn post_tool_result_to_den(
     Ok(())
 }
 
+async fn send_client_tool_result_update(
+    session_id: &str,
+    call_id: &str,
+    tool_name: &str,
+    status: &str,
+    result: Option<&Value>,
+) -> Result<()> {
+    let preview = result
+        .map(|value| value.to_string().chars().take(500).collect::<String>())
+        .unwrap_or_else(|| format!("{tool_name} failed"));
+    write_notification(
+        "session/update",
+        json!({
+            "sessionId": session_id,
+            "update": {
+                "sessionUpdate": "tool_call_update",
+                "toolCallId": call_id,
+                "title": tool_name,
+                "status": status,
+                "rawOutput": result.cloned().unwrap_or_else(|| json!({})),
+                "content": [{
+                    "type": "content",
+                    "content": { "type": "text", "text": preview }
+                }]
+            }
+        }),
+    )
+    .await
+}
+
+fn tool_kind_for_event(event: &Value) -> &'static str {
+    match event.get("tool_name").and_then(Value::as_str).unwrap_or("") {
+        "acp_fs_write_text_file" => "edit",
+        "acp_fs_read_text_file" => "read",
+        _ => "other",
+    }
+}
+
 async fn send_client_tool_call_update(session_id: &str, event: &Value) -> Result<()> {
     let call_id = event
         .get("call_id")
@@ -1476,7 +1565,7 @@ async fn send_client_tool_call_update(session_id: &str, event: &Value) -> Result
                 "sessionUpdate": "tool_call",
                 "toolCallId": call_id,
                 "title": tool_name,
-                "kind": "read",
+                "kind": tool_kind_for_event(event),
                 "status": "pending",
                 "content": { "type": "text", "text": summary }
             }
