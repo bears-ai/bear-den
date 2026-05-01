@@ -476,7 +476,7 @@ body.bear_chat .den-conv-button-container:hover {
 
 .den-all-threads-list > li.den-conv-menu-row {
     display: grid;
-    grid-template-columns: minmax(12rem, 1fr) auto;
+    grid-template-columns: minmax(12rem, 1fr) auto auto auto;
     align-items: stretch;
     margin: 0;
     padding: 0;
@@ -501,6 +501,10 @@ body.bear_chat .den-conv-button-container:hover {
     white-space: nowrap;
 }
 
+.den-all-threads-list button.den-conv-menu-action {
+    cursor: pointer;
+}
+
 .den-all-threads-list .den-conv-menu-main {
     min-width: 0;
     overflow: hidden;
@@ -519,6 +523,11 @@ body.bear_chat .den-conv-button-container:hover {
 .den-all-threads-list .den-conv-menu-action:hover {
     background-color: var(--accent-color);
     color: var(--page-color);
+}
+
+.den-all-threads-list .den-conv-menu-action:disabled {
+    cursor: wait;
+    opacity: 0.65;
 }
 
 .den-all-threads-title,

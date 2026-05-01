@@ -1,6 +1,6 @@
 {% extends "base.html" %} {% block title %}All threads · {{ bear.name | e }}{%
 endblock %} {% block content %}
-<section class="den-all-threads-page">
+<section class="den-all-threads-page" data-bear-id="{{ bear.id }}">
     <div class="den-design-chat-toolbar den-chat-toolbar">
         <h2>All threads</h2>
         <a class="button-link" href="/bear/{{ bear.slug | e }}/details"
@@ -25,6 +25,34 @@ endblock %} {% block content %}
                 </span>
             </a>
             <a class="den-conv-menu-action" href="{{ c.web_href | e }}">Open</a>
+            {% if c.id != "default" %}
+            <button
+                type="button"
+                class="den-conv-menu-action den-all-threads-rename-action"
+                data-conversation-id="{{ c.id | e }}"
+                aria-label="Rename thread {{ c.title | e }}"
+            >
+                Rename
+            </button>
+            <button
+                type="button"
+                class="den-conv-menu-action den-all-threads-archive-action"
+                data-conversation-id="{{ c.id | e }}"
+                data-archived="{% if c.archived %}true{% else %}false{% endif %}"
+                aria-label="{% if c.archived %}Unarchive{% else %}Archive{% endif %} thread {{ c.title | e }}"
+            >
+                {% if c.archived %}Unarchive{% else %}Archive{% endif %}
+            </button>
+            {% else %}
+            <span
+                class="den-conv-menu-action den-all-threads-action-placeholder"
+                aria-hidden="true"
+            ></span>
+            <span
+                class="den-conv-menu-action den-all-threads-action-placeholder"
+                aria-hidden="true"
+            ></span>
+            {% endif %}
         </li>
         {% endfor %}
     </ul>
@@ -32,4 +60,162 @@ endblock %} {% block content %}
     <p class="form-hint">No conversations.</p>
     {% endif %}
 </section>
+<script>
+    (function () {
+        var page = document.querySelector(".den-all-threads-page");
+        if (!page) return;
+        var bearId = page.getAttribute("data-bear-id");
+
+        function denResponseRequiresLogin(response) {
+            if (!response) return false;
+            if (response.status === 401) return true;
+            if (response.status === 405) return true;
+            if (response.redirected && response.url) {
+                try {
+                    return (
+                        new URL(response.url, window.location.origin)
+                            .pathname === "/login"
+                    );
+                } catch (_) {
+                    return false;
+                }
+            }
+            return false;
+        }
+
+        function denRedirectToLogin() {
+            window.location.href =
+                "/login?next=" +
+                encodeURIComponent(
+                    window.location.pathname + window.location.search,
+                );
+        }
+
+        function patchConversation(id, patch) {
+            patch.bear_id = bearId;
+            return fetch("/v1/chat/conversations/" + encodeURIComponent(id), {
+                method: "PATCH",
+                credentials: "same-origin",
+                headers: {
+                    "Content-Type": "application/json",
+                    Accept: "application/json",
+                },
+                body: JSON.stringify(patch),
+            }).then(function (response) {
+                if (denResponseRequiresLogin(response)) {
+                    denRedirectToLogin();
+                    return { __den_skip: true };
+                }
+                if (!response.ok) {
+                    return response.text().then(function (t) {
+                        throw new Error(t || "HTTP " + response.status);
+                    });
+                }
+                return response.json();
+            });
+        }
+
+        function setRowArchived(row, button, archived) {
+            row.classList.toggle("den-all-threads-row-archived", archived);
+            button.setAttribute("data-archived", archived ? "true" : "false");
+            button.textContent = archived ? "Unarchive" : "Archive";
+            var title = row.querySelector(".den-all-threads-title");
+            button.setAttribute(
+                "aria-label",
+                (archived ? "Unarchive" : "Archive") +
+                    " thread " +
+                    (title ? title.textContent : ""),
+            );
+
+            var meta = row.querySelector(".den-all-threads-meta");
+            if (meta) {
+                var text = meta.textContent || "";
+                text = text.replace(/\s*·\s*archived/g, "").trim();
+                if (archived) {
+                    var parts = text ? text.split(" · ") : [];
+                    parts.splice(Math.min(1, parts.length), 0, "archived");
+                    meta.textContent = parts.join(" · ");
+                } else {
+                    meta.textContent = text;
+                }
+            }
+        }
+
+        page.addEventListener("click", function (event) {
+            var renameButton = event.target.closest(
+                ".den-all-threads-rename-action",
+            );
+            if (renameButton) {
+                var renameId = renameButton.getAttribute(
+                    "data-conversation-id",
+                );
+                if (!renameId) return;
+                var rowForRename = renameButton.closest(".den-conv-menu-row");
+                var titleEl = rowForRename
+                    ? rowForRename.querySelector(".den-all-threads-title")
+                    : null;
+                var currentTitle = titleEl ? titleEl.textContent : renameId;
+                var nextTitle = window.prompt("Rename thread", currentTitle);
+                if (nextTitle == null) return;
+                nextTitle = nextTitle.trim();
+                if (!nextTitle) return;
+                renameButton.disabled = true;
+                patchConversation(renameId, { title: nextTitle }).then(
+                    function (data) {
+                        if (data && data.__den_skip) return;
+                        if (titleEl) titleEl.textContent = nextTitle;
+                        renameButton.setAttribute(
+                            "aria-label",
+                            "Rename thread " + nextTitle,
+                        );
+                        var archiveButton = rowForRename
+                            ? rowForRename.querySelector(
+                                  ".den-all-threads-archive-action",
+                              )
+                            : null;
+                        if (archiveButton) {
+                            archiveButton.setAttribute(
+                                "aria-label",
+                                (archiveButton.getAttribute("data-archived") ===
+                                "true"
+                                    ? "Unarchive"
+                                    : "Archive") +
+                                    " thread " +
+                                    nextTitle,
+                            );
+                        }
+                        renameButton.disabled = false;
+                    },
+                    function (err) {
+                        renameButton.disabled = false;
+                        window.alert(String(err.message || err));
+                    },
+                );
+                return;
+            }
+
+            var button = event.target.closest(
+                ".den-all-threads-archive-action",
+            );
+            if (!button) return;
+            var id = button.getAttribute("data-conversation-id");
+            if (!id) return;
+            var archived = button.getAttribute("data-archived") === "true";
+            var nextArchived = !archived;
+            button.disabled = true;
+            patchConversation(id, { archived: nextArchived }).then(
+                function (data) {
+                    if (data && data.__den_skip) return;
+                    var row = button.closest(".den-conv-menu-row");
+                    if (row) setRowArchived(row, button, nextArchived);
+                    button.disabled = false;
+                },
+                function (err) {
+                    button.disabled = false;
+                    window.alert(String(err.message || err));
+                },
+            );
+        });
+    })();
+</script>
 {% endblock %}
