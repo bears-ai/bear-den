@@ -43,9 +43,17 @@ function isMissingConversationError(err: unknown): boolean {
     return /Conversation\s+conv-[A-Za-z0-9_-]+\s+not found/i.test(s);
 }
 
+function toolsSignature(tools?: AnyAgentTool[]): string {
+    return (tools ?? [])
+        .map((tool) => tool.name)
+        .sort()
+        .join(",");
+}
+
 type Entry = {
     session: Session;
     lastUsed: number;
+    toolSignature: string;
 };
 
 export type StreamUserOpts = {
@@ -191,9 +199,29 @@ export class ConversationSessionPool {
         const rt = resumeTargetFor(agentId, conversationId);
         let entry = this.map.get(key);
         const now = Date.now();
+        const toolSignature = toolsSignature(tools);
         if (entry) {
-            entry.lastUsed = now;
-            return entry.session;
+            if (entry.toolSignature === toolSignature) {
+                entry.lastUsed = now;
+                return entry.session;
+            }
+            logger.info(
+                "Letta Code session tool set changed; reopening warm session",
+                {
+                    event: "letta_code_session_tools_changed",
+                    agent_id: agentId,
+                    conversation_id: conversationId,
+                    previous_tool_signature: entry.toolSignature,
+                    next_tool_signature: toolSignature,
+                },
+            );
+            try {
+                entry.session.close();
+            } catch {
+                /* ignore */
+            }
+            this.map.delete(key);
+            entry = undefined;
         }
         this.evictIdle();
         const sessionOpts: Parameters<typeof resumeSession>[1] = {
@@ -221,7 +249,7 @@ export class ConversationSessionPool {
             method === "createSession"
                 ? createSession(agentId, sessionOpts)
                 : resumeSession(rt, sessionOpts);
-        this.map.set(key, { session, lastUsed: now });
+        this.map.set(key, { session, lastUsed: now, toolSignature });
         return session;
     }
 
@@ -300,7 +328,11 @@ export class ConversationSessionPool {
                             sessionOpts.cwd = cwd;
                         }
                         const session = createSession(agentId, sessionOpts);
-                        this.map.set(key, { session, lastUsed: Date.now() });
+                        this.map.set(key, {
+                            session,
+                            lastUsed: Date.now(),
+                            toolSignature: toolsSignature(opts.tools),
+                        });
                         await session.send(userText);
                         for await (const msg of session.stream()) {
                             yield msg as SDKMessage;
