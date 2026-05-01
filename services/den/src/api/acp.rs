@@ -9,7 +9,7 @@ use axum::{
     extract::{Path, State},
     http::{header, HeaderMap, HeaderName, HeaderValue, StatusCode},
     response::{IntoResponse, Response},
-    routing::post,
+    routing::{get, post},
     Json, Router,
 };
 use bytes::Bytes;
@@ -47,6 +47,7 @@ pub fn router() -> Router<ApiState> {
             "/bears/{slug}/sessions/{session_id}/close",
             post(close_session),
         )
+        .route("/bears/{slug}/auth-check", get(auth_check))
 }
 
 #[derive(Debug, Deserialize)]
@@ -286,6 +287,61 @@ async fn prompt(
         Ok(Err(err)) => acp_error_response(err, request_id),
         Err(err) => api_auth_error_response(err, request_id),
     }
+}
+
+async fn auth_check(
+    State(state): State<ApiState>,
+    Path(slug): Path<String>,
+    headers: HeaderMap,
+) -> Response {
+    let request_id = Uuid::new_v4();
+    match authenticate_acp_code_token(&state, &headers, &slug, true).await {
+        Ok((user_id, has_tools)) => Json(serde_json::json!({
+            "ok": true,
+            "user_id": user_id,
+            "scopes": {
+                "acp:chat": true,
+                "acp:tools": has_tools
+            }
+        }))
+        .into_response(),
+        Err(err) => acp_error_response(err, request_id),
+    }
+}
+
+async fn authenticate_acp_code_token(
+    state: &ApiState,
+    headers: &HeaderMap,
+    slug: &str,
+    require_tools: bool,
+) -> Result<(i32, bool), CustomError> {
+    let token = auth::extract_bearer_token(headers)
+        .map_err(|err| CustomError::Authentication(err.message))?;
+    if !acp_tokens::is_acp_token(&token) {
+        return Err(CustomError::Authentication(
+            "expected a bear-scoped BEARS ACP Code token".to_string(),
+        ));
+    }
+    let auth = acp_tokens::authenticate_for_bear_slug_with_scopes(&state.sqlx_pool, &token, slug)
+        .await?
+        .ok_or_else(|| {
+            CustomError::Authentication(
+                "invalid, expired, revoked, or unauthorized ACP token".to_string(),
+            )
+        })?;
+    if !acp_tokens::scopes_contains(&auth.scopes, OAuthScope::AcpChat.as_str()) {
+        return Err(CustomError::Authentication(
+            "ACP token is missing required acp:chat scope".to_string(),
+        ));
+    }
+    let has_tools = acp_tokens::scopes_contains(&auth.scopes, OAuthScope::AcpTools.as_str());
+    if require_tools && !has_tools {
+        return Err(CustomError::Authorization(
+            "ACP token is missing required acp:tools scope; generate a new Den Code token"
+                .to_string(),
+        ));
+    }
+    Ok((auth.user_id, has_tools))
 }
 
 async fn close_session(

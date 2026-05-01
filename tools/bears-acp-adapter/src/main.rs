@@ -24,6 +24,10 @@ struct RuntimeConfig {
     config: Option<Config>,
     diagnostics: Vec<String>,
     check_server: bool,
+    api_url: String,
+    bear: String,
+    token_env: String,
+    client: String,
 }
 
 #[derive(Default)]
@@ -78,7 +82,7 @@ async fn main() {
 }
 
 async fn run() -> Result<()> {
-    let runtime = RuntimeConfig::from_env_and_args()?;
+    let mut runtime = RuntimeConfig::from_env_and_args()?;
     eprintln!(
         "bears-acp-adapter: starting version={} build_git_sha={} local_head_sha={} conversation_id_mode=default",
         env!("CARGO_PKG_VERSION"),
@@ -133,7 +137,7 @@ async fn run() -> Result<()> {
         };
 
         if let Err(err) =
-            handle_request(&http, &runtime, &mut adapter_state, &mut lines, request).await
+            handle_request(&http, &mut runtime, &mut adapter_state, &mut lines, request).await
         {
             eprintln!("bears-acp-adapter: request handling failed: {err:#}");
         }
@@ -204,10 +208,10 @@ impl RuntimeConfig {
 
         let config = if diagnostics.is_empty() {
             Some(Config {
-                api_url,
-                bear,
+                api_url: api_url.clone(),
+                bear: bear.clone(),
                 token,
-                client,
+                client: client.clone(),
             })
         } else {
             None
@@ -217,6 +221,10 @@ impl RuntimeConfig {
             config,
             diagnostics,
             check_server,
+            api_url,
+            bear,
+            token_env,
+            client,
         };
         if check_config {
             if runtime.is_configured() {
@@ -337,7 +345,7 @@ fn parse_request(line: &str) -> Result<JsonRpcRequest> {
 
 async fn handle_request(
     http: &reqwest::Client,
-    runtime: &RuntimeConfig,
+    runtime: &mut RuntimeConfig,
     adapter_state: &mut AdapterState,
     lines: &mut Lines<BufReader<Stdin>>,
     request: JsonRpcRequest,
@@ -354,6 +362,22 @@ async fn handle_request(
             );
             if let Some(id) = request.id {
                 write_response(id, Ok(initialize_result())).await?;
+            }
+        }
+        "authenticate" => {
+            if let Some(id) = request.id {
+                match handle_authenticate(http, runtime, request.params).await {
+                    Ok(()) => write_response(id, Ok(json!({}))).await?,
+                    Err(err) => {
+                        write_response(
+                            id,
+                            Err(auth_required_error(Some(
+                                json!({ "message": format!("{err:#}") }),
+                            ))),
+                        )
+                        .await?;
+                    }
+                }
             }
         }
         "session/new" => {
@@ -385,18 +409,26 @@ async fn handle_request(
                 let Some(config) = runtime.config.as_ref() else {
                     write_response(
                         id,
-                        Err(json_rpc_error(
-                            -32003,
-                            "BEARS adapter is not configured",
-                            Some(json!({
-                                "message": runtime.configuration_error_message(),
-                                "problems": runtime.diagnostics,
-                            })),
-                        )),
+                        Err(auth_required_error(Some(json!({
+                            "message": runtime.configuration_error_message(),
+                            "problems": runtime.diagnostics,
+                        })))),
                     )
                     .await?;
                     return Ok(());
                 };
+
+                if let Err(err) = validate_den_code_token(http, config).await {
+                    write_response(
+                        id,
+                        Err(auth_required_error(Some(json!({
+                            "message": format!("BEARS Code token authentication failed: {err:#}"),
+                            "hint": "Generate a fresh Den Code token for this bear. Code tokens must include acp:chat and acp:tools."
+                        })))),
+                    )
+                    .await?;
+                    return Ok(());
+                }
 
                 if let Err(err) = handle_prompt(
                     http,
@@ -434,14 +466,10 @@ async fn handle_request(
                 let Some(config) = runtime.config.as_ref() else {
                     write_response(
                         id,
-                        Err(json_rpc_error(
-                            -32003,
-                            "BEARS adapter is not configured",
-                            Some(json!({
-                                "message": runtime.configuration_error_message(),
-                                "problems": runtime.diagnostics,
-                            })),
-                        )),
+                        Err(auth_required_error(Some(json!({
+                            "message": runtime.configuration_error_message(),
+                            "problems": runtime.diagnostics,
+                        })))),
                     )
                     .await?;
                     return Ok(());
@@ -506,6 +534,91 @@ fn session_context_from_params(params: &Value) -> SessionContext {
     SessionContext { cwd, roots, raw }
 }
 
+async fn handle_authenticate(
+    http: &reqwest::Client,
+    runtime: &mut RuntimeConfig,
+    params: Value,
+) -> Result<()> {
+    let method_id = params
+        .get("methodId")
+        .and_then(Value::as_str)
+        .unwrap_or("bears_den_token");
+    if method_id != "bears_den_token" {
+        return Err(anyhow!("unsupported BEARS auth method: {method_id}"));
+    }
+    let config = runtime_config_from_current_env(runtime)?;
+    validate_den_code_token(http, &config).await?;
+    runtime.config = Some(config);
+    runtime.diagnostics.clear();
+    Ok(())
+}
+
+fn runtime_config_from_current_env(runtime: &RuntimeConfig) -> Result<Config> {
+    let mut token = env::var("BEARS_DEN_TOKEN").unwrap_or_default();
+    let token_env = runtime.token_env.trim();
+    if !token_env.is_empty() {
+        token = env::var(token_env).with_context(|| {
+            format!("BEARS_DEN_TOKEN_ENV points at {token_env:?}, but that environment variable is not set")
+        })?;
+    }
+    let api_url = runtime.api_url.trim().trim_end_matches('/').to_string();
+    let bear = runtime.bear.trim().to_string();
+    let token = token.trim().to_string();
+    if api_url.is_empty() {
+        return Err(anyhow!(
+            "Missing BEARS_DEN_API_URL / --api-url for BEARS authentication"
+        ));
+    }
+    if bear.is_empty() {
+        return Err(anyhow!(
+            "Missing BEARS_BEAR_SLUG / --bear for BEARS authentication"
+        ));
+    }
+    if token.is_empty() {
+        return Err(anyhow!("Missing BEARS_DEN_TOKEN. Paste a Den Code token when prompted, or configure BEARS_DEN_TOKEN in Zed."));
+    }
+    Ok(Config {
+        api_url,
+        bear,
+        token,
+        client: runtime.client.clone(),
+    })
+}
+
+async fn validate_den_code_token(http: &reqwest::Client, config: &Config) -> Result<()> {
+    let url = format!(
+        "{}/acp/bears/{}/auth-check",
+        config.api_url,
+        urlencoding::encode(&config.bear)
+    );
+    let response = http
+        .get(&url)
+        .header(
+            AUTHORIZATION,
+            HeaderValue::from_str(&format!("Bearer {}", config.token))?,
+        )
+        .send()
+        .await
+        .with_context(|| format!("validate BEARS Code token with Den at {url}"))?;
+    if response.status().is_success() {
+        return Ok(());
+    }
+    let status = response.status();
+    let body = response.text().await.unwrap_or_default();
+    Err(anyhow!(
+        "BEARS Code token validation failed with HTTP {status}: {}",
+        body.trim()
+    ))
+}
+
+fn token_env_for_auth_method() -> String {
+    env::var("BEARS_DEN_TOKEN_ENV")
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "BEARS_DEN_TOKEN".to_string())
+}
+
 fn initialize_result() -> Value {
     json!({
         "protocolVersion": 1,
@@ -529,7 +642,22 @@ fn initialize_result() -> Value {
             "title": "BEARS",
             "version": env!("CARGO_PKG_VERSION")
         },
-        "authMethods": []
+        "authMethods": [
+            {
+                "id": "bears_den_token",
+                "name": "BEARS Code Token",
+                "type": "env_var",
+                "vars": [
+                    {
+                        "name": token_env_for_auth_method(),
+                        "label": "BEARS Code Token",
+                        "secret": true
+                    }
+                ],
+                "description": "Paste a Den Code token. Code tokens include acp:chat and acp:tools scopes.",
+                "link": "https://github.com/silarsis/BEARS"
+            }
+        ]
     })
 }
 
@@ -1358,6 +1486,10 @@ async fn write_json(value: Value) -> Result<()> {
     stdout.write_all(b"\n").await?;
     stdout.flush().await?;
     Ok(())
+}
+
+fn auth_required_error(data: Option<Value>) -> Value {
+    json_rpc_error(-32000, "Authentication required", data)
 }
 
 fn json_rpc_error(code: i64, message: &str, data: Option<Value>) -> Value {
