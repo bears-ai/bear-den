@@ -1014,7 +1014,11 @@ async fn prompt_inner(
         .map_err(|err| {
             let (_, _, message) = acp_error_status_message(&err);
             ApiError::new(StatusCode::BAD_REQUEST, "validation", message)
-        })?;
+        })?
+        // Older adapters hardcoded `conversation_id: "default"` for every prompt.
+        // Treat that as omission so ACP session/new still creates a pending thread and
+        // later prompts can use the stored/resolved conversation for this ACP session.
+        .filter(|id| id != "default");
     let generated_conversation_id = acp_conversation_id(&client, session_id);
     let (conversation_id, conversation_selection_source) =
         if let Some(id) = requested_conversation_id.clone() {
@@ -1035,7 +1039,7 @@ async fn prompt_inner(
         } else {
             (generated_conversation_id.clone(), "generated")
         };
-    if conversation_id.starts_with("conv-") {
+    if conversation_id.starts_with("conv-") && conversation_selection_source == "explicit" {
         verify_acp_conversation_belongs_to_bear(
             &state,
             bear.letta_agent_id.as_deref().unwrap_or(""),

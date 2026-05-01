@@ -29,6 +29,12 @@ The ACP path is not complete yet:
 
 The immediate goal is to make ACP-created sessions stable across Codepool warm-pool eviction/restart, then expose explicit load/resume to ACP clients.
 
+## ACP session semantics note
+
+ACP clients commonly treat `session/new` as the "new thread" signal and do not necessarily send a backend-specific conversation id on later prompts. When a prompt includes `conversation_id: "default"`, that can mean "no saved backend session was selected" rather than "append to the bear's canonical default thread".
+
+BEARS should therefore keep the normal adapter pattern: bind each ACP `sessionId` to a backend BEARS/Letta conversation id. A fresh ACP session with no explicit saved `conv-...` should create or reuse a pending `new-acp-...` binding, then store the resolved canonical `conv-...`. Explicit `conv-...` ids are the saved-conversation resume path; explicit selection of the bear's true `default` thread should be reserved for a deliberate load/selection flow, not inferred from generic ACP prompt defaults.
+
 ## Current implementation facts
 
 ### Codepool runtime layer

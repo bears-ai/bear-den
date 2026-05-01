@@ -80,6 +80,7 @@ async fn fake_bear_channel(
     (
         [(header::CONTENT_TYPE, "text/event-stream; charset=utf-8")],
         concat!(
+            "data: {\"type\":\"conversation_resolved\",\"conversation_id\":\"conv-fake-resolved123\"}\n\n",
             "data: {\"type\":\"assistant_delta\",\"text\":\"hello from fake codepool\"}\n\n",
             "data: {\"type\":\"reasoning_delta\",\"text\":\"thinking\"}\n\n",
             "data: {\"type\":\"done\",\"outcome\":\"ok\"}\n\n"
@@ -305,6 +306,80 @@ async fn acp_prompt_rejects_empty_messages_before_codepool() {
     let value: Value = serde_json::from_slice(&body).expect("JSON error body");
     assert_eq!(value["error_code"], "validation");
     assert!(fixture.captured_codepool_body.lock().await.is_none());
+}
+
+#[tokio::test]
+async fn acp_prompt_treats_legacy_default_conversation_id_as_omitted() {
+    let fixture = test_app().await;
+    let user_bear = create_test_user_bear(&fixture.pool, true).await;
+
+    let res = post_prompt(
+        fixture.app,
+        &user_bear.bear_slug,
+        "session-default-legacy",
+        Some(&user_bear.raw_token),
+        json!({
+            "message": "hello bear",
+            "conversation_id": "default",
+            "client": "zed"
+        }),
+    )
+    .await;
+    assert_eq!(res.status(), StatusCode::OK);
+
+    let captured = fixture
+        .captured_codepool_body
+        .lock()
+        .await
+        .clone()
+        .expect("Codepool request captured");
+    assert_eq!(
+        captured["conversation_id"],
+        "new-acp-zed-session-default-legacy"
+    );
+}
+
+#[tokio::test]
+async fn acp_prompt_reuses_resolved_conversation_after_legacy_default_id() {
+    let fixture = test_app().await;
+    let user_bear = create_test_user_bear(&fixture.pool, true).await;
+
+    let first = post_prompt(
+        fixture.app.clone(),
+        &user_bear.bear_slug,
+        "session-reuse-resolved",
+        Some(&user_bear.raw_token),
+        json!({
+            "message": "first",
+            "conversation_id": "default",
+            "client": "zed"
+        }),
+    )
+    .await;
+    assert_eq!(first.status(), StatusCode::OK);
+    let _ = first.into_body().collect().await.unwrap().to_bytes();
+
+    let second = post_prompt(
+        fixture.app,
+        &user_bear.bear_slug,
+        "session-reuse-resolved",
+        Some(&user_bear.raw_token),
+        json!({
+            "message": "second",
+            "conversation_id": "default",
+            "client": "zed"
+        }),
+    )
+    .await;
+    assert_eq!(second.status(), StatusCode::OK);
+
+    let captured = fixture
+        .captured_codepool_body
+        .lock()
+        .await
+        .clone()
+        .expect("Codepool request captured");
+    assert_eq!(captured["conversation_id"], "conv-fake-resolved123");
 }
 
 #[tokio::test]
