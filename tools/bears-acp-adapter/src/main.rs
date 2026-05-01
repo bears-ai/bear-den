@@ -42,6 +42,8 @@ struct SessionContext {
     cwd: String,
     roots: Vec<String>,
     raw: Value,
+    conversation_id: Option<String>,
+    resolved_conversation_id: Option<String>,
 }
 
 #[derive(Debug)]
@@ -305,7 +307,7 @@ fn require_arg_value(flag: &str, value: Option<String>) -> Result<String> {
 
 fn print_version_to_stderr() {
     eprintln!(
-        "bears-acp-adapter {}\nBuild git SHA: {}\nLocal HEAD SHA: {}\nACP conversation id mode: default",
+        "bears-acp-adapter {}\nBuild git SHA: {}\nLocal HEAD SHA: {}\nACP conversations: bound/resolved when available; loadSession disabled",
         env!("CARGO_PKG_VERSION"),
         env!("BEARS_ACP_ADAPTER_GIT_SHA"),
         local_head_sha()
@@ -325,7 +327,7 @@ fn local_head_sha() -> String {
 
 fn print_help_to_stderr() {
     eprintln!(
-        "bears-acp-adapter {}\nBuild git SHA: {}\nLocal HEAD SHA: {}\nACP conversation id mode: default\n\n\
+        "bears-acp-adapter {}\nBuild git SHA: {}\nLocal HEAD SHA: {}\nACP conversations: bound/resolved when available; loadSession disabled\n\n\
 Usage: bears-acp-adapter --api-url <url> --bear <slug> [--client zed] [--token-env BEARS_DEN_TOKEN]\n\n\
 Options:\n  --api-url <url>        Den API origin, for example https://api.bears.example\n  --bear <slug>          Bear slug to chat with\n  --token <token>        Den Code token with acp:chat and acp:tools scopes\n  --token-env <env-var>  Read the Den bearer token from this environment variable\n  --client <name>        Client label: zed, opencode, or acp_adapter\n  --check-config         Validate configuration and exit without starting ACP stdio\n  --check-server         Fetch Den /version and exit without starting ACP stdio\n  --version              Show version/build behavior and exit\n  --help                 Show this help\n\n\
 Environment fallbacks:\n  BEARS_DEN_API_URL\n  BEARS_BEAR_SLUG\n  BEARS_DEN_TOKEN\n  BEARS_DEN_TOKEN_ENV\n  BEARS_ACP_CLIENT\n\n\
@@ -544,7 +546,13 @@ fn session_context_from_params(params: &Value) -> SessionContext {
         "workspace_roots": roots,
         "adapter_version": env!("CARGO_PKG_VERSION"),
     });
-    SessionContext { cwd, roots, raw }
+    SessionContext {
+        cwd,
+        roots,
+        raw,
+        conversation_id: None,
+        resolved_conversation_id: None,
+    }
 }
 
 async fn handle_authenticate(
@@ -724,16 +732,21 @@ async fn handle_prompt(
         .ok_or_else(|| anyhow!("session/prompt params missing sessionId"))?;
     let prompt = prompt_text_from_params(&params)?;
     let display_prompt = prompt_display_text_from_params(&params).unwrap_or_else(|| prompt.clone());
-    let conversation_id = "default";
     let client_context = adapter_state
         .session_contexts
         .get(session_id)
         .cloned()
         .unwrap_or_default();
+    let conversation_id = client_context
+        .resolved_conversation_id
+        .as_deref()
+        .or(client_context.conversation_id.as_deref())
+        .map(str::to_string);
+    let conversation_log = conversation_id.as_deref().unwrap_or("<den-selected>");
     let cwd = client_context.cwd.clone();
     eprintln!(
         "bears-acp-adapter: session/prompt session_id={} bear={} conversation_id={} client={}",
-        session_id, config.bear, conversation_id, config.client
+        session_id, config.bear, conversation_log, config.client
     );
 
     send_user_message_chunk(session_id, &display_prompt).await?;
@@ -752,16 +765,20 @@ async fn handle_prompt(
     );
     headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
 
+    let mut den_payload = json!({
+        "message": prompt,
+        "client": config.client,
+        "client_capabilities": adapter_state.client_capabilities,
+        "client_context": client_context.raw,
+    });
+    if let Some(conversation_id) = conversation_id.as_deref() {
+        den_payload["conversation_id"] = json!(conversation_id);
+    }
+
     let response = http
         .post(&url)
         .headers(headers)
-        .json(&json!({
-            "message": prompt,
-            "conversation_id": conversation_id,
-            "client": config.client,
-            "client_capabilities": adapter_state.client_capabilities,
-            "client_context": client_context.raw,
-        }))
+        .json(&den_payload)
         .send()
         .await
         .with_context(|| den_request_context(&url))?;
@@ -782,7 +799,9 @@ async fn handle_prompt(
         buffer.extend_from_slice(&chunk);
         while let Some(pos) = buffer.windows(2).position(|w| w == b"\n\n") {
             let frame: Vec<u8> = buffer.drain(..pos + 2).collect();
-            let outcome = handle_sse_frame(http, config, lines, session_id, &cwd, &frame).await?;
+            let outcome =
+                handle_sse_frame(http, config, adapter_state, lines, session_id, &cwd, &frame)
+                    .await?;
             saw_done |= outcome.saw_done;
             saw_assistant_output |= outcome.saw_assistant_output;
             upstream_errors.extend(outcome.upstream_errors);
@@ -790,7 +809,8 @@ async fn handle_prompt(
     }
     if !buffer.is_empty() {
         let frame = std::mem::take(&mut buffer);
-        let outcome = handle_sse_frame(http, config, lines, session_id, &cwd, &frame).await?;
+        let outcome =
+            handle_sse_frame(http, config, adapter_state, lines, session_id, &cwd, &frame).await?;
         saw_done |= outcome.saw_done;
         saw_assistant_output |= outcome.saw_assistant_output;
         upstream_errors.extend(outcome.upstream_errors);
@@ -1111,6 +1131,7 @@ fn prompt_text_from_params_with_resource_mode(
 async fn handle_sse_frame(
     http: &reqwest::Client,
     config: &Config,
+    adapter_state: &mut AdapterState,
     lines: &mut Lines<BufReader<Stdin>>,
     session_id: &str,
     cwd: &str,
@@ -1139,7 +1160,8 @@ async fn handle_sse_frame(
             Some("error") => outcome.upstream_errors.push(format_den_event_error(&event)),
             _ => {}
         }
-        outcome.saw_done |= handle_den_event(http, config, lines, session_id, cwd, &event).await?;
+        outcome.saw_done |=
+            handle_den_event(http, config, adapter_state, lines, session_id, cwd, &event).await?;
     }
     Ok(outcome)
 }
@@ -1167,6 +1189,7 @@ fn format_den_event_error(event: &Value) -> String {
 async fn handle_den_event(
     http: &reqwest::Client,
     config: &Config,
+    adapter_state: &mut AdapterState,
     lines: &mut Lines<BufReader<Stdin>>,
     session_id: &str,
     cwd: &str,
@@ -1198,6 +1221,25 @@ async fn handle_den_event(
         "error" => {
             let message = format_den_event_error(event);
             send_agent_thought_chunk(session_id, &message).await?;
+            Ok(false)
+        }
+        "conversation_resolved" => {
+            if let Some(conversation_id) = event
+                .get("conversation_id")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|s| s.starts_with("conv-"))
+            {
+                let context = adapter_state
+                    .session_contexts
+                    .entry(session_id.to_string())
+                    .or_default();
+                context.resolved_conversation_id = Some(conversation_id.to_string());
+                eprintln!(
+                    "bears-acp-adapter: session_id={} resolved conversation_id={}",
+                    session_id, conversation_id
+                );
+            }
             Ok(false)
         }
         "client_tool_request" => {
@@ -1574,5 +1616,26 @@ mod tests {
             absolutize_client_path("README.md", "/Users/bear/project"),
             "/Users/bear/project/README.md"
         );
+    }
+
+    #[test]
+    fn session_context_starts_without_conversation_ids() {
+        let context = session_context_from_params(&json!({}));
+        assert!(context.conversation_id.is_none());
+        assert!(context.resolved_conversation_id.is_none());
+    }
+
+    #[test]
+    fn prompt_prefers_resolved_conversation_id() {
+        let context = SessionContext {
+            conversation_id: Some("new-acp-zed-abc12345".to_string()),
+            resolved_conversation_id: Some("conv-resolved12345".to_string()),
+            ..Default::default()
+        };
+        let selected = context
+            .resolved_conversation_id
+            .as_deref()
+            .or(context.conversation_id.as_deref());
+        assert_eq!(selected, Some("conv-resolved12345"));
     }
 }

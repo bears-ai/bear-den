@@ -54,12 +54,18 @@ Before deep implementation:
    - Add timeout, cancellation, disconnect, and error propagation semantics.
    - Audit every request and result.
 
-4. **Server tool management over `bear_channel`**
+4. **ACP session load/resume — planned**
+   - Detailed plan: [`ACP_SESSION_RESUME_PLAN.md`](ACP_SESSION_RESUME_PLAN.md).
+   - Make ACP-created sessions durable by routing later prompts through Den's stored `resolved_conversation_id`.
+   - Add ACP-token conversation list/history endpoints for adapters.
+   - Implement adapter `session/load` and advertise `loadSession: true` only after end-to-end support exists.
+
+5. **Server tool management over `bear_channel`**
    - Add Den-provided runtime capability context for Codepool.
    - Enable Cabinet/memory tools as Den-controlled server capabilities.
    - Route server tool execution through Den APIs so authorization, audit, and policy remain centralized.
 
-5. **Richer runtime events and UI surfacing**
+6. **Richer runtime events and UI surfacing**
    - Surface server tool, client tool, subagent, memory, and artifact events to clients that advertise support.
    - Keep the Den web chat readable with an activity strip or collapsible timeline.
 

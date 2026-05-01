@@ -315,9 +315,7 @@ export class ConversationSessionPool {
                         continue;
                     }
                     if (
-                        attempt === 0 &&
-                        conversationId !== "default" &&
-                        !isPendingNewConversationId(conversationId) &&
+                        conversationId.startsWith("conv-") &&
                         isMissingConversationError(e)
                     ) {
                         const ent = this.map.get(key);
@@ -329,38 +327,10 @@ export class ConversationSessionPool {
                             }
                             this.map.delete(key);
                         }
-                        const sessionOpts: Parameters<typeof createSession>[1] =
-                            {
-                                includePartialMessages:
-                                    this.includePartialMessages,
-                                systemInfoReminder: false,
-                                memfs: true,
-                            };
-                        if (opts.tools && opts.tools.length > 0) {
-                            sessionOpts.tools = opts.tools;
-                            sessionOpts.allowedTools = opts.tools.map(
-                                (tool) => tool.name,
-                            );
-                            sessionOpts.permissionMode = "bypassPermissions";
-                            sessionOpts.canUseTool = canUseRegisteredTool(
-                                opts.tools,
-                            );
-                        }
-                        const cwd = ensure.cwd?.trim();
-                        if (cwd) {
-                            sessionOpts.cwd = cwd;
-                        }
-                        const session = createSession(agentId, sessionOpts);
-                        this.map.set(key, {
-                            session,
-                            lastUsed: Date.now(),
-                            toolSignature: toolsSignature(opts.tools),
-                        });
-                        await session.send(userText);
-                        for await (const msg of session.stream()) {
-                            yield msg as SDKMessage;
-                        }
-                        return;
+                        throw new Error(
+                            `Letta conversation ${conversationId} was not found for strict resume; refusing to create a replacement conversation.`,
+                            { cause: e },
+                        );
                     }
                     throw e;
                 }

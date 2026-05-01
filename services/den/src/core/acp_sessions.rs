@@ -12,6 +12,7 @@ pub struct UpsertAcpSession {
     pub acp_session_id: String,
     pub codepool_session_id: String,
     pub conversation_id: String,
+    pub resolved_conversation_id: Option<String>,
     pub client: String,
     pub cwd: Option<String>,
 }
@@ -34,13 +35,14 @@ pub async fn upsert_session(pool: &PgPool, session: UpsertAcpSession) -> Result<
         r#"
         INSERT INTO acp_sessions (
             user_id, bear_id, bear_slug, acp_session_id, codepool_session_id,
-            conversation_id, client, cwd
+            conversation_id, resolved_conversation_id, client, cwd
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
         ON CONFLICT (user_id, bear_id, acp_session_id) DO UPDATE
         SET bear_slug = EXCLUDED.bear_slug,
             codepool_session_id = EXCLUDED.codepool_session_id,
             conversation_id = EXCLUDED.conversation_id,
+            resolved_conversation_id = EXCLUDED.resolved_conversation_id,
             client = EXCLUDED.client,
             cwd = EXCLUDED.cwd,
             updated_at = NOW()
@@ -52,6 +54,7 @@ pub async fn upsert_session(pool: &PgPool, session: UpsertAcpSession) -> Result<
     .bind(session.acp_session_id)
     .bind(session.codepool_session_id)
     .bind(session.conversation_id)
+    .bind(session.resolved_conversation_id)
     .bind(session.client)
     .bind(session.cwd)
     .execute(pool)

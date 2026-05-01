@@ -6,7 +6,7 @@
 
 use axum::{
     body::Body,
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::{header, HeaderMap, HeaderName, HeaderValue, StatusCode},
     response::{IntoResponse, Response},
     routing::{get, post},
@@ -31,6 +31,7 @@ use crate::{
         acp_tokens,
         bears::db as bears_db,
         codepool::CodepoolToolResultRequest,
+        letta::load_agent_conversations,
         user,
     },
     errors::CustomError,
@@ -46,6 +47,11 @@ pub fn router() -> Router<ApiState> {
         .route(
             "/bears/{slug}/sessions/{session_id}/close",
             post(close_session),
+        )
+        .route("/bears/{slug}/conversations", get(conversations))
+        .route(
+            "/bears/{slug}/conversations/{conversation_id}/history",
+            get(conversation_history),
         )
         .route("/bears/{slug}/auth-check", get(auth_check))
 }
@@ -96,6 +102,48 @@ struct AcpErrorResponse {
     error: String,
     error_code: &'static str,
     request_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct AcpConversationsQuery {
+    #[serde(default)]
+    include_archived: bool,
+}
+
+#[derive(Debug, Serialize)]
+struct AcpConversationRow {
+    id: String,
+    title: String,
+    last_message_at: Option<String>,
+    archived: bool,
+}
+
+#[derive(Debug, Serialize)]
+struct AcpConversationsResponse {
+    conversations: Vec<AcpConversationRow>,
+}
+
+#[derive(Debug, Deserialize)]
+struct AcpConversationHistoryQuery {
+    #[serde(default)]
+    before: Option<String>,
+    #[serde(default)]
+    limit: Option<u32>,
+}
+
+#[derive(Debug, Serialize)]
+struct AcpConversationHistoryMessage {
+    role: String,
+    text: String,
+    created_at: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct AcpConversationHistoryResponse {
+    messages: Vec<AcpConversationHistoryMessage>,
+    has_more: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    next_before: Option<String>,
 }
 
 fn default_conversation_id() -> String {
@@ -214,6 +262,27 @@ fn acp_conversation_id(client: &str, session_id: &str) -> String {
     format!("new-acp-{client}-{}", stable_session_suffix(session_id))
 }
 
+fn normalize_acp_conversation_id(raw: Option<&str>) -> Result<String, CustomError> {
+    let s = raw
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .unwrap_or("default");
+    if s == "default" {
+        return Ok("default".to_string());
+    }
+    let ok = (s.starts_with("conv-") || s.starts_with("new-"))
+        && s.len() > 8
+        && s.chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_');
+    if ok {
+        Ok(s.to_string())
+    } else {
+        Err(CustomError::ValidationError(format!(
+            "invalid conversation_id (expected 'default', a Letta conv- id, or a pending new- id): {s}"
+        )))
+    }
+}
+
 fn stable_session_suffix(session_id: &str) -> String {
     session_id
         .chars()
@@ -223,6 +292,144 @@ fn stable_session_suffix(session_id: &str) -> String {
         .chars()
         .take(80)
         .collect()
+}
+
+async fn verify_acp_conversation_belongs_to_bear(
+    state: &ApiState,
+    agent_id: &str,
+    conversation_id: &str,
+) -> Result<(), CustomError> {
+    if conversation_id == "default" || conversation_id.starts_with("new-") {
+        return Ok(());
+    }
+    if !conversation_id.starts_with("conv-") {
+        return Err(CustomError::ValidationError(format!(
+            "invalid conversation_id: {conversation_id}"
+        )));
+    }
+    if !state.letta.is_enabled() {
+        return Err(CustomError::System(
+            "Letta is not configured (set LETTA_BASE_URL)".to_string(),
+        ));
+    }
+    let agent_id = agent_id.trim();
+    if agent_id.is_empty() {
+        return Err(CustomError::ValidationError(
+            "this bear is not linked to a Letta agent".to_string(),
+        ));
+    }
+    let snap = load_agent_conversations(state.letta.as_ref(), agent_id).await;
+    let found = snap.all.iter().any(|row| row.id == conversation_id);
+    if found {
+        Ok(())
+    } else {
+        Err(CustomError::Authorization(
+            "conversation not found for this bear".to_string(),
+        ))
+    }
+}
+
+fn letta_messages_top_array<'a>(v: &'a serde_json::Value) -> &'a [serde_json::Value] {
+    if let Some(a) = v.as_array() {
+        return a.as_slice();
+    }
+    if let Some(a) = v.get("messages").and_then(|x| x.as_array()) {
+        return a.as_slice();
+    }
+    if let Some(a) = v.get("data").and_then(|x| x.as_array()) {
+        return a.as_slice();
+    }
+    if let Some(a) = v.get("items").and_then(|x| x.as_array()) {
+        return a.as_slice();
+    }
+    &[]
+}
+
+fn letta_inner_for_acp_history(msg: &serde_json::Value) -> &serde_json::Value {
+    match msg.get("contents") {
+        Some(c) if c.get("message_type").is_some() => c,
+        _ => msg,
+    }
+}
+
+fn letta_message_text(inner: &serde_json::Value) -> Option<String> {
+    let content = inner.get("content")?;
+    if let Some(s) = content.as_str() {
+        let s = s.trim();
+        return if s.is_empty() {
+            None
+        } else {
+            Some(s.to_string())
+        };
+    }
+    if let Some(obj) = content.as_object() {
+        if let Some(t) = obj.get("text").and_then(|x| x.as_str()) {
+            let t = t.trim();
+            if !t.is_empty() {
+                return Some(t.to_string());
+            }
+        }
+    }
+    let parts = content.as_array()?;
+    let mut out = String::new();
+    for part in parts {
+        if let Some(t) = part.get("text").and_then(|x| x.as_str()) {
+            out.push_str(t);
+        }
+    }
+    let out = out.trim().to_string();
+    if out.is_empty() {
+        None
+    } else {
+        Some(out)
+    }
+}
+
+fn letta_message_id_string(msg: &serde_json::Value) -> Option<String> {
+    match msg.get("id")? {
+        serde_json::Value::String(s) if !s.is_empty() => Some(s.clone()),
+        serde_json::Value::Number(n) => Some(n.to_string()),
+        _ => None,
+    }
+}
+
+fn letta_message_created_at(msg: &serde_json::Value) -> Option<String> {
+    msg.get("date")
+        .or_else(|| msg.get("created_at"))
+        .and_then(|x| x.as_str())
+        .map(str::to_string)
+}
+
+fn map_acp_history_page(
+    body: &serde_json::Value,
+    page_limit: u32,
+) -> (Vec<AcpConversationHistoryMessage>, bool, Option<String>) {
+    let raw = letta_messages_top_array(body);
+    let has_more = raw.len() >= page_limit as usize;
+    let next_before = raw.iter().filter_map(letta_message_id_string).next_back();
+    let mut rows = Vec::new();
+    for msg in raw.iter().rev() {
+        let inner = letta_inner_for_acp_history(msg);
+        let message_type = inner
+            .get("message_type")
+            .and_then(|x| x.as_str())
+            .or_else(|| msg.get("message_type").and_then(|x| x.as_str()))
+            .unwrap_or("");
+        let role = match message_type {
+            "user_message" => "user",
+            "assistant_message" => "assistant",
+            _ => continue,
+        };
+        let Some(text) = letta_message_text(inner).or_else(|| letta_message_text(msg)) else {
+            continue;
+        };
+        rows.push(AcpConversationHistoryMessage {
+            role: role.to_string(),
+            text,
+            created_at: letta_message_created_at(msg),
+        });
+    }
+    (rows, has_more, next_before)
 }
 
 fn authorized_client_tool_descriptors(
@@ -309,6 +516,51 @@ async fn auth_check(
     }
 }
 
+async fn authenticate_acp_principal(
+    state: &ApiState,
+    headers: &HeaderMap,
+    slug: &str,
+) -> Result<(i32, bool), ApiError> {
+    let token = auth::extract_bearer_token(headers)?;
+    if acp_tokens::is_acp_token(&token) {
+        let auth =
+            acp_tokens::authenticate_for_bear_slug_with_scopes(&state.sqlx_pool, &token, slug)
+                .await
+                .map_err(|err| {
+                    ApiError::new(
+                        StatusCode::UNPROCESSABLE_ENTITY,
+                        "database",
+                        err.to_string(),
+                    )
+                })?
+                .ok_or_else(|| {
+                    ApiError::new(
+                        StatusCode::UNAUTHORIZED,
+                        "invalid_token",
+                        "invalid, expired, revoked, or unauthorized ACP token",
+                    )
+                })?;
+        if !acp_tokens::scopes_contains(&auth.scopes, OAuthScope::AcpChat.as_str()) {
+            return Err(ApiError::new(
+                StatusCode::UNAUTHORIZED,
+                "invalid_token",
+                "invalid, expired, revoked, or unauthorized ACP token",
+            ));
+        }
+        return Ok((
+            auth.user_id,
+            acp_tokens::scopes_contains(&auth.scopes, OAuthScope::AcpTools.as_str()),
+        ));
+    }
+
+    let principal = auth::authenticate_bearer(headers)?;
+    auth::require_scope(&principal, OAuthScope::AcpChat)?;
+    Ok((
+        principal.user_id,
+        principal.scopes.contains(&OAuthScope::AcpTools),
+    ))
+}
+
 async fn authenticate_acp_code_token(
     state: &ApiState,
     headers: &HeaderMap,
@@ -342,6 +594,153 @@ async fn authenticate_acp_code_token(
         ));
     }
     Ok((auth.user_id, has_tools))
+}
+
+async fn conversations(
+    State(state): State<ApiState>,
+    Path(slug): Path<String>,
+    Query(query): Query<AcpConversationsQuery>,
+    headers: HeaderMap,
+) -> Response {
+    let request_id = Uuid::new_v4();
+    match conversations_inner(state, slug, query, headers).await {
+        Ok(response) => response,
+        Err(err) => acp_error_response(err, request_id),
+    }
+}
+
+async fn conversations_inner(
+    state: ApiState,
+    slug: String,
+    query: AcpConversationsQuery,
+    headers: HeaderMap,
+) -> Result<Response, CustomError> {
+    let (user_id, _) = authenticate_acp_principal(&state, &headers, &slug)
+        .await
+        .map_err(ApiError::into_custom_error)?;
+    let bear = bears_db::bear_for_user_by_slug(&state.sqlx_pool, user_id, slug.trim())
+        .await?
+        .ok_or_else(|| {
+            CustomError::NotFound("bear not found or you do not have access".to_string())
+        })?;
+
+    let default_only = || {
+        Json(AcpConversationsResponse {
+            conversations: vec![AcpConversationRow {
+                id: "default".to_string(),
+                title: "Main chat".to_string(),
+                last_message_at: None,
+                archived: false,
+            }],
+        })
+        .into_response()
+    };
+
+    if !state.letta.is_enabled() {
+        return Ok(default_only());
+    }
+    let Some(agent_id) = bear
+        .letta_agent_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    else {
+        return Ok(default_only());
+    };
+
+    let snap = load_agent_conversations(state.letta.as_ref(), agent_id).await;
+    let source = if query.include_archived {
+        snap.all
+    } else {
+        snap.active
+    };
+    let conversations = source
+        .into_iter()
+        .map(|row| AcpConversationRow {
+            id: row.id,
+            title: row.title,
+            last_message_at: row.last_message_at,
+            archived: row.archived,
+        })
+        .collect();
+    Ok(Json(AcpConversationsResponse { conversations }).into_response())
+}
+
+async fn conversation_history(
+    State(state): State<ApiState>,
+    Path((slug, conversation_id)): Path<(String, String)>,
+    Query(query): Query<AcpConversationHistoryQuery>,
+    headers: HeaderMap,
+) -> Response {
+    let request_id = Uuid::new_v4();
+    match conversation_history_inner(state, slug, conversation_id, query, headers).await {
+        Ok(response) => response,
+        Err(err) => acp_error_response(err, request_id),
+    }
+}
+
+async fn conversation_history_inner(
+    state: ApiState,
+    slug: String,
+    conversation_id: String,
+    query: AcpConversationHistoryQuery,
+    headers: HeaderMap,
+) -> Result<Response, CustomError> {
+    let (user_id, _) = authenticate_acp_principal(&state, &headers, &slug)
+        .await
+        .map_err(ApiError::into_custom_error)?;
+    let bear = bears_db::bear_for_user_by_slug(&state.sqlx_pool, user_id, slug.trim())
+        .await?
+        .ok_or_else(|| {
+            CustomError::NotFound("bear not found or you do not have access".to_string())
+        })?;
+    if !state.letta.is_enabled() {
+        return Ok(Json(AcpConversationHistoryResponse {
+            messages: vec![],
+            has_more: false,
+            next_before: None,
+        })
+        .into_response());
+    }
+    let agent_id = bear
+        .letta_agent_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| {
+            CustomError::ValidationError("this bear is not linked to a Letta agent".to_string())
+        })?;
+    let conv_id = normalize_acp_conversation_id(Some(&conversation_id))?;
+    if conv_id.starts_with("new-") {
+        return Err(CustomError::ValidationError(
+            "history is only available for default or saved conv- conversations".to_string(),
+        ));
+    }
+    if conv_id.starts_with("conv-") {
+        verify_acp_conversation_belongs_to_bear(&state, agent_id, &conv_id).await?;
+    }
+    let limit = query.limit.unwrap_or(50).clamp(1, 100);
+    let before = query
+        .before
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
+    let agent_for_conv = if conv_id == "default" {
+        Some(agent_id)
+    } else {
+        None
+    };
+    let body = state
+        .letta
+        .list_conversation_messages(&conv_id, agent_for_conv, limit, before, false)
+        .await?;
+    let (messages, has_more, next_before) = map_acp_history_page(&body, limit);
+    Ok(Json(AcpConversationHistoryResponse {
+        messages,
+        has_more,
+        next_before,
+    })
+    .into_response())
 }
 
 async fn close_session(
@@ -543,45 +942,9 @@ async fn prompt_inner(
     body: AcpPromptRequest,
     request_id: Uuid,
 ) -> Result<Result<Response, CustomError>, ApiError> {
-    let token = auth::extract_bearer_token(&headers)?;
     let slug = slug.trim().to_string();
-    let (user_id, has_acp_tools_scope) = if acp_tokens::is_acp_token(&token) {
-        let auth =
-            acp_tokens::authenticate_for_bear_slug_with_scopes(&state.sqlx_pool, &token, &slug)
-                .await
-                .map_err(|err| {
-                    ApiError::new(
-                        StatusCode::UNPROCESSABLE_ENTITY,
-                        "database",
-                        err.to_string(),
-                    )
-                })?
-                .ok_or_else(|| {
-                    ApiError::new(
-                        StatusCode::UNAUTHORIZED,
-                        "invalid_token",
-                        "invalid, expired, revoked, or unauthorized ACP token",
-                    )
-                })?;
-        if !acp_tokens::scopes_contains(&auth.scopes, OAuthScope::AcpChat.as_str()) {
-            return Err(ApiError::new(
-                StatusCode::UNAUTHORIZED,
-                "invalid_token",
-                "invalid, expired, revoked, or unauthorized ACP token",
-            ));
-        }
-        (
-            auth.user_id,
-            acp_tokens::scopes_contains(&auth.scopes, OAuthScope::AcpTools.as_str()),
-        )
-    } else {
-        let principal = auth::authenticate_bearer(&headers)?;
-        auth::require_scope(&principal, OAuthScope::AcpChat)?;
-        (
-            principal.user_id,
-            principal.scopes.contains(&OAuthScope::AcpTools),
-        )
-    };
+    let (user_id, has_acp_tools_scope) =
+        authenticate_acp_principal(&state, &headers, &slug).await?;
     let prompt = body.message.trim();
     if prompt.is_empty() {
         return Ok(Err(CustomError::ValidationError(
@@ -630,21 +993,72 @@ async fn prompt_inner(
         )));
     }
 
-    if let Some(raw_conversation_id) = body
+    let client = normalize_acp_client(body.client.as_deref());
+    let existing_session =
+        acp_sessions::find_for_user_bear_session(&state.sqlx_pool, user_id, &bear.slug, session_id)
+            .await
+            .map_err(|err| {
+                ApiError::new(
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                    "database",
+                    err.to_string(),
+                )
+            })?;
+    let requested_conversation_id = body
         .conversation_id
         .as_deref()
         .map(str::trim)
-        .filter(|s| !s.is_empty() && *s != "default")
-    {
-        tracing::info!(
-            %request_id,
-            acp_session_id = %session_id,
-            requested_conversation_id = %raw_conversation_id,
-            "ACP gateway ignoring client conversation_id; loadSession is not supported yet"
-        );
+        .filter(|s| !s.is_empty())
+        .map(|s| normalize_acp_conversation_id(Some(s)))
+        .transpose()
+        .map_err(|err| {
+            let (_, _, message) = acp_error_status_message(&err);
+            ApiError::new(StatusCode::BAD_REQUEST, "validation", message)
+        })?;
+    let generated_conversation_id = acp_conversation_id(&client, session_id);
+    let (conversation_id, conversation_selection_source) =
+        if let Some(id) = requested_conversation_id.clone() {
+            (id, "explicit")
+        } else if let Some(id) = existing_session
+            .as_ref()
+            .and_then(|s| s.resolved_conversation_id.as_deref())
+            .map(str::to_string)
+        {
+            (id, "resolved")
+        } else if let Some(id) = existing_session
+            .as_ref()
+            .map(|s| s.conversation_id.trim())
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+        {
+            (id, "stored")
+        } else {
+            (generated_conversation_id.clone(), "generated")
+        };
+    if conversation_id.starts_with("conv-") {
+        verify_acp_conversation_belongs_to_bear(
+            &state,
+            bear.letta_agent_id.as_deref().unwrap_or(""),
+            &conversation_id,
+        )
+        .await
+        .map_err(|err| {
+            let (status, code, message) = acp_error_status_message(&err);
+            ApiError::new(status, code, message)
+        })?;
     }
-    let client = normalize_acp_client(body.client.as_deref());
-    let conversation_id = acp_conversation_id(&client, session_id);
+    let resolved_conversation_id = if conversation_id.starts_with("conv-") {
+        Some(conversation_id.clone())
+    } else if existing_session
+        .as_ref()
+        .is_some_and(|s| s.conversation_id == conversation_id)
+    {
+        existing_session
+            .as_ref()
+            .and_then(|s| s.resolved_conversation_id.clone())
+    } else {
+        None
+    };
     let client_tools = authorized_client_tool_descriptors(
         has_acp_tools_scope,
         &client,
@@ -689,6 +1103,7 @@ async fn prompt_inner(
             acp_session_id: session_id.to_string(),
             codepool_session_id: channel_session_id.clone(),
             conversation_id: conversation_id.clone(),
+            resolved_conversation_id: resolved_conversation_id.clone(),
             client: client.clone(),
             cwd: body
                 .client_context
@@ -714,7 +1129,10 @@ async fn prompt_inner(
         letta_agent_id = %letta_agent_id,
         client = %client,
         codepool_session_id = %channel_session_id,
+        requested_conversation_id = requested_conversation_id.as_deref(),
         codepool_conversation_id = %conversation_id,
+        conversation_selection_source = %conversation_selection_source,
+        resolved_conversation_id = resolved_conversation_id.as_deref(),
         "ACP gateway routing prompt to Codepool"
     );
     let upstream = match state
@@ -1162,6 +1580,21 @@ mod tests {
             normalize_codepool_tool_result_status("timeout").unwrap(),
             "timeout"
         );
+    }
+
+    #[test]
+    fn normalizes_acp_conversation_ids() {
+        assert_eq!(normalize_acp_conversation_id(None).unwrap(), "default");
+        assert_eq!(
+            normalize_acp_conversation_id(Some("conv-abc12345")).unwrap(),
+            "conv-abc12345"
+        );
+        assert_eq!(
+            normalize_acp_conversation_id(Some("new-acp-zed-abc12345")).unwrap(),
+            "new-acp-zed-abc12345"
+        );
+        assert!(normalize_acp_conversation_id(Some("conv-x")).is_err());
+        assert!(normalize_acp_conversation_id(Some("../../etc/passwd")).is_err());
     }
 
     #[test]
