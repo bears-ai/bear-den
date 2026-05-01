@@ -80,9 +80,10 @@ async fn main() {
 async fn run() -> Result<()> {
     let runtime = RuntimeConfig::from_env_and_args()?;
     eprintln!(
-        "bears-acp-adapter: starting version={} git_sha={} conversation_id_mode=default",
+        "bears-acp-adapter: starting version={} build_git_sha={} local_head_sha={} conversation_id_mode=default",
         env!("CARGO_PKG_VERSION"),
-        env!("BEARS_ACP_ADAPTER_GIT_SHA")
+        env!("BEARS_ACP_ADAPTER_GIT_SHA"),
+        env!("BEARS_ACP_ADAPTER_LOCAL_HEAD_SHA")
     );
     if runtime.is_configured() {
         eprintln!("bears-acp-adapter: configuration looks valid");
@@ -294,21 +295,23 @@ fn require_arg_value(flag: &str, value: Option<String>) -> Result<String> {
 
 fn print_version_to_stderr() {
     eprintln!(
-        "bears-acp-adapter {}\nBuild git SHA: {}\nACP conversation id mode: default",
+        "bears-acp-adapter {}\nBuild git SHA: {}\nLocal HEAD SHA: {}\nACP conversation id mode: default",
         env!("CARGO_PKG_VERSION"),
-        env!("BEARS_ACP_ADAPTER_GIT_SHA")
+        env!("BEARS_ACP_ADAPTER_GIT_SHA"),
+        env!("BEARS_ACP_ADAPTER_LOCAL_HEAD_SHA")
     );
 }
 
 fn print_help_to_stderr() {
     eprintln!(
-        "bears-acp-adapter {}\nBuild git SHA: {}\nACP conversation id mode: default\n\n\
+        "bears-acp-adapter {}\nBuild git SHA: {}\nLocal HEAD SHA: {}\nACP conversation id mode: default\n\n\
 Usage: bears-acp-adapter --api-url <url> --bear <slug> [--client zed] [--token-env BEARS_DEN_TOKEN]\n\n\
 Options:\n  --api-url <url>        Den API origin, for example https://api.bears.example\n  --bear <slug>          Bear slug to chat with\n  --token <token>        Den Code token with acp:chat and acp:tools scopes\n  --token-env <env-var>  Read the Den bearer token from this environment variable\n  --client <name>        Client label: zed, opencode, or acp_adapter\n  --check-config         Validate configuration and exit without starting ACP stdio\n  --check-server         Fetch Den /version and exit without starting ACP stdio\n  --version              Show version/build behavior and exit\n  --help                 Show this help\n\n\
 Environment fallbacks:\n  BEARS_DEN_API_URL\n  BEARS_BEAR_SLUG\n  BEARS_DEN_TOKEN\n  BEARS_DEN_TOKEN_ENV\n  BEARS_ACP_CLIENT\n\n\
 BEARS_DEN_API_URL should be the API origin only, not the full /acp/bears/... endpoint.",
         env!("CARGO_PKG_VERSION"),
-        env!("BEARS_ACP_ADAPTER_GIT_SHA")
+        env!("BEARS_ACP_ADAPTER_GIT_SHA"),
+        env!("BEARS_ACP_ADAPTER_LOCAL_HEAD_SHA")
     );
 }
 

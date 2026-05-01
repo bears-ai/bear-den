@@ -8,7 +8,7 @@ fn main() {
     println!("cargo:rerun-if-changed=../../.git/HEAD");
     println!("cargo:rerun-if-changed=../../.git/index");
 
-    let sha = std::env::var("BEARS_ACP_ADAPTER_BUILD_SHA")
+    let build_sha = std::env::var("BEARS_ACP_ADAPTER_BUILD_SHA")
         .ok()
         .filter(|s| !s.trim().is_empty())
         .or_else(|| {
@@ -18,8 +18,10 @@ fn main() {
         })
         .or_else(local_repo_head_sha)
         .unwrap_or_else(|| "unknown".to_string());
+    let local_head_sha = local_repo_head_sha().unwrap_or_else(|| "unavailable".to_string());
 
-    println!("cargo:rustc-env=BEARS_ACP_ADAPTER_GIT_SHA={sha}");
+    println!("cargo:rustc-env=BEARS_ACP_ADAPTER_GIT_SHA={build_sha}");
+    println!("cargo:rustc-env=BEARS_ACP_ADAPTER_LOCAL_HEAD_SHA={local_head_sha}");
 }
 
 fn local_repo_head_sha() -> Option<String> {
