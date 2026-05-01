@@ -88,7 +88,7 @@ async fn main() {
 async fn run() -> Result<()> {
     let mut runtime = RuntimeConfig::from_env_and_args()?;
     eprintln!(
-        "bears-acp-adapter: starting version={} build_git_sha={} local_head_sha={} conversation_id_mode=default",
+        "bears-acp-adapter: starting version={} build_git_sha={} local_head_sha={} ACP sessions=list/resume/load supported",
         env!("CARGO_PKG_VERSION"),
         env!("BEARS_ACP_ADAPTER_GIT_SHA"),
         local_head_sha()
@@ -307,7 +307,7 @@ fn require_arg_value(flag: &str, value: Option<String>) -> Result<String> {
 
 fn print_version_to_stderr() {
     eprintln!(
-        "bears-acp-adapter {}\nBuild git SHA: {}\nLocal HEAD SHA: {}\nACP conversations: bound/resolved when available; loadSession disabled",
+        "bears-acp-adapter {}\nBuild git SHA: {}\nLocal HEAD SHA: {}\nACP sessions: list/resume/load; conversations bound via Den",
         env!("CARGO_PKG_VERSION"),
         env!("BEARS_ACP_ADAPTER_GIT_SHA"),
         local_head_sha()
@@ -327,7 +327,7 @@ fn local_head_sha() -> String {
 
 fn print_help_to_stderr() {
     eprintln!(
-        "bears-acp-adapter {}\nBuild git SHA: {}\nLocal HEAD SHA: {}\nACP conversations: bound/resolved when available; loadSession disabled\n\n\
+        "bears-acp-adapter {}\nBuild git SHA: {}\nLocal HEAD SHA: {}\nACP sessions: list/resume/load; conversations bound via Den\n\n\
 Usage: bears-acp-adapter --api-url <url> --bear <slug> [--client zed] [--token-env BEARS_DEN_TOKEN]\n\n\
 Options:\n  --api-url <url>        Den API origin, for example https://api.bears.example\n  --bear <slug>          Bear slug to chat with\n  --token <token>        Den Code token with acp:chat and acp:tools scopes\n  --token-env <env-var>  Read the Den bearer token from this environment variable\n  --client <name>        Client label: zed, opencode, or acp_adapter\n  --check-config         Validate configuration and exit without starting ACP stdio\n  --check-server         Fetch Den /version and exit without starting ACP stdio\n  --version              Show version/build behavior and exit\n  --help                 Show this help\n\n\
 Environment fallbacks:\n  BEARS_DEN_API_URL\n  BEARS_BEAR_SLUG\n  BEARS_DEN_TOKEN\n  BEARS_DEN_TOKEN_ENV\n  BEARS_ACP_CLIENT\n\n\
@@ -417,6 +417,129 @@ async fn handle_request(
                     })),
                 )
                 .await?;
+            }
+        }
+        "session/list" => {
+            if let Some(id) = request.id.clone() {
+                let Some(config) = runtime.config.as_ref() else {
+                    write_response(
+                        id,
+                        Err(auth_required_error(Some(json!({
+                            "message": runtime.configuration_error_message(),
+                            "problems": runtime.diagnostics,
+                        })))),
+                    )
+                    .await?;
+                    return Ok(());
+                };
+                if let Err(err) = validate_den_code_token(http, config).await {
+                    write_response(
+                        id,
+                        Err(auth_required_error(Some(json!({
+                            "message": format!("BEARS Code token authentication failed: {err:#}"),
+                            "hint": "Generate a fresh Den Code token for this bear."
+                        })))),
+                    )
+                    .await?;
+                    return Ok(());
+                }
+                match den_list_acp_sessions(http, config, &request.params).await {
+                    Ok(den) => {
+                        let mapped = map_den_sessions_list_to_acp(&den);
+                        write_response(id, Ok(mapped)).await?;
+                    }
+                    Err(err) => {
+                        write_response(
+                            id,
+                            Err(json_rpc_error(
+                                -32003,
+                                "BEARS session list failed",
+                                Some(json!({ "message": format!("{err:#}") })),
+                            )),
+                        )
+                        .await?;
+                    }
+                }
+            }
+        }
+        "session/resume" => {
+            if let Some(id) = request.id.clone() {
+                let Some(config) = runtime.config.as_ref() else {
+                    write_response(
+                        id,
+                        Err(auth_required_error(Some(json!({
+                            "message": runtime.configuration_error_message(),
+                            "problems": runtime.diagnostics,
+                        })))),
+                    )
+                    .await?;
+                    return Ok(());
+                };
+                if let Err(err) = validate_den_code_token(http, config).await {
+                    write_response(
+                        id,
+                        Err(auth_required_error(Some(json!({
+                            "message": format!("BEARS Code token authentication failed: {err:#}"),
+                        })))),
+                    )
+                    .await?;
+                    return Ok(());
+                }
+                match restore_session_from_den(http, config, adapter_state, &request.params).await {
+                    Ok(()) => write_response(id, Ok(json!({}))).await?,
+                    Err(err) => {
+                        write_response(
+                            id,
+                            Err(json_rpc_error(
+                                -32003,
+                                "BEARS session resume failed",
+                                Some(json!({ "message": format!("{err:#}") })),
+                            )),
+                        )
+                        .await?;
+                    }
+                }
+            }
+        }
+        "session/load" => {
+            if let Some(id) = request.id.clone() {
+                let Some(config) = runtime.config.as_ref() else {
+                    write_response(
+                        id,
+                        Err(auth_required_error(Some(json!({
+                            "message": runtime.configuration_error_message(),
+                            "problems": runtime.diagnostics,
+                        })))),
+                    )
+                    .await?;
+                    return Ok(());
+                };
+                if let Err(err) = validate_den_code_token(http, config).await {
+                    write_response(
+                        id,
+                        Err(auth_required_error(Some(json!({
+                            "message": format!("BEARS Code token authentication failed: {err:#}"),
+                        })))),
+                    )
+                    .await?;
+                    return Ok(());
+                }
+                match handle_session_load(http, config, adapter_state, id.clone(), &request.params)
+                    .await
+                {
+                    Ok(()) => {}
+                    Err(err) => {
+                        write_response(
+                            id,
+                            Err(json_rpc_error(
+                                -32003,
+                                "BEARS session load failed",
+                                Some(json!({ "message": format!("{err:#}") })),
+                            )),
+                        )
+                        .await?;
+                    }
+                }
             }
         }
         "session/prompt" => {
@@ -644,7 +767,7 @@ fn initialize_result() -> Value {
     json!({
         "protocolVersion": 1,
         "agentCapabilities": {
-            "loadSession": false,
+            "loadSession": true,
             "mcpCapabilities": {
                 "http": false,
                 "sse": false
@@ -655,7 +778,9 @@ fn initialize_result() -> Value {
                 "embeddedContext": true
             },
             "sessionCapabilities": {
-                "close": {}
+                "close": {},
+                "list": {},
+                "resume": {}
             }
         },
         "agentInfo": {
@@ -680,6 +805,321 @@ fn initialize_result() -> Value {
             }
         ]
     })
+}
+
+fn map_den_sessions_list_to_acp(den: &Value) -> Value {
+    let sessions_in = den
+        .get("sessions")
+        .and_then(|s| s.as_array())
+        .cloned()
+        .unwrap_or_default();
+    let mut sessions_out = Vec::new();
+    for s in sessions_in {
+        let session_id = s.get("acp_session_id").and_then(Value::as_str).unwrap_or("");
+        let updated_at = s.get("updated_at").and_then(Value::as_str).unwrap_or("");
+        let cwd = s.get("cwd").and_then(Value::as_str).unwrap_or("").to_string();
+        let mut row = json!({
+            "sessionId": session_id,
+            "updatedAt": updated_at,
+            "cwd": cwd,
+        });
+        if let Some(title) = s
+            .get("resolved_conversation_id")
+            .and_then(Value::as_str)
+            .filter(|t| !t.is_empty())
+            .map(str::to_string)
+            .or_else(|| {
+                s.get("conversation_id")
+                    .and_then(Value::as_str)
+                    .filter(|t| !t.is_empty())
+                    .map(str::to_string)
+            })
+        {
+            row["title"] = json!(title);
+        }
+        row["_meta"] = json!({
+            "conversation_id": s.get("conversation_id"),
+            "resolved_conversation_id": s.get("resolved_conversation_id"),
+            "client": s.get("client"),
+            "closed_at": s.get("closed_at"),
+        });
+        sessions_out.push(row);
+    }
+    let mut result = json!({ "sessions": sessions_out });
+    if let Some(c) = den.get("next_cursor").and_then(Value::as_str) {
+        result["nextCursor"] = json!(c);
+    }
+    result
+}
+
+fn conversation_id_for_history(den_session: &Value) -> Option<String> {
+    if let Some(r) = den_session
+        .get("resolved_conversation_id")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        if r.starts_with("conv-") || r == "default" {
+            return Some(r.to_string());
+        }
+    }
+    if let Some(c) = den_session
+        .get("conversation_id")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        if c.starts_with("conv-") || c == "default" {
+            return Some(c.to_string());
+        }
+    }
+    None
+}
+
+fn session_context_from_den_session(params: &Value, den_session: &Value) -> SessionContext {
+    let mut ctx = session_context_from_params(params);
+    if let Some(dcwd) = den_session
+        .get("cwd")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        if ctx.cwd.is_empty() {
+            ctx.cwd = dcwd.to_string();
+        }
+    }
+    ctx.conversation_id = den_session
+        .get("conversation_id")
+        .and_then(Value::as_str)
+        .map(str::to_string);
+    ctx.resolved_conversation_id = den_session
+        .get("resolved_conversation_id")
+        .and_then(Value::as_str)
+        .map(str::to_string);
+    ctx.raw = json!({
+        "cwd": ctx.cwd.clone(),
+        "workspace_roots": ctx.roots.clone(),
+        "adapter_version": env!("CARGO_PKG_VERSION"),
+        "den_acp_session": den_session.clone(),
+    });
+    ctx
+}
+
+async fn den_list_acp_sessions(
+    http: &reqwest::Client,
+    config: &Config,
+    params: &Value,
+) -> Result<Value> {
+    let mut url = format!(
+        "{}/acp/bears/{}/sessions",
+        config.api_url,
+        urlencoding::encode(&config.bear)
+    );
+    let mut qs = Vec::new();
+    if let Some(cwd) = params
+        .get("cwd")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        qs.push(format!("cwd={}", urlencoding::encode(cwd)));
+    }
+    if let Some(cursor) = params
+        .get("cursor")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        qs.push(format!("cursor={}", urlencoding::encode(cursor)));
+    }
+    if params
+        .get("includeClosed")
+        .or_else(|| params.get("include_closed"))
+        .and_then(Value::as_bool)
+        == Some(true)
+    {
+        qs.push("include_closed=true".to_string());
+    }
+    if !qs.is_empty() {
+        url.push('?');
+        url.push_str(&qs.join("&"));
+    }
+    let response = http
+        .get(&url)
+        .header(
+            AUTHORIZATION,
+            HeaderValue::from_str(&format!("Bearer {}", config.token))?,
+        )
+        .send()
+        .await
+        .with_context(|| format!("list ACP sessions at {url}"))?;
+    let status = response.status();
+    let body = response.text().await.unwrap_or_default();
+    if !status.is_success() {
+        return Err(anyhow!(
+            "Den session list returned HTTP {status}: {}",
+            body.trim()
+        ));
+    }
+    serde_json::from_str(&body).with_context(|| "parse Den session list JSON")
+}
+
+async fn den_get_acp_session(
+    http: &reqwest::Client,
+    config: &Config,
+    session_id: &str,
+) -> Result<Value> {
+    let url = format!(
+        "{}/acp/bears/{}/sessions/{}",
+        config.api_url,
+        urlencoding::encode(&config.bear),
+        urlencoding::encode(session_id),
+    );
+    let response = http
+        .get(&url)
+        .header(
+            AUTHORIZATION,
+            HeaderValue::from_str(&format!("Bearer {}", config.token))?,
+        )
+        .send()
+        .await
+        .with_context(|| format!("get ACP session at {url}"))?;
+    let status = response.status();
+    let body = response.text().await.unwrap_or_default();
+    if !status.is_success() {
+        return Err(anyhow!(
+            "Den get session returned HTTP {status}: {}",
+            body.trim()
+        ));
+    }
+    serde_json::from_str(&body).with_context(|| "parse Den get session JSON")
+}
+
+async fn fetch_conversation_history_chronological(
+    http: &reqwest::Client,
+    config: &Config,
+    conversation_id: &str,
+) -> Result<Vec<(String, String)>> {
+    let mut chunks: Vec<Vec<(String, String)>> = Vec::new();
+    let mut before: Option<String> = None;
+    loop {
+        let mut url = format!(
+            "{}/acp/bears/{}/conversations/{}/history?limit=50",
+            config.api_url,
+            urlencoding::encode(&config.bear),
+            urlencoding::encode(conversation_id),
+        );
+        if let Some(b) = before.as_ref() {
+            url.push_str("&before=");
+            url.push_str(&urlencoding::encode(b));
+        }
+        let response = http
+            .get(&url)
+            .header(
+                AUTHORIZATION,
+                HeaderValue::from_str(&format!("Bearer {}", config.token))?,
+            )
+            .send()
+            .await
+            .with_context(|| format!("get conversation history at {url}"))?;
+        let status = response.status();
+        let body = response.text().await.unwrap_or_default();
+        if !status.is_success() {
+            return Err(anyhow!(
+                "Den history returned HTTP {status}: {}",
+                body.trim()
+            ));
+        }
+        let body: Value = serde_json::from_str(&body).context("parse history JSON")?;
+        let messages = body
+            .get("messages")
+            .and_then(|m| m.as_array())
+            .cloned()
+            .unwrap_or_default();
+        let mut page = Vec::new();
+        for m in messages {
+            let role = m.get("role").and_then(Value::as_str).unwrap_or("");
+            let text = m.get("text").and_then(Value::as_str).unwrap_or("");
+            if text.trim().is_empty() {
+                continue;
+            }
+            page.push((role.to_string(), text.to_string()));
+        }
+        chunks.push(page);
+        let has_more = body.get("has_more").and_then(|v| v.as_bool()).unwrap_or(false);
+        before = body
+            .get("next_before")
+            .and_then(|v| v.as_str())
+            .map(str::to_string);
+        if !has_more {
+            break;
+        }
+        if before.as_ref().map(|s| s.is_empty()).unwrap_or(true) {
+            break;
+        }
+    }
+    Ok(chunks.into_iter().rev().flatten().collect())
+}
+
+async fn restore_session_from_den(
+    http: &reqwest::Client,
+    config: &Config,
+    adapter_state: &mut AdapterState,
+    params: &Value,
+) -> Result<()> {
+    let session_id = params
+        .get("sessionId")
+        .and_then(Value::as_str)
+        .ok_or_else(|| anyhow!("session params missing sessionId"))?;
+    let den = den_get_acp_session(http, config, session_id).await?;
+    let context = session_context_from_den_session(params, &den);
+    adapter_state
+        .session_contexts
+        .insert(session_id.to_string(), context);
+    Ok(())
+}
+
+async fn handle_session_load(
+    http: &reqwest::Client,
+    config: &Config,
+    adapter_state: &mut AdapterState,
+    response_id: Value,
+    params: &Value,
+) -> Result<()> {
+    let session_id = params
+        .get("sessionId")
+        .and_then(Value::as_str)
+        .ok_or_else(|| anyhow!("session/load params missing sessionId"))?;
+    let den = den_get_acp_session(http, config, session_id).await?;
+    let context = session_context_from_den_session(params, &den);
+    adapter_state
+        .session_contexts
+        .insert(session_id.to_string(), context);
+
+    if let Some(conv) = conversation_id_for_history(&den) {
+        let messages = fetch_conversation_history_chronological(http, config, &conv).await?;
+        eprintln!(
+            "bears-acp-adapter: session/load session_id={} replaying {} history messages for conversation_id={}",
+            session_id,
+            messages.len(),
+            conv
+        );
+        for (role, text) in messages {
+            match role.as_str() {
+                "user" => send_user_message_chunk(session_id, &text).await?,
+                "assistant" => send_agent_message_chunk(session_id, &text).await?,
+                _ => {}
+            }
+        }
+    } else {
+        eprintln!(
+            "bears-acp-adapter: session/load session_id={} has no conv-/default history yet (pending new- thread); skipping replay",
+            session_id
+        );
+    }
+
+    write_response(response_id, Ok(Value::Null)).await?;
+    Ok(())
 }
 
 async fn handle_session_close(
@@ -1376,7 +1816,7 @@ async fn request_client_tool_permission(
         event,
     ))
     .await?;
-    let response = wait_for_json_rpc_response(lines, &rpc_id).await?;
+    let response = wait_for_json_rpc_response(lines, &rpc_id, session_id).await?;
     if let Some(error) = response.get("error") {
         return Err(anyhow!("ACP client permission request failed: {error}"));
     }
@@ -1460,6 +1900,7 @@ async fn execute_fs_read_text_file(
         .filter(|s| !s.trim().is_empty())
         .ok_or_else(|| anyhow!("fs/read_text_file requires arguments.path"))?;
     let absolute_path = absolutize_client_path(path, cwd);
+    eprintln!("bears-acp-adapter: requesting fs/read_text_file path={absolute_path}");
     let rpc_id = format!("bears-tool-{}", Uuid::new_v4());
     write_json(json!({
         "jsonrpc": "2.0",
@@ -1471,7 +1912,7 @@ async fn execute_fs_read_text_file(
         }
     }))
     .await?;
-    let response = wait_for_json_rpc_response(lines, &rpc_id).await?;
+    let response = wait_for_json_rpc_response(lines, &rpc_id, session_id).await?;
     if let Some(error) = response.get("error") {
         return Err(anyhow!("ACP client fs/read_text_file failed: {error}"));
     }
@@ -1489,6 +1930,10 @@ async fn execute_fs_write_text_file(
     event: &Value,
 ) -> Result<Value> {
     let arguments = write_text_file_arguments(event, cwd)?;
+    eprintln!(
+        "bears-acp-adapter: requesting fs/write_text_file path={}",
+        arguments.path
+    );
     let rpc_id = format!("bears-tool-{}", Uuid::new_v4());
     write_json(build_write_text_file_request(
         rpc_id.clone(),
@@ -1497,7 +1942,7 @@ async fn execute_fs_write_text_file(
         &arguments.content,
     ))
     .await?;
-    let response = wait_for_json_rpc_response(lines, &rpc_id).await?;
+    let response = wait_for_json_rpc_response(lines, &rpc_id, session_id).await?;
     if let Some(error) = response.get("error") {
         return Err(anyhow!("ACP client fs/write_text_file failed: {error}"));
     }
@@ -1549,6 +1994,7 @@ fn build_write_text_file_request(
 async fn wait_for_json_rpc_response(
     lines: &mut Lines<BufReader<Stdin>>,
     rpc_id: &str,
+    active_session_id: &str,
 ) -> Result<Value> {
     loop {
         let Some(line) = lines
@@ -1565,6 +2011,11 @@ async fn wait_for_json_rpc_response(
             continue;
         }
         let value: Value = serde_json::from_str(line).context("parse ACP client response JSON")?;
+        if is_cancel_for_session(&value, active_session_id) {
+            return Err(anyhow!(
+                "ACP client cancelled session while waiting for {rpc_id}"
+            ));
+        }
         if is_auth_required_noise(&value) {
             eprintln!("bears-acp-adapter: ignoring ACP auth_required response while waiting for tool response");
             continue;
@@ -1580,6 +2031,15 @@ async fn wait_for_json_rpc_response(
             value.get("method").and_then(Value::as_str).unwrap_or("response")
         );
     }
+}
+
+fn is_cancel_for_session(value: &Value, session_id: &str) -> bool {
+    value.get("method").and_then(Value::as_str) == Some("session/cancel")
+        && value
+            .get("params")
+            .and_then(|params| params.get("sessionId"))
+            .and_then(Value::as_str)
+            == Some(session_id)
 }
 
 fn is_auth_required_noise(value: &Value) -> bool {
@@ -2049,5 +2509,36 @@ mod tests {
             .as_deref()
             .or(context.conversation_id.as_deref());
         assert_eq!(selected, Some("conv-resolved12345"));
+    }
+
+    #[test]
+    fn conversation_id_for_history_prefers_resolved_conv() {
+        let v = json!({
+            "conversation_id": "new-acp-zed-x",
+            "resolved_conversation_id": "conv-abc"
+        });
+        assert_eq!(
+            conversation_id_for_history(&v).as_deref(),
+            Some("conv-abc")
+        );
+    }
+
+    #[test]
+    fn map_den_sessions_list_maps_next_cursor() {
+        let den = json!({
+            "sessions": [{
+                "acp_session_id": "s1",
+                "updated_at": "2026-01-01T00:00:00Z",
+                "conversation_id": "conv-x",
+                "resolved_conversation_id": Value::Null,
+                "client": "zed",
+                "cwd": "/tmp"
+            }],
+            "next_cursor": "abc"
+        });
+        let m = map_den_sessions_list_to_acp(&den);
+        assert_eq!(m["nextCursor"], "abc");
+        assert_eq!(m["sessions"][0]["sessionId"], "s1");
+        assert_eq!(m["sessions"][0]["cwd"], "/tmp");
     }
 }

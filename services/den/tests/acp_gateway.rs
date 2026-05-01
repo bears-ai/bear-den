@@ -181,6 +181,46 @@ async fn create_test_user_bear(pool: &sqlx::PgPool, membership: bool) -> TestUse
     }
 }
 
+async fn get_acp_sessions(
+    app: axum::Router,
+    slug: &str,
+    token: Option<&str>,
+    query: Option<&str>,
+) -> axum::response::Response {
+    let uri = match query {
+        Some(q) => format!("/acp/bears/{slug}/sessions?{q}"),
+        None => format!("/acp/bears/{slug}/sessions"),
+    };
+    let mut builder = Request::builder()
+        .method("GET")
+        .uri(uri)
+        .header(header::ACCEPT, "application/json");
+    if let Some(token) = token {
+        builder = builder.header(header::AUTHORIZATION, format!("Bearer {token}"));
+    }
+    app.oneshot(builder.body(Body::empty()).unwrap())
+        .await
+        .expect("ACP sessions list response")
+}
+
+async fn get_acp_session(
+    app: axum::Router,
+    slug: &str,
+    session_id: &str,
+    token: Option<&str>,
+) -> axum::response::Response {
+    let mut builder = Request::builder()
+        .method("GET")
+        .uri(format!("/acp/bears/{slug}/sessions/{session_id}"))
+        .header(header::ACCEPT, "application/json");
+    if let Some(token) = token {
+        builder = builder.header(header::AUTHORIZATION, format!("Bearer {token}"));
+    }
+    app.oneshot(builder.body(Body::empty()).unwrap())
+        .await
+        .expect("ACP session get response")
+}
+
 async fn post_prompt(
     app: axum::Router,
     slug: &str,
@@ -444,4 +484,83 @@ async fn acp_prompt_builds_bear_channel_request_and_maps_sse() {
     assert_eq!(captured["capabilities"]["supports_cancellation"], false);
     assert_eq!(captured["capabilities"]["supports_rich_events"], true);
     assert!(captured["request_id"].as_str().is_some());
+}
+
+#[tokio::test]
+async fn acp_sessions_list_requires_auth() {
+    let fixture = test_app().await;
+    let user_bear = create_test_user_bear(&fixture.pool, true).await;
+
+    let res = get_acp_sessions(fixture.app.clone(), &user_bear.bear_slug, None, None).await;
+    assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
+
+    let ok = get_acp_sessions(
+        fixture.app,
+        &user_bear.bear_slug,
+        Some(&user_bear.raw_token),
+        None,
+    )
+    .await;
+    assert_eq!(ok.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn acp_sessions_list_returns_row_after_prompt() {
+    let fixture = test_app().await;
+    let user_bear = create_test_user_bear(&fixture.pool, true).await;
+    let session_id = "session-bind-list";
+
+    let prompt = post_prompt(
+        fixture.app.clone(),
+        &user_bear.bear_slug,
+        session_id,
+        Some(&user_bear.raw_token),
+        json!({ "message": "yo", "client": "zed" }),
+    )
+    .await;
+    assert_eq!(prompt.status(), StatusCode::OK);
+    let _ = prompt.into_body().collect().await.unwrap();
+
+    let list = get_acp_sessions(
+        fixture.app.clone(),
+        &user_bear.bear_slug,
+        Some(&user_bear.raw_token),
+        None,
+    )
+    .await;
+    assert_eq!(list.status(), StatusCode::OK);
+    let body = list.into_body().collect().await.unwrap().to_bytes();
+    let value: Value = serde_json::from_slice(&body).expect("sessions JSON");
+    let sessions = value["sessions"].as_array().expect("sessions array");
+    assert!(
+        sessions.iter().any(|row| row["acp_session_id"] == session_id),
+        "expected acp_session row for {session_id}: {sessions:?}"
+    );
+
+    let one = get_acp_session(
+        fixture.app,
+        &user_bear.bear_slug,
+        session_id,
+        Some(&user_bear.raw_token),
+    )
+    .await;
+    assert_eq!(one.status(), StatusCode::OK);
+    let one_body = one.into_body().collect().await.unwrap().to_bytes();
+    let row: Value = serde_json::from_slice(&one_body).expect("session JSON");
+    assert_eq!(row["acp_session_id"], session_id);
+}
+
+#[tokio::test]
+async fn acp_session_get_unknown_returns_404() {
+    let fixture = test_app().await;
+    let user_bear = create_test_user_bear(&fixture.pool, true).await;
+
+    let res = get_acp_session(
+        fixture.app,
+        &user_bear.bear_slug,
+        "no-such-session",
+        Some(&user_bear.raw_token),
+    )
+    .await;
+    assert_eq!(res.status(), StatusCode::NOT_FOUND);
 }
