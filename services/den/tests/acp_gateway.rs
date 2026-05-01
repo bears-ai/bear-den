@@ -319,7 +319,6 @@ async fn acp_prompt_builds_bear_channel_request_and_maps_sse() {
         Some(&user_bear.raw_token),
         json!({
             "message": "hello bear",
-            "conversation_id": "client-supplied-is-ignored-for-now",
             "client": "zed"
         }),
     )
