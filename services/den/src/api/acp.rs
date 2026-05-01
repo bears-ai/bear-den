@@ -595,7 +595,9 @@ async fn prompt_inner(
         &body.client_capabilities,
         &body.client_context,
     );
-    if !has_acp_tools_scope && client_supports_read_text_file(&body.client_capabilities) {
+    let missing_tools_scope =
+        !has_acp_tools_scope && client_supports_read_text_file(&body.client_capabilities);
+    if missing_tools_scope {
         tracing::info!(
             %request_id,
             acp_session_id = %session_id,
@@ -696,6 +698,7 @@ async fn prompt_inner(
             conversation_id: conversation_id.clone(),
             request_id,
         },
+        initial_adapter_events(missing_tools_scope),
     );
     let request_id_header = HeaderValue::from_str(&request_id.to_string()).map_err(|_| {
         ApiError::new(
@@ -905,6 +908,26 @@ async fn map_bear_channel_frame_to_acp_adapter_events_with_persistence(
     Ok(out)
 }
 
+fn initial_adapter_events(missing_tools_scope: bool) -> Vec<Bytes> {
+    if !missing_tools_scope {
+        return Vec::new();
+    }
+    vec![Bytes::from(format!(
+        "data: {}\n\n",
+        serde_json::json!({
+            "type": "status",
+            "content": {
+                "type": "text",
+                "text": "ACP local editor tools are unavailable because this token lacks the acp:tools scope. Chat will continue, but the bear cannot request local file reads from this editor session. Generate a new Den Code token to enable local tools."
+            },
+            "diagnostic": {
+                "code": "acp_tools_scope_missing",
+                "required_scope": "acp:tools"
+            }
+        })
+    ))]
+}
+
 struct AcpBearChannelSseStream {
     inner: Pin<Box<dyn Stream<Item = Result<Bytes, reqwest::Error>> + Send>>,
     buffer: Vec<u8>,
@@ -918,11 +941,12 @@ impl AcpBearChannelSseStream {
     fn new(
         inner: impl Stream<Item = Result<Bytes, reqwest::Error>> + Send + 'static,
         context: AcpStreamContext,
+        initial_pending: Vec<Bytes>,
     ) -> Self {
         Self {
             inner: Box::pin(inner),
             buffer: Vec::new(),
-            pending: std::collections::VecDeque::new(),
+            pending: initial_pending.into(),
             context,
             persist_future: None,
         }

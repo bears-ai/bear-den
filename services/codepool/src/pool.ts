@@ -231,6 +231,8 @@ export class ConversationSessionPool {
         };
         if (tools && tools.length > 0) {
             sessionOpts.tools = tools;
+            sessionOpts.allowedTools = tools.map((tool) => tool.name);
+            sessionOpts.permissionMode = "bypassPermissions";
         }
         const cwd = ensure.cwd?.trim();
         if (cwd) {
@@ -322,6 +324,10 @@ export class ConversationSessionPool {
                             };
                         if (opts.tools && opts.tools.length > 0) {
                             sessionOpts.tools = opts.tools;
+                            sessionOpts.allowedTools = opts.tools.map(
+                                (tool) => tool.name,
+                            );
+                            sessionOpts.permissionMode = "bypassPermissions";
                         }
                         const cwd = ensure.cwd?.trim();
                         if (cwd) {
