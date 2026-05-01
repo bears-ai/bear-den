@@ -181,6 +181,21 @@ fn client_supports_read_text_file(client_capabilities: &serde_json::Value) -> bo
             .unwrap_or(false)
 }
 
+fn acp_conversation_id(client: &str, session_id: &str) -> String {
+    format!("new-acp-{client}-{}", stable_session_suffix(session_id))
+}
+
+fn stable_session_suffix(session_id: &str) -> String {
+    session_id
+        .chars()
+        .map(|ch| if ch.is_ascii_alphanumeric() { ch } else { '-' })
+        .collect::<String>()
+        .trim_matches('-')
+        .chars()
+        .take(80)
+        .collect()
+}
+
 fn authorized_client_tool_descriptors(
     has_acp_tools_scope: bool,
     client: &str,
@@ -458,8 +473,8 @@ async fn prompt_inner(
             "ACP gateway ignoring client conversation_id; loadSession is not supported yet"
         );
     }
-    let conversation_id = "default".to_string();
     let client = normalize_acp_client(body.client.as_deref());
+    let conversation_id = acp_conversation_id(&client, session_id);
     let client_tools = authorized_client_tool_descriptors(
         has_acp_tools_scope,
         &client,
