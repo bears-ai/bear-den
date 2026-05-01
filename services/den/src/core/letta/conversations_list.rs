@@ -27,8 +27,8 @@ pub struct AgentConversationsSnapshot {
     pub active: Vec<LettaConversationRow>,
     /// All rows including archived, newest activity first.
     pub all: Vec<LettaConversationRow>,
-    /// True if Letta returned at least one archived `conv-…` thread.
-    pub has_archived: bool,
+    /// Number of archived `conv-…` threads returned by Letta.
+    pub archived_count: usize,
 }
 
 pub fn letta_conversations_top_array<'a>(v: &'a Value) -> &'a [Value] {
@@ -63,13 +63,35 @@ fn letta_messages_top_array<'a>(v: &'a Value) -> &'a [Value] {
     &[]
 }
 
+fn value_has_true_flag(v: &Value, key: &str) -> bool {
+    v.get(key).and_then(|x| x.as_bool()) == Some(true)
+        || v.get(key).and_then(|x| x.as_str()) == Some("true")
+}
+
+fn object_marks_archived(v: &Value) -> bool {
+    value_has_true_flag(v, "archived")
+        || value_has_true_flag(v, "is_archived")
+        || value_has_true_flag(v, "deleted")
+        || value_has_true_flag(v, "hidden")
+        || v.get("archived_at").is_some_and(|x| !x.is_null())
+        || v.get("status")
+            .and_then(|x| x.as_str())
+            .is_some_and(|s| s.eq_ignore_ascii_case("archived"))
+}
+
 /// Hide rows that look archived (Letta may extend the schema; Den may add flags later).
 pub fn conversation_is_archived(v: &Value) -> bool {
-    v.get("archived").and_then(|x| x.as_bool()) == Some(true)
-        || v.get("is_archived").and_then(|x| x.as_bool()) == Some(true)
-        || v.get("deleted").and_then(|x| x.as_bool()) == Some(true)
-        || v.get("hidden").and_then(|x| x.as_bool()) == Some(true)
-        || v.get("status").and_then(|x| x.as_str()) == Some("archived")
+    object_marks_archived(v)
+        || v.get("metadata").is_some_and(object_marks_archived)
+        || v.get("attributes").is_some_and(object_marks_archived)
+        || v.get("tags")
+            .and_then(|x| x.as_array())
+            .is_some_and(|tags| {
+                tags.iter().any(|tag| {
+                    tag.as_str()
+                        .is_some_and(|s| s.eq_ignore_ascii_case("archived"))
+                })
+            })
 }
 
 pub fn cmp_conversation_row_newest_first(
@@ -126,7 +148,7 @@ pub async fn load_agent_conversations(
     agent_id: &str,
 ) -> AgentConversationsSnapshot {
     let mut rows: Vec<LettaConversationRow> = Vec::new();
-    let mut has_archived = false;
+    let mut archived_count = 0usize;
 
     let default_last = match letta
         .list_conversation_messages("default", Some(agent_id), 1, None, false)
@@ -160,7 +182,7 @@ pub async fn load_agent_conversations(
             return AgentConversationsSnapshot {
                 active,
                 all: rows,
-                has_archived: false,
+                archived_count: 0,
             };
         }
     };
@@ -183,7 +205,7 @@ pub async fn load_agent_conversations(
 
         let archived = conversation_is_archived(item);
         if archived {
-            has_archived = true;
+            archived_count += 1;
         }
 
         let last_message_at = item
@@ -211,6 +233,6 @@ pub async fn load_agent_conversations(
     AgentConversationsSnapshot {
         active,
         all,
-        has_archived,
+        archived_count,
     }
 }

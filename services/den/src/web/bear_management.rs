@@ -448,7 +448,7 @@ async fn render_bear_details_page(
         (None, None, None)
     };
 
-    let (conversation_rows, has_archived_conversations) = if letta_configured {
+    let (conversation_rows, archived_conversation_count) = if letta_configured {
         if let Some(agent_id) = bear
             .letta_agent_id
             .as_deref()
@@ -456,7 +456,7 @@ async fn render_bear_details_page(
             .filter(|s| !s.is_empty())
         {
             let snap = load_agent_conversations(state.letta.as_ref(), agent_id).await;
-            let has_archived = snap.has_archived;
+            let archived_count = snap.archived_count;
             let rows: Vec<DetailsConvRow> = snap
                 .active
                 .into_iter()
@@ -480,12 +480,12 @@ async fn render_bear_details_page(
                     }
                 })
                 .collect();
-            (rows, has_archived)
+            (rows, archived_count)
         } else {
-            (Vec::new(), false)
+            (Vec::new(), 0)
         }
     } else {
-        (Vec::new(), false)
+        (Vec::new(), 0)
     };
 
     let letta_tool_ids_display = if bear.letta_tool_ids.0.is_empty() {
@@ -566,7 +566,7 @@ async fn render_bear_details_page(
             letta_drift,
             letta_tool_ids_display,
             conversation_rows,
-            has_archived_conversations,
+            archived_conversation_count,
             letta_resync_notice,
             mem_private_files,
             mem_private_error,

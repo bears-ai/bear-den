@@ -1236,12 +1236,29 @@ block head %} {{ super() }}
                         patchConversation(row.id, { archived: true }).then(
                             function (data) {
                                 if (data && data.__den_skip) return;
+                                DEN_CONVERSATIONS = DEN_CONVERSATIONS.filter(
+                                    function (candidate) {
+                                        return (
+                                            candidate && candidate.id !== row.id
+                                        );
+                                    },
+                                );
+                                if (
+                                    DEN_PENDING_CONVERSATION &&
+                                    DEN_PENDING_CONVERSATION.id === row.id
+                                ) {
+                                    DEN_PENDING_CONVERSATION = null;
+                                }
                                 if (row.id === CONVERSATION_ID) {
                                     PREFERRED_CONVERSATION_ID = "default";
+                                    CONVERSATION_ID = "default";
+                                    syncConversationUrl(CONVERSATION_ID);
+                                    renderConversationTabs();
                                     loadConversations().then(function () {
                                         remountDeepChat();
                                     });
                                 } else {
+                                    renderConversationTabs();
                                     loadConversations();
                                 }
                                 closeConversationMenu();

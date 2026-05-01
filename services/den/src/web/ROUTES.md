@@ -37,7 +37,7 @@ Axum routes for the web server (`RUN_WEB=true`). Update this file when you add o
 - `GET|POST /bear/{slug}/details/edit/prompt` — edit system prompt only (bear admins)
 - `GET|POST /bear/{slug}/details/edit/configuration` — edit model, Letta agent type, tool ids (bear admins)
 - `GET /bear/{slug}/details/access` — manage members (add/remove); bear admins only
-- `GET /bear/{slug}/details/conversations` — all conversations including archived (Letta); membership required
+- `GET /bear/{slug}/details/conversations` — all threads including archived (Letta); membership required
 - `GET /bear/{slug}/details/memory` — memory block details from Letta
 - `POST /bear/{slug}/details/delete` — delete bear row (bear admins only); form field `confirm_slug` must match the slug
 - `POST /bear/{slug}/details/members/add` — add or update a user by username (`username`, `role` = `member` or `admin`) — bear admins only

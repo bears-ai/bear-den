@@ -126,12 +126,18 @@ block subnav %}
                     <li class="caption">No conversations yet.</li>
                     {% endfor %}
                 </ul>
-                {% if has_archived_conversations %}
+                {% if archived_conversation_count and archived_conversation_count > 0 %}
+                <p class="form-hint">
+                    {{ archived_conversation_count }} archived thread{% if archived_conversation_count != 1 %}s{% endif %}.
+                    <a href="/bear/{{ bear.slug | e }}/details/conversations"
+                        >All threads</a
+                    >
+                </p>
+                {% else %}
                 <p class="form-hint">
                     <a href="/bear/{{ bear.slug | e }}/details/conversations"
-                        >All conversations</a
+                        >All threads</a
                     >
-                    (includes archived)
                 </p>
                 {% endif %} {% endif %}
             </div>
