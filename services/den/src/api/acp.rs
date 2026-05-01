@@ -507,7 +507,7 @@ fn authorized_client_tool_descriptors(
         "client_context": client_context,
     }));
     }
-    if client_supports_write_text_file(client_capabilities) {
+    if acp_write_tools_enabled() && client_supports_write_text_file(client_capabilities) {
         descriptors.push(serde_json::json!({
             "id": "acp_fs_write_text_file",
             "name": "acp_fs_write_text_file",
@@ -552,6 +552,18 @@ fn authorized_client_tool_descriptors(
         }));
     }
     descriptors
+}
+
+fn acp_write_tools_enabled() -> bool {
+    std::env::var("ACP_WRITE_TOOLS_ENABLED")
+        .ok()
+        .map(|value| {
+            matches!(
+                value.trim().to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes" | "on"
+            )
+        })
+        .unwrap_or(false)
 }
 
 async fn prompt(
@@ -1654,6 +1666,7 @@ mod tests {
 
     #[test]
     fn builds_write_text_file_descriptor_only_when_authorized_and_supported() {
+        std::env::set_var("ACP_WRITE_TOOLS_ENABLED", "true");
         let caps = serde_json::json!({ "fs": { "writeTextFile": true } });
         let context = serde_json::json!({ "cwd": "/tmp/workspace" });
         let descriptors = authorized_client_tool_descriptors(true, "zed", &caps, &context);
@@ -1688,6 +1701,7 @@ mod tests {
 
     #[test]
     fn builds_read_and_write_descriptors_together() {
+        std::env::set_var("ACP_WRITE_TOOLS_ENABLED", "true");
         let caps = serde_json::json!({ "fs": { "readTextFile": true, "writeTextFile": true } });
         let context = serde_json::json!({ "cwd": "/tmp/workspace" });
         let descriptors = authorized_client_tool_descriptors(true, "zed", &caps, &context);

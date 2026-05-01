@@ -44,15 +44,19 @@ function isMissingConversationError(err: unknown): boolean {
 }
 
 function toolsSignature(tools?: AnyAgentTool[]): string {
-    return (tools ?? [])
-        .map((tool) => tool.name)
-        .sort()
-        .join(",");
+    // Letta Code sessions cannot reliably hot-swap external tools mid-conversation.
+    // Use a stable signature so adding newly advertised capabilities (for example
+    // write support after read support) does not close a working ACP conversation.
+    // Fresh ACP sessions still receive the current full tool list at creation time.
+    return (tools ?? []).length > 0 ? "acp-client-tools" : "";
 }
 
 function canUseRegisteredTool(tools: AnyAgentTool[]) {
     const allowed = new Set(tools.map((tool) => tool.name));
     return async (toolName: string) => {
+        if (toolName.startsWith("acp_")) {
+            return { behavior: "allow" as const };
+        }
         if (allowed.has(toolName)) {
             return { behavior: "allow" as const };
         }
