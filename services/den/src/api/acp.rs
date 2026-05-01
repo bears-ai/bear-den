@@ -244,7 +244,7 @@ fn authorized_client_tool_descriptors(
         "scope": "client_connection",
         "client": client,
         "permissions": ["filesystem", "read"],
-        "approval_policy": "on_sensitive_action",
+        "approval_policy": "never",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -1111,6 +1111,7 @@ mod tests {
         assert_eq!(descriptors.len(), 1);
         assert_eq!(descriptors[0]["name"], "acp_fs_read_text_file");
         assert_eq!(descriptors[0]["acp"]["method"], "fs/read_text_file");
+        assert_eq!(descriptors[0]["approval_policy"], "never");
 
         assert!(authorized_client_tool_descriptors(false, "zed", &caps, &context).is_empty());
         assert!(authorized_client_tool_descriptors(

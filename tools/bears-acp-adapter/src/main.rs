@@ -70,6 +70,7 @@ impl ServerVersion {
 #[derive(Default)]
 struct SseFrameOutcome {
     saw_done: bool,
+    saw_assistant_output: bool,
     upstream_errors: Vec<String>,
 }
 
@@ -760,6 +761,7 @@ async fn handle_prompt(
     }
 
     let mut saw_done = false;
+    let mut saw_assistant_output = false;
     let mut upstream_errors = Vec::new();
     let mut buffer = Vec::<u8>::new();
     let mut stream = response.bytes_stream();
@@ -770,6 +772,7 @@ async fn handle_prompt(
             let frame: Vec<u8> = buffer.drain(..pos + 2).collect();
             let outcome = handle_sse_frame(http, config, lines, session_id, &cwd, &frame).await?;
             saw_done |= outcome.saw_done;
+            saw_assistant_output |= outcome.saw_assistant_output;
             upstream_errors.extend(outcome.upstream_errors);
         }
     }
@@ -777,14 +780,22 @@ async fn handle_prompt(
         let frame = std::mem::take(&mut buffer);
         let outcome = handle_sse_frame(http, config, lines, session_id, &cwd, &frame).await?;
         saw_done |= outcome.saw_done;
+        saw_assistant_output |= outcome.saw_assistant_output;
         upstream_errors.extend(outcome.upstream_errors);
     }
 
     if !upstream_errors.is_empty() {
-        return Err(anyhow!(
-            "BEARS upstream stream reported error: {}",
-            upstream_errors.join("; ")
-        ));
+        if saw_assistant_output {
+            eprintln!(
+                "bears-acp-adapter: ignoring upstream error after assistant output: {}",
+                upstream_errors.join("; ")
+            );
+        } else {
+            return Err(anyhow!(
+                "BEARS upstream stream reported error: {}",
+                upstream_errors.join("; ")
+            ));
+        }
     }
 
     let stop_reason = if saw_done { "end_turn" } else { "end_turn" };
@@ -1104,8 +1115,17 @@ async fn handle_sse_frame(
             continue;
         }
         let event: Value = serde_json::from_str(data).context("parse Den SSE event JSON")?;
-        if event.get("type").and_then(Value::as_str) == Some("error") {
-            outcome.upstream_errors.push(format_den_event_error(&event));
+        match event.get("type").and_then(Value::as_str) {
+            Some("agent_message_chunk") => {
+                let text = event
+                    .get("content")
+                    .and_then(|c| c.get("text"))
+                    .and_then(Value::as_str)
+                    .unwrap_or("");
+                outcome.saw_assistant_output |= !text.is_empty();
+            }
+            Some("error") => outcome.upstream_errors.push(format_den_event_error(&event)),
+            _ => {}
         }
         outcome.saw_done |= handle_den_event(http, config, lines, session_id, cwd, &event).await?;
     }
