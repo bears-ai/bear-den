@@ -245,6 +245,54 @@ export function extractUpstreamErrorSummary(value: unknown): {
     return { message, detail, error_type, param, code };
 }
 
+function stringField(
+    obj: Record<string, unknown>,
+    key: string,
+): string | undefined {
+    const value = obj[key];
+    return typeof value === "string" && value.trim() ? value : undefined;
+}
+
+function approvalToolNamesFromUnknown(
+    value: unknown,
+    out: Set<string>,
+    depth = 0,
+): void {
+    if (!value || depth > 5) return;
+    if (Array.isArray(value)) {
+        for (const item of value)
+            approvalToolNamesFromUnknown(item, out, depth + 1);
+        return;
+    }
+    if (typeof value !== "object") return;
+    const obj = value as Record<string, unknown>;
+    for (const key of ["name", "tool_name", "toolName"]) {
+        const name = stringField(obj, key);
+        if (name) out.add(name);
+    }
+    for (const key of ["tool_call", "tool_calls", "function", "input"]) {
+        approvalToolNamesFromUnknown(obj[key], out, depth + 1);
+    }
+}
+
+export function summarizeApprovalRequestEvent(ev: Record<string, unknown>): {
+    tool_names: string[];
+    preview: string;
+} {
+    const names = new Set<string>();
+    approvalToolNamesFromUnknown(ev.tool_call, names);
+    approvalToolNamesFromUnknown(ev.tool_calls, names);
+    return {
+        tool_names: [...names].sort(),
+        preview: JSON.stringify({
+            id: ev.id,
+            step_id: ev.step_id,
+            tool_call: ev.tool_call,
+            tool_calls: ev.tool_calls,
+        }).slice(0, 1200),
+    };
+}
+
 function llmApiErrorDetail(ev: Record<string, unknown>): string {
     const summary = extractUpstreamErrorSummary(ev);
     const parts = [
@@ -307,6 +355,9 @@ export function sdkMessageToBearChannelEvents(
             ];
         case "stream_event": {
             const ev = msg.event as Record<string, unknown>;
+            if (ev.message_type === "approval_request_message") {
+                return [];
+            }
             if (typeof ev.message_type === "string") {
                 if (ev.message_type === "assistant_message") {
                     return [

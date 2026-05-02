@@ -111,6 +111,9 @@ Acceptance:
   - Added Codepool logs when ACP external tools emit requests and when their waiter receives results.
   - Made ACP client tool timeout configurable with `ACP_CLIENT_TOOL_TIMEOUT_MS` and lowered default to 15s while debugging repeated-turn stalls.
   - Added bounded `recoverPendingApprovals` attempt when Letta Code emits `approval_request_message` during a streaming turn. Logs `letta_code_approval_request_recovery` and the recovery result/error.
+  - Moved approval recovery behind `ACP_APPROVAL_RECOVERY_ENABLED` (default false) to reduce control-traffic noise during ACP tool debugging.
+  - Added dedicated `letta_code_approval_request_event` logging with extracted approval tool names and a redacted/truncated preview.
+  - Added ACP strict client-tools mode (`ACP_STRICT_CLIENT_TOOLS`, default true) to deny Codepool-local filesystem tools and steer workspace access to ACP client tools.
 - Began Phase 3 Den continuation diagnostics:
   - Den now deserializes Codepool `reason` and `runtime_id` fields.
   - Den tool-result response now includes `reason` and `runtime_id` for adapter/proxy-visible diagnostics.

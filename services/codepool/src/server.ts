@@ -15,6 +15,7 @@ import {
     parseBearChannelRequest,
     runtimeErrorContext,
     sdkMessageToBearChannelEvents,
+    summarizeApprovalRequestEvent,
     summarizeSdkMessageForDiagnostics,
     type BearChannelRequest,
 } from "./bear-channel.js";
@@ -541,6 +542,27 @@ export function attachRoutes(
                     );
                     sdkMessageTypes[msgType] =
                         (sdkMessageTypes[msgType] ?? 0) + 1;
+                    if (msgType === "stream_event") {
+                        const ev = (msg as { event?: unknown }).event;
+                        if (
+                            ev &&
+                            typeof ev === "object" &&
+                            (ev as { message_type?: unknown }).message_type ===
+                                "approval_request_message"
+                        ) {
+                            const summary = summarizeApprovalRequestEvent(
+                                ev as Record<string, unknown>,
+                            );
+                            logger.warn("Letta Code approval request event", {
+                                event: "letta_code_approval_request_event",
+                                request_id: requestId,
+                                session_id: sessionId,
+                                conversation_id: parsed.conversationId,
+                                tool_names: summary.tool_names,
+                                preview: summary.preview,
+                            });
+                        }
+                    }
                     const events = sdkMessageToBearChannelEvents(msg);
                     if (
                         msgType === "stream_event" &&
