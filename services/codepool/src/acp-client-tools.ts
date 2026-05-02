@@ -2,6 +2,7 @@ import type { AnyAgentTool, AgentToolResult } from "@letta-ai/letta-code-sdk";
 import { randomUUID } from "node:crypto";
 import type { BearChannelEvent } from "./bear-channel.js";
 import type { AcpToolResultRegistry } from "./acp-tool-results.js";
+import { logger } from "./logger.js";
 
 export type AcpClientToolDescriptor = {
     name?: unknown;
@@ -17,7 +18,9 @@ export type AcpClientToolRuntimeContext = {
     request_id: string;
 };
 
-const DEFAULT_TIMEOUT_MS = 30_000;
+const DEFAULT_TIMEOUT_MS = Number(
+    process.env.ACP_CLIENT_TOOL_TIMEOUT_MS || "15000",
+);
 
 export function parseAcpClientTools(
     capabilities:
@@ -97,6 +100,18 @@ function toAgentTool(
         ) => {
             const context = getContext();
             const callId = toolCallId?.trim() || randomUUID();
+            logger.info("ACP client tool request emitted", {
+                event: "acp_client_tool_request_emit",
+                request_id: context.request_id,
+                session_id: context.session_id,
+                conversation_id: context.conversation_id,
+                call_id: callId,
+                tool_name: name,
+                arg_keys:
+                    args && typeof args === "object"
+                        ? Object.keys(args as Record<string, unknown>).sort()
+                        : [],
+            });
             emit({
                 type: "client_tool_request",
                 request_id: context.request_id,
@@ -122,6 +137,17 @@ function toAgentTool(
                 signal,
                 toolName: name,
                 conversationId: context.conversation_id,
+            });
+            logger.info("ACP client tool result received by Codepool", {
+                event: "acp_client_tool_result_received",
+                request_id: context.request_id,
+                session_id: context.session_id,
+                conversation_id: context.conversation_id,
+                call_id: callId,
+                tool_name: name,
+                status: payload.status,
+                has_result: payload.result !== undefined,
+                has_error: payload.error !== undefined,
             });
             if (payload.status === "ok") {
                 return jsonTextResult(payload.result ?? {});
