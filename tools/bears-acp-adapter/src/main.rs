@@ -9,7 +9,10 @@ use std::{
     path::{Path, PathBuf},
     process::Command,
 };
-use tokio::io::{self, AsyncBufReadExt, AsyncWriteExt, BufReader, Lines, Stdin};
+use tokio::{
+    io::{self, AsyncBufReadExt, AsyncWriteExt, BufReader},
+    sync::mpsc,
+};
 use uuid::Uuid;
 
 #[derive(Clone, Debug)]
@@ -44,6 +47,11 @@ struct SessionContext {
     raw: Value,
     conversation_id: Option<String>,
     resolved_conversation_id: Option<String>,
+}
+
+#[derive(Debug)]
+struct InboundMessage {
+    value: Value,
 }
 
 #[derive(Debug)]
@@ -113,18 +121,13 @@ async fn run() -> Result<()> {
         return Ok(());
     }
 
-    let stdin = BufReader::new(io::stdin());
-    let mut lines = stdin.lines();
+    let (inbound_tx, mut inbound_rx) = mpsc::channel::<InboundMessage>(128);
+    tokio::spawn(read_stdin_messages(inbound_tx));
 
     let mut adapter_state = AdapterState::default();
 
-    while let Some(line) = lines.next_line().await.context("read stdin")? {
-        let line = line.trim();
-        if line.is_empty() {
-            continue;
-        }
-
-        let request = match parse_request(line) {
+    while let Some(message) = inbound_rx.recv().await {
+        let request = match request_from_value(message.value) {
             Ok(request) => request,
             Err(err) => {
                 write_response(
@@ -140,8 +143,14 @@ async fn run() -> Result<()> {
             }
         };
 
-        if let Err(err) =
-            handle_request(&http, &mut runtime, &mut adapter_state, &mut lines, request).await
+        if let Err(err) = handle_request(
+            &http,
+            &mut runtime,
+            &mut adapter_state,
+            &mut inbound_rx,
+            request,
+        )
+        .await
         {
             eprintln!("bears-acp-adapter: request handling failed: {err:#}");
         }
@@ -346,8 +355,45 @@ fn normalize_client(raw: &str) -> String {
     }
 }
 
-fn parse_request(line: &str) -> Result<JsonRpcRequest> {
-    let value: Value = serde_json::from_str(line)?;
+async fn read_stdin_messages(tx: mpsc::Sender<InboundMessage>) {
+    let stdin = BufReader::new(io::stdin());
+    let mut lines = stdin.lines();
+    loop {
+        match lines.next_line().await {
+            Ok(Some(line)) => {
+                let line = line.trim();
+                if line.is_empty() {
+                    continue;
+                }
+                match serde_json::from_str::<Value>(line) {
+                    Ok(value) => {
+                        if tx.send(InboundMessage { value }).await.is_err() {
+                            break;
+                        }
+                    }
+                    Err(err) => {
+                        let _ = write_response(
+                            None,
+                            Err(json_rpc_error(
+                                -32700,
+                                "Parse error",
+                                Some(json!(err.to_string())),
+                            )),
+                        )
+                        .await;
+                    }
+                }
+            }
+            Ok(None) => break,
+            Err(err) => {
+                eprintln!("bears-acp-adapter: failed to read stdin: {err:#}");
+                break;
+            }
+        }
+    }
+}
+
+fn request_from_value(value: Value) -> Result<JsonRpcRequest> {
     let method = value
         .get("method")
         .and_then(Value::as_str)
@@ -362,7 +408,7 @@ async fn handle_request(
     http: &reqwest::Client,
     runtime: &mut RuntimeConfig,
     adapter_state: &mut AdapterState,
-    lines: &mut Lines<BufReader<Stdin>>,
+    inbound_rx: &mut mpsc::Receiver<InboundMessage>,
     request: JsonRpcRequest,
 ) -> Result<()> {
     match request.method.as_str() {
@@ -598,7 +644,7 @@ async fn handle_request(
                     http,
                     config,
                     adapter_state,
-                    lines,
+                    inbound_rx,
                     id.clone(),
                     request.params,
                 )
@@ -1343,7 +1389,7 @@ async fn handle_prompt(
     http: &reqwest::Client,
     config: &Config,
     adapter_state: &mut AdapterState,
-    lines: &mut Lines<BufReader<Stdin>>,
+    inbound_rx: &mut mpsc::Receiver<InboundMessage>,
     response_id: Value,
     params: Value,
 ) -> Result<()> {
@@ -1420,9 +1466,16 @@ async fn handle_prompt(
         buffer.extend_from_slice(&chunk);
         while let Some(pos) = buffer.windows(2).position(|w| w == b"\n\n") {
             let frame: Vec<u8> = buffer.drain(..pos + 2).collect();
-            let outcome =
-                handle_sse_frame(http, config, adapter_state, lines, session_id, &cwd, &frame)
-                    .await?;
+            let outcome = handle_sse_frame(
+                http,
+                config,
+                adapter_state,
+                inbound_rx,
+                session_id,
+                &cwd,
+                &frame,
+            )
+            .await?;
             saw_done |= outcome.saw_done;
             saw_assistant_output |= outcome.saw_assistant_output;
             upstream_errors.extend(outcome.upstream_errors);
@@ -1430,8 +1483,16 @@ async fn handle_prompt(
     }
     if !buffer.is_empty() {
         let frame = std::mem::take(&mut buffer);
-        let outcome =
-            handle_sse_frame(http, config, adapter_state, lines, session_id, &cwd, &frame).await?;
+        let outcome = handle_sse_frame(
+            http,
+            config,
+            adapter_state,
+            inbound_rx,
+            session_id,
+            &cwd,
+            &frame,
+        )
+        .await?;
         saw_done |= outcome.saw_done;
         saw_assistant_output |= outcome.saw_assistant_output;
         upstream_errors.extend(outcome.upstream_errors);
@@ -1765,7 +1826,7 @@ async fn handle_sse_frame(
     http: &reqwest::Client,
     config: &Config,
     adapter_state: &mut AdapterState,
-    lines: &mut Lines<BufReader<Stdin>>,
+    inbound_rx: &mut mpsc::Receiver<InboundMessage>,
     session_id: &str,
     cwd: &str,
     frame: &[u8],
@@ -1793,8 +1854,16 @@ async fn handle_sse_frame(
             Some("error") => outcome.upstream_errors.push(format_den_event_error(&event)),
             _ => {}
         }
-        outcome.saw_done |=
-            handle_den_event(http, config, adapter_state, lines, session_id, cwd, &event).await?;
+        outcome.saw_done |= handle_den_event(
+            http,
+            config,
+            adapter_state,
+            inbound_rx,
+            session_id,
+            cwd,
+            &event,
+        )
+        .await?;
     }
     Ok(outcome)
 }
@@ -1823,7 +1892,7 @@ async fn handle_den_event(
     http: &reqwest::Client,
     config: &Config,
     adapter_state: &mut AdapterState,
-    lines: &mut Lines<BufReader<Stdin>>,
+    inbound_rx: &mut mpsc::Receiver<InboundMessage>,
     session_id: &str,
     cwd: &str,
     event: &Value,
@@ -1877,7 +1946,7 @@ async fn handle_den_event(
         }
         "client_tool_request" => {
             send_client_tool_call_update(session_id, event).await?;
-            execute_and_post_client_tool_result(http, config, lines, session_id, cwd, event)
+            execute_and_post_client_tool_result(http, config, inbound_rx, session_id, cwd, event)
                 .await?;
             Ok(false)
         }
@@ -1889,7 +1958,7 @@ async fn handle_den_event(
 async fn execute_and_post_client_tool_result(
     http: &reqwest::Client,
     config: &Config,
-    lines: &mut Lines<BufReader<Stdin>>,
+    inbound_rx: &mut mpsc::Receiver<InboundMessage>,
     session_id: &str,
     cwd: &str,
     event: &Value,
@@ -1913,10 +1982,13 @@ async fn execute_and_post_client_tool_result(
 
     send_client_tool_progress_update(session_id, call_id, tool_name, event).await?;
     let tool_result = match tool_name {
-        "acp_fs_read_text_file" => execute_fs_read_text_file(lines, session_id, cwd, event).await,
+        "acp_fs_read_text_file" => {
+            execute_fs_read_text_file(inbound_rx, session_id, cwd, event).await
+        }
         "acp_fs_write_text_file" => {
-            request_client_tool_permission(lines, session_id, call_id, tool_name, event).await?;
-            execute_fs_write_text_file(lines, session_id, cwd, event).await
+            request_client_tool_permission(inbound_rx, session_id, call_id, tool_name, event)
+                .await?;
+            execute_fs_write_text_file(inbound_rx, session_id, cwd, event).await
         }
         other => Err(anyhow!("unsupported ACP client tool: {other}")),
     };
@@ -1976,7 +2048,7 @@ async fn execute_and_post_client_tool_result(
 }
 
 async fn request_client_tool_permission(
-    lines: &mut Lines<BufReader<Stdin>>,
+    inbound_rx: &mut mpsc::Receiver<InboundMessage>,
     session_id: &str,
     call_id: &str,
     tool_name: &str,
@@ -2000,7 +2072,7 @@ async fn request_client_tool_permission(
         event,
     ))
     .await?;
-    let response = wait_for_json_rpc_response(lines, &rpc_id, session_id).await?;
+    let response = wait_for_json_rpc_response(inbound_rx, &rpc_id, session_id).await?;
     if let Some(error) = response.get("error") {
         return Err(anyhow!("ACP client permission request failed: {error}"));
     }
@@ -2072,7 +2144,7 @@ fn permission_prompt_text(tool_name: &str, event: &Value) -> String {
 }
 
 async fn execute_fs_read_text_file(
-    lines: &mut Lines<BufReader<Stdin>>,
+    inbound_rx: &mut mpsc::Receiver<InboundMessage>,
     session_id: &str,
     cwd: &str,
     event: &Value,
@@ -2096,7 +2168,7 @@ async fn execute_fs_read_text_file(
         }
     }))
     .await?;
-    let response = wait_for_json_rpc_response(lines, &rpc_id, session_id).await?;
+    let response = wait_for_json_rpc_response(inbound_rx, &rpc_id, session_id).await?;
     if let Some(error) = response.get("error") {
         return Err(anyhow!("ACP client fs/read_text_file failed: {error}"));
     }
@@ -2108,7 +2180,7 @@ async fn execute_fs_read_text_file(
 }
 
 async fn execute_fs_write_text_file(
-    lines: &mut Lines<BufReader<Stdin>>,
+    inbound_rx: &mut mpsc::Receiver<InboundMessage>,
     session_id: &str,
     cwd: &str,
     event: &Value,
@@ -2126,7 +2198,7 @@ async fn execute_fs_write_text_file(
         &arguments.content,
     ))
     .await?;
-    let response = wait_for_json_rpc_response(lines, &rpc_id, session_id).await?;
+    let response = wait_for_json_rpc_response(inbound_rx, &rpc_id, session_id).await?;
     if let Some(error) = response.get("error") {
         return Err(anyhow!("ACP client fs/write_text_file failed: {error}"));
     }
@@ -2176,25 +2248,17 @@ fn build_write_text_file_request(
 }
 
 async fn wait_for_json_rpc_response(
-    lines: &mut Lines<BufReader<Stdin>>,
+    inbound_rx: &mut mpsc::Receiver<InboundMessage>,
     rpc_id: &str,
     active_session_id: &str,
 ) -> Result<Value> {
     loop {
-        let Some(line) = lines
-            .next_line()
-            .await
-            .context("read stdin for ACP tool response")?
-        else {
+        let Some(message) = inbound_rx.recv().await else {
             return Err(anyhow!(
                 "ACP client closed stdin while waiting for {rpc_id}"
             ));
         };
-        let line = line.trim();
-        if line.is_empty() {
-            continue;
-        }
-        let value: Value = serde_json::from_str(line).context("parse ACP client response JSON")?;
+        let value = message.value;
         if is_cancel_for_session(&value, active_session_id) {
             return Err(anyhow!(
                 "ACP client cancelled session while waiting for {rpc_id}"

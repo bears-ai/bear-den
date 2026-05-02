@@ -97,3 +97,12 @@ Acceptance:
   - Preserved current sequential request handling while removing duplicate stdin readers.
   - Adapter compiles after this intermediate step.
   - Remaining Phase 1 work: true concurrent pending response map/oneshot dispatcher, cancellation propagation to active prompt, and tests/manual Zed verification.
+- Began Phase 2 Codepool waiter diagnostics:
+  - Added waiter metadata and `listWaiters()`.
+  - Changed `deliverResult` to return `{ delivered, reason }` instead of a boolean.
+  - Added Codepool runtime id and included it in continuation responses/logs.
+  - Added internal `GET /internal/bear_channel/tool-waiters` endpoint.
+  - Updated Codepool tests for delivery reasons.
+- Began Phase 3 Den continuation diagnostics:
+  - Den now deserializes Codepool `reason` and `runtime_id` fields.
+  - Den tool-result response now includes `reason` and `runtime_id` for adapter/proxy-visible diagnostics.

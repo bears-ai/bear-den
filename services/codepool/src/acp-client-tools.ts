@@ -120,6 +120,8 @@ function toAgentTool(
                 callId,
                 timeoutMs: DEFAULT_TIMEOUT_MS,
                 signal,
+                toolName: name,
+                conversationId: context.conversation_id,
             });
             if (payload.status === "ok") {
                 return jsonTextResult(payload.result ?? {});

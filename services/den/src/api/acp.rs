@@ -98,6 +98,8 @@ struct AcpToolResultResponse {
     ok: bool,
     delivered: bool,
     call_id: String,
+    reason: Option<String>,
+    runtime_id: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -1226,7 +1228,7 @@ async fn tool_result_inner(
         result: body.result,
         error: body.error,
     };
-    let delivered = match state
+    let (delivered, delivery_reason, runtime_id) = match state
         .codepool
         .post_bear_channel_tool_result(
             &pending.codepool_session_id,
@@ -1235,7 +1237,7 @@ async fn tool_result_inner(
         )
         .await
     {
-        Ok(response) => response.delivered,
+        Ok(response) => (response.delivered, response.reason, response.runtime_id),
         Err(err) => {
             tracing::warn!(
                 request_id = %body.request_id,
@@ -1246,7 +1248,7 @@ async fn tool_result_inner(
                 error = %err,
                 "ACP tool result accepted by Den but could not be delivered to Codepool"
             );
-            false
+            (false, Some("codepool_forward_error".to_string()), None)
         }
     };
     if delivered {
@@ -1256,6 +1258,8 @@ async fn tool_result_inner(
         ok: true,
         delivered,
         call_id,
+        reason: delivery_reason,
+        runtime_id,
     })
     .into_response())
 }

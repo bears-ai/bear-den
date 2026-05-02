@@ -11,14 +11,14 @@ test("ACP tool result registry delivers waiter payloads", async () => {
         timeoutMs: 1_000,
     });
     assert.equal(registry.pendingCount(), 1);
-    assert.equal(
+    assert.deepEqual(
         registry.deliverResult("session-1", {
             request_id: "request-1",
             call_id: "call-1",
             status: "ok",
             result: { content: "hello" },
         }),
-        true,
+        { delivered: true, reason: "delivered" },
     );
     const payload = await wait;
     assert.equal(payload.status, "ok");
@@ -28,13 +28,13 @@ test("ACP tool result registry delivers waiter payloads", async () => {
 
 test("ACP tool result registry reports undelivered unknown calls", () => {
     const registry = new AcpToolResultRegistry();
-    assert.equal(
+    assert.deepEqual(
         registry.deliverResult("session-1", {
             request_id: "request-1",
             call_id: "missing-call",
             status: "ok",
             result: {},
         }),
-        false,
+        { delivered: false, reason: "no_waiter" },
     );
 });

@@ -46,6 +46,8 @@ import {
 } from "./acp-tool-results.js";
 import { logger } from "./logger.js";
 
+const CODEPOOL_RUNTIME_ID = randomUUID();
+
 const packageJson = JSON.parse(
     readFileSync(new URL("../package.json", import.meta.url), "utf8"),
 ) as { version?: string };
@@ -265,7 +267,7 @@ export function attachRoutes(
                 body.result === undefined
                     ? 0
                     : JSON.stringify(body.result).length;
-            const delivered = acpToolResults.deliverResult(sessionId, {
+            const delivery = acpToolResults.deliverResult(sessionId, {
                 conversation_id:
                     typeof body.conversation_id === "string"
                         ? body.conversation_id
@@ -290,13 +292,28 @@ export function attachRoutes(
                         ? body.tool_name
                         : undefined,
                 status,
-                delivered,
+                delivered: delivery.delivered,
+                delivery_reason: delivery.reason,
+                runtime_id: CODEPOOL_RUNTIME_ID,
                 result_bytes: resultBytes,
                 pending_waiters: acpToolResults.pendingCount(),
             });
-            res.json({ ok: true, delivered });
+            res.json({
+                ok: true,
+                delivered: delivery.delivered,
+                reason: delivery.reason,
+                runtime_id: CODEPOOL_RUNTIME_ID,
+            });
         },
     );
+
+    app.get("/internal/bear_channel/tool-waiters", guard, (_req, res) => {
+        res.json({
+            ok: true,
+            runtime_id: CODEPOOL_RUNTIME_ID,
+            waiters: acpToolResults.listWaiters(),
+        });
+    });
 
     app.get("/internal/pool", guard, (_req, res) => {
         res.json({

@@ -30,6 +30,10 @@ pub struct CodepoolToolResultResponse {
     #[serde(default)]
     pub delivered: bool,
     #[serde(default)]
+    pub reason: Option<String>,
+    #[serde(default)]
+    pub runtime_id: Option<String>,
+    #[serde(default)]
     pub error: Option<String>,
 }
 

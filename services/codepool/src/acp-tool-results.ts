@@ -10,10 +10,27 @@ export type AcpToolResultPayload = {
     error?: unknown;
 };
 
+export type AcpToolWaiterInfo = {
+    session_id: string;
+    request_id: string;
+    call_id: string;
+    tool_name?: string;
+    conversation_id?: string;
+    created_at_ms: number;
+    timeout_ms: number;
+    age_ms: number;
+};
+
+export type AcpToolDeliveryResult = {
+    delivered: boolean;
+    reason: "delivered" | "no_waiter";
+};
+
 type Waiter = {
     resolve: (payload: AcpToolResultPayload) => void;
     reject: (error: Error) => void;
     timer: ReturnType<typeof setTimeout>;
+    info: Omit<AcpToolWaiterInfo, "age_ms">;
 };
 
 export class AcpToolResultRegistry {
@@ -25,6 +42,8 @@ export class AcpToolResultRegistry {
         callId: string;
         timeoutMs: number;
         signal?: AbortSignal;
+        toolName?: string;
+        conversationId?: string;
     }): Promise<AcpToolResultPayload> {
         const key = this.key(opts.sessionId, opts.requestId, opts.callId);
         if (this.waiters.has(key)) {
@@ -51,6 +70,15 @@ export class AcpToolResultRegistry {
                     cleanup();
                     reject(error);
                 },
+                info: {
+                    session_id: opts.sessionId,
+                    request_id: opts.requestId,
+                    call_id: opts.callId,
+                    tool_name: opts.toolName,
+                    conversation_id: opts.conversationId,
+                    created_at_ms: Date.now(),
+                    timeout_ms: opts.timeoutMs,
+                },
                 timer: setTimeout(() => {
                     cleanup();
                     resolve({
@@ -71,12 +99,23 @@ export class AcpToolResultRegistry {
         });
     }
 
-    deliverResult(sessionId: string, payload: AcpToolResultPayload): boolean {
+    deliverResult(
+        sessionId: string,
+        payload: AcpToolResultPayload,
+    ): AcpToolDeliveryResult {
         const key = this.key(sessionId, payload.request_id, payload.call_id);
         const waiter = this.waiters.get(key);
-        if (!waiter) return false;
+        if (!waiter) return { delivered: false, reason: "no_waiter" };
         waiter.resolve(payload);
-        return true;
+        return { delivered: true, reason: "delivered" };
+    }
+
+    listWaiters(): AcpToolWaiterInfo[] {
+        const now = Date.now();
+        return [...this.waiters.values()].map((waiter) => ({
+            ...waiter.info,
+            age_ms: now - waiter.info.created_at_ms,
+        }));
     }
 
     pendingCount(): number {
@@ -88,7 +127,9 @@ export class AcpToolResultRegistry {
     }
 }
 
-export function normalizeAcpToolResultStatus(value: unknown): AcpToolResultStatus | null {
+export function normalizeAcpToolResultStatus(
+    value: unknown,
+): AcpToolResultStatus | null {
     if (
         value === "ok" ||
         value === "error" ||
