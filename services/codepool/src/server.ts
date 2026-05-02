@@ -446,6 +446,7 @@ export function attachRoutes(
         async (req, res) => {
             const sessionId = req.params.sessionId ?? "";
             const body = req.body as BearChannelRequest;
+            req.socket.setNoDelay?.(true);
             let parsed: ReturnType<typeof parseBearChannelRequest>;
             try {
                 parsed = parseBearChannelRequest(body);
@@ -457,8 +458,10 @@ export function attachRoutes(
 
             res.status(200);
             res.setHeader("Content-Type", "text/event-stream; charset=utf-8");
-            res.setHeader("Cache-Control", "no-cache");
+            res.setHeader("Cache-Control", "no-cache, no-transform");
             res.setHeader("Connection", "keep-alive");
+            res.setHeader("X-Accel-Buffering", "no");
+            res.flushHeaders?.();
 
             const rawReqId = req.headers["x-request-id"];
             const requestId =
@@ -504,6 +507,7 @@ export function attachRoutes(
                     sseDataLines += 1;
                     const line = bearChannelEventToSseDataLine(event);
                     res.write(`data: ${line}\n\n`);
+                    (res as { flush?: () => void }).flush?.();
                 };
                 const denTools = makeDenExternalTools({
                     descriptors: parseDenServerTools(body.capabilities),
@@ -561,6 +565,7 @@ export function attachRoutes(
                         res.write(
                             `data: ${bearChannelEventToSseDataLine(event)}\n\n`,
                         );
+                        (res as { flush?: () => void }).flush?.();
                         if (
                             event.type === "assistant_delta" ||
                             event.type === "reasoning_delta"
