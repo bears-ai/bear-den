@@ -508,8 +508,8 @@ async fn handle_request(
                     id,
                     Ok(json!({
                         "sessionId": session_id,
-                        "sessionConfigOptions": null,
-                        "mode": null,
+                        "configOptions": null,
+                        "modes": null,
                     })),
                 )
                 .await?;
@@ -594,7 +594,7 @@ async fn handle_request(
                     return Ok(());
                 }
                 match restore_session_from_den(http, config, adapter_state, &request.params).await {
-                    Ok(()) => write_response(id, Ok(json!({}))).await?,
+                    Ok(()) => write_response(id, Ok(session_lifecycle_result())).await?,
                     Err(err) => {
                         write_response(
                             id,
@@ -1374,8 +1374,15 @@ async fn handle_session_load(
 
     replay_history_for_den_session(http, config, session_id, &den, "session/load").await?;
 
-    write_response(response_id, Ok(Value::Null)).await?;
+    write_response(response_id, Ok(session_lifecycle_result())).await?;
     Ok(())
+}
+
+fn session_lifecycle_result() -> Value {
+    json!({
+        "configOptions": null,
+        "modes": null,
+    })
 }
 
 async fn handle_session_close(
