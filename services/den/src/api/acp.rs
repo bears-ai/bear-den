@@ -1988,7 +1988,26 @@ impl Stream for AcpBearChannelSseStream {
                 }
                 self.poll_next(cx)
             }
-            Some(Err(err)) => Poll::Ready(Some(Err(std::io::Error::other(err.to_string())))),
+            Some(Err(err)) => {
+                let message = format!("Codepool stream read failed: {err}");
+                tracing::warn!(
+                    request_id = %this.context.request_id,
+                    acp_session_id = %this.context.acp_session_id,
+                    error = %err,
+                    "ACP upstream Codepool SSE stream read error"
+                );
+                let event = serde_json::json!({
+                    "type": "error",
+                    "message": "Codepool stream ended unexpectedly while BEARS was waiting for events.",
+                    "detail": message,
+                    "request_id": this.context.request_id.to_string(),
+                    "diagnostic": {
+                        "code": "codepool_stream_read_error",
+                        "component": "den.acp"
+                    }
+                });
+                Poll::Ready(Some(Ok(Bytes::from(format!("data: {}\n\n", event)))))
+            }
             None => {
                 if !this.buffer.is_empty() {
                     let preview = preview_bytes_utf8_lossy(&this.buffer);
