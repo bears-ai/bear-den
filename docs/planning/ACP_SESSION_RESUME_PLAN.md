@@ -19,15 +19,15 @@ Den and Codepool already have most of the lower-level conversation mechanics nee
 - Codepool emits `conversation_resolved` when Letta Code resolves a pending/new session to a canonical conversation id.
 - Den web chat already lists, loads history for, and sends messages to `default`, `new-...`, and `conv-...` conversations.
 
-The ACP path is not complete yet:
+The ACP path has an MVP session base now, but it is not fully ACP-spec-complete yet:
 
-- The adapter advertises `loadSession: false`.
-- The adapter does not implement ACP `session/load`.
-- The adapter currently does not persist `conversation_resolved` into its local ACP session context.
-- Den's ACP prompt route currently accepts `conversation_id` in the request body but logs and ignores non-default client-supplied ids.
-- Den creates/stores ACP session bindings and stores `resolved_conversation_id`, but the ACP prompt route does not yet use the resolved id on later prompts.
+- The adapter advertises and handles `session/list`, `session/resume`, and `session/load`.
+- Den exposes adapter-facing session list/get and conversation history endpoints.
+- The adapter tracks Den `conversation_resolved` events and uses loaded/resumed conversation mappings for future prompts.
+- Den's ACP prompt route selects explicit, resolved, stored, or generated conversation ids and validates explicit `conv-...` ids against the bear.
+- Remaining work is mostly spec hardening: absolute `cwd`, MCP server policy, richer history replay, cancellation/close semantics, stable pagination, and documentation of persisted-vs-local session listing.
 
-The immediate goal is to make ACP-created sessions stable across Codepool warm-pool eviction/restart, then expose explicit load/resume to ACP clients.
+The immediate goal is to finish those hardening slices, then revisit tool timeouts/cancellation on top of the stable session base.
 
 ## ACP session semantics note
 
@@ -68,14 +68,18 @@ Relevant file:
 
 ### Den ACP gateway path
 
-The Den ACP gateway currently has only the basic prompt route plus tool-result and close helpers:
+The Den ACP gateway now includes prompt/session backing routes plus tool-result and close helpers:
 
+- `GET /acp/bears/{slug}/sessions`
+- `GET /acp/bears/{slug}/sessions/{session_id}`
 - `POST /acp/bears/{slug}/sessions/{session_id}/prompt`
 - `POST /acp/bears/{slug}/sessions/{session_id}/tool-results/{call_id}`
 - `POST /acp/bears/{slug}/sessions/{session_id}/close`
+- `GET /acp/bears/{slug}/conversations`
+- `GET /acp/bears/{slug}/conversations/{conversation_id}/history`
 - `GET /acp/bears/{slug}/auth-check`
 
-The prompt request body has an optional `conversation_id`, but current code ignores non-default client-supplied ids and generates a pending ACP id of the form `new-acp-{client}-{stable_session_suffix(session_id)}`.
+The prompt request body has an optional `conversation_id`. Den selects the route target from explicit, resolved, stored, or generated pending ids and generates pending ACP ids of the form `new-acp-{client}-{stable_session_suffix(session_id)}` when needed.
 
 Den persists ACP session bindings in `acp_sessions`, including:
 
@@ -95,14 +99,17 @@ Relevant files:
 
 ### Adapter path
 
-The local adapter currently implements basic chat only:
+The local adapter currently implements the session MVP:
 
 - `initialize`
 - `session/new`
+- `session/list`
+- `session/resume`
+- `session/load`
 - `session/prompt`
 - `session/close`
 
-It advertises `loadSession: false`, hardcodes prompt `conversation_id` to `default`, and ignores Den `conversation_resolved` events.
+It advertises `loadSession: true` and `sessionCapabilities.list/resume/close`. It tracks Den `conversation_resolved` events, restores Den session mappings on load/resume, and replays text history for `session/load`.
 
 Relevant files:
 
@@ -275,10 +282,161 @@ Acceptance criteria:
 - Typo/deleted `conv-...` ids do not silently create new conversations.
 - Pending `new-...` ids continue to create new conversations.
 
+## ACP spec alignment hardening
+
+The current session implementation is intentionally ACP-shaped, but these tightenings are required before treating it as fully spec-compliant rather than MVP-compatible.
+
+### Hardening slice A: absolute `cwd` semantics
+
+ACP treats `cwd` as the session's filesystem context. It is required for session setup/load/resume, must be an absolute path, and `session/list` rows expose `cwd` as a required field.
+
+Tasks:
+
+1. In the adapter, validate `cwd` for `session/new`, `session/load`, and `session/resume`.
+   - Prefer the explicit `params.cwd` value when present.
+   - Continue accepting known client workspace URI/folder fallbacks only when they normalize to an absolute local path.
+   - Return a clear JSON-RPC validation error when no absolute `cwd` can be determined, or explicitly gate a compatibility fallback if a client is known to omit it.
+2. Persist only valid absolute `cwd` values into Den `acp_sessions` for ACP sessions.
+3. Ensure `session/list` never returns an empty `cwd` for ACP-facing rows.
+   - If legacy rows have no `cwd`, either omit them from ACP list results, repair them from known context, or return a conservative absolute fallback only when it is truthful.
+4. Add Den-side validation for the optional `cwd` filter on `GET /acp/bears/{slug}/sessions`.
+   - Reject non-absolute paths instead of treating them as arbitrary strings.
+5. Add logging/metrics for rejected or legacy missing-`cwd` sessions so we know which clients need compatibility handling.
+
+Acceptance criteria:
+
+- `session/new`, `session/load`, and `session/resume` have deterministic absolute `cwd` handling.
+- `session/list` rows satisfy ACP's `SessionInfo.cwd` requirement.
+- Relative, empty, or malformed `cwd` values produce clear errors or documented compatibility behavior.
+
+### Hardening slice B: MCP server handling policy
+
+ACP clients may pass `mcpServers` to `session/new`, `session/load`, and `session/resume`; stdio MCP support is part of the ACP session setup model. The current BEARS ACP adapter ignores these entries and instead exposes BEARS/Den/Codepool tools plus ACP client filesystem bridges.
+
+Tasks:
+
+1. Decide the product stance for ACP-provided `mcpServers`:
+   - implement stdio MCP server lifecycle in the adapter; or
+   - explicitly reject non-empty `mcpServers` with a clear unsupported-feature error; or
+   - accept but ignore them only as a documented temporary compatibility compromise.
+2. Do not advertise HTTP/SSE MCP support until implemented; keep `mcpCapabilities.http = false` and `mcpCapabilities.sse = false` unless that changes.
+3. Update adapter README and ACP planning docs to state the current MCP behavior.
+4. If implementing stdio MCP later, define ownership boundaries:
+   - adapter process owns local MCP subprocess lifecycle;
+   - Den remains policy/audit authority for BEARS tools;
+   - local MCP server credentials must not be persisted in Den.
+
+Acceptance criteria:
+
+- A client that supplies `mcpServers` gets predictable behavior.
+- The behavior is documented and reflected in tests.
+- We do not imply full ACP MCP support until we actually have it.
+
+### Hardening slice C: history replay completeness
+
+ACP `session/load` requires replaying the conversation to the client through `session/update` notifications before responding. The current implementation replays user and assistant text messages only.
+
+Tasks:
+
+1. Document the current MVP as text-only replay of user/assistant messages.
+2. Determine which historical event types are available from Letta/Codepool persistence:
+   - tool calls;
+   - tool results;
+   - reasoning/status chunks;
+   - errors;
+   - resource/image/audio content;
+   - session info, mode, or config updates.
+3. Extend Den history APIs, if possible, to expose enough structured data for richer ACP replay.
+4. Extend adapter replay mapping to produce ACP-native `session/update` notifications for any supported historical event types.
+5. If richer data is unavailable, keep replay explicitly scoped and avoid claiming complete ACP event reconstruction.
+
+Acceptance criteria:
+
+- `session/load` clearly replays all event types we can faithfully reconstruct.
+- Unsupported historical event types are documented rather than silently implied.
+- Text-only replay remains stable for user/assistant conversation continuity.
+
+### Hardening slice D: cancellation and close semantics
+
+ACP baseline support includes `session/cancel`, and `session/close` must cancel ongoing work as if `session/cancel` had been called before freeing resources. The current implementation records close/archive state but does not yet cancel active Codepool/Letta work.
+
+Tasks:
+
+1. Implement adapter `session/cancel` handling for active prompts.
+2. Add Den and/or Codepool cancellation plumbing keyed by ACP session id / Codepool session id / request id.
+3. Ensure `session/close` triggers the same cancellation path before marking sessions closed or archived.
+4. Define behavior for pending ACP client tool calls when a session is cancelled or closed:
+   - mark pending calls cancelled/timed out;
+   - stop waiting on client responses;
+   - avoid forwarding late duplicate results.
+5. Tie this into the planned tool timeout/cancellation work after the stable session base is in place.
+
+Acceptance criteria:
+
+- `session/cancel` stops an active prompt/tool wait where possible.
+- `session/close` cancels active work before closing resources.
+- Late tool/model events after cancellation are ignored or surfaced safely.
+
+### Hardening slice E: stable session-list pagination
+
+The current cursor is opaque to clients, which satisfies ACP shape, but it is offset-based internally. Offset pagination can skip or duplicate rows when session `updated_at` changes while a client pages through results.
+
+Tasks:
+
+1. Replace offset cursors with keyset cursors over `(updated_at, id)` using the existing `ORDER BY updated_at DESC, id DESC` ordering.
+2. Encode the cursor as an opaque token containing the last row's `updated_at` and `id`.
+3. Reject malformed or stale cursors with clear validation errors.
+4. Keep enforcing an internal page-size limit.
+
+Acceptance criteria:
+
+- Pagination is stable while sessions update concurrently.
+- Clients still treat cursors as opaque ACP tokens.
+
+### Hardening slice F: listed sessions vs adapter-local active sessions
+
+ACP says `session/list` discovers sessions known to the agent. Today Den only lists persisted sessions, while the adapter may also know about newly created but never-prompted local sessions.
+
+Tasks:
+
+1. Decide whether `session/list` should include adapter-local in-memory sessions that have not yet reached Den persistence.
+2. If yes, merge local rows with Den rows and clearly mark unpublished rows in `_meta`.
+3. If no, document `session/list` as listing persisted/resumable Den sessions only.
+4. Ensure `session/load` and `session/resume` error clearly for unknown/unpersisted session ids after adapter restart.
+
+Acceptance criteria:
+
+- The product behavior is intentional and documented.
+- Users are not surprised when never-used transient sessions are absent from persisted history.
+
+### Hardening slice G: auth consistency for ACP session support endpoints
+
+The Den ACP prompt/list/get/history endpoints currently share the broader `authenticate_acp_principal` path, while close/tool-result paths require bear-scoped ACP Code tokens. This may be intentional, but should be explicit.
+
+Tasks:
+
+1. Decide whether ACP session backing APIs should accept generic bearer principals with `acp:chat`, or only bear-scoped ACP Code tokens.
+2. Apply the decision consistently across:
+   - session list/get;
+   - conversation list/history;
+   - prompt;
+   - close;
+   - tool result.
+3. Document the boundary between external ACP Code-token adapter traffic and internal/admin API traffic.
+
+Acceptance criteria:
+
+- Auth behavior is consistent or intentionally differentiated.
+- Token scope errors are clear to users and operators.
+
 ## Test plan
 
 ### Den ACP tests
 
+- `GET /acp/bears/{slug}/sessions` returns ACP-backed session rows with non-empty absolute `cwd` values or intentionally excludes legacy rows without valid `cwd`.
+- Session list rejects malformed cursors and non-absolute `cwd` filters.
+- Session list pagination remains stable when sessions update between pages.
+- Session get/list/history auth behavior matches the chosen ACP Code-token vs generic bearer policy.
 - Prompt with no conversation id creates/selects a pending `new-acp-...` id.
 - `conversation_resolved` updates the ACP session binding.
 - Second prompt for the same ACP session routes to the resolved `conv-...` id.
@@ -289,6 +447,12 @@ Acceptance criteria:
 
 ### Adapter tests
 
+- `session/new`, `session/load`, and `session/resume` validate or deterministically normalize absolute `cwd`.
+- `session/list` maps Den rows to ACP `SessionInfo` with `sessionId`, absolute `cwd`, `updatedAt`, optional `title`, `_meta`, and `nextCursor`.
+- Non-empty `mcpServers` produce the chosen documented behavior: implemented, rejected, or compatibility-ignored.
+- `session/load` replays history before returning `null`; current MVP tests should explicitly assert user/assistant text replay.
+- `session/resume` restores context without emitting history replay updates.
+- `session/cancel` and `session/close` cancellation behavior is covered once cancellation plumbing lands.
 - `session/new` stores context without a conversation id.
 - Den `conversation_resolved` event updates the session context.
 - Future prompt payloads include the resolved `conversation_id`.
@@ -314,6 +478,10 @@ This order makes ACP-created sessions durable first, then adds explicit user-fac
 
 ## Open questions
 
+- Should `session/list` include adapter-local in-memory sessions that have never been persisted to Den, or should it intentionally list persisted/resumable Den sessions only?
+- Should Den ACP session support endpoints accept generic bearer principals with `acp:chat`, or require bear-scoped ACP Code tokens consistently?
+- Should non-empty ACP `mcpServers` be implemented, rejected, or temporarily accepted-and-ignored?
+- Which Letta/Codepool historical event types can be faithfully replayed through ACP `session/load` beyond user/assistant text?
 - What exact `session/load` request and response shape do current ACP clients expect?
 - Should adapter-local session ids be stable across adapter process restarts, or is Den-side binding sufficient?
 - Should ACP conversation list include archived conversations by default?

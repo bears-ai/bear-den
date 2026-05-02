@@ -15,6 +15,7 @@ High-level implementation roadmap for BEARS. This file is the planning hub: it s
 - [Phase 1 locked decisions](PHASE1_DECISIONS.md)
 - [`bear_channel` Phase 7+](BEAR_CHANNEL_PHASE7_PLANS.md)
 - [ACP discovery prompt](ACP_DISCOVERY_PROMPT.md)
+- [ACP session load/resume plan](ACP_SESSION_RESUME_PLAN.md)
 
 **Reading order:** Use [§3](#3-phased-roadmap) for delivery sequencing. Use [§1](#1-system-architecture)–[§2](#2-capability-contracts-pseudo) only as historical planning context where the architecture docs do not yet cover a topic.
 
