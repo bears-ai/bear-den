@@ -96,7 +96,10 @@ Acceptance:
   - Replaced direct tool-response stdin reads with channel receives in `wait_for_json_rpc_response`.
   - Preserved current sequential request handling while removing duplicate stdin readers.
   - Adapter compiles after this intermediate step.
-  - Remaining Phase 1 work: true concurrent pending response map/oneshot dispatcher, cancellation propagation to active prompt, and tests/manual Zed verification.
+  - Added pending response map with `oneshot` waiters for adapter-to-client requests.
+  - Stdin reader now routes JSON-RPC responses directly to pending waiters before forwarding requests/notifications to the main handler.
+  - File read, file write, and permission requests now use `send_client_request_with_waiter` instead of consuming the inbound channel directly.
+  - Remaining Phase 1 work: cancellation propagation to active prompt, adapter unit tests for dispatcher routing, and manual Zed verification.
 - Began Phase 2 Codepool waiter diagnostics:
   - Added waiter metadata and `listWaiters()`.
   - Changed `deliverResult` to return `{ delivered, reason }` instead of a boolean.

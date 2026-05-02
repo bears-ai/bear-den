@@ -8,10 +8,12 @@ use std::{
     env,
     path::{Path, PathBuf},
     process::Command,
+    sync::Arc,
+    time::Duration,
 };
 use tokio::{
     io::{self, AsyncBufReadExt, AsyncWriteExt, BufReader},
-    sync::mpsc,
+    sync::{mpsc, oneshot, Mutex},
 };
 use uuid::Uuid;
 
@@ -48,6 +50,10 @@ struct SessionContext {
     conversation_id: Option<String>,
     resolved_conversation_id: Option<String>,
 }
+
+type PendingResponses = Arc<Mutex<HashMap<String, oneshot::Sender<Value>>>>;
+
+const CLIENT_TOOL_RESPONSE_TIMEOUT: Duration = Duration::from_secs(25);
 
 #[derive(Debug)]
 struct InboundMessage {
@@ -122,7 +128,8 @@ async fn run() -> Result<()> {
     }
 
     let (inbound_tx, mut inbound_rx) = mpsc::channel::<InboundMessage>(128);
-    tokio::spawn(read_stdin_messages(inbound_tx));
+    let pending_responses: PendingResponses = Arc::new(Mutex::new(HashMap::new()));
+    tokio::spawn(read_stdin_messages(inbound_tx, pending_responses.clone()));
 
     let mut adapter_state = AdapterState::default();
 
@@ -148,6 +155,7 @@ async fn run() -> Result<()> {
             &mut runtime,
             &mut adapter_state,
             &mut inbound_rx,
+            pending_responses.clone(),
             request,
         )
         .await
@@ -355,7 +363,7 @@ fn normalize_client(raw: &str) -> String {
     }
 }
 
-async fn read_stdin_messages(tx: mpsc::Sender<InboundMessage>) {
+async fn read_stdin_messages(tx: mpsc::Sender<InboundMessage>, pending: PendingResponses) {
     let stdin = BufReader::new(io::stdin());
     let mut lines = stdin.lines();
     loop {
@@ -367,6 +375,9 @@ async fn read_stdin_messages(tx: mpsc::Sender<InboundMessage>) {
                 }
                 match serde_json::from_str::<Value>(line) {
                     Ok(value) => {
+                        if route_pending_response(&pending, &value).await {
+                            continue;
+                        }
                         if tx.send(InboundMessage { value }).await.is_err() {
                             break;
                         }
@@ -393,6 +404,30 @@ async fn read_stdin_messages(tx: mpsc::Sender<InboundMessage>) {
     }
 }
 
+async fn route_pending_response(pending: &PendingResponses, value: &Value) -> bool {
+    if value.get("method").is_some() {
+        return false;
+    }
+    let Some(id) = response_id_key(value.get("id")) else {
+        return false;
+    };
+    let sender = pending.lock().await.remove(&id);
+    if let Some(sender) = sender {
+        let _ = sender.send(value.clone());
+        true
+    } else {
+        false
+    }
+}
+
+fn response_id_key(value: Option<&Value>) -> Option<String> {
+    match value? {
+        Value::String(s) => Some(s.clone()),
+        Value::Number(n) => Some(n.to_string()),
+        _ => None,
+    }
+}
+
 fn request_from_value(value: Value) -> Result<JsonRpcRequest> {
     let method = value
         .get("method")
@@ -409,6 +444,7 @@ async fn handle_request(
     runtime: &mut RuntimeConfig,
     adapter_state: &mut AdapterState,
     inbound_rx: &mut mpsc::Receiver<InboundMessage>,
+    pending_responses: PendingResponses,
     request: JsonRpcRequest,
 ) -> Result<()> {
     match request.method.as_str() {
@@ -645,6 +681,7 @@ async fn handle_request(
                     config,
                     adapter_state,
                     inbound_rx,
+                    pending_responses.clone(),
                     id.clone(),
                     request.params,
                 )
@@ -1390,6 +1427,7 @@ async fn handle_prompt(
     config: &Config,
     adapter_state: &mut AdapterState,
     inbound_rx: &mut mpsc::Receiver<InboundMessage>,
+    pending_responses: PendingResponses,
     response_id: Value,
     params: Value,
 ) -> Result<()> {
@@ -1471,6 +1509,7 @@ async fn handle_prompt(
                 config,
                 adapter_state,
                 inbound_rx,
+                pending_responses.clone(),
                 session_id,
                 &cwd,
                 &frame,
@@ -1488,6 +1527,7 @@ async fn handle_prompt(
             config,
             adapter_state,
             inbound_rx,
+            pending_responses.clone(),
             session_id,
             &cwd,
             &frame,
@@ -1827,6 +1867,7 @@ async fn handle_sse_frame(
     config: &Config,
     adapter_state: &mut AdapterState,
     inbound_rx: &mut mpsc::Receiver<InboundMessage>,
+    pending_responses: PendingResponses,
     session_id: &str,
     cwd: &str,
     frame: &[u8],
@@ -1859,6 +1900,7 @@ async fn handle_sse_frame(
             config,
             adapter_state,
             inbound_rx,
+            pending_responses.clone(),
             session_id,
             cwd,
             &event,
@@ -1892,7 +1934,8 @@ async fn handle_den_event(
     http: &reqwest::Client,
     config: &Config,
     adapter_state: &mut AdapterState,
-    inbound_rx: &mut mpsc::Receiver<InboundMessage>,
+    _inbound_rx: &mut mpsc::Receiver<InboundMessage>,
+    pending_responses: PendingResponses,
     session_id: &str,
     cwd: &str,
     event: &Value,
@@ -1946,8 +1989,15 @@ async fn handle_den_event(
         }
         "client_tool_request" => {
             send_client_tool_call_update(session_id, event).await?;
-            execute_and_post_client_tool_result(http, config, inbound_rx, session_id, cwd, event)
-                .await?;
+            execute_and_post_client_tool_result(
+                http,
+                config,
+                pending_responses.clone(),
+                session_id,
+                cwd,
+                event,
+            )
+            .await?;
             Ok(false)
         }
         "done" => Ok(true),
@@ -1958,7 +2008,7 @@ async fn handle_den_event(
 async fn execute_and_post_client_tool_result(
     http: &reqwest::Client,
     config: &Config,
-    inbound_rx: &mut mpsc::Receiver<InboundMessage>,
+    pending_responses: PendingResponses,
     session_id: &str,
     cwd: &str,
     event: &Value,
@@ -1983,12 +2033,18 @@ async fn execute_and_post_client_tool_result(
     send_client_tool_progress_update(session_id, call_id, tool_name, event).await?;
     let tool_result = match tool_name {
         "acp_fs_read_text_file" => {
-            execute_fs_read_text_file(inbound_rx, session_id, cwd, event).await
+            execute_fs_read_text_file(pending_responses.clone(), session_id, cwd, event).await
         }
         "acp_fs_write_text_file" => {
-            request_client_tool_permission(inbound_rx, session_id, call_id, tool_name, event)
-                .await?;
-            execute_fs_write_text_file(inbound_rx, session_id, cwd, event).await
+            request_client_tool_permission(
+                pending_responses.clone(),
+                session_id,
+                call_id,
+                tool_name,
+                event,
+            )
+            .await?;
+            execute_fs_write_text_file(pending_responses.clone(), session_id, cwd, event).await
         }
         other => Err(anyhow!("unsupported ACP client tool: {other}")),
     };
@@ -2048,7 +2104,7 @@ async fn execute_and_post_client_tool_result(
 }
 
 async fn request_client_tool_permission(
-    inbound_rx: &mut mpsc::Receiver<InboundMessage>,
+    pending_responses: PendingResponses,
     session_id: &str,
     call_id: &str,
     tool_name: &str,
@@ -2064,15 +2120,8 @@ async fn request_client_tool_permission(
     }
 
     let rpc_id = format!("bears-permission-{}", Uuid::new_v4());
-    write_json(build_permission_request(
-        rpc_id.clone(),
-        session_id,
-        call_id,
-        tool_name,
-        event,
-    ))
-    .await?;
-    let response = wait_for_json_rpc_response(inbound_rx, &rpc_id, session_id).await?;
+    let request = build_permission_request(rpc_id.clone(), session_id, call_id, tool_name, event);
+    let response = send_client_request_with_waiter(pending_responses, &rpc_id, request).await?;
     if let Some(error) = response.get("error") {
         return Err(anyhow!("ACP client permission request failed: {error}"));
     }
@@ -2144,7 +2193,7 @@ fn permission_prompt_text(tool_name: &str, event: &Value) -> String {
 }
 
 async fn execute_fs_read_text_file(
-    inbound_rx: &mut mpsc::Receiver<InboundMessage>,
+    pending_responses: PendingResponses,
     session_id: &str,
     cwd: &str,
     event: &Value,
@@ -2158,7 +2207,7 @@ async fn execute_fs_read_text_file(
     let absolute_path = absolutize_client_path(path, cwd);
     eprintln!("bears-acp-adapter: requesting fs/read_text_file path={absolute_path}");
     let rpc_id = format!("bears-tool-{}", Uuid::new_v4());
-    write_json(json!({
+    let request = json!({
         "jsonrpc": "2.0",
         "id": rpc_id,
         "method": "fs/read_text_file",
@@ -2166,9 +2215,8 @@ async fn execute_fs_read_text_file(
             "sessionId": session_id,
             "path": absolute_path
         }
-    }))
-    .await?;
-    let response = wait_for_json_rpc_response(inbound_rx, &rpc_id, session_id).await?;
+    });
+    let response = send_client_request_with_waiter(pending_responses, &rpc_id, request).await?;
     if let Some(error) = response.get("error") {
         return Err(anyhow!("ACP client fs/read_text_file failed: {error}"));
     }
@@ -2180,7 +2228,7 @@ async fn execute_fs_read_text_file(
 }
 
 async fn execute_fs_write_text_file(
-    inbound_rx: &mut mpsc::Receiver<InboundMessage>,
+    pending_responses: PendingResponses,
     session_id: &str,
     cwd: &str,
     event: &Value,
@@ -2191,14 +2239,13 @@ async fn execute_fs_write_text_file(
         arguments.path
     );
     let rpc_id = format!("bears-tool-{}", Uuid::new_v4());
-    write_json(build_write_text_file_request(
+    let request = build_write_text_file_request(
         rpc_id.clone(),
         session_id,
         &arguments.path,
         &arguments.content,
-    ))
-    .await?;
-    let response = wait_for_json_rpc_response(inbound_rx, &rpc_id, session_id).await?;
+    );
+    let response = send_client_request_with_waiter(pending_responses, &rpc_id, request).await?;
     if let Some(error) = response.get("error") {
         return Err(anyhow!("ACP client fs/write_text_file failed: {error}"));
     }
@@ -2247,61 +2294,28 @@ fn build_write_text_file_request(
     })
 }
 
-async fn wait_for_json_rpc_response(
-    inbound_rx: &mut mpsc::Receiver<InboundMessage>,
+async fn send_client_request_with_waiter(
+    pending_responses: PendingResponses,
     rpc_id: &str,
-    active_session_id: &str,
+    request: Value,
 ) -> Result<Value> {
-    loop {
-        let Some(message) = inbound_rx.recv().await else {
-            return Err(anyhow!(
-                "ACP client closed stdin while waiting for {rpc_id}"
-            ));
-        };
-        let value = message.value;
-        if is_cancel_for_session(&value, active_session_id) {
-            return Err(anyhow!(
-                "ACP client cancelled session while waiting for {rpc_id}"
-            ));
+    let (tx, rx) = oneshot::channel();
+    pending_responses
+        .lock()
+        .await
+        .insert(rpc_id.to_string(), tx);
+    write_json(request).await?;
+    match tokio::time::timeout(CLIENT_TOOL_RESPONSE_TIMEOUT, rx).await {
+        Ok(Ok(value)) => Ok(value),
+        Ok(Err(_)) => Err(anyhow!("ACP client response waiter dropped for {rpc_id}")),
+        Err(_) => {
+            pending_responses.lock().await.remove(rpc_id);
+            Err(anyhow!(
+                "ACP client did not return a response for {rpc_id} within {}s",
+                CLIENT_TOOL_RESPONSE_TIMEOUT.as_secs()
+            ))
         }
-        if is_auth_required_noise(&value) {
-            eprintln!("bears-acp-adapter: ignoring ACP auth_required response while waiting for tool response");
-            continue;
-        }
-        if value.get("id").and_then(Value::as_str) == Some(rpc_id) {
-            return Ok(value);
-        }
-        if value.get("id") == Some(&json!(rpc_id)) {
-            return Ok(value);
-        }
-        eprintln!(
-            "bears-acp-adapter: ignoring interleaved JSON-RPC message while waiting for tool response: {}",
-            value.get("method").and_then(Value::as_str).unwrap_or("response")
-        );
     }
-}
-
-fn is_cancel_for_session(value: &Value, session_id: &str) -> bool {
-    value.get("method").and_then(Value::as_str) == Some("session/cancel")
-        && value
-            .get("params")
-            .and_then(|params| params.get("sessionId"))
-            .and_then(Value::as_str)
-            == Some(session_id)
-}
-
-fn is_auth_required_noise(value: &Value) -> bool {
-    value
-        .get("error")
-        .and_then(|error| error.get("code"))
-        .and_then(Value::as_i64)
-        == Some(-32000)
-        || value
-            .get("error")
-            .and_then(|error| error.get("message"))
-            .and_then(Value::as_str)
-            .map(|message| message.eq_ignore_ascii_case("authentication required"))
-            .unwrap_or(false)
 }
 
 fn absolutize_client_path(path: &str, cwd: &str) -> String {
