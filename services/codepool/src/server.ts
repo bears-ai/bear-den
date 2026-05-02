@@ -261,6 +261,10 @@ export function attachRoutes(
                 });
                 return;
             }
+            const resultBytes =
+                body.result === undefined
+                    ? 0
+                    : JSON.stringify(body.result).length;
             const delivered = acpToolResults.deliverResult(sessionId, {
                 conversation_id:
                     typeof body.conversation_id === "string"
@@ -275,6 +279,20 @@ export function attachRoutes(
                 status,
                 result: body.result,
                 error: body.error,
+            });
+            logger.info("ACP tool result continuation received", {
+                event: "acp_tool_result_continuation",
+                session_id: sessionId,
+                request_id: requestId,
+                call_id: callId,
+                tool_name:
+                    typeof body.tool_name === "string"
+                        ? body.tool_name
+                        : undefined,
+                status,
+                delivered,
+                result_bytes: resultBytes,
+                pending_waiters: acpToolResults.pendingCount(),
             });
             res.json({ ok: true, delivered });
         },

@@ -761,8 +761,6 @@ async fn auth_check(
     }
 }
 
-
-
 async fn authenticate_acp_code_token(
     state: &ApiState,
     headers: &HeaderMap,
@@ -1123,13 +1121,9 @@ async fn close_session_inner(
 ) -> Result<Response, CustomError> {
     let (user_id, _) = authenticate_acp_code_token(&state, &headers, &slug, false).await?;
 
-    let Some(session) = acp_sessions::find_for_user_bear_session(
-        &state.sqlx_pool,
-        user_id,
-        &slug,
-        &session_id,
-    )
-    .await?
+    let Some(session) =
+        acp_sessions::find_for_user_bear_session(&state.sqlx_pool, user_id, &slug, &session_id)
+            .await?
     else {
         return Ok(Json(AcpCloseSessionResponse {
             ok: true,
@@ -1143,13 +1137,9 @@ async fn close_session_inner(
         .codepool
         .post_bear_channel_cancel(&session.codepool_session_id, Uuid::new_v4())
         .await;
-    let _ = acp_client_tools::mark_cancelled_for_session(
-        &state.sqlx_pool,
-        user_id,
-        &slug,
-        &session_id,
-    )
-    .await?;
+    let _ =
+        acp_client_tools::mark_cancelled_for_session(&state.sqlx_pool, user_id, &slug, &session_id)
+            .await?;
     acp_sessions::mark_closed(&state.sqlx_pool, session.id).await?;
     let archive_target = session
         .resolved_conversation_id
@@ -1236,7 +1226,7 @@ async fn tool_result_inner(
         result: body.result,
         error: body.error,
     };
-    let delivered = state
+    let delivered = match state
         .codepool
         .post_bear_channel_tool_result(
             &pending.codepool_session_id,
@@ -1244,8 +1234,21 @@ async fn tool_result_inner(
             body.request_id,
         )
         .await
-        .map(|response| response.delivered)
-        .unwrap_or(false);
+    {
+        Ok(response) => response.delivered,
+        Err(err) => {
+            tracing::warn!(
+                request_id = %body.request_id,
+                acp_session_id = %session_id,
+                codepool_session_id = %pending.codepool_session_id,
+                call_id = %call_id,
+                tool_name = %pending.tool_name,
+                error = %err,
+                "ACP tool result accepted by Den but could not be delivered to Codepool"
+            );
+            false
+        }
+    };
     if delivered {
         acp_client_tools::mark_forwarded(&state.sqlx_pool, pending.id).await?;
     }

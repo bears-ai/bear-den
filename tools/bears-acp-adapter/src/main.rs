@@ -1969,7 +1969,10 @@ async fn execute_and_post_client_tool_result(
             })
         }
     };
-    post_tool_result_to_den(http, config, session_id, call_id, body).await
+    post_tool_result_to_den(
+        http, config, session_id, call_id, request_id, tool_name, &body,
+    )
+    .await
 }
 
 async fn request_client_tool_permission(
@@ -2266,7 +2269,9 @@ async fn post_tool_result_to_den(
     config: &Config,
     session_id: &str,
     call_id: &str,
-    body: Value,
+    request_id: &str,
+    tool_name: &str,
+    body: &Value,
 ) -> Result<()> {
     let url = format!(
         "{}/acp/bears/{}/sessions/{}/tool-results/{}",
@@ -2275,6 +2280,11 @@ async fn post_tool_result_to_den(
         urlencoding::encode(session_id),
         urlencoding::encode(call_id),
     );
+    let payload_summary = tool_result_payload_summary(body);
+    eprintln!(
+        "bears-acp-adapter: posting tool result request_id={} session_id={} call_id={} tool={} {}",
+        request_id, session_id, call_id, tool_name, payload_summary
+    );
     let response = http
         .post(&url)
         .header(
@@ -2282,19 +2292,44 @@ async fn post_tool_result_to_den(
             HeaderValue::from_str(&format!("Bearer {}", config.token))?,
         )
         .header(CONTENT_TYPE, HeaderValue::from_static("application/json"))
-        .json(&body)
+        .json(body)
         .send()
         .await
         .with_context(|| format!("post ACP tool result to Den at {url}"))?;
     if !response.status().is_success() {
         let status = response.status();
-        let body = response.text().await.unwrap_or_default();
+        let response_body = response.text().await.unwrap_or_default();
         return Err(anyhow!(
-            "Den tool result endpoint returned HTTP {status}: {}",
-            body.trim()
+            "Den tool result endpoint returned HTTP {status} for request_id={request_id} session_id={session_id} call_id={call_id} tool={tool_name} {payload_summary}: {}",
+            response_body.trim()
         ));
     }
     Ok(())
+}
+
+fn tool_result_payload_summary(body: &Value) -> String {
+    let status = body
+        .get("status")
+        .and_then(Value::as_str)
+        .unwrap_or("unknown");
+    let result_bytes = body
+        .get("result")
+        .map(|value| value.to_string().len())
+        .unwrap_or(0);
+    let content_bytes = body
+        .pointer("/result/content")
+        .and_then(Value::as_str)
+        .map(str::len)
+        .unwrap_or(0);
+    let error = body
+        .get("error")
+        .and_then(|value| value.get("code"))
+        .and_then(Value::as_str)
+        .unwrap_or("");
+    format!(
+        "status={} result_bytes={} content_bytes={} error_code={}",
+        status, result_bytes, content_bytes, error
+    )
 }
 
 async fn send_client_tool_progress_update(
