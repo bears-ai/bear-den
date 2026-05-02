@@ -21,11 +21,13 @@ Run smoke tests after the stack is started and seeded:
 ./scripts/smoke.sh
 ```
 
-Build local source images, start/recreate the stack, seed, and run smoke tests:
+Build local source images, start/recreate the stack, seed, and run smoke tests. This path should remain GitOps-like: built images plus explicit env/secrets, without app/config source bind mounts at runtime.
 
 ```bash
 ./scripts/smoke-stack.sh
 ```
+
+Live bind-mount/hot-reload development is intentionally a separate future mode; see `docs/planning/LIVE_DEV_STACK_PLAN.md`.
 
 ## ACP Session Hardening
 

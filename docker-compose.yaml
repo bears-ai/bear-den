@@ -24,8 +24,8 @@
 name: bears-stack
 
 x-preflight-build: &preflight-build
-    context: ./services/preflight
-    dockerfile: Dockerfile
+    context: .
+    dockerfile: services/preflight/Dockerfile
 
 x-preflight-environment: &preflight-environment
     BIFROST_CONFIG_PATH: /app/bifrost/config.json
@@ -64,8 +64,6 @@ services:
         restart: "no"
         command: ["config"]
         environment: *preflight-environment
-        volumes:
-            - ./services/bifrost/config.json:/app/bifrost/config.json:ro
 
     bears-preflight-den-db:
         build: *preflight-build

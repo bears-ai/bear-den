@@ -143,7 +143,7 @@ def validate_bifrost_model_metadata_config() -> None:
     path = Path(os.environ.get("BIFROST_CONFIG_PATH", "/app/bifrost/config.json"))
     if not path.exists():
         fail(
-            f"BIFROST_CONFIG_PATH does not exist: {path}. The preflight image should mount services/bifrost/config.json read-only."
+            f"BIFROST_CONFIG_PATH does not exist: {path}. The preflight image should bake services/bifrost/config.json from the Git-tracked build context."
         )
 
     try:
