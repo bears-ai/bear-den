@@ -91,3 +91,9 @@ Acceptance:
 ## Progress log
 
 - Created plan.
+- Began Phase 1 adapter dispatcher refactor:
+  - Added a single stdin reader task that sends parsed JSON-RPC values over an internal channel.
+  - Replaced direct tool-response stdin reads with channel receives in `wait_for_json_rpc_response`.
+  - Preserved current sequential request handling while removing duplicate stdin readers.
+  - Adapter compiles after this intermediate step.
+  - Remaining Phase 1 work: true concurrent pending response map/oneshot dispatcher, cancellation propagation to active prompt, and tests/manual Zed verification.
