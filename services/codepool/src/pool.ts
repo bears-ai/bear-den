@@ -51,6 +51,14 @@ function toolsSignature(tools?: AnyAgentTool[]): string {
     return (tools ?? []).length > 0 ? "acp-client-tools" : "";
 }
 
+function isApprovalRequestMessage(msg: SDKMessage): boolean {
+    return (
+        msg.type === "stream_event" &&
+        (msg.event as { message_type?: unknown }).message_type ===
+            "approval_request_message"
+    );
+}
+
 function canUseRegisteredTool(tools: AnyAgentTool[]) {
     const allowed = new Set(tools.map((tool) => tool.name));
     return async (toolName: string) => {
@@ -346,11 +354,59 @@ export class ConversationSessionPool {
                         return;
                     }
                     await session.send(userText);
+                    let approvalRecoveryAttempted = false;
                     for await (const msg of session.stream()) {
                         if (run.cancelled) {
                             return;
                         }
-                        yield msg as SDKMessage;
+                        const sdkMsg = msg as SDKMessage;
+                        if (
+                            !approvalRecoveryAttempted &&
+                            isApprovalRequestMessage(sdkMsg)
+                        ) {
+                            approvalRecoveryAttempted = true;
+                            logger.warn(
+                                "Letta Code emitted approval request during streaming turn; attempting bounded recovery",
+                                {
+                                    event: "letta_code_approval_request_recovery",
+                                    agent_id: agentId,
+                                    conversation_id: conversationId,
+                                    channel_session_id: opts.channelSessionId,
+                                },
+                            );
+                            void session
+                                .recoverPendingApprovals({ timeoutMs: 5_000 })
+                                .then((result) => {
+                                    logger.info(
+                                        "Letta Code approval recovery completed",
+                                        {
+                                            event: "letta_code_approval_recovery_result",
+                                            agent_id: agentId,
+                                            conversation_id: conversationId,
+                                            recovered: result.recovered,
+                                            pending_approval:
+                                                result.pendingApproval,
+                                            unsupported: result.unsupported,
+                                            detail: result.detail,
+                                        },
+                                    );
+                                })
+                                .catch((error: unknown) => {
+                                    logger.warn(
+                                        "Letta Code approval recovery failed",
+                                        {
+                                            event: "letta_code_approval_recovery_error",
+                                            agent_id: agentId,
+                                            conversation_id: conversationId,
+                                            error:
+                                                error instanceof Error
+                                                    ? error.message
+                                                    : String(error),
+                                        },
+                                    );
+                                });
+                        }
+                        yield sdkMsg;
                     }
                     return;
                 } catch (e) {
