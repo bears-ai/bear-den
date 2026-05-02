@@ -1303,6 +1303,39 @@ async fn fetch_conversation_history_chronological(
     Ok(chunks.into_iter().rev().flatten().collect())
 }
 
+async fn replay_history_for_den_session(
+    http: &reqwest::Client,
+    config: &Config,
+    session_id: &str,
+    den: &Value,
+    lifecycle_method: &str,
+) -> Result<()> {
+    if let Some(conv) = conversation_id_for_history(den) {
+        let messages = fetch_conversation_history_chronological(http, config, &conv).await?;
+        eprintln!(
+            "bears-acp-adapter: {} session_id={} replaying {} history messages for conversation_id={}",
+            lifecycle_method,
+            session_id,
+            messages.len(),
+            conv
+        );
+        for (role, text) in messages {
+            match role.as_str() {
+                "user" => send_user_message_chunk(session_id, &text).await?,
+                "assistant" => send_agent_message_chunk(session_id, &text).await?,
+                _ => {}
+            }
+        }
+    } else {
+        eprintln!(
+            "bears-acp-adapter: {} session_id={} has no conv-/default history yet (pending new- thread); skipping replay",
+            lifecycle_method,
+            session_id
+        );
+    }
+    Ok(())
+}
+
 async fn restore_session_from_den(
     http: &reqwest::Client,
     config: &Config,
@@ -1318,6 +1351,7 @@ async fn restore_session_from_den(
     adapter_state
         .session_contexts
         .insert(session_id.to_string(), context);
+    replay_history_for_den_session(http, config, session_id, &den, "session/resume").await?;
     Ok(())
 }
 
@@ -1338,27 +1372,7 @@ async fn handle_session_load(
         .session_contexts
         .insert(session_id.to_string(), context);
 
-    if let Some(conv) = conversation_id_for_history(&den) {
-        let messages = fetch_conversation_history_chronological(http, config, &conv).await?;
-        eprintln!(
-            "bears-acp-adapter: session/load session_id={} replaying {} history messages for conversation_id={}",
-            session_id,
-            messages.len(),
-            conv
-        );
-        for (role, text) in messages {
-            match role.as_str() {
-                "user" => send_user_message_chunk(session_id, &text).await?,
-                "assistant" => send_agent_message_chunk(session_id, &text).await?,
-                _ => {}
-            }
-        }
-    } else {
-        eprintln!(
-            "bears-acp-adapter: session/load session_id={} has no conv-/default history yet (pending new- thread); skipping replay",
-            session_id
-        );
-    }
+    replay_history_for_den_session(http, config, session_id, &den, "session/load").await?;
 
     write_response(response_id, Ok(Value::Null)).await?;
     Ok(())
