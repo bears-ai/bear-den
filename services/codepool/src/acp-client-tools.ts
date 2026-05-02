@@ -126,20 +126,65 @@ function toAgentTool(
             if (payload.status === "ok") {
                 return jsonTextResult(payload.result ?? {});
             }
-            return jsonTextResult({
-                status: payload.status,
-                call_id: callId,
-                tool_name: name,
-                error: payload.error ?? {
-                    message: `ACP client tool ${name} did not return ok`,
-                },
-            });
+            return nonOkToolResult(name, callId, payload);
         },
     };
 }
 
 function isJsonSchemaObject(value: unknown): value is Record<string, unknown> {
     return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function nonOkToolResult(
+    toolName: string,
+    callId: string,
+    payload: { status: string; error?: unknown },
+): AgentToolResult<unknown> {
+    const message = nonOkToolMessage(toolName, payload.status, payload.error);
+    const details = {
+        status: payload.status,
+        call_id: callId,
+        tool_name: toolName,
+        error: payload.error ?? { message },
+    };
+    return {
+        content: [
+            {
+                type: "text",
+                text: message,
+            },
+        ],
+        details,
+    };
+}
+
+function nonOkToolMessage(
+    toolName: string,
+    status: string,
+    error: unknown,
+): string {
+    const errorMessage = extractErrorText(error);
+    if (status === "timeout") {
+        return `The local editor tool ${toolName} timed out before BEARS received a result. This is a tool delivery failure, not evidence that the requested file does not exist. You may retry once, preferably with a smaller or more specific file path.`;
+    }
+    if (status === "cancelled") {
+        return `The local editor tool ${toolName} was cancelled by the ACP client or user before it returned a result.`;
+    }
+    return `The local editor tool ${toolName} failed before returning a usable result.${
+        errorMessage ? ` Error: ${errorMessage}` : ""
+    }`;
+}
+
+function extractErrorText(error: unknown): string | null {
+    if (typeof error === "string") return error;
+    if (!error || typeof error !== "object") return null;
+    const message = (error as { message?: unknown }).message;
+    if (typeof message === "string") return message;
+    try {
+        return JSON.stringify(error);
+    } catch {
+        return null;
+    }
 }
 
 function jsonTextResult(value: unknown): AgentToolResult<unknown> {

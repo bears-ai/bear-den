@@ -106,3 +106,6 @@ Acceptance:
 - Began Phase 3 Den continuation diagnostics:
   - Den now deserializes Codepool `reason` and `runtime_id` fields.
   - Den tool-result response now includes `reason` and `runtime_id` for adapter/proxy-visible diagnostics.
+- Completed initial Phase 4 model-facing timeout clarity:
+  - Codepool ACP external tools now return explicit text for `timeout`, `cancelled`, and non-ok tool results.
+  - Timeout text explains this is a local editor tool delivery failure, not evidence that the file is absent.
