@@ -2009,6 +2009,18 @@ async fn handle_den_event(
             Ok(false)
         }
         "client_tool_request" => {
+            eprintln!(
+                "bears-acp-adapter: received client_tool_request session_id={} call_id={} tool={}",
+                session_id,
+                event
+                    .get("call_id")
+                    .and_then(Value::as_str)
+                    .unwrap_or("unknown"),
+                event
+                    .get("tool_name")
+                    .and_then(Value::as_str)
+                    .unwrap_or("unknown")
+            );
             send_client_tool_call_update(session_id, event).await?;
             execute_and_post_client_tool_result(
                 http,
@@ -2057,14 +2069,10 @@ async fn execute_and_post_client_tool_result(
             execute_fs_read_text_file(pending_responses.clone(), session_id, cwd, event).await
         }
         "acp_fs_write_text_file" => {
-            request_client_tool_permission(
-                pending_responses.clone(),
-                session_id,
-                call_id,
-                tool_name,
-                event,
-            )
-            .await?;
+            // Zed's `fs/write_text_file` request is the authority for local editor
+            // write approval. Avoid an extra ACP `session/request_permission` round-trip
+            // here because it can leave Codepool's external-tool waiter timing out
+            // before the actual file write request is ever sent.
             execute_fs_write_text_file(pending_responses.clone(), session_id, cwd, event).await
         }
         other => Err(anyhow!("unsupported ACP client tool: {other}")),
@@ -2122,95 +2130,6 @@ async fn execute_and_post_client_tool_result(
         http, config, session_id, call_id, request_id, tool_name, &body,
     )
     .await
-}
-
-async fn request_client_tool_permission(
-    pending_responses: PendingResponses,
-    session_id: &str,
-    call_id: &str,
-    tool_name: &str,
-    event: &Value,
-) -> Result<()> {
-    if event
-        .get("approval_policy")
-        .and_then(Value::as_str)
-        .unwrap_or("never")
-        != "always"
-    {
-        return Ok(());
-    }
-
-    let rpc_id = format!("bears-permission-{}", Uuid::new_v4());
-    let request = build_permission_request(rpc_id.clone(), session_id, call_id, tool_name, event);
-    let response = send_client_request_with_waiter(pending_responses, &rpc_id, request).await?;
-    if let Some(error) = response.get("error") {
-        return Err(anyhow!("ACP client permission request failed: {error}"));
-    }
-    let outcome = response
-        .pointer("/result/outcome/outcome")
-        .and_then(Value::as_str)
-        .unwrap_or("cancelled");
-    if outcome != "selected" {
-        return Err(anyhow!("ACP client permission request was {outcome}"));
-    }
-    Ok(())
-}
-
-fn build_permission_request(
-    rpc_id: impl Into<Value>,
-    session_id: &str,
-    call_id: &str,
-    tool_name: &str,
-    event: &Value,
-) -> Value {
-    let args = event.get("arguments").cloned().unwrap_or_else(|| json!({}));
-    json!({
-        "jsonrpc": "2.0",
-        "id": rpc_id.into(),
-        "method": "session/request_permission",
-        "params": {
-            "sessionId": session_id,
-            "toolCall": {
-                "toolCallId": call_id,
-                "title": tool_title(tool_name),
-                "kind": tool_kind_for_event(event),
-                "status": "pending",
-                "locations": tool_locations_for_event(event),
-                "rawInput": args,
-                "content": [{
-                    "type": "content",
-                    "content": {
-                        "type": "text",
-                        "text": permission_prompt_text(tool_name, event)
-                    }
-                }]
-            },
-            "options": [
-                {
-                    "optionId": "allow_once",
-                    "name": "Allow once",
-                    "kind": "allow_once"
-                },
-                {
-                    "optionId": "reject_once",
-                    "name": "Reject",
-                    "kind": "reject_once"
-                }
-            ]
-        }
-    })
-}
-
-fn permission_prompt_text(tool_name: &str, event: &Value) -> String {
-    let path = event
-        .get("arguments")
-        .and_then(|arguments| arguments.get("path"))
-        .and_then(Value::as_str)
-        .unwrap_or("file");
-    match tool_name {
-        "acp_fs_write_text_file" => format!("Allow BEARS to write text content to {path}?"),
-        _ => format!("Allow BEARS to run {}?", tool_title(tool_name)),
-    }
 }
 
 async fn execute_fs_read_text_file(
@@ -2769,34 +2688,6 @@ mod tests {
                 content: "fn main() {}".to_string(),
             }
         );
-    }
-
-    #[test]
-    fn build_permission_request_uses_acp_request_permission_shape() {
-        let event = json!({
-            "tool_name": "acp_fs_write_text_file",
-            "arguments": {
-                "path": "README.md",
-                "content": "hello"
-            }
-        });
-        let request = build_permission_request(
-            "permission-1",
-            "session-1",
-            "call-1",
-            "acp_fs_write_text_file",
-            &event,
-        );
-        assert_eq!(request["method"], "session/request_permission");
-        assert_eq!(request["params"]["sessionId"], "session-1");
-        assert_eq!(request["params"]["toolCall"]["toolCallId"], "call-1");
-        assert_eq!(request["params"]["toolCall"]["kind"], "edit");
-        assert_eq!(
-            request["params"]["toolCall"]["locations"][0]["path"],
-            "README.md"
-        );
-        assert_eq!(request["params"]["options"][0]["kind"], "allow_once");
-        assert_eq!(request["params"]["options"][1]["kind"], "reject_once");
     }
 
     #[test]

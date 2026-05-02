@@ -98,7 +98,8 @@ Acceptance:
   - Adapter compiles after this intermediate step.
   - Added pending response map with `oneshot` waiters for adapter-to-client requests.
   - Stdin reader now routes JSON-RPC responses directly to pending waiters before forwarding requests/notifications to the main handler.
-  - File read, file write, and permission requests now use `send_client_request_with_waiter` instead of consuming the inbound channel directly.
+  - File read and file write requests now use `send_client_request_with_waiter` instead of consuming the inbound channel directly.
+  - Removed adapter-initiated `session/request_permission` before writes; Zed's `fs/write_text_file` request is the local approval boundary and the extra permission round-trip caused repeated-turn write calls to time out before the actual file request was sent.
   - Remaining Phase 1 work: cancellation propagation to active prompt, adapter unit tests for dispatcher routing, and manual Zed verification.
 - Began Phase 2 Codepool waiter diagnostics:
   - Added waiter metadata and `listWaiters()`.
