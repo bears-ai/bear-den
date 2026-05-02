@@ -110,6 +110,10 @@ Acceptance:
   - Fixed warm-session stale request context by storing latest ACP tool context per Codepool channel session; reused external tool closures now read the current Den request id instead of the first-turn request id.
   - Added Codepool logs when ACP external tools emit requests and when their waiter receives results.
   - Made ACP client tool timeout configurable with `ACP_CLIENT_TOOL_TIMEOUT_MS` and lowered default to 15s while debugging repeated-turn stalls.
+  - Made ACP client tool request emission await the SSE `res.write` callback/drain path before starting the Codepool waiter, and added `acp_client_tool_request_sse_written` logs.
+  - `acp_client_tool_request_sse_written` now includes write duration and whether Node reported response backpressure.
+  - Added `GET /internal/bear_channel/debug` for Codepool runtime id, pending tool waiters, waiter metadata, and pool stats.
+  - Restored default `ACP_CLIENT_TOOL_TIMEOUT_MS` to 30s; it remains configurable for experiments.
   - Added bounded `recoverPendingApprovals` attempt when Letta Code emits `approval_request_message` during a streaming turn. Logs `letta_code_approval_request_recovery` and the recovery result/error.
   - Moved approval recovery behind `ACP_APPROVAL_RECOVERY_ENABLED` (default false) to reduce control-traffic noise during ACP tool debugging.
   - Added dedicated `letta_code_approval_request_event` logging with extracted approval tool names and a redacted/truncated preview.

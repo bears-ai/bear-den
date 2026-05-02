@@ -19,7 +19,7 @@ export type AcpClientToolRuntimeContext = {
 };
 
 const DEFAULT_TIMEOUT_MS = Number(
-    process.env.ACP_CLIENT_TOOL_TIMEOUT_MS || "15000",
+    process.env.ACP_CLIENT_TOOL_TIMEOUT_MS || "30000",
 );
 
 export function parseAcpClientTools(
@@ -40,7 +40,7 @@ export function parseAcpClientTools(
 export function makeAcpClientExternalTools(opts: {
     descriptors: AcpClientToolDescriptor[];
     getContext: () => AcpClientToolRuntimeContext;
-    emit: (event: BearChannelEvent) => void;
+    emit: (event: BearChannelEvent) => void | Promise<void>;
     results: AcpToolResultRegistry;
 }): AnyAgentTool[] {
     const used = new Set<string>();
@@ -60,7 +60,7 @@ export function makeAcpClientExternalTools(opts: {
 function toAgentTool(
     descriptor: AcpClientToolDescriptor,
     getContext: () => AcpClientToolRuntimeContext,
-    emit: (event: BearChannelEvent) => void,
+    emit: (event: BearChannelEvent) => void | Promise<void>,
     results: AcpToolResultRegistry,
     used: Set<string>,
 ): AnyAgentTool | null {
@@ -112,7 +112,7 @@ function toAgentTool(
                         ? Object.keys(args as Record<string, unknown>).sort()
                         : [],
             });
-            emit({
+            await emit({
                 type: "client_tool_request",
                 request_id: context.request_id,
                 session_id: context.session_id,

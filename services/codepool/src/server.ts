@@ -189,6 +189,32 @@ export type ServerContext = {
     acpToolResults?: AcpToolResultRegistry;
 };
 
+type SseWriteResult = {
+    backpressure: boolean;
+    duration_ms: number;
+};
+
+function writeSseFrame(
+    res: express.Response,
+    line: string,
+): Promise<SseWriteResult> {
+    const started = Date.now();
+    return new Promise((resolve, reject) => {
+        const finish = (backpressure: boolean) =>
+            resolve({ backpressure, duration_ms: Date.now() - started });
+        const ok = res.write(`data: ${line}\n\n`, (error?: Error | null) => {
+            if (error) reject(error);
+        });
+        (res as { flush?: () => void }).flush?.();
+        if (ok) {
+            finish(false);
+            return;
+        }
+        res.once("drain", () => finish(true));
+        res.once("error", reject);
+    });
+}
+
 function authMiddleware(internalToken: string) {
     return (
         req: express.Request,
@@ -315,6 +341,16 @@ export function attachRoutes(
             ok: true,
             runtime_id: CODEPOOL_RUNTIME_ID,
             waiters: acpToolResults.listWaiters(),
+        });
+    });
+
+    app.get("/internal/bear_channel/debug", guard, (_req, res) => {
+        res.json({
+            ok: true,
+            runtime_id: CODEPOOL_RUNTIME_ID,
+            pending_tool_waiters: acpToolResults.pendingCount(),
+            tool_waiters: acpToolResults.listWaiters(),
+            pool: ctx.pool.stats(),
         });
     });
 
@@ -502,13 +538,24 @@ export function attachRoutes(
                     conversation_id: parsed.conversationId,
                     request_id: requestId,
                 });
-                const emitBearChannelEvent = (
+                const emitBearChannelEvent = async (
                     event: import("./bear-channel.js").BearChannelEvent,
                 ) => {
                     sseDataLines += 1;
                     const line = bearChannelEventToSseDataLine(event);
-                    res.write(`data: ${line}\n\n`);
-                    (res as { flush?: () => void }).flush?.();
+                    const writeResult = await writeSseFrame(res, line);
+                    if (event.type === "client_tool_request") {
+                        logger.info("ACP client tool request SSE written", {
+                            event: "acp_client_tool_request_sse_written",
+                            request_id: event.request_id,
+                            session_id: event.session_id,
+                            conversation_id: event.conversation_id,
+                            call_id: event.call.id,
+                            tool_name: event.call.name,
+                            write_duration_ms: writeResult.duration_ms,
+                            backpressure: writeResult.backpressure,
+                        });
+                    }
                 };
                 const denTools = makeDenExternalTools({
                     descriptors: parseDenServerTools(body.capabilities),
@@ -584,10 +631,10 @@ export function attachRoutes(
                     }
                     for (const event of events) {
                         sseDataLines += 1;
-                        res.write(
-                            `data: ${bearChannelEventToSseDataLine(event)}\n\n`,
+                        await writeSseFrame(
+                            res,
+                            bearChannelEventToSseDataLine(event),
                         );
-                        (res as { flush?: () => void }).flush?.();
                         if (
                             event.type === "assistant_delta" ||
                             event.type === "reasoning_delta"
