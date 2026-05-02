@@ -257,7 +257,7 @@ async fn acp_prompt_requires_bearer_auth() {
     assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
     let body = res.into_body().collect().await.unwrap().to_bytes();
     let value: Value = serde_json::from_slice(&body).expect("JSON error body");
-    assert_eq!(value["error_code"], "missing_authorization");
+    assert_eq!(value["error_code"], "authentication");
 }
 
 #[tokio::test]

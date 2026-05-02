@@ -1714,45 +1714,168 @@ fn map_bear_channel_event_to_acp_adapter_event(event: &serde_json::Value) -> Opt
     Some(Bytes::from(format!("data: {}\n\n", mapped)))
 }
 
-fn parse_bear_channel_frame_values(frame: &[u8]) -> Vec<serde_json::Value> {
-    let text = String::from_utf8_lossy(frame);
-    let mut out = Vec::new();
-    for line in text.lines() {
-        let Some(data) = line.strip_prefix("data:") else {
+/// Byte offset **after** the first complete SSE frame delimiter (`\n\n` or `\r\n\r\n`).
+fn find_sse_frame_end(buf: &[u8]) -> Option<usize> {
+    let lf = buf
+        .windows(2)
+        .position(|w| w == b"\n\n")
+        .map(|p| p + 2);
+    let crlf = buf
+        .windows(4)
+        .position(|w| w == b"\r\n\r\n")
+        .map(|p| p + 4);
+    match (lf, crlf) {
+        (Some(a), Some(b)) => Some(a.min(b)),
+        (Some(a), None) => Some(a),
+        (None, Some(b)) => Some(b),
+        (None, None) => None,
+    }
+}
+
+fn strip_trailing_sse_delimiter_owned(mut frame: Vec<u8>) -> Vec<u8> {
+    if frame.ends_with(b"\r\n\r\n") {
+        frame.truncate(frame.len().saturating_sub(4));
+    } else if frame.ends_with(b"\n\n") {
+        frame.truncate(frame.len().saturating_sub(2));
+    }
+    frame
+}
+
+#[cfg(test)]
+fn strip_trailing_sse_delimiter(frame: &[u8]) -> &[u8] {
+    if frame.ends_with(b"\r\n\r\n") {
+        &frame[..frame.len().saturating_sub(4)]
+    } else if frame.ends_with(b"\n\n") {
+        &frame[..frame.len().saturating_sub(2)]
+    } else {
+        frame
+    }
+}
+
+const SSE_JSON_PREVIEW_MAX: usize = 192;
+
+fn preview_bytes_utf8_lossy(bytes: &[u8]) -> String {
+    let s = String::from_utf8_lossy(bytes);
+    preview_str_truncated(&s, SSE_JSON_PREVIEW_MAX)
+}
+
+fn preview_str_truncated(s: &str, max: usize) -> String {
+    if s.len() <= max {
+        s.to_string()
+    } else {
+        format!("{}...", &s[..max])
+    }
+}
+
+/// Preview for log lines (prefix + `...`).
+fn preview_id(s: &str) -> String {
+    const PREFIX: usize = 12;
+    let mut it = s.chars();
+    let prefix: String = it.by_ref().take(PREFIX).collect();
+    if it.next().is_some() {
+        format!("{prefix}...")
+    } else {
+        s.to_string()
+    }
+}
+
+/// One SSE *event* (between delimiters): join all `data:` field lines with `\n`, then parse JSON once.
+fn parse_sse_event_body_to_json(body: &[u8]) -> Result<Option<serde_json::Value>, String> {
+    let text = std::str::from_utf8(body).map_err(|_| {
+        format!(
+            "invalid UTF-8 in SSE event body (preview: {})",
+            preview_bytes_utf8_lossy(body)
+        )
+    })?;
+    let mut chunks: Vec<&str> = Vec::new();
+    for line in text.split('\n') {
+        let line = line.strip_suffix('\r').unwrap_or(line);
+        if line.is_empty() {
+            continue;
+        }
+        if line.starts_with(':') {
+            continue;
+        }
+        let Some(rest) = line.strip_prefix("data:") else {
             continue;
         };
-        let data = data.trim();
-        if data.is_empty() || data == "[DONE]" {
-            continue;
-        }
-        if let Ok(value) = serde_json::from_str::<serde_json::Value>(data) {
-            out.push(value);
-        }
+        let rest = rest.strip_prefix(' ').unwrap_or(rest);
+        chunks.push(rest);
     }
-    out
+    let joined = chunks.join("\n");
+    let joined = joined.trim();
+    if joined.is_empty() || joined == "[DONE]" {
+        return Ok(None);
+    }
+    serde_json::from_str::<serde_json::Value>(joined)
+        .map(Some)
+        .map_err(|e| {
+            format!(
+                "{e} (preview: {})",
+                preview_str_truncated(joined, SSE_JSON_PREVIEW_MAX)
+            )
+        })
 }
 
 #[cfg(test)]
 fn map_bear_channel_frame_to_acp_adapter_events(frame: &[u8]) -> Vec<Bytes> {
-    parse_bear_channel_frame_values(frame)
-        .into_iter()
-        .filter_map(|value| map_bear_channel_event_to_acp_adapter_event(&value))
-        .collect()
+    let body = strip_trailing_sse_delimiter(frame);
+    match parse_sse_event_body_to_json(body) {
+        Ok(Some(value)) => map_bear_channel_event_to_acp_adapter_event(&value)
+            .into_iter()
+            .collect(),
+        Ok(None) | Err(_) => Vec::new(),
+    }
 }
 
 async fn map_bear_channel_frame_to_acp_adapter_events_with_persistence(
     frame: Vec<u8>,
     context: AcpStreamContext,
 ) -> Result<Vec<Bytes>, std::io::Error> {
-    let values = parse_bear_channel_frame_values(&frame);
-    let mut out = Vec::new();
-    for value in values {
-        persist_stream_event_side_effects(&context, &value)
-            .await
-            .map_err(|err| std::io::Error::other(err.to_string()))?;
-        if let Some(bytes) = map_bear_channel_event_to_acp_adapter_event(&value) {
-            out.push(bytes);
+    let body = strip_trailing_sse_delimiter_owned(frame);
+    let value = match parse_sse_event_body_to_json(&body) {
+        Err(msg) => {
+            tracing::warn!(
+                request_id = %context.request_id,
+                acp_session_id = %context.acp_session_id,
+                error = %msg,
+                "ACP upstream Codepool SSE event JSON parse failed"
+            );
+            return Ok(Vec::new());
         }
+        Ok(None) => return Ok(Vec::new()),
+        Ok(Some(v)) => v,
+    };
+
+    if value.get("type").and_then(|v| v.as_str()) == Some("client_tool_request") {
+        let context_rid = context.request_id.to_string();
+        let req_preview = preview_id(
+            value
+                .get("request_id")
+                .and_then(|v| v.as_str())
+                .unwrap_or(&context_rid),
+        );
+        let call_preview = value
+            .get("call")
+            .and_then(|c| c.get("id"))
+            .and_then(|v| v.as_str())
+            .map(preview_id)
+            .unwrap_or_else(|| "?".to_string());
+        tracing::info!(
+            request_id = %context.request_id,
+            event_type = "client_tool_request",
+            event_request_id = %req_preview,
+            call_id = %call_preview,
+            "ACP upstream Codepool event received"
+        );
+    }
+
+    persist_stream_event_side_effects(&context, &value)
+        .await
+        .map_err(|err| std::io::Error::other(err.to_string()))?;
+    let mut out = Vec::new();
+    if let Some(bytes) = map_bear_channel_event_to_acp_adapter_event(&value) {
+        out.push(bytes);
     }
     Ok(out)
 }
@@ -1780,6 +1903,8 @@ fn initial_adapter_events(missing_tools_scope: bool) -> Vec<Bytes> {
 struct AcpBearChannelSseStream {
     inner: Pin<Box<dyn Stream<Item = Result<Bytes, reqwest::Error>> + Send>>,
     buffer: Vec<u8>,
+    /// Complete upstream SSE event bodies (delimiter stripped), FIFO.
+    pending_raw_frames: std::collections::VecDeque<Vec<u8>>,
     pending: std::collections::VecDeque<Bytes>,
     context: AcpStreamContext,
     persist_future:
@@ -1795,6 +1920,7 @@ impl AcpBearChannelSseStream {
         Self {
             inner: Box::pin(inner),
             buffer: Vec::new(),
+            pending_raw_frames: std::collections::VecDeque::new(),
             pending: initial_pending.into(),
             context,
             persist_future: None,
@@ -1821,9 +1947,7 @@ impl Stream for AcpBearChannelSseStream {
                     for item in bytes {
                         this.pending.push_back(item);
                     }
-                    if let Some(bytes) = this.pending.pop_front() {
-                        return Poll::Ready(Some(Ok(bytes)));
-                    }
+                    return self.poll_next(cx);
                 }
                 Err(err) => {
                     this.persist_future = None;
@@ -1832,41 +1956,45 @@ impl Stream for AcpBearChannelSseStream {
             }
         }
 
-        loop {
-            match ready!(this.inner.as_mut().poll_next(cx)) {
-                Some(Ok(chunk)) => {
-                    this.buffer.extend_from_slice(&chunk);
-                    while let Some(pos) = this.buffer.windows(2).position(|w| w == b"\n\n") {
-                        let frame: Vec<u8> = this.buffer.drain(..pos + 2).collect();
-                        let context = this.context.clone();
-                        this.persist_future = Some(Box::pin(async move {
-                            map_bear_channel_frame_to_acp_adapter_events_with_persistence(
-                                frame, context,
-                            )
-                            .await
-                        }));
-                        return self.poll_next(cx);
-                    }
-                    if let Some(bytes) = this.pending.pop_front() {
-                        return Poll::Ready(Some(Ok(bytes)));
-                    }
+        if let Some(frame_body) = this.pending_raw_frames.pop_front() {
+            let context = this.context.clone();
+            this.persist_future = Some(Box::pin(async move {
+                map_bear_channel_frame_to_acp_adapter_events_with_persistence(
+                    frame_body,
+                    context,
+                )
+                .await
+            }));
+            return self.poll_next(cx);
+        }
+
+        match ready!(this.inner.as_mut().poll_next(cx)) {
+            Some(Ok(chunk)) => {
+                this.buffer.extend_from_slice(&chunk);
+                while let Some(end) = find_sse_frame_end(&this.buffer) {
+                    let raw: Vec<u8> = this.buffer.drain(..end).collect();
+                    let frame_body = strip_trailing_sse_delimiter_owned(raw);
+                    this.pending_raw_frames.push_back(frame_body);
                 }
-                Some(Err(err)) => {
-                    return Poll::Ready(Some(Err(std::io::Error::other(err.to_string()))));
+                self.poll_next(cx)
+            }
+            Some(Err(err)) => Poll::Ready(Some(Err(std::io::Error::other(err.to_string())))),
+            None => {
+                if !this.buffer.is_empty() {
+                    let preview = preview_bytes_utf8_lossy(&this.buffer);
+                    tracing::warn!(
+                        request_id = %this.context.request_id,
+                        acp_session_id = %this.context.acp_session_id,
+                        incomplete_bytes = this.buffer.len(),
+                        preview = %preview,
+                        "ACP upstream Codepool SSE stream ended with incomplete frame"
+                    );
+                    this.buffer.clear();
                 }
-                None => {
-                    if !this.buffer.is_empty() {
-                        let frame = std::mem::take(&mut this.buffer);
-                        let context = this.context.clone();
-                        this.persist_future = Some(Box::pin(async move {
-                            map_bear_channel_frame_to_acp_adapter_events_with_persistence(
-                                frame, context,
-                            )
-                            .await
-                        }));
-                        return self.poll_next(cx);
-                    }
-                    return Poll::Ready(None);
+                if !this.pending_raw_frames.is_empty() {
+                    self.poll_next(cx)
+                } else {
+                    Poll::Ready(None)
                 }
             }
         }
@@ -1894,6 +2022,35 @@ mod tests {
         );
         let text = String::from_utf8(out[0].to_vec()).unwrap();
         assert!(text.contains("\"type\":\"done\""));
+    }
+
+    #[test]
+    fn sse_parser_joins_multiple_data_lines_into_one_json_value() {
+        let body = br#"data: {"type":"assistant_delta","text":
+data: "hello"}"#;
+        let v = parse_sse_event_body_to_json(body).unwrap().unwrap();
+        assert_eq!(v["type"], "assistant_delta");
+        assert_eq!(v["text"], "hello");
+        let out = map_bear_channel_frame_to_acp_adapter_events(
+            b"data: {\"type\":\"assistant_delta\",\"text\":\ndata: \"hello\"}\n\n",
+        );
+        assert_eq!(out.len(), 1);
+    }
+
+    #[test]
+    fn sse_parser_rejects_invalid_json_with_parse_path_empty() {
+        let body = br#"data: not-json"#;
+        assert!(parse_sse_event_body_to_json(body).is_err());
+        let out = map_bear_channel_frame_to_acp_adapter_events(b"data: not-json\n\n");
+        assert!(out.is_empty());
+    }
+
+    #[test]
+    fn sse_frame_end_prefers_earliest_lf_or_crlf_delimiter() {
+        let buf = b"data: {}\r\n\r\n";
+        assert_eq!(find_sse_frame_end(buf), Some(12));
+        let buf2 = b"data: {}\n\n";
+        assert_eq!(find_sse_frame_end(buf2), Some(10));
     }
 
     #[test]
