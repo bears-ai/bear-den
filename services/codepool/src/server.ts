@@ -457,19 +457,19 @@ export function attachRoutes(
                 return;
             }
 
-            res.status(200);
-            res.setHeader("Content-Type", "text/event-stream; charset=utf-8");
-            res.setHeader("Cache-Control", "no-cache, no-transform");
-            res.setHeader("Connection", "keep-alive");
-            res.setHeader("X-Accel-Buffering", "no");
-            res.flushHeaders?.();
-
             const rawReqId = req.headers["x-request-id"];
             const requestId =
                 typeof rawReqId === "string" && rawReqId.trim()
                     ? rawReqId.trim()
                     : body.request_id?.trim() || randomUUID();
+
+            res.status(200);
+            res.setHeader("Content-Type", "text/event-stream; charset=utf-8");
+            res.setHeader("Cache-Control", "no-cache, no-transform");
+            res.setHeader("Connection", "keep-alive");
+            res.setHeader("X-Accel-Buffering", "no");
             res.setHeader("X-Request-Id", requestId);
+            res.flushHeaders?.();
 
             recordConversationMessagesRequest();
             const t0 = Date.now();
