@@ -1623,6 +1623,15 @@ async fn persist_stream_event_side_effects(
         .and_then(|v| v.as_i64())
         .filter(|v| *v > 0)
         .unwrap_or(30_000);
+    tracing::info!(
+        request_id = %context.request_id,
+        acp_session_id = %context.acp_session_id,
+        codepool_session_id = %context.codepool_session_id,
+        call_id = %call_id,
+        tool_name = %tool_name,
+        timeout_ms,
+        "ACP streaming client tool request to adapter"
+    );
     acp_client_tools::persist_sent_call(
         &context.pool,
         NewAcpClientToolCall {
