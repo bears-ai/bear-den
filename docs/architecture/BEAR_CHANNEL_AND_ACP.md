@@ -75,6 +75,8 @@ Future development should not build conversation listing, history, memory, searc
 
 If this table/model is renamed later, prefer names that emphasize binding rather than conversation ownership, such as `acp_session_bindings` or `client_session_bindings`.
 
+See also: [ACP Session Bindings ADR](adr/acp-session-bindings.md).
+
 ## Current implementation status
 
 Implemented:
@@ -82,31 +84,38 @@ Implemented:
 - Codepool `BearChannelRequest` and `BearChannelEvent` TypeScript contract.
 - Codepool internal route:
   - `POST /internal/bear_channel/sessions/:sessionId/messages`
-- Codepool cancellation placeholder:
-  - `POST /internal/bear_channel/sessions/:sessionId/cancel` returns `501` until the warm pool supports cancellation.
+- Codepool cancellation route:
+  - `POST /internal/bear_channel/sessions/:sessionId/cancel` cancels active bear-channel runs where possible.
 - Den `CodePoolClient::post_bear_channel_message_streaming`.
 - Den web chat (`POST /v1/chat/send`) now calls `bear_channel` internally while preserving the browser-facing SSE contract.
 - Den maps `bear_channel` events back to the current Deep Chat / Letta-shaped SSE payloads:
   - `assistant_delta` -> `assistant_message`
   - `reasoning_delta` -> `reasoning_message`
   - `error` -> `error_message`
-- Den API ACP gateway route:
+- Den API ACP gateway routes:
+  - `GET /acp/bears/{slug}/sessions`
+  - `GET /acp/bears/{slug}/sessions/{session_id}`
   - `POST /acp/bears/{slug}/sessions/{session_id}/prompt`
+  - `POST /acp/bears/{slug}/sessions/{session_id}/cancel`
+  - `POST /acp/bears/{slug}/sessions/{session_id}/close`
+  - `POST /acp/bears/{slug}/sessions/{session_id}/tool-results/{call_id}`
+  - `GET /acp/bears/{slug}/conversations`
+  - `GET /acp/bears/{slug}/conversations/{conversation_id}/history`
+  - `GET /acp/bears/{slug}/auth-check`
 - ACP tokens with `acp:chat` scope, per-bear grants, hashing, last-used tracking, and revocation.
 - Local `bears-acp-adapter` for ACP JSON-RPC over stdio to Den HTTPS/SSE.
+- Adapter `session/list`, `session/resume`, `session/load`, `session/cancel`, and `session/close` support.
+- Text-only `session/load` history replay for user/assistant messages.
+- Absolute `cwd` validation for ACP sessions.
+- Stable keyset pagination for ACP session listing.
+- ACP-provided `mcpServers` are rejected until stdio MCP lifecycle support exists.
 - Basic ACP chat validated with Zed.
-
-In progress / next:
-
-- ACP gateway integration tests for auth, membership, validation, request construction, and SSE mapping.
 
 Reserved for later:
 
-- ACP client tool relay implementation. The detailed design is in [`../planning/ACP_CLIENT_TOOL_RELAY_PLAN.md`](../planning/ACP_CLIENT_TOOL_RELAY_PLAN.md).
-- Rich web UI rendering of server tool, sub-agent, and memory events.
-- Full cancellation.
-- Session resume/load/list.
+- Richer ACP history replay if Letta/Codepool expose faithful historical tool/status/error/resource events.
 - MCP relay.
+- Rich web UI rendering of server tool, sub-agent, and memory events.
 - Adapter packaging polish.
 
 ## `bear_channel` request shape

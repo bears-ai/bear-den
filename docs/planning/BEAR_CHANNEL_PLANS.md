@@ -54,11 +54,11 @@ Before deep implementation:
    - Add timeout, cancellation, disconnect, and error propagation semantics.
    - Audit every request and result.
 
-4. **ACP session load/resume — planned**
-   - Detailed plan: [`ACP_SESSION_RESUME_PLAN.md`](ACP_SESSION_RESUME_PLAN.md).
-   - Make ACP-created sessions durable by routing later prompts through Den's stored `resolved_conversation_id`.
-   - Add ACP-token conversation list/history endpoints for adapters.
-   - Implement adapter `session/load` and advertise `loadSession: true` only after end-to-end support exists.
+4. **ACP session bindings — implemented baseline**
+   - Durable ACP session behavior is captured in the [ACP Session Bindings ADR](../architecture/adr/acp-session-bindings.md).
+   - ACP-created sessions route later prompts through Den's stored `resolved_conversation_id` when available.
+   - Den exposes ACP Code-token session/conversation list and history endpoints for adapters.
+   - The adapter supports `session/list`, `session/resume`, `session/load`, `session/cancel`, and `session/close`.
 
 5. **Server tool management over `bear_channel`**
    - Add Den-provided runtime capability context for Codepool.
