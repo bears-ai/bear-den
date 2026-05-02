@@ -164,3 +164,29 @@ pub async fn mark_forwarded(pool: &PgPool, id: Uuid) -> Result<(), CustomError> 
     .await?;
     Ok(())
 }
+
+pub async fn mark_cancelled_for_session(
+    pool: &PgPool,
+    user_id: i32,
+    bear_slug: &str,
+    acp_session_id: &str,
+) -> Result<u64, CustomError> {
+    let result = sqlx::query(
+        r#"
+        UPDATE acp_client_tool_calls
+        SET status = 'cancelled',
+            error = COALESCE(error, '{"message":"ACP session was cancelled"}'::jsonb),
+            result_received_at = COALESCE(result_received_at, NOW())
+        WHERE user_id = $1
+          AND bear_slug = $2
+          AND acp_session_id = $3
+          AND status IN ('sent_to_client', 'approved', 'pending')
+        "#,
+    )
+    .bind(user_id)
+    .bind(bear_slug)
+    .bind(acp_session_id)
+    .execute(pool)
+    .await?;
+    Ok(result.rows_affected())
+}

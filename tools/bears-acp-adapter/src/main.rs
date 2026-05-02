@@ -398,7 +398,21 @@ async fn handle_request(
         "session/new" => {
             if let Some(id) = request.id {
                 let session_id = format!("acp-{}", Uuid::new_v4());
-                let context = session_context_from_params(&request.params);
+                let context = match session_context_from_params(&request.params) {
+                    Ok(context) => context,
+                    Err(err) => {
+                        write_response(
+                            id,
+                            Err(json_rpc_error(
+                                -32602,
+                                "Invalid session params",
+                                Some(json!({ "message": format!("{err:#}") })),
+                            )),
+                        )
+                        .await?;
+                        return Ok(());
+                    }
+                };
                 eprintln!(
                     "bears-acp-adapter: session/new session_id={} cwd={} roots={}",
                     session_id,
@@ -439,6 +453,18 @@ async fn handle_request(
                             "message": format!("BEARS Code token authentication failed: {err:#}"),
                             "hint": "Generate a fresh Den Code token for this bear."
                         })))),
+                    )
+                    .await?;
+                    return Ok(());
+                }
+                if let Err(err) = validate_optional_cwd_filter(&request.params) {
+                    write_response(
+                        id,
+                        Err(json_rpc_error(
+                            -32602,
+                            "Invalid session/list params",
+                            Some(json!({ "message": format!("{err:#}") })),
+                        )),
                     )
                     .await?;
                     return Ok(());
@@ -629,7 +655,33 @@ async fn handle_request(
             }
         }
         "session/cancel" => {
-            eprintln!("bears-acp-adapter: session/cancel received; remote cancellation is not implemented yet");
+            if let Some(id) = request.id {
+                let Some(config) = runtime.config.as_ref() else {
+                    write_response(
+                        id,
+                        Err(auth_required_error(Some(json!({
+                            "message": runtime.configuration_error_message(),
+                            "problems": runtime.diagnostics,
+                        })))),
+                    )
+                    .await?;
+                    return Ok(());
+                };
+                match handle_session_cancel(http, config, request.params).await {
+                    Ok(()) => write_response(id, Ok(json!({}))).await?,
+                    Err(err) => {
+                        write_response(
+                            id,
+                            Err(json_rpc_error(
+                                -32003,
+                                "BEARS session cancel failed",
+                                Some(json!({ "message": format!("{err:#}") })),
+                            )),
+                        )
+                        .await?;
+                    }
+                }
+            }
         }
         _ => {
             if let Some(id) = request.id {
@@ -648,34 +700,117 @@ async fn handle_request(
     Ok(())
 }
 
-fn session_context_from_params(params: &Value) -> SessionContext {
+fn session_context_from_params(params: &Value) -> Result<SessionContext> {
+    validate_mcp_servers_unsupported(params)?;
     let roots = workspace_roots_from_params(params);
-    let cwd = params
-        .get("cwd")
-        .or_else(|| params.get("workspaceUri"))
-        .or_else(|| params.pointer("/workspace/currentDirectory"))
-        .or_else(|| params.pointer("/workspace/cwd"))
-        .or_else(|| params.pointer("/workspace/root"))
-        .or_else(|| params.pointer("/workspace/folders/0/path"))
-        .or_else(|| params.pointer("/workspace/folders/0/uri"))
-        .or_else(|| params.pointer("/workspaceFolders/0/path"))
-        .or_else(|| params.pointer("/workspaceFolders/0/uri"))
-        .and_then(Value::as_str)
-        .and_then(file_uri_or_path_to_path)
+    let cwd = explicit_cwd_from_params(params)
+        .transpose()?
+        .or_else(|| fallback_cwd_from_params(params))
         .or_else(|| roots.first().cloned())
-        .unwrap_or_default();
+        .ok_or_else(|| anyhow!("ACP session requires an absolute cwd; provide params.cwd as an absolute local path"))?;
+    if !is_absolute_local_path(&cwd) {
+        return Err(anyhow!(
+            "ACP session cwd must be an absolute local path; got {cwd:?}"
+        ));
+    }
     let raw = json!({
         "cwd": cwd,
         "workspace_roots": roots,
         "adapter_version": env!("CARGO_PKG_VERSION"),
     });
-    SessionContext {
+    Ok(SessionContext {
         cwd,
         roots,
         raw,
         conversation_id: None,
         resolved_conversation_id: None,
+    })
+}
+
+fn validate_mcp_servers_unsupported(params: &Value) -> Result<()> {
+    let Some(mcp_servers) = params
+        .get("mcpServers")
+        .or_else(|| params.get("mcp_servers"))
+    else {
+        return Ok(());
+    };
+    let non_empty = match mcp_servers {
+        Value::Null => false,
+        Value::Array(items) => !items.is_empty(),
+        Value::Object(map) => !map.is_empty(),
+        _ => true,
+    };
+    if non_empty {
+        return Err(anyhow!(
+            "ACP-provided mcpServers are not supported by the BEARS local adapter yet; configure BEARS/Den tools instead"
+        ));
     }
+    Ok(())
+}
+
+fn explicit_cwd_from_params(params: &Value) -> Option<Result<String>> {
+    params.get("cwd").and_then(Value::as_str).map(|raw| {
+        let path =
+            file_uri_or_path_to_path(raw).ok_or_else(|| anyhow!("params.cwd must not be empty"))?;
+        if is_absolute_local_path(&path) {
+            Ok(path)
+        } else {
+            Err(anyhow!(
+                "params.cwd must be an absolute local path; got {path:?}"
+            ))
+        }
+    })
+}
+
+fn fallback_cwd_from_params(params: &Value) -> Option<String> {
+    [
+        params.get("workspaceUri"),
+        params.pointer("/workspace/currentDirectory"),
+        params.pointer("/workspace/cwd"),
+        params.pointer("/workspace/root"),
+        params.pointer("/workspace/folders/0/path"),
+        params.pointer("/workspace/folders/0/uri"),
+        params.pointer("/workspaceFolders/0/path"),
+        params.pointer("/workspaceFolders/0/uri"),
+    ]
+    .into_iter()
+    .flatten()
+    .filter_map(Value::as_str)
+    .filter_map(file_uri_or_path_to_path)
+    .find(|path| is_absolute_local_path(path))
+}
+
+fn validate_optional_cwd_filter(params: &Value) -> Result<()> {
+    let Some(cwd) = params
+        .get("cwd")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    else {
+        return Ok(());
+    };
+    let path = file_uri_or_path_to_path(cwd)
+        .ok_or_else(|| anyhow!("session/list cwd filter must not be empty"))?;
+    if is_absolute_local_path(&path) {
+        Ok(())
+    } else {
+        Err(anyhow!(
+            "session/list cwd filter must be an absolute local path; got {path:?}"
+        ))
+    }
+}
+
+fn is_absolute_local_path(path: &str) -> bool {
+    let path = path.trim();
+    if path.is_empty() {
+        return false;
+    }
+    Path::new(path).is_absolute()
+        || path.starts_with("\\\\")
+        || (path.len() >= 3
+            && path.as_bytes()[0].is_ascii_alphabetic()
+            && path.as_bytes()[1] == b':'
+            && matches!(path.as_bytes()[2], b'/' | b'\\'))
 }
 
 async fn handle_authenticate(
@@ -815,9 +950,16 @@ fn map_den_sessions_list_to_acp(den: &Value) -> Value {
         .unwrap_or_default();
     let mut sessions_out = Vec::new();
     for s in sessions_in {
-        let session_id = s.get("acp_session_id").and_then(Value::as_str).unwrap_or("");
+        let session_id = s
+            .get("acp_session_id")
+            .and_then(Value::as_str)
+            .unwrap_or("");
         let updated_at = s.get("updated_at").and_then(Value::as_str).unwrap_or("");
-        let cwd = s.get("cwd").and_then(Value::as_str).unwrap_or("").to_string();
+        let cwd = s
+            .get("cwd")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string();
         let mut row = json!({
             "sessionId": session_id,
             "updatedAt": updated_at,
@@ -876,33 +1018,47 @@ fn conversation_id_for_history(den_session: &Value) -> Option<String> {
     None
 }
 
-fn session_context_from_den_session(params: &Value, den_session: &Value) -> SessionContext {
-    let mut ctx = session_context_from_params(params);
-    if let Some(dcwd) = den_session
-        .get("cwd")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-    {
-        if ctx.cwd.is_empty() {
-            ctx.cwd = dcwd.to_string();
-        }
+fn session_context_from_den_session(params: &Value, den_session: &Value) -> Result<SessionContext> {
+    validate_mcp_servers_unsupported(params)?;
+    let roots = workspace_roots_from_params(params);
+    let cwd = explicit_cwd_from_params(params)
+        .transpose()?
+        .or_else(|| fallback_cwd_from_params(params))
+        .or_else(|| roots.first().cloned())
+        .or_else(|| {
+            den_session
+                .get("cwd")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(str::to_string)
+        })
+        .ok_or_else(|| anyhow!("ACP session load/resume requires an absolute cwd; Den session row has no cwd and params.cwd was not provided"))?;
+    if !is_absolute_local_path(&cwd) {
+        return Err(anyhow!(
+            "ACP session cwd must be an absolute local path; got {cwd:?}"
+        ));
     }
-    ctx.conversation_id = den_session
-        .get("conversation_id")
-        .and_then(Value::as_str)
-        .map(str::to_string);
-    ctx.resolved_conversation_id = den_session
-        .get("resolved_conversation_id")
-        .and_then(Value::as_str)
-        .map(str::to_string);
+    let mut ctx = SessionContext {
+        cwd,
+        roots,
+        raw: Value::Null,
+        conversation_id: den_session
+            .get("conversation_id")
+            .and_then(Value::as_str)
+            .map(str::to_string),
+        resolved_conversation_id: den_session
+            .get("resolved_conversation_id")
+            .and_then(Value::as_str)
+            .map(str::to_string),
+    };
     ctx.raw = json!({
         "cwd": ctx.cwd.clone(),
         "workspace_roots": ctx.roots.clone(),
         "adapter_version": env!("CARGO_PKG_VERSION"),
         "den_acp_session": den_session.clone(),
     });
-    ctx
+    Ok(ctx)
 }
 
 async fn den_list_acp_sessions(
@@ -1046,7 +1202,10 @@ async fn fetch_conversation_history_chronological(
             page.push((role.to_string(), text.to_string()));
         }
         chunks.push(page);
-        let has_more = body.get("has_more").and_then(|v| v.as_bool()).unwrap_or(false);
+        let has_more = body
+            .get("has_more")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
         before = body
             .get("next_before")
             .and_then(|v| v.as_str())
@@ -1072,7 +1231,7 @@ async fn restore_session_from_den(
         .and_then(Value::as_str)
         .ok_or_else(|| anyhow!("session params missing sessionId"))?;
     let den = den_get_acp_session(http, config, session_id).await?;
-    let context = session_context_from_den_session(params, &den);
+    let context = session_context_from_den_session(params, &den)?;
     adapter_state
         .session_contexts
         .insert(session_id.to_string(), context);
@@ -1091,7 +1250,7 @@ async fn handle_session_load(
         .and_then(Value::as_str)
         .ok_or_else(|| anyhow!("session/load params missing sessionId"))?;
     let den = den_get_acp_session(http, config, session_id).await?;
-    let context = session_context_from_den_session(params, &den);
+    let context = session_context_from_den_session(params, &den)?;
     adapter_state
         .session_contexts
         .insert(session_id.to_string(), context);
@@ -1131,11 +1290,33 @@ async fn handle_session_close(
         .get("sessionId")
         .and_then(Value::as_str)
         .ok_or_else(|| anyhow!("session/close params missing sessionId"))?;
+    post_session_lifecycle_action(http, config, session_id, "close").await
+}
+
+async fn handle_session_cancel(
+    http: &reqwest::Client,
+    config: &Config,
+    params: Value,
+) -> Result<()> {
+    let session_id = params
+        .get("sessionId")
+        .and_then(Value::as_str)
+        .ok_or_else(|| anyhow!("session/cancel params missing sessionId"))?;
+    post_session_lifecycle_action(http, config, session_id, "cancel").await
+}
+
+async fn post_session_lifecycle_action(
+    http: &reqwest::Client,
+    config: &Config,
+    session_id: &str,
+    action: &str,
+) -> Result<()> {
     let url = format!(
-        "{}/acp/bears/{}/sessions/{}/close",
+        "{}/acp/bears/{}/sessions/{}/{}",
         config.api_url,
         urlencoding::encode(&config.bear),
         urlencoding::encode(session_id),
+        action,
     );
     let response = http
         .post(&url)
@@ -1146,12 +1327,12 @@ async fn handle_session_close(
         .header(CONTENT_TYPE, HeaderValue::from_static("application/json"))
         .send()
         .await
-        .with_context(|| format!("post ACP session close to Den at {url}"))?;
+        .with_context(|| format!("post ACP session {action} to Den at {url}"))?;
     if !response.status().is_success() {
         let status = response.status();
         let body = response.text().await.unwrap_or_default();
         return Err(anyhow!(
-            "Den session close endpoint returned HTTP {status}: {}",
+            "Den session {action} endpoint returned HTTP {status}: {}",
             body.trim()
         ));
     }
@@ -1452,7 +1633,7 @@ fn push_path_value(roots: &mut Vec<String>, value: Option<&Value>) {
     if let Some(path) = value
         .and_then(Value::as_str)
         .and_then(file_uri_or_path_to_path)
-        .filter(|s| !s.trim().is_empty())
+        .filter(|s| is_absolute_local_path(s))
     {
         roots.push(path);
     }
@@ -2374,7 +2555,8 @@ mod tests {
             "workspaceFolders": [
                 { "uri": "file:///Users/bear/project%20space", "name": "project space" }
             ]
-        }));
+        }))
+        .unwrap();
         assert_eq!(context.cwd, "/Users/bear/project space");
         assert_eq!(context.raw["cwd"], "/Users/bear/project space");
         assert_eq!(
@@ -2388,7 +2570,8 @@ mod tests {
         let context = session_context_from_params(&json!({
             "cwd": "/Users/bear/active",
             "workspaceFolders": [{ "path": "/Users/bear/project" }]
-        }));
+        }))
+        .unwrap();
         assert_eq!(context.cwd, "/Users/bear/active");
         assert_eq!(context.roots, vec!["/Users/bear/project".to_string()]);
     }
@@ -2492,9 +2675,25 @@ mod tests {
 
     #[test]
     fn session_context_starts_without_conversation_ids() {
-        let context = session_context_from_params(&json!({}));
+        let context = session_context_from_params(&json!({ "cwd": "/tmp/workspace" })).unwrap();
         assert!(context.conversation_id.is_none());
         assert!(context.resolved_conversation_id.is_none());
+    }
+
+    #[test]
+    fn session_context_rejects_relative_cwd() {
+        let err = session_context_from_params(&json!({ "cwd": "relative/project" })).unwrap_err();
+        assert!(format!("{err:#}").contains("absolute local path"));
+    }
+
+    #[test]
+    fn session_context_rejects_non_empty_mcp_servers() {
+        let err = session_context_from_params(&json!({
+            "cwd": "/tmp/workspace",
+            "mcpServers": { "local": { "command": "server" } }
+        }))
+        .unwrap_err();
+        assert!(format!("{err:#}").contains("mcpServers are not supported"));
     }
 
     #[test]
@@ -2517,10 +2716,7 @@ mod tests {
             "conversation_id": "new-acp-zed-x",
             "resolved_conversation_id": "conv-abc"
         });
-        assert_eq!(
-            conversation_id_for_history(&v).as_deref(),
-            Some("conv-abc")
-        );
+        assert_eq!(conversation_id_for_history(&v).as_deref(), Some("conv-abc"));
     }
 
     #[test]

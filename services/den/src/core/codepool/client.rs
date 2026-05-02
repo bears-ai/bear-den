@@ -33,6 +33,16 @@ pub struct CodepoolToolResultResponse {
     pub error: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CodepoolCancelResponse {
+    #[serde(default)]
+    pub ok: bool,
+    #[serde(default)]
+    pub cancelled: bool,
+    #[serde(default)]
+    pub error: Option<String>,
+}
+
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct CodepoolMemfsCheck {
     #[serde(default)]
@@ -237,6 +247,48 @@ impl CodePoolClient {
             )));
         }
         Ok(text)
+    }
+
+    pub async fn post_bear_channel_cancel(
+        &self,
+        session_id: &str,
+        request_id: Uuid,
+    ) -> Result<CodepoolCancelResponse, CustomError> {
+        if !self.is_enabled() {
+            return Err(CustomError::System(
+                "Codepool is not configured (set CODEPOOL_BASE_URL)".to_string(),
+            ));
+        }
+        let url = format!(
+            "{}/internal/bear_channel/sessions/{}/cancel",
+            self.base_url,
+            urlencoding::encode(session_id),
+        );
+        let mut headers = self.auth_headers();
+        if let Ok(v) = HeaderValue::from_str(&request_id.to_string()) {
+            headers.insert(HeaderName::from_static("x-request-id"), v);
+        }
+        let resp = self
+            .http
+            .post(url)
+            .headers(headers)
+            .header(CONTENT_TYPE, "application/json")
+            .json(&json!({ "request_id": request_id.to_string() }))
+            .send()
+            .await
+            .map_err(|e| CustomError::System(format!("Codepool cancel request failed: {e}")))?;
+        let status = resp.status();
+        let text = resp
+            .text()
+            .await
+            .map_err(|e| CustomError::System(format!("Codepool cancel body: {e}")))?;
+        if !status.is_success() {
+            return Err(CustomError::System(format!(
+                "Codepool cancel HTTP {status}: {text}"
+            )));
+        }
+        serde_json::from_str(&text)
+            .map_err(|e| CustomError::Parsing(format!("Codepool cancel JSON: {e}; body: {text}")))
     }
 
     pub async fn post_bear_channel_tool_result(

@@ -11,7 +11,10 @@ Implemented:
 - `initialize`
 - `authenticate`
 - `session/new`
+- `session/list`
+- `session/load` / `session/resume`
 - `session/prompt`
+- `session/cancel`
 - `session/close`
 - Den SSE -> ACP `session/update` text/thought chunks
 - ACP client-tool relay for editor file-system tools:
@@ -20,10 +23,16 @@ Implemented:
 
 `fs/write_text_file` is a whole-file text create/replace operation. It is not a granular patch/edit API and does not cover directory creation, delete, move/rename, or copy operations.
 
+Session setup requires an absolute local `cwd`. The adapter prefers explicit `params.cwd`, then known client workspace URI/folder fallbacks if they normalize to an absolute local path. Relative or missing `cwd` values are rejected with a JSON-RPC validation error so Den only persists resumable sessions with a truthful filesystem context.
+
+ACP-provided `mcpServers` are intentionally rejected when non-empty. BEARS currently exposes Den/Codepool tools plus ACP client filesystem bridges, and does not own stdio MCP subprocess lifecycle. The adapter also reports `mcpCapabilities.http = false` and `mcpCapabilities.sse = false` until real MCP support exists.
+
+`session/load` replays persisted history as user/assistant text-only `session/update` notifications. Tool calls/results, status/reasoning chunks, errors, images/audio, and richer Letta/Codepool event history are not reconstructed unless Den exposes faithful historical event data in a future version.
+
+`session/list` lists persisted/resumable Den ACP sessions only. Newly-created adapter-local sessions are transient until the first prompt causes Den to persist them, and they are not listed after adapter restart.
+
 Not implemented yet:
 
-- cancellation forwarding
-- session resume/load/list
 - MCP relay
 - terminal tool execution
 - broader file mutation tools beyond ACP's standard read/write text-file requests

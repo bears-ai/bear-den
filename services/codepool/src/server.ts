@@ -485,6 +485,7 @@ export function attachRoutes(
                         bearId: parsed.bearId,
                         plan: parsed.plan,
                         tools: [...denTools, ...acpClientTools],
+                        channelSessionId: sessionId,
                     },
                 )) {
                     sdkMessageCount += 1;
@@ -637,9 +638,22 @@ export function attachRoutes(
         express.json({ limit: "64kb" }),
         guard,
         (req, res) => {
-            res.status(501).json({
-                error: "bear_channel cancellation is reserved but not implemented by the current warm pool yet",
+            const sessionId = req.params.sessionId ?? "";
+            if (!sessionId) {
+                res.status(400).json({
+                    ok: false,
+                    cancelled: false,
+                    error: "sessionId is required",
+                });
+                return;
+            }
+            const cancelled = ctx.pool.cancelSession(sessionId);
+            logger.info("bear channel session cancel requested", {
+                event: "bear_channel_session_cancel",
+                session_id: sessionId,
+                cancelled,
             });
+            res.json({ ok: true, cancelled });
         },
     );
 

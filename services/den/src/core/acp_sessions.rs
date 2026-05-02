@@ -145,7 +145,8 @@ pub async fn list_for_user_bear(
     include_closed: bool,
     cwd_filter: Option<&str>,
     limit: i64,
-    offset: i64,
+    cursor_updated_at: Option<OffsetDateTime>,
+    cursor_id: Option<Uuid>,
 ) -> Result<Vec<AcpSessionRow>, CustomError> {
     let limit = limit.clamp(1, 100);
     let cwd_filter = cwd_filter.map(str::trim).filter(|s| !s.is_empty());
@@ -158,8 +159,13 @@ pub async fn list_for_user_bear(
         WHERE user_id = $1 AND bear_slug = $2
           AND ($3 OR closed_at IS NULL)
           AND ($4::text IS NULL OR cwd IS NOT DISTINCT FROM $4)
+          AND (
+            $6::timestamptz IS NULL
+            OR updated_at < $6
+            OR (updated_at = $6 AND id < $7)
+          )
         ORDER BY updated_at DESC, id DESC
-        LIMIT $5 OFFSET $6
+        LIMIT $5
         "#,
     )
     .bind(user_id)
@@ -167,7 +173,8 @@ pub async fn list_for_user_bear(
     .bind(include_closed)
     .bind(cwd_filter)
     .bind(limit)
-    .bind(offset)
+    .bind(cursor_updated_at)
+    .bind(cursor_id)
     .fetch_all(pool)
     .await?;
 

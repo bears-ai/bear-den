@@ -303,6 +303,11 @@ Tasks:
    - Reject non-absolute paths instead of treating them as arbitrary strings.
 5. Add logging/metrics for rejected or legacy missing-`cwd` sessions so we know which clients need compatibility handling.
 
+Implementation status:
+
+- The local adapter now requires an absolute local `cwd` for `session/new`, `session/load`, and `session/resume`, preferring `params.cwd` and then accepting known workspace URI/folder fallbacks only if they normalize to absolute paths.
+- Den validates prompt `client_context.cwd`, rejects non-absolute list filters, persists only validated absolute prompt cwd values, and omits legacy missing/non-absolute cwd rows from ACP `session/list` responses with warning logs.
+
 Acceptance criteria:
 
 - `session/new`, `session/load`, and `session/resume` have deterministic absolute `cwd` handling.
@@ -325,6 +330,12 @@ Tasks:
    - adapter process owns local MCP subprocess lifecycle;
    - Den remains policy/audit authority for BEARS tools;
    - local MCP server credentials must not be persisted in Den.
+
+Implementation status:
+
+- Current product stance: non-empty ACP-provided `mcpServers` are rejected by the local adapter with a clear unsupported-feature validation error. Empty/null values are tolerated.
+- The adapter still advertises `mcpCapabilities.http = false` and `mcpCapabilities.sse = false`.
+- Ownership for future stdio MCP remains local to the adapter; Den remains policy/audit authority for BEARS tools and should not persist local MCP credentials.
 
 Acceptance criteria:
 
@@ -350,6 +361,11 @@ Tasks:
 4. Extend adapter replay mapping to produce ACP-native `session/update` notifications for any supported historical event types.
 5. If richer data is unavailable, keep replay explicitly scoped and avoid claiming complete ACP event reconstruction.
 
+Implementation status:
+
+- Current MVP replay remains explicitly text-only: Den history exposes user/assistant text rows and the adapter maps those into ACP text `session/update` notifications before responding to `session/load`.
+- Tool calls/results, reasoning/status chunks, errors, resources, images/audio, and richer session configuration events are not claimed as reconstructable until Letta/Codepool expose faithful historical event data.
+
 Acceptance criteria:
 
 - `session/load` clearly replays all event types we can faithfully reconstruct.
@@ -371,6 +387,12 @@ Tasks:
    - avoid forwarding late duplicate results.
 5. Tie this into the planned tool timeout/cancellation work after the stable session base is in place.
 
+Implementation status:
+
+- The adapter implements `session/cancel` by calling Den; Den forwards cancellation to Codepool and marks pending ACP client tool calls cancelled.
+- `session/close` calls the same cancellation path before marking the session closed/archived.
+- Codepool tracks active bear-channel runs by channel session id and closes active Letta Code sessions on cancellation.
+
 Acceptance criteria:
 
 - `session/cancel` stops an active prompt/tool wait where possible.
@@ -388,6 +410,10 @@ Tasks:
 3. Reject malformed or stale cursors with clear validation errors.
 4. Keep enforcing an internal page-size limit.
 
+Implementation status:
+
+- Den session-list pagination now uses opaque keyset cursors over `(updated_at, id)` in the existing `ORDER BY updated_at DESC, id DESC` order and rejects legacy offset cursor payloads as stale.
+
 Acceptance criteria:
 
 - Pagination is stable while sessions update concurrently.
@@ -403,6 +429,10 @@ Tasks:
 2. If yes, merge local rows with Den rows and clearly mark unpublished rows in `_meta`.
 3. If no, document `session/list` as listing persisted/resumable Den sessions only.
 4. Ensure `session/load` and `session/resume` error clearly for unknown/unpersisted session ids after adapter restart.
+
+Implementation status:
+
+- Product decision: `session/list` lists persisted/resumable Den sessions only. Adapter-local sessions created by `session/new` but never prompted are transient and intentionally absent from persisted history.
 
 Acceptance criteria:
 
@@ -423,6 +453,11 @@ Tasks:
    - close;
    - tool result.
 3. Document the boundary between external ACP Code-token adapter traffic and internal/admin API traffic.
+
+Implementation status:
+
+- ACP support endpoints now consistently require bear-scoped ACP Code tokens. Chat/list/get/history/close/cancel require `acp:chat`; tool result delivery additionally requires `acp:tools`.
+- Generic bearer principals are not accepted on external ACP backing endpoints; internal/admin traffic should use separate non-ACP API surfaces.
 
 Acceptance criteria:
 

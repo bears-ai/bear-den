@@ -16,7 +16,7 @@ use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use bytes::Bytes;
 use futures::{ready, Stream};
 use serde::{Deserialize, Serialize};
-use std::{future::Future, pin::Pin, task::Poll};
+use std::{future::Future, path::Path as FsPath, pin::Pin, task::Poll};
 use time::format_description::well_known::Rfc3339;
 use tracing::Instrument;
 use uuid::Uuid;
@@ -53,6 +53,10 @@ pub fn router() -> Router<ApiState> {
         .route(
             "/bears/{slug}/sessions/{session_id}/close",
             post(close_session),
+        )
+        .route(
+            "/bears/{slug}/sessions/{session_id}/cancel",
+            post(cancel_session),
         )
         .route("/bears/{slug}/conversations", get(conversations))
         .route(
@@ -188,8 +192,7 @@ struct AcpSessionHttp {
 }
 
 fn format_acp_session_timestamp(t: time::OffsetDateTime) -> String {
-    t.format(&Rfc3339)
-        .unwrap_or_else(|_| t.to_string())
+    t.format(&Rfc3339).unwrap_or_else(|_| t.to_string())
 }
 
 fn acp_session_row_to_http(row: acp_sessions::AcpSessionRow) -> AcpSessionHttp {
@@ -207,30 +210,98 @@ fn acp_session_row_to_http(row: acp_sessions::AcpSessionRow) -> AcpSessionHttp {
     }
 }
 
-fn encode_acp_sessions_cursor(offset: i64) -> String {
-    let payload = serde_json::json!({ "offset": offset });
+#[derive(Debug, Clone)]
+struct AcpSessionsCursor {
+    updated_at: time::OffsetDateTime,
+    id: Uuid,
+}
+
+fn encode_acp_sessions_cursor(row: &acp_sessions::AcpSessionRow) -> String {
+    let payload = serde_json::json!({
+        "updated_at": format_acp_session_timestamp(row.updated_at),
+        "id": row.id,
+    });
     URL_SAFE_NO_PAD.encode(
         serde_json::to_string(&payload)
-            .unwrap_or_else(|_| r#"{"offset":0}"#.to_string())
+            .unwrap_or_else(|_| r#"{}"#.to_string())
             .as_bytes(),
     )
 }
 
-fn decode_acp_sessions_cursor(raw: Option<&str>) -> Result<i64, CustomError> {
+fn decode_acp_sessions_cursor(raw: Option<&str>) -> Result<Option<AcpSessionsCursor>, CustomError> {
     let Some(raw) = raw.map(str::trim).filter(|s| !s.is_empty()) else {
-        return Ok(0);
+        return Ok(None);
     };
     let bytes = URL_SAFE_NO_PAD
         .decode(raw.as_bytes())
         .map_err(|_| CustomError::ValidationError("invalid sessions cursor".to_string()))?;
-    let value: serde_json::Value = serde_json::from_slice(&bytes).map_err(|_| {
-        CustomError::ValidationError("invalid sessions cursor payload".to_string())
+    let value: serde_json::Value = serde_json::from_slice(&bytes)
+        .map_err(|_| CustomError::ValidationError("invalid sessions cursor payload".to_string()))?;
+    if value.get("offset").is_some() {
+        return Err(CustomError::ValidationError(
+            "stale offset-based sessions cursor; restart pagination".to_string(),
+        ));
+    }
+    let updated_at_raw = value
+        .get("updated_at")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| {
+            CustomError::ValidationError("invalid sessions cursor updated_at".to_string())
+        })?;
+    let updated_at = time::OffsetDateTime::parse(updated_at_raw, &Rfc3339).map_err(|_| {
+        CustomError::ValidationError("invalid sessions cursor updated_at".to_string())
     })?;
-    let offset = value
-        .get("offset")
-        .and_then(|v| v.as_u64())
-        .ok_or_else(|| CustomError::ValidationError("invalid sessions cursor offset".to_string()))?;
-    i64::try_from(offset).map_err(|_| CustomError::ValidationError("sessions cursor offset".to_string()))
+    let id = value
+        .get("id")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| CustomError::ValidationError("invalid sessions cursor id".to_string()))?
+        .parse::<Uuid>()
+        .map_err(|_| CustomError::ValidationError("invalid sessions cursor id".to_string()))?;
+    Ok(Some(AcpSessionsCursor { updated_at, id }))
+}
+
+fn is_absolute_local_path(path: &str) -> bool {
+    let path = path.trim();
+    if path.is_empty() {
+        return false;
+    }
+    FsPath::new(path).is_absolute()
+        || path.starts_with("\\\\")
+        || (path.len() >= 3
+            && path.as_bytes()[0].is_ascii_alphabetic()
+            && path.as_bytes()[1] == b':'
+            && matches!(path.as_bytes()[2], b'/' | b'\\'))
+}
+
+fn optional_absolute_cwd_filter(raw: Option<&str>) -> Result<Option<&str>, CustomError> {
+    let Some(cwd) = raw.map(str::trim).filter(|s| !s.is_empty()) else {
+        return Ok(None);
+    };
+    if is_absolute_local_path(cwd) {
+        Ok(Some(cwd))
+    } else {
+        tracing::warn!(cwd = %cwd, "rejecting non-absolute ACP sessions cwd filter");
+        Err(CustomError::ValidationError(
+            "cwd filter must be an absolute local path".to_string(),
+        ))
+    }
+}
+
+fn require_absolute_cwd(raw: Option<&str>) -> Result<String, CustomError> {
+    let Some(cwd) = raw.map(str::trim).filter(|s| !s.is_empty()) else {
+        tracing::warn!("rejecting ACP prompt with missing cwd");
+        return Err(CustomError::ValidationError(
+            "ACP client_context.cwd must be an absolute local path".to_string(),
+        ));
+    };
+    if is_absolute_local_path(cwd) {
+        Ok(cwd.to_string())
+    } else {
+        tracing::warn!(cwd = %cwd, "rejecting ACP prompt with non-absolute cwd");
+        Err(CustomError::ValidationError(
+            "ACP client_context.cwd must be an absolute local path".to_string(),
+        ))
+    }
 }
 
 fn default_conversation_id() -> String {
@@ -690,50 +761,7 @@ async fn auth_check(
     }
 }
 
-async fn authenticate_acp_principal(
-    state: &ApiState,
-    headers: &HeaderMap,
-    slug: &str,
-) -> Result<(i32, bool), ApiError> {
-    let token = auth::extract_bearer_token(headers)?;
-    if acp_tokens::is_acp_token(&token) {
-        let auth =
-            acp_tokens::authenticate_for_bear_slug_with_scopes(&state.sqlx_pool, &token, slug)
-                .await
-                .map_err(|err| {
-                    ApiError::new(
-                        StatusCode::UNPROCESSABLE_ENTITY,
-                        "database",
-                        err.to_string(),
-                    )
-                })?
-                .ok_or_else(|| {
-                    ApiError::new(
-                        StatusCode::UNAUTHORIZED,
-                        "invalid_token",
-                        "invalid, expired, revoked, or unauthorized ACP token",
-                    )
-                })?;
-        if !acp_tokens::scopes_contains(&auth.scopes, OAuthScope::AcpChat.as_str()) {
-            return Err(ApiError::new(
-                StatusCode::UNAUTHORIZED,
-                "invalid_token",
-                "invalid, expired, revoked, or unauthorized ACP token",
-            ));
-        }
-        return Ok((
-            auth.user_id,
-            acp_tokens::scopes_contains(&auth.scopes, OAuthScope::AcpTools.as_str()),
-        ));
-    }
 
-    let principal = auth::authenticate_bearer(headers)?;
-    auth::require_scope(&principal, OAuthScope::AcpChat)?;
-    Ok((
-        principal.user_id,
-        principal.scopes.contains(&OAuthScope::AcpTools),
-    ))
-}
 
 async fn authenticate_acp_code_token(
     state: &ApiState,
@@ -789,16 +817,14 @@ async fn list_acp_sessions_inner(
     query: AcpSessionsListQuery,
     headers: HeaderMap,
 ) -> Result<Response, CustomError> {
-    let (user_id, _) = authenticate_acp_principal(&state, &headers, &slug)
-        .await
-        .map_err(ApiError::into_custom_error)?;
+    let (user_id, _) = authenticate_acp_code_token(&state, &headers, &slug, false).await?;
     let bear = bears_db::bear_for_user_by_slug(&state.sqlx_pool, user_id, slug.trim())
         .await?
         .ok_or_else(|| {
             CustomError::NotFound("bear not found or you do not have access".to_string())
         })?;
-    let offset = decode_acp_sessions_cursor(query.cursor.as_deref())?;
-    let cwd_filter = query.cwd.as_deref().map(str::trim).filter(|s| !s.is_empty());
+    let cursor = decode_acp_sessions_cursor(query.cursor.as_deref())?;
+    let cwd_filter = optional_absolute_cwd_filter(query.cwd.as_deref())?;
     let fetch_limit = ACP_SESSIONS_PAGE_SIZE + 1;
     let mut rows = acp_sessions::list_for_user_bear(
         &state.sqlx_pool,
@@ -807,17 +833,35 @@ async fn list_acp_sessions_inner(
         query.include_closed,
         cwd_filter,
         fetch_limit,
-        offset,
+        cursor.as_ref().map(|c| c.updated_at),
+        cursor.as_ref().map(|c| c.id),
     )
     .await?;
     let has_more = rows.len() > ACP_SESSIONS_PAGE_SIZE as usize;
     rows.truncate(ACP_SESSIONS_PAGE_SIZE as usize);
     let next_cursor = if has_more {
-        Some(encode_acp_sessions_cursor(offset + ACP_SESSIONS_PAGE_SIZE))
+        rows.last().map(encode_acp_sessions_cursor)
     } else {
         None
     };
-    let sessions = rows.into_iter().map(acp_session_row_to_http).collect();
+    let mut sessions = Vec::new();
+    for row in rows {
+        if row
+            .cwd
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| is_absolute_local_path(s))
+            .is_none()
+        {
+            tracing::warn!(
+                acp_session_id = %row.acp_session_id,
+                bear_slug = %row.bear_slug,
+                "omitting ACP session list row with missing or non-absolute cwd"
+            );
+            continue;
+        }
+        sessions.push(acp_session_row_to_http(row));
+    }
     Ok(Json(AcpSessionsListHttpResponse {
         sessions,
         next_cursor,
@@ -843,9 +887,7 @@ async fn get_acp_session_inner(
     session_id: String,
     headers: HeaderMap,
 ) -> Result<Response, CustomError> {
-    let (user_id, _) = authenticate_acp_principal(&state, &headers, &slug)
-        .await
-        .map_err(ApiError::into_custom_error)?;
+    let (user_id, _) = authenticate_acp_code_token(&state, &headers, &slug, false).await?;
     let bear = bears_db::bear_for_user_by_slug(&state.sqlx_pool, user_id, slug.trim())
         .await?
         .ok_or_else(|| {
@@ -857,14 +899,10 @@ async fn get_acp_session_inner(
             "session_id must not be empty".to_string(),
         ));
     }
-    let row = acp_sessions::find_for_user_bear_session(
-        &state.sqlx_pool,
-        user_id,
-        &bear.slug,
-        session_id,
-    )
-    .await?
-    .ok_or_else(|| CustomError::NotFound("ACP session not found".to_string()))?;
+    let row =
+        acp_sessions::find_for_user_bear_session(&state.sqlx_pool, user_id, &bear.slug, session_id)
+            .await?
+            .ok_or_else(|| CustomError::NotFound("ACP session not found".to_string()))?;
     Ok(Json(acp_session_row_to_http(row)).into_response())
 }
 
@@ -887,9 +925,7 @@ async fn conversations_inner(
     query: AcpConversationsQuery,
     headers: HeaderMap,
 ) -> Result<Response, CustomError> {
-    let (user_id, _) = authenticate_acp_principal(&state, &headers, &slug)
-        .await
-        .map_err(ApiError::into_custom_error)?;
+    let (user_id, _) = authenticate_acp_code_token(&state, &headers, &slug, false).await?;
     let bear = bears_db::bear_for_user_by_slug(&state.sqlx_pool, user_id, slug.trim())
         .await?
         .ok_or_else(|| {
@@ -970,9 +1006,7 @@ async fn conversation_history_inner(
     query: AcpConversationHistoryQuery,
     headers: HeaderMap,
 ) -> Result<Response, CustomError> {
-    let (user_id, _) = authenticate_acp_principal(&state, &headers, &slug)
-        .await
-        .map_err(ApiError::into_custom_error)?;
+    let (user_id, _) = authenticate_acp_code_token(&state, &headers, &slug, false).await?;
     let bear = bears_db::bear_for_user_by_slug(&state.sqlx_pool, user_id, slug.trim())
         .await?
         .ok_or_else(|| {
@@ -1039,31 +1073,59 @@ async fn close_session(
     }
 }
 
+async fn cancel_session(
+    State(state): State<ApiState>,
+    Path((slug, session_id)): Path<(String, String)>,
+    headers: HeaderMap,
+) -> Response {
+    let response_request_id = Uuid::new_v4();
+    match cancel_session_inner(state, slug, session_id, headers).await {
+        Ok(response) => response,
+        Err(err) => acp_error_response(err, response_request_id),
+    }
+}
+
+async fn cancel_session_inner(
+    state: ApiState,
+    slug: String,
+    session_id: String,
+    headers: HeaderMap,
+) -> Result<Response, CustomError> {
+    let (user_id, _) = authenticate_acp_code_token(&state, &headers, &slug, false).await?;
+    let Some(session) =
+        acp_sessions::find_for_user_bear_session(&state.sqlx_pool, user_id, &slug, &session_id)
+            .await?
+    else {
+        return Ok(Json(serde_json::json!({ "ok": true, "cancelled": false })).into_response());
+    };
+    let cancelled = state
+        .codepool
+        .post_bear_channel_cancel(&session.codepool_session_id, Uuid::new_v4())
+        .await
+        .map(|response| response.cancelled)
+        .unwrap_or(false);
+    let marked =
+        acp_client_tools::mark_cancelled_for_session(&state.sqlx_pool, user_id, &slug, &session_id)
+            .await?;
+    Ok(Json(serde_json::json!({
+        "ok": true,
+        "cancelled": cancelled,
+        "pending_tool_calls_cancelled": marked,
+    }))
+    .into_response())
+}
+
 async fn close_session_inner(
     state: ApiState,
     slug: String,
     session_id: String,
     headers: HeaderMap,
 ) -> Result<Response, CustomError> {
-    let token = auth::extract_bearer_token(&headers)
-        .map_err(|err| CustomError::Authentication(err.message))?;
-    let auth = if acp_tokens::is_acp_token(&token) {
-        acp_tokens::authenticate_for_bear_slug_with_scopes(&state.sqlx_pool, &token, &slug)
-            .await?
-            .ok_or_else(|| {
-                CustomError::Authentication(
-                    "invalid, expired, revoked, or unauthorized ACP token".to_string(),
-                )
-            })?
-    } else {
-        return Err(CustomError::Authentication(
-            "ACP session close requires a bear-scoped ACP Code token".to_string(),
-        ));
-    };
+    let (user_id, _) = authenticate_acp_code_token(&state, &headers, &slug, false).await?;
 
     let Some(session) = acp_sessions::find_for_user_bear_session(
         &state.sqlx_pool,
-        auth.user_id,
+        user_id,
         &slug,
         &session_id,
     )
@@ -1077,6 +1139,17 @@ async fn close_session_inner(
         .into_response());
     };
 
+    let _ = state
+        .codepool
+        .post_bear_channel_cancel(&session.codepool_session_id, Uuid::new_v4())
+        .await;
+    let _ = acp_client_tools::mark_cancelled_for_session(
+        &state.sqlx_pool,
+        user_id,
+        &slug,
+        &session_id,
+    )
+    .await?;
     acp_sessions::mark_closed(&state.sqlx_pool, session.id).await?;
     let archive_target = session
         .resolved_conversation_id
@@ -1092,7 +1165,7 @@ async fn close_session_inner(
             &state.sqlx_pool,
             session.bear_id,
             archive_target,
-            Some(auth.user_id),
+            Some(user_id),
             "acp",
             true,
         )
@@ -1130,31 +1203,12 @@ async fn tool_result_inner(
     headers: HeaderMap,
     body: AcpToolResultRequest,
 ) -> Result<Response, CustomError> {
-    let token = auth::extract_bearer_token(&headers)
-        .map_err(|err| CustomError::Authentication(err.message))?;
-    let auth = if acp_tokens::is_acp_token(&token) {
-        acp_tokens::authenticate_for_bear_slug_with_scopes(&state.sqlx_pool, &token, &slug)
-            .await?
-            .ok_or_else(|| {
-                CustomError::Authentication(
-                    "invalid, expired, revoked, or unauthorized ACP token".to_string(),
-                )
-            })?
-    } else {
-        return Err(CustomError::Authentication(
-            "ACP tool results require a bear-scoped ACP Code token".to_string(),
-        ));
-    };
-    if !acp_tokens::scopes_contains(&auth.scopes, OAuthScope::AcpTools.as_str()) {
-        return Err(CustomError::Authorization(
-            "ACP tool result requires acp:tools scope".to_string(),
-        ));
-    }
+    let (user_id, _) = authenticate_acp_code_token(&state, &headers, &slug, true).await?;
     let db_status = normalize_tool_result_status(&body.status)?;
     let codepool_status = normalize_codepool_tool_result_status(&body.status)?;
     let pending = acp_client_tools::find_active_call_for_result(
         &state.sqlx_pool,
-        auth.user_id,
+        user_id,
         &slug,
         &session_id,
         body.request_id,
@@ -1237,7 +1291,12 @@ async fn prompt_inner(
 ) -> Result<Result<Response, CustomError>, ApiError> {
     let slug = slug.trim().to_string();
     let (user_id, has_acp_tools_scope) =
-        authenticate_acp_principal(&state, &headers, &slug).await?;
+        authenticate_acp_code_token(&state, &headers, &slug, false)
+            .await
+            .map_err(|err| {
+                let (status, code, message) = acp_error_status_message(&err);
+                ApiError::new(status, code, message)
+            })?;
     let prompt = body.message.trim();
     if prompt.is_empty() {
         return Ok(Err(CustomError::ValidationError(
@@ -1287,6 +1346,11 @@ async fn prompt_inner(
     }
 
     let client = normalize_acp_client(body.client.as_deref());
+    let cwd = require_absolute_cwd(body.client_context.get("cwd").and_then(|v| v.as_str()))
+        .map_err(|err| {
+            let (status, code, message) = acp_error_status_message(&err);
+            ApiError::new(status, code, message)
+        })?;
     let existing_session =
         acp_sessions::find_for_user_bear_session(&state.sqlx_pool, user_id, &bear.slug, session_id)
             .await
@@ -1403,11 +1467,7 @@ async fn prompt_inner(
             conversation_id: conversation_id.clone(),
             resolved_conversation_id: resolved_conversation_id.clone(),
             client: client.clone(),
-            cwd: body
-                .client_context
-                .get("cwd")
-                .and_then(|v| v.as_str())
-                .map(str::to_string),
+            cwd: Some(cwd.clone()),
         },
     )
     .await
@@ -1426,6 +1486,7 @@ async fn prompt_inner(
         bear_id = %bear.id,
         letta_agent_id = %letta_agent_id,
         client = %client,
+        cwd = %cwd,
         codepool_session_id = %channel_session_id,
         requested_conversation_id = requested_conversation_id.as_deref(),
         codepool_conversation_id = %conversation_id,

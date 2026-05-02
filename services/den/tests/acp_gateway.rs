@@ -226,8 +226,11 @@ async fn post_prompt(
     slug: &str,
     session_id: &str,
     token: Option<&str>,
-    body: Value,
+    mut body: Value,
 ) -> axum::response::Response {
+    if body.get("client_context").is_none() {
+        body["client_context"] = json!({ "cwd": "/tmp/acp-workspace" });
+    }
     let mut builder = Request::builder()
         .method("POST")
         .uri(format!("/acp/bears/{slug}/sessions/{session_id}/prompt"))
@@ -533,7 +536,9 @@ async fn acp_sessions_list_returns_row_after_prompt() {
     let value: Value = serde_json::from_slice(&body).expect("sessions JSON");
     let sessions = value["sessions"].as_array().expect("sessions array");
     assert!(
-        sessions.iter().any(|row| row["acp_session_id"] == session_id),
+        sessions
+            .iter()
+            .any(|row| row["acp_session_id"] == session_id),
         "expected acp_session row for {session_id}: {sessions:?}"
     );
 

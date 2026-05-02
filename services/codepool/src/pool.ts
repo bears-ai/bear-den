@@ -73,10 +73,16 @@ type Entry = {
     toolSignature: string;
 };
 
+type ActiveRun = {
+    cancelled: boolean;
+    closeSession?: () => void;
+};
+
 export type StreamUserOpts = {
     bearId: string;
     plan: BearRuntimePlan;
     tools?: AnyAgentTool[];
+    channelSessionId?: string;
 };
 
 export type ConversationPoolStats = {
@@ -98,6 +104,7 @@ export class ConversationSessionPool {
     private sweepTimer: ReturnType<typeof setInterval> | undefined;
     /** Exclusive lock per conversation (one active run at a time). */
     private tail = new Map<PoolKey, Promise<void>>();
+    private readonly activeRuns = new Map<string, ActiveRun>();
 
     constructor(opts: {
         ttlSecs: number;
@@ -135,8 +142,34 @@ export class ConversationSessionPool {
                 /* ignore */
             }
         }
+        for (const run of this.activeRuns.values()) {
+            run.cancelled = true;
+            try {
+                run.closeSession?.();
+            } catch {
+                /* ignore */
+            }
+        }
+        this.activeRuns.clear();
         this.map.clear();
         this.ensureByBear.clear();
+    }
+
+    cancelSession(sessionId: string): boolean {
+        let cancelled = false;
+        const prefix = `${sessionId}\n`;
+        for (const [key, run] of this.activeRuns) {
+            if (key === sessionId || key.startsWith(prefix)) {
+                run.cancelled = true;
+                cancelled = true;
+                try {
+                    run.closeSession?.();
+                } catch {
+                    /* ignore */
+                }
+            }
+        }
+        return cancelled;
     }
 
     private async acquireLock(key: PoolKey): Promise<() => void> {
@@ -283,6 +316,11 @@ export class ConversationSessionPool {
         opts: StreamUserOpts,
     ): AsyncGenerator<SDKMessage, void, unknown> {
         const key = makePoolKey(agentId, conversationId);
+        const runKey = `${opts.channelSessionId ?? ""}\n${key}`;
+        const run: ActiveRun = { cancelled: false };
+        if (opts.channelSessionId) {
+            this.activeRuns.set(runKey, run);
+        }
         const unlock = await this.acquireLock(key);
         try {
             const ensure = await this.ensureRuntime(
@@ -299,8 +337,19 @@ export class ConversationSessionPool {
                         ensure,
                         opts.tools,
                     );
+                    run.closeSession = () => {
+                        session.close();
+                        this.map.delete(key);
+                    };
+                    if (run.cancelled) {
+                        session.close();
+                        return;
+                    }
                     await session.send(userText);
                     for await (const msg of session.stream()) {
+                        if (run.cancelled) {
+                            return;
+                        }
                         yield msg as SDKMessage;
                     }
                     return;
@@ -340,6 +389,9 @@ export class ConversationSessionPool {
                 }
             }
         } finally {
+            if (opts.channelSessionId) {
+                this.activeRuns.delete(runKey);
+            }
             unlock();
         }
     }
