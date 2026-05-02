@@ -465,6 +465,14 @@ body.bear_chat .den-conv-button-container:hover {
     margin: 0;
 }
 
+.den-all-threads-section {
+    margin-top: calc(var(--spacing-unit) * 1.5);
+}
+
+.den-all-threads-section h3 {
+    margin-bottom: calc(var(--spacing-unit) * 0.5);
+}
+
 .den-all-threads-list {
     list-style: none;
     padding: 0;
