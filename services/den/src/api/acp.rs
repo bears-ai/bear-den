@@ -1716,14 +1716,8 @@ fn map_bear_channel_event_to_acp_adapter_event(event: &serde_json::Value) -> Opt
 
 /// Byte offset **after** the first complete SSE frame delimiter (`\n\n` or `\r\n\r\n`).
 fn find_sse_frame_end(buf: &[u8]) -> Option<usize> {
-    let lf = buf
-        .windows(2)
-        .position(|w| w == b"\n\n")
-        .map(|p| p + 2);
-    let crlf = buf
-        .windows(4)
-        .position(|w| w == b"\r\n\r\n")
-        .map(|p| p + 4);
+    let lf = buf.windows(2).position(|w| w == b"\n\n").map(|p| p + 2);
+    let crlf = buf.windows(4).position(|w| w == b"\r\n\r\n").map(|p| p + 4);
     match (lf, crlf) {
         (Some(a), Some(b)) => Some(a.min(b)),
         (Some(a), None) => Some(a),
@@ -1875,6 +1869,25 @@ async fn map_bear_channel_frame_to_acp_adapter_events_with_persistence(
         .map_err(|err| std::io::Error::other(err.to_string()))?;
     let mut out = Vec::new();
     if let Some(bytes) = map_bear_channel_event_to_acp_adapter_event(&value) {
+        if value.get("type").and_then(|v| v.as_str()) == Some("client_tool_request") {
+            let call = value.get("call");
+            let call_id = call
+                .and_then(|c| c.get("id"))
+                .and_then(|v| v.as_str())
+                .map(preview_id)
+                .unwrap_or_else(|| "?".to_string());
+            let tool_name = call
+                .and_then(|c| c.get("name"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("unknown");
+            tracing::info!(
+                request_id = %context.request_id,
+                acp_session_id = %context.acp_session_id,
+                call_id = %call_id,
+                tool_name = %tool_name,
+                "ACP adapter-facing client tool request emitted"
+            );
+        }
         out.push(bytes);
     }
     Ok(out)
@@ -1959,11 +1972,8 @@ impl Stream for AcpBearChannelSseStream {
         if let Some(frame_body) = this.pending_raw_frames.pop_front() {
             let context = this.context.clone();
             this.persist_future = Some(Box::pin(async move {
-                map_bear_channel_frame_to_acp_adapter_events_with_persistence(
-                    frame_body,
-                    context,
-                )
-                .await
+                map_bear_channel_frame_to_acp_adapter_events_with_persistence(frame_body, context)
+                    .await
             }));
             return self.poll_next(cx);
         }
