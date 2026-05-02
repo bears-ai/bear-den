@@ -106,6 +106,7 @@ Acceptance:
   - Added Codepool runtime id and included it in continuation responses/logs.
   - Added internal `GET /internal/bear_channel/tool-waiters` endpoint.
   - Updated Codepool tests for delivery reasons.
+  - Fixed warm-session stale request context by storing latest ACP tool context per Codepool channel session; reused external tool closures now read the current Den request id instead of the first-turn request id.
 - Began Phase 3 Den continuation diagnostics:
   - Den now deserializes Codepool `reason` and `runtime_id` fields.
   - Den tool-result response now includes `reason` and `runtime_id` for adapter/proxy-visible diagnostics.
