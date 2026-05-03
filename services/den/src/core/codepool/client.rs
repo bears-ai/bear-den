@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use uuid::Uuid;
 
-use crate::core::bears::model::Bear;
+use crate::core::bears::model::{Bear, BearAgentRole};
 
 use crate::{config::Config, errors::CustomError};
 
@@ -354,6 +354,7 @@ impl CodePoolClient {
             ));
         }
 
+        let agent_role = BearAgentRole::Talk;
         let agent_id = bear
             .letta_agent_id
             .as_deref()
@@ -361,7 +362,7 @@ impl CodePoolClient {
             .filter(|s| !s.is_empty())
             .ok_or_else(|| {
                 CustomError::System(
-                    "This bear is not provisioned in Letta yet (missing letta_agent_id)."
+                    "This bear is not provisioned in Letta yet (missing talk role agent)."
                         .to_string(),
                 )
             })?;
@@ -374,6 +375,9 @@ impl CodePoolClient {
                 "slug": bear.slug,
                 "name": bear.name,
                 "letta_agent_id": agent_id,
+                "agent_role": agent_role.as_str(),
+                "role_agent_id": agent_id,
+                "runtime_family": agent_role.runtime_family(),
             },
             "user": {
                 "id": user_id,
