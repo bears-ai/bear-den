@@ -4,13 +4,20 @@
 
 {% block admin_content %}
 <h3>Bears</h3>
-<p>Registry rows; Letta agent id is filled when provisioning is wired.</p>
+<p>Registry rows. Multi-agent role ids live in <code>bear_agents</code>; legacy <code>bears.letta_agent_id</code> is a transitional talk-role mirror.</p>
+{% if repair_message %}
+<p class="form-hint">{{ repair_message }}</p>
+{% endif %}
+<form method="post" action="/admin/bears/repair-legacy-agents" style="margin: 0 0 1rem 0;">
+  <button type="submit">Repair / migrate legacy agent ids</button>
+  <span class="form-hint">Copies legacy ids into <code>bear_agents(role=talk)</code> and creates missing role placeholder rows.</span>
+</form>
 <table>
   <thead>
     <tr>
       <th>Slug</th>
       <th>Name</th>
-      <th>Letta agent</th>
+      <th>Legacy talk mirror</th>
       <th></th>
     </tr>
   </thead>
@@ -19,7 +26,7 @@
     <tr>
       <td><a href="/admin/bears/{{ b.id }}"><code>{{ b.slug }}</code></a></td>
       <td><a href="/admin/bears/{{ b.id }}">{{ b.name }}</a></td>
-      <td>{% if b.letta_agent_id %}{{ b.letta_agent_id }}{% else %}<em>unset</em>{% endif %}</td>
+      <td>{% if b.letta_agent_id %}<code>{{ b.letta_agent_id }}</code>{% else %}<em>unset</em>{% endif %}</td>
       <td><a class="navigate" href="/admin/bears/{{ b.id }}/edit">Edit</a></td>
     </tr>
   {% endfor %}

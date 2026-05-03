@@ -446,6 +446,92 @@ pub async fn mirror_talk_agent_to_legacy_letta_agent_id(
     Ok(())
 }
 
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct LegacyBearAgentRepairResult {
+    pub migrated_talk_rows: i64,
+    pub inserted_missing_role_rows: i64,
+}
+
+/// Idempotently repair/migrate legacy single-agent Bears into the multi-agent registry.
+///
+/// - Copies non-empty `bears.letta_agent_id` values into `bear_agents(role='talk')`.
+/// - Creates missing placeholder role rows for every Bear and every known role.
+///
+/// The legacy column is intentionally left intact as a transitional mirror until all read paths are
+/// role-aware and a later migration drops the column.
+pub async fn repair_legacy_bear_agents(
+    pool: &PgPool,
+) -> Result<LegacyBearAgentRepairResult, CustomError> {
+    let migrated: (i64,) = sqlx::query_as(
+        r#"
+        WITH legacy AS (
+            SELECT id AS bear_id,
+                   NULLIF(btrim(letta_agent_id), '') AS agent_id,
+                   provisioning_version
+            FROM bears
+            WHERE letta_agent_id IS NOT NULL
+              AND btrim(letta_agent_id) <> ''
+        ), upserted AS (
+            INSERT INTO bear_agents (
+                bear_id,
+                role,
+                letta_agent_id,
+                provisioning_status,
+                last_provisioned_version,
+                last_synced_at,
+                updated_at
+            )
+            SELECT bear_id,
+                   'talk',
+                   agent_id,
+                   'ready',
+                   provisioning_version,
+                   NOW(),
+                   NOW()
+            FROM legacy
+            ON CONFLICT (bear_id, role)
+            DO UPDATE SET letta_agent_id = EXCLUDED.letta_agent_id,
+                          provisioning_status = 'ready',
+                          last_provisioned_version = GREATEST(
+                              bear_agents.last_provisioned_version,
+                              EXCLUDED.last_provisioned_version
+                          ),
+                          last_synced_at = NOW(),
+                          updated_at = NOW()
+            WHERE bear_agents.letta_agent_id IS DISTINCT FROM EXCLUDED.letta_agent_id
+               OR bear_agents.provisioning_status IS DISTINCT FROM 'ready'
+            RETURNING 1
+        )
+        SELECT COUNT(*)::bigint FROM upserted
+        "#,
+    )
+    .fetch_one(pool)
+    .await?;
+
+    let inserted_missing: (i64,) = sqlx::query_as(
+        r#"
+        WITH roles(role) AS (
+            VALUES ('talk'), ('pair'), ('curate'), ('work'), ('watch')
+        ), inserted AS (
+            INSERT INTO bear_agents (bear_id, role)
+            SELECT b.id, r.role
+            FROM bears b
+            CROSS JOIN roles r
+            ON CONFLICT (bear_id, role) DO NOTHING
+            RETURNING 1
+        )
+        SELECT COUNT(*)::bigint FROM inserted
+        "#,
+    )
+    .fetch_one(pool)
+    .await?;
+
+    Ok(LegacyBearAgentRepairResult {
+        migrated_talk_rows: migrated.0,
+        inserted_missing_role_rows: inserted_missing.0,
+    })
+}
+
 pub async fn ensure_bear_agent_rows(pool: &PgPool, bear_id: Uuid) -> Result<(), CustomError> {
     for role in BearAgentRole::ALL {
         sqlx::query(

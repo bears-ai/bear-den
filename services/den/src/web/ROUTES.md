@@ -59,9 +59,10 @@ Axum routes for the web server (`RUN_WEB=true`). Update this file when you add o
 - `GET /admin/` — admin menu (includes Letta `/v1/health` and **Codepool** `/health` when configured)
 - `GET|POST /admin/users/*` — user management
 - `GET|POST /admin/bears/*` — bear registry (create bear with prompt/model fields)
-- `GET /admin/bears/unlinked-letta-agents` — Letta agents with no Den bear (`letta_agent_id`); link to new-bear-from-agent flow
+- `GET /admin/bears/unlinked-letta-agents` — Letta agents with no Den bear (`letta_agent_id` or `bear_agents.letta_agent_id`); link to new-bear-from-agent flow
 - `GET /admin/bears/new?from_letta_agent={id}` — new bear form prefilled from Letta `GET /v1/agents/{id}` (hidden `attach_letta_agent_id` skips provisioning)
-- `GET /admin/bears/{id}` — read-only bear detail (Den fields, membership count, Letta agent summary when configured)
+- `POST /admin/bears/repair-legacy-agents` — idempotently copy legacy `bears.letta_agent_id` values into `bear_agents(role=talk)` and create missing role placeholder rows; redirects to the bear list with counts
+- `GET /admin/bears/{id}` — read-only bear detail (Den fields, membership count, associated role agents with per-agent Letta health checks when configured)
 - `GET|POST /admin/bears/{id}/edit` — edit bear row (slug, prompt, model, tools JSON)
 - `POST /admin/bears/{id}/retry-letta` — create Letta agent when `letta_agent_id` is unset (responds with detail HTML including a status line)
 - `GET|POST /admin/membership/*` — list and grant `user_bear` membership

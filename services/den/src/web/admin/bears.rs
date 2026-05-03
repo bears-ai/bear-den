@@ -37,6 +37,10 @@ pub fn router() -> Router<AppState> {
             "/bears/unlinked-letta-agents",
             get(unlinked_letta_agents_view),
         )
+        .route_with_tsr(
+            "/bears/repair-legacy-agents",
+            post(repair_legacy_agents_action),
+        )
         .route_with_tsr("/bears/new", get(new_view).post(new_action))
         .route_with_tsr("/bears/{id}/edit", get(edit_view).post(edit_action))
         .route_with_tsr("/bears/{id}/retry-letta", post(retry_letta_action))
@@ -278,18 +282,58 @@ async fn detail_view(
     bear_detail_response(&state, auth_session, id, None).await
 }
 
+#[derive(Debug, Deserialize)]
+struct BearsListQuery {
+    #[serde(default)]
+    repair: Option<String>,
+    #[serde(default)]
+    migrated: Option<i64>,
+    #[serde(default)]
+    inserted: Option<i64>,
+    #[serde(default)]
+    error: Option<String>,
+}
+
 async fn list_view(
     State(state): State<AppState>,
     auth_session: AuthSession,
+    Query(query): Query<BearsListQuery>,
 ) -> Result<Response, CustomError> {
     let bears = bears_db::list_bears(state.sqlx_pool()).await?;
+    let repair_message = match query.repair.as_deref() {
+        Some("ok") => Some(format!(
+            "Legacy bear-agent repair complete: {} talk row(s) migrated/updated; {} missing role row(s) inserted.",
+            query.migrated.unwrap_or(0),
+            query.inserted.unwrap_or(0)
+        )),
+        Some("error") => Some(format!(
+            "Legacy bear-agent repair failed: {}",
+            query.error.unwrap_or_else(|| "unknown error".to_string())
+        )),
+        _ => None,
+    };
     web::render_template(
         &state,
         "admin/bears/list.html",
         auth_session,
-        context! { bears },
+        context! { bears, repair_message },
     )
     .await
+}
+
+async fn repair_legacy_agents_action(State(state): State<AppState>) -> Result<Response, CustomError> {
+    match bears_db::repair_legacy_bear_agents(state.sqlx_pool()).await {
+        Ok(result) => Ok(Redirect::to(&format!(
+            "/admin/bears/?repair=ok&migrated={}&inserted={}",
+            result.migrated_talk_rows, result.inserted_missing_role_rows
+        ))
+        .into_response()),
+        Err(err) => Ok(Redirect::to(&format!(
+            "/admin/bears/?repair=error&error={}",
+            urlencoding::encode(&err.to_string())
+        ))
+        .into_response()),
+    }
 }
 
 async fn new_view(
