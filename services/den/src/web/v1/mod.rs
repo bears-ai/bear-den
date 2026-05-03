@@ -19,7 +19,10 @@ use crate::{
     auth_backend::{AuthSession, Backend},
     core::{
         archived_conversations,
-        bears::db::{self as bears_db, role_is_bear_admin},
+        bears::{
+            db::{self as bears_db, role_is_bear_admin},
+            BearAgentRole,
+        },
         letta::{load_agent_conversations, strip_letta_harness_for_user},
     },
     errors::CustomError,
@@ -196,17 +199,20 @@ async fn chat_conversations(
         return Ok(default_only());
     }
 
-    let Some(agent_id) = bear
-        .letta_agent_id
-        .as_deref()
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
+    let Some(agent_id) = bears_db::role_agent_id_or_legacy(
+        state.sqlx_pool(),
+        &bear,
+        BearAgentRole::Talk,
+    )
+    .await?
+    .map(|s| s.trim().to_string())
+    .filter(|s| !s.is_empty())
     else {
         return Ok(default_only());
     };
 
     let archived_ids = archived_conversations::list_for_bear(state.sqlx_pool(), bear.id).await?;
-    let snap = load_agent_conversations(state.letta.as_ref(), agent_id).await;
+    let snap = load_agent_conversations(state.letta.as_ref(), &agent_id).await;
     let conversations: Vec<ChatConversationRow> = snap
         .all
         .into_iter()
@@ -257,18 +263,21 @@ async fn chat_conversation_patch(
         ));
     }
 
-    let Some(agent_id) = bear
-        .letta_agent_id
-        .as_deref()
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
+    let Some(agent_id) = bears_db::role_agent_id_or_legacy(
+        state.sqlx_pool(),
+        &bear,
+        BearAgentRole::Talk,
+    )
+    .await?
+    .map(|s| s.trim().to_string())
+    .filter(|s| !s.is_empty())
     else {
         return Err(CustomError::ValidationError(
-            "this bear is not linked to a Letta agent".to_string(),
+            "this bear is not linked to a talk Letta agent".to_string(),
         ));
     };
 
-    let snap = load_agent_conversations(state.letta.as_ref(), agent_id).await;
+    let snap = load_agent_conversations(state.letta.as_ref(), &agent_id).await;
     let found = snap.all.iter().any(|r| r.id == conv_id);
     if !found {
         return Err(CustomError::NotFound("conversation not found".to_string()));
@@ -351,11 +360,14 @@ async fn chat_history(
         return Ok(empty());
     }
 
-    let Some(agent_id) = bear
-        .letta_agent_id
-        .as_deref()
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
+    let Some(agent_id) = bears_db::role_agent_id_or_legacy(
+        state.sqlx_pool(),
+        &bear,
+        BearAgentRole::Talk,
+    )
+    .await?
+    .map(|s| s.trim().to_string())
+    .filter(|s| !s.is_empty())
     else {
         return Ok(empty());
     };
@@ -365,7 +377,7 @@ async fn chat_history(
 
     let conv_id = normalize_client_conversation_id(q.conversation_id.as_deref())?;
     let agent_for_conv = if conv_id == "default" {
-        Some(agent_id)
+        Some(agent_id.as_str())
     } else {
         None
     };
@@ -710,17 +722,21 @@ async fn chat_send_inner(
         .await?
         .ok_or_else(|| CustomError::NotFound("bear not found".to_string()))?;
 
-    if bear
-        .letta_agent_id
-        .as_deref()
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .is_none()
-    {
-        return Err(CustomError::System(
-            "This bear is not provisioned in Letta yet (missing letta_agent_id).".to_string(),
-        ));
-    }
+    let talk_agent_id = bears_db::role_agent_id_or_legacy(
+        state.sqlx_pool(),
+        &bear,
+        BearAgentRole::Talk,
+    )
+    .await?
+    .map(|s| s.trim().to_string())
+    .filter(|s| !s.is_empty())
+    .ok_or_else(|| {
+        CustomError::System(
+            "This bear is not provisioned in Letta yet (missing talk role agent).".to_string(),
+        )
+    })?;
+    let mut bear = bear;
+    bear.letta_agent_id = Some(talk_agent_id);
 
     let conv_id = normalize_client_conversation_id(body.conversation_id.as_deref())?;
 

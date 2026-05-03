@@ -201,11 +201,17 @@ Each phase has explicit acceptance criteria. Phases are ordered for safe increme
 4. Verify the talk agent has access to the privileged Den tool needed to write task intents under `talk/tasks/` per [`../architecture/tasks-schema.md`](../architecture/tasks-schema.md). The tool should validate the intent against the schema before writing.
 5. Confirm tool execution path: tools execute on the harness server (existing behavior) and don't interact with `pair/`, `curate/`, `work/`, or `core/` paths in MemFS.
 
+### Implementation note — current web-chat test slice
+
+Before full Phase 2/3 MemFS and skill projection are complete, web chat can be tested against the `talk` role by using `bear_agents(role='talk')` as the authoritative Letta id and falling back to legacy `bears.letta_agent_id` only for pre-migration Bears. This slice intentionally does not require `pair`, `curate`, `work`, or `watch` to be fully provisioned before browser chat works.
+
 ### Acceptance
 
+- A web chat message routes correctly to the talk agent through Codepool `bear_channel` and gets a response.
 - A Slack message routes correctly to the talk agent and gets a response.
 - Sending two Slack messages back-to-back to the same Bear produces correctly serialized responses (existing per-agent sequential guarantee holds).
 - A memory edit during a chat turn results in a push to the bare repo's `talk` branch within a few seconds.
+- Codepool receives the talk-role Letta id in the trusted bear payload, with legacy `bears.letta_agent_id` used only as fallback during migration.
 - The push contains only `talk/` paths.
 - A user can request a scheduled task ("check the deploy API every morning") and the agent writes a valid intent file to `talk/tasks/`. The intent file passes schema validation.
 

@@ -354,12 +354,16 @@ pub async fn user_may_use_bear(
     Ok(n.0 > 0)
 }
 
-/// Non-empty `letta_agent_id` values already assigned to some bear (for orphan-agent UI).
+/// Non-empty `letta_agent_id` values already assigned to some bear or bear role (for orphan-agent UI).
 pub async fn list_letta_agent_ids_in_use(pool: &PgPool) -> Result<Vec<String>, CustomError> {
     let rows: Vec<(String,)> = sqlx::query_as(
         r#"
         SELECT letta_agent_id
         FROM bears
+        WHERE letta_agent_id IS NOT NULL AND btrim(letta_agent_id) <> ''
+        UNION
+        SELECT letta_agent_id
+        FROM bear_agents
         WHERE letta_agent_id IS NOT NULL AND btrim(letta_agent_id) <> ''
         "#,
     )
@@ -372,10 +376,19 @@ pub async fn bear_exists_for_letta_agent_id(
     pool: &PgPool,
     agent_id: &str,
 ) -> Result<bool, CustomError> {
-    let n: (i64,) = sqlx::query_as("SELECT COUNT(*)::bigint FROM bears WHERE letta_agent_id = $1")
-        .bind(agent_id)
-        .fetch_one(pool)
-        .await?;
+    let n: (i64,) = sqlx::query_as(
+        r#"
+        SELECT COUNT(*)::bigint
+        FROM (
+            SELECT letta_agent_id FROM bears WHERE letta_agent_id = $1
+            UNION ALL
+            SELECT letta_agent_id FROM bear_agents WHERE letta_agent_id = $1
+        ) ids
+        "#,
+    )
+    .bind(agent_id)
+    .fetch_one(pool)
+    .await?;
     Ok(n.0 > 0)
 }
 
@@ -389,6 +402,24 @@ pub async fn set_letta_agent_id(
         .bind(bear_id)
         .execute(pool)
         .await?;
+    // Treat direct attachment as legacy talk-role attachment during the migration window.
+    sqlx::query(
+        r#"
+        INSERT INTO bear_agents (
+            bear_id, role, letta_agent_id, provisioning_status, last_synced_at, updated_at
+        )
+        VALUES ($1, 'talk', $2, 'ready', NOW(), NOW())
+        ON CONFLICT (bear_id, role)
+        DO UPDATE SET letta_agent_id = EXCLUDED.letta_agent_id,
+                      provisioning_status = 'ready',
+                      last_synced_at = NOW(),
+                      updated_at = NOW()
+        "#,
+    )
+    .bind(bear_id)
+    .bind(agent_id)
+    .execute(pool)
+    .await?;
     Ok(())
 }
 
@@ -694,7 +725,10 @@ pub async fn ensure_default_runtime_plan(
     Ok(())
 }
 
-/// One row per `user_bear` for Letta Code harness YAML (`username` + `bear_slug` + optional Letta id).
+/// One row per `user_bear` for Letta Code harness YAML.
+///
+/// During migration the talk role is authoritative, with `bears.letta_agent_id` as fallback for
+/// legacy Bears not yet backfilled into `bear_agents`.
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct LettaCodeHarnessRow {
     pub username: String,
@@ -707,10 +741,13 @@ pub async fn list_letta_code_harness_rows(
 ) -> Result<Vec<LettaCodeHarnessRow>, CustomError> {
     sqlx::query_as::<_, LettaCodeHarnessRow>(
         r#"
-        SELECT u.username, b.slug AS bear_slug, b.letta_agent_id
+        SELECT u.username,
+               b.slug AS bear_slug,
+               COALESCE(ba.letta_agent_id, b.letta_agent_id) AS letta_agent_id
         FROM user_bear ub
         INNER JOIN users u ON u.id = ub.user_id
         INNER JOIN bears b ON b.id = ub.bear_id
+        LEFT JOIN bear_agents ba ON ba.bear_id = b.id AND ba.role = 'talk'
         ORDER BY u.username, b.slug
         "#,
     )
