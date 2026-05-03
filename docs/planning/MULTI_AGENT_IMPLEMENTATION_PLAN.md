@@ -6,14 +6,16 @@ Each phase has explicit acceptance criteria. Phases are ordered for safe increme
 
 ## Glossary (read first)
 
-- **Bear** — a logical agent identity. Implemented as a quartet of Letta agents (talk, pair, curate, work) sharing memory.
+- **Bear** — a logical agent identity. Implemented as a quintet of Letta agents (talk, pair, curate, work, watch) sharing memory.
 - **Den** — our existing control plane service. Provisions and manages Bears.
 - **MemFS** — Letta's git-backed memory filesystem. Stored as a bare repo per Bear; agents access it via worktrees.
 - **Sidecar** — the git smart HTTP service that fronts the bare repos. Configured via `LETTA_MEMFS_SERVICE_URL`.
-- **Channel agent** — talk or pair. The two user-facing agents.
-- **Curate agent** — the integrator. Reflects on memory, approves task intents, promotes results to `core/`.
-- **Work agent** — the executor. Runs approved external-action tasks.
+- **Channel agent** — talk or pair. The two synchronous, user-facing agents.
+- **Curate agent** — the integrator. Reflects on memory, approves task intents, reviews skill proposals, promotes results to `core/`.
+- **Work agent** — the executor. Runs approved external-action tasks (outbound autonomous comms).
+- **Watch agent** — the listener. Holds open subscriptions to external streams and produces observation events for curate to review (inbound autonomous comms).
 - **Worktree** — a git working directory tied to one branch. Each agent gets one worktree per Bear.
+- **Skill manifest** — Den-managed canonical record of which skills are installed on which agents within a Bear. Source of truth for skill provisioning and reconciliation.
 
 ## Prerequisites
 
@@ -30,14 +32,18 @@ Each phase has explicit acceptance criteria. Phases are ordered for safe increme
 ### Tasks
 
 1. Write a spec doc (`bear-spec.md` in the Den repo) covering:
-   - Tool roster for each of the four agent types. List every tool by name, server-side vs client-side, and which agent it's attached to.
-   - System prompt template. Decide whether the four agents share a base prompt with role-specific suffixes, or have fully distinct prompts. Recommendation: shared base, distinct role suffixes.
-   - Skill roster: which skills go to which agents. Coding skills are talk and pair; reflection skills are curate; integration tools (HTTP clients, posting tools, etc.) are work; some user-preference skills go to all four.
+   - Tool roster for each of the five agent types. List every tool by name, server-side vs client-side, and which agent it's attached to.
+   - System prompt template. Decide whether the five agents share a base prompt with role-specific suffixes, or have fully distinct prompts. Recommendation: shared base, distinct role suffixes.
+   - Skill roster and the per-role applicability matrix (see task 2 below). Coding skills typically apply to talk and pair; reflection skills are curate-only; integration tools (HTTP clients, posting tools, etc.) are work-only; subscription handlers and stream parsers are watch-only; some user-preference and company-convention skills apply to all roles.
    - MemFS directory layout (see phase 2).
-2. Resolve the open ADR question on **skill sync mechanism**. Pick one of:
-   - **(A)** Skills live in MemFS under `core/.skills/` and `<agent>/.skills/`. Distribution is via git.
-   - **(B)** Den owns skill installation via Letta API; skills are not in MemFS. Agent-driven `/skill` learning writes go through a Den webhook.
-   - Recommendation: (A), because it makes skill propagation a side effect of memory sync we're already paying for. Disable agent-driven skill writes outside `<own-branch>/.skills/`.
+2. **Skill management design.** Skills are managed by Den as Bear-scoped resources with per-role applicability. Letta Code's filesystem-based skill discovery (`.skills/`, `.agents/skills/`) only applies to the talk agent's harness; the other four agents are Letta-API-direct and receive skills through the Letta API. These two installation mechanisms are different, and we manage both from a single canonical source rather than treating them uniformly.
+   - **Manifest model.** Den maintains a `bear_skills_manifest` table per Bear. Each row records a skill (name, version, source URL or path, content hash) and the set of roles to which it applies. The manifest is the source of truth; both installation mechanisms are projections of it.
+   - **Two installation paths:**
+     - For the **talk agent**, Den writes the agent-scoped skills to `~/.letta/agents/{talk_agent_id}/skills/` on the harness host before the harness starts (or restarts the harness on manifest change). Letta Code's loader picks them up at startup.
+     - For **pair, curate, work, and watch**, Den uses the Letta API to attach skills directly to each agent. Skill records live server-side on the Letta agent.
+   - **No skills in MemFS.** The earlier proposal to store skills under `core/.skills/` or `<agent>/.skills/` is rejected. Filesystem-based skill discovery via MemFS would only work for the talk agent's harness; the other four agents wouldn't see them. The manifest design works uniformly across all five and avoids the legacy `.skills/` location.
+   - **Agent-driven skill learning is curate-mediated.** When any agent uses `/skill` (or its equivalent), the proposed skill is captured by Den and queued as a *skill proposal* for the curate agent to review during its next cycle (parallel to how task intents are reviewed). On approval, curate updates the manifest; on rejection, the proposal is closed with a reason. Channel agents and the work agent do not get raw, in-place skill installation tools — those are replaced (or wrapped) with proposal-writing tools.
+   - **Reconciliation.** `reconcile_bear` validates each agent's actual installed skills against the manifest's role-relevant slice and corrects drift (re-install missing, remove extra). Drift detection mechanism differs per agent (filesystem listing for talk, Letta API listing for the others) but the canonical comparison is always against the manifest.
 3. Define the Bear data model in Den's database:
    ```
    bears
@@ -45,24 +51,45 @@ Each phase has explicit acceptance criteria. Phases are ordered for safe increme
      name
      created_at
      memfs_repo_path
-     provisioning_version (int — bumped on prompt/tool/runtime changes; skills deferred)
+     provisioning_version (int — bumped on prompt/tool/skill-manifest/runtime changes)
 
    bear_agents
      bear_id (fk)
-     role (talk | pair | curate | work)
+     role (talk | pair | curate | work | watch)
      letta_agent_id (nullable until provisioning succeeds)
      provisioning_status (pending | provisioning | ready | drifted | failed)
      last_provisioned_version
      last_synced_at
      last_provisioning_error
      config_hash
+
+   bear_skills_manifest
+     bear_id (fk)
+     skill_name
+     skill_version
+     source                      -- URL or path
+     content_hash                -- sha256 of skill contents
+     applies_to_roles            -- set of {talk, pair, curate, work, watch}
+     installed_at
+     last_verified_at
+
+   bear_skill_proposals
+     bear_id (fk)
+     id (uuid)
+     proposed_by_agent_id        -- which agent proposed it
+     proposed_at
+     skill_payload               -- the proposed skill content
+     status                      -- pending_review | approved | rejected
+     reviewed_at
+     rejection_reason
+     resulting_manifest_entry    -- nullable fk into bear_skills_manifest
    ```
-4. Read `tasks-schema.md` and confirm tool requirements derived from it (e.g., channel agents need a privileged Den tool that can write structured intent files; the curate agent needs privileged Den tools for approval/rejection and validated writes to `core/tasks/`; the work agent needs structured input handling and scoped result-writing tools for task definitions).
+4. Read `tasks-schema.md` and confirm tool requirements derived from it (e.g., channel agents need a privileged Den tool that can write structured intent files; the curate agent needs privileged Den tools for approval/rejection and validated writes to `core/tasks/`; the work agent needs structured input handling and scoped result-writing tools for task definitions; the watch agent needs structured observation-writing tools).
 
 ### Acceptance
 
 - Spec doc reviewed by team and merged to main.
-- Skill sync mechanism scope decided for this phase: direct out-of-band skill installation is denied, while detailed skill storage/runtime behavior is deferred to the dedicated skills discussion/design.
+- Skill management design (above) reviewed and the manifest schema reflected in the database migration.
 - Database migration written but not yet applied.
 - Tool requirements from the tasks schema reviewed and folded into the per-agent tool roster.
 
@@ -70,23 +97,26 @@ Each phase has explicit acceptance criteria. Phases are ordered for safe increme
 
 ## Phase 1 — Den data model and provisioning API
 
-**Goal:** Den knows what a Bear is and can talk about its four constituent agents.
+**Goal:** Den knows what a Bear is and can talk about its five constituent agents.
 
 ### Tasks
 
 1. Apply the database migration from phase 0.
 2. Add the following Den endpoints (or internal methods if Den is library-shaped, not service-shaped):
    - `create_bear(name) -> bear_id` — creates the bear record. Does not yet provision agents.
-   - `provision_bear(bear_id)` — creates/updates the four Letta agents to match the current canonical config.
+   - `provision_bear(bear_id)` — creates/updates the five Letta agents to match the current canonical config (including the skill manifest's role-relevant slice for each).
    - `reconcile_bear(bear_id)` — checks each agent's actual tool/prompt/skill state against canonical, reports drift. Idempotent fix-up.
-   - `get_bear(bear_id)` — returns the bear with its four agent IDs and roles.
+   - `get_bear(bear_id)` — returns the bear with its five agent IDs and roles.
+   - `list_bear_skills(bear_id) -> manifest entries` — returns the current skill manifest for a Bear.
+   - `propose_skill(bear_id, agent_id, payload) -> proposal_id` — registers a skill proposal for curate review (called by the agent-side proposal tool, not directly by humans).
 3. Write integration tests for these endpoints against a test Letta server.
 
 ### Acceptance
 
-- `create_bear` followed by `provision_bear` creates or updates four `bear_agents` rows and produces four agents on the Letta server with the correct tags (`bear:<id>`, `role:<role>`, `bear:<id>:role:talk`, `bear:<id>:role:pair`, `bear:<id>:role:curate`, `bear:<id>:role:work`, `git-memory-enabled`) and tool profiles.
+- `create_bear` followed by `provision_bear` creates or updates five `bear_agents` rows and produces five agents on the Letta server with the correct tags (`bear:<id>`, `role:<role>`, `bear:<id>:role:talk`, `bear:<id>:role:pair`, `bear:<id>:role:curate`, `bear:<id>:role:work`, `bear:<id>:role:watch`, `git-memory-enabled`) and tool profiles.
 - `reconcile_bear` returns no drift immediately after provisioning.
 - `reconcile_bear` detects and corrects drift after manually mutating an agent's tool roster via the Letta API.
+- `list_bear_skills` returns the manifest contents and `propose_skill` writes a `pending_review` row.
 
 ---
 
@@ -101,7 +131,8 @@ Each phase has explicit acceptance criteria. Phases are ordered for safe increme
    - `pair` — writable by pair agent. Contents: `pair/` directory, including `pair/tasks/` for intent files.
    - `curate` — writable by curate agent. Contents: `curate/` directory and `core/` directory (which contains `core/tasks/` and `core/results/`).
    - `work` — writable by work agent. Contents: `work/` directory, including `work/results/<task-id>/<run-id>.md`.
-   - `core/` is curated shared state. The implementation must document how `core/` is materialized read-only for `talk`, `pair`, and `work` before Phase 2 acceptance (for example read-only worktree/mount, Den-managed prompt/context copy, or Den-managed merge strategy).
+   - `watch` — writable by watch agent. Contents: `watch/` directory, including `watch/observations/` for raw observation files and `watch/subscriptions/` for subscription configurations.
+   - `core/` is curated shared state. The implementation must document how `core/` is materialized read-only for `talk`, `pair`, `work`, and `watch` before Phase 2 acceptance (for example read-only worktree/mount, Den-managed prompt/context copy, or Den-managed merge strategy).
 2. Write a `pre-receive` hook for the bare repo that:
    - Identifies the branch being pushed.
    - Walks the changed file list.
@@ -110,42 +141,47 @@ Each phase has explicit acceptance criteria. Phases are ordered for safe increme
 3. Write an initialization script `den/scripts/init_bear_repo.sh <bear_id>` that:
    - Creates the bare repo at the configured path.
    - Installs the `pre-receive` hook.
-   - Creates the four branches with appropriate empty directory structure (a `.gitkeep` in each, plus the `tasks/` and `results/` subdirectories where applicable).
+   - Creates the five branches with appropriate empty directory structure (a `.gitkeep` in each, plus the `tasks/`, `results/`, `observations/`, and `subscriptions/` subdirectories where applicable).
 4. Add a "memfs sidecar healthcheck" to Den's existing health endpoints — confirms the sidecar is reachable and can serve at least one repo.
 
 ### Acceptance
 
-- Initializing a new Bear produces a bare repo with all four branches and the hook installed.
+- Initializing a new Bear produces a bare repo with all five branches and the hook installed.
 - Manual test: clone the `talk` branch, add a file under `core/`, push — push is rejected with the clear error.
 - Manual test: clone the `curate` branch, add a file under `core/`, push — push succeeds.
 - Manual test: clone the `work` branch, add a file under `core/`, push — push is rejected.
+- Manual test: clone the `watch` branch, add a file under `core/`, push — push is rejected.
 - Sidecar healthcheck passes.
-- The active `core/` materialization strategy is documented and does not give `talk`, `pair`, or `work` raw push authority over `core/`.
+- The active `core/` materialization strategy is documented and does not give `talk`, `pair`, `work`, or `watch` raw push authority over `core/`.
 
 ---
 
 ## Phase 3 — Agent provisioning logic
 
-**Goal:** `provision_bear` and `reconcile_bear` correctly configure each of the four agents.
+**Goal:** `provision_bear` and `reconcile_bear` correctly configure each of the five agents.
 
 ### Tasks
 
 1. Implement provisioning per role. For each role:
    - Create the Letta agent with the role's tool profile, system prompt, and `git-memory-enabled` tag.
    - Configure MemFS to point at the Bear's bare repo on the correct branch.
-   - Apply the role's skill roster (mechanism depends on phase 0 decision).
+   - Apply the role's skill roster from the manifest. For the talk agent, write the role-relevant skills to `~/.letta/agents/{talk_agent_id}/skills/` on the harness host. For the other four agents, attach skills via the Letta API.
    - Tag with `bear:<id>` and `role:<role>` for discovery.
 2. Implement drift detection in `reconcile_bear`:
    - Tool roster: list attached tools on the agent, diff against canonical.
    - System prompt: hash compare.
-   - Skills: list (via filesystem read of `.skills/` if mechanism A, or via Den's installation log if mechanism B), diff against canonical.
+   - Skills: compare actual installed skills against the manifest's role-relevant slice.
+     - For talk: list files in `~/.letta/agents/{talk_agent_id}/skills/`, compute hashes, diff.
+     - For pair, curate, work, watch: list skills via Letta API, diff.
    - MemFS branch: confirm the agent is configured against the right branch.
-3. Implement drift correction. Order matters: detach removed tools before attaching new ones; update prompt last (so any in-flight turn finishes on the old config rather than mid-mutation).
+3. Implement drift correction. Order matters: detach removed tools before attaching new ones; install missing skills before removing extras (so the agent always has at least the manifest's set during reconciliation); update prompt last (so any in-flight turn finishes on the old config rather than mid-mutation). For the talk agent, restart the harness if skills changed (Letta Code's loader runs at startup).
 
 ### Acceptance
 
-- `provision_bear` on a fresh Bear produces four correctly configured agents.
-- `reconcile_bear` detects each implemented kind of drift in isolation (tool added, tool removed, prompt edited, runtime policy/config hash mismatch) and corrects it. Skill drift detection is deferred until the skills design is finalized.
+- `provision_bear` on a fresh Bear produces five correctly configured agents.
+- `reconcile_bear` detects each implemented kind of drift in isolation (tool added, tool removed, prompt edited, skill added, skill removed, runtime policy/config hash mismatch) and corrects it.
+- A skill removed from an agent's filesystem (talk) or detached via the Letta API (other agents) is re-installed by `reconcile_bear` per the manifest.
+- A skill added out-of-band (not in the manifest) is removed by `reconcile_bear`.
 - Re-running `provision_bear` on an already-provisioned Bear is a no-op (idempotent).
 
 ---
@@ -214,29 +250,34 @@ Each phase has explicit acceptance criteria. Phases are ordered for safe increme
 
 ## Phase 6 — Curate agent and orchestration
 
-**Goal:** curate agent runs reflection, integrates learnings, reviews task intents, and promotes work results.
+**Goal:** curate agent runs reflection, integrates learnings, reviews task intents, reviews skill proposals, and promotes work results and watch observations.
 
 ### Tasks
 
-1. Implement the curate agent's tool profile per `bear-spec.md`. It needs read access to all branches (via additional read-only worktrees) and write access to its own branch and `core/`. Reuse Letta's existing reflection and defragmentation skills.
-2. Implement the curate agent's worktree setup. The curate agent reads from `talk/`, `pair/`, and `work/` and writes to `curate/` and `core/`. Mount additional read-only worktrees for the other branches alongside the curate worktree:
+1. Implement the curate agent's tool profile per `bear-spec.md`. It needs read access to all branches (via additional read-only worktrees) and write access to its own branch and `core/`. Reuse Letta's existing reflection and defragmentation skills. Curate also needs privileged Den tools to (a) approve/reject task intents, (b) approve/reject skill proposals, and (c) update the manifest on skill approval.
+2. Implement the curate agent's worktree setup. The curate agent reads from `talk/`, `pair/`, `work/`, and `watch/` and writes to `curate/` and `core/`. Mount additional read-only worktrees for the other branches alongside the curate worktree:
    ```
    /work/curate-branch/      (read-write, current branch: curate)
    /work/talk-readonly/      (read-only, branch: talk)
    /work/pair-readonly/      (read-only, branch: pair)
    /work/work-readonly/      (read-only, branch: work)
+   /work/watch-readonly/     (read-only, branch: watch)
    ```
 3. Implement curate cycle triggering in Den:
    - Idle trigger: after N minutes of no activity on talk or pair agents.
    - Volume trigger: after M new messages across talk and pair since last cycle.
    - Pending intent trigger: when one or more files in `talk/tasks/` or `pair/tasks/` have status `pending_review`.
    - Pending result trigger: when new files have appeared in `work/results/` since last cycle.
+   - Pending observation trigger: when new files have appeared in `watch/observations/` since last cycle.
+   - Pending skill proposal trigger: when one or more rows in `bear_skill_proposals` have status `pending_review`.
    - Manual trigger: an `admin/trigger_curate/<bear_id>` endpoint for testing.
-4. Implement curate cycle execution. The cycle has three responsibilities, executed in this order:
+4. Implement curate cycle execution. The cycle has these responsibilities, executed in this order:
    - **Memory integration:** review new content in `talk/` and `pair/` since last cycle. Promote durable learnings to `core/` through allowed curate writes or privileged Den tools.
    - **Task intent review:** for each pending intent file, decide approve or reject. If approved, call privileged Den tooling to validate and write a corresponding file to `core/tasks/<task-id>.md` per the schema and update the source intent audit metadata. If rejected, call privileged Den tooling to update the source intent with rejection metadata. The curate agent must not receive raw write access to `talk/` or `pair/`.
+   - **Observation review:** for each new file in `watch/observations/`, decide whether the observation is salient. If yes, decide whether it warrants promotion to `core/` (a noteworthy fact for the Bear to know) or generation of a derived task intent (an observation that should trigger work — e.g., "deploy failure detected, post a summary"). Derived task intents are written by curate to `core/tasks/` directly, with `parent_intent` pointing to the observation file rather than to a channel intent.
    - **Result promotion:** for each new file in `work/results/`, decide whether to surface a summary to channel agents. If yes, write a summary to `core/results/<task-id>.md` through allowed curate writes or privileged Den tools.
-5. Den records the cycle (start time, end time, branches' commit SHAs at start, what was integrated, what intents were approved/rejected, what results were promoted).
+   - **Skill proposal review:** for each pending skill proposal in `bear_skill_proposals`, decide approve or reject. On approval, call the privileged Den tool that adds the skill to `bear_skills_manifest` (with curate's chosen `applies_to_roles`) and triggers re-provisioning across affected agents. On rejection, update the proposal row with `status: rejected` and a reason. Curate should consult the proposing agent's role when deciding default applicability — e.g., a skill proposed by the work agent typically applies to work only unless curate sees broader value.
+5. Den records the cycle (start time, end time, branches' commit SHAs at start, what was integrated, what intents were approved/rejected, what observations were promoted, what results were promoted, what skill proposals were approved/rejected).
 6. Ensure curate cycles don't run concurrently for the same Bear (Den-level lock).
 
 ### Acceptance
@@ -244,7 +285,9 @@ Each phase has explicit acceptance criteria. Phases are ordered for safe increme
 - Triggering a curate cycle on a test Bear produces commits to the `curate` branch touching `curate/` and `core/`, with a clear commit message.
 - After a curate cycle, the next system prompt construction on the talk agent reflects content from `core/` (verify by inspecting the agent's loaded context).
 - A pending intent file in `talk/tasks/` is reviewed during the next cycle; either an approval lands in `core/tasks/` and the source intent audit metadata is updated by Den, or a rejection audit update is written by Den to the source intent. The curate agent never raw-writes the channel branch.
+- A new observation in `watch/observations/` produces either a promotion to `core/` or a derived task intent in `core/tasks/`, or is dismissed (no action), within the next cycle.
 - A new result file in `work/results/` produces a summary in `core/results/` after the next cycle.
+- A pending skill proposal is reviewed during the next cycle; on approval the manifest is updated and the affected agents are re-provisioned to install the skill. On rejection, the proposal is closed with a reason.
 - Two near-simultaneous curate triggers result in only one cycle running; the second is rejected or queued.
 - A failure mid-cycle leaves the repo in a clean state.
 
@@ -388,20 +431,73 @@ Audit and update so operators **never** see a bare `letta_agent_id` without **ro
 
 ---
 
+## Phase 8.6 — Watch agent
+
+**Goal:** the watch agent holds open subscriptions to external streams and produces structured observation events for curate to review.
+
+The watch agent is the inbound counterpart to the work agent. Where work executes outbound external action on a schedule, watch maintains long-lived inbound subscriptions (webhooks, polling subscriptions, message queues) and writes observations to its branch when something interesting arrives. Curate decides what those observations mean (promote to `core/`, generate derived task intent, or dismiss).
+
+### Trust position
+
+Watch holds private data (whatever it observes) and inbound external comms (read-side). It has no durable write authority over `core/`, no outbound action capability, and no read access to other agents' branches. Like work, it sees only `core/` (read-only) plus its own branch.
+
+### Tasks
+
+1. Implement the watch agent's tool profile per `bear-spec.md`. Includes:
+   - Subscription registration tools (register webhook endpoint, register polling job, etc. — finalize the set in phase 0).
+   - Observation-writing tool (`write_observation`) that produces a structured file under `watch/observations/<observation-id>.md`. Schema TBD; include source subscription, timestamp, payload summary, raw payload reference, and a salience hint.
+   - **No outbound action tools.** No HTTP POST, no Slack post, etc. — those belong to work.
+2. Implement the watch agent's MemFS configuration:
+   - Worktree on the `watch` branch.
+   - Read-only mount of `core/` so the watch agent can consult curated context (e.g., "what subscriptions does the user care about") when deciding what to observe.
+3. Implement subscription management. Subscriptions are durable across watch agent restarts:
+   - Den maintains a registry of active subscriptions per Bear (`bear_subscriptions` table).
+   - On Bear startup, Den restores subscriptions to the watch agent's known state.
+   - User-requested subscriptions flow through the same task-intent → curate-approval pipeline as work tasks. A user asks talk/pair to "watch the deploy webhook"; the channel agent writes an intent; curate approves; Den registers the subscription and notifies the watch agent.
+4. Implement observation flow:
+   - When a subscription fires (webhook arrives, polled value changes, etc.), Den routes the event to the watch agent as a structured prompt: "subscription <id> fired with payload <X>; decide whether and how to record this."
+   - The watch agent uses `write_observation` to record, including a salience hint (`low | medium | high`).
+   - Watch commits and pushes; this triggers curate's pending-observation trigger (phase 6).
+5. Implement sandboxing. The watch agent should run with:
+   - Inbound network only — no outbound HTTP except to Den's own observation-recording endpoint and to MemFS sidecar.
+   - Webhook receivers must validate signatures where applicable; raw payloads from untrusted sources are wrapped as quoted data, not interpreted as instructions to the watch agent.
+   - Polling jobs run in Den (not in the watch agent) and deliver results to watch as events; this avoids giving watch a generic outbound HTTP capability.
+6. Implement observability:
+   - Every observation is logged with subscription, timestamp, salience hint, and curate's eventual decision.
+   - Subscription health (last fire, error count) surfaced to UI.
+   - Anomalies (high observation rate, repeated parse failures) raise alerts.
+
+### Acceptance
+
+- A test webhook subscription fires; the watch agent produces a valid observation file in `watch/observations/`.
+- A polling subscription configured in Den delivers events to the watch agent at the configured interval.
+- An attempt by the watch agent to make an outbound HTTP call fails (no such tool attached; network egress also blocked).
+- An attempt by the watch agent to read `talk/`, `pair/`, `curate/`, or `work/` paths fails.
+- An observation written by watch triggers a curate cycle within the configured trigger window, and curate's decision (promote / generate task intent / dismiss) is recorded against the observation.
+- Subscriptions survive a watch agent restart.
+
+### Notes on placement in the rollout
+
+The watch agent is not blocking for any user-visible functionality in phases 4–8. Bears can ship with talk, pair, curate, and work for the initial rollout, with the watch agent added later (e.g., as part of phase 9 or post-cutover). If this phasing is chosen, the manifest, branch layout, and curate's observation-review responsibilities should still be reserved from phase 0, even if watch itself is provisioned later — retrofitting all five concerns is more painful than reserving four and provisioning watch last.
+
+---
+
 ## Phase 9 — Management UI updates
 
 **Goal:** the Den UI surfaces conversations as agent-locked, makes the task lifecycle visible, and provides the HITL approval queue. **Depends on:** Phase **8.5** for list/detail/harness and doc baseline so Phase 9 is not built on 1:1 assumptions.
 
 ### Tasks
 
-1. Bear-level view: lists the four agents with status, last activity, last curate cycle, last reconcile.
-2. Conversations view: scoped per agent. A Bear's conversations across all four agents can be aggregated into a unified timeline, but each conversation entry must clearly show which agent it belongs to.
+1. Bear-level view: lists the five agents with status, last activity, last curate cycle, last reconcile.
+2. Conversations view: scoped per agent. A Bear's conversations across all five agents can be aggregated into a unified timeline, but each conversation entry must clearly show which agent it belongs to.
 3. Tasks view: shows pending intents, approved tasks, paused/failed tasks, and recent run history. Allows manual approval / rejection of intents (override of curate decisions if needed) and manual triggering of `oneshot` tasks.
 4. HITL approval queue: dedicated view for high-risk task runs awaiting approval. Each entry shows the task definition, the run-specific inputs, and approve/reject buttons. Approval should be cryptographically signed (so the audit log records who approved what).
 5. MemFS browser: read-only view of each branch's content. Useful for debugging.
 6. Drift indicator: surface `reconcile_bear` results with an actionable button to fix.
 7. Curate cycle log: history of cycles per Bear with timing and what was integrated/approved/promoted.
 8. Work agent activity: outbound request log, rate-limit status, alerting summary.
+9. Skills view: shows the manifest per Bear (skill name, version, applies-to-roles, source). Pending skill proposals are visible with their proposing agent and review status. Operators can override or delete manifest entries with appropriate audit logging.
+10. Watch view: lists active subscriptions per Bear with health (last fire, error count). Shows recent observations and curate's decisions on each (promoted, generated task intent, dismissed).
 
 ### Acceptance
 
@@ -410,26 +506,31 @@ Audit and update so operators **never** see a bare `letta_agent_id` without **ro
 - A user can answer "what does the Bear durably know about me?" by reading `core/`.
 - A user can see all pending and approved tasks for a Bear in one place.
 - A user can approve or reject a high-risk task run from the UI.
+- A user can see the current skill manifest and any pending skill proposals.
+- A user can see active subscriptions and recent observations.
 
 ---
 
 ## Phase 10 — Migration of existing Bears
 
-**Goal:** existing single-agent Bears are converted to quartets without data loss.
+**Goal:** existing single-agent Bears are converted to the multi-agent shape without data loss.
 
 ### Tasks
 
 1. Write a migration script `den/scripts/migrate_bear.py <legacy_bear_id>`:
    - Read the legacy Bear's MemFS content.
-   - Initialize the new bare repo with the four-branch layout.
+   - Initialize the new bare repo with the five-branch layout.
    - Write the legacy memory content into `core/` on the `curate` branch (treating all existing memory as "already promoted").
-   - Provision the four new agents.
-   - Create new `bear_agents` records pointing to the new quartet.
+   - Provision the new agents. If the watch agent is being phased in later (per phase 8.6 notes), provision the four core agents (talk, pair, curate, work) at minimum; the watch agent's branch and `bear_agents` row can be created with `provisioning_status: pending` for later activation.
+   - Initialize the skill manifest with the legacy Bear's known skills, mapping each to the appropriate `applies_to_roles` set per the spec.
+   - Create new `bear_agents` records pointing to the new agents.
    - Mark the legacy agent as deprecated (do not delete; we want rollback).
 2. Test the migration on a cloned production Bear in a staging environment. Verify:
    - The talk agent has access to the migrated content via `core/`.
    - The pair agent likewise.
    - The work agent has read access to the migrated content via `core/`.
+   - The watch agent (if provisioned) has read access to the migrated content via `core/`.
+   - The skill manifest is populated and each agent has its role-relevant slice installed.
    - Conversation history from the legacy agent is **not** carried over (this is the agent-locked tradeoff; document in user-facing release notes).
 3. Define a rollback path: if a migrated Bear misbehaves, point Den's router back at the legacy agent until investigation completes.
 
@@ -458,6 +559,9 @@ Audit and update so operators **never** see a bare `letta_agent_id` without **ro
    - **Task queue health:** backlog size, dispatch latency, rate-limit rejection rate.
    - **Work agent egress:** novel destinations, unusual byte volumes, error spikes.
    - **HITL queue depth:** pending high-risk approvals per Bear.
+   - **Skill manifest drift:** alert on per-Bear skill drift detected by `reconcile_bear`.
+   - **Skill proposal backlog:** alert on proposals pending for longer than threshold.
+   - **Watch agent (if active):** subscription health (last fire timestamps), observation rate per subscription, parse failure rate.
 3. Document operational runbooks: how to manually fix drift, how to recover from a failed curate cycle, how to roll back a Bear, how to inspect MemFS state for debugging, how to handle a stuck or failing task, how to revoke a misbehaving work-agent capability.
 
 ### Acceptance
@@ -473,13 +577,16 @@ Audit and update so operators **never** see a bare `letta_agent_id` without **ro
 | Risk | Mitigation |
 |---|---|
 | Drift between agents in a Bear | Hourly `reconcile_bear`, alerting, fix-up tooling. |
-| Agent self-modifies tools/skills out-of-band | Agents do not have tools to attach/detach tools or install skills outside their branch's `.skills/`. Confirm in tool roster review (phase 0). |
+| Agent self-modifies tools/skills out-of-band | Agents do not have tools to attach/detach tools. Skill installation is mediated by the manifest; agent-driven `/skill` learning is captured as a proposal for curate review, not a direct install. The talk agent's skill directory is owned by Den; raw filesystem writes by the harness outside the manifest are detected and reverted by `reconcile_bear`. |
 | Concurrent commits across worktrees | Branch-per-agent + path-per-agent enforced by `pre-receive`. |
 | Curate cycle conflicts with user load | Idle-triggered by default; volume-triggered with backoff during active hours. |
 | Conversation history fragmentation confuses users | UI work in phase 9 + explicit release notes. |
 | Letta upstream changes break our assumptions | Pin Letta and Letta Code versions; subscribe to changelog; integration tests in CI against pinned versions. |
 | Work agent exfiltration via prompt injection | Trifecta split (work has no read access to channel branches); network egress allowlist; HITL on high-risk tasks; rate limiting. |
+| Watch agent abuse by hostile inbound payloads | Webhook signature validation; raw payloads wrapped as quoted data, not as instructions; watch has no outbound action capability; salience hints are advisory, not authoritative. |
 | Task intent backlog | Curate trigger on pending intents; backlog size alert; manual override in UI. |
+| Skill proposal backlog | Curate trigger on pending proposals; UI surfaces the queue; operator override available. |
+| Skill manifest drift between Den and Letta server | `reconcile_bear` validates per-role manifest slice against actual installed skills via filesystem (talk) or Letta API (other roles). |
 
 ## What is explicitly out of scope
 
