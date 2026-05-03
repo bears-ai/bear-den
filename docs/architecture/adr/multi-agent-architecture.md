@@ -173,6 +173,34 @@ Decision deferred to implementation phase 0. Constraints: agent-driven `/skill` 
 
 **Three agents with external work as deterministic Den-side jobs (no LLM in the loop for execution).** Considered as a complement to the four-agent design. Useful for highly structured tasks but doesn't cover work that requires reasoning during execution. Adopted as the high-risk-task mode within the work-agent design (Den can choose deterministic execution for tasks that don't need reasoning, agent execution for tasks that do).
 
+## Prior art and pattern alignment
+
+This section situates the design against published work on agentic prompt-injection defenses. The four-agent split was developed from first principles around the trifecta, but most of its load-bearing properties correspond to named patterns in the literature. Naming them makes future review easier and surfaces concrete remediations for the places where this design diverges from the canonical form.
+
+The reference taxonomy is Beurer-Kellner et al., *Design Patterns for Securing LLM Agents against Prompt Injections* (2025), which formalizes six patterns: **Action-Selector**, **Plan-Then-Execute**, **LLM Map-Reduce**, **Dual LLM** (Willison, 2023), **Code-Then-Execute**, and **Context-Minimization**. CaMeL (Debenedetti et al., 2025) is the strongest published instance of Code-Then-Execute and contributes the capability/taint-tracking machinery referenced below. OWASP Top 10 for Agentic Applications (2026) supplies the threat vocabulary, in particular ASI01 (Agent Goal Hijack) and ASI07 (Insecure Inter-Agent Communication).
+
+### Correspondence to the four-agent split
+
+| This ADR | Pattern analog | Notes |
+|---|---|---|
+| `talk`, `pair` | Quarantined LLM (channel side) of Dual LLM | Diverges in that they hold their own durable writes rather than returning only symbolic references. |
+| `curate` | Privileged controller of Dual LLM + Approval Agent (separation-of-duties) | Sees all branches; sole writer to `core/`; no external comms by design. |
+| `work` | Executor of Plan-Then-Execute; Action-Selector when dispatched as a deterministic Den job | Reads only `core/` and explicit task definitions; never raw user input. |
+| `core/` plus `pre-receive` hook | Coarse capability enforcement, path-and-branch granular | Plays the role CaMeL gives to a typed interpreter at value granularity. |
+| Den per-run HITL queue for high-risk tasks | Anthropic Plan-Mode-style intent approval | Approves task intent and individual destructive runs, not each step. |
+| Channel agents writing structured task intents (§5) | Context-Minimization on the work-agent path | Work agent receives no free-form user prose. |
+
+The trifecta argument in §3 is the same argument the design-patterns paper makes for Plan-Then-Execute, applied across persistent agents rather than within a single request.
+
+### Departures from the canonical patterns
+
+These are intentional departures or known gaps relative to the strictest form of each pattern. They are recorded here so they remain visible and reviewable; each is a candidate for a follow-up ADR and none change the core decision above.
+
+1. **The `curate` agent is not strictly quarantined.** It reads raw `talk/` and `pair/` branches, which contain potentially-injected content, and it is also the sole writer to `core/`. In strict Dual LLM, only the Q-LLM touches untrusted tokens. The trifecta is still structurally split because curate has no external comms, but an injection-driven promotion to `core/` does compromise the work agent. Tracked mitigations: provenance metadata on every `core/` entry; an LLM Map-Reduce shape for the curate cycle (per-branch quarantined summarizers feeding a reducer that does not see raw content); a non-LLM policy engine validating `core/tasks/<task-id>.md` against an allowlist DSL before Den dispatches.
+2. **Inter-agent communication is integrity-checked but not authenticated per agent.** Git push/fetch with `pre-receive` enforces who-writes-what-where but does not cryptographically bind a commit to a specific agent identity. OWASP ASI07 calls this out as a distinct class of risk. Tracked mitigation: per-agent commit signing, with Den verifying signer-vs-branch on each fetch and the `pre-receive` hook rejecting unsigned or mis-signed commits.
+3. **Memory poisoning has no first-class rollback story.** `core/` is durable and influences every subsequent system prompt. IBM's A2AS framing recommends data-provenance plus rollback at the memory layer. Git history makes rollback mechanically possible; what is missing is an audit cadence and a documented rollback path. Tracked mitigation: periodic `core/`-audit curate cycles that replay evidence trails for high-impact entries, plus a Den-side procedure for reverting `core/` to a prior known-good commit and reconstructing affected agent contexts.
+4. **The `curate` agent is both reviewer and planner.** Strongest-guarantee instances of these patterns place a deterministic policy engine between planner and executor. Today curate plays both roles. Tracked mitigation: split "curate proposes promotion" from "Den policy-engine validates" as a Den responsibility, alongside the existing per-run HITL queue for high-risk tasks. The policy engine is a non-LLM component and applies regardless of how curate was reasoning at the time.
+
 ## Naming notes
 
 The four agents are named for the activity they perform:
@@ -192,4 +220,10 @@ The four agents are named for the activity they perform:
 - ACP overview: <https://agentclientprotocol.com/overview/architecture>
 - Letta sequential processing constraint: <https://docs.letta.com/api/python/resources/agents/subresources/messages/methods/stream>
 - Lethal trifecta: <https://simonwillison.net/2025/Jun/16/the-lethal-trifecta/>
+- Beurer-Kellner et al., *Design Patterns for Securing LLM Agents against Prompt Injections*: <https://arxiv.org/abs/2506.08837>
+- Debenedetti et al., *Defeating Prompt Injections by Design* (CaMeL): <https://arxiv.org/abs/2503.18813>
+- Willison, *The Dual LLM pattern for building AI assistants that can resist prompt injection*: <https://simonwillison.net/2023/Apr/25/dual-llm-pattern/>
+- OWASP Top 10 for Agentic Applications (2026): <https://genai.owasp.org/resource/owasp-top-10-for-agentic-applications-for-2026/>
+- Anthropic, *Trustworthy agents in practice*: <https://www.anthropic.com/research/trustworthy-agents>
+- IBM, *Establishing Runtime Security for Agentic AI* (A2AS): <https://www.ibm.com/think/insights/agentic-ai-runtime-security>
 - Companion documents: `bear-den-implementation-plan.md`, `bear-den-tasks-schema.md`
