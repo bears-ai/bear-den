@@ -124,6 +124,8 @@ export type StreamUserOpts = {
     plan: BearRuntimePlan;
     tools?: AnyAgentTool[];
     channelSessionId?: string;
+    onRunStart?: () => void;
+    onRunEnd?: () => void;
 };
 
 export type ConversationPoolStats = {
@@ -366,7 +368,10 @@ export class ConversationSessionPool {
             this.activeRuns.set(runKey, run);
         }
         const unlock = await this.acquireLock(key);
+        let runStarted = false;
         try {
+            opts.onRunStart?.();
+            runStarted = true;
             const ensure = await this.ensureRuntime(
                 opts.bearId,
                 agentId,
@@ -482,6 +487,9 @@ export class ConversationSessionPool {
                 }
             }
         } finally {
+            if (runStarted) {
+                opts.onRunEnd?.();
+            }
             if (opts.channelSessionId) {
                 this.activeRuns.delete(runKey);
             }

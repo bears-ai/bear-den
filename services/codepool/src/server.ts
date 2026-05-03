@@ -520,6 +520,7 @@ export function attachRoutes(
             let sawUpstreamErrorMessage = false;
             let sseDataLines = 0;
             let sdkMessageCount = 0;
+            let streamOpen = false;
             const sdkMessageTypes: Record<string, number> = {};
             const unmappedStreamEventSamples: unknown[] = [];
             const upstreamErrorSamples: unknown[] = [];
@@ -539,6 +540,11 @@ export function attachRoutes(
                 const emitBearChannelEvent = async (
                     event: import("./bear-channel.js").BearChannelEvent,
                 ) => {
+                    if (!streamOpen || res.writableEnded || res.destroyed) {
+                        throw new Error(
+                            `Cannot emit ${event.type}; bear channel SSE response is closed`,
+                        );
+                    }
                     sseDataLines += 1;
                     const line = bearChannelEventToSseDataLine(event);
                     const writeResult = await writeSseFrame(res, line);
@@ -574,6 +580,12 @@ export function attachRoutes(
                         plan: parsed.plan,
                         tools: [...denTools, ...acpClientTools],
                         channelSessionId: sessionId,
+                        onRunStart: () => {
+                            streamOpen = true;
+                        },
+                        onRunEnd: () => {
+                            streamOpen = false;
+                        },
                     },
                 )) {
                     sdkMessageCount += 1;
