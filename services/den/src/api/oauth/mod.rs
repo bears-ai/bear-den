@@ -219,8 +219,6 @@ pub enum OAuthScope {
     DataWrite,
     /// Send basic-chat prompts through the ACP gateway.
     AcpChat,
-    /// Reserved for ACP client-tool relay.
-    AcpTools,
 }
 
 impl OAuthScope {
@@ -234,7 +232,6 @@ impl OAuthScope {
             OAuthScope::DataRead => "data:read",
             OAuthScope::DataWrite => "data:write",
             OAuthScope::AcpChat => "acp:chat",
-            OAuthScope::AcpTools => "acp:tools",
         }
     }
 
@@ -248,7 +245,6 @@ impl OAuthScope {
             "data:read" => Some(OAuthScope::DataRead),
             "data:write" => Some(OAuthScope::DataWrite),
             "acp:chat" => Some(OAuthScope::AcpChat),
-            "acp:tools" => Some(OAuthScope::AcpTools),
             // Legacy scope names from older forks (still accepted when reading stored scopes)
             "hexes:read" => Some(OAuthScope::DataRead),
             "visits:write" => Some(OAuthScope::DataWrite),
@@ -264,7 +260,6 @@ impl OAuthScope {
             OAuthScope::DataRead,
             OAuthScope::DataWrite,
             OAuthScope::AcpChat,
-            OAuthScope::AcpTools,
         ]
     }
 }
@@ -494,7 +489,6 @@ mod tests {
         assert_eq!(OAuthScope::DataRead.as_str(), "data:read");
         assert_eq!(OAuthScope::DataWrite.as_str(), "data:write");
         assert_eq!(OAuthScope::AcpChat.as_str(), "acp:chat");
-        assert_eq!(OAuthScope::AcpTools.as_str(), "acp:tools");
 
         assert_eq!(
             OAuthScope::from_str("profile:read"),
@@ -513,10 +507,7 @@ mod tests {
             Some(OAuthScope::DataWrite)
         );
         assert_eq!(OAuthScope::from_str("acp:chat"), Some(OAuthScope::AcpChat));
-        assert_eq!(
-            OAuthScope::from_str("acp:tools"),
-            Some(OAuthScope::AcpTools)
-        );
+        assert_eq!(OAuthScope::from_str("acp:tools"), None);
         assert_eq!(
             OAuthScope::from_str("hexes:read"),
             Some(OAuthScope::DataRead)

@@ -53,7 +53,7 @@ tools/bears-acp-adapter/target/debug/bears-acp-adapter
 
 ## Required environment
 
-The adapter needs a Den API URL, bear slug, and bearer token with `acp:chat` scope. Use a Den Code token with `acp:tools` as well if you want the bear to request local editor file reads or writes.
+The adapter needs a Den API URL, bear slug, and bearer token with `acp:chat` scope. Local editor file tools are not currently relayed through this adapter/Codepool path.
 
 ```bash
 export BEARS_DEN_API_URL="https://api.bears.[domain]" # or another public API origin, e.g. https://bears.[domain]:3001
@@ -155,5 +155,4 @@ Production distribution should add Developer ID signing and Apple notarization b
 - HTTP failures include targeted hints for common cases: bad token (`401`), missing scope or membership (`403`), wrong API URL or disabled ACP gateway (`404`), wrong web/API origin (`405`), rate limits (`429`), and Den server errors (`5xx`).
 - Prompt failures that successfully reached Den include Den `/version` metadata in the JSON-RPC error data when it can be fetched, which helps confirm the deployed server build while debugging.
 - ACP `sessionId` values identify the client-side ACP session. The adapter lets Den bind a new session to a BEARS conversation, stores Den `conversation_resolved` events, and sends the resolved `conv-...` id on future prompts when available.
-- Local editor file-system tools are only advertised to Den when the ACP client advertises matching capabilities and the token includes `acp:tools`.
-- Write requests use ACP `session/request_permission` before calling `fs/write_text_file`, then rely on the client to perform the actual workspace write.
+- Local editor file-system tool relay through Letta Code was removed. Future ACP tool support should be implemented in a dedicated ACP runtime rather than this adapter/Codepool path.

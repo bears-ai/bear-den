@@ -483,7 +483,7 @@ async fn acp_prompt_builds_bear_channel_request_and_maps_sse() {
         captured["message"],
         json!({ "type": "text", "content": "hello bear" })
     );
-    assert_eq!(captured["capabilities"]["client_tools"], json!([]));
+    assert!(captured["capabilities"].get("client_tools").is_none());
     assert_eq!(captured["capabilities"]["supports_cancellation"], false);
     assert_eq!(captured["capabilities"]["supports_rich_events"], true);
     assert!(captured["request_id"].as_str().is_some());

@@ -3,39 +3,12 @@ use std::time::Duration;
 use async_trait::async_trait;
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue, AUTHORIZATION, CONTENT_TYPE};
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::json;
 use uuid::Uuid;
 
 use crate::core::bears::model::Bear;
 
 use crate::{config::Config, errors::CustomError};
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CodepoolToolResultRequest {
-    pub conversation_id: String,
-    pub request_id: String,
-    pub call_id: String,
-    pub tool_name: String,
-    pub status: String,
-    #[serde(default)]
-    pub result: Option<Value>,
-    #[serde(default)]
-    pub error: Option<Value>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CodepoolToolResultResponse {
-    #[serde(default)]
-    pub ok: bool,
-    #[serde(default)]
-    pub delivered: bool,
-    #[serde(default)]
-    pub reason: Option<String>,
-    #[serde(default)]
-    pub runtime_id: Option<String>,
-    #[serde(default)]
-    pub error: Option<String>,
-}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CodepoolCancelResponse {
@@ -295,52 +268,6 @@ impl CodePoolClient {
             .map_err(|e| CustomError::Parsing(format!("Codepool cancel JSON: {e}; body: {text}")))
     }
 
-    pub async fn post_bear_channel_tool_result(
-        &self,
-        session_id: &str,
-        payload: &CodepoolToolResultRequest,
-        request_id: Uuid,
-    ) -> Result<CodepoolToolResultResponse, CustomError> {
-        if !self.is_enabled() {
-            return Err(CustomError::System(
-                "Codepool is not configured (set CODEPOOL_BASE_URL)".to_string(),
-            ));
-        }
-        let url = format!(
-            "{}/internal/bear_channel/sessions/{}/tool-results",
-            self.base_url,
-            urlencoding::encode(session_id),
-        );
-        let mut headers = self.auth_headers();
-        if let Ok(v) = HeaderValue::from_str(&request_id.to_string()) {
-            headers.insert(HeaderName::from_static("x-request-id"), v);
-        }
-        let resp = self
-            .http
-            .post(url)
-            .headers(headers)
-            .header(CONTENT_TYPE, "application/json")
-            .json(payload)
-            .send()
-            .await
-            .map_err(|e| {
-                CustomError::System(format!("Codepool tool result request failed: {e}"))
-            })?;
-        let status = resp.status();
-        let text = resp
-            .text()
-            .await
-            .map_err(|e| CustomError::System(format!("Codepool tool result body: {e}")))?;
-        if !status.is_success() {
-            return Err(CustomError::System(format!(
-                "Codepool tool result HTTP {status}: {text}"
-            )));
-        }
-        serde_json::from_str(&text).map_err(|e| {
-            CustomError::Parsing(format!("Codepool tool result JSON: {e}; body: {text}"))
-        })
-    }
-
     /// `GET /health`
     pub async fn check_health(&self) -> Result<String, CustomError> {
         if !self.is_enabled() {
@@ -421,45 +348,6 @@ impl CodePoolClient {
         supports_cancellation: bool,
         supports_rich_events: bool,
     ) -> Result<reqwest::Response, CustomError> {
-        self.post_bear_channel_message_for_channel_with_client_tools_streaming(
-            session_id,
-            conversation_id,
-            bear,
-            user_id,
-            username,
-            membership_role,
-            user_input,
-            runtime_plan,
-            request_id,
-            channel_family,
-            channel_client,
-            channel_protocol,
-            supports_cancellation,
-            supports_rich_events,
-            Vec::new(),
-        )
-        .await
-    }
-
-    /// Lower-level `bear_channel` sender with ACP client tool descriptors.
-    pub async fn post_bear_channel_message_for_channel_with_client_tools_streaming(
-        &self,
-        session_id: &str,
-        conversation_id: &str,
-        bear: &Bear,
-        user_id: i32,
-        username: Option<&str>,
-        membership_role: Option<&str>,
-        user_input: &str,
-        runtime_plan: &serde_json::Value,
-        request_id: Uuid,
-        channel_family: &str,
-        channel_client: &str,
-        channel_protocol: &str,
-        supports_cancellation: bool,
-        supports_rich_events: bool,
-        client_tools: Vec<serde_json::Value>,
-    ) -> Result<reqwest::Response, CustomError> {
         if !self.is_enabled() {
             return Err(CustomError::System(
                 "Codepool is not configured (set CODEPOOL_BASE_URL)".to_string(),
@@ -503,7 +391,6 @@ impl CodePoolClient {
             },
             "capabilities": {
                 "server_tools": crate::core::den_tools::builtin_den_tool_descriptors(),
-                "client_tools": client_tools,
                 "supports_cancellation": supports_cancellation,
                 "supports_rich_events": supports_rich_events,
             },

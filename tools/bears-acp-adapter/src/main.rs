@@ -3,17 +3,10 @@ use futures_util::StreamExt;
 use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, CONTENT_TYPE};
 use reqwest::Url;
 use serde_json::{json, Value};
-use std::{
-    collections::HashMap,
-    env,
-    path::{Path, PathBuf},
-    process::Command,
-    sync::Arc,
-    time::Duration,
-};
+use std::{collections::HashMap, env, path::Path, process::Command};
 use tokio::{
     io::{self, AsyncBufReadExt, AsyncWriteExt, BufReader},
-    sync::{mpsc, oneshot, Mutex},
+    sync::mpsc,
 };
 use uuid::Uuid;
 
@@ -50,10 +43,6 @@ struct SessionContext {
     conversation_id: Option<String>,
     resolved_conversation_id: Option<String>,
 }
-
-type PendingResponses = Arc<Mutex<HashMap<String, oneshot::Sender<Value>>>>;
-
-const CLIENT_TOOL_RESPONSE_TIMEOUT: Duration = Duration::from_secs(25);
 
 #[derive(Debug)]
 struct InboundMessage {
@@ -128,8 +117,7 @@ async fn run() -> Result<()> {
     }
 
     let (inbound_tx, mut inbound_rx) = mpsc::channel::<InboundMessage>(128);
-    let pending_responses: PendingResponses = Arc::new(Mutex::new(HashMap::new()));
-    tokio::spawn(read_stdin_messages(inbound_tx, pending_responses.clone()));
+    tokio::spawn(read_stdin_messages(inbound_tx));
 
     let mut adapter_state = AdapterState::default();
 
@@ -150,16 +138,7 @@ async fn run() -> Result<()> {
             }
         };
 
-        if let Err(err) = handle_request(
-            &http,
-            &mut runtime,
-            &mut adapter_state,
-            &mut inbound_rx,
-            pending_responses.clone(),
-            request,
-        )
-        .await
-        {
+        if let Err(err) = handle_request(&http, &mut runtime, &mut adapter_state, request).await {
             eprintln!("bears-acp-adapter: request handling failed: {err:#}");
         }
     }
@@ -222,7 +201,7 @@ impl RuntimeConfig {
         }
         if token.is_empty() {
             diagnostics.push(
-                "Missing Den bearer token. Set BEARS_DEN_TOKEN, set BEARS_DEN_TOKEN_ENV to the name of an environment variable containing the token, pass --token <token>, or pass --token-env <env-var>. Den Code tokens include acp:chat and acp:tools scopes."
+                "Missing Den bearer token. Set BEARS_DEN_TOKEN, set BEARS_DEN_TOKEN_ENV to the name of an environment variable containing the token, pass --token <token>, or pass --token-env <env-var>. Den ACP tokens include the acp:chat scope."
                     .to_string(),
             );
         }
@@ -346,7 +325,7 @@ fn print_help_to_stderr() {
     eprintln!(
         "bears-acp-adapter {}\nBuild git SHA: {}\nLocal HEAD SHA: {}\nACP sessions: list/resume/load; conversations bound via Den\n\n\
 Usage: bears-acp-adapter --api-url <url> --bear <slug> [--client zed] [--token-env BEARS_DEN_TOKEN]\n\n\
-Options:\n  --api-url <url>        Den API origin, for example https://api.bears.example\n  --bear <slug>          Bear slug to chat with\n  --token <token>        Den Code token with acp:chat and acp:tools scopes\n  --token-env <env-var>  Read the Den bearer token from this environment variable\n  --client <name>        Client label: zed, opencode, or acp_adapter\n  --check-config         Validate configuration and exit without starting ACP stdio\n  --check-server         Fetch Den /version and exit without starting ACP stdio\n  --version              Show version/build behavior and exit\n  --help                 Show this help\n\n\
+Options:\n  --api-url <url>        Den API origin, for example https://api.bears.example\n  --bear <slug>          Bear slug to chat with\n  --token <token>        Den ACP token with acp:chat scope\n  --token-env <env-var>  Read the Den bearer token from this environment variable\n  --client <name>        Client label: zed, opencode, or acp_adapter\n  --check-config         Validate configuration and exit without starting ACP stdio\n  --check-server         Fetch Den /version and exit without starting ACP stdio\n  --version              Show version/build behavior and exit\n  --help                 Show this help\n\n\
 Environment fallbacks:\n  BEARS_DEN_API_URL\n  BEARS_BEAR_SLUG\n  BEARS_DEN_TOKEN\n  BEARS_DEN_TOKEN_ENV\n  BEARS_ACP_CLIENT\n\n\
 BEARS_DEN_API_URL should be the API origin only, not the full /acp/bears/... endpoint.",
         env!("CARGO_PKG_VERSION"),
@@ -363,7 +342,7 @@ fn normalize_client(raw: &str) -> String {
     }
 }
 
-async fn read_stdin_messages(tx: mpsc::Sender<InboundMessage>, pending: PendingResponses) {
+async fn read_stdin_messages(tx: mpsc::Sender<InboundMessage>) {
     let stdin = BufReader::new(io::stdin());
     let mut lines = stdin.lines();
     loop {
@@ -375,9 +354,6 @@ async fn read_stdin_messages(tx: mpsc::Sender<InboundMessage>, pending: PendingR
                 }
                 match serde_json::from_str::<Value>(line) {
                     Ok(value) => {
-                        if route_pending_response(&pending, &value).await {
-                            continue;
-                        }
                         if tx.send(InboundMessage { value }).await.is_err() {
                             break;
                         }
@@ -404,30 +380,6 @@ async fn read_stdin_messages(tx: mpsc::Sender<InboundMessage>, pending: PendingR
     }
 }
 
-async fn route_pending_response(pending: &PendingResponses, value: &Value) -> bool {
-    if value.get("method").is_some() {
-        return false;
-    }
-    let Some(id) = response_id_key(value.get("id")) else {
-        return false;
-    };
-    let sender = pending.lock().await.remove(&id);
-    if let Some(sender) = sender {
-        let _ = sender.send(value.clone());
-        true
-    } else {
-        false
-    }
-}
-
-fn response_id_key(value: Option<&Value>) -> Option<String> {
-    match value? {
-        Value::String(s) => Some(s.clone()),
-        Value::Number(n) => Some(n.to_string()),
-        _ => None,
-    }
-}
-
 fn request_from_value(value: Value) -> Result<JsonRpcRequest> {
     let method = value
         .get("method")
@@ -443,8 +395,6 @@ async fn handle_request(
     http: &reqwest::Client,
     runtime: &mut RuntimeConfig,
     adapter_state: &mut AdapterState,
-    inbound_rx: &mut mpsc::Receiver<InboundMessage>,
-    pending_responses: PendingResponses,
     request: JsonRpcRequest,
 ) -> Result<()> {
     match request.method.as_str() {
@@ -669,23 +619,15 @@ async fn handle_request(
                         id,
                         Err(auth_required_error(Some(json!({
                             "message": format!("BEARS Code token authentication failed: {err:#}"),
-                            "hint": "Generate a fresh Den Code token for this bear. Code tokens must include acp:chat and acp:tools."
+                            "hint": "Generate a fresh Den Code token for this bear. Code tokens must include acp:chat."
                         })))),
                     )
                     .await?;
                     return Ok(());
                 }
 
-                if let Err(err) = handle_prompt(
-                    http,
-                    config,
-                    adapter_state,
-                    inbound_rx,
-                    pending_responses.clone(),
-                    id.clone(),
-                    request.params,
-                )
-                .await
+                if let Err(err) =
+                    handle_prompt(http, config, adapter_state, id.clone(), request.params).await
                 {
                     let server_version = fetch_server_version(http, config).await.ok();
                     let mut message = format!("{err:#}");
@@ -1018,7 +960,7 @@ fn initialize_result() -> Value {
                         "secret": true
                     }
                 ],
-                "description": "Paste a Den Code token. Code tokens include acp:chat and acp:tools scopes.",
+                "description": "Paste a Den ACP token. Tokens include the acp:chat scope.",
                 "link": "https://github.com/silarsis/BEARS"
             }
         ]
@@ -1447,8 +1389,6 @@ async fn handle_prompt(
     http: &reqwest::Client,
     config: &Config,
     adapter_state: &mut AdapterState,
-    inbound_rx: &mut mpsc::Receiver<InboundMessage>,
-    pending_responses: PendingResponses,
     response_id: Value,
     params: Value,
 ) -> Result<()> {
@@ -1469,7 +1409,6 @@ async fn handle_prompt(
         .or(client_context.conversation_id.as_deref())
         .map(str::to_string);
     let conversation_log = conversation_id.as_deref().unwrap_or("<den-selected>");
-    let cwd = client_context.cwd.clone();
     eprintln!(
         "bears-acp-adapter: session/prompt session_id={} bear={} conversation_id={} client={}",
         session_id, config.bear, conversation_log, config.client
@@ -1525,17 +1464,7 @@ async fn handle_prompt(
         buffer.extend_from_slice(&chunk);
         while let Some(pos) = buffer.windows(2).position(|w| w == b"\n\n") {
             let frame: Vec<u8> = buffer.drain(..pos + 2).collect();
-            let outcome = handle_sse_frame(
-                http,
-                config,
-                adapter_state,
-                inbound_rx,
-                pending_responses.clone(),
-                session_id,
-                &cwd,
-                &frame,
-            )
-            .await?;
+            let outcome = handle_sse_frame(adapter_state, session_id, &frame).await?;
             saw_done |= outcome.saw_done;
             saw_assistant_output |= outcome.saw_assistant_output;
             upstream_errors.extend(outcome.upstream_errors);
@@ -1543,17 +1472,7 @@ async fn handle_prompt(
     }
     if !buffer.is_empty() {
         let frame = std::mem::take(&mut buffer);
-        let outcome = handle_sse_frame(
-            http,
-            config,
-            adapter_state,
-            inbound_rx,
-            pending_responses.clone(),
-            session_id,
-            &cwd,
-            &frame,
-        )
-        .await?;
+        let outcome = handle_sse_frame(adapter_state, session_id, &frame).await?;
         saw_done |= outcome.saw_done;
         saw_assistant_output |= outcome.saw_assistant_output;
         upstream_errors.extend(outcome.upstream_errors);
@@ -1884,13 +1803,8 @@ fn prompt_text_from_params_with_resource_mode(
 }
 
 async fn handle_sse_frame(
-    http: &reqwest::Client,
-    config: &Config,
     adapter_state: &mut AdapterState,
-    inbound_rx: &mut mpsc::Receiver<InboundMessage>,
-    pending_responses: PendingResponses,
     session_id: &str,
-    cwd: &str,
     frame: &[u8],
 ) -> Result<SseFrameOutcome> {
     let text = String::from_utf8_lossy(frame);
@@ -1904,29 +1818,17 @@ async fn handle_sse_frame(
             continue;
         }
         let event: Value = serde_json::from_str(data).context("parse Den SSE event JSON")?;
-        match event.get("type").and_then(Value::as_str) {
-            Some("agent_message_chunk") => {
-                let text = event
-                    .get("content")
-                    .and_then(|c| c.get("text"))
-                    .and_then(Value::as_str)
-                    .unwrap_or("");
-                outcome.saw_assistant_output |= !text.is_empty();
-            }
-            Some("error") => outcome.upstream_errors.push(format_den_event_error(&event)),
-            _ => {}
+        if event.get("type").and_then(Value::as_str) == Some("agent_message_chunk") {
+            let text = event
+                .get("content")
+                .and_then(|c| c.get("text"))
+                .and_then(Value::as_str)
+                .unwrap_or("");
+            outcome.saw_assistant_output |= !text.is_empty();
+        } else if event.get("type").and_then(Value::as_str) == Some("error") {
+            outcome.upstream_errors.push(format_den_event_error(&event));
         }
-        outcome.saw_done |= handle_den_event(
-            http,
-            config,
-            adapter_state,
-            inbound_rx,
-            pending_responses.clone(),
-            session_id,
-            cwd,
-            &event,
-        )
-        .await?;
+        outcome.saw_done |= handle_den_event(adapter_state, session_id, &event).await?;
     }
     Ok(outcome)
 }
@@ -1952,13 +1854,8 @@ fn format_den_event_error(event: &Value) -> String {
 }
 
 async fn handle_den_event(
-    http: &reqwest::Client,
-    config: &Config,
     adapter_state: &mut AdapterState,
-    _inbound_rx: &mut mpsc::Receiver<InboundMessage>,
-    pending_responses: PendingResponses,
     session_id: &str,
-    cwd: &str,
     event: &Value,
 ) -> Result<bool> {
     match event.get("type").and_then(Value::as_str).unwrap_or("") {
@@ -2008,508 +1905,10 @@ async fn handle_den_event(
             }
             Ok(false)
         }
-        "client_tool_request" => {
-            eprintln!(
-                "bears-acp-adapter: received client_tool_request session_id={} call_id={} tool={}",
-                session_id,
-                event
-                    .get("call_id")
-                    .and_then(Value::as_str)
-                    .unwrap_or("unknown"),
-                event
-                    .get("tool_name")
-                    .and_then(Value::as_str)
-                    .unwrap_or("unknown")
-            );
-            send_client_tool_call_update(session_id, event).await?;
-            execute_and_post_client_tool_result(
-                http,
-                config,
-                pending_responses.clone(),
-                session_id,
-                cwd,
-                event,
-            )
-            .await?;
-            Ok(false)
-        }
+
         "done" => Ok(true),
         _ => Ok(false),
     }
-}
-
-async fn execute_and_post_client_tool_result(
-    http: &reqwest::Client,
-    config: &Config,
-    pending_responses: PendingResponses,
-    session_id: &str,
-    cwd: &str,
-    event: &Value,
-) -> Result<()> {
-    let call_id = event
-        .get("call_id")
-        .and_then(Value::as_str)
-        .ok_or_else(|| anyhow!("client_tool_request missing call_id"))?;
-    let request_id = event
-        .get("request_id")
-        .and_then(Value::as_str)
-        .ok_or_else(|| anyhow!("client_tool_request missing request_id"))?;
-    let conversation_id = event
-        .get("conversation_id")
-        .and_then(Value::as_str)
-        .unwrap_or("default");
-    let tool_name = event
-        .get("tool_name")
-        .and_then(Value::as_str)
-        .unwrap_or("acp_client_tool");
-
-    send_client_tool_progress_update(session_id, call_id, tool_name, event).await?;
-    let tool_result = match tool_name {
-        "acp_fs_read_text_file" => {
-            execute_fs_read_text_file(pending_responses.clone(), session_id, cwd, event).await
-        }
-        "acp_fs_write_text_file" => {
-            // Zed's `fs/write_text_file` request is the authority for local editor
-            // write approval. Avoid an extra ACP `session/request_permission` round-trip
-            // here because it can leave Codepool's external-tool waiter timing out
-            // before the actual file write request is ever sent.
-            execute_fs_write_text_file(pending_responses.clone(), session_id, cwd, event).await
-        }
-        other => Err(anyhow!("unsupported ACP client tool: {other}")),
-    };
-
-    let body = match tool_result {
-        Ok(result) => {
-            send_client_tool_result_update(
-                session_id,
-                call_id,
-                tool_name,
-                event,
-                "completed",
-                Some(&result),
-                None,
-            )
-            .await?;
-            json!({
-                "request_id": request_id,
-                "conversation_id": conversation_id,
-                "tool_name": tool_name,
-                "status": "ok",
-                "result": result,
-                "client_observation": {
-                    "adapter_version": env!("CARGO_PKG_VERSION")
-                }
-            })
-        }
-        Err(err) => {
-            let error_message = format!("{err:#}");
-            send_client_tool_result_update(
-                session_id,
-                call_id,
-                tool_name,
-                event,
-                "failed",
-                None,
-                Some(&error_message),
-            )
-            .await?;
-            json!({
-                "request_id": request_id,
-                "conversation_id": conversation_id,
-                "tool_name": tool_name,
-                "status": "error",
-                "error": {
-                    "code": "adapter_client_tool_error",
-                    "message": error_message
-                },
-                "client_observation": {
-                    "adapter_version": env!("CARGO_PKG_VERSION")
-                }
-            })
-        }
-    };
-    post_tool_result_to_den(
-        http, config, session_id, call_id, request_id, tool_name, &body,
-    )
-    .await
-}
-
-async fn execute_fs_read_text_file(
-    pending_responses: PendingResponses,
-    session_id: &str,
-    cwd: &str,
-    event: &Value,
-) -> Result<Value> {
-    let path = event
-        .get("arguments")
-        .and_then(|v| v.get("path"))
-        .and_then(Value::as_str)
-        .filter(|s| !s.trim().is_empty())
-        .ok_or_else(|| anyhow!("fs/read_text_file requires arguments.path"))?;
-    let absolute_path = absolutize_client_path(path, cwd);
-    eprintln!("bears-acp-adapter: requesting fs/read_text_file path={absolute_path}");
-    let rpc_id = format!("bears-tool-{}", Uuid::new_v4());
-    let request = json!({
-        "jsonrpc": "2.0",
-        "id": rpc_id,
-        "method": "fs/read_text_file",
-        "params": {
-            "sessionId": session_id,
-            "path": absolute_path
-        }
-    });
-    let response = send_client_request_with_waiter(pending_responses, &rpc_id, request).await?;
-    if let Some(error) = response.get("error") {
-        return Err(anyhow!("ACP client fs/read_text_file failed: {error}"));
-    }
-    let result = response
-        .get("result")
-        .cloned()
-        .ok_or_else(|| anyhow!("ACP client fs/read_text_file response missing result"))?;
-    Ok(normalize_read_text_file_result(result))
-}
-
-async fn execute_fs_write_text_file(
-    pending_responses: PendingResponses,
-    session_id: &str,
-    cwd: &str,
-    event: &Value,
-) -> Result<Value> {
-    let arguments = write_text_file_arguments(event, cwd)?;
-    eprintln!(
-        "bears-acp-adapter: requesting fs/write_text_file path={}",
-        arguments.path
-    );
-    let rpc_id = format!("bears-tool-{}", Uuid::new_v4());
-    let request = build_write_text_file_request(
-        rpc_id.clone(),
-        session_id,
-        &arguments.path,
-        &arguments.content,
-    );
-    let response = send_client_request_with_waiter(pending_responses, &rpc_id, request).await?;
-    if let Some(error) = response.get("error") {
-        return Err(anyhow!("ACP client fs/write_text_file failed: {error}"));
-    }
-    Ok(response.get("result").cloned().unwrap_or_else(|| json!({})))
-}
-
-#[derive(Debug, PartialEq, Eq)]
-struct WriteTextFileArguments {
-    path: String,
-    content: String,
-}
-
-fn write_text_file_arguments(event: &Value, cwd: &str) -> Result<WriteTextFileArguments> {
-    let path = event
-        .get("arguments")
-        .and_then(|v| v.get("path"))
-        .and_then(Value::as_str)
-        .filter(|s| !s.trim().is_empty())
-        .ok_or_else(|| anyhow!("fs/write_text_file requires arguments.path"))?;
-    let content = event
-        .get("arguments")
-        .and_then(|v| v.get("content"))
-        .and_then(Value::as_str)
-        .ok_or_else(|| anyhow!("fs/write_text_file requires arguments.content"))?;
-    Ok(WriteTextFileArguments {
-        path: absolutize_client_path(path, cwd),
-        content: content.to_string(),
-    })
-}
-
-fn build_write_text_file_request(
-    rpc_id: impl Into<Value>,
-    session_id: &str,
-    path: &str,
-    content: &str,
-) -> Value {
-    json!({
-        "jsonrpc": "2.0",
-        "id": rpc_id.into(),
-        "method": "fs/write_text_file",
-        "params": {
-            "sessionId": session_id,
-            "path": path,
-            "content": content
-        }
-    })
-}
-
-async fn send_client_request_with_waiter(
-    pending_responses: PendingResponses,
-    rpc_id: &str,
-    request: Value,
-) -> Result<Value> {
-    let (tx, rx) = oneshot::channel();
-    pending_responses
-        .lock()
-        .await
-        .insert(rpc_id.to_string(), tx);
-    write_json(request).await?;
-    match tokio::time::timeout(CLIENT_TOOL_RESPONSE_TIMEOUT, rx).await {
-        Ok(Ok(value)) => Ok(value),
-        Ok(Err(_)) => Err(anyhow!("ACP client response waiter dropped for {rpc_id}")),
-        Err(_) => {
-            pending_responses.lock().await.remove(rpc_id);
-            Err(anyhow!(
-                "ACP client did not return a response for {rpc_id} within {}s",
-                CLIENT_TOOL_RESPONSE_TIMEOUT.as_secs()
-            ))
-        }
-    }
-}
-
-fn absolutize_client_path(path: &str, cwd: &str) -> String {
-    let path = path.trim();
-    if path.starts_with("file://") || Path::new(path).is_absolute() || cwd.trim().is_empty() {
-        return path.to_string();
-    }
-    PathBuf::from(cwd.trim())
-        .join(path)
-        .to_string_lossy()
-        .to_string()
-}
-
-fn normalize_read_text_file_result(result: Value) -> Value {
-    if result.get("content").and_then(Value::as_str).is_some() {
-        return result;
-    }
-    if let Some(text) = result.get("text").and_then(Value::as_str) {
-        return json!({ "content": text });
-    }
-    if let Some(text) = result.as_str() {
-        return json!({ "content": text });
-    }
-    result
-}
-
-async fn post_tool_result_to_den(
-    http: &reqwest::Client,
-    config: &Config,
-    session_id: &str,
-    call_id: &str,
-    request_id: &str,
-    tool_name: &str,
-    body: &Value,
-) -> Result<()> {
-    let url = format!(
-        "{}/acp/bears/{}/sessions/{}/tool-results/{}",
-        config.api_url,
-        urlencoding::encode(&config.bear),
-        urlencoding::encode(session_id),
-        urlencoding::encode(call_id),
-    );
-    let payload_summary = tool_result_payload_summary(body);
-    eprintln!(
-        "bears-acp-adapter: posting tool result request_id={} session_id={} call_id={} tool={} {}",
-        request_id, session_id, call_id, tool_name, payload_summary
-    );
-    let response = http
-        .post(&url)
-        .header(
-            AUTHORIZATION,
-            HeaderValue::from_str(&format!("Bearer {}", config.token))?,
-        )
-        .header(CONTENT_TYPE, HeaderValue::from_static("application/json"))
-        .json(body)
-        .send()
-        .await
-        .with_context(|| format!("post ACP tool result to Den at {url}"))?;
-    if !response.status().is_success() {
-        let status = response.status();
-        let response_body = response.text().await.unwrap_or_default();
-        return Err(anyhow!(
-            "Den tool result endpoint returned HTTP {status} for request_id={request_id} session_id={session_id} call_id={call_id} tool={tool_name} {payload_summary}: {}",
-            response_body.trim()
-        ));
-    }
-    Ok(())
-}
-
-fn tool_result_payload_summary(body: &Value) -> String {
-    let status = body
-        .get("status")
-        .and_then(Value::as_str)
-        .unwrap_or("unknown");
-    let result_bytes = body
-        .get("result")
-        .map(|value| value.to_string().len())
-        .unwrap_or(0);
-    let content_bytes = body
-        .pointer("/result/content")
-        .and_then(Value::as_str)
-        .map(str::len)
-        .unwrap_or(0);
-    let error = body
-        .get("error")
-        .and_then(|value| value.get("code"))
-        .and_then(Value::as_str)
-        .unwrap_or("");
-    format!(
-        "status={} result_bytes={} content_bytes={} error_code={}",
-        status, result_bytes, content_bytes, error
-    )
-}
-
-async fn send_client_tool_progress_update(
-    session_id: &str,
-    call_id: &str,
-    tool_name: &str,
-    event: &Value,
-) -> Result<()> {
-    write_notification(
-        "session/update",
-        json!({
-            "sessionId": session_id,
-            "update": {
-                "sessionUpdate": "tool_call_update",
-                "toolCallId": call_id,
-                "title": tool_title(tool_name),
-                "kind": tool_kind_for_event(event),
-                "status": "in_progress",
-                "rawInput": event.get("arguments").cloned().unwrap_or_else(|| json!({})),
-                "locations": tool_locations_for_event(event),
-            }
-        }),
-    )
-    .await
-}
-
-async fn send_client_tool_result_update(
-    session_id: &str,
-    call_id: &str,
-    tool_name: &str,
-    event: &Value,
-    status: &str,
-    result: Option<&Value>,
-    error_message: Option<&str>,
-) -> Result<()> {
-    let preview = tool_result_preview(tool_name, event, result, error_message);
-    write_notification(
-        "session/update",
-        json!({
-            "sessionId": session_id,
-            "update": {
-                "sessionUpdate": "tool_call_update",
-                "toolCallId": call_id,
-                "title": tool_title(tool_name),
-                "kind": tool_kind_for_event(event),
-                "status": status,
-                "locations": tool_locations_for_event(event),
-                "rawOutput": match error_message {
-                    Some(message) => json!({ "error": message }),
-                    None => result.cloned().unwrap_or_else(|| json!({})),
-                },
-                "content": [{
-                    "type": "content",
-                    "content": { "type": "text", "text": preview }
-                }]
-            }
-        }),
-    )
-    .await
-}
-
-fn tool_kind_for_event(event: &Value) -> &'static str {
-    match event.get("tool_name").and_then(Value::as_str).unwrap_or("") {
-        "acp_fs_write_text_file" => "edit",
-        "acp_fs_read_text_file" => "read",
-        _ => "other",
-    }
-}
-
-fn tool_title(tool_name: &str) -> &'static str {
-    match tool_name {
-        "acp_fs_write_text_file" => "Write text file",
-        "acp_fs_read_text_file" => "Read text file",
-        _ => "ACP client tool",
-    }
-}
-
-fn tool_locations_for_event(event: &Value) -> Vec<Value> {
-    event
-        .get("arguments")
-        .and_then(|arguments| arguments.get("path"))
-        .and_then(Value::as_str)
-        .filter(|path| !path.trim().is_empty())
-        .map(|path| vec![json!({ "path": path })])
-        .unwrap_or_default()
-}
-
-fn tool_result_preview(
-    tool_name: &str,
-    event: &Value,
-    result: Option<&Value>,
-    error_message: Option<&str>,
-) -> String {
-    if let Some(message) = error_message {
-        return format!("{} failed: {}", tool_title(tool_name), message);
-    }
-    let path = event
-        .get("arguments")
-        .and_then(|arguments| arguments.get("path"))
-        .and_then(Value::as_str)
-        .unwrap_or("file");
-    match tool_name {
-        "acp_fs_write_text_file" => {
-            let bytes = event
-                .get("arguments")
-                .and_then(|arguments| arguments.get("content"))
-                .and_then(Value::as_str)
-                .map(str::len)
-                .unwrap_or(0);
-            format!("Wrote {bytes} bytes to {path}")
-        }
-        "acp_fs_read_text_file" => result
-            .and_then(|value| value.get("content"))
-            .and_then(Value::as_str)
-            .map(|content| format!("Read {} bytes from {}", content.len(), path))
-            .unwrap_or_else(|| {
-                result
-                    .map(|value| value.to_string().chars().take(500).collect::<String>())
-                    .unwrap_or_else(|| format!("{} completed", tool_title(tool_name)))
-            }),
-        _ => result
-            .map(|value| value.to_string().chars().take(500).collect::<String>())
-            .unwrap_or_else(|| format!("{} completed", tool_title(tool_name))),
-    }
-}
-
-async fn send_client_tool_call_update(session_id: &str, event: &Value) -> Result<()> {
-    let call_id = event
-        .get("call_id")
-        .and_then(Value::as_str)
-        .unwrap_or("acp-client-tool-call");
-    let tool_name = event
-        .get("tool_name")
-        .and_then(Value::as_str)
-        .unwrap_or("acp_client_tool");
-    let args = event.get("arguments").cloned().unwrap_or_else(|| json!({}));
-    let summary = format!(
-        "Requested local editor tool `{}` with arguments {}",
-        tool_name, args
-    );
-    write_notification(
-        "session/update",
-        json!({
-            "sessionId": session_id,
-            "update": {
-                "sessionUpdate": "tool_call",
-                "toolCallId": call_id,
-                "title": tool_title(tool_name),
-                "kind": tool_kind_for_event(event),
-                "status": "pending",
-                "locations": tool_locations_for_event(event),
-                "rawInput": args,
-                "content": [{
-                    "type": "content",
-                    "content": { "type": "text", "text": summary }
-                }]
-            }
-        }),
-    )
-    .await
 }
 
 async fn send_user_message_chunk(session_id: &str, text: &str) -> Result<()> {
@@ -2657,47 +2056,6 @@ mod tests {
         }));
         assert_eq!(normalized["fs"]["readTextFile"], true);
         assert_eq!(normalized["fs"]["writeTextFile"], true);
-    }
-
-    #[test]
-    fn build_write_text_file_request_uses_acp_shape() {
-        let request = build_write_text_file_request(
-            "rpc-1",
-            "session-1",
-            "/Users/bear/project/README.md",
-            "hello",
-        );
-        assert_eq!(request["jsonrpc"], "2.0");
-        assert_eq!(request["id"], "rpc-1");
-        assert_eq!(request["method"], "fs/write_text_file");
-        assert_eq!(request["params"]["sessionId"], "session-1");
-        assert_eq!(request["params"]["path"], "/Users/bear/project/README.md");
-        assert_eq!(request["params"]["content"], "hello");
-    }
-
-    #[test]
-    fn write_text_file_arguments_resolves_relative_path() {
-        let event = json!({
-            "arguments": {
-                "path": "src/main.rs",
-                "content": "fn main() {}"
-            }
-        });
-        assert_eq!(
-            write_text_file_arguments(&event, "/Users/bear/project").unwrap(),
-            WriteTextFileArguments {
-                path: "/Users/bear/project/src/main.rs".to_string(),
-                content: "fn main() {}".to_string(),
-            }
-        );
-    }
-
-    #[test]
-    fn relative_tool_paths_are_resolved_against_client_cwd() {
-        assert_eq!(
-            absolutize_client_path("README.md", "/Users/bear/project"),
-            "/Users/bear/project/README.md"
-        );
     }
 
     #[test]

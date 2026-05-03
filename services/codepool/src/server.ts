@@ -37,17 +37,8 @@ import {
     makeDenExternalTools,
     parseDenServerTools,
 } from "./den-tools.js";
-import {
-    makeAcpClientExternalTools,
-    parseAcpClientTools,
-} from "./acp-client-tools.js";
-import {
-    AcpToolResultRegistry,
-    normalizeAcpToolResultStatus,
-} from "./acp-tool-results.js";
-import { logger } from "./logger.js";
 
-const CODEPOOL_RUNTIME_ID = randomUUID();
+import { logger } from "./logger.js";
 
 const packageJson = JSON.parse(
     readFileSync(new URL("../package.json", import.meta.url), "utf8"),
@@ -185,7 +176,6 @@ export type ServerContext = {
     pool: ConversationSessionPool;
     channelListeners: ChannelListenerRegistry;
     internalToken: string;
-    acpToolResults?: AcpToolResultRegistry;
 };
 
 type SseWriteResult = {
@@ -239,7 +229,6 @@ export function attachRoutes(
     ctx: ServerContext,
 ): void {
     const guard = authMiddleware(ctx.internalToken);
-    const acpToolResults = ctx.acpToolResults ?? new AcpToolResultRegistry();
 
     app.get("/health", (_req, res) => {
         const lettaCliHome = join(homedir(), ".letta");
@@ -268,87 +257,6 @@ export function attachRoutes(
             service: "bears-codepool",
             version: packageJson.version ?? "0.0.0",
             git_sha: gitSha,
-        });
-    });
-
-    app.post(
-        "/internal/bear_channel/sessions/:sessionId/tool-results",
-        express.json({ limit: "1mb" }),
-        guard,
-        (req, res) => {
-            const sessionId = req.params.sessionId ?? "";
-            const body = req.body as Record<string, unknown>;
-            const requestId =
-                typeof body.request_id === "string" ? body.request_id : "";
-            const callId = typeof body.call_id === "string" ? body.call_id : "";
-            const status = normalizeAcpToolResultStatus(body.status);
-            if (!sessionId || !requestId || !callId || !status) {
-                res.status(400).json({
-                    ok: false,
-                    delivered: false,
-                    error: "sessionId, request_id, call_id, and valid status are required",
-                });
-                return;
-            }
-            const resultBytes =
-                body.result === undefined
-                    ? 0
-                    : JSON.stringify(body.result).length;
-            const delivery = acpToolResults.deliverResult(sessionId, {
-                conversation_id:
-                    typeof body.conversation_id === "string"
-                        ? body.conversation_id
-                        : undefined,
-                request_id: requestId,
-                call_id: callId,
-                tool_name:
-                    typeof body.tool_name === "string"
-                        ? body.tool_name
-                        : undefined,
-                status,
-                result: body.result,
-                error: body.error,
-            });
-            logger.info("ACP tool result continuation received", {
-                event: "acp_tool_result_continuation",
-                session_id: sessionId,
-                request_id: requestId,
-                call_id: callId,
-                tool_name:
-                    typeof body.tool_name === "string"
-                        ? body.tool_name
-                        : undefined,
-                status,
-                delivered: delivery.delivered,
-                delivery_reason: delivery.reason,
-                runtime_id: CODEPOOL_RUNTIME_ID,
-                result_bytes: resultBytes,
-                pending_waiters: acpToolResults.pendingCount(),
-            });
-            res.json({
-                ok: true,
-                delivered: delivery.delivered,
-                reason: delivery.reason,
-                runtime_id: CODEPOOL_RUNTIME_ID,
-            });
-        },
-    );
-
-    app.get("/internal/bear_channel/tool-waiters", guard, (_req, res) => {
-        res.json({
-            ok: true,
-            runtime_id: CODEPOOL_RUNTIME_ID,
-            waiters: acpToolResults.listWaiters(),
-        });
-    });
-
-    app.get("/internal/bear_channel/debug", guard, (_req, res) => {
-        res.json({
-            ok: true,
-            runtime_id: CODEPOOL_RUNTIME_ID,
-            pending_tool_waiters: acpToolResults.pendingCount(),
-            tool_waiters: acpToolResults.listWaiters(),
-            pool: ctx.pool.stats(),
         });
     });
 
@@ -520,7 +428,6 @@ export function attachRoutes(
             let sawUpstreamErrorMessage = false;
             let sseDataLines = 0;
             let sdkMessageCount = 0;
-            let streamOpen = false;
             const sdkMessageTypes: Record<string, number> = {};
             const unmappedStreamEventSamples: unknown[] = [];
             const upstreamErrorSamples: unknown[] = [];
@@ -532,44 +439,9 @@ export function attachRoutes(
                     parsed.conversationId,
                     requestId,
                 );
-                const acpToolContext = {
-                    session_id: sessionId,
-                    conversation_id: parsed.conversationId,
-                    request_id: requestId,
-                };
-                const emitBearChannelEvent = async (
-                    event: import("./bear-channel.js").BearChannelEvent,
-                ) => {
-                    if (!streamOpen || res.writableEnded || res.destroyed) {
-                        throw new Error(
-                            `Cannot emit ${event.type}; bear channel SSE response is closed`,
-                        );
-                    }
-                    sseDataLines += 1;
-                    const line = bearChannelEventToSseDataLine(event);
-                    const writeResult = await writeSseFrame(res, line);
-                    if (event.type === "client_tool_request") {
-                        logger.info("ACP client tool request SSE written", {
-                            event: "acp_client_tool_request_sse_written",
-                            request_id: event.request_id,
-                            session_id: event.session_id,
-                            conversation_id: event.conversation_id,
-                            call_id: event.call.id,
-                            tool_name: event.call.name,
-                            write_duration_ms: writeResult.duration_ms,
-                            backpressure: writeResult.backpressure,
-                        });
-                    }
-                };
                 const denTools = makeDenExternalTools({
                     descriptors: parseDenServerTools(body.capabilities),
                     getContext: () => denToolContext,
-                });
-                const acpClientTools = makeAcpClientExternalTools({
-                    descriptors: parseAcpClientTools(body.capabilities),
-                    getContext: () => acpToolContext,
-                    emit: emitBearChannelEvent,
-                    results: acpToolResults,
                 });
                 for await (const msg of ctx.pool.streamUserMessage(
                     parsed.agentId,
@@ -578,14 +450,8 @@ export function attachRoutes(
                     {
                         bearId: parsed.bearId,
                         plan: parsed.plan,
-                        tools: [...denTools, ...acpClientTools],
+                        tools: denTools,
                         channelSessionId: sessionId,
-                        onRunStart: () => {
-                            streamOpen = true;
-                        },
-                        onRunEnd: () => {
-                            streamOpen = false;
-                        },
                     },
                 )) {
                     sdkMessageCount += 1;

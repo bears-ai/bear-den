@@ -32,11 +32,11 @@ At **process startup**, `den` runs embedded migrations against `DATABASE_URL` (s
 | [`20260416120100_drop_bear_chat_activity.up.sql`](20260416120100_drop_bear_chat_activity.up.sql) | Drop `bear_chat_activity` |
 | [`20260418130000_drop_users_webui_account_id.up.sql`](20260418130000_drop_users_webui_account_id.up.sql) | Drop `users.webui_account_id` + index |
 | [`20260429120000_acp_tokens.up.sql`](20260429120000_acp_tokens.up.sql) | ACP code tokens and scopes |
-| [`20260430120000_acp_client_tool_calls.up.sql`](20260430120000_acp_client_tool_calls.up.sql) | Legacy persisted ACP client tool relay calls; superseded by process-local Codepool waiters |
+| [`20260430120000_acp_client_tool_calls.up.sql`](20260430120000_acp_client_tool_calls.up.sql) | Legacy persisted ACP client tool relay calls; removed from the active architecture |
 | [`20260430121000_acp_sessions.up.sql`](20260430121000_acp_sessions.up.sql) | ACP sessions and Codepool session binding |
 | [`20260501120000_archived_conversations.up.sql`](20260501120000_archived_conversations.up.sql) | Archived conversation tracking |
 | [`20260501121000_drop_users_admin_flag.up.sql`](20260501121000_drop_users_admin_flag.up.sql) | Backfill canonical `users.is_admin` and drop legacy `users.admin_flag` |
-| [`20260502120000_drop_acp_client_tool_calls.up.sql`](20260502120000_drop_acp_client_tool_calls.up.sql) | Drop obsolete `acp_client_tool_calls`; Den now proxies ACP tool results statelessly to Codepool |
+| [`20260502120000_drop_acp_client_tool_calls.up.sql`](20260502120000_drop_acp_client_tool_calls.up.sql) | Drop obsolete `acp_client_tool_calls`; ACP client-tool relay through Codepool was removed |
 
 ### Default operator account
 

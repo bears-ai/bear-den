@@ -150,7 +150,6 @@ fn rich_event_status_text(event: &serde_json::Value) -> Option<String> {
                 format!("Recorded memory update: {summary}")
             }
         }
-        "client_tool_request" => "Waiting for client tool".to_string(),
         _ => return None,
     };
     Some(text)
@@ -191,8 +190,7 @@ fn bear_channel_event_to_deep_chat_sse(event: &serde_json::Value) -> Option<Byte
         | "server_tool_finished"
         | "subagent_started"
         | "subagent_finished"
-        | "memory_update_recorded"
-        | "client_tool_request" => {
+        | "memory_update_recorded" => {
             let text = rich_event_status_text(event)?;
             serde_json::json!({
                 "message_type": "status_message",

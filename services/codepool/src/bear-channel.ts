@@ -52,7 +52,6 @@ export type BearChannelRequest = {
     };
     capabilities?: {
         server_tools?: unknown[];
-        client_tools?: unknown[];
         supports_cancellation?: boolean;
         supports_rich_events?: boolean;
     };
@@ -69,13 +68,6 @@ export type BearChannelEvent =
           tool: string;
           label?: string;
           summary?: string;
-      }
-    | {
-          type: "client_tool_request";
-          call: BearChannelToolCall;
-          request_id?: string;
-          session_id?: string;
-          conversation_id?: string;
       }
     | { type: "subagent_started"; name: string; label?: string }
     | {
@@ -98,15 +90,6 @@ export type BearChannelEvent =
           type: "done";
           outcome?: "ok" | "upstream_error" | "empty_fallback" | "cancelled";
       };
-
-export type BearChannelToolCall = {
-    id: string;
-    name: string;
-    arguments: unknown;
-    descriptor?: unknown;
-    approval_policy?: string;
-    timeout_ms?: number;
-};
 
 export type BearChannelErrorContext = {
     session_id: string;

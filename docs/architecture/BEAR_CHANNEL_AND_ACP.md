@@ -98,7 +98,6 @@ Implemented:
   - `POST /acp/bears/{slug}/sessions/{session_id}/prompt`
   - `POST /acp/bears/{slug}/sessions/{session_id}/cancel`
   - `POST /acp/bears/{slug}/sessions/{session_id}/close`
-  - `POST /acp/bears/{slug}/sessions/{session_id}/tool-results/{call_id}`
   - `GET /acp/bears/{slug}/conversations`
   - `GET /acp/bears/{slug}/conversations/{conversation_id}/history`
   - `GET /acp/bears/{slug}/auth-check`
@@ -113,7 +112,8 @@ Implemented:
 
 Reserved for later:
 
-- Richer ACP history replay if Letta/Codepool expose faithful historical tool/status/error/resource events.
+- Dedicated non-Letta-Code ACP runtime that can own ACP client tool execution directly.
+- Richer ACP history replay if runtime services expose faithful historical tool/status/error/resource events.
 - MCP relay.
 - Rich web UI rendering of server tool, sub-agent, and memory events.
 - Adapter packaging polish.
@@ -147,7 +147,6 @@ The internal request includes trusted context from Den:
     "content": "Hello"
   },
   "capabilities": {
-    "client_tools": [],
     "supports_cancellation": false,
     "supports_rich_events": true
   },
@@ -174,7 +173,6 @@ Reserved richer events:
 ```json
 {"type":"server_tool_started","tool":"cabinet_search"}
 {"type":"server_tool_finished","tool":"cabinet_search","summary":"3 results"}
-{"type":"client_tool_request","call":{"id":"call_1","name":"read_file","arguments":{}}}
 {"type":"subagent_started","name":"reflection"}
 {"type":"subagent_finished","name":"reflection","summary":"..."}
 {"type":"memory_update_recorded","target":"product","summary":"..."}
@@ -194,17 +192,16 @@ Expected mapping:
 | User message | `message: { type: "text", content }` |
 | Assistant delta | `assistant_delta` |
 | Reasoning/status | `reasoning_delta` or future status events |
-| Client capabilities | `capabilities.client_tools` |
-| Client tool request | `client_tool_request` |
-| Client tool result | adapter -> Den `tool-results/{call_id}` endpoint, then Den -> Codepool internal tool-result continuation endpoint |
-| Cancel | planned cancellation endpoint |
+| Cancel | Codepool session cancel endpoint via Den |
 
-Den is the ACP gateway, not a blind proxy. It authenticates the ACP client, authorizes bear access, injects trusted context, and will broker client tool requests/results using the design in [`../planning/ACP_CLIENT_TOOL_RELAY_PLAN.md`](../planning/ACP_CLIENT_TOOL_RELAY_PLAN.md). The first slice intentionally sends `conversation_id = "default"` and ignores client-supplied non-default conversation ids until session load/resume semantics are implemented.
+The former Letta Code ACP client-tool relay (`capabilities.client_tools`, `client_tool_request`, and tool-result continuation endpoints) has been removed from the active implementation. Future ACP client tools should be owned by a dedicated ACP runtime rather than tunneled through Letta Code external-tool closures.
+
+Den is the ACP gateway, not a blind proxy. It authenticates the ACP client, authorizes bear access, and injects trusted context. The original Letta Code client-tool relay plan is retained as historical planning material only; future ACP tool support should use a dedicated runtime architecture.
 
 ## Rollout approach
 
 1. Keep browser APIs stable.
 2. Move Den -> Codepool runtime traffic to `bear_channel`.
 3. Add ACP gateway in Den after the internal channel is stable.
-4. Add client tool relay and richer event rendering after ACP session basics are proven.
-5. Keep legacy Codepool endpoints until `bear_channel` has production soak time.
+4. Add richer event rendering after ACP session basics are proven.
+5. Build future ACP client tool support in a dedicated non-Letta-Code runtime.

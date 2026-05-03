@@ -47,14 +47,6 @@ function toolsSignature(tools?: AnyAgentTool[]): string {
     return (tools ?? []).length > 0 ? "acp-client-tools" : "";
 }
 
-function shouldReuseWarmSession(tools?: AnyAgentTool[]): boolean {
-    // ACP client tool closures capture the active SSE response emitter. Reusing a
-    // warm Letta Code session with those closures can write to an ended response
-    // on the next prompt. Reopen ACP-tool sessions per prompt until the SDK can
-    // dynamically rebind external tool handlers.
-    return (tools ?? []).length === 0;
-}
-
 function approvalRecoveryEnabled(): boolean {
     const value = process.env.ACP_APPROVAL_RECOVERY_ENABLED ?? "false";
     return ["1", "true", "yes", "on"].includes(value.trim().toLowerCase());
@@ -68,40 +60,9 @@ function isApprovalRequestMessage(msg: SDKMessage): boolean {
     );
 }
 
-const CODEPOOL_LOCAL_FILESYSTEM_TOOL_PATTERNS = [
-    /^(Read|Write|Edit|MultiEdit|NotebookRead|NotebookEdit)$/i,
-    /^(Glob|Grep|LS)$/i,
-    /file/i,
-    /filesystem/i,
-];
-
-function acpStrictClientToolsEnabled(): boolean {
-    const value = process.env.ACP_STRICT_CLIENT_TOOLS ?? "true";
-    return ["1", "true", "yes", "on"].includes(value.trim().toLowerCase());
-}
-
-function isCodepoolLocalFilesystemTool(toolName: string): boolean {
-    if (toolName.startsWith("acp_") || toolName.startsWith("den_")) {
-        return false;
-    }
-    return CODEPOOL_LOCAL_FILESYSTEM_TOOL_PATTERNS.some((pattern) =>
-        pattern.test(toolName),
-    );
-}
-
 function canUseRegisteredTool(tools: AnyAgentTool[]) {
     const allowed = new Set(tools.map((tool) => tool.name));
-    const strictAcp = acpStrictClientToolsEnabled();
     return async (toolName: string) => {
-        if (toolName.startsWith("acp_")) {
-            return { behavior: "allow" as const };
-        }
-        if (strictAcp && isCodepoolLocalFilesystemTool(toolName)) {
-            return {
-                behavior: "deny" as const,
-                message: `In ACP mode, workspace filesystem access must use ACP client tools such as acp_fs_read_text_file/acp_fs_write_text_file, not Codepool-local tool ${toolName}.`,
-            };
-        }
         if (allowed.has(toolName)) {
             return { behavior: "allow" as const };
         }
@@ -128,8 +89,6 @@ export type StreamUserOpts = {
     plan: BearRuntimePlan;
     tools?: AnyAgentTool[];
     channelSessionId?: string;
-    onRunStart?: () => void;
-    onRunEnd?: () => void;
 };
 
 export type ConversationPoolStats = {
@@ -298,22 +257,14 @@ export class ConversationSessionPool {
         const now = Date.now();
         const toolSignature = toolsSignature(tools);
         if (entry) {
-            if (
-                entry.toolSignature === toolSignature &&
-                shouldReuseWarmSession(tools)
-            ) {
+            if (entry.toolSignature === toolSignature) {
                 entry.lastUsed = now;
                 return entry.session;
             }
             logger.info(
-                entry.toolSignature === toolSignature
-                    ? "Letta Code ACP tool session reopened to refresh request-bound handlers"
-                    : "Letta Code session tool set changed; reopening warm session",
+                "Letta Code session tool set changed; reopening warm session",
                 {
-                    event:
-                        entry.toolSignature === toolSignature
-                            ? "letta_code_acp_tool_session_reopen"
-                            : "letta_code_session_tools_changed",
+                    event: "letta_code_session_tools_changed",
                     agent_id: agentId,
                     conversation_id: conversationId,
                     previous_tool_signature: entry.toolSignature,
@@ -337,9 +288,6 @@ export class ConversationSessionPool {
         if (tools && tools.length > 0) {
             sessionOpts.tools = tools;
             sessionOpts.allowedTools = tools.map((tool) => tool.name);
-            sessionOpts.disallowedTools = acpStrictClientToolsEnabled()
-                ? ["Read", "Write", "Edit", "MultiEdit", "Glob", "Grep", "LS"]
-                : undefined;
             sessionOpts.permissionMode = "bypassPermissions";
             sessionOpts.canUseTool = canUseRegisteredTool(tools);
         }
@@ -380,10 +328,7 @@ export class ConversationSessionPool {
             this.activeRuns.set(runKey, run);
         }
         const unlock = await this.acquireLock(key);
-        let runStarted = false;
         try {
-            opts.onRunStart?.();
-            runStarted = true;
             const ensure = await this.ensureRuntime(
                 opts.bearId,
                 agentId,
@@ -499,9 +444,6 @@ export class ConversationSessionPool {
                 }
             }
         } finally {
-            if (runStarted) {
-                opts.onRunEnd?.();
-            }
             if (opts.channelSessionId) {
                 this.activeRuns.delete(runKey);
             }

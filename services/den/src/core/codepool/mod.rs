@@ -2,6 +2,4 @@
 
 mod client;
 
-pub use client::{
-    BearRuntimeClient, CodePoolClient, CodepoolToolResultRequest, CodepoolToolResultResponse,
-};
+pub use client::{BearRuntimeClient, CodePoolClient};
