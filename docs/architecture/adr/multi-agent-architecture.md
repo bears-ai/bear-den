@@ -33,8 +33,8 @@ Every Bear consists of:
 
 - **talk agent** — Backs Letta Code-based conversational channels (Slack, web chat, Discord). Runs behind a Letta Code harness. Tool profile suited to text-in / text-out interaction with optional tool calls executed on the harness server. Holds: private data, durable state (own memory branch). No external comms beyond the channel itself.
 - **pair agent** — Backs ACP-direct connections from client-side tools (IDEs, Cowork, Figma plugins, future ACP-speaking apps). Implemented as a Letta-API client that speaks ACP; no Letta Code harness involved. Tool execution forwarded to the client via ACP's native tool-call and `session/request_permission` flow. Holds: private data, durable state (own memory branch). External effects only via the client tool, gated by user approval per call.
-- **curate agent** — Handles reflection, defragmentation, cross-branch memory integration, approval of work-task intents, and promotion of work results into shared memory. Server-orchestrated, never user-facing. Has read access to all branches; sole writer to `shared/`. Holds: private data (broad — sees everything across the Bear), durable state (writes `shared/`, which influences every other agent's system prompt). **No external comms by design.**
-- **work agent** — Executes scheduled or event-triggered tasks against external systems (APIs, services, long-running research). Reads only from `shared/` and from explicit task definitions Den hands it. **Does not read `talk/` or `pair/` branches.** Holds: external comms, durable state (own memory branch). Sees only curated, post-curate-review private data.
+- **curate agent** — Handles reflection, defragmentation, cross-branch memory integration, approval of work-task intents, and promotion of work results into shared memory. Server-orchestrated, never user-facing. Has read access to all branches; sole writer to `core/`. Holds: private data (broad — sees everything across the Bear), durable state (writes `core/`, which influences every other agent's system prompt). **No external comms by design.**
+- **work agent** — Executes scheduled or event-triggered tasks against external systems (APIs, services, long-running research). Reads only from `core/` and from explicit task definitions Den hands it. **Does not read `talk/` or `pair/` branches.** Holds: external comms, durable state (own memory branch). Sees only curated, post-curate-review private data.
 
 Each agent has its own tool profile. Prompts, skills, and memory are shared via Den-managed sync.
 
@@ -46,17 +46,17 @@ The four-agent split is not arbitrary; it is designed to ensure no single agent 
 |---|---|---|---|
 | `talk` | yes (channel-scoped) | conversational only | yes (own branch) |
 | `pair` | yes (session-scoped) | client-mediated, user-gated | yes (own branch) |
-| `curate` | yes (broad) | **no** | yes (own branch + `shared/`) |
-| `work` | curated only (`shared/`) | yes | yes (own branch) |
+| `curate` | yes (broad) | **no** | yes (own branch + `core/`) |
+| `work` | curated only (`core/`) | yes | yes (own branch) |
 
 The trust hierarchy is:
 
 ```
 talk, pair (raw user input, narrow durable writes)
     ↓
-curate (reads all, writes shared/, no external comms)
+curate (reads all, writes core/, no external comms)
     ↓
-work (reads only curated shared/, has external comms)
+work (reads only curated core/, has external comms)
 ```
 
 Each step does some filtering. Channel agents see raw user input (and potential prompt injections) but cannot act on the world beyond their own conversational surface. The curate agent sees everything but only writes to memory. The work agent acts on the world but only on inputs that have been mediated by the curate agent.
@@ -72,15 +72,15 @@ This protects against attacks where a prompt injection in a Slack message or IDE
 
 | Branch | Writable paths | Readable paths |
 |---|---|---|
-| `talk` | `talk/` | `talk/`, `shared/` |
-| `pair` | `pair/` | `pair/`, `shared/` |
-| `curate` | `curate/`, `shared/` | all branches |
-| `work` | `work/` | `work/`, `shared/` (no `talk/`, `pair/`, `curate/`) |
+| `talk` | `talk/` | `talk/`, `core/` |
+| `pair` | `pair/` | `pair/`, `core/` |
+| `curate` | `curate/`, `core/` | all branches |
+| `work` | `work/` | `work/`, `core/` (no `talk/`, `pair/`, `curate/`) |
 
 Enforced via a `pre-receive` hook on the bare repo that inspects branch and changed paths.
 
 - **Push-on-commit:** agents push immediately after each commit rather than waiting for Letta Code's periodic reminders. Other agents fetch and fast-forward merge on each system prompt construction. Fetch cost on long-lived agents is negligible (local-disk fast-forward) and we explicitly accept it without further optimization.
-- The curate agent is the sole merge authority. It promotes durable learnings from `talk/` and `pair/` into `shared/`. Channel agents never read each other's branches. The work agent never reads channel branches at all.
+- The curate agent is the sole merge authority. It promotes durable learnings from `talk/` and `pair/` into `core/`. Channel agents never read each other's branches. The work agent never reads channel branches at all.
 
 ### 5. Task request flow
 
@@ -89,11 +89,11 @@ External work is requested through the architecture, never invoked directly by c
 1. A user asks the talk or pair agent to do something with external effects ("check deploy status hourly", "post a daily standup summary to #team").
 2. The channel agent writes a structured task intent to its own branch (`talk/tasks/<intent-id>.md` or `pair/tasks/<intent-id>.md`).
 3. On its next cycle, the curate agent reads pending task intents from channel branches. For each, it either:
-   - Approves and promotes to `shared/tasks/<task-id>.md` with appropriate metadata (schedule, scope, allowed tools, risk level); or
+   - Approves and promotes to `core/tasks/<task-id>.md` with appropriate metadata (schedule, scope, allowed tools, risk level); or
    - Rejects with a reason written back to the requesting branch's `tasks/<intent-id>.md` for the channel agent to surface to the user.
-4. Den picks up approved tasks from `shared/tasks/` and dispatches them to the work agent on schedule or trigger.
+4. Den picks up approved tasks from `core/tasks/` and dispatches them to the work agent on schedule or trigger.
 5. The work agent executes, writing logs and results to `work/results/<task-id>/<run-id>.md`.
-6. On its next cycle, the curate agent promotes summary results to `shared/results/` for visibility to channel agents (so the user can ask "what did you do overnight?" via talk or pair).
+6. On its next cycle, the curate agent promotes summary results to `core/results/` for visibility to channel agents (so the user can ask "what did you do overnight?" via talk or pair).
 
 For high-risk operations (any task that would be destructive or irreversible), Den implements an additional human-in-the-loop approval queue per run, surfaced in the management UI. Routine, low-risk tasks (read-only checks, idempotent posts) flow through curate-agent approval alone.
 
@@ -107,7 +107,7 @@ Den must:
 - Detect and reconcile drift in tool/prompt/skill state across the four agents within a Bear.
 - Run the MemFS sidecar; own conflict resolution policy.
 - Trigger curate cycles on appropriate cadence (idle detection, message-count thresholds, manual trigger).
-- Manage the work-task queue: pick up approved tasks from `shared/tasks/`, dispatch to the work agent on schedule, log results.
+- Manage the work-task queue: pick up approved tasks from `core/tasks/`, dispatch to the work agent on schedule, log results.
 - Implement the human-in-the-loop approval queue for high-risk work-task runs.
 - Rate-limit the work agent's external calls; alert on novel destinations or unusually high volume.
 - Route ACP traffic to the pair agent.
@@ -115,13 +115,13 @@ Den must:
 
 ### 7. Conversations are agent-locked
 
-Conversation history is not shared across the agents within a Bear. Cross-channel learning transfer happens only via the curate agent reading branches and promoting to `shared/`. The management UI must surface conversations as agent-locked rather than Bear-global, with a Bear-level view that aggregates without conflating.
+Conversation history is not shared across the agents within a Bear. Cross-channel learning transfer happens only via the curate agent reading branches and promoting to `core/`. The management UI must surface conversations as agent-locked rather than Bear-global, with a Bear-level view that aggregates without conflating.
 
 ### 8. Open: skill sync mechanism
 
 Two viable paths are still on the table:
 
-- **Skills as MemFS content** — store skills inside the memfs repo (in a `.skills/` directory under each agent's path or under `shared/`), letting git handle distribution.
+- **Skills as MemFS content** — store skills inside the memfs repo (in a `.skills/` directory under each agent's path or under `core/`), letting git handle distribution.
 - **Den-managed skill installation** — Den owns the skill roster and installs/updates skills on each agent via Letta API, treating skills as out-of-band from MemFS.
 
 Decision deferred to implementation phase 0. Constraints: agent-driven `/skill` learning writes must flow through whichever mechanism we pick, or be disabled.
@@ -142,7 +142,7 @@ Decision deferred to implementation phase 0. Constraints: agent-driven `/skill` 
 
 - More moving parts per Bear (4 agents, central management plane, sidecar, task queue).
 - Den must own provisioning sync as a first-class concern; drift between agents within a Bear is a real failure mode requiring monitoring and reconciliation tooling.
-- Cross-channel learning transfer is eventually-consistent. A user teaching the talk agent something on Slack does not affect the pair agent's behavior in the IDE until a curate cycle promotes the learning to `shared/`.
+- Cross-channel learning transfer is eventually-consistent. A user teaching the talk agent something on Slack does not affect the pair agent's behavior in the IDE until a curate cycle promotes the learning to `core/`.
 - Task execution is also eventually-consistent — a user requesting work via talk or pair does not see action until the next curate cycle approves the request. Acceptable for scheduled and background work; not appropriate for urgent operations.
 - Conversation history fragmentation requires UI work to be navigable.
 - We diverge from Letta's "one stateful agent, many conversations" abstraction. If Letta solves multi-tenant tool execution natively in future versions, our architecture becomes a legacy workaround.
@@ -182,7 +182,7 @@ The four agents are named for the activity they perform:
 - `curate` — integrate, reflect, approve; the editorial and gatekeeping role
 - `work` — autonomous external action
 
-`curate` was chosen over `dream`, `steward`, `weave`, and `direct` for accessibility and accuracy. It captures both halves of the agent's role: editorial integration of branch content into `shared/`, and approval of work-task intents. Internationally legible, not metaphorical, doesn't connote command-and-control (which the agent does not do).
+`curate` was chosen over `dream`, `steward`, `weave`, and `direct` for accessibility and accuracy. It captures both halves of the agent's role: editorial integration of branch content into `core/`, and approval of work-task intents. Internationally legible, not metaphorical, doesn't connote command-and-control (which the agent does not do).
 
 ## References
 

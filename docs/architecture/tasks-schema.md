@@ -15,7 +15,7 @@ There are three distinct file types, each living on a different branch of the Be
                                    │  approves or rejects
                                    ▼
                           ┌──────────────────┐
-                          │  shared/tasks/   │  approved task definitions
+                          │  core/tasks/   │  approved task definitions
                           │                  │  written by curate agent
                           └────────┬─────────┘
                                    │  Den dispatches per
@@ -27,10 +27,10 @@ There are three distinct file types, each living on a different branch of the Be
                           │    <run-id>.md   │
                           └────────┬─────────┘
                                    │  curate cycle promotes
-                                   │  summaries to shared/
+                                   │  summaries to core/
                                    ▼
                           ┌──────────────────┐
-                          │  shared/results/ │  cross-channel-visible
+                          │  core/results/ │  cross-channel-visible
                           │                  │  result summaries
                           └──────────────────┘
 ```
@@ -47,7 +47,7 @@ All files are markdown with YAML frontmatter. This matches the format of skills 
 
 **Read by:** the curate agent during its cycle.
 
-**Lifecycle:** `pending_review` → `approved` (intent file remains as audit record; canonical state moves to `shared/tasks/`) or `rejected` (intent file updated with rejection reason).
+**Lifecycle:** `pending_review` → `approved` (intent file remains as audit record; canonical state moves to `core/tasks/`) or `rejected` (intent file updated with rejection reason).
 
 ### Schema
 
@@ -74,7 +74,7 @@ reviewed_by: null                       # agent-id of the curate agent that revi
 reviewed_at: null
 rejection_reason: null                  # populated only when status: rejected
 approved_task_id: null                  # populated only when status: approved
-                                        # references the file in shared/tasks/
+                                        # references the file in core/tasks/
 ---
 
 # <human-readable title>
@@ -180,7 +180,7 @@ choosing a standard.
 
 ## File type 2: Approved task (shared branch)
 
-**Location:** `shared/tasks/<task-id>.md`
+**Location:** `core/tasks/<task-id>.md`
 
 **Written by:** the curate agent, after reviewing and approving an intent.
 
@@ -271,7 +271,7 @@ error details. Do not post to Slack.
 The curate agent reads the corresponding intent, evaluates it, and writes the approved task using a tool (`approve_task_intent`) that takes the intent path, a refined task definition, and validation parameters. The tool:
 
 - Validates the result against this schema.
-- Writes the file to `shared/tasks/`.
+- Writes the file to `core/tasks/`.
 - Updates the intent file: `status: approved`, `reviewed_by`, `reviewed_at`, `approved_task_id`.
 
 For rejections, a parallel tool (`reject_task_intent`) writes back to the intent file: `status: rejected`, `reviewed_by`, `reviewed_at`, `rejection_reason`.
@@ -292,7 +292,7 @@ For rejections, a parallel tool (`reject_task_intent`) writes back to the intent
 
 **Written by:** the work agent at the end of each task run.
 
-**Read by:** the curate agent during its cycle (to decide whether to surface a summary in `shared/results/`); Den (for logging); the user (via UI).
+**Read by:** the curate agent during its cycle (to decide whether to surface a summary in `core/results/`); Den (for logging); the user (via UI).
 
 **Lifecycle:** terminal — once written, never modified.
 
@@ -323,7 +323,7 @@ external_calls:
 # For UI display and curate review:
 summary: "Found 2 deploy failures in last 24h, posted summary to #team-deploy-alerts."
 surfaceable: true                        # curate uses this as a hint;
-                                         # true means "worth promoting to shared/results/"
+                                         # true means "worth promoting to core/results/"
 
 # For debugging:
 error: null                              # populated when run_status != success
@@ -350,7 +350,7 @@ Should not include credentials or secrets.>
 ### Validation rules
 
 - `id` matches `^run-\d{4}-\d{2}-\d{2}-\d{3,}$` and is unique within the task's results directory.
-- `task_id` references an existing file in `shared/tasks/`.
+- `task_id` references an existing file in `core/tasks/`.
 - `run_status` is one of the allowed values.
 - `external_calls` is an array; can be empty if the run made no external calls (e.g., a no-op result).
 - All `external_calls[].target` values must be within the parent task's `scope`. Den's auditor cross-checks this and alerts on mismatches.
@@ -387,7 +387,7 @@ None of these files may contain secrets, credentials, tokens, or other sensitive
 Validation runs at three points:
 
 1. **Authoring tools** — the tools that channel/curate/work agents use to create these files validate before writing. Bad inputs fail fast.
-2. **Pre-receive hook** — for files in paths Den cares about, the bare repo's `pre-receive` hook can optionally re-validate (recommended for `shared/tasks/` since it's the dispatch source of truth).
+2. **Pre-receive hook** — for files in paths Den cares about, the bare repo's `pre-receive` hook can optionally re-validate (recommended for `core/tasks/` since it's the dispatch source of truth).
 3. **Den's polling/index** — when Den picks up a new approved task, it validates again before scheduling. Failures are logged and the task is not dispatched.
 
 ### Open design questions

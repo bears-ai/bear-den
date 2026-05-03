@@ -11,7 +11,7 @@ Each phase has explicit acceptance criteria. Phases are ordered for safe increme
 - **MemFS** — Letta's git-backed memory filesystem. Stored as a bare repo per Bear; agents access it via worktrees.
 - **Sidecar** — the git smart HTTP service that fronts the bare repos. Configured via `LETTA_MEMFS_SERVICE_URL`.
 - **Channel agent** — talk or pair. The two user-facing agents.
-- **Curate agent** — the integrator. Reflects on memory, approves task intents, promotes results to `shared/`.
+- **Curate agent** — the integrator. Reflects on memory, approves task intents, promotes results to `core/`.
 - **Work agent** — the executor. Runs approved external-action tasks.
 - **Worktree** — a git working directory tied to one branch. Each agent gets one worktree per Bear.
 
@@ -35,7 +35,7 @@ Each phase has explicit acceptance criteria. Phases are ordered for safe increme
    - Skill roster: which skills go to which agents. Coding skills are talk and pair; reflection skills are curate; integration tools (HTTP clients, posting tools, etc.) are work; some user-preference skills go to all four.
    - MemFS directory layout (see phase 2).
 2. Resolve the open ADR question on **skill sync mechanism**. Pick one of:
-   - **(A)** Skills live in MemFS under `shared/.skills/` and `<agent>/.skills/`. Distribution is via git.
+   - **(A)** Skills live in MemFS under `core/.skills/` and `<agent>/.skills/`. Distribution is via git.
    - **(B)** Den owns skill installation via Letta API; skills are not in MemFS. Agent-driven `/skill` learning writes go through a Den webhook.
    - Recommendation: (A), because it makes skill propagation a side effect of memory sync we're already paying for. Disable agent-driven skill writes outside `<own-branch>/.skills/`.
 3. Define the Bear data model in Den's database:
@@ -54,7 +54,7 @@ Each phase has explicit acceptance criteria. Phases are ordered for safe increme
      last_provisioned_version
      last_synced_at
    ```
-4. Read `bear-den-tasks-schema.md` and confirm tool requirements derived from it (e.g., the channel agents need a tool that can write structured intent files; the curate agent needs a tool that can read intents and write to `shared/tasks/`; the work agent needs structured input handling for task definitions).
+4. Read `bear-den-tasks-schema.md` and confirm tool requirements derived from it (e.g., the channel agents need a tool that can write structured intent files; the curate agent needs a tool that can read intents and write to `core/tasks/`; the work agent needs structured input handling for task definitions).
 
 ### Acceptance
 
@@ -96,12 +96,12 @@ Each phase has explicit acceptance criteria. Phases are ordered for safe increme
 1. Define the canonical layout. For each Bear, the bare repo has these branches:
    - `talk` — writable by talk agent. Contents: `talk/` directory, including `talk/tasks/` for intent files.
    - `pair` — writable by pair agent. Contents: `pair/` directory, including `pair/tasks/` for intent files.
-   - `curate` — writable by curate agent. Contents: `curate/` directory and `shared/` directory (which contains `shared/tasks/` and `shared/results/`).
+   - `curate` — writable by curate agent. Contents: `curate/` directory and `core/` directory (which contains `core/tasks/` and `core/results/`).
    - `work` — writable by work agent. Contents: `work/` directory, including `work/results/<task-id>/<run-id>.md`.
 2. Write a `pre-receive` hook for the bare repo that:
    - Identifies the branch being pushed.
    - Walks the changed file list.
-   - Rejects the push if any changed path is outside that branch's allowed paths. Error message must be clear (e.g., "branch 'talk' attempted to write to 'shared/notes.md'; only 'talk/' paths are allowed").
+   - Rejects the push if any changed path is outside that branch's allowed paths. Error message must be clear (e.g., "branch 'talk' attempted to write to 'core/notes.md'; only 'talk/' paths are allowed").
 3. Write an initialization script `den/scripts/init_bear_repo.sh <bear_id>` that:
    - Creates the bare repo at the configured path.
    - Installs the `pre-receive` hook.
@@ -111,9 +111,9 @@ Each phase has explicit acceptance criteria. Phases are ordered for safe increme
 ### Acceptance
 
 - Initializing a new Bear produces a bare repo with all four branches and the hook installed.
-- Manual test: clone the `talk` branch, add a file under `shared/`, push — push is rejected with the clear error.
-- Manual test: clone the `curate` branch, add a file under `shared/`, push — push succeeds.
-- Manual test: clone the `work` branch, add a file under `shared/`, push — push is rejected.
+- Manual test: clone the `talk` branch, add a file under `core/`, push — push is rejected with the clear error.
+- Manual test: clone the `curate` branch, add a file under `core/`, push — push succeeds.
+- Manual test: clone the `work` branch, add a file under `core/`, push — push is rejected.
 - Sidecar healthcheck passes.
 
 ---
@@ -157,7 +157,7 @@ Each phase has explicit acceptance criteria. Phases are ordered for safe increme
    - Push-on-commit: configure the harness to push immediately after committing, not on the periodic reminder. Verify by triggering a memory edit and confirming the push happens within seconds.
 3. Update the conversation lifecycle: each new chat session creates a Letta Conversation against the talk agent.
 4. Verify the talk agent has the tool needed to write task intents under `talk/tasks/` per the schema (see `bear-den-tasks-schema.md`). The tool should validate the intent against the schema before writing.
-5. Confirm tool execution path: tools execute on the harness server (existing behavior) and don't interact with `pair/`, `curate/`, `work/`, or `shared/` paths in MemFS.
+5. Confirm tool execution path: tools execute on the harness server (existing behavior) and don't interact with `pair/`, `curate/`, `work/`, or `core/` paths in MemFS.
 
 ### Acceptance
 
@@ -212,8 +212,8 @@ Each phase has explicit acceptance criteria. Phases are ordered for safe increme
 
 ### Tasks
 
-1. Implement the curate agent's tool profile per `bear-spec.md`. It needs read access to all branches (via additional read-only worktrees) and write access to its own branch and `shared/`. Reuse Letta's existing reflection and defragmentation skills.
-2. Implement the curate agent's worktree setup. The curate agent reads from `talk/`, `pair/`, and `work/` and writes to `curate/` and `shared/`. Mount additional read-only worktrees for the other branches alongside the curate worktree:
+1. Implement the curate agent's tool profile per `bear-spec.md`. It needs read access to all branches (via additional read-only worktrees) and write access to its own branch and `core/`. Reuse Letta's existing reflection and defragmentation skills.
+2. Implement the curate agent's worktree setup. The curate agent reads from `talk/`, `pair/`, and `work/` and writes to `curate/` and `core/`. Mount additional read-only worktrees for the other branches alongside the curate worktree:
    ```
    /work/curate-branch/      (read-write, current branch: curate)
    /work/talk-readonly/      (read-only, branch: talk)
@@ -227,18 +227,18 @@ Each phase has explicit acceptance criteria. Phases are ordered for safe increme
    - Pending result trigger: when new files have appeared in `work/results/` since last cycle.
    - Manual trigger: an `admin/trigger_curate/<bear_id>` endpoint for testing.
 4. Implement curate cycle execution. The cycle has three responsibilities, executed in this order:
-   - **Memory integration:** review new content in `talk/` and `pair/` since last cycle. Promote durable learnings to `shared/`.
-   - **Task intent review:** for each pending intent file, decide approve or reject. If approved, write a corresponding file to `shared/tasks/<task-id>.md` per the schema. If rejected, write the rejection reason back to the intent file (status changes from `pending_review` to `rejected`).
-   - **Result promotion:** for each new file in `work/results/`, decide whether to surface a summary to channel agents. If yes, write a summary to `shared/results/<task-id>.md`.
+   - **Memory integration:** review new content in `talk/` and `pair/` since last cycle. Promote durable learnings to `core/`.
+   - **Task intent review:** for each pending intent file, decide approve or reject. If approved, write a corresponding file to `core/tasks/<task-id>.md` per the schema. If rejected, write the rejection reason back to the intent file (status changes from `pending_review` to `rejected`).
+   - **Result promotion:** for each new file in `work/results/`, decide whether to surface a summary to channel agents. If yes, write a summary to `core/results/<task-id>.md`.
 5. Den records the cycle (start time, end time, branches' commit SHAs at start, what was integrated, what intents were approved/rejected, what results were promoted).
 6. Ensure curate cycles don't run concurrently for the same Bear (Den-level lock).
 
 ### Acceptance
 
-- Triggering a curate cycle on a test Bear produces commits to the `curate` branch touching `curate/` and `shared/`, with a clear commit message.
-- After a curate cycle, the next system prompt construction on the talk agent reflects content from `shared/` (verify by inspecting the agent's loaded context).
-- A pending intent file in `talk/tasks/` is reviewed during the next cycle; either an approval lands in `shared/tasks/` or a rejection lands back in `talk/tasks/`.
-- A new result file in `work/results/` produces a summary in `shared/results/` after the next cycle.
+- Triggering a curate cycle on a test Bear produces commits to the `curate` branch touching `curate/` and `core/`, with a clear commit message.
+- After a curate cycle, the next system prompt construction on the talk agent reflects content from `core/` (verify by inspecting the agent's loaded context).
+- A pending intent file in `talk/tasks/` is reviewed during the next cycle; either an approval lands in `core/tasks/` or a rejection lands back in `talk/tasks/`.
+- A new result file in `work/results/` produces a summary in `core/results/` after the next cycle.
 - Two near-simultaneous curate triggers result in only one cycle running; the second is rejected or queued.
 - A failure mid-cycle leaves the repo in a clean state.
 
@@ -246,11 +246,11 @@ Each phase has explicit acceptance criteria. Phases are ordered for safe increme
 
 ## Phase 7 — Task queue infrastructure (Den-side)
 
-**Goal:** Den can read approved tasks from `shared/tasks/`, schedule them, dispatch to the work agent, and record results.
+**Goal:** Den can read approved tasks from `core/tasks/`, schedule them, dispatch to the work agent, and record results.
 
 ### Tasks
 
-1. Implement a task index in Den's database, populated by polling `shared/tasks/` (or, better, reacting to `post-receive` hooks on the bare repo when curate pushes):
+1. Implement a task index in Den's database, populated by polling `core/tasks/` (or, better, reacting to `post-receive` hooks on the bare repo when curate pushes):
    ```
    bear_tasks
      bear_id (fk)
@@ -279,13 +279,13 @@ Each phase has explicit acceptance criteria. Phases are ordered for safe increme
    - Per-domain limit (alert on novel destinations).
    - Per-task-type limit (e.g., no more than N runs per hour for a given task).
 5. Implement task lifecycle handling:
-   - On schema-validation failure of a `shared/tasks/` file, log and skip; alert if persistent.
+   - On schema-validation failure of a `core/tasks/` file, log and skip; alert if persistent.
    - On `expires_at` reached, mark task `completed` and stop scheduling.
    - On repeated failures (configurable threshold), pause the task and alert.
 
 ### Acceptance
 
-- A `shared/tasks/` file with `type: oneshot` and `risk: low` is dispatched to the work agent within one polling interval.
+- A `core/tasks/` file with `type: oneshot` and `risk: low` is dispatched to the work agent within one polling interval.
 - A `type: scheduled` task with a cron string runs at the expected time.
 - A `risk: high` task does not dispatch until the HITL queue has been approved.
 - Rate limiting blocks excessive requests and logs the rejection.
@@ -302,7 +302,7 @@ Each phase has explicit acceptance criteria. Phases are ordered for safe increme
 1. Implement the work agent's tool profile per `bear-spec.md`. Includes HTTP client, third-party API tools (Slack post, GitHub, etc.), result writer. **No tools that read `talk/`, `pair/`, or `curate/` branches.** Den enforces this by attaching only the approved set.
 2. Implement the work agent's MemFS configuration:
    - Worktree on the `work` branch.
-   - Read-only mount of `shared/` so the work agent can consult curated context (prefs, project info) when executing tasks.
+   - Read-only mount of `core/` so the work agent can consult curated context (prefs, project info) when executing tasks.
 3. Implement the work agent's input handling. Den dispatches a structured prompt of the form:
    ```
    You are executing task <task-id>, run <run-id>. Definition:
@@ -357,7 +357,7 @@ Each phase has explicit acceptance criteria. Phases are ordered for safe increme
 
 - Stakeholder review of the updated UI confirms the agent-locked nature is clear and not confusing.
 - A user can answer "what did Slack-me teach the Bear last week?" by looking at the talk agent's conversations.
-- A user can answer "what does the Bear durably know about me?" by reading `shared/`.
+- A user can answer "what does the Bear durably know about me?" by reading `core/`.
 - A user can see all pending and approved tasks for a Bear in one place.
 - A user can approve or reject a high-risk task run from the UI.
 
@@ -372,14 +372,14 @@ Each phase has explicit acceptance criteria. Phases are ordered for safe increme
 1. Write a migration script `den/scripts/migrate_bear.py <legacy_bear_id>`:
    - Read the legacy Bear's MemFS content.
    - Initialize the new bare repo with the four-branch layout.
-   - Write the legacy memory content into `shared/` on the `curate` branch (treating all existing memory as "already promoted").
+   - Write the legacy memory content into `core/` on the `curate` branch (treating all existing memory as "already promoted").
    - Provision the four new agents.
    - Create new `bear_agents` records pointing to the new quartet.
    - Mark the legacy agent as deprecated (do not delete; we want rollback).
 2. Test the migration on a cloned production Bear in a staging environment. Verify:
-   - The talk agent has access to the migrated content via `shared/`.
+   - The talk agent has access to the migrated content via `core/`.
    - The pair agent likewise.
-   - The work agent has read access to the migrated content via `shared/`.
+   - The work agent has read access to the migrated content via `core/`.
    - Conversation history from the legacy agent is **not** carried over (this is the agent-locked tradeoff; document in user-facing release notes).
 3. Define a rollback path: if a migrated Bear misbehaves, point Den's router back at the legacy agent until investigation completes.
 
