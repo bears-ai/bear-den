@@ -5,13 +5,16 @@ use uuid::Uuid;
 
 use crate::errors::CustomError;
 
-use super::model::{Bear, BearWithMembership};
+use super::model::{
+    Bear, BearAgent, BearAgentRole, BearSkillManifestEntry, BearSkillProposal, BearWithMembership,
+};
 
 pub async fn list_bears(pool: &PgPool) -> Result<Vec<Bear>, CustomError> {
     sqlx::query_as::<_, Bear>(
         r#"
         SELECT id, slug, name, description, letta_agent_id, default_model, tools_enabled,
-               letta_agent_type, letta_tool_ids, runtime_plan, system_prompt, created_at, updated_at
+               letta_agent_type, letta_tool_ids, runtime_plan,
+               memfs_repo_path, provisioning_version, system_prompt, created_at, updated_at
         FROM bears
         ORDER BY slug
         "#,
@@ -25,7 +28,8 @@ pub async fn get_bear(pool: &PgPool, id: Uuid) -> Result<Option<Bear>, CustomErr
     sqlx::query_as::<_, Bear>(
         r#"
         SELECT id, slug, name, description, letta_agent_id, default_model, tools_enabled,
-               letta_agent_type, letta_tool_ids, runtime_plan, system_prompt, created_at, updated_at
+               letta_agent_type, letta_tool_ids, runtime_plan,
+               memfs_repo_path, provisioning_version, system_prompt, created_at, updated_at
         FROM bears
         WHERE id = $1
         "#,
@@ -287,7 +291,8 @@ pub async fn list_bears_for_user(
     sqlx::query_as::<_, BearWithMembership>(
         r#"
         SELECT b.id, b.slug, b.name, b.description, b.letta_agent_id, b.default_model, b.tools_enabled,
-               b.letta_agent_type, b.letta_tool_ids, b.runtime_plan, b.system_prompt, b.created_at, b.updated_at,
+               b.letta_agent_type, b.letta_tool_ids, b.runtime_plan,
+               b.memfs_repo_path, b.provisioning_version, b.system_prompt, b.created_at, b.updated_at,
                ub.role AS membership_role
         FROM bears b
         INNER JOIN user_bear ub ON ub.bear_id = b.id
@@ -310,7 +315,8 @@ pub async fn bear_for_user_by_slug(
     sqlx::query_as::<_, Bear>(
         r#"
         SELECT b.id, b.slug, b.name, b.description, b.letta_agent_id, b.default_model, b.tools_enabled,
-               b.letta_agent_type, b.letta_tool_ids, b.runtime_plan, b.system_prompt, b.created_at, b.updated_at
+               b.letta_agent_type, b.letta_tool_ids, b.runtime_plan,
+               b.memfs_repo_path, b.provisioning_version, b.system_prompt, b.created_at, b.updated_at
         FROM bears b
         INNER JOIN user_bear ub ON ub.bear_id = b.id
         WHERE ub.user_id = $1 AND b.slug = $2
@@ -384,6 +390,264 @@ pub async fn set_letta_agent_id(
         .execute(pool)
         .await?;
     Ok(())
+}
+
+pub async fn mirror_talk_agent_to_legacy_letta_agent_id(
+    pool: &PgPool,
+    bear_id: Uuid,
+) -> Result<(), CustomError> {
+    sqlx::query(
+        r#"
+        UPDATE bears b
+        SET letta_agent_id = ba.letta_agent_id,
+            updated_at = NOW()
+        FROM bear_agents ba
+        WHERE b.id = ba.bear_id
+          AND b.id = $1
+          AND ba.role = 'talk'
+          AND ba.letta_agent_id IS NOT NULL
+          AND btrim(ba.letta_agent_id) <> ''
+        "#,
+    )
+    .bind(bear_id)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+pub async fn ensure_bear_agent_rows(pool: &PgPool, bear_id: Uuid) -> Result<(), CustomError> {
+    for role in BearAgentRole::ALL {
+        sqlx::query(
+            r#"
+            INSERT INTO bear_agents (bear_id, role)
+            VALUES ($1, $2)
+            ON CONFLICT (bear_id, role) DO NOTHING
+            "#,
+        )
+        .bind(bear_id)
+        .bind(role.as_str())
+        .execute(pool)
+        .await?;
+    }
+    Ok(())
+}
+
+pub async fn list_bear_agents(pool: &PgPool, bear_id: Uuid) -> Result<Vec<BearAgent>, CustomError> {
+    sqlx::query_as::<_, BearAgent>(
+        r#"
+        SELECT bear_id, role, letta_agent_id, provisioning_status, last_provisioned_version,
+               last_synced_at, last_provisioning_error, config_hash, created_at, updated_at
+        FROM bear_agents
+        WHERE bear_id = $1
+        ORDER BY CASE role
+            WHEN 'talk' THEN 1
+            WHEN 'pair' THEN 2
+            WHEN 'curate' THEN 3
+            WHEN 'work' THEN 4
+            WHEN 'watch' THEN 5
+            ELSE 99
+        END
+        "#,
+    )
+    .bind(bear_id)
+    .fetch_all(pool)
+    .await
+    .map_err(Into::into)
+}
+
+pub async fn get_bear_agent(
+    pool: &PgPool,
+    bear_id: Uuid,
+    role: BearAgentRole,
+) -> Result<Option<BearAgent>, CustomError> {
+    sqlx::query_as::<_, BearAgent>(
+        r#"
+        SELECT bear_id, role, letta_agent_id, provisioning_status, last_provisioned_version,
+               last_synced_at, last_provisioning_error, config_hash, created_at, updated_at
+        FROM bear_agents
+        WHERE bear_id = $1 AND role = $2
+        "#,
+    )
+    .bind(bear_id)
+    .bind(role.as_str())
+    .fetch_optional(pool)
+    .await
+    .map_err(Into::into)
+}
+
+pub async fn role_agent_id(
+    pool: &PgPool,
+    bear_id: Uuid,
+    role: BearAgentRole,
+) -> Result<Option<String>, CustomError> {
+    let row: Option<(Option<String>,)> = sqlx::query_as(
+        r#"
+        SELECT letta_agent_id
+        FROM bear_agents
+        WHERE bear_id = $1 AND role = $2
+        "#,
+    )
+    .bind(bear_id)
+    .bind(role.as_str())
+    .fetch_optional(pool)
+    .await?;
+    Ok(row.and_then(|r| r.0))
+}
+
+pub async fn role_agent_id_or_legacy(
+    pool: &PgPool,
+    bear: &Bear,
+    role: BearAgentRole,
+) -> Result<Option<String>, CustomError> {
+    let role_id = role_agent_id(pool, bear.id, role).await?;
+    if role_id.as_deref().is_some_and(|s| !s.trim().is_empty()) {
+        return Ok(role_id);
+    }
+    if role == BearAgentRole::Talk {
+        return Ok(bear.letta_agent_id.clone());
+    }
+    Ok(None)
+}
+
+pub async fn mark_bear_agent_provisioning(
+    pool: &PgPool,
+    bear_id: Uuid,
+    role: BearAgentRole,
+) -> Result<(), CustomError> {
+    sqlx::query(
+        r#"
+        INSERT INTO bear_agents (bear_id, role, provisioning_status, updated_at)
+        VALUES ($1, $2, 'provisioning', NOW())
+        ON CONFLICT (bear_id, role)
+        DO UPDATE SET provisioning_status = 'provisioning',
+                      last_provisioning_error = NULL,
+                      updated_at = NOW()
+        "#,
+    )
+    .bind(bear_id)
+    .bind(role.as_str())
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+pub async fn mark_bear_agent_ready(
+    pool: &PgPool,
+    bear_id: Uuid,
+    role: BearAgentRole,
+    agent_id: &str,
+    version: i32,
+    config_hash: &serde_json::Value,
+) -> Result<(), CustomError> {
+    sqlx::query(
+        r#"
+        INSERT INTO bear_agents (
+            bear_id, role, letta_agent_id, provisioning_status, last_provisioned_version,
+            last_synced_at, last_provisioning_error, config_hash, updated_at
+        )
+        VALUES ($1, $2, $3, 'ready', $4, NOW(), NULL, $5::jsonb, NOW())
+        ON CONFLICT (bear_id, role)
+        DO UPDATE SET letta_agent_id = EXCLUDED.letta_agent_id,
+                      provisioning_status = 'ready',
+                      last_provisioned_version = EXCLUDED.last_provisioned_version,
+                      last_synced_at = NOW(),
+                      last_provisioning_error = NULL,
+                      config_hash = EXCLUDED.config_hash,
+                      updated_at = NOW()
+        "#,
+    )
+    .bind(bear_id)
+    .bind(role.as_str())
+    .bind(agent_id)
+    .bind(version)
+    .bind(config_hash)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+pub async fn mark_bear_agent_failed(
+    pool: &PgPool,
+    bear_id: Uuid,
+    role: BearAgentRole,
+    message: &str,
+) -> Result<(), CustomError> {
+    sqlx::query(
+        r#"
+        INSERT INTO bear_agents (bear_id, role, provisioning_status, last_provisioning_error, updated_at)
+        VALUES ($1, $2, 'failed', $3, NOW())
+        ON CONFLICT (bear_id, role)
+        DO UPDATE SET provisioning_status = 'failed',
+                      last_provisioning_error = EXCLUDED.last_provisioning_error,
+                      updated_at = NOW()
+        "#,
+    )
+    .bind(bear_id)
+    .bind(role.as_str())
+    .bind(message)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+pub async fn list_bear_skills(
+    pool: &PgPool,
+    bear_id: Uuid,
+) -> Result<Vec<BearSkillManifestEntry>, CustomError> {
+    sqlx::query_as::<_, BearSkillManifestEntry>(
+        r#"
+        SELECT bear_id, skill_name, skill_version, source, content_hash, applies_to_roles,
+               installed_at, last_verified_at, created_at, updated_at
+        FROM bear_skills_manifest
+        WHERE bear_id = $1
+        ORDER BY skill_name, skill_version
+        "#,
+    )
+    .bind(bear_id)
+    .fetch_all(pool)
+    .await
+    .map_err(Into::into)
+}
+
+pub async fn propose_skill(
+    pool: &PgPool,
+    bear_id: Uuid,
+    proposed_by_agent_id: &str,
+    skill_payload: &serde_json::Value,
+) -> Result<Uuid, CustomError> {
+    let row: (Uuid,) = sqlx::query_as(
+        r#"
+        INSERT INTO bear_skill_proposals (bear_id, proposed_by_agent_id, skill_payload)
+        VALUES ($1, $2, $3::jsonb)
+        RETURNING id
+        "#,
+    )
+    .bind(bear_id)
+    .bind(proposed_by_agent_id)
+    .bind(skill_payload)
+    .fetch_one(pool)
+    .await?;
+    Ok(row.0)
+}
+
+pub async fn list_pending_skill_proposals(
+    pool: &PgPool,
+    bear_id: Uuid,
+) -> Result<Vec<BearSkillProposal>, CustomError> {
+    sqlx::query_as::<_, BearSkillProposal>(
+        r#"
+        SELECT bear_id, id, proposed_by_agent_id, proposed_at, skill_payload, status,
+               reviewed_at, rejection_reason, resulting_manifest_bear_id,
+               resulting_manifest_skill_name, resulting_manifest_skill_version, updated_at
+        FROM bear_skill_proposals
+        WHERE bear_id = $1 AND status = 'pending_review'
+        ORDER BY proposed_at, id
+        "#,
+    )
+    .bind(bear_id)
+    .fetch_all(pool)
+    .await
+    .map_err(Into::into)
 }
 
 /// When the operator left `letta_agent_type` empty, persist the default used for Letta (`letta_v1_agent`).

@@ -1,15 +1,18 @@
 //! Create/update Letta agents after Den bear rows exist.
 
+use serde_json::json;
 use sqlx::PgPool;
 use uuid::Uuid;
 
 use crate::core::{bifrost::BifrostClient, letta::LettaClient};
 
 use super::db as bears_db;
+use super::model::{Bear, BearAgentRole};
 use super::runtime_plan::default_runtime_plan;
 use crate::errors::CustomError;
 
-/// When Letta is configured, create a Letta agent and store `letta_agent_id`. No-op if Letta disabled.
+/// When Letta is configured, create role-specific Letta agents and mirror the talk role to
+/// legacy `bears.letta_agent_id`. No-op if Letta disabled.
 pub async fn provision_bear_if_configured(
     pool: &PgPool,
     letta: &LettaClient,
@@ -24,10 +27,79 @@ pub async fn provision_bear_if_configured(
         .await?
         .ok_or_else(|| CustomError::NotFound("bear not found".to_string()))?;
 
-    if bear.letta_agent_id.is_some() {
+    provision_bear_roles(pool, letta, bifrost, &bear).await?;
+    bears_db::backfill_default_letta_agent_type(pool, bear_id, "letta_v1_agent").await?;
+    bears_db::ensure_default_runtime_plan(pool, bear_id, &default_runtime_plan()).await?;
+    bears_db::mirror_talk_agent_to_legacy_letta_agent_id(pool, bear_id).await?;
+    Ok(())
+}
+
+async fn provision_bear_roles(
+    pool: &PgPool,
+    letta: &LettaClient,
+    bifrost: &BifrostClient,
+    bear: &Bear,
+) -> Result<(), CustomError> {
+    bears_db::ensure_bear_agent_rows(pool, bear.id).await?;
+
+    for role in BearAgentRole::ALL {
+        provision_bear_role(pool, letta, bifrost, bear, role).await?;
+    }
+
+    Ok(())
+}
+
+async fn provision_bear_role(
+    pool: &PgPool,
+    letta: &LettaClient,
+    bifrost: &BifrostClient,
+    bear: &Bear,
+    role: BearAgentRole,
+) -> Result<(), CustomError> {
+    let existing = bears_db::get_bear_agent(pool, bear.id, role).await?;
+    if existing
+        .as_ref()
+        .and_then(|row| row.letta_agent_id.as_deref())
+        .is_some_and(|id| !id.trim().is_empty())
+        && existing
+            .as_ref()
+            .is_some_and(|row| row.last_provisioned_version >= bear.provisioning_version)
+    {
         return Ok(());
     }
 
+    bears_db::mark_bear_agent_provisioning(pool, bear.id, role).await?;
+
+    let result = create_role_agent(letta, bifrost, bear, role).await;
+    match result {
+        Ok(agent_id) => {
+            let config_hash = role_config_hash(bear, role);
+            bears_db::mark_bear_agent_ready(
+                pool,
+                bear.id,
+                role,
+                &agent_id,
+                bear.provisioning_version,
+                &config_hash,
+            )
+            .await?;
+            tracing::info!(bear_id = %bear.id, %agent_id, role = %role, "Letta role agent provisioned for bear");
+            Ok(())
+        }
+        Err(err) => {
+            let message = err.to_string();
+            bears_db::mark_bear_agent_failed(pool, bear.id, role, &message).await?;
+            Err(err)
+        }
+    }
+}
+
+async fn create_role_agent(
+    letta: &LettaClient,
+    bifrost: &BifrostClient,
+    bear: &Bear,
+    role: BearAgentRole,
+) -> Result<String, CustomError> {
     let model = bear
         .default_model
         .as_deref()
@@ -54,20 +126,64 @@ pub async fn provision_bear_if_configured(
         None
     };
 
-    let agent_id = letta
-        .create_agent(
-            bear.name.as_str(),
-            bear.system_prompt.as_str(),
+    let name = format!("{} ({})", bear.name, role.as_str());
+    let prompt = render_role_prompt(bear, role);
+    let tags = role.tags_for_bear(bear.id);
+
+    letta
+        .create_agent_with_tags(
+            name.as_str(),
+            prompt.as_str(),
             Some(model),
             context_window,
             Some(agent_type),
             &tool_ids,
+            &tags,
         )
-        .await?;
+        .await
+}
 
-    bears_db::set_letta_agent_id(pool, bear_id, &agent_id).await?;
-    bears_db::backfill_default_letta_agent_type(pool, bear_id, "letta_v1_agent").await?;
-    bears_db::ensure_default_runtime_plan(pool, bear_id, &default_runtime_plan()).await?;
-    tracing::info!(%bear_id, %agent_id, "Letta agent provisioned for bear");
-    Ok(())
+fn render_role_prompt(bear: &Bear, role: BearAgentRole) -> String {
+    let mut prompt = bear.system_prompt.trim().to_string();
+    if !prompt.is_empty() {
+        prompt.push_str("\n\n");
+    }
+    prompt.push_str("# BEARS role assignment\n");
+    prompt.push_str(&format!(
+        "You are the `{}` role agent for the logical Bear `{}`. \
+         Preserve the Bear identity while obeying this role boundary.\n",
+        role.as_str(), bear.name
+    ));
+    prompt.push_str(match role {
+        BearAgentRole::Talk => {
+            "Use conversational channels only. Read core/ and talk/; write only talk/. Use Den tools for task intents and skill proposals."
+        }
+        BearAgentRole::Pair => {
+            "Serve ACP clients. Read core/ and pair/; write only pair/. Client tools are user-gated through ACP. Use Den tools for task intents and skill proposals."
+        }
+        BearAgentRole::Curate => {
+            "Review branches, task intents, observations, results, and skill proposals. Write directly only to curate/ and core/. No external communication tools are allowed."
+        }
+        BearAgentRole::Work => {
+            "Execute approved outbound work through the Letta Code harness. Read only core/, the dispatched task definition, and work/. Write only work/. Obey Den-issued run context, allowed_tools, and scope."
+        }
+        BearAgentRole::Watch => {
+            "Record inbound external observations. Read only core/, delivered event payloads, and watch/. Write only watch/. No outbound action tools are allowed."
+        }
+    });
+    prompt
+}
+
+fn role_config_hash(bear: &Bear, role: BearAgentRole) -> serde_json::Value {
+    json!({
+        "schema_version": 1,
+        "role": role.as_str(),
+        "runtime_family": role.runtime_family(),
+        "bear_provisioning_version": bear.provisioning_version,
+        "tool_ids": bear.letta_tool_ids.0,
+        "prompt_strategy": "base_prompt_plus_role_suffix_v1",
+        "skills": {
+            "manifest_projection": "pending"
+        }
+    })
 }

@@ -13,5 +13,7 @@ pub mod sync;
 pub use letta_drift::{
     compute_letta_drift, compute_letta_drift_with_expected_tool_ids, LettaDriftFlags,
 };
-pub use model::{Bear, BearWithMembership};
+pub use model::{
+    Bear, BearAgent, BearAgentRole, BearSkillManifestEntry, BearSkillProposal, BearWithMembership,
+};
 pub use runtime_plan::{default_runtime_plan, effective_runtime_plan};

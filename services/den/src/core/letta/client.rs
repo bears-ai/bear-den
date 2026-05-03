@@ -176,6 +176,7 @@ impl LettaClient {
             agent_type,
             tool_ids,
             true,
+            &[],
         );
         let (status, text) = self.post_create_agent_raw(&body_with_git).await?;
 
@@ -196,6 +197,72 @@ impl LettaClient {
                 agent_type,
                 tool_ids,
                 false,
+                &[],
+            );
+            let (status2, text2) = self.post_create_agent_raw(&body_no_git).await?;
+            if status2.is_success() {
+                tracing::warn!(
+                    "Letta create agent succeeded without git_enabled/context metadata (server may not support these fields on this endpoint)"
+                );
+                return parse_create_agent_id(&text2);
+            }
+            return Err(CustomError::System(format!(
+                "Letta create agent HTTP {status2}: {text2}\n\
+                 (Earlier attempt with git_enabled/context metadata returned HTTP {status}: {text})"
+            )));
+        }
+
+        Err(CustomError::System(format!(
+            "Letta create agent HTTP {status}: {text}"
+        )))
+    }
+
+    pub async fn create_agent_with_tags(
+        &self,
+        name: &str,
+        system_prompt: &str,
+        model: Option<&str>,
+        context_window: Option<u32>,
+        agent_type: Option<&str>,
+        tool_ids: &[String],
+        tags: &[String],
+    ) -> Result<String, CustomError> {
+        if !self.is_enabled() {
+            return Err(CustomError::System(
+                "Letta is not configured (set LETTA_BASE_URL)".to_string(),
+            ));
+        }
+
+        let body_with_git = build_create_agent_body(
+            name,
+            system_prompt,
+            model,
+            context_window,
+            agent_type,
+            tool_ids,
+            true,
+            tags,
+        );
+        let (status, text) = self.post_create_agent_raw(&body_with_git).await?;
+
+        if status.is_success() {
+            return parse_create_agent_id(&text);
+        }
+
+        if letta_status_suggests_retry_without_git(status) {
+            tracing::warn!(
+                %status,
+                "Letta rejected POST /v1/agents with git_enabled/custom tags; retrying without git_enabled/context metadata"
+            );
+            let body_no_git = build_create_agent_body(
+                name,
+                system_prompt,
+                model,
+                None,
+                agent_type,
+                tool_ids,
+                false,
+                tags,
             );
             let (status2, text2) = self.post_create_agent_raw(&body_no_git).await?;
             if status2.is_success() {
@@ -849,18 +916,25 @@ fn build_create_agent_body(
     agent_type: Option<&str>,
     tool_ids: &[String],
     git_enabled: bool,
+    tags: &[String],
 ) -> serde_json::Map<String, serde_json::Value> {
     let mut body = serde_json::Map::new();
     body.insert("name".to_string(), json!(name));
     body.insert("system".to_string(), json!(system_prompt));
     body.insert("include_base_tools".to_string(), json!(false));
+    let mut effective_tags: Vec<String> = tags
+        .iter()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect();
     if git_enabled {
         body.insert("git_enabled".to_string(), json!(true));
-        // With self-hosted memfs, Letta Code expects git-backed agents (see `LETTA_MEMFS_SERVICE_URL` + MemFS Manager).
-        body.insert(
-            "tags".to_string(),
-            json!(vec!["git-memory-enabled".to_string()]),
-        );
+        effective_tags.push("git-memory-enabled".to_string());
+    }
+    effective_tags.sort();
+    effective_tags.dedup();
+    if !effective_tags.is_empty() {
+        body.insert("tags".to_string(), json!(effective_tags));
     }
     if let Some(m) = model.filter(|s| !s.is_empty()) {
         body.insert("model".to_string(), json!(m));
