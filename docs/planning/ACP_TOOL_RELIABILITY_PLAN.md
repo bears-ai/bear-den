@@ -135,6 +135,154 @@ Make ACP client-tool relay deliberately boring: Codepool is the only owner of li
 - New installations create then drop the obsolete table through migrations; existing installations drop it safely through the new migration.
 - Existing ACP tool result responses still expose `delivered`, `reason`, and `runtime_id` diagnostics from Codepool.
 
+## Prioritized future improvement plan
+
+The boring waiter simplification makes Codepool the single owner of live ACP client-tool waiters and keeps Den stateless. Future ACP reliability work should focus on lifecycle cleanup and observability rather than reintroducing durable Den-side pending-call state.
+
+### Priority 1: Bulk waiter cleanup by request/session
+
+Goal: prevent orphaned waiters when the active stream, request, or session lifecycle ends before a tool result arrives.
+
+Tasks:
+
+- Add `AcpToolResultRegistry` helpers:
+  - `cancelWaitersForRequest(sessionId, requestId, message)`
+  - `cancelWaitersForSession(sessionId, message)`
+  - optionally `listWaitersForRequest(sessionId, requestId)`
+- Use these helpers from Codepool when:
+  - the HTTP request closes
+  - the SSE response errors
+  - the stream handler exits abnormally
+  - Codepool receives a session cancellation request
+  - Codepool closes/tears down a channel session
+- Resolve these waiters as normal `cancelled` or `error` payloads rather than leaving them to timeout.
+- Add tests for request-close and session-cancel cleanup.
+
+Acceptance:
+
+- A disconnected ACP client does not leave waiters pending until timeout.
+- Cancelling an ACP session resolves all active tool waiters for that session.
+- Waiter cleanup logs include session id, request id, call id count, and reason.
+
+### Priority 2: Short-lived recently-settled waiter cache
+
+Goal: make late, duplicate, or retried tool results diagnosable after the live waiter is gone.
+
+Tasks:
+
+- Add a small in-memory TTL/LRU cache of recently settled waiter keys.
+- Record settled metadata for a few minutes after `ok`, `error`, `cancelled`, or `timeout`:
+  - session id
+  - request id
+  - call id
+  - tool name
+  - final status
+  - settled timestamp
+  - timeout vs explicit result/cancel
+- Extend `deliverResult(...)` delivery reasons where possible:
+  - `delivered`
+  - `no_waiter`
+  - `already_settled`
+  - `expired_recently`
+- Include the richer reason in Codepool logs and Den result responses.
+- Add tests for duplicate result after success and late result after timeout.
+
+Acceptance:
+
+- A duplicate result immediately after success is distinguishable from a result for an unknown call.
+- A result arriving shortly after timeout is visible as recently expired/settled.
+- The cache remains bounded by size and TTL.
+
+### Priority 3: ACP client-tool metrics
+
+Goal: make ACP reliability visible without log archaeology.
+
+Tasks:
+
+- Add Prometheus metrics for:
+  - `acp_client_tool_requests_total{tool,status}`
+  - `acp_client_tool_wait_duration_seconds{tool,status}`
+  - `acp_client_tool_timeouts_total{tool}`
+  - `acp_client_tool_cancellations_total{tool}`
+  - `acp_client_tool_no_waiter_results_total{reason}`
+  - `acp_client_tool_pending_waiters`
+- Record wait duration from waiter creation to settlement.
+- Expose pending waiter gauge from the registry.
+- Add dashboard/runbook notes once production metric names stabilize.
+
+Acceptance:
+
+- We can tell whether failures are timeouts, cancellations, no-waiter results, or Codepool forwarding failures.
+- We can see which ACP tools are slow or unreliable.
+- Pending waiter count is observable during active ACP sessions.
+
+### Priority 4: Stronger Codepool result validation
+
+Goal: keep Den stateless while validating results at the live waiter owner.
+
+Tasks:
+
+- Compare optional result `tool_name` against waiter metadata and log/reject mismatches.
+- Compare optional `conversation_id` against waiter metadata and log mismatches.
+- Add result-size validation and clearer errors for oversized payloads.
+- Keep Den's role limited to auth, session binding, shape validation, and forwarding.
+
+Acceptance:
+
+- Incorrect `tool_name` or `conversation_id` cannot silently resolve the wrong waiter.
+- Oversized or malformed tool results get clear diagnostics.
+
+### Priority 5: Per-tool timeout policy
+
+Goal: avoid forcing every ACP client tool into one global timeout.
+
+Tasks:
+
+- Allow descriptor-level timeout defaults.
+- Keep `ACP_CLIENT_TOOL_TIMEOUT_MS` as a global default or cap.
+- Add per-tool timeout overrides for likely future tool classes:
+  - file read/write
+  - search
+  - terminal or long-running tools
+- Include timeout policy in logs and waiter metadata.
+
+Acceptance:
+
+- Fast tools retain short timeouts.
+- Future slower tools can have explicit longer timeouts without weakening all tools.
+
+### Priority 6: Adapter retry policy for result delivery
+
+Goal: prevent blind retries and make adapter behavior match Codepool/Den result reasons.
+
+Tasks:
+
+- Treat `delivered: true` as final success.
+- Treat `delivered: false, reason: "no_waiter"` or future `already_settled` as non-retryable.
+- Treat `codepool_forward_error` as potentially retryable with bounded backoff.
+- Treat auth errors and session-not-found errors as non-retryable.
+- Log retry decisions with request id and call id.
+
+Acceptance:
+
+- The adapter does not create retry storms for stale/no-waiter results.
+- Transient Den-to-Codepool failures can still be retried safely.
+
+### Priority 7: Client-visible cancellation/expiry events
+
+Goal: help ACP clients abandon local work when Codepool no longer needs a tool result.
+
+Tasks:
+
+- Investigate whether the ACP stream can express tool cancellation or expiry events naturally.
+- If protocol-compatible, emit events such as `client_tool_cancelled` or `client_tool_expired` when Codepool cancels waiters.
+- If not protocol-compatible, keep this as logging/diagnostics only.
+
+Acceptance:
+
+- The adapter/client can stop unnecessary local work where the protocol allows it.
+- No custom event is introduced unless clients can safely ignore or support it.
+
 ## Progress log
 
 - Completed boring waiter simplification pass:
