@@ -1188,6 +1188,61 @@ mod tests {
     use super::*;
 
     #[test]
+    fn build_create_agent_body_merges_custom_tags_with_git_tag() {
+        let body = build_create_agent_body(
+            "Bear (work)",
+            "system",
+            Some("openai/gpt-4o"),
+            Some(128000),
+            Some("letta_v1_agent"),
+            &["tool-1".to_string()],
+            true,
+            &[
+                "bear:00000000-0000-0000-0000-000000000123".to_string(),
+                "role:work".to_string(),
+                "git-memory-enabled".to_string(),
+                " ".to_string(),
+            ],
+        );
+
+        let tags = body
+            .get("tags")
+            .and_then(|v| v.as_array())
+            .expect("tags array");
+        let tags: Vec<_> = tags.iter().filter_map(|v| v.as_str()).collect();
+        assert!(tags.contains(&"bear:00000000-0000-0000-0000-000000000123"));
+        assert!(tags.contains(&"role:work"));
+        assert!(tags.contains(&"git-memory-enabled"));
+        assert_eq!(
+            tags.iter()
+                .filter(|tag| **tag == "git-memory-enabled")
+                .count(),
+            1
+        );
+        assert_eq!(body.get("git_enabled"), Some(&serde_json::json!(true)));
+    }
+
+    #[test]
+    fn build_create_agent_body_keeps_custom_tags_when_git_disabled() {
+        let body = build_create_agent_body(
+            "Bear (pair)",
+            "system",
+            None,
+            None,
+            None,
+            &[],
+            false,
+            &["role:pair".to_string()],
+        );
+        let tags = body
+            .get("tags")
+            .and_then(|v| v.as_array())
+            .expect("tags array");
+        assert_eq!(tags, &vec![serde_json::json!("role:pair")]);
+        assert!(body.get("git_enabled").is_none());
+    }
+
+    #[test]
     fn parse_models_accepts_top_level_array() {
         let v = serde_json::json!([
             {"handle": "openai/gpt-4o", "display_name": "GPT-4o", "model_type": "llm"},

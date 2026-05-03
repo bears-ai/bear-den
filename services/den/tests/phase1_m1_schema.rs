@@ -172,6 +172,71 @@ async fn m1c_bears_letta_sync_columns_exist() {
 }
 
 #[tokio::test]
+async fn multi_agent_tables_columns_and_role_constraints_exist() {
+    dotenvy::dotenv().ok();
+    let url = std::env::var("DATABASE_URL").expect("DATABASE_URL for integration test");
+    let pool = PgPoolOptions::new()
+        .max_connections(2)
+        .connect(&url)
+        .await
+        .expect("connect postgres");
+
+    apply_migrations(&pool).await;
+
+    for table in [
+        "bear_agents",
+        "bear_skills_manifest",
+        "bear_skill_proposals",
+        "bear_subscriptions",
+    ] {
+        let n: i64 = sqlx::query_scalar(
+            r#"
+            SELECT COUNT(*)::bigint
+            FROM information_schema.tables
+            WHERE table_schema = 'public'
+              AND table_name = $1
+            "#,
+        )
+        .bind(table)
+        .fetch_one(&pool)
+        .await
+        .expect("information_schema query");
+        assert_eq!(n, 1, "missing table {table}");
+    }
+
+    let bear_cols: i64 = sqlx::query_scalar(
+        r#"
+        SELECT COUNT(*)::bigint
+        FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND table_name = 'bears'
+          AND column_name IN ('memfs_repo_path', 'provisioning_version')
+        "#,
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("information_schema query");
+    assert_eq!(bear_cols, 2, "bears missing multi-agent columns");
+
+    let role_check: String = sqlx::query_scalar(
+        r#"
+        SELECT pg_get_constraintdef(c.oid)
+        FROM pg_constraint c
+        INNER JOIN pg_class t ON t.oid = c.conrelid
+        WHERE t.relname = 'bear_agents'
+          AND c.contype = 'c'
+          AND pg_get_constraintdef(c.oid) LIKE '%watch%'
+        LIMIT 1
+        "#,
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("bear_agents role check");
+    assert!(role_check.contains("talk"));
+    assert!(role_check.contains("watch"));
+}
+
+#[tokio::test]
 async fn m1d_bears_runtime_plan_column_exists() {
     dotenvy::dotenv().ok();
     let url = std::env::var("DATABASE_URL").expect("DATABASE_URL for integration test");

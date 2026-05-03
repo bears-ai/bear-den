@@ -161,3 +161,40 @@ pub struct BearSkillProposal {
     pub resulting_manifest_skill_version: Option<String>,
     pub updated_at: OffsetDateTime,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn role_parse_and_display_round_trip() {
+        for role in BearAgentRole::ALL {
+            let parsed: BearAgentRole = role.as_str().parse().expect("role parses");
+            assert_eq!(parsed, role);
+            assert_eq!(role.to_string(), role.as_str());
+        }
+        assert!("unknown".parse::<BearAgentRole>().is_err());
+    }
+
+    #[test]
+    fn role_runtime_family_matches_harness_design() {
+        assert!(BearAgentRole::Talk.is_harness_backed());
+        assert!(BearAgentRole::Work.is_harness_backed());
+        assert!(!BearAgentRole::Pair.is_harness_backed());
+        assert!(!BearAgentRole::Curate.is_harness_backed());
+        assert!(!BearAgentRole::Watch.is_harness_backed());
+        assert_eq!(BearAgentRole::Talk.runtime_family(), "letta_code_harness");
+        assert_eq!(BearAgentRole::Work.runtime_family(), "letta_code_harness");
+        assert_eq!(BearAgentRole::Pair.runtime_family(), "letta_api_direct");
+    }
+
+    #[test]
+    fn role_tags_include_bear_role_and_git_memory() {
+        let bear_id = Uuid::parse_str("00000000-0000-0000-0000-000000000123").unwrap();
+        let tags = BearAgentRole::Work.tags_for_bear(bear_id);
+        assert!(tags.contains(&format!("bear:{bear_id}")));
+        assert!(tags.contains(&"role:work".to_string()));
+        assert!(tags.contains(&format!("bear:{bear_id}:role:work")));
+        assert!(tags.contains(&"git-memory-enabled".to_string()));
+    }
+}
