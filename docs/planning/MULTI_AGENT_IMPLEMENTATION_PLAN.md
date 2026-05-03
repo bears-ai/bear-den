@@ -36,14 +36,14 @@ Each phase has explicit acceptance criteria. Phases are ordered for safe increme
    - System prompt template. Decide whether the five agents share a base prompt with role-specific suffixes, or have fully distinct prompts. Recommendation: shared base, distinct role suffixes.
    - Skill roster and the per-role applicability matrix (see task 2 below). Coding skills typically apply to talk and pair; reflection skills are curate-only; integration tools (HTTP clients, posting tools, etc.) are work-only; subscription handlers and stream parsers are watch-only; some user-preference and company-convention skills apply to all roles.
    - MemFS directory layout (see phase 2).
-2. **Skill management design.** Skills are managed by Den as Bear-scoped resources with per-role applicability. Letta Code's filesystem-based skill discovery (`.skills/`, `.agents/skills/`) only applies to the talk agent's harness; the other four agents are Letta-API-direct and receive skills through the Letta API. These two installation mechanisms are different, and we manage both from a single canonical source rather than treating them uniformly.
+2. **Skill management design.** Skills are managed by Den as Bear-scoped resources with per-role applicability. Letta Code's filesystem-based skill discovery (`.skills/`, `.agents/skills/`) applies to harness-backed agents (`talk` and `work`); API-direct agents (`pair`, `curate`, `watch`) receive skills through the Letta API. These two installation mechanisms are different, and we manage both from a single canonical source rather than treating them uniformly.
    - **Manifest model.** Den maintains a `bear_skills_manifest` table per Bear. Each row records a skill (name, version, source URL or path, content hash) and the set of roles to which it applies. The manifest is the source of truth; both installation mechanisms are projections of it.
    - **Two installation paths:**
-     - For the **talk agent**, Den writes the agent-scoped skills to `~/.letta/agents/{talk_agent_id}/skills/` on the harness host before the harness starts (or restarts the harness on manifest change). Letta Code's loader picks them up at startup.
-     - For **pair, curate, work, and watch**, Den uses the Letta API to attach skills directly to each agent. Skill records live server-side on the Letta agent.
-   - **No skills in MemFS.** The earlier proposal to store skills under `core/.skills/` or `<agent>/.skills/` is rejected. Filesystem-based skill discovery via MemFS would only work for the talk agent's harness; the other four agents wouldn't see them. The manifest design works uniformly across all five and avoids the legacy `.skills/` location.
-   - **Agent-driven skill learning is curate-mediated.** When any agent uses `/skill` (or its equivalent), the proposed skill is captured by Den and queued as a *skill proposal* for the curate agent to review during its next cycle (parallel to how task intents are reviewed). On approval, curate updates the manifest; on rejection, the proposal is closed with a reason. Channel agents and the work agent do not get raw, in-place skill installation tools — those are replaced (or wrapped) with proposal-writing tools.
-   - **Reconciliation.** `reconcile_bear` validates each agent's actual installed skills against the manifest's role-relevant slice and corrects drift (re-install missing, remove extra). Drift detection mechanism differs per agent (filesystem listing for talk, Letta API listing for the others) but the canonical comparison is always against the manifest.
+     - For the **talk and work agents**, Den writes the agent-scoped skills to `~/.letta/agents/{agent_id}/skills/` on the harness host before the harness starts (or restarts the harness on manifest change). Letta Code's loader picks them up at startup.
+     - For **pair, curate, and watch**, Den uses the Letta API to attach skills directly to each agent. Skill records live server-side on the Letta agent.
+   - **No skills in MemFS.** The earlier proposal to store skills under `core/.skills/` or `<agent>/.skills/` is rejected. Filesystem-based skill discovery via MemFS would only work for harness-backed agents; API-direct agents wouldn't see them. The manifest design works uniformly across all five and avoids the legacy `.skills/` location.
+   - **Agent-driven skill learning is curate-mediated.** When any agent uses `/skill` (or its equivalent), the proposed skill is captured by Den and queued as a *skill proposal* for the curate agent to review during its next cycle (parallel to how task intents are reviewed). On approval, curate updates the manifest; on rejection, the proposal is closed with a reason. Channel and work agents do not get raw, in-place skill installation tools — those are replaced (or wrapped) with proposal-writing tools.
+   - **Reconciliation.** `reconcile_bear` validates each agent's actual installed skills against the manifest's role-relevant slice and corrects drift (re-install missing, remove extra). Drift detection mechanism differs per agent (filesystem listing for harness-backed talk/work, Letta API listing for API-direct pair/curate/watch) but the canonical comparison is always against the manifest.
 3. Define the Bear data model in Den's database:
    ```
    bears
@@ -165,22 +165,22 @@ Each phase has explicit acceptance criteria. Phases are ordered for safe increme
 1. Implement provisioning per role. For each role:
    - Create the Letta agent with the role's tool profile, system prompt, and `git-memory-enabled` tag.
    - Configure MemFS to point at the Bear's bare repo on the correct branch.
-   - Apply the role's skill roster from the manifest. For the talk agent, write the role-relevant skills to `~/.letta/agents/{talk_agent_id}/skills/` on the harness host. For the other four agents, attach skills via the Letta API.
+   - Apply the role's skill roster from the manifest. For harness-backed agents (`talk`, `work`), write the role-relevant skills to `~/.letta/agents/{agent_id}/skills/` on the harness host. For API-direct agents (`pair`, `curate`, `watch`), attach skills via the Letta API.
    - Tag with `bear:<id>` and `role:<role>` for discovery.
 2. Implement drift detection in `reconcile_bear`:
    - Tool roster: list attached tools on the agent, diff against canonical.
    - System prompt: hash compare.
    - Skills: compare actual installed skills against the manifest's role-relevant slice.
-     - For talk: list files in `~/.letta/agents/{talk_agent_id}/skills/`, compute hashes, diff.
-     - For pair, curate, work, watch: list skills via Letta API, diff.
+     - For talk and work: list files in `~/.letta/agents/{agent_id}/skills/`, compute hashes, diff.
+     - For pair, curate, watch: list skills via Letta API, diff.
    - MemFS branch: confirm the agent is configured against the right branch.
-3. Implement drift correction. Order matters: detach removed tools before attaching new ones; install missing skills before removing extras (so the agent always has at least the manifest's set during reconciliation); update prompt last (so any in-flight turn finishes on the old config rather than mid-mutation). For the talk agent, restart the harness if skills changed (Letta Code's loader runs at startup).
+3. Implement drift correction. Order matters: detach removed tools before attaching new ones; install missing skills before removing extras (so the agent always has at least the manifest's set during reconciliation); update prompt last (so any in-flight turn finishes on the old config rather than mid-mutation). For harness-backed agents (`talk`, `work`), restart the role harness if skills changed (Letta Code's loader runs at startup).
 
 ### Acceptance
 
 - `provision_bear` on a fresh Bear produces five correctly configured agents.
 - `reconcile_bear` detects each implemented kind of drift in isolation (tool added, tool removed, prompt edited, skill added, skill removed, runtime policy/config hash mismatch) and corrects it.
-- A skill removed from an agent's filesystem (talk) or detached via the Letta API (other agents) is re-installed by `reconcile_bear` per the manifest.
+- A skill removed from an agent's filesystem (`talk` or `work`) or detached via the Letta API (`pair`, `curate`, `watch`) is re-installed by `reconcile_bear` per the manifest.
 - A skill added out-of-band (not in the manifest) is removed by `reconcile_bear`.
 - Re-running `provision_bear` on an already-provisioned Bear is a no-op (idempotent).
 
@@ -321,7 +321,7 @@ Each phase has explicit acceptance criteria. Phases are ordered for safe increme
    - Generate a `run_id`.
    - If `risk: high`, enqueue in the human-in-the-loop approval queue. Block dispatch until approved or rejected. Surface in the management UI per phase 9.
    - On approval (or for `risk: low`), construct a structured prompt for the work agent containing the task definition, run ID, and any input parameters.
-   - Send the prompt to the work agent via Letta API. Use a fresh Letta Conversation per run (to keep run histories isolated; the work agent's persistent memory still tracks higher-level patterns).
+   - Dispatch the prompt to the work agent through its Letta Code harness. Den controls dispatch concurrency so the work harness processes one task at a time; use a fresh run/session context per task run where the harness supports it.
    - Wait for completion (with a timeout per task type). On completion, the work agent will have written `work/results/<task-id>/<run-id>.md`.
 4. Implement rate limiting:
    - Per-Bear limit on outbound HTTP requests per minute.
@@ -348,7 +348,7 @@ Each phase has explicit acceptance criteria. Phases are ordered for safe increme
 
 ### Tasks
 
-1. Implement the work agent's tool profile per `bear-spec.md`. Includes HTTP client, third-party API tools (Slack post, GitHub, etc.), result writer. **No tools that read `talk/`, `pair/`, or `curate/` branches.** Den enforces this by attaching only the approved set.
+1. Implement the work agent's Letta Code harness profile per `bear-spec.md`. Includes approved integration tools (HTTP client, Slack post, GitHub, etc.) and result writer. **No tools that read `talk/`, `pair/`, `curate/`, or `watch` branches.** Den enforces this by harness configuration, Den policy wrappers, and network/filesystem sandboxing.
 2. Implement the work agent's MemFS configuration:
    - Worktree on the `work` branch.
    - Read-only mount of `core/` so the work agent can consult curated context (prefs, project info) when executing tasks.
@@ -364,13 +364,15 @@ Each phase has explicit acceptance criteria. Phases are ordered for safe increme
    Use only the tools listed in `allowed_tools`.
    ```
 4. Implement result writing. The work agent must:
-   - Call privileged Den tooling to write a result file matching [`../architecture/tasks-schema.md`](../architecture/tasks-schema.md).
+   - Call privileged Den tooling from the Letta Code harness to write a result file matching [`../architecture/tasks-schema.md`](../architecture/tasks-schema.md).
    - Commit and push through the validated result-writing path.
    - Return a short summary in its response to Den (so Den can log without re-reading the file).
-5. Implement sandboxing. The work agent should run with:
+5. Implement sandboxing. The work Letta Code harness should run with:
    - Network egress filtered to allowed destinations (HTTP allowlist enforced at network layer, not just at agent layer).
    - No access to other Bears' MemFS repos (already enforced by sidecar auth, but verify).
-   - Read-only on its own filesystem outside the worktree.
+   - No read access to `talk/`, `pair/`, `curate/`, or `watch` worktrees/branches.
+   - Read-only on its own filesystem outside the worktree and Den-managed harness skill directory.
+   - Broad harness tools (shell/filesystem/network) disabled, wrapped, or constrained so they cannot bypass Den-issued `allowed_tools` and `scope`.
 6. Implement observability:
    - Every HTTP call from the work agent is logged with destination, method, status code, byte counts.
    - Every result file is checksummed and indexed.
@@ -389,11 +391,11 @@ Each phase has explicit acceptance criteria. Phases are ordered for safe increme
 
 ## Phase 8.5 — Documentation and operator UI: retire implicit 1:1 bear ↔ Letta agent
 
-**Goal:** Every human-facing document, operator template, and user-visible error string reflects that a **bear** is a **logical assistant** (one coherent product identity) backed by **one or more Letta agents** with explicit **roles** (`talk` \| `pair` \| `curate` \| `work` per the [`multi-agent-architecture` ADR](../architecture/adr/multi-agent-architecture.md)). Legacy `bears.letta_agent_id` remains valid only as a **transitional** or **migration** concept until Phase 10 completes; it must not be the only story in UI or docs.
+**Goal:** Every human-facing document, operator template, and user-visible error string reflects that a **bear** is a **logical assistant** (one coherent product identity) backed by **one or more Letta agents** with explicit **roles** (`talk` \| `pair` \| `curate` \| `work` \| `watch` per the [`multi-agent-architecture` ADR](../architecture/adr/multi-agent-architecture.md)). Legacy `bears.letta_agent_id` remains valid only as a **transitional** or **migration** concept until Phase 10 completes; it must not be the only story in UI or docs.
 
 **Prerequisite:** `bear_agents` (or equivalent) exists and at least the **talk** row is populated for newly provisioned bears (Phases 0–3). Work can **start in parallel with Phase 4+** once that is true.
 
-**Ordering:** Baseline doc + list/detail/harness template updates from this phase **must ship before Phase 11 cutover** so no production operator relies on obsolete 1:1 copy. **Phase 9** advanced views (unified timeline, MemFS browser, HITL) **assume** this phase has updated the **bear list**, **bear detail**, **create/link bear**, and **Letta Code harness** surfaces so they already speak in roles or show the quartet.
+**Ordering:** Baseline doc + list/detail/harness template updates from this phase **must ship before Phase 11 cutover** so no production operator relies on obsolete 1:1 copy. **Phase 9** advanced views (unified timeline, MemFS browser, HITL, skills, watch) **assume** this phase has updated the **bear list**, **bear detail**, **create/link bear**, and **Letta Code harness** surfaces so they already speak in roles or show the five-role cluster / partial provisioning state.
 
 ### Tasks — documentation
 
@@ -412,9 +414,9 @@ Audit and update so operators **never** see a bare `letta_agent_id` without **ro
 
 | Area | Indicative paths | Expected change |
 |------|------------------|-----------------|
-| Admin bear list | `services/den/src/web/templates/admin/bears/list.html` | Replace a single “Letta id” column with **roles** (e.g. talk / pair / curate / work), **partial** provisioning, or **legacy single-agent** badge. |
+| Admin bear list | `services/den/src/web/templates/admin/bears/list.html` | Replace a single “Letta id” column with **roles** (talk / pair / curate / work / watch), **partial** provisioning, or **legacy single-agent** badge. |
 | Admin bear detail | `services/den/src/web/templates/admin/bears/detail.html` | Per-role Letta summary (or tabs); SSE / API hints must name **talk** agent, not a generic “the agent”. |
-| Create / attach bear | `admin/bears/new.html`, `bear/new.html` | Copy for **attach existing Letta agent**: clarify **legacy single-agent link** vs **quartet** provision; forms may need role-specific attach later. |
+| Create / attach bear | `admin/bears/new.html`, `bear/new.html` | Copy for **attach existing Letta agent**: clarify **legacy single-agent link** vs **multi-role cluster** provision; forms may need role-specific attach later. |
 | Letta Code harness admin | `admin/letta_code_harness.html` | Rows or copy must not assume one Letta row per bear without role. |
 | Unlinked Letta agents | `admin/bears/unlinked_letta_agents.html` | Consider ids referenced only in **`bear_agents`** as linked; not only `bears.letta_agent_id`. |
 | End-user bear pages | `bear/details.html`, `bear/memory.html`, `bear/edit_configuration.html` | Diagnostics: show **which** Letta agent is summarized (default **talk** for operator/e2e “bear health”). |

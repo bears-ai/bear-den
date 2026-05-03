@@ -31,13 +31,31 @@ A **Bear** is a logical agent identity from the user's perspective — one coher
 
 Every Bear consists of:
 
-- **talk agent** — Backs Letta Code-based conversational channels (Slack, web chat, Discord). Runs behind a Letta Code harness. Tool profile suited to text-in / text-out interaction with optional tool calls executed on the harness server. Holds: private data, durable state (own memory branch). No external comms beyond the channel itself.
-- **pair agent** — Backs ACP-direct connections from client-side tools (IDEs, Cowork, Figma plugins, future ACP-speaking apps). Implemented as a Letta-API client that speaks ACP; no Letta Code harness involved. Tool execution forwarded to the client via ACP's native tool-call and `session/request_permission` flow. Holds: private data, durable state (own memory branch). External effects only via the client tool, gated by user approval per call.
-- **curate agent** — Handles reflection, defragmentation, cross-branch memory integration, approval of work-task intents, review of skill proposals, review of watch observations, and promotion of work results into shared memory. Server-orchestrated, never user-facing. Has read access to all branches; sole writer to `core/`. Holds: private data (broad — sees everything across the Bear), durable state (writes `core/`, which influences every other agent's system prompt). **No external comms by design.**
-- **work agent** — Executes scheduled or event-triggered tasks against external systems (APIs, services, long-running research). Reads only from `core/` and from explicit task definitions Den hands it. **Does not read `talk/`, `pair/`, or `watch/` branches.** Holds: outbound external comms, durable state (own memory branch). Sees only curated, post-curate-review private data.
-- **watch agent** — Holds open subscriptions to external streams (webhooks, polling, message queues) and writes structured observation files to its branch when subscriptions fire. The inbound counterpart to the work agent. Reads only from `core/`. **Does not read `talk/`, `pair/`, `curate/`, or `work/` branches. Has no outbound action capability** — observations are written locally and surfaced to curate, not pushed anywhere. Holds: inbound external comms, durable state (own memory branch).
+- **talk agent** — Backs Letta Code-based conversational channels (Slack, web chat, Discord). **Runs behind a Letta Code harness.** Tool profile suited to text-in / text-out interaction with optional tool calls executed on the harness server. Holds: private data, durable state (own memory branch). No external comms beyond the channel itself.
+- **pair agent** — Backs ACP-direct connections from client-side tools (IDEs, Cowork, Figma plugins, future ACP-speaking apps). **Implemented as a Letta-API-direct client that speaks ACP; no Letta Code harness involved** — the harness's single-session state model is incompatible with ACP's multi-session-per-connection design. Tool execution forwarded to the client via ACP's native tool-call and `session/request_permission` flow. Holds: private data, durable state (own memory branch). External effects only via the client tool, gated by user approval per call.
+- **curate agent** — Handles reflection, defragmentation, cross-branch memory integration, approval of work-task intents, review of skill proposals, review of watch observations, and promotion of work results into shared memory. Server-orchestrated, never user-facing. **Implemented as a Letta-API-direct agent driven by a Den-side cycle runner** — its job calls for a deliberately narrow tool roster, multi-branch read access, and tight cycle control, all of which are friction against Letta Code's defaults. Has read access to all branches; sole writer to `core/`. Holds: private data (broad — sees everything across the Bear), durable state (writes `core/`, which influences every other agent's system prompt). **No external comms by design.**
+- **work agent** — Executes scheduled or event-triggered tasks against external systems (APIs, services, long-running research). **Runs behind a Letta Code harness** — its job is structured tool execution, which is exactly what Letta Code provides; the concurrency constraint that drives `pair` to API-direct does not apply, since Den controls dispatch and the work agent processes one task at a time. Reads only from `core/` and from explicit task definitions Den hands it. **Does not read `talk/`, `pair/`, or `watch/` branches.** Holds: outbound external comms, durable state (own memory branch). Sees only curated, post-curate-review private data.
+- **watch agent** — Holds open subscriptions to external streams (webhooks, polling, message queues) and writes structured observation files to its branch when subscriptions fire. The inbound counterpart to the work agent. **Implemented as a Letta-API-direct agent** — the job is a thin event-reception loop that does not benefit from the harness's tool execution surface, and giving watch shell or filesystem access (which the harness provides by default) would broaden its trust position. Reads only from `core/`. **Does not read `talk/`, `pair/`, `curate/`, or `work/` branches. Has no outbound action capability** — observations are written locally and surfaced to curate, not pushed anywhere. Holds: inbound external comms, durable state (own memory branch).
 
 Each agent has its own tool profile. Prompts, skills, and memory are shared via Den-managed sync.
+
+### 2a. Harness choice rule
+
+The five agents split cleanly into two harness families. The rule:
+
+> **Letta Code** is for agents whose job is "execute tools to help with a task" — they want the full tool surface (Bash, Read, Write, Edit, Task subagents, skills loader) and have no structural reason to avoid it.
+>
+> **Letta-API-direct** is for agents whose job is structurally narrower — protocol mediation (`pair`), event reception (`watch`), or controlled review and integration (`curate`). API-direct lets us attach exactly the tool roster the role requires and nothing else.
+
+| Agent | Harness | Rationale |
+|---|---|---|
+| `talk` | Letta Code | Full tool surface wanted; conversational channels are Letta Code's native domain. |
+| `pair` | API-direct | ACP's multi-session-per-connection model is incompatible with the harness's single-session state. |
+| `curate` | API-direct | Narrow tool roster; multi-branch read access is a custom requirement; harness defaults would have to be stripped on every upstream change. |
+| `work` | Letta Code | Tool execution is the job; Den controls dispatch so concurrency doesn't bite. |
+| `watch` | API-direct | Thin event-reception loop; should not have shell/filesystem access by default. |
+
+This rule resolves prospectively: if a sixth agent type is ever proposed, the question "does its job want the full Letta Code tool surface?" determines its harness.
 
 ### 3. Trust boundaries and the lethal trifecta
 
@@ -129,16 +147,19 @@ This pipeline ensures that no inbound external payload reaches the work agent wi
 
 Den must:
 
-- Provision the five agents per Bear with their correct tool profiles, system prompts, runtime policy, and skill rosters per the manifest (§8).
+- Provision the five agents per Bear with their correct tool profiles, system prompts, runtime policy, harness choice (per §2a), and skill rosters per the manifest (§8).
 - Detect and reconcile drift in tool/prompt/runtime policy/skill state across the five agents within a Bear.
 - Run the MemFS sidecar; own conflict resolution policy.
+- Run Letta Code harnesses for the talk and work agents; manage their lifecycle, working directories, and per-agent skill directories.
+- Run the cycle runner for the curate agent: fetch peer branches before each cycle, construct the curate prompt, drive the Letta API stream, execute curate's privileged tool calls (task-intent approval/rejection, skill-proposal approval, etc.), record cycle metadata.
+- Run the event-reception loop for the watch agent: receive validated webhook payloads or polling results, route them to watch via the Letta API, persist observation commits.
 - Trigger curate cycles on appropriate cadence (idle detection, message-count thresholds, pending-intent/observation/result/proposal triggers, manual trigger).
-- Manage the work-task queue: pick up approved tasks from `core/tasks/`, dispatch to the work agent on schedule, log results.
-- Manage the watch subscription registry: register approved subscriptions, run polling jobs, route inbound events to the watch agent.
+- Manage the work-task queue: pick up approved tasks from `core/tasks/`, dispatch to the work agent's harness on schedule, log results.
+- Manage the watch subscription registry: register approved subscriptions, run polling jobs, validate inbound webhook signatures, route events to the watch agent.
 - Implement the human-in-the-loop approval queue for high-risk work-task runs.
-- Rate-limit the work agent's external calls; alert on novel destinations or unusually high volume. Validate inbound webhook signatures before routing payloads to the watch agent.
-- Maintain the skill manifest: install per-role skills via filesystem (talk) or Letta API (other roles); receive and queue skill proposals from agents for curate review.
-- Route ACP traffic to the pair agent.
+- Rate-limit the work agent's external calls; alert on novel destinations or unusually high volume.
+- Maintain the skill manifest: install per-role skills via filesystem (talk and work harnesses) or Letta API (pair, curate, watch); receive and queue skill proposals from agents for curate review.
+- Route ACP traffic to the pair agent's API-direct adapter.
 - Route Slack and web-chat traffic to the talk agent via its Letta Code harness.
 
 ### 7. Conversations are agent-locked
@@ -147,14 +168,14 @@ Conversation history is not shared across the agents within a Bear. Cross-channe
 
 ### 8. Skill management
 
-Skills are managed by Den as Bear-scoped resources with per-role applicability. Letta Code's filesystem-based skill discovery (`.skills/`, `.agents/skills/`) only applies to the talk agent's harness; the other four agents are Letta-API-direct and receive skills through the Letta API. These two installation mechanisms are different, and we manage both from a single canonical source.
+Skills are managed by Den as Bear-scoped resources with per-role applicability. Letta Code's filesystem-based skill discovery (`.skills/`, `.agents/skills/`) applies to the agents that run behind a harness (`talk` and `work`); the API-direct agents (`pair`, `curate`, `watch`) receive skills through the Letta API. These two installation mechanisms are different, and we manage both from a single canonical source.
 
 - **Manifest model.** Den maintains a per-Bear skill manifest. Each entry records a skill (name, version, source, content hash) and the set of roles to which it applies. The manifest is the source of truth; both installation mechanisms are projections of it.
-- **Two installation paths.** For the **talk agent**, Den writes role-relevant skills to `~/.letta/agents/{talk_agent_id}/skills/` on the harness host. For **pair, curate, work, and watch**, Den uses the Letta API to attach skills directly to each agent.
-- **No skills in MemFS.** An earlier proposal to store skills under `core/.skills/` was rejected: filesystem-based skill discovery via MemFS would only work for the talk agent's harness; the other four agents wouldn't see them. The manifest design works uniformly across all five.
+- **Two installation paths.** For the **talk and work agents**, Den writes role-relevant skills to `~/.letta/agents/{agent_id}/skills/` on the harness host. For **pair, curate, and watch**, Den uses the Letta API to attach skills directly to each agent.
+- **No skills in MemFS.** An earlier proposal to store skills under `core/.skills/` was rejected: filesystem-based skill discovery via MemFS would only work for the harness-backed agents; the API-direct agents wouldn't see them. The manifest design works uniformly across all five.
 - **Per-role applicability.** Skills are not necessarily uniform across agents. Coding skills typically apply to talk and pair; reflection skills to curate; integration tools to work; subscription handlers to watch. Some skills (user preferences, company conventions) apply broadly. The manifest's `applies_to_roles` field encodes this.
 - **Agent-driven skill learning is curate-mediated.** When any agent attempts to learn a skill (`/skill` or equivalent), the proposal is captured by Den and queued for curate review during the next cycle, parallel to task-intent review. On approval, curate updates the manifest and Den re-provisions affected agents. Channel and work agents do not get raw, in-place skill installation tools — those are replaced with proposal-writing tools.
-- **Reconciliation.** `reconcile_bear` validates each agent's actual installed skills against the manifest's role-relevant slice and corrects drift. Detection mechanism differs per agent (filesystem listing for talk, Letta API listing for the others); the canonical comparison is always against the manifest.
+- **Reconciliation.** `reconcile_bear` validates each agent's actual installed skills against the manifest's role-relevant slice and corrects drift. Detection mechanism differs per agent (filesystem listing for harness-backed agents, Letta API listing for API-direct agents); the canonical comparison is always against the manifest.
 
 ## Consequences
 
@@ -206,6 +227,10 @@ Skills are managed by Den as Bear-scoped resources with per-role applicability. 
 **Three agents with external work as deterministic Den-side jobs (no LLM in the loop for execution).** Considered as a complement to the four-agent design. Useful for highly structured tasks but doesn't cover work that requires reasoning during execution. Adopted as the high-risk-task mode within the work-agent design (Den can choose deterministic execution for tasks that don't need reasoning, agent execution for tasks that do).
 
 **Four agents (talk, pair, curate, work) with inbound external events handled by polling tasks on the work agent.** Considered. Polling is functional but masquerades as event-driven, and giving the work agent generic inbound HTTP capability would broaden its trust position toward the trifecta line. A dedicated watch agent with no outbound action capability and no read access to other agents' branches is structurally different — it's the inbound counterpart to the work agent's outbound role and preserves the same trust-distribution argument. The watch agent is not blocking for initial rollout; Bears can ship with four agents and add watch when inbound event handling becomes a real need.
+
+**All non-talk agents on Letta-API-direct (no harness for work).** An earlier draft of this ADR placed `work` on Letta-API-direct alongside `pair`, `curate`, and `watch`. That was an accidental over-extension of the pair-specific concurrency reasoning. Work's job is structured tool execution — exactly what Letta Code provides — and Den controls its dispatch, so the concurrency mismatch that drives `pair` to API-direct does not apply. The cleaner rule (§2a) is that Letta Code is for agents whose job benefits from the full tool surface, regardless of whether they're user-facing.
+
+**All agents on Letta Code.** Considered. Pair is structurally incompatible (concurrency); curate and watch would require stripping the harness's default tool roster (Bash, Edit, Task subagents, etc.) on every Letta Code release to maintain their narrow trust positions, which is an ongoing maintenance tax that scales with upstream change. API-direct gives those three agents stable, exact tool rosters that don't drift with Letta Code's evolution.
 
 ## Prior art and pattern alignment
 
