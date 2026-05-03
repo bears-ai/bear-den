@@ -44,11 +44,15 @@ function isMissingConversationError(err: unknown): boolean {
 }
 
 function toolsSignature(tools?: AnyAgentTool[]): string {
-    // Letta Code sessions cannot reliably hot-swap external tools mid-conversation.
-    // Use a stable signature so adding newly advertised capabilities (for example
-    // write support after read support) does not close a working ACP conversation.
-    // Fresh ACP sessions still receive the current full tool list at creation time.
     return (tools ?? []).length > 0 ? "acp-client-tools" : "";
+}
+
+function shouldReuseWarmSession(tools?: AnyAgentTool[]): boolean {
+    // ACP client tool closures capture the active SSE response emitter. Reusing a
+    // warm Letta Code session with those closures can write to an ended response
+    // on the next prompt. Reopen ACP-tool sessions per prompt until the SDK can
+    // dynamically rebind external tool handlers.
+    return (tools ?? []).length === 0;
 }
 
 function approvalRecoveryEnabled(): boolean {
@@ -294,14 +298,22 @@ export class ConversationSessionPool {
         const now = Date.now();
         const toolSignature = toolsSignature(tools);
         if (entry) {
-            if (entry.toolSignature === toolSignature) {
+            if (
+                entry.toolSignature === toolSignature &&
+                shouldReuseWarmSession(tools)
+            ) {
                 entry.lastUsed = now;
                 return entry.session;
             }
             logger.info(
-                "Letta Code session tool set changed; reopening warm session",
+                entry.toolSignature === toolSignature
+                    ? "Letta Code ACP tool session reopened to refresh request-bound handlers"
+                    : "Letta Code session tool set changed; reopening warm session",
                 {
-                    event: "letta_code_session_tools_changed",
+                    event:
+                        entry.toolSignature === toolSignature
+                            ? "letta_code_acp_tool_session_reopen"
+                            : "letta_code_session_tools_changed",
                     agent_id: agentId,
                     conversation_id: conversationId,
                     previous_tool_signature: entry.toolSignature,
