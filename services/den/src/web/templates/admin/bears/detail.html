@@ -40,22 +40,73 @@
 <p><strong>{{ member_count }}</strong> user(s) can use this bear via <code>user_bear</code>.
   <a href="/admin/membership/">Manage membership</a></p>
 
-<h3>Letta agent</h3>
+<h3>Associated Letta agents</h3>
 {% if not letta_configured %}
-<p><em>Letta is not configured on this Den instance</em> (<code>LETTA_BASE_URL</code> empty). Stored agent id, if any, is not verified against Letta.</p>
+<p><em>Letta is not configured on this Den instance</em> (<code>LETTA_BASE_URL</code> empty). Stored role agent ids, if any, are not verified against Letta.</p>
 {% endif %}
+<p class="form-hint">Role rows come from <code>bear_agents</code>. Legacy <code>bears.letta_agent_id</code> mirrors/falls back to <strong>talk</strong> during migration.</p>
+<table>
+  <thead>
+    <tr>
+      <th>Role</th>
+      <th>Runtime</th>
+      <th>Branch</th>
+      <th>Letta id</th>
+      <th>Provisioning</th>
+      <th>Health</th>
+      <th>Letta summary</th>
+      <th>Last sync</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for agent in agent_health_rows %}
+    <tr>
+      <td><strong>{{ agent.role }}</strong></td>
+      <td><code>{{ agent.runtime_family }}</code></td>
+      <td><code>{{ agent.branch }}</code></td>
+      <td>{% if agent.letta_agent_id %}<code>{{ agent.letta_agent_id }}</code>{% else %}<em>none</em>{% endif %}</td>
+      <td>
+        <code>{{ agent.provisioning_status }}</code>
+        <br><span class="form-hint">v{{ agent.last_provisioned_version }}</span>
+      </td>
+      <td>
+        {% if agent.health_status == "ok" %}
+          <strong>{{ agent.health_label }}</strong>
+        {% elif agent.health_status == "missing" %}
+          <em>{{ agent.health_label }}</em>
+        {% elif agent.health_status == "unknown" %}
+          <em>{{ agent.health_label }}</em>
+        {% else %}
+          <span class="form-errors">{{ agent.health_label }}</span>
+        {% endif %}
+        {% if agent.health_detail %}<br><span class="form-hint">{{ agent.health_detail }}</span>{% endif %}
+      </td>
+      <td>
+        {% if agent.letta_name %}<div><strong>{{ agent.letta_name }}</strong></div>{% endif %}
+        {% if agent.letta_model %}<div>Model: <code>{{ agent.letta_model }}</code></div>{% endif %}
+        {% if agent.letta_agent_type %}<div>Type: <code>{{ agent.letta_agent_type }}</code></div>{% endif %}
+        {% if agent.letta_tool_count is not none %}<div>Tools: {{ agent.letta_tool_count }}</div>{% endif %}
+        {% if agent.letta_memory_block_count is not none %}<div>Memory blocks: {{ agent.letta_memory_block_count }}</div>{% endif %}
+        {% if not agent.letta_name and not agent.letta_model and agent.health_status == "ok" %}<em>loaded</em>{% endif %}
+      </td>
+      <td>{% if agent.last_synced_at %}{{ agent.last_synced_at }}{% else %}<em>never</em>{% endif %}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
 
-{% if bear.letta_agent_id %}
-<p><strong>Stored agent id:</strong> <code>{{ bear.letta_agent_id }}</code></p>
+<h3>Talk agent detail</h3>
+{% if talk_agent_id %}
+<p><strong>Talk agent id:</strong> <code>{{ talk_agent_id }}</code>{% if bear.letta_agent_id and bear.letta_agent_id != talk_agent_id %} <span class="form-hint">legacy mirror differs: <code>{{ bear.letta_agent_id }}</code></span>{% endif %}</p>
 {% if letta_api_base %}
-<p class="form-hint">End-user chat (via Den) proxies Letta <code>POST …/v1/agents/{{ bear.letta_agent_id }}/messages/stream</code> (SSE).</p>
+<p class="form-hint">End-user chat (via Den/Codepool) targets the <strong>talk</strong> role agent.</p>
 {% endif %}
 
 {% if letta_agent_fetch_error %}
-<p class="form-errors"><strong>Could not load agent from Letta:</strong> {{ letta_agent_fetch_error }}</p>
+<p class="form-errors"><strong>Could not load talk agent from Letta:</strong> {{ letta_agent_fetch_error }}</p>
 <p class="form-hint">The id may be stale if the agent was deleted in Letta, or Letta may be unreachable.</p>
 {% elif letta_agent_summary %}
-<p><em>Fields below are from Letta</em> <code>GET /v1/agents/{{ bear.letta_agent_id }}</code> (shape may vary by server version).</p>
+<p><em>Fields below are from Letta</em> <code>GET /v1/agents/{{ talk_agent_id }}</code> (shape may vary by server version).</p>
 <dl>
   <dt>Letta id</dt>
   <dd><code>{{ letta_agent_summary.id }}</code></dd>
@@ -97,16 +148,16 @@
   {% endif %}
 </dl>
 {% if bear.default_model and letta_agent_summary.model and bear.default_model != letta_agent_summary.model %}
-<p class="form-errors">Den <strong>default model</strong> (<code>{{ bear.default_model }}</code>) differs from the <strong>model</strong> on the Letta agent (<code>{{ letta_agent_summary.model }}</code>). Align them if you expect matching behavior.</p>
+<p class="form-errors">Den <strong>default model</strong> (<code>{{ bear.default_model }}</code>) differs from the <strong>model</strong> on the talk Letta agent (<code>{{ letta_agent_summary.model }}</code>). Align them if you expect matching behavior.</p>
 {% endif %}
 {% endif %}
 
 {% else %}
-<p><em>No Letta agent id stored for this bear.</em></p>
+<p><em>No talk Letta agent id stored for this bear.</em></p>
 {% if letta_configured %}
 <form method="post" action="/admin/bears/{{ bear.id }}/retry-letta" style="margin-top: 0.5rem;">
   <button type="submit">Retry Letta provisioning</button>
-  <span class="form-hint">Creates an agent in Letta and saves its id on success.</span>
+  <span class="form-hint">Creates role agents in Letta and mirrors the talk id for legacy callers.</span>
 </form>
 {% endif %}
 {% endif %}

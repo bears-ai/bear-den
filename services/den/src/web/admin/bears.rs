@@ -18,7 +18,7 @@ use validator::{Validate, ValidationError, ValidationErrors};
 use crate::{
     auth_backend::AuthSession,
     core::{
-        bears::{db as bears_db, provision, sync},
+        bears::{db as bears_db, provision, sync, BearAgent, BearAgentRole},
         letta::{AgentBearPrefill, AgentSummary, LettaAgentListItem},
     },
     errors::CustomError,
@@ -49,6 +49,147 @@ struct NewBearPageQuery {
     from_letta_agent: Option<String>,
 }
 
+#[derive(Debug, Serialize)]
+struct BearAgentHealthRow {
+    role: String,
+    runtime_family: String,
+    branch: String,
+    letta_agent_id: Option<String>,
+    provisioning_status: String,
+    last_provisioned_version: i32,
+    last_synced_at: Option<String>,
+    health_status: String,
+    health_label: String,
+    health_detail: Option<String>,
+    letta_name: Option<String>,
+    letta_model: Option<String>,
+    letta_agent_type: Option<String>,
+    letta_tool_count: Option<usize>,
+    letta_memory_block_count: Option<usize>,
+}
+
+impl BearAgentHealthRow {
+    fn not_configured(agent: &BearAgent, role: BearAgentRole) -> Self {
+        Self {
+            role: role.as_str().to_string(),
+            runtime_family: role.runtime_family().to_string(),
+            branch: role.as_str().to_string(),
+            letta_agent_id: agent.letta_agent_id.clone(),
+            provisioning_status: agent.provisioning_status.clone(),
+            last_provisioned_version: agent.last_provisioned_version,
+            last_synced_at: agent.last_synced_at.map(|t| t.to_string()),
+            health_status: "unknown".to_string(),
+            health_label: "Not checked".to_string(),
+            health_detail: Some("Letta is not configured on this Den instance.".to_string()),
+            letta_name: None,
+            letta_model: None,
+            letta_agent_type: None,
+            letta_tool_count: None,
+            letta_memory_block_count: None,
+        }
+    }
+
+    fn missing(agent: &BearAgent, role: BearAgentRole) -> Self {
+        Self {
+            role: role.as_str().to_string(),
+            runtime_family: role.runtime_family().to_string(),
+            branch: role.as_str().to_string(),
+            letta_agent_id: None,
+            provisioning_status: agent.provisioning_status.clone(),
+            last_provisioned_version: agent.last_provisioned_version,
+            last_synced_at: agent.last_synced_at.map(|t| t.to_string()),
+            health_status: "missing".to_string(),
+            health_label: "No agent id".to_string(),
+            health_detail: agent
+                .last_provisioning_error
+                .clone()
+                .or_else(|| Some("No Letta agent id is recorded for this role.".to_string())),
+            letta_name: None,
+            letta_model: None,
+            letta_agent_type: None,
+            letta_tool_count: None,
+            letta_memory_block_count: None,
+        }
+    }
+
+    fn ok(agent: &BearAgent, role: BearAgentRole, summary: AgentSummary) -> Self {
+        Self {
+            role: role.as_str().to_string(),
+            runtime_family: role.runtime_family().to_string(),
+            branch: role.as_str().to_string(),
+            letta_agent_id: agent.letta_agent_id.clone(),
+            provisioning_status: agent.provisioning_status.clone(),
+            last_provisioned_version: agent.last_provisioned_version,
+            last_synced_at: agent.last_synced_at.map(|t| t.to_string()),
+            health_status: "ok".to_string(),
+            health_label: "OK".to_string(),
+            health_detail: None,
+            letta_name: summary.name,
+            letta_model: summary.model,
+            letta_agent_type: summary.agent_type,
+            letta_tool_count: summary.tool_count,
+            letta_memory_block_count: summary.memory_block_count,
+        }
+    }
+
+    fn error(agent: &BearAgent, role: BearAgentRole, error: String) -> Self {
+        Self {
+            role: role.as_str().to_string(),
+            runtime_family: role.runtime_family().to_string(),
+            branch: role.as_str().to_string(),
+            letta_agent_id: agent.letta_agent_id.clone(),
+            provisioning_status: agent.provisioning_status.clone(),
+            last_provisioned_version: agent.last_provisioned_version,
+            last_synced_at: agent.last_synced_at.map(|t| t.to_string()),
+            health_status: "error".to_string(),
+            health_label: "Fetch failed".to_string(),
+            health_detail: Some(error),
+            letta_name: None,
+            letta_model: None,
+            letta_agent_type: None,
+            letta_tool_count: None,
+            letta_memory_block_count: None,
+        }
+    }
+}
+
+async fn bear_agent_health_rows(
+    state: &AppState,
+    bear_id: Uuid,
+    letta_configured: bool,
+) -> Result<Vec<BearAgentHealthRow>, CustomError> {
+    bears_db::ensure_bear_agent_rows(state.sqlx_pool(), bear_id).await?;
+    let agents = bears_db::list_bear_agents(state.sqlx_pool(), bear_id).await?;
+    let mut rows = Vec::with_capacity(agents.len());
+    for agent in agents {
+        let role = agent
+            .parsed_role()
+            .map_err(|err| CustomError::System(format!("invalid bear agent role in DB: {err}")))?;
+        if !letta_configured {
+            rows.push(BearAgentHealthRow::not_configured(&agent, role));
+            continue;
+        }
+        let Some(agent_id) = agent
+            .letta_agent_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        else {
+            rows.push(BearAgentHealthRow::missing(&agent, role));
+            continue;
+        };
+        match state.letta.fetch_agent(agent_id).await {
+            Ok(v) => rows.push(BearAgentHealthRow::ok(
+                &agent,
+                role,
+                AgentSummary::from_letta_agent_state(&v),
+            )),
+            Err(err) => rows.push(BearAgentHealthRow::error(&agent, role, err.to_string())),
+        }
+    }
+    Ok(rows)
+}
+
 async fn bear_detail_response(
     state: &AppState,
     auth_session: AuthSession,
@@ -64,9 +205,16 @@ async fn bear_detail_response(
     let letta_api_base = state.config.letta_base_url.trim().to_string();
     let letta_configured = state.letta.is_enabled();
 
+    let agent_health_rows = bear_agent_health_rows(state, id, letta_configured).await?;
+
+    let talk_agent_id = bears_db::role_agent_id_or_legacy(state.sqlx_pool(), &bear, BearAgentRole::Talk)
+        .await?
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+
     let (letta_agent_summary, letta_agent_fetch_error): (Option<AgentSummary>, Option<String>) =
         if letta_configured {
-            if let Some(agent_id) = bear.letta_agent_id.as_deref() {
+            if let Some(agent_id) = talk_agent_id.as_deref() {
                 match state.letta.fetch_agent(agent_id).await {
                     Ok(v) => (Some(AgentSummary::from_letta_agent_state(&v)), None),
                     Err(e) => (None, Some(e.to_string())),
@@ -108,6 +256,8 @@ async fn bear_detail_response(
             member_count,
             letta_api_base,
             letta_configured,
+            talk_agent_id,
+            agent_health_rows,
             letta_agent_summary,
             letta_agent_fetch_error,
             letta_retry_message,
