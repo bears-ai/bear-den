@@ -100,6 +100,15 @@ function toAgentTool(
         ) => {
             const context = getContext();
             const callId = toolCallId?.trim() || randomUUID();
+            const resultPromise = results.waitForResult({
+                sessionId: context.session_id,
+                requestId: context.request_id,
+                callId,
+                timeoutMs: DEFAULT_TIMEOUT_MS,
+                signal,
+                toolName: name,
+                conversationId: context.conversation_id,
+            });
             logger.info("ACP client tool request emitted", {
                 event: "acp_client_tool_request_emit",
                 request_id: context.request_id,
@@ -112,32 +121,36 @@ function toAgentTool(
                         ? Object.keys(args as Record<string, unknown>).sort()
                         : [],
             });
-            await emit({
-                type: "client_tool_request",
-                request_id: context.request_id,
-                session_id: context.session_id,
-                conversation_id: context.conversation_id,
-                call: {
-                    id: callId,
-                    name,
-                    arguments: args ?? {},
-                    descriptor,
-                    approval_policy:
-                        typeof descriptor.approval_policy === "string"
-                            ? descriptor.approval_policy
-                            : undefined,
-                    timeout_ms: DEFAULT_TIMEOUT_MS,
-                },
-            });
-            const payload = await results.waitForResult({
-                sessionId: context.session_id,
-                requestId: context.request_id,
-                callId,
-                timeoutMs: DEFAULT_TIMEOUT_MS,
-                signal,
-                toolName: name,
-                conversationId: context.conversation_id,
-            });
+            try {
+                await emit({
+                    type: "client_tool_request",
+                    request_id: context.request_id,
+                    session_id: context.session_id,
+                    conversation_id: context.conversation_id,
+                    call: {
+                        id: callId,
+                        name,
+                        arguments: args ?? {},
+                        descriptor,
+                        approval_policy:
+                            typeof descriptor.approval_policy === "string"
+                                ? descriptor.approval_policy
+                                : undefined,
+                        timeout_ms: DEFAULT_TIMEOUT_MS,
+                    },
+                });
+            } catch (e) {
+                const message = e instanceof Error ? e.message : String(e);
+                results.rejectWaiter({
+                    sessionId: context.session_id,
+                    requestId: context.request_id,
+                    callId,
+                    error: e instanceof Error ? e : new Error(message),
+                });
+                await resultPromise.catch(() => undefined);
+                throw e;
+            }
+            const payload = await resultPromise;
             logger.info("ACP client tool result received by Codepool", {
                 event: "acp_client_tool_result_received",
                 request_id: context.request_id,

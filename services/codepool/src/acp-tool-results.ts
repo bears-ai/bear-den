@@ -26,6 +26,11 @@ export type AcpToolDeliveryResult = {
     reason: "delivered" | "no_waiter";
 };
 
+export type AcpToolWaiterRemovalResult = {
+    removed: boolean;
+    reason: "removed" | "no_waiter";
+};
+
 type Waiter = {
     resolve: (payload: AcpToolResultPayload) => void;
     reject: (error: Error) => void;
@@ -47,9 +52,7 @@ export class AcpToolResultRegistry {
     }): Promise<AcpToolResultPayload> {
         const key = this.key(opts.sessionId, opts.requestId, opts.callId);
         if (this.waiters.has(key)) {
-            return Promise.reject(
-                new Error(`duplicate ACP tool waiter for ${opts.callId}`),
-            );
+            throw new Error(`duplicate ACP tool waiter for ${opts.callId}`);
         }
         return new Promise((resolve, reject) => {
             const cleanup = () => {
@@ -57,9 +60,21 @@ export class AcpToolResultRegistry {
                 this.waiters.delete(key);
                 opts.signal?.removeEventListener("abort", onAbort);
             };
+            const cancelledPayload = (
+                message: string,
+            ): AcpToolResultPayload => ({
+                request_id: opts.requestId,
+                call_id: opts.callId,
+                status: "cancelled",
+                error: { message },
+            });
             const onAbort = () => {
                 cleanup();
-                reject(new Error(`ACP tool call ${opts.callId} was cancelled`));
+                resolve(
+                    cancelledPayload(
+                        `ACP tool call ${opts.callId} was cancelled`,
+                    ),
+                );
             };
             const waiter: Waiter = {
                 resolve: (payload) => {
@@ -108,6 +123,37 @@ export class AcpToolResultRegistry {
         if (!waiter) return { delivered: false, reason: "no_waiter" };
         waiter.resolve(payload);
         return { delivered: true, reason: "delivered" };
+    }
+
+    cancelWaiter(opts: {
+        sessionId: string;
+        requestId: string;
+        callId: string;
+        message: string;
+    }): AcpToolWaiterRemovalResult {
+        const key = this.key(opts.sessionId, opts.requestId, opts.callId);
+        const waiter = this.waiters.get(key);
+        if (!waiter) return { removed: false, reason: "no_waiter" };
+        waiter.resolve({
+            request_id: opts.requestId,
+            call_id: opts.callId,
+            status: "cancelled",
+            error: { message: opts.message },
+        });
+        return { removed: true, reason: "removed" };
+    }
+
+    rejectWaiter(opts: {
+        sessionId: string;
+        requestId: string;
+        callId: string;
+        error: Error;
+    }): AcpToolWaiterRemovalResult {
+        const key = this.key(opts.sessionId, opts.requestId, opts.callId);
+        const waiter = this.waiters.get(key);
+        if (!waiter) return { removed: false, reason: "no_waiter" };
+        waiter.reject(opts.error);
+        return { removed: true, reason: "removed" };
     }
 
     listWaiters(): AcpToolWaiterInfo[] {

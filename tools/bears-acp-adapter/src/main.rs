@@ -2093,6 +2093,7 @@ async fn execute_and_post_client_tool_result(
             json!({
                 "request_id": request_id,
                 "conversation_id": conversation_id,
+                "tool_name": tool_name,
                 "status": "ok",
                 "result": result,
                 "client_observation": {
@@ -2115,6 +2116,7 @@ async fn execute_and_post_client_tool_result(
             json!({
                 "request_id": request_id,
                 "conversation_id": conversation_id,
+                "tool_name": tool_name,
                 "status": "error",
                 "error": {
                     "code": "adapter_client_tool_error",
