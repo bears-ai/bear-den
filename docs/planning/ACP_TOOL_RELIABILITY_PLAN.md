@@ -88,8 +88,68 @@ Acceptance:
 - General MCP-over-ACP.
 - Making ACP sessions canonical conversations.
 
+## Boring waiter simplification plan
+
+### Goal
+
+Make ACP client-tool relay deliberately boring: Codepool is the only owner of live tool waiters, Den is a stateless authenticated stream/proxy, and every expected tool outcome resolves through one result path.
+
+### Target flow
+
+1. Letta Code calls a Codepool ACP external tool.
+2. Codepool creates the in-memory waiter before the request is visible outside Codepool.
+3. Codepool emits one `client_tool_request` event on the active SSE stream.
+4. Den maps that event to the adapter-facing ACP SSE event without persisting tool-call state.
+5. The adapter calls the editor/client and POSTs the result to Den.
+6. Den authenticates the ACP token/session, forwards the result directly to Codepool, and returns Codepool's delivery details.
+7. Codepool resolves the waiter with `ok`, `error`, `cancelled`, or `timeout` and returns a structured tool result to Letta Code.
+
+### Design decisions
+
+- Codepool waiter state is intentionally process-local and non-durable.
+- Den does not validate tool results against a pending-call DB table. It only authenticates the ACP token, resolves the ACP session to the Codepool session, validates the result status shape, and forwards.
+- `request_id` + `call_id` remain the correlation identifiers between adapter, Den, and Codepool.
+- Waiters are registered before SSE emission to avoid fast-result races.
+- Expected outcomes (`ok`, `error`, `cancelled`, `timeout`) resolve to payloads; promise rejection is reserved for duplicate waiters and unexpected infrastructure/programmer failures.
+- Request context for ACP tools is captured per Codepool request instead of stored in a session-scoped mutable map.
+
+### Implementation tasks
+
+- Add a Codepool waiter cancellation/removal API so failed SSE emission can clean up a pre-registered waiter.
+- Update Codepool ACP external tools to create the waiter before `emit(...)` and to clean it up if emission fails.
+- Normalize abort/cancellation into a `cancelled` payload instead of rejecting the waiter promise.
+- Remove the session-scoped `acpToolContexts` map in Codepool and capture immutable per-request context in the tool closures.
+- Add Codepool tests for the fast-result race: a fake `emit(...)` immediately delivers the result, and the tool still succeeds.
+- Simplify Den's ACP tool result endpoint so it does not query or update `acp_client_tool_calls`.
+- Remove Den stream-side persistence of `client_tool_request` events; keep logging and event mapping.
+- Remove the Den `acp_client_tools` core module from the code path.
+- Add a new migration that drops `acp_client_tool_calls`. Do not edit the existing migration that created it.
+- Update migration docs to mention the drop migration.
+- Run Codepool tests/typecheck and Den tests/checks as far as practical.
+
+### Acceptance
+
+- A tool result that arrives while `emit(...)` is still unwinding can still resolve the Codepool waiter.
+- Codepool has no request-context map keyed only by session id.
+- Den compiles without references to `acp_client_tool_calls` runtime helpers.
+- New installations create then drop the obsolete table through migrations; existing installations drop it safely through the new migration.
+- Existing ACP tool result responses still expose `delivered`, `reason`, and `runtime_id` diagnostics from Codepool.
+
 ## Progress log
 
+- Completed boring waiter simplification pass:
+  - Codepool now registers ACP client-tool waiters before emitting `client_tool_request` over SSE.
+  - Codepool cancellation now resolves as a `cancelled` payload instead of rejecting expected control flow.
+  - Codepool has explicit waiter cleanup APIs for failed request emission.
+  - Removed the session-scoped `acpToolContexts` map; ACP tool closures now capture immutable per-request context.
+  - Added a fast-result regression test where `emit(...)` delivers a result before returning.
+  - Den no longer persists ACP client tool calls or validates results against `acp_client_tool_calls`.
+  - Den now resolves ACP session binding and forwards tool results directly to Codepool.
+  - Removed Den stream-side `client_tool_request` persistence; the stream still logs and maps events.
+  - Removed the Den `acp_client_tools` runtime module.
+  - Added `20260502120000_drop_acp_client_tool_calls.up.sql` to drop the obsolete table.
+  - Adapter now includes `tool_name` in result POST payloads so Den can continue forwarding diagnostic metadata without the DB row.
+  - Validated with Codepool tests, Den `cargo check`, Den ACP unit tests, adapter `cargo check`, and project diagnostics.
 - Created plan.
 - Began Phase 1 adapter dispatcher refactor:
   - Added a single stdin reader task that sends parsed JSON-RPC values over an internal channel.

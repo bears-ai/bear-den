@@ -28,7 +28,6 @@ use crate::{
         service::ApiState,
     },
     core::{
-        acp_client_tools::{self, NewAcpClientToolCall},
         acp_sessions::{self, UpsertAcpSession},
         acp_tokens, archived_conversations,
         bears::db as bears_db,
@@ -89,6 +88,8 @@ pub struct AcpToolResultRequest {
     pub result: Option<serde_json::Value>,
     #[serde(default)]
     pub error: Option<serde_json::Value>,
+    #[serde(default)]
+    pub tool_name: Option<String>,
     #[serde(default)]
     pub client_observation: Option<serde_json::Value>,
 }
@@ -1104,13 +1105,9 @@ async fn cancel_session_inner(
         .await
         .map(|response| response.cancelled)
         .unwrap_or(false);
-    let marked =
-        acp_client_tools::mark_cancelled_for_session(&state.sqlx_pool, user_id, &slug, &session_id)
-            .await?;
     Ok(Json(serde_json::json!({
         "ok": true,
         "cancelled": cancelled,
-        "pending_tool_calls_cancelled": marked,
     }))
     .into_response())
 }
@@ -1139,9 +1136,6 @@ async fn close_session_inner(
         .codepool
         .post_bear_channel_cancel(&session.codepool_session_id, Uuid::new_v4())
         .await;
-    let _ =
-        acp_client_tools::mark_cancelled_for_session(&state.sqlx_pool, user_id, &slug, &session_id)
-            .await?;
     acp_sessions::mark_closed(&state.sqlx_pool, session.id).await?;
     let archive_target = session
         .resolved_conversation_id
@@ -1196,34 +1190,17 @@ async fn tool_result_inner(
     body: AcpToolResultRequest,
 ) -> Result<Response, CustomError> {
     let (user_id, _) = authenticate_acp_code_token(&state, &headers, &slug, true).await?;
-    let db_status = normalize_tool_result_status(&body.status)?;
     let codepool_status = normalize_codepool_tool_result_status(&body.status)?;
-    let pending = acp_client_tools::find_active_call_for_result(
-        &state.sqlx_pool,
-        user_id,
-        &slug,
-        &session_id,
-        body.request_id,
-        &call_id,
-    )
-    .await?
-    .ok_or_else(|| CustomError::NotFound("pending ACP client tool call not found".to_string()))?;
-
-    acp_client_tools::mark_result_received(
-        &state.sqlx_pool,
-        pending.id,
-        db_status,
-        body.result.clone(),
-        body.error.clone(),
-        body.client_observation.clone(),
-    )
-    .await?;
+    let session =
+        acp_sessions::find_for_user_bear_session(&state.sqlx_pool, user_id, &slug, &session_id)
+            .await?
+            .ok_or_else(|| CustomError::NotFound("ACP session not found".to_string()))?;
 
     let codepool_payload = CodepoolToolResultRequest {
         conversation_id: body.conversation_id.trim().to_string(),
         request_id: body.request_id.to_string(),
         call_id: call_id.clone(),
-        tool_name: pending.tool_name.clone(),
+        tool_name: body.tool_name.unwrap_or_default(),
         status: codepool_status.to_string(),
         result: body.result,
         error: body.error,
@@ -1231,7 +1208,7 @@ async fn tool_result_inner(
     let (delivered, delivery_reason, runtime_id) = match state
         .codepool
         .post_bear_channel_tool_result(
-            &pending.codepool_session_id,
+            &session.codepool_session_id,
             &codepool_payload,
             body.request_id,
         )
@@ -1242,18 +1219,15 @@ async fn tool_result_inner(
             tracing::warn!(
                 request_id = %body.request_id,
                 acp_session_id = %session_id,
-                codepool_session_id = %pending.codepool_session_id,
+                codepool_session_id = %session.codepool_session_id,
                 call_id = %call_id,
-                tool_name = %pending.tool_name,
+                tool_name = %codepool_payload.tool_name,
                 error = %err,
                 "ACP tool result accepted by Den but could not be delivered to Codepool"
             );
             (false, Some("codepool_forward_error".to_string()), None)
         }
     };
-    if delivered {
-        acp_client_tools::mark_forwarded(&state.sqlx_pool, pending.id).await?;
-    }
     Ok(Json(AcpToolResultResponse {
         ok: true,
         delivered,
@@ -1262,18 +1236,6 @@ async fn tool_result_inner(
         runtime_id,
     })
     .into_response())
-}
-
-fn normalize_tool_result_status(status: &str) -> Result<&'static str, CustomError> {
-    match status.trim() {
-        "ok" => Ok("result_received"),
-        "error" => Ok("failed"),
-        "cancelled" => Ok("cancelled"),
-        "timeout" => Ok("timed_out"),
-        other => Err(CustomError::ValidationError(format!(
-            "unsupported tool result status: {other}"
-        ))),
-    }
 }
 
 fn normalize_codepool_tool_result_status(status: &str) -> Result<&'static str, CustomError> {
@@ -1532,10 +1494,7 @@ async fn prompt_inner(
             pool: state.sqlx_pool.clone(),
             user_id,
             bear_id: bear.id,
-            bear_slug: bear.slug.clone(),
             acp_session_id: session_id.to_string(),
-            codepool_session_id: channel_session_id.clone(),
-            conversation_id: conversation_id.clone(),
             request_id,
         },
         initial_adapter_events(missing_tools_scope),
@@ -1570,10 +1529,7 @@ struct AcpStreamContext {
     pool: sqlx::PgPool,
     user_id: i32,
     bear_id: Uuid,
-    bear_slug: String,
     acp_session_id: String,
-    codepool_session_id: String,
-    conversation_id: String,
     request_id: Uuid,
 }
 
@@ -1592,70 +1548,8 @@ async fn persist_stream_event_side_effects(
             )
             .await?;
         }
-        return Ok(());
     }
-
-    if event.get("type").and_then(|v| v.as_str()) != Some("client_tool_request") {
-        return Ok(());
-    }
-    let call = event
-        .get("call")
-        .and_then(|v| v.as_object())
-        .ok_or_else(|| {
-            CustomError::ValidationError("client_tool_request missing call".to_string())
-        })?;
-    let call_id = call
-        .get("id")
-        .and_then(|v| v.as_str())
-        .filter(|s| !s.trim().is_empty())
-        .ok_or_else(|| {
-            CustomError::ValidationError("client_tool_request missing call.id".to_string())
-        })?;
-    let tool_name = call
-        .get("name")
-        .and_then(|v| v.as_str())
-        .filter(|s| !s.trim().is_empty())
-        .ok_or_else(|| {
-            CustomError::ValidationError("client_tool_request missing call.name".to_string())
-        })?;
-    let timeout_ms = call
-        .get("timeout_ms")
-        .and_then(|v| v.as_i64())
-        .filter(|v| *v > 0)
-        .unwrap_or(30_000);
-    tracing::info!(
-        request_id = %context.request_id,
-        acp_session_id = %context.acp_session_id,
-        codepool_session_id = %context.codepool_session_id,
-        call_id = %call_id,
-        tool_name = %tool_name,
-        timeout_ms,
-        "ACP streaming client tool request to adapter"
-    );
-    acp_client_tools::persist_sent_call(
-        &context.pool,
-        NewAcpClientToolCall {
-            user_id: context.user_id,
-            bear_id: context.bear_id,
-            bear_slug: context.bear_slug.clone(),
-            acp_session_id: context.acp_session_id.clone(),
-            codepool_session_id: context.codepool_session_id.clone(),
-            conversation_id: context.conversation_id.clone(),
-            request_id: context.request_id,
-            call_id: call_id.to_string(),
-            tool_name: tool_name.to_string(),
-            arguments: call
-                .get("arguments")
-                .cloned()
-                .unwrap_or_else(|| serde_json::json!({})),
-            descriptor: call
-                .get("descriptor")
-                .cloned()
-                .unwrap_or_else(|| serde_json::json!({})),
-            timeout_ms,
-        },
-    )
-    .await
+    Ok(())
 }
 
 fn map_bear_channel_event_to_acp_adapter_event(event: &serde_json::Value) -> Option<Bytes> {
@@ -2173,21 +2067,7 @@ data: "hello"}"#;
     }
 
     #[test]
-    fn normalizes_acp_tool_result_statuses_for_db_and_codepool() {
-        assert_eq!(
-            normalize_tool_result_status("ok").unwrap(),
-            "result_received"
-        );
-        assert_eq!(normalize_tool_result_status("error").unwrap(), "failed");
-        assert_eq!(
-            normalize_tool_result_status("cancelled").unwrap(),
-            "cancelled"
-        );
-        assert_eq!(
-            normalize_tool_result_status("timeout").unwrap(),
-            "timed_out"
-        );
-
+    fn normalizes_acp_tool_result_statuses_for_codepool() {
         assert_eq!(normalize_codepool_tool_result_status("ok").unwrap(), "ok");
         assert_eq!(
             normalize_codepool_tool_result_status("error").unwrap(),

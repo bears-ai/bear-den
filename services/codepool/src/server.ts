@@ -40,7 +40,6 @@ import {
 import {
     makeAcpClientExternalTools,
     parseAcpClientTools,
-    type AcpClientToolRuntimeContext,
 } from "./acp-client-tools.js";
 import {
     AcpToolResultRegistry,
@@ -241,7 +240,6 @@ export function attachRoutes(
 ): void {
     const guard = authMiddleware(ctx.internalToken);
     const acpToolResults = ctx.acpToolResults ?? new AcpToolResultRegistry();
-    const acpToolContexts = new Map<string, AcpClientToolRuntimeContext>();
 
     app.get("/health", (_req, res) => {
         const lettaCliHome = join(homedir(), ".letta");
@@ -533,11 +531,11 @@ export function attachRoutes(
                     parsed.conversationId,
                     requestId,
                 );
-                acpToolContexts.set(sessionId, {
+                const acpToolContext = {
                     session_id: sessionId,
                     conversation_id: parsed.conversationId,
                     request_id: requestId,
-                });
+                };
                 const emitBearChannelEvent = async (
                     event: import("./bear-channel.js").BearChannelEvent,
                 ) => {
@@ -563,12 +561,7 @@ export function attachRoutes(
                 });
                 const acpClientTools = makeAcpClientExternalTools({
                     descriptors: parseAcpClientTools(body.capabilities),
-                    getContext: () =>
-                        acpToolContexts.get(sessionId) ?? {
-                            session_id: sessionId,
-                            conversation_id: parsed.conversationId,
-                            request_id: requestId,
-                        },
+                    getContext: () => acpToolContext,
                     emit: emitBearChannelEvent,
                     results: acpToolResults,
                 });
