@@ -49,6 +49,8 @@ All files are markdown with YAML frontmatter. This matches the format of skills 
 
 **Lifecycle:** `pending_review` → `approved` (intent file remains as audit record; canonical state moves to `core/tasks/`) or `rejected` (intent file updated with rejection reason).
 
+The approval/rejection update is performed by a privileged Den tool, not by granting the curate agent raw write access to the channel branch. The curate agent decides approve/reject during its cycle; Den validates the transition and writes the source-branch audit metadata as a control-plane operation.
+
 ### Schema
 
 ```yaml
@@ -102,7 +104,9 @@ when deciding whether to approve.>
 
 ### Authoring
 
-The channel agent uses a tool (`write_task_intent` or similar — finalize in phase 0) that takes structured inputs, validates, and writes the file. The agent should not write intent files directly via raw filesystem operations; the tool exists to enforce schema and avoid malformed entries that would be rejected by curate.
+The channel agent uses `write_task_intent`, a privileged Den tool that takes structured inputs, validates them, and writes the file. The agent should not write intent files directly via raw filesystem operations; the tool exists to enforce schema and avoid malformed entries that would be rejected during review.
+
+Approval and rejection are similarly performed through privileged Den tools (`approve_task_intent` and `reject_task_intent`). These tools update source intent audit fields without giving the curate agent raw write access to `talk/` or `pair/` paths.
 
 ### Examples
 
@@ -182,7 +186,7 @@ choosing a standard.
 
 **Location:** `core/tasks/<task-id>.md`
 
-**Written by:** the curate agent, after reviewing and approving an intent.
+**Written by:** privileged Den tooling after the curate agent reviews and approves an intent. The curate agent supplies the decision and refined task definition; Den validates and writes the file.
 
 **Read by:** Den (for scheduling and dispatch); the work agent (when Den dispatches a run).
 
@@ -229,10 +233,11 @@ consecutive_failures: 0
 
 # Daily deploy status check
 
-<The curate agent should write a clean, executable description of the task
-based on the intent and any context the agent has. This is what the work
-agent will see when dispatched. Write it in the second person, addressing
-the work agent directly.>
+<The curate agent should propose a clean, executable description of the task
+based on the intent and any context the agent has. Den validates and writes
+this description through `approve_task_intent`. This is what the work agent
+will see when dispatched. Write it in the second person, addressing the work
+agent directly.>
 
 When triggered:
 
@@ -268,13 +273,15 @@ error details. Do not post to Slack.
 
 ### Authoring
 
-The curate agent reads the corresponding intent, evaluates it, and writes the approved task using a tool (`approve_task_intent`) that takes the intent path, a refined task definition, and validation parameters. The tool:
+The curate agent reads the corresponding intent, evaluates it, and calls privileged Den tooling (`approve_task_intent`) with the intent path, a refined task definition, and validation parameters. The tool:
 
 - Validates the result against this schema.
 - Writes the file to `core/tasks/`.
-- Updates the intent file: `status: approved`, `reviewed_by`, `reviewed_at`, `approved_task_id`.
+- Updates the source intent audit metadata as a Den control-plane operation: `status: approved`, `reviewed_by`, `reviewed_at`, `approved_task_id`.
 
-For rejections, a parallel tool (`reject_task_intent`) writes back to the intent file: `status: rejected`, `reviewed_by`, `reviewed_at`, `rejection_reason`.
+For rejections, a parallel privileged Den tool (`reject_task_intent`) updates the source intent audit metadata as a Den control-plane operation: `status: rejected`, `reviewed_by`, `reviewed_at`, `rejection_reason`.
+
+Neither tool grants the curate agent raw write access to `talk/` or `pair/` paths.
 
 ### State transitions (managed by Den)
 
@@ -387,7 +394,7 @@ None of these files may contain secrets, credentials, tokens, or other sensitive
 Validation runs at three points:
 
 1. **Authoring tools** — the tools that channel/curate/work agents use to create these files validate before writing. Bad inputs fail fast.
-2. **Pre-receive hook** — for files in paths Den cares about, the bare repo's `pre-receive` hook can optionally re-validate (recommended for `core/tasks/` since it's the dispatch source of truth).
+2. **Pre-receive hook** — for files in paths Den cares about, the bare repo's `pre-receive` hook can optionally re-validate (recommended for `core/tasks/` since it's the dispatch source of truth). The hook also enforces branch/path write policy; Den-mediated privileged tools are responsible for any approved cross-branch audit updates.
 3. **Den's polling/index** — when Den picks up a new approved task, it validates again before scheduling. Failures are logged and the task is not dispatched.
 
 ### Open design questions

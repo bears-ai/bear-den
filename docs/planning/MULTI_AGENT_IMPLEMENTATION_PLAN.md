@@ -45,21 +45,24 @@ Each phase has explicit acceptance criteria. Phases are ordered for safe increme
      name
      created_at
      memfs_repo_path
-     provisioning_version (int — bumped on prompt/skill/tool roster changes)
+     provisioning_version (int — bumped on prompt/tool/runtime changes; skills deferred)
 
    bear_agents
      bear_id (fk)
      role (talk | pair | curate | work)
-     letta_agent_id
+     letta_agent_id (nullable until provisioning succeeds)
+     provisioning_status (pending | provisioning | ready | drifted | failed)
      last_provisioned_version
      last_synced_at
+     last_provisioning_error
+     config_hash
    ```
-4. Read `bear-den-tasks-schema.md` and confirm tool requirements derived from it (e.g., the channel agents need a tool that can write structured intent files; the curate agent needs a tool that can read intents and write to `core/tasks/`; the work agent needs structured input handling for task definitions).
+4. Read `tasks-schema.md` and confirm tool requirements derived from it (e.g., channel agents need a privileged Den tool that can write structured intent files; the curate agent needs privileged Den tools for approval/rejection and validated writes to `core/tasks/`; the work agent needs structured input handling and scoped result-writing tools for task definitions).
 
 ### Acceptance
 
 - Spec doc reviewed by team and merged to main.
-- Skill sync mechanism decided and documented.
+- Skill sync mechanism scope decided for this phase: direct out-of-band skill installation is denied, while detailed skill storage/runtime behavior is deferred to the dedicated skills discussion/design.
 - Database migration written but not yet applied.
 - Tool requirements from the tasks schema reviewed and folded into the per-agent tool roster.
 
@@ -81,7 +84,7 @@ Each phase has explicit acceptance criteria. Phases are ordered for safe increme
 
 ### Acceptance
 
-- `create_bear` followed by `provision_bear` produces four agents on the Letta server with the correct tags (`bear:<id>:role:talk`, `bear:<id>:role:pair`, `bear:<id>:role:curate`, `bear:<id>:role:work`) and tool profiles.
+- `create_bear` followed by `provision_bear` creates or updates four `bear_agents` rows and produces four agents on the Letta server with the correct tags (`bear:<id>`, `role:<role>`, `bear:<id>:role:talk`, `bear:<id>:role:pair`, `bear:<id>:role:curate`, `bear:<id>:role:work`, `git-memory-enabled`) and tool profiles.
 - `reconcile_bear` returns no drift immediately after provisioning.
 - `reconcile_bear` detects and corrects drift after manually mutating an agent's tool roster via the Letta API.
 
@@ -98,10 +101,12 @@ Each phase has explicit acceptance criteria. Phases are ordered for safe increme
    - `pair` — writable by pair agent. Contents: `pair/` directory, including `pair/tasks/` for intent files.
    - `curate` — writable by curate agent. Contents: `curate/` directory and `core/` directory (which contains `core/tasks/` and `core/results/`).
    - `work` — writable by work agent. Contents: `work/` directory, including `work/results/<task-id>/<run-id>.md`.
+   - `core/` is curated shared state. The implementation must document how `core/` is materialized read-only for `talk`, `pair`, and `work` before Phase 2 acceptance (for example read-only worktree/mount, Den-managed prompt/context copy, or Den-managed merge strategy).
 2. Write a `pre-receive` hook for the bare repo that:
    - Identifies the branch being pushed.
    - Walks the changed file list.
    - Rejects the push if any changed path is outside that branch's allowed paths. Error message must be clear (e.g., "branch 'talk' attempted to write to 'core/notes.md'; only 'talk/' paths are allowed").
+   - Preserves the invariant that privileged Den tools, not raw agent pushes, perform approved cross-branch audit updates such as task intent approval/rejection metadata.
 3. Write an initialization script `den/scripts/init_bear_repo.sh <bear_id>` that:
    - Creates the bare repo at the configured path.
    - Installs the `pre-receive` hook.
@@ -115,6 +120,7 @@ Each phase has explicit acceptance criteria. Phases are ordered for safe increme
 - Manual test: clone the `curate` branch, add a file under `core/`, push — push succeeds.
 - Manual test: clone the `work` branch, add a file under `core/`, push — push is rejected.
 - Sidecar healthcheck passes.
+- The active `core/` materialization strategy is documented and does not give `talk`, `pair`, or `work` raw push authority over `core/`.
 
 ---
 
@@ -139,7 +145,7 @@ Each phase has explicit acceptance criteria. Phases are ordered for safe increme
 ### Acceptance
 
 - `provision_bear` on a fresh Bear produces four correctly configured agents.
-- `reconcile_bear` detects each kind of drift in isolation (tool added, tool removed, prompt edited, skill missing) and corrects it.
+- `reconcile_bear` detects each implemented kind of drift in isolation (tool added, tool removed, prompt edited, runtime policy/config hash mismatch) and corrects it. Skill drift detection is deferred until the skills design is finalized.
 - Re-running `provision_bear` on an already-provisioned Bear is a no-op (idempotent).
 
 ---
@@ -156,7 +162,7 @@ Each phase has explicit acceptance criteria. Phases are ordered for safe increme
    - MemFS auto-clone: confirm Letta Code clones the `talk` branch on startup.
    - Push-on-commit: configure the harness to push immediately after committing, not on the periodic reminder. Verify by triggering a memory edit and confirming the push happens within seconds.
 3. Update the conversation lifecycle: each new chat session creates a Letta Conversation against the talk agent.
-4. Verify the talk agent has the tool needed to write task intents under `talk/tasks/` per the schema (see `bear-den-tasks-schema.md`). The tool should validate the intent against the schema before writing.
+4. Verify the talk agent has access to the privileged Den tool needed to write task intents under `talk/tasks/` per [`../architecture/tasks-schema.md`](../architecture/tasks-schema.md). The tool should validate the intent against the schema before writing.
 5. Confirm tool execution path: tools execute on the harness server (existing behavior) and don't interact with `pair/`, `curate/`, `work/`, or `core/` paths in MemFS.
 
 ### Acceptance
@@ -227,9 +233,9 @@ Each phase has explicit acceptance criteria. Phases are ordered for safe increme
    - Pending result trigger: when new files have appeared in `work/results/` since last cycle.
    - Manual trigger: an `admin/trigger_curate/<bear_id>` endpoint for testing.
 4. Implement curate cycle execution. The cycle has three responsibilities, executed in this order:
-   - **Memory integration:** review new content in `talk/` and `pair/` since last cycle. Promote durable learnings to `core/`.
-   - **Task intent review:** for each pending intent file, decide approve or reject. If approved, write a corresponding file to `core/tasks/<task-id>.md` per the schema. If rejected, write the rejection reason back to the intent file (status changes from `pending_review` to `rejected`).
-   - **Result promotion:** for each new file in `work/results/`, decide whether to surface a summary to channel agents. If yes, write a summary to `core/results/<task-id>.md`.
+   - **Memory integration:** review new content in `talk/` and `pair/` since last cycle. Promote durable learnings to `core/` through allowed curate writes or privileged Den tools.
+   - **Task intent review:** for each pending intent file, decide approve or reject. If approved, call privileged Den tooling to validate and write a corresponding file to `core/tasks/<task-id>.md` per the schema and update the source intent audit metadata. If rejected, call privileged Den tooling to update the source intent with rejection metadata. The curate agent must not receive raw write access to `talk/` or `pair/`.
+   - **Result promotion:** for each new file in `work/results/`, decide whether to surface a summary to channel agents. If yes, write a summary to `core/results/<task-id>.md` through allowed curate writes or privileged Den tools.
 5. Den records the cycle (start time, end time, branches' commit SHAs at start, what was integrated, what intents were approved/rejected, what results were promoted).
 6. Ensure curate cycles don't run concurrently for the same Bear (Den-level lock).
 
@@ -237,7 +243,7 @@ Each phase has explicit acceptance criteria. Phases are ordered for safe increme
 
 - Triggering a curate cycle on a test Bear produces commits to the `curate` branch touching `curate/` and `core/`, with a clear commit message.
 - After a curate cycle, the next system prompt construction on the talk agent reflects content from `core/` (verify by inspecting the agent's loaded context).
-- A pending intent file in `talk/tasks/` is reviewed during the next cycle; either an approval lands in `core/tasks/` or a rejection lands back in `talk/tasks/`.
+- A pending intent file in `talk/tasks/` is reviewed during the next cycle; either an approval lands in `core/tasks/` and the source intent audit metadata is updated by Den, or a rejection audit update is written by Den to the source intent. The curate agent never raw-writes the channel branch.
 - A new result file in `work/results/` produces a summary in `core/results/` after the next cycle.
 - Two near-simultaneous curate triggers result in only one cycle running; the second is rejected or queued.
 - A failure mid-cycle leaves the repo in a clean state.
@@ -315,8 +321,8 @@ Each phase has explicit acceptance criteria. Phases are ordered for safe increme
    Use only the tools listed in `allowed_tools`.
    ```
 4. Implement result writing. The work agent must:
-   - Write a result file matching the schema (see `bear-den-tasks-schema.md`).
-   - Commit and push.
+   - Call privileged Den tooling to write a result file matching [`../architecture/tasks-schema.md`](../architecture/tasks-schema.md).
+   - Commit and push through the validated result-writing path.
    - Return a short summary in its response to Den (so Den can log without re-reading the file).
 5. Implement sandboxing. The work agent should run with:
    - Network egress filtered to allowed destinations (HTTP allowlist enforced at network layer, not just at agent layer).

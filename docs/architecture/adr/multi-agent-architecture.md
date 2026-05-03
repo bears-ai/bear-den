@@ -88,9 +88,11 @@ External work is requested through the architecture, never invoked directly by c
 
 1. A user asks the talk or pair agent to do something with external effects ("check deploy status hourly", "post a daily standup summary to #team").
 2. The channel agent writes a structured task intent to its own branch (`talk/tasks/<intent-id>.md` or `pair/tasks/<intent-id>.md`).
-3. On its next cycle, the curate agent reads pending task intents from channel branches. For each, it either:
-   - Approves and promotes to `core/tasks/<task-id>.md` with appropriate metadata (schedule, scope, allowed tools, risk level); or
-   - Rejects with a reason written back to the requesting branch's `tasks/<intent-id>.md` for the channel agent to surface to the user.
+3. On its next cycle, the curate agent reads pending task intents from channel branches. For each, it decides approve or reject and invokes privileged Den tooling to perform the mutation:
+   - Approval validates and writes `core/tasks/<task-id>.md` with appropriate metadata (schedule, scope, allowed tools, risk level), then updates the source intent audit metadata; or
+   - Rejection updates the source intent audit metadata with a reason for the channel agent to surface to the user.
+
+The curate agent is not granted raw write access to channel branches; Den tools perform these cross-branch audit updates as controlled operations.
 4. Den picks up approved tasks from `core/tasks/` and dispatches them to the work agent on schedule or trigger.
 5. The work agent executes, writing logs and results to `work/results/<task-id>/<run-id>.md`.
 6. On its next cycle, the curate agent promotes summary results to `core/results/` for visibility to channel agents (so the user can ask "what did you do overnight?" via talk or pair).
@@ -103,8 +105,8 @@ The full schema for intent files, approved task files, and result files is speci
 
 Den must:
 
-- Provision the four agents per Bear with their correct tool profiles, system prompts, and skill rosters.
-- Detect and reconcile drift in tool/prompt/skill state across the four agents within a Bear.
+- Provision the four agents per Bear with their correct tool profiles, system prompts, runtime policy, and eventually skill rosters once the skills design is finalized.
+- Detect and reconcile drift in tool/prompt/runtime policy state across the four agents within a Bear; skill drift detection is deferred to the skills design.
 - Run the MemFS sidecar; own conflict resolution policy.
 - Trigger curate cycles on appropriate cadence (idle detection, message-count thresholds, manual trigger).
 - Manage the work-task queue: pick up approved tasks from `core/tasks/`, dispatch to the work agent on schedule, log results.
@@ -124,7 +126,7 @@ Two viable paths are still on the table:
 - **Skills as MemFS content** — store skills inside the memfs repo (in a `.skills/` directory under each agent's path or under `core/`), letting git handle distribution.
 - **Den-managed skill installation** — Den owns the skill roster and installs/updates skills on each agent via Letta API, treating skills as out-of-band from MemFS.
 
-Decision deferred to implementation phase 0. Constraints: agent-driven `/skill` learning writes must flow through whichever mechanism we pick, or be disabled.
+Decision remains deferred to the dedicated skills design. Phase 0 freezes the constraint that agent-driven `/skill` learning writes must flow through the selected mechanism or be disabled; agents must not install out-of-band Letta skills directly.
 
 ## Consequences
 
@@ -226,4 +228,4 @@ The four agents are named for the activity they perform:
 - OWASP Top 10 for Agentic Applications (2026): <https://genai.owasp.org/resource/owasp-top-10-for-agentic-applications-for-2026/>
 - Anthropic, *Trustworthy agents in practice*: <https://www.anthropic.com/research/trustworthy-agents>
 - IBM, *Establishing Runtime Security for Agentic AI* (A2AS): <https://www.ibm.com/think/insights/agentic-ai-runtime-security>
-- Companion documents: `bear-den-implementation-plan.md`, `bear-den-tasks-schema.md`
+- Companion documents: [`../../planning/MULTI_AGENT_IMPLEMENTATION_PLAN.md`](../../planning/MULTI_AGENT_IMPLEMENTATION_PLAN.md), [`../tasks-schema.md`](../tasks-schema.md), [`../../../services/den/docs/bear-spec.md`](../../../services/den/docs/bear-spec.md)
