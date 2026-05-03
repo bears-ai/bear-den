@@ -338,9 +338,53 @@ Each phase has explicit acceptance criteria. Phases are ordered for safe increme
 
 ---
 
+## Phase 8.5 — Documentation and operator UI: retire implicit 1:1 bear ↔ Letta agent
+
+**Goal:** Every human-facing document, operator template, and user-visible error string reflects that a **bear** is a **logical assistant** (one coherent product identity) backed by **one or more Letta agents** with explicit **roles** (`talk` \| `pair` \| `curate` \| `work` per the [`multi-agent-architecture` ADR](../architecture/adr/multi-agent-architecture.md)). Legacy `bears.letta_agent_id` remains valid only as a **transitional** or **migration** concept until Phase 10 completes; it must not be the only story in UI or docs.
+
+**Prerequisite:** `bear_agents` (or equivalent) exists and at least the **talk** row is populated for newly provisioned bears (Phases 0–3). Work can **start in parallel with Phase 4+** once that is true.
+
+**Ordering:** Baseline doc + list/detail/harness template updates from this phase **must ship before Phase 11 cutover** so no production operator relies on obsolete 1:1 copy. **Phase 9** advanced views (unified timeline, MemFS browser, HITL) **assume** this phase has updated the **bear list**, **bear detail**, **create/link bear**, and **Letta Code harness** surfaces so they already speak in roles or show the quartet.
+
+### Tasks — documentation
+
+1. **`docs/planning/PLAN.md`** — Revise **Terminology** and any §1–§2 bullets that describe Den as storing a single `bear_id` ↔ `letta_agent_id` map or routing web/Slack to “the” Letta agent without naming **talk** (and ACP → **pair**, etc.).
+2. **`docs/architecture/DEN_ARCHITECTURE.md`** — Harness binding, skills materialization paths, Den meta tools: document **per-role** Letta agent ids and which **surface** uses which role.
+3. **`docs/architecture/ARCHITECTURE_NOTES.md`** — Stack diagram and component tables: one bear → **cluster** of Letta agents where the architecture is live.
+4. **`docs/planning/PHASE1_BOOTSTRAP.md`**, **`PHASE1_DECISIONS.md`** — Public JSON stays **`bear_id`**-centric; internal and harness artifacts document **role → `letta_agent_id`**; clarify any transition where legacy `bears.letta_agent_id` mirrors **talk** only.
+5. **`docs/planning/DEN_SPECIFIC_TOOLS_PLAN.md`**, **`docs/architecture/BEAR_CHANNEL_AND_ACP.md`**, repo-root **`FAQ.md`** (if present) — JSON examples and narratives: use **talk** (or explicit role) in payloads; ACP sections name **pair**.
+6. **`services/den/migrations/README.md`** — When `bear_agents` lands, document it next to legacy `bears.letta_agent_id` semantics.
+7. **`services/den/docs/`** (e.g. **`concepts-overview.md`**, **`src/web/ROUTES.md`**) — Provisioning and admin flows: no “one agent per bear” without qualification.
+8. **`README.md`** (repo root) — If the one-liner implies a single Letta agent per bear, align wording with **logical bear** vs **Letta runtime identities**.
+
+### Tasks — operator UI, templates, and copy
+
+Audit and update so operators **never** see a bare `letta_agent_id` without **role** or **legacy / pre-migration** context (except deliberate migration tooling).
+
+| Area | Indicative paths | Expected change |
+|------|------------------|-----------------|
+| Admin bear list | `services/den/src/web/templates/admin/bears/list.html` | Replace a single “Letta id” column with **roles** (e.g. talk / pair / curate / work), **partial** provisioning, or **legacy single-agent** badge. |
+| Admin bear detail | `services/den/src/web/templates/admin/bears/detail.html` | Per-role Letta summary (or tabs); SSE / API hints must name **talk** agent, not a generic “the agent”. |
+| Create / attach bear | `admin/bears/new.html`, `bear/new.html` | Copy for **attach existing Letta agent**: clarify **legacy single-agent link** vs **quartet** provision; forms may need role-specific attach later. |
+| Letta Code harness admin | `admin/letta_code_harness.html` | Rows or copy must not assume one Letta row per bear without role. |
+| Unlinked Letta agents | `admin/bears/unlinked_letta_agents.html` | Consider ids referenced only in **`bear_agents`** as linked; not only `bears.letta_agent_id`. |
+| End-user bear pages | `bear/details.html`, `bear/memory.html`, `bear/edit_configuration.html` | Diagnostics: show **which** Letta agent is summarized (default **talk** for operator/e2e “bear health”). |
+
+**Rust / API surfaces:** Audit `services/den/src/web/bear_management.rs`, `services/den/src/web/v1/mod.rs`, `services/den/src/api/acp.rs`, and related modules for template context and JSON field names — external docs and OpenAPI-style comments should match. Prefer structured logs with **`bear_id` + `role` + `letta_agent_id`**.
+
+**Codepool:** `services/codepool/` — Document in README or inline types which **role** Den supplies for harness / Den-tool calls (typically **talk** until multi-role payloads exist).
+
+### Acceptance
+
+- A new engineer can read **only** updated docs and correctly explain why **Slack/web** and **ACP** may use **different** Letta agents for the same `bear_id`.
+- Operator **bear list** and **bear detail** do not imply a single Letta agent unless labeled **legacy** or **pre-migration**.
+- Checklist (manual or scripted grep): remaining UI that binds **only** `bears.letta_agent_id` without `bear_agents` / role is listed and tracked to zero before Phase 11.
+
+---
+
 ## Phase 9 — Management UI updates
 
-**Goal:** the Den UI surfaces conversations as agent-locked, makes the task lifecycle visible, and provides the HITL approval queue.
+**Goal:** the Den UI surfaces conversations as agent-locked, makes the task lifecycle visible, and provides the HITL approval queue. **Depends on:** Phase **8.5** for list/detail/harness and doc baseline so Phase 9 is not built on 1:1 assumptions.
 
 ### Tasks
 

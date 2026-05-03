@@ -60,4 +60,4 @@ Do not assume the environment is “simulated only”: prefer **running `cargo` 
 
 ## Planning docs (BEARS)
 
-Monorepo **[`docs/planning/`](../../docs/planning/)**: [Phase 1 bootstrap](../../docs/planning/PHASE1_BOOTSTRAP.md), [Phase 1 decisions](../../docs/planning/PHASE1_DECISIONS.md), [PLAN](../../docs/planning/PLAN.md). The [`plans/`](plans/) folder here is only a **pointer** to those paths; do not duplicate planning markdown under `services/den/plans/`.
+Monorepo **[`docs/planning/`](../../docs/planning/)**: [Phase 1 bootstrap](../../docs/planning/PHASE1_BOOTSTRAP.md), [Phase 1 decisions](../../docs/planning/PHASE1_DECISIONS.md), [PLAN](../../docs/planning/PLAN.md), [Multi-agent implementation (incl. doc + operator UI Phase 8.5)](../../docs/planning/MULTI_AGENT_IMPLEMENTATION_PLAN.md). The [`plans/`](plans/) folder here is only a **pointer** to those paths; do not duplicate planning markdown under `services/den/plans/`.
