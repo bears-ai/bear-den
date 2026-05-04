@@ -55,6 +55,7 @@ struct AcpToolTurn {
     request_id: Uuid,
     tool_call_id: String,
     tool_name: String,
+    approval_request_id: Option<String>,
     settled: bool,
     result_tx: Option<oneshot::Sender<AcpToolResultRequest>>,
 }
@@ -113,7 +114,9 @@ pub struct AcpPromptRequest {
 struct AcpToolResultRequest {
     turn_id: Option<String>,
     request_id: Option<String>,
+    tool_call_id: Option<String>,
     tool_name: Option<String>,
+    approval_request_id: Option<String>,
     status: String,
     #[serde(default)]
     content: Option<String>,
@@ -1171,6 +1174,26 @@ async fn tool_result_inner(
             "tool result does not match the authenticated ACP session".to_string(),
         ));
     }
+    if let Some(body_tool_call_id) = body.tool_call_id.as_deref().filter(|s| !s.is_empty()) {
+        if body_tool_call_id != turn.tool_call_id {
+            return Err(CustomError::ValidationError(format!(
+                "tool result call id mismatch: expected {}, got {}",
+                turn.tool_call_id, body_tool_call_id
+            )));
+        }
+    }
+    if let Some(body_approval_request_id) = body
+        .approval_request_id
+        .as_deref()
+        .filter(|s| !s.is_empty())
+    {
+        if turn.approval_request_id.as_deref() != Some(body_approval_request_id) {
+            return Err(CustomError::ValidationError(format!(
+                "tool result approval request id mismatch: expected {:?}, got {}",
+                turn.approval_request_id, body_approval_request_id
+            )));
+        }
+    }
     if let Some(body_tool_name) = body.tool_name.as_deref().filter(|s| !s.is_empty()) {
         if body_tool_name != turn.tool_name {
             return Err(CustomError::ValidationError(format!(
@@ -1557,11 +1580,13 @@ enum AcpGatewayEvent {
         request_id: String,
         turn_id: String,
         tool_call_id: String,
+        approval_request_id: Option<String>,
         tool_name: String,
         title: String,
         kind: String,
         args: serde_json::Value,
         approval_required: bool,
+        approval_reason: Option<String>,
         result_tx: Option<oneshot::Sender<AcpToolResultRequest>>,
         result_rx: Option<oneshot::Receiver<AcpToolResultRequest>>,
     },
@@ -1587,6 +1612,7 @@ async fn persist_stream_event_side_effects(
         }
         AcpGatewayEvent::ToolRequest {
             tool_call_id,
+            approval_request_id,
             tool_name,
             request_id,
             result_tx,
@@ -1609,6 +1635,7 @@ async fn persist_stream_event_side_effects(
                     request_id: context.request_id,
                     tool_call_id: tool_call_id.clone(),
                     tool_name: tool_name.clone(),
+                    approval_request_id: approval_request_id.clone(),
                     settled: false,
                     result_tx: Some(result_tx),
                 },
@@ -1702,7 +1729,11 @@ fn map_native_letta_stream_event_to_acp_event(
             }
         }
         "tool_call_message" | "approval_request_message" | "function_call" => {
-            native_letta_tool_request_event(event, inner)
+            native_letta_tool_request_event(
+                event,
+                inner,
+                message_type == "approval_request_message",
+            )
         }
         _ => native_letta_conversation_resolved_event(event),
     }
@@ -1711,6 +1742,7 @@ fn map_native_letta_stream_event_to_acp_event(
 fn native_letta_tool_request_event(
     event: &serde_json::Value,
     inner: &serde_json::Value,
+    approval_required: bool,
 ) -> Option<AcpGatewayEvent> {
     let tool_call = inner
         .get("tool_call")
@@ -1777,6 +1809,13 @@ fn native_letta_tool_request_event(
         .and_then(|v| v.as_str())
         .map(str::to_string)
         .unwrap_or_else(|| format!("call-{}", Uuid::new_v4()));
+    let approval_request_id = (approval_required).then(|| {
+        event
+            .get("id")
+            .and_then(|v| v.as_str())
+            .map(str::to_string)
+            .unwrap_or_else(|| format!("approval-{}", Uuid::new_v4()))
+    });
     let request_id = event
         .get("request_id")
         .and_then(|v| v.as_str())
@@ -1792,11 +1831,14 @@ fn native_letta_tool_request_event(
         request_id,
         turn_id,
         tool_call_id,
+        approval_request_id,
         tool_name: normalized_tool.to_string(),
         title: "Read file".to_string(),
         kind: "read".to_string(),
         args,
-        approval_required: false,
+        approval_required,
+        approval_reason: approval_required
+            .then(|| "Letta requested approval before running this local ACP tool.".to_string()),
         result_tx: Some(result_tx),
         result_rx: Some(result_rx),
     })
@@ -1985,11 +2027,13 @@ fn acp_event_to_adapter_sse(event: AcpGatewayEvent) -> Bytes {
             request_id,
             turn_id,
             tool_call_id,
+            approval_request_id,
             tool_name,
             title,
             kind,
             args,
             approval_required,
+            approval_reason,
             result_tx: _,
             result_rx: _,
         } => serde_json::json!({
@@ -1997,12 +2041,14 @@ fn acp_event_to_adapter_sse(event: AcpGatewayEvent) -> Bytes {
             "request_id": request_id,
             "turn_id": turn_id,
             "tool_call_id": tool_call_id,
+            "approval_request_id": approval_request_id,
             "tool_name": tool_name,
             "title": title,
             "kind": kind,
             "args": args,
             "approval": {
                 "required": approval_required,
+                "reason": approval_reason,
             },
             "diagnostic": {
                 "component": "den.acp",
@@ -2280,6 +2326,7 @@ impl Stream for AcpLettaSseStream {
                             let pair_agent_id = this.pair_agent_id.clone();
                             let tool_return = tool_result.content.clone().unwrap_or_default();
                             let status = tool_result.status.clone();
+                            let approval_request_id = tool_result.approval_request_id.clone();
                             this.persist_future =
                                 Some(AcpPendingFuture::ContinueTool(Box::pin(async move {
                                     letta
@@ -2287,6 +2334,7 @@ impl Stream for AcpLettaSseStream {
                                             &upstream_target,
                                             Some(&pair_agent_id),
                                             &tool_name,
+                                            approval_request_id.as_deref(),
                                             &status,
                                             &tool_return,
                                         )

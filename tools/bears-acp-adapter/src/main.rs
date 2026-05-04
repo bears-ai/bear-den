@@ -2097,6 +2097,22 @@ async fn handle_tool_request_event(
         .get("tool_name")
         .and_then(Value::as_str)
         .ok_or_else(|| anyhow!("tool_request missing tool_name"))?;
+    send_tool_call_update(session_id, tool_call_id, "pending", "Preparing local tool").await?;
+    if event
+        .get("approval")
+        .and_then(|v| v.get("required"))
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+    {
+        send_tool_call_update(
+            session_id,
+            tool_call_id,
+            "pending",
+            "Waiting for permission",
+        )
+        .await?;
+        request_tool_permission(session_id, tool_call_id, tool_name, event).await?;
+    }
     send_tool_call_update(session_id, tool_call_id, "pending", "Running local tool").await?;
     let started = std::time::Instant::now();
     let result = match tool_name {
@@ -2113,6 +2129,8 @@ async fn handle_tool_request_event(
     let mut payload = json!({
         "turn_id": event.get("turn_id").and_then(Value::as_str),
         "request_id": event.get("request_id").and_then(Value::as_str),
+        "tool_call_id": tool_call_id,
+        "approval_request_id": event.get("approval_request_id").and_then(Value::as_str),
         "tool_name": tool_name,
         "diagnostic": {
             "adapter_version": env!("CARGO_PKG_VERSION"),
@@ -2141,6 +2159,55 @@ async fn handle_tool_request_event(
         }
     }
     post_tool_result(config, session_id, tool_call_id, payload).await?;
+    Ok(())
+}
+
+async fn request_tool_permission(
+    session_id: &str,
+    tool_call_id: &str,
+    tool_name: &str,
+    event: &Value,
+) -> Result<()> {
+    let path = event
+        .get("args")
+        .and_then(|v| v.get("path"))
+        .and_then(Value::as_str)
+        .unwrap_or("the requested file");
+    let title = event
+        .get("title")
+        .and_then(Value::as_str)
+        .unwrap_or("Run local tool");
+    let reason = event
+        .get("approval")
+        .and_then(|v| v.get("reason"))
+        .and_then(Value::as_str)
+        .unwrap_or("Letta requested approval before running this local ACP tool.");
+    let request_id = format!("perm-{}", Uuid::new_v4());
+    eprintln!(
+        "bears-acp-adapter: requesting permission session_id={} tool_call_id={} tool_name={} path={}",
+        session_id, tool_call_id, tool_name, path
+    );
+    write_json(json!({
+        "jsonrpc": "2.0",
+        "id": request_id,
+        "method": "session/request_permission",
+        "params": {
+            "sessionId": session_id,
+            "toolCallId": tool_call_id,
+            "title": title,
+            "kind": event.get("kind").and_then(Value::as_str).unwrap_or("read"),
+            "description": format!("{reason}\n\nTool: {tool_name}\nPath: {path}"),
+            "content": [{
+                "type": "content",
+                "content": { "type": "text", "text": format!("Allow {tool_name} to read {path}?") }
+            }]
+        }
+    }))
+    .await?;
+    // TODO: once the adapter has response waiters for outbound JSON-RPC requests,
+    // wait for the matching permission response and honor denials. For now this
+    // sends the standard ACP permission request so clients that support
+    // contextual auto-approval can record/decide, then continues optimistically.
     Ok(())
 }
 

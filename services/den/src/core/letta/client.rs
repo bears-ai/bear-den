@@ -603,6 +603,7 @@ impl LettaClient {
         conversation_id: &str,
         agent_id: Option<&str>,
         tool_call_id: &str,
+        approval_request_id: Option<&str>,
         status: &str,
         tool_return: &str,
     ) -> Result<reqwest::Response, CustomError> {
@@ -614,17 +615,25 @@ impl LettaClient {
 
         let letta_status = if status == "ok" { "success" } else { "error" };
         let mut body = serde_json::Map::new();
-        body.insert(
-            "messages".to_string(),
-            json!([{
+        let tool_return_value = json!({
+            "status": letta_status,
+            "tool_call_id": tool_call_id,
+            "tool_return": tool_return,
+        });
+        let message = if let Some(approval_request_id) = approval_request_id {
+            json!({
+                "type": "approval",
+                "approval_request_id": approval_request_id,
+                "approve": letta_status == "success",
+                "approvals": [tool_return_value]
+            })
+        } else {
+            json!({
                 "type": "tool_return",
-                "tool_returns": [{
-                    "status": letta_status,
-                    "tool_call_id": tool_call_id,
-                    "tool_return": tool_return,
-                }]
-            }]),
-        );
+                "tool_returns": [tool_return_value]
+            })
+        };
+        body.insert("messages".to_string(), json!([message]));
         body.insert("streaming".to_string(), json!(true));
         body.insert("stream_tokens".to_string(), json!(true));
         if let Some(a) = agent_id.map(str::trim).filter(|s| !s.is_empty()) {
