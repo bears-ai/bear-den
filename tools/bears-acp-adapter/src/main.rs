@@ -1,8 +1,12 @@
 use agent_client_protocol::schema::{
-    ContentBlock, ContentChunk, PermissionOption, PermissionOptionKind, PromptResponse,
-    ReadTextFileRequest, ReadTextFileResponse, RequestPermissionOutcome, RequestPermissionRequest,
-    RequestPermissionResponse, SessionUpdate, StopReason, ToolCall, ToolCallContent,
-    ToolCallStatus, ToolCallUpdate, ToolCallUpdateFields, ToolKind,
+    AgentCapabilities, AuthEnvVar, AuthMethod, AuthMethodEnvVar, ContentBlock, ContentChunk,
+    Implementation, InitializeResponse, ListSessionsResponse, LoadSessionResponse, McpCapabilities,
+    NewSessionResponse, PermissionOption, PermissionOptionKind, PromptCapabilities, PromptResponse,
+    ProtocolVersion, ReadTextFileRequest, ReadTextFileResponse, RequestPermissionOutcome,
+    RequestPermissionRequest, RequestPermissionResponse, SessionCapabilities,
+    SessionCloseCapabilities, SessionInfo, SessionListCapabilities, SessionResumeCapabilities,
+    SessionUpdate, StopReason, ToolCall, ToolCallContent, ToolCallStatus, ToolCallUpdate,
+    ToolCallUpdateFields, ToolKind,
 };
 use anyhow::{anyhow, Context, Result};
 use futures_util::StreamExt;
@@ -501,7 +505,7 @@ async fn handle_request(
                     .unwrap_or(Value::Null),
             );
             if let Some(id) = request.id {
-                write_response(id, Ok(initialize_result())).await?;
+                write_response(id, Ok(initialize_result()?)).await?;
             }
         }
         "bears/read_text_file" => {
@@ -567,11 +571,7 @@ async fn handle_request(
                     .insert(session_id.clone(), context);
                 write_response(
                     id,
-                    Ok(json!({
-                        "sessionId": session_id,
-                        "configOptions": null,
-                        "modes": null,
-                    })),
+                    Ok(serde_json::to_value(NewSessionResponse::new(session_id))?),
                 )
                 .await?;
             }
@@ -614,7 +614,7 @@ async fn handle_request(
                 }
                 match den_list_acp_sessions(http, config, &request.params).await {
                     Ok(den) => {
-                        let mapped = map_den_sessions_list_to_acp(&den);
+                        let mapped = map_den_sessions_list_to_acp(&den)?;
                         write_response(id, Ok(mapped)).await?;
                     }
                     Err(err) => {
@@ -655,7 +655,7 @@ async fn handle_request(
                     return Ok(());
                 }
                 match restore_session_from_den(http, config, adapter_state, &request.params).await {
-                    Ok(()) => write_response(id, Ok(session_lifecycle_result())).await?,
+                    Ok(()) => write_response(id, Ok(session_lifecycle_result()?)).await?,
                     Err(err) => {
                         write_response(
                             id,
@@ -1194,51 +1194,46 @@ fn token_env_for_auth_method() -> String {
         .unwrap_or_else(|| "BEARS_DEN_TOKEN".to_string())
 }
 
-fn initialize_result() -> Value {
-    json!({
-        "protocolVersion": 1,
-        "agentCapabilities": {
-            "loadSession": true,
-            "mcpCapabilities": {
-                "http": false,
-                "sse": false
-            },
-            "promptCapabilities": {
-                "image": false,
-                "audio": false,
-                "embeddedContext": true
-            },
-            "sessionCapabilities": {
-                "close": {},
-                "list": {},
-                "resume": {}
-            }
-        },
-        "agentInfo": {
-            "name": "bears",
-            "title": "BEARS",
-            "version": env!("CARGO_PKG_VERSION")
-        },
-        "authMethods": [
-            {
-                "id": "bears_den_token",
-                "name": "BEARS Code Token",
-                "type": "env_var",
-                "vars": [
-                    {
-                        "name": token_env_for_auth_method(),
-                        "label": "BEARS Code Token",
-                        "secret": true
-                    }
-                ],
-                "description": "Paste a Den ACP token. Tokens include the acp:chat scope.",
-                "link": "https://github.com/silarsis/BEARS"
-            }
-        ]
-    })
+fn initialize_result() -> Result<Value> {
+    let capabilities = AgentCapabilities::new()
+        .load_session(true)
+        .mcp_capabilities(McpCapabilities::new().http(false).sse(false))
+        .prompt_capabilities(
+            PromptCapabilities::new()
+                .image(false)
+                .audio(false)
+                .embedded_context(true),
+        )
+        .session_capabilities(
+            SessionCapabilities::new()
+                .list(Some(SessionListCapabilities::new()))
+                .resume(Some(SessionResumeCapabilities::new()))
+                .close(Some(SessionCloseCapabilities::new())),
+        );
+    let info =
+        Implementation::new("bears", env!("CARGO_PKG_VERSION")).title(Some("BEARS".to_string()));
+    let auth = AuthMethod::EnvVar(
+        AuthMethodEnvVar::new(
+            "bears_den_token",
+            "BEARS Code Token",
+            vec![AuthEnvVar::new(token_env_for_auth_method())
+                .label(Some("BEARS Code Token".to_string()))
+                .secret(true)],
+        )
+        .description(Some(
+            "Paste a Den ACP token. Tokens include the acp:chat scope.".to_string(),
+        ))
+        .link(Some("https://github.com/silarsis/BEARS".to_string())),
+    );
+    Ok(serde_json::to_value(
+        InitializeResponse::new(ProtocolVersion::V1)
+            .agent_capabilities(capabilities)
+            .agent_info(Some(info))
+            .auth_methods(vec![auth]),
+    )?)
 }
 
-fn map_den_sessions_list_to_acp(den: &Value) -> Value {
+fn map_den_sessions_list_to_acp(den: &Value) -> Result<Value> {
     let sessions_in = den
         .get("sessions")
         .and_then(|s| s.as_array())
@@ -1256,12 +1251,10 @@ fn map_den_sessions_list_to_acp(den: &Value) -> Value {
             .and_then(Value::as_str)
             .unwrap_or("")
             .to_string();
-        let mut row = json!({
-            "sessionId": session_id,
-            "updatedAt": updated_at,
-            "cwd": cwd,
-        });
-        if let Some(title) = s
+        if session_id.is_empty() || cwd.is_empty() {
+            continue;
+        }
+        let title = s
             .get("resolved_conversation_id")
             .and_then(Value::as_str)
             .filter(|t| !t.is_empty())
@@ -1271,23 +1264,18 @@ fn map_den_sessions_list_to_acp(den: &Value) -> Value {
                     .and_then(Value::as_str)
                     .filter(|t| !t.is_empty())
                     .map(str::to_string)
-            })
-        {
-            row["title"] = json!(title);
-        }
-        row["_meta"] = json!({
-            "conversation_id": s.get("conversation_id"),
-            "resolved_conversation_id": s.get("resolved_conversation_id"),
-            "client": s.get("client"),
-            "closed_at": s.get("closed_at"),
-        });
-        sessions_out.push(row);
+            });
+        let info = SessionInfo::new(session_id.to_string(), PathBuf::from(cwd))
+            .updated_at(Some(updated_at.to_string()))
+            .title(title);
+        sessions_out.push(info);
     }
-    let mut result = json!({ "sessions": sessions_out });
-    if let Some(c) = den.get("next_cursor").and_then(Value::as_str) {
-        result["nextCursor"] = json!(c);
-    }
-    result
+    let response = ListSessionsResponse::new(sessions_out).next_cursor(
+        den.get("next_cursor")
+            .and_then(Value::as_str)
+            .map(str::to_string),
+    );
+    Ok(serde_json::to_value(response)?)
 }
 
 fn conversation_id_for_history(den_session: &Value) -> Option<String> {
@@ -1590,15 +1578,12 @@ async fn handle_session_load(
 
     replay_history_for_den_session(http, config, session_id, &den, "session/load").await?;
 
-    write_response(response_id, Ok(session_lifecycle_result())).await?;
+    write_response(response_id, Ok(session_lifecycle_result()?)).await?;
     Ok(())
 }
 
-fn session_lifecycle_result() -> Value {
-    json!({
-        "configOptions": null,
-        "modes": null,
-    })
+fn session_lifecycle_result() -> Result<Value> {
+    Ok(serde_json::to_value(LoadSessionResponse::new())?)
 }
 
 async fn handle_session_close(
@@ -2751,7 +2736,7 @@ mod tests {
             }],
             "next_cursor": "abc"
         });
-        let m = map_den_sessions_list_to_acp(&den);
+        let m = map_den_sessions_list_to_acp(&den).unwrap();
         assert_eq!(m["nextCursor"], "abc");
         assert_eq!(m["sessions"][0]["sessionId"], "s1");
         assert_eq!(m["sessions"][0]["cwd"], "/tmp");
