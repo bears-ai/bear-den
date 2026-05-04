@@ -10,6 +10,7 @@ use serde::Serialize;
 use sqlx::{postgres::PgPoolOptions, PgPool};
 use time::OffsetDateTime;
 use tokio::time::timeout;
+use serde_json::Value;
 use url::Url;
 
 use crate::startup;
@@ -82,12 +83,13 @@ pub async fn gather(state: &AppState) -> StackHealthReport {
     checks.push(openai_key_warn());
     checks.push(web_server_url_shape(cfg));
 
-    let (den_pg, letta_pg, codepool_h, letta_h, bifrost_h) = tokio::join!(
+    let (den_pg, letta_pg, codepool_h, letta_h, bifrost_h, memfs_views_h) = tokio::join!(
         check_den_postgres(state.sqlx_pool()),
         check_letta_postgres(&cfg.letta_pg_uri),
         check_codepool(&state),
         check_letta_api(&state),
         check_bifrost_http(&cfg.bifrost_base_url, &cfg.bifrost_metadata_url),
+        check_memfs_sidecar_views(&cfg.letta_memfs_service_url),
     );
 
     checks.push(den_pg);
@@ -95,6 +97,7 @@ pub async fn gather(state: &AppState) -> StackHealthReport {
     checks.push(codepool_h);
     checks.push(letta_h);
     checks.push(bifrost_h);
+    checks.push(memfs_views_h);
 
     StackHealthReport::from_checks(checks)
 }
@@ -421,6 +424,130 @@ async fn check_letta_api(state: &AppState) -> HealthCheck {
             state: CheckState::Fail,
             detail: e.to_string(),
         },
+    }
+}
+
+async fn check_memfs_sidecar_views(base: &str) -> HealthCheck {
+    let base = base.trim().trim_end_matches('/');
+    if base.is_empty() {
+        return HealthCheck {
+            id: "memfs_views",
+            label: "MemFS role views",
+            state: CheckState::Skipped,
+            detail: "LETTA_MEMFS_SERVICE_URL empty".into(),
+        };
+    }
+    let client = match reqwest::Client::builder()
+        .timeout(HTTP_PROBE_TIMEOUT)
+        .connect_timeout(Duration::from_secs(4))
+        .build()
+    {
+        Ok(c) => c,
+        Err(e) => {
+            return HealthCheck {
+                id: "memfs_views",
+                label: "MemFS role views",
+                state: CheckState::Fail,
+                detail: format!("reqwest client: {e}"),
+            };
+        }
+    };
+    let url = format!("{base}/v1/management/bears");
+    let resp = match timeout(HTTP_PROBE_TIMEOUT, client.get(&url).send()).await {
+        Err(_) => {
+            return HealthCheck {
+                id: "memfs_views",
+                label: "MemFS role views",
+                state: CheckState::Fail,
+                detail: format!("timeout after {}s ({url})", HTTP_PROBE_TIMEOUT.as_secs()),
+            };
+        }
+        Ok(Err(e)) => {
+            return HealthCheck {
+                id: "memfs_views",
+                label: "MemFS role views",
+                state: CheckState::Fail,
+                detail: e.to_string(),
+            };
+        }
+        Ok(Ok(resp)) => resp,
+    };
+    let status = resp.status();
+    let text = resp.text().await.unwrap_or_default();
+    if !status.is_success() {
+        return HealthCheck {
+            id: "memfs_views",
+            label: "MemFS role views",
+            state: CheckState::Fail,
+            detail: format!("HTTP {status} from {url}: {}", truncate_detail(text)),
+        };
+    }
+    let value: Value = match serde_json::from_str(&text) {
+        Ok(v) => v,
+        Err(e) => {
+            return HealthCheck {
+                id: "memfs_views",
+                label: "MemFS role views",
+                state: CheckState::Fail,
+                detail: format!("JSON parse failed: {e}"),
+            };
+        }
+    };
+    let views = value
+        .get("views")
+        .and_then(|v| v.as_object())
+        .map(|m| m.values().collect::<Vec<_>>())
+        .unwrap_or_default();
+    if views.is_empty() {
+        return HealthCheck {
+            id: "memfs_views",
+            label: "MemFS role views",
+            state: CheckState::Warn,
+            detail: "sidecar reachable but no registered role views".into(),
+        };
+    }
+    let mut quarantined = 0usize;
+    let mut drift = 0usize;
+    let mut missing = 0usize;
+    let mut errors = 0usize;
+    let mut stale = 0usize;
+    let now = OffsetDateTime::now_utc().unix_timestamp() as f64;
+    for view in &views {
+        let state = view.get("state").and_then(|v| v.as_str()).unwrap_or("unknown");
+        if view.get("quarantined").and_then(|v| v.as_bool()).unwrap_or(false) || state == "quarantined" {
+            quarantined += 1;
+        }
+        if state == "drift" {
+            drift += 1;
+        }
+        if matches!(state, "missing_view" | "missing_canonical") {
+            missing += 1;
+        }
+        if matches!(state, "error" | "git_error") {
+            errors += 1;
+        }
+        if let Some(ts) = view.get("last_reconciled_at").and_then(|v| v.as_f64()) {
+            if now - ts > 600.0 {
+                stale += 1;
+            }
+        }
+    }
+    let total = views.len();
+    let detail = format!(
+        "{total} view(s); quarantined={quarantined}, drift={drift}, missing={missing}, stale_reconcile={stale}, errors={errors}"
+    );
+    let state = if quarantined > 0 || missing > 0 || errors > 0 {
+        CheckState::Fail
+    } else if drift > 0 || stale > 0 {
+        CheckState::Warn
+    } else {
+        CheckState::Ok
+    };
+    HealthCheck {
+        id: "memfs_views",
+        label: "MemFS role views",
+        state,
+        detail,
     }
 }
 
