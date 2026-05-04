@@ -1466,6 +1466,19 @@ async fn prompt_inner(
             &conversation_resolution.upstream_target,
             Some(&pair_agent_id),
             &prompt_with_tool_context,
+            Some(serde_json::json!([{
+                "name": "fs.read_text_file",
+                "description": "Read a UTF-8 text file from the user's local ACP workspace. Use this when you need file contents. Only absolute paths under the active workspace are allowed.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "path": { "type": "string", "description": "Absolute local file path under the workspace." },
+                        "line": { "type": "integer", "minimum": 1, "description": "Optional 1-based starting line." },
+                        "limit": { "type": "integer", "minimum": 1, "maximum": 2000, "description": "Optional maximum number of lines." }
+                    },
+                    "required": ["path"]
+                }
+            }])),
         )
         .await
     {
@@ -1483,6 +1496,9 @@ async fn prompt_inner(
             acp_session_id: session_id.to_string(),
             request_id,
         },
+        state.letta.clone(),
+        pair_agent_id.clone(),
+        conversation_resolution.upstream_target.clone(),
     );
     let request_id_header = HeaderValue::from_str(&request_id.to_string()).map_err(|_| {
         ApiError::new(
@@ -2130,6 +2146,7 @@ enum AcpPendingFuture {
             >,
         >,
     ),
+    ContinueTool(Pin<Box<dyn Future<Output = Result<reqwest::Response, CustomError>> + Send>>),
 }
 
 struct AcpLettaSseStream {
@@ -2139,6 +2156,9 @@ struct AcpLettaSseStream {
     pending_raw_frames: VecDeque<Vec<u8>>,
     pending: VecDeque<Bytes>,
     context: AcpStreamContext,
+    letta: Arc<crate::core::letta::LettaClient>,
+    pair_agent_id: String,
+    upstream_target: String,
     diagnostics: AcpStreamDiagnostics,
     logged_summary: bool,
     persist_future: Option<AcpPendingFuture>,
@@ -2148,6 +2168,9 @@ impl AcpLettaSseStream {
     fn new(
         inner: impl Stream<Item = Result<Bytes, reqwest::Error>> + Send + 'static,
         context: AcpStreamContext,
+        letta: Arc<crate::core::letta::LettaClient>,
+        pair_agent_id: String,
+        upstream_target: String,
     ) -> Self {
         Self {
             inner: Box::pin(inner),
@@ -2155,6 +2178,9 @@ impl AcpLettaSseStream {
             pending_raw_frames: VecDeque::new(),
             pending: VecDeque::new(),
             context,
+            letta,
+            pair_agent_id,
+            upstream_target,
             diagnostics: AcpStreamDiagnostics::default(),
             logged_summary: false,
             persist_future: None,
@@ -2206,16 +2232,36 @@ impl Stream for AcpLettaSseStream {
                     this.persist_future = None;
                     match result {
                         Ok(tool_result) => {
-                            this.pending.push_back(acp_event_to_adapter_sse(
-                                AcpGatewayEvent::StatusText {
-                                    text: format!(
-                                        "Local tool {} completed with status {} ({} bytes)",
-                                        tool_result.tool_name.as_deref().unwrap_or("tool"),
-                                        tool_result.status,
-                                        tool_result.content.as_deref().map(str::len).unwrap_or(0),
-                                    ),
-                                },
-                            ));
+                            let tool_name = tool_result
+                                .tool_name
+                                .as_deref()
+                                .unwrap_or("tool")
+                                .to_string();
+                            this.pending
+                                .push_back(acp_event_to_adapter_sse(AcpGatewayEvent::StatusText {
+                                text: format!(
+                                    "Local tool {tool_name} completed with status {} ({} bytes)",
+                                    tool_result.status,
+                                    tool_result.content.as_deref().map(str::len).unwrap_or(0),
+                                ),
+                            }));
+                            let letta = this.letta.clone();
+                            let upstream_target = this.upstream_target.clone();
+                            let pair_agent_id = this.pair_agent_id.clone();
+                            let tool_return = tool_result.content.clone().unwrap_or_default();
+                            let status = tool_result.status.clone();
+                            this.persist_future =
+                                Some(AcpPendingFuture::ContinueTool(Box::pin(async move {
+                                    letta
+                                        .post_conversation_tool_returns_streaming(
+                                            &upstream_target,
+                                            Some(&pair_agent_id),
+                                            &tool_name,
+                                            &status,
+                                            &tool_return,
+                                        )
+                                        .await
+                                })));
                             return self.poll_next(cx);
                         }
                         Err(err) => {
@@ -2224,6 +2270,30 @@ impl Stream for AcpLettaSseStream {
                                     message: "ACP local tool result channel closed before a result was delivered.".to_string(),
                                     detail: Some(err.to_string()),
                                     error_type: Some("tool_result_channel_closed".to_string()),
+                                    request_id: Some(this.context.request_id.to_string()),
+                                    context: None,
+                                },
+                            ));
+                            return self.poll_next(cx);
+                        }
+                    }
+                }
+                AcpPendingFuture::ContinueTool(fut) => {
+                    let result = ready!(fut.as_mut().poll(cx));
+                    this.persist_future = None;
+                    match result {
+                        Ok(response) => {
+                            this.inner = Box::pin(response.bytes_stream());
+                            return self.poll_next(cx);
+                        }
+                        Err(err) => {
+                            this.pending.push_back(acp_event_to_adapter_sse(
+                                AcpGatewayEvent::Error {
+                                    message:
+                                        "Failed to continue Letta after ACP local tool result."
+                                            .to_string(),
+                                    detail: Some(err.to_string()),
+                                    error_type: Some("letta_tool_return_failed".to_string()),
                                     request_id: Some(this.context.request_id.to_string()),
                                     context: None,
                                 },

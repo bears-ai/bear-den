@@ -542,6 +542,7 @@ impl LettaClient {
         conversation_id: &str,
         agent_id: Option<&str>,
         user_input: &str,
+        client_tools: Option<serde_json::Value>,
     ) -> Result<reqwest::Response, CustomError> {
         if !self.is_enabled() {
             return Err(CustomError::System(
@@ -561,6 +562,9 @@ impl LettaClient {
         body.insert("stream_tokens".to_string(), json!(true));
         if let Some(a) = agent_id.map(str::trim).filter(|s| !s.is_empty()) {
             body.insert("agent_id".to_string(), json!(a));
+        }
+        if let Some(tools) = client_tools {
+            body.insert("client_tools".to_string(), tools);
         }
 
         let url = format!(
@@ -588,6 +592,68 @@ impl LettaClient {
                 .unwrap_or_else(|_| "(no body)".to_string());
             return Err(CustomError::System(format!(
                 "Letta conversation messages HTTP {status}: {text}"
+            )));
+        }
+
+        Ok(resp)
+    }
+
+    pub async fn post_conversation_tool_returns_streaming(
+        &self,
+        conversation_id: &str,
+        agent_id: Option<&str>,
+        tool_call_id: &str,
+        status: &str,
+        tool_return: &str,
+    ) -> Result<reqwest::Response, CustomError> {
+        if !self.is_enabled() {
+            return Err(CustomError::System(
+                "Letta is not configured (set LETTA_BASE_URL)".to_string(),
+            ));
+        }
+
+        let letta_status = if status == "ok" { "success" } else { "error" };
+        let mut body = serde_json::Map::new();
+        body.insert(
+            "messages".to_string(),
+            json!([{
+                "type": "tool_return",
+                "tool_returns": [{
+                    "status": letta_status,
+                    "tool_call_id": tool_call_id,
+                    "tool_return": tool_return,
+                }]
+            }]),
+        );
+        body.insert("streaming".to_string(), json!(true));
+        body.insert("stream_tokens".to_string(), json!(true));
+        if let Some(a) = agent_id.map(str::trim).filter(|s| !s.is_empty()) {
+            body.insert("agent_id".to_string(), json!(a));
+        }
+
+        let url = format!(
+            "{}/v1/conversations/{}/messages",
+            self.base_url, conversation_id
+        );
+
+        let resp = self
+            .http
+            .post(url)
+            .headers(self.auth_headers())
+            .header(CONTENT_TYPE, "application/json")
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| CustomError::System(format!("Letta tool return request failed: {e}")))?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let text = resp
+                .text()
+                .await
+                .unwrap_or_else(|_| "(no body)".to_string());
+            return Err(CustomError::System(format!(
+                "Letta tool return HTTP {status}: {text}"
             )));
         }
 
