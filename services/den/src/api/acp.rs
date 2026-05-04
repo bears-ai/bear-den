@@ -654,6 +654,28 @@ fn letta_message_text(inner: &serde_json::Value) -> Option<String> {
     }
 }
 
+fn letta_stream_text_preserving_whitespace(inner: &serde_json::Value) -> Option<String> {
+    let content = inner.get("content")?;
+    if let Some(s) = content.as_str() {
+        return Some(s.to_string());
+    }
+    if let Some(obj) = content.as_object() {
+        if let Some(t) = obj.get("text").and_then(|x| x.as_str()) {
+            return Some(t.to_string());
+        }
+    }
+    let parts = content.as_array()?;
+    let mut out = String::new();
+    let mut found_text = false;
+    for part in parts {
+        if let Some(t) = part.get("text").and_then(|x| x.as_str()) {
+            found_text = true;
+            out.push_str(t);
+        }
+    }
+    found_text.then_some(out)
+}
+
 fn letta_message_id_string(msg: &serde_json::Value) -> Option<String> {
     match msg.get("id")? {
         serde_json::Value::String(s) if !s.is_empty() => Some(s.clone()),
@@ -1364,8 +1386,8 @@ fn map_native_letta_stream_event_to_acp_event(
         .unwrap_or("");
     match message_type {
         "assistant_message" => Some(AcpGatewayEvent::AssistantTextDelta {
-            text: letta_message_text(inner)
-                .or_else(|| letta_message_text(event))
+            text: letta_stream_text_preserving_whitespace(inner)
+                .or_else(|| letta_stream_text_preserving_whitespace(event))
                 .unwrap_or_default(),
         }),
         "reasoning_message" => Some(AcpGatewayEvent::StatusText {
@@ -1379,8 +1401,8 @@ fn map_native_letta_stream_event_to_acp_event(
                         .and_then(|v| v.as_str())
                         .map(str::to_string)
                 })
-                .or_else(|| letta_message_text(inner))
-                .or_else(|| letta_message_text(event))
+                .or_else(|| letta_stream_text_preserving_whitespace(inner))
+                .or_else(|| letta_stream_text_preserving_whitespace(event))
                 .unwrap_or_default(),
         }),
         "error_message" => Some(AcpGatewayEvent::Error {
@@ -1782,6 +1804,15 @@ mod tests {
         let text = String::from_utf8(out[0].to_vec()).unwrap();
         assert!(text.contains("\"type\":\"assistant_text_delta\""));
         assert!(text.contains("hello from native Letta"));
+    }
+
+    #[test]
+    fn maps_native_letta_assistant_chunks_without_stripping_spaces() {
+        let out = map_letta_stream_frame_to_acp_adapter_events(
+            b"data: {\"message_type\":\"assistant_message\",\"content\":\" broke\"}\n\n",
+        );
+        let text = String::from_utf8(out[0].to_vec()).unwrap();
+        assert!(text.contains("\"text\":\" broke\""));
     }
 
     #[test]
