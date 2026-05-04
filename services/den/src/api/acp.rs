@@ -2963,6 +2963,135 @@ impl Stream for AcpLettaSseStream {
 mod tests {
     use super::*;
 
+    #[tokio::test]
+    async fn acp_stream_waits_for_tool_result_and_continues_letta() {
+        use axum::{
+            extract::State,
+            http::header,
+            response::{IntoResponse, Response},
+            routing::post,
+            Json, Router,
+        };
+        use futures::StreamExt;
+        use sqlx::postgres::PgPoolOptions;
+        use std::sync::Arc;
+        use tokio::sync::Mutex as TokioMutex;
+
+        #[derive(Clone)]
+        struct FakeState {
+            captured: Arc<TokioMutex<Option<serde_json::Value>>>,
+        }
+
+        async fn fake_tool_return(
+            State(state): State<FakeState>,
+            Json(body): Json<serde_json::Value>,
+        ) -> Response {
+            *state.captured.lock().await = Some(body);
+            (
+                [(header::CONTENT_TYPE, "text/event-stream; charset=utf-8")],
+                concat!(
+                    "data: {\"message_type\":\"assistant_message\",\"content\":\"file says hello\"}\n\n",
+                    "data: {\"message_type\":\"stop_reason\",\"stop_reason\":\"end_turn\"}\n\n"
+                ),
+            )
+                .into_response()
+        }
+
+        let captured = Arc::new(TokioMutex::new(None));
+        let app = Router::new()
+            .route(
+                "/v1/conversations/{conversation_id}/messages",
+                post(fake_tool_return),
+            )
+            .with_state(FakeState {
+                captured: captured.clone(),
+            });
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+
+        let mut config = crate::config::Config::load();
+        config.letta_base_url = format!("http://{addr}");
+        let letta = Arc::new(crate::core::letta::LettaClient::new(&config));
+        let pool = PgPoolOptions::new()
+            .connect_lazy("postgres://postgres:postgres@127.0.0.1/postgres")
+            .unwrap();
+        let registry = new_acp_tool_turn_registry();
+        let context = AcpStreamContext {
+            pool,
+            tool_turns: registry.clone(),
+            user_id: 1,
+            bear_id: Uuid::new_v4(),
+            bear_slug: "test-bear".to_string(),
+            acp_session_id: "acp-test-session".to_string(),
+            request_id: Uuid::new_v4(),
+        };
+        let upstream = futures::stream::iter(vec![
+            Ok::<Bytes, reqwest::Error>(Bytes::from(concat!(
+                "data: {\"id\":\"approval-1\",\"message_type\":\"approval_request_message\",",
+                "\"tool_call\":{\"name\":\"fs_read_text_file\",\"tool_call_id\":\"call_test\",",
+                "\"arguments\":\"{\\\"path\\\":\\\"/tmp/acp-test.txt\\\"}\"}}\n\n"
+            ))),
+            Ok::<Bytes, reqwest::Error>(Bytes::from(
+                "data: {\"message_type\":\"stop_reason\",\"stop_reason\":\"requires_approval\"}\n\n",
+            )),
+        ]);
+        let mut stream = AcpLettaSseStream::new(
+            upstream,
+            context,
+            letta,
+            "agent-12345678-1234-4567-89ab-123456789abc".to_string(),
+            "conv-test-continuation".to_string(),
+        );
+
+        let first = stream.next().await.unwrap().unwrap();
+        let first_text = String::from_utf8(first.to_vec()).unwrap();
+        assert!(first_text.contains("\"type\":\"tool_request\""));
+        assert!(first_text.contains("\"tool_call_id\":\"call_test\""));
+
+        let tx = registry
+            .lock()
+            .unwrap()
+            .get_mut(&acp_tool_turn_key("acp-test-session", "call_test"))
+            .unwrap()
+            .result_tx
+            .take()
+            .unwrap();
+        tx.send(AcpToolResultRequest {
+            turn_id: Some("turn-test".to_string()),
+            request_id: Some("request-test".to_string()),
+            tool_call_id: Some("call_test".to_string()),
+            tool_name: Some("fs_read_text_file".to_string()),
+            approval_request_id: Some("approval-1".to_string()),
+            status: "ok".to_string(),
+            content: Some("hello from file".to_string()),
+            structured_content: serde_json::json!({}),
+            diagnostic: serde_json::json!({}),
+        })
+        .unwrap();
+
+        let mut output = String::new();
+        while let Some(item) = stream.next().await {
+            output.push_str(&String::from_utf8(item.unwrap().to_vec()).unwrap());
+            if output.contains("file says hello") {
+                break;
+            }
+        }
+        assert!(output.contains("Local tool fs_read_text_file completed"));
+        assert!(output.contains("file says hello"));
+
+        let body = captured.lock().await.clone().unwrap();
+        assert_eq!(body["messages"][0]["type"], "approval");
+        assert_eq!(body["messages"][0]["approval_request_id"], "approval-1");
+        assert_eq!(body["messages"][0]["approvals"][0]["type"], "tool");
+        assert_eq!(
+            body["messages"][0]["approvals"][0]["tool_call_id"],
+            "call_test"
+        );
+    }
+
     #[test]
     fn acp_read_text_file_provider_name_is_safe() {
         assert!(provider_tool_name_is_safe(
