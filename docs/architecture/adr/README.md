@@ -14,6 +14,7 @@ Use ADRs for cross-cutting product and architecture decisions that are expected 
 | [bear-memory-tool-boundary.md](bear-memory-tool-boundary.md) | Accepted | Boundary between Letta Code-native MemFS tools and Den-hosted bear tools |
 | [cabinet-reading-pipeline.md](cabinet-reading-pipeline.md) | Proposed | Cabinet document ingestion and reading pipeline |
 | [dynamic-skills-subagents.md](dynamic-skills-subagents.md) | Proposed | Dynamic skills, reflection subagents, bear-authored capability growth |
+| [memfs-sidecar-repo-views.md](memfs-sidecar-repo-views.md) | Accepted | Canonical Bear MemFS repo plus per-agent sidecar repo views |
 | [multi-user-memory.md](multi-user-memory.md) | Proposed | Multi-user memory model and Letta-native memory visibility |
 | [routines-automation.md](routines-automation.md) | Proposed | Den-managed routines, scheduling, output handling, learning constraints |
 

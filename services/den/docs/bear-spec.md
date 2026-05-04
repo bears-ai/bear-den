@@ -204,7 +204,9 @@ Watch tools must reject observations that do not have a valid Den-issued event c
 
 ## MemFS Layout
 
-Each Bear has one bare repo, recorded in `bears.memfs_repo_path`, and five branches:
+MemFS topology is defined by [`../../../docs/architecture/adr/memfs-sidecar-repo-views.md`](../../../docs/architecture/adr/memfs-sidecar-repo-views.md).
+
+Each Bear has one canonical bare repo, recorded in `bears.memfs_repo_path`, and five canonical role branches:
 
 | Branch | Writable paths | Readable paths |
 |--------|----------------|----------------|
@@ -227,19 +229,15 @@ watch/observations/
 watch/subscriptions/
 ```
 
-The bare repo `pre-receive` hook is authoritative for branch/path write enforcement. Tool-level path checks are defense in depth and should return clearer errors before push time.
+The canonical bare repo `pre-receive` hook is authoritative for branch/path write enforcement. Tool-level path checks are defense in depth and should return clearer errors before push time.
+
+The MemFS sidecar presents each Letta role agent with a per-agent view repo whose default branch is `main`. The view repo maps to exactly one canonical role branch and forwards accepted pushes to canonical. The sidecar owns view creation, forwarding, reconciliation, quarantine, diagnostics, and per-role health reporting.
 
 ### Core Materialization
 
-`core/` is curated shared state. The source of truth for writes to `core/` is the `curate` branch plus Den-mediated privileged tools that write validated `core/` files.
+`core/` is curated shared state. The source of truth for writes to `core/` is the canonical `curate` branch plus Den-mediated privileged tools that write validated `core/` files.
 
-Non-curate role agents may read `core/`, but they do not gain write authority over it. Implementation may materialize `core/` for `talk`, `pair`, `work`, and `watch` by one of these Den-managed mechanisms:
-
-1. A read-only worktree/mount of the `curate` branch's `core/` directory alongside the role worktree.
-2. A Den-managed merge/copy of `core/` into the role's prompt/context construction path without committing `core/` changes to the role branch.
-3. A Git merge strategy that imports `core/` into role worktrees while preserving the rule that role agents cannot commit or push `core/` changes.
-
-The implementation must document which mechanism is active before Phase 2 acceptance. Any mechanism that can produce non-fast-forward branch divergence must be Den-managed and must not rely on the agent to resolve conflicts. If a role agent attempts to commit `core/` changes directly, the pre-receive hook rejects the push.
+Non-curate role agents may read curated `core/` context, but they do not gain write authority over it. Under the sidecar-view design, any `core/` materialization into non-curate view repos must be sidecar-managed and must remain read-only from the role agent's effective write path. If a role agent attempts to commit `core/` changes directly, the canonical hook rejects the forwarded push and the sidecar records a diagnostic or quarantine according to the MemFS sidecar ADR.
 
 ## Data Model
 

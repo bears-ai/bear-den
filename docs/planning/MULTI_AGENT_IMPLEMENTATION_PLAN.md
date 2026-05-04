@@ -1,6 +1,6 @@
 # Implementation Plan: BEARS Multi-Agent Architecture
 
-This plan implements the architecture described in the `multi-agent-architecture` ADR. The task-queue specifics referenced in phases 4–8 are detailed in `tasks-schema.md`.
+This plan implements the architecture described in the `multi-agent-architecture` ADR. The task-queue specifics referenced in phases 4–8 are detailed in `tasks-schema.md`. MemFS repo/view topology is specified by the [`memfs-sidecar-repo-views` ADR](../architecture/adr/memfs-sidecar-repo-views.md).
 
 Each phase has explicit acceptance criteria. Phases are ordered for safe incremental rollout. Phase 10 (migration) only runs after phases 1–9 have been validated on a test Bear.
 
@@ -135,36 +135,48 @@ As of the current Den slice:
 
 ## Phase 2 — MemFS layout and enforcement
 
-**Goal:** the bare repo per Bear has the right structure, and the path-per-agent invariant is enforced server-side.
+**Goal:** the canonical bare repo per Bear and the per-agent sidecar repo views have the right structure, and the path-per-agent invariant is enforced server-side.
 
 ### Tasks
 
-1. Define the canonical layout. For each Bear, the bare repo has these branches:
+1. Define the canonical layout per the [`memfs-sidecar-repo-views` ADR](../architecture/adr/memfs-sidecar-repo-views.md). For each Bear, the canonical bare repo has these branches:
    - `talk` — writable by talk agent. Contents: `talk/` directory, including `talk/tasks/` for intent files.
    - `pair` — writable by pair agent. Contents: `pair/` directory, including `pair/tasks/` for intent files.
    - `curate` — writable by curate agent. Contents: `curate/` directory and `core/` directory (which contains `core/tasks/` and `core/results/`).
    - `work` — writable by work agent. Contents: `work/` directory, including `work/results/<task-id>/<run-id>.md`.
    - `watch` — writable by watch agent. Contents: `watch/` directory, including `watch/observations/` for raw observation files and `watch/subscriptions/` for subscription configurations.
    - `core/` is curated shared state. The implementation must document how `core/` is materialized read-only for `talk`, `pair`, `work`, and `watch` before Phase 2 acceptance (for example read-only worktree/mount, Den-managed prompt/context copy, or Den-managed merge strategy).
-2. Write a `pre-receive` hook for the bare repo that:
+2. Write canonical and view hooks for the MemFS sidecar:
+   - The canonical repo hook enforces branch/path policy.
+   - Each per-agent view repo presents `main` to Letta and forwards accepted pushes to the matching canonical role branch.
+   - Forwarding is idempotent and emits diagnostics on failure.
+3. Write a `pre-receive` hook for the canonical bare repo that:
    - Identifies the branch being pushed.
    - Walks the changed file list.
    - Rejects the push if any changed path is outside that branch's allowed paths. Error message must be clear (e.g., "branch 'talk' attempted to write to 'core/notes.md'; only 'talk/' paths are allowed").
    - Preserves the invariant that privileged Den tools, not raw agent pushes, perform approved cross-branch audit updates such as task intent approval/rejection metadata.
-3. Write an initialization script `den/scripts/init_bear_repo.sh <bear_id>` that:
-   - Creates the bare repo at the configured path.
-   - Installs the `pre-receive` hook.
-   - Creates the five branches with appropriate empty directory structure (a `.gitkeep` in each, plus the `tasks/`, `results/`, `observations/`, and `subscriptions/` subdirectories where applicable).
-4. Add a "memfs sidecar healthcheck" to Den's existing health endpoints — confirms the sidecar is reachable and can serve at least one repo.
+4. Write an initialization script `den/scripts/init_bear_repo.sh <bear_id>` that:
+   - Creates the canonical bare repo at the configured path.
+   - Installs the canonical `pre-receive` hook.
+   - Creates the five canonical branches with appropriate empty directory structure (a `.gitkeep` in each, plus the `tasks/`, `results/`, `observations/`, and `subscriptions/` subdirectories where applicable).
+5. Extend the MemFS sidecar to create per-agent view repos (`main` default branch) for each `bear_agents` row and to maintain the mapping from `agent_id` to `(bear_id, role, canonical_repo, canonical_branch, view_repo)`.
+6. Implement sidecar reconciliation and quarantine:
+   - view behind canonical → fast-forward view;
+   - view ahead and acceptable → forward to canonical;
+   - divergence or canonical rejection → quarantine view and block further pushes;
+   - missing/corrupt view → recreate from canonical.
+7. Add a "memfs sidecar healthcheck" to Den's existing health endpoints — confirms the sidecar is reachable and can report per-Bear/per-role view health.
 
 ### Acceptance
 
-- Initializing a new Bear produces a bare repo with all five branches and the hook installed.
+- Initializing a new Bear produces a canonical bare repo with all five branches and the canonical hook installed.
 - Manual test: clone the `talk` branch, add a file under `core/`, push — push is rejected with the clear error.
 - Manual test: clone the `curate` branch, add a file under `core/`, push — push succeeds.
 - Manual test: clone the `work` branch, add a file under `core/`, push — push is rejected.
 - Manual test: clone the `watch` branch, add a file under `core/`, push — push is rejected.
-- Sidecar healthcheck passes.
+- Per-agent view repos expose only their role branch as `main` and cannot directly browse other role branches.
+- Sidecar healthcheck passes and reports canonical/view tips, last forward/reconcile times, drift count, and quarantine state.
+- Sidecar reconciliation self-heals fast-forwardable drift and quarantines unresolvable drift with an operator-actionable diagnostic.
 - The active `core/` materialization strategy is documented and does not give `talk`, `pair`, `work`, or `watch` raw push authority over `core/`.
 
 ---
