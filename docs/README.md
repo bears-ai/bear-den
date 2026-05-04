@@ -9,6 +9,7 @@ Human-oriented docs for the **Basic Environment for Agents Runtime Server (BEARS
 | Path | Contents |
 |------|----------|
 | [../services/codepool/](../services/codepool/) | **Codepool** — Letta Code SDK harness (warm pool, Den streaming, optional channel listeners) |
+| [concepts/](concepts/) | Durable cross-functional concepts and vocabulary: [Bear roles](concepts/BEAR_ROLES.md) for the five-role model (`talk`, `pair`, `curate`, `work`, `watch`) |
 | [planning/](planning/) | Roadmap and implementation sequencing: [PLAN](planning/PLAN.md), [Phase 1 bootstrap](planning/PHASE1_BOOTSTRAP.md), [locked Phase 1 decisions](planning/PHASE1_DECISIONS.md), [**Multi-agent bear** rollout + **doc/UI** for bear ↔ Letta roles](planning/MULTI_AGENT_IMPLEMENTATION_PLAN.md) (includes Phase 8.5: retire implicit 1:1 copy), [`bear_channel` Phase 7+](planning/BEAR_CHANNEL_PHASE7_PLANS.md), [bear capability management](planning/BEAR_CAPABILITY_MANAGEMENT_PLAN.md), [capabilities/skills brokering](planning/CAPABILITIES_SKILLS_BROKERING_PLAN.md), [Den-specific bear tools](planning/DEN_SPECIFIC_TOOLS_PLAN.md), ACP discovery notes |
 | [deployment/](deployment/) | Coolify deployment order and steps |
 | [architecture/](architecture/) | System architecture and contracts: stack notes, Den + multi-user Letta, [`bear_channel` + ACP](architecture/BEAR_CHANNEL_AND_ACP.md), MemFS and memory UI, Letta vs bear UI coverage, Den meta tools |
