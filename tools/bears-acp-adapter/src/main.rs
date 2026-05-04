@@ -1,9 +1,10 @@
 use agent_client_protocol::schema::{
-    AgentCapabilities, AuthEnvVar, AuthMethod, AuthMethodEnvVar, ContentBlock, ContentChunk,
-    Implementation, InitializeResponse, ListSessionsResponse, LoadSessionResponse, McpCapabilities,
-    NewSessionResponse, PermissionOption, PermissionOptionKind, PromptCapabilities, PromptResponse,
-    ProtocolVersion, ReadTextFileRequest, ReadTextFileResponse, RequestPermissionOutcome,
-    RequestPermissionRequest, RequestPermissionResponse, SessionCapabilities,
+    AgentCapabilities, AuthEnvVar, AuthMethod, AuthMethodEnvVar, AuthenticateResponse,
+    CloseSessionResponse, ContentBlock, ContentChunk, Implementation, InitializeResponse,
+    ListSessionsResponse, LoadSessionResponse, McpCapabilities, NewSessionResponse,
+    PermissionOption, PermissionOptionKind, PromptCapabilities, PromptResponse, ProtocolVersion,
+    ReadTextFileRequest, ReadTextFileResponse, RequestPermissionOutcome, RequestPermissionRequest,
+    RequestPermissionResponse, ResumeSessionResponse, SessionCapabilities,
     SessionCloseCapabilities, SessionInfo, SessionListCapabilities, SessionResumeCapabilities,
     SessionUpdate, StopReason, ToolCall, ToolCallContent, ToolCallStatus, ToolCallUpdate,
     ToolCallUpdateFields, ToolKind,
@@ -529,7 +530,10 @@ async fn handle_request(
         "authenticate" => {
             if let Some(id) = request.id {
                 match handle_authenticate(http, runtime, request.params).await {
-                    Ok(()) => write_response(id, Ok(json!({}))).await?,
+                    Ok(()) => {
+                        write_response(id, Ok(serde_json::to_value(AuthenticateResponse::new())?))
+                            .await?
+                    }
                     Err(err) => {
                         write_response(
                             id,
@@ -655,7 +659,10 @@ async fn handle_request(
                     return Ok(());
                 }
                 match restore_session_from_den(http, config, adapter_state, &request.params).await {
-                    Ok(()) => write_response(id, Ok(session_lifecycle_result()?)).await?,
+                    Ok(()) => {
+                        write_response(id, Ok(serde_json::to_value(ResumeSessionResponse::new())?))
+                            .await?
+                    }
                     Err(err) => {
                         write_response(
                             id,
@@ -775,7 +782,10 @@ async fn handle_request(
                     return Ok(());
                 };
                 match handle_session_close(http, config, request.params).await {
-                    Ok(()) => write_response(id, Ok(json!({}))).await?,
+                    Ok(()) => {
+                        write_response(id, Ok(serde_json::to_value(CloseSessionResponse::new())?))
+                            .await?
+                    }
                     Err(err) => {
                         write_response(
                             id,
@@ -804,7 +814,10 @@ async fn handle_request(
                     return Ok(());
                 };
                 match handle_session_cancel(http, config, request.params).await {
-                    Ok(()) => write_response(id, Ok(json!({}))).await?,
+                    Ok(()) => {
+                        write_response(id, Ok(serde_json::to_value(CloseSessionResponse::new())?))
+                            .await?
+                    }
                     Err(err) => {
                         write_response(
                             id,
