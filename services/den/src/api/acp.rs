@@ -2278,6 +2278,7 @@ struct AcpLettaSseStream {
     letta: Arc<crate::core::letta::LettaClient>,
     pair_agent_id: String,
     upstream_target: String,
+    pending_tool_result: Option<AcpToolResultRequest>,
     diagnostics: AcpStreamDiagnostics,
     logged_summary: bool,
     persist_future: Option<AcpPendingFuture>,
@@ -2300,6 +2301,7 @@ impl AcpLettaSseStream {
             letta,
             pair_agent_id,
             upstream_target,
+            pending_tool_result: None,
             diagnostics: AcpStreamDiagnostics::default(),
             logged_summary: false,
             persist_future: None,
@@ -2365,25 +2367,13 @@ impl Stream for AcpLettaSseStream {
                                 ),
                                 },
                             ));
-                            let letta = this.letta.clone();
-                            let upstream_target = this.upstream_target.clone();
-                            let pair_agent_id = this.pair_agent_id.clone();
-                            let tool_return = tool_result.content.clone().unwrap_or_default();
-                            let status = tool_result.status.clone();
-                            let approval_request_id = tool_result.approval_request_id.clone();
-                            this.persist_future =
-                                Some(AcpPendingFuture::ContinueTool(Box::pin(async move {
-                                    letta
-                                        .post_conversation_tool_returns_streaming(
-                                            &upstream_target,
-                                            Some(&pair_agent_id),
-                                            &tool_name,
-                                            approval_request_id.as_deref(),
-                                            &status,
-                                            &tool_return,
-                                        )
-                                        .await
-                                })));
+                            // Letta keeps the original run active until its SSE stream finishes
+                            // with `requires_approval`/stop metadata. If we POST the tool return
+                            // before draining that stream, Letta rejects the continuation with
+                            // HTTP 409 (another run is still processing this conversation). Store
+                            // the result and continue reading the current stream; once it ends,
+                            // start the tool-return continuation.
+                            this.pending_tool_result = Some(tool_result);
                             return self.poll_next(cx);
                         }
                         Err(err) => {
@@ -2485,6 +2475,32 @@ impl Stream for AcpLettaSseStream {
                     this.buffer.clear();
                 }
                 if !this.pending_raw_frames.is_empty() {
+                    self.poll_next(cx)
+                } else if let Some(tool_result) = this.pending_tool_result.take() {
+                    let letta = this.letta.clone();
+                    let upstream_target = this.upstream_target.clone();
+                    let pair_agent_id = this.pair_agent_id.clone();
+                    let tool_name = tool_result
+                        .tool_name
+                        .as_deref()
+                        .unwrap_or("tool")
+                        .to_string();
+                    let tool_return = tool_result.content.clone().unwrap_or_default();
+                    let status = tool_result.status.clone();
+                    let approval_request_id = tool_result.approval_request_id.clone();
+                    this.persist_future =
+                        Some(AcpPendingFuture::ContinueTool(Box::pin(async move {
+                            letta
+                                .post_conversation_tool_returns_streaming(
+                                    &upstream_target,
+                                    Some(&pair_agent_id),
+                                    &tool_name,
+                                    approval_request_id.as_deref(),
+                                    &status,
+                                    &tool_return,
+                                )
+                                .await
+                        })));
                     self.poll_next(cx)
                 } else if let Some(event) = this.diagnostics.empty_turn_error_event(&this.context) {
                     this.diagnostics.observe_mapped_event(&event);
