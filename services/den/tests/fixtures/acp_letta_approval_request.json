@@ -1,0 +1,12 @@
+{
+  "id": "message-approval-fixture",
+  "date": "2026-05-04T14:22:38+00:00",
+  "message_type": "approval_request_message",
+  "run_id": "run-fixture",
+  "step_id": "step-fixture",
+  "tool_call": {
+    "name": "fs_read_text_file",
+    "tool_call_id": "call_fixture_read",
+    "arguments": "{\"path\":\"/tmp/acp-fixture.txt\",\"line\":1,\"limit\":50}"
+  }
+}

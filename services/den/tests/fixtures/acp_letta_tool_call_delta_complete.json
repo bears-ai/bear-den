@@ -1,0 +1,9 @@
+{
+  "id": "message-complete-fixture",
+  "message_type": "approval_request_message",
+  "tool_call": {
+    "name": "fs_read_text_file",
+    "tool_call_id": "call_fixture_partial",
+    "arguments": "{\"path\":\"/tmp/acp-complete.txt\"}"
+  }
+}

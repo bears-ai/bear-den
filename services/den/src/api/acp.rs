@@ -2749,6 +2749,59 @@ mod tests {
     }
 
     #[test]
+    fn maps_realistic_fixture_approval_request_to_tool_request() {
+        let event: serde_json::Value = serde_json::from_str(include_str!(
+            "../../tests/fixtures/acp_letta_approval_request.json"
+        ))
+        .unwrap();
+        let mapped = map_native_letta_stream_event_to_acp_event(&event).unwrap();
+        match mapped {
+            AcpGatewayEvent::ToolRequest {
+                tool_call_id,
+                approval_request_id,
+                tool_name,
+                args,
+                approval_required,
+                ..
+            } => {
+                assert_eq!(tool_call_id, "call_fixture_read");
+                assert_eq!(
+                    approval_request_id.as_deref(),
+                    Some("message-approval-fixture")
+                );
+                assert_eq!(tool_name, "fs_read_text_file");
+                assert_eq!(args["path"], "/tmp/acp-fixture.txt");
+                assert!(approval_required);
+            }
+            other => panic!("expected tool request, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn partial_fixture_does_not_emit_tool_request_until_arguments_complete() {
+        let partial: serde_json::Value = serde_json::from_str(include_str!(
+            "../../tests/fixtures/acp_letta_tool_call_delta_partial.json"
+        ))
+        .unwrap();
+        assert!(map_native_letta_stream_event_to_acp_event(&partial).is_none());
+
+        let complete: serde_json::Value = serde_json::from_str(include_str!(
+            "../../tests/fixtures/acp_letta_tool_call_delta_complete.json"
+        ))
+        .unwrap();
+        let mapped = map_native_letta_stream_event_to_acp_event(&complete).unwrap();
+        match mapped {
+            AcpGatewayEvent::ToolRequest {
+                tool_call_id, args, ..
+            } => {
+                assert_eq!(tool_call_id, "call_fixture_partial");
+                assert_eq!(args["path"], "/tmp/acp-complete.txt");
+            }
+            other => panic!("expected tool request, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn maps_nested_letta_approval_request_to_tool_request() {
         let event = serde_json::json!({
             "id": "message-approval-1",
