@@ -1,5 +1,6 @@
 use agent_client_protocol::schema::{
-    ReadTextFileResponse, RequestPermissionOutcome, RequestPermissionResponse,
+    ContentBlock, ContentChunk, ReadTextFileResponse, RequestPermissionOutcome,
+    RequestPermissionResponse, SessionUpdate, ToolCall, ToolCallContent, ToolCallStatus, ToolKind,
 };
 use anyhow::{anyhow, Context, Result};
 use futures_util::StreamExt;
@@ -2437,30 +2438,45 @@ async fn handle_den_event(
     }
 }
 
+fn tool_status_from_str(status: &str) -> ToolCallStatus {
+    match status {
+        "pending" => ToolCallStatus::Pending,
+        "running" | "in_progress" => ToolCallStatus::InProgress,
+        "completed" => ToolCallStatus::Completed,
+        "failed" | "error" => ToolCallStatus::Failed,
+        _ => ToolCallStatus::Pending,
+    }
+}
+
 async fn send_tool_call_update(
     session_id: &str,
     tool_call_id: &str,
     status: &str,
     text: &str,
 ) -> Result<()> {
+    let tool_call = ToolCall::new(tool_call_id.to_string(), "Read file")
+        .kind(ToolKind::Read)
+        .status(tool_status_from_str(status))
+        .content(vec![ToolCallContent::from(text.to_string())]);
     write_notification(
         "session/update",
         json!({
             "sessionId": session_id,
-            "update": {
-                "sessionUpdate": "tool_call",
-                "toolCallId": tool_call_id,
-                "title": "Read file",
-                "kind": "read",
-                "status": status,
-                "content": [{
-                    "type": "content",
-                    "content": { "type": "text", "text": text }
-                }]
-            }
+            "update": serde_json::to_value(SessionUpdate::ToolCall(tool_call))?,
         }),
     )
     .await
+}
+
+fn text_chunk_update(kind: &str, text: &str) -> Result<Value> {
+    let chunk = ContentChunk::new(ContentBlock::from(text.to_string()));
+    let update = match kind {
+        "user" => SessionUpdate::UserMessageChunk(chunk),
+        "agent" => SessionUpdate::AgentMessageChunk(chunk),
+        "thought" => SessionUpdate::AgentThoughtChunk(chunk),
+        _ => return Err(anyhow!("unknown chunk kind {kind}")),
+    };
+    Ok(serde_json::to_value(update)?)
 }
 
 async fn send_user_message_chunk(session_id: &str, text: &str) -> Result<()> {
@@ -2468,10 +2484,7 @@ async fn send_user_message_chunk(session_id: &str, text: &str) -> Result<()> {
         "session/update",
         json!({
             "sessionId": session_id,
-            "update": {
-                "sessionUpdate": "user_message_chunk",
-                "content": { "type": "text", "text": text }
-            }
+            "update": text_chunk_update("user", text)?,
         }),
     )
     .await
@@ -2482,10 +2495,7 @@ async fn send_agent_message_chunk(session_id: &str, text: &str) -> Result<()> {
         "session/update",
         json!({
             "sessionId": session_id,
-            "update": {
-                "sessionUpdate": "agent_message_chunk",
-                "content": { "type": "text", "text": text }
-            }
+            "update": text_chunk_update("agent", text)?,
         }),
     )
     .await
@@ -2496,10 +2506,7 @@ async fn send_agent_thought_chunk(session_id: &str, text: &str) -> Result<()> {
         "session/update",
         json!({
             "sessionId": session_id,
-            "update": {
-                "sessionUpdate": "agent_thought_chunk",
-                "content": { "type": "text", "text": text }
-            }
+            "update": text_chunk_update("thought", text)?,
         }),
     )
     .await
