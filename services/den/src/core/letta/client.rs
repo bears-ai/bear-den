@@ -604,7 +604,7 @@ impl LettaClient {
         Ok(())
     }
 
-    /// `POST /v1/conversations/{conversation_id}/messages/stream` (native Letta SSE).
+    /// `POST /v1/conversations/{conversation_id}/messages` with `streaming: true` and step-level SSE.
     ///
     /// For the agent default thread, pass `conversation_id == "default"` and `Some(agent_id)` in the body.
     ///
@@ -631,7 +631,8 @@ impl LettaClient {
                 "content": user_input,
             }]),
         );
-        body.insert("stream_tokens".to_string(), json!(true));
+        body.insert("streaming".to_string(), json!(true));
+        body.insert("stream_tokens".to_string(), json!(false));
         if let Some(a) = agent_id.map(str::trim).filter(|s| !s.is_empty()) {
             body.insert("agent_id".to_string(), json!(a));
         }
@@ -640,7 +641,7 @@ impl LettaClient {
         }
 
         let url = format!(
-            "{}/v1/conversations/{}/messages/stream",
+            "{}/v1/conversations/{}/messages",
             self.base_url, conversation_id
         );
 
@@ -707,13 +708,14 @@ impl LettaClient {
             })
         };
         body.insert("messages".to_string(), json!([message]));
-        body.insert("stream_tokens".to_string(), json!(true));
+        body.insert("streaming".to_string(), json!(true));
+        body.insert("stream_tokens".to_string(), json!(false));
         if let Some(a) = agent_id.map(str::trim).filter(|s| !s.is_empty()) {
             body.insert("agent_id".to_string(), json!(a));
         }
 
         let url = format!(
-            "{}/v1/conversations/{}/messages/stream",
+            "{}/v1/conversations/{}/messages",
             self.base_url, conversation_id
         );
 
@@ -735,6 +737,125 @@ impl LettaClient {
                 .unwrap_or_else(|_| "(no body)".to_string());
             return Err(CustomError::System(format!(
                 "Letta tool return HTTP {status}: {text}"
+            )));
+        }
+
+        Ok(resp)
+    }
+
+    pub async fn post_agent_messages_streaming(
+        &self,
+        agent_id: &str,
+        user_input: &str,
+        client_tools: Option<serde_json::Value>,
+    ) -> Result<reqwest::Response, CustomError> {
+        if !self.is_enabled() {
+            return Err(CustomError::System(
+                "Letta is not configured (set LETTA_BASE_URL)".to_string(),
+            ));
+        }
+
+        let mut body = serde_json::Map::new();
+        body.insert(
+            "messages".to_string(),
+            json!([{
+                "role": "user",
+                "content": user_input,
+            }]),
+        );
+        body.insert("streaming".to_string(), json!(true));
+        body.insert("stream_tokens".to_string(), json!(false));
+        if let Some(tools) = client_tools {
+            body.insert("client_tools".to_string(), tools);
+        }
+
+        let url = format!("{}/v1/agents/{}/messages", self.base_url, agent_id);
+        let resp = self
+            .http
+            .post(url)
+            .headers(self.auth_headers())
+            .header(CONTENT_TYPE, "application/json")
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| {
+                CustomError::System(format!("Letta agent messages request failed: {e}"))
+            })?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let text = resp
+                .text()
+                .await
+                .unwrap_or_else(|_| "(no body)".to_string());
+            return Err(CustomError::System(format!(
+                "Letta agent messages HTTP {status}: {text}"
+            )));
+        }
+
+        Ok(resp)
+    }
+
+    pub async fn post_agent_tool_returns_streaming(
+        &self,
+        agent_id: &str,
+        tool_call_id: &str,
+        approval_request_id: Option<&str>,
+        status: &str,
+        tool_return: &str,
+    ) -> Result<reqwest::Response, CustomError> {
+        if !self.is_enabled() {
+            return Err(CustomError::System(
+                "Letta is not configured (set LETTA_BASE_URL)".to_string(),
+            ));
+        }
+
+        let letta_status = if status == "ok" { "success" } else { "error" };
+        let mut body = serde_json::Map::new();
+        let tool_return_value = json!({
+            "type": "tool",
+            "status": letta_status,
+            "tool_call_id": tool_call_id,
+            "tool_return": tool_return,
+        });
+        let message = if let Some(approval_request_id) = approval_request_id {
+            json!({
+                "type": "approval",
+                "approval_request_id": approval_request_id,
+                "approve": letta_status == "success",
+                "approvals": [tool_return_value]
+            })
+        } else {
+            json!({
+                "type": "tool_return",
+                "tool_returns": [tool_return_value]
+            })
+        };
+        body.insert("messages".to_string(), json!([message]));
+        body.insert("streaming".to_string(), json!(true));
+        body.insert("stream_tokens".to_string(), json!(false));
+
+        let url = format!("{}/v1/agents/{}/messages", self.base_url, agent_id);
+        let resp = self
+            .http
+            .post(url)
+            .headers(self.auth_headers())
+            .header(CONTENT_TYPE, "application/json")
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| {
+                CustomError::System(format!("Letta agent tool return request failed: {e}"))
+            })?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let text = resp
+                .text()
+                .await
+                .unwrap_or_else(|_| "(no body)".to_string());
+            return Err(CustomError::System(format!(
+                "Letta agent tool return HTTP {status}: {text}"
             )));
         }
 

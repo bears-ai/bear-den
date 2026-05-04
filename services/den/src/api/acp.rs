@@ -1610,9 +1610,8 @@ async fn prompt_inner(
     let prompt_with_tool_context = format!("{prompt}{tool_prompt_context}");
     let upstream = match state
         .letta
-        .post_conversation_messages_streaming(
-            &conversation_resolution.upstream_target,
-            Some(&pair_agent_id),
+        .post_agent_messages_streaming(
+            &pair_agent_id,
             &prompt_with_tool_context,
             Some(serde_json::json!([
                 acp_read_text_file_client_tool_descriptor()
@@ -1637,7 +1636,6 @@ async fn prompt_inner(
         },
         state.letta.clone(),
         pair_agent_id.clone(),
-        conversation_resolution.upstream_target.clone(),
     );
     let request_id_header = HeaderValue::from_str(&request_id.to_string()).map_err(|_| {
         ApiError::new(
@@ -2610,7 +2608,6 @@ struct AcpLettaSseStream {
     context: AcpStreamContext,
     letta: Arc<crate::core::letta::LettaClient>,
     pair_agent_id: String,
-    upstream_target: String,
     pending_tool_result: Option<AcpToolResultRequest>,
     diagnostics: AcpStreamDiagnostics,
     logged_summary: bool,
@@ -2624,7 +2621,6 @@ impl AcpLettaSseStream {
         context: AcpStreamContext,
         letta: Arc<crate::core::letta::LettaClient>,
         pair_agent_id: String,
-        upstream_target: String,
     ) -> Self {
         Self {
             inner: Box::pin(inner),
@@ -2634,7 +2630,6 @@ impl AcpLettaSseStream {
             context,
             letta,
             pair_agent_id,
-            upstream_target,
             pending_tool_result: None,
             diagnostics: AcpStreamDiagnostics::default(),
             logged_summary: false,
@@ -2849,7 +2844,6 @@ impl Stream for AcpLettaSseStream {
                     self.poll_next(cx)
                 } else if let Some(tool_result) = this.pending_tool_result.take() {
                     let letta = this.letta.clone();
-                    let upstream_target = this.upstream_target.clone();
                     let pair_agent_id = this.pair_agent_id.clone();
                     let tool_name = tool_result
                         .tool_name
@@ -2866,9 +2860,8 @@ impl Stream for AcpLettaSseStream {
                     this.persist_future =
                         Some(AcpPendingFuture::ContinueTool(Box::pin(async move {
                             letta
-                                .post_conversation_tool_returns_streaming(
-                                    &upstream_target,
-                                    Some(&pair_agent_id),
+                                .post_agent_tool_returns_streaming(
+                                    &pair_agent_id,
                                     &tool_call_id,
                                     approval_request_id.as_deref(),
                                     &status,
