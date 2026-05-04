@@ -15,6 +15,7 @@ High-level implementation roadmap for BEARS. This file is the planning hub: it s
 - [Phase 1 locked decisions](PHASE1_DECISIONS.md)
 - [`bear_channel` Phase 7+](BEAR_CHANNEL_PHASE7_PLANS.md)
 - [ACP discovery prompt](ACP_DISCOVERY_PROMPT.md)
+- [ACP direct local tool runtime](ACP_DIRECT_LOCAL_TOOL_RUNTIME_PLAN.md)
 - [Multi-agent bear implementation (doc + UI Phase 8.5)](MULTI_AGENT_IMPLEMENTATION_PLAN.md)
 
 

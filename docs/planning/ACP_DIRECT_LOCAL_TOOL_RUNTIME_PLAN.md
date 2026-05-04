@@ -1,0 +1,605 @@
+# ACP direct local tool runtime implementation plan
+
+Status: proposed implementation plan.
+
+Owner boundary: `bears-acp-adapter` is the local ACP stdio edge and owns calls to editor/client capabilities. Den is the auth, policy, audit, session, and Letta conversation gateway. Letta remains the durable conversation/memory service. Codepool/Letta Code are not in the ACP direct path.
+
+Related docs:
+
+- [`../architecture/BEAR_CHANNEL_AND_ACP.md`](../architecture/BEAR_CHANNEL_AND_ACP.md)
+- [`../architecture/adr/acp-conversation-resolver.md`](../architecture/adr/acp-conversation-resolver.md)
+- [`../architecture/adr/acp-session-bindings.md`](../architecture/adr/acp-session-bindings.md)
+- [`ACP_CLIENT_TOOL_RELAY_PLAN.md`](ACP_CLIENT_TOOL_RELAY_PLAN.md) — historical Codepool/Letta Code relay plan; do not use for the direct ACP runtime.
+- [`ACP_TOOL_RELIABILITY_PLAN.md`](ACP_TOOL_RELIABILITY_PLAN.md) — historical reliability work for the Codepool waiter model; reuse diagnostics lessons, not the architecture.
+
+---
+
+## Goal
+
+Implement a complete ACP local tooling surface for coding clients while preserving the direct ACP route:
+
+```text
+ACP client/editor ⇄ bears-acp-adapter ⇄ Den ACP gateway ⇄ Letta conversation API
+```
+
+The local adapter should look like a normal ACP agent to Zed/OpenCode. Den-specific details stay below the adapter boundary except in diagnostic metadata.
+
+Implemented tools should cover, in this order:
+
+1. Read file.
+2. List directory.
+3. Search files.
+4. Edit/write file.
+5. Shell/terminal execution.
+6. Local MCP server relay.
+
+---
+
+## Key architectural decision
+
+Do **not** resurrect the old Letta Code / Codepool ACP tool relay for direct ACP.
+
+Instead, use a dedicated **Den ACP tool-turn protocol** between Den and the adapter:
+
+1. Den sends the user's prompt to Letta.
+2. Den parses native Letta stream events.
+3. If Letta asks for an action that requires local workspace access, Den emits an explicit adapter transport event: `tool_request`.
+4. The adapter translates `tool_request` into normal ACP client operations such as `fs/read_text_file`, `session/request_permission`, or terminal methods.
+5. The adapter sends a `POST` result back to Den.
+6. Den resumes the same logical ACP turn by submitting tool output back into the Letta conversation with structured context.
+7. The loop continues until Letta produces assistant text or a terminal error.
+
+This is a **turn-level orchestration loop**, not Codepool waiter relay. The live waiter owner for local client operations is the adapter. Den owns turn state, policy, audit, and continuation with Letta.
+
+### Why not raw Letta tools?
+
+Letta server-side tools cannot directly read a user's local editor workspace. The adapter is the only process with access to ACP client capabilities. Therefore local file/shell/MCP tools must terminate at the adapter.
+
+### Why not make the adapter Letta-aware?
+
+The adapter should not parse Letta stream internals or own BEARS authorization. Den remains the Letta anti-corruption layer and policy authority.
+
+---
+
+## Core design principles
+
+1. **Normal ACP at the editor boundary**
+   - The adapter calls standard ACP client methods.
+   - The adapter emits standard `session/update` tool-call progress notifications.
+   - Healthy client logs should look like ordinary ACP, not BEARS internals.
+
+2. **One live waiter owner per hop**
+   - Adapter owns editor/client JSON-RPC waiters.
+   - Den owns Den/adapter tool-turn correlation and audit.
+   - Letta owns durable conversation state.
+   - No split-brain pending tool tables.
+
+3. **Every empty turn is an error**
+   - If Letta/Den/adapter completes without assistant output, status, or explicit error, the user gets a diagnostic failure.
+
+4. **Structured diagnostics everywhere**
+   - Every tool request/result carries correlation ids.
+   - Logs identify the failing component: `adapter`, `den`, `letta`, `client`, `mcp`, `terminal`.
+   - Errors include enough counts/samples to debug without leaking secrets.
+
+5. **Capability- and policy-gated tools**
+   - Adapter reports raw ACP client capabilities.
+   - Den filters by token scope, bear policy, user role, workspace context, and risk class.
+   - Adapter still checks client capability before invoking any client method.
+
+6. **Progressive privilege**
+   - Read-only tools first.
+   - Writes, shell, and MCP require explicit permission and stronger audit.
+
+---
+
+## Den ⇄ adapter transport v3
+
+Current direct ACP transport events:
+
+- `assistant_text_delta`
+- `status_text`
+- `turn_complete`
+- `error`
+- `conversation_resolved`
+
+Add:
+
+### `tool_request`
+
+```json
+{
+  "type": "tool_request",
+  "request_id": "den-request-uuid",
+  "turn_id": "turn-uuid",
+  "tool_call_id": "call-uuid",
+  "tool_name": "fs.read_text_file",
+  "title": "Read file",
+  "kind": "read",
+  "args": {
+    "path": "/absolute/path/to/file.rs",
+    "line": 1,
+    "limit": 200
+  },
+  "approval": {
+    "required": false,
+    "reason": "read-only workspace file"
+  },
+  "diagnostic": {
+    "component": "den.acp",
+    "transport_version": 3
+  }
+}
+```
+
+### `tool_progress`
+
+Optional Den-originated progress/status around tool orchestration:
+
+```json
+{
+  "type": "tool_progress",
+  "tool_call_id": "call-uuid",
+  "status": "started|waiting_for_permission|running|completed|failed|cancelled|timeout",
+  "message": "Reading file"
+}
+```
+
+### Tool result endpoint
+
+Adapter posts results to Den:
+
+```text
+POST /acp/bears/{slug}/sessions/{session_id}/tool-results/{tool_call_id}
+```
+
+Payload:
+
+```json
+{
+  "turn_id": "turn-uuid",
+  "request_id": "den-request-uuid",
+  "tool_name": "fs.read_text_file",
+  "status": "ok|error|cancelled|timeout|permission_denied|unsupported",
+  "content": "file contents or short result text",
+  "structured_content": {},
+  "diagnostic": {
+    "adapter_version": "...",
+    "client_method": "fs/read_text_file",
+    "duration_ms": 42,
+    "bytes": 1234,
+    "truncated": false
+  }
+}
+```
+
+Den response:
+
+```json
+{
+  "accepted": true,
+  "reason": "delivered|turn_missing|already_settled|stale_turn|invalid_shape",
+  "turn_id": "turn-uuid",
+  "tool_call_id": "call-uuid"
+}
+```
+
+---
+
+## Correlation identifiers
+
+Every prompt/turn/tool log line should include:
+
+- `request_id`: Den HTTP request id for the active prompt stream.
+- `turn_id`: one logical ACP prompt turn, including tool continuations.
+- `tool_call_id`: one tool invocation.
+- `acp_session_id`: ACP session id.
+- `bear_id` and `bear_slug` where available.
+- `conversation_id` / `resolved_conversation_id` where available.
+- `adapter_runtime_id`: generated by adapter at startup.
+- `client_request_id`: JSON-RPC id used by adapter when calling the ACP client.
+
+---
+
+## Consistent error model
+
+Use these statuses across Den and adapter:
+
+| Status | Meaning | Retry? |
+| --- | --- | --- |
+| `ok` | Tool completed successfully. | No |
+| `error` | Tool ran and failed. | Maybe, depending on detail |
+| `cancelled` | User/client cancelled. | User initiated |
+| `timeout` | A hop timed out. | Maybe |
+| `permission_denied` | User or policy denied action. | No unless policy changes |
+| `unsupported` | Client/Den/tool runtime cannot do this action. | No until feature added |
+| `invalid_request` | Bad arguments or protocol mismatch. | Fix caller |
+| `transport_error` | HTTP/SSE/JSON-RPC transport failed. | Maybe |
+
+Error payload shape:
+
+```json
+{
+  "type": "error",
+  "message": "Human-readable summary",
+  "detail": "Actionable diagnostic details",
+  "error_type": "unsupported_tool|timeout|permission_denied|invalid_request|transport_error|empty_mapped_turn",
+  "request_id": "...",
+  "context": {
+    "component": "adapter|den|letta|client|mcp|terminal",
+    "turn_id": "...",
+    "tool_call_id": "...",
+    "event_counts": {},
+    "samples": []
+  }
+}
+```
+
+Rules:
+
+- No silent `turn_complete` after a failed or empty tool turn.
+- Unknown event types are logged with truncated samples.
+- Raw file contents are not logged; log byte counts, hashes, path, truncation, and line ranges.
+- Permission denials are normal tool results, not infrastructure crashes.
+
+---
+
+## Tool catalog
+
+### 1. `fs.read_text_file`
+
+ACP client method:
+
+- `fs/read_text_file`
+
+Arguments:
+
+- `path`: absolute local path.
+- `line`: optional 1-based line start.
+- `limit`: optional max lines.
+
+Policy:
+
+- Path must be under the validated session `cwd` or workspace roots unless Den policy explicitly allows otherwise.
+- Read-only; no user permission by default for workspace files.
+- Den may require permission for files outside roots or hidden/sensitive paths.
+
+Diagnostics:
+
+- path, normalized path, root match, duration, bytes, line range, truncated.
+- never log full contents.
+
+### 2. `fs.list_directory`
+
+ACP client method options:
+
+- Prefer a standard ACP filesystem listing method if the client advertises one.
+- If the client does not provide directory listing, implement adapter-local read via OS APIs only after explicit Den policy allows it.
+
+Arguments:
+
+- `path`
+- `recursive`: false initially
+- `limit`
+- `include_hidden`: false initially
+
+Policy:
+
+- Root-contained paths only.
+- Limit entries and total response size.
+
+Diagnostics:
+
+- path, entry count, truncated flag, duration.
+
+### 3. `fs.search_files`
+
+Implementation options:
+
+- Adapter-local search using Rust filesystem traversal.
+- Respect `.gitignore` if practical.
+- Do not depend on shell commands for search.
+
+Arguments:
+
+- `query` or regex/pattern
+- `path` root
+- `include_glob`
+- `exclude_glob`
+- `limit`
+
+Policy:
+
+- Root-contained paths only.
+- Den-configurable maximum results and bytes.
+
+Diagnostics:
+
+- query hash/summary, roots searched, match count, truncated flag, duration.
+
+### 4. `fs.write_text_file` / edit file
+
+ACP client methods:
+
+- `fs/write_text_file`
+- future patch/edit method if ACP client supports it.
+
+Arguments:
+
+- `path`
+- `content` or patch operations
+- optional expected current hash for optimistic concurrency
+
+Policy:
+
+- Requires `acp:tools` and write tool policy enabled.
+- Requires `session/request_permission` before write.
+- Path must be under workspace root.
+- Den may block sensitive paths (`.env`, secrets, credentials) unless explicit elevated policy exists.
+
+Diagnostics:
+
+- path, old hash if known, new hash, bytes changed, permission request id, duration.
+- never log full file content.
+
+### 5. `terminal.run_command`
+
+ACP client methods:
+
+- `terminal/create`
+- `terminal/output`
+- `terminal/wait_for_exit`
+- `terminal/kill`
+- `terminal/release`
+
+Arguments:
+
+- command argv, not shell string when possible
+- cwd
+- timeout
+- max output bytes
+
+Policy:
+
+- Disabled by default.
+- Requires permission every time initially.
+- Den may allowlist commands later.
+- No long-running background commands in first slice.
+
+Diagnostics:
+
+- command preview, cwd, exit code, timeout, output bytes, duration.
+- redact env and secrets.
+
+### 6. Local MCP server relay
+
+ACP client input:
+
+- `mcpServers` from `session/new` / `initialize`.
+
+Plan:
+
+- Phase 1: continue rejecting non-empty MCP servers with a clear unsupported error.
+- Phase 2: adapter owns MCP subprocess lifecycle locally.
+- Den only receives normalized tool descriptors and policy metadata, not raw local credentials.
+- Adapter maps Den `tool_request` to MCP tool calls and returns results using the same tool result endpoint.
+
+Policy:
+
+- Den filters which MCP tools are exposed by name/server/risk class.
+- User permission required for unknown/high-risk tools.
+
+Diagnostics:
+
+- MCP server name, tool name, duration, status, result size, stderr summary.
+- never log credentials or full payloads by default.
+
+---
+
+## Letta continuation strategy
+
+Direct Letta ACP cannot assume Letta will natively pause for external local tool results. Implement an explicit Den turn loop:
+
+1. User prompt goes to Letta.
+2. Den maps assistant/status output as normal.
+3. If Letta emits an unsupported tool-call-like native event, Den maps it to an explicit unsupported-tool diagnostic until the tool-call schema is implemented.
+4. Once a reliable native Letta tool-call schema is identified, Den converts that schema to `tool_request`.
+5. After adapter returns a tool result, Den posts a follow-up message into the same resolved conversation with structured tool-result context.
+6. Den continues streaming Letta's next response to the adapter.
+
+Acceptance for the first real tool slice requires demonstrating that Letta can reliably request `fs.read_text_file` in a parseable schema. If Letta cannot produce a stable tool-call stream event through the conversation API, build a small Den-side tool intent parser as a temporary controlled bridge only for explicit tool intents, and mark it experimental.
+
+---
+
+## Implementation phases
+
+### Phase 0: diagnostics hardening (already in progress)
+
+- Den stream summaries for native Letta event counts and unmapped samples.
+- Adapter Den-stream summaries and unknown event samples.
+- Empty-turn errors on both Den and adapter.
+- Transport v3 names: `assistant_text_delta`, `status_text`, `turn_complete`.
+
+Acceptance:
+
+- No silent no-response turns.
+- Unknown Den/Letta event shapes are visible in logs and user-facing errors.
+
+### Phase 1: adapter dispatcher and capability normalization
+
+Tasks:
+
+- Ensure the adapter has exactly one stdin reader task.
+- Route JSON-RPC responses by id through an internal waiter registry.
+- Store normalized `initialize.clientCapabilities`.
+- Add an adapter `runtime_id` generated at startup.
+- Include `adapter_runtime_id`, version, client capabilities, and transport version in Den prompt context.
+- Add JSON-RPC request helper with timeout/cancel handling and structured logs.
+
+Acceptance:
+
+- Chat/session flows still work.
+- Adapter can safely issue `fs/read_text_file` while still receiving interleaved client messages.
+- Logs show request ids, response ids, durations, and timeout/cancel outcomes.
+
+### Phase 2: Den tool policy and tool-turn state
+
+Tasks:
+
+- Add Den in-memory active turn registry keyed by `(user_id, bear_id, acp_session_id, turn_id)`.
+- Store only live turn metadata; do not create durable pending-call rows.
+- Add `POST /tool-results/{tool_call_id}` endpoint.
+- Validate token has `acp:chat` for prompt and `acp:tools` for tool results.
+- Add tool descriptor/policy builder from client capabilities.
+- Add Den audit logs for tool request and result.
+
+Acceptance:
+
+- Den can emit a synthetic `tool_request` in a test and accept an adapter result.
+- Late/duplicate/stale tool results return diagnostic `reason` values.
+
+### Phase 3: read file vertical slice
+
+Tasks:
+
+- Define `fs.read_text_file` descriptor and schema.
+- Adapter maps `tool_request` to:
+  - `session/update` `tool_call` started;
+  - optional `session/request_permission` if requested;
+  - ACP `fs/read_text_file` request;
+  - `session/update` completed/failed;
+  - Den tool result POST.
+- Den injects successful tool result back into Letta as structured context and continues the turn.
+- Add size limits and truncation.
+
+Acceptance:
+
+- User asks to read a file.
+- Client shows a normal read tool call.
+- File contents are returned to Letta.
+- Final assistant response references file content.
+- Failures are visible as permission/path/timeout/unsupported errors.
+
+### Phase 4: directory listing and search
+
+Tasks:
+
+- Add `fs.list_directory` and `fs.search_files` descriptors.
+- Implement adapter-local directory/search where ACP client lacks direct methods, behind Den policy.
+- Add result truncation and response summaries.
+
+Acceptance:
+
+- Bear can inspect workspace shape and locate files without shell.
+- Search/list diagnostics identify limits/truncation.
+
+### Phase 5: edit/write tools
+
+Tasks:
+
+- Add write/edit descriptor.
+- Require permission via ACP `session/request_permission`.
+- Add optimistic concurrency via expected hash where possible.
+- Add sensitive path denylist.
+- Add audit event for every write attempt and result.
+
+Acceptance:
+
+- Bear can write or edit a workspace file after permission.
+- Den/adapter logs include permission and write diagnostics without content leakage.
+
+### Phase 6: terminal tools
+
+Tasks:
+
+- Implement terminal create/output/wait/kill/release orchestration.
+- Add strict timeout/output limits.
+- Require permission for each command.
+- Stream terminal progress as `status_text` and ACP tool updates.
+
+Acceptance:
+
+- Bear can run bounded commands with permission.
+- Timeout/kill/release are reliable and diagnosed.
+
+### Phase 7: MCP relay
+
+Tasks:
+
+- Accept non-empty ACP `mcpServers` after capability negotiation.
+- Adapter owns local MCP lifecycle.
+- Adapter reports normalized MCP tool descriptors to Den.
+- Den filters tools by policy.
+- Adapter invokes MCP tools and posts results via the same tool-result endpoint.
+
+Acceptance:
+
+- MCP tools are visible only after policy filtering.
+- Tool calls/results follow the same diagnostics/error model.
+
+---
+
+## Logging and metrics checklist
+
+### Adapter logs
+
+- startup: version, git sha, runtime id, client name.
+- initialize: capability summary.
+- prompt start/end: session id, turn id, Den request id if known.
+- Den stream summary: frames, event types, unknown samples.
+- tool request: tool name, call id, permission policy, args summary.
+- client method call: method, JSON-RPC id, timeout, duration.
+- tool result delivery: HTTP status, Den reason, duration.
+
+### Den logs
+
+- prompt routing: session selection, upstream target, transport version.
+- native Letta stream summary.
+- tool request emitted: policy decision, call id, args summary.
+- tool result received: status, size, duration, reason.
+- continuation posted to Letta: conversation id, turn id.
+- empty/unsupported turn errors.
+
+### Metrics
+
+Add later once names stabilize:
+
+- `den_acp_prompts_total{outcome}`
+- `den_acp_stream_unmapped_events_total{message_type,type}`
+- `den_acp_tool_requests_total{tool,status}`
+- `den_acp_tool_duration_seconds{tool,status}`
+- `adapter_acp_client_method_duration_seconds{method,status}`
+- `adapter_acp_unknown_den_events_total{type}`
+
+---
+
+## Security and privacy rules
+
+- Do not log raw bearer tokens.
+- Do not log full file contents or command output by default.
+- Truncate raw event samples.
+- Include hashes/byte counts instead of content where possible.
+- Require permission for writes, shell, and high-risk MCP tools.
+- Keep local filesystem credentials and MCP secrets in the adapter/client environment only.
+- Den should store policy/audit metadata, not durable local workspace secrets.
+
+---
+
+## Open questions
+
+1. Which native Letta conversation stream event represents a tool call in the deployed Letta version?
+2. Can Letta conversation API reliably continue a turn after an externally supplied local tool result, or do we need a Den-side explicit tool-intent bridge for the first slice?
+3. Which ACP filesystem methods are supported by each target client (`Zed`, `OpenCode`) today?
+4. Should Den UI-created Code tokens always include `acp:tools`, or should existing token flows expose a safer chat-only option?
+5. What default max file bytes, search results, terminal output bytes, and timeouts should ship first?
+
+---
+
+## Definition of done for “ACP tools complete enough”
+
+- Read/list/search/edit/shell tools are implemented with permission and policy controls.
+- Non-empty MCP server config is supported or rejected with actionable per-server diagnostics.
+- Every tool request/result is correlated across adapter and Den logs.
+- Empty turns and unknown event shapes produce visible errors, not silent `end_turn`.
+- Integration tests cover success, unsupported capability, permission denial, timeout, stale result, duplicate result, oversized result, and cancellation.
+- User-facing behavior in Zed/OpenCode looks like ordinary ACP tool use.
