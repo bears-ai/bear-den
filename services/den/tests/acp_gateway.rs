@@ -131,6 +131,14 @@ async fn test_app() -> TestApp {
 }
 
 async fn create_test_user_bear(pool: &sqlx::PgPool, membership: bool) -> TestUserBear {
+    create_test_user_bear_with_pair(pool, membership, true).await
+}
+
+async fn create_test_user_bear_with_pair(
+    pool: &sqlx::PgPool,
+    membership: bool,
+    provision_pair: bool,
+) -> TestUserBear {
     let suffix = Uuid::new_v4().simple().to_string();
     let username = format!("u{}", &suffix[..20]);
     let email = format!("{username}@example.test");
@@ -167,23 +175,25 @@ async fn create_test_user_bear(pool: &sqlx::PgPool, membership: bool) -> TestUse
     bears_db::set_letta_agent_id(pool, bear_id, "agent-acp-talk-test")
         .await
         .expect("set legacy talk agent id");
-    sqlx::query(
-        r#"
-        INSERT INTO bear_agents (bear_id, role, letta_agent_id, provisioning_status, last_synced_at)
-        VALUES ($1, $2, $3, 'ready', NOW())
-        ON CONFLICT (bear_id, role)
-        DO UPDATE SET letta_agent_id = EXCLUDED.letta_agent_id,
-                      provisioning_status = 'ready',
-                      last_synced_at = NOW(),
-                      updated_at = NOW()
-        "#,
-    )
-    .bind(bear_id)
-    .bind(BearAgentRole::Pair.as_str())
-    .bind("agent-acp-pair-test")
-    .execute(pool)
-    .await
-    .expect("set pair agent id");
+    if provision_pair {
+        sqlx::query(
+            r#"
+            INSERT INTO bear_agents (bear_id, role, letta_agent_id, provisioning_status, last_synced_at)
+            VALUES ($1, $2, $3, 'ready', NOW())
+            ON CONFLICT (bear_id, role)
+            DO UPDATE SET letta_agent_id = EXCLUDED.letta_agent_id,
+                          provisioning_status = 'ready',
+                          last_synced_at = NOW(),
+                          updated_at = NOW()
+            "#,
+        )
+        .bind(bear_id)
+        .bind(BearAgentRole::Pair.as_str())
+        .bind("agent-acp-pair-test")
+        .execute(pool)
+        .await
+        .expect("set pair agent id");
+    }
     if membership {
         bears_db::grant_membership(pool, user_id, bear_id, Some(bears_db::BEAR_ROLE_ADMIN))
             .await
@@ -443,6 +453,38 @@ async fn acp_prompt_reuses_resolved_conversation_after_legacy_default_id() {
         .clone()
         .expect("Letta request captured");
     assert_eq!(captured["conversation_id"], "new-acp-zed-session-reuse-resolved");
+}
+
+#[tokio::test]
+async fn acp_prompt_missing_pair_returns_operator_actionable_error_without_legacy_fallback() {
+    let fixture = test_app().await;
+    let user_bear = create_test_user_bear_with_pair(&fixture.pool, true, false).await;
+
+    let res = post_prompt(
+        fixture.app,
+        &user_bear.bear_slug,
+        "session-missing-pair",
+        Some(&user_bear.raw_token),
+        json!({
+            "message": "hello pair?",
+            "client": "zed"
+        }),
+    )
+    .await;
+    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+    let body = res.into_body().collect().await.unwrap().to_bytes();
+    let value: Value = serde_json::from_slice(&body).expect("JSON error body");
+    assert_eq!(value["error_code"], "validation");
+    let message = value["error"].as_str().expect("error message");
+    assert!(message.contains("pair"), "message should name missing pair role: {message}");
+    assert!(
+        message.contains("Provision missing role agents"),
+        "message should tell operator how to remediate: {message}"
+    );
+    assert!(
+        fixture.captured_letta_body.lock().await.is_none(),
+        "ACP must not fall back to legacy talk id or call Letta when pair is missing"
+    );
 }
 
 #[tokio::test]
