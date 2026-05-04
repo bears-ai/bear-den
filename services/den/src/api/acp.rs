@@ -1853,6 +1853,15 @@ fn native_letta_tool_request_event(
     inner: &serde_json::Value,
     approval_required: bool,
 ) -> Option<AcpGatewayEvent> {
+    native_letta_tool_request_event_with_args(event, inner, approval_required, None)
+}
+
+fn native_letta_tool_request_event_with_args(
+    event: &serde_json::Value,
+    inner: &serde_json::Value,
+    approval_required: bool,
+    args_override: Option<serde_json::Value>,
+) -> Option<AcpGatewayEvent> {
     let tool_call = inner
         .get("tool_call")
         .or_else(|| event.get("tool_call"))
@@ -1912,26 +1921,30 @@ fn native_letta_tool_request_event(
         .or_else(|| event.get("input"))
         .or_else(|| event.get("args"))
         .or_else(|| event.get("arguments"));
-    let args = match args_raw {
-        Some(v) => {
-            if v.is_null() {
-                // Letta may emit an initial tool-call shell with null arguments, then stream
-                // the real arguments in later events. Treat null as incomplete, not invalid.
-                return None;
-            }
-            if let Some(s) = v.as_str() {
-                // Letta may stream tool-call arguments incrementally. Do not emit a tool
-                // request until the JSON arguments parse completely.
-                let parsed = serde_json::from_str::<serde_json::Value>(s).ok()?;
-                if parsed.is_null() {
+    let args = if let Some(args) = args_override {
+        args
+    } else {
+        match args_raw {
+            Some(v) => {
+                if v.is_null() {
+                    // Letta may emit an initial tool-call shell with null arguments, then stream
+                    // the real arguments in later events. Treat null as incomplete, not invalid.
                     return None;
                 }
-                parsed
-            } else {
-                v.clone()
+                if let Some(s) = v.as_str() {
+                    // Letta may stream tool-call arguments incrementally. Do not emit a tool
+                    // request until the JSON arguments parse completely.
+                    let parsed = serde_json::from_str::<serde_json::Value>(s).ok()?;
+                    if parsed.is_null() {
+                        return None;
+                    }
+                    parsed
+                } else {
+                    v.clone()
+                }
             }
+            None => return None,
         }
-        None => return None,
     };
     if normalized_tool == "fs_read_text_file" && args.get("path").and_then(|v| v.as_str()).is_none()
     {
@@ -2007,6 +2020,97 @@ fn native_letta_tool_request_event(
     })
 }
 
+fn map_native_letta_stream_event_to_acp_event_with_diagnostics(
+    event: &serde_json::Value,
+    diagnostics: &mut AcpStreamDiagnostics,
+) -> Option<AcpGatewayEvent> {
+    let inner = letta_inner_for_acp_history(event);
+    let message_type = inner
+        .get("message_type")
+        .and_then(|v| v.as_str())
+        .or_else(|| event.get("message_type").and_then(|v| v.as_str()))
+        .unwrap_or("");
+    if !matches!(
+        message_type,
+        "tool_call_message" | "approval_request_message" | "function_call"
+    ) {
+        return map_native_letta_stream_event_to_acp_event(event);
+    }
+
+    let tool_call = inner
+        .get("tool_call")
+        .or_else(|| event.get("tool_call"))
+        .or_else(|| {
+            inner
+                .get("tool_calls")
+                .and_then(|v| v.as_array())
+                .and_then(|items| items.first())
+        })
+        .or_else(|| {
+            event
+                .get("tool_calls")
+                .and_then(|v| v.as_array())
+                .and_then(|items| items.first())
+        });
+    let tool_call_id = tool_call
+        .and_then(|v| v.get("tool_call_id"))
+        .or_else(|| tool_call.and_then(|v| v.get("id")))
+        .or_else(|| inner.get("tool_call_id"))
+        .or_else(|| inner.get("id"))
+        .or_else(|| event.get("tool_call_id"))
+        .or_else(|| event.get("id"))
+        .and_then(|v| v.as_str())
+        .map(str::to_string)
+        .unwrap_or_else(|| format!("unknown-{}", Uuid::new_v4()));
+    let args_raw = tool_call
+        .and_then(|v| v.get("input"))
+        .or_else(|| tool_call.and_then(|v| v.get("arguments")))
+        .or_else(|| tool_call.and_then(|v| v.get("args")))
+        .or_else(|| {
+            tool_call
+                .and_then(|v| v.get("function"))
+                .and_then(|f| f.get("arguments"))
+        })
+        .or_else(|| inner.get("input"))
+        .or_else(|| inner.get("args"))
+        .or_else(|| inner.get("arguments"))
+        .or_else(|| event.get("input"))
+        .or_else(|| event.get("args"))
+        .or_else(|| event.get("arguments"));
+
+    let parsed_args = match args_raw {
+        Some(v) if v.is_null() => None,
+        Some(v) if v.is_string() => {
+            let fragment = v.as_str().unwrap_or("");
+            let buffer = diagnostics
+                .tool_argument_buffers
+                .entry(tool_call_id.clone())
+                .or_default();
+            buffer.push_str(fragment);
+            match serde_json::from_str::<serde_json::Value>(buffer) {
+                Ok(value) if !value.is_null() => {
+                    diagnostics.tool_argument_buffers.remove(&tool_call_id);
+                    Some(value)
+                }
+                _ => None,
+            }
+        }
+        Some(v) => Some(v.clone()),
+        None => None,
+    };
+
+    if let Some(args) = parsed_args {
+        native_letta_tool_request_event_with_args(
+            event,
+            inner,
+            message_type == "approval_request_message",
+            Some(args),
+        )
+    } else {
+        None
+    }
+}
+
 fn native_letta_conversation_resolved_event(event: &serde_json::Value) -> Option<AcpGatewayEvent> {
     let conversation_id = event
         .get("conversation_id")
@@ -2061,6 +2165,7 @@ struct AcpStreamDiagnostics {
     native_event_types: BTreeMap<String, usize>,
     adapter_event_types: BTreeMap<String, usize>,
     tool_request_counts: BTreeMap<String, usize>,
+    tool_argument_buffers: BTreeMap<String, String>,
     unmapped_event_samples: Vec<String>,
     saw_visible_output: bool,
     saw_error: bool,
@@ -2147,6 +2252,7 @@ impl AcpStreamDiagnostics {
             native_event_types = ?self.native_event_types,
             adapter_event_types = ?self.adapter_event_types,
             tool_request_counts = ?self.tool_request_counts,
+            pending_tool_argument_buffers = self.tool_argument_buffers.len(),
             unmapped_event_samples = ?self.unmapped_event_samples,
             "ACP Letta stream summary"
         );
@@ -2353,7 +2459,9 @@ async fn map_letta_stream_frame_to_acp_adapter_events_with_persistence(
     };
     diagnostics.observe_parsed_event(&value);
 
-    let Some(mut event) = map_native_letta_stream_event_to_acp_event(&value) else {
+    let Some(mut event) =
+        map_native_letta_stream_event_to_acp_event_with_diagnostics(&value, diagnostics)
+    else {
         diagnostics.observe_unmapped_event(&value);
         return Ok((Vec::new(), None));
     };
@@ -2864,6 +2972,36 @@ mod tests {
                 assert_eq!(tool_name, "fs_read_text_file");
                 assert_eq!(args["path"], "/tmp/readme.md");
                 assert!(approval_required);
+            }
+            other => panic!("expected tool request, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn accumulates_split_tool_argument_fragments() {
+        let first: serde_json::Value = serde_json::from_str(include_str!(
+            "../../tests/fixtures/acp_letta_tool_call_delta_split_1.json"
+        ))
+        .unwrap();
+        let second: serde_json::Value = serde_json::from_str(include_str!(
+            "../../tests/fixtures/acp_letta_tool_call_delta_split_2.json"
+        ))
+        .unwrap();
+        let mut diagnostics = AcpStreamDiagnostics::default();
+        assert!(map_native_letta_stream_event_to_acp_event_with_diagnostics(
+            &first,
+            &mut diagnostics,
+        )
+        .is_none());
+        let mapped =
+            map_native_letta_stream_event_to_acp_event_with_diagnostics(&second, &mut diagnostics)
+                .unwrap();
+        match mapped {
+            AcpGatewayEvent::ToolRequest {
+                tool_call_id, args, ..
+            } => {
+                assert_eq!(tool_call_id, "call_fixture_split");
+                assert_eq!(args["path"], "/tmp/split.txt");
             }
             other => panic!("expected tool request, got {other:?}"),
         }
