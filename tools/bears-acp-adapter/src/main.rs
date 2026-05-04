@@ -1,6 +1,8 @@
 use agent_client_protocol::schema::{
-    ContentBlock, ContentChunk, ReadTextFileResponse, RequestPermissionOutcome,
-    RequestPermissionResponse, SessionUpdate, ToolCall, ToolCallContent, ToolCallStatus, ToolKind,
+    ContentBlock, ContentChunk, PermissionOption, PermissionOptionKind, ReadTextFileRequest,
+    ReadTextFileResponse, RequestPermissionOutcome, RequestPermissionRequest,
+    RequestPermissionResponse, SessionUpdate, ToolCall, ToolCallContent, ToolCallStatus,
+    ToolCallUpdate, ToolCallUpdateFields, ToolKind,
 };
 use anyhow::{anyhow, Context, Result};
 use futures_util::StreamExt;
@@ -1044,16 +1046,14 @@ async fn handle_client_read_text_file(
         .get("path")
         .and_then(Value::as_str)
         .ok_or_else(|| anyhow!("fs_read_text_file args missing path"))?;
-    let mut params = json!({
-        "sessionId": session_id,
-        "path": path,
-    });
-    if let Some(line) = args.get("line") {
-        params["line"] = line.clone();
+    let mut request = ReadTextFileRequest::new(session_id.to_string(), PathBuf::from(path));
+    if let Some(line) = args.get("line").and_then(Value::as_u64) {
+        request = request.line(Some(line.clamp(1, u32::MAX as u64) as u32));
     }
-    if let Some(limit) = args.get("limit") {
-        params["limit"] = limit.clone();
+    if let Some(limit) = args.get("limit").and_then(Value::as_u64) {
+        request = request.limit(Some(limit.clamp(1, u32::MAX as u64) as u32));
     }
+    let params = serde_json::to_value(request)?;
     let started = std::time::Instant::now();
     let response = send_request_and_wait(
         adapter_state,
@@ -2291,20 +2291,26 @@ async fn request_tool_permission(
         "bears-acp-adapter: requesting permission session_id={} tool_call_id={} tool_name={} path={}",
         session_id, tool_call_id, tool_name, path
     );
+    let fields = ToolCallUpdateFields::new()
+        .kind(Some(ToolKind::Read))
+        .status(Some(ToolCallStatus::Pending))
+        .title(Some(title.to_string()))
+        .content(Some(vec![ToolCallContent::from(format!(
+            "{reason}\n\nTool: {tool_name}\nPath: {path}"
+        ))]));
+    let tool_call = ToolCallUpdate::new(tool_call_id.to_string(), fields);
+    let request = RequestPermissionRequest::new(
+        session_id.to_string(),
+        tool_call,
+        vec![
+            PermissionOption::new("allow", "Allow", PermissionOptionKind::AllowOnce),
+            PermissionOption::new("reject", "Deny", PermissionOptionKind::RejectOnce),
+        ],
+    );
     let response = send_request_and_wait(
         adapter_state,
         "session/request_permission",
-        json!({
-            "sessionId": session_id,
-            "toolCallId": tool_call_id,
-            "title": title,
-            "kind": event.get("kind").and_then(Value::as_str).unwrap_or("read"),
-            "description": format!("{reason}\n\nTool: {tool_name}\nPath: {path}"),
-            "content": [{
-                "type": "content",
-                "content": { "type": "text", "text": format!("Allow {tool_name} to read {path}?") }
-            }]
-        }),
+        serde_json::to_value(request)?,
         std::time::Duration::from_secs(120),
     )
     .await?;
