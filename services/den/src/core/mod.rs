@@ -1,3 +1,4 @@
+pub mod acp_letta_events;
 pub mod acp_sessions;
 pub mod acp_tokens;
 pub mod acp_tool_turns;
