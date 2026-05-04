@@ -689,6 +689,7 @@ impl LettaClient {
         let letta_status = if status == "ok" { "success" } else { "error" };
         let mut body = serde_json::Map::new();
         let tool_return_value = json!({
+            "type": "tool",
             "status": letta_status,
             "tool_call_id": tool_call_id,
             "tool_return": tool_return,
