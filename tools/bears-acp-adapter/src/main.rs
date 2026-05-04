@@ -38,6 +38,7 @@ struct RuntimeConfig {
 struct AdapterState {
     client_capabilities: Value,
     session_contexts: HashMap<String, SessionContext>,
+    pending_responses: HashMap<String, tokio::sync::oneshot::Sender<Value>>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -50,8 +51,9 @@ struct SessionContext {
 }
 
 #[derive(Debug)]
-struct InboundMessage {
-    value: Value,
+enum InboundMessage {
+    Request(Value),
+    Response { id: Value, value: Value },
 }
 
 #[derive(Debug)]
@@ -75,6 +77,13 @@ impl ServerVersion {
             "Den server version: service={}, version={}, git_sha={}, built_at_utc={}",
             self.service, self.version, self.git_sha, self.built_at_utc
         )
+    }
+}
+
+fn id_key(id: &Value) -> String {
+    match id {
+        Value::String(s) => s.clone(),
+        _ => id.to_string(),
     }
 }
 
@@ -179,7 +188,21 @@ async fn run() -> Result<()> {
     let mut adapter_state = AdapterState::default();
 
     while let Some(message) = inbound_rx.recv().await {
-        let request = match request_from_value(message.value) {
+        let value = match message {
+            InboundMessage::Request(value) => value,
+            InboundMessage::Response { id, value } => {
+                if let Some(tx) = adapter_state.pending_responses.remove(&id_key(&id)) {
+                    let _ = tx.send(value);
+                } else {
+                    eprintln!(
+                        "bears-acp-adapter: unmatched JSON-RPC response id={}",
+                        id_key(&id)
+                    );
+                }
+                continue;
+            }
+        };
+        let request = match request_from_value(value) {
             Ok(request) => request,
             Err(err) => {
                 write_response(
@@ -411,7 +434,14 @@ async fn read_stdin_messages(tx: mpsc::Sender<InboundMessage>) {
                 }
                 match serde_json::from_str::<Value>(line) {
                     Ok(value) => {
-                        if tx.send(InboundMessage { value }).await.is_err() {
+                        let message = if value.get("method").and_then(Value::as_str).is_some() {
+                            InboundMessage::Request(value)
+                        } else if let Some(id) = value.get("id").cloned() {
+                            InboundMessage::Response { id, value }
+                        } else {
+                            InboundMessage::Request(value)
+                        };
+                        if tx.send(message).await.is_err() {
                             break;
                         }
                     }
@@ -2085,7 +2115,7 @@ fn format_den_event_error(event: &Value) -> String {
 
 async fn handle_tool_request_event(
     config: &Config,
-    adapter_state: &AdapterState,
+    adapter_state: &mut AdapterState,
     session_id: &str,
     event: &Value,
 ) -> Result<()> {
@@ -2111,7 +2141,7 @@ async fn handle_tool_request_event(
             "Waiting for permission",
         )
         .await?;
-        request_tool_permission(session_id, tool_call_id, tool_name, event).await?;
+        request_tool_permission(adapter_state, session_id, tool_call_id, tool_name, event).await?;
     }
     send_tool_call_update(session_id, tool_call_id, "pending", "Running local tool").await?;
     let started = std::time::Instant::now();
@@ -2163,6 +2193,7 @@ async fn handle_tool_request_event(
 }
 
 async fn request_tool_permission(
+    adapter_state: &mut AdapterState,
     session_id: &str,
     tool_call_id: &str,
     tool_name: &str,
@@ -2182,16 +2213,14 @@ async fn request_tool_permission(
         .and_then(|v| v.get("reason"))
         .and_then(Value::as_str)
         .unwrap_or("Letta requested approval before running this local ACP tool.");
-    let request_id = format!("perm-{}", Uuid::new_v4());
     eprintln!(
         "bears-acp-adapter: requesting permission session_id={} tool_call_id={} tool_name={} path={}",
         session_id, tool_call_id, tool_name, path
     );
-    write_json(json!({
-        "jsonrpc": "2.0",
-        "id": request_id,
-        "method": "session/request_permission",
-        "params": {
+    let response = send_request_and_wait(
+        adapter_state,
+        "session/request_permission",
+        json!({
             "sessionId": session_id,
             "toolCallId": tool_call_id,
             "title": title,
@@ -2201,14 +2230,28 @@ async fn request_tool_permission(
                 "type": "content",
                 "content": { "type": "text", "text": format!("Allow {tool_name} to read {path}?") }
             }]
-        }
-    }))
+        }),
+        std::time::Duration::from_secs(120),
+    )
     .await?;
-    // TODO: once the adapter has response waiters for outbound JSON-RPC requests,
-    // wait for the matching permission response and honor denials. For now this
-    // sends the standard ACP permission request so clients that support
-    // contextual auto-approval can record/decide, then continues optimistically.
-    Ok(())
+    if let Some(error) = response.get("error") {
+        return Err(anyhow!("permission request failed: {error}"));
+    }
+    let result = response.get("result").unwrap_or(&Value::Null);
+    let approved = result
+        .get("approved")
+        .or_else(|| result.get("approve"))
+        .or_else(|| result.get("granted"))
+        .and_then(Value::as_bool)
+        .unwrap_or_else(|| {
+            // Some clients answer `{}` after applying their own auto-approval policy.
+            result.is_object()
+        });
+    if approved {
+        Ok(())
+    } else {
+        Err(anyhow!("permission denied for {tool_name} on {path}"))
+    }
 }
 
 async fn post_tool_result(
@@ -2373,6 +2416,37 @@ async fn send_agent_thought_chunk(session_id: &str, text: &str) -> Result<()> {
         }),
     )
     .await
+}
+
+async fn send_request_and_wait(
+    adapter_state: &mut AdapterState,
+    method: &str,
+    params: Value,
+    timeout: std::time::Duration,
+) -> Result<Value> {
+    let id = json!(format!("req-{}", Uuid::new_v4()));
+    let key = id_key(&id);
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    adapter_state.pending_responses.insert(key.clone(), tx);
+    write_json(json!({
+        "jsonrpc": "2.0",
+        "id": id,
+        "method": method,
+        "params": params,
+    }))
+    .await?;
+    match tokio::time::timeout(timeout, rx).await {
+        Ok(Ok(value)) => Ok(value),
+        Ok(Err(_)) => Err(anyhow!(
+            "client response channel closed for {method} id={key}"
+        )),
+        Err(_) => {
+            adapter_state.pending_responses.remove(&key);
+            Err(anyhow!(
+                "timed out waiting for client response to {method} id={key}"
+            ))
+        }
+    }
 }
 
 async fn write_notification(method: &str, params: Value) -> Result<()> {
