@@ -108,10 +108,10 @@ block subnav %}
                     >{% endif %}{% endif %}
                 </p>
                 <p class="caption">Active conversations</p>
-                {% if not letta_configured or not bear.letta_agent_id %}
-                <p class="form-hint">
-                    Link a Letta agent to list conversations.
-                </p>
+                {% if not letta_configured or not talk_agent_id %}
+                                <p class="form-hint">
+                                    Provision the talk role agent to list conversations.
+                                </p>
                 {% else %}
                 <ul class="den-bear-conv-list">
                     {% for c in conversation_rows %}
@@ -141,6 +141,42 @@ block subnav %}
                 </p>
                 {% endif %} {% endif %}
             </div>
+        </div>
+    </section>
+
+    <section>
+        <div id="role-agents" class="box full-width">
+            <h3>Role agents</h3>
+            <p class="form-hint">This Bear is a logical assistant backed by role-specific Letta agents. Web chat uses the <strong>talk</strong> role; ACP uses the <strong>pair</strong> role.</p>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Role</th>
+                        <th>Runtime</th>
+                        <th>Letta id</th>
+                        <th>Provisioning</th>
+                        <th>MemFS view</th>
+                        <th>Last sync</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for r in role_rows %}
+                    <tr>
+                        <td><strong>{{ r.role }}</strong></td>
+                        <td><code>{{ r.runtime_family }}</code></td>
+                        <td>{% if r.letta_agent_id %}<code>{{ r.letta_agent_id }}</code>{% else %}<em>none</em>{% endif %}</td>
+                        <td><code>{{ r.provisioning_status }}</code></td>
+                        <td>
+                            {% if r.memfs_view_state %}
+                                {% if r.memfs_view_quarantined %}<span class="form-errors">quarantined</span>{% else %}<code>{{ r.memfs_view_state }}</code>{% endif %}
+                                {% if r.memfs_view_diagnostic %}<br><span class="caption">{{ r.memfs_view_diagnostic | e }}</span>{% endif %}
+                            {% else %}<em>not registered</em>{% endif %}
+                        </td>
+                        <td>{% if r.last_synced_at %}{{ r.last_synced_at }}{% else %}<em>never</em>{% endif %}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
         </div>
     </section>
 
@@ -289,10 +325,10 @@ block subnav %}
             {% endif %}
             {% if mem_private_skipped %} {% if not letta_configured %}
             <p class="form-hint">Letta is not configured.</p>
-            {% elif not bear.letta_agent_id %}
-            <p class="form-hint">
-                Link a Letta agent to see private git memory status.
-            </p>
+            {% elif not talk_agent_id %}
+                        <p class="form-hint">
+                            Provision the talk role agent to see private git memory status.
+                        </p>
             {% else %}
             <p class="form-hint">
                 Set <code>LETTA_MEMFS_SERVICE_URL</code> (MemFS Manager) for

@@ -1364,6 +1364,7 @@ async fn bear_memory_get(
         auth_session,
         context! {
             bear,
+            talk_agent_id,
             letta_configured,
             letta_diagnostics,
             letta_diag_error,

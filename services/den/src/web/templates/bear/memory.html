@@ -44,8 +44,8 @@
         {% endif %}
         {% elif codepool_memfs_error %}
         <p class="form-errors">Could not run Codepool memfs check: {{ codepool_memfs_error | e }}</p>
-        {% elif not bear.letta_agent_id %}
-        <p class="form-hint">No Letta agent is linked to this bear.</p>
+        {% elif not talk_agent_id %}
+        <p class="form-hint">No talk role Letta agent is linked to this bear.</p>
         {% else %}
         <p class="form-hint">No Codepool memfs check result.</p>
         {% endif %}
@@ -67,8 +67,8 @@
         </dl>
         {% elif mem_health_error %}
         <p class="form-errors">Could not load memfs health: {{ mem_health_error | e }}</p>
-        {% elif not bear.letta_agent_id %}
-        <p class="form-hint">No Letta agent is linked to this bear.</p>
+        {% elif not talk_agent_id %}
+        <p class="form-hint">No talk role Letta agent is linked to this bear.</p>
         {% else %}
         <p class="form-hint">No memfs health result.</p>
         {% endif %}
@@ -127,7 +127,7 @@
     <p><em>No blocks in the Letta response.</em></p>
     {% endif %}
     {% else %}
-    <p class="form-hint">No Letta agent is linked to this bear.</p>
+    <p class="form-hint">No talk role Letta agent is linked to this bear.</p>
     {% endif %}
     </section>
 </section>
