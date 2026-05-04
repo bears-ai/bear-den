@@ -1023,6 +1023,66 @@ async fn validate_den_code_token(http: &reqwest::Client, config: &Config) -> Res
     ))
 }
 
+fn client_supports_read_text_file(adapter_state: &AdapterState) -> bool {
+    adapter_state
+        .client_capabilities
+        .pointer("/fs/readTextFile")
+        .and_then(Value::as_bool)
+        == Some(true)
+}
+
+async fn handle_client_read_text_file(
+    adapter_state: &mut AdapterState,
+    session_id: &str,
+    args: &Value,
+) -> Result<Value> {
+    let path = args
+        .get("path")
+        .and_then(Value::as_str)
+        .ok_or_else(|| anyhow!("fs_read_text_file args missing path"))?;
+    let mut params = json!({
+        "sessionId": session_id,
+        "path": path,
+    });
+    if let Some(line) = args.get("line") {
+        params["line"] = line.clone();
+    }
+    if let Some(limit) = args.get("limit") {
+        params["limit"] = limit.clone();
+    }
+    let started = std::time::Instant::now();
+    let response = send_request_and_wait(
+        adapter_state,
+        "fs/read_text_file",
+        params,
+        std::time::Duration::from_secs(30),
+    )
+    .await?;
+    if let Some(error) = response.get("error") {
+        return Err(anyhow!("client fs/read_text_file failed: {error}"));
+    }
+    let result = response.get("result").cloned().unwrap_or(Value::Null);
+    let content = result
+        .get("content")
+        .or_else(|| result.get("text"))
+        .and_then(Value::as_str)
+        .ok_or_else(|| anyhow!("client fs/read_text_file response missing content/text"))?;
+    eprintln!(
+        "bears-acp-adapter: client fs/read_text_file path={} bytes={} duration_ms={}",
+        path,
+        content.len(),
+        started.elapsed().as_millis(),
+    );
+    Ok(json!({
+        "ok": true,
+        "path": path,
+        "content": content,
+        "source": "acp_client",
+        "raw_result": result,
+        "bytes": content.len(),
+    }))
+}
+
 async fn handle_direct_read_text_file(
     adapter_state: &AdapterState,
     params: Value,
@@ -2147,9 +2207,17 @@ async fn handle_tool_request_event(
     let started = std::time::Instant::now();
     let result = match tool_name {
         "fs_read_text_file" | "fs.read_text_file" => {
-            let mut params = event.get("args").cloned().unwrap_or_else(|| json!({}));
-            params["sessionId"] = json!(session_id);
-            handle_direct_read_text_file(adapter_state, params).await
+            let args = event.get("args").cloned().unwrap_or_else(|| json!({}));
+            if client_supports_read_text_file(adapter_state) {
+                handle_client_read_text_file(adapter_state, session_id, &args).await
+            } else {
+                eprintln!(
+                    "bears-acp-adapter: client did not advertise fs/read_text_file; using adapter-local fallback"
+                );
+                let mut params = args;
+                params["sessionId"] = json!(session_id);
+                handle_direct_read_text_file(adapter_state, params).await
+            }
         }
         _ => Err(anyhow!(
             "unsupported Den tool_request tool_name {tool_name}"

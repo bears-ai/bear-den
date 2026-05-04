@@ -46,6 +46,61 @@ use crate::{
 
 const ACP_SESSIONS_PAGE_SIZE: i64 = 50;
 
+#[derive(Debug, Clone, Copy)]
+struct AcpToolDescriptor {
+    provider_name: &'static str,
+    canonical_name: &'static str,
+    adapter_method: &'static str,
+    client_method: &'static str,
+    title: &'static str,
+    kind: &'static str,
+    risk: &'static str,
+}
+
+const ACP_READ_TEXT_FILE_TOOL: AcpToolDescriptor = AcpToolDescriptor {
+    provider_name: "fs_read_text_file",
+    canonical_name: "acp.fs.read_text_file",
+    adapter_method: "bears/read_text_file",
+    client_method: "fs/read_text_file",
+    title: "Read file",
+    kind: "read",
+    risk: "read_only",
+};
+
+fn provider_tool_name_is_safe(name: &str) -> bool {
+    !name.is_empty()
+        && name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+}
+
+fn acp_read_text_file_client_tool_descriptor() -> serde_json::Value {
+    debug_assert!(provider_tool_name_is_safe(
+        ACP_READ_TEXT_FILE_TOOL.provider_name
+    ));
+    serde_json::json!({
+        "name": ACP_READ_TEXT_FILE_TOOL.provider_name,
+        "description": format!(
+            "ACP local workspace tool ({}, target={}, adapter={}, client={}, kind={}, risk={}). Reads a UTF-8 text file from the user's editor workspace through the local adapter. Use only for user workspace files, not server files.",
+            ACP_READ_TEXT_FILE_TOOL.canonical_name,
+            "acp_client",
+            ACP_READ_TEXT_FILE_TOOL.adapter_method,
+            ACP_READ_TEXT_FILE_TOOL.client_method,
+            ACP_READ_TEXT_FILE_TOOL.kind,
+            ACP_READ_TEXT_FILE_TOOL.risk,
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "path": { "type": "string", "description": "Absolute local file path under the workspace." },
+                "line": { "type": "integer", "minimum": 1, "description": "Optional 1-based starting line." },
+                "limit": { "type": "integer", "minimum": 1, "maximum": 2000, "description": "Optional maximum number of lines." }
+            },
+            "required": ["path"]
+        }
+    })
+}
+
 #[derive(Debug)]
 pub(crate) struct AcpToolTurn {
     user_id: i32,
@@ -614,7 +669,7 @@ fn acp_direct_tool_prompt_context(
         concat!(
             "\n\n<system-reminder>",
             "BEARS ACP direct local file reading is available for this turn. ",
-            "If you need to read a workspace file, call client tool `fs_read_text_file`; Den will route it to the local ACP adapter method `bears/read_text_file`. ",
+            "If you need to read a workspace file, call client tool `fs_read_text_file`; Den will route it to the local ACP adapter method `bears/read_text_file` / ACP client method `fs/read_text_file`. ",
             "Use params {{\"path\":\"/absolute/path\",\"line\":1,\"limit\":400}}. Current ACP session id is `{session_id}`. ",
             "Use absolute paths under these workspace roots: {roots}. ",
             "Do not guess file contents; request the file read and use the returned content. ",
@@ -1551,19 +1606,9 @@ async fn prompt_inner(
             &conversation_resolution.upstream_target,
             Some(&pair_agent_id),
             &prompt_with_tool_context,
-            Some(serde_json::json!([{
-                "name": "fs_read_text_file",
-                "description": "Read a UTF-8 text file from the user's local ACP workspace. Use this when you need file contents. Only absolute paths under the active workspace are allowed.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "path": { "type": "string", "description": "Absolute local file path under the workspace." },
-                        "line": { "type": "integer", "minimum": 1, "description": "Optional 1-based starting line." },
-                        "limit": { "type": "integer", "minimum": 1, "maximum": 2000, "description": "Optional maximum number of lines." }
-                    },
-                    "required": ["path"]
-                }
-            }])),
+            Some(serde_json::json!([
+                acp_read_text_file_client_tool_descriptor()
+            ])),
         )
         .await
     {
@@ -1868,7 +1913,23 @@ fn native_letta_tool_request_event(
     };
     if normalized_tool == "fs_read_text_file" && args.get("path").and_then(|v| v.as_str()).is_none()
     {
-        return None;
+        return Some(AcpGatewayEvent::Error {
+            message: "Letta requested fs_read_text_file without a path argument.".to_string(),
+            detail: Some(format!(
+                "Parsed arguments did not contain string field `path`; args={}",
+                preview_str_truncated(&args.to_string(), 240)
+            )),
+            error_type: Some("invalid_tool_arguments".to_string()),
+            request_id: None,
+            context: Some(serde_json::json!({
+                "tool_name": tool_name,
+                "tool_call_id": tool_call
+                    .and_then(|v| v.get("tool_call_id"))
+                    .or_else(|| tool_call.and_then(|v| v.get("id")))
+                    .and_then(|v| v.as_str()),
+                "args": args,
+            })),
+        });
     }
     let tool_call_id = tool_call
         .and_then(|v| v.get("tool_call_id"))
@@ -1904,8 +1965,8 @@ fn native_letta_tool_request_event(
         tool_call_id,
         approval_request_id,
         tool_name: normalized_tool.to_string(),
-        title: "Read file".to_string(),
-        kind: "read".to_string(),
+        title: ACP_READ_TEXT_FILE_TOOL.title.to_string(),
+        kind: ACP_READ_TEXT_FILE_TOOL.kind.to_string(),
         args,
         approval_required,
         approval_reason: approval_required
@@ -2616,6 +2677,26 @@ mod tests {
     use super::*;
 
     #[test]
+    fn acp_read_text_file_provider_name_is_safe() {
+        assert!(provider_tool_name_is_safe(
+            ACP_READ_TEXT_FILE_TOOL.provider_name
+        ));
+        assert!(!provider_tool_name_is_safe("fs.read_text_file"));
+        assert!(!provider_tool_name_is_safe("fs/read_text_file"));
+    }
+
+    #[test]
+    fn acp_read_text_file_descriptor_uses_provider_name_only() {
+        let descriptor = acp_read_text_file_client_tool_descriptor();
+        assert_eq!(descriptor["name"], ACP_READ_TEXT_FILE_TOOL.provider_name);
+        assert_ne!(descriptor["name"], ACP_READ_TEXT_FILE_TOOL.canonical_name);
+        assert_ne!(descriptor["name"], ACP_READ_TEXT_FILE_TOOL.client_method);
+        assert!(!descriptor
+            .to_string()
+            .contains("\"name\":\"fs.read_text_file\""));
+    }
+
+    #[test]
     fn serializes_internal_assistant_chunk_to_acp_adapter_event() {
         let text = String::from_utf8(
             acp_event_to_adapter_sse(AcpGatewayEvent::AssistantTextDelta {
@@ -2665,6 +2746,88 @@ mod tests {
         );
         let text = String::from_utf8(out[0].to_vec()).unwrap();
         assert!(text.contains("\"text\":\" broke\""));
+    }
+
+    #[test]
+    fn maps_nested_letta_approval_request_to_tool_request() {
+        let event = serde_json::json!({
+            "id": "message-approval-1",
+            "message_type": "approval_request_message",
+            "tool_call": {
+                "name": "fs_read_text_file",
+                "tool_call_id": "call_abc123",
+                "arguments": "{\"path\":\"/tmp/readme.md\",\"line\":1,\"limit\":20}"
+            }
+        });
+        let mapped = map_native_letta_stream_event_to_acp_event(&event).unwrap();
+        match mapped {
+            AcpGatewayEvent::ToolRequest {
+                tool_call_id,
+                approval_request_id,
+                tool_name,
+                args,
+                approval_required,
+                ..
+            } => {
+                assert_eq!(tool_call_id, "call_abc123");
+                assert_eq!(approval_request_id.as_deref(), Some("message-approval-1"));
+                assert_eq!(tool_name, "fs_read_text_file");
+                assert_eq!(args["path"], "/tmp/readme.md");
+                assert!(approval_required);
+            }
+            other => panic!("expected tool request, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn maps_letta_tool_calls_array_to_tool_request() {
+        let event = serde_json::json!({
+            "message_type": "tool_call_message",
+            "tool_calls": [{
+                "name": "fs_read_text_file",
+                "tool_call_id": "call_array",
+                "arguments": {"path":"/tmp/a.txt"}
+            }]
+        });
+        let mapped = map_native_letta_stream_event_to_acp_event(&event).unwrap();
+        match mapped {
+            AcpGatewayEvent::ToolRequest {
+                tool_call_id,
+                args,
+                approval_required,
+                ..
+            } => {
+                assert_eq!(tool_call_id, "call_array");
+                assert_eq!(args["path"], "/tmp/a.txt");
+                assert!(!approval_required);
+            }
+            other => panic!("expected tool request, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn invalid_read_file_tool_arguments_are_visible_errors() {
+        let event = serde_json::json!({
+            "message_type": "approval_request_message",
+            "id": "message-missing-path",
+            "tool_call": {
+                "name": "fs_read_text_file",
+                "tool_call_id": "call_missing_path",
+                "arguments": "{}"
+            }
+        });
+        let mapped = map_native_letta_stream_event_to_acp_event(&event).unwrap();
+        match mapped {
+            AcpGatewayEvent::Error {
+                error_type,
+                message,
+                ..
+            } => {
+                assert_eq!(error_type.as_deref(), Some("invalid_tool_arguments"));
+                assert!(message.contains("without a path"));
+            }
+            other => panic!("expected error, got {other:?}"),
+        }
     }
 
     #[test]
