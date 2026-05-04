@@ -1333,17 +1333,46 @@ async fn persist_stream_event_side_effects(
 }
 
 fn map_letta_stream_event_to_acp_adapter_event(event: &serde_json::Value) -> Option<Bytes> {
+    let inner = letta_inner_for_acp_history(event);
+    let message_type = inner
+        .get("message_type")
+        .and_then(|v| v.as_str())
+        .or_else(|| event.get("message_type").and_then(|v| v.as_str()))
+        .unwrap_or("");
     let ty = event.get("type").and_then(|v| v.as_str()).unwrap_or("");
-    let mapped = match ty {
-        "assistant_delta" => serde_json::json!({
+    let mapped = match (ty, message_type) {
+        ("assistant_delta", _) => serde_json::json!({
             "type": "agent_message_chunk",
             "content": { "type": "text", "text": event.get("text").and_then(|v| v.as_str()).unwrap_or("") },
         }),
-        "reasoning_delta" => serde_json::json!({
+        (_, "assistant_message") => serde_json::json!({
+            "type": "agent_message_chunk",
+            "content": { "type": "text", "text": letta_message_text(inner).or_else(|| letta_message_text(event)).unwrap_or_default() },
+        }),
+        ("reasoning_delta", _) => serde_json::json!({
             "type": "status",
             "content": { "type": "text", "text": event.get("text").and_then(|v| v.as_str()).unwrap_or("") },
         }),
-        "error" => {
+        (_, "reasoning_message") => {
+            let text = inner
+                .get("reasoning")
+                .and_then(|v| v.as_str())
+                .map(str::to_string)
+                .or_else(|| {
+                    event
+                        .get("reasoning")
+                        .and_then(|v| v.as_str())
+                        .map(str::to_string)
+                })
+                .or_else(|| letta_message_text(inner))
+                .or_else(|| letta_message_text(event))
+                .unwrap_or_default();
+            serde_json::json!({
+                "type": "status",
+                "content": { "type": "text", "text": text },
+            })
+        }
+        ("error", _) | (_, "error_message") => {
             let mut mapped = serde_json::json!({
                 "type": "error",
                 "message": event.get("message").and_then(|v| v.as_str()).unwrap_or("Upstream error"),
@@ -1357,11 +1386,29 @@ fn map_letta_stream_event_to_acp_adapter_event(event: &serde_json::Value) -> Opt
             }
             mapped
         }
-        "done" => serde_json::json!({
+        ("done", _) => serde_json::json!({
             "type": "done",
             "outcome": event.get("outcome").and_then(|v| v.as_str()).unwrap_or("ok"),
         }),
-        "conversation_resolved" => serde_json::json!({
+        (_, "stop_reason") => {
+            let stop_reason = inner
+                .get("stop_reason")
+                .and_then(|v| v.as_str())
+                .or_else(|| event.get("stop_reason").and_then(|v| v.as_str()))
+                .unwrap_or("unknown");
+            if stop_reason == "end_turn" {
+                serde_json::json!({ "type": "done", "outcome": "ok" })
+            } else if stop_reason == "requires_approval" {
+                return None;
+            } else {
+                serde_json::json!({
+                    "type": "error",
+                    "message": format!("Letta stopped before producing assistant output: {stop_reason}"),
+                    "error_type": stop_reason,
+                })
+            }
+        }
+        ("conversation_resolved", _) => serde_json::json!({
             "type": "conversation_resolved",
             "conversation_id": event.get("conversation_id").and_then(|v| v.as_str()),
         }),
@@ -1629,6 +1676,25 @@ mod tests {
     fn maps_done_to_acp_adapter_event() {
         let out = map_letta_stream_frame_to_acp_adapter_events(
             b"data: {\"type\":\"done\",\"outcome\":\"ok\"}\n\n",
+        );
+        let text = String::from_utf8(out[0].to_vec()).unwrap();
+        assert!(text.contains("\"type\":\"done\""));
+    }
+
+    #[test]
+    fn maps_native_letta_assistant_message_to_acp_adapter_event() {
+        let out = map_letta_stream_frame_to_acp_adapter_events(
+            b"data: {\"message_type\":\"assistant_message\",\"content\":\"hello from native Letta\"}\n\n",
+        );
+        let text = String::from_utf8(out[0].to_vec()).unwrap();
+        assert!(text.contains("\"type\":\"agent_message_chunk\""));
+        assert!(text.contains("hello from native Letta"));
+    }
+
+    #[test]
+    fn maps_native_letta_stop_reason_end_turn_to_done() {
+        let out = map_letta_stream_frame_to_acp_adapter_events(
+            b"data: {\"message_type\":\"stop_reason\",\"stop_reason\":\"end_turn\"}\n\n",
         );
         let text = String::from_utf8(out[0].to_vec()).unwrap();
         assert!(text.contains("\"type\":\"done\""));
