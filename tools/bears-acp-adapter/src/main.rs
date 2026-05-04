@@ -1,4 +1,6 @@
-use agent_client_protocol::schema::{RequestPermissionOutcome, RequestPermissionResponse};
+use agent_client_protocol::schema::{
+    ReadTextFileResponse, RequestPermissionOutcome, RequestPermissionResponse,
+};
 use anyhow::{anyhow, Context, Result};
 use futures_util::StreamExt;
 use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, CONTENT_TYPE};
@@ -1063,11 +1065,13 @@ async fn handle_client_read_text_file(
         return Err(anyhow!("client fs/read_text_file failed: {error}"));
     }
     let result = response.get("result").cloned().unwrap_or(Value::Null);
-    let content = result
-        .get("content")
-        .or_else(|| result.get("text"))
-        .and_then(Value::as_str)
-        .ok_or_else(|| anyhow!("client fs/read_text_file response missing content/text"))?;
+    let parsed = serde_json::from_value::<ReadTextFileResponse>(result.clone()).map_err(|err| {
+        anyhow!(
+            "client fs/read_text_file response did not match ACP schema: {err}; result={}",
+            truncate_for_log(&result.to_string(), 240)
+        )
+    })?;
+    let content = parsed.content;
     eprintln!(
         "bears-acp-adapter: client fs/read_text_file path={} bytes={} duration_ms={}",
         path,
@@ -2581,6 +2585,15 @@ fn json_rpc_error(code: i64, message: &str, data: Option<Value>) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parses_typed_acp_read_text_file_response() {
+        let response = serde_json::from_value::<ReadTextFileResponse>(json!({
+            "content": "hello from file"
+        }))
+        .unwrap();
+        assert_eq!(response.content, "hello from file");
+    }
 
     #[test]
     fn parses_typed_acp_permission_selection() {
