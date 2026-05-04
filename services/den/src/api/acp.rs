@@ -17,11 +17,11 @@ use bytes::Bytes;
 use futures::{ready, Stream};
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::{BTreeMap, HashMap, VecDeque},
+    collections::{BTreeMap, VecDeque},
     future::Future,
     path::Path as FsPath,
     pin::Pin,
-    sync::{Arc, Mutex},
+    sync::Arc,
     task::Poll,
 };
 use time::format_description::well_known::Rfc3339;
@@ -38,6 +38,10 @@ use crate::{
     core::{
         acp_sessions::{self, UpsertAcpSession},
         acp_tokens,
+        acp_tool_turns::{
+            AcpToolResultDelivery, AcpToolResultRequest, AcpToolTurnCoordinator,
+            AcpToolTurnRegistration,
+        },
         acp_tools::{
             acp_read_text_file_client_tool_descriptor, AcpToolName, AcpToolStatus,
             ACP_READ_TEXT_FILE_TOOL,
@@ -57,30 +61,6 @@ fn acp_debug_event_sample_chars() -> usize {
         .and_then(|s| s.trim().parse::<usize>().ok())
         .map(|n| n.clamp(128, 20_000))
         .unwrap_or(360)
-}
-
-#[derive(Debug)]
-pub(crate) struct AcpToolTurn {
-    user_id: i32,
-    bear_id: Uuid,
-    bear_slug: String,
-    acp_session_id: String,
-    request_id: Uuid,
-    tool_call_id: String,
-    tool_name: String,
-    approval_request_id: Option<String>,
-    settled: bool,
-    result_tx: Option<oneshot::Sender<AcpToolResultRequest>>,
-}
-
-pub(crate) type AcpToolTurnRegistry = Arc<Mutex<HashMap<String, AcpToolTurn>>>;
-
-pub(crate) fn new_acp_tool_turn_registry() -> AcpToolTurnRegistry {
-    Arc::new(Mutex::new(HashMap::new()))
-}
-
-fn acp_tool_turn_key(session_id: &str, tool_call_id: &str) -> String {
-    format!("{session_id}\n{tool_call_id}")
 }
 
 pub fn router() -> Router<ApiState> {
@@ -119,22 +99,6 @@ pub struct AcpPromptRequest {
     pub client_capabilities: serde_json::Value,
     #[serde(default)]
     pub client_context: serde_json::Value,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-struct AcpToolResultRequest {
-    turn_id: Option<String>,
-    request_id: Option<String>,
-    tool_call_id: Option<String>,
-    tool_name: Option<String>,
-    approval_request_id: Option<String>,
-    status: String,
-    #[serde(default)]
-    content: Option<String>,
-    #[serde(default)]
-    structured_content: serde_json::Value,
-    #[serde(default)]
-    diagnostic: serde_json::Value,
 }
 
 #[derive(Debug, Serialize)]
@@ -1172,114 +1136,65 @@ async fn tool_result_inner(
     body: AcpToolResultRequest,
 ) -> Result<Response, CustomError> {
     let user_id = authenticate_acp_code_token(&state, &headers, &slug).await?;
-    let key = acp_tool_turn_key(&session_id, &tool_call_id);
-    let mut turns = state
-        .acp_tool_turns
-        .lock()
-        .map_err(|_| CustomError::System("ACP tool turn registry lock poisoned".to_string()))?;
-    let Some(turn) = turns.get_mut(&key) else {
-        return Ok(Json(AcpToolResultResponse {
-            accepted: false,
-            reason: "turn_missing".to_string(),
-            turn_id: body.turn_id,
-            tool_call_id,
-        })
-        .into_response());
-    };
-    if turn.user_id != user_id
-        || turn.bear_slug != slug
-        || turn.acp_session_id != session_id
-        || turn.tool_call_id != tool_call_id
-    {
-        return Err(CustomError::Authorization(
-            "tool result does not match the authenticated ACP session".to_string(),
-        ));
-    }
-    if let Some(body_tool_call_id) = body.tool_call_id.as_deref().filter(|s| !s.is_empty()) {
-        if body_tool_call_id != turn.tool_call_id {
-            return Err(CustomError::ValidationError(format!(
-                "tool result call id mismatch: expected {}, got {}",
-                turn.tool_call_id, body_tool_call_id
-            )));
-        }
-    }
-    if let Some(body_approval_request_id) = body
-        .approval_request_id
-        .as_deref()
-        .filter(|s| !s.is_empty())
-    {
-        if turn.approval_request_id.as_deref() != Some(body_approval_request_id) {
-            return Err(CustomError::ValidationError(format!(
-                "tool result approval request id mismatch: expected {:?}, got {}",
-                turn.approval_request_id, body_approval_request_id
-            )));
-        }
-    }
     let parsed_status = AcpToolStatus::parse(&body.status).ok_or_else(|| {
         CustomError::ValidationError(format!("invalid ACP tool result status: {}", body.status))
     })?;
-    if let Some(body_tool_name) = body.tool_name.as_deref().filter(|s| !s.is_empty()) {
-        if body_tool_name != turn.tool_name {
-            return Err(CustomError::ValidationError(format!(
-                "tool result name mismatch: expected {}, got {}",
-                turn.tool_name, body_tool_name
-            )));
+    let delivery =
+        state
+            .acp_tool_turns
+            .deliver_result(user_id, &slug, &session_id, &tool_call_id, body)?;
+    match delivery {
+        AcpToolResultDelivery::Delivered {
+            mut body,
+            request_id,
+            bear_id,
+            tool_name,
+        } => {
+            body.status = parsed_status.as_str().to_string();
+            tracing::info!(
+                request_id = %request_id,
+                bear_id = %bear_id,
+                acp_session_id = %session_id,
+                tool_call_id = %tool_call_id,
+                tool_name = %tool_name,
+                body_request_id = body.request_id.as_deref(),
+                body_tool_call_id = body.tool_call_id.as_deref(),
+                body_approval_request_id = body.approval_request_id.as_deref(),
+                status = %parsed_status.as_str(),
+                content_bytes = body.content.as_deref().map(str::len).unwrap_or(0),
+                structured_content_bytes = body.structured_content.to_string().len(),
+                diagnostic = ?body.diagnostic,
+                "ACP tool result received"
+            );
+            Ok(Json(AcpToolResultResponse {
+                accepted: true,
+                reason: "delivered".to_string(),
+                turn_id: body.turn_id,
+                tool_call_id,
+            })
+            .into_response())
         }
-    }
-    if turn.settled {
-        return Ok(Json(AcpToolResultResponse {
+        AcpToolResultDelivery::TurnMissing {
+            turn_id,
+            tool_call_id,
+        } => Ok(Json(AcpToolResultResponse {
             accepted: false,
-            reason: "already_settled".to_string(),
-            turn_id: body.turn_id,
+            reason: "turn_missing".to_string(),
+            turn_id,
             tool_call_id,
         })
-        .into_response());
+        .into_response()),
+        AcpToolResultDelivery::AlreadySettled {
+            turn_id,
+            tool_call_id,
+        } => Ok(Json(AcpToolResultResponse {
+            accepted: false,
+            reason: "already_settled".to_string(),
+            turn_id,
+            tool_call_id,
+        })
+        .into_response()),
     }
-    let mut body = body;
-    if body
-        .tool_call_id
-        .as_deref()
-        .filter(|s| !s.is_empty())
-        .is_none()
-    {
-        body.tool_call_id = Some(turn.tool_call_id.clone());
-    }
-    if body
-        .approval_request_id
-        .as_deref()
-        .filter(|s| !s.is_empty())
-        .is_none()
-    {
-        body.approval_request_id = turn.approval_request_id.clone();
-    }
-    turn.settled = true;
-    let result_tx = turn.result_tx.take();
-    tracing::info!(
-        request_id = %turn.request_id,
-        bear_id = %turn.bear_id,
-        acp_session_id = %session_id,
-        tool_call_id = %tool_call_id,
-        tool_name = %turn.tool_name,
-        body_request_id = body.request_id.as_deref(),
-        body_tool_call_id = body.tool_call_id.as_deref(),
-        body_approval_request_id = body.approval_request_id.as_deref(),
-        status = %parsed_status.as_str(),
-        content_bytes = body.content.as_deref().map(str::len).unwrap_or(0),
-        structured_content_bytes = body.structured_content.to_string().len(),
-        diagnostic = ?body.diagnostic,
-        "ACP tool result received"
-    );
-    body.status = parsed_status.as_str().to_string();
-    if let Some(result_tx) = result_tx {
-        let _ = result_tx.send(body.clone());
-    }
-    Ok(Json(AcpToolResultResponse {
-        accepted: true,
-        reason: "delivered".to_string(),
-        turn_id: body.turn_id,
-        tool_call_id,
-    })
-    .into_response())
 }
 
 async fn close_session(
@@ -1621,7 +1536,7 @@ async fn prompt_inner(
 #[derive(Clone)]
 struct AcpStreamContext {
     pool: sqlx::PgPool,
-    tool_turns: AcpToolTurnRegistry,
+    tool_turns: AcpToolTurnCoordinator,
     user_id: i32,
     bear_id: Uuid,
     bear_slug: String,
@@ -1692,25 +1607,17 @@ async fn persist_stream_event_side_effects(
             let result_tx = result_tx.take().ok_or_else(|| {
                 CustomError::System("ACP tool request missing result channel".to_string())
             })?;
-            let key = acp_tool_turn_key(&context.acp_session_id, tool_call_id);
-            let mut turns = context.tool_turns.lock().map_err(|_| {
-                CustomError::System("ACP tool turn registry lock poisoned".to_string())
+            context.tool_turns.register(AcpToolTurnRegistration {
+                user_id: context.user_id,
+                bear_id: context.bear_id,
+                bear_slug: context.bear_slug.clone(),
+                acp_session_id: context.acp_session_id.clone(),
+                request_id: context.request_id,
+                tool_call_id: tool_call_id.clone(),
+                tool_name: tool_name.clone(),
+                approval_request_id: approval_request_id.clone(),
+                result_tx,
             })?;
-            turns.insert(
-                key,
-                AcpToolTurn {
-                    user_id: context.user_id,
-                    bear_id: context.bear_id,
-                    bear_slug: context.bear_slug.clone(),
-                    acp_session_id: context.acp_session_id.clone(),
-                    request_id: context.request_id,
-                    tool_call_id: tool_call_id.clone(),
-                    tool_name: tool_name.clone(),
-                    approval_request_id: approval_request_id.clone(),
-                    settled: false,
-                    result_tx: Some(result_tx),
-                },
-            );
             tracing::info!(
                 request_id = %context.request_id,
                 acp_session_id = %context.acp_session_id,
@@ -2608,13 +2515,10 @@ impl AcpLettaSseStream {
         if self.active_tool_call_ids.is_empty() {
             return;
         }
-        if let Ok(mut turns) = self.context.tool_turns.lock() {
-            for tool_call_id in self.active_tool_call_ids.drain(..) {
-                turns.remove(&acp_tool_turn_key(
-                    &self.context.acp_session_id,
-                    &tool_call_id,
-                ));
-            }
+        for tool_call_id in self.active_tool_call_ids.drain(..) {
+            self.context
+                .tool_turns
+                .remove(&self.context.acp_session_id, &tool_call_id);
         }
     }
 
@@ -2678,12 +2582,9 @@ impl Stream for AcpLettaSseStream {
                         Ok(tool_result) => {
                             if let Some(done_id) = tool_result.tool_call_id.as_deref() {
                                 this.active_tool_call_ids.retain(|id| id != done_id);
-                                if let Ok(mut turns) = this.context.tool_turns.lock() {
-                                    turns.remove(&acp_tool_turn_key(
-                                        &this.context.acp_session_id,
-                                        done_id,
-                                    ));
-                                }
+                                this.context
+                                    .tool_turns
+                                    .remove(&this.context.acp_session_id, done_id);
                             }
                             let tool_name = tool_result
                                 .tool_name
@@ -2910,7 +2811,7 @@ mod tests {
         let pool = PgPoolOptions::new()
             .connect_lazy("postgres://postgres:postgres@127.0.0.1/postgres")
             .unwrap();
-        let registry = new_acp_tool_turn_registry();
+        let registry = AcpToolTurnCoordinator::new();
         let context = AcpStreamContext {
             pool,
             tool_turns: registry.clone(),
@@ -2943,26 +2844,26 @@ mod tests {
         assert!(first_text.contains("\"type\":\"tool_request\""));
         assert!(first_text.contains("\"tool_call_id\":\"call_test\""));
 
-        let tx = registry
-            .lock()
-            .unwrap()
-            .get_mut(&acp_tool_turn_key("acp-test-session", "call_test"))
-            .unwrap()
-            .result_tx
-            .take()
+        let delivery = registry
+            .deliver_result(
+                1,
+                "test-bear",
+                "acp-test-session",
+                "call_test",
+                AcpToolResultRequest {
+                    turn_id: Some("turn-test".to_string()),
+                    request_id: Some("request-test".to_string()),
+                    tool_call_id: Some("call_test".to_string()),
+                    tool_name: Some("fs_read_text_file".to_string()),
+                    approval_request_id: Some("approval-1".to_string()),
+                    status: "ok".to_string(),
+                    content: Some("hello from file".to_string()),
+                    structured_content: serde_json::json!({}),
+                    diagnostic: serde_json::json!({}),
+                },
+            )
             .unwrap();
-        tx.send(AcpToolResultRequest {
-            turn_id: Some("turn-test".to_string()),
-            request_id: Some("request-test".to_string()),
-            tool_call_id: Some("call_test".to_string()),
-            tool_name: Some("fs_read_text_file".to_string()),
-            approval_request_id: Some("approval-1".to_string()),
-            status: "ok".to_string(),
-            content: Some("hello from file".to_string()),
-            structured_content: serde_json::json!({}),
-            diagnostic: serde_json::json!({}),
-        })
-        .unwrap();
+        assert!(matches!(delivery, AcpToolResultDelivery::Delivered { .. }));
 
         let mut output = String::new();
         while let Some(item) = stream.next().await {

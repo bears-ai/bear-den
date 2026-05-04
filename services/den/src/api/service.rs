@@ -46,7 +46,7 @@ pub struct ApiState {
     /// Shared Bifrost model metadata client.
     pub bifrost: Arc<BifrostClient>,
     /// Process-local active ACP direct tool turns.
-    pub(crate) acp_tool_turns: crate::api::acp::AcpToolTurnRegistry,
+    pub(crate) acp_tool_turns: crate::core::acp_tool_turns::AcpToolTurnCoordinator,
 }
 
 async fn api_readiness(State(state): State<ApiState>) -> Result<&'static str, StatusCode> {
@@ -107,7 +107,7 @@ pub async fn create_api_app(
         config: config.clone(),
         letta: Arc::new(LettaClient::new(config.as_ref())),
         bifrost: Arc::new(BifrostClient::new(config.as_ref())),
-        acp_tool_turns: crate::api::acp::new_acp_tool_turn_registry(),
+        acp_tool_turns: crate::core::acp_tool_turns::AcpToolTurnCoordinator::new(),
     };
 
     // Create OAuth state (separate from main API state for OAuth endpoints)

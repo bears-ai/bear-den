@@ -1,5 +1,6 @@
 pub mod acp_sessions;
 pub mod acp_tokens;
+pub mod acp_tool_turns;
 pub mod acp_tools;
 pub mod api_utils;
 pub mod archived_conversations;
