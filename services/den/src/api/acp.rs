@@ -1220,6 +1220,23 @@ async fn tool_result_inner(
         })
         .into_response());
     }
+    let mut body = body;
+    if body
+        .tool_call_id
+        .as_deref()
+        .filter(|s| !s.is_empty())
+        .is_none()
+    {
+        body.tool_call_id = Some(turn.tool_call_id.clone());
+    }
+    if body
+        .approval_request_id
+        .as_deref()
+        .filter(|s| !s.is_empty())
+        .is_none()
+    {
+        body.approval_request_id = turn.approval_request_id.clone();
+    }
     turn.settled = true;
     let result_tx = turn.result_tx.take();
     tracing::info!(
@@ -1229,6 +1246,8 @@ async fn tool_result_inner(
         tool_call_id = %tool_call_id,
         tool_name = %turn.tool_name,
         body_request_id = body.request_id.as_deref(),
+        body_tool_call_id = body.tool_call_id.as_deref(),
+        body_approval_request_id = body.approval_request_id.as_deref(),
         status = %body.status,
         content_bytes = body.content.as_deref().map(str::len).unwrap_or(0),
         structured_content_bytes = body.structured_content.to_string().len(),
