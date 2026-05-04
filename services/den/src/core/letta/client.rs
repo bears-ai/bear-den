@@ -343,6 +343,48 @@ impl LettaClient {
         Ok(resp)
     }
 
+    /// `POST /v1/conversations/?agent_id=...` — create a fresh durable conversation for one agent.
+    pub async fn create_conversation_for_agent(
+        &self,
+        agent_id: &str,
+    ) -> Result<serde_json::Value, CustomError> {
+        if !self.is_enabled() {
+            return Err(CustomError::System(
+                "Letta is not configured (set LETTA_BASE_URL)".to_string(),
+            ));
+        }
+
+        let url = format!("{}/v1/conversations/", self.base_url);
+        let resp = self
+            .http
+            .post(url)
+            .headers(self.auth_headers())
+            .header(CONTENT_TYPE, "application/json")
+            .query(&[("agent_id", agent_id)])
+            .json(&json!({}))
+            .send()
+            .await
+            .map_err(|e| {
+                CustomError::System(format!("Letta create conversation request failed: {e}"))
+            })?;
+
+        let status = resp.status();
+        let text = resp
+            .text()
+            .await
+            .map_err(|e| CustomError::System(format!("Letta create conversation body: {e}")))?;
+
+        if !status.is_success() {
+            return Err(CustomError::System(format!(
+                "Letta create conversation HTTP {status}: {text}"
+            )));
+        }
+
+        serde_json::from_str(&text).map_err(|e| {
+            CustomError::Parsing(format!("Letta create conversation JSON: {e}; body: {text}"))
+        })
+    }
+
     /// `GET /v1/conversations/` — conversations for one agent (`order_by=last_message_at`, newest first).
     pub async fn list_conversations_for_agent(
         &self,

@@ -585,6 +585,15 @@ fn acp_archive_target_for_session(session: &acp_sessions::AcpSessionRow) -> Opti
         })
 }
 
+fn letta_conversation_id_from_create_response(value: &serde_json::Value) -> Option<String> {
+    value
+        .get("id")
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|s| s.starts_with("conv-"))
+        .map(str::to_string)
+}
+
 fn acp_direct_tool_prompt_context(
     session_id: &str,
     cwd: &str,
@@ -1417,7 +1426,7 @@ async fn prompt_inner(
                 )
             })?;
     let generated_conversation_id = new_acp_conversation_id(&client);
-    let conversation_resolution = resolve_acp_prompt_conversation(
+    let mut conversation_resolution = resolve_acp_prompt_conversation(
         body.conversation_id.as_deref(),
         existing_session.as_ref(),
         &pair_agent_id,
@@ -1438,6 +1447,41 @@ async fn prompt_inner(
             let (status, code, message) = acp_error_status_message(&err);
             ApiError::new(status, code, message)
         })?;
+    }
+    if conversation_resolution
+        .session_selection
+        .starts_with("new-")
+        && conversation_resolution.resolved_conversation_id.is_none()
+    {
+        let created = state
+            .letta
+            .create_conversation_for_agent(&pair_agent_id)
+            .await
+            .map_err(|err| {
+                let (status, code, message) = acp_error_status_message(&err);
+                ApiError::new(status, code, message)
+            })?;
+        let conv_id = letta_conversation_id_from_create_response(&created).ok_or_else(|| {
+            ApiError::new(
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "letta_create_conversation",
+                format!(
+                    "Letta create conversation response did not contain a conv-* id: {created}"
+                ),
+            )
+        })?;
+        tracing::info!(
+            %request_id,
+            acp_session_id = %session_id,
+            bear_id = %bear.id,
+            pending_conversation_id = %conversation_resolution.session_selection,
+            resolved_conversation_id = %conv_id,
+            "ACP created fresh Letta conversation for new session"
+        );
+        conversation_resolution.resolved_conversation_id = Some(conv_id.clone());
+        conversation_resolution.history_target = Some(conv_id.clone());
+        conversation_resolution.archive_target = Some(conv_id.clone());
+        conversation_resolution.upstream_target = conv_id;
     }
     let runtime_session_id = format!("acp-api-direct:{client}:{}:{session_id}", bear.id);
     acp_sessions::upsert_session(
