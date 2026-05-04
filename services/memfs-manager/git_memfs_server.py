@@ -44,6 +44,20 @@ ACTIVITY_LOG = Path(
     os.environ.get("MEMFS_ACTIVITY_LOG", str(MEMFS_BASE.parent / "activity.jsonl"))
 )
 ACTIVITY_LOG_MAX_BYTES = int(os.environ.get("MEMFS_ACTIVITY_LOG_MAX_BYTES", "1048576"))
+BEARS_CANONICAL_BASE = Path(
+    os.environ.get("BEARS_CANONICAL_MEMFS_BASE", str(MEMFS_BASE.parent / "bears"))
+)
+VIEW_REGISTRY_PATH = Path(
+    os.environ.get("MEMFS_VIEW_REGISTRY", str(MEMFS_BASE.parent / "bear_views.json"))
+)
+ROLE_BRANCHES = {"talk", "pair", "curate", "work", "watch"}
+ROLE_ALLOWED_PREFIXES = {
+    "talk": ["talk/"],
+    "pair": ["pair/"],
+    "curate": ["curate/", "core/"],
+    "work": ["work/"],
+    "watch": ["watch/"],
+}
 
 
 def log_activity(event: str, **fields: object) -> None:
@@ -121,6 +135,158 @@ def _remove_bare_if_empty_or_broken(repo: Path) -> None:
     if c is None or c == 0:
         log_activity("repo_removed_empty_or_broken", repo=str(repo), commit_count=c)
         shutil.rmtree(repo, ignore_errors=True)
+
+
+def _git(
+    *args: str, cwd: Path | None = None, check: bool = True
+) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        ["git", *args], cwd=cwd, capture_output=True, text=True, check=check
+    )
+
+
+def _branch_tip(repo: Path, branch: str) -> str | None:
+    r = subprocess.run(
+        ["git", "-C", str(repo), "rev-parse", "--verify", f"refs/heads/{branch}"],
+        capture_output=True,
+        text=True,
+    )
+    if r.returncode != 0:
+        return None
+    return (r.stdout or "").strip() or None
+
+
+def _is_ancestor(repo: Path, maybe_ancestor: str, descendant: str) -> bool:
+    r = subprocess.run(
+        [
+            "git",
+            "-C",
+            str(repo),
+            "merge-base",
+            "--is-ancestor",
+            maybe_ancestor,
+            descendant,
+        ],
+        capture_output=True,
+        text=True,
+    )
+    return r.returncode == 0
+
+
+def _changed_paths(repo: Path, old: str | None, new: str) -> list[str]:
+    if old:
+        r = _git("-C", str(repo), "diff", "--name-only", old, new)
+    else:
+        r = _git(
+            "-C",
+            str(repo),
+            "diff-tree",
+            "--root",
+            "--no-commit-id",
+            "--name-only",
+            "-r",
+            new,
+        )
+    return [line.strip() for line in (r.stdout or "").splitlines() if line.strip()]
+
+
+def _paths_allowed(role: str, paths: list[str]) -> tuple[bool, str | None]:
+    prefixes = ROLE_ALLOWED_PREFIXES.get(role, [])
+    for path in paths:
+        if not any(path.startswith(prefix) for prefix in prefixes):
+            return False, path
+    return True, None
+
+
+def _read_view_registry() -> dict:
+    if not VIEW_REGISTRY_PATH.exists():
+        return {"version": 1, "views": {}}
+    try:
+        data = json.loads(VIEW_REGISTRY_PATH.read_text(encoding="utf-8"))
+        if not isinstance(data, dict):
+            return {"version": 1, "views": {}}
+        data.setdefault("version", 1)
+        data.setdefault("views", {})
+        return data
+    except (OSError, json.JSONDecodeError):
+        return {"version": 1, "views": {}}
+
+
+def _write_view_registry(data: dict) -> None:
+    VIEW_REGISTRY_PATH.parent.mkdir(parents=True, exist_ok=True)
+    tmp = VIEW_REGISTRY_PATH.with_suffix(".tmp")
+    tmp.write_text(json.dumps(data, indent=2, sort_keys=True), encoding="utf-8")
+    tmp.replace(VIEW_REGISTRY_PATH)
+
+
+def _view_record(agent_id: str) -> dict | None:
+    return _read_view_registry().get("views", {}).get(agent_id)
+
+
+def _canonical_repo_path(bear_id: str) -> Path:
+    return BEARS_CANONICAL_BASE / f"{bear_id}.git"
+
+
+def _view_repo_path(org_id: str, agent_id: str) -> Path:
+    return MEMFS_BASE / org_id / agent_id / "repo.git"
+
+
+def _repo_is_quarantined(repo: Path) -> bool:
+    return (repo / "BEARS_QUARANTINED").exists()
+
+
+def _set_quarantine(repo: Path, reason: str) -> None:
+    repo.mkdir(parents=True, exist_ok=True)
+    (repo / "BEARS_QUARANTINED").write_text(reason, encoding="utf-8")
+
+
+def _clear_quarantine(repo: Path) -> None:
+    marker = repo / "BEARS_QUARANTINED"
+    if marker.exists():
+        marker.unlink()
+
+
+def _canonical_hook_contents() -> str:
+    return r"""#!/usr/bin/env sh
+set -eu
+zero="0000000000000000000000000000000000000000"
+allowed_for_ref() {
+  case "$1" in
+    refs/heads/talk) printf '%s\n' "talk/" ;;
+    refs/heads/pair) printf '%s\n' "pair/" ;;
+    refs/heads/curate) printf '%s\n' "curate/" "core/" ;;
+    refs/heads/work) printf '%s\n' "work/" ;;
+    refs/heads/watch) printf '%s\n' "watch/" ;;
+    *) printf '%s\n' "" ;;
+  esac
+}
+while read old new ref; do
+  case "$ref" in refs/heads/talk|refs/heads/pair|refs/heads/curate|refs/heads/work|refs/heads/watch) ;; *) continue ;; esac
+  [ "$new" = "$zero" ] && continue
+  branch="${ref#refs/heads/}"
+  allowed="$(allowed_for_ref "$ref")"
+  if [ "$old" = "$zero" ]; then
+    paths="$(git diff-tree --root --no-commit-id --name-only -r "$new")"
+  else
+    paths="$(git diff --name-only "$old" "$new")"
+  fi
+  printf '%s\n' "$paths" | while IFS= read -r path; do
+    [ -z "$path" ] && continue
+    case "$ref:$path" in
+      refs/heads/talk:talk/*|refs/heads/pair:pair/*|refs/heads/curate:curate/*|refs/heads/curate:core/*|refs/heads/work:work/*|refs/heads/watch:watch/*) ;;
+      *) echo "branch '$branch' attempted to write to '$path'; allowed path prefixes are:" >&2; printf '%s\n' "$allowed" | sed 's/^/  - /' >&2; exit 1 ;;
+    esac
+  done
+done
+"""
+
+
+def _write_canonical_hook(repo: Path) -> None:
+    hooks = repo / "hooks"
+    hooks.mkdir(parents=True, exist_ok=True)
+    hook = hooks / "pre-receive"
+    hook.write_text(_canonical_hook_contents(), encoding="utf-8")
+    hook.chmod(0o755)
 
 
 def _create_bare_with_letta_initial_commit(repo: Path) -> None:
@@ -415,8 +581,152 @@ def repository_status(agent_id: str, org_id: str) -> dict:
     }
 
 
+def _ensure_canonical_branch(repo: Path, bear_id: str, role: str) -> None:
+    if _branch_tip(repo, role):
+        return
+    with tempfile.TemporaryDirectory() as tmp:
+        work = Path(tmp) / "w"
+        work.mkdir()
+        _git("init", "-b", role, cwd=work)
+        _git("-C", str(work), "config", "user.name", "BEARS MemFS Sidecar")
+        _git("-C", str(work), "config", "user.email", "memfs-sidecar@bears.local")
+        paths = {
+            "talk": ["talk/tasks"],
+            "pair": ["pair/tasks"],
+            "curate": ["curate", "core/tasks", "core/results"],
+            "work": ["work/results"],
+            "watch": ["watch/observations", "watch/subscriptions"],
+        }[role]
+        for rel in paths:
+            d = work / rel
+            d.mkdir(parents=True, exist_ok=True)
+            (d / ".gitkeep").write_text("", encoding="utf-8")
+        _git("add", ".", cwd=work)
+        _git("commit", "-m", f"Initialize {role} branch for bear {bear_id}", cwd=work)
+        _git("remote", "add", "origin", str(repo), cwd=work)
+        _git("push", "origin", f"HEAD:refs/heads/{role}", cwd=work)
+
+
+def ensure_canonical_repo(bear_id: str) -> Path:
+    repo = _canonical_repo_path(bear_id)
+    if not repo.exists():
+        repo.parent.mkdir(parents=True, exist_ok=True)
+        _git("init", "--bare", str(repo))
+        _git("--git-dir", str(repo), "config", "http.receivepack", "true")
+    _write_canonical_hook(repo)
+    for role in sorted(ROLE_BRANCHES):
+        _ensure_canonical_branch(repo, bear_id, role)
+    return repo
+
+
+def _reset_view_to_canonical(view_repo: Path, canonical_repo: Path, role: str) -> None:
+    canonical_tip = _branch_tip(canonical_repo, role)
+    if not canonical_tip:
+        raise RuntimeError(f"canonical branch missing: {role}")
+    if not view_repo.exists():
+        view_repo.parent.mkdir(parents=True, exist_ok=True)
+        _git("clone", "--shared", "--bare", str(canonical_repo), str(view_repo))
+    _git(
+        "--git-dir",
+        str(view_repo),
+        "fetch",
+        str(canonical_repo),
+        f"refs/heads/{role}:refs/heads/main",
+    )
+    _git("--git-dir", str(view_repo), "symbolic-ref", "HEAD", "refs/heads/main")
+    _git("--git-dir", str(view_repo), "config", "http.receivepack", "true")
+    _clear_quarantine(view_repo)
+
+
+def _forward_view_to_canonical(
+    record: dict, old_tip: str | None = None
+) -> tuple[str, str | None]:
+    role = str(record["role"])
+    bear_id = str(record["bear_id"])
+    agent_id = str(record["agent_id"])
+    canonical = Path(record["canonical_repo"])
+    view = Path(record["view_repo"])
+    if _repo_is_quarantined(view):
+        return "quarantined", "view is quarantined; operator action required"
+    view_tip = _branch_tip(view, "main")
+    canonical_tip = _branch_tip(canonical, role)
+    if not view_tip:
+        return "missing_view_tip", "view main branch missing"
+    if canonical_tip == view_tip:
+        return "already_current", None
+    if canonical_tip and _is_ancestor(view, view_tip, canonical_tip):
+        _reset_view_to_canonical(view, canonical, role)
+        return "fast_forwarded_view", None
+    if canonical_tip and not _is_ancestor(view, canonical_tip, view_tip):
+        reason = f"view and canonical diverged for role {role}: canonical={canonical_tip}, view={view_tip}"
+        _set_quarantine(view, reason)
+        log_activity(
+            "view_quarantined",
+            bear_id=bear_id,
+            role=role,
+            agent_id=agent_id,
+            reason=reason,
+        )
+        return "quarantined", reason
+    paths = _changed_paths(view, canonical_tip, view_tip)
+    ok, bad_path = _paths_allowed(role, paths)
+    if not ok:
+        reason = f"canonical would reject role {role} path {bad_path}"
+        _set_quarantine(view, reason)
+        log_activity(
+            "view_quarantined",
+            bear_id=bear_id,
+            role=role,
+            agent_id=agent_id,
+            reason=reason,
+            bad_path=bad_path,
+        )
+        return "quarantined", reason
+    try:
+        _git(
+            "--git-dir",
+            str(canonical),
+            "fetch",
+            str(view),
+            f"refs/heads/main:refs/heads/{role}",
+        )
+    except subprocess.CalledProcessError as e:
+        reason = (e.stderr or e.stdout or str(e)).strip()
+        _set_quarantine(view, reason)
+        log_activity(
+            "forward_failed_quarantined",
+            bear_id=bear_id,
+            role=role,
+            agent_id=agent_id,
+            reason=reason,
+        )
+        return "quarantined", reason
+    log_activity(
+        "forward_ok",
+        bear_id=bear_id,
+        role=role,
+        agent_id=agent_id,
+        old_tip=old_tip,
+        new_tip=view_tip,
+        canonical_tip=canonical_tip,
+    )
+    return "forwarded", None
+
+
+def ensure_view_repo(agent_id: str, org_id: str, record: dict) -> Path:
+    canonical = ensure_canonical_repo(str(record["bear_id"]))
+    view = _view_repo_path(org_id, agent_id)
+    record["canonical_repo"] = str(canonical)
+    record["view_repo"] = str(view)
+    _reset_view_to_canonical(view, canonical, str(record["role"]))
+    return view
+
+
 def find_or_create_repo(agent_id: str, org_id: str) -> Path:
     """Resolve bare repo; align with local storage and Letta's on-disk layout."""
+    record = _view_record(agent_id)
+    if record:
+        return ensure_view_repo(agent_id, org_id, record)
     repo = MEMFS_BASE / org_id / agent_id / "repo.git"
     _remove_bare_if_empty_or_broken(repo)
     if _is_usable_bare_repo(repo):
@@ -565,6 +875,152 @@ class GitHTTPHandler(BaseHTTPRequestHandler):
             self._send_json(500, {"error": str(e) or "git failed"})
             return True
 
+    def _try_view_management_get(self) -> bool:
+        if self.command != "GET":
+            return False
+        parsed = urlparse(self.path)
+        parts = [p for p in parsed.path.strip("/").split("/") if p]
+        if parts == ["v1", "management", "bears"]:
+            data = _read_view_registry()
+            self._send_json(200, data)
+            return True
+        if (
+            len(parts) == 6
+            and parts[:3] == ["v1", "management", "bears"]
+            and parts[4] == "roles"
+        ):
+            bear_id = parts[3]
+            role = parts[5]
+            data = _read_view_registry()
+            rows = []
+            for record in data.get("views", {}).values():
+                if (
+                    str(record.get("bear_id")) == bear_id
+                    and str(record.get("role")) == role
+                ):
+                    rows.append(self._view_health(record))
+            self._send_json(200, {"bear_id": bear_id, "role": role, "views": rows})
+            return True
+        return False
+
+    def _view_health(self, record: dict) -> dict:
+        role = str(record.get("role", ""))
+        canonical = Path(
+            str(
+                record.get(
+                    "canonical_repo",
+                    _canonical_repo_path(str(record.get("bear_id", ""))),
+                )
+            )
+        )
+        view = Path(str(record.get("view_repo", "")))
+        canonical_tip = _branch_tip(canonical, role) if canonical.exists() else None
+        view_tip = _branch_tip(view, "main") if view.exists() else None
+        quarantined = _repo_is_quarantined(view) if view.exists() else False
+        reason = None
+        marker = view / "BEARS_QUARANTINED"
+        if marker.exists():
+            reason = marker.read_text(encoding="utf-8", errors="replace")
+        state = "ok"
+        if quarantined:
+            state = "quarantined"
+        elif not canonical.exists():
+            state = "missing_canonical"
+        elif not view.exists():
+            state = "missing_view"
+        elif canonical_tip != view_tip:
+            state = "drift"
+        return {
+            **record,
+            "state": state,
+            "canonical_exists": canonical.exists(),
+            "view_exists": view.exists(),
+            "canonical_tip": canonical_tip,
+            "view_tip": view_tip,
+            "quarantined": quarantined,
+            "diagnostic": reason,
+        }
+
+    def _try_view_management_post(self) -> bool:
+        if self.command != "POST":
+            return False
+        parsed = urlparse(self.path)
+        parts = [p for p in parsed.path.strip("/").split("/") if p]
+        if parts == ["v1", "management", "views", "register"]:
+            try:
+                body = json.loads(self._read_body().decode("utf-8") or "{}")
+                agent_id = str(body["agent_id"]).strip()
+                bear_id = str(body["bear_id"]).strip()
+                role = str(body["role"]).strip()
+                org_id = str(
+                    body.get("org_id")
+                    or resolve_org_id(self.headers.get("X-Organization-Id"))
+                ).strip()
+                if not agent_id or not bear_id or role not in ROLE_BRANCHES:
+                    raise ValueError("agent_id, bear_id, and valid role are required")
+                canonical = ensure_canonical_repo(bear_id)
+                record = {
+                    "agent_id": agent_id,
+                    "bear_id": bear_id,
+                    "role": role,
+                    "org_id": org_id,
+                    "canonical_repo": str(canonical),
+                    "canonical_branch": role,
+                    "view_repo": str(_view_repo_path(org_id, agent_id)),
+                    "registered_at": time.time(),
+                }
+                ensure_view_repo(agent_id, org_id, record)
+                data = _read_view_registry()
+                data.setdefault("views", {})[agent_id] = record
+                _write_view_registry(data)
+                log_activity(
+                    "view_registered",
+                    agent_id=agent_id,
+                    bear_id=bear_id,
+                    role=role,
+                    org_id=org_id,
+                )
+                self._send_json(200, {"ok": True, "view": self._view_health(record)})
+                return True
+            except Exception as e:
+                self._send_json(400, {"ok": False, "error": str(e)})
+                return True
+        if (
+            len(parts) == 5
+            and parts[:3] == ["v1", "management", "views"]
+            and parts[4] == "reconcile"
+        ):
+            agent_id = parts[3]
+            record = _view_record(agent_id)
+            if not record:
+                self._send_json(404, {"ok": False, "error": "view_not_registered"})
+                return True
+            try:
+                ensure_view_repo(
+                    agent_id, str(record.get("org_id") or resolve_org_id(None)), record
+                )
+                status, reason = _forward_view_to_canonical(record)
+                data = _read_view_registry()
+                data.setdefault("views", {})[agent_id] = record
+                _write_view_registry(data)
+                self._send_json(
+                    200,
+                    {
+                        "ok": status not in {"quarantined", "missing_view_tip"},
+                        "status": status,
+                        "reason": reason,
+                        "view": self._view_health(record),
+                    },
+                )
+                return True
+            except Exception as e:
+                self._send_json(
+                    500,
+                    {"ok": False, "error": str(e), "view": self._view_health(record)},
+                )
+                return True
+        return False
+
     def _send_json(self, status: int, body: object) -> None:
         data = json.dumps(body).encode("utf-8")
         self.send_response(status)
@@ -672,6 +1128,36 @@ class GitHTTPHandler(BaseHTTPRequestHandler):
                 else:
                     headers.append((k, v))
 
+        record = _view_record(agent_id)
+        if (
+            record
+            and self.command == "POST"
+            and "git-receive-pack" in git_op
+            and 200 <= status < 300
+        ):
+            old_tip = record.get("last_view_tip")
+            record["canonical_repo"] = str(_canonical_repo_path(str(record["bear_id"])))
+            record["view_repo"] = str(repo_path)
+            forward_status, forward_reason = _forward_view_to_canonical(
+                record, old_tip=old_tip
+            )
+            record["last_view_tip"] = _branch_tip(repo_path, "main")
+            record["last_forward_status"] = forward_status
+            record["last_forward_reason"] = forward_reason
+            record["last_forward_at"] = time.time()
+            data = _read_view_registry()
+            data.setdefault("views", {})[agent_id] = record
+            _write_view_registry(data)
+            log_activity(
+                "view_forward_result",
+                agent_id=agent_id,
+                org_id=org_id,
+                bear_id=record.get("bear_id"),
+                role=record.get("role"),
+                status=forward_status,
+                reason=forward_reason,
+            )
+
         log_activity(
             "git_response",
             agent_id=agent_id,
@@ -697,6 +1183,8 @@ class GitHTTPHandler(BaseHTTPRequestHandler):
             return
         if parsed.path == "/v1/management/activity":
             self._send_activity(parsed.query)
+            return
+        if self._try_view_management_get():
             return
         if self._try_management():
             return
@@ -772,6 +1260,8 @@ class GitHTTPHandler(BaseHTTPRequestHandler):
         self._send_json(200, result)
 
     def do_POST(self) -> None:  # noqa: N802
+        if self._try_view_management_post():
+            return
         self._run_backend()
 
     def log_message(self, fmt: str, *args) -> None:
