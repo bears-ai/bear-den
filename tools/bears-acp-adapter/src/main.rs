@@ -1644,9 +1644,14 @@ async fn handle_prompt(
         buffer.extend_from_slice(&chunk);
         while let Some(pos) = buffer.windows(2).position(|w| w == b"\n\n") {
             let frame: Vec<u8> = buffer.drain(..pos + 2).collect();
-            let outcome =
-                handle_sse_frame(adapter_state, session_id, &frame, &mut stream_diagnostics)
-                    .await?;
+            let outcome = handle_sse_frame(
+                config,
+                adapter_state,
+                session_id,
+                &frame,
+                &mut stream_diagnostics,
+            )
+            .await?;
             saw_done |= outcome.saw_done;
             saw_assistant_output |= outcome.saw_assistant_output;
             saw_error |= outcome.saw_error;
@@ -1655,8 +1660,14 @@ async fn handle_prompt(
     }
     if !buffer.is_empty() {
         let frame = std::mem::take(&mut buffer);
-        let outcome =
-            handle_sse_frame(adapter_state, session_id, &frame, &mut stream_diagnostics).await?;
+        let outcome = handle_sse_frame(
+            config,
+            adapter_state,
+            session_id,
+            &frame,
+            &mut stream_diagnostics,
+        )
+        .await?;
         saw_done |= outcome.saw_done;
         saw_assistant_output |= outcome.saw_assistant_output;
         saw_error |= outcome.saw_error;
@@ -2000,6 +2011,7 @@ fn prompt_text_from_params_with_resource_mode(
 }
 
 async fn handle_sse_frame(
+    config: &Config,
     adapter_state: &mut AdapterState,
     session_id: &str,
     frame: &[u8],
@@ -2027,7 +2039,7 @@ async fn handle_sse_frame(
             diagnostics.saw_error = true;
             outcome.upstream_errors.push(format_den_event_error(&event));
         }
-        let handled = handle_den_event(adapter_state, session_id, &event).await?;
+        let handled = handle_den_event(config, adapter_state, session_id, &event).await?;
         outcome.saw_done |= handled;
         diagnostics.saw_turn_complete |= handled;
         diagnostics.saw_assistant_output |= outcome.saw_assistant_output;
@@ -2036,6 +2048,7 @@ async fn handle_sse_frame(
             "assistant_text_delta"
                 | "status_text"
                 | "error"
+                | "tool_request"
                 | "conversation_resolved"
                 | "turn_complete"
         ) {
@@ -2070,7 +2083,110 @@ fn format_den_event_error(event: &Value) -> String {
     out
 }
 
+async fn handle_tool_request_event(
+    config: &Config,
+    adapter_state: &AdapterState,
+    session_id: &str,
+    event: &Value,
+) -> Result<()> {
+    let tool_call_id = event
+        .get("tool_call_id")
+        .and_then(Value::as_str)
+        .ok_or_else(|| anyhow!("tool_request missing tool_call_id"))?;
+    let tool_name = event
+        .get("tool_name")
+        .and_then(Value::as_str)
+        .ok_or_else(|| anyhow!("tool_request missing tool_name"))?;
+    send_tool_call_update(session_id, tool_call_id, "pending", "Running local tool").await?;
+    let started = std::time::Instant::now();
+    let result = match tool_name {
+        "fs.read_text_file" => {
+            let mut params = event.get("args").cloned().unwrap_or_else(|| json!({}));
+            params["sessionId"] = json!(session_id);
+            handle_direct_read_text_file(adapter_state, params).await
+        }
+        _ => Err(anyhow!(
+            "unsupported Den tool_request tool_name {tool_name}"
+        )),
+    };
+    let status;
+    let mut payload = json!({
+        "turn_id": event.get("turn_id").and_then(Value::as_str),
+        "request_id": event.get("request_id").and_then(Value::as_str),
+        "tool_name": tool_name,
+        "diagnostic": {
+            "adapter_version": env!("CARGO_PKG_VERSION"),
+            "duration_ms": started.elapsed().as_millis(),
+        }
+    });
+    match result {
+        Ok(value) => {
+            status = "ok";
+            payload["status"] = json!(status);
+            payload["content"] = value.get("content").cloned().unwrap_or_else(|| json!(""));
+            payload["structured_content"] = value;
+            send_tool_call_update(
+                session_id,
+                tool_call_id,
+                "completed",
+                "Local tool completed",
+            )
+            .await?;
+        }
+        Err(err) => {
+            status = "error";
+            payload["status"] = json!(status);
+            payload["content"] = json!(format!("{err:#}"));
+            send_tool_call_update(session_id, tool_call_id, "failed", &format!("{err:#}")).await?;
+        }
+    }
+    post_tool_result(config, session_id, tool_call_id, payload).await?;
+    Ok(())
+}
+
+async fn post_tool_result(
+    config: &Config,
+    session_id: &str,
+    tool_call_id: &str,
+    payload: Value,
+) -> Result<()> {
+    let url = format!(
+        "{}/acp/bears/{}/sessions/{}/tool-results/{}",
+        config.api_url,
+        urlencoding::encode(&config.bear),
+        urlencoding::encode(session_id),
+        urlencoding::encode(tool_call_id),
+    );
+    let response = reqwest::Client::new()
+        .post(&url)
+        .header(
+            AUTHORIZATION,
+            HeaderValue::from_str(&format!("Bearer {}", config.token))?,
+        )
+        .header(CONTENT_TYPE, HeaderValue::from_static("application/json"))
+        .json(&payload)
+        .send()
+        .await
+        .with_context(|| format!("post ACP tool result to Den at {url}"))?;
+    let status = response.status();
+    let body = response.text().await.unwrap_or_default();
+    if !status.is_success() {
+        return Err(anyhow!(
+            "Den tool result endpoint returned HTTP {status}: {}",
+            body.trim()
+        ));
+    }
+    eprintln!(
+        "bears-acp-adapter: posted tool result session_id={} tool_call_id={} response={}",
+        session_id,
+        tool_call_id,
+        body.trim()
+    );
+    Ok(())
+}
+
 async fn handle_den_event(
+    config: &Config,
     adapter_state: &mut AdapterState,
     session_id: &str,
     event: &Value,
@@ -2093,6 +2209,10 @@ async fn handle_den_event(
         "error" => {
             let message = format_den_event_error(event);
             send_agent_thought_chunk(session_id, &message).await?;
+            Ok(false)
+        }
+        "tool_request" => {
+            handle_tool_request_event(config, adapter_state, session_id, event).await?;
             Ok(false)
         }
         "conversation_resolved" => {
@@ -2118,6 +2238,32 @@ async fn handle_den_event(
         "turn_complete" => Ok(true),
         _ => Ok(false),
     }
+}
+
+async fn send_tool_call_update(
+    session_id: &str,
+    tool_call_id: &str,
+    status: &str,
+    text: &str,
+) -> Result<()> {
+    write_notification(
+        "session/update",
+        json!({
+            "sessionId": session_id,
+            "update": {
+                "sessionUpdate": "tool_call",
+                "toolCallId": tool_call_id,
+                "title": "Read file",
+                "kind": "read",
+                "status": status,
+                "content": [{
+                    "type": "content",
+                    "content": { "type": "text", "text": text }
+                }]
+            }
+        }),
+    )
+    .await
 }
 
 async fn send_user_message_chunk(session_id: &str, text: &str) -> Result<()> {

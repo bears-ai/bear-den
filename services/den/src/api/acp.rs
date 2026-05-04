@@ -17,13 +17,15 @@ use bytes::Bytes;
 use futures::{ready, Stream};
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::{BTreeMap, VecDeque},
+    collections::{BTreeMap, HashMap, VecDeque},
     future::Future,
     path::Path as FsPath,
     pin::Pin,
+    sync::{Arc, Mutex, OnceLock},
     task::Poll,
 };
 use time::format_description::well_known::Rfc3339;
+use tokio::sync::oneshot;
 use tracing::Instrument;
 use uuid::Uuid;
 
@@ -44,11 +46,40 @@ use crate::{
 
 const ACP_SESSIONS_PAGE_SIZE: i64 = 50;
 
+#[derive(Debug)]
+struct AcpToolTurn {
+    user_id: i32,
+    bear_id: Uuid,
+    bear_slug: String,
+    acp_session_id: String,
+    request_id: Uuid,
+    tool_call_id: String,
+    tool_name: String,
+    settled: bool,
+    result_tx: Option<oneshot::Sender<AcpToolResultRequest>>,
+}
+
+type AcpToolTurnRegistry = Arc<Mutex<HashMap<String, AcpToolTurn>>>;
+
+static ACP_TOOL_TURNS: OnceLock<AcpToolTurnRegistry> = OnceLock::new();
+
+fn acp_tool_turns() -> &'static AcpToolTurnRegistry {
+    ACP_TOOL_TURNS.get_or_init(|| Arc::new(Mutex::new(HashMap::new())))
+}
+
+fn acp_tool_turn_key(session_id: &str, tool_call_id: &str) -> String {
+    format!("{session_id}\n{tool_call_id}")
+}
+
 pub fn router() -> Router<ApiState> {
     Router::new()
         .route("/bears/{slug}/sessions", get(list_acp_sessions))
         .route("/bears/{slug}/sessions/{session_id}", get(get_acp_session))
         .route("/bears/{slug}/sessions/{session_id}/prompt", post(prompt))
+        .route(
+            "/bears/{slug}/sessions/{session_id}/tool-results/{tool_call_id}",
+            post(tool_result),
+        )
         .route(
             "/bears/{slug}/sessions/{session_id}/close",
             post(close_session),
@@ -76,6 +107,28 @@ pub struct AcpPromptRequest {
     pub client_capabilities: serde_json::Value,
     #[serde(default)]
     pub client_context: serde_json::Value,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct AcpToolResultRequest {
+    turn_id: Option<String>,
+    request_id: Option<String>,
+    tool_name: Option<String>,
+    status: String,
+    #[serde(default)]
+    content: Option<String>,
+    #[serde(default)]
+    structured_content: serde_json::Value,
+    #[serde(default)]
+    diagnostic: serde_json::Value,
+}
+
+#[derive(Debug, Serialize)]
+struct AcpToolResultResponse {
+    accepted: bool,
+    reason: String,
+    turn_id: Option<String>,
+    tool_call_id: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -1074,6 +1127,94 @@ async fn conversation_history_inner(
     .into_response())
 }
 
+async fn tool_result(
+    State(state): State<ApiState>,
+    Path((slug, session_id, tool_call_id)): Path<(String, String, String)>,
+    headers: HeaderMap,
+    Json(body): Json<AcpToolResultRequest>,
+) -> Response {
+    let request_id = Uuid::new_v4();
+    match tool_result_inner(state, slug, session_id, tool_call_id, headers, body).await {
+        Ok(response) => response,
+        Err(err) => acp_error_response(err, request_id),
+    }
+}
+
+async fn tool_result_inner(
+    state: ApiState,
+    slug: String,
+    session_id: String,
+    tool_call_id: String,
+    headers: HeaderMap,
+    body: AcpToolResultRequest,
+) -> Result<Response, CustomError> {
+    let user_id = authenticate_acp_code_token(&state, &headers, &slug).await?;
+    let key = acp_tool_turn_key(&session_id, &tool_call_id);
+    let mut turns = acp_tool_turns()
+        .lock()
+        .map_err(|_| CustomError::System("ACP tool turn registry lock poisoned".to_string()))?;
+    let Some(turn) = turns.get_mut(&key) else {
+        return Ok(Json(AcpToolResultResponse {
+            accepted: false,
+            reason: "turn_missing".to_string(),
+            turn_id: body.turn_id,
+            tool_call_id,
+        })
+        .into_response());
+    };
+    if turn.user_id != user_id
+        || turn.bear_slug != slug
+        || turn.acp_session_id != session_id
+        || turn.tool_call_id != tool_call_id
+    {
+        return Err(CustomError::Authorization(
+            "tool result does not match the authenticated ACP session".to_string(),
+        ));
+    }
+    if let Some(body_tool_name) = body.tool_name.as_deref().filter(|s| !s.is_empty()) {
+        if body_tool_name != turn.tool_name {
+            return Err(CustomError::ValidationError(format!(
+                "tool result name mismatch: expected {}, got {}",
+                turn.tool_name, body_tool_name
+            )));
+        }
+    }
+    if turn.settled {
+        return Ok(Json(AcpToolResultResponse {
+            accepted: false,
+            reason: "already_settled".to_string(),
+            turn_id: body.turn_id,
+            tool_call_id,
+        })
+        .into_response());
+    }
+    turn.settled = true;
+    let result_tx = turn.result_tx.take();
+    tracing::info!(
+        request_id = %turn.request_id,
+        bear_id = %turn.bear_id,
+        acp_session_id = %session_id,
+        tool_call_id = %tool_call_id,
+        tool_name = %turn.tool_name,
+        body_request_id = body.request_id.as_deref(),
+        status = %body.status,
+        content_bytes = body.content.as_deref().map(str::len).unwrap_or(0),
+        structured_content_bytes = body.structured_content.to_string().len(),
+        diagnostic = ?body.diagnostic,
+        "ACP tool result received"
+    );
+    if let Some(result_tx) = result_tx {
+        let _ = result_tx.send(body.clone());
+    }
+    Ok(Json(AcpToolResultResponse {
+        accepted: true,
+        reason: "delivered".to_string(),
+        turn_id: body.turn_id,
+        tool_call_id,
+    })
+    .into_response())
+}
+
 async fn close_session(
     State(state): State<ApiState>,
     Path((slug, session_id)): Path<(String, String)>,
@@ -1338,6 +1479,7 @@ async fn prompt_inner(
             pool: state.sqlx_pool.clone(),
             user_id,
             bear_id: bear.id,
+            bear_slug: bear.slug.clone(),
             acp_session_id: session_id.to_string(),
             request_id,
         },
@@ -1372,11 +1514,12 @@ struct AcpStreamContext {
     pool: sqlx::PgPool,
     user_id: i32,
     bear_id: Uuid,
+    bear_slug: String,
     acp_session_id: String,
     request_id: Uuid,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug)]
 enum AcpGatewayEvent {
     AssistantTextDelta {
         text: String,
@@ -1394,6 +1537,18 @@ enum AcpGatewayEvent {
         request_id: Option<String>,
         context: Option<serde_json::Value>,
     },
+    ToolRequest {
+        request_id: String,
+        turn_id: String,
+        tool_call_id: String,
+        tool_name: String,
+        title: String,
+        kind: String,
+        args: serde_json::Value,
+        approval_required: bool,
+        result_tx: Option<oneshot::Sender<AcpToolResultRequest>>,
+        result_rx: Option<oneshot::Receiver<AcpToolResultRequest>>,
+    },
     ConversationResolved {
         conversation_id: String,
     },
@@ -1401,17 +1556,57 @@ enum AcpGatewayEvent {
 
 async fn persist_stream_event_side_effects(
     context: &AcpStreamContext,
-    event: &AcpGatewayEvent,
+    event: &mut AcpGatewayEvent,
 ) -> Result<(), CustomError> {
-    if let AcpGatewayEvent::ConversationResolved { conversation_id } = event {
-        acp_sessions::mark_resolved(
-            &context.pool,
-            context.user_id,
-            context.bear_id,
-            &context.acp_session_id,
-            conversation_id,
-        )
-        .await?;
+    match event {
+        AcpGatewayEvent::ConversationResolved { conversation_id } => {
+            acp_sessions::mark_resolved(
+                &context.pool,
+                context.user_id,
+                context.bear_id,
+                &context.acp_session_id,
+                conversation_id,
+            )
+            .await?;
+        }
+        AcpGatewayEvent::ToolRequest {
+            tool_call_id,
+            tool_name,
+            request_id,
+            result_tx,
+            ..
+        } => {
+            let result_tx = result_tx.take().ok_or_else(|| {
+                CustomError::System("ACP tool request missing result channel".to_string())
+            })?;
+            let key = acp_tool_turn_key(&context.acp_session_id, tool_call_id);
+            let mut turns = acp_tool_turns().lock().map_err(|_| {
+                CustomError::System("ACP tool turn registry lock poisoned".to_string())
+            })?;
+            turns.insert(
+                key,
+                AcpToolTurn {
+                    user_id: context.user_id,
+                    bear_id: context.bear_id,
+                    bear_slug: context.bear_slug.clone(),
+                    acp_session_id: context.acp_session_id.clone(),
+                    request_id: context.request_id,
+                    tool_call_id: tool_call_id.clone(),
+                    tool_name: tool_name.clone(),
+                    settled: false,
+                    result_tx: Some(result_tx),
+                },
+            );
+            tracing::info!(
+                request_id = %context.request_id,
+                acp_session_id = %context.acp_session_id,
+                tool_request_id = %request_id,
+                tool_call_id = %tool_call_id,
+                tool_name = %tool_name,
+                "ACP tool request registered"
+            );
+        }
+        _ => {}
     }
     Ok(())
 }
@@ -1490,8 +1685,76 @@ fn map_native_letta_stream_event_to_acp_event(
                 })
             }
         }
+        "tool_call_message" | "function_call" => native_letta_tool_request_event(event, inner),
         _ => native_letta_conversation_resolved_event(event),
     }
+}
+
+fn native_letta_tool_request_event(
+    event: &serde_json::Value,
+    inner: &serde_json::Value,
+) -> Option<AcpGatewayEvent> {
+    let tool_name = inner
+        .get("tool_name")
+        .or_else(|| inner.get("name"))
+        .or_else(|| event.get("tool_name"))
+        .or_else(|| event.get("name"))
+        .and_then(|v| v.as_str())?;
+    let normalized_tool = match tool_name {
+        "bears/read_text_file" | "fs.read_text_file" | "fs_read_text_file" | "read_text_file" => {
+            "fs.read_text_file"
+        }
+        _ => {
+            return Some(AcpGatewayEvent::Error {
+                message: format!("Letta requested unsupported ACP local tool: {tool_name}"),
+                detail: Some(
+                    "Only fs.read_text_file is wired for the current ACP local tool slice."
+                        .to_string(),
+                ),
+                error_type: Some("unsupported_tool".to_string()),
+                request_id: None,
+                context: Some(serde_json::json!({ "tool_name": tool_name })),
+            })
+        }
+    };
+    let args = inner
+        .get("args")
+        .or_else(|| inner.get("arguments"))
+        .or_else(|| event.get("args"))
+        .or_else(|| event.get("arguments"))
+        .cloned()
+        .unwrap_or_else(|| serde_json::json!({}));
+    let tool_call_id = inner
+        .get("tool_call_id")
+        .or_else(|| inner.get("id"))
+        .or_else(|| event.get("tool_call_id"))
+        .or_else(|| event.get("id"))
+        .and_then(|v| v.as_str())
+        .map(str::to_string)
+        .unwrap_or_else(|| format!("call-{}", Uuid::new_v4()));
+    let request_id = event
+        .get("request_id")
+        .and_then(|v| v.as_str())
+        .map(str::to_string)
+        .unwrap_or_else(|| Uuid::new_v4().to_string());
+    let turn_id = event
+        .get("turn_id")
+        .and_then(|v| v.as_str())
+        .map(str::to_string)
+        .unwrap_or_else(|| Uuid::new_v4().to_string());
+    let (result_tx, result_rx) = oneshot::channel();
+    Some(AcpGatewayEvent::ToolRequest {
+        request_id,
+        turn_id,
+        tool_call_id,
+        tool_name: normalized_tool.to_string(),
+        title: "Read file".to_string(),
+        kind: "read".to_string(),
+        args,
+        approval_required: false,
+        result_tx: Some(result_tx),
+        result_rx: Some(result_rx),
+    })
 }
 
 fn native_letta_conversation_resolved_event(event: &serde_json::Value) -> Option<AcpGatewayEvent> {
@@ -1521,6 +1784,7 @@ fn acp_event_adapter_type(event: &AcpGatewayEvent) -> &'static str {
         AcpGatewayEvent::StatusText { .. } => "status_text",
         AcpGatewayEvent::TurnComplete { .. } => "turn_complete",
         AcpGatewayEvent::Error { .. } => "error",
+        AcpGatewayEvent::ToolRequest { .. } => "tool_request",
         AcpGatewayEvent::ConversationResolved { .. } => "conversation_resolved",
     }
 }
@@ -1531,9 +1795,9 @@ fn acp_event_has_visible_output(event: &AcpGatewayEvent) -> bool {
             !text.is_empty()
         }
         AcpGatewayEvent::Error { .. } => true,
-        AcpGatewayEvent::TurnComplete { .. } | AcpGatewayEvent::ConversationResolved { .. } => {
-            false
-        }
+        AcpGatewayEvent::TurnComplete { .. }
+        | AcpGatewayEvent::ToolRequest { .. }
+        | AcpGatewayEvent::ConversationResolved { .. } => false,
     }
 }
 
@@ -1672,6 +1936,34 @@ fn acp_event_to_adapter_sse(event: AcpGatewayEvent) -> Bytes {
             }
             mapped
         }
+        AcpGatewayEvent::ToolRequest {
+            request_id,
+            turn_id,
+            tool_call_id,
+            tool_name,
+            title,
+            kind,
+            args,
+            approval_required,
+            result_tx: _,
+            result_rx: _,
+        } => serde_json::json!({
+            "type": "tool_request",
+            "request_id": request_id,
+            "turn_id": turn_id,
+            "tool_call_id": tool_call_id,
+            "tool_name": tool_name,
+            "title": title,
+            "kind": kind,
+            "args": args,
+            "approval": {
+                "required": approval_required,
+            },
+            "diagnostic": {
+                "component": "den.acp",
+                "transport_version": 3,
+            },
+        }),
         AcpGatewayEvent::ConversationResolved { conversation_id } => serde_json::json!({
             "type": "conversation_resolved",
             "conversation_id": conversation_id,
@@ -1781,7 +2073,7 @@ async fn map_letta_stream_frame_to_acp_adapter_events_with_persistence(
     frame: Vec<u8>,
     context: AcpStreamContext,
     diagnostics: &mut AcpStreamDiagnostics,
-) -> Result<Vec<Bytes>, std::io::Error> {
+) -> Result<(Vec<Bytes>, Option<oneshot::Receiver<AcpToolResultRequest>>), std::io::Error> {
     diagnostics.upstream_frames += 1;
     let body = strip_trailing_sse_delimiter_owned(frame);
     let value = match parse_sse_event_body_to_json(&body) {
@@ -1792,22 +2084,52 @@ async fn map_letta_stream_frame_to_acp_adapter_events_with_persistence(
                 error = %msg,
                 "ACP upstream Letta SSE event JSON parse failed"
             );
-            return Ok(Vec::new());
+            return Ok((Vec::new(), None));
         }
-        Ok(None) => return Ok(Vec::new()),
+        Ok(None) => return Ok((Vec::new(), None)),
         Ok(Some(v)) => v,
     };
     diagnostics.observe_parsed_event(&value);
 
-    let Some(event) = map_native_letta_stream_event_to_acp_event(&value) else {
+    let Some(mut event) = map_native_letta_stream_event_to_acp_event(&value) else {
         diagnostics.observe_unmapped_event(&value);
-        return Ok(Vec::new());
+        return Ok((Vec::new(), None));
+    };
+    let result_rx = if let AcpGatewayEvent::ToolRequest { result_rx, .. } = &mut event {
+        result_rx.take()
+    } else {
+        None
     };
     diagnostics.observe_mapped_event(&event);
-    persist_stream_event_side_effects(&context, &event)
+    persist_stream_event_side_effects(&context, &mut event)
         .await
         .map_err(|err| std::io::Error::other(err.to_string()))?;
-    Ok(vec![acp_event_to_adapter_sse(event)])
+    Ok((vec![acp_event_to_adapter_sse(event)], result_rx))
+}
+
+enum AcpPendingFuture {
+    Frame(
+        Pin<
+            Box<
+                dyn Future<
+                        Output = (
+                            Result<
+                                (Vec<Bytes>, Option<oneshot::Receiver<AcpToolResultRequest>>),
+                                std::io::Error,
+                            >,
+                            AcpStreamDiagnostics,
+                        ),
+                    > + Send,
+            >,
+        >,
+    ),
+    Tool(
+        Pin<
+            Box<
+                dyn Future<Output = Result<AcpToolResultRequest, oneshot::error::RecvError>> + Send,
+            >,
+        >,
+    ),
 }
 
 struct AcpLettaSseStream {
@@ -1819,14 +2141,7 @@ struct AcpLettaSseStream {
     context: AcpStreamContext,
     diagnostics: AcpStreamDiagnostics,
     logged_summary: bool,
-    persist_future: Option<
-        Pin<
-            Box<
-                dyn Future<Output = (Result<Vec<Bytes>, std::io::Error>, AcpStreamDiagnostics)>
-                    + Send,
-            >,
-        >,
-    >,
+    persist_future: Option<AcpPendingFuture>,
 }
 
 impl AcpLettaSseStream {
@@ -1867,24 +2182,63 @@ impl Stream for AcpLettaSseStream {
         }
 
         if let Some(fut) = this.persist_future.as_mut() {
-            let (result, diagnostics) = ready!(fut.as_mut().poll(cx));
-            this.persist_future = None;
-            this.diagnostics = diagnostics;
-            match result {
-                Ok(bytes) => {
-                    for item in bytes {
-                        this.pending.push_back(item);
+            match fut {
+                AcpPendingFuture::Frame(fut) => {
+                    let (result, diagnostics) = ready!(fut.as_mut().poll(cx));
+                    this.persist_future = None;
+                    this.diagnostics = diagnostics;
+                    match result {
+                        Ok((bytes, result_rx)) => {
+                            for item in bytes {
+                                this.pending.push_back(item);
+                            }
+                            if let Some(result_rx) = result_rx {
+                                this.persist_future =
+                                    Some(AcpPendingFuture::Tool(Box::pin(result_rx)));
+                            }
+                            return self.poll_next(cx);
+                        }
+                        Err(err) => return Poll::Ready(Some(Err(err))),
                     }
-                    return self.poll_next(cx);
                 }
-                Err(err) => return Poll::Ready(Some(Err(err))),
+                AcpPendingFuture::Tool(fut) => {
+                    let result = ready!(fut.as_mut().poll(cx));
+                    this.persist_future = None;
+                    match result {
+                        Ok(tool_result) => {
+                            this.pending.push_back(acp_event_to_adapter_sse(
+                                AcpGatewayEvent::StatusText {
+                                    text: format!(
+                                        "Local tool {} completed with status {} ({} bytes)",
+                                        tool_result.tool_name.as_deref().unwrap_or("tool"),
+                                        tool_result.status,
+                                        tool_result.content.as_deref().map(str::len).unwrap_or(0),
+                                    ),
+                                },
+                            ));
+                            return self.poll_next(cx);
+                        }
+                        Err(err) => {
+                            this.pending.push_back(acp_event_to_adapter_sse(
+                                AcpGatewayEvent::Error {
+                                    message: "ACP local tool result channel closed before a result was delivered.".to_string(),
+                                    detail: Some(err.to_string()),
+                                    error_type: Some("tool_result_channel_closed".to_string()),
+                                    request_id: Some(this.context.request_id.to_string()),
+                                    context: None,
+                                },
+                            ));
+                            return self.poll_next(cx);
+                        }
+                    }
+                }
             }
         }
 
         if let Some(frame_body) = this.pending_raw_frames.pop_front() {
             let context = this.context.clone();
             let mut diagnostics = std::mem::take(&mut this.diagnostics);
-            this.persist_future = Some(Box::pin(async move {
+            this.persist_future = Some(AcpPendingFuture::Frame(Box::pin(async move {
                 let result = map_letta_stream_frame_to_acp_adapter_events_with_persistence(
                     frame_body,
                     context,
@@ -1892,7 +2246,7 @@ impl Stream for AcpLettaSseStream {
                 )
                 .await;
                 (result, diagnostics)
-            }));
+            })));
             return self.poll_next(cx);
         }
 
