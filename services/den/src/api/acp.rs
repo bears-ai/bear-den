@@ -529,6 +529,39 @@ fn acp_archive_target_for_session(session: &acp_sessions::AcpSessionRow) -> Opti
         })
 }
 
+fn acp_direct_tool_prompt_context(
+    session_id: &str,
+    cwd: &str,
+    client_context: &serde_json::Value,
+) -> String {
+    let roots = client_context
+        .get("workspace_roots")
+        .or_else(|| client_context.get("workspaceRoots"))
+        .and_then(|v| v.as_array())
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|v| v.as_str())
+                .map(str::to_string)
+                .collect::<Vec<_>>()
+        })
+        .filter(|items| !items.is_empty())
+        .unwrap_or_else(|| vec![cwd.to_string()]);
+    format!(
+        concat!(
+            "\n\n<system-reminder>",
+            "BEARS ACP direct local file reading is available for this turn. ",
+            "If you need to read a workspace file, ask the ACP client to call JSON-RPC method `bears/read_text_file` ",
+            "with params {{\"sessionId\":\"{session_id}\",\"path\":\"/absolute/path\",\"line\":1,\"limit\":400}}. ",
+            "Use absolute paths under these workspace roots: {roots}. ",
+            "Do not guess file contents; request the file read and use the returned content. ",
+            "</system-reminder>"
+        ),
+        session_id = session_id,
+        roots = roots.join(", "),
+    )
+}
+
 fn normalize_acp_conversation_id(raw: Option<&str>) -> Result<String, CustomError> {
     let s = raw
         .map(str::trim)
@@ -1283,12 +1316,15 @@ async fn prompt_inner(
         letta_conversation_id = %conversation_resolution.upstream_target,
         "ACP gateway routing prompt to pair role via Letta API"
     );
+    let tool_prompt_context =
+        acp_direct_tool_prompt_context(session_id, &cwd, &body.client_context);
+    let prompt_with_tool_context = format!("{prompt}{tool_prompt_context}");
     let upstream = match state
         .letta
         .post_conversation_messages_streaming(
             &conversation_resolution.upstream_target,
             Some(&pair_agent_id),
-            prompt,
+            &prompt_with_tool_context,
         )
         .await
     {

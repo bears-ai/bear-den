@@ -3,7 +3,12 @@ use futures_util::StreamExt;
 use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, CONTENT_TYPE};
 use reqwest::Url;
 use serde_json::{json, Value};
-use std::{collections::HashMap, env, path::Path, process::Command};
+use std::{
+    collections::HashMap,
+    env,
+    path::{Path, PathBuf},
+    process::Command,
+};
 use tokio::{
     io::{self, AsyncBufReadExt, AsyncWriteExt, BufReader},
     sync::mpsc,
@@ -463,6 +468,24 @@ async fn handle_request(
                 write_response(id, Ok(initialize_result())).await?;
             }
         }
+        "bears/read_text_file" => {
+            if let Some(id) = request.id {
+                match handle_direct_read_text_file(adapter_state, request.params).await {
+                    Ok(result) => write_response(id, Ok(result)).await?,
+                    Err(err) => {
+                        write_response(
+                            id,
+                            Err(json_rpc_error(
+                                -32004,
+                                "BEARS read_text_file failed",
+                                Some(json!({ "message": format!("{err:#}") })),
+                            )),
+                        )
+                        .await?;
+                    }
+                }
+            }
+        }
         "authenticate" => {
             if let Some(id) = request.id {
                 match handle_authenticate(http, runtime, request.params).await {
@@ -794,6 +817,9 @@ fn session_context_from_params(params: &Value) -> Result<SessionContext> {
         "cwd": cwd,
         "workspace_roots": roots,
         "adapter_version": env!("CARGO_PKG_VERSION"),
+        "direct_tools": {
+            "fs_read_text_file": true,
+        },
     });
     Ok(SessionContext {
         cwd,
@@ -967,6 +993,103 @@ async fn validate_den_code_token(http: &reqwest::Client, config: &Config) -> Res
     ))
 }
 
+async fn handle_direct_read_text_file(
+    adapter_state: &AdapterState,
+    params: Value,
+) -> Result<Value> {
+    let session_id = params
+        .get("sessionId")
+        .and_then(Value::as_str)
+        .ok_or_else(|| anyhow!("bears/read_text_file params missing sessionId"))?;
+    let path = params
+        .get("path")
+        .and_then(Value::as_str)
+        .ok_or_else(|| anyhow!("bears/read_text_file params missing path"))?;
+    let line = params
+        .get("line")
+        .and_then(Value::as_u64)
+        .unwrap_or(1)
+        .max(1) as usize;
+    let limit = params
+        .get("limit")
+        .and_then(Value::as_u64)
+        .unwrap_or(400)
+        .clamp(1, 2_000) as usize;
+    let context = adapter_state
+        .session_contexts
+        .get(session_id)
+        .ok_or_else(|| anyhow!("ACP session {session_id} is not known to this adapter"))?;
+    let path = normalize_requested_tool_path(path)?;
+    ensure_path_allowed_for_session(context, &path)?;
+    let started = std::time::Instant::now();
+    let raw = tokio::fs::read_to_string(&path)
+        .await
+        .with_context(|| format!("read text file {}", path.display()))?;
+    let total_lines = raw.lines().count();
+    let selected: Vec<&str> = raw
+        .lines()
+        .skip(line.saturating_sub(1))
+        .take(limit)
+        .collect();
+    let truncated = line.saturating_sub(1) + selected.len() < total_lines;
+    let mut content = selected.join("\n");
+    if raw.ends_with('\n') && !content.is_empty() && !truncated {
+        content.push('\n');
+    }
+    eprintln!(
+        "bears-acp-adapter: read_text_file session_id={} path={} line={} limit={} bytes={} total_lines={} returned_lines={} truncated={} duration_ms={}",
+        session_id,
+        path.display(),
+        line,
+        limit,
+        raw.len(),
+        total_lines,
+        selected.len(),
+        truncated,
+        started.elapsed().as_millis(),
+    );
+    Ok(json!({
+        "ok": true,
+        "path": path.to_string_lossy(),
+        "content": content,
+        "line": line,
+        "returned_lines": selected.len(),
+        "total_lines": total_lines,
+        "truncated": truncated,
+        "bytes": raw.len(),
+    }))
+}
+
+fn normalize_requested_tool_path(path: &str) -> Result<PathBuf> {
+    let path = file_uri_or_path_to_path(path).ok_or_else(|| anyhow!("path must not be empty"))?;
+    if !is_absolute_local_path(&path) {
+        return Err(anyhow!(
+            "tool path must be an absolute local path; got {path:?}"
+        ));
+    }
+    Ok(PathBuf::from(path))
+}
+
+fn ensure_path_allowed_for_session(context: &SessionContext, path: &Path) -> Result<()> {
+    let roots = if context.roots.is_empty() {
+        vec![context.cwd.as_str()]
+    } else {
+        context.roots.iter().map(String::as_str).collect::<Vec<_>>()
+    };
+    let allowed = roots.iter().any(|root| {
+        let root_path = Path::new(root);
+        path == root_path || path.starts_with(root_path)
+    });
+    if allowed {
+        Ok(())
+    } else {
+        Err(anyhow!(
+            "tool path {} is outside the ACP session workspace roots",
+            path.display()
+        ))
+    }
+}
+
 fn token_env_for_auth_method() -> String {
     env::var("BEARS_DEN_TOKEN_ENV")
         .ok()
@@ -1133,6 +1256,9 @@ fn session_context_from_den_session(params: &Value, den_session: &Value) -> Resu
         "cwd": ctx.cwd.clone(),
         "workspace_roots": ctx.roots.clone(),
         "adapter_version": env!("CARGO_PKG_VERSION"),
+        "direct_tools": {
+            "fs_read_text_file": true,
+        },
         "den_acp_session": den_session.clone(),
     });
     Ok(ctx)
