@@ -54,6 +54,64 @@ fn acp_debug_event_sample_chars() -> usize {
         .unwrap_or(360)
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AcpToolName {
+    ReadTextFile,
+}
+
+impl AcpToolName {
+    fn descriptor(self) -> &'static AcpToolDescriptor {
+        match self {
+            Self::ReadTextFile => &ACP_READ_TEXT_FILE_TOOL,
+        }
+    }
+
+    fn from_provider_alias(raw: &str) -> Option<Self> {
+        match raw {
+            "bears/read_text_file"
+            | "fs.read_text_file"
+            | "fs_read_text_file"
+            | "read_text_file" => Some(Self::ReadTextFile),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AcpToolStatus {
+    Ok,
+    Error,
+    Cancelled,
+    Timeout,
+    PermissionDenied,
+    Unsupported,
+}
+
+impl AcpToolStatus {
+    fn parse(raw: &str) -> Option<Self> {
+        match raw {
+            "ok" => Some(Self::Ok),
+            "error" => Some(Self::Error),
+            "cancelled" => Some(Self::Cancelled),
+            "timeout" => Some(Self::Timeout),
+            "permission_denied" => Some(Self::PermissionDenied),
+            "unsupported" => Some(Self::Unsupported),
+            _ => None,
+        }
+    }
+
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Ok => "ok",
+            Self::Error => "error",
+            Self::Cancelled => "cancelled",
+            Self::Timeout => "timeout",
+            Self::PermissionDenied => "permission_denied",
+            Self::Unsupported => "unsupported",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 struct AcpToolDescriptor {
     provider_name: &'static str,
@@ -1265,6 +1323,9 @@ async fn tool_result_inner(
             )));
         }
     }
+    let parsed_status = AcpToolStatus::parse(&body.status).ok_or_else(|| {
+        CustomError::ValidationError(format!("invalid ACP tool result status: {}", body.status))
+    })?;
     if let Some(body_tool_name) = body.tool_name.as_deref().filter(|s| !s.is_empty()) {
         if body_tool_name != turn.tool_name {
             return Err(CustomError::ValidationError(format!(
@@ -1310,12 +1371,13 @@ async fn tool_result_inner(
         body_request_id = body.request_id.as_deref(),
         body_tool_call_id = body.tool_call_id.as_deref(),
         body_approval_request_id = body.approval_request_id.as_deref(),
-        status = %body.status,
+        status = %parsed_status.as_str(),
         content_bytes = body.content.as_deref().map(str::len).unwrap_or(0),
         structured_content_bytes = body.structured_content.to_string().len(),
         diagnostic = ?body.diagnostic,
         "ACP tool result received"
     );
+    body.status = parsed_status.as_str().to_string();
     if let Some(result_tx) = result_tx {
         let _ = result_tx.send(body.clone());
     }
@@ -1900,23 +1962,19 @@ fn native_letta_tool_request_event_with_args(
             .or_else(|| event.get("name"))
             .and_then(|v| v.as_str())
     })?;
-    let normalized_tool = match tool_name {
-        "bears/read_text_file" | "fs.read_text_file" | "fs_read_text_file" | "read_text_file" => {
-            "fs_read_text_file"
-        }
-        _ => {
-            return Some(AcpGatewayEvent::Error {
-                message: format!("Letta requested unsupported ACP local tool: {tool_name}"),
-                detail: Some(
-                    "Only fs_read_text_file is wired for the current ACP local tool slice."
-                        .to_string(),
-                ),
-                error_type: Some("unsupported_tool".to_string()),
-                request_id: None,
-                context: Some(serde_json::json!({ "tool_name": tool_name })),
-            })
-        }
+    let Some(tool) = AcpToolName::from_provider_alias(tool_name) else {
+        return Some(AcpGatewayEvent::Error {
+            message: format!("Letta requested unsupported ACP local tool: {tool_name}"),
+            detail: Some(format!(
+                "Only {} is wired for the current ACP local tool slice.",
+                ACP_READ_TEXT_FILE_TOOL.provider_name
+            )),
+            error_type: Some("unsupported_tool".to_string()),
+            request_id: None,
+            context: Some(serde_json::json!({ "tool_name": tool_name })),
+        });
     };
+    let descriptor = tool.descriptor();
     let args_raw = tool_call
         .and_then(|v| v.get("input"))
         .or_else(|| tool_call.and_then(|v| v.get("arguments")))
@@ -1957,8 +2015,7 @@ fn native_letta_tool_request_event_with_args(
             None => return None,
         }
     };
-    if normalized_tool == "fs_read_text_file" && args.get("path").and_then(|v| v.as_str()).is_none()
-    {
+    if tool == AcpToolName::ReadTextFile && args.get("path").and_then(|v| v.as_str()).is_none() {
         // Do not fail on still-empty/non-object incremental chunks; wait for a complete object.
         if !args.is_object() || args.as_object().is_some_and(|m| m.is_empty()) {
             return None;
@@ -2019,9 +2076,9 @@ fn native_letta_tool_request_event_with_args(
         turn_id,
         tool_call_id,
         approval_request_id,
-        tool_name: normalized_tool.to_string(),
-        title: ACP_READ_TEXT_FILE_TOOL.title.to_string(),
-        kind: ACP_READ_TEXT_FILE_TOOL.kind.to_string(),
+        tool_name: descriptor.provider_name.to_string(),
+        title: descriptor.title.to_string(),
+        kind: descriptor.kind.to_string(),
         args,
         approval_required,
         approval_reason: approval_required
@@ -2031,6 +2088,18 @@ fn native_letta_tool_request_event_with_args(
     })
 }
 
+/// Defensive compatibility layer for Letta tool-call streaming.
+///
+/// The preferred ACP path uses the conversation-scoped Letta messages endpoint with
+/// `streaming=true` and `stream_tokens=false`, which should normally yield coherent
+/// step-level tool events. Older/deployed Letta builds and some provider paths may
+/// still surface tool calls as repeated delta-like `approval_request_message` events:
+/// the tool name can appear in one event, arguments can arrive later as string
+/// fragments, and duplicate events for the same `tool_call_id` may be emitted.
+///
+/// Keep this accumulator even if it looks vestigial in the clean/native case. It is a
+/// low-cost guardrail that reconstructs partial tool-call deltas into exactly one
+/// `AcpGatewayEvent::ToolRequest` and prevents early/duplicate local tool execution.
 #[derive(Debug, Default)]
 struct LettaToolCallAccumulator {
     names: BTreeMap<String, String>,
