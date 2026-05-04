@@ -1853,15 +1853,22 @@ fn native_letta_tool_request_event(
         .or_else(|| inner.get("arguments"))
         .or_else(|| event.get("args"))
         .or_else(|| event.get("arguments"));
-    let args = args_raw
-        .and_then(|v| {
+    let args = match args_raw {
+        Some(v) => {
             if let Some(s) = v.as_str() {
-                serde_json::from_str::<serde_json::Value>(s).ok()
+                // Letta may stream tool-call arguments incrementally. Do not emit a tool
+                // request until the JSON arguments parse completely.
+                serde_json::from_str::<serde_json::Value>(s).ok()?
             } else {
-                Some(v.clone())
+                v.clone()
             }
-        })
-        .unwrap_or_else(|| serde_json::json!({}));
+        }
+        None => serde_json::json!({}),
+    };
+    if normalized_tool == "fs_read_text_file" && args.get("path").and_then(|v| v.as_str()).is_none()
+    {
+        return None;
+    }
     let tool_call_id = tool_call
         .and_then(|v| v.get("tool_call_id"))
         .or_else(|| tool_call.and_then(|v| v.get("id")))
@@ -1960,6 +1967,7 @@ struct AcpStreamDiagnostics {
     native_message_types: BTreeMap<String, usize>,
     native_event_types: BTreeMap<String, usize>,
     adapter_event_types: BTreeMap<String, usize>,
+    tool_request_counts: BTreeMap<String, usize>,
     unmapped_event_samples: Vec<String>,
     saw_visible_output: bool,
     saw_error: bool,
@@ -2045,6 +2053,7 @@ impl AcpStreamDiagnostics {
             native_message_types = ?self.native_message_types,
             native_event_types = ?self.native_event_types,
             adapter_event_types = ?self.adapter_event_types,
+            tool_request_counts = ?self.tool_request_counts,
             unmapped_event_samples = ?self.unmapped_event_samples,
             "ACP Letta stream summary"
         );
@@ -2254,6 +2263,23 @@ async fn map_letta_stream_frame_to_acp_adapter_events_with_persistence(
     } else {
         None
     };
+    if let AcpGatewayEvent::ToolRequest { tool_call_id, .. } = &event {
+        let count = diagnostics
+            .tool_request_counts
+            .entry(tool_call_id.clone())
+            .or_insert(0);
+        *count += 1;
+        if *count > 1 {
+            tracing::debug!(
+                request_id = %context.request_id,
+                acp_session_id = %context.acp_session_id,
+                tool_call_id = %tool_call_id,
+                duplicate_count = *count,
+                "ignoring duplicate streamed ACP tool request"
+            );
+            return Ok((Vec::new(), None));
+        }
+    }
     diagnostics.observe_mapped_event(&event);
     persist_stream_event_side_effects(&context, &mut event)
         .await
