@@ -22,7 +22,6 @@ pub struct Bear {
     pub slug: String,
     pub name: String,
     pub description: String,
-    pub letta_agent_id: Option<String>,
     pub default_model: Option<String>,
     pub tools_enabled: Option<Json<serde_json::Value>>,
     /// Letta `agent_type` on create/patch when set (e.g. `memgpt_agent`, `letta_v1_agent`).

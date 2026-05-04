@@ -200,7 +200,7 @@ async fn chat_conversations(
     }
 
     let Some(agent_id) =
-        bears_db::role_agent_id_or_legacy(state.sqlx_pool(), &bear, BearAgentRole::Talk)
+        bears_db::role_agent_id(state.sqlx_pool(), bear.id, BearAgentRole::Talk)
             .await?
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty())
@@ -261,7 +261,7 @@ async fn chat_conversation_patch(
     }
 
     let Some(agent_id) =
-        bears_db::role_agent_id_or_legacy(state.sqlx_pool(), &bear, BearAgentRole::Talk)
+        bears_db::role_agent_id(state.sqlx_pool(), bear.id, BearAgentRole::Talk)
             .await?
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty())
@@ -355,7 +355,7 @@ async fn chat_history(
     }
 
     let Some(agent_id) =
-        bears_db::role_agent_id_or_legacy(state.sqlx_pool(), &bear, BearAgentRole::Talk)
+        bears_db::role_agent_id(state.sqlx_pool(), bear.id, BearAgentRole::Talk)
             .await?
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty())
@@ -714,7 +714,7 @@ async fn chat_send_inner(
         .ok_or_else(|| CustomError::NotFound("bear not found".to_string()))?;
 
     let talk_agent_id =
-        bears_db::role_agent_id_or_legacy(state.sqlx_pool(), &bear, BearAgentRole::Talk)
+        bears_db::role_agent_id(state.sqlx_pool(), bear.id, BearAgentRole::Talk)
             .await?
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty())

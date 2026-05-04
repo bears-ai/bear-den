@@ -12,7 +12,7 @@ use super::model::{
 pub async fn list_bears(pool: &PgPool) -> Result<Vec<Bear>, CustomError> {
     sqlx::query_as::<_, Bear>(
         r#"
-        SELECT id, slug, name, description, letta_agent_id, default_model, tools_enabled,
+        SELECT id, slug, name, description, default_model, tools_enabled,
                letta_agent_type, letta_tool_ids, runtime_plan,
                memfs_repo_path, provisioning_version, system_prompt, created_at, updated_at
         FROM bears
@@ -27,7 +27,7 @@ pub async fn list_bears(pool: &PgPool) -> Result<Vec<Bear>, CustomError> {
 pub async fn get_bear(pool: &PgPool, id: Uuid) -> Result<Option<Bear>, CustomError> {
     sqlx::query_as::<_, Bear>(
         r#"
-        SELECT id, slug, name, description, letta_agent_id, default_model, tools_enabled,
+        SELECT id, slug, name, description, default_model, tools_enabled,
                letta_agent_type, letta_tool_ids, runtime_plan,
                memfs_repo_path, provisioning_version, system_prompt, created_at, updated_at
         FROM bears
@@ -290,7 +290,7 @@ pub async fn list_bears_for_user(
 ) -> Result<Vec<BearWithMembership>, CustomError> {
     sqlx::query_as::<_, BearWithMembership>(
         r#"
-        SELECT b.id, b.slug, b.name, b.description, b.letta_agent_id, b.default_model, b.tools_enabled,
+        SELECT b.id, b.slug, b.name, b.description, b.default_model, b.tools_enabled,
                b.letta_agent_type, b.letta_tool_ids, b.runtime_plan,
                b.memfs_repo_path, b.provisioning_version, b.system_prompt, b.created_at, b.updated_at,
                ub.role AS membership_role
@@ -314,7 +314,7 @@ pub async fn bear_for_user_by_slug(
 ) -> Result<Option<Bear>, CustomError> {
     sqlx::query_as::<_, Bear>(
         r#"
-        SELECT b.id, b.slug, b.name, b.description, b.letta_agent_id, b.default_model, b.tools_enabled,
+        SELECT b.id, b.slug, b.name, b.description, b.default_model, b.tools_enabled,
                b.letta_agent_type, b.letta_tool_ids, b.runtime_plan,
                b.memfs_repo_path, b.provisioning_version, b.system_prompt, b.created_at, b.updated_at
         FROM bears b
@@ -359,10 +359,6 @@ pub async fn list_letta_agent_ids_in_use(pool: &PgPool) -> Result<Vec<String>, C
     let rows: Vec<(String,)> = sqlx::query_as(
         r#"
         SELECT letta_agent_id
-        FROM bears
-        WHERE letta_agent_id IS NOT NULL AND btrim(letta_agent_id) <> ''
-        UNION
-        SELECT letta_agent_id
         FROM bear_agents
         WHERE letta_agent_id IS NOT NULL AND btrim(letta_agent_id) <> ''
         "#,
@@ -372,114 +368,9 @@ pub async fn list_letta_agent_ids_in_use(pool: &PgPool) -> Result<Vec<String>, C
     Ok(rows.into_iter().map(|r| r.0).collect())
 }
 
-pub async fn mirror_talk_agent_to_legacy_letta_agent_id(
-    pool: &PgPool,
-    bear_id: Uuid,
-) -> Result<(), CustomError> {
-    sqlx::query(
-        r#"
-        UPDATE bears b
-        SET letta_agent_id = ba.letta_agent_id,
-            updated_at = NOW()
-        FROM bear_agents ba
-        WHERE b.id = ba.bear_id
-          AND b.id = $1
-          AND ba.role = 'talk'
-          AND ba.letta_agent_id IS NOT NULL
-          AND btrim(ba.letta_agent_id) <> ''
-        "#,
-    )
-    .bind(bear_id)
-    .execute(pool)
-    .await?;
-    Ok(())
-}
 
-#[derive(Debug, Clone, serde::Serialize)]
-pub struct LegacyBearAgentRepairResult {
-    pub migrated_talk_rows: i64,
-    pub inserted_missing_role_rows: i64,
-}
 
-/// Idempotently repair/migrate legacy single-agent Bears into the multi-agent registry.
-///
-/// - Copies non-empty `bears.letta_agent_id` values into `bear_agents(role='talk')`.
-/// - Creates missing placeholder role rows for every Bear and every known role.
-///
-/// The legacy column is intentionally left intact as a transitional mirror until all read paths are
-/// role-aware and a later migration drops the column.
-pub async fn repair_legacy_bear_agents(
-    pool: &PgPool,
-) -> Result<LegacyBearAgentRepairResult, CustomError> {
-    let migrated: (i64,) = sqlx::query_as(
-        r#"
-        WITH legacy AS (
-            SELECT id AS bear_id,
-                   NULLIF(btrim(letta_agent_id), '') AS agent_id,
-                   provisioning_version
-            FROM bears
-            WHERE letta_agent_id IS NOT NULL
-              AND btrim(letta_agent_id) <> ''
-        ), upserted AS (
-            INSERT INTO bear_agents (
-                bear_id,
-                role,
-                letta_agent_id,
-                provisioning_status,
-                last_provisioned_version,
-                last_synced_at,
-                updated_at
-            )
-            SELECT bear_id,
-                   'talk',
-                   agent_id,
-                   'ready',
-                   provisioning_version,
-                   NOW(),
-                   NOW()
-            FROM legacy
-            ON CONFLICT (bear_id, role)
-            DO UPDATE SET letta_agent_id = EXCLUDED.letta_agent_id,
-                          provisioning_status = 'ready',
-                          last_provisioned_version = GREATEST(
-                              bear_agents.last_provisioned_version,
-                              EXCLUDED.last_provisioned_version
-                          ),
-                          last_synced_at = NOW(),
-                          updated_at = NOW()
-            WHERE bear_agents.letta_agent_id IS DISTINCT FROM EXCLUDED.letta_agent_id
-               OR bear_agents.provisioning_status IS DISTINCT FROM 'ready'
-            RETURNING 1
-        )
-        SELECT COUNT(*)::bigint FROM upserted
-        "#,
-    )
-    .fetch_one(pool)
-    .await?;
 
-    let inserted_missing: (i64,) = sqlx::query_as(
-        r#"
-        WITH roles(role) AS (
-            VALUES ('talk'), ('pair'), ('curate'), ('work'), ('watch')
-        ), inserted AS (
-            INSERT INTO bear_agents (bear_id, role)
-            SELECT b.id, r.role
-            FROM bears b
-            CROSS JOIN roles r
-            ON CONFLICT (bear_id, role) DO NOTHING
-            RETURNING 1
-        )
-        SELECT COUNT(*)::bigint FROM inserted
-        "#,
-    )
-    .fetch_one(pool)
-    .await?;
-
-    Ok(LegacyBearAgentRepairResult {
-        migrated_talk_rows: migrated.0,
-        inserted_missing_role_rows: inserted_missing.0,
-    })
-}
 
 pub async fn ensure_bear_agent_rows(pool: &PgPool, bear_id: Uuid) -> Result<(), CustomError> {
     for role in BearAgentRole::ALL {
@@ -560,20 +451,7 @@ pub async fn role_agent_id(
     Ok(row.and_then(|r| r.0))
 }
 
-pub async fn role_agent_id_or_legacy(
-    pool: &PgPool,
-    bear: &Bear,
-    role: BearAgentRole,
-) -> Result<Option<String>, CustomError> {
-    let role_id = role_agent_id(pool, bear.id, role).await?;
-    if role_id.as_deref().is_some_and(|s| !s.trim().is_empty()) {
-        return Ok(role_id);
-    }
-    if role == BearAgentRole::Talk {
-        return Ok(bear.letta_agent_id.clone());
-    }
-    Ok(None)
-}
+
 
 pub async fn mark_bear_agent_provisioning(
     pool: &PgPool,
@@ -829,7 +707,7 @@ pub async fn list_letta_code_harness_rows(
         r#"
         SELECT u.username,
                b.slug AS bear_slug,
-               COALESCE(ba.letta_agent_id, b.letta_agent_id) AS letta_agent_id
+               ba.letta_agent_id AS letta_agent_id
         FROM user_bear ub
         INNER JOIN users u ON u.id = ub.user_id
         INNER JOIN bears b ON b.id = ub.bear_id

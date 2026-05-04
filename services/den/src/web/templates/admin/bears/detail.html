@@ -44,7 +44,7 @@
 {% if not letta_configured %}
 <p><em>Letta is not configured on this Den instance</em> (<code>LETTA_BASE_URL</code> empty). Stored role agent ids, if any, are not verified against Letta.</p>
 {% endif %}
-<p class="form-hint">Role rows come from <code>bear_agents</code>. Legacy <code>bears.letta_agent_id</code> mirrors/falls back to <strong>talk</strong> during migration.</p>
+<p class="form-hint">Role rows come from <code>bear_agents</code>. Web chat uses <strong>talk</strong>; ACP uses <strong>pair</strong>.</p>
 {% if letta_configured %}
 <form method="post" action="/admin/bears/{{ bear.id }}/provision-missing-roles" style="margin: 0 0 1rem 0;">
   <button type="submit">Provision missing role agents</button>
@@ -112,7 +112,7 @@
 
 <h3>Talk agent detail</h3>
 {% if talk_agent_id %}
-<p><strong>Talk agent id:</strong> <code>{{ talk_agent_id }}</code>{% if bear.letta_agent_id and bear.letta_agent_id != talk_agent_id %} <span class="form-hint">legacy mirror differs: <code>{{ bear.letta_agent_id }}</code></span>{% endif %}</p>
+<p><strong>Talk agent id:</strong> <code>{{ talk_agent_id }}</code></p>
 {% if letta_api_base %}
 <p class="form-hint">End-user chat (via Den/Codepool) targets the <strong>talk</strong> role agent.</p>
 {% endif %}

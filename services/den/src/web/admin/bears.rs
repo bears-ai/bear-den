@@ -38,10 +38,6 @@ pub fn router() -> Router<AppState> {
             get(unlinked_letta_agents_view),
         )
         .route_with_tsr(
-            "/bears/repair-legacy-agents",
-            post(repair_legacy_agents_action),
-        )
-        .route_with_tsr(
             "/bears/register-memfs-views",
             post(register_memfs_views_action),
         )
@@ -249,7 +245,7 @@ async fn bear_detail_response(
     let agent_health_rows = bear_agent_health_rows(state, id, letta_configured).await?;
 
     let talk_agent_id =
-        bears_db::role_agent_id_or_legacy(state.sqlx_pool(), &bear, BearAgentRole::Talk)
+        bears_db::role_agent_id(state.sqlx_pool(), bear.id, BearAgentRole::Talk)
             .await?
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty());
@@ -323,12 +319,6 @@ async fn detail_view(
 #[derive(Debug, Deserialize)]
 struct BearsListQuery {
     #[serde(default)]
-    repair: Option<String>,
-    #[serde(default)]
-    migrated: Option<i64>,
-    #[serde(default)]
-    inserted: Option<i64>,
-    #[serde(default)]
     error: Option<String>,
     memfs: Option<String>,
     views: Option<usize>,
@@ -340,18 +330,6 @@ async fn list_view(
     Query(query): Query<BearsListQuery>,
 ) -> Result<Response, CustomError> {
     let bears = bears_db::list_bears(state.sqlx_pool()).await?;
-    let repair_message = match query.repair.as_deref() {
-        Some("ok") => Some(format!(
-            "Legacy bear-agent repair complete: {} talk row(s) migrated/updated; {} missing role row(s) inserted.",
-            query.migrated.unwrap_or(0),
-            query.inserted.unwrap_or(0)
-        )),
-        Some("error") => Some(format!(
-            "Legacy bear-agent repair failed: {}",
-            query.error.clone().unwrap_or_else(|| "unknown error".to_string())
-        )),
-        _ => None,
-    };
     let memfs_message = match query.memfs.as_deref() {
         Some("ok") => Some(format!(
             "MemFS sidecar role view registration complete: {} view(s) registered/refreshed.",
@@ -370,7 +348,7 @@ async fn list_view(
         &state,
         "admin/bears/list.html",
         auth_session,
-        context! { bears, repair_message, memfs_message },
+        context! { bears, memfs_message },
     )
     .await
 }
@@ -390,22 +368,6 @@ async fn register_memfs_views_action(
     }
 }
 
-async fn repair_legacy_agents_action(
-    State(state): State<AppState>,
-) -> Result<Response, CustomError> {
-    match bears_db::repair_legacy_bear_agents(state.sqlx_pool()).await {
-        Ok(result) => Ok(Redirect::to(&format!(
-            "/admin/bears/?repair=ok&migrated={}&inserted={}",
-            result.migrated_talk_rows, result.inserted_missing_role_rows
-        ))
-        .into_response()),
-        Err(err) => Ok(Redirect::to(&format!(
-            "/admin/bears/?repair=error&error={}",
-            urlencoding::encode(&err.to_string())
-        ))
-        .into_response()),
-    }
-}
 
 async fn new_view(
     State(state): State<AppState>,

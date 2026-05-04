@@ -75,7 +75,6 @@ pub async fn provision_bear_if_configured(
     provision_bear_roles(pool, letta, bifrost, &bear).await?;
     bears_db::backfill_default_letta_agent_type(pool, bear_id, "letta_v1_agent").await?;
     bears_db::ensure_default_runtime_plan(pool, bear_id, &default_runtime_plan()).await?;
-    bears_db::mirror_talk_agent_to_legacy_letta_agent_id(pool, bear_id).await?;
     Ok(())
 }
 
@@ -125,7 +124,6 @@ pub async fn provision_missing_bear_roles(
         provisioned += 1;
     }
 
-    bears_db::mirror_talk_agent_to_legacy_letta_agent_id(pool, bear_id).await?;
     Ok(provisioned)
 }
 
