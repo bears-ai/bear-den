@@ -1,6 +1,6 @@
 # Notes on ACP
 
-These notes capture lessons from implementing and testing BEARS' first ACP adapter path through Den, Codepool, and Letta Code. They are intended to inform a future ACP implementation that does **not** depend on Letta Code.
+These notes capture lessons from implementing and testing BEARS' ACP adapter path. The current `pair` role ACP implementation is direct: local adapter ⇄ Den ⇄ Letta conversation API. Earlier Codepool/Letta Code relay lessons remain useful where noted, but new ACP work should not route pair-role tools through Codepool.
 
 ## 1. Keep ACP sessions separate from canonical conversations
 
@@ -12,7 +12,9 @@ Use ACP session records only as bindings between:
 - client name, such as `zed`;
 - local workspace context, such as `cwd`;
 - authenticated BEARS user/bear;
-- canonical BEARS/Letta conversation id, when one exists.
+- canonical BEARS/Letta `conv-*` id, when one exists.
+
+For the direct ACP `pair` role, new ACP sessions should create distinct Letta conversations with `POST /v1/conversations/?agent_id=...`, then send prompts to `POST /v1/conversations/{conv_id}/messages` with `streaming=true` and `stream_tokens=false`. Do not route new ACP sessions through agent-default endpoints; those can share conversation state.
 
 Conversation history, archive semantics, search, memory, and title generation should operate on canonical BEARS conversations, not on ACP session rows directly.
 
@@ -115,10 +117,25 @@ If the backend runtime also has local filesystem tools, the model may choose tho
 
 An ACP mode should disable or strongly deprioritize backend-local filesystem tools and steer the model toward ACP client tools:
 
-- `acp_fs_read_text_file`;
-- `acp_fs_write_text_file`.
+- provider-safe Letta tool name: `fs_read_text_file`;
+- canonical Den tool identity: `acp.fs.read_text_file`;
+- ACP client method: `fs/read_text_file`;
+- adapter-local fallback method: `bears/read_text_file`.
 
 This was a recurring source of confusion when the model reported only seeing backend files.
+
+Current read-file flow:
+
+1. Den advertises Letta `client_tools[].name = "fs_read_text_file"`.
+2. Letta emits native `approval_request_message` / `tool_call_message` for that tool.
+3. Den maps it to private adapter event `tool_request`.
+4. Adapter requests ACP permission with `session/request_permission`.
+5. Adapter prefers ACP client method `fs/read_text_file` when advertised by the client.
+6. Adapter falls back to `bears/read_text_file` only when the client does not advertise `fs.readTextFile`.
+7. Adapter posts the result to Den.
+8. Den sends a Letta approval/tool return back to the same `conv-*` conversation.
+
+Use `stream_tokens=false` on the conversation-scoped Letta messages endpoint so Letta emits step-level native tool/message events rather than OpenAI token/tool-call deltas where possible.
 
 ## 9. Match ACP tool-call update schemas exactly
 
