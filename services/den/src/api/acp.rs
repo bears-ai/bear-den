@@ -1901,18 +1901,31 @@ fn native_letta_tool_request_event(
         .or_else(|| event.get("arguments"));
     let args = match args_raw {
         Some(v) => {
+            if v.is_null() {
+                // Letta may emit an initial tool-call shell with null arguments, then stream
+                // the real arguments in later events. Treat null as incomplete, not invalid.
+                return None;
+            }
             if let Some(s) = v.as_str() {
                 // Letta may stream tool-call arguments incrementally. Do not emit a tool
                 // request until the JSON arguments parse completely.
-                serde_json::from_str::<serde_json::Value>(s).ok()?
+                let parsed = serde_json::from_str::<serde_json::Value>(s).ok()?;
+                if parsed.is_null() {
+                    return None;
+                }
+                parsed
             } else {
                 v.clone()
             }
         }
-        None => serde_json::json!({}),
+        None => return None,
     };
     if normalized_tool == "fs_read_text_file" && args.get("path").and_then(|v| v.as_str()).is_none()
     {
+        // Do not fail on still-empty/non-object incremental chunks; wait for a complete object.
+        if !args.is_object() || args.as_object().is_some_and(|m| m.is_empty()) {
+            return None;
+        }
         return Some(AcpGatewayEvent::Error {
             message: "Letta requested fs_read_text_file without a path argument.".to_string(),
             detail: Some(format!(
@@ -2779,6 +2792,12 @@ mod tests {
 
     #[test]
     fn partial_fixture_does_not_emit_tool_request_until_arguments_complete() {
+        let null_args: serde_json::Value = serde_json::from_str(include_str!(
+            "../../tests/fixtures/acp_letta_tool_call_delta_null_args.json"
+        ))
+        .unwrap();
+        assert!(map_native_letta_stream_event_to_acp_event(&null_args).is_none());
+
         let partial: serde_json::Value = serde_json::from_str(include_str!(
             "../../tests/fixtures/acp_letta_tool_call_delta_partial.json"
         ))
