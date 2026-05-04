@@ -1818,12 +1818,8 @@ async fn handle_sse_frame(
             continue;
         }
         let event: Value = serde_json::from_str(data).context("parse Den SSE event JSON")?;
-        if event.get("type").and_then(Value::as_str) == Some("agent_message_chunk") {
-            let text = event
-                .get("content")
-                .and_then(|c| c.get("text"))
-                .and_then(Value::as_str)
-                .unwrap_or("");
+        if event.get("type").and_then(Value::as_str) == Some("assistant_text_delta") {
+            let text = event.get("text").and_then(Value::as_str).unwrap_or("");
             outcome.saw_assistant_output |= !text.is_empty();
         } else if event.get("type").and_then(Value::as_str) == Some("error") {
             outcome.upstream_errors.push(format_den_event_error(&event));
@@ -1859,23 +1855,15 @@ async fn handle_den_event(
     event: &Value,
 ) -> Result<bool> {
     match event.get("type").and_then(Value::as_str).unwrap_or("") {
-        "agent_message_chunk" => {
-            let text = event
-                .get("content")
-                .and_then(|c| c.get("text"))
-                .and_then(Value::as_str)
-                .unwrap_or("");
+        "assistant_text_delta" => {
+            let text = event.get("text").and_then(Value::as_str).unwrap_or("");
             if !text.is_empty() {
                 send_agent_message_chunk(session_id, text).await?;
             }
             Ok(false)
         }
-        "status" => {
-            let text = event
-                .get("content")
-                .and_then(|c| c.get("text"))
-                .and_then(Value::as_str)
-                .unwrap_or("");
+        "status_text" => {
+            let text = event.get("text").and_then(Value::as_str).unwrap_or("");
             if !text.is_empty() {
                 send_agent_thought_chunk(session_id, text).await?;
             }
@@ -1906,7 +1894,7 @@ async fn handle_den_event(
             Ok(false)
         }
 
-        "done" => Ok(true),
+        "turn_complete" => Ok(true),
         _ => Ok(false),
     }
 }

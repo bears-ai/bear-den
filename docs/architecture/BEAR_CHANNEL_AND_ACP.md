@@ -184,15 +184,17 @@ The current Den browser bridge drops reserved richer events to preserve the exis
 
 Agent Client Protocol (ACP) is the external protocol for Zed/OpenCode-like agent clients. BEARS currently supports the basic-chat slice through a local stdio adapter and Den's HTTPS/SSE ACP gateway.
 
-Expected mapping:
+The ACP gateway does not use `bear_channel` or Letta Code event names. Den parses native Letta conversation SSE events into Den ACP gateway domain events, then serializes a small Den-to-adapter transport:
 
-| ACP concept | `bear_channel` concept |
-| --- | --- |
-| Session start/resume | `session_id`, `conversation_id`, trusted Den context |
-| User message | `message: { type: "text", content }` |
-| Assistant delta | `assistant_delta` |
-| Reasoning/status | `reasoning_delta` or future status events |
-| Cancel | Codepool session cancel endpoint via Den |
+```json
+{"type":"assistant_text_delta","text":"Hello"}
+{"type":"status_text","text":"Thinking"}
+{"type":"error","message":"Upstream error","detail":"...","request_id":"..."}
+{"type":"conversation_resolved","conversation_id":"conv-..."}
+{"type":"turn_complete","outcome":"ok"}
+```
+
+The local adapter is the only consumer of this HTTPS/SSE transport; it converts these events to ACP `session/update` JSON-RPC notifications over stdio. Historical `bear_channel`/Letta-Code-shaped events such as `assistant_delta`, `reasoning_delta`, and `done` are not accepted as ACP direct-Letta upstream stream events.
 
 The former Letta Code ACP client-tool relay (`capabilities.client_tools`, `client_tool_request`, and tool-result continuation endpoints) has been removed from the active implementation. Future ACP client tools should be owned by a dedicated ACP runtime rather than tunneled through Letta Code external-tool closures.
 

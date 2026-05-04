@@ -81,10 +81,10 @@ async fn fake_letta_conversation_messages(
     (
         [(header::CONTENT_TYPE, "text/event-stream; charset=utf-8")],
         concat!(
-            "data: {\"type\":\"conversation_resolved\",\"conversation_id\":\"conv-fake-resolved123\"}\n\n",
-            "data: {\"type\":\"assistant_delta\",\"text\":\"hello from fake Letta\"}\n\n",
-            "data: {\"type\":\"reasoning_delta\",\"text\":\"thinking\"}\n\n",
-            "data: {\"type\":\"done\",\"outcome\":\"ok\"}\n\n"
+            "data: {\"message_type\":\"conversation_resolved\",\"conversation_id\":\"conv-fake-resolved123\"}\n\n",
+            "data: {\"message_type\":\"assistant_message\",\"content\":\"hello from fake Letta\"}\n\n",
+            "data: {\"message_type\":\"reasoning_message\",\"reasoning\":\"thinking\"}\n\n",
+            "data: {\"message_type\":\"stop_reason\",\"stop_reason\":\"end_turn\"}\n\n"
         ),
     )
         .into_response()
@@ -513,11 +513,11 @@ async fn acp_prompt_streams_to_pair_agent_and_maps_sse() {
     );
     let body = res.into_body().collect().await.unwrap().to_bytes();
     let text = String::from_utf8(body.to_vec()).expect("SSE body is UTF-8");
-    assert!(text.contains("\"type\":\"agent_message_chunk\""));
+    assert!(text.contains("\"type\":\"assistant_text_delta\""));
     assert!(text.contains("hello from fake Letta"));
-    assert!(text.contains("\"type\":\"status\""));
+    assert!(text.contains("\"type\":\"status_text\""));
     assert!(text.contains("thinking"));
-    assert!(text.contains("\"type\":\"done\""));
+    assert!(text.contains("\"type\":\"turn_complete\""));
 
     let captured = fixture
         .captured_letta_body

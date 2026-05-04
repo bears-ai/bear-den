@@ -1313,48 +1313,63 @@ struct AcpStreamContext {
     request_id: Uuid,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum AcpGatewayEvent {
+    AssistantTextDelta {
+        text: String,
+    },
+    StatusText {
+        text: String,
+    },
+    TurnComplete {
+        outcome: String,
+    },
+    Error {
+        message: String,
+        detail: Option<String>,
+        error_type: Option<String>,
+        request_id: Option<String>,
+        context: Option<serde_json::Value>,
+    },
+    ConversationResolved {
+        conversation_id: String,
+    },
+}
+
 async fn persist_stream_event_side_effects(
     context: &AcpStreamContext,
-    event: &serde_json::Value,
+    event: &AcpGatewayEvent,
 ) -> Result<(), CustomError> {
-    if event.get("type").and_then(|v| v.as_str()) == Some("conversation_resolved") {
-        if let Some(conversation_id) = event.get("conversation_id").and_then(|v| v.as_str()) {
-            acp_sessions::mark_resolved(
-                &context.pool,
-                context.user_id,
-                context.bear_id,
-                &context.acp_session_id,
-                conversation_id,
-            )
-            .await?;
-        }
+    if let AcpGatewayEvent::ConversationResolved { conversation_id } = event {
+        acp_sessions::mark_resolved(
+            &context.pool,
+            context.user_id,
+            context.bear_id,
+            &context.acp_session_id,
+            conversation_id,
+        )
+        .await?;
     }
     Ok(())
 }
 
-fn map_letta_stream_event_to_acp_adapter_event(event: &serde_json::Value) -> Option<Bytes> {
+fn map_native_letta_stream_event_to_acp_event(
+    event: &serde_json::Value,
+) -> Option<AcpGatewayEvent> {
     let inner = letta_inner_for_acp_history(event);
     let message_type = inner
         .get("message_type")
         .and_then(|v| v.as_str())
         .or_else(|| event.get("message_type").and_then(|v| v.as_str()))
         .unwrap_or("");
-    let ty = event.get("type").and_then(|v| v.as_str()).unwrap_or("");
-    let mapped = match (ty, message_type) {
-        ("assistant_delta", _) => serde_json::json!({
-            "type": "agent_message_chunk",
-            "content": { "type": "text", "text": event.get("text").and_then(|v| v.as_str()).unwrap_or("") },
+    match message_type {
+        "assistant_message" => Some(AcpGatewayEvent::AssistantTextDelta {
+            text: letta_message_text(inner)
+                .or_else(|| letta_message_text(event))
+                .unwrap_or_default(),
         }),
-        (_, "assistant_message") => serde_json::json!({
-            "type": "agent_message_chunk",
-            "content": { "type": "text", "text": letta_message_text(inner).or_else(|| letta_message_text(event)).unwrap_or_default() },
-        }),
-        ("reasoning_delta", _) => serde_json::json!({
-            "type": "status",
-            "content": { "type": "text", "text": event.get("text").and_then(|v| v.as_str()).unwrap_or("") },
-        }),
-        (_, "reasoning_message") => {
-            let text = inner
+        "reasoning_message" => Some(AcpGatewayEvent::StatusText {
+            text: inner
                 .get("reasoning")
                 .and_then(|v| v.as_str())
                 .map(str::to_string)
@@ -1366,56 +1381,118 @@ fn map_letta_stream_event_to_acp_adapter_event(event: &serde_json::Value) -> Opt
                 })
                 .or_else(|| letta_message_text(inner))
                 .or_else(|| letta_message_text(event))
-                .unwrap_or_default();
-            serde_json::json!({
-                "type": "status",
-                "content": { "type": "text", "text": text },
-            })
-        }
-        ("error", _) | (_, "error_message") => {
-            let mut mapped = serde_json::json!({
-                "type": "error",
-                "message": event.get("message").and_then(|v| v.as_str()).unwrap_or("Upstream error"),
-                "detail": event.get("detail").and_then(|v| v.as_str()),
-            });
-            if let Some(context) = event.get("context") {
-                mapped["context"] = context.clone();
-            }
-            if let Some(request_id) = event.get("request_id") {
-                mapped["request_id"] = request_id.clone();
-            }
-            mapped
-        }
-        ("done", _) => serde_json::json!({
-            "type": "done",
-            "outcome": event.get("outcome").and_then(|v| v.as_str()).unwrap_or("ok"),
+                .unwrap_or_default(),
         }),
-        (_, "stop_reason") => {
+        "error_message" => Some(AcpGatewayEvent::Error {
+            message: event
+                .get("message")
+                .and_then(|v| v.as_str())
+                .unwrap_or("Upstream error")
+                .to_string(),
+            detail: event
+                .get("detail")
+                .and_then(|v| v.as_str())
+                .map(str::to_string),
+            error_type: event
+                .get("error_type")
+                .and_then(|v| v.as_str())
+                .map(str::to_string),
+            request_id: event
+                .get("request_id")
+                .and_then(|v| v.as_str())
+                .map(str::to_string),
+            context: event.get("context").cloned(),
+        }),
+        "stop_reason" => {
             let stop_reason = inner
                 .get("stop_reason")
                 .and_then(|v| v.as_str())
                 .or_else(|| event.get("stop_reason").and_then(|v| v.as_str()))
                 .unwrap_or("unknown");
             if stop_reason == "end_turn" {
-                serde_json::json!({ "type": "done", "outcome": "ok" })
+                Some(AcpGatewayEvent::TurnComplete {
+                    outcome: "ok".to_string(),
+                })
             } else if stop_reason == "requires_approval" {
-                return None;
+                None
             } else {
-                serde_json::json!({
-                    "type": "error",
-                    "message": format!("Letta stopped before producing assistant output: {stop_reason}"),
-                    "error_type": stop_reason,
+                Some(AcpGatewayEvent::Error {
+                    message: format!(
+                        "Letta stopped before producing assistant output: {stop_reason}"
+                    ),
+                    detail: None,
+                    error_type: Some(stop_reason.to_string()),
+                    request_id: None,
+                    context: None,
                 })
             }
         }
-        ("conversation_resolved", _) => serde_json::json!({
-            "type": "conversation_resolved",
-            "conversation_id": event.get("conversation_id").and_then(|v| v.as_str()),
-        }),
+        _ => native_letta_conversation_resolved_event(event),
+    }
+}
 
-        _ => return None,
+fn native_letta_conversation_resolved_event(event: &serde_json::Value) -> Option<AcpGatewayEvent> {
+    let conversation_id = event
+        .get("conversation_id")
+        .or_else(|| event.get("conversationId"))
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|s| s.starts_with("conv-"))?;
+    let ty = event.get("type").and_then(|v| v.as_str()).unwrap_or("");
+    let message_type = event
+        .get("message_type")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    if ty == "conversation_resolved" || message_type == "conversation_resolved" {
+        Some(AcpGatewayEvent::ConversationResolved {
+            conversation_id: conversation_id.to_string(),
+        })
+    } else {
+        None
+    }
+}
+
+fn acp_event_to_adapter_sse(event: AcpGatewayEvent) -> Bytes {
+    let mapped = match event {
+        AcpGatewayEvent::AssistantTextDelta { text } => serde_json::json!({
+            "type": "assistant_text_delta",
+            "text": text,
+        }),
+        AcpGatewayEvent::StatusText { text } => serde_json::json!({
+            "type": "status_text",
+            "text": text,
+        }),
+        AcpGatewayEvent::TurnComplete { outcome } => serde_json::json!({
+            "type": "turn_complete",
+            "outcome": outcome,
+        }),
+        AcpGatewayEvent::Error {
+            message,
+            detail,
+            error_type,
+            request_id,
+            context,
+        } => {
+            let mut mapped = serde_json::json!({
+                "type": "error",
+                "message": message,
+                "detail": detail,
+                "error_type": error_type,
+            });
+            if let Some(context) = context {
+                mapped["context"] = context;
+            }
+            if let Some(request_id) = request_id {
+                mapped["request_id"] = serde_json::json!(request_id);
+            }
+            mapped
+        }
+        AcpGatewayEvent::ConversationResolved { conversation_id } => serde_json::json!({
+            "type": "conversation_resolved",
+            "conversation_id": conversation_id,
+        }),
     };
-    Some(Bytes::from(format!("data: {}\n\n", mapped)))
+    Bytes::from(format!("data: {}\n\n", mapped))
 }
 
 /// Byte offset **after** the first complete SSE frame delimiter (`\n\n` or `\r\n\r\n`).
@@ -1507,7 +1584,8 @@ fn parse_sse_event_body_to_json(body: &[u8]) -> Result<Option<serde_json::Value>
 fn map_letta_stream_frame_to_acp_adapter_events(frame: &[u8]) -> Vec<Bytes> {
     let body = strip_trailing_sse_delimiter(frame);
     match parse_sse_event_body_to_json(body) {
-        Ok(Some(value)) => map_letta_stream_event_to_acp_adapter_event(&value)
+        Ok(Some(value)) => map_native_letta_stream_event_to_acp_event(&value)
+            .map(acp_event_to_adapter_sse)
             .into_iter()
             .collect(),
         Ok(None) | Err(_) => Vec::new(),
@@ -1533,12 +1611,13 @@ async fn map_letta_stream_frame_to_acp_adapter_events_with_persistence(
         Ok(Some(v)) => v,
     };
 
-    persist_stream_event_side_effects(&context, &value)
+    let Some(event) = map_native_letta_stream_event_to_acp_event(&value) else {
+        return Ok(Vec::new());
+    };
+    persist_stream_event_side_effects(&context, &event)
         .await
         .map_err(|err| std::io::Error::other(err.to_string()))?;
-    Ok(map_letta_stream_event_to_acp_adapter_event(&value)
-        .into_iter()
-        .collect())
+    Ok(vec![acp_event_to_adapter_sse(event)])
 }
 
 struct AcpLettaSseStream {
@@ -1663,22 +1742,36 @@ mod tests {
     use super::*;
 
     #[test]
-    fn maps_assistant_delta_to_acp_adapter_event() {
-        let out = map_letta_stream_frame_to_acp_adapter_events(
-            b"data: {\"type\":\"assistant_delta\",\"text\":\"hello\"}\n\n",
-        );
-        let text = String::from_utf8(out[0].to_vec()).unwrap();
-        assert!(text.contains("\"type\":\"agent_message_chunk\""));
+    fn serializes_internal_assistant_chunk_to_acp_adapter_event() {
+        let text = String::from_utf8(
+            acp_event_to_adapter_sse(AcpGatewayEvent::AssistantTextDelta {
+                text: "hello".to_string(),
+            })
+            .to_vec(),
+        )
+        .unwrap();
+        assert!(text.contains("\"type\":\"assistant_text_delta\""));
         assert!(text.contains("\"text\":\"hello\""));
     }
 
     #[test]
-    fn maps_done_to_acp_adapter_event() {
+    fn serializes_internal_done_to_acp_adapter_event() {
+        let text = String::from_utf8(
+            acp_event_to_adapter_sse(AcpGatewayEvent::TurnComplete {
+                outcome: "ok".to_string(),
+            })
+            .to_vec(),
+        )
+        .unwrap();
+        assert!(text.contains("\"type\":\"turn_complete\""));
+    }
+
+    #[test]
+    fn native_parser_ignores_bears_shaped_assistant_delta() {
         let out = map_letta_stream_frame_to_acp_adapter_events(
-            b"data: {\"type\":\"done\",\"outcome\":\"ok\"}\n\n",
+            b"data: {\"type\":\"assistant_delta\",\"text\":\"hello\"}\n\n",
         );
-        let text = String::from_utf8(out[0].to_vec()).unwrap();
-        assert!(text.contains("\"type\":\"done\""));
+        assert!(out.is_empty());
     }
 
     #[test]
@@ -1687,7 +1780,7 @@ mod tests {
             b"data: {\"message_type\":\"assistant_message\",\"content\":\"hello from native Letta\"}\n\n",
         );
         let text = String::from_utf8(out[0].to_vec()).unwrap();
-        assert!(text.contains("\"type\":\"agent_message_chunk\""));
+        assert!(text.contains("\"type\":\"assistant_text_delta\""));
         assert!(text.contains("hello from native Letta"));
     }
 
@@ -1697,18 +1790,18 @@ mod tests {
             b"data: {\"message_type\":\"stop_reason\",\"stop_reason\":\"end_turn\"}\n\n",
         );
         let text = String::from_utf8(out[0].to_vec()).unwrap();
-        assert!(text.contains("\"type\":\"done\""));
+        assert!(text.contains("\"type\":\"turn_complete\""));
     }
 
     #[test]
     fn sse_parser_joins_multiple_data_lines_into_one_json_value() {
-        let body = br#"data: {"type":"assistant_delta","text":
+        let body = br#"data: {"message_type":"assistant_message","content":
 data: "hello"}"#;
         let v = parse_sse_event_body_to_json(body).unwrap().unwrap();
-        assert_eq!(v["type"], "assistant_delta");
-        assert_eq!(v["text"], "hello");
+        assert_eq!(v["message_type"], "assistant_message");
+        assert_eq!(v["content"], "hello");
         let out = map_letta_stream_frame_to_acp_adapter_events(
-            b"data: {\"type\":\"assistant_delta\",\"text\":\ndata: \"hello\"}\n\n",
+            b"data: {\"message_type\":\"assistant_message\",\"content\":\ndata: \"hello\"}\n\n",
         );
         assert_eq!(out.len(), 1);
     }
