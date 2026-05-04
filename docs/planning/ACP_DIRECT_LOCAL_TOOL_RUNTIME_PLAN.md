@@ -585,6 +585,223 @@ Add later once names stabilize:
 
 ---
 
+## Follow-up capability families
+
+The phased tool catalog above is enough for a useful first coding-agent runtime, but it is not the complete ACP/product surface. Track these as follow-up capability families once the read/list/search/edit/terminal/MCP spine is stable.
+
+### Rich prompt inputs
+
+Potential capabilities:
+
+- image inputs;
+- screenshots supplied by the editor/client;
+- audio inputs;
+- binary/file attachments;
+- selected text and active editor buffer metadata;
+- embedded resources referenced by URI.
+
+Design notes:
+
+- Keep Den as the input normalization and policy boundary.
+- Do not send large binary payloads directly through unbounded JSON bodies.
+- Prefer artifact/object storage for large inputs, with short metadata in the ACP prompt payload.
+- Log content type, byte size, hash, and origin; do not log raw binary/text payloads by default.
+
+### Rich outputs and artifacts
+
+Potential capabilities:
+
+- image/artifact cards;
+- downloadable generated files;
+- structured tables;
+- links to Cabinet/Garage artifacts;
+- conversation attachments;
+- generated reports or patches as first-class resources.
+
+Design notes:
+
+- Separate transient ACP display updates from durable artifacts.
+- Use Garage/Cabinet artifact plans for durable storage.
+- Adapter should render normal ACP updates; Den should return artifact metadata and URLs only after authz checks.
+
+### Structured edits, diffs, and review flows
+
+Potential capabilities:
+
+- multi-file patch application;
+- unified diff preview;
+- editor-native diff review;
+- file rename/move/delete;
+- conflict-aware patching;
+- optimistic concurrency using file hashes;
+- formatting after edit;
+- undo/revert metadata.
+
+Design notes:
+
+- Prefer reviewable patch operations over blind full-file replacement for non-trivial edits.
+- Require explicit permission for writes and destructive operations.
+- Log paths, hashes, byte counts, and diff stats; avoid logging complete patches when they may contain secrets.
+
+### Language intelligence / LSP tools
+
+Potential capabilities:
+
+- diagnostics for file/workspace;
+- go to definition;
+- find references;
+- document symbols;
+- workspace symbols;
+- semantic rename;
+- code actions;
+- formatting;
+- type hover/signature information.
+
+Design notes:
+
+- Treat LSP-derived results as local client capabilities exposed through the adapter.
+- Keep language-server process ownership with the editor/client where possible.
+- Include language id, path, result counts, and truncation in diagnostics.
+
+### Git and source-control tools
+
+Potential capabilities:
+
+- git status;
+- diff;
+- branch info;
+- log/blame;
+- stage/unstage;
+- commit;
+- revert;
+- PR/patch generation.
+
+Design notes:
+
+- Prefer explicit structured source-control tools over raw shell commands for common operations.
+- Require permission for commit, push, branch mutation, destructive revert, and remote operations.
+- Log command-equivalent summary, repo root, changed file counts, and exit/status metadata.
+
+### Browser control, web preview, and screenshotting
+
+Potential capabilities:
+
+- open URL or local preview;
+- capture screenshot of page or element;
+- inspect DOM/accessibility tree;
+- read console logs;
+- inspect network requests;
+- interact with page elements;
+- emulate viewport/device/color scheme;
+- capture performance traces;
+- control local dev-server preview sessions.
+
+Design notes:
+
+- Treat browser control as a high-risk local capability, not as generic shell execution.
+- Require explicit permission before navigating to arbitrary URLs or interacting with authenticated pages.
+- Screenshots may contain secrets; log only dimensions, URL origin, hash, and byte size by default.
+- Prefer client/editor-provided browser APIs where available; otherwise adapter-owned browser automation may be a separate optional runtime with clear lifecycle and sandboxing.
+- For local dev-server inspection, tie browser access to workspace roots and approved localhost ports.
+- Add redaction/truncation controls for console/network logs before sending them to Letta.
+
+### Long-running/background tasks
+
+Potential capabilities:
+
+- persistent terminal sessions;
+- background build/test/watch tasks;
+- reconnect to running task after prompt continuation;
+- task cancellation and cleanup;
+- progress streaming over long durations.
+
+Design notes:
+
+- Keep initial terminal tools bounded and foreground-only.
+- Persistent tasks need explicit lifecycle ownership, cancellation, timeout, output retention, and resume semantics.
+
+### Multi-root, remote, and path-mapping policy
+
+Potential capabilities/policies:
+
+- multiple workspace roots with different trust levels;
+- symlink traversal rules;
+- case-insensitive path handling;
+- WSL/container path mapping;
+- remote SSH/devcontainer workspaces;
+- editor URI to local path resolution.
+
+Design notes:
+
+- Writes and terminal commands must resolve through the same canonical path policy.
+- Diagnostics should report both requested and normalized paths when safe.
+
+### Permission memory and trust policy
+
+Potential capabilities:
+
+- remember approval for one tool call;
+- remember for session;
+- remember for workspace;
+- allowlist command/path patterns;
+- denylist sensitive paths/actions;
+- revoke remembered approvals.
+
+Design notes:
+
+- Default to no remembered permission for writes/shell/browser/MCP.
+- Store durable trust decisions in Den only if they are user-visible and revocable.
+- Keep client-local permission behavior compatible with ACP client expectations.
+
+### Tool discovery and operator UX
+
+Potential capabilities:
+
+- show available client tools for the active session;
+- explain why a tool is disabled;
+- show client capability matrix;
+- show Den policy filtering decisions;
+- expose last tool use, failures, and audit summaries.
+
+Design notes:
+
+- Add Den operator/debug pages only after backend logs and transport diagnostics are stable.
+- Avoid leaking local paths or sensitive tool names to users who lack access.
+
+### Cross-client compatibility matrix
+
+Maintain a tested matrix for Zed, OpenCode, and future ACP clients:
+
+| Capability | Zed | OpenCode | Notes |
+| --- | --- | --- | --- |
+| `fs/read_text_file` | TBD | TBD | method shape and limits |
+| `fs/write_text_file` | TBD | TBD | permission behavior |
+| terminal | TBD | TBD | lifecycle support |
+| MCP servers | TBD | TBD | stdio/http/sse support |
+| images/screenshots | TBD | TBD | input/output content model |
+| browser preview | TBD | TBD | client-provided vs adapter-owned |
+| LSP diagnostics/symbols | TBD | TBD | if exposed through ACP/client extension |
+
+### Protocol conformance and simulation tests
+
+Add a simulator suite that can exercise:
+
+- capability negotiation;
+- JSON-RPC interleaving;
+- permission approval/denial;
+- cancel during tool wait;
+- malformed client responses;
+- duplicate responses;
+- timeout;
+- stream reconnect/load;
+- browser screenshot success/failure;
+- terminal cancellation;
+- MCP tool errors.
+
+These tests should run without a real editor and should produce concise failure diagnostics.
+
+---
+
 ## Open questions
 
 1. Which native Letta conversation stream event represents a tool call in the deployed Letta version?
