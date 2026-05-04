@@ -1,8 +1,8 @@
 use agent_client_protocol::schema::{
-    ContentBlock, ContentChunk, PermissionOption, PermissionOptionKind, ReadTextFileRequest,
-    ReadTextFileResponse, RequestPermissionOutcome, RequestPermissionRequest,
-    RequestPermissionResponse, SessionUpdate, ToolCall, ToolCallContent, ToolCallStatus,
-    ToolCallUpdate, ToolCallUpdateFields, ToolKind,
+    ContentBlock, ContentChunk, PermissionOption, PermissionOptionKind, PromptResponse,
+    ReadTextFileRequest, ReadTextFileResponse, RequestPermissionOutcome, RequestPermissionRequest,
+    RequestPermissionResponse, SessionUpdate, StopReason, ToolCall, ToolCallContent,
+    ToolCallStatus, ToolCallUpdate, ToolCallUpdateFields, ToolKind,
 };
 use anyhow::{anyhow, Context, Result};
 use futures_util::StreamExt;
@@ -1796,8 +1796,16 @@ async fn handle_prompt(
         ));
     }
 
-    let stop_reason = if saw_done { "end_turn" } else { "end_turn" };
-    write_response(response_id, Ok(json!({ "stopReason": stop_reason }))).await?;
+    let stop_reason = if saw_done {
+        StopReason::EndTurn
+    } else {
+        StopReason::EndTurn
+    };
+    write_response(
+        response_id,
+        Ok(serde_json::to_value(PromptResponse::new(stop_reason))?),
+    )
+    .await?;
     Ok(())
 }
 
