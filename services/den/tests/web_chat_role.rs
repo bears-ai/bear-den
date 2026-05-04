@@ -260,11 +260,10 @@ async fn web_chat_send_uses_talk_role_agent_id_for_codepool() {
         .await
         .clone()
         .expect("Codepool request captured");
-    assert_eq!(captured["bear"]["letta_agent_id"], "agent-talk-web");
     assert_eq!(captured["bear"]["role_agent_id"], "agent-talk-web");
+    assert!(captured["bear"].get("letta_agent_id").is_none());
     assert_eq!(captured["bear"]["agent_role"], "talk");
     assert_eq!(captured["bear"]["runtime_family"], "letta_code_harness");
-    assert_ne!(captured["bear"]["letta_agent_id"], "agent-legacy-web");
     assert_eq!(captured["channel"]["family"], "browser_chat");
     assert_eq!(
         captured["message"],

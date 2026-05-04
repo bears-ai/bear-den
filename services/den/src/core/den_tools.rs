@@ -145,7 +145,7 @@ pub fn is_builtin_den_tool(name: &str) -> bool {
 pub struct DenToolInvocationContext {
     pub bear_id: Uuid,
     pub bear_slug: String,
-    pub letta_agent_id: String,
+    pub role_agent_id: String,
     pub user_id: i32,
     pub username: Option<String>,
     pub membership_role: Option<String>,
@@ -289,6 +289,7 @@ async fn list_capabilities_self(
 fn channel_context(context: &DenToolInvocationContext) -> Value {
     json!({
         "bear_id": context.bear_id,
+        "role_agent_id": context.role_agent_id,
         "user_id": context.user_id,
         "conversation_id": context.conversation_id,
         "session_id": context.session_id,

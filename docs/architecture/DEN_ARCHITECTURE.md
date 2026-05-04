@@ -152,13 +152,13 @@ Regenerate **harness deploy artifacts** (e.g. `letta-code.yaml` from the operato
 
 ### Den-managed skills
 
-**Den is the system of record for which [Letta Code / Agent Skills](https://docs.letta.com/letta-code/skills/) each bear may use.** Operators attach skills **per bear** (underlying Letta agent). **Letta Code** **loads and runs** skills from the filesystem layouts it supports; Den does not reimplement the skill runtime.
+**Den is the system of record for which [Letta Code / Agent Skills](https://docs.letta.com/letta-code/skills/) each bear role may use.** Operators attach skills **per bear** and Den projects them to the appropriate role agents. **Letta Code** **loads and runs** skills from the filesystem layouts it supports; Den does not reimplement the skill runtime.
 
 **Responsibilities**
 
 - **Catalog:** Den stores skill metadata (name, source URL or package id, pinned revision, scope: org-wide vs user-uploaded) and optional trust flags.
-- **Attachment:** `(bear_id, skill_id, enabled, order)` (or equivalent) defines the skill set for that bear’s bot.
-- **Materialization:** On change, Den writes or syncs [Agent Skills](https://agentskills.io/)–compatible **directories** (`SKILL.md` + assets) onto paths **Letta Code** reads—e.g. per-agent under `~/.letta/agents/{letta_agent_id}/skills/`, shared org library mapped to **global** skill dirs—**exact layout depends on your Letta Code version**; keep this mapping in deploy docs next to volume mounts.
+- **Attachment:** `(bear_id, skill_id, enabled, order)` plus role applicability (or equivalent) defines the skill set projected to that bear’s role agents.
+- **Materialization:** On change, Den writes or syncs [Agent Skills](https://agentskills.io/)–compatible **directories** (`SKILL.md` + assets) onto paths **Letta Code** reads—e.g. per-role-agent under `~/.letta/agents/{letta_agent_id}/skills/`, shared org library mapped to **global** skill dirs—**exact layout depends on your Letta Code version**; keep this mapping in deploy docs next to volume mounts.
 - **Sharing:** Reuse the same catalog entry across many bears; materialize **copies** per agent dir or use a **shared** directory plus Den policy for who may attach which catalog skill.
 
 **Operator console:** paste GitHub URLs, pick from catalog, preview, enable/disable, reorder. **GitOps:** exported config or CI can drive the same materialization inputs as the UI.
@@ -212,7 +212,7 @@ See [PLAN.md](../planning/PLAN.md) Phase 1 for the phased implementation checkli
 **Contract (conceptual).**
 
 1. **Authorization.** Enforce **user and membership** in **Den** on every invocation (signed server-to-server context from the harness, HMAC, mTLS, or equivalent). Do **not** trust model-supplied user ids for security boundaries.
-2. **Scope.** Bind each call to **`bear_id` / `letta_agent_id`** and, when relevant, **`conversation_id`**; reject cross-bear or out-of-membership use.
+2. **Scope.** Bind each call to **`bear_id` / `role_agent_id`** (the Letta id for the selected role) and, when relevant, **`conversation_id`**; reject cross-bear or out-of-membership use.
 3. **Provisioning.** Den’s registry and materialized config record **which** meta tools each bear has; GitOps and review apply the same as other bear fields. Letta agent / harness wiring reflects that catalog—**without** embedding implementation source in the Letta process.
 4. **Transport.** Exact wire format (HTTP from Letta Code to Den, streaming callbacks, etc.) is defined by **Letta Code + Den** integration work—not by scattering executors in the Letta server. The invariant is: **handlers live in Den**; **Letta Code** mediates the agent tool loop.
 

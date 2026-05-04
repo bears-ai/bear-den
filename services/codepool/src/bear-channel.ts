@@ -34,8 +34,6 @@ export type BearChannelRequest = {
         id?: string;
         slug?: string;
         name?: string;
-        /** Deprecated compatibility field; prefer role_agent_id. */
-        letta_agent_id?: string;
         agent_role?: string;
         role_agent_id?: string;
         runtime_family?: string;
@@ -138,8 +136,7 @@ export function parseBearChannelRequest(
     body: BearChannelRequest,
 ): ParsedBearChannelRequest {
     const conversationId = body.conversation_id?.trim() || "default";
-    const agentId =
-        body.bear?.role_agent_id?.trim() ?? body.bear?.letta_agent_id?.trim();
+    const agentId = body.bear?.role_agent_id?.trim();
     if (!agentId) {
         throw new Error("bear.role_agent_id is required");
     }

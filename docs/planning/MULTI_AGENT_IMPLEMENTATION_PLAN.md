@@ -228,7 +228,7 @@ As of the current Den slice:
 
 ### Implementation note — current web-chat test slice
 
-Before full Phase 2/3 MemFS and skill projection are complete, web chat can be tested against the `talk` role by using `bear_agents(role='talk')` as the authoritative Letta id and falling back to legacy `bears.letta_agent_id` only for pre-migration Bears. This slice intentionally does not require `pair`, `curate`, `work`, or `watch` to be fully provisioned before browser chat works.
+Before full Phase 2/3 MemFS and skill projection are complete, web chat can be tested against the `talk` role by using `bear_agents(role='talk')` as the authoritative Letta id. The retired `bears.letta_agent_id` field is not a runtime fallback. This slice intentionally does not require `pair`, `curate`, `work`, or `watch` to be fully provisioned before browser chat works.
 
 ### Acceptance
 
@@ -236,7 +236,7 @@ Before full Phase 2/3 MemFS and skill projection are complete, web chat can be t
 - A Slack message routes correctly to the talk agent and gets a response.
 - Sending two Slack messages back-to-back to the same Bear produces correctly serialized responses (existing per-agent sequential guarantee holds).
 - A memory edit during a chat turn results in a push to the bare repo's `talk` branch within a few seconds.
-- Codepool receives the talk-role Letta id in the trusted bear payload, with legacy `bears.letta_agent_id` used only as fallback during migration.
+- Codepool receives the talk-role Letta id as `bear.role_agent_id` in the trusted bear payload and does not receive or parse `bear.letta_agent_id`.
 - The push contains only `talk/` paths.
 - A user can request a scheduled task ("check the deploy API every morning") and the agent writes a valid intent file to `talk/tasks/`. The intent file passes schema validation.
 
@@ -426,7 +426,7 @@ Before full Phase 2/3 MemFS and skill projection are complete, web chat can be t
 
 ## Phase 8.5 — Documentation and operator UI: retire implicit 1:1 bear ↔ Letta agent
 
-**Goal:** Every human-facing document, operator template, and user-visible error string reflects that a **bear** is a **logical assistant** (one coherent product identity) backed by **one or more Letta agents** with explicit **roles** (`talk` \| `pair` \| `curate` \| `work` \| `watch` per the [`multi-agent-architecture` ADR](../architecture/adr/multi-agent-architecture.md)). Legacy `bears.letta_agent_id` remains valid only as a **transitional** or **migration** concept until Phase 10 completes; it must not be the only story in UI or docs.
+**Goal:** Every human-facing document, operator template, and user-visible error string reflects that a **bear** is a **logical assistant** (one coherent product identity) backed by **one or more Letta agents** with explicit **roles** (`talk` \| `pair` \| `curate` \| `work` \| `watch` per the [`multi-agent-architecture` ADR](../architecture/adr/multi-agent-architecture.md)). Legacy `bears.letta_agent_id` is retired for active routing and should appear only as historical migration/repair data until the column is dropped.
 
 **Prerequisite:** `bear_agents` (or equivalent) exists and at least the **talk** row is populated for newly provisioned bears (Phases 0–3). Work can **start in parallel with Phase 4+** once that is true.
 
@@ -437,7 +437,7 @@ Before full Phase 2/3 MemFS and skill projection are complete, web chat can be t
 1. **`docs/planning/PLAN.md`** — Revise **Terminology** and any §1–§2 bullets that describe Den as storing a single `bear_id` ↔ `letta_agent_id` map or routing web/Slack to “the” Letta agent without naming **talk** (and ACP → **pair**, etc.).
 2. **`docs/architecture/DEN_ARCHITECTURE.md`** — Harness binding, skills materialization paths, Den meta tools: document **per-role** Letta agent ids and which **surface** uses which role.
 3. **`docs/architecture/ARCHITECTURE_NOTES.md`** — Stack diagram and component tables: one bear → **cluster** of Letta agents where the architecture is live.
-4. **`docs/planning/PHASE1_BOOTSTRAP.md`**, **`PHASE1_DECISIONS.md`** — Public JSON stays **`bear_id`**-centric; internal and harness artifacts document **role → `letta_agent_id`**; clarify any transition where legacy `bears.letta_agent_id` mirrors **talk** only.
+4. **`docs/planning/PHASE1_BOOTSTRAP.md`**, **`PHASE1_DECISIONS.md`** — Public JSON stays **`bear_id`**-centric; internal and harness artifacts document **role → `letta_agent_id`**; clarify that legacy `bears.letta_agent_id` is retired outside historical migrations/repair tooling.
 5. **`docs/planning/DEN_SPECIFIC_TOOLS_PLAN.md`**, **`docs/architecture/BEAR_CHANNEL_AND_ACP.md`**, repo-root **`FAQ.md`** (if present) — JSON examples and narratives: use **talk** (or explicit role) in payloads; ACP sections name **pair**.
 6. **`services/den/migrations/README.md`** — When `bear_agents` lands, document it next to legacy `bears.letta_agent_id` semantics.
 7. **`services/den/docs/`** (e.g. **`concepts-overview.md`**, **`src/web/ROUTES.md`**) — Provisioning and admin flows: no “one agent per bear” without qualification.

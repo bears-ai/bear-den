@@ -64,7 +64,7 @@ Every Den tool invocation is bound to context supplied by the runtime, not by th
 
 - `bear_id`
 - `bear_slug`
-- `letta_agent_id`
+- `role_agent_id`
 - `user_id`
 - `username`
 - `membership_role`
@@ -96,7 +96,7 @@ Request shape:
   "context": {
     "bear_id": "...",
     "bear_slug": "bruno",
-    "letta_agent_id": "agent-...",
+    "role_agent_id": "agent-...",
     "user_id": 123,
     "username": "alice",
     "membership_role": "admin",

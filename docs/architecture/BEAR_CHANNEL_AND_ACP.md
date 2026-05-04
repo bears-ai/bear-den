@@ -130,7 +130,9 @@ The internal request includes trusted context from Den:
     "id": "uuid",
     "slug": "dev",
     "name": "Dev Bear",
-    "letta_agent_id": "agent-abc"
+    "agent_role": "talk",
+    "role_agent_id": "agent-abc",
+    "runtime_family": "letta_code_harness"
   },
   "user": {
     "id": 1,

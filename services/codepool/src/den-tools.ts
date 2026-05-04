@@ -12,7 +12,7 @@ export type DenToolDescriptor = {
 export type DenToolRuntimeContext = {
     bear_id: string;
     bear_slug?: string;
-    letta_agent_id: string;
+    role_agent_id: string;
     user_id: number | string;
     username?: string;
     membership_role?: string | null;
@@ -50,10 +50,7 @@ export function buildDenToolRuntimeContext(
     requestId: string,
 ): DenToolRuntimeContext {
     const bearId = body.bear?.id?.trim() ?? "";
-    const agentId =
-        body.bear?.role_agent_id?.trim() ??
-        body.bear?.letta_agent_id?.trim() ??
-        "";
+    const agentId = body.bear?.role_agent_id?.trim() ?? "";
     const userId = body.user?.id ?? "";
     if (!bearId) throw new Error("bear.id is required for Den tools");
     if (!agentId)
@@ -64,7 +61,7 @@ export function buildDenToolRuntimeContext(
     return {
         bear_id: bearId,
         bear_slug: body.bear?.slug,
-        letta_agent_id: agentId,
+        role_agent_id: agentId,
         user_id: userId,
         username: body.user?.username,
         membership_role: body.user?.membership_role,
