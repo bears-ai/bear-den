@@ -223,11 +223,10 @@ async fn talk_agent_id_for_bear(
     pool: &sqlx::PgPool,
     bear: &Bear,
 ) -> Result<Option<String>, CustomError> {
-    async fn talk_agent_id_for_bear(pool: &sqlx::PgPool, bear: &Bear) -> Result<Option<String>, CustomError> {
-        bears_db::role_agent_id(pool, bear.id, BearAgentRole::Talk)
-            .await
-            .map(|v| v.map(|s| s.trim().to_string()).filter(|s| !s.is_empty()))
-    }
+    bears_db::role_agent_id(pool, bear.id, BearAgentRole::Talk)
+        .await
+        .map(|v| v.map(|s| s.trim().to_string()).filter(|s| !s.is_empty()))
+}
 
 async fn bear_code_token_get(
     Path(slug): Path<String>,

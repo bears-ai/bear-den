@@ -2100,7 +2100,7 @@ async fn handle_tool_request_event(
     send_tool_call_update(session_id, tool_call_id, "pending", "Running local tool").await?;
     let started = std::time::Instant::now();
     let result = match tool_name {
-        "fs.read_text_file" => {
+        "fs_read_text_file" | "fs.read_text_file" => {
             let mut params = event.get("args").cloned().unwrap_or_else(|| json!({}));
             params["sessionId"] = json!(session_id);
             handle_direct_read_text_file(adapter_state, params).await

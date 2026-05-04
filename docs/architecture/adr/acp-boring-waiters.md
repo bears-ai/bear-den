@@ -1,6 +1,8 @@
 # ACP Boring Waiters — Architecture Decision Record
 
-## Status: Accepted
+## Status: Superseded for ACP direct mode
+
+Superseded by the direct Den ⇄ adapter local tool runtime documented in [`../../planning/ACP_DIRECT_LOCAL_TOOL_RUNTIME_PLAN.md`](../../planning/ACP_DIRECT_LOCAL_TOOL_RUNTIME_PLAN.md). This ADR remains historical context for the older Codepool/Letta Code relay design and should not guide new `pair` role ACP implementation.
 
 ## Date: 2026-05-03
 

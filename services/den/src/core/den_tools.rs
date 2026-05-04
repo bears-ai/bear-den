@@ -209,7 +209,6 @@ async fn get_bear_self(
             "slug": bear.slug,
             "name": bear.name,
             "description": bear.description,
-            "letta_agent_id": bear.letta_agent_id,
             "default_model": bear.default_model,
             "letta_agent_type": bear.letta_agent_type,
             "member_count": member_count,

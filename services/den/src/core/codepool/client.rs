@@ -83,6 +83,7 @@ pub trait BearRuntimeClient {
         session_id: &str,
         conversation_id: &str,
         bear: &Bear,
+        role_agent_id: &str,
         user_id: i32,
         username: Option<&str>,
         membership_role: Option<&str>,
@@ -304,6 +305,7 @@ impl CodePoolClient {
         session_id: &str,
         conversation_id: &str,
         bear: &Bear,
+        role_agent_id: &str,
         user_id: i32,
         username: Option<&str>,
         membership_role: Option<&str>,
@@ -315,6 +317,7 @@ impl CodePoolClient {
             session_id,
             conversation_id,
             bear,
+            role_agent_id,
             user_id,
             username,
             membership_role,
@@ -338,6 +341,7 @@ impl CodePoolClient {
         session_id: &str,
         conversation_id: &str,
         bear: &Bear,
+        role_agent_id: &str,
         user_id: i32,
         username: Option<&str>,
         membership_role: Option<&str>,
@@ -357,17 +361,12 @@ impl CodePoolClient {
         }
 
         let agent_role = BearAgentRole::Talk;
-        let agent_id = bear
-            .letta_agent_id
-            .as_deref()
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-            .ok_or_else(|| {
-                CustomError::System(
-                    "This bear is not provisioned in Letta yet (missing talk role agent)."
-                        .to_string(),
-                )
-            })?;
+        let agent_id = role_agent_id.trim();
+        if agent_id.is_empty() {
+            return Err(CustomError::System(
+                "This bear is not provisioned in Letta yet (missing talk role agent).".to_string(),
+            ));
+        }
 
         let body = json!({
             "session_id": session_id,
@@ -527,6 +526,7 @@ impl BearRuntimeClient for CodePoolClient {
         session_id: &str,
         conversation_id: &str,
         bear: &Bear,
+        role_agent_id: &str,
         user_id: i32,
         username: Option<&str>,
         membership_role: Option<&str>,
@@ -539,6 +539,7 @@ impl BearRuntimeClient for CodePoolClient {
             session_id,
             conversation_id,
             bear,
+            role_agent_id,
             user_id,
             username,
             membership_role,

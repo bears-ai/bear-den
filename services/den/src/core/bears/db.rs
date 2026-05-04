@@ -106,7 +106,7 @@ pub async fn update_bear(
     Ok(())
 }
 
-/// `letta_agent_id` stays unset until Letta provisions the agent.
+/// Creates a logical Bear row. Runtime Letta ids live in `bear_agents`.
 pub async fn create_bear(
     pool: &PgPool,
     slug: &str,
@@ -122,9 +122,9 @@ pub async fn create_bear(
         r#"
         INSERT INTO bears (
             slug, name, description, system_prompt, default_model, tools_enabled,
-            letta_agent_type, letta_tool_ids, letta_agent_id
+            letta_agent_type, letta_tool_ids
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NULL)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
         RETURNING id
         "#,
     )
@@ -368,10 +368,6 @@ pub async fn list_letta_agent_ids_in_use(pool: &PgPool) -> Result<Vec<String>, C
     Ok(rows.into_iter().map(|r| r.0).collect())
 }
 
-
-
-
-
 pub async fn ensure_bear_agent_rows(pool: &PgPool, bear_id: Uuid) -> Result<(), CustomError> {
     for role in BearAgentRole::ALL {
         sqlx::query(
@@ -450,8 +446,6 @@ pub async fn role_agent_id(
     .await?;
     Ok(row.and_then(|r| r.0))
 }
-
-
 
 pub async fn mark_bear_agent_provisioning(
     pool: &PgPool,
@@ -689,10 +683,7 @@ pub async fn ensure_default_runtime_plan(
     Ok(())
 }
 
-/// One row per `user_bear` for Letta Code harness YAML.
-///
-/// During migration the talk role is authoritative, with `bears.letta_agent_id` as fallback for
-/// legacy Bears not yet backfilled into `bear_agents`.
+/// One row per `user_bear` for Letta Code harness YAML. The talk role is authoritative.
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct LettaCodeHarnessRow {
     pub username: String,

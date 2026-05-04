@@ -56,8 +56,7 @@ pub async fn register_role_view_if_configured(
     Ok(())
 }
 
-/// When Letta is configured, create role-specific Letta agents and mirror the talk role to
-/// legacy `bears.letta_agent_id`. No-op if Letta disabled.
+/// When Letta is configured, create role-specific Letta agents. No-op if Letta disabled.
 pub async fn provision_bear_if_configured(
     pool: &PgPool,
     letta: &LettaClient,
@@ -396,7 +395,6 @@ mod tests {
             slug: "builder".to_string(),
             name: name.to_string(),
             description: String::new(),
-            letta_agent_id: None,
             default_model: Some("openai/gpt-4o".to_string()),
             tools_enabled: None,
             letta_agent_type: None,

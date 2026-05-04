@@ -8,15 +8,15 @@
 
 ## Context
 
-BEARS exposes Agent Client Protocol (ACP) to coding clients through a local `bears-acp-adapter`. The adapter calls Den's ACP gateway, and Den routes work to Codepool's `bear_channel` runtime.
+BEARS exposes Agent Client Protocol (ACP) to coding clients through a local `bears-acp-adapter`. The adapter calls Den's ACP gateway, and Den routes the `pair` role through the direct Letta conversation API. Earlier ACP designs routed through Codepool `bear_channel`; that is historical context only for the `pair` role.
 
 ACP sessions are protocol/client lifecycle objects. BEARS conversations are canonical Letta/BEARS conversation identities:
 
 - `default` for a bear's main thread;
 - `conv-...` for saved Letta conversations;
-- temporary `new-...` ids until Codepool/Letta resolves them.
+- temporary `new-...` ids until Den/Letta resolves them.
 
-A durable ACP session therefore needs a binding from ACP `sessionId` to Codepool session id and BEARS/Letta conversation id, without treating ACP session rows as the source of truth for chat history.
+A durable ACP session therefore needs a binding from ACP `sessionId` to Den's selected/resolved BEARS/Letta conversation id, without treating ACP session rows as the source of truth for chat history.
 
 ---
 
@@ -30,7 +30,7 @@ Den may persist ACP session rows containing routing and lifecycle metadata, incl
 - user and bear identifiers;
 - ACP client name;
 - absolute local client `cwd`;
-- Codepool session id;
+- Den runtime session id;
 - pending/generated conversation id;
 - resolved `conv-...` id when available;
 - closed/archive timestamps.
@@ -53,11 +53,11 @@ Pagination uses opaque keyset cursors over `(updated_at, id)` in descending orde
 
 `session/resume` restores adapter routing context without replaying history.
 
-`session/load` replays all historical events BEARS can faithfully reconstruct. The current implementation replays user/assistant text messages only. Tool calls/results, reasoning/status chunks, errors, resource/image/audio content, and richer session configuration events are not claimed as reconstructable until Den/Letta/Codepool expose faithful historical event data.
+`session/load` replays all historical events BEARS can faithfully reconstruct. The current implementation replays user/assistant text messages only. Tool calls/results, reasoning/status chunks, errors, resource/image/audio content, and richer session configuration events are not claimed as reconstructable until Den/Letta expose faithful historical event data.
 
 ### Cancellation and close
 
-ACP `session/cancel` is plumbed through adapter -> Den -> Codepool where possible. `session/close` must call the same cancellation path before marking a session closed or archived. Pending ACP client tool calls for a cancelled/closed session are marked cancelled so late duplicate results are not treated as active work.
+ACP `session/cancel` is plumbed through adapter -> Den where possible. `session/close` should cancel active direct ACP tool turns before marking a session closed or archived. Pending ACP client tool calls for a cancelled/closed session are marked cancelled so late duplicate results are not treated as active work.
 
 ### MCP server handling
 

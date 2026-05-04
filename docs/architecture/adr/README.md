@@ -8,7 +8,7 @@ Use ADRs for cross-cutting product and architecture decisions that are expected 
 
 | ADR | Status | Topic |
 |-----|--------|-------|
-| [acp-boring-waiters.md](acp-boring-waiters.md) | Accepted | Codepool-owned process-local ACP client-tool waiters; Den as stateless result proxy |
+| [acp-boring-waiters.md](acp-boring-waiters.md) | Superseded for ACP direct mode | Historical Codepool-owned ACP client-tool waiters; replaced by direct Den ⇄ adapter local tool runtime |
 | [acp-conversation-resolver.md](acp-conversation-resolver.md) | Accepted | Typed ACP conversation/session routing decisions and Letta target boundaries |
 | [acp-session-bindings.md](acp-session-bindings.md) | Accepted | ACP sessions as protocol bindings, cwd/list/load/cancel/MCP/auth semantics |
 | [artifacts-garage.md](artifacts-garage.md) | Proposed | Artifacts bucket, Garage/S3 storage, Cabinet attachment separation, GC policy |

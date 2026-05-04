@@ -244,11 +244,10 @@ async fn bear_detail_response(
 
     let agent_health_rows = bear_agent_health_rows(state, id, letta_configured).await?;
 
-    let talk_agent_id =
-        bears_db::role_agent_id(state.sqlx_pool(), bear.id, BearAgentRole::Talk)
-            .await?
-            .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty());
+    let talk_agent_id = bears_db::role_agent_id(state.sqlx_pool(), bear.id, BearAgentRole::Talk)
+        .await?
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
 
     let (letta_agent_summary, letta_agent_fetch_error): (Option<AgentSummary>, Option<String>) =
         if letta_configured {
@@ -367,7 +366,6 @@ async fn register_memfs_views_action(
         .into_response()),
     }
 }
-
 
 async fn new_view(
     State(state): State<AppState>,

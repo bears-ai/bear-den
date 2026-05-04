@@ -1,8 +1,10 @@
-# ACP client tool relay plan
+# ACP client tool relay plan — historical Codepool design
 
-Status: design-ready plan; not implemented.
+Status: historical / superseded. Do not implement for ACP direct mode.
 
-Owner boundary: Den remains the security, policy, and audit authority. `bears-acp-adapter` remains the local ACP stdio edge process. Codepool remains the private Letta Code runtime owner.
+This document describes the earlier Codepool/Letta Code ACP client-tool relay design. ACP for the `pair` role now uses Den's direct Letta conversation API path and a dedicated Den ⇄ adapter local tool runtime. Use [`ACP_DIRECT_LOCAL_TOOL_RUNTIME_PLAN.md`](ACP_DIRECT_LOCAL_TOOL_RUNTIME_PLAN.md) for active implementation work.
+
+Owner boundary in this historical design: Den remains the security, policy, and audit authority. `bears-acp-adapter` remains the local ACP stdio edge process. Codepool remains the private Letta Code runtime owner.
 
 Related docs:
 

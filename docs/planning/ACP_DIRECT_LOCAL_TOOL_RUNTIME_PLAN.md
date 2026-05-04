@@ -113,7 +113,7 @@ Add:
   "request_id": "den-request-uuid",
   "turn_id": "turn-uuid",
   "tool_call_id": "call-uuid",
-  "tool_name": "fs.read_text_file",
+  "tool_name": "fs_read_text_file",
   "title": "Read file",
   "kind": "read",
   "args": {
@@ -159,7 +159,7 @@ Payload:
 {
   "turn_id": "turn-uuid",
   "request_id": "den-request-uuid",
-  "tool_name": "fs.read_text_file",
+  "tool_name": "fs_read_text_file",
   "status": "ok|error|cancelled|timeout|permission_denied|unsupported",
   "content": "file contents or short result text",
   "structured_content": {},
@@ -246,7 +246,7 @@ Rules:
 
 ## Tool catalog
 
-### 1. `fs.read_text_file`
+### 1. `fs_read_text_file` / ACP client `fs/read_text_file`
 
 ACP client method:
 
@@ -407,7 +407,7 @@ Direct Letta ACP cannot assume Letta will natively pause for external local tool
 5. After adapter returns a tool result, Den posts a follow-up message into the same resolved conversation with structured tool-result context.
 6. Den continues streaming Letta's next response to the adapter.
 
-Acceptance for the first real tool slice requires demonstrating that Letta can reliably request `fs.read_text_file` in a parseable schema. If Letta cannot produce a stable tool-call stream event through the conversation API, build a small Den-side tool intent parser as a temporary controlled bridge only for explicit tool intents, and mark it experimental.
+Acceptance for the first real tool slice requires demonstrating that Letta can reliably request `fs_read_text_file` in a parseable schema. Letta/OpenAI-compatible tool names must match `^[a-zA-Z0-9_-]+$`; Den maps this sanitized Letta tool name to the ACP client method `fs/read_text_file`. If Letta cannot produce a stable tool-call stream event through the conversation API, build a small Den-side tool intent parser as a temporary controlled bridge only for explicit tool intents, and mark it experimental.
 
 ---
 
@@ -462,7 +462,7 @@ Acceptance:
 
 Tasks:
 
-- Define `fs.read_text_file` descriptor and schema.
+- Define `fs_read_text_file` descriptor and schema, mapped by the adapter to ACP client method `fs/read_text_file`.
 - Adapter maps `tool_request` to:
   - `session/update` `tool_call` started;
   - optional `session/request_permission` if requested;
@@ -582,6 +582,226 @@ Add later once names stabilize:
 - Require permission for writes, shell, and high-risk MCP tools.
 - Keep local filesystem credentials and MCP secrets in the adapter/client environment only.
 - Den should store policy/audit metadata, not durable local workspace secrets.
+
+---
+
+## Architecture hardening plan
+
+The current direct ACP file-tool implementation proves the right native Letta direction, but it is still a vertical slice. Before expanding beyond read-only file access, harden these areas.
+
+### Concern 1: `AcpLettaSseStream` owns too many responsibilities
+
+Current issue:
+
+- one stream state machine reads upstream Letta SSE bytes;
+- parses native Letta events;
+- maps events to Den ACP domain events;
+- persists side effects;
+- registers tool turns;
+- waits for adapter tool results;
+- posts Letta tool returns;
+- swaps upstream continuation streams;
+- records diagnostics;
+- handles empty-turn behavior.
+
+This makes failures hard to isolate and makes future tool classes risky to add.
+
+Improvement plan:
+
+1. Extract `NativeLettaEventMapper` for JSON → `AcpGatewayEvent`.
+2. Extract `AcpAdapterEventSerializer` for `AcpGatewayEvent` → Den/adapter SSE JSON.
+3. Extract `AcpToolTurnCoordinator` for live tool turn registration, result delivery, timeout, duplicate/stale result handling, and cleanup.
+4. Extract `AcpTurnRunner` for the high-level loop: Letta stream → adapter events → tool result → Letta tool return → continuation stream.
+5. Keep `AcpLettaSseStream` as a thin `Stream` adapter around `AcpTurnRunner` output.
+
+Acceptance:
+
+- each component has focused unit tests;
+- stream code no longer contains tool registry or Letta continuation details;
+- adding a second tool does not require editing the raw SSE parser state machine.
+
+### Concern 2: active tool turns use a process-global registry
+
+Current issue:
+
+- the live turn registry is a `OnceLock<Arc<Mutex<HashMap<...>>>>`;
+- it is process-local and has no TTL cleanup;
+- it is not tied to request/session lifecycle;
+- stale entries can remain if a stream disconnects mid-tool;
+- tests have to share global state.
+
+Improvement plan:
+
+1. Move active tool turn state into `ApiState`.
+2. Add explicit cleanup on:
+   - stream end;
+   - stream error;
+   - session cancel;
+   - session close;
+   - tool result delivery;
+   - timeout.
+3. Add result reasons:
+   - `delivered`;
+   - `turn_missing`;
+   - `already_settled`;
+   - `stale_turn`;
+   - `timed_out`;
+   - `cancelled`.
+4. Add a bounded recently-settled cache for duplicate/late result diagnostics.
+5. Add metrics for live turns, settled turns, timeouts, and stale results.
+
+Acceptance:
+
+- no live tool turn remains after stream close/cancel;
+- duplicate and late results are distinguished from unknown results;
+- tests can create isolated coordinator instances.
+
+### Concern 3: adapter file reads are adapter-local, not normal ACP client filesystem calls
+
+Current issue:
+
+- `bears/read_text_file` reads the local OS filesystem directly inside the adapter;
+- this bypasses editor/client file virtualization, remote workspace mapping, and client permission behavior;
+- it is useful for a local vertical slice but not ideal ACP fidelity.
+
+Target design:
+
+```text
+Den tool_request -> adapter -> ACP client fs/read_text_file -> adapter -> Den tool result
+```
+
+Improvement plan:
+
+1. Implement adapter JSON-RPC request waiters for client responses.
+2. For read file, prefer standard ACP method `fs/read_text_file` when `clientCapabilities.fs.readTextFile` is true.
+3. Keep adapter-local reads only as an explicit fallback mode for clients/environments that do not expose file methods.
+4. Add per-client compatibility tests for Zed/OpenCode method shapes.
+5. Make fallback use visible in logs and diagnostics.
+
+Acceptance:
+
+- healthy Zed/OpenCode file reads appear as normal ACP client `fs/read_text_file` calls;
+- adapter-local read fallback is opt-in or clearly diagnosed;
+- remote/devcontainer workspaces can work through client path mapping.
+
+### Concern 4: tool schemas and statuses are still loosely typed
+
+Current issue:
+
+- HTTP payloads and internal state use flexible JSON in several places;
+- tool name, status, args, diagnostics, and result content are not represented by focused Rust types;
+- future tools will increase shape drift risk.
+
+Improvement plan:
+
+1. Introduce typed enums/structs:
+   - `AcpToolName`;
+   - `AcpToolStatus`;
+   - `AcpToolRequest`;
+   - `AcpToolResult`;
+   - `AcpToolDiagnostic`;
+   - per-tool args/result structs.
+2. Validate at Den boundary before inserting into live turn state.
+3. Validate again in adapter before invoking local/client methods.
+4. Keep raw JSON only at HTTP/SSE/JSON-RPC edges.
+
+Acceptance:
+
+- malformed tool args produce `invalid_request` with component and call id;
+- unsupported tools produce `unsupported` rather than parser fall-through;
+- tests cover every status conversion to Letta `success`/`error`.
+
+### Concern 5: Letta stream tool-call parsing is currently defensive and under-tested
+
+Current issue:
+
+- parser accepts several possible field locations (`tool_name`, `name`, `args`, `arguments`, `id`, `tool_call_id`);
+- docs indicate tool calls may be nested under `tool_call` or `tool_calls`;
+- actual deployed Letta stream shape should be captured and tested.
+
+Improvement plan:
+
+1. Add parser support for documented nested shapes:
+   - `tool_call.name`;
+   - `tool_call.arguments`;
+   - `tool_call.tool_call_id`;
+   - first supported entry in `tool_calls[]`.
+2. If `arguments` is a JSON string, parse it as JSON object.
+3. Add unit fixtures copied from real Letta SSE samples, redacted where needed.
+4. Add unknown tool-call-shape diagnostics with safe truncated samples.
+
+Acceptance:
+
+- deployed Letta `tool_call_message` shape is covered by a fixture;
+- unknown tool-call shapes produce visible diagnostics;
+- no silent empty turn if Letta emits a tool-call-like message Den cannot parse.
+
+### Concern 6: tool waits need explicit timeout and cancellation
+
+Current issue:
+
+- the stream waits on a one-shot channel for the adapter result;
+- if adapter/client never returns, the prompt can hang until HTTP/client timeout.
+
+Improvement plan:
+
+1. Add per-tool timeout policy, initially read file ≤ 30 seconds.
+2. On timeout, emit an adapter-visible error and send a Letta tool return with `status=error` if safe.
+3. Cancel active tool turns on session cancel/close.
+4. Adapter should also apply client-method timeouts and return `timeout` to Den.
+
+Acceptance:
+
+- hung adapter/client file reads produce `timeout` diagnostics;
+- Den and adapter logs name the timed-out hop;
+- session cancel resolves active tool waiters promptly.
+
+### Concern 7: Den policy is not explicit enough yet
+
+Current issue:
+
+- adapter enforces workspace root containment;
+- Den currently advertises the tool but does not make a complete policy decision per request;
+- future write/shell/browser/MCP tools need Den-side policy and audit before execution.
+
+Improvement plan:
+
+1. Add a Den policy decision object to every `tool_request`:
+   - allowed roots;
+   - max bytes/lines/results;
+   - approval requirement;
+   - sensitive path behavior;
+   - user role and token-scope basis.
+2. Adapter enforces Den policy plus local/client capability checks.
+3. Log policy decision metadata without sensitive contents.
+4. Require `acp:tools` for tool-enabled prompts/results once token UI is updated.
+
+Acceptance:
+
+- Den logs explain why a tool was allowed/denied;
+- adapter rejects requests outside Den-provided policy even if local filesystem permits them;
+- write/shell tools cannot be enabled without policy objects.
+
+### Concern 8: token scopes and UI need alignment
+
+Current issue:
+
+- chat works with `acp:chat`;
+- tool-result authorization path currently relies on the same ACP token authentication;
+- long-term Code tokens should make tool brokerage explicit.
+
+Improvement plan:
+
+1. Update Code-token creation to include `acp:chat` and `acp:tools` for new tool-enabled tokens.
+2. For legacy `acp:chat`-only tokens, keep chat working but omit local tool descriptors.
+3. Surface Code-token capabilities in token listing UI.
+4. Log `acp_tools_scope_missing` when tools are filtered out.
+
+Acceptance:
+
+- users can audit which tokens can broker local tools;
+- missing tool scope degrades to chat-only with clear diagnostics;
+- tool-result endpoint requires `acp:tools` before write/shell/MCP phases ship.
 
 ---
 

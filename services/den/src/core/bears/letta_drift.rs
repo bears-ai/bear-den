@@ -159,15 +159,6 @@ pub fn compute_letta_drift_with_expected_tool_ids(
     raw_agent_json: Option<&Value>,
     expected_tool_ids: Option<&[String]>,
 ) -> Option<LettaDriftFlags> {
-    if bear
-        .letta_agent_id
-        .as_deref()
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .is_none()
-    {
-        return None;
-    }
     let summary = summary?;
     let diagnostics = diagnostics?;
 
@@ -229,20 +220,9 @@ mod tests {
             runtime_plan: None,
             memfs_repo_path: None,
             provisioning_version: 1,
-            letta_agent_id: Some("agent-1".into()),
             created_at: OffsetDateTime::UNIX_EPOCH,
             updated_at: OffsetDateTime::UNIX_EPOCH,
         }
-    }
-
-    #[test]
-    fn drift_none_when_no_agent() {
-        let mut b = sample_bear();
-        b.letta_agent_id = None;
-        let v = json!({"id": "agent-1", "system": "hello", "model": "gpt-4o", "agent_type": "memgpt_agent", "tools": [{"id": "t1"}], "blocks": []});
-        let s = AgentSummary::from_letta_agent_state(&v);
-        let d = LettaAgentDiagnostics::from_agent_json(&v);
-        assert!(compute_letta_drift(&b, Some(&s), Some(&d), Some(&v)).is_none());
     }
 
     #[test]

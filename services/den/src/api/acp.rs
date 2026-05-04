@@ -604,8 +604,8 @@ fn acp_direct_tool_prompt_context(
         concat!(
             "\n\n<system-reminder>",
             "BEARS ACP direct local file reading is available for this turn. ",
-            "If you need to read a workspace file, ask the ACP client to call JSON-RPC method `bears/read_text_file` ",
-            "with params {{\"sessionId\":\"{session_id}\",\"path\":\"/absolute/path\",\"line\":1,\"limit\":400}}. ",
+            "If you need to read a workspace file, call client tool `fs_read_text_file`; Den will route it to the local ACP adapter method `bears/read_text_file`. ",
+            "Use params {{\"path\":\"/absolute/path\",\"line\":1,\"limit\":400}}. Current ACP session id is `{session_id}`. ",
             "Use absolute paths under these workspace roots: {roots}. ",
             "Do not guess file contents; request the file read and use the returned content. ",
             "</system-reminder>"
@@ -1467,7 +1467,7 @@ async fn prompt_inner(
             Some(&pair_agent_id),
             &prompt_with_tool_context,
             Some(serde_json::json!([{
-                "name": "fs.read_text_file",
+                "name": "fs_read_text_file",
                 "description": "Read a UTF-8 text file from the user's local ACP workspace. Use this when you need file contents. Only absolute paths under the active workspace are allowed.",
                 "parameters": {
                     "type": "object",
@@ -1718,13 +1718,13 @@ fn native_letta_tool_request_event(
         .and_then(|v| v.as_str())?;
     let normalized_tool = match tool_name {
         "bears/read_text_file" | "fs.read_text_file" | "fs_read_text_file" | "read_text_file" => {
-            "fs.read_text_file"
+            "fs_read_text_file"
         }
         _ => {
             return Some(AcpGatewayEvent::Error {
                 message: format!("Letta requested unsupported ACP local tool: {tool_name}"),
                 detail: Some(
-                    "Only fs.read_text_file is wired for the current ACP local tool slice."
+                    "Only fs_read_text_file is wired for the current ACP local tool slice."
                         .to_string(),
                 ),
                 error_type: Some("unsupported_tool".to_string()),
@@ -2237,14 +2237,15 @@ impl Stream for AcpLettaSseStream {
                                 .as_deref()
                                 .unwrap_or("tool")
                                 .to_string();
-                            this.pending
-                                .push_back(acp_event_to_adapter_sse(AcpGatewayEvent::StatusText {
-                                text: format!(
+                            this.pending.push_back(acp_event_to_adapter_sse(
+                                AcpGatewayEvent::StatusText {
+                                    text: format!(
                                     "Local tool {tool_name} completed with status {} ({} bytes)",
                                     tool_result.status,
                                     tool_result.content.as_deref().map(str::len).unwrap_or(0),
                                 ),
-                            }));
+                                },
+                            ));
                             let letta = this.letta.clone();
                             let upstream_target = this.upstream_target.clone();
                             let pair_agent_id = this.pair_agent_id.clone();
