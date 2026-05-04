@@ -47,8 +47,16 @@ A problematic view health response should include enough information to decide r
   "state": "quarantined",
   "canonical_tip": "abc123",
   "view_tip": "def456",
+  "merge_base": "abc123",
+  "view_ahead_by": 1,
+  "canonical_ahead_by": 0,
+  "drift_count": 1,
+  "last_successful_forward_at": 1777875900.456,
+  "last_reconciled_at": 1777876000.123,
+  "last_reconcile_status": "quarantined",
   "quarantined": true,
-  "diagnostic": "canonical would reject role talk path core/nope.md"
+  "diagnostic": "canonical would reject role talk path core/nope.md",
+  "recommended_action": "Inspect diagnostic, then run reconcile or an operator override."
 }
 ```
 
@@ -59,6 +67,14 @@ Before using override endpoints, try normal reconciliation:
 ```text
 POST /v1/management/views/{agent_id}/reconcile
 ```
+
+To run reconciliation for all registered views immediately:
+
+```text
+POST /v1/management/views/reconcile-all
+```
+
+The sidecar also runs scheduled reconciliation when `MEMFS_RECONCILE_INTERVAL_SECONDS` is greater than `0` (default: `60`). Set it to `0` to disable the loop for debugging.
 
 Use this when the view may simply be behind canonical, ahead with acceptable commits, or missing/corrupt but canonical is healthy. Reconcile is idempotent.
 
