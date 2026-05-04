@@ -17,6 +17,7 @@ Use ADRs for cross-cutting product and architecture decisions that are expected 
 | [dynamic-skills-subagents.md](dynamic-skills-subagents.md) | Proposed | Dynamic skills, reflection subagents, bear-authored capability growth |
 | [memfs-sidecar-repo-views.md](memfs-sidecar-repo-views.md) | Accepted | Canonical Bear MemFS repo plus per-agent sidecar repo views |
 | [multi-user-memory.md](multi-user-memory.md) | Proposed | Multi-user memory model and Letta-native memory visibility |
+| [provider-safe-tool-naming.md](provider-safe-tool-naming.md) | Accepted | Provider-safe tool names with scoped canonical BEARS tool identities |
 | [routines-automation.md](routines-automation.md) | Proposed | Den-managed routines, scheduling, output handling, learning constraints |
 
 ## Naming

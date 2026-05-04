@@ -9,6 +9,7 @@ Related docs:
 - [`../architecture/BEAR_CHANNEL_AND_ACP.md`](../architecture/BEAR_CHANNEL_AND_ACP.md)
 - [`../architecture/adr/acp-conversation-resolver.md`](../architecture/adr/acp-conversation-resolver.md)
 - [`../architecture/adr/acp-session-bindings.md`](../architecture/adr/acp-session-bindings.md)
+- [`../architecture/adr/provider-safe-tool-naming.md`](../architecture/adr/provider-safe-tool-naming.md)
 - [`ACP_CLIENT_TOOL_RELAY_PLAN.md`](ACP_CLIENT_TOOL_RELAY_PLAN.md) — historical Codepool/Letta Code relay plan; do not use for the direct ACP runtime.
 - [`ACP_TOOL_RELIABILITY_PLAN.md`](ACP_TOOL_RELIABILITY_PLAN.md) — historical reliability work for the Codepool waiter model; reuse diagnostics lessons, not the architecture.
 
