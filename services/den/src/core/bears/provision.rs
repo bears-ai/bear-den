@@ -1,5 +1,8 @@
 //! Create/update Letta agents after Den bear rows exist.
 
+use std::sync::OnceLock;
+
+use regex::Regex;
 use serde_json::json;
 use sqlx::PgPool;
 use uuid::Uuid;
@@ -248,7 +251,7 @@ async fn create_role_agent(
         None
     };
 
-    let name = format!("{} ({})", bear.name, role.as_str());
+    let name = role_agent_name(bear, role);
     let prompt = render_role_prompt(bear, role);
     let tags = role.tags_for_bear(bear.id);
 
@@ -263,6 +266,41 @@ async fn create_role_agent(
             &tags,
         )
         .await
+}
+
+pub(crate) fn role_agent_name(bear: &Bear, role: BearAgentRole) -> String {
+    // Letta validates agent names using a filesystem-safe allow-list. Keep the name readable
+    // while stripping punctuation that can fail export/memfs paths (notably parentheses).
+    let base = sanitize_letta_agent_name(&bear.name);
+    sanitize_letta_agent_name(&format!("{base} - {}", role.as_str()))
+}
+
+fn sanitize_letta_agent_name(name: &str) -> String {
+    static UNSAFE_CHARS: OnceLock<Regex> = OnceLock::new();
+    static WHITESPACE: OnceLock<Regex> = OnceLock::new();
+    static HYPHENS: OnceLock<Regex> = OnceLock::new();
+
+    let unsafe_chars = UNSAFE_CHARS
+        .get_or_init(|| Regex::new(r#"[^\p{L}\p{N} _\-' ]+"#).expect("valid Letta name sanitizer regex"));
+    let whitespace =
+        WHITESPACE.get_or_init(|| Regex::new(r#"\s+"#).expect("valid whitespace regex"));
+    let hyphens =
+        HYPHENS.get_or_init(|| Regex::new(r#"\s*-+\s*"#).expect("valid separator regex"));
+
+    let apostrophe_normalized = name.replace(['’', '‘', '`', '´'], "'");
+    let cleaned = unsafe_chars.replace_all(&apostrophe_normalized, " ");
+    let cleaned = whitespace.replace_all(cleaned.trim(), " ");
+    let cleaned = hyphens.replace_all(&cleaned, " - ");
+    let cleaned = whitespace.replace_all(cleaned.trim(), " ");
+    let cleaned = cleaned
+        .trim_matches(|c: char| c == '-' || c == '_' || c == '\'')
+        .trim();
+
+    if cleaned.is_empty() {
+        "Bear".to_string()
+    } else {
+        cleaned.to_string()
+    }
 }
 
 pub(crate) fn desired_role_tool_ids(bear: &Bear, role: BearAgentRole) -> Vec<String> {
@@ -319,4 +357,59 @@ pub(crate) fn role_config_hash(bear: &Bear, role: BearAgentRole) -> serde_json::
             "manifest_projection": "pending"
         }
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sqlx::types::Json;
+    use time::OffsetDateTime;
+
+    fn test_bear(name: &str) -> Bear {
+        Bear {
+            id: Uuid::nil(),
+            slug: "builder".to_string(),
+            name: name.to_string(),
+            description: String::new(),
+            letta_agent_id: None,
+            default_model: Some("openai/gpt-4o".to_string()),
+            tools_enabled: None,
+            letta_agent_type: None,
+            letta_tool_ids: Json(Vec::new()),
+            runtime_plan: None,
+            memfs_repo_path: None,
+            provisioning_version: 1,
+            system_prompt: String::new(),
+            created_at: OffsetDateTime::UNIX_EPOCH,
+            updated_at: OffsetDateTime::UNIX_EPOCH,
+        }
+    }
+
+    #[test]
+    fn role_agent_name_uses_letta_safe_role_suffix() {
+        let bear = test_bear("Builder Bear");
+        assert_eq!(role_agent_name(&bear, BearAgentRole::Pair), "Builder Bear - pair");
+    }
+
+    #[test]
+    fn role_agent_name_sanitizes_filesystem_unsafe_characters() {
+        let bear = test_bear("Builder/Bear: Alpha (v2) \"ops\"?");
+        let name = role_agent_name(&bear, BearAgentRole::Work);
+        assert_eq!(name, "Builder Bear Alpha v2 ops - work");
+        assert!(name
+            .chars()
+            .all(|c| c.is_alphanumeric() || matches!(c, ' ' | '-' | '_' | '\'')));
+    }
+
+    #[test]
+    fn role_agent_name_keeps_unicode_letters_and_normalizes_apostrophes() {
+        let bear = test_bear("Zoë’s 建築_Bear");
+        assert_eq!(role_agent_name(&bear, BearAgentRole::Talk), "Zoë's 建築_Bear - talk");
+    }
+
+    #[test]
+    fn role_agent_name_falls_back_when_base_name_has_no_safe_characters() {
+        let bear = test_bear("()/?*");
+        assert_eq!(role_agent_name(&bear, BearAgentRole::Curate), "Bear - curate");
+    }
 }

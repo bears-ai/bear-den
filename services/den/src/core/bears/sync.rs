@@ -9,7 +9,7 @@ use crate::core::{
     bears::{
         db as bears_db,
         model::{Bear, BearAgent, BearAgentRole},
-        provision::{desired_role_tool_ids, render_role_prompt, role_config_hash},
+        provision::{desired_role_tool_ids, render_role_prompt, role_agent_name, role_config_hash},
         runtime_plan::default_runtime_plan,
     },
     bifrost::BifrostClient,
@@ -146,7 +146,7 @@ async fn sync_one_role(
     };
 
     let prompt = render_role_prompt(bear, role);
-    let role_name = format!("{} ({})", bear.name, role.as_str());
+    let role_name = role_agent_name(bear, role);
 
     if let Err(err) = letta
         .patch_agent(
