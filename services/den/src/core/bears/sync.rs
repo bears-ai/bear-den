@@ -9,7 +9,7 @@ use crate::core::{
     bears::{
         db as bears_db,
         model::{Bear, BearAgent, BearAgentRole},
-        provision::{render_role_prompt, role_config_hash},
+        provision::{desired_role_tool_ids, render_role_prompt, role_config_hash},
         runtime_plan::default_runtime_plan,
     },
     bifrost::BifrostClient,
@@ -110,7 +110,8 @@ async fn sync_one_role(
         .filter(|s| !s.is_empty())
         .unwrap_or("letta_v1_agent");
 
-    let tool_ids = match letta.filtered_tool_ids(&bear.letta_tool_ids.0).await {
+    let desired_tool_ids = desired_role_tool_ids(bear, role);
+    let tool_ids = match letta.filtered_tool_ids(&desired_tool_ids).await {
         Ok(ids) => ids,
         Err(err) => {
             let msg = format!("tool roster resolution failed before patching Letta: {err}");

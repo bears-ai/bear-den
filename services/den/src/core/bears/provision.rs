@@ -84,6 +84,29 @@ pub async fn provision_missing_bear_roles(
     Ok(provisioned)
 }
 
+pub async fn reconcile_bear_if_configured(
+    pool: &PgPool,
+    letta: &LettaClient,
+    bifrost: &BifrostClient,
+    bear_id: Uuid,
+) -> Result<crate::core::bears::sync::BearSyncSummary, CustomError> {
+    if !letta.is_enabled() {
+        return Ok(crate::core::bears::sync::BearSyncSummary {
+            bear_id,
+            outcomes: BearAgentRole::ALL
+                .iter()
+                .map(|role| crate::core::bears::sync::BearRoleSyncOutcome {
+                    role: role.as_str().to_string(),
+                    letta_agent_id: None,
+                    status: "skipped_letta_disabled".to_string(),
+                    message: Some("Letta is not configured (set LETTA_BASE_URL).".to_string()),
+                })
+                .collect(),
+        });
+    }
+    crate::core::bears::sync::sync_all_bear_roles_to_letta(pool, letta, bifrost, bear_id).await
+}
+
 async fn provision_bear_role(
     pool: &PgPool,
     letta: &LettaClient,
@@ -92,15 +115,33 @@ async fn provision_bear_role(
     role: BearAgentRole,
 ) -> Result<(), CustomError> {
     let existing = bears_db::get_bear_agent(pool, bear.id, role).await?;
-    if existing
-        .as_ref()
-        .and_then(|row| row.letta_agent_id.as_deref())
-        .is_some_and(|id| !id.trim().is_empty())
-        && existing
-            .as_ref()
-            .is_some_and(|row| row.last_provisioned_version >= bear.provisioning_version)
-    {
-        return Ok(());
+    if let Some(existing) = existing.as_ref() {
+        if existing
+            .letta_agent_id
+            .as_deref()
+            .is_some_and(|id| !id.trim().is_empty())
+        {
+            let current_hash = role_config_hash(bear, role);
+            let stored_hash = existing.config_hash.as_ref().map(|j| j.as_ref());
+            if existing.last_provisioned_version >= bear.provisioning_version
+                && stored_hash == Some(&current_hash)
+            {
+                return Ok(());
+            }
+
+            // Existing role agents are reconciled via PATCH rather than replaced.
+            let summary = crate::core::bears::sync::sync_all_bear_roles_to_letta(
+                pool,
+                letta,
+                bifrost,
+                bear.id,
+            )
+            .await?;
+            if let Some(message) = summary.diagnostic_message() {
+                return Err(CustomError::System(message));
+            }
+            return Ok(());
+        }
     }
 
     bears_db::mark_bear_agent_provisioning(pool, bear.id, role).await?;
@@ -154,7 +195,8 @@ async fn create_role_agent(
         .filter(|s| !s.is_empty())
         .unwrap_or("letta_v1_agent");
 
-    let tool_ids = letta.filtered_tool_ids(&bear.letta_tool_ids.0).await?;
+    let desired_tool_ids = desired_role_tool_ids(bear, role);
+    let tool_ids = letta.filtered_tool_ids(&desired_tool_ids).await?;
     let context_window = if bifrost.is_enabled() {
         bifrost.get_model(model).await?.map(|m| m.context_window)
     } else {
@@ -176,6 +218,17 @@ async fn create_role_agent(
             &tags,
         )
         .await
+}
+
+pub(crate) fn desired_role_tool_ids(bear: &Bear, role: BearAgentRole) -> Vec<String> {
+    // Until explicit per-role tool roster configuration lands, be conservative:
+    // harness-backed roles keep the operator-selected Letta tools, while API-direct roles receive
+    // no broad operator-selected harness tools. Den/ACP tools are exposed through their own
+    // controlled paths rather than by attaching every legacy Letta tool to every role.
+    match role {
+        BearAgentRole::Talk | BearAgentRole::Work => bear.letta_tool_ids.0.clone(),
+        BearAgentRole::Pair | BearAgentRole::Curate | BearAgentRole::Watch => Vec::new(),
+    }
 }
 
 pub(crate) fn render_role_prompt(bear: &Bear, role: BearAgentRole) -> String {
@@ -215,7 +268,7 @@ pub(crate) fn role_config_hash(bear: &Bear, role: BearAgentRole) -> serde_json::
         "role": role.as_str(),
         "runtime_family": role.runtime_family(),
         "bear_provisioning_version": bear.provisioning_version,
-        "tool_ids": bear.letta_tool_ids.0,
+        "tool_ids": desired_role_tool_ids(bear, role),
         "prompt_strategy": "base_prompt_plus_role_suffix_v1",
         "skills": {
             "manifest_projection": "pending"
