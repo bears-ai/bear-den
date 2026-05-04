@@ -371,6 +371,18 @@ fn is_valid_pending_acp_conversation_id(conversation_id: &str) -> bool {
         && normalize_acp_conversation_id(Some(conversation_id)).is_ok()
 }
 
+fn letta_conversation_target<'a>(conversation_id: &'a str, agent_id: &'a str) -> &'a str {
+    if conversation_id.starts_with("new-") {
+        // `new-*` IDs are BEARS/ACP-local pending identifiers. Letta validates the path
+        // parameter strictly (`default`, `conv-*`, or `agent-*`), so create/resume the
+        // pending thread through the agent target and persist the real `conv-*` once the
+        // stream emits `conversation_resolved`.
+        agent_id
+    } else {
+        conversation_id
+    }
+}
+
 fn normalize_acp_conversation_id(raw: Option<&str>) -> Result<String, CustomError> {
     let s = raw
         .map(str::trim)
@@ -1095,9 +1107,7 @@ async fn prompt_inner(
         existing_session
             .as_ref()
             .and_then(|s| s.resolved_conversation_id.clone())
-    } else if conversation_id == "default" || conversation_id.starts_with("new-") {
-        // API-direct Letta streaming does not currently emit a separate `conversation_resolved`
-        // event. Keep the session usable by treating the selected conversation as resolved.
+    } else if conversation_id == "default" {
         Some(conversation_id.clone())
     } else {
         None
@@ -1125,6 +1135,7 @@ async fn prompt_inner(
             err.to_string(),
         )
     })?;
+    let letta_conversation_id = letta_conversation_target(&conversation_id, &pair_agent_id);
     tracing::info!(
         %request_id,
         acp_session_id = %session_id,
@@ -1138,11 +1149,12 @@ async fn prompt_inner(
         conversation_id = %conversation_id,
         conversation_selection_source = %conversation_selection_source,
         resolved_conversation_id = resolved_conversation_id.as_deref(),
+        letta_conversation_id = %letta_conversation_id,
         "ACP gateway routing prompt to pair role via Letta API"
     );
     let upstream = match state
         .letta
-        .post_conversation_messages_streaming(&conversation_id, Some(&pair_agent_id), prompt)
+        .post_conversation_messages_streaming(letta_conversation_id, Some(&pair_agent_id), prompt)
         .await
     {
         Ok(upstream) => upstream,
@@ -1570,6 +1582,17 @@ data: "hello"}"#;
         assert!(id.starts_with("new-acp-acp_adapter-"));
         assert_eq!(id.len(), 42);
         assert!(is_valid_pending_acp_conversation_id(&id));
+    }
+
+    #[test]
+    fn maps_pending_acp_conversation_ids_to_letta_agent_target() {
+        let agent_id = "agent-12345678-1234-4567-89ab-123456789abc";
+        assert_eq!(letta_conversation_target("new-acp-zed-abc123", agent_id), agent_id);
+        assert_eq!(
+            letta_conversation_target("conv-12345678-1234-4567-89ab-123456789abc", agent_id),
+            "conv-12345678-1234-4567-89ab-123456789abc"
+        );
+        assert_eq!(letta_conversation_target("default", agent_id), "default");
     }
 
     #[test]

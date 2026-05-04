@@ -172,7 +172,10 @@ async fn create_test_user_bear_with_pair(
     )
     .await
     .expect("create test bear");
-    bears_db::set_letta_agent_id(pool, bear_id, "agent-acp-talk-test")
+    sqlx::query("UPDATE bears SET letta_agent_id = $2, updated_at = NOW() WHERE id = $1")
+        .bind(bear_id)
+        .bind("agent-acp-talk-test")
+        .execute(pool)
         .await
         .expect("set legacy talk agent id");
     if provision_pair {
@@ -406,10 +409,7 @@ async fn acp_prompt_treats_legacy_default_conversation_id_as_omitted() {
         .await
         .clone()
         .expect("Letta request captured");
-    assert_eq!(
-        captured["conversation_id"],
-        "new-acp-zed-session-default-legacy"
-    );
+    assert_eq!(captured["conversation_id"], "agent-acp-pair-test");
 }
 
 #[tokio::test]
@@ -452,7 +452,7 @@ async fn acp_prompt_reuses_resolved_conversation_after_legacy_default_id() {
         .await
         .clone()
         .expect("Letta request captured");
-    assert_eq!(captured["conversation_id"], "new-acp-zed-session-reuse-resolved");
+    assert_eq!(captured["conversation_id"], "conv-fake-resolved123");
 }
 
 #[tokio::test]
@@ -525,7 +525,7 @@ async fn acp_prompt_streams_to_pair_agent_and_maps_sse() {
         .clone()
         .expect("Letta request captured");
     assert!(captured.get("session_id").is_none());
-    assert_eq!(captured["conversation_id"], "new-acp-zed-session-success");
+    assert_eq!(captured["conversation_id"], "agent-acp-pair-test");
     assert_eq!(captured["agent_id"], "agent-acp-pair-test");
     assert_eq!(captured["messages"][0]["content"], "hello bear");
     assert_ne!(captured["agent_id"], "agent-acp-talk-test");
