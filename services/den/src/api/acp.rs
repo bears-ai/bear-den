@@ -2485,6 +2485,10 @@ impl Stream for AcpLettaSseStream {
                         .as_deref()
                         .unwrap_or("tool")
                         .to_string();
+                    let tool_call_id = tool_result
+                        .tool_call_id
+                        .clone()
+                        .unwrap_or_else(|| tool_name.clone());
                     let tool_return = tool_result.content.clone().unwrap_or_default();
                     let status = tool_result.status.clone();
                     let approval_request_id = tool_result.approval_request_id.clone();
@@ -2494,7 +2498,7 @@ impl Stream for AcpLettaSseStream {
                                 .post_conversation_tool_returns_streaming(
                                     &upstream_target,
                                     Some(&pair_agent_id),
-                                    &tool_name,
+                                    &tool_call_id,
                                     approval_request_id.as_deref(),
                                     &status,
                                     &tool_return,
