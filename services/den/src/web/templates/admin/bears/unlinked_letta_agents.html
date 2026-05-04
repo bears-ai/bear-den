@@ -1,34 +1,42 @@
-{% extends "admin/base.html" %}
-
-{% block title %}Letta agents without a bear{% endblock %}
-
-{% block admin_content %}
+{% extends "admin/base.html" %} {% block title %}Letta agents without a bear{%
+endblock %} {% block admin_content %}
 <div class="box">
-<h3>Letta agents not linked to a bear role</h3>
-<p>These Letta agent ids are not referenced by Den’s role registry (<code>bear_agents.letta_agent_id</code>) or the legacy talk mirror. The legacy attach flow has been retired; create/provision Bears through Den so role agents are registered explicitly.</p>
-{% if letta_list_error %}
-<p class="form-errors">{{ letta_list_error }}</p>
-{% endif %}
-{% if letta_configured and not letta_list_error and (unlinked_rows | length == 0) %}
-<p>Every agent returned by Letta is already linked to a bear (or Letta returned an empty list).</p>
-{% elif letta_configured and not letta_list_error %}
-<table>
-  <thead>
-    <tr>
-      <th>Name</th>
-      <th>Letta agent id</th>
-    </tr>
-  </thead>
-  <tbody>
-  {% for row in unlinked_rows %}
-    <tr>
-      <td>{{ row.display_name | e }}</td>
-      <td><code>{{ row.agent_id | e }}</code></td>
-    </tr>
-  {% endfor %}
-  </tbody>
-</table>
-{% endif %}
-<p><a href="/admin/bears/">All bears</a> &middot; <a href="/admin/bears/new">New bear (blank)</a></p>
+    <h3>Letta agents not linked to a bear role</h3>
+    <p>
+        These Letta agent ids are not referenced by Den’s role registry
+        (<code>bear_agents.letta_agent_id</code>). The legacy attach flow has
+        been retired; create/provision Bears through Den so role agents are
+        registered explicitly.
+    </p>
+    {% if letta_list_error %}
+    <p class="form-errors">{{ letta_list_error }}</p>
+    {% endif %} {% if letta_configured and not letta_list_error and
+    (unlinked_rows | length == 0) %}
+    <p>
+        Every agent returned by Letta is already linked to a bear (or Letta
+        returned an empty list).
+    </p>
+    {% elif letta_configured and not letta_list_error %}
+    <table>
+        <thead>
+            <tr>
+                <th>Name</th>
+                <th>Letta agent id</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for row in unlinked_rows %}
+            <tr>
+                <td>{{ row.display_name | e }}</td>
+                <td><code>{{ row.agent_id | e }}</code></td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% endif %}
+    <p>
+        <a href="/admin/bears/">All bears</a> &middot;
+        <a href="/admin/bears/new">New bear (blank)</a>
+    </p>
 </div>
 {% endblock %}

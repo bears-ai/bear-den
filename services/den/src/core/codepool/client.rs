@@ -375,7 +375,6 @@ impl CodePoolClient {
                 "id": bear.id.to_string(),
                 "slug": bear.slug,
                 "name": bear.name,
-                "letta_agent_id": agent_id,
                 "agent_role": agent_role.as_str(),
                 "role_agent_id": agent_id,
                 "runtime_family": agent_role.runtime_family(),

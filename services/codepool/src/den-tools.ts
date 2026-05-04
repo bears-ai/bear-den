@@ -50,11 +50,14 @@ export function buildDenToolRuntimeContext(
     requestId: string,
 ): DenToolRuntimeContext {
     const bearId = body.bear?.id?.trim() ?? "";
-    const agentId = body.bear?.letta_agent_id?.trim() ?? "";
+    const agentId =
+        body.bear?.role_agent_id?.trim() ??
+        body.bear?.letta_agent_id?.trim() ??
+        "";
     const userId = body.user?.id ?? "";
     if (!bearId) throw new Error("bear.id is required for Den tools");
     if (!agentId)
-        throw new Error("bear.letta_agent_id is required for Den tools");
+        throw new Error("bear.role_agent_id is required for Den tools");
     if (userId === "" || userId === null || userId === undefined) {
         throw new Error("user.id is required for Den tools");
     }
