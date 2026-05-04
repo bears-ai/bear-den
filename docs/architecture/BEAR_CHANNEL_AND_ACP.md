@@ -15,12 +15,12 @@ Zed / OpenCode / coding clients
   -> Agent Client Protocol (ACP) to local `bears-acp-adapter`
   -> Adapter calls Den API ACP gateway over HTTPS/SSE
   -> Den validates auth, membership, and bear policy
-  -> Den maps ACP sessions to `bear_channel`
-  -> Codepool runs the Letta Code runtime
-  -> Future slices delegate client tools back through Den
+  -> Den resolves `bear_agents(role='pair')` strictly
+  -> Den streams prompts to the pair Letta agent through the Letta API
+  -> Future slices delegate client tools back through Den / ACP permission flows
 ```
 
-`bear_channel` is the internal Den -> Codepool channel contract. ACP is the planned external protocol for coding clients. OpenAI-compatible APIs remain compatibility/browser-facing surfaces, not the canonical Den -> Codepool runtime boundary.
+`bear_channel` is the internal Den -> Codepool channel contract for Letta Code-backed chat/work surfaces such as browser chat and Slack. ACP is the external protocol for coding clients and routes to the API-direct `pair` role; it must not use Codepool `bear_channel`. OpenAI-compatible APIs remain compatibility/browser-facing surfaces, not the canonical Den -> runtime boundary.
 
 ## Responsibilities
 
@@ -66,7 +66,7 @@ An ACP session binding may store:
 - BEARS user and bear ids;
 - ACP client name, such as `zed`;
 - client working directory (`cwd`);
-- Codepool session id;
+- runtime session/binding id (historically named `codepool_session_id`; migrate to `runtime_session_id`);
 - pending/generated conversation id;
 - resolved `conv-...` id when available;
 - protocol lifecycle timestamps such as closed or archived.
@@ -81,18 +81,18 @@ See also: [ACP Session Bindings ADR](adr/acp-session-bindings.md).
 
 Implemented:
 
-- Codepool `BearChannelRequest` and `BearChannelEvent` TypeScript contract.
+- Codepool `BearChannelRequest` and `BearChannelEvent` TypeScript contract for Letta Code-backed surfaces.
 - Codepool internal route:
   - `POST /internal/bear_channel/sessions/:sessionId/messages`
 - Codepool cancellation route:
   - `POST /internal/bear_channel/sessions/:sessionId/cancel` cancels active bear-channel runs where possible.
-- Den `CodePoolClient::post_bear_channel_message_streaming`.
-- Den web chat (`POST /v1/chat/send`) now calls `bear_channel` internally while preserving the browser-facing SSE contract.
+- Den `CodePoolClient::post_bear_channel_message_streaming` for browser chat and future Slack/talk surfaces.
+- Den web chat (`POST /v1/chat/send`) calls `bear_channel` internally while preserving the browser-facing SSE contract and sends the `talk` role id in the trusted payload.
 - Den maps `bear_channel` events back to the current Deep Chat / Letta-shaped SSE payloads:
   - `assistant_delta` -> `assistant_message`
   - `reasoning_delta` -> `reasoning_message`
   - `error` -> `error_message`
-- Den API ACP gateway routes:
+- Den API ACP gateway routes to `bear_agents(role='pair')` through Letta API direct, not Codepool:
   - `GET /acp/bears/{slug}/sessions`
   - `GET /acp/bears/{slug}/sessions/{session_id}`
   - `POST /acp/bears/{slug}/sessions/{session_id}/prompt`

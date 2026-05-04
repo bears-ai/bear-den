@@ -4,6 +4,17 @@ This plan implements the architecture described in the `multi-agent-architecture
 
 Each phase has explicit acceptance criteria. Phases are ordered for safe incremental rollout. Phase 10 (migration) only runs after phases 1–9 have been validated on a test Bear.
 
+## Current implementation checkpoint
+
+As of the current Den slice:
+
+- The additive multi-agent schema exists for `bear_agents`, `bear_skills_manifest`, `bear_skill_proposals`, and `bear_subscriptions`.
+- Existing legacy Bears can be repaired from the admin Bear list: `POST /admin/bears/repair-legacy-agents` copies non-empty `bears.letta_agent_id` values into `bear_agents(role='talk')` and creates missing placeholder role rows.
+- Individual Bear detail pages list all role agents, perform per-role Letta fetch health checks, and expose `POST /admin/bears/{id}/provision-missing-roles` to create Letta agents only for roles with no recorded role agent id.
+- Browser web chat routes through the `talk` role and includes role metadata in the trusted Codepool `bear_channel` payload.
+- ACP is being migrated to strict `pair` role routing: no Codepool fallback and no `talk`/legacy fallback. Missing `pair` must produce an operator-actionable error directing admins to provision missing role agents.
+- Historical ACP naming such as `codepool_session_id` is being retired in favor of runtime-neutral session binding names such as `runtime_session_id`.
+
 ## Glossary (read first)
 
 - **Bear** — a logical agent identity. Implemented as a quintet of Letta agents (talk, pair, curate, work, watch) sharing memory.
@@ -114,6 +125,8 @@ Each phase has explicit acceptance criteria. Phases are ordered for safe increme
 ### Acceptance
 
 - `create_bear` followed by `provision_bear` creates or updates five `bear_agents` rows and produces five agents on the Letta server with the correct tags (`bear:<id>`, `role:<role>`, `bear:<id>:role:talk`, `bear:<id>:role:pair`, `bear:<id>:role:curate`, `bear:<id>:role:work`, `bear:<id>:role:watch`, `git-memory-enabled`) and tool profiles.
+- Admin repair/migration tooling can idempotently backfill legacy `bears.letta_agent_id` into `bear_agents(role='talk')` and create missing placeholder rows for all five roles.
+- Admin detail tooling can provision only missing role agents for a Bear without replacing already-recorded role agent ids.
 - `reconcile_bear` returns no drift immediately after provisioning.
 - `reconcile_bear` detects and corrects drift after manually mutating an agent's tool roster via the Letta API.
 - `list_bear_skills` returns the manifest contents and `propose_skill` writes a `pending_review` row.
@@ -219,7 +232,7 @@ Before full Phase 2/3 MemFS and skill projection are complete, web chat can be t
 
 ## Phase 5 — Pair agent (ACP adapter)
 
-**Goal:** IDEs can connect to the pair agent over ACP. No Letta Code in this path. Pair agent can also write task intents.
+**Goal:** IDEs can connect to the pair agent over ACP. No Letta Code and no Codepool `bear_channel` path in this route. Pair agent can also write task intents.
 
 ### Tasks
 
@@ -228,9 +241,9 @@ Before full Phase 2/3 MemFS and skill projection are complete, web chat can be t
    - <https://github.com/zed-industries/agent-client-protocol>
 2. Implement the required ACP methods. Minimum viable set:
    - `initialize` — protocol version negotiation, capability advertisement.
-   - `session/new` — creates a Letta Conversation against the pair agent. Returns the session ID.
-   - `session/prompt` — calls `client.agents.messages.stream(agentId, { conversationId, input })` on the Letta API. Translates the streamed reasoning, messages, and tool calls into ACP `session/update` notifications.
-   - `session/cancel` — issues cancel against the Letta stream.
+   - `session/new` — creates or selects a Letta Conversation against `bear_agents(role='pair')`. Returns the session ID.
+   - `session/prompt` — calls the Letta API directly for the pair role agent (for example `POST /v1/conversations/{conversation_id}/messages` with `agent_id=<pair_agent_id>` where applicable). Translates streamed reasoning, messages, and tool calls into ACP `session/update` notifications.
+   - `session/cancel` — cancel direct Letta streaming when supported; if the current Letta API lacks cancellation, return an explicit `cancelled: false` response explaining that there is no Codepool session to cancel.
    - `session/load` — resumes an existing Letta Conversation (Letta supports background streaming so this should work cleanly).
 3. Implement tool forwarding. When the Letta agent emits a client-side tool call:
    - Translate to ACP `session/update` of kind `tool_call` (status: pending).
@@ -238,18 +251,22 @@ Before full Phase 2/3 MemFS and skill projection are complete, web chat can be t
    - On approval, the IDE executes the tool; the IDE's response comes back as an ACP message.
    - Forward the result back to Letta as the tool result, allowing the agent to continue.
    - On rejection, emit the appropriate refusal back to Letta.
-4. Authenticate against the Letta server using a service token bound to the Bear (so the ACP adapter can only see/touch agents in its scope).
-5. Background streaming: use Letta's background mode so a dropped ACP connection doesn't kill the agent's in-progress work. On reconnect, resume the stream.
-6. Logging and tracing: every ACP session should emit structured logs tagged with the bear ID, pair agent ID, and ACP session ID.
-7. Verify the pair agent has the tool needed to write task intents under `pair/tasks/` per the schema. Same validation as talk agent.
+4. Resolve the target agent strictly from `bear_agents(role='pair')`. ACP must not fall back to `talk` or legacy `bears.letta_agent_id`. If the pair role is missing, return a clear diagnostic that names the Bear, says the `pair` role is missing, and directs operators to Admin → Bears → Bear detail → `Provision missing role agents`.
+5. Authenticate against the Letta server using a service token bound to the Bear (so the ACP adapter can only see/touch agents in its scope).
+6. Background streaming: use Letta's background mode so a dropped ACP connection doesn't kill the agent's in-progress work. On reconnect, resume the stream.
+7. Logging and tracing: every ACP session should emit structured logs tagged with the bear ID, role=`pair`, pair agent ID, ACP session ID, request ID, client, cwd, and conversation selection source.
+8. Rename historical session-binding fields that mention Codepool (for example `codepool_session_id`) to runtime-neutral names such as `runtime_session_id`; preserve a migration only if existing local databases need it.
+9. Verify the pair agent has the tool needed to write task intents under `pair/tasks/` per the schema. Same validation as talk agent.
 
 ### Acceptance
 
 - Zed's `dev: open acp logs` shows a clean handshake with the den-acp service.
-- A simple prompt that doesn't invoke tools round-trips correctly: prompt in Zed, response streams back.
+- A simple prompt that doesn't invoke tools round-trips correctly: prompt in Zed, response streams back from the `pair` role through Letta API direct, not Codepool.
+- If a Bear has no `pair` role agent id, ACP returns a structured JSON error with request id and operator-actionable text explaining how to provision missing role agents; it must not silently fall back to `talk`.
 - A prompt that invokes a tool round-trips: tool call appears in Zed, permission prompt shows, on approval the tool runs in the IDE, result returns to the agent, agent continues.
 - Disconnecting Zed mid-stream and reconnecting (`session/load`) resumes the in-progress turn.
 - Two concurrent Zed sessions to the same pair agent are correctly serialized by the agent's sequential processing.
+- ACP session list/get responses use runtime-neutral session binding names and do not expose Codepool-specific fields.
 - A user can request a scheduled task in the IDE and the agent writes a valid intent file to `pair/tasks/`.
 
 ---
@@ -420,8 +437,8 @@ Audit and update so operators **never** see a bare `letta_agent_id` without **ro
 
 | Area | Indicative paths | Expected change |
 |------|------------------|-----------------|
-| Admin bear list | `services/den/src/web/templates/admin/bears/list.html` | Replace a single “Letta id” column with **roles** (talk / pair / curate / work / watch), **partial** provisioning, or **legacy single-agent** badge. |
-| Admin bear detail | `services/den/src/web/templates/admin/bears/detail.html` | Per-role Letta summary (or tabs); SSE / API hints must name **talk** agent, not a generic “the agent”. |
+| Admin bear list | `services/den/src/web/templates/admin/bears/list.html` | Replace a single “Letta id” column with **roles** (talk / pair / curate / work / watch), **partial** provisioning, or **legacy single-agent** badge. Include a deliberate repair control for legacy rows. |
+| Admin bear detail | `services/den/src/web/templates/admin/bears/detail.html` | Per-role Letta summary (or tabs); SSE / API hints must name **talk** agent, not a generic “the agent”. Include per-role health checks and a deliberate control to provision only missing role agents. |
 | Create / attach bear | `admin/bears/new.html`, `bear/new.html` | Copy for **attach existing Letta agent**: clarify **legacy single-agent link** vs **multi-role cluster** provision; forms may need role-specific attach later. |
 | Letta Code harness admin | `admin/letta_code_harness.html` | Rows or copy must not assume one Letta row per bear without role. |
 | Unlinked Letta agents | `admin/bears/unlinked_letta_agents.html` | Consider ids referenced only in **`bear_agents`** as linked; not only `bears.letta_agent_id`. |

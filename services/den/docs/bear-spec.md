@@ -153,7 +153,7 @@ Tool ids are environment-specific Letta ids. Den stores canonical tool names in 
 | `approve_skill_proposal` | privileged Den tool | `curate` | Adds or updates `bear_skills_manifest`, closes the proposal as approved, and triggers re-provisioning/reconciliation for affected roles. |
 | `reject_skill_proposal` | privileged Den tool | `curate` | Closes a pending skill proposal with reviewer metadata and rejection reason. |
 | `reflection` / `defragmentation` | server-side | `curate` | Letta reflection and memory maintenance. No external communication capability. |
-| ACP client tool relay | client-side | `pair` | Forwarded through ACP `session/request_permission`; Den does not execute these tools server-side. |
+| ACP client tool relay | client-side | `pair` | Forwarded through ACP `session/request_permission`; Den does not execute these tools server-side. ACP prompt streaming is API-direct to the pair Letta agent, not Codepool. |
 | Integration tools (`http_get`, `slack_post`, `github_*`, etc.) | Letta Code harness tools plus privileged Den policy wrappers | `work` only | Runtime use must be within the approved task's `allowed_tools` and `scope`, verified by Den-issued run context and tool-side policy checks. Harness-level tools must be scoped or wrapped so the work agent cannot bypass Den policy. |
 | Subscription/event delivery | Den control-plane operation | `watch` | Den registers durable subscriptions after curate-approved intents, validates inbound signatures, performs polling where required, and delivers structured event prompts to watch. This is not generic outbound network access for watch. |
 
@@ -359,7 +359,7 @@ Conversation history belongs to a specific Bear role agent, not to the logical B
 Migration rules:
 
 - Legacy conversation views that read `bears.letta_agent_id` should be treated as `talk` conversations.
-- ACP conversation lists/history must migrate to the `pair` agent id.
+- ACP conversation lists/history and prompt streaming use `bear_agents(role='pair')` strictly. ACP must not fall back to `talk` or legacy `bears.letta_agent_id`; missing `pair` is an operator-remediable provisioning error.
 - Web chat and Slack conversation routing must migrate to the `talk` agent id.
 - Curate, work, and watch conversations/runs are internal and should be surfaced as role-scoped operational history rather than user-facing chat history. Work runs are Letta Code harness-backed operational sessions, not API-direct user conversations.
 - Management UI filters should support role-specific conversation inspection before Phase 8.5 is considered complete.
@@ -391,5 +391,6 @@ Polling subscriptions are executed by Den and delivered to watch as structured e
 
 - `create_bear` keeps creating only the logical Bear row.
 - `provision_bear` creates or reconciles one `bear_agents` row per role. The implementation may leave `watch` in `pending`/reserved state until the watch rollout if the chosen deployment phase provisions only four runtime agents initially.
-- New Slack/web chat routing must resolve role `talk`; ACP routing must resolve role `pair`.
-- Existing legacy paths should continue to read `bears.letta_agent_id` until their call sites are explicitly migrated, but new code should not add additional dependencies on that column.
+- Admin repair tooling may backfill legacy `bears.letta_agent_id` into `bear_agents(role='talk')`; admin detail tooling may provision only missing roles for a Bear.
+- New Slack/web chat routing must resolve role `talk`; ACP routing must resolve role `pair` strictly.
+- Existing legacy paths may read `bears.letta_agent_id` only as a transitional talk-role mirror until their call sites are explicitly migrated. New code must not add additional dependencies on that column.
