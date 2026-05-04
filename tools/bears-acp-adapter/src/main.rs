@@ -15,8 +15,8 @@ use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, CONTENT_TYPE};
 use reqwest::Url;
 use serde_json::{json, Value};
 use std::{
-    collections::HashMap,
-    env,
+    collections::{HashMap, VecDeque},
+    env, fs,
     path::{Path, PathBuf},
     process::Command,
 };
@@ -868,6 +868,8 @@ fn session_context_from_params(params: &Value) -> Result<SessionContext> {
         "adapter_version": env!("CARGO_PKG_VERSION"),
         "direct_tools": {
             "fs_read_text_file": true,
+            "fs_list_directory": true,
+            "fs_search_files": true,
         },
     });
     Ok(SessionContext {
@@ -1167,6 +1169,349 @@ async fn handle_direct_read_text_file(
         "truncated": truncated,
         "bytes": raw.len(),
     }))
+}
+
+async fn execute_local_tool(
+    adapter_state: &mut AdapterState,
+    session_id: &str,
+    tool_name: &str,
+    args: Value,
+) -> Result<Value> {
+    match tool_name {
+        "fs_read_text_file" | "fs.read_text_file" => {
+            if client_supports_read_text_file(adapter_state) {
+                handle_client_read_text_file(adapter_state, session_id, &args).await
+            } else {
+                eprintln!(
+                    "bears-acp-adapter: client did not advertise fs/read_text_file; using adapter-local fallback"
+                );
+                let mut params = args;
+                params["sessionId"] = json!(session_id);
+                handle_direct_read_text_file(adapter_state, params).await
+            }
+        }
+        "fs_list_directory" => handle_direct_list_directory(adapter_state, session_id, &args).await,
+        "fs_search_files" => handle_direct_search_files(adapter_state, session_id, &args).await,
+        _ => Err(anyhow!(
+            "unsupported Den tool_request tool_name {tool_name}"
+        )),
+    }
+}
+
+async fn handle_direct_list_directory(
+    adapter_state: &AdapterState,
+    session_id: &str,
+    args: &Value,
+) -> Result<Value> {
+    let path = args
+        .get("path")
+        .and_then(Value::as_str)
+        .ok_or_else(|| anyhow!("fs_list_directory args missing path"))?;
+    let recursive = args
+        .get("recursive")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let include_hidden = args
+        .get("include_hidden")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let limit = args
+        .get("limit")
+        .and_then(Value::as_u64)
+        .unwrap_or(200)
+        .clamp(1, 1_000) as usize;
+    let context = session_context(adapter_state, session_id)?;
+    let path = normalize_requested_tool_path(path)?;
+    ensure_path_allowed_for_session(context, &path)?;
+    let started = std::time::Instant::now();
+    let mut entries = Vec::new();
+    let mut total_entries_seen = 0usize;
+    let mut truncated = false;
+    let mut queue = VecDeque::from([path.clone()]);
+    while let Some(dir) = queue.pop_front() {
+        ensure_path_allowed_for_session(context, &dir)?;
+        let mut dir_entries = fs::read_dir(&dir)
+            .with_context(|| format!("list directory {}", dir.display()))?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        dir_entries.sort_by_key(|entry| entry.path());
+        for entry in dir_entries {
+            let entry_path = entry.path();
+            if !include_hidden && is_hidden_path_component(&entry_path, &path) {
+                continue;
+            }
+            ensure_path_allowed_for_session(context, &entry_path)?;
+            total_entries_seen += 1;
+            let metadata = entry.metadata().ok();
+            let kind = metadata
+                .as_ref()
+                .map(|m| {
+                    if m.is_dir() {
+                        "directory"
+                    } else if m.is_file() {
+                        "file"
+                    } else {
+                        "other"
+                    }
+                })
+                .unwrap_or("unknown");
+            if entries.len() < limit {
+                entries.push(json!({
+                    "path": entry_path.to_string_lossy(),
+                    "name": entry.file_name().to_string_lossy(),
+                    "kind": kind,
+                    "size": metadata.as_ref().filter(|m| m.is_file()).map(|m| m.len()),
+                }));
+            } else {
+                truncated = true;
+                break;
+            }
+            if recursive && metadata.as_ref().is_some_and(|m| m.is_dir()) {
+                queue.push_back(entry_path);
+            }
+        }
+    }
+    let truncated = truncated || total_entries_seen > entries.len() || !queue.is_empty();
+    let content = format_directory_listing(&path, &entries, truncated);
+    eprintln!(
+        "bears-acp-adapter: list_directory session_id={} path={} recursive={} include_hidden={} limit={} returned_entries={} total_entries_seen={} truncated={} duration_ms={}",
+        session_id,
+        path.display(),
+        recursive,
+        include_hidden,
+        limit,
+        entries.len(),
+        total_entries_seen,
+        truncated,
+        started.elapsed().as_millis(),
+    );
+    Ok(json!({
+        "ok": true,
+        "path": path.to_string_lossy(),
+        "entries": entries,
+        "total_entries_seen": total_entries_seen,
+        "returned_entries": entries.len(),
+        "truncated": truncated,
+        "recursive": recursive,
+        "include_hidden": include_hidden,
+        "source": "adapter_local",
+        "content": content,
+    }))
+}
+
+async fn handle_direct_search_files(
+    adapter_state: &AdapterState,
+    session_id: &str,
+    args: &Value,
+) -> Result<Value> {
+    let path = args
+        .get("path")
+        .and_then(Value::as_str)
+        .ok_or_else(|| anyhow!("fs_search_files args missing path"))?;
+    let query = args
+        .get("query")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| anyhow!("fs_search_files args missing non-empty query"))?;
+    let limit = args
+        .get("limit")
+        .and_then(Value::as_u64)
+        .unwrap_or(50)
+        .clamp(1, 200) as usize;
+    let max_bytes = args
+        .get("max_bytes")
+        .and_then(Value::as_u64)
+        .unwrap_or(1_048_576)
+        .clamp(1, 5_242_880);
+    let include_hidden = args
+        .get("include_hidden")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let context = session_context(adapter_state, session_id)?;
+    let path = normalize_requested_tool_path(path)?;
+    ensure_path_allowed_for_session(context, &path)?;
+    let started = std::time::Instant::now();
+    let mut files = Vec::new();
+    let mut file_collection_truncated = false;
+    collect_search_files(
+        context,
+        &path,
+        &path,
+        include_hidden,
+        5_000,
+        &mut file_collection_truncated,
+        &mut files,
+    )?;
+    files.sort();
+
+    let mut matches = Vec::new();
+    let mut files_scanned = 0usize;
+    let mut bytes_scanned = 0u64;
+    let mut truncated = file_collection_truncated;
+    for file in files {
+        ensure_path_allowed_for_session(context, &file)?;
+        let metadata = match fs::metadata(&file) {
+            Ok(metadata) if metadata.is_file() => metadata,
+            _ => continue,
+        };
+        if bytes_scanned.saturating_add(metadata.len()) > max_bytes {
+            truncated = true;
+            break;
+        }
+        let raw = match fs::read_to_string(&file) {
+            Ok(raw) => raw,
+            Err(_) => continue,
+        };
+        bytes_scanned = bytes_scanned.saturating_add(metadata.len());
+        files_scanned += 1;
+        for (idx, line) in raw.lines().enumerate() {
+            if line.contains(query) {
+                matches.push(json!({
+                    "path": file.to_string_lossy(),
+                    "line": idx + 1,
+                    "preview": truncate_for_log(line.trim(), 240),
+                }));
+                if matches.len() >= limit {
+                    truncated = true;
+                    break;
+                }
+            }
+        }
+        if matches.len() >= limit {
+            break;
+        }
+    }
+    let content = format_search_results(query, &matches, truncated);
+    eprintln!(
+        "bears-acp-adapter: search_files session_id={} path={} query_len={} limit={} max_bytes={} files_scanned={} bytes_scanned={} matches={} truncated={} duration_ms={}",
+        session_id,
+        path.display(),
+        query.len(),
+        limit,
+        max_bytes,
+        files_scanned,
+        bytes_scanned,
+        matches.len(),
+        truncated,
+        started.elapsed().as_millis(),
+    );
+    Ok(json!({
+        "ok": true,
+        "path": path.to_string_lossy(),
+        "query": query,
+        "matches": matches,
+        "returned_matches": matches.len(),
+        "truncated": truncated,
+        "files_scanned": files_scanned,
+        "bytes_scanned": bytes_scanned,
+        "max_bytes": max_bytes,
+        "include_hidden": include_hidden,
+        "source": "adapter_local",
+        "content": content,
+    }))
+}
+
+fn session_context<'a>(
+    adapter_state: &'a AdapterState,
+    session_id: &str,
+) -> Result<&'a SessionContext> {
+    adapter_state
+        .session_contexts
+        .get(session_id)
+        .ok_or_else(|| anyhow!("ACP session {session_id} is not known to this adapter"))
+}
+
+fn collect_search_files(
+    context: &SessionContext,
+    root: &Path,
+    path: &Path,
+    include_hidden: bool,
+    max_files: usize,
+    truncated: &mut bool,
+    out: &mut Vec<PathBuf>,
+) -> Result<()> {
+    if *truncated {
+        return Ok(());
+    }
+    if !include_hidden && is_hidden_path_component(path, root) {
+        return Ok(());
+    }
+    ensure_path_allowed_for_session(context, path)?;
+    let metadata = fs::metadata(path).with_context(|| format!("stat {}", path.display()))?;
+    if metadata.is_file() {
+        if out.len() >= max_files {
+            *truncated = true;
+        } else {
+            out.push(path.to_path_buf());
+        }
+        return Ok(());
+    }
+    if !metadata.is_dir() {
+        return Ok(());
+    }
+    for entry in
+        fs::read_dir(path).with_context(|| format!("search directory {}", path.display()))?
+    {
+        let entry = entry?;
+        collect_search_files(
+            context,
+            root,
+            &entry.path(),
+            include_hidden,
+            max_files,
+            truncated,
+            out,
+        )?;
+        if *truncated {
+            break;
+        }
+    }
+    Ok(())
+}
+
+fn is_hidden_path_component(path: &Path, root: &Path) -> bool {
+    path.strip_prefix(root)
+        .unwrap_or(path)
+        .components()
+        .any(|component| {
+            component
+                .as_os_str()
+                .to_str()
+                .is_some_and(|s| s.starts_with('.') && s != "." && s != "..")
+        })
+}
+
+fn format_directory_listing(path: &Path, entries: &[Value], truncated: bool) -> String {
+    let mut lines = vec![format!("Directory listing for {}", path.display())];
+    for entry in entries {
+        let kind = entry
+            .get("kind")
+            .and_then(Value::as_str)
+            .unwrap_or("unknown");
+        let entry_path = entry.get("path").and_then(Value::as_str).unwrap_or("");
+        lines.push(format!("{kind}\t{entry_path}"));
+    }
+    if truncated {
+        lines.push("... truncated".to_string());
+    }
+    lines.join("\n")
+}
+
+fn format_search_results(query: &str, matches: &[Value], truncated: bool) -> String {
+    let mut lines = vec![format!("Search results for {query:?}")];
+    for item in matches {
+        let path = item.get("path").and_then(Value::as_str).unwrap_or("");
+        let line = item.get("line").and_then(Value::as_u64).unwrap_or(0);
+        let preview = item.get("preview").and_then(Value::as_str).unwrap_or("");
+        lines.push(format!("{path}:{line}: {preview}"));
+    }
+    if matches.is_empty() {
+        lines.push("No matches found.".to_string());
+    }
+    if truncated {
+        lines.push("... truncated".to_string());
+    }
+    lines.join("\n")
 }
 
 fn normalize_requested_tool_path(path: &str) -> Result<PathBuf> {
@@ -2217,24 +2562,8 @@ async fn handle_tool_request_event(
     }
     send_tool_call_update(session_id, tool_call_id, "pending", "Running local tool").await?;
     let started = std::time::Instant::now();
-    let result = match tool_name {
-        "fs_read_text_file" | "fs.read_text_file" => {
-            let args = event.get("args").cloned().unwrap_or_else(|| json!({}));
-            if client_supports_read_text_file(adapter_state) {
-                handle_client_read_text_file(adapter_state, session_id, &args).await
-            } else {
-                eprintln!(
-                    "bears-acp-adapter: client did not advertise fs/read_text_file; using adapter-local fallback"
-                );
-                let mut params = args;
-                params["sessionId"] = json!(session_id);
-                handle_direct_read_text_file(adapter_state, params).await
-            }
-        }
-        _ => Err(anyhow!(
-            "unsupported Den tool_request tool_name {tool_name}"
-        )),
-    };
+    let args = event.get("args").cloned().unwrap_or_else(|| json!({}));
+    let result = execute_local_tool(adapter_state, session_id, tool_name, args).await;
     let status;
     let mut payload = json!({
         "turn_id": event.get("turn_id").and_then(Value::as_str),
@@ -2604,6 +2933,100 @@ fn json_rpc_error(code: i64, message: &str, data: Option<Value>) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn unique_test_dir(name: &str) -> PathBuf {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let path = env::temp_dir().join(format!("bears-acp-adapter-{name}-{nonce}"));
+        fs::create_dir_all(&path).unwrap();
+        path
+    }
+
+    fn test_adapter_state(session_id: &str, root: &Path) -> AdapterState {
+        let mut state = AdapterState::default();
+        state.session_contexts.insert(
+            session_id.to_string(),
+            SessionContext {
+                cwd: root.to_string_lossy().to_string(),
+                roots: vec![root.to_string_lossy().to_string()],
+                ..Default::default()
+            },
+        );
+        state
+    }
+
+    #[tokio::test]
+    async fn list_directory_enforces_root_containment() {
+        let root = unique_test_dir("list-root");
+        let outside = unique_test_dir("list-outside");
+        let state = test_adapter_state("session-1", &root);
+        let result = handle_direct_list_directory(
+            &state,
+            "session-1",
+            &json!({ "path": outside.to_string_lossy() }),
+        )
+        .await;
+        assert!(format!("{:#}", result.unwrap_err())
+            .contains("outside the ACP session workspace roots"));
+        let _ = fs::remove_dir_all(root);
+        let _ = fs::remove_dir_all(outside);
+    }
+
+    #[tokio::test]
+    async fn list_directory_reports_truncation() {
+        let root = unique_test_dir("list-truncated");
+        fs::write(root.join("a.txt"), "a").unwrap();
+        fs::write(root.join("b.txt"), "b").unwrap();
+        let state = test_adapter_state("session-1", &root);
+        let result = handle_direct_list_directory(
+            &state,
+            "session-1",
+            &json!({ "path": root.to_string_lossy(), "limit": 1 }),
+        )
+        .await
+        .unwrap();
+        assert_eq!(result["returned_entries"], 1);
+        assert_eq!(result["truncated"], true);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn search_files_enforces_root_containment() {
+        let root = unique_test_dir("search-root");
+        let outside = unique_test_dir("search-outside");
+        fs::write(outside.join("file.txt"), "needle").unwrap();
+        let state = test_adapter_state("session-1", &root);
+        let result = handle_direct_search_files(
+            &state,
+            "session-1",
+            &json!({ "path": outside.to_string_lossy(), "query": "needle" }),
+        )
+        .await;
+        assert!(format!("{:#}", result.unwrap_err())
+            .contains("outside the ACP session workspace roots"));
+        let _ = fs::remove_dir_all(root);
+        let _ = fs::remove_dir_all(outside);
+    }
+
+    #[tokio::test]
+    async fn search_files_reports_result_truncation() {
+        let root = unique_test_dir("search-truncated");
+        fs::write(root.join("file.txt"), "needle one\nneedle two\n").unwrap();
+        let state = test_adapter_state("session-1", &root);
+        let result = handle_direct_search_files(
+            &state,
+            "session-1",
+            &json!({ "path": root.to_string_lossy(), "query": "needle", "limit": 1 }),
+        )
+        .await
+        .unwrap();
+        assert_eq!(result["returned_matches"], 1);
+        assert_eq!(result["truncated"], true);
+        let _ = fs::remove_dir_all(root);
+    }
 
     #[test]
     fn parses_typed_acp_read_text_file_response() {

@@ -47,7 +47,7 @@ use crate::{
             AcpToolResultDelivery, AcpToolResultRequest, AcpToolTurnCoordinator,
             AcpToolTurnRegistration,
         },
-        acp_tools::{acp_read_text_file_client_tool_descriptor, AcpToolStatus},
+        acp_tools::{acp_client_tool_descriptors, AcpToolStatus},
         archived_conversations,
         bears::{db as bears_db, Bear, BearAgentRole},
         letta::load_agent_conversations,
@@ -596,11 +596,11 @@ fn acp_direct_tool_prompt_context(
     format!(
         concat!(
             "\n\n<system-reminder>",
-            "BEARS ACP direct local file reading is available for this turn. ",
-            "If you need to read a workspace file, call client tool `fs_read_text_file`; Den will route it to the local ACP adapter method `bears/read_text_file` / ACP client method `fs/read_text_file`. ",
-            "Use params {{\"path\":\"/absolute/path\",\"line\":1,\"limit\":400}}. Current ACP session id is `{session_id}`. ",
+            "BEARS ACP direct local read-only workspace tools are available for this turn. ",
+            "Use `fs_list_directory` with {{\"path\":\"/absolute/dir\",\"limit\":200}} to discover files, `fs_search_files` with {{\"path\":\"/absolute/path\",\"query\":\"text\",\"limit\":50}} to search, and `fs_read_text_file` with {{\"path\":\"/absolute/file\",\"line\":1,\"limit\":400}} to read. ",
+            "Den routes these through the local ACP adapter using read-only workspace policy. Current ACP session id is `{session_id}`. ",
             "Use absolute paths under these workspace roots: {roots}. ",
-            "Do not guess file contents; request the file read and use the returned content. ",
+            "Do not guess file contents; discover, search, or read files and use the returned content. ",
             "</system-reminder>"
         ),
         session_id = session_id,
@@ -1491,7 +1491,7 @@ async fn prompt_inner(
             &conversation_resolution.upstream_target,
             Some(&pair_agent_id),
             &prompt_with_tool_context,
-            tools_enabled.then(|| serde_json::json!([acp_read_text_file_client_tool_descriptor()])),
+            tools_enabled.then(acp_client_tool_descriptors),
         )
         .await
     {

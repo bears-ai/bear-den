@@ -6,7 +6,7 @@ use uuid::Uuid;
 
 use crate::core::{
     acp_tool_turns::AcpToolResultRequest,
-    acp_tools::{AcpToolName, ACP_READ_TEXT_FILE_TOOL},
+    acp_tools::{supported_provider_tool_names, AcpToolName},
 };
 
 #[derive(Debug)]
@@ -181,8 +181,8 @@ fn native_letta_tool_request_event_with_args(
         return Some(AcpGatewayEvent::Error {
             message: format!("Letta requested unsupported ACP local tool: {tool_name}"),
             detail: Some(format!(
-                "Only {} is wired for the current ACP local tool slice.",
-                ACP_READ_TEXT_FILE_TOOL.provider_name
+                "Supported ACP local tools: {}.",
+                supported_provider_tool_names().join(", ")
             )),
             error_type: Some("unsupported_tool".to_string()),
             request_id: None,
@@ -208,14 +208,17 @@ fn native_letta_tool_request_event_with_args(
             _ => return None,
         }
     };
-    if tool == AcpToolName::ReadTextFile && args.get("path").and_then(|v| v.as_str()).is_none() {
+    if let Some(missing) = missing_required_tool_arg(tool, &args) {
         if !args.is_object() || args.as_object().is_some_and(|m| m.is_empty()) {
             return None;
         }
         return Some(AcpGatewayEvent::Error {
-            message: "Letta requested fs_read_text_file without a path argument.".to_string(),
+            message: format!(
+                "Letta requested {} without a {missing} argument.",
+                descriptor.provider_name
+            ),
             detail: Some(format!(
-                "Parsed arguments did not contain string field `path`; args={}",
+                "Parsed arguments did not contain required string field `{missing}`; args={}",
                 preview_str_truncated(&args.to_string(), 240)
             )),
             error_type: Some("invalid_tool_arguments".to_string()),
@@ -227,6 +230,7 @@ fn native_letta_tool_request_event_with_args(
                     .or_else(|| tool_call.and_then(|v| v.get("id")))
                     .and_then(|v| v.as_str()),
                 "args": args,
+                "missing": missing,
             })),
         });
     }
@@ -265,6 +269,36 @@ fn native_letta_tool_request_event_with_args(
         result_tx: Some(result_tx),
         result_rx: Some(result_rx),
     })
+}
+
+fn missing_required_tool_arg(tool: AcpToolName, args: &serde_json::Value) -> Option<&'static str> {
+    match tool {
+        AcpToolName::ReadTextFile | AcpToolName::ListDirectory => args
+            .get("path")
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.trim().is_empty())
+            .is_none()
+            .then_some("path"),
+        AcpToolName::SearchFiles => {
+            if args
+                .get("path")
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.trim().is_empty())
+                .is_none()
+            {
+                Some("path")
+            } else if args
+                .get("query")
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.trim().is_empty())
+                .is_none()
+            {
+                Some("query")
+            } else {
+                None
+            }
+        }
+    }
 }
 
 /// Defensive compatibility layer for Letta tool-call streaming.
@@ -501,6 +535,34 @@ pub fn acp_event_has_visible_output(event: &AcpGatewayEvent) -> bool {
     }
 }
 
+fn policy_for_tool_name(tool_name: &str) -> serde_json::Value {
+    let risk = AcpToolName::from_provider_alias(tool_name)
+        .map(|tool| tool.descriptor().risk)
+        .unwrap_or("read_only");
+    let mut policy = serde_json::json!({
+        "scope_basis": "acp:tools",
+        "risk": risk,
+        "sensitive_path_policy": "client_permission_required",
+    });
+    match AcpToolName::from_provider_alias(tool_name) {
+        Some(AcpToolName::ReadTextFile) => {
+            policy["max_lines"] = serde_json::json!(2000);
+        }
+        Some(AcpToolName::ListDirectory) => {
+            policy["max_entries"] = serde_json::json!(1000);
+            policy["recursive_default"] = serde_json::json!(false);
+            policy["include_hidden_default"] = serde_json::json!(false);
+        }
+        Some(AcpToolName::SearchFiles) => {
+            policy["max_results"] = serde_json::json!(200);
+            policy["max_bytes"] = serde_json::json!(1048576);
+            policy["include_hidden_default"] = serde_json::json!(false);
+        }
+        None => {}
+    }
+    policy
+}
+
 pub fn acp_event_to_adapter_sse(event: AcpGatewayEvent) -> Bytes {
     let mapped = match event {
         AcpGatewayEvent::AssistantTextDelta { text } => serde_json::json!({
@@ -563,12 +625,7 @@ pub fn acp_event_to_adapter_sse(event: AcpGatewayEvent) -> Bytes {
                 "required": approval_required,
                 "reason": approval_reason,
             },
-            "policy": {
-                "scope_basis": "acp:tools",
-                "risk": ACP_READ_TEXT_FILE_TOOL.risk,
-                "max_lines": 2000,
-                "sensitive_path_policy": "client_permission_required",
-            },
+            "policy": policy_for_tool_name(&tool_name),
             "diagnostic": {
                 "component": "den.acp",
                 "transport_version": 3,
@@ -587,5 +644,110 @@ fn preview_str_truncated(s: &str, max: usize) -> String {
         s.to_string()
     } else {
         format!("{}...", &s[..max])
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn tool_call_event(name: &str, args: serde_json::Value) -> serde_json::Value {
+        serde_json::json!({
+            "message_type": "tool_call_message",
+            "tool_call": {
+                "name": name,
+                "tool_call_id": "call-test",
+                "arguments": args.to_string(),
+            }
+        })
+    }
+
+    #[test]
+    fn maps_list_directory_tool_call() {
+        let event = tool_call_event(
+            "fs_list_directory",
+            serde_json::json!({ "path": "/workspace" }),
+        );
+        let mapped = map_native_letta_stream_event_to_acp_event(&event).expect("mapped event");
+        match mapped {
+            AcpGatewayEvent::ToolRequest {
+                tool_name,
+                kind,
+                args,
+                ..
+            } => {
+                assert_eq!(tool_name, "fs_list_directory");
+                assert_eq!(kind, "read");
+                assert_eq!(args["path"], "/workspace");
+            }
+            other => panic!("unexpected event: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn maps_search_files_tool_call() {
+        let event = tool_call_event(
+            "fs_search_files",
+            serde_json::json!({ "path": "/workspace", "query": "needle" }),
+        );
+        let mapped = map_native_letta_stream_event_to_acp_event(&event).expect("mapped event");
+        match mapped {
+            AcpGatewayEvent::ToolRequest {
+                tool_name,
+                kind,
+                args,
+                ..
+            } => {
+                assert_eq!(tool_name, "fs_search_files");
+                assert_eq!(kind, "search");
+                assert_eq!(args["path"], "/workspace");
+                assert_eq!(args["query"], "needle");
+            }
+            other => panic!("unexpected event: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn search_files_requires_query() {
+        let event = tool_call_event(
+            "fs_search_files",
+            serde_json::json!({ "path": "/workspace" }),
+        );
+        let mapped = map_native_letta_stream_event_to_acp_event(&event).expect("mapped event");
+        match mapped {
+            AcpGatewayEvent::Error {
+                error_type,
+                message,
+                context,
+                ..
+            } => {
+                assert_eq!(error_type.as_deref(), Some("invalid_tool_arguments"));
+                assert!(message.contains("fs_search_files"));
+                assert_eq!(context.unwrap()["missing"], "query");
+            }
+            other => panic!("unexpected event: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn list_directory_sse_policy_includes_entry_limit() {
+        let event = AcpGatewayEvent::ToolRequest {
+            request_id: "request-1".to_string(),
+            turn_id: "turn-1".to_string(),
+            tool_call_id: "call-1".to_string(),
+            approval_request_id: None,
+            tool_name: "fs_list_directory".to_string(),
+            title: "List directory".to_string(),
+            kind: "read".to_string(),
+            args: serde_json::json!({ "path": "/workspace" }),
+            approval_required: false,
+            approval_reason: None,
+            result_tx: None,
+            result_rx: None,
+        };
+        let bytes = acp_event_to_adapter_sse(event);
+        let raw = std::str::from_utf8(&bytes).expect("utf8 sse");
+        assert!(raw.contains("\"max_entries\":1000"));
+        assert!(raw.contains("\"risk\":\"read_only\""));
     }
 }
