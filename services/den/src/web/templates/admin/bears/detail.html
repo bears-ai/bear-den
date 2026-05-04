@@ -61,6 +61,7 @@
       <th>Provisioning</th>
       <th>Health</th>
       <th>Letta summary</th>
+      <th>MemFS view</th>
       <th>Last sync</th>
     </tr>
   </thead>
@@ -94,6 +95,14 @@
         {% if agent.letta_tool_count is not none %}<div>Tools: {{ agent.letta_tool_count }}</div>{% endif %}
         {% if agent.letta_memory_block_count is not none %}<div>Memory blocks: {{ agent.letta_memory_block_count }}</div>{% endif %}
         {% if not agent.letta_name and not agent.letta_model and agent.health_status == "ok" %}<em>loaded</em>{% endif %}
+      </td>
+      <td>
+        {% if agent.memfs_view_state %}
+          {% if agent.memfs_view_quarantined %}<span class="form-errors">quarantined</span>{% else %}<code>{{ agent.memfs_view_state }}</code>{% endif %}
+          {% if agent.memfs_view_diagnostic %}<br><span class="form-hint">{{ agent.memfs_view_diagnostic }}</span>{% endif %}
+        {% else %}
+          <em>not registered</em>
+        {% endif %}
       </td>
       <td>{% if agent.last_synced_at %}{{ agent.last_synced_at }}{% else %}<em>never</em>{% endif %}</td>
     </tr>

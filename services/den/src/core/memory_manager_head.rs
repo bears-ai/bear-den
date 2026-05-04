@@ -111,6 +111,40 @@ struct MemoryManagerActivityResponse {
     status: Option<i64>,
 }
 
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct MemfsViewHealth {
+    #[serde(default)]
+    pub agent_id: String,
+    #[serde(default)]
+    pub bear_id: String,
+    #[serde(default)]
+    pub role: String,
+    #[serde(default)]
+    pub state: String,
+    #[serde(default)]
+    pub canonical_tip: Option<String>,
+    #[serde(default)]
+    pub view_tip: Option<String>,
+    #[serde(default)]
+    pub quarantined: bool,
+    #[serde(default)]
+    pub diagnostic: Option<String>,
+    #[serde(default)]
+    pub canonical_repo: Option<String>,
+    #[serde(default)]
+    pub view_repo: Option<String>,
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
+struct MemfsViewRegisterResponse {
+    #[serde(default)]
+    ok: bool,
+    #[serde(default)]
+    view: Option<MemfsViewHealth>,
+    #[serde(default)]
+    error: Option<String>,
+}
+
 impl From<MemoryManagerStatusResponse> for MemoryManagerStatusView {
     fn from(status: MemoryManagerStatusResponse) -> Self {
         let state = if status.state.trim().is_empty() {
@@ -246,6 +280,96 @@ impl MemoryManagerFilesResponse {
             Self::WrappedTree { tree } => tree,
             Self::WrappedRoot { root } => root,
         }
+    }
+}
+
+pub async fn register_memfs_role_view(
+    http: &reqwest::Client,
+    base_url: &str,
+    agent_id: &str,
+    bear_id: uuid::Uuid,
+    role: &str,
+) -> Result<Option<MemfsViewHealth>, CustomError> {
+    let base = base_url.trim().trim_end_matches('/');
+    if base.is_empty() || agent_id.trim().is_empty() {
+        return Ok(None);
+    }
+    let url = format!("{}/v1/management/views/register", base);
+    let body = serde_json::json!({
+        "agent_id": agent_id.trim(),
+        "bear_id": bear_id.to_string(),
+        "role": role,
+        "org_id": DEFAULT_ORG,
+    });
+    let resp = http
+        .post(&url)
+        .header("X-Organization-Id", DEFAULT_ORG)
+        .json(&body)
+        .timeout(Duration::from_secs(30))
+        .send()
+        .await
+        .map_err(|e| CustomError::System(format!("MemFS view registration request failed: {e}")))?;
+    let status = resp.status();
+    let text = resp.text().await.unwrap_or_default();
+    if !status.is_success() {
+        return Err(CustomError::System(format!(
+            "MemFS view registration HTTP {status}: {text}"
+        )));
+    }
+    let payload: MemfsViewRegisterResponse = serde_json::from_str(&text)
+        .map_err(|e| CustomError::Parsing(format!("MemFS view registration JSON: {e}; body: {text}")))?;
+    if !payload.ok {
+        return Err(CustomError::System(format!(
+            "MemFS view registration failed: {}",
+            payload.error.unwrap_or_else(|| "unknown error".to_string())
+        )));
+    }
+    Ok(payload.view)
+}
+
+pub async fn fetch_memfs_role_view_health(
+    http: &reqwest::Client,
+    base_url: &str,
+    bear_id: uuid::Uuid,
+    role: &str,
+) -> Result<Option<MemfsViewHealth>, CustomError> {
+    let base = base_url.trim().trim_end_matches('/');
+    if base.is_empty() {
+        return Ok(None);
+    }
+    let url = format!(
+        "{}/v1/management/bears/{}/roles/{}",
+        base,
+        bear_id,
+        urlencoding::encode(role)
+    );
+    let resp = http
+        .get(&url)
+        .header("X-Organization-Id", DEFAULT_ORG)
+        .timeout(Duration::from_secs(15))
+        .send()
+        .await
+        .map_err(|e| CustomError::System(format!("MemFS view health request failed: {e}")))?;
+    if resp.status() == reqwest::StatusCode::NOT_FOUND {
+        return Ok(None);
+    }
+    let status = resp.status();
+    let text = resp.text().await.unwrap_or_default();
+    if !status.is_success() {
+        return Err(CustomError::System(format!("MemFS view health HTTP {status}: {text}")));
+    }
+    let payload: serde_json::Value = serde_json::from_str(&text)
+        .map_err(|e| CustomError::Parsing(format!("MemFS view health JSON: {e}; body: {text}")))?;
+    let first = payload
+        .get("views")
+        .and_then(|v| v.as_array())
+        .and_then(|arr| arr.first())
+        .cloned();
+    match first {
+        Some(v) => serde_json::from_value(v)
+            .map(Some)
+            .map_err(|e| CustomError::Parsing(format!("MemFS view health row JSON: {e}"))),
+        None => Ok(None),
     }
 }
 

@@ -4,12 +4,56 @@ use serde_json::json;
 use sqlx::PgPool;
 use uuid::Uuid;
 
-use crate::core::{bifrost::BifrostClient, letta::LettaClient};
+use crate::core::{
+    bifrost::BifrostClient,
+    letta::LettaClient,
+    memory_manager_head::register_memfs_role_view,
+};
 
 use super::db as bears_db;
 use super::model::{Bear, BearAgentRole};
 use super::runtime_plan::default_runtime_plan;
 use crate::errors::CustomError;
+
+fn memfs_sidecar_url_from_env() -> String {
+    std::env::var("LETTA_MEMFS_SERVICE_URL")
+        .unwrap_or_default()
+        .trim_end_matches('/')
+        .to_string()
+}
+
+async fn register_role_view_if_configured(
+    letta: &LettaClient,
+    bear_id: Uuid,
+    role: BearAgentRole,
+    agent_id: &str,
+) -> Result<(), CustomError> {
+    let base = memfs_sidecar_url_from_env();
+    if base.trim().is_empty() {
+        return Ok(());
+    }
+    match register_memfs_role_view(letta.http(), &base, agent_id, bear_id, role.as_str()).await {
+        Ok(Some(view)) => {
+            tracing::info!(
+                %bear_id,
+                role = %role,
+                %agent_id,
+                state = %view.state,
+                canonical_tip = view.canonical_tip.as_deref(),
+                view_tip = view.view_tip.as_deref(),
+                "MemFS role view registered"
+            );
+        }
+        Ok(None) => {
+            tracing::debug!(%bear_id, role = %role, %agent_id, "MemFS sidecar not configured; skipped role view registration");
+        }
+        Err(err) => {
+            tracing::warn!(%bear_id, role = %role, %agent_id, error = %err, "MemFS role view registration failed");
+            return Err(err);
+        }
+    }
+    Ok(())
+}
 
 /// When Letta is configured, create role-specific Letta agents and mirror the talk role to
 /// legacy `bears.letta_agent_id`. No-op if Letta disabled.
@@ -159,6 +203,7 @@ async fn provision_bear_role(
                 &config_hash,
             )
             .await?;
+            register_role_view_if_configured(letta, bear.id, role, &agent_id).await?;
             tracing::info!(bear_id = %bear.id, %agent_id, role = %role, "Letta role agent provisioned for bear");
             Ok(())
         }
