@@ -1,18 +1,18 @@
-# Bear Roles: Talk, Pair, Curate, Work, and Watch
+# Bear Agent Roles: Talk, Pair, Curate, Work, and Watch
 
-This document is the long-term conceptual description of the five roles inside a Bear. It exists to align product, design, engineering, documentation, support, and marketing around one shared model.
+This document is the long-term conceptual description of the five internal agent roles inside a Bear. It exists to align product, design, engineering, documentation, support, and marketing around one shared model.
 
 A Bear should feel like one coherent assistant to a user. Internally, that Bear is a small team of five specialized agents. Each role has a distinct job, trust profile, memory branch, and relationship to external systems.
 
 ## Status and relationship to other docs
 
-This is the durable conceptual source for the five Bear roles: what they are, why they exist, how they cooperate, and how we should talk about them.
+This is the durable conceptual source for the five Bear agent roles: what they are, why they exist, how they cooperate, and how we should talk about them.
 
 It is not the implementation spec for provisioning, prompt hashes, tool ids, runtime lifecycle, or database reconciliation. Those details live in the Den spec. It is also not the decision record explaining why the architecture was chosen. That rationale lives in the ADR.
 
 | Document | Audience | Purpose |
 |----------|----------|---------|
-| [`BEAR_ROLES.md`](BEAR_ROLES.md) | Product, design, engineering, docs, marketing, support | Canonical conceptual model and shared language for the five roles. |
+| [`BEAR_AGENT_ROLES.md`](BEAR_AGENT_ROLES.md) | Product, design, engineering, docs, marketing, support | Canonical conceptual model and shared language for the five internal agent roles. |
 | [`../architecture/adr/multi-agent-architecture.md`](../architecture/adr/multi-agent-architecture.md) | Engineering and architecture | Accepted decision record: why the multi-agent Bear architecture exists and what tradeoffs it makes. |
 | [`../../services/den/docs/bear-spec.md`](../../services/den/docs/bear-spec.md) | Engineering implementation | Canonical Den-owned provisioning/runtime spec for prompts, tools, skills, tags, branches, and reconciliation. |
 
@@ -20,7 +20,7 @@ When these docs disagree, treat this document as the source for cross-functional
 
 ## The core idea
 
-A Bear is one assistant with five coordinated roles:
+A Bear is one assistant with five coordinated internal agent roles:
 
 | Role | Plain-English name | Primary job | User-visible surface |
 |------|--------------------|-------------|----------------------|
