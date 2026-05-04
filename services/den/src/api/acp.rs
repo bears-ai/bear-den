@@ -21,7 +21,7 @@ use std::{
     future::Future,
     path::Path as FsPath,
     pin::Pin,
-    sync::{Arc, Mutex, OnceLock},
+    sync::{Arc, Mutex},
     task::Poll,
 };
 use time::format_description::well_known::Rfc3339;
@@ -47,7 +47,7 @@ use crate::{
 const ACP_SESSIONS_PAGE_SIZE: i64 = 50;
 
 #[derive(Debug)]
-struct AcpToolTurn {
+pub(crate) struct AcpToolTurn {
     user_id: i32,
     bear_id: Uuid,
     bear_slug: String,
@@ -60,12 +60,10 @@ struct AcpToolTurn {
     result_tx: Option<oneshot::Sender<AcpToolResultRequest>>,
 }
 
-type AcpToolTurnRegistry = Arc<Mutex<HashMap<String, AcpToolTurn>>>;
+pub(crate) type AcpToolTurnRegistry = Arc<Mutex<HashMap<String, AcpToolTurn>>>;
 
-static ACP_TOOL_TURNS: OnceLock<AcpToolTurnRegistry> = OnceLock::new();
-
-fn acp_tool_turns() -> &'static AcpToolTurnRegistry {
-    ACP_TOOL_TURNS.get_or_init(|| Arc::new(Mutex::new(HashMap::new())))
+pub(crate) fn new_acp_tool_turn_registry() -> AcpToolTurnRegistry {
+    Arc::new(Mutex::new(HashMap::new()))
 }
 
 fn acp_tool_turn_key(session_id: &str, tool_call_id: &str) -> String {
@@ -1162,7 +1160,8 @@ async fn tool_result_inner(
 ) -> Result<Response, CustomError> {
     let user_id = authenticate_acp_code_token(&state, &headers, &slug).await?;
     let key = acp_tool_turn_key(&session_id, &tool_call_id);
-    let mut turns = acp_tool_turns()
+    let mut turns = state
+        .acp_tool_turns
         .lock()
         .map_err(|_| CustomError::System("ACP tool turn registry lock poisoned".to_string()))?;
     let Some(turn) = turns.get_mut(&key) else {
@@ -1576,6 +1575,7 @@ async fn prompt_inner(
         upstream.bytes_stream(),
         AcpStreamContext {
             pool: state.sqlx_pool.clone(),
+            tool_turns: state.acp_tool_turns.clone(),
             user_id,
             bear_id: bear.id,
             bear_slug: bear.slug.clone(),
@@ -1614,6 +1614,7 @@ async fn prompt_inner(
 #[derive(Clone)]
 struct AcpStreamContext {
     pool: sqlx::PgPool,
+    tool_turns: AcpToolTurnRegistry,
     user_id: i32,
     bear_id: Uuid,
     bear_slug: String,
@@ -1685,7 +1686,7 @@ async fn persist_stream_event_side_effects(
                 CustomError::System("ACP tool request missing result channel".to_string())
             })?;
             let key = acp_tool_turn_key(&context.acp_session_id, tool_call_id);
-            let mut turns = acp_tool_turns().lock().map_err(|_| {
+            let mut turns = context.tool_turns.lock().map_err(|_| {
                 CustomError::System("ACP tool turn registry lock poisoned".to_string())
             })?;
             turns.insert(
@@ -2236,7 +2237,13 @@ async fn map_letta_stream_frame_to_acp_adapter_events_with_persistence(
     frame: Vec<u8>,
     context: AcpStreamContext,
     diagnostics: &mut AcpStreamDiagnostics,
-) -> Result<(Vec<Bytes>, Option<oneshot::Receiver<AcpToolResultRequest>>), std::io::Error> {
+) -> Result<
+    (
+        Vec<Bytes>,
+        Option<(String, oneshot::Receiver<AcpToolResultRequest>)>,
+    ),
+    std::io::Error,
+> {
     diagnostics.upstream_frames += 1;
     let body = strip_trailing_sse_delimiter_owned(frame);
     let value = match parse_sse_event_body_to_json(&body) {
@@ -2258,8 +2265,13 @@ async fn map_letta_stream_frame_to_acp_adapter_events_with_persistence(
         diagnostics.observe_unmapped_event(&value);
         return Ok((Vec::new(), None));
     };
-    let result_rx = if let AcpGatewayEvent::ToolRequest { result_rx, .. } = &mut event {
-        result_rx.take()
+    let result_rx = if let AcpGatewayEvent::ToolRequest {
+        tool_call_id,
+        result_rx,
+        ..
+    } = &mut event
+    {
+        result_rx.take().map(|rx| (tool_call_id.clone(), rx))
     } else {
         None
     };
@@ -2294,7 +2306,10 @@ enum AcpPendingFuture {
                 dyn Future<
                         Output = (
                             Result<
-                                (Vec<Bytes>, Option<oneshot::Receiver<AcpToolResultRequest>>),
+                                (
+                                    Vec<Bytes>,
+                                    Option<(String, oneshot::Receiver<AcpToolResultRequest>)>,
+                                ),
                                 std::io::Error,
                             >,
                             AcpStreamDiagnostics,
@@ -2303,13 +2318,7 @@ enum AcpPendingFuture {
             >,
         >,
     ),
-    Tool(
-        Pin<
-            Box<
-                dyn Future<Output = Result<AcpToolResultRequest, oneshot::error::RecvError>> + Send,
-            >,
-        >,
-    ),
+    Tool(Pin<Box<dyn Future<Output = Result<AcpToolResultRequest, String>> + Send>>),
     ContinueTool(Pin<Box<dyn Future<Output = Result<reqwest::Response, CustomError>> + Send>>),
 }
 
@@ -2326,6 +2335,7 @@ struct AcpLettaSseStream {
     pending_tool_result: Option<AcpToolResultRequest>,
     diagnostics: AcpStreamDiagnostics,
     logged_summary: bool,
+    active_tool_call_ids: Vec<String>,
     persist_future: Option<AcpPendingFuture>,
 }
 
@@ -2349,12 +2359,28 @@ impl AcpLettaSseStream {
             pending_tool_result: None,
             diagnostics: AcpStreamDiagnostics::default(),
             logged_summary: false,
+            active_tool_call_ids: Vec::new(),
             persist_future: None,
+        }
+    }
+
+    fn cleanup_active_tool_turns(&mut self) {
+        if self.active_tool_call_ids.is_empty() {
+            return;
+        }
+        if let Ok(mut turns) = self.context.tool_turns.lock() {
+            for tool_call_id in self.active_tool_call_ids.drain(..) {
+                turns.remove(&acp_tool_turn_key(
+                    &self.context.acp_session_id,
+                    &tool_call_id,
+                ));
+            }
         }
     }
 
     fn log_summary_once(&mut self) {
         if !self.logged_summary {
+            self.cleanup_active_tool_turns();
             self.diagnostics.log_summary(&self.context);
             self.logged_summary = true;
         }
@@ -2384,9 +2410,21 @@ impl Stream for AcpLettaSseStream {
                             for item in bytes {
                                 this.pending.push_back(item);
                             }
-                            if let Some(result_rx) = result_rx {
+                            if let Some((tool_call_id, result_rx)) = result_rx {
+                                this.active_tool_call_ids.push(tool_call_id);
                                 this.persist_future =
-                                    Some(AcpPendingFuture::Tool(Box::pin(result_rx)));
+                                    Some(AcpPendingFuture::Tool(Box::pin(async move {
+                                        tokio::time::timeout(
+                                            std::time::Duration::from_secs(30),
+                                            result_rx,
+                                        )
+                                        .await
+                                        .map_err(|_| {
+                                            "timed out waiting for ACP local tool result"
+                                                .to_string()
+                                        })?
+                                        .map_err(|err| err.to_string())
+                                    })));
                             }
                             return self.poll_next(cx);
                         }
@@ -2398,6 +2436,15 @@ impl Stream for AcpLettaSseStream {
                     this.persist_future = None;
                     match result {
                         Ok(tool_result) => {
+                            if let Some(done_id) = tool_result.tool_call_id.as_deref() {
+                                this.active_tool_call_ids.retain(|id| id != done_id);
+                                if let Ok(mut turns) = this.context.tool_turns.lock() {
+                                    turns.remove(&acp_tool_turn_key(
+                                        &this.context.acp_session_id,
+                                        done_id,
+                                    ));
+                                }
+                            }
                             let tool_name = tool_result
                                 .tool_name
                                 .as_deref()
@@ -2424,8 +2471,8 @@ impl Stream for AcpLettaSseStream {
                         Err(err) => {
                             this.pending.push_back(acp_event_to_adapter_sse(
                                 AcpGatewayEvent::Error {
-                                    message: "ACP local tool result channel closed before a result was delivered.".to_string(),
-                                    detail: Some(err.to_string()),
+                                    message: "ACP local tool result was not delivered before the turn could continue.".to_string(),
+                                    detail: Some(err),
                                     error_type: Some("tool_result_channel_closed".to_string()),
                                     request_id: Some(this.context.request_id.to_string()),
                                     context: None,
