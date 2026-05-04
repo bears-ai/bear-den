@@ -49,6 +49,41 @@ async fn provision_bear_roles(
     Ok(())
 }
 
+pub async fn provision_missing_bear_roles(
+    pool: &PgPool,
+    letta: &LettaClient,
+    bifrost: &BifrostClient,
+    bear_id: Uuid,
+) -> Result<usize, CustomError> {
+    if !letta.is_enabled() {
+        return Err(CustomError::System(
+            "Letta is not configured (set LETTA_BASE_URL).".to_string(),
+        ));
+    }
+
+    let bear = bears_db::get_bear(pool, bear_id)
+        .await?
+        .ok_or_else(|| CustomError::NotFound("bear not found".to_string()))?;
+    bears_db::ensure_bear_agent_rows(pool, bear.id).await?;
+
+    let mut provisioned = 0usize;
+    for role in BearAgentRole::ALL {
+        let existing = bears_db::get_bear_agent(pool, bear.id, role).await?;
+        let has_agent = existing
+            .as_ref()
+            .and_then(|row| row.letta_agent_id.as_deref())
+            .is_some_and(|id| !id.trim().is_empty());
+        if has_agent {
+            continue;
+        }
+        provision_bear_role(pool, letta, bifrost, &bear, role).await?;
+        provisioned += 1;
+    }
+
+    bears_db::mirror_talk_agent_to_legacy_letta_agent_id(pool, bear_id).await?;
+    Ok(provisioned)
+}
+
 async fn provision_bear_role(
     pool: &PgPool,
     letta: &LettaClient,

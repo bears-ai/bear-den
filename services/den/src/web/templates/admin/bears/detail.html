@@ -45,6 +45,12 @@
 <p><em>Letta is not configured on this Den instance</em> (<code>LETTA_BASE_URL</code> empty). Stored role agent ids, if any, are not verified against Letta.</p>
 {% endif %}
 <p class="form-hint">Role rows come from <code>bear_agents</code>. Legacy <code>bears.letta_agent_id</code> mirrors/falls back to <strong>talk</strong> during migration.</p>
+{% if letta_configured %}
+<form method="post" action="/admin/bears/{{ bear.id }}/provision-missing-roles" style="margin: 0 0 1rem 0;">
+  <button type="submit">Provision missing role agents</button>
+  <span class="form-hint">Creates Letta agents only for roles with no recorded agent id.</span>
+</form>
+{% endif %}
 <table>
   <thead>
     <tr>

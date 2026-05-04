@@ -43,6 +43,10 @@ pub fn router() -> Router<AppState> {
         )
         .route_with_tsr("/bears/new", get(new_view).post(new_action))
         .route_with_tsr("/bears/{id}/edit", get(edit_view).post(edit_action))
+        .route_with_tsr(
+            "/bears/{id}/provision-missing-roles",
+            post(provision_missing_roles_action),
+        )
         .route_with_tsr("/bears/{id}/retry-letta", post(retry_letta_action))
         .route_with_tsr("/bears/{id}", get(detail_view))
 }
@@ -807,6 +811,27 @@ async fn edit_action(
         )
         .await
     }
+}
+
+async fn provision_missing_roles_action(
+    Path(id): Path<Uuid>,
+    State(state): State<AppState>,
+    auth_session: AuthSession,
+) -> Result<Response, CustomError> {
+    let message = match provision::provision_missing_bear_roles(
+        state.sqlx_pool(),
+        state.letta.as_ref(),
+        state.bifrost.as_ref(),
+        id,
+    )
+    .await
+    {
+        Ok(0) => "No missing role agents to provision.".to_string(),
+        Ok(n) => format!("Provisioned {n} missing role agent(s)."),
+        Err(err) => format!("Provisioning missing role agents failed: {err}"),
+    };
+
+    bear_detail_response(&state, auth_session, id, Some(message)).await
 }
 
 async fn retry_letta_action(
