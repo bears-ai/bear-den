@@ -46,6 +46,14 @@ use crate::{
 
 const ACP_SESSIONS_PAGE_SIZE: i64 = 50;
 
+fn acp_debug_event_sample_chars() -> usize {
+    std::env::var("ACP_DEBUG_EVENT_SAMPLE_CHARS")
+        .ok()
+        .and_then(|s| s.trim().parse::<usize>().ok())
+        .map(|n| n.clamp(128, 20_000))
+        .unwrap_or(360)
+}
+
 #[derive(Debug, Clone, Copy)]
 struct AcpToolDescriptor {
     provider_name: &'static str,
@@ -2205,8 +2213,10 @@ impl AcpStreamDiagnostics {
     fn observe_unmapped_event(&mut self, value: &serde_json::Value) {
         self.unmapped_events += 1;
         if self.unmapped_event_samples.len() < 5 {
-            self.unmapped_event_samples
-                .push(preview_str_truncated(&value.to_string(), 360));
+            self.unmapped_event_samples.push(preview_str_truncated(
+                &value.to_string(),
+                acp_debug_event_sample_chars(),
+            ));
         }
     }
 
