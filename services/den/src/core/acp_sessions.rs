@@ -195,6 +195,29 @@ pub async fn mark_closed(pool: &PgPool, id: Uuid) -> Result<(), CustomError> {
     Ok(())
 }
 
+pub async fn resolved_conversation_ids_for_bear(
+    pool: &PgPool,
+    bear_slug: &str,
+) -> Result<Vec<String>, CustomError> {
+    let rows = sqlx::query(
+        r#"
+        SELECT DISTINCT resolved_conversation_id
+        FROM acp_sessions
+        WHERE bear_slug = $1
+          AND resolved_conversation_id IS NOT NULL
+          AND resolved_conversation_id LIKE 'conv-%'
+        "#,
+    )
+    .bind(bear_slug)
+    .fetch_all(pool)
+    .await?;
+
+    Ok(rows
+        .iter()
+        .filter_map(|row| row.get::<Option<String>, _>("resolved_conversation_id"))
+        .collect())
+}
+
 pub async fn mark_archived(pool: &PgPool, id: Uuid) -> Result<(), CustomError> {
     sqlx::query(
         r#"

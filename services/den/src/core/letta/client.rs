@@ -495,6 +495,37 @@ impl LettaClient {
         })
     }
 
+    /// `DELETE /v1/conversations/{conversation_id}` — permanently delete a conversation.
+    pub async fn delete_conversation(&self, conversation_id: &str) -> Result<(), CustomError> {
+        if !self.is_enabled() {
+            return Err(CustomError::System(
+                "Letta is not configured (set LETTA_BASE_URL)".to_string(),
+            ));
+        }
+
+        let url = format!("{}/v1/conversations/{}", self.base_url, conversation_id);
+        let resp = self
+            .http
+            .delete(url)
+            .headers(self.auth_headers())
+            .send()
+            .await
+            .map_err(|e| CustomError::System(format!("Letta delete conversation failed: {e}")))?;
+
+        let status = resp.status();
+        let text = resp
+            .text()
+            .await
+            .map_err(|e| CustomError::System(format!("Letta delete conversation body: {e}")))?;
+
+        if !status.is_success() {
+            return Err(CustomError::System(format!(
+                "Letta delete conversation HTTP {status}: {text}"
+            )));
+        }
+        Ok(())
+    }
+
     /// `PATCH /v1/conversations/{conversation_id}` — set `summary` (human-facing thread title).
     pub async fn patch_conversation_summary(
         &self,

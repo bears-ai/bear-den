@@ -83,11 +83,11 @@ endblock %} {% block content %}
                 {% if c.id != "default" %}
                 <button
                     type="button"
-                    class="den-conv-menu-action den-all-threads-rename-action"
+                    class="den-conv-menu-action den-all-threads-delete-action"
                     data-conversation-id="{{ c.id | e }}"
-                    aria-label="Rename thread {{ c.title | e }}"
+                    aria-label="Delete thread {{ c.title | e }}"
                 >
-                    Rename
+                    Delete
                 </button>
                 <button
                     type="button"
@@ -273,6 +273,44 @@ endblock %} {% block content %}
                     },
                     function (err) {
                         renameButton.disabled = false;
+                        window.alert(String(err.message || err));
+                    },
+                );
+                return;
+            }
+
+            var deleteButton = event.target.closest(
+                ".den-all-threads-delete-action",
+            );
+            if (deleteButton) {
+                var deleteId = deleteButton.getAttribute(
+                    "data-conversation-id",
+                );
+                if (!deleteId) return;
+                var rowForDelete = deleteButton.closest(".den-conv-menu-row");
+                var titleForDelete = rowForDelete
+                    ? rowForDelete.querySelector(".den-all-threads-title")
+                    : null;
+                var label = titleForDelete
+                    ? titleForDelete.textContent
+                    : deleteId;
+                if (
+                    !window.confirm(
+                        'Permanently delete thread "' +
+                            label +
+                            '"? This cannot be undone.',
+                    )
+                )
+                    return;
+                deleteButton.disabled = true;
+                patchConversation(deleteId, { deleted: true }).then(
+                    function (data) {
+                        if (data && data.__den_skip) return;
+                        if (rowForDelete) rowForDelete.remove();
+                        updateEmptyStates();
+                    },
+                    function (err) {
+                        deleteButton.disabled = false;
                         window.alert(String(err.message || err));
                     },
                 );

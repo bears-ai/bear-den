@@ -118,6 +118,8 @@ pub struct ChatConversationPatchBody {
     pub title: Option<String>,
     #[serde(default)]
     pub archived: Option<bool>,
+    #[serde(default)]
+    pub deleted: Option<bool>,
 }
 
 #[derive(Serialize)]
@@ -285,10 +287,24 @@ async fn chat_conversation_patch(
             "conversation title cannot be empty".to_string(),
         ));
     }
-    if body.title.is_none() && body.archived.is_none() {
+    if body.title.is_none() && body.archived.is_none() && body.deleted != Some(true) {
         return Err(CustomError::ValidationError(
             "no conversation update requested".to_string(),
         ));
+    }
+
+    if body.deleted == Some(true) {
+        state.letta.delete_conversation(&conv_id).await?;
+        archived_conversations::set_archived(
+            state.sqlx_pool(),
+            bear.id,
+            &conv_id,
+            Some(user_id),
+            "delete",
+            false,
+        )
+        .await?;
+        return Ok(Json(ChatConversationPatchResponse { ok: true }));
     }
 
     if let Some(title) = title {
