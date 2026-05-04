@@ -196,7 +196,7 @@ Expected mapping:
 
 The former Letta Code ACP client-tool relay (`capabilities.client_tools`, `client_tool_request`, and tool-result continuation endpoints) has been removed from the active implementation. Future ACP client tools should be owned by a dedicated ACP runtime rather than tunneled through Letta Code external-tool closures.
 
-Den is the ACP gateway, not a blind proxy. It authenticates the ACP client, authorizes bear access, and injects trusted context. The original Letta Code client-tool relay plan is retained as historical planning material only; future ACP tool support should use a dedicated runtime architecture.
+Den is the ACP gateway, not a blind proxy. It authenticates the ACP client, authorizes bear access, injects trusted context, and owns ACP conversation resolution. Den-local pending identifiers such as `new-acp-*` are session-selection placeholders only and must not be sent to Letta as conversation path ids; see [ADR: ACP Conversation Resolver](adr/acp-conversation-resolver.md). The original Letta Code client-tool relay plan is retained as historical planning material only; future ACP tool support should use a dedicated runtime architecture.
 
 ## Rollout approach
 
