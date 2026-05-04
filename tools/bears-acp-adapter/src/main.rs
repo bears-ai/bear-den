@@ -1,3 +1,4 @@
+use agent_client_protocol::schema::{RequestPermissionOutcome, RequestPermissionResponse};
 use anyhow::{anyhow, Context, Result};
 use futures_util::StreamExt;
 use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, CONTENT_TYPE};
@@ -2305,8 +2306,27 @@ async fn request_tool_permission(
     if let Some(error) = response.get("error") {
         return Err(anyhow!("permission request failed: {error}"));
     }
-    let result = response.get("result").unwrap_or(&Value::Null);
-    let approved = result
+    let result = response.get("result").cloned().unwrap_or(Value::Null);
+    let approved = parse_permission_approved(&result)?;
+    if approved {
+        Ok(())
+    } else {
+        Err(anyhow!("permission denied for {tool_name} on {path}"))
+    }
+}
+
+fn parse_permission_approved(result: &Value) -> Result<bool> {
+    if let Ok(response) = serde_json::from_value::<RequestPermissionResponse>(result.clone()) {
+        return Ok(match response.outcome {
+            RequestPermissionOutcome::Selected(selected) => {
+                let id = selected.option_id.to_string();
+                matches!(id.as_str(), "allow" | "approve" | "approved" | "yes")
+            }
+            RequestPermissionOutcome::Cancelled => false,
+            _ => false,
+        });
+    }
+    Ok(result
         .get("approved")
         .or_else(|| result.get("approve"))
         .or_else(|| result.get("granted"))
@@ -2314,12 +2334,7 @@ async fn request_tool_permission(
         .unwrap_or_else(|| {
             // Some clients answer `{}` after applying their own auto-approval policy.
             result.is_object()
-        });
-    if approved {
-        Ok(())
-    } else {
-        Err(anyhow!("permission denied for {tool_name} on {path}"))
-    }
+        }))
 }
 
 async fn post_tool_result(
@@ -2566,6 +2581,27 @@ fn json_rpc_error(code: i64, message: &str, data: Option<Value>) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parses_typed_acp_permission_selection() {
+        let result = json!({
+            "outcome": {
+                "outcome": "selected",
+                "optionId": "allow"
+            }
+        });
+        assert!(parse_permission_approved(&result).unwrap());
+    }
+
+    #[test]
+    fn parses_typed_acp_permission_cancelled() {
+        let result = json!({
+            "outcome": {
+                "outcome": "cancelled"
+            }
+        });
+        assert!(!parse_permission_approved(&result).unwrap());
+    }
 
     #[test]
     fn session_context_extracts_zed_workspace_folder_uri() {
