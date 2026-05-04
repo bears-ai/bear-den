@@ -10,6 +10,15 @@ use crate::errors::CustomError;
 
 const TOKEN_PREFIX: &str = "bears_acp_";
 const ACP_CHAT_SCOPE: &str = "acp:chat";
+const ACP_TOOLS_SCOPE: &str = "acp:tools";
+
+pub fn acp_chat_scope() -> &'static str {
+    ACP_CHAT_SCOPE
+}
+
+pub fn acp_tools_scope() -> &'static str {
+    ACP_TOOLS_SCOPE
+}
 
 #[derive(Debug, Clone, Serialize)]
 pub struct AcpTokenListRow {
@@ -79,7 +88,7 @@ pub async fn create_for_bear(
     .bind(user_id)
     .bind(name)
     .bind(hash)
-    .bind(serde_json::json!([ACP_CHAT_SCOPE]))
+    .bind(serde_json::json!([ACP_CHAT_SCOPE, ACP_TOOLS_SCOPE]))
     .fetch_one(&mut *tx)
     .await?;
 
@@ -143,7 +152,11 @@ pub async fn list_for_user(
                 expires_at: row.get("expires_at"),
                 last_used_at: row.get("last_used_at"),
                 revoked_at: row.get("revoked_at"),
-                token_type: "ACP chat".to_string(),
+                token_type: if scopes_contains(&scopes, ACP_TOOLS_SCOPE) {
+                    "ACP code".to_string()
+                } else {
+                    "ACP chat".to_string()
+                },
                 scope_labels: scope_labels(&scopes),
             }
         })
@@ -246,6 +259,9 @@ fn scope_labels(scopes: &serde_json::Value) -> Vec<String> {
     let mut labels = Vec::new();
     if scopes_contains(scopes, ACP_CHAT_SCOPE) {
         labels.push("chat".to_string());
+    }
+    if scopes_contains(scopes, ACP_TOOLS_SCOPE) {
+        labels.push("tools".to_string());
     }
 
     labels

@@ -563,6 +563,12 @@ pub fn acp_event_to_adapter_sse(event: AcpGatewayEvent) -> Bytes {
                 "required": approval_required,
                 "reason": approval_reason,
             },
+            "policy": {
+                "scope_basis": "acp:tools",
+                "risk": ACP_READ_TEXT_FILE_TOOL.risk,
+                "max_lines": 2000,
+                "sensitive_path_policy": "client_permission_required",
+            },
             "diagnostic": {
                 "component": "den.acp",
                 "transport_version": 3,

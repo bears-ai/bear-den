@@ -575,7 +575,11 @@ fn acp_direct_tool_prompt_context(
     session_id: &str,
     cwd: &str,
     client_context: &serde_json::Value,
+    tools_enabled: bool,
 ) -> String {
+    if !tools_enabled {
+        return String::new();
+    }
     let roots = client_context
         .get("workspace_roots")
         .or_else(|| client_context.get("workspaceRoots"))
@@ -825,12 +829,22 @@ async fn authenticate_acp_code_token(
 ) -> Result<i32, CustomError> {
     let token = auth::extract_bearer_token(headers)
         .map_err(|err| CustomError::Authentication(err.message))?;
-    if !acp_tokens::is_acp_token(&token) {
+    Ok(authenticate_acp_code_token_with_auth(state, &token, slug)
+        .await?
+        .user_id)
+}
+
+async fn authenticate_acp_code_token_with_auth(
+    state: &ApiState,
+    token: &str,
+    slug: &str,
+) -> Result<acp_tokens::AcpTokenAuth, CustomError> {
+    if !acp_tokens::is_acp_token(token) {
         return Err(CustomError::Authentication(
             "expected a bear-scoped BEARS ACP token".to_string(),
         ));
     }
-    let auth = acp_tokens::authenticate_for_bear_slug_with_scopes(&state.sqlx_pool, &token, slug)
+    let auth = acp_tokens::authenticate_for_bear_slug_with_scopes(&state.sqlx_pool, token, slug)
         .await?
         .ok_or_else(|| {
             CustomError::Authentication(
@@ -842,7 +856,7 @@ async fn authenticate_acp_code_token(
             "ACP token is missing required acp:chat scope".to_string(),
         ));
     }
-    Ok(auth.user_id)
+    Ok(auth)
 }
 
 async fn list_acp_sessions(
@@ -1115,7 +1129,15 @@ async fn tool_result_inner(
     headers: HeaderMap,
     body: AcpToolResultRequest,
 ) -> Result<Response, CustomError> {
-    let user_id = authenticate_acp_code_token(&state, &headers, &slug).await?;
+    let token = auth::extract_bearer_token(&headers)
+        .map_err(|err| CustomError::Authentication(err.message))?;
+    let auth = authenticate_acp_code_token_with_auth(&state, &token, &slug).await?;
+    if !acp_tokens::scopes_contains(&auth.scopes, acp_tokens::acp_tools_scope()) {
+        return Err(CustomError::Authorization(
+            "ACP token is missing required acp:tools scope".to_string(),
+        ));
+    }
+    let user_id = auth.user_id;
     let parsed_status = AcpToolStatus::parse(&body.status).ok_or_else(|| {
         CustomError::ValidationError(format!("invalid ACP tool result status: {}", body.status))
     })?;
@@ -1292,12 +1314,18 @@ async fn prompt_inner(
     request_id: Uuid,
 ) -> Result<Result<Response, CustomError>, ApiError> {
     let slug = slug.trim().to_string();
-    let user_id = authenticate_acp_code_token(&state, &headers, &slug)
+    let token = auth::extract_bearer_token(&headers).map_err(|err| err)?;
+    let auth = authenticate_acp_code_token_with_auth(&state, &token, &slug)
         .await
         .map_err(|err| {
             let (status, code, message) = acp_error_status_message(&err);
             ApiError::new(status, code, message)
         })?;
+    let user_id = auth.user_id;
+    let tools_enabled = acp_tokens::scopes_contains(&auth.scopes, acp_tokens::acp_tools_scope());
+    if !tools_enabled {
+        tracing::info!(bear_slug = %slug, user_id = user_id, "ACP token lacks acp:tools; local client tools disabled for prompt");
+    }
     let prompt = body.message.trim();
     if prompt.is_empty() {
         return Ok(Err(CustomError::ValidationError(
@@ -1455,7 +1483,7 @@ async fn prompt_inner(
         "ACP gateway routing prompt to pair role via Letta API"
     );
     let tool_prompt_context =
-        acp_direct_tool_prompt_context(session_id, &cwd, &body.client_context);
+        acp_direct_tool_prompt_context(session_id, &cwd, &body.client_context, tools_enabled);
     let prompt_with_tool_context = format!("{prompt}{tool_prompt_context}");
     let upstream = match state
         .letta
@@ -1463,9 +1491,7 @@ async fn prompt_inner(
             &conversation_resolution.upstream_target,
             Some(&pair_agent_id),
             &prompt_with_tool_context,
-            Some(serde_json::json!([
-                acp_read_text_file_client_tool_descriptor()
-            ])),
+            tools_enabled.then(|| serde_json::json!([acp_read_text_file_client_tool_descriptor()])),
         )
         .await
     {
