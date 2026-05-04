@@ -134,7 +134,7 @@ services/den/
 - `slug` TEXT UNIQUE — human-stable handle (`household`, `personal-hans`)
 - `name`, `description` TEXT
 - `default_model` TEXT NULL — informational; Letta is source of truth for actual model
-- Historical `letta_agent_id` routing mirror is retired; use `bear_agents` for role-scoped Letta ids
+- No `letta_agent_id` column; active routing uses `bear_agents` for role-scoped Letta ids
 - `tools_enabled` JSONB NULL — optional mirror for future Cabinet
 - `created_at`, `updated_at`
 
@@ -239,7 +239,7 @@ services/den/
 1. **Config (Letta):** `LETTA_BASE_URL` (Letta HTTP API for agents/provisioning), `CODEPOOL_BASE_URL` (Codepool harness for web chat — required for `/v1/chat/*`; no fallback to the API URL), `LETTA_AUTH` / `LETTA_API_KEY` (Bearer `LETTA_SERVER_PASS` or as per your Letta version).
 2. **Provision (Den → Letta):**
    - `POST /v1/agents` with JSON body (name, model, system prompt — store template in Den or env).
-   - On success, persist each role's `letta_agent_id` in `bear_agents`; do not use the retired `bears.letta_agent_id` mirror for active routing.
+   - On success, persist each role's `letta_agent_id` in `bear_agents`; active routing never reads a bear-level Letta id.
 3. **Chat (Den → Letta Code → Letta):** Den does **not** use Letta’s browser-facing messages API directly for `POST /v1/chat/send`; it calls **Letta Code**, which owns the conversation loop and uses Letta for persistence and models. Den forwards conversation context (`conversation_id`, `channel`, `channel_thread_id`) and Letta Code resolves/creates Letta conversations.
 4. **Harness config:** Render deploy artifacts from DB (`letta-code.yaml`); mount or sync **skill directories** per [DEN_ARCHITECTURE.md](../architecture/DEN_ARCHITECTURE.md) § Den-managed skills; **Slack** follows [Letta Code Channels](https://docs.letta.com/letta-code/channels/).
 5. **Version drift:** Letta OpenAPI and Letta Code APIs may differ by image/tag; pin versions in deploy docs and add integration tests.

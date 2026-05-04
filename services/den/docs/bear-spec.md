@@ -14,7 +14,7 @@ A Bear is a logical assistant backed by five Letta agents with fixed roles:
 | `work` | Den task dispatcher only | Letta Code harness | `work` | Scheduled or event-triggered outbound external work execution. |
 | `watch` | Den subscription/event router only | Letta API | `watch` | Inbound external observation from webhooks, polling results, message queues, and other streams. |
 
-Legacy `bears.letta_agent_id` is retired for active runtime routing. Den resolves agents through `bear_agents(role, letta_agent_id)` and sends the selected role as `role_agent_id` to runtime services. The legacy column may remain in historical migrations or repair tooling only; active callers must not read or write it as a routing source.
+The old single-agent `bears.letta_agent_id` column is dropped from the active schema. Den resolves agents through `bear_agents(role, letta_agent_id)` and sends the selected role as `role_agent_id` to runtime services.
 
 The watch agent may be provisioned later than the first four roles during rollout, but Phase 0 data structures, branch layout, tags, prompts, harness choice, and skill manifest semantics reserve the `watch` role from the start.
 
@@ -330,7 +330,7 @@ Rules:
 - If a row exists and the Letta agent exists but differs from canonical config, Den patches/reconciles it and records the outcome.
 - If a row exists but the Letta agent is missing, Den marks it `failed` or creates a replacement depending on operator policy; automatic replacement must be logged.
 - If Letta contains tagged agents not present in the database, `reconcile_bear` reports them. Den may adopt a tagged agent only when it unambiguously matches a missing `(bear_id, role)` and passes safety checks.
-- Newly provisioned or reconciled Bears do not mirror role agents into `bears.letta_agent_id`; active runtime routing uses `bear_agents(role, letta_agent_id)` and sends the selected value as `role_agent_id`.
+- Newly provisioned or reconciled Bears store role agents only in `bear_agents(role, letta_agent_id)` and send the selected value as `role_agent_id`.
 - Skill manifest changes trigger reconciliation for all roles in the changed entry's `applies_to_roles`; harness restart is required when `talk` or `work` skill projections change.
 
 ## Task, Observation, and Skill Tool Requirements
@@ -356,8 +356,8 @@ Conversation history belongs to a specific Bear role agent, not to the logical B
 
 Migration rules:
 
-- Legacy conversation views that read `bears.letta_agent_id` are retired; active views must resolve the relevant role through `bear_agents` and preserve the role/agent source.
-- ACP conversation lists/history and prompt streaming use `bear_agents(role='pair')` strictly. ACP must not fall back to `talk` or legacy `bears.letta_agent_id`; missing `pair` is an operator-remediable provisioning error.
+- Active conversation views must resolve the relevant role through `bear_agents` and preserve the role/agent source.
+- ACP conversation lists/history and prompt streaming use `bear_agents(role='pair')` strictly. ACP must not fall back to `talk`; missing `pair` is an operator-remediable provisioning error.
 - Web chat and Slack conversation routing use the `talk` role agent id.
 - Curate, work, and watch conversations/runs are internal and should be surfaced as role-scoped operational history rather than user-facing chat history. Work runs are Letta Code harness-backed operational sessions, not API-direct user conversations.
 - Management UI filters should support role-specific conversation inspection before Phase 8.5 is considered complete.
@@ -389,6 +389,6 @@ Polling subscriptions are executed by Den and delivered to watch as structured e
 
 - `create_bear` keeps creating only the logical Bear row.
 - `provision_bear` creates or reconciles one `bear_agents` row per role. The implementation may leave `watch` in `pending`/reserved state until the watch rollout if the chosen deployment phase provisions only four runtime agents initially.
-- Admin repair tooling may backfill historical `bears.letta_agent_id` into `bear_agents(role='talk')`; admin detail tooling may provision only missing roles for a Bear.
+- The migration sequence imports historical single-agent ids into `bear_agents(role='talk')`, then drops `bears.letta_agent_id`; admin detail tooling may provision only missing roles for a Bear.
 - Slack/web chat routing must resolve role `talk`; ACP routing must resolve role `pair` strictly.
-- Active runtime paths must not read or write `bears.letta_agent_id`; the column is retained only for historical migrations/repair until it is dropped.
+- Active runtime paths must not read or write a bear-level Letta agent id.

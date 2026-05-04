@@ -25,7 +25,7 @@ At **process startup**, `den` runs embedded migrations against `DATABASE_URL` (s
 |------|---------|
 | [`20250309000000_trestle.up.sql`](20250309000000_trestle.up.sql) | Starter: `users`, invites, email, OAuth tables |
 | [`20250331120000_phase1_den_registry.up.sql`](20250331120000_phase1_den_registry.up.sql) | **Phase 1 M1**: `bears`, `user_bear`, `audit_chat`; `users.webui_account_id` + index; `users.is_admin` |
-| [`20250401120000_phase1_bear_provisioning_fields.up.sql`](20250401120000_phase1_bear_provisioning_fields.up.sql) | **Phase 1 M1b**: `bears.system_prompt`; nullable `bears.letta_agent_id` until provisioned |
+| [`20250401120000_phase1_bear_provisioning_fields.up.sql`](20250401120000_phase1_bear_provisioning_fields.up.sql) | **Historical Phase 1 M1b**: `bears.system_prompt`; introduced now-retired nullable `bears.letta_agent_id` |
 | [`20250401130000_phase1_bootstrap_admin.up.sql`](20250401130000_phase1_bootstrap_admin.up.sql) | **Bootstrap operator** (only if no `username = 'admin'` yet): see **Default operator account** below |
 | [`20250413120000_bear_letta_sync_fields.up.sql`](20250413120000_bear_letta_sync_fields.up.sql) | `bears.letta_agent_type`, `bears.letta_tool_ids` |
 | [`20260416120000_bear_chat_activity.up.sql`](20260416120000_bear_chat_activity.up.sql) | `bear_chat_activity` (later dropped) |
@@ -37,8 +37,9 @@ At **process startup**, `den` runs embedded migrations against `DATABASE_URL` (s
 | [`20260501120000_archived_conversations.up.sql`](20260501120000_archived_conversations.up.sql) | Archived conversation tracking |
 | [`20260501121000_drop_users_admin_flag.up.sql`](20260501121000_drop_users_admin_flag.up.sql) | Backfill canonical `users.is_admin` and drop legacy `users.admin_flag` |
 | [`20260502120000_drop_acp_client_tool_calls.up.sql`](20260502120000_drop_acp_client_tool_calls.up.sql) | Drop obsolete `acp_client_tool_calls`; ACP client-tool relay through Codepool was removed |
-| [`20260503120000_multi_agent_bears.up.sql`](20260503120000_multi_agent_bears.up.sql) | Multi-agent Bear registry (`bear_agents`), skill manifest/proposals, watch subscriptions, and legacy talk-role backfill |
+| [`20260503120000_multi_agent_bears.up.sql`](20260503120000_multi_agent_bears.up.sql) | Multi-agent Bear registry (`bear_agents`), skill manifest/proposals, watch subscriptions, and one-time import from retired single-agent bear ids into `bear_agents(role='talk')` |
 | [`20260503130000_acp_runtime_session_id.up.sql`](20260503130000_acp_runtime_session_id.up.sql) | Rename historical ACP `codepool_session_id` bindings to runtime-neutral `runtime_session_id` |
+| [`20260503140000_drop_bears_letta_agent_id.up.sql`](20260503140000_drop_bears_letta_agent_id.up.sql) | Drop retired `bears.letta_agent_id`; runtime Letta ids live exclusively in `bear_agents(role, letta_agent_id)` |
 
 ### Default operator account
 

@@ -9,7 +9,7 @@ Each phase has explicit acceptance criteria. Phases are ordered for safe increme
 As of the current Den slice:
 
 - The additive multi-agent schema exists for `bear_agents`, `bear_skills_manifest`, `bear_skill_proposals`, and `bear_subscriptions`.
-- Existing legacy Bears can be repaired from the admin Bear list: `POST /admin/bears/repair-legacy-agents` copies non-empty `bears.letta_agent_id` values into `bear_agents(role='talk')` and creates missing placeholder role rows.
+- Historical single-agent bear ids have been imported into `bear_agents(role='talk')` by migration, and `bears.letta_agent_id` is dropped by the follow-up schema migration.
 - Individual Bear detail pages list all role agents, perform per-role Letta fetch health checks, and expose `POST /admin/bears/{id}/provision-missing-roles` to create Letta agents only for roles with no recorded role agent id.
 - Browser web chat routes through the `talk` role and includes role metadata in the trusted Codepool `bear_channel` payload.
 - ACP is being migrated to strict `pair` role routing: no Codepool fallback and no `talk`/legacy fallback. Missing `pair` must produce an operator-actionable error directing admins to provision missing role agents.
@@ -125,7 +125,7 @@ As of the current Den slice:
 ### Acceptance
 
 - `create_bear` followed by `provision_bear` creates or updates five `bear_agents` rows and produces five agents on the Letta server with the correct tags (`bear:<id>`, `role:<role>`, `bear:<id>:role:talk`, `bear:<id>:role:pair`, `bear:<id>:role:curate`, `bear:<id>:role:work`, `bear:<id>:role:watch`, `git-memory-enabled`) and tool profiles.
-- Admin repair/migration tooling can idempotently backfill legacy `bears.letta_agent_id` into `bear_agents(role='talk')` and create missing placeholder rows for all five roles.
+- Schema migration imports historical single-agent ids into `bear_agents(role='talk')`, creates missing placeholder rows for all five roles, and the follow-up migration drops `bears.letta_agent_id`.
 - Admin detail tooling can provision only missing role agents for a Bear without replacing already-recorded role agent ids.
 - `reconcile_bear` returns no drift immediately after provisioning.
 - `reconcile_bear` detects and corrects drift after manually mutating an agent's tool roster via the Letta API.
@@ -426,7 +426,7 @@ Before full Phase 2/3 MemFS and skill projection are complete, web chat can be t
 
 ## Phase 8.5 — Documentation and operator UI: retire implicit 1:1 bear ↔ Letta agent
 
-**Goal:** Every human-facing document, operator template, and user-visible error string reflects that a **bear** is a **logical assistant** (one coherent product identity) backed by **one or more Letta agents** with explicit **roles** (`talk` \| `pair` \| `curate` \| `work` \| `watch` per the [`multi-agent-architecture` ADR](../architecture/adr/multi-agent-architecture.md)). Legacy `bears.letta_agent_id` is retired for active routing and should appear only as historical migration/repair data until the column is dropped.
+**Goal:** Every human-facing document, operator template, and user-visible error string reflects that a **bear** is a **logical assistant** (one coherent product identity) backed by **one or more Letta agents** with explicit **roles** (`talk` \| `pair` \| `curate` \| `work` \| `watch` per the [`multi-agent-architecture` ADR](../architecture/adr/multi-agent-architecture.md)). The old `bears.letta_agent_id` column is dropped; active and operator-facing runtime surfaces use `bear_agents`.
 
 **Prerequisite:** `bear_agents` (or equivalent) exists and at least the **talk** row is populated for newly provisioned bears (Phases 0–3). Work can **start in parallel with Phase 4+** once that is true.
 
@@ -437,23 +437,23 @@ Before full Phase 2/3 MemFS and skill projection are complete, web chat can be t
 1. **`docs/planning/PLAN.md`** — Revise **Terminology** and any §1–§2 bullets that describe Den as storing a single `bear_id` ↔ `letta_agent_id` map or routing web/Slack to “the” Letta agent without naming **talk** (and ACP → **pair**, etc.).
 2. **`docs/architecture/DEN_ARCHITECTURE.md`** — Harness binding, skills materialization paths, Den meta tools: document **per-role** Letta agent ids and which **surface** uses which role.
 3. **`docs/architecture/ARCHITECTURE_NOTES.md`** — Stack diagram and component tables: one bear → **cluster** of Letta agents where the architecture is live.
-4. **`docs/planning/PHASE1_BOOTSTRAP.md`**, **`PHASE1_DECISIONS.md`** — Public JSON stays **`bear_id`**-centric; internal and harness artifacts document **role → `letta_agent_id`**; clarify that legacy `bears.letta_agent_id` is retired outside historical migrations/repair tooling.
+4. **`docs/planning/PHASE1_BOOTSTRAP.md`**, **`PHASE1_DECISIONS.md`** — Public JSON stays **`bear_id`**-centric; internal and harness artifacts document **role → `letta_agent_id`**; clarify that `bears.letta_agent_id` has been dropped from the active schema.
 5. **`docs/planning/DEN_SPECIFIC_TOOLS_PLAN.md`**, **`docs/architecture/BEAR_CHANNEL_AND_ACP.md`**, repo-root **`FAQ.md`** (if present) — JSON examples and narratives: use **talk** (or explicit role) in payloads; ACP sections name **pair**.
-6. **`services/den/migrations/README.md`** — When `bear_agents` lands, document it next to legacy `bears.letta_agent_id` semantics.
+6. **`services/den/migrations/README.md`** — Document the one-time import from the retired single-agent column and the follow-up migration that drops `bears.letta_agent_id`.
 7. **`services/den/docs/`** (e.g. **`concepts-overview.md`**, **`src/web/ROUTES.md`**) — Provisioning and admin flows: no “one agent per bear” without qualification.
 8. **`README.md`** (repo root) — If the one-liner implies a single Letta agent per bear, align wording with **logical bear** vs **Letta runtime identities**.
 
 ### Tasks — operator UI, templates, and copy
 
-Audit and update so operators **never** see a bare `letta_agent_id` without **role** or **legacy / pre-migration** context (except deliberate migration tooling).
+Audit and update so operators **never** see a bare `letta_agent_id` without an explicit **role** context.
 
 | Area | Indicative paths | Expected change |
 |------|------------------|-----------------|
-| Admin bear list | `services/den/src/web/templates/admin/bears/list.html` | Replace a single “Letta id” column with **roles** (talk / pair / curate / work / watch), **partial** provisioning, or **legacy single-agent** badge. Include a deliberate repair control for legacy rows. |
+| Admin bear list | `services/den/src/web/templates/admin/bears/list.html` | Show **roles** (talk / pair / curate / work / watch) and **partial** provisioning; no single “Letta id” column. |
 | Admin bear detail | `services/den/src/web/templates/admin/bears/detail.html` | Per-role Letta summary (or tabs); SSE / API hints must name **talk** agent, not a generic “the agent”. Include per-role health checks and a deliberate control to provision only missing role agents. |
-| Create / attach bear | `admin/bears/new.html`, `bear/new.html` | Copy for **attach existing Letta agent**: clarify **legacy single-agent link** vs **multi-role cluster** provision; forms may need role-specific attach later. |
+| Create / attach bear | `admin/bears/new.html`, `bear/new.html` | Copy for provisioning or attaching Letta agents must name the target role; forms may need role-specific attach later. |
 | Letta Code harness admin | `admin/letta_code_harness.html` | Rows or copy must not assume one Letta row per bear without role. |
-| Unlinked Letta agents | `admin/bears/unlinked_letta_agents.html` | Consider ids referenced only in **`bear_agents`** as linked; not only `bears.letta_agent_id`. |
+| Unlinked Letta agents | `admin/bears/unlinked_letta_agents.html` | Consider ids referenced in **`bear_agents`** as linked. |
 | End-user bear pages | `bear/details.html`, `bear/memory.html`, `bear/edit_configuration.html` | Diagnostics: show **which** Letta agent is summarized (default **talk** for operator/e2e “bear health”). |
 
 **Rust / API surfaces:** Audit `services/den/src/web/bear_management.rs`, `services/den/src/web/v1/mod.rs`, `services/den/src/api/acp.rs`, and related modules for template context and JSON field names — external docs and OpenAPI-style comments should match. Prefer structured logs with **`bear_id` + `role` + `letta_agent_id`**.
@@ -463,8 +463,8 @@ Audit and update so operators **never** see a bare `letta_agent_id` without **ro
 ### Acceptance
 
 - A new engineer can read **only** updated docs and correctly explain why **Slack/web** and **ACP** may use **different** Letta agents for the same `bear_id`.
-- Operator **bear list** and **bear detail** do not imply a single Letta agent unless labeled **legacy** or **pre-migration**.
-- Checklist (manual or scripted grep): remaining UI that binds **only** `bears.letta_agent_id` without `bear_agents` / role is listed and tracked to zero before Phase 11.
+- Operator **bear list** and **bear detail** do not imply a single Letta agent.
+- Checklist (manual or scripted grep): remaining UI that binds **only** `bears.letta_agent_id` is zero.
 
 ---
 
@@ -550,7 +550,7 @@ The watch agent is not blocking for any user-visible functionality in phases 4�
 
 ## Phase 10 — Migration of existing Bears
 
-**Goal:** existing single-agent Bears are converted to the multi-agent shape without data loss.
+**Goal:** existing single-agent Bears are converted to the multi-agent shape without data loss; active schema no longer keeps `bears.letta_agent_id`.
 
 ### Tasks
 

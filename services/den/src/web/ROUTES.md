@@ -59,14 +59,13 @@ Axum routes for the web server (`RUN_WEB=true`). Update this file when you add o
 - `GET /admin/` — admin menu (includes Letta `/v1/health` and **Codepool** `/health` when configured)
 - `GET|POST /admin/users/*` — user management
 - `GET|POST /admin/bears/*` — bear registry (create bear with prompt/model fields)
-- `GET /admin/bears/unlinked-letta-agents` — Letta agents with no Den bear (`letta_agent_id` or `bear_agents.letta_agent_id`); link to new-bear-from-agent flow
+- `GET /admin/bears/unlinked-letta-agents` — Letta agents with no Den role registry reference (`bear_agents.letta_agent_id`); link to new-bear-from-agent flow
 - `GET /admin/bears/new?from_letta_agent={id}` — new bear form prefilled from Letta `GET /v1/agents/{id}` (hidden `attach_letta_agent_id` skips provisioning)
-- `POST /admin/bears/repair-legacy-agents` — idempotently copy legacy `bears.letta_agent_id` values into `bear_agents(role=talk)` and create missing role placeholder rows; redirects to the bear list with counts
 - `POST /admin/bears/register-memfs-views` — register/refresh MemFS sidecar per-agent repo views for existing `bear_agents` rows with Letta ids; redirects to the bear list with counts
 - `GET /admin/bears/{id}` — read-only bear detail (Den fields, membership count, associated role agents with per-agent Letta health checks when configured)
 - `POST /admin/bears/{id}/provision-missing-roles` — create Letta agents only for roles under this Bear that have no recorded role agent id; renders detail with a status line
 - `GET|POST /admin/bears/{id}/edit` — edit bear row (slug, prompt, model, tools JSON)
-- `POST /admin/bears/{id}/retry-letta` — create Letta agent when `letta_agent_id` is unset (responds with detail HTML including a status line)
+- `POST /admin/bears/{id}/retry-letta` — create role agents when no role agent ids are recorded (responds with detail HTML including a status line)
 - `GET|POST /admin/membership/*` — list and grant `user_bear` membership
 - `GET /admin/health/letta` — JSON: Letta reachable + auth (`GET /v1/health` on Letta) (`src/web/admin/ops.rs`)
 - `GET /admin/harness-pool` — **Codepool** warm session / channel listener stats (HTML)

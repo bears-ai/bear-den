@@ -172,7 +172,7 @@
 {% if letta_configured %}
 <form method="post" action="/admin/bears/{{ bear.id }}/retry-letta" style="margin-top: 0.5rem;">
   <button type="submit">Retry Letta provisioning</button>
-  <span class="form-hint">Creates role agents in Letta and mirrors the talk id for legacy callers.</span>
+  <span class="form-hint">Creates missing role agents in Letta and records them in the role registry.</span>
 </form>
 {% endif %}
 {% endif %}
