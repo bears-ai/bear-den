@@ -357,8 +357,18 @@ fn normalize_acp_client(raw: Option<&str>) -> String {
     }
 }
 
-fn acp_conversation_id(client: &str, session_id: &str) -> String {
-    format!("new-acp-{client}-{}", stable_session_suffix(session_id))
+fn new_acp_conversation_id(client: &str) -> String {
+    let uuid = Uuid::new_v4();
+    format!(
+        "new-acp-{client}-{}",
+        URL_SAFE_NO_PAD.encode(uuid.as_bytes())
+    )
+}
+
+fn is_valid_pending_acp_conversation_id(conversation_id: &str) -> bool {
+    conversation_id.starts_with("new-")
+        && conversation_id.len() <= 42
+        && normalize_acp_conversation_id(Some(conversation_id)).is_ok()
 }
 
 fn normalize_acp_conversation_id(raw: Option<&str>) -> Result<String, CustomError> {
@@ -399,17 +409,6 @@ async fn require_pair_agent_id(state: &ApiState, bear: &Bear) -> Result<String, 
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
         .ok_or_else(|| CustomError::ValidationError(acp_missing_pair_agent_message(&bear.slug)))
-}
-
-fn stable_session_suffix(session_id: &str) -> String {
-    session_id
-        .chars()
-        .map(|ch| if ch.is_ascii_alphanumeric() { ch } else { '-' })
-        .collect::<String>()
-        .trim_matches('-')
-        .chars()
-        .take(80)
-        .collect()
 }
 
 async fn verify_acp_conversation_belongs_to_bear(
@@ -1058,7 +1057,7 @@ async fn prompt_inner(
         // Treat that as omission so ACP session/new still creates a pending thread and
         // later prompts can use the stored/resolved conversation for this ACP session.
         .filter(|id| id != "default");
-    let generated_conversation_id = acp_conversation_id(&client, session_id);
+    let generated_conversation_id = new_acp_conversation_id(&client);
     let (conversation_id, conversation_selection_source) =
         if let Some(id) = requested_conversation_id.clone() {
             (id, "explicit")
@@ -1072,6 +1071,7 @@ async fn prompt_inner(
             .as_ref()
             .map(|s| s.conversation_id.trim())
             .filter(|s| !s.is_empty())
+            .filter(|s| s.starts_with("conv-") || is_valid_pending_acp_conversation_id(s))
             .map(str::to_string)
         {
             (id, "stored")
@@ -1079,16 +1079,12 @@ async fn prompt_inner(
             (generated_conversation_id.clone(), "generated")
         };
     if conversation_id.starts_with("conv-") && conversation_selection_source == "explicit" {
-        verify_acp_conversation_belongs_to_bear(
-            &state,
-            &pair_agent_id,
-            &conversation_id,
-        )
-        .await
-        .map_err(|err| {
-            let (status, code, message) = acp_error_status_message(&err);
-            ApiError::new(status, code, message)
-        })?;
+        verify_acp_conversation_belongs_to_bear(&state, &pair_agent_id, &conversation_id)
+            .await
+            .map_err(|err| {
+                let (status, code, message) = acp_error_status_message(&err);
+                ApiError::new(status, code, message)
+            })?;
     }
     let resolved_conversation_id = if conversation_id.starts_with("conv-") {
         Some(conversation_id.clone())
@@ -1146,11 +1142,7 @@ async fn prompt_inner(
     );
     let upstream = match state
         .letta
-        .post_conversation_messages_streaming(
-            &conversation_id,
-            Some(&pair_agent_id),
-            prompt,
-        )
+        .post_conversation_messages_streaming(&conversation_id, Some(&pair_agent_id), prompt)
         .await
     {
         Ok(upstream) => upstream,
@@ -1565,5 +1557,25 @@ data: "hello"}"#;
         );
         assert!(normalize_acp_conversation_id(Some("conv-x")).is_err());
         assert!(normalize_acp_conversation_id(Some("../../etc/passwd")).is_err());
+    }
+
+    #[test]
+    fn generated_acp_conversation_ids_are_compact_opaque_ids() {
+        let id = new_acp_conversation_id("zed");
+        assert!(id.starts_with("new-acp-zed-"));
+        assert_eq!(id.len(), 34);
+        assert!(is_valid_pending_acp_conversation_id(&id));
+
+        let id = new_acp_conversation_id("acp_adapter");
+        assert!(id.starts_with("new-acp-acp_adapter-"));
+        assert_eq!(id.len(), 42);
+        assert!(is_valid_pending_acp_conversation_id(&id));
+    }
+
+    #[test]
+    fn rejects_legacy_pending_acp_conversation_ids_that_exceed_letta_limit() {
+        let legacy = "new-acp-zed-acp-12345678-1234-1234-1234-123456789abc";
+        assert!(normalize_acp_conversation_id(Some(legacy)).is_ok());
+        assert!(!is_valid_pending_acp_conversation_id(legacy));
     }
 }

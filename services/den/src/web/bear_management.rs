@@ -22,12 +22,12 @@ use crate::{
         bears::{
             compute_letta_drift_with_expected_tool_ids, db as bears_db,
             db::{role_is_bear_admin, BearMemberRow, BEAR_ROLE_ADMIN, BEAR_ROLE_MEMBER},
-            provision, sync, Bear,
+            provision, sync, Bear, BearAgent, BearAgentRole,
         },
         letta::{load_agent_conversations, AgentSummary, LettaAgentDiagnostics},
         memory_manager_head::{
-            fetch_memory_manager_repository_files, fetch_memory_manager_repository_status,
-            private_memory_commit_rows,
+            fetch_memfs_role_view_health, fetch_memory_manager_repository_files,
+            fetch_memory_manager_repository_status, private_memory_commit_rows,
         },
         user,
         user::db as user_db,
@@ -152,6 +152,80 @@ struct DetailsConvRow {
     channel_label: &'static str,
     web_href: String,
     archived: bool,
+}
+
+#[derive(Serialize)]
+struct BearRoleViewRow {
+    role: String,
+    runtime_family: String,
+    letta_agent_id: Option<String>,
+    provisioning_status: String,
+    last_synced_at: Option<String>,
+    memfs_view_state: Option<String>,
+    memfs_view_quarantined: bool,
+    memfs_view_diagnostic: Option<String>,
+}
+
+impl BearRoleViewRow {
+    fn from_agent(agent: BearAgent, role: BearAgentRole) -> Self {
+        Self {
+            role: role.as_str().to_string(),
+            runtime_family: role.runtime_family().to_string(),
+            letta_agent_id: agent.letta_agent_id,
+            provisioning_status: agent.provisioning_status,
+            last_synced_at: agent.last_synced_at.map(|t| t.to_string()),
+            memfs_view_state: None,
+            memfs_view_quarantined: false,
+            memfs_view_diagnostic: None,
+        }
+    }
+}
+
+async fn bear_role_rows(
+    state: &AppState,
+    bear_id: Uuid,
+) -> Result<Vec<BearRoleViewRow>, CustomError> {
+    bears_db::ensure_bear_agent_rows(state.sqlx_pool(), bear_id).await?;
+    let memfs_url = state.config.letta_memfs_service_url.trim().to_string();
+    let mut rows = Vec::new();
+    for agent in bears_db::list_bear_agents(state.sqlx_pool(), bear_id).await? {
+        let role = agent
+            .parsed_role()
+            .map_err(|err| CustomError::System(format!("invalid bear agent role in DB: {err}")))?;
+        let mut row = BearRoleViewRow::from_agent(agent, role);
+        if !memfs_url.is_empty() {
+            match fetch_memfs_role_view_health(
+                state.letta.http(),
+                &memfs_url,
+                bear_id,
+                role.as_str(),
+            )
+            .await
+            {
+                Ok(Some(view)) => {
+                    row.memfs_view_state = Some(view.state);
+                    row.memfs_view_quarantined = view.quarantined;
+                    row.memfs_view_diagnostic = view.diagnostic;
+                }
+                Ok(None) => {}
+                Err(err) => {
+                    row.memfs_view_state = Some("error".to_string());
+                    row.memfs_view_diagnostic = Some(err.to_string());
+                }
+            }
+        }
+        rows.push(row);
+    }
+    Ok(rows)
+}
+
+async fn talk_agent_id_for_bear(
+    pool: &sqlx::PgPool,
+    bear: &Bear,
+) -> Result<Option<String>, CustomError> {
+    bears_db::role_agent_id_or_legacy(pool, bear, BearAgentRole::Talk)
+        .await
+        .map(|v| v.map(|s| s.trim().to_string()).filter(|s| !s.is_empty()))
 }
 
 async fn bear_code_token_get(
@@ -344,34 +418,29 @@ async fn new_bear_post(
         }
 
         if state.letta.is_enabled() {
-            let bear = bears_db::get_bear(state.sqlx_pool(), id)
-                .await?
-                .ok_or_else(|| CustomError::NotFound("bear not found".to_string()))?;
-            if bear.letta_agent_id.is_some() {
-                if let Err(e) = sync::sync_bear_to_letta(
-                    state.sqlx_pool(),
-                    state.letta.as_ref(),
-                    state.bifrost.as_ref(),
-                    id,
+            let sync_summary = sync::sync_all_bear_roles_to_letta(
+                state.sqlx_pool(),
+                state.letta.as_ref(),
+                state.bifrost.as_ref(),
+                id,
+            )
+            .await?;
+            if let Some(message) = sync_summary.diagnostic_message() {
+                tracing::warn!(bear_id = %id, message = %message, "Letta role sync after member bear create had failures");
+                let page = bear_new_form_context(&state, &form).await;
+                return render_template(
+                    &state,
+                    "bear/new.html",
+                    auth_session,
+                    context! {
+                        form => form,
+                        letta_sync_error => format!(
+                            "Bear was saved and provisioned, but one or more role agents rejected syncing fields: {message}"
+                        ),
+                        ..page
+                    },
                 )
-                .await
-                {
-                    tracing::warn!(%id, "Letta sync after create failed: {e}");
-                    let page = bear_new_form_context(&state, &form).await;
-                    return render_template(
-                        &state,
-                        "bear/new.html",
-                        auth_session,
-                        context! {
-                            form => form,
-                            letta_sync_error => format!(
-                                "Bear was saved and provisioned in Den, but Letta rejected syncing fields: {e}"
-                            ),
-                            ..page
-                        },
-                    )
-                    .await;
-                }
+                .await;
             }
         }
 
@@ -407,14 +476,11 @@ async fn render_bear_details_page(
     let letta_configured = state.letta.is_enabled();
     let letta_api_base = state.config.letta_base_url.trim().to_string();
     let slug = bear.slug.clone();
+    let talk_agent_id = talk_agent_id_for_bear(state.sqlx_pool(), &bear).await?;
+    let role_rows = bear_role_rows(state, bear.id).await?;
 
     let (letta_agent_summary, letta_agent_fetch_error, letta_drift) = if letta_configured {
-        if let Some(agent_id) = bear
-            .letta_agent_id
-            .as_deref()
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-        {
+        if let Some(agent_id) = talk_agent_id.as_deref() {
             match state.letta.fetch_agent(agent_id).await {
                 Ok(v) => {
                     let summary = AgentSummary::from_letta_agent_state(&v);
@@ -449,12 +515,7 @@ async fn render_bear_details_page(
     };
 
     let (conversation_rows, archived_conversation_count) = if letta_configured {
-        if let Some(agent_id) = bear
-            .letta_agent_id
-            .as_deref()
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-        {
+        if let Some(agent_id) = talk_agent_id.as_deref() {
             let archived_ids =
                 archived_conversations::list_for_bear(state.sqlx_pool(), bear.id).await?;
             let snap = load_agent_conversations(state.letta.as_ref(), agent_id).await;
@@ -517,12 +578,7 @@ async fn render_bear_details_page(
         mem_health,
         mem_health_error,
     ) = if !memfs_url.is_empty() && letta_configured {
-        if let Some(agent_id) = bear
-            .letta_agent_id
-            .as_deref()
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-        {
+        if let Some(agent_id) = talk_agent_id.as_deref() {
             let mem_health_result =
                 fetch_memory_manager_repository_status(state.letta.http(), memfs_url, agent_id)
                     .await;
@@ -568,6 +624,8 @@ async fn render_bear_details_page(
             members,
             letta_configured,
             letta_api_base,
+            talk_agent_id,
+            role_rows,
             letta_agent_summary,
             letta_agent_fetch_error,
             letta_drift,
@@ -638,39 +696,27 @@ async fn bear_resync_letta_post(
     }
 
     let target = format!("/bear/{}/details", bear.slug);
-    if !state.letta.is_enabled()
-        || bear
-            .letta_agent_id
-            .as_deref()
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-            .is_none()
-    {
+    if !state.letta.is_enabled() {
         return Ok(Redirect::to(&format!("{target}?letta_resync=error")).into_response());
     }
 
-    if let Err(e) = sync::sync_bear_to_letta(
+    let sync_summary = sync::sync_all_bear_roles_to_letta(
         state.sqlx_pool(),
         state.letta.as_ref(),
         state.bifrost.as_ref(),
         bear.id,
     )
-    .await
-    {
-        tracing::warn!(bear_id = %bear.id, "Letta resync from details failed: {e}");
+    .await?;
+    if let Some(message) = sync_summary.diagnostic_message() {
+        tracing::warn!(bear_id = %bear.id, message = %message, "Letta role resync from details had failures");
         return Ok(Redirect::to(&format!("{target}?letta_resync=error")).into_response());
     }
 
-    let Some(agent_id) = bear
-        .letta_agent_id
-        .as_deref()
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-    else {
+    let Some(agent_id) = talk_agent_id_for_bear(state.sqlx_pool(), &bear).await? else {
         return Ok(Redirect::to(&format!("{target}?letta_resync=error")).into_response());
     };
 
-    let still_drifted = match state.letta.fetch_agent(agent_id).await {
+    let still_drifted = match state.letta.fetch_agent(&agent_id).await {
         Ok(v) => {
             let summary = AgentSummary::from_letta_agent_state(&v);
             let diagnostics = LettaAgentDiagnostics::from_agent_json(&v);
@@ -1178,13 +1224,9 @@ async fn bear_conversations_get(
     let bear = load_bear_member(state.sqlx_pool(), user_id, &slug).await?;
     let letta_configured = state.letta.is_enabled();
 
+    let talk_agent_id = talk_agent_id_for_bear(state.sqlx_pool(), &bear).await?;
     let (rows, list_error) = if letta_configured {
-        if let Some(agent_id) = bear
-            .letta_agent_id
-            .as_deref()
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-        {
+        if let Some(agent_id) = talk_agent_id.as_deref() {
             let archived_ids =
                 archived_conversations::list_for_bear(state.sqlx_pool(), bear.id).await?;
             let snap = load_agent_conversations(state.letta.as_ref(), agent_id).await;
@@ -1218,7 +1260,7 @@ async fn bear_conversations_get(
         } else {
             (
                 Vec::new(),
-                Some("No Letta agent is linked to this bear.".to_string()),
+                Some("No talk role Letta agent is linked to this bear.".to_string()),
             )
         }
     } else {
@@ -1254,11 +1296,8 @@ async fn bear_memory_get(
 
     let bear = load_bear_member(state.sqlx_pool(), user_id, &slug).await?;
     let letta_configured = state.letta.is_enabled();
-    let agent_id = bear
-        .letta_agent_id
-        .as_deref()
-        .map(str::trim)
-        .filter(|s| !s.is_empty());
+    let talk_agent_id = talk_agent_id_for_bear(state.sqlx_pool(), &bear).await?;
+    let agent_id = talk_agent_id.as_deref();
 
     let (letta_diagnostics, letta_diag_error) = if letta_configured {
         if let Some(agent_id) = agent_id {
