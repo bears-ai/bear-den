@@ -604,7 +604,7 @@ impl LettaClient {
         Ok(())
     }
 
-    /// `POST /v1/conversations/{conversation_id}/messages` with `streaming: true` (SSE).
+    /// `POST /v1/conversations/{conversation_id}/messages/stream` (native Letta SSE).
     ///
     /// For the agent default thread, pass `conversation_id == "default"` and `Some(agent_id)` in the body.
     ///
@@ -631,7 +631,6 @@ impl LettaClient {
                 "content": user_input,
             }]),
         );
-        body.insert("streaming".to_string(), json!(true));
         body.insert("stream_tokens".to_string(), json!(true));
         if let Some(a) = agent_id.map(str::trim).filter(|s| !s.is_empty()) {
             body.insert("agent_id".to_string(), json!(a));
@@ -641,7 +640,7 @@ impl LettaClient {
         }
 
         let url = format!(
-            "{}/v1/conversations/{}/messages",
+            "{}/v1/conversations/{}/messages/stream",
             self.base_url, conversation_id
         );
 
@@ -708,14 +707,13 @@ impl LettaClient {
             })
         };
         body.insert("messages".to_string(), json!([message]));
-        body.insert("streaming".to_string(), json!(true));
         body.insert("stream_tokens".to_string(), json!(true));
         if let Some(a) = agent_id.map(str::trim).filter(|s| !s.is_empty()) {
             body.insert("agent_id".to_string(), json!(a));
         }
 
         let url = format!(
-            "{}/v1/conversations/{}/messages",
+            "{}/v1/conversations/{}/messages/stream",
             self.base_url, conversation_id
         );
 
