@@ -16,7 +16,13 @@ use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use bytes::Bytes;
 use futures::{ready, Stream};
 use serde::{Deserialize, Serialize};
-use std::{future::Future, path::Path as FsPath, pin::Pin, task::Poll};
+use std::{
+    collections::{BTreeMap, VecDeque},
+    future::Future,
+    path::Path as FsPath,
+    pin::Pin,
+    task::Poll,
+};
 use time::format_description::well_known::Rfc3339;
 use tracing::Instrument;
 use uuid::Uuid;
@@ -1299,7 +1305,6 @@ async fn prompt_inner(
             acp_session_id: session_id.to_string(),
             request_id,
         },
-        Vec::new(),
     );
     let request_id_header = HeaderValue::from_str(&request_id.to_string()).map_err(|_| {
         ApiError::new(
@@ -1474,6 +1479,128 @@ fn native_letta_conversation_resolved_event(event: &serde_json::Value) -> Option
     }
 }
 
+fn acp_event_adapter_type(event: &AcpGatewayEvent) -> &'static str {
+    match event {
+        AcpGatewayEvent::AssistantTextDelta { .. } => "assistant_text_delta",
+        AcpGatewayEvent::StatusText { .. } => "status_text",
+        AcpGatewayEvent::TurnComplete { .. } => "turn_complete",
+        AcpGatewayEvent::Error { .. } => "error",
+        AcpGatewayEvent::ConversationResolved { .. } => "conversation_resolved",
+    }
+}
+
+fn acp_event_has_visible_output(event: &AcpGatewayEvent) -> bool {
+    match event {
+        AcpGatewayEvent::AssistantTextDelta { text } | AcpGatewayEvent::StatusText { text } => {
+            !text.is_empty()
+        }
+        AcpGatewayEvent::Error { .. } => true,
+        AcpGatewayEvent::TurnComplete { .. } | AcpGatewayEvent::ConversationResolved { .. } => {
+            false
+        }
+    }
+}
+
+#[derive(Debug, Default)]
+struct AcpStreamDiagnostics {
+    upstream_frames: usize,
+    parsed_events: usize,
+    mapped_events: usize,
+    unmapped_events: usize,
+    native_message_types: BTreeMap<String, usize>,
+    native_event_types: BTreeMap<String, usize>,
+    adapter_event_types: BTreeMap<String, usize>,
+    unmapped_event_samples: Vec<String>,
+    saw_visible_output: bool,
+    saw_error: bool,
+    saw_turn_complete: bool,
+    emitted_empty_turn_error: bool,
+}
+
+impl AcpStreamDiagnostics {
+    fn increment(map: &mut BTreeMap<String, usize>, key: &str) {
+        let key = if key.trim().is_empty() {
+            "<missing>"
+        } else {
+            key
+        };
+        *map.entry(key.to_string()).or_insert(0) += 1;
+    }
+
+    fn observe_parsed_event(&mut self, value: &serde_json::Value) {
+        self.parsed_events += 1;
+        let message_type = value
+            .get("message_type")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        let event_type = value.get("type").and_then(|v| v.as_str()).unwrap_or("");
+        Self::increment(&mut self.native_message_types, message_type);
+        Self::increment(&mut self.native_event_types, event_type);
+    }
+
+    fn observe_mapped_event(&mut self, event: &AcpGatewayEvent) {
+        self.mapped_events += 1;
+        Self::increment(&mut self.adapter_event_types, acp_event_adapter_type(event));
+        self.saw_visible_output |= acp_event_has_visible_output(event);
+        self.saw_error |= matches!(event, AcpGatewayEvent::Error { .. });
+        self.saw_turn_complete |= matches!(event, AcpGatewayEvent::TurnComplete { .. });
+    }
+
+    fn observe_unmapped_event(&mut self, value: &serde_json::Value) {
+        self.unmapped_events += 1;
+        if self.unmapped_event_samples.len() < 5 {
+            self.unmapped_event_samples
+                .push(preview_str_truncated(&value.to_string(), 360));
+        }
+    }
+
+    fn empty_turn_error_event(&mut self, context: &AcpStreamContext) -> Option<AcpGatewayEvent> {
+        if self.emitted_empty_turn_error || self.saw_visible_output || self.saw_error {
+            return None;
+        }
+        self.emitted_empty_turn_error = true;
+        let detail = format!(
+            "Letta stream ended without displayable assistant/status/error output. upstream_frames={}, parsed_events={}, mapped_events={}, unmapped_events={}, message_types={:?}, event_types={:?}",
+            self.upstream_frames,
+            self.parsed_events,
+            self.mapped_events,
+            self.unmapped_events,
+            self.native_message_types,
+            self.native_event_types,
+        );
+        Some(AcpGatewayEvent::Error {
+            message: "Letta completed the turn without producing displayable ACP output."
+                .to_string(),
+            detail: Some(detail),
+            error_type: Some("empty_mapped_turn".to_string()),
+            request_id: Some(context.request_id.to_string()),
+            context: Some(serde_json::json!({
+                "acp_session_id": context.acp_session_id,
+                "unmapped_event_samples": self.unmapped_event_samples,
+            })),
+        })
+    }
+
+    fn log_summary(&self, context: &AcpStreamContext) {
+        tracing::info!(
+            request_id = %context.request_id,
+            acp_session_id = %context.acp_session_id,
+            upstream_frames = self.upstream_frames,
+            parsed_events = self.parsed_events,
+            mapped_events = self.mapped_events,
+            unmapped_events = self.unmapped_events,
+            saw_visible_output = self.saw_visible_output,
+            saw_error = self.saw_error,
+            saw_turn_complete = self.saw_turn_complete,
+            native_message_types = ?self.native_message_types,
+            native_event_types = ?self.native_event_types,
+            adapter_event_types = ?self.adapter_event_types,
+            unmapped_event_samples = ?self.unmapped_event_samples,
+            "ACP Letta stream summary"
+        );
+    }
+}
+
 fn acp_event_to_adapter_sse(event: AcpGatewayEvent) -> Bytes {
     let mapped = match event {
         AcpGatewayEvent::AssistantTextDelta { text } => serde_json::json!({
@@ -1617,7 +1744,9 @@ fn map_letta_stream_frame_to_acp_adapter_events(frame: &[u8]) -> Vec<Bytes> {
 async fn map_letta_stream_frame_to_acp_adapter_events_with_persistence(
     frame: Vec<u8>,
     context: AcpStreamContext,
+    diagnostics: &mut AcpStreamDiagnostics,
 ) -> Result<Vec<Bytes>, std::io::Error> {
+    diagnostics.upstream_frames += 1;
     let body = strip_trailing_sse_delimiter_owned(frame);
     let value = match parse_sse_event_body_to_json(&body) {
         Err(msg) => {
@@ -1632,10 +1761,13 @@ async fn map_letta_stream_frame_to_acp_adapter_events_with_persistence(
         Ok(None) => return Ok(Vec::new()),
         Ok(Some(v)) => v,
     };
+    diagnostics.observe_parsed_event(&value);
 
     let Some(event) = map_native_letta_stream_event_to_acp_event(&value) else {
+        diagnostics.observe_unmapped_event(&value);
         return Ok(Vec::new());
     };
+    diagnostics.observe_mapped_event(&event);
     persist_stream_event_side_effects(&context, &event)
         .await
         .map_err(|err| std::io::Error::other(err.to_string()))?;
@@ -1646,26 +1778,42 @@ struct AcpLettaSseStream {
     inner: Pin<Box<dyn Stream<Item = Result<Bytes, reqwest::Error>> + Send>>,
     buffer: Vec<u8>,
     /// Complete upstream SSE event bodies (delimiter stripped), FIFO.
-    pending_raw_frames: std::collections::VecDeque<Vec<u8>>,
-    pending: std::collections::VecDeque<Bytes>,
+    pending_raw_frames: VecDeque<Vec<u8>>,
+    pending: VecDeque<Bytes>,
     context: AcpStreamContext,
-    persist_future:
-        Option<Pin<Box<dyn Future<Output = Result<Vec<Bytes>, std::io::Error>> + Send>>>,
+    diagnostics: AcpStreamDiagnostics,
+    logged_summary: bool,
+    persist_future: Option<
+        Pin<
+            Box<
+                dyn Future<Output = (Result<Vec<Bytes>, std::io::Error>, AcpStreamDiagnostics)>
+                    + Send,
+            >,
+        >,
+    >,
 }
 
 impl AcpLettaSseStream {
     fn new(
         inner: impl Stream<Item = Result<Bytes, reqwest::Error>> + Send + 'static,
         context: AcpStreamContext,
-        initial_pending: Vec<Bytes>,
     ) -> Self {
         Self {
             inner: Box::pin(inner),
             buffer: Vec::new(),
-            pending_raw_frames: std::collections::VecDeque::new(),
-            pending: initial_pending.into(),
+            pending_raw_frames: VecDeque::new(),
+            pending: VecDeque::new(),
             context,
+            diagnostics: AcpStreamDiagnostics::default(),
+            logged_summary: false,
             persist_future: None,
+        }
+    }
+
+    fn log_summary_once(&mut self) {
+        if !self.logged_summary {
+            self.diagnostics.log_summary(&self.context);
+            self.logged_summary = true;
         }
     }
 }
@@ -1683,26 +1831,31 @@ impl Stream for AcpLettaSseStream {
         }
 
         if let Some(fut) = this.persist_future.as_mut() {
-            match ready!(fut.as_mut().poll(cx)) {
+            let (result, diagnostics) = ready!(fut.as_mut().poll(cx));
+            this.persist_future = None;
+            this.diagnostics = diagnostics;
+            match result {
                 Ok(bytes) => {
-                    this.persist_future = None;
                     for item in bytes {
                         this.pending.push_back(item);
                     }
                     return self.poll_next(cx);
                 }
-                Err(err) => {
-                    this.persist_future = None;
-                    return Poll::Ready(Some(Err(err)));
-                }
+                Err(err) => return Poll::Ready(Some(Err(err))),
             }
         }
 
         if let Some(frame_body) = this.pending_raw_frames.pop_front() {
             let context = this.context.clone();
+            let mut diagnostics = std::mem::take(&mut this.diagnostics);
             this.persist_future = Some(Box::pin(async move {
-                map_letta_stream_frame_to_acp_adapter_events_with_persistence(frame_body, context)
-                    .await
+                let result = map_letta_stream_frame_to_acp_adapter_events_with_persistence(
+                    frame_body,
+                    context,
+                    &mut diagnostics,
+                )
+                .await;
+                (result, diagnostics)
             }));
             return self.poll_next(cx);
         }
@@ -1751,7 +1904,12 @@ impl Stream for AcpLettaSseStream {
                 }
                 if !this.pending_raw_frames.is_empty() {
                     self.poll_next(cx)
+                } else if let Some(event) = this.diagnostics.empty_turn_error_event(&this.context) {
+                    this.diagnostics.observe_mapped_event(&event);
+                    this.pending.push_back(acp_event_to_adapter_sse(event));
+                    self.poll_next(cx)
                 } else {
+                    this.log_summary_once();
                     Poll::Ready(None)
                 }
             }

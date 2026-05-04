@@ -73,10 +73,62 @@ impl ServerVersion {
     }
 }
 
+fn truncate_for_log(s: &str, max: usize) -> String {
+    if s.len() <= max {
+        s.to_string()
+    } else {
+        format!("{}...", &s[..max])
+    }
+}
+
+#[derive(Default)]
+struct SseStreamDiagnostics {
+    frames: usize,
+    events: usize,
+    event_types: HashMap<String, usize>,
+    unknown_event_samples: Vec<String>,
+    saw_turn_complete: bool,
+    saw_assistant_output: bool,
+    saw_error: bool,
+}
+
+impl SseStreamDiagnostics {
+    fn observe_event(&mut self, event: &Value) {
+        self.events += 1;
+        let ty = event
+            .get("type")
+            .and_then(Value::as_str)
+            .unwrap_or("<missing>")
+            .to_string();
+        *self.event_types.entry(ty).or_insert(0) += 1;
+    }
+
+    fn observe_unknown(&mut self, event: &Value) {
+        if self.unknown_event_samples.len() < 5 {
+            self.unknown_event_samples
+                .push(truncate_for_log(&event.to_string(), 360));
+        }
+    }
+
+    fn summary(&self) -> String {
+        format!(
+            "frames={}, events={}, event_types={:?}, unknown_samples={:?}, saw_turn_complete={}, saw_assistant_output={}, saw_error={}",
+            self.frames,
+            self.events,
+            self.event_types,
+            self.unknown_event_samples,
+            self.saw_turn_complete,
+            self.saw_assistant_output,
+            self.saw_error,
+        )
+    }
+}
+
 #[derive(Default)]
 struct SseFrameOutcome {
     saw_done: bool,
     saw_assistant_output: bool,
+    saw_error: bool,
     upstream_errors: Vec<String>,
 }
 
@@ -1454,8 +1506,10 @@ async fn handle_prompt(
         return Err(anyhow!("{}", den_status_error_message(status, text.trim())));
     }
 
+    let mut stream_diagnostics = SseStreamDiagnostics::default();
     let mut saw_done = false;
     let mut saw_assistant_output = false;
+    let mut saw_error = false;
     let mut upstream_errors = Vec::new();
     let mut buffer = Vec::<u8>::new();
     let mut stream = response.bytes_stream();
@@ -1464,17 +1518,22 @@ async fn handle_prompt(
         buffer.extend_from_slice(&chunk);
         while let Some(pos) = buffer.windows(2).position(|w| w == b"\n\n") {
             let frame: Vec<u8> = buffer.drain(..pos + 2).collect();
-            let outcome = handle_sse_frame(adapter_state, session_id, &frame).await?;
+            let outcome =
+                handle_sse_frame(adapter_state, session_id, &frame, &mut stream_diagnostics)
+                    .await?;
             saw_done |= outcome.saw_done;
             saw_assistant_output |= outcome.saw_assistant_output;
+            saw_error |= outcome.saw_error;
             upstream_errors.extend(outcome.upstream_errors);
         }
     }
     if !buffer.is_empty() {
         let frame = std::mem::take(&mut buffer);
-        let outcome = handle_sse_frame(adapter_state, session_id, &frame).await?;
+        let outcome =
+            handle_sse_frame(adapter_state, session_id, &frame, &mut stream_diagnostics).await?;
         saw_done |= outcome.saw_done;
         saw_assistant_output |= outcome.saw_assistant_output;
+        saw_error |= outcome.saw_error;
         upstream_errors.extend(outcome.upstream_errors);
     }
 
@@ -1490,6 +1549,18 @@ async fn handle_prompt(
                 upstream_errors.join("; ")
             ));
         }
+    }
+
+    eprintln!(
+        "bears-acp-adapter: Den stream summary session_id={} {}",
+        session_id,
+        stream_diagnostics.summary()
+    );
+    if !saw_assistant_output && !saw_error {
+        return Err(anyhow!(
+            "BEARS ACP stream completed without assistant output or an error. Diagnostics: {}",
+            stream_diagnostics.summary()
+        ));
     }
 
     let stop_reason = if saw_done { "end_turn" } else { "end_turn" };
@@ -1806,7 +1877,9 @@ async fn handle_sse_frame(
     adapter_state: &mut AdapterState,
     session_id: &str,
     frame: &[u8],
+    diagnostics: &mut SseStreamDiagnostics,
 ) -> Result<SseFrameOutcome> {
+    diagnostics.frames += 1;
     let text = String::from_utf8_lossy(frame);
     let mut outcome = SseFrameOutcome::default();
     for line in text.lines() {
@@ -1818,13 +1891,35 @@ async fn handle_sse_frame(
             continue;
         }
         let event: Value = serde_json::from_str(data).context("parse Den SSE event JSON")?;
-        if event.get("type").and_then(Value::as_str) == Some("assistant_text_delta") {
+        diagnostics.observe_event(&event);
+        let ty = event.get("type").and_then(Value::as_str).unwrap_or("");
+        if ty == "assistant_text_delta" {
             let text = event.get("text").and_then(Value::as_str).unwrap_or("");
             outcome.saw_assistant_output |= !text.is_empty();
-        } else if event.get("type").and_then(Value::as_str) == Some("error") {
+        } else if ty == "error" {
+            outcome.saw_error = true;
+            diagnostics.saw_error = true;
             outcome.upstream_errors.push(format_den_event_error(&event));
         }
-        outcome.saw_done |= handle_den_event(adapter_state, session_id, &event).await?;
+        let handled = handle_den_event(adapter_state, session_id, &event).await?;
+        outcome.saw_done |= handled;
+        diagnostics.saw_turn_complete |= handled;
+        diagnostics.saw_assistant_output |= outcome.saw_assistant_output;
+        if !matches!(
+            ty,
+            "assistant_text_delta"
+                | "status_text"
+                | "error"
+                | "conversation_resolved"
+                | "turn_complete"
+        ) {
+            diagnostics.observe_unknown(&event);
+            eprintln!(
+                "bears-acp-adapter: unknown Den ACP event type {:?}; sample={}",
+                ty,
+                truncate_for_log(&event.to_string(), 240)
+            );
+        }
     }
     Ok(outcome)
 }
