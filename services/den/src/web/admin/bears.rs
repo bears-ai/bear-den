@@ -42,6 +42,10 @@ pub fn router() -> Router<AppState> {
             "/bears/repair-legacy-agents",
             post(repair_legacy_agents_action),
         )
+        .route_with_tsr(
+            "/bears/register-memfs-views",
+            post(register_memfs_views_action),
+        )
         .route_with_tsr("/bears/new", get(new_view).post(new_action))
         .route_with_tsr("/bears/{id}/edit", get(edit_view).post(edit_action))
         .route_with_tsr(
@@ -334,6 +338,8 @@ struct BearsListQuery {
     inserted: Option<i64>,
     #[serde(default)]
     error: Option<String>,
+    memfs: Option<String>,
+    views: Option<usize>,
 }
 
 async fn list_view(
@@ -350,7 +356,18 @@ async fn list_view(
         )),
         Some("error") => Some(format!(
             "Legacy bear-agent repair failed: {}",
-            query.error.unwrap_or_else(|| "unknown error".to_string())
+            query.error.clone().unwrap_or_else(|| "unknown error".to_string())
+        )),
+        _ => None,
+    };
+    let memfs_message = match query.memfs.as_deref() {
+        Some("ok") => Some(format!(
+            "MemFS sidecar role view registration complete: {} view(s) registered/refreshed.",
+            query.views.unwrap_or(0)
+        )),
+        Some("error") => Some(format!(
+            "MemFS sidecar role view registration failed: {}",
+            query.error.clone().unwrap_or_else(|| "unknown error".to_string())
         )),
         _ => None,
     };
@@ -358,9 +375,23 @@ async fn list_view(
         &state,
         "admin/bears/list.html",
         auth_session,
-        context! { bears, repair_message },
+        context! { bears, repair_message, memfs_message },
     )
     .await
+}
+
+async fn register_memfs_views_action(State(state): State<AppState>) -> Result<Response, CustomError> {
+    match provision::register_existing_role_views(state.sqlx_pool(), state.letta.as_ref()).await {
+        Ok(count) => Ok(Redirect::to(&format!(
+            "/admin/bears/?memfs=ok&views={count}"
+        ))
+        .into_response()),
+        Err(err) => Ok(Redirect::to(&format!(
+            "/admin/bears/?memfs=error&error={}",
+            urlencoding::encode(&err.to_string())
+        ))
+        .into_response()),
+    }
 }
 
 async fn repair_legacy_agents_action(State(state): State<AppState>) -> Result<Response, CustomError> {

@@ -8,9 +8,16 @@
 {% if repair_message %}
 <p class="form-hint">{{ repair_message }}</p>
 {% endif %}
-<form method="post" action="/admin/bears/repair-legacy-agents" style="margin: 0 0 1rem 0;">
+{% if memfs_message %}
+<p class="form-hint">{{ memfs_message }}</p>
+{% endif %}
+<form method="post" action="/admin/bears/repair-legacy-agents" style="margin: 0 0 0.5rem 0;">
   <button type="submit">Repair / migrate legacy agent ids</button>
   <span class="form-hint">Copies legacy ids into <code>bear_agents(role=talk)</code> and creates missing role placeholder rows.</span>
+</form>
+<form method="post" action="/admin/bears/register-memfs-views" style="margin: 0 0 1rem 0;">
+  <button type="submit">Register MemFS role views</button>
+  <span class="form-hint">Registers sidecar repo views for existing role agents with Letta ids.</span>
 </form>
 <table>
   <thead>
@@ -32,6 +39,5 @@
   {% endfor %}
   </tbody>
 </table>
-<p><a class="action" href="./new">New bear</a>
-  · <a href="/admin/bears/unlinked-letta-agents">Letta agents without a bear</a></p>
+<p><a class="action" href="./new">New bear</a> - <a href="/admin/bears/unlinked-letta-agents">Letta agents without a bear</a></p>
 {% endblock %}

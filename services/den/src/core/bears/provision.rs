@@ -25,7 +25,7 @@ fn memfs_sidecar_url_from_env() -> String {
         .to_string()
 }
 
-async fn register_role_view_if_configured(
+pub async fn register_role_view_if_configured(
     letta: &LettaClient,
     bear_id: Uuid,
     role: BearAgentRole,
@@ -129,6 +129,37 @@ pub async fn provision_missing_bear_roles(
 
     bears_db::mirror_talk_agent_to_legacy_letta_agent_id(pool, bear_id).await?;
     Ok(provisioned)
+}
+
+pub async fn register_existing_role_views(
+    pool: &PgPool,
+    letta: &LettaClient,
+) -> Result<usize, CustomError> {
+    let bears = bears_db::list_bears(pool).await?;
+    let mut registered = 0usize;
+    for bear in bears {
+        let agents = bears_db::list_bear_agents(pool, bear.id).await?;
+        for agent in agents {
+            let role = match agent.parsed_role() {
+                Ok(role) => role,
+                Err(err) => {
+                    tracing::warn!(bear_id = %bear.id, role = %agent.role, error = %err, "skipping MemFS view registration for invalid role");
+                    continue;
+                }
+            };
+            let Some(agent_id) = agent
+                .letta_agent_id
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+            else {
+                continue;
+            };
+            register_role_view_if_configured(letta, bear.id, role, agent_id).await?;
+            registered += 1;
+        }
+    }
+    Ok(registered)
 }
 
 pub async fn reconcile_bear_if_configured(
