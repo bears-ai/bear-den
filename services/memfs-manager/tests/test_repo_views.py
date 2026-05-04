@@ -170,3 +170,141 @@ def test_registry_json_is_operator_inspectable(memfs):
     assert data["version"] == 1
     assert data["views"]["agent-work"]["bear_id"] == "bear-observable"
     assert data["views"]["agent-work"]["role"] == "work"
+
+
+def test_override_canonical_wins_resets_quarantined_view(memfs, tmp_path):
+    record = register_view(memfs, agent_id="agent-talk", role="talk")
+    work = clone_view(memfs, "agent-talk", tmp_path=tmp_path)
+    commit_file(work, "core/nope.md", "invalid cross-role write")
+    run("git", "push", "origin", "HEAD:main", cwd=work)
+    status, _ = memfs._forward_view_to_canonical(record)
+    assert status == "quarantined"
+
+    handler = object.__new__(memfs.GitHTTPHandler)
+    result = handler._operator_override(
+        "agent-talk",
+        "canonical-wins",
+        {"reason": "discard invalid cross-role write"},
+    )
+
+    assert result["ok"] is True
+    assert result["status"] == "canonical_wins"
+    assert not memfs._repo_is_quarantined(Path(record["view_repo"]))
+    assert memfs._branch_tip(Path(record["view_repo"]), "main") == memfs._branch_tip(
+        Path(record["canonical_repo"]), "talk"
+    )
+
+
+def test_override_view_wins_requires_confirmation(memfs, tmp_path):
+    record = register_view(memfs, agent_id="agent-talk", role="talk")
+    work = clone_view(memfs, "agent-talk", tmp_path=tmp_path)
+    commit_file(work, "talk/keep.md", "view should win")
+    run("git", "push", "origin", "HEAD:main", cwd=work)
+
+    handler = object.__new__(memfs.GitHTTPHandler)
+    with pytest.raises(ValueError, match="confirm='view-wins'"):
+        handler._operator_override(
+            "agent-talk",
+            "view-wins",
+            {"reason": "testing missing confirmation"},
+        )
+
+    result = handler._operator_override(
+        "agent-talk",
+        "view-wins",
+        {"confirm": "view-wins", "reason": "view has known-good commit"},
+    )
+    assert result["status"] == "view_wins"
+    canonical = Path(record["canonical_repo"])
+    files = run(
+        "git", "--git-dir", str(canonical), "ls-tree", "-r", "--name-only", "talk"
+    ).stdout
+    assert "talk/keep.md" in files
+
+
+def test_override_recreate_view_archives_old_view(memfs):
+    record = register_view(memfs, agent_id="agent-watch", role="watch")
+    view = Path(record["view_repo"])
+    handler = object.__new__(memfs.GitHTTPHandler)
+
+    result = handler._operator_override(
+        "agent-watch",
+        "recreate-view",
+        {"reason": "replace view for test"},
+    )
+
+    assert result["status"] == "view_recreated"
+    assert result["archived_view"]
+    assert Path(result["archived_view"]).exists()
+    assert view.exists()
+
+
+def test_reconcile_all_forwards_safe_ahead_view(memfs, tmp_path):
+    record = register_view(memfs, agent_id="agent-talk", role="talk")
+    work = clone_view(memfs, "agent-talk", tmp_path=tmp_path)
+    commit_file(work, "talk/reconcile-all.md", "safe ahead commit")
+    run("git", "push", "origin", "HEAD:main", cwd=work)
+
+    summary = memfs.reconcile_all_views_once()
+    assert summary["checked"] == 1
+    assert summary["corrected"] == 1
+    canonical = Path(record["canonical_repo"])
+    files = run(
+        "git", "--git-dir", str(canonical), "ls-tree", "-r", "--name-only", "talk"
+    ).stdout
+    assert "talk/reconcile-all.md" in files
+
+
+def test_reconcile_all_quarantines_unsafe_ahead_view(memfs, tmp_path):
+    record = register_view(memfs, agent_id="agent-talk", role="talk")
+    work = clone_view(memfs, "agent-talk", tmp_path=tmp_path)
+    commit_file(work, "core/reconcile-all-nope.md", "unsafe ahead commit")
+    run("git", "push", "origin", "HEAD:main", cwd=work)
+
+    summary = memfs.reconcile_all_views_once()
+    assert summary["checked"] == 1
+    assert summary["quarantined"] == 1
+    assert memfs._repo_is_quarantined(Path(record["view_repo"]))
+
+
+def test_health_contains_richer_drift_fields(memfs, tmp_path):
+    record = register_view(memfs, agent_id="agent-talk", role="talk")
+    work = clone_view(memfs, "agent-talk", tmp_path=tmp_path)
+    commit_file(work, "talk/ahead.md", "ahead")
+    run("git", "push", "origin", "HEAD:main", cwd=work)
+    handler = object.__new__(memfs.GitHTTPHandler)
+    health = handler._view_health(record)
+    assert health["state"] == "drift"
+    assert health["view_ahead_by"] == 1
+    assert health["canonical_ahead_by"] == 0
+    assert health["merge_base"]
+    assert health["recommended_action"]
+
+
+def test_clear_quarantine_refuses_when_tips_differ_without_force(memfs, tmp_path):
+    record = register_view(memfs, agent_id="agent-talk", role="talk")
+    work = clone_view(memfs, "agent-talk", tmp_path=tmp_path)
+    commit_file(work, "core/nope.md", "invalid cross-role write")
+    run("git", "push", "origin", "HEAD:main", cwd=work)
+    status, _ = memfs._forward_view_to_canonical(record)
+    assert status == "quarantined"
+
+    handler = object.__new__(memfs.GitHTTPHandler)
+    with pytest.raises(ValueError, match="cannot clear quarantine"):
+        handler._operator_override(
+            "agent-talk",
+            "clear-quarantine",
+            {"reason": "not safe yet"},
+        )
+
+    result = handler._operator_override(
+        "agent-talk",
+        "clear-quarantine",
+        {
+            "force": True,
+            "confirm": "clear-quarantine-force",
+            "reason": "test force clear",
+        },
+    )
+    assert result["status"] == "quarantine_cleared"
+    assert not memfs._repo_is_quarantined(Path(record["view_repo"]))

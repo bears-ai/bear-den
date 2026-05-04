@@ -240,7 +240,7 @@ Rejected because it weakens the core multi-agent memory invariants.
 - Specify canonical hook implementation and view post-receive forwarding algorithm.
 - Specify reconciliation schedule and locking.
 - Specify quarantine states and health response schemas.
-- Write the operator override runbook.
+- Keep the operator override runbook current as override behavior evolves.
 - Run an early sanity check that Letta does not actively fight the per-agent view presentation, even though non-`main` branch behavior is no longer gating.
 
 ## References
@@ -248,3 +248,4 @@ Rejected because it weakens the core multi-agent memory invariants.
 - [BEARS Multi-Agent Architecture for Letta-Backed Coding Agents](multi-agent-architecture.md)
 - [BEARS Multi-Agent Bear Spec](../../../services/den/docs/bear-spec.md)
 - [Implementation Plan: BEARS Multi-Agent Architecture](../../planning/MULTI_AGENT_IMPLEMENTATION_PLAN.md)
+- [MemFS sidecar operator runbook](../MEMFS_SIDECAR_RUNBOOK.md)

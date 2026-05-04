@@ -23,6 +23,7 @@ import os
 import shutil
 import subprocess
 import tempfile
+import threading
 import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
@@ -44,6 +45,9 @@ ACTIVITY_LOG = Path(
     os.environ.get("MEMFS_ACTIVITY_LOG", str(MEMFS_BASE.parent / "activity.jsonl"))
 )
 ACTIVITY_LOG_MAX_BYTES = int(os.environ.get("MEMFS_ACTIVITY_LOG_MAX_BYTES", "1048576"))
+RECONCILE_INTERVAL_SECONDS = int(
+    os.environ.get("MEMFS_RECONCILE_INTERVAL_SECONDS", "60")
+)
 BEARS_CANONICAL_BASE = Path(
     os.environ.get("BEARS_CANONICAL_MEMFS_BASE", str(MEMFS_BASE.parent / "bears"))
 )
@@ -173,6 +177,33 @@ def _is_ancestor(repo: Path, maybe_ancestor: str, descendant: str) -> bool:
     return r.returncode == 0
 
 
+def _merge_base(repo: Path, a: str | None, b: str | None) -> str | None:
+    if not a or not b:
+        return None
+    r = subprocess.run(
+        ["git", "-C", str(repo), "merge-base", a, b],
+        capture_output=True,
+        text=True,
+    )
+    if r.returncode != 0:
+        return None
+    return (r.stdout or "").strip() or None
+
+
+def _rev_count(repo: Path, rev_range: str) -> int | None:
+    r = subprocess.run(
+        ["git", "-C", str(repo), "rev-list", "--count", rev_range],
+        capture_output=True,
+        text=True,
+    )
+    if r.returncode != 0:
+        return None
+    try:
+        return int((r.stdout or "0").strip() or 0)
+    except ValueError:
+        return None
+
+
 def _changed_paths(repo: Path, old: str | None, new: str) -> list[str]:
     if old:
         r = _git("-C", str(repo), "diff", "--name-only", old, new)
@@ -235,9 +266,26 @@ def _repo_is_quarantined(repo: Path) -> bool:
     return (repo / "BEARS_QUARANTINED").exists()
 
 
+def _update_view_record(agent_id: str, **fields: object) -> None:
+    data = _read_view_registry()
+    record = data.setdefault("views", {}).get(agent_id)
+    if not record:
+        return
+    record.update(fields)
+    _write_view_registry(data)
+
+
 def _set_quarantine(repo: Path, reason: str) -> None:
     repo.mkdir(parents=True, exist_ok=True)
     (repo / "BEARS_QUARANTINED").write_text(reason, encoding="utf-8")
+
+
+def _archive_view_repo(view_repo: Path, label: str) -> Path | None:
+    if not view_repo.exists():
+        return None
+    archive = view_repo.with_name(f"{view_repo.name}.{label}.{int(time.time())}")
+    shutil.move(str(view_repo), str(archive))
+    return archive
 
 
 def _clear_quarantine(repo: Path) -> None:
@@ -619,7 +667,9 @@ def ensure_canonical_repo(bear_id: str) -> Path:
     return repo
 
 
-def _reset_view_to_canonical(view_repo: Path, canonical_repo: Path, role: str) -> None:
+def _force_reset_view_to_canonical(
+    view_repo: Path, canonical_repo: Path, role: str
+) -> None:
     canonical_tip = _branch_tip(canonical_repo, role)
     if not canonical_tip:
         raise RuntimeError(f"canonical branch missing: {role}")
@@ -631,7 +681,7 @@ def _reset_view_to_canonical(view_repo: Path, canonical_repo: Path, role: str) -
         str(view_repo),
         "fetch",
         str(canonical_repo),
-        f"refs/heads/{role}:refs/heads/main",
+        f"+refs/heads/{role}:refs/heads/main",
     )
     _git("--git-dir", str(view_repo), "symbolic-ref", "HEAD", "refs/heads/main")
     _git("--git-dir", str(view_repo), "config", "http.receivepack", "true")
@@ -653,13 +703,22 @@ def _forward_view_to_canonical(
     if not view_tip:
         return "missing_view_tip", "view main branch missing"
     if canonical_tip == view_tip:
+        record["last_reconciled_at"] = time.time()
+        record["last_reconcile_status"] = "ok"
+        record["drift_count"] = int(record.get("drift_count") or 0)
         return "already_current", None
     if canonical_tip and _is_ancestor(view, view_tip, canonical_tip):
-        _reset_view_to_canonical(view, canonical, role)
+        _force_reset_view_to_canonical(view, canonical, role)
+        record["last_reconciled_at"] = time.time()
+        record["last_reconcile_status"] = "fast_forwarded_view"
         return "fast_forwarded_view", None
     if canonical_tip and not _is_ancestor(view, canonical_tip, view_tip):
         reason = f"view and canonical diverged for role {role}: canonical={canonical_tip}, view={view_tip}"
         _set_quarantine(view, reason)
+        record["drift_count"] = int(record.get("drift_count") or 0) + 1
+        record["last_reconciled_at"] = time.time()
+        record["last_reconcile_status"] = "quarantined"
+        record["last_reconcile_reason"] = reason
         log_activity(
             "view_quarantined",
             bear_id=bear_id,
@@ -673,6 +732,10 @@ def _forward_view_to_canonical(
     if not ok:
         reason = f"canonical would reject role {role} path {bad_path}"
         _set_quarantine(view, reason)
+        record["drift_count"] = int(record.get("drift_count") or 0) + 1
+        record["last_reconciled_at"] = time.time()
+        record["last_reconcile_status"] = "quarantined"
+        record["last_reconcile_reason"] = reason
         log_activity(
             "view_quarantined",
             bear_id=bear_id,
@@ -693,6 +756,10 @@ def _forward_view_to_canonical(
     except subprocess.CalledProcessError as e:
         reason = (e.stderr or e.stdout or str(e)).strip()
         _set_quarantine(view, reason)
+        record["drift_count"] = int(record.get("drift_count") or 0) + 1
+        record["last_reconciled_at"] = time.time()
+        record["last_reconcile_status"] = "quarantined"
+        record["last_reconcile_reason"] = reason
         log_activity(
             "forward_failed_quarantined",
             bear_id=bear_id,
@@ -701,6 +768,9 @@ def _forward_view_to_canonical(
             reason=reason,
         )
         return "quarantined", reason
+    record["last_reconciled_at"] = time.time()
+    record["last_reconcile_status"] = "forwarded"
+    record["last_successful_forward_at"] = record["last_reconciled_at"]
     log_activity(
         "forward_ok",
         bear_id=bear_id,
@@ -718,7 +788,14 @@ def ensure_view_repo(agent_id: str, org_id: str, record: dict) -> Path:
     view = _view_repo_path(org_id, agent_id)
     record["canonical_repo"] = str(canonical)
     record["view_repo"] = str(view)
-    _reset_view_to_canonical(view, canonical, str(record["role"]))
+    role = str(record["role"])
+    if not view.exists() or not _is_usable_bare_repo(view):
+        if view.exists():
+            shutil.rmtree(view, ignore_errors=True)
+        _force_reset_view_to_canonical(view, canonical, role)
+    else:
+        _git("--git-dir", str(view), "symbolic-ref", "HEAD", "refs/heads/main")
+        _git("--git-dir", str(view), "config", "http.receivepack", "true")
     return view
 
 
@@ -921,15 +998,35 @@ class GitHTTPHandler(BaseHTTPRequestHandler):
         marker = view / "BEARS_QUARANTINED"
         if marker.exists():
             reason = marker.read_text(encoding="utf-8", errors="replace")
+        merge_base = (
+            _merge_base(view, canonical_tip, view_tip) if view.exists() else None
+        )
+        view_ahead_by = (
+            _rev_count(view, f"{canonical_tip}..{view_tip}")
+            if canonical_tip and view_tip and view.exists()
+            else None
+        )
+        canonical_ahead_by = (
+            _rev_count(view, f"{view_tip}..{canonical_tip}")
+            if canonical_tip and view_tip and view.exists()
+            else None
+        )
         state = "ok"
+        recommended_action = None
         if quarantined:
             state = "quarantined"
+            recommended_action = "Inspect diagnostic, then run reconcile or an operator override (canonical-wins, recreate-view, view-wins, or clear-quarantine)."
         elif not canonical.exists():
             state = "missing_canonical"
+            recommended_action = "Restore or initialize canonical Bear repo before accepting role memory writes."
         elif not view.exists():
             state = "missing_view"
+            recommended_action = (
+                "Run reconcile to recreate the role view from canonical."
+            )
         elif canonical_tip != view_tip:
             state = "drift"
+            recommended_action = "Run reconcile; sidecar will fast-forward, forward acceptable commits, or quarantine if unsafe."
         return {
             **record,
             "state": state,
@@ -937,8 +1034,119 @@ class GitHTTPHandler(BaseHTTPRequestHandler):
             "view_exists": view.exists(),
             "canonical_tip": canonical_tip,
             "view_tip": view_tip,
+            "merge_base": merge_base,
+            "view_ahead_by": view_ahead_by,
+            "canonical_ahead_by": canonical_ahead_by,
+            "drift_count": int(record.get("drift_count") or 0),
+            "last_successful_forward_at": record.get("last_successful_forward_at"),
+            "last_reconciled_at": record.get("last_reconciled_at"),
+            "last_reconcile_status": record.get("last_reconcile_status"),
             "quarantined": quarantined,
-            "diagnostic": reason,
+            "diagnostic": reason or record.get("last_reconcile_reason"),
+            "recommended_action": recommended_action,
+        }
+
+    def _require_override_reason(self, body: dict, action: str) -> str:
+        reason = str(body.get("reason") or "").strip()
+        confirm = str(body.get("confirm") or "").strip()
+        if not reason:
+            raise ValueError("operator override requires non-empty reason")
+        if action in {"view-wins", "clear-quarantine-force"} and confirm != action:
+            raise ValueError(f"operator override requires confirm='{action}'")
+        return reason
+
+    def _operator_override(self, agent_id: str, action: str, body: dict) -> dict:
+        record = _view_record(agent_id)
+        if not record:
+            raise KeyError("view_not_registered")
+        role = str(record["role"])
+        bear_id = str(record["bear_id"])
+        canonical = Path(record["canonical_repo"])
+        view = Path(record["view_repo"])
+        old_canonical_tip = _branch_tip(canonical, role) if canonical.exists() else None
+        old_view_tip = _branch_tip(view, "main") if view.exists() else None
+        reason = self._require_override_reason(
+            body, action if action != "clear-quarantine" else "clear-quarantine"
+        )
+
+        archived_view = None
+        if action == "canonical-wins":
+            _force_reset_view_to_canonical(view, canonical, role)
+            status = "canonical_wins"
+        elif action == "recreate-view":
+            archived_view = _archive_view_repo(view, "replaced")
+            _force_reset_view_to_canonical(view, canonical, role)
+            status = "view_recreated"
+        elif action == "view-wins":
+            if not old_view_tip:
+                raise ValueError("view main branch missing; cannot apply view-wins")
+            paths = _changed_paths(view, old_canonical_tip, old_view_tip)
+            ok, bad_path = _paths_allowed(role, paths)
+            if not ok and body.get("allow_policy_violation") is not True:
+                raise ValueError(
+                    f"view-wins would violate role path policy at {bad_path}; set allow_policy_violation=true only if policy is known wrong"
+                )
+            _git(
+                "--git-dir",
+                str(canonical),
+                "fetch",
+                str(view),
+                f"+refs/heads/main:refs/heads/{role}",
+            )
+            _clear_quarantine(view)
+            status = "view_wins"
+        elif action == "clear-quarantine":
+            current_canonical_tip = (
+                _branch_tip(canonical, role) if canonical.exists() else None
+            )
+            current_view_tip = _branch_tip(view, "main") if view.exists() else None
+            force = body.get("force") is True
+            if current_canonical_tip != current_view_tip and not force:
+                raise ValueError(
+                    "cannot clear quarantine while canonical and view tips differ; reconcile or use force with confirm='clear-quarantine-force'"
+                )
+            if force:
+                self._require_override_reason(body, "clear-quarantine-force")
+            _clear_quarantine(view)
+            status = "quarantine_cleared"
+        else:
+            raise ValueError(f"unknown override action: {action}")
+
+        new_canonical_tip = _branch_tip(canonical, role) if canonical.exists() else None
+        new_view_tip = _branch_tip(view, "main") if view.exists() else None
+        record["last_override_action"] = action
+        record["last_override_reason"] = reason
+        record["last_override_at"] = time.time()
+        record["last_override_old_canonical_tip"] = old_canonical_tip
+        record["last_override_old_view_tip"] = old_view_tip
+        record["last_override_new_canonical_tip"] = new_canonical_tip
+        record["last_override_new_view_tip"] = new_view_tip
+        data = _read_view_registry()
+        data.setdefault("views", {})[agent_id] = record
+        _write_view_registry(data)
+        log_activity(
+            "operator_override",
+            agent_id=agent_id,
+            bear_id=bear_id,
+            role=role,
+            action=action,
+            reason=reason,
+            old_canonical_tip=old_canonical_tip,
+            old_view_tip=old_view_tip,
+            new_canonical_tip=new_canonical_tip,
+            new_view_tip=new_view_tip,
+            archived_view=str(archived_view) if archived_view else None,
+        )
+        return {
+            "ok": True,
+            "status": status,
+            "action": action,
+            "archived_view": str(archived_view) if archived_view else None,
+            "old_canonical_tip": old_canonical_tip,
+            "old_view_tip": old_view_tip,
+            "new_canonical_tip": new_canonical_tip,
+            "new_view_tip": new_view_tip,
+            "view": self._view_health(record),
         }
 
     def _try_view_management_post(self) -> bool:
@@ -946,6 +1154,24 @@ class GitHTTPHandler(BaseHTTPRequestHandler):
             return False
         parsed = urlparse(self.path)
         parts = [p for p in parsed.path.strip("/").split("/") if p]
+        if (
+            len(parts) == 6
+            and parts[:3] == ["v1", "management", "views"]
+            and parts[4] == "override"
+        ):
+            agent_id = parts[3]
+            action = parts[5]
+            try:
+                body = json.loads(self._read_body().decode("utf-8") or "{}")
+                self._send_json(200, self._operator_override(agent_id, action, body))
+                return True
+            except KeyError as e:
+                self._send_json(404, {"ok": False, "error": str(e).strip("'")})
+                return True
+            except Exception as e:
+                self._send_json(400, {"ok": False, "error": str(e)})
+                return True
+
         if parts == ["v1", "management", "views", "register"]:
             try:
                 body = json.loads(self._read_body().decode("utf-8") or "{}")
@@ -985,6 +1211,16 @@ class GitHTTPHandler(BaseHTTPRequestHandler):
             except Exception as e:
                 self._send_json(400, {"ok": False, "error": str(e)})
                 return True
+        if parts == ["v1", "management", "views", "reconcile-all"]:
+            try:
+                self._send_json(
+                    200, {"ok": True, "summary": reconcile_all_views_once()}
+                )
+                return True
+            except Exception as e:
+                self._send_json(500, {"ok": False, "error": str(e)})
+                return True
+
         if (
             len(parts) == 5
             and parts[:3] == ["v1", "management", "views"]
@@ -1271,7 +1507,73 @@ class GitHTTPHandler(BaseHTTPRequestHandler):
         print(f"[memfs-manager] {self.address_string()} {fmt % args}", flush=True)
 
 
+def reconcile_all_views_once() -> dict:
+    data = _read_view_registry()
+    views = data.setdefault("views", {})
+    summary = {
+        "checked": 0,
+        "ok": 0,
+        "corrected": 0,
+        "quarantined": 0,
+        "errors": 0,
+        "results": [],
+    }
+    for agent_id, record in list(views.items()):
+        summary["checked"] += 1
+        try:
+            ensure_view_repo(
+                agent_id, str(record.get("org_id") or resolve_org_id(None)), record
+            )
+            status, reason = _forward_view_to_canonical(record)
+            views[agent_id] = record
+            if status in {"already_current"}:
+                summary["ok"] += 1
+            elif status in {"forwarded", "fast_forwarded_view"}:
+                summary["corrected"] += 1
+            elif status == "quarantined":
+                summary["quarantined"] += 1
+            else:
+                summary["errors"] += 1
+            summary["results"].append(
+                {"agent_id": agent_id, "status": status, "reason": reason}
+            )
+        except Exception as e:
+            summary["errors"] += 1
+            record["last_reconciled_at"] = time.time()
+            record["last_reconcile_status"] = "error"
+            record["last_reconcile_reason"] = str(e)
+            views[agent_id] = record
+            summary["results"].append(
+                {"agent_id": agent_id, "status": "error", "reason": str(e)}
+            )
+            log_activity("reconcile_error", agent_id=agent_id, error=str(e))
+    data["last_reconcile_all_at"] = time.time()
+    data["last_reconcile_all_summary"] = summary
+    _write_view_registry(data)
+    log_activity(
+        "reconcile_all", **{k: v for k, v in summary.items() if k != "results"}
+    )
+    return summary
+
+
+def _scheduled_reconcile_loop() -> None:
+    if RECONCILE_INTERVAL_SECONDS <= 0:
+        return
+    while True:
+        time.sleep(RECONCILE_INTERVAL_SECONDS)
+        try:
+            reconcile_all_views_once()
+        except Exception as e:
+            log_activity("reconcile_loop_error", error=str(e))
+
+
 if __name__ == "__main__":
     MEMFS_BASE.mkdir(parents=True, exist_ok=True)
-    print(f"[memfs-manager] listen http://{BIND}:{PORT} base={MEMFS_BASE}", flush=True)
+    BEARS_CANONICAL_BASE.mkdir(parents=True, exist_ok=True)
+    if RECONCILE_INTERVAL_SECONDS > 0:
+        threading.Thread(target=_scheduled_reconcile_loop, daemon=True).start()
+    print(
+        f"[memfs-manager] listen http://{BIND}:{PORT} base={MEMFS_BASE} canonical_base={BEARS_CANONICAL_BASE} reconcile_interval={RECONCILE_INTERVAL_SECONDS}s",
+        flush=True,
+    )
     HTTPServer((BIND, PORT), GitHTTPHandler).serve_forever()
