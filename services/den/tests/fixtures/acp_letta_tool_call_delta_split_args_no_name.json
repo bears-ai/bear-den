@@ -1,0 +1,9 @@
+{
+  "id": "message-split-args-fixture",
+  "message_type": "approval_request_message",
+  "tool_call": {
+    "name": null,
+    "tool_call_id": "call_fixture_split_name",
+    "arguments": "{\"path\":\"/tmp/name-buffer.txt\"}"
+  }
+}
