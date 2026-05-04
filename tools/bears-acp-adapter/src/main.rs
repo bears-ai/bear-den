@@ -2077,7 +2077,7 @@ fn format_den_event_error(event: &Value) -> String {
         out.push_str(&context.to_string());
     }
     if let Some(request_id) = event.get("request_id").and_then(Value::as_str) {
-        out.push_str("\nCodepool request_id: ");
+        out.push_str("\nDen request_id: ");
         out.push_str(request_id);
     }
     out

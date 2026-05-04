@@ -1701,7 +1701,9 @@ fn map_native_letta_stream_event_to_acp_event(
                 })
             }
         }
-        "tool_call_message" | "function_call" => native_letta_tool_request_event(event, inner),
+        "tool_call_message" | "approval_request_message" | "function_call" => {
+            native_letta_tool_request_event(event, inner)
+        }
         _ => native_letta_conversation_resolved_event(event),
     }
 }
@@ -1710,8 +1712,24 @@ fn native_letta_tool_request_event(
     event: &serde_json::Value,
     inner: &serde_json::Value,
 ) -> Option<AcpGatewayEvent> {
-    let tool_name = inner
-        .get("tool_name")
+    let tool_call = inner
+        .get("tool_call")
+        .or_else(|| event.get("tool_call"))
+        .or_else(|| {
+            inner
+                .get("tool_calls")
+                .and_then(|v| v.as_array())
+                .and_then(|items| items.first())
+        })
+        .or_else(|| {
+            event
+                .get("tool_calls")
+                .and_then(|v| v.as_array())
+                .and_then(|items| items.first())
+        });
+    let tool_name = tool_call
+        .and_then(|v| v.get("name"))
+        .or_else(|| inner.get("tool_name"))
         .or_else(|| inner.get("name"))
         .or_else(|| event.get("tool_name"))
         .or_else(|| event.get("name"))
@@ -1733,15 +1751,26 @@ fn native_letta_tool_request_event(
             })
         }
     };
-    let args = inner
-        .get("args")
+    let args_raw = tool_call
+        .and_then(|v| v.get("arguments"))
+        .or_else(|| tool_call.and_then(|v| v.get("args")))
+        .or_else(|| inner.get("args"))
         .or_else(|| inner.get("arguments"))
         .or_else(|| event.get("args"))
-        .or_else(|| event.get("arguments"))
-        .cloned()
+        .or_else(|| event.get("arguments"));
+    let args = args_raw
+        .and_then(|v| {
+            if let Some(s) = v.as_str() {
+                serde_json::from_str::<serde_json::Value>(s).ok()
+            } else {
+                Some(v.clone())
+            }
+        })
         .unwrap_or_else(|| serde_json::json!({}));
-    let tool_call_id = inner
-        .get("tool_call_id")
+    let tool_call_id = tool_call
+        .and_then(|v| v.get("tool_call_id"))
+        .or_else(|| tool_call.and_then(|v| v.get("id")))
+        .or_else(|| inner.get("tool_call_id"))
         .or_else(|| inner.get("id"))
         .or_else(|| event.get("tool_call_id"))
         .or_else(|| event.get("id"))
