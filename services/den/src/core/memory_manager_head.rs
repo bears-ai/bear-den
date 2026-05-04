@@ -316,8 +316,9 @@ pub async fn register_memfs_role_view(
             "MemFS view registration HTTP {status}: {text}"
         )));
     }
-    let payload: MemfsViewRegisterResponse = serde_json::from_str(&text)
-        .map_err(|e| CustomError::Parsing(format!("MemFS view registration JSON: {e}; body: {text}")))?;
+    let payload: MemfsViewRegisterResponse = serde_json::from_str(&text).map_err(|e| {
+        CustomError::Parsing(format!("MemFS view registration JSON: {e}; body: {text}"))
+    })?;
     if !payload.ok {
         return Err(CustomError::System(format!(
             "MemFS view registration failed: {}",
@@ -356,7 +357,9 @@ pub async fn fetch_memfs_role_view_health(
     let status = resp.status();
     let text = resp.text().await.unwrap_or_default();
     if !status.is_success() {
-        return Err(CustomError::System(format!("MemFS view health HTTP {status}: {text}")));
+        return Err(CustomError::System(format!(
+            "MemFS view health HTTP {status}: {text}"
+        )));
     }
     let payload: serde_json::Value = serde_json::from_str(&text)
         .map_err(|e| CustomError::Parsing(format!("MemFS view health JSON: {e}; body: {text}")))?;

@@ -371,16 +371,156 @@ fn is_valid_pending_acp_conversation_id(conversation_id: &str) -> bool {
         && normalize_acp_conversation_id(Some(conversation_id)).is_ok()
 }
 
-fn letta_conversation_target<'a>(conversation_id: &'a str, agent_id: &'a str) -> &'a str {
-    if conversation_id.starts_with("new-") {
-        // `new-*` IDs are BEARS/ACP-local pending identifiers. Letta validates the path
-        // parameter strictly (`default`, `conv-*`, or `agent-*`), so create/resume the
-        // pending thread through the agent target and persist the real `conv-*` once the
-        // stream emits `conversation_resolved`.
-        agent_id
-    } else {
-        conversation_id
+fn is_acp_history_target(conversation_id: &str) -> bool {
+    conversation_id == "default" || conversation_id.starts_with("conv-")
+}
+
+fn is_acp_archive_target(conversation_id: &str) -> bool {
+    conversation_id.starts_with("conv-")
+}
+
+fn normalized_durable_acp_conversation_id(raw: Option<&str>) -> Option<String> {
+    raw.map(str::trim)
+        .filter(|s| is_acp_history_target(s))
+        .map(str::to_string)
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AcpConversationSelectionSource {
+    Explicit,
+    Resolved,
+    Stored,
+    Generated,
+}
+
+impl AcpConversationSelectionSource {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Explicit => "explicit",
+            Self::Resolved => "resolved",
+            Self::Stored => "stored",
+            Self::Generated => "generated",
+        }
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct AcpConversationResolution {
+    /// Den-persisted ACP session selection. May be `default`, `conv-*`, or pending `new-*`.
+    session_selection: String,
+    /// Known durable conversation id. Never a pending `new-*` placeholder.
+    resolved_conversation_id: Option<String>,
+    /// Letta path target. Never a pending `new-*` placeholder.
+    upstream_target: String,
+    selection_source: AcpConversationSelectionSource,
+    history_target: Option<String>,
+    archive_target: Option<String>,
+    requires_belongs_to_bear_check: bool,
+}
+
+impl AcpConversationResolution {
+    fn from_selection(
+        session_selection: String,
+        selection_source: AcpConversationSelectionSource,
+        pair_agent_id: &str,
+        existing_session: Option<&acp_sessions::AcpSessionRow>,
+    ) -> Self {
+        let resolved_conversation_id = if is_acp_history_target(&session_selection) {
+            Some(session_selection.clone())
+        } else if existing_session.is_some_and(|s| s.conversation_id.trim() == session_selection) {
+            normalized_durable_acp_conversation_id(
+                existing_session.and_then(|s| s.resolved_conversation_id.as_deref()),
+            )
+        } else {
+            None
+        };
+        let upstream_target = if session_selection.starts_with("new-") {
+            // `new-*` IDs are BEARS/ACP-local pending identifiers. Letta validates the path
+            // parameter strictly (`default`, `conv-*`, or `agent-*`), so create/resume the
+            // pending thread through the agent target and persist the real `conv-*` once the
+            // stream emits `conversation_resolved`.
+            pair_agent_id.to_string()
+        } else {
+            session_selection.clone()
+        };
+        let history_target = resolved_conversation_id
+            .as_deref()
+            .filter(|s| is_acp_history_target(s))
+            .map(str::to_string);
+        let archive_target = resolved_conversation_id
+            .as_deref()
+            .filter(|s| is_acp_archive_target(s))
+            .map(str::to_string);
+        let requires_belongs_to_bear_check = selection_source
+            == AcpConversationSelectionSource::Explicit
+            && session_selection.starts_with("conv-");
+
+        Self {
+            session_selection,
+            resolved_conversation_id,
+            upstream_target,
+            selection_source,
+            history_target,
+            archive_target,
+            requires_belongs_to_bear_check,
+        }
+    }
+}
+
+fn resolve_acp_prompt_conversation(
+    requested_raw: Option<&str>,
+    existing_session: Option<&acp_sessions::AcpSessionRow>,
+    pair_agent_id: &str,
+    generated_pending_id: String,
+) -> Result<AcpConversationResolution, CustomError> {
+    let requested = requested_raw
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(|s| normalize_acp_conversation_id(Some(s)))
+        .transpose()?
+        // Older adapters hardcoded `conversation_id: "default"` for every prompt.
+        // Treat that as omission so ACP session/new still creates a pending thread and
+        // later prompts can use the stored/resolved conversation for this ACP session.
+        .filter(|id| id != "default");
+
+    let (session_selection, source) = if let Some(id) = requested {
+        (id, AcpConversationSelectionSource::Explicit)
+    } else if let Some(id) = existing_session
+        .and_then(|s| normalized_durable_acp_conversation_id(s.resolved_conversation_id.as_deref()))
+    {
+        (id, AcpConversationSelectionSource::Resolved)
+    } else if let Some(id) = existing_session
+        .map(|s| s.conversation_id.trim())
+        .filter(|s| !s.is_empty())
+        .filter(|s| s.starts_with("conv-") || is_valid_pending_acp_conversation_id(s))
+        .map(str::to_string)
+    {
+        (id, AcpConversationSelectionSource::Stored)
+    } else {
+        (
+            generated_pending_id,
+            AcpConversationSelectionSource::Generated,
+        )
+    };
+
+    Ok(AcpConversationResolution::from_selection(
+        session_selection,
+        source,
+        pair_agent_id,
+        existing_session,
+    ))
+}
+
+fn acp_archive_target_for_session(session: &acp_sessions::AcpSessionRow) -> Option<&str> {
+    session
+        .resolved_conversation_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| is_acp_archive_target(s))
+        .or_else(|| {
+            let selection = session.conversation_id.trim();
+            is_acp_archive_target(selection).then_some(selection)
+        })
 }
 
 fn normalize_acp_conversation_id(raw: Option<&str>) -> Result<String, CustomError> {
@@ -951,12 +1091,9 @@ async fn close_session_inner(
         "ACP close requested; marking API-direct pair session closed"
     );
     acp_sessions::mark_closed(&state.sqlx_pool, session.id).await?;
-    let archive_target = session
-        .resolved_conversation_id
-        .as_deref()
-        .unwrap_or(&session.conversation_id);
+    let archive_target = acp_archive_target_for_session(&session);
     let mut archived = false;
-    if archive_target.starts_with("conv-") && state.letta.is_enabled() {
+    if let Some(archive_target) = archive_target.filter(|_| state.letta.is_enabled()) {
         state
             .letta
             .patch_conversation_archived(archive_target, true)
@@ -977,7 +1114,7 @@ async fn close_session_inner(
     Ok(Json(AcpCloseSessionResponse {
         ok: true,
         archived,
-        conversation_id: Some(archive_target.to_string()),
+        conversation_id: archive_target.map(str::to_string),
     })
     .into_response())
 }
@@ -1054,64 +1191,29 @@ async fn prompt_inner(
                     err.to_string(),
                 )
             })?;
-    let requested_conversation_id = body
-        .conversation_id
-        .as_deref()
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .map(|s| normalize_acp_conversation_id(Some(s)))
-        .transpose()
-        .map_err(|err| {
-            let (_, _, message) = acp_error_status_message(&err);
-            ApiError::new(StatusCode::BAD_REQUEST, "validation", message)
-        })?
-        // Older adapters hardcoded `conversation_id: "default"` for every prompt.
-        // Treat that as omission so ACP session/new still creates a pending thread and
-        // later prompts can use the stored/resolved conversation for this ACP session.
-        .filter(|id| id != "default");
     let generated_conversation_id = new_acp_conversation_id(&client);
-    let (conversation_id, conversation_selection_source) =
-        if let Some(id) = requested_conversation_id.clone() {
-            (id, "explicit")
-        } else if let Some(id) = existing_session
-            .as_ref()
-            .and_then(|s| s.resolved_conversation_id.as_deref())
-            .map(str::to_string)
-        {
-            (id, "resolved")
-        } else if let Some(id) = existing_session
-            .as_ref()
-            .map(|s| s.conversation_id.trim())
-            .filter(|s| !s.is_empty())
-            .filter(|s| s.starts_with("conv-") || is_valid_pending_acp_conversation_id(s))
-            .map(str::to_string)
-        {
-            (id, "stored")
-        } else {
-            (generated_conversation_id.clone(), "generated")
-        };
-    if conversation_id.starts_with("conv-") && conversation_selection_source == "explicit" {
-        verify_acp_conversation_belongs_to_bear(&state, &pair_agent_id, &conversation_id)
-            .await
-            .map_err(|err| {
-                let (status, code, message) = acp_error_status_message(&err);
-                ApiError::new(status, code, message)
-            })?;
+    let conversation_resolution = resolve_acp_prompt_conversation(
+        body.conversation_id.as_deref(),
+        existing_session.as_ref(),
+        &pair_agent_id,
+        generated_conversation_id,
+    )
+    .map_err(|err| {
+        let (_, _, message) = acp_error_status_message(&err);
+        ApiError::new(StatusCode::BAD_REQUEST, "validation", message)
+    })?;
+    if conversation_resolution.requires_belongs_to_bear_check {
+        verify_acp_conversation_belongs_to_bear(
+            &state,
+            &pair_agent_id,
+            &conversation_resolution.session_selection,
+        )
+        .await
+        .map_err(|err| {
+            let (status, code, message) = acp_error_status_message(&err);
+            ApiError::new(status, code, message)
+        })?;
     }
-    let resolved_conversation_id = if conversation_id.starts_with("conv-") {
-        Some(conversation_id.clone())
-    } else if existing_session
-        .as_ref()
-        .is_some_and(|s| s.conversation_id == conversation_id)
-    {
-        existing_session
-            .as_ref()
-            .and_then(|s| s.resolved_conversation_id.clone())
-    } else if conversation_id == "default" {
-        Some(conversation_id.clone())
-    } else {
-        None
-    };
     let runtime_session_id = format!("acp-api-direct:{client}:{}:{session_id}", bear.id);
     acp_sessions::upsert_session(
         &state.sqlx_pool,
@@ -1121,8 +1223,8 @@ async fn prompt_inner(
             bear_slug: bear.slug.clone(),
             acp_session_id: session_id.to_string(),
             runtime_session_id: runtime_session_id.clone(),
-            conversation_id: conversation_id.clone(),
-            resolved_conversation_id: resolved_conversation_id.clone(),
+            conversation_id: conversation_resolution.session_selection.clone(),
+            resolved_conversation_id: conversation_resolution.resolved_conversation_id.clone(),
             client: client.clone(),
             cwd: Some(cwd.clone()),
         },
@@ -1135,7 +1237,6 @@ async fn prompt_inner(
             err.to_string(),
         )
     })?;
-    let letta_conversation_id = letta_conversation_target(&conversation_id, &pair_agent_id);
     tracing::info!(
         %request_id,
         acp_session_id = %session_id,
@@ -1145,16 +1246,22 @@ async fn prompt_inner(
         letta_agent_id = %pair_agent_id,
         client = %client,
         cwd = %cwd,
-        requested_conversation_id = requested_conversation_id.as_deref(),
-        conversation_id = %conversation_id,
-        conversation_selection_source = %conversation_selection_source,
-        resolved_conversation_id = resolved_conversation_id.as_deref(),
-        letta_conversation_id = %letta_conversation_id,
+        requested_conversation_id = body.conversation_id.as_deref().map(str::trim),
+        conversation_id = %conversation_resolution.session_selection,
+        conversation_selection_source = %conversation_resolution.selection_source.as_str(),
+        resolved_conversation_id = conversation_resolution.resolved_conversation_id.as_deref(),
+        history_target = conversation_resolution.history_target.as_deref(),
+        archive_target = conversation_resolution.archive_target.as_deref(),
+        letta_conversation_id = %conversation_resolution.upstream_target,
         "ACP gateway routing prompt to pair role via Letta API"
     );
     let upstream = match state
         .letta
-        .post_conversation_messages_streaming(letta_conversation_id, Some(&pair_agent_id), prompt)
+        .post_conversation_messages_streaming(
+            &conversation_resolution.upstream_target,
+            Some(&pair_agent_id),
+            prompt,
+        )
         .await
     {
         Ok(upstream) => upstream,
@@ -1585,14 +1692,67 @@ data: "hello"}"#;
     }
 
     #[test]
-    fn maps_pending_acp_conversation_ids_to_letta_agent_target() {
+    fn resolver_maps_pending_acp_selection_to_letta_agent_target() {
         let agent_id = "agent-12345678-1234-4567-89ab-123456789abc";
-        assert_eq!(letta_conversation_target("new-acp-zed-abc123", agent_id), agent_id);
+        let resolution =
+            resolve_acp_prompt_conversation(None, None, agent_id, "new-acp-zed-abc123".to_string())
+                .unwrap();
+        assert_eq!(resolution.session_selection, "new-acp-zed-abc123");
+        assert_eq!(resolution.resolved_conversation_id, None);
+        assert_eq!(resolution.upstream_target, agent_id);
+        assert_eq!(resolution.history_target, None);
+        assert_eq!(resolution.archive_target, None);
         assert_eq!(
-            letta_conversation_target("conv-12345678-1234-4567-89ab-123456789abc", agent_id),
-            "conv-12345678-1234-4567-89ab-123456789abc"
+            resolution.selection_source,
+            AcpConversationSelectionSource::Generated
         );
-        assert_eq!(letta_conversation_target("default", agent_id), "default");
+    }
+
+    #[test]
+    fn resolver_routes_explicit_conv_directly_and_requires_bear_check() {
+        let agent_id = "agent-12345678-1234-4567-89ab-123456789abc";
+        let conv_id = "conv-12345678-1234-4567-89ab-123456789abc";
+        let resolution = resolve_acp_prompt_conversation(
+            Some(conv_id),
+            None,
+            agent_id,
+            "new-acp-zed-unused".to_string(),
+        )
+        .unwrap();
+        assert_eq!(resolution.session_selection, conv_id);
+        assert_eq!(
+            resolution.resolved_conversation_id.as_deref(),
+            Some(conv_id)
+        );
+        assert_eq!(resolution.upstream_target, conv_id);
+        assert_eq!(resolution.history_target.as_deref(), Some(conv_id));
+        assert_eq!(resolution.archive_target.as_deref(), Some(conv_id));
+        assert_eq!(
+            resolution.selection_source,
+            AcpConversationSelectionSource::Explicit
+        );
+        assert!(resolution.requires_belongs_to_bear_check);
+    }
+
+    #[test]
+    fn resolver_never_archives_pending_or_default_targets() {
+        let pending = AcpConversationResolution::from_selection(
+            "new-acp-zed-abc123".to_string(),
+            AcpConversationSelectionSource::Generated,
+            "agent-12345678-1234-4567-89ab-123456789abc",
+            None,
+        );
+        assert_eq!(pending.history_target, None);
+        assert_eq!(pending.archive_target, None);
+
+        let default = AcpConversationResolution::from_selection(
+            "default".to_string(),
+            AcpConversationSelectionSource::Stored,
+            "agent-12345678-1234-4567-89ab-123456789abc",
+            None,
+        );
+        assert_eq!(default.history_target.as_deref(), Some("default"));
+        assert_eq!(default.archive_target, None);
     }
 
     #[test]

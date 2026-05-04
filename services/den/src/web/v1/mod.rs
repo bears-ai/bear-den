@@ -199,14 +199,11 @@ async fn chat_conversations(
         return Ok(default_only());
     }
 
-    let Some(agent_id) = bears_db::role_agent_id_or_legacy(
-        state.sqlx_pool(),
-        &bear,
-        BearAgentRole::Talk,
-    )
-    .await?
-    .map(|s| s.trim().to_string())
-    .filter(|s| !s.is_empty())
+    let Some(agent_id) =
+        bears_db::role_agent_id_or_legacy(state.sqlx_pool(), &bear, BearAgentRole::Talk)
+            .await?
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
     else {
         return Ok(default_only());
     };
@@ -263,14 +260,11 @@ async fn chat_conversation_patch(
         ));
     }
 
-    let Some(agent_id) = bears_db::role_agent_id_or_legacy(
-        state.sqlx_pool(),
-        &bear,
-        BearAgentRole::Talk,
-    )
-    .await?
-    .map(|s| s.trim().to_string())
-    .filter(|s| !s.is_empty())
+    let Some(agent_id) =
+        bears_db::role_agent_id_or_legacy(state.sqlx_pool(), &bear, BearAgentRole::Talk)
+            .await?
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
     else {
         return Err(CustomError::ValidationError(
             "this bear is not linked to a talk Letta agent".to_string(),
@@ -360,14 +354,11 @@ async fn chat_history(
         return Ok(empty());
     }
 
-    let Some(agent_id) = bears_db::role_agent_id_or_legacy(
-        state.sqlx_pool(),
-        &bear,
-        BearAgentRole::Talk,
-    )
-    .await?
-    .map(|s| s.trim().to_string())
-    .filter(|s| !s.is_empty())
+    let Some(agent_id) =
+        bears_db::role_agent_id_or_legacy(state.sqlx_pool(), &bear, BearAgentRole::Talk)
+            .await?
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
     else {
         return Ok(empty());
     };
@@ -722,19 +713,17 @@ async fn chat_send_inner(
         .await?
         .ok_or_else(|| CustomError::NotFound("bear not found".to_string()))?;
 
-    let talk_agent_id = bears_db::role_agent_id_or_legacy(
-        state.sqlx_pool(),
-        &bear,
-        BearAgentRole::Talk,
-    )
-    .await?
-    .map(|s| s.trim().to_string())
-    .filter(|s| !s.is_empty())
-    .ok_or_else(|| {
-        CustomError::System(
-            "This bear is not provisioned in Letta yet (missing talk role agent).".to_string(),
-        )
-    })?;
+    let talk_agent_id =
+        bears_db::role_agent_id_or_legacy(state.sqlx_pool(), &bear, BearAgentRole::Talk)
+            .await?
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .ok_or_else(|| {
+                CustomError::System(
+                    "This bear is not provisioned in Letta yet (missing talk role agent)."
+                        .to_string(),
+                )
+            })?;
     let mut bear = bear;
     bear.letta_agent_id = Some(talk_agent_id);
 

@@ -55,8 +55,6 @@ pub fn router() -> Router<AppState> {
         .route_with_tsr("/bears/{id}", get(detail_view))
 }
 
-
-
 #[derive(Debug, Serialize)]
 struct BearAgentHealthRow {
     role: String,
@@ -198,11 +196,9 @@ async fn bear_agent_health_rows(
             .filter(|s| !s.is_empty())
         {
             match state.letta.fetch_agent(agent_id).await {
-                Ok(v) => BearAgentHealthRow::ok(
-                    &agent,
-                    role,
-                    AgentSummary::from_letta_agent_state(&v),
-                ),
+                Ok(v) => {
+                    BearAgentHealthRow::ok(&agent, role, AgentSummary::from_letta_agent_state(&v))
+                }
                 Err(err) => BearAgentHealthRow::error(&agent, role, err.to_string()),
             }
         } else {
@@ -252,10 +248,11 @@ async fn bear_detail_response(
 
     let agent_health_rows = bear_agent_health_rows(state, id, letta_configured).await?;
 
-    let talk_agent_id = bears_db::role_agent_id_or_legacy(state.sqlx_pool(), &bear, BearAgentRole::Talk)
-        .await?
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty());
+    let talk_agent_id =
+        bears_db::role_agent_id_or_legacy(state.sqlx_pool(), &bear, BearAgentRole::Talk)
+            .await?
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty());
 
     let (letta_agent_summary, letta_agent_fetch_error): (Option<AgentSummary>, Option<String>) =
         if letta_configured {
@@ -362,7 +359,10 @@ async fn list_view(
         )),
         Some("error") => Some(format!(
             "MemFS sidecar role view registration failed: {}",
-            query.error.clone().unwrap_or_else(|| "unknown error".to_string())
+            query
+                .error
+                .clone()
+                .unwrap_or_else(|| "unknown error".to_string())
         )),
         _ => None,
     };
@@ -375,12 +375,13 @@ async fn list_view(
     .await
 }
 
-async fn register_memfs_views_action(State(state): State<AppState>) -> Result<Response, CustomError> {
+async fn register_memfs_views_action(
+    State(state): State<AppState>,
+) -> Result<Response, CustomError> {
     match provision::register_existing_role_views(state.sqlx_pool(), state.letta.as_ref()).await {
-        Ok(count) => Ok(Redirect::to(&format!(
-            "/admin/bears/?memfs=ok&views={count}"
-        ))
-        .into_response()),
+        Ok(count) => {
+            Ok(Redirect::to(&format!("/admin/bears/?memfs=ok&views={count}")).into_response())
+        }
         Err(err) => Ok(Redirect::to(&format!(
             "/admin/bears/?memfs=error&error={}",
             urlencoding::encode(&err.to_string())
@@ -389,7 +390,9 @@ async fn register_memfs_views_action(State(state): State<AppState>) -> Result<Re
     }
 }
 
-async fn repair_legacy_agents_action(State(state): State<AppState>) -> Result<Response, CustomError> {
+async fn repair_legacy_agents_action(
+    State(state): State<AppState>,
+) -> Result<Response, CustomError> {
     match bears_db::repair_legacy_bear_agents(state.sqlx_pool()).await {
         Ok(result) => Ok(Redirect::to(&format!(
             "/admin/bears/?repair=ok&migrated={}&inserted={}",
@@ -496,8 +499,6 @@ pub async fn new_action(
     if let Err(e) = form.validate() {
         validation_errors = e;
     }
-
-
 
     let letta_tool_ids: Vec<String> = form
         .letta_tool_ids
@@ -788,10 +789,7 @@ async fn retry_letta_action(
     State(state): State<AppState>,
     auth_session: AuthSession,
 ) -> Result<Response, CustomError> {
-    if bears_db::get_bear(state.sqlx_pool(), id)
-        .await?
-        .is_none()
-    {
+    if bears_db::get_bear(state.sqlx_pool(), id).await?.is_none() {
         return Err(CustomError::NotFound("bear not found".to_string()));
     }
 

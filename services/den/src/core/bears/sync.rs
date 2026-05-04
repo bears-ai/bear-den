@@ -47,7 +47,10 @@ impl BearSyncSummary {
     }
 
     pub fn synced_count(&self) -> usize {
-        self.outcomes.iter().filter(|o| o.status == "synced").count()
+        self.outcomes
+            .iter()
+            .filter(|o| o.status == "synced")
+            .count()
     }
 
     pub fn diagnostic_message(&self) -> Option<String> {

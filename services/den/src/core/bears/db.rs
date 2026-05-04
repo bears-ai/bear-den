@@ -372,7 +372,6 @@ pub async fn list_letta_agent_ids_in_use(pool: &PgPool) -> Result<Vec<String>, C
     Ok(rows.into_iter().map(|r| r.0).collect())
 }
 
-
 pub async fn mirror_talk_agent_to_legacy_letta_agent_id(
     pool: &PgPool,
     bear_id: Uuid,

@@ -331,7 +331,6 @@ async fn new_bear_post(
         return Ok(r.into_response());
     }
 
-
     let letta_fetch = if state.letta.is_enabled() {
         Some(state.letta.list_llm_models().await.map(|opts| {
             let model_trim = form.default_model.trim();

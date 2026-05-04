@@ -57,7 +57,13 @@ pub enum BearAgentRole {
 }
 
 impl BearAgentRole {
-    pub const ALL: [Self; 5] = [Self::Talk, Self::Pair, Self::Curate, Self::Work, Self::Watch];
+    pub const ALL: [Self; 5] = [
+        Self::Talk,
+        Self::Pair,
+        Self::Curate,
+        Self::Work,
+        Self::Watch,
+    ];
 
     pub fn as_str(self) -> &'static str {
         match self {

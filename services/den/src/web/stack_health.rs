@@ -7,10 +7,10 @@
 use std::time::Duration;
 
 use serde::Serialize;
+use serde_json::Value;
 use sqlx::{postgres::PgPoolOptions, PgPool};
 use time::OffsetDateTime;
 use tokio::time::timeout;
-use serde_json::Value;
 use url::Url;
 
 use crate::startup;
@@ -513,8 +513,16 @@ async fn check_memfs_sidecar_views(base: &str) -> HealthCheck {
     let mut stale = 0usize;
     let now = OffsetDateTime::now_utc().unix_timestamp() as f64;
     for view in &views {
-        let state = view.get("state").and_then(|v| v.as_str()).unwrap_or("unknown");
-        if view.get("quarantined").and_then(|v| v.as_bool()).unwrap_or(false) || state == "quarantined" {
+        let state = view
+            .get("state")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown");
+        if view
+            .get("quarantined")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false)
+            || state == "quarantined"
+        {
             quarantined += 1;
         }
         if state == "drift" {

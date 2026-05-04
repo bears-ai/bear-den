@@ -66,9 +66,7 @@ async fn start_fake_letta() -> (String, Arc<Mutex<Option<Value>>>) {
         .expect("bind fake Letta");
     let addr: SocketAddr = listener.local_addr().expect("fake Letta local addr");
     tokio::spawn(async move {
-        axum::serve(listener, app)
-            .await
-            .expect("fake Letta server");
+        axum::serve(listener, app).await.expect("fake Letta server");
     });
     (format!("http://{addr}"), captured)
 }
@@ -476,7 +474,10 @@ async fn acp_prompt_missing_pair_returns_operator_actionable_error_without_legac
     let value: Value = serde_json::from_slice(&body).expect("JSON error body");
     assert_eq!(value["error_code"], "validation");
     let message = value["error"].as_str().expect("error message");
-    assert!(message.contains("pair"), "message should name missing pair role: {message}");
+    assert!(
+        message.contains("pair"),
+        "message should name missing pair role: {message}"
+    );
     assert!(
         message.contains("Provision missing role agents"),
         "message should tell operator how to remediate: {message}"

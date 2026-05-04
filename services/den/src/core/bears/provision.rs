@@ -8,9 +8,7 @@ use sqlx::PgPool;
 use uuid::Uuid;
 
 use crate::core::{
-    bifrost::BifrostClient,
-    letta::LettaClient,
-    memory_manager_head::register_memfs_role_view,
+    bifrost::BifrostClient, letta::LettaClient, memory_manager_head::register_memfs_role_view,
 };
 
 use super::db as bears_db;
@@ -209,10 +207,7 @@ async fn provision_bear_role(
 
             // Existing role agents are reconciled via PATCH rather than replaced.
             let summary = crate::core::bears::sync::sync_all_bear_roles_to_letta(
-                pool,
-                letta,
-                bifrost,
-                bear.id,
+                pool, letta, bifrost, bear.id,
             )
             .await?;
             if let Some(message) = summary.diagnostic_message() {
@@ -311,12 +306,12 @@ fn sanitize_letta_agent_name(name: &str) -> String {
     static WHITESPACE: OnceLock<Regex> = OnceLock::new();
     static HYPHENS: OnceLock<Regex> = OnceLock::new();
 
-    let unsafe_chars = UNSAFE_CHARS
-        .get_or_init(|| Regex::new(r#"[^\p{L}\p{N} _\-' ]+"#).expect("valid Letta name sanitizer regex"));
+    let unsafe_chars = UNSAFE_CHARS.get_or_init(|| {
+        Regex::new(r#"[^\p{L}\p{N} _\-' ]+"#).expect("valid Letta name sanitizer regex")
+    });
     let whitespace =
         WHITESPACE.get_or_init(|| Regex::new(r#"\s+"#).expect("valid whitespace regex"));
-    let hyphens =
-        HYPHENS.get_or_init(|| Regex::new(r#"\s*-+\s*"#).expect("valid separator regex"));
+    let hyphens = HYPHENS.get_or_init(|| Regex::new(r#"\s*-+\s*"#).expect("valid separator regex"));
 
     let apostrophe_normalized = name.replace(['’', '‘', '`', '´'], "'");
     let cleaned = unsafe_chars.replace_all(&apostrophe_normalized, " ");
@@ -354,7 +349,8 @@ pub(crate) fn render_role_prompt(bear: &Bear, role: BearAgentRole) -> String {
     prompt.push_str(&format!(
         "You are the `{}` role agent for the logical Bear `{}`. \
          Preserve the Bear identity while obeying this role boundary.\n",
-        role.as_str(), bear.name
+        role.as_str(),
+        bear.name
     ));
     prompt.push_str(match role {
         BearAgentRole::Talk => {
@@ -419,7 +415,10 @@ mod tests {
     #[test]
     fn role_agent_name_uses_letta_safe_role_suffix() {
         let bear = test_bear("Builder Bear");
-        assert_eq!(role_agent_name(&bear, BearAgentRole::Pair), "Builder Bear - pair");
+        assert_eq!(
+            role_agent_name(&bear, BearAgentRole::Pair),
+            "Builder Bear - pair"
+        );
     }
 
     #[test]
@@ -435,12 +434,18 @@ mod tests {
     #[test]
     fn role_agent_name_keeps_unicode_letters_and_normalizes_apostrophes() {
         let bear = test_bear("Zoë’s 建築_Bear");
-        assert_eq!(role_agent_name(&bear, BearAgentRole::Talk), "Zoë's 建築_Bear - talk");
+        assert_eq!(
+            role_agent_name(&bear, BearAgentRole::Talk),
+            "Zoë's 建築_Bear - talk"
+        );
     }
 
     #[test]
     fn role_agent_name_falls_back_when_base_name_has_no_safe_characters() {
         let bear = test_bear("()/?*");
-        assert_eq!(role_agent_name(&bear, BearAgentRole::Curate), "Bear - curate");
+        assert_eq!(
+            role_agent_name(&bear, BearAgentRole::Curate),
+            "Bear - curate"
+        );
     }
 }

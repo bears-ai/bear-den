@@ -89,8 +89,7 @@ async fn fake_bear_channel(
 
 async fn test_app() -> TestApp {
     dotenvy::dotenv().ok();
-    let database_url =
-        std::env::var("DATABASE_URL").expect("DATABASE_URL for web chat role test");
+    let database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL for web chat role test");
     let pool = PgPoolOptions::new()
         .max_connections(2)
         .acquire_timeout(std::time::Duration::from_secs(5))
@@ -267,5 +266,8 @@ async fn web_chat_send_uses_talk_role_agent_id_for_codepool() {
     assert_eq!(captured["bear"]["runtime_family"], "letta_code_harness");
     assert_ne!(captured["bear"]["letta_agent_id"], "agent-legacy-web");
     assert_eq!(captured["channel"]["family"], "browser_chat");
-    assert_eq!(captured["message"], json!({ "type": "text", "content": "hello web chat" }));
+    assert_eq!(
+        captured["message"],
+        json!({ "type": "text", "content": "hello web chat" })
+    );
 }
