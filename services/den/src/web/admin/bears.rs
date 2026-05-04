@@ -764,20 +764,21 @@ async fn edit_action(
         )
         .await?;
 
-        if let Err(e) = sync::sync_bear_to_letta(
+        let sync_summary = sync::sync_all_bear_roles_to_letta(
             state.sqlx_pool(),
             state.letta.as_ref(),
             state.bifrost.as_ref(),
             id,
         )
-        .await
-        {
-            tracing::warn!(%id, "Letta sync after bear edit failed: {e}");
+        .await?;
+        if let Some(message) = sync_summary.diagnostic_message() {
+            tracing::warn!(%id, message = %message, "Letta role sync after bear edit had failures");
             let bear = bears_db::get_bear(state.sqlx_pool(), id)
                 .await?
                 .ok_or_else(|| CustomError::NotFound("bear not found".to_string()))?;
             let page = bear_edit_page_context(&state, &bear, &form).await;
             let empty_errors = ValidationErrors::new();
+            let skipped = sync_summary.skipped_roles().len();
             return web::render_template(
                 &state,
                 "admin/bears/edit.html",
@@ -787,7 +788,10 @@ async fn edit_action(
                     form => form,
                     bear,
                     letta_sync_error => format!(
-                        "Bear was saved in Den, but Letta rejected the update: {e}"
+                        "Bear was saved in Den. {}. {} role(s) synced; {} unprovisioned role(s) skipped. Use the Bear detail page to inspect per-role health and provision missing roles.",
+                        message,
+                        sync_summary.synced_count(),
+                        skipped
                     ),
                     ..page
                 },

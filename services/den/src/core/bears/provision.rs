@@ -178,7 +178,7 @@ async fn create_role_agent(
         .await
 }
 
-fn render_role_prompt(bear: &Bear, role: BearAgentRole) -> String {
+pub(crate) fn render_role_prompt(bear: &Bear, role: BearAgentRole) -> String {
     let mut prompt = bear.system_prompt.trim().to_string();
     if !prompt.is_empty() {
         prompt.push_str("\n\n");
@@ -209,7 +209,7 @@ fn render_role_prompt(bear: &Bear, role: BearAgentRole) -> String {
     prompt
 }
 
-fn role_config_hash(bear: &Bear, role: BearAgentRole) -> serde_json::Value {
+pub(crate) fn role_config_hash(bear: &Bear, role: BearAgentRole) -> serde_json::Value {
     json!({
         "schema_version": 1,
         "role": role.as_str(),

@@ -683,6 +683,57 @@ pub async fn mark_bear_agent_ready(
     Ok(())
 }
 
+pub async fn mark_bear_agent_synced(
+    pool: &PgPool,
+    bear_id: Uuid,
+    role: BearAgentRole,
+    version: i32,
+    config_hash: &serde_json::Value,
+) -> Result<(), CustomError> {
+    sqlx::query(
+        r#"
+        UPDATE bear_agents
+        SET provisioning_status = 'ready',
+            last_provisioned_version = $3,
+            last_synced_at = NOW(),
+            last_provisioning_error = NULL,
+            config_hash = $4::jsonb,
+            updated_at = NOW()
+        WHERE bear_id = $1 AND role = $2
+        "#,
+    )
+    .bind(bear_id)
+    .bind(role.as_str())
+    .bind(version)
+    .bind(config_hash)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+pub async fn mark_bear_agent_drifted(
+    pool: &PgPool,
+    bear_id: Uuid,
+    role: BearAgentRole,
+    message: &str,
+) -> Result<(), CustomError> {
+    sqlx::query(
+        r#"
+        UPDATE bear_agents
+        SET provisioning_status = 'drifted',
+            last_provisioning_error = $3,
+            updated_at = NOW()
+        WHERE bear_id = $1 AND role = $2
+        "#,
+    )
+    .bind(bear_id)
+    .bind(role.as_str())
+    .bind(message)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
 pub async fn mark_bear_agent_failed(
     pool: &PgPool,
     bear_id: Uuid,
