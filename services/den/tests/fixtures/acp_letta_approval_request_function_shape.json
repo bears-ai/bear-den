@@ -1,0 +1,11 @@
+{
+  "id": "message-function-shape-fixture",
+  "message_type": "approval_request_message",
+  "tool_call": {
+    "id": "call_fixture_function_shape",
+    "function": {
+      "name": "fs_read_text_file",
+      "arguments": "{\"path\":\"/tmp/function-shape.txt\"}"
+    }
+  }
+}

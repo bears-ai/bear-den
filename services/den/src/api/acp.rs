@@ -1870,6 +1870,11 @@ fn native_letta_tool_request_event(
         });
     let tool_name = tool_call
         .and_then(|v| v.get("name"))
+        .or_else(|| {
+            tool_call
+                .and_then(|v| v.get("function"))
+                .and_then(|f| f.get("name"))
+        })
         .or_else(|| inner.get("tool_name"))
         .or_else(|| inner.get("name"))
         .or_else(|| event.get("tool_name"))
@@ -1893,10 +1898,18 @@ fn native_letta_tool_request_event(
         }
     };
     let args_raw = tool_call
-        .and_then(|v| v.get("arguments"))
+        .and_then(|v| v.get("input"))
+        .or_else(|| tool_call.and_then(|v| v.get("arguments")))
         .or_else(|| tool_call.and_then(|v| v.get("args")))
+        .or_else(|| {
+            tool_call
+                .and_then(|v| v.get("function"))
+                .and_then(|f| f.get("arguments"))
+        })
+        .or_else(|| inner.get("input"))
         .or_else(|| inner.get("args"))
         .or_else(|| inner.get("arguments"))
+        .or_else(|| event.get("input"))
         .or_else(|| event.get("args"))
         .or_else(|| event.get("arguments"));
     let args = match args_raw {
@@ -1947,6 +1960,11 @@ fn native_letta_tool_request_event(
     let tool_call_id = tool_call
         .and_then(|v| v.get("tool_call_id"))
         .or_else(|| tool_call.and_then(|v| v.get("id")))
+        .or_else(|| {
+            tool_call
+                .and_then(|v| v.get("function"))
+                .and_then(|f| f.get("tool_call_id"))
+        })
         .or_else(|| inner.get("tool_call_id"))
         .or_else(|| inner.get("id"))
         .or_else(|| event.get("tool_call_id"))
@@ -2846,6 +2864,43 @@ mod tests {
                 assert_eq!(tool_name, "fs_read_text_file");
                 assert_eq!(args["path"], "/tmp/readme.md");
                 assert!(approval_required);
+            }
+            other => panic!("expected tool request, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn maps_letta_input_shape_fixture_to_tool_request() {
+        let event: serde_json::Value = serde_json::from_str(include_str!(
+            "../../tests/fixtures/acp_letta_approval_request_input_shape.json"
+        ))
+        .unwrap();
+        let mapped = map_native_letta_stream_event_to_acp_event(&event).unwrap();
+        match mapped {
+            AcpGatewayEvent::ToolRequest {
+                tool_call_id, args, ..
+            } => {
+                assert_eq!(tool_call_id, "call_fixture_input_shape");
+                assert_eq!(args["path"], "/tmp/input-shape.txt");
+                assert_eq!(args["line"], 3);
+            }
+            other => panic!("expected tool request, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn maps_letta_function_shape_fixture_to_tool_request() {
+        let event: serde_json::Value = serde_json::from_str(include_str!(
+            "../../tests/fixtures/acp_letta_approval_request_function_shape.json"
+        ))
+        .unwrap();
+        let mapped = map_native_letta_stream_event_to_acp_event(&event).unwrap();
+        match mapped {
+            AcpGatewayEvent::ToolRequest {
+                tool_call_id, args, ..
+            } => {
+                assert_eq!(tool_call_id, "call_fixture_function_shape");
+                assert_eq!(args["path"], "/tmp/function-shape.txt");
             }
             other => panic!("expected tool request, got {other:?}"),
         }

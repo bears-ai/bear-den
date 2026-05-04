@@ -1,0 +1,12 @@
+{
+  "id": "message-input-shape-fixture",
+  "message_type": "approval_request_message",
+  "tool_call": {
+    "name": "fs_read_text_file",
+    "tool_call_id": "call_fixture_input_shape",
+    "input": {
+      "path": "/tmp/input-shape.txt",
+      "line": 3
+    }
+  }
+}
