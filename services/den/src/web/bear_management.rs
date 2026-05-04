@@ -18,7 +18,7 @@ use validator::{Validate, ValidationError, ValidationErrors};
 use crate::{
     auth_backend::{AuthSession, SessionUser},
     core::{
-        acp_tokens, archived_conversations,
+        acp_sessions, acp_tokens, archived_conversations,
         bears::{
             compute_letta_drift_with_expected_tool_ids, db as bears_db,
             db::{role_is_bear_admin, BearMemberRow, BEAR_ROLE_ADMIN, BEAR_ROLE_MEMBER},
@@ -226,6 +226,39 @@ async fn talk_agent_id_for_bear(
     bears_db::role_agent_id(pool, bear.id, BearAgentRole::Talk)
         .await
         .map(|v| v.map(|s| s.trim().to_string()).filter(|s| !s.is_empty()))
+}
+
+async fn pair_agent_id_for_bear(
+    pool: &sqlx::PgPool,
+    bear: &Bear,
+) -> Result<Option<String>, CustomError> {
+    bears_db::role_agent_id(pool, bear.id, BearAgentRole::Pair)
+        .await
+        .map(|v| v.map(|s| s.trim().to_string()).filter(|s| !s.is_empty()))
+}
+
+fn web_href_for_conversation(slug: &str, conversation_id: &str) -> String {
+    if conversation_id == "default" {
+        format!("/bear/{slug}/")
+    } else {
+        format!(
+            "/bear/{}/?conversation_id={}",
+            slug,
+            urlencoding::encode(conversation_id)
+        )
+    }
+}
+
+async fn acp_conversation_ids_for_bear(
+    pool: &sqlx::PgPool,
+    bear: &Bear,
+) -> Result<std::collections::HashSet<String>, CustomError> {
+    Ok(
+        acp_sessions::resolved_conversation_ids_for_bear(pool, &bear.slug)
+            .await?
+            .into_iter()
+            .collect(),
+    )
 }
 
 async fn bear_code_token_get(
@@ -475,6 +508,7 @@ async fn render_bear_details_page(
     let letta_api_base = state.config.letta_base_url.trim().to_string();
     let slug = bear.slug.clone();
     let talk_agent_id = talk_agent_id_for_bear(state.sqlx_pool(), &bear).await?;
+    let pair_agent_id = pair_agent_id_for_bear(state.sqlx_pool(), &bear).await?;
     let role_rows = bear_role_rows(state, bear.id).await?;
 
     let (letta_agent_summary, letta_agent_fetch_error, letta_drift) = if letta_configured {
@@ -513,43 +547,56 @@ async fn render_bear_details_page(
     };
 
     let (conversation_rows, archived_conversation_count) = if letta_configured {
+        let archived_ids =
+            archived_conversations::list_for_bear(state.sqlx_pool(), bear.id).await?;
+        let acp_ids = acp_conversation_ids_for_bear(state.sqlx_pool(), &bear).await?;
+        let mut rows = Vec::new();
+        let mut archived_count = 0usize;
         if let Some(agent_id) = talk_agent_id.as_deref() {
-            let archived_ids =
-                archived_conversations::list_for_bear(state.sqlx_pool(), bear.id).await?;
             let snap = load_agent_conversations(state.letta.as_ref(), agent_id).await;
-            let archived_count = snap
+            archived_count += snap
                 .all
                 .iter()
                 .filter(|r| r.archived || archived_ids.contains(&r.id))
                 .count();
-            let rows: Vec<DetailsConvRow> = snap
-                .all
-                .into_iter()
-                .filter(|r| !r.archived && !archived_ids.contains(&r.id))
-                .map(|r| {
-                    let web_href = if r.id == "default" {
-                        format!("/bear/{}/", slug)
-                    } else {
-                        format!(
-                            "/bear/{}/?conversation_id={}",
-                            slug,
-                            urlencoding::encode(&r.id)
-                        )
-                    };
-                    DetailsConvRow {
+            rows.extend(
+                snap.all
+                    .into_iter()
+                    .filter(|r| !r.archived && !archived_ids.contains(&r.id))
+                    .map(|r| DetailsConvRow {
+                        web_href: web_href_for_conversation(&slug, &r.id),
                         id: r.id,
                         title: r.title,
                         last_message_at: r.last_message_at,
                         channel_label: "Web",
-                        web_href,
                         archived: false,
-                    }
-                })
-                .collect();
-            (rows, archived_count)
-        } else {
-            (Vec::new(), 0)
+                    }),
+            );
         }
+        if let Some(agent_id) = pair_agent_id.as_deref() {
+            let snap = load_agent_conversations(state.letta.as_ref(), agent_id).await;
+            archived_count += snap
+                .all
+                .iter()
+                .filter(|r| r.archived || archived_ids.contains(&r.id))
+                .count();
+            rows.extend(
+                snap.all
+                    .into_iter()
+                    .filter(|r| acp_ids.contains(&r.id))
+                    .filter(|r| !r.archived && !archived_ids.contains(&r.id))
+                    .map(|r| DetailsConvRow {
+                        web_href: web_href_for_conversation(&slug, &r.id),
+                        id: r.id,
+                        title: r.title,
+                        last_message_at: r.last_message_at,
+                        channel_label: "ACP",
+                        archived: false,
+                    }),
+            );
+        }
+        rows.sort_by(|a, b| b.last_message_at.cmp(&a.last_message_at));
+        (rows, archived_count)
     } else {
         (Vec::new(), 0)
     };
@@ -1223,44 +1270,56 @@ async fn bear_conversations_get(
     let letta_configured = state.letta.is_enabled();
 
     let talk_agent_id = talk_agent_id_for_bear(state.sqlx_pool(), &bear).await?;
+    let pair_agent_id = pair_agent_id_for_bear(state.sqlx_pool(), &bear).await?;
     let (rows, list_error) = if letta_configured {
+        let archived_ids =
+            archived_conversations::list_for_bear(state.sqlx_pool(), bear.id).await?;
+        let acp_ids = acp_conversation_ids_for_bear(state.sqlx_pool(), &bear).await?;
+        let mut rows = Vec::new();
         if let Some(agent_id) = talk_agent_id.as_deref() {
-            let archived_ids =
-                archived_conversations::list_for_bear(state.sqlx_pool(), bear.id).await?;
             let snap = load_agent_conversations(state.letta.as_ref(), agent_id).await;
-            let rows: Vec<DetailsConvRow> = snap
-                .all
-                .into_iter()
-                .map(|mut r| {
-                    if archived_ids.contains(&r.id) {
-                        r.archived = true;
-                    }
-                    let web_href = if r.id == "default" {
-                        format!("/bear/{}/", bear.slug)
-                    } else {
-                        format!(
-                            "/bear/{}/?conversation_id={}",
-                            bear.slug,
-                            urlencoding::encode(&r.id)
-                        )
-                    };
-                    DetailsConvRow {
-                        id: r.id,
-                        title: r.title,
-                        last_message_at: r.last_message_at,
-                        channel_label: "Web",
-                        web_href,
-                        archived: r.archived,
-                    }
-                })
-                .collect();
-            (rows, None)
-        } else {
-            (
-                Vec::new(),
-                Some("No talk role Letta agent is linked to this bear.".to_string()),
-            )
+            rows.extend(snap.all.into_iter().map(|mut r| {
+                if archived_ids.contains(&r.id) {
+                    r.archived = true;
+                }
+                DetailsConvRow {
+                    web_href: web_href_for_conversation(&bear.slug, &r.id),
+                    id: r.id,
+                    title: r.title,
+                    last_message_at: r.last_message_at,
+                    channel_label: "Web",
+                    archived: r.archived,
+                }
+            }));
         }
+        if let Some(agent_id) = pair_agent_id.as_deref() {
+            let snap = load_agent_conversations(state.letta.as_ref(), agent_id).await;
+            rows.extend(
+                snap.all
+                    .into_iter()
+                    .filter(|r| acp_ids.contains(&r.id))
+                    .map(|mut r| {
+                        if archived_ids.contains(&r.id) {
+                            r.archived = true;
+                        }
+                        DetailsConvRow {
+                            web_href: web_href_for_conversation(&bear.slug, &r.id),
+                            id: r.id,
+                            title: r.title,
+                            last_message_at: r.last_message_at,
+                            channel_label: "ACP",
+                            archived: r.archived,
+                        }
+                    }),
+            );
+        }
+        rows.sort_by(|a, b| b.last_message_at.cmp(&a.last_message_at));
+        let list_error = if talk_agent_id.is_none() && pair_agent_id.is_none() {
+            Some("No talk or pair role Letta agent is linked to this bear.".to_string())
+        } else {
+            None
+        };
+        (rows, list_error)
     } else {
         (Vec::new(), Some("Letta is not configured.".to_string()))
     };
