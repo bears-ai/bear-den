@@ -96,9 +96,9 @@ pub fn validate_runtime_config(config: &Config) -> Result<(), StartupError> {
                 .into(),
         ));
     }
-    if config.acp_gateway_enabled && config.codepool_base_url.trim().is_empty() {
+    if config.acp_gateway_enabled && config.letta_base_url.trim().is_empty() {
         return Err(StartupError::Message(
-            "CODEPOOL_BASE_URL must be set when ACP_GATEWAY_ENABLED=true. Den maps ACP prompts to Codepool bear_channel."
+            "LETTA_BASE_URL must be set when ACP_GATEWAY_ENABLED=true. Den routes ACP prompts directly to the pair role through the Letta API."
                 .into(),
         ));
     }
@@ -184,7 +184,7 @@ mod tests {
     }
 
     #[test]
-    fn validate_requires_api_and_codepool_when_acp_enabled() {
+    fn validate_requires_api_and_letta_when_acp_enabled() {
         let prev = std::env::var("JWT_SECRET").ok();
         unsafe {
             std::env::set_var("JWT_SECRET", "test-jwt-secret-for-unit-tests-min-length-ok");
@@ -197,8 +197,8 @@ mod tests {
         acp_on.run_api = true;
         assert!(validate_runtime_config(&acp_on).is_err());
 
-        acp_on.codepool_base_url = "http://bears-codepool:3030".into();
-        validate_runtime_config(&acp_on).expect("ACP with API and Codepool should pass");
+        acp_on.letta_base_url = "http://bears-letta:8283".into();
+        validate_runtime_config(&acp_on).expect("ACP with API and Letta should pass");
 
         match prev {
             Some(v) => unsafe { std::env::set_var("JWT_SECRET", v) },

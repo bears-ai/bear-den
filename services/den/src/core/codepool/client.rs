@@ -330,7 +330,9 @@ impl CodePoolClient {
         .await
     }
 
-    /// Lower-level `bear_channel` sender for non-browser clients such as ACP adapters.
+    /// Lower-level `bear_channel` sender for non-browser Letta Code-backed clients.
+    ///
+    /// ACP no longer uses this path; ACP is API-direct to the Bear's `pair` role.
     pub async fn post_bear_channel_message_for_channel_streaming(
         &self,
         session_id: &str,
