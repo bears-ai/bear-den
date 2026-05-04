@@ -320,7 +320,7 @@ async fn new_bear_get(
 async fn new_bear_post(
     State(state): State<AppState>,
     auth_session: AuthSession,
-    Form(mut form): Form<NewBearForm>,
+    Form(form): Form<NewBearForm>,
 ) -> Result<Response, CustomError> {
     let user_id = auth_session
         .user
@@ -331,7 +331,6 @@ async fn new_bear_post(
         return Ok(r.into_response());
     }
 
-    form.attach_letta_agent_id.clear();
 
     let letta_fetch = if state.letta.is_enabled() {
         Some(state.letta.list_llm_models().await.map(|opts| {

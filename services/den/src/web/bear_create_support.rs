@@ -9,7 +9,7 @@ use validator::{Validate, ValidationError, ValidationErrors};
 use crate::{
     core::{
         bears::{db as bears_db, Bear},
-        letta::{LettaAgentDiagnostics, LettaModelOption, LettaToolOption},
+        letta::{LettaModelOption, LettaToolOption},
     },
     errors::CustomError,
     web::AppState,
@@ -291,7 +291,7 @@ impl From<&Bear> for BearConfigurationEditForm {
 /// Model + tool `<select>`s for `/bear/{slug}/details/edit/configuration`.
 pub async fn bear_configuration_page_context(
     state: &AppState,
-    bear: &Bear,
+    _bear: &Bear,
     form: &BearConfigurationEditForm,
 ) -> minijinja::Value {
     let (letta_configured, letta_model_options, letta_models_fetch_error) =
@@ -315,27 +315,6 @@ pub async fn bear_configuration_page_context(
         letta_tool_options = ensure_stored_tools_in_options_ids(&form_tool_ids, letta_tool_options);
     }
 
-    let (letta_diagnostics, letta_agent_fetch_warn): (
-        Option<LettaAgentDiagnostics>,
-        Option<String>,
-    ) = if state.letta.is_enabled() {
-        if let Some(agent_id) = bear
-            .letta_agent_id
-            .as_deref()
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-        {
-            match state.letta.fetch_agent(agent_id).await {
-                Ok(v) => (Some(LettaAgentDiagnostics::from_agent_json(&v)), None),
-                Err(e) => (None, Some(e.to_string())),
-            }
-        } else {
-            (None, None)
-        }
-    } else {
-        (None, None)
-    };
-
     context! {
         letta_configured,
         letta_model_options,
@@ -344,8 +323,6 @@ pub async fn bear_configuration_page_context(
         letta_tool_options,
         letta_tools_fetch_error,
         letta_agent_type_rows => LETTA_AGENT_TYPE_ROWS,
-        letta_diagnostics => letta_diagnostics,
-        letta_agent_fetch_warn => letta_agent_fetch_warn,
     }
 }
 
@@ -367,10 +344,6 @@ pub struct NewBearForm {
     /// Letta `tool_ids` from `<select name="letta_tool_ids" multiple>`.
     #[serde(default)]
     pub letta_tool_ids: Vec<String>,
-    /// When set (hidden field), Den links this Letta agent instead of calling `POST /v1/agents`.
-    #[serde(default)]
-    #[validate(length(max = 256))]
-    pub attach_letta_agent_id: String,
 }
 
 impl From<&Bear> for NewBearForm {
@@ -383,7 +356,6 @@ impl From<&Bear> for NewBearForm {
             default_model: bear.default_model.clone().unwrap_or_default(),
             letta_agent_type: bear.letta_agent_type.clone().unwrap_or_default(),
             letta_tool_ids: bear.letta_tool_ids.0.clone(),
-            attach_letta_agent_id: String::new(),
         }
     }
 }
@@ -424,10 +396,10 @@ pub async fn bear_new_form_context(state: &AppState, form: &NewBearForm) -> mini
     }
 }
 
-/// Edit bear template: merged model/tool lists + optional Letta agent diagnostics.
+/// Edit bear template: merged model/tool lists. Per-role diagnostics live on the detail page.
 pub async fn bear_edit_page_context(
     state: &AppState,
-    bear: &Bear,
+    _bear: &Bear,
     form: &NewBearForm,
 ) -> minijinja::Value {
     let (letta_configured, letta_model_options, letta_models_fetch_error) =
@@ -451,26 +423,7 @@ pub async fn bear_edit_page_context(
         letta_tool_options = ensure_stored_tools_in_options_ids(&form_tool_ids, letta_tool_options);
     }
 
-    let (letta_diagnostics, letta_agent_fetch_warn): (
-        Option<LettaAgentDiagnostics>,
-        Option<String>,
-    ) = if state.letta.is_enabled() {
-        if let Some(agent_id) = bear
-            .letta_agent_id
-            .as_deref()
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-        {
-            match state.letta.fetch_agent(agent_id).await {
-                Ok(v) => (Some(LettaAgentDiagnostics::from_agent_json(&v)), None),
-                Err(e) => (None, Some(e.to_string())),
-            }
-        } else {
-            (None, None)
-        }
-    } else {
-        (None, None)
-    };
+    let _ = _bear;
 
     context! {
         letta_configured,
@@ -480,8 +433,6 @@ pub async fn bear_edit_page_context(
         letta_tool_options,
         letta_tools_fetch_error,
         letta_agent_type_rows => LETTA_AGENT_TYPE_ROWS,
-        letta_diagnostics => letta_diagnostics,
-        letta_agent_fetch_warn => letta_agent_fetch_warn,
     }
 }
 

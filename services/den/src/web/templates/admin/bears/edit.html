@@ -10,9 +10,7 @@
 {% if letta_sync_error %}
 <p class="form-errors"><strong>Letta sync failed</strong>: {{ letta_sync_error }}</p>
 {% endif %}
-{% if letta_agent_fetch_warn %}
-<p class="form-errors"><strong>Could not load agent from Letta for diagnostics:</strong> {{ letta_agent_fetch_warn }}</p>
-{% endif %}
+
 <form method="post">
   {{ forms.input("slug", "Slug", "text", 'required maxlength="120"', form) }}
   {{ forms.input("name", "Name", "text", 'maxlength="255"', form) }}
@@ -87,44 +85,7 @@
   <button type="submit">Save changes</button>
 </form>
 
-{% if letta_diagnostics %}
-<h3 style="margin-top: 2rem;">Letta agent snapshot</h3>
-<p class="form-hint">Read-only view from <code>GET /v1/agents/{{ bear.letta_agent_id }}</code> when this page was loaded.</p>
-{% if letta_diagnostics.blocks and letta_diagnostics.blocks | length > 0 %}
-<h4>Memory blocks</h4>
-<div class="den-letta-memory-blocks">
-  {% for b in letta_diagnostics.blocks %}
-  <details class="den-letta-memory-block">
-    <summary class="den-letta-memory-block-summary">
-      {% if b.label %}<span class="den-letta-memory-block-label"><strong>{{ b.label | e }}</strong></span>{% else %}<span class="den-letta-memory-block-label"><em>(no label)</em></span>{% endif %}
-      {% if b.id %}<span class="den-letta-memory-block-id"><code>{{ b.id | e }}</code></span>{% endif %}
-      {% if b.char_count %}<span class="den-letta-memory-block-meta">~{{ b.char_count }} chars</span>{% endif %}
-    </summary>
-    <div class="den-letta-memory-block-body">
-      {% if b.content %}
-      <pre class="den-letta-memory-block-pre">{{ b.content | e }}</pre>
-      {% else %}
-      <p class="form-hint"><em>No value in the Letta payload for this block.</em></p>
-      {% endif %}
-    </div>
-  </details>
-  {% endfor %}
-</div>
-{% endif %}
-{% if letta_diagnostics.tools and letta_diagnostics.tools | length > 0 %}
-<h4>Tools</h4>
-<ul>
-  {% for t in letta_diagnostics.tools %}
-  <li>{% if t.name %}{{ t.name | e }}{% else %}<em>(no name)</em>{% endif %} — <code>{{ t.id | e }}</code></li>
-  {% endfor %}
-</ul>
-{% endif %}
-<details style="margin-top: 1rem;">
-  <summary>Raw Letta agent JSON</summary>
-  <pre style="white-space: pre-wrap; max-height: 28rem; overflow: auto;">{{ letta_diagnostics.raw_json | e }}</pre>
-</details>
-{% endif %}
-
+<p class="form-hint">Per-role Letta health and raw diagnostics are available on the Bear details page.</p>
 <p><a href="/admin/bears/{{ bear.id }}">View bear details</a> · <a href="/admin/bears/">All bears</a></p>
 </div>
 {% endblock %}

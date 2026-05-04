@@ -10,7 +10,6 @@ use axum_extra::routing::RouterExt;
 use minijinja::context;
 use serde::{Deserialize, Serialize};
 use sqlx::types::Json;
-use std::borrow::Cow;
 use std::collections::HashSet;
 use uuid::Uuid;
 use validator::{Validate, ValidationError, ValidationErrors};
@@ -19,7 +18,7 @@ use crate::{
     auth_backend::AuthSession,
     core::{
         bears::{db as bears_db, provision, sync, BearAgent, BearAgentRole},
-        letta::{AgentBearPrefill, AgentSummary, LettaAgentListItem},
+        letta::{AgentSummary, LettaAgentListItem},
         memory_manager_head::fetch_memfs_role_view_health,
     },
     errors::CustomError,
@@ -56,11 +55,7 @@ pub fn router() -> Router<AppState> {
         .route_with_tsr("/bears/{id}", get(detail_view))
 }
 
-#[derive(Debug, Deserialize)]
-struct NewBearPageQuery {
-    #[serde(default, rename = "from_letta_agent")]
-    from_letta_agent: Option<String>,
-}
+
 
 #[derive(Debug, Serialize)]
 struct BearAgentHealthRow {
@@ -412,44 +407,9 @@ async fn repair_legacy_agents_action(State(state): State<AppState>) -> Result<Re
 async fn new_view(
     State(state): State<AppState>,
     auth_session: AuthSession,
-    Query(query): Query<NewBearPageQuery>,
+    Query(_query): Query<std::collections::HashMap<String, String>>,
 ) -> Result<Response, CustomError> {
-    let mut from_agent_error: Option<String> = None;
-    let form = if let Some(raw) = query.from_letta_agent.as_ref() {
-        let agent_id = raw.trim();
-        if agent_id.is_empty() {
-            NewBearForm::default()
-        } else if !state.letta.is_enabled() {
-            from_agent_error = Some(format!(
-                "Letta is not configured; cannot pre-fill from agent {agent_id:?}."
-            ));
-            NewBearForm::default()
-        } else {
-            match state.letta.fetch_agent(agent_id).await {
-                Ok(v) => {
-                    let pre = AgentBearPrefill::from_agent_json(&v);
-                    NewBearForm {
-                        slug: pre.suggested_slug,
-                        name: pre.name,
-                        description: pre.description,
-                        system_prompt: pre.system_prompt,
-                        default_model: pre.default_model,
-                        letta_agent_type: pre.letta_agent_type,
-                        letta_tool_ids: pre.letta_tool_ids,
-                        attach_letta_agent_id: agent_id.to_string(),
-                    }
-                }
-                Err(e) => {
-                    from_agent_error =
-                        Some(format!("Could not load Letta agent {agent_id:?}: {e}"));
-                    NewBearForm::default()
-                }
-            }
-        }
-    } else {
-        NewBearForm::default()
-    };
-
+    let form = NewBearForm::default();
     let page = bear_new_form_context(&state, &form).await;
     web::render_template(
         &state,
@@ -457,7 +417,6 @@ async fn new_view(
         auth_session,
         context! {
             form,
-            from_agent_error,
             ..page
         },
     )
@@ -468,7 +427,6 @@ async fn new_view(
 struct UnlinkedLettaAgentRow {
     display_name: String,
     agent_id: String,
-    new_bear_href: String,
 }
 
 async fn unlinked_letta_agents_view(
@@ -496,14 +454,9 @@ async fn unlinked_letta_agents_view(
                     }
                     let LettaAgentListItem { id, name } = a;
                     let display_name = name.clone().unwrap_or_else(|| id.clone());
-                    let new_bear_href = format!(
-                        "/admin/bears/new?from_letta_agent={}",
-                        urlencoding::encode(&id).into_owned()
-                    );
                     unlinked_rows.push(UnlinkedLettaAgentRow {
                         display_name,
                         agent_id: id,
-                        new_bear_href,
                     });
                 }
             }
@@ -544,37 +497,7 @@ pub async fn new_action(
         validation_errors = e;
     }
 
-    let attach_trim = form.attach_letta_agent_id.trim();
-    if !attach_trim.is_empty() {
-        if !state.letta.is_enabled() {
-            validation_errors.add(
-                "attach_letta_agent_id",
-                ValidationError::new(
-                    "Letta is not configured; remove attach mode or configure Letta first.",
-                ),
-            );
-        } else {
-            match state.letta.fetch_agent(attach_trim).await {
-                Ok(_) => {}
-                Err(e) => {
-                    validation_errors.add(
-                        "attach_letta_agent_id",
-                        ValidationError::new("letta_agent_fetch_failed").with_message(Cow::Owned(
-                            format!(
-                                "Could not load this Letta agent (it may have been deleted): {e}"
-                            ),
-                        )),
-                    );
-                }
-            }
-            if bears_db::bear_exists_for_letta_agent_id(state.sqlx_pool(), attach_trim).await? {
-                validation_errors.add(
-                    "attach_letta_agent_id",
-                    ValidationError::new("Another bear already uses this Letta agent id."),
-                );
-            }
-        }
-    }
+
 
     let letta_tool_ids: Vec<String> = form
         .letta_tool_ids
@@ -622,65 +545,16 @@ pub async fn new_action(
         )
         .await?;
 
-        if attach_trim.is_empty() {
-            if let Err(e) = provision::provision_bear_if_configured(
-                state.sqlx_pool(),
-                state.letta.as_ref(),
-                state.bifrost.as_ref(),
-                id,
-            )
-            .await
-            {
-                if state.letta.is_enabled() {
-                    tracing::warn!(%id, "Letta provision failed: {e}");
-                    let page = bear_new_form_context(&state, &form).await;
-                    return web::render_template(
-                        &state,
-                        "admin/bears/new.html",
-                        auth_session,
-                        context! {
-                            form => form,
-                            provision_error => e.to_string(),
-                            ..page
-                        },
-                    )
-                    .await;
-                }
-            }
-
+        if let Err(e) = provision::provision_bear_if_configured(
+            state.sqlx_pool(),
+            state.letta.as_ref(),
+            state.bifrost.as_ref(),
+            id,
+        )
+        .await
+        {
             if state.letta.is_enabled() {
-                let bear = bears_db::get_bear(state.sqlx_pool(), id)
-                    .await?
-                    .ok_or_else(|| CustomError::NotFound("bear not found".to_string()))?;
-                if bear.letta_agent_id.is_some() {
-                    if let Err(e) = sync::sync_bear_to_letta(
-                        state.sqlx_pool(),
-                        state.letta.as_ref(),
-                        state.bifrost.as_ref(),
-                        id,
-                    )
-                    .await
-                    {
-                        tracing::warn!(%id, "Letta sync after create failed: {e}");
-                        let page = bear_new_form_context(&state, &form).await;
-                        return web::render_template(
-                            &state,
-                            "admin/bears/new.html",
-                            auth_session,
-                            context! {
-                                form => form,
-                                letta_sync_error => format!(
-                                    "Bear was saved and provisioned in Den, but Letta rejected syncing fields: {e}"
-                                ),
-                                ..page
-                            },
-                        )
-                        .await;
-                    }
-                }
-            }
-        } else {
-            if bears_db::bear_exists_for_letta_agent_id(state.sqlx_pool(), attach_trim).await? {
+                tracing::warn!(%id, "Letta provision failed: {e}");
                 let page = bear_new_form_context(&state, &form).await;
                 return web::render_template(
                     &state,
@@ -688,22 +562,24 @@ pub async fn new_action(
                     auth_session,
                     context! {
                         form => form,
-                        provision_error => "Another bear was linked to this Letta agent while you were editing; the new bear row was created without an agent. Delete it or pick a different agent.".to_string(),
+                        provision_error => e.to_string(),
                         ..page
                     },
                 )
                 .await;
             }
-            bears_db::set_letta_agent_id(state.sqlx_pool(), id, attach_trim).await?;
-            if let Err(e) = sync::sync_bear_to_letta(
+        }
+
+        if state.letta.is_enabled() {
+            let sync_summary = sync::sync_all_bear_roles_to_letta(
                 state.sqlx_pool(),
                 state.letta.as_ref(),
                 state.bifrost.as_ref(),
                 id,
             )
-            .await
-            {
-                tracing::warn!(%id, "Letta sync after attach failed: {e}");
+            .await?;
+            if let Some(message) = sync_summary.diagnostic_message() {
+                tracing::warn!(%id, message = %message, "Letta role sync after create had failures");
                 let page = bear_new_form_context(&state, &form).await;
                 return web::render_template(
                     &state,
@@ -712,7 +588,7 @@ pub async fn new_action(
                     context! {
                         form => form,
                         letta_sync_error => format!(
-                            "Bear was saved and linked to Letta agent {attach_trim}, but Letta rejected syncing fields: {e}"
+                            "Bear was saved and provisioned in Den, but one or more role agents rejected syncing fields: {message}"
                         ),
                         ..page
                     },
@@ -912,17 +788,26 @@ async fn retry_letta_action(
     State(state): State<AppState>,
     auth_session: AuthSession,
 ) -> Result<Response, CustomError> {
-    let bear = bears_db::get_bear(state.sqlx_pool(), id)
+    if bears_db::get_bear(state.sqlx_pool(), id)
         .await?
-        .ok_or_else(|| CustomError::NotFound("bear not found".to_string()))?;
+        .is_none()
+    {
+        return Err(CustomError::NotFound("bear not found".to_string()));
+    }
+
+    let existing_agents = bears_db::list_bear_agents(state.sqlx_pool(), id).await?;
+    let has_any_role_agent = existing_agents.iter().any(|agent| {
+        agent
+            .letta_agent_id
+            .as_deref()
+            .map(str::trim)
+            .is_some_and(|s| !s.is_empty())
+    });
 
     let letta_retry_message = if !state.letta.is_enabled() {
         "Letta is not configured (set LETTA_BASE_URL).".to_string()
-    } else if bear.letta_agent_id.is_some() {
-        format!(
-            "This bear already has a Letta agent ({}). No new agent was created.",
-            bear.letta_agent_id.as_deref().unwrap_or("")
-        )
+    } else if has_any_role_agent {
+        "This bear already has one or more role agents. Use 'Provision missing role agents' to fill only empty roles.".to_string()
     } else {
         match provision::provision_bear_if_configured(
             state.sqlx_pool(),
@@ -933,26 +818,22 @@ async fn retry_letta_action(
         .await
         {
             Ok(()) => {
-                let bear2 = bears_db::get_bear(state.sqlx_pool(), id)
-                    .await?
-                    .ok_or_else(|| CustomError::NotFound("bear not found".to_string()))?;
-                if let Some(agent) = bear2.letta_agent_id.as_deref() {
-                    let mut msg = format!("Letta agent provisioned: {agent}.");
-                    if let Err(e) = sync::sync_bear_to_letta(
-                        state.sqlx_pool(),
-                        state.letta.as_ref(),
-                        state.bifrost.as_ref(),
-                        id,
-                    )
-                    .await
-                    {
-                        msg.push_str(&format!(
-                            " Den saved the bear but a follow-up sync to Letta failed: {e}"
-                        ));
-                    }
-                    msg
-                } else {
-                    "Provisioning finished but letta_agent_id is still unset.".to_string()
+                match sync::sync_all_bear_roles_to_letta(
+                    state.sqlx_pool(),
+                    state.letta.as_ref(),
+                    state.bifrost.as_ref(),
+                    id,
+                )
+                .await
+                {
+                    Ok(summary) => format!(
+                        "Role agent provisioning finished. {} role(s) synced; {} unprovisioned role(s) skipped.",
+                        summary.synced_count(),
+                        summary.skipped_roles().len()
+                    ),
+                    Err(e) => format!(
+                        "Role agent provisioning finished, but follow-up role sync failed: {e}"
+                    ),
                 }
             }
             Err(e) => format!("Letta provisioning failed: {e}"),

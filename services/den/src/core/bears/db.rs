@@ -372,56 +372,6 @@ pub async fn list_letta_agent_ids_in_use(pool: &PgPool) -> Result<Vec<String>, C
     Ok(rows.into_iter().map(|r| r.0).collect())
 }
 
-pub async fn bear_exists_for_letta_agent_id(
-    pool: &PgPool,
-    agent_id: &str,
-) -> Result<bool, CustomError> {
-    let n: (i64,) = sqlx::query_as(
-        r#"
-        SELECT COUNT(*)::bigint
-        FROM (
-            SELECT letta_agent_id FROM bears WHERE letta_agent_id = $1
-            UNION ALL
-            SELECT letta_agent_id FROM bear_agents WHERE letta_agent_id = $1
-        ) ids
-        "#,
-    )
-    .bind(agent_id)
-    .fetch_one(pool)
-    .await?;
-    Ok(n.0 > 0)
-}
-
-pub async fn set_letta_agent_id(
-    pool: &PgPool,
-    bear_id: Uuid,
-    agent_id: &str,
-) -> Result<(), CustomError> {
-    sqlx::query("UPDATE bears SET letta_agent_id = $1, updated_at = NOW() WHERE id = $2")
-        .bind(agent_id)
-        .bind(bear_id)
-        .execute(pool)
-        .await?;
-    // Treat direct attachment as legacy talk-role attachment during the migration window.
-    sqlx::query(
-        r#"
-        INSERT INTO bear_agents (
-            bear_id, role, letta_agent_id, provisioning_status, last_synced_at, updated_at
-        )
-        VALUES ($1, 'talk', $2, 'ready', NOW(), NOW())
-        ON CONFLICT (bear_id, role)
-        DO UPDATE SET letta_agent_id = EXCLUDED.letta_agent_id,
-                      provisioning_status = 'ready',
-                      last_synced_at = NOW(),
-                      updated_at = NOW()
-        "#,
-    )
-    .bind(bear_id)
-    .bind(agent_id)
-    .execute(pool)
-    .await?;
-    Ok(())
-}
 
 pub async fn mirror_talk_agent_to_legacy_letta_agent_id(
     pool: &PgPool,
