@@ -23,7 +23,7 @@ use tracing::info_span;
 use crate::{
     auth_backend::Backend,
     config::Config,
-    core::{bifrost::BifrostClient, codepool::CodePoolClient, letta::LettaClient},
+    core::{bifrost::BifrostClient, letta::LettaClient},
 };
 
 use super::oauth::{endpoints::OAuthState, router::create_oauth_router};
@@ -45,8 +45,6 @@ pub struct ApiState {
     pub letta: Arc<LettaClient>,
     /// Shared Bifrost model metadata client.
     pub bifrost: Arc<BifrostClient>,
-    /// Shared Codepool client for ACP -> bear_channel runtime traffic.
-    pub codepool: Arc<CodePoolClient>,
 }
 
 async fn api_readiness(State(state): State<ApiState>) -> Result<&'static str, StatusCode> {
@@ -107,7 +105,6 @@ pub async fn create_api_app(
         config: config.clone(),
         letta: Arc::new(LettaClient::new(config.as_ref())),
         bifrost: Arc::new(BifrostClient::new(config.as_ref())),
-        codepool: Arc::new(CodePoolClient::new(config.as_ref())),
     };
 
     // Create OAuth state (separate from main API state for OAuth endpoints)

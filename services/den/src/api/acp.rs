@@ -1,8 +1,8 @@
 //! Minimal Agent Client Protocol (ACP) gateway for adapter clients.
 //!
 //! This is the Phase 7 basic-chat slice: Den authenticates, authorizes the selected bear,
-//! injects trusted context, and maps text prompts to Codepool `bear_channel`. Client-tool
-//! relay and full ACP stdio transport live in later slices / an external adapter.
+//! injects trusted context, and maps text prompts to the Bear's API-direct `pair` Letta agent.
+//! Client-tool relay and full ACP stdio transport live in later slices / an external adapter.
 
 use axum::{
     body::Body,
@@ -30,9 +30,8 @@ use crate::{
     core::{
         acp_sessions::{self, UpsertAcpSession},
         acp_tokens, archived_conversations,
-        bears::db as bears_db,
+        bears::{db as bears_db, Bear, BearAgentRole},
         letta::load_agent_conversations,
-        user,
     },
     errors::CustomError,
 };
@@ -149,7 +148,7 @@ struct AcpSessionsListHttpResponse {
 #[derive(Debug, Serialize)]
 struct AcpSessionHttp {
     acp_session_id: String,
-    codepool_session_id: String,
+    runtime_session_id: String,
     conversation_id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     resolved_conversation_id: Option<String>,
@@ -171,7 +170,7 @@ fn format_acp_session_timestamp(t: time::OffsetDateTime) -> String {
 fn acp_session_row_to_http(row: acp_sessions::AcpSessionRow) -> AcpSessionHttp {
     AcpSessionHttp {
         acp_session_id: row.acp_session_id,
-        codepool_session_id: row.codepool_session_id,
+        runtime_session_id: row.runtime_session_id,
         conversation_id: row.conversation_id,
         resolved_conversation_id: row.resolved_conversation_id,
         client: row.client,
@@ -381,6 +380,25 @@ fn normalize_acp_conversation_id(raw: Option<&str>) -> Result<String, CustomErro
             "invalid conversation_id (expected 'default', a Letta conv- id, or a pending new- id): {s}"
         )))
     }
+}
+
+fn acp_missing_pair_agent_message(bear_slug: &str) -> String {
+    format!(
+        "ACP requires this Bear to have a provisioned `pair` role Letta agent, but none is recorded for bear `{bear_slug}`. Ask an operator to open Admin → Bears → this Bear and click `Provision missing role agents`, then retry."
+    )
+}
+
+async fn require_pair_agent_id(state: &ApiState, bear: &Bear) -> Result<String, CustomError> {
+    if !state.letta.is_enabled() {
+        return Err(CustomError::System(
+            "Letta is not configured (set LETTA_BASE_URL); ACP pair role cannot run.".to_string(),
+        ));
+    }
+    bears_db::role_agent_id(&state.sqlx_pool, bear.id, BearAgentRole::Pair)
+        .await?
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| CustomError::ValidationError(acp_missing_pair_agent_message(&bear.slug)))
 }
 
 fn stable_session_suffix(session_id: &str) -> String {
@@ -744,17 +762,10 @@ async fn conversations_inner(
     if !state.letta.is_enabled() {
         return Ok(default_only());
     }
-    let Some(agent_id) = bear
-        .letta_agent_id
-        .as_deref()
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-    else {
-        return Ok(default_only());
-    };
+    let agent_id = require_pair_agent_id(&state, &bear).await?;
 
     let archived_ids = archived_conversations::list_for_bear(&state.sqlx_pool, bear.id).await?;
-    let snap = load_agent_conversations(state.letta.as_ref(), agent_id).await;
+    let snap = load_agent_conversations(state.letta.as_ref(), &agent_id).await;
     let source: Vec<_> = if query.include_archived {
         snap.all
             .into_iter()
@@ -817,14 +828,7 @@ async fn conversation_history_inner(
         })
         .into_response());
     }
-    let agent_id = bear
-        .letta_agent_id
-        .as_deref()
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .ok_or_else(|| {
-            CustomError::ValidationError("this bear is not linked to a Letta agent".to_string())
-        })?;
+    let agent_id = require_pair_agent_id(&state, &bear).await?;
     let conv_id = normalize_acp_conversation_id(Some(&conversation_id))?;
     if conv_id.starts_with("new-") {
         return Err(CustomError::ValidationError(
@@ -832,7 +836,7 @@ async fn conversation_history_inner(
         ));
     }
     if conv_id.starts_with("conv-") {
-        verify_acp_conversation_belongs_to_bear(&state, agent_id, &conv_id).await?;
+        verify_acp_conversation_belongs_to_bear(&state, &agent_id, &conv_id).await?;
     }
     let limit = query.limit.unwrap_or(50).clamp(1, 100);
     let before = query
@@ -841,7 +845,7 @@ async fn conversation_history_inner(
         .map(str::trim)
         .filter(|s| !s.is_empty());
     let agent_for_conv = if conv_id == "default" {
-        Some(agent_id)
+        Some(agent_id.as_str())
     } else {
         None
     };
@@ -895,15 +899,16 @@ async fn cancel_session_inner(
     else {
         return Ok(Json(serde_json::json!({ "ok": true, "cancelled": false })).into_response());
     };
-    let cancelled = state
-        .codepool
-        .post_bear_channel_cancel(&session.codepool_session_id, Uuid::new_v4())
-        .await
-        .map(|response| response.cancelled)
-        .unwrap_or(false);
+    tracing::info!(
+        bear_id = %session.bear_id,
+        acp_session_id = %session.acp_session_id,
+        conversation_id = %session.conversation_id,
+        "ACP cancel requested; pair role uses API-direct Letta streaming"
+    );
     Ok(Json(serde_json::json!({
         "ok": true,
-        "cancelled": cancelled,
+        "cancelled": false,
+        "message": "ACP is API-direct for the pair role; this endpoint marked no active runtime stream as cancelled."
     }))
     .into_response())
 }
@@ -928,10 +933,12 @@ async fn close_session_inner(
         .into_response());
     };
 
-    let _ = state
-        .codepool
-        .post_bear_channel_cancel(&session.codepool_session_id, Uuid::new_v4())
-        .await;
+    tracing::info!(
+        bear_id = %session.bear_id,
+        acp_session_id = %session.acp_session_id,
+        conversation_id = %session.conversation_id,
+        "ACP close requested; marking API-direct pair session closed"
+    );
     acp_sessions::mark_closed(&state.sqlx_pool, session.id).await?;
     let archive_target = session
         .resolved_conversation_id
@@ -1008,17 +1015,10 @@ async fn prompt_inner(
             )
         })?;
 
-    if bear
-        .letta_agent_id
-        .as_deref()
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .is_none()
-    {
-        return Ok(Err(CustomError::System(
-            "This bear is not provisioned in Letta yet (missing letta_agent_id).".to_string(),
-        )));
-    }
+    let pair_agent_id = match require_pair_agent_id(&state, &bear).await {
+        Ok(agent_id) => agent_id,
+        Err(err) => return Ok(Err(err)),
+    };
 
     let session_id = session_id.trim();
     if session_id.is_empty() {
@@ -1081,7 +1081,7 @@ async fn prompt_inner(
     if conversation_id.starts_with("conv-") && conversation_selection_source == "explicit" {
         verify_acp_conversation_belongs_to_bear(
             &state,
-            bear.letta_agent_id.as_deref().unwrap_or(""),
+            &pair_agent_id,
             &conversation_id,
         )
         .await
@@ -1099,27 +1099,14 @@ async fn prompt_inner(
         existing_session
             .as_ref()
             .and_then(|s| s.resolved_conversation_id.clone())
+    } else if conversation_id == "default" || conversation_id.starts_with("new-") {
+        // API-direct Letta streaming does not currently emit a separate `conversation_resolved`
+        // event. Keep the session usable by treating the selected conversation as resolved.
+        Some(conversation_id.clone())
     } else {
         None
     };
-    let username = user::user_by_id(&state.sqlx_pool, user_id)
-        .await
-        .ok()
-        .map(|u| u.username);
-    let membership_role = bears_db::membership_role_for_user(&state.sqlx_pool, user_id, bear.id)
-        .await
-        .map_err(|err| {
-            ApiError::new(
-                StatusCode::UNPROCESSABLE_ENTITY,
-                "database",
-                err.to_string(),
-            )
-        })?
-        .flatten();
-    let runtime_plan =
-        crate::core::bears::effective_runtime_plan(bear.runtime_plan.as_ref().map(|j| j.as_ref()));
-
-    let channel_session_id = format!("acp:{client}:{}:{session_id}", bear.id);
+    let runtime_session_id = format!("acp-api-direct:{client}:{}:{session_id}", bear.id);
     acp_sessions::upsert_session(
         &state.sqlx_pool,
         UpsertAcpSession {
@@ -1127,7 +1114,7 @@ async fn prompt_inner(
             bear_id: bear.id,
             bear_slug: bear.slug.clone(),
             acp_session_id: session_id.to_string(),
-            codepool_session_id: channel_session_id.clone(),
+            runtime_session_id: runtime_session_id.clone(),
             conversation_id: conversation_id.clone(),
             resolved_conversation_id: resolved_conversation_id.clone(),
             client: client.clone(),
@@ -1142,39 +1129,27 @@ async fn prompt_inner(
             err.to_string(),
         )
     })?;
-    let letta_agent_id = bear.letta_agent_id.as_deref().unwrap_or("unknown");
     tracing::info!(
         %request_id,
         acp_session_id = %session_id,
         bear_slug = %bear.slug,
         bear_id = %bear.id,
-        letta_agent_id = %letta_agent_id,
+        role = "pair",
+        letta_agent_id = %pair_agent_id,
         client = %client,
         cwd = %cwd,
-        codepool_session_id = %channel_session_id,
         requested_conversation_id = requested_conversation_id.as_deref(),
-        codepool_conversation_id = %conversation_id,
+        conversation_id = %conversation_id,
         conversation_selection_source = %conversation_selection_source,
         resolved_conversation_id = resolved_conversation_id.as_deref(),
-        "ACP gateway routing prompt to Codepool"
+        "ACP gateway routing prompt to pair role via Letta API"
     );
     let upstream = match state
-        .codepool
-        .post_bear_channel_message_for_channel_streaming(
-            &channel_session_id,
+        .letta
+        .post_conversation_messages_streaming(
             &conversation_id,
-            &bear,
-            user_id,
-            username.as_deref(),
-            membership_role.as_deref(),
+            Some(&pair_agent_id),
             prompt,
-            &runtime_plan,
-            request_id,
-            "coding_workspace",
-            &client,
-            "agent_client_protocol",
-            false,
-            true,
         )
         .await
     {
@@ -1182,7 +1157,7 @@ async fn prompt_inner(
         Err(err) => return Ok(Err(err)),
     };
 
-    let stream = AcpBearChannelSseStream::new(
+    let stream = AcpLettaSseStream::new(
         upstream.bytes_stream(),
         AcpStreamContext {
             pool: state.sqlx_pool.clone(),
@@ -1246,7 +1221,7 @@ async fn persist_stream_event_side_effects(
     Ok(())
 }
 
-fn map_bear_channel_event_to_acp_adapter_event(event: &serde_json::Value) -> Option<Bytes> {
+fn map_letta_stream_event_to_acp_adapter_event(event: &serde_json::Value) -> Option<Bytes> {
     let ty = event.get("type").and_then(|v| v.as_str()).unwrap_or("");
     let mapped = match ty {
         "assistant_delta" => serde_json::json!({
@@ -1371,17 +1346,17 @@ fn parse_sse_event_body_to_json(body: &[u8]) -> Result<Option<serde_json::Value>
 }
 
 #[cfg(test)]
-fn map_bear_channel_frame_to_acp_adapter_events(frame: &[u8]) -> Vec<Bytes> {
+fn map_letta_stream_frame_to_acp_adapter_events(frame: &[u8]) -> Vec<Bytes> {
     let body = strip_trailing_sse_delimiter(frame);
     match parse_sse_event_body_to_json(body) {
-        Ok(Some(value)) => map_bear_channel_event_to_acp_adapter_event(&value)
+        Ok(Some(value)) => map_letta_stream_event_to_acp_adapter_event(&value)
             .into_iter()
             .collect(),
         Ok(None) | Err(_) => Vec::new(),
     }
 }
 
-async fn map_bear_channel_frame_to_acp_adapter_events_with_persistence(
+async fn map_letta_stream_frame_to_acp_adapter_events_with_persistence(
     frame: Vec<u8>,
     context: AcpStreamContext,
 ) -> Result<Vec<Bytes>, std::io::Error> {
@@ -1392,7 +1367,7 @@ async fn map_bear_channel_frame_to_acp_adapter_events_with_persistence(
                 request_id = %context.request_id,
                 acp_session_id = %context.acp_session_id,
                 error = %msg,
-                "ACP upstream Codepool SSE event JSON parse failed"
+                "ACP upstream Letta SSE event JSON parse failed"
             );
             return Ok(Vec::new());
         }
@@ -1403,12 +1378,12 @@ async fn map_bear_channel_frame_to_acp_adapter_events_with_persistence(
     persist_stream_event_side_effects(&context, &value)
         .await
         .map_err(|err| std::io::Error::other(err.to_string()))?;
-    Ok(map_bear_channel_event_to_acp_adapter_event(&value)
+    Ok(map_letta_stream_event_to_acp_adapter_event(&value)
         .into_iter()
         .collect())
 }
 
-struct AcpBearChannelSseStream {
+struct AcpLettaSseStream {
     inner: Pin<Box<dyn Stream<Item = Result<Bytes, reqwest::Error>> + Send>>,
     buffer: Vec<u8>,
     /// Complete upstream SSE event bodies (delimiter stripped), FIFO.
@@ -1419,7 +1394,7 @@ struct AcpBearChannelSseStream {
         Option<Pin<Box<dyn Future<Output = Result<Vec<Bytes>, std::io::Error>> + Send>>>,
 }
 
-impl AcpBearChannelSseStream {
+impl AcpLettaSseStream {
     fn new(
         inner: impl Stream<Item = Result<Bytes, reqwest::Error>> + Send + 'static,
         context: AcpStreamContext,
@@ -1436,7 +1411,7 @@ impl AcpBearChannelSseStream {
     }
 }
 
-impl Stream for AcpBearChannelSseStream {
+impl Stream for AcpLettaSseStream {
     type Item = Result<Bytes, std::io::Error>;
 
     fn poll_next(
@@ -1467,7 +1442,7 @@ impl Stream for AcpBearChannelSseStream {
         if let Some(frame_body) = this.pending_raw_frames.pop_front() {
             let context = this.context.clone();
             this.persist_future = Some(Box::pin(async move {
-                map_bear_channel_frame_to_acp_adapter_events_with_persistence(frame_body, context)
+                map_letta_stream_frame_to_acp_adapter_events_with_persistence(frame_body, context)
                     .await
             }));
             return self.poll_next(cx);
@@ -1484,20 +1459,20 @@ impl Stream for AcpBearChannelSseStream {
                 self.poll_next(cx)
             }
             Some(Err(err)) => {
-                let message = format!("Codepool stream read failed: {err}");
+                let message = format!("Letta stream read failed: {err}");
                 tracing::warn!(
                     request_id = %this.context.request_id,
                     acp_session_id = %this.context.acp_session_id,
                     error = %err,
-                    "ACP upstream Codepool SSE stream read error"
+                    "ACP upstream Letta SSE stream read error"
                 );
                 let event = serde_json::json!({
                     "type": "error",
-                    "message": "Codepool stream ended unexpectedly while BEARS was waiting for events.",
+                    "message": "Letta stream ended unexpectedly while BEARS was waiting for events.",
                     "detail": message,
                     "request_id": this.context.request_id.to_string(),
                     "diagnostic": {
-                        "code": "codepool_stream_read_error",
+                        "code": "letta_stream_read_error",
                         "component": "den.acp"
                     }
                 });
@@ -1511,7 +1486,7 @@ impl Stream for AcpBearChannelSseStream {
                         acp_session_id = %this.context.acp_session_id,
                         incomplete_bytes = this.buffer.len(),
                         preview = %preview,
-                        "ACP upstream Codepool SSE stream ended with incomplete frame"
+                        "ACP upstream Letta SSE stream ended with incomplete frame"
                     );
                     this.buffer.clear();
                 }
@@ -1531,7 +1506,7 @@ mod tests {
 
     #[test]
     fn maps_assistant_delta_to_acp_adapter_event() {
-        let out = map_bear_channel_frame_to_acp_adapter_events(
+        let out = map_letta_stream_frame_to_acp_adapter_events(
             b"data: {\"type\":\"assistant_delta\",\"text\":\"hello\"}\n\n",
         );
         let text = String::from_utf8(out[0].to_vec()).unwrap();
@@ -1541,7 +1516,7 @@ mod tests {
 
     #[test]
     fn maps_done_to_acp_adapter_event() {
-        let out = map_bear_channel_frame_to_acp_adapter_events(
+        let out = map_letta_stream_frame_to_acp_adapter_events(
             b"data: {\"type\":\"done\",\"outcome\":\"ok\"}\n\n",
         );
         let text = String::from_utf8(out[0].to_vec()).unwrap();
@@ -1555,7 +1530,7 @@ data: "hello"}"#;
         let v = parse_sse_event_body_to_json(body).unwrap().unwrap();
         assert_eq!(v["type"], "assistant_delta");
         assert_eq!(v["text"], "hello");
-        let out = map_bear_channel_frame_to_acp_adapter_events(
+        let out = map_letta_stream_frame_to_acp_adapter_events(
             b"data: {\"type\":\"assistant_delta\",\"text\":\ndata: \"hello\"}\n\n",
         );
         assert_eq!(out.len(), 1);
@@ -1565,7 +1540,7 @@ data: "hello"}"#;
     fn sse_parser_rejects_invalid_json_with_parse_path_empty() {
         let body = br#"data: not-json"#;
         assert!(parse_sse_event_body_to_json(body).is_err());
-        let out = map_bear_channel_frame_to_acp_adapter_events(b"data: not-json\n\n");
+        let out = map_letta_stream_frame_to_acp_adapter_events(b"data: not-json\n\n");
         assert!(out.is_empty());
     }
 

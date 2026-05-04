@@ -11,7 +11,7 @@ pub struct UpsertAcpSession {
     pub bear_id: Uuid,
     pub bear_slug: String,
     pub acp_session_id: String,
-    pub codepool_session_id: String,
+    pub runtime_session_id: String,
     pub conversation_id: String,
     pub resolved_conversation_id: Option<String>,
     pub client: String,
@@ -25,7 +25,7 @@ pub struct AcpSessionRow {
     pub bear_id: Uuid,
     pub bear_slug: String,
     pub acp_session_id: String,
-    pub codepool_session_id: String,
+    pub runtime_session_id: String,
     pub conversation_id: String,
     pub resolved_conversation_id: Option<String>,
     pub client: String,
@@ -43,13 +43,13 @@ pub async fn upsert_session(pool: &PgPool, session: UpsertAcpSession) -> Result<
     sqlx::query(
         r#"
         INSERT INTO acp_sessions (
-            user_id, bear_id, bear_slug, acp_session_id, codepool_session_id,
+            user_id, bear_id, bear_slug, acp_session_id, runtime_session_id,
             conversation_id, resolved_conversation_id, client, cwd
         )
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
         ON CONFLICT (user_id, bear_id, acp_session_id) DO UPDATE
         SET bear_slug = EXCLUDED.bear_slug,
-            codepool_session_id = EXCLUDED.codepool_session_id,
+            runtime_session_id = EXCLUDED.runtime_session_id,
             conversation_id = EXCLUDED.conversation_id,
             resolved_conversation_id = EXCLUDED.resolved_conversation_id,
             client = EXCLUDED.client,
@@ -61,7 +61,7 @@ pub async fn upsert_session(pool: &PgPool, session: UpsertAcpSession) -> Result<
     .bind(session.bear_id)
     .bind(session.bear_slug)
     .bind(session.acp_session_id)
-    .bind(session.codepool_session_id)
+    .bind(session.runtime_session_id)
     .bind(session.conversation_id)
     .bind(session.resolved_conversation_id)
     .bind(session.client)
@@ -101,7 +101,7 @@ fn acp_session_row_from_sql(row: &PgRow) -> AcpSessionRow {
         bear_id: row.get("bear_id"),
         bear_slug: row.get("bear_slug"),
         acp_session_id: row.get("acp_session_id"),
-        codepool_session_id: row.get("codepool_session_id"),
+        runtime_session_id: row.get("runtime_session_id"),
         conversation_id: row.get("conversation_id"),
         resolved_conversation_id: row.get("resolved_conversation_id"),
         client: row.get("client"),
@@ -121,7 +121,7 @@ pub async fn find_for_user_bear_session(
 ) -> Result<Option<AcpSessionRow>, CustomError> {
     let row = sqlx::query(
         r#"
-        SELECT id, user_id, bear_id, bear_slug, acp_session_id, codepool_session_id,
+        SELECT id, user_id, bear_id, bear_slug, acp_session_id, runtime_session_id,
                conversation_id, resolved_conversation_id, client, cwd,
                closed_at, archived_at, created_at, updated_at
         FROM acp_sessions
@@ -152,7 +152,7 @@ pub async fn list_for_user_bear(
     let cwd_filter = cwd_filter.map(str::trim).filter(|s| !s.is_empty());
     let rows = sqlx::query(
         r#"
-        SELECT id, user_id, bear_id, bear_slug, acp_session_id, codepool_session_id,
+        SELECT id, user_id, bear_id, bear_slug, acp_session_id, runtime_session_id,
                conversation_id, resolved_conversation_id, client, cwd,
                closed_at, archived_at, created_at, updated_at
         FROM acp_sessions

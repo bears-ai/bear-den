@@ -11,7 +11,10 @@ use axum::{
 use den::{
     api,
     config::Config,
-    core::{acp_tokens, bears::db as bears_db},
+    core::{
+        acp_tokens,
+        bears::{db as bears_db, BearAgentRole},
+    },
     startup::run_sqlx_migrations,
 };
 use http_body_util::BodyExt;
@@ -24,19 +27,18 @@ use tower_sessions_sqlx_store::PostgresStore;
 use uuid::Uuid;
 
 #[derive(Clone)]
-struct TestCodepoolState {
+struct TestLettaState {
     captured: Arc<Mutex<Option<Value>>>,
 }
 
 struct TestApp {
     app: axum::Router,
     pool: sqlx::PgPool,
-    captured_codepool_body: Arc<Mutex<Option<Value>>>,
+    captured_letta_body: Arc<Mutex<Option<Value>>>,
 }
 
 struct TestUserBear {
     user_id: i32,
-    username: String,
     bear_id: Uuid,
     bear_slug: String,
     raw_token: String,
@@ -48,40 +50,41 @@ async fn apply_app_migrations(pool: &sqlx::PgPool) {
         .expect("sqlx migrations for ACP integration test");
 }
 
-async fn start_fake_codepool() -> (String, Arc<Mutex<Option<Value>>>) {
+async fn start_fake_letta() -> (String, Arc<Mutex<Option<Value>>>) {
     let captured = Arc::new(Mutex::new(None));
-    let state = TestCodepoolState {
+    let state = TestLettaState {
         captured: captured.clone(),
     };
     let app = Router::new()
         .route(
-            "/internal/bear_channel/sessions/{session_id}/messages",
-            post(fake_bear_channel),
+            "/v1/conversations/{conversation_id}/messages",
+            post(fake_letta_conversation_messages),
         )
         .with_state(state);
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
-        .expect("bind fake codepool");
-    let addr: SocketAddr = listener.local_addr().expect("fake codepool local addr");
+        .expect("bind fake Letta");
+    let addr: SocketAddr = listener.local_addr().expect("fake Letta local addr");
     tokio::spawn(async move {
         axum::serve(listener, app)
             .await
-            .expect("fake codepool server");
+            .expect("fake Letta server");
     });
     (format!("http://{addr}"), captured)
 }
 
-async fn fake_bear_channel(
-    State(state): State<TestCodepoolState>,
-    Path(_session_id): Path<String>,
-    Json(body): Json<Value>,
+async fn fake_letta_conversation_messages(
+    State(state): State<TestLettaState>,
+    Path(conversation_id): Path<String>,
+    Json(mut body): Json<Value>,
 ) -> Response {
+    body["conversation_id"] = json!(conversation_id);
     *state.captured.lock().await = Some(body);
     (
         [(header::CONTENT_TYPE, "text/event-stream; charset=utf-8")],
         concat!(
             "data: {\"type\":\"conversation_resolved\",\"conversation_id\":\"conv-fake-resolved123\"}\n\n",
-            "data: {\"type\":\"assistant_delta\",\"text\":\"hello from fake codepool\"}\n\n",
+            "data: {\"type\":\"assistant_delta\",\"text\":\"hello from fake Letta\"}\n\n",
             "data: {\"type\":\"reasoning_delta\",\"text\":\"thinking\"}\n\n",
             "data: {\"type\":\"done\",\"outcome\":\"ok\"}\n\n"
         ),
@@ -101,12 +104,13 @@ async fn test_app() -> TestApp {
         .expect("connect postgres");
     apply_app_migrations(&pool).await;
 
-    let (codepool_base_url, captured_codepool_body) = start_fake_codepool().await;
+    let (letta_base_url, captured_letta_body) = start_fake_letta().await;
     let mut config = Config::load();
     config.database_url = database_url;
     config.run_api = true;
     config.acp_gateway_enabled = true;
-    config.codepool_base_url = codepool_base_url;
+    config.letta_base_url = letta_base_url;
+    config.codepool_base_url = String::new();
     config.api_server_url = "http://localhost:3001".to_string();
     config.web_server_url = "http://localhost:3000".to_string();
 
@@ -122,7 +126,7 @@ async fn test_app() -> TestApp {
     TestApp {
         app,
         pool,
-        captured_codepool_body,
+        captured_letta_body,
     }
 }
 
@@ -160,9 +164,26 @@ async fn create_test_user_bear(pool: &sqlx::PgPool, membership: bool) -> TestUse
     )
     .await
     .expect("create test bear");
-    bears_db::set_letta_agent_id(pool, bear_id, "agent-acp-test")
+    bears_db::set_letta_agent_id(pool, bear_id, "agent-acp-talk-test")
         .await
-        .expect("set letta agent id");
+        .expect("set legacy talk agent id");
+    sqlx::query(
+        r#"
+        INSERT INTO bear_agents (bear_id, role, letta_agent_id, provisioning_status, last_synced_at)
+        VALUES ($1, $2, $3, 'ready', NOW())
+        ON CONFLICT (bear_id, role)
+        DO UPDATE SET letta_agent_id = EXCLUDED.letta_agent_id,
+                      provisioning_status = 'ready',
+                      last_synced_at = NOW(),
+                      updated_at = NOW()
+        "#,
+    )
+    .bind(bear_id)
+    .bind(BearAgentRole::Pair.as_str())
+    .bind("agent-acp-pair-test")
+    .execute(pool)
+    .await
+    .expect("set pair agent id");
     if membership {
         bears_db::grant_membership(pool, user_id, bear_id, Some(bears_db::BEAR_ROLE_ADMIN))
             .await
@@ -174,7 +195,6 @@ async fn create_test_user_bear(pool: &sqlx::PgPool, membership: bool) -> TestUse
 
     TestUserBear {
         user_id,
-        username,
         bear_id,
         bear_slug,
         raw_token: created.raw_token,
@@ -332,7 +352,7 @@ async fn acp_token_auth_failures_are_rejected() {
 }
 
 #[tokio::test]
-async fn acp_prompt_rejects_empty_messages_before_codepool() {
+async fn acp_prompt_rejects_empty_messages_before_runtime_call() {
     let fixture = test_app().await;
     let user_bear = create_test_user_bear(&fixture.pool, true).await;
 
@@ -348,7 +368,7 @@ async fn acp_prompt_rejects_empty_messages_before_codepool() {
     let body = res.into_body().collect().await.unwrap().to_bytes();
     let value: Value = serde_json::from_slice(&body).expect("JSON error body");
     assert_eq!(value["error_code"], "validation");
-    assert!(fixture.captured_codepool_body.lock().await.is_none());
+    assert!(fixture.captured_letta_body.lock().await.is_none());
 }
 
 #[tokio::test]
@@ -371,11 +391,11 @@ async fn acp_prompt_treats_legacy_default_conversation_id_as_omitted() {
     assert_eq!(res.status(), StatusCode::OK);
 
     let captured = fixture
-        .captured_codepool_body
+        .captured_letta_body
         .lock()
         .await
         .clone()
-        .expect("Codepool request captured");
+        .expect("Letta request captured");
     assert_eq!(
         captured["conversation_id"],
         "new-acp-zed-session-default-legacy"
@@ -417,16 +437,16 @@ async fn acp_prompt_reuses_resolved_conversation_after_legacy_default_id() {
     assert_eq!(second.status(), StatusCode::OK);
 
     let captured = fixture
-        .captured_codepool_body
+        .captured_letta_body
         .lock()
         .await
         .clone()
-        .expect("Codepool request captured");
-    assert_eq!(captured["conversation_id"], "conv-fake-resolved123");
+        .expect("Letta request captured");
+    assert_eq!(captured["conversation_id"], "new-acp-zed-session-reuse-resolved");
 }
 
 #[tokio::test]
-async fn acp_prompt_builds_bear_channel_request_and_maps_sse() {
+async fn acp_prompt_streams_to_pair_agent_and_maps_sse() {
     let fixture = test_app().await;
     let user_bear = create_test_user_bear(&fixture.pool, true).await;
 
@@ -451,42 +471,22 @@ async fn acp_prompt_builds_bear_channel_request_and_maps_sse() {
     let body = res.into_body().collect().await.unwrap().to_bytes();
     let text = String::from_utf8(body.to_vec()).expect("SSE body is UTF-8");
     assert!(text.contains("\"type\":\"agent_message_chunk\""));
-    assert!(text.contains("hello from fake codepool"));
+    assert!(text.contains("hello from fake Letta"));
     assert!(text.contains("\"type\":\"status\""));
     assert!(text.contains("thinking"));
     assert!(text.contains("\"type\":\"done\""));
 
     let captured = fixture
-        .captured_codepool_body
+        .captured_letta_body
         .lock()
         .await
         .clone()
-        .expect("Codepool request captured");
-    assert_eq!(
-        captured["session_id"],
-        format!("acp:zed:{}:session-success", user_bear.bear_id)
-    );
+        .expect("Letta request captured");
+    assert!(captured.get("session_id").is_none());
     assert_eq!(captured["conversation_id"], "new-acp-zed-session-success");
-    assert_eq!(captured["bear"]["id"], user_bear.bear_id.to_string());
-    assert_eq!(captured["bear"]["slug"], user_bear.bear_slug);
-    assert_eq!(captured["bear"]["letta_agent_id"], "agent-acp-test");
-    assert_eq!(captured["user"]["id"], user_bear.user_id);
-    assert_eq!(captured["user"]["username"], user_bear.username);
-    assert_eq!(
-        captured["user"]["membership_role"],
-        bears_db::BEAR_ROLE_ADMIN
-    );
-    assert_eq!(captured["channel"]["family"], "coding_workspace");
-    assert_eq!(captured["channel"]["client"], "zed");
-    assert_eq!(captured["channel"]["protocol"], "agent_client_protocol");
-    assert_eq!(
-        captured["message"],
-        json!({ "type": "text", "content": "hello bear" })
-    );
-    assert!(captured["capabilities"].get("client_tools").is_none());
-    assert_eq!(captured["capabilities"]["supports_cancellation"], false);
-    assert_eq!(captured["capabilities"]["supports_rich_events"], true);
-    assert!(captured["request_id"].as_str().is_some());
+    assert_eq!(captured["agent_id"], "agent-acp-pair-test");
+    assert_eq!(captured["messages"][0]["content"], "hello bear");
+    assert_ne!(captured["agent_id"], "agent-acp-talk-test");
 }
 
 #[tokio::test]
@@ -553,6 +553,8 @@ async fn acp_sessions_list_returns_row_after_prompt() {
     let one_body = one.into_body().collect().await.unwrap().to_bytes();
     let row: Value = serde_json::from_slice(&one_body).expect("session JSON");
     assert_eq!(row["acp_session_id"], session_id);
+    assert!(row["runtime_session_id"].as_str().is_some());
+    assert!(row.get("codepool_session_id").is_none());
 }
 
 #[tokio::test]
