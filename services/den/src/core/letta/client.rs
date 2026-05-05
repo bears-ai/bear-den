@@ -679,6 +679,7 @@ impl LettaClient {
         approval_request_id: Option<&str>,
         status: &str,
         tool_return: &str,
+        client_tools: Option<serde_json::Value>,
     ) -> Result<reqwest::Response, CustomError> {
         if !self.is_enabled() {
             return Err(CustomError::System(
@@ -709,6 +710,9 @@ impl LettaClient {
         body.insert("streaming".to_string(), json!(true));
         body.insert("stream_tokens".to_string(), json!(false));
         body.insert("max_steps".to_string(), json!(2));
+        if let Some(tools) = client_tools {
+            body.insert("client_tools".to_string(), tools);
+        }
         if let Some(a) = agent_id.map(str::trim).filter(|s| !s.is_empty()) {
             body.insert("agent_id".to_string(), json!(a));
         }

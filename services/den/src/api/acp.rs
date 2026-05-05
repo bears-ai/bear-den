@@ -1559,14 +1559,15 @@ async fn prompt_inner(
             ApiError::new(status, code, message)
         })?;
     let prompt_with_tool_context = format!("{prompt}{workboard_context}{tool_prompt_context}");
+    let client_tool_descriptors =
+        tools_enabled.then(|| acp_client_tool_descriptors_for_client_context(&body.client_context));
     let upstream = match state
         .letta
         .post_conversation_messages_streaming(
             &conversation_resolution.upstream_target,
             Some(&pair_agent_id),
             &prompt_with_tool_context,
-            tools_enabled
-                .then(|| acp_client_tool_descriptors_for_client_context(&body.client_context)),
+            client_tool_descriptors.clone(),
         )
         .await
     {
@@ -1588,6 +1589,7 @@ async fn prompt_inner(
         state.letta.clone(),
         pair_agent_id.clone(),
         conversation_resolution.upstream_target.clone(),
+        client_tool_descriptors,
     );
     let request_id_header = HeaderValue::from_str(&request_id.to_string()).map_err(|_| {
         ApiError::new(
@@ -2002,6 +2004,7 @@ struct AcpLettaSseStream {
     pair_agent_id: String,
     upstream_target: String,
     pending_tool_result: Option<AcpToolResultRequest>,
+    client_tools: Option<serde_json::Value>,
     diagnostics: AcpStreamDiagnostics,
     logged_summary: bool,
     active_tool_call_ids: Vec<String>,
@@ -2015,6 +2018,7 @@ impl AcpLettaSseStream {
         letta: Arc<crate::core::letta::LettaClient>,
         pair_agent_id: String,
         upstream_target: String,
+        client_tools: Option<serde_json::Value>,
     ) -> Self {
         Self {
             inner: Box::pin(inner),
@@ -2026,6 +2030,7 @@ impl AcpLettaSseStream {
             pair_agent_id,
             upstream_target,
             pending_tool_result: None,
+            client_tools,
             diagnostics: AcpStreamDiagnostics::default(),
             logged_summary: false,
             active_tool_call_ids: Vec::new(),
@@ -2242,6 +2247,7 @@ impl Stream for AcpLettaSseStream {
                     let letta = this.letta.clone();
                     let upstream_target = this.upstream_target.clone();
                     let pair_agent_id = this.pair_agent_id.clone();
+                    let client_tools = this.client_tools.clone();
                     let tool_name = tool_result
                         .tool_name
                         .as_deref()
@@ -2264,6 +2270,7 @@ impl Stream for AcpLettaSseStream {
                                     approval_request_id.as_deref(),
                                     &status,
                                     &tool_return,
+                                    client_tools,
                                 )
                                 .await
                         })));
@@ -2366,6 +2373,7 @@ mod tests {
             letta,
             "agent-12345678-1234-4567-89ab-123456789abc".to_string(),
             "conv-test-continuation".to_string(),
+            Some(serde_json::json!([{ "name": "fs_read_text_file" }])),
         );
 
         let first = stream.next().await.unwrap().unwrap();
@@ -2405,6 +2413,7 @@ mod tests {
         assert!(output.contains("file says hello"));
 
         let body = captured.lock().await.clone().unwrap();
+        assert_eq!(body["client_tools"][0]["name"], "fs_read_text_file");
         assert_eq!(body["messages"][0]["type"], "tool_return");
         assert_eq!(body["messages"][0]["tool_returns"][0]["type"], "tool");
         assert_eq!(
