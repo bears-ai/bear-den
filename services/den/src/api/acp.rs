@@ -617,9 +617,11 @@ fn acp_direct_tool_prompt_context(
     }
     if tool_names.contains(&"fs_replace_text") {
         guidance.push("Use `fs_replace_text` with {{\"path\":\"/absolute/file\",\"old_text\":\"exact\",\"new_text\":\"replacement\"}} to edit existing files. Edits require approval; do not ask for approval in chat. To append, first read the file, then replace a unique end-of-file suffix with that suffix plus the appended text.".to_string());
+        guidance.push("ACP edit workflow: discover/read the target, call the edit tool, wait for its result, verify the change with `fs_read_text_file`, then provide a concise final answer naming the changed file and what changed.".to_string());
     } else {
         guidance.push("No ACP edit tool is callable in this turn. Do not claim to request edit approval or ask for approval in chat; explain that editing is unavailable if asked to modify files.".to_string());
     }
+    guidance.push("Tool-loop rule: after any ACP tool result, continue from the returned content until the user's original request is complete. Do not stop merely because a tool succeeded. Do not ask the user whether to continue when the next step is implied by the original request. Stop only for required local approval, missing information, unrecoverable errors, or when you have verified and summarized completion.".to_string());
     format!(
         "\n\n<system-reminder>{}</system-reminder>",
         guidance.join(" ")
