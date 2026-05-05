@@ -260,3 +260,122 @@ async fn m1d_bears_runtime_plan_column_exists() {
 
     assert_eq!(n, 1, "bears missing runtime_plan");
 }
+
+#[tokio::test]
+async fn work_plan_tables_columns_and_constraints_exist() {
+    dotenvy::dotenv().ok();
+    let url = std::env::var("DATABASE_URL").expect("DATABASE_URL for integration test");
+    let pool = PgPoolOptions::new()
+        .max_connections(2)
+        .connect(&url)
+        .await
+        .expect("connect postgres");
+
+    apply_migrations(&pool).await;
+
+    for table in ["bear_work_plans", "bear_work_plan_events"] {
+        let n: i64 = sqlx::query_scalar(
+            r#"
+            SELECT COUNT(*)::bigint
+            FROM information_schema.tables
+            WHERE table_schema = 'public'
+              AND table_name = $1
+            "#,
+        )
+        .bind(table)
+        .fetch_one(&pool)
+        .await
+        .expect("information_schema query");
+        assert_eq!(n, 1, "missing table {table}");
+    }
+
+    let work_plan_cols: i64 = sqlx::query_scalar(
+        r#"
+        SELECT COUNT(*)::bigint
+        FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND table_name = 'bear_work_plans'
+          AND column_name IN (
+            'bear_id',
+            'owner_role',
+            'owner_agent_id',
+            'created_by_user_id',
+            'source_conversation_id',
+            'source_acp_session_id',
+            'visibility',
+            'status',
+            'items',
+            'version',
+            'handoff_intent_path',
+            'handoff_task_id'
+          )
+        "#,
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("information_schema query");
+    assert_eq!(
+        work_plan_cols, 12,
+        "bear_work_plans missing expected columns"
+    );
+
+    let event_cols: i64 = sqlx::query_scalar(
+        r#"
+        SELECT COUNT(*)::bigint
+        FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND table_name = 'bear_work_plan_events'
+          AND column_name IN (
+            'plan_id',
+            'bear_id',
+            'actor_role',
+            'actor_agent_id',
+            'actor_user_id',
+            'event_type',
+            'event_payload',
+            'created_at'
+          )
+        "#,
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("information_schema query");
+    assert_eq!(
+        event_cols, 8,
+        "bear_work_plan_events missing expected columns"
+    );
+
+    let visibility_check: String = sqlx::query_scalar(
+        r#"
+        SELECT pg_get_constraintdef(c.oid)
+        FROM pg_constraint c
+        INNER JOIN pg_class t ON t.oid = c.conrelid
+        WHERE t.relname = 'bear_work_plans'
+          AND c.contype = 'c'
+          AND pg_get_constraintdef(c.oid) LIKE '%handoff_requested%'
+        LIMIT 1
+        "#,
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("bear_work_plans visibility check");
+    assert!(visibility_check.contains("private_to_role"));
+    assert!(visibility_check.contains("handoff_requested"));
+
+    let event_type_check: String = sqlx::query_scalar(
+        r#"
+        SELECT pg_get_constraintdef(c.oid)
+        FROM pg_constraint c
+        INNER JOIN pg_class t ON t.oid = c.conrelid
+        WHERE t.relname = 'bear_work_plan_events'
+          AND c.contype = 'c'
+          AND pg_get_constraintdef(c.oid) LIKE '%handoff_requested%'
+        LIMIT 1
+        "#,
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("bear_work_plan_events event type check");
+    assert!(event_type_check.contains("created"));
+    assert!(event_type_check.contains("handoff_requested"));
+}
