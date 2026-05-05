@@ -111,26 +111,49 @@ impl ToolTaskRegistry {
     ) {
         let mut tasks = self.tasks.lock().await;
         let key = Self::key(session_id, tool_call_id);
-        let entry = tasks.entry(key).or_insert_with(|| {
-            let now = std::time::Instant::now();
-            ToolTaskRecord {
-                session_id: session_id.to_string(),
-                tool_call_id: tool_call_id.to_string(),
-                tool_name: tool_name.to_string(),
-                phase,
-                started_at: now,
-                updated_at: now,
-            }
+        let now = std::time::Instant::now();
+        let entry = tasks.entry(key).or_insert_with(|| ToolTaskRecord {
+            session_id: session_id.to_string(),
+            tool_call_id: tool_call_id.to_string(),
+            tool_name: tool_name.to_string(),
+            phase,
+            started_at: now,
+            updated_at: now,
         });
+        let previous_phase = entry.phase;
+        let previous_elapsed_ms = now.duration_since(entry.updated_at).as_millis();
+        let total_elapsed_ms = now.duration_since(entry.started_at).as_millis();
         entry.phase = phase;
-        entry.updated_at = std::time::Instant::now();
+        entry.updated_at = now;
+        eprintln!(
+            "bears-acp-adapter: tool_task transition session_id={} tool_call_id={} tool_name={} from_phase={} to_phase={} phase_duration_ms={} total_duration_ms={}",
+            session_id,
+            tool_call_id,
+            tool_name,
+            previous_phase.as_str(),
+            phase.as_str(),
+            previous_elapsed_ms,
+            total_elapsed_ms,
+        );
     }
 
     async fn remove(&self, session_id: &str, tool_call_id: &str) -> Option<ToolTaskRecord> {
-        self.tasks
+        let removed = self
+            .tasks
             .lock()
             .await
-            .remove(&Self::key(session_id, tool_call_id))
+            .remove(&Self::key(session_id, tool_call_id));
+        if let Some(record) = removed.as_ref() {
+            eprintln!(
+                "bears-acp-adapter: tool_task finished session_id={} tool_call_id={} tool_name={} final_phase={} total_duration_ms={}",
+                record.session_id,
+                record.tool_call_id,
+                record.tool_name,
+                record.phase.as_str(),
+                record.started_at.elapsed().as_millis(),
+            );
+        }
+        removed
     }
 
     #[allow(dead_code)]
