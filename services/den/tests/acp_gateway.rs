@@ -14,6 +14,10 @@ use den::{
     core::{
         acp_tokens,
         bears::{db as bears_db, BearAgentRole},
+        work_plans::{
+            self, WorkPlanItem, WorkPlanItemStatus, WorkPlanStatus, WorkPlanUpdate, WorkPlanUpsert,
+            WorkPlanVisibility,
+        },
     },
     startup::run_sqlx_migrations,
 };
@@ -243,6 +247,44 @@ async fn create_test_user_bear_with_pair(
         pair_agent_id,
         raw_token: created.raw_token,
     }
+}
+
+async fn create_acp_session_work_plan(
+    pool: &sqlx::PgPool,
+    user_bear: &TestUserBear,
+    session_id: &str,
+) {
+    work_plans::create_or_update_work_plan(
+        pool,
+        WorkPlanUpsert {
+            bear_id: user_bear.bear_id,
+            owner_role: BearAgentRole::Pair,
+            owner_agent_id: Some(user_bear.pair_agent_id.clone()),
+            created_by_user_id: Some(user_bear.user_id),
+            source_conversation_id: Some("conv-acp-workboard-context".to_string()),
+            source_acp_session_id: Some(session_id.to_string()),
+            source_channel: json!({ "protocol": "acp" }),
+            plan_id: None,
+            expected_version: None,
+            update: WorkPlanUpdate {
+                title: "ACP context plan".to_string(),
+                summary: "Visible in pair prompt".to_string(),
+                visibility: WorkPlanVisibility::PrivateToRole,
+                status: WorkPlanStatus::Active,
+                items: vec![WorkPlanItem {
+                    id: "current".to_string(),
+                    title: "Inject ACP workboard".to_string(),
+                    summary: None,
+                    status: WorkPlanItemStatus::InProgress,
+                    blocked_reason: None,
+                    source_refs: Vec::new(),
+                }],
+                workspace_context: json!({ "private_path": "/tmp/secret" }),
+            },
+        },
+    )
+    .await
+    .expect("create ACP session work plan");
 }
 
 async fn get_acp_sessions(
@@ -585,6 +627,7 @@ async fn acp_prompt_missing_pair_returns_operator_actionable_error_without_legac
 async fn acp_prompt_streams_to_pair_agent_and_maps_sse() {
     let fixture = test_app().await;
     let user_bear = create_test_user_bear(&fixture.pool, true).await;
+    create_acp_session_work_plan(&fixture.pool, &user_bear, "session-success").await;
 
     let res = post_prompt(
         fixture.app,
@@ -621,9 +664,14 @@ async fn acp_prompt_streams_to_pair_agent_and_maps_sse() {
     assert!(captured.get("session_id").is_none());
     assert_eq!(captured["conversation_id"], "conv-fake-resolved123");
     assert_eq!(captured["agent_id"], user_bear.pair_agent_id);
-    assert!(captured["messages"][0]["content"]
+    let content = captured["messages"][0]["content"]
         .as_str()
-        .is_some_and(|content| content.starts_with("hello bear")));
+        .expect("prompt content string");
+    assert!(content.starts_with("hello bear"));
+    assert!(content.contains("Den workboard context"));
+    assert!(content.contains("ACP context plan"));
+    assert!(content.contains("den.work_plan.update"));
+    assert!(!content.contains("private_path"));
     assert_ne!(captured["agent_id"], "agent-acp-talk-test");
 }
 
@@ -966,8 +1014,14 @@ async fn acp_replace_text_tool_request_round_trips_result_to_letta() {
 
     let requests = fixture.letta_requests.lock().await.clone();
     assert_eq!(requests.len(), 2);
-    assert_eq!(requests[1]["messages"][0]["approvals"][0]["tool_call_id"], "call-replace-e2e");
-    assert_eq!(requests[1]["messages"][0]["approvals"][0]["status"], "success");
+    assert_eq!(
+        requests[1]["messages"][0]["approvals"][0]["tool_call_id"],
+        "call-replace-e2e"
+    );
+    assert_eq!(
+        requests[1]["messages"][0]["approvals"][0]["status"],
+        "success"
+    );
 }
 
 #[tokio::test]

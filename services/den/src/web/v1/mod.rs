@@ -24,6 +24,7 @@ use crate::{
             BearAgentRole,
         },
         letta::{load_agent_conversations, strip_letta_harness_for_user},
+        work_plans::{self, WorkPlanListFilter, WorkPlanStatus},
     },
     errors::CustomError,
     observability::chat_proxy_stream::BearChannelSseProxyStream,
@@ -675,6 +676,26 @@ fn chat_send_error_response(err: CustomError, request_id: Uuid) -> Response {
     }
 }
 
+async fn web_chat_workboard_prompt_context(
+    pool: &sqlx::PgPool,
+    bear_id: Uuid,
+    user_id: i32,
+) -> Result<String, CustomError> {
+    let plans = work_plans::list_visible_work_plans(
+        pool,
+        bear_id,
+        BearAgentRole::Talk,
+        user_id,
+        WorkPlanListFilter {
+            statuses: Some(vec![WorkPlanStatus::Active, WorkPlanStatus::Blocked]),
+            owner_role: None,
+            include_archived: false,
+        },
+    )
+    .await?;
+    Ok(work_plans::render_workboard_prompt_context(&plans))
+}
+
 async fn chat_send(
     State(state): State<AppState>,
     auth_session: AuthSession,
@@ -751,6 +772,9 @@ async fn chat_send_inner(
             .await?
             .flatten();
     let session_id = format!("den-web:{}:{}", body.bear_id, conv_id);
+    let workboard_context =
+        web_chat_workboard_prompt_context(state.sqlx_pool(), bear.id, user_id).await?;
+    let upstream_message = format!("{}{}", body.message.trim(), workboard_context);
 
     crate::observability::metrics::chat_send_runtime_bear_channel();
 
@@ -764,7 +788,7 @@ async fn chat_send_inner(
             user_id,
             Some(username.as_str()),
             membership_role.as_deref(),
-            body.message.trim(),
+            &upstream_message,
             &runtime_plan,
             request_id,
         )

@@ -55,6 +55,7 @@ use crate::{
         archived_conversations,
         bears::{db as bears_db, Bear, BearAgentRole},
         letta::load_agent_conversations,
+        work_plans::{self, WorkPlanLookup},
     },
     errors::CustomError,
 };
@@ -623,6 +624,28 @@ fn acp_direct_tool_prompt_context(
         "\n\n<system-reminder>{}</system-reminder>",
         guidance.join(" ")
     )
+}
+
+async fn acp_workboard_prompt_context(
+    state: &ApiState,
+    bear_id: Uuid,
+    user_id: i32,
+    session_id: &str,
+) -> Result<String, CustomError> {
+    let plan = work_plans::get_visible_work_plan(
+        &state.sqlx_pool,
+        bear_id,
+        BearAgentRole::Pair,
+        user_id,
+        WorkPlanLookup {
+            plan_id: None,
+            source_conversation_id: None,
+            source_acp_session_id: Some(session_id.to_string()),
+        },
+    )
+    .await?;
+    let plans = plan.into_iter().collect::<Vec<_>>();
+    Ok(work_plans::render_workboard_prompt_context(&plans))
 }
 
 fn normalize_acp_conversation_id(raw: Option<&str>) -> Result<String, CustomError> {
@@ -1527,7 +1550,13 @@ async fn prompt_inner(
     );
     let tool_prompt_context =
         acp_direct_tool_prompt_context(session_id, &cwd, &body.client_context, tools_enabled);
-    let prompt_with_tool_context = format!("{prompt}{tool_prompt_context}");
+    let workboard_context = acp_workboard_prompt_context(&state, bear.id, user_id, session_id)
+        .await
+        .map_err(|err| {
+            let (status, code, message) = acp_error_status_message(&err);
+            ApiError::new(status, code, message)
+        })?;
+    let prompt_with_tool_context = format!("{prompt}{workboard_context}{tool_prompt_context}");
     let upstream = match state
         .letta
         .post_conversation_messages_streaming(

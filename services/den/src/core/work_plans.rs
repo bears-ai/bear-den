@@ -616,6 +616,35 @@ pub async fn get_visible_work_plan(
     }
 }
 
+pub fn render_workboard_prompt_context(plans: &[WorkPlanProjection]) -> String {
+    if plans.is_empty() {
+        return String::new();
+    }
+
+    let mut out = String::from(
+        "\n\n<system-reminder>\nDen workboard context for this Bear. Use `den.work_plan.update` to keep live plan/status current. Use `den.work_plan.request_handoff` when channel work should become a durable task intent.\n",
+    );
+    for plan in plans.iter().take(5) {
+        out.push_str(&format!(
+            "- plan_id={} owner={} status={} visibility={} title={}",
+            plan.id, plan.owner_role, plan.status, plan.visibility, plan.title
+        ));
+        if let Some(current) = plan.current_item.as_ref() {
+            out.push_str(&format!(
+                " current_item={} ({})",
+                current.title,
+                current.status.as_str()
+            ));
+        }
+        if !plan.summary.trim().is_empty() {
+            out.push_str(&format!(" summary={}", plan.summary.trim()));
+        }
+        out.push('\n');
+    }
+    out.push_str("</system-reminder>");
+    out
+}
+
 const SELECT_WORK_PLAN_BY_ID: &str = r#"
     SELECT id, bear_id, title, summary, owner_role, owner_agent_id, created_by_user_id,
            source_conversation_id, source_acp_session_id, source_channel, workspace_context,
@@ -795,5 +824,34 @@ mod tests {
         assert!(role_can_request_work_handoff(BearAgentRole::Pair));
         assert!(!role_can_request_work_handoff(BearAgentRole::Work));
         assert!(!role_can_request_work_handoff(BearAgentRole::Curate));
+    }
+
+    #[test]
+    fn renders_compact_prompt_context_without_raw_workspace_context() {
+        let plan = WorkPlanProjection {
+            id: Uuid::parse_str("00000000-0000-0000-0000-000000000123").unwrap(),
+            bear_id: Uuid::parse_str("00000000-0000-0000-0000-000000000456").unwrap(),
+            title: "Build task system".to_string(),
+            summary: "Keep status current".to_string(),
+            owner_role: "pair".to_string(),
+            visibility: "bear_visible".to_string(),
+            status: "active".to_string(),
+            version: 1,
+            items: vec![item("one", WorkPlanItemStatus::InProgress)],
+            current_item: Some(item("one", WorkPlanItemStatus::InProgress)),
+            source_conversation_id: None,
+            source_acp_session_id: None,
+            handoff_intent_path: None,
+            handoff_task_id: None,
+            created_at: OffsetDateTime::UNIX_EPOCH,
+            updated_at: OffsetDateTime::UNIX_EPOCH,
+        };
+
+        let rendered = render_workboard_prompt_context(&[plan]);
+        assert!(rendered.contains("Den workboard context"));
+        assert!(rendered.contains("den.work_plan.update"));
+        assert!(rendered.contains("Build task system"));
+        assert!(rendered.contains("Item one"));
+        assert!(!rendered.contains("workspace_context"));
     }
 }

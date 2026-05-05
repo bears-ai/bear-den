@@ -2,10 +2,10 @@
 
 use den::{
     core::{
-        bears::{BearAgentRole, db as bears_db},
+        bears::{db as bears_db, BearAgentRole},
         den_tools::{
-            self, DEN_WORK_PLAN_LIST, DEN_WORK_PLAN_UPDATE, DenToolChannelContext,
-            DenToolInvocationContext,
+            self, DenToolChannelContext, DenToolInvocationContext, DEN_WORK_PLAN_LIST,
+            DEN_WORK_PLAN_UPDATE,
         },
         work_plans::{
             self, WorkPlanItem, WorkPlanItemStatus, WorkPlanListFilter, WorkPlanStatus,

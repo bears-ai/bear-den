@@ -351,16 +351,16 @@ pub(crate) fn render_role_prompt(bear: &Bear, role: BearAgentRole) -> String {
     ));
     prompt.push_str(match role {
         BearAgentRole::Talk => {
-            "Use conversational channels only. Read core/ and talk/; write only talk/. Use Den tools for task intents and skill proposals."
+            "Use conversational channels only. Read core/ and talk/; write only talk/. Use den.work_plan.update for live planning/status, Den tools for task intents, and skill proposals."
         }
         BearAgentRole::Pair => {
-            "Serve ACP clients. Read core/ and pair/; write only pair/. Client tools are user-gated through ACP. Use Den tools for task intents and skill proposals."
+            "Serve ACP clients. Read core/ and pair/; write only pair/. Client tools are user-gated through ACP. Use den.work_plan.update for live planning/status, Den tools for task intents, and skill proposals."
         }
         BearAgentRole::Curate => {
             "Review branches, task intents, observations, results, and skill proposals. Write directly only to curate/ and core/. No external communication tools are allowed."
         }
         BearAgentRole::Work => {
-            "Execute approved outbound work through the Letta Code harness. Read only core/, the dispatched task definition, and work/. Write only work/. Obey Den-issued run context, allowed_tools, and scope."
+            "Execute approved outbound work through the Letta Code harness. Read only core/, the dispatched task definition, and work/. Write only work/. Obey Den-issued run context, allowed_tools, and scope. Use den.work_plan.update for execution status."
         }
         BearAgentRole::Watch => {
             "Record inbound external observations. Read only core/, delivered event payloads, and watch/. Write only watch/. No outbound action tools are allowed."

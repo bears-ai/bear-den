@@ -10,7 +10,13 @@ use axum::{
 };
 use den::{
     config::Config,
-    core::bears::{db as bears_db, BearAgentRole},
+    core::{
+        bears::{db as bears_db, BearAgentRole},
+        work_plans::{
+            self, WorkPlanItem, WorkPlanItemStatus, WorkPlanStatus, WorkPlanUpdate, WorkPlanUpsert,
+            WorkPlanVisibility,
+        },
+    },
     startup::run_sqlx_migrations,
     web,
 };
@@ -38,6 +44,7 @@ struct TestApp {
 struct TestUserBear {
     username: String,
     password: String,
+    user_id: i32,
     bear_id: Uuid,
 }
 
@@ -181,8 +188,43 @@ async fn create_test_user_bear(pool: &sqlx::PgPool) -> TestUserBear {
     TestUserBear {
         username,
         password,
+        user_id,
         bear_id,
     }
+}
+
+async fn create_visible_work_plan(pool: &sqlx::PgPool, user_bear: &TestUserBear) {
+    work_plans::create_or_update_work_plan(
+        pool,
+        WorkPlanUpsert {
+            bear_id: user_bear.bear_id,
+            owner_role: BearAgentRole::Pair,
+            owner_agent_id: Some("agent-pair-web-context".to_string()),
+            created_by_user_id: Some(user_bear.user_id),
+            source_conversation_id: Some("conv-web-context".to_string()),
+            source_acp_session_id: Some("session-web-context".to_string()),
+            source_channel: json!({ "family": "acp" }),
+            plan_id: None,
+            expected_version: None,
+            update: WorkPlanUpdate {
+                title: "Pair context plan".to_string(),
+                summary: "Visible to talk".to_string(),
+                visibility: WorkPlanVisibility::BearVisible,
+                status: WorkPlanStatus::Active,
+                items: vec![WorkPlanItem {
+                    id: "current".to_string(),
+                    title: "Wire workboard context".to_string(),
+                    summary: None,
+                    status: WorkPlanItemStatus::InProgress,
+                    blocked_reason: None,
+                    source_refs: Vec::new(),
+                }],
+                workspace_context: json!({ "secret_path": "/tmp/private" }),
+            },
+        },
+    )
+    .await
+    .expect("create visible work plan");
 }
 
 async fn login_cookie(app: axum::Router, user: &TestUserBear) -> String {
@@ -219,6 +261,7 @@ async fn login_cookie(app: axum::Router, user: &TestUserBear) -> String {
 async fn web_chat_send_uses_talk_role_agent_id_for_codepool() {
     let fixture = test_app().await;
     let user_bear = create_test_user_bear(&fixture.pool).await;
+    create_visible_work_plan(&fixture.pool, &user_bear).await;
     let cookie = login_cookie(fixture.app.clone(), &user_bear).await;
 
     let res = fixture
@@ -276,8 +319,13 @@ async fn web_chat_send_uses_talk_role_agent_id_for_codepool() {
         .iter()
         .all(|name| !name.contains('.') && !name.contains('/')));
     assert_eq!(captured["channel"]["family"], "browser_chat");
-    assert_eq!(
-        captured["message"],
-        json!({ "type": "text", "content": "hello web chat" })
-    );
+    assert_eq!(captured["message"]["type"], "text");
+    let content = captured["message"]["content"]
+        .as_str()
+        .expect("message content string");
+    assert!(content.starts_with("hello web chat"));
+    assert!(content.contains("Den workboard context"));
+    assert!(content.contains("Pair context plan"));
+    assert!(content.contains("den.work_plan.update"));
+    assert!(!content.contains("secret_path"));
 }
