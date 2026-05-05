@@ -61,6 +61,58 @@ struct SessionContext {
     resolved_conversation_id: Option<String>,
 }
 
+#[derive(Clone, Debug, Default)]
+struct ToolPolicy {
+    max_lines: Option<usize>,
+    max_entries: Option<usize>,
+    max_results: Option<usize>,
+    max_bytes: Option<u64>,
+    recursive_default: Option<bool>,
+    include_hidden_default: Option<bool>,
+}
+
+#[derive(Debug)]
+struct LocalToolError {
+    status: &'static str,
+    message: String,
+    diagnostic: Value,
+}
+
+impl LocalToolError {
+    fn error(message: impl Into<String>) -> Self {
+        Self {
+            status: "error",
+            message: message.into(),
+            diagnostic: json!({}),
+        }
+    }
+
+    fn permission_denied(message: impl Into<String>) -> Self {
+        Self {
+            status: "permission_denied",
+            message: message.into(),
+            diagnostic: json!({
+                "component": "bears-acp-adapter",
+                "reason": "client_permission_rejected",
+            }),
+        }
+    }
+}
+
+impl std::fmt::Display for LocalToolError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.message)
+    }
+}
+
+impl std::error::Error for LocalToolError {}
+
+impl From<anyhow::Error> for LocalToolError {
+    fn from(err: anyhow::Error) -> Self {
+        Self::error(format!("{err:#}"))
+    }
+}
+
 #[derive(Debug)]
 enum InboundMessage {
     Request(Value),
@@ -511,7 +563,7 @@ async fn handle_request(
         }
         "bears/read_text_file" => {
             if let Some(id) = request.id {
-                match handle_direct_read_text_file(adapter_state, request.params).await {
+                match handle_direct_read_text_file(adapter_state, request.params, &ToolPolicy::default()).await {
                     Ok(result) => write_response(id, Ok(result)).await?,
                     Err(err) => {
                         write_response(
@@ -1107,6 +1159,7 @@ async fn handle_client_read_text_file(
 async fn handle_direct_read_text_file(
     adapter_state: &AdapterState,
     params: Value,
+    policy: &ToolPolicy,
 ) -> Result<Value> {
     let session_id = params
         .get("sessionId")
@@ -1121,11 +1174,12 @@ async fn handle_direct_read_text_file(
         .and_then(Value::as_u64)
         .unwrap_or(1)
         .max(1) as usize;
+    let policy_max_lines = policy.max_lines.unwrap_or(2_000).clamp(1, 2_000);
     let limit = params
         .get("limit")
         .and_then(Value::as_u64)
-        .unwrap_or(400)
-        .clamp(1, 2_000) as usize;
+        .map(|v| v.clamp(1, policy_max_lines as u64) as usize)
+        .unwrap_or(400.min(policy_max_lines));
     let context = adapter_state
         .session_contexts
         .get(session_id)
@@ -1168,7 +1222,35 @@ async fn handle_direct_read_text_file(
         "total_lines": total_lines,
         "truncated": truncated,
         "bytes": raw.len(),
+        "policy": {
+            "max_lines": policy_max_lines,
+            "applied_limit": limit,
+        },
     }))
+}
+
+fn policy_from_event(event: &Value) -> ToolPolicy {
+    let policy = event.get("policy").unwrap_or(&Value::Null);
+    ToolPolicy {
+        max_lines: policy
+            .get("max_lines")
+            .and_then(Value::as_u64)
+            .map(|v| v.clamp(1, 2_000) as usize),
+        max_entries: policy
+            .get("max_entries")
+            .and_then(Value::as_u64)
+            .map(|v| v.clamp(1, 1_000) as usize),
+        max_results: policy
+            .get("max_results")
+            .and_then(Value::as_u64)
+            .map(|v| v.clamp(1, 200) as usize),
+        max_bytes: policy
+            .get("max_bytes")
+            .and_then(Value::as_u64)
+            .map(|v| v.clamp(1, 5_242_880)),
+        recursive_default: policy.get("recursive_default").and_then(Value::as_bool),
+        include_hidden_default: policy.get("include_hidden_default").and_then(Value::as_bool),
+    }
 }
 
 async fn execute_local_tool(
@@ -1176,6 +1258,7 @@ async fn execute_local_tool(
     session_id: &str,
     tool_name: &str,
     args: Value,
+    policy: &ToolPolicy,
 ) -> Result<Value> {
     match tool_name {
         "fs_read_text_file" | "fs.read_text_file" => {
@@ -1187,11 +1270,13 @@ async fn execute_local_tool(
                 );
                 let mut params = args;
                 params["sessionId"] = json!(session_id);
-                handle_direct_read_text_file(adapter_state, params).await
+                handle_direct_read_text_file(adapter_state, params, policy).await
             }
         }
-        "fs_list_directory" => handle_direct_list_directory(adapter_state, session_id, &args).await,
-        "fs_search_files" => handle_direct_search_files(adapter_state, session_id, &args).await,
+        "fs_list_directory" => {
+            handle_direct_list_directory(adapter_state, session_id, &args, policy).await
+        }
+        "fs_search_files" => handle_direct_search_files(adapter_state, session_id, &args, policy).await,
         _ => Err(anyhow!(
             "unsupported Den tool_request tool_name {tool_name}"
         )),
@@ -1202,6 +1287,7 @@ async fn handle_direct_list_directory(
     adapter_state: &AdapterState,
     session_id: &str,
     args: &Value,
+    policy: &ToolPolicy,
 ) -> Result<Value> {
     let path = args
         .get("path")
@@ -1210,16 +1296,19 @@ async fn handle_direct_list_directory(
     let recursive = args
         .get("recursive")
         .and_then(Value::as_bool)
+        .or(policy.recursive_default)
         .unwrap_or(false);
     let include_hidden = args
         .get("include_hidden")
         .and_then(Value::as_bool)
+        .or(policy.include_hidden_default)
         .unwrap_or(false);
+    let policy_max_entries = policy.max_entries.unwrap_or(1_000).clamp(1, 1_000);
     let limit = args
         .get("limit")
         .and_then(Value::as_u64)
-        .unwrap_or(200)
-        .clamp(1, 1_000) as usize;
+        .map(|v| v.clamp(1, policy_max_entries as u64) as usize)
+        .unwrap_or(200.min(policy_max_entries));
     let context = session_context(adapter_state, session_id)?;
     let path = normalize_requested_tool_path(path)?;
     ensure_path_allowed_for_session(context, &path)?;
@@ -1295,6 +1384,12 @@ async fn handle_direct_list_directory(
         "include_hidden": include_hidden,
         "source": "adapter_local",
         "content": content,
+        "policy": {
+            "max_entries": policy_max_entries,
+            "applied_limit": limit,
+            "recursive_default": policy.recursive_default,
+            "include_hidden_default": policy.include_hidden_default,
+        },
     }))
 }
 
@@ -1302,6 +1397,7 @@ async fn handle_direct_search_files(
     adapter_state: &AdapterState,
     session_id: &str,
     args: &Value,
+    policy: &ToolPolicy,
 ) -> Result<Value> {
     let path = args
         .get("path")
@@ -1313,19 +1409,22 @@ async fn handle_direct_search_files(
         .map(str::trim)
         .filter(|s| !s.is_empty())
         .ok_or_else(|| anyhow!("fs_search_files args missing non-empty query"))?;
+    let policy_max_results = policy.max_results.unwrap_or(200).clamp(1, 200);
     let limit = args
         .get("limit")
         .and_then(Value::as_u64)
-        .unwrap_or(50)
-        .clamp(1, 200) as usize;
+        .map(|v| v.clamp(1, policy_max_results as u64) as usize)
+        .unwrap_or(50.min(policy_max_results));
+    let policy_max_bytes = policy.max_bytes.unwrap_or(1_048_576).clamp(1, 5_242_880);
     let max_bytes = args
         .get("max_bytes")
         .and_then(Value::as_u64)
-        .unwrap_or(1_048_576)
-        .clamp(1, 5_242_880);
+        .map(|v| v.clamp(1, policy_max_bytes))
+        .unwrap_or(policy_max_bytes);
     let include_hidden = args
         .get("include_hidden")
         .and_then(Value::as_bool)
+        .or(policy.include_hidden_default)
         .unwrap_or(false);
     let context = session_context(adapter_state, session_id)?;
     let path = normalize_requested_tool_path(path)?;
@@ -1408,6 +1507,13 @@ async fn handle_direct_search_files(
         "include_hidden": include_hidden,
         "source": "adapter_local",
         "content": content,
+        "policy": {
+            "max_results": policy_max_results,
+            "applied_limit": limit,
+            "max_bytes": policy_max_bytes,
+            "applied_max_bytes": max_bytes,
+            "include_hidden_default": policy.include_hidden_default,
+        },
     }))
 }
 
@@ -2558,12 +2664,17 @@ async fn handle_tool_request_event(
             "Waiting for permission",
         )
         .await?;
-        request_tool_permission(adapter_state, session_id, tool_call_id, tool_name, event).await?;
+        if let Err(err) = request_tool_permission(adapter_state, session_id, tool_call_id, tool_name, event).await {
+            let local_err = LocalToolError::permission_denied(format!("{err:#}"));
+            post_local_tool_error_result(config, session_id, tool_call_id, tool_name, event, local_err, std::time::Instant::now()).await?;
+            return Ok(());
+        }
     }
     send_tool_call_update(session_id, tool_call_id, "pending", "Running local tool").await?;
     let started = std::time::Instant::now();
     let args = event.get("args").cloned().unwrap_or_else(|| json!({}));
-    let result = execute_local_tool(adapter_state, session_id, tool_name, args).await;
+    let policy = policy_from_event(event);
+    let result = execute_local_tool(adapter_state, session_id, tool_name, args, &policy).await;
     let status;
     let mut payload = json!({
         "turn_id": event.get("turn_id").and_then(Value::as_str),
@@ -2591,14 +2702,68 @@ async fn handle_tool_request_event(
             .await?;
         }
         Err(err) => {
-            status = "error";
+            let local_err = LocalToolError::from(err);
+            status = local_err.status;
             payload["status"] = json!(status);
-            payload["content"] = json!(format!("{err:#}"));
-            send_tool_call_update(session_id, tool_call_id, "failed", &format!("{err:#}")).await?;
+            payload["content"] = json!(local_err.message);
+            merge_diagnostic(&mut payload["diagnostic"], local_err.diagnostic);
+            send_tool_call_update(
+                session_id,
+                tool_call_id,
+                "failed",
+                payload["content"].as_str().unwrap_or("Local tool failed"),
+            )
+            .await?;
         }
     }
     post_tool_result(config, session_id, tool_call_id, payload).await?;
     Ok(())
+}
+
+async fn post_local_tool_error_result(
+    config: &Config,
+    session_id: &str,
+    tool_call_id: &str,
+    tool_name: &str,
+    event: &Value,
+    local_err: LocalToolError,
+    started: std::time::Instant,
+) -> Result<()> {
+    let mut payload = json!({
+        "turn_id": event.get("turn_id").and_then(Value::as_str),
+        "request_id": event.get("request_id").and_then(Value::as_str),
+        "tool_call_id": tool_call_id,
+        "approval_request_id": event.get("approval_request_id").and_then(Value::as_str),
+        "tool_name": tool_name,
+        "status": local_err.status,
+        "content": local_err.message,
+        "structured_content": {},
+        "diagnostic": {
+            "adapter_version": env!("CARGO_PKG_VERSION"),
+            "duration_ms": started.elapsed().as_millis(),
+        }
+    });
+    merge_diagnostic(&mut payload["diagnostic"], local_err.diagnostic);
+    send_tool_call_update(
+        session_id,
+        tool_call_id,
+        "failed",
+        payload["content"].as_str().unwrap_or("Local tool failed"),
+    )
+    .await?;
+    post_tool_result(config, session_id, tool_call_id, payload).await
+}
+
+fn merge_diagnostic(target: &mut Value, extra: Value) {
+    let Some(target_obj) = target.as_object_mut() else {
+        *target = extra;
+        return;
+    };
+    if let Some(extra_obj) = extra.as_object() {
+        for (key, value) in extra_obj {
+            target_obj.insert(key.clone(), value.clone());
+        }
+    }
 }
 
 async fn request_tool_permission(
@@ -2967,6 +3132,7 @@ mod tests {
             &state,
             "session-1",
             &json!({ "path": outside.to_string_lossy() }),
+            &ToolPolicy::default(),
         )
         .await;
         assert!(format!("{:#}", result.unwrap_err())
@@ -2985,6 +3151,7 @@ mod tests {
             &state,
             "session-1",
             &json!({ "path": root.to_string_lossy(), "limit": 1 }),
+            &ToolPolicy::default(),
         )
         .await
         .unwrap();
@@ -3003,6 +3170,7 @@ mod tests {
             &state,
             "session-1",
             &json!({ "path": outside.to_string_lossy(), "query": "needle" }),
+            &ToolPolicy::default(),
         )
         .await;
         assert!(format!("{:#}", result.unwrap_err())
@@ -3020,12 +3188,89 @@ mod tests {
             &state,
             "session-1",
             &json!({ "path": root.to_string_lossy(), "query": "needle", "limit": 1 }),
+            &ToolPolicy::default(),
         )
         .await
         .unwrap();
         assert_eq!(result["returned_matches"], 1);
         assert_eq!(result["truncated"], true);
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn list_directory_uses_policy_max_entries() {
+        let root = unique_test_dir("list-policy");
+        fs::write(root.join("a.txt"), "a").unwrap();
+        fs::write(root.join("b.txt"), "b").unwrap();
+        let state = test_adapter_state("session-1", &root);
+        let result = handle_direct_list_directory(
+            &state,
+            "session-1",
+            &json!({ "path": root.to_string_lossy(), "limit": 99 }),
+            &ToolPolicy {
+                max_entries: Some(1),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(result["returned_entries"], 1);
+        assert_eq!(result["policy"]["max_entries"], 1);
+        assert_eq!(result["policy"]["applied_limit"], 1);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn search_files_uses_policy_limits_and_hidden_default() {
+        let root = unique_test_dir("search-policy");
+        fs::create_dir_all(root.join(".hidden")).unwrap();
+        fs::write(root.join(".hidden").join("a.txt"), "needle hidden").unwrap();
+        fs::write(root.join("b.txt"), "needle visible\nneedle again\n").unwrap();
+        let state = test_adapter_state("session-1", &root);
+        let result = handle_direct_search_files(
+            &state,
+            "session-1",
+            &json!({ "path": root.to_string_lossy(), "query": "needle", "limit": 99 }),
+            &ToolPolicy {
+                max_results: Some(1),
+                include_hidden_default: Some(true),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(result["returned_matches"], 1);
+        assert_eq!(result["include_hidden"], true);
+        assert_eq!(result["policy"]["max_results"], 1);
+        assert_eq!(result["policy"]["applied_limit"], 1);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn policy_from_event_reads_den_limits() {
+        let policy = policy_from_event(&json!({
+            "policy": {
+                "max_lines": 5,
+                "max_entries": 7,
+                "max_results": 9,
+                "max_bytes": 11,
+                "recursive_default": true,
+                "include_hidden_default": true
+            }
+        }));
+        assert_eq!(policy.max_lines, Some(5));
+        assert_eq!(policy.max_entries, Some(7));
+        assert_eq!(policy.max_results, Some(9));
+        assert_eq!(policy.max_bytes, Some(11));
+        assert_eq!(policy.recursive_default, Some(true));
+        assert_eq!(policy.include_hidden_default, Some(true));
+    }
+
+    #[test]
+    fn permission_denied_error_sets_status_and_diagnostic() {
+        let err = LocalToolError::permission_denied("nope");
+        assert_eq!(err.status, "permission_denied");
+        assert_eq!(err.diagnostic["reason"], "client_permission_rejected");
     }
 
     #[test]

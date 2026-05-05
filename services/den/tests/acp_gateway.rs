@@ -2,7 +2,7 @@
 
 use axum::{
     body::Body,
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::{header, Request, StatusCode},
     response::{IntoResponse, Response},
     routing::post,
@@ -45,6 +45,7 @@ struct TestUserBear {
     user_id: i32,
     bear_id: Uuid,
     bear_slug: String,
+    pair_agent_id: String,
     raw_token: String,
 }
 
@@ -54,7 +55,12 @@ async fn apply_app_migrations(pool: &sqlx::PgPool) {
         .expect("sqlx migrations for ACP integration test");
 }
 
-async fn start_fake_letta() -> (String, Arc<Mutex<Option<Value>>>, Arc<Mutex<Vec<Value>>>, Arc<Mutex<Vec<String>>>) {
+async fn start_fake_letta() -> (
+    String,
+    Arc<Mutex<Option<Value>>>,
+    Arc<Mutex<Vec<Value>>>,
+    Arc<Mutex<Vec<String>>>,
+) {
     let captured = Arc::new(Mutex::new(None));
     let requests = Arc::new(Mutex::new(Vec::new()));
     let script = Arc::new(Mutex::new(Vec::new()));
@@ -64,6 +70,7 @@ async fn start_fake_letta() -> (String, Arc<Mutex<Option<Value>>>, Arc<Mutex<Vec
         script: script.clone(),
     };
     let app = Router::new()
+        .route("/v1/conversations/", post(fake_letta_create_conversation))
         .route(
             "/v1/conversations/{conversation_id}/messages",
             post(fake_letta_conversation_messages),
@@ -77,6 +84,12 @@ async fn start_fake_letta() -> (String, Arc<Mutex<Option<Value>>>, Arc<Mutex<Vec
         axum::serve(listener, app).await.expect("fake Letta server");
     });
     (format!("http://{addr}"), captured, requests, script)
+}
+
+async fn fake_letta_create_conversation(
+    Query(_params): Query<std::collections::HashMap<String, String>>,
+) -> Json<Value> {
+    Json(json!({ "id": "conv-fake-resolved123" }))
 }
 
 async fn fake_letta_conversation_messages(
@@ -123,7 +136,8 @@ async fn test_app() -> TestApp {
         .expect("connect postgres");
     apply_app_migrations(&pool).await;
 
-    let (letta_base_url, captured_letta_body, letta_requests, letta_script) = start_fake_letta().await;
+    let (letta_base_url, captured_letta_body, letta_requests, letta_script) =
+        start_fake_letta().await;
     let mut config = Config::load();
     config.database_url = database_url;
     config.run_api = true;
@@ -164,6 +178,7 @@ async fn create_test_user_bear_with_pair(
     let username = format!("u{}", &suffix[..20]);
     let email = format!("{username}@example.test");
     let bear_slug = format!("acp-test-{}", &suffix[..12]);
+    let pair_agent_id = format!("agent-acp-{}", &suffix[..8]);
 
     let (user_id,): (i32,) = sqlx::query_as(
         r#"
@@ -193,12 +208,6 @@ async fn create_test_user_bear_with_pair(
     )
     .await
     .expect("create test bear");
-    sqlx::query("UPDATE bears SET letta_agent_id = $2, updated_at = NOW() WHERE id = $1")
-        .bind(bear_id)
-        .bind("agent-acp-talk-test")
-        .execute(pool)
-        .await
-        .expect("set legacy talk agent id");
     if provision_pair {
         sqlx::query(
             r#"
@@ -213,7 +222,7 @@ async fn create_test_user_bear_with_pair(
         )
         .bind(bear_id)
         .bind(BearAgentRole::Pair.as_str())
-        .bind("agent-acp-pair-test")
+        .bind(&pair_agent_id)
         .execute(pool)
         .await
         .expect("set pair agent id");
@@ -231,6 +240,7 @@ async fn create_test_user_bear_with_pair(
         user_id,
         bear_id,
         bear_slug,
+        pair_agent_id,
         raw_token: created.raw_token,
     }
 }
@@ -349,7 +359,7 @@ fn letta_malformed_tool_request_sse(tool_name: &str, tool_call_id: &str, args: V
 }
 
 fn letta_stop_sse() -> String {
-    "data: {\"message_type\":\"stop_reason\",\"stop_reason\":\"end_turn\"}\n\n".to_string()
+    "data: {\"message_type\":\"stop_reason\",\"stop_reason\":\"requires_approval\"}\n\n".to_string()
 }
 
 async fn response_text(response: axum::response::Response) -> String {
@@ -371,7 +381,7 @@ async fn acp_prompt_requires_bearer_auth() {
     assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
     let body = res.into_body().collect().await.unwrap().to_bytes();
     let value: Value = serde_json::from_slice(&body).expect("JSON error body");
-    assert_eq!(value["error_code"], "authentication");
+    assert_eq!(value["error_code"], "missing_authorization");
 }
 
 #[tokio::test]
@@ -490,7 +500,7 @@ async fn acp_prompt_treats_legacy_default_conversation_id_as_omitted() {
         .await
         .clone()
         .expect("Letta request captured");
-    assert_eq!(captured["conversation_id"], "agent-acp-pair-test");
+    assert_eq!(captured["conversation_id"], "conv-fake-resolved123");
 }
 
 #[tokio::test]
@@ -609,9 +619,11 @@ async fn acp_prompt_streams_to_pair_agent_and_maps_sse() {
         .clone()
         .expect("Letta request captured");
     assert!(captured.get("session_id").is_none());
-    assert_eq!(captured["conversation_id"], "agent-acp-pair-test");
-    assert_eq!(captured["agent_id"], "agent-acp-pair-test");
-    assert_eq!(captured["messages"][0]["content"], "hello bear");
+    assert_eq!(captured["conversation_id"], "conv-fake-resolved123");
+    assert_eq!(captured["agent_id"], user_bear.pair_agent_id);
+    assert!(captured["messages"][0]["content"]
+        .as_str()
+        .is_some_and(|content| content.starts_with("hello bear")));
     assert_ne!(captured["agent_id"], "agent-acp-talk-test");
 }
 
@@ -647,7 +659,9 @@ async fn acp_prompt_advertises_all_read_only_tool_descriptors() {
     assert!(names.contains(&"fs_read_text_file"));
     assert!(names.contains(&"fs_list_directory"));
     assert!(names.contains(&"fs_search_files"));
-    assert!(names.iter().all(|name| !name.contains('.') && !name.contains('/')));
+    assert!(names
+        .iter()
+        .all(|name| !name.contains('.') && !name.contains('/')));
 }
 
 #[tokio::test]
@@ -702,7 +716,7 @@ async fn acp_read_text_file_tool_request_round_trips_result_to_letta() {
     .await;
     assert_eq!(result.status(), StatusCode::OK);
     let result_json: Value = serde_json::from_str(&response_text(result).await).unwrap();
-    assert_eq!(result_json["accepted"], true);
+    assert_eq!(result_json["accepted"], true, "{result_json}");
 
     let prompt = prompt_task.await.unwrap();
     assert_eq!(prompt.status(), StatusCode::OK);
@@ -713,10 +727,20 @@ async fn acp_read_text_file_tool_request_round_trips_result_to_letta() {
     assert!(text.contains("read complete"));
 
     let requests = fixture.letta_requests.lock().await.clone();
-    assert_eq!(requests.len(), 2, "expected original prompt and tool return");
+    assert_eq!(
+        requests.len(),
+        2,
+        "expected original prompt and tool return"
+    );
     assert_eq!(requests[1]["messages"][0]["type"], "approval");
-    assert_eq!(requests[1]["messages"][0]["approvals"][0]["tool_call_id"], "call-read-e2e");
-    assert_eq!(requests[1]["messages"][0]["approvals"][0]["tool_return"], "# README\n");
+    assert_eq!(
+        requests[1]["messages"][0]["approvals"][0]["tool_call_id"],
+        "call-read-e2e"
+    );
+    assert_eq!(
+        requests[1]["messages"][0]["approvals"][0]["tool_return"],
+        "# README\n"
+    );
 }
 
 #[tokio::test]
@@ -774,7 +798,7 @@ async fn acp_list_directory_tool_request_round_trips_result_to_letta() {
     .await;
     assert_eq!(result.status(), StatusCode::OK);
     let result_json: Value = serde_json::from_str(&response_text(result).await).unwrap();
-    assert_eq!(result_json["accepted"], true);
+    assert_eq!(result_json["accepted"], true, "{result_json}");
 
     let prompt = prompt_task.await.unwrap();
     assert_eq!(prompt.status(), StatusCode::OK);
@@ -785,8 +809,14 @@ async fn acp_list_directory_tool_request_round_trips_result_to_letta() {
 
     let requests = fixture.letta_requests.lock().await.clone();
     assert_eq!(requests.len(), 2);
-    assert_eq!(requests[1]["messages"][0]["approvals"][0]["tool_call_id"], "call-list-e2e");
-    assert_eq!(requests[1]["messages"][0]["approvals"][0]["status"], "success");
+    assert_eq!(
+        requests[1]["messages"][0]["approvals"][0]["tool_call_id"],
+        "call-list-e2e"
+    );
+    assert_eq!(
+        requests[1]["messages"][0]["approvals"][0]["status"],
+        "success"
+    );
 }
 
 #[tokio::test]
@@ -844,7 +874,7 @@ async fn acp_search_files_tool_request_round_trips_result_to_letta() {
     .await;
     assert_eq!(result.status(), StatusCode::OK);
     let result_json: Value = serde_json::from_str(&response_text(result).await).unwrap();
-    assert_eq!(result_json["accepted"], true);
+    assert_eq!(result_json["accepted"], true, "{result_json}");
 
     let prompt = prompt_task.await.unwrap();
     assert_eq!(prompt.status(), StatusCode::OK);
@@ -855,8 +885,14 @@ async fn acp_search_files_tool_request_round_trips_result_to_letta() {
 
     let requests = fixture.letta_requests.lock().await.clone();
     assert_eq!(requests.len(), 2);
-    assert_eq!(requests[1]["messages"][0]["approvals"][0]["tool_call_id"], "call-search-e2e");
-    assert_eq!(requests[1]["messages"][0]["approvals"][0]["tool_return"], "/tmp/acp-workspace/a.txt:1: needle");
+    assert_eq!(
+        requests[1]["messages"][0]["approvals"][0]["tool_call_id"],
+        "call-search-e2e"
+    );
+    assert_eq!(
+        requests[1]["messages"][0]["approvals"][0]["tool_return"],
+        "/tmp/acp-workspace/a.txt:1: needle"
+    );
 }
 
 #[tokio::test]
@@ -959,7 +995,7 @@ async fn acp_tool_permission_denied_result_continues_as_error_return() {
     .await;
     assert_eq!(result.status(), StatusCode::OK);
     let result_json: Value = serde_json::from_str(&response_text(result).await).unwrap();
-    assert_eq!(result_json["accepted"], true);
+    assert_eq!(result_json["accepted"], true, "{result_json}");
 
     let prompt = prompt_task.await.unwrap();
     assert_eq!(prompt.status(), StatusCode::OK);
@@ -969,8 +1005,14 @@ async fn acp_tool_permission_denied_result_continues_as_error_return() {
 
     let requests = fixture.letta_requests.lock().await.clone();
     assert_eq!(requests.len(), 2);
-    assert_eq!(requests[1]["messages"][0]["approvals"][0]["status"], "error");
-    assert_eq!(requests[1]["messages"][0]["approvals"][0]["tool_return"], "permission denied by client");
+    assert_eq!(
+        requests[1]["messages"][0]["approvals"][0]["status"],
+        "error"
+    );
+    assert_eq!(
+        requests[1]["messages"][0]["approvals"][0]["tool_return"],
+        "permission denied by client"
+    );
 }
 
 #[tokio::test]
