@@ -70,6 +70,10 @@ struct ToolPolicy {
     recursive_default: Option<bool>,
     include_hidden_default: Option<bool>,
     sensitive_path_policy: Option<String>,
+    max_replacements: Option<usize>,
+    create_files: Option<bool>,
+    allow_multiple: Option<bool>,
+    deny_hidden_paths: Option<bool>,
 }
 
 #[derive(Debug)]
@@ -1263,6 +1267,13 @@ fn policy_from_event(event: &Value) -> ToolPolicy {
             .get("sensitive_path_policy")
             .and_then(Value::as_str)
             .map(str::to_string),
+        max_replacements: policy
+            .get("max_replacements")
+            .and_then(Value::as_u64)
+            .map(|v| v.clamp(1, 100) as usize),
+        create_files: policy.get("create_files").and_then(Value::as_bool),
+        allow_multiple: policy.get("allow_multiple").and_then(Value::as_bool),
+        deny_hidden_paths: policy.get("deny_hidden_paths").and_then(Value::as_bool),
     }
 }
 
@@ -1560,17 +1571,21 @@ async fn handle_direct_replace_text(
     if old_text.is_empty() {
         return Err(anyhow!("fs_replace_text old_text must not be empty"));
     }
+    let policy_create_files = policy.create_files.unwrap_or(false);
     if args
         .get("create_if_missing")
         .and_then(Value::as_bool)
         .unwrap_or(false)
+        && !policy_create_files
     {
         return Err(anyhow!("fs_replace_text does not create files yet"));
     }
+    let policy_allow_multiple = policy.allow_multiple.unwrap_or(false);
     if args
         .get("allow_multiple")
         .and_then(Value::as_bool)
         .unwrap_or(false)
+        && !policy_allow_multiple
     {
         return Err(anyhow!("fs_replace_text does not allow multiple replacements yet"));
     }
@@ -1578,9 +1593,15 @@ async fn handle_direct_replace_text(
         .get("expected_replacements")
         .and_then(Value::as_u64)
         .unwrap_or(1);
-    if expected_replacements != 1 {
+    let policy_max_replacements = policy.max_replacements.unwrap_or(1).clamp(1, 100);
+    if expected_replacements == 0 || expected_replacements as usize > policy_max_replacements {
         return Err(anyhow!(
-            "fs_replace_text currently requires expected_replacements=1"
+            "fs_replace_text expected_replacements exceeds policy max_replacements={policy_max_replacements}"
+        ));
+    }
+    if expected_replacements != 1 || policy_allow_multiple {
+        return Err(anyhow!(
+            "fs_replace_text currently supports exactly one replacement"
         ));
     }
     let policy_max_bytes = policy.max_bytes.unwrap_or(1_048_576).clamp(1, 5_242_880);
@@ -1636,8 +1657,10 @@ async fn handle_direct_replace_text(
         "policy": {
             "max_bytes": policy_max_bytes,
             "sensitive_path_policy": policy.sensitive_path_policy,
-            "max_replacements": 1,
-            "create_files": false,
+            "max_replacements": policy_max_replacements,
+            "create_files": policy_create_files,
+            "allow_multiple": policy_allow_multiple,
+            "deny_hidden_paths": policy.deny_hidden_paths.unwrap_or(true),
         },
     }))
 }
@@ -1651,7 +1674,7 @@ fn ensure_replace_text_path_allowed(path: &Path, policy: &ToolPolicy) -> Result<
             path.display()
         ));
     }
-    if policy.include_hidden_default != Some(true) && is_hidden_path_component(path, Path::new("/"))
+    if policy.deny_hidden_paths.unwrap_or(true) && is_hidden_path_component(path, Path::new("/"))
     {
         return Err(anyhow!(
             "fs_replace_text denied hidden path {}",
@@ -3667,7 +3690,12 @@ mod tests {
                 "max_results": 9,
                 "max_bytes": 11,
                 "recursive_default": true,
-                "include_hidden_default": true
+                "include_hidden_default": true,
+                "max_replacements": 3,
+                "create_files": false,
+                "allow_multiple": false,
+                "deny_hidden_paths": true,
+                "sensitive_path_policy": "deny_sensitive_paths"
             }
         }));
         assert_eq!(policy.max_lines, Some(5));
@@ -3676,6 +3704,11 @@ mod tests {
         assert_eq!(policy.max_bytes, Some(11));
         assert_eq!(policy.recursive_default, Some(true));
         assert_eq!(policy.include_hidden_default, Some(true));
+        assert_eq!(policy.max_replacements, Some(3));
+        assert_eq!(policy.create_files, Some(false));
+        assert_eq!(policy.allow_multiple, Some(false));
+        assert_eq!(policy.deny_hidden_paths, Some(true));
+        assert_eq!(policy.sensitive_path_policy.as_deref(), Some("deny_sensitive_paths"));
     }
 
     #[test]

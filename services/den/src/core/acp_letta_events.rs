@@ -163,15 +163,15 @@ pub fn map_native_letta_stream_event_to_acp_event(
 fn native_letta_tool_request_event(
     event: &serde_json::Value,
     inner: &serde_json::Value,
-    approval_required: bool,
+    has_letta_approval_request: bool,
 ) -> Option<AcpGatewayEvent> {
-    native_letta_tool_request_event_with_args(event, inner, approval_required, None, None)
+    native_letta_tool_request_event_with_args(event, inner, has_letta_approval_request, None, None)
 }
 
 fn native_letta_tool_request_event_with_args(
     event: &serde_json::Value,
     inner: &serde_json::Value,
-    approval_required: bool,
+    has_letta_approval_request: bool,
     args_override: Option<serde_json::Value>,
     tool_name_override: Option<&str>,
 ) -> Option<AcpGatewayEvent> {
@@ -208,7 +208,7 @@ fn native_letta_tool_request_event_with_args(
             _ => return None,
         }
     };
-    if let Some(missing) = missing_required_tool_arg(tool, &args) {
+    if let Some(missing) = tool.missing_required_string_arg(&args) {
         if !args.is_object() || args.as_object().is_some_and(|m| m.is_empty()) {
             return None;
         }
@@ -236,8 +236,8 @@ fn native_letta_tool_request_event_with_args(
     }
     let tool_call_id =
         tool_call_id(tool_call, inner, event).unwrap_or_else(|| format!("call-{}", Uuid::new_v4()));
-    let requires_approval = true;
-    let approval_request_id = approval_required.then(|| {
+    let client_approval_required = true;
+    let letta_approval_request_id = has_letta_approval_request.then(|| {
         event
             .get("id")
             .and_then(|v| v.as_str())
@@ -259,64 +259,18 @@ fn native_letta_tool_request_event_with_args(
         request_id,
         turn_id,
         tool_call_id,
-        approval_request_id,
+        approval_request_id: letta_approval_request_id,
         tool_name: descriptor.provider_name.to_string(),
         title: descriptor.title.to_string(),
         kind: descriptor.kind.to_string(),
         args,
-        approval_required: requires_approval,
+        approval_required: client_approval_required,
         approval_reason: Some(
             "BEARS requires client approval before running this local ACP tool.".to_string(),
         ),
         result_tx: Some(result_tx),
         result_rx: Some(result_rx),
     })
-}
-
-fn missing_required_tool_arg(tool: AcpToolName, args: &serde_json::Value) -> Option<&'static str> {
-    match tool {
-        AcpToolName::ReadTextFile | AcpToolName::ListDirectory => args
-            .get("path")
-            .and_then(|v| v.as_str())
-            .filter(|s| !s.trim().is_empty())
-            .is_none()
-            .then_some("path"),
-        AcpToolName::SearchFiles => {
-            if args
-                .get("path")
-                .and_then(|v| v.as_str())
-                .filter(|s| !s.trim().is_empty())
-                .is_none()
-            {
-                Some("path")
-            } else if args
-                .get("query")
-                .and_then(|v| v.as_str())
-                .filter(|s| !s.trim().is_empty())
-                .is_none()
-            {
-                Some("query")
-            } else {
-                None
-            }
-        }
-        AcpToolName::ReplaceText => {
-            if args
-                .get("path")
-                .and_then(|v| v.as_str())
-                .filter(|s| !s.trim().is_empty())
-                .is_none()
-            {
-                Some("path")
-            } else if args.get("old_text").and_then(|v| v.as_str()).is_none() {
-                Some("old_text")
-            } else if args.get("new_text").and_then(|v| v.as_str()).is_none() {
-                Some("new_text")
-            } else {
-                None
-            }
-        }
-    }
 }
 
 /// Defensive compatibility layer for Letta tool-call streaming.

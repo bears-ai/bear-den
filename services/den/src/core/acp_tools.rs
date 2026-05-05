@@ -27,6 +27,32 @@ impl AcpToolName {
         ]
     }
 
+    pub fn missing_required_string_arg(self, args: &serde_json::Value) -> Option<&'static str> {
+        for arg in self.required_string_args() {
+            if args
+                .get(arg)
+                .and_then(|v| v.as_str())
+                .filter(|s| self.allow_empty_required_string(*arg) || !s.trim().is_empty())
+                .is_none()
+            {
+                return Some(arg);
+            }
+        }
+        None
+    }
+
+    pub fn required_string_args(self) -> &'static [&'static str] {
+        match self {
+            Self::ReadTextFile | Self::ListDirectory => &["path"],
+            Self::SearchFiles => &["path", "query"],
+            Self::ReplaceText => &["path", "old_text", "new_text"],
+        }
+    }
+
+    fn allow_empty_required_string(self, arg: &str) -> bool {
+        matches!(self, Self::ReplaceText) && matches!(arg, "old_text" | "new_text")
+    }
+
     pub fn from_provider_alias(raw: &str) -> Option<Self> {
         match raw {
             "bears/read_text_file"
@@ -110,6 +136,10 @@ pub struct AcpToolPolicy {
     pub max_bytes: Option<u64>,
     pub recursive_default: Option<bool>,
     pub include_hidden_default: Option<bool>,
+    pub max_replacements: Option<u32>,
+    pub create_files: Option<bool>,
+    pub allow_multiple: Option<bool>,
+    pub deny_hidden_paths: Option<bool>,
 }
 
 impl AcpToolPolicy {
@@ -144,6 +174,18 @@ impl AcpToolPolicy {
         }
         if let Some(include_hidden_default) = self.include_hidden_default {
             policy["include_hidden_default"] = json!(include_hidden_default);
+        }
+        if let Some(max_replacements) = self.max_replacements {
+            policy["max_replacements"] = json!(max_replacements);
+        }
+        if let Some(create_files) = self.create_files {
+            policy["create_files"] = json!(create_files);
+        }
+        if let Some(allow_multiple) = self.allow_multiple {
+            policy["allow_multiple"] = json!(allow_multiple);
+        }
+        if let Some(deny_hidden_paths) = self.deny_hidden_paths {
+            policy["deny_hidden_paths"] = json!(deny_hidden_paths);
         }
         policy
     }
@@ -209,6 +251,10 @@ const ACP_READ_TEXT_FILE_POLICY: AcpToolPolicy = AcpToolPolicy {
     max_bytes: None,
     recursive_default: None,
     include_hidden_default: None,
+    max_replacements: None,
+    create_files: None,
+    allow_multiple: None,
+    deny_hidden_paths: None,
 };
 
 const ACP_LIST_DIRECTORY_POLICY: AcpToolPolicy = AcpToolPolicy {
@@ -224,6 +270,10 @@ const ACP_LIST_DIRECTORY_POLICY: AcpToolPolicy = AcpToolPolicy {
     max_bytes: None,
     recursive_default: Some(false),
     include_hidden_default: Some(false),
+    max_replacements: None,
+    create_files: None,
+    allow_multiple: None,
+    deny_hidden_paths: None,
 };
 
 const ACP_SEARCH_FILES_POLICY: AcpToolPolicy = AcpToolPolicy {
@@ -239,6 +289,10 @@ const ACP_SEARCH_FILES_POLICY: AcpToolPolicy = AcpToolPolicy {
     max_bytes: Some(1_048_576),
     recursive_default: None,
     include_hidden_default: Some(false),
+    max_replacements: None,
+    create_files: None,
+    allow_multiple: None,
+    deny_hidden_paths: None,
 };
 
 const ACP_REPLACE_TEXT_POLICY: AcpToolPolicy = AcpToolPolicy {
@@ -250,10 +304,14 @@ const ACP_REPLACE_TEXT_POLICY: AcpToolPolicy = AcpToolPolicy {
     sensitive_path_policy: "deny_sensitive_paths",
     max_lines: None,
     max_entries: None,
-    max_results: Some(1),
+    max_results: None,
     max_bytes: Some(1_048_576),
     recursive_default: None,
     include_hidden_default: Some(false),
+    max_replacements: Some(1),
+    create_files: Some(false),
+    allow_multiple: Some(false),
+    deny_hidden_paths: Some(true),
 };
 
 pub fn acp_tool_policy(tool: AcpToolName) -> AcpToolPolicy {
@@ -505,7 +563,11 @@ mod tests {
         let replace_policy = acp_tool_policy_json_for_provider("fs_replace_text");
         assert_eq!(replace_policy["risk"], "writes_workspace");
         assert_eq!(replace_policy["sensitive_path_policy"], "deny_sensitive_paths");
-        assert_eq!(replace_policy["max_results"], 1);
+        assert_eq!(replace_policy["max_replacements"], 1);
+        assert_eq!(replace_policy["create_files"], false);
+        assert_eq!(replace_policy["allow_multiple"], false);
+        assert_eq!(replace_policy["deny_hidden_paths"], true);
+        assert!(replace_policy.get("max_results").is_none());
         assert_eq!(replace_policy["approval_required"], true);
     }
 }
