@@ -90,6 +90,7 @@ struct ApprovalRecord {
     bear: String,
     client: String,
     tool_name: String,
+    permission_class: String,
     root_fingerprint: String,
     risk: String,
     created_at_secs: u64,
@@ -124,9 +125,9 @@ impl ApprovalCache {
         bear: &str,
         client: &str,
         root_fingerprint: &str,
-        tool_name: &str,
+        permission_class: &str,
     ) -> String {
-        format!("{api_url}\n{bear}\n{client}\n{root_fingerprint}\n{tool_name}")
+        format!("{api_url}\n{bear}\n{client}\n{root_fingerprint}\n{permission_class}")
     }
 
     async fn load_for_runtime(runtime: &RuntimeConfig) -> Self {
@@ -155,13 +156,17 @@ impl ApprovalCache {
             if let Ok(file) = serde_json::from_str::<ApprovalCacheFile>(&raw) {
                 let now = now_secs();
                 let mut entries = cache.entries.lock().await;
-                for record in file.entries.into_iter().filter(|r| r.expires_at_secs > now) {
+                for mut record in file.entries.into_iter().filter(|r| r.expires_at_secs > now) {
+                    if record.permission_class.trim().is_empty() {
+                        record.permission_class =
+                            permission_class_for_tool(&record.tool_name).to_string();
+                    }
                     let key = Self::key(
                         &record.api_url,
                         &record.bear,
                         &record.client,
                         &record.root_fingerprint,
-                        &record.tool_name,
+                        &record.permission_class,
                     );
                     entries.insert(key, record);
                 }
@@ -181,6 +186,7 @@ impl ApprovalCache {
             bear: persistence.bear.clone(),
             client: persistence.client.clone(),
             tool_name: tool_name.to_string(),
+            permission_class: permission_class_for_tool(tool_name).to_string(),
             root_fingerprint: root_fingerprint.clone(),
             risk: risk.to_string(),
             created_at_secs: now,
@@ -192,7 +198,7 @@ impl ApprovalCache {
                 &record.bear,
                 &record.client,
                 &record.root_fingerprint,
-                &record.tool_name,
+                &record.permission_class,
             ),
             record,
         );
@@ -209,7 +215,7 @@ impl ApprovalCache {
             &persistence.bear,
             &persistence.client,
             &root_fingerprint,
-            tool_name,
+            permission_class_for_tool(tool_name),
         );
         let now = now_secs();
         let mut entries = self.entries.lock().await;
@@ -289,6 +295,16 @@ fn approval_cache_path() -> PathBuf {
             .join("acp-approvals.json");
     }
     PathBuf::from(".bears-acp-approvals.json")
+}
+
+fn permission_class_for_tool(tool_name: &str) -> &'static str {
+    match tool_name {
+        "fs_read_text_file" | "fs_list_directory" | "fs_search_files" | "fs.read_text_file"
+        | "read_text_file" => "read_files",
+        "fs_replace_text" => "edit_files",
+        "fs_delete_path" => "delete_files",
+        _ => "local_files",
+    }
 }
 
 fn approval_root_fingerprint(context: &SessionContext) -> String {
@@ -1525,7 +1541,8 @@ fn adapter_capabilities_context() -> Value {
             "fs_read_text_file": { "supported": true, "version": 1 },
             "fs_list_directory": { "supported": true, "version": 1 },
             "fs_search_files": { "supported": true, "version": 1 },
-            "fs_replace_text": { "supported": true, "version": 1 }
+            "fs_replace_text": { "supported": true, "version": 1 },
+            "fs_delete_path": { "supported": true, "version": 1 }
         }
     })
 }
@@ -1536,6 +1553,7 @@ fn direct_tools_context() -> Value {
         "fs_list_directory": true,
         "fs_search_files": true,
         "fs_replace_text": true,
+        "fs_delete_path": true,
     })
 }
 
@@ -1955,6 +1973,9 @@ async fn execute_local_tool(
         }
         "fs_replace_text" => {
             handle_direct_replace_text(adapter_state, session_id, &args, policy).await
+        }
+        "fs_delete_path" => {
+            handle_direct_delete_path(adapter_state, session_id, &args, policy).await
         }
         _ => Err(anyhow!(
             "unsupported Den tool_request tool_name {tool_name}"
@@ -2446,6 +2467,172 @@ fn truncate_chars(text: &str, max_chars: usize) -> String {
         out.push_str("...");
         out
     }
+}
+
+async fn handle_direct_delete_path(
+    adapter_state: &AdapterState,
+    session_id: &str,
+    args: &Value,
+    policy: &ToolPolicy,
+) -> Result<Value> {
+    let raw_path = args
+        .get("path")
+        .and_then(Value::as_str)
+        .ok_or_else(|| anyhow!("fs_delete_path args missing path"))?;
+    let recursive = args
+        .get("recursive")
+        .and_then(Value::as_bool)
+        .or(policy.recursive_default)
+        .unwrap_or(false);
+    let allow_missing = args
+        .get("allow_missing")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let expected_kind = args
+        .get("expected_kind")
+        .and_then(Value::as_str)
+        .unwrap_or("any");
+    let max_entries = policy.max_entries.unwrap_or(100).clamp(1, 1_000);
+    let context = session_context(adapter_state, session_id)?;
+    let path = normalize_requested_tool_path(raw_path)?;
+    ensure_path_allowed_for_session(context, &path)?;
+    ensure_delete_path_allowed(context, &path, policy)?;
+    let started = std::time::Instant::now();
+    let metadata = match fs::metadata(&path) {
+        Ok(metadata) => metadata,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound && allow_missing => {
+            return Ok(json!({
+                "ok": true,
+                "path": path.to_string_lossy(),
+                "deleted": false,
+                "missing": true,
+                "source": "adapter_local",
+                "content": format!("Path {} was already missing.", path.display()),
+            }));
+        }
+        Err(err) => return Err(anyhow!(err).context(format!("stat {}", path.display()))),
+    };
+    let kind = if metadata.is_file() {
+        "file"
+    } else if metadata.is_dir() {
+        "directory"
+    } else {
+        "other"
+    };
+    if expected_kind != "any" && expected_kind != kind {
+        return Err(anyhow!(
+            "fs_delete_path expected kind {expected_kind}, found {kind}"
+        ));
+    }
+    let mut entries = Vec::new();
+    if metadata.is_dir() {
+        collect_delete_entries(&path, &mut entries, max_entries + 1)?;
+        if entries.len() > max_entries {
+            return Err(anyhow!(
+                "fs_delete_path directory has more than policy max_entries={max_entries}"
+            ));
+        }
+        if !recursive && !entries.is_empty() {
+            return Err(anyhow!(
+                "fs_delete_path requires recursive=true for non-empty directories"
+            ));
+        }
+        if recursive {
+            fs::remove_dir_all(&path)
+                .with_context(|| format!("delete directory {}", path.display()))?;
+        } else {
+            fs::remove_dir(&path)
+                .with_context(|| format!("delete directory {}", path.display()))?;
+        }
+    } else if metadata.is_file() {
+        fs::remove_file(&path).with_context(|| format!("delete file {}", path.display()))?;
+    } else {
+        return Err(anyhow!("fs_delete_path only deletes files or directories"));
+    }
+    let content = format!(
+        "Deleted {kind} {}{}",
+        path.display(),
+        if metadata.is_dir() {
+            format!(" ({} entries)", entries.len())
+        } else {
+            String::new()
+        }
+    );
+    eprintln!(
+        "bears-acp-adapter: delete_path session_id={} path={} kind={} recursive={} entries={} duration_ms={}",
+        session_id,
+        path.display(),
+        kind,
+        recursive,
+        entries.len(),
+        started.elapsed().as_millis(),
+    );
+    Ok(json!({
+        "ok": true,
+        "path": path.to_string_lossy(),
+        "deleted": true,
+        "kind": kind,
+        "recursive": recursive,
+        "entries": entries.iter().map(|p| p.to_string_lossy().to_string()).collect::<Vec<_>>(),
+        "source": "adapter_local",
+        "content": content,
+        "policy": {
+            "max_entries": max_entries,
+            "deny_hidden_paths": policy.deny_hidden_paths.unwrap_or(true),
+            "sensitive_path_policy": policy.sensitive_path_policy,
+        }
+    }))
+}
+
+fn ensure_delete_path_allowed(
+    context: &SessionContext,
+    path: &Path,
+    policy: &ToolPolicy,
+) -> Result<()> {
+    let roots = if context.roots.is_empty() {
+        vec![PathBuf::from(&context.cwd)]
+    } else {
+        context.roots.iter().map(PathBuf::from).collect::<Vec<_>>()
+    };
+    if roots.iter().any(|root| path == root) {
+        return Err(anyhow!("fs_delete_path refuses to delete a workspace root"));
+    }
+    if path.parent().is_none() {
+        return Err(anyhow!("fs_delete_path refuses to delete filesystem root"));
+    }
+    if policy.sensitive_path_policy.as_deref() == Some("deny_sensitive_paths")
+        && is_sensitive_path(path)
+    {
+        return Err(anyhow!(
+            "fs_delete_path denied sensitive path {}",
+            path.display()
+        ));
+    }
+    if policy.deny_hidden_paths.unwrap_or(true) && is_hidden_path_component(path, Path::new("/")) {
+        return Err(anyhow!(
+            "fs_delete_path denied hidden path {}",
+            path.display()
+        ));
+    }
+    Ok(())
+}
+
+fn collect_delete_entries(path: &Path, out: &mut Vec<PathBuf>, limit: usize) -> Result<()> {
+    if out.len() >= limit {
+        return Ok(());
+    }
+    for entry in fs::read_dir(path).with_context(|| format!("scan directory {}", path.display()))? {
+        let entry = entry?;
+        let path = entry.path();
+        out.push(path.clone());
+        if out.len() >= limit {
+            return Ok(());
+        }
+        if entry.metadata().map(|m| m.is_dir()).unwrap_or(false) {
+            collect_delete_entries(&path, out, limit)?;
+        }
+    }
+    Ok(())
 }
 
 fn replace_text_diff_content(plan: &ReplaceTextPlan) -> ToolCallContent {
@@ -4505,6 +4692,19 @@ async fn request_tool_permission(
         .title(Some(title.to_string()))
         .content(Some(vec![ToolCallContent::from(permission_content)]));
     let tool_call = ToolCallUpdate::new(tool_call_id.to_string(), fields);
+    let permission_class = permission_class_for_tool(tool_name);
+    let allow_always_label = match permission_class {
+        "read_files" => "Always allow reading files in this workspace",
+        "edit_files" => "Always allow editing files in this workspace",
+        "delete_files" => "Always allow deleting files in this workspace",
+        _ => "Always allow matching local file operations",
+    };
+    let reject_always_label = match permission_class {
+        "read_files" => "Always deny reading files in this workspace",
+        "edit_files" => "Always deny editing files in this workspace",
+        "delete_files" => "Always deny deleting files in this workspace",
+        _ => "Always deny matching local file operations",
+    };
     let request = RequestPermissionRequest::new(
         session_id.to_string(),
         tool_call,
@@ -4512,13 +4712,13 @@ async fn request_tool_permission(
             PermissionOption::new("allow", "Allow once", PermissionOptionKind::AllowOnce),
             PermissionOption::new(
                 "allow_always",
-                "Always allow local file operations in this session",
+                allow_always_label,
                 PermissionOptionKind::AllowAlways,
             ),
             PermissionOption::new("reject", "Deny once", PermissionOptionKind::RejectOnce),
             PermissionOption::new(
                 "reject_always",
-                "Always deny this session",
+                reject_always_label,
                 PermissionOptionKind::RejectAlways,
             ),
         ],
@@ -4727,6 +4927,11 @@ fn tool_display(tool_name: &str) -> ToolDisplay {
             title: "Edit file",
             kind: ToolKind::Edit,
             verb: "Editing",
+        },
+        "fs_delete_path" => ToolDisplay {
+            title: "Delete path",
+            kind: ToolKind::Delete,
+            verb: "Deleting",
         },
         _ => ToolDisplay {
             title: "Local tool",

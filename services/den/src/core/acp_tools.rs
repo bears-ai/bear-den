@@ -22,6 +22,7 @@ pub enum AcpToolName {
     ListDirectory,
     SearchFiles,
     ReplaceText,
+    DeletePath,
 }
 
 impl AcpToolName {
@@ -31,6 +32,7 @@ impl AcpToolName {
             Self::ListDirectory => &ACP_LIST_DIRECTORY_TOOL,
             Self::SearchFiles => &ACP_SEARCH_FILES_TOOL,
             Self::ReplaceText => &ACP_REPLACE_TEXT_TOOL,
+            Self::DeletePath => &ACP_DELETE_PATH_TOOL,
         }
     }
 
@@ -40,6 +42,7 @@ impl AcpToolName {
             Self::ListDirectory,
             Self::SearchFiles,
             Self::ReplaceText,
+            Self::DeletePath,
         ]
     }
 
@@ -62,6 +65,7 @@ impl AcpToolName {
             Self::ReadTextFile | Self::ListDirectory => &["path"],
             Self::SearchFiles => &["path", "query"],
             Self::ReplaceText => &["path", "old_text", "new_text"],
+            Self::DeletePath => &["path"],
         }
     }
 
@@ -84,6 +88,8 @@ impl AcpToolName {
             | "search_files" => Some(Self::SearchFiles),
             "bears/replace_text" | "fs/replace_text" | "fs.replace_text" | "fs_replace_text"
             | "replace_text" => Some(Self::ReplaceText),
+            "bears/delete_path" | "fs/delete_path" | "fs.delete_path" | "fs_delete_path"
+            | "delete_path" => Some(Self::DeletePath),
             _ => None,
         }
     }
@@ -249,6 +255,16 @@ pub const ACP_REPLACE_TEXT_TOOL: AcpToolDescriptor = AcpToolDescriptor {
     risk: "writes_workspace",
 };
 
+pub const ACP_DELETE_PATH_TOOL: AcpToolDescriptor = AcpToolDescriptor {
+    provider_name: "fs_delete_path",
+    canonical_name: "acp.fs.delete_path",
+    adapter_method: "bears/delete_path",
+    client_method: "fs/delete_path",
+    title: "Delete path",
+    kind: "delete",
+    risk: "deletes_workspace",
+};
+
 pub fn provider_tool_name_is_safe(name: &str) -> bool {
     !name.is_empty()
         && name
@@ -340,12 +356,34 @@ const ACP_REPLACE_TEXT_POLICY: AcpToolPolicy = AcpToolPolicy {
     permission_timeout_ms: 120_000,
 };
 
+const ACP_DELETE_PATH_POLICY: AcpToolPolicy = AcpToolPolicy {
+    scope_basis: "acp:tools",
+    role_basis: "pair_agent",
+    allowed_roots_basis: "acp_session.workspace_roots",
+    path_containment: "adapter_enforced_absolute_path_under_allowed_roots",
+    approval_required: true,
+    sensitive_path_policy: "deny_sensitive_paths",
+    max_lines: None,
+    max_entries: Some(100),
+    max_results: None,
+    max_bytes: None,
+    recursive_default: Some(false),
+    include_hidden_default: Some(false),
+    max_replacements: None,
+    create_files: None,
+    allow_multiple: None,
+    deny_hidden_paths: Some(true),
+    total_timeout_ms: 150_000,
+    permission_timeout_ms: 120_000,
+};
+
 pub fn acp_tool_policy(tool: AcpToolName) -> AcpToolPolicy {
     match tool {
         AcpToolName::ReadTextFile => ACP_READ_TEXT_FILE_POLICY,
         AcpToolName::ListDirectory => ACP_LIST_DIRECTORY_POLICY,
         AcpToolName::SearchFiles => ACP_SEARCH_FILES_POLICY,
         AcpToolName::ReplaceText => ACP_REPLACE_TEXT_POLICY,
+        AcpToolName::DeletePath => ACP_DELETE_PATH_POLICY,
     }
 }
 
@@ -529,6 +567,28 @@ pub fn acp_client_tool_descriptor(tool: &AcpToolDescriptor) -> serde_json::Value
                 "required": ["path", "old_text", "new_text"]
             }
         }),
+        "fs_delete_path" => json!({
+            "name": tool.provider_name,
+            "description": format!(
+                "ACP local workspace tool ({}, target={}, adapter={}, client={}, kind={}, risk={}). Deletes an existing workspace file or directory through the local adapter. Approval is required; sensitive paths and workspace roots are denied.",
+                tool.canonical_name,
+                "acp_client",
+                tool.adapter_method,
+                tool.client_method,
+                tool.kind,
+                tool.risk,
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": { "type": "string", "description": "Absolute local file or directory path under the workspace." },
+                    "recursive": { "type": "boolean", "default": false, "description": "Required to delete non-empty directories." },
+                    "expected_kind": { "type": "string", "enum": ["file", "directory", "any"], "description": "Optional expected path kind. Defaults to any." },
+                    "allow_missing": { "type": "boolean", "default": false, "description": "If true, a missing path is treated as success." }
+                },
+                "required": ["path"]
+            }
+        }),
         _ => unreachable!("unknown ACP tool descriptor: {}", tool.provider_name),
     }
 }
@@ -550,7 +610,7 @@ mod tests {
     fn descriptors_use_provider_name_only() {
         let descriptors = acp_client_tool_descriptors();
         let descriptors = descriptors.as_array().expect("descriptor array");
-        assert_eq!(descriptors.len(), 4);
+        assert_eq!(descriptors.len(), 5);
         for descriptor in descriptors {
             let name = descriptor["name"].as_str().expect("descriptor name");
             assert!(provider_tool_name_is_safe(name));
@@ -570,7 +630,8 @@ mod tests {
             "direct_tools": {
                 "fs_read_text_file": true,
                 "fs_list_directory": true,
-                "fs_search_files": true
+                "fs_search_files": true,
+                "fs_delete_path": true
             }
         }));
         let names = descriptors
@@ -582,6 +643,7 @@ mod tests {
         assert!(names.contains(&"fs_read_text_file"));
         assert!(names.contains(&"fs_list_directory"));
         assert!(names.contains(&"fs_search_files"));
+        assert!(names.contains(&"fs_delete_path"));
         assert!(!names.contains(&"fs_replace_text"));
     }
 
@@ -593,7 +655,8 @@ mod tests {
                 "version": "0.1.0",
                 "direct_tools": {
                     "fs_read_text_file": { "supported": true, "version": 1 },
-                    "fs_replace_text": { "supported": true, "version": 1 }
+                    "fs_replace_text": { "supported": true, "version": 1 },
+                    "fs_delete_path": { "supported": true, "version": 1 }
                 }
             }
         }));
@@ -603,7 +666,10 @@ mod tests {
             .iter()
             .map(|descriptor| descriptor["name"].as_str().unwrap())
             .collect::<Vec<_>>();
-        assert_eq!(names, vec!["fs_read_text_file", "fs_replace_text"]);
+        assert_eq!(
+            names,
+            vec!["fs_read_text_file", "fs_replace_text", "fs_delete_path"]
+        );
     }
 
     #[test]
@@ -653,5 +719,14 @@ mod tests {
         assert_eq!(replace_policy["deny_hidden_paths"], true);
         assert!(replace_policy.get("max_results").is_none());
         assert_eq!(replace_policy["approval_required"], true);
+
+        let delete_policy = acp_tool_policy_json_for_provider("fs_delete_path");
+        assert_eq!(delete_policy["risk"], "deletes_workspace");
+        assert_eq!(
+            delete_policy["sensitive_path_policy"],
+            "deny_sensitive_paths"
+        );
+        assert_eq!(delete_policy["max_entries"], 100);
+        assert_eq!(delete_policy["deny_hidden_paths"], true);
     }
 }
