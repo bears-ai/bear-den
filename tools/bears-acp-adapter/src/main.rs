@@ -23,7 +23,7 @@ use std::{
 };
 use tokio::{
     io::{self, AsyncBufReadExt, AsyncWriteExt, BufReader},
-    sync::{mpsc, Mutex as TokioMutex},
+    sync::{broadcast, mpsc, Mutex as TokioMutex},
 };
 use uuid::Uuid;
 
@@ -46,17 +46,74 @@ struct RuntimeConfig {
     client: String,
 }
 
+#[derive(Clone, Default)]
+struct JsonRpcTransport {
+    pending_responses: Arc<TokioMutex<HashMap<String, tokio::sync::oneshot::Sender<Value>>>>,
+}
+
 #[derive(Default)]
 struct AdapterState {
     client_capabilities: Value,
     session_contexts: HashMap<String, SessionContext>,
-    pending_responses: Arc<TokioMutex<HashMap<String, tokio::sync::oneshot::Sender<Value>>>>,
+    transport: JsonRpcTransport,
 }
 
 #[derive(Clone)]
 struct AdapterSharedState {
-    pending_responses: Arc<TokioMutex<HashMap<String, tokio::sync::oneshot::Sender<Value>>>>,
+    transport: JsonRpcTransport,
     session_contexts: Arc<TokioMutex<HashMap<String, SessionContext>>>,
+    cancellation_tx: broadcast::Sender<String>,
+}
+
+impl JsonRpcTransport {
+    async fn route_response(&self, id: &Value, value: Value) -> bool {
+        if let Some(tx) = self.pending_responses.lock().await.remove(&id_key(id)) {
+            let _ = tx.send(value);
+            true
+        } else {
+            false
+        }
+    }
+
+    async fn request(
+        &self,
+        method: &str,
+        params: Value,
+        timeout: std::time::Duration,
+    ) -> Result<Value> {
+        let id = json!(format!("req-{}", Uuid::new_v4()));
+        let key = id_key(&id);
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        self.pending_responses.lock().await.insert(key.clone(), tx);
+        write_json(json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "method": method,
+            "params": params,
+        }))
+        .await?;
+        match tokio::time::timeout(timeout, rx).await {
+            Ok(Ok(value)) => Ok(value),
+            Ok(Err(_)) => Err(anyhow!(
+                "client response channel closed for {method} id={key}"
+            )),
+            Err(_) => {
+                self.pending_responses.lock().await.remove(&key);
+                Err(anyhow!(
+                    "timed out waiting for client response to {method} id={key}"
+                ))
+            }
+        }
+    }
+
+    async fn notify(&self, method: &str, params: Value) -> Result<()> {
+        write_json(json!({
+            "jsonrpc": "2.0",
+            "method": method,
+            "params": params,
+        }))
+        .await
+    }
 }
 
 #[derive(Clone, Debug, Default)]
@@ -129,6 +186,7 @@ enum ToolTaskPhase {
     ExecutionFailed,
     ResultPosted,
     ResultPostFailed,
+    Cancelled,
 }
 
 impl ToolTaskPhase {
@@ -144,6 +202,7 @@ impl ToolTaskPhase {
             Self::ExecutionFailed => "execution_failed",
             Self::ResultPosted => "result_posted",
             Self::ResultPostFailed => "result_post_failed",
+            Self::Cancelled => "cancelled",
         }
     }
 }
@@ -200,6 +259,18 @@ impl LocalToolError {
                 "component": "bears-acp-adapter",
                 "phase": "adapter_permission_denied",
                 "reason": "client_permission_rejected",
+            }),
+        }
+    }
+
+    fn cancelled(message: impl Into<String>) -> Self {
+        Self {
+            status: LocalToolStatus::Cancelled,
+            message: message.into(),
+            diagnostic: json!({
+                "component": "bears-acp-adapter",
+                "phase": "adapter_cancelled",
+                "reason": "session_cancelled",
             }),
         }
     }
@@ -383,27 +454,22 @@ async fn run() -> Result<()> {
 
     let (inbound_tx, mut inbound_rx) = mpsc::channel::<InboundMessage>(128);
     let mut adapter_state = AdapterState::default();
+    let (cancellation_tx, _) = broadcast::channel(64);
     let shared_state = AdapterSharedState {
-        pending_responses: adapter_state.pending_responses.clone(),
+        transport: adapter_state.transport.clone(),
         session_contexts: Arc::new(TokioMutex::new(HashMap::new())),
+        cancellation_tx,
     };
     tokio::spawn(read_stdin_messages(
         inbound_tx,
-        adapter_state.pending_responses.clone(),
+        adapter_state.transport.clone(),
     ));
 
     while let Some(message) = inbound_rx.recv().await {
         let value = match message {
             InboundMessage::Request(value) => value,
             InboundMessage::Response { id, value } => {
-                if let Some(tx) = adapter_state
-                    .pending_responses
-                    .lock()
-                    .await
-                    .remove(&id_key(&id))
-                {
-                    let _ = tx.send(value);
-                } else {
+                if !adapter_state.transport.route_response(&id, value).await {
                     eprintln!(
                         "bears-acp-adapter: unmatched JSON-RPC response id={}",
                         id_key(&id)
@@ -641,10 +707,7 @@ fn normalize_client(raw: &str) -> String {
     }
 }
 
-async fn read_stdin_messages(
-    tx: mpsc::Sender<InboundMessage>,
-    pending_responses: Arc<TokioMutex<HashMap<String, tokio::sync::oneshot::Sender<Value>>>>,
-) {
+async fn read_stdin_messages(tx: mpsc::Sender<InboundMessage>, transport: JsonRpcTransport) {
     let stdin = BufReader::new(io::stdin());
     let mut lines = stdin.lines();
     loop {
@@ -661,10 +724,8 @@ async fn read_stdin_messages(
                                 break;
                             }
                         } else if let Some(id) = value.get("id").cloned() {
-                            if let Some(response_tx) =
-                                pending_responses.lock().await.remove(&id_key(&id))
-                            {
-                                let _ = response_tx.send(value);
+                            if transport.route_response(&id, value.clone()).await {
+                                // Matched an adapter-originated request.
                             } else if tx
                                 .send(InboundMessage::Response { id, value })
                                 .await
@@ -1072,7 +1133,7 @@ async fn handle_request(
                     .await?;
                     return Ok(());
                 };
-                match handle_session_cancel(http, config, request.params).await {
+                match handle_session_cancel(http, config, &shared_state, request.params).await {
                     Ok(()) => {
                         write_response(id, Ok(serde_json::to_value(CloseSessionResponse::new())?))
                             .await?
@@ -1365,13 +1426,14 @@ async fn handle_client_read_text_file(
     }
     let params = serde_json::to_value(request)?;
     let started = std::time::Instant::now();
-    let response = send_request_and_wait(
-        adapter_state,
-        "fs/read_text_file",
-        params,
-        std::time::Duration::from_secs(30),
-    )
-    .await?;
+    let response = adapter_state
+        .transport
+        .request(
+            "fs/read_text_file",
+            params,
+            std::time::Duration::from_secs(30),
+        )
+        .await?;
     if let Some(error) = response.get("error") {
         return Err(anyhow!("client fs/read_text_file failed: {error}"));
     }
@@ -2819,12 +2881,14 @@ async fn handle_session_close(
 async fn handle_session_cancel(
     http: &reqwest::Client,
     config: &Config,
+    shared_state: &AdapterSharedState,
     params: Value,
 ) -> Result<()> {
     let session_id = params
         .get("sessionId")
         .and_then(Value::as_str)
         .ok_or_else(|| anyhow!("session/cancel params missing sessionId"))?;
+    let _ = shared_state.cancellation_tx.send(session_id.to_string());
     post_session_lifecycle_action(http, config, session_id, "cancel").await
 }
 
@@ -3434,11 +3498,42 @@ fn spawn_tool_request_task(
         let mut task_state = AdapterState {
             client_capabilities: Value::Null,
             session_contexts: shared_state.session_contexts.lock().await.clone(),
-            pending_responses: shared_state.pending_responses.clone(),
+            transport: shared_state.transport.clone(),
         };
-        if let Err(err) =
-            handle_tool_request_event(&config, &mut task_state, &session_id, &event).await
-        {
+        let mut cancellation_rx = shared_state.cancellation_tx.subscribe();
+        let tool_future = handle_tool_request_event(&config, &mut task_state, &session_id, &event);
+        let result = tokio::select! {
+            result = tool_future => result,
+            cancelled = cancellation_rx.recv() => {
+                match cancelled {
+                    Ok(cancelled_session_id) if cancelled_session_id == session_id => {
+                        let tool_call_id = event
+                            .get("tool_call_id")
+                            .and_then(Value::as_str)
+                            .unwrap_or("unknown");
+                        let tool_name = event
+                            .get("tool_name")
+                            .and_then(Value::as_str)
+                            .unwrap_or("unknown");
+                        log_tool_task_phase(&session_id, tool_call_id, tool_name, ToolTaskPhase::Cancelled);
+                        let local_err = LocalToolError::cancelled("ACP session was cancelled before local tool completed");
+                        let _ = post_local_tool_error_result(
+                            &config,
+                            &session_id,
+                            tool_call_id,
+                            tool_name,
+                            &event,
+                            local_err,
+                            std::time::Instant::now(),
+                        )
+                        .await;
+                        return;
+                    }
+                    _ => Ok(()),
+                }
+            }
+        };
+        if let Err(err) = result {
             let tool_call_id = event
                 .get("tool_call_id")
                 .and_then(Value::as_str)
@@ -3758,13 +3853,14 @@ async fn request_tool_permission(
             PermissionOption::new("reject", "Deny", PermissionOptionKind::RejectOnce),
         ],
     );
-    let response = send_request_and_wait(
-        adapter_state,
-        "session/request_permission",
-        serde_json::to_value(request)?,
-        std::time::Duration::from_millis(policy.permission_timeout_ms.unwrap_or(120_000)),
-    )
-    .await?;
+    let response = adapter_state
+        .transport
+        .request(
+            "session/request_permission",
+            serde_json::to_value(request)?,
+            std::time::Duration::from_millis(policy.permission_timeout_ms.unwrap_or(120_000)),
+        )
+        .await?;
     if let Some(error) = response.get("error") {
         return Err(anyhow!("permission request failed: {error}"));
     }
@@ -3982,48 +4078,8 @@ async fn send_agent_thought_chunk(session_id: &str, text: &str) -> Result<()> {
     .await
 }
 
-async fn send_request_and_wait(
-    adapter_state: &mut AdapterState,
-    method: &str,
-    params: Value,
-    timeout: std::time::Duration,
-) -> Result<Value> {
-    let id = json!(format!("req-{}", Uuid::new_v4()));
-    let key = id_key(&id);
-    let (tx, rx) = tokio::sync::oneshot::channel();
-    adapter_state
-        .pending_responses
-        .lock()
-        .await
-        .insert(key.clone(), tx);
-    write_json(json!({
-        "jsonrpc": "2.0",
-        "id": id,
-        "method": method,
-        "params": params,
-    }))
-    .await?;
-    match tokio::time::timeout(timeout, rx).await {
-        Ok(Ok(value)) => Ok(value),
-        Ok(Err(_)) => Err(anyhow!(
-            "client response channel closed for {method} id={key}"
-        )),
-        Err(_) => {
-            adapter_state.pending_responses.lock().await.remove(&key);
-            Err(anyhow!(
-                "timed out waiting for client response to {method} id={key}"
-            ))
-        }
-    }
-}
-
 async fn write_notification(method: &str, params: Value) -> Result<()> {
-    write_json(json!({
-        "jsonrpc": "2.0",
-        "method": method,
-        "params": params,
-    }))
-    .await
+    JsonRpcTransport::default().notify(method, params).await
 }
 
 async fn write_response(id: impl Into<Option<Value>>, result: Result<Value, Value>) -> Result<()> {
