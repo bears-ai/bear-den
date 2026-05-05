@@ -2374,11 +2374,10 @@ mod tests {
         assert!(output.contains("file says hello"));
 
         let body = captured.lock().await.clone().unwrap();
-        assert_eq!(body["messages"][0]["type"], "approval");
-        assert_eq!(body["messages"][0]["approval_request_id"], "approval-1");
-        assert_eq!(body["messages"][0]["approvals"][0]["type"], "tool");
+        assert_eq!(body["messages"][0]["type"], "tool_return");
+        assert_eq!(body["messages"][0]["tool_returns"][0]["type"], "tool");
         assert_eq!(
-            body["messages"][0]["approvals"][0]["tool_call_id"],
+            body["messages"][0]["tool_returns"][0]["tool_call_id"],
             "call_test"
         );
     }
