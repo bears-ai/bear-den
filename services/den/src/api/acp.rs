@@ -619,7 +619,10 @@ fn acp_direct_tool_prompt_context(
     } else {
         guidance.push("No ACP edit tool is callable in this turn. Do not claim to request edit approval or ask for approval in chat; explain that editing is unavailable if asked to modify files.".to_string());
     }
-    format!("\n\n<system-reminder>{}</system-reminder>", guidance.join(" "))
+    format!(
+        "\n\n<system-reminder>{}</system-reminder>",
+        guidance.join(" ")
+    )
 }
 
 fn normalize_acp_conversation_id(raw: Option<&str>) -> Result<String, CustomError> {
@@ -1531,7 +1534,8 @@ async fn prompt_inner(
             &conversation_resolution.upstream_target,
             Some(&pair_agent_id),
             &prompt_with_tool_context,
-            tools_enabled.then(|| acp_client_tool_descriptors_for_client_context(&body.client_context)),
+            tools_enabled
+                .then(|| acp_client_tool_descriptors_for_client_context(&body.client_context)),
         )
         .await
     {
@@ -1656,6 +1660,7 @@ struct AcpStreamDiagnostics {
     saw_visible_output: bool,
     saw_error: bool,
     saw_turn_complete: bool,
+    saw_tool_return_ack: bool,
     emitted_empty_turn_error: bool,
 }
 
@@ -1677,6 +1682,9 @@ impl AcpStreamDiagnostics {
             .unwrap_or("");
         let event_type = value.get("type").and_then(|v| v.as_str()).unwrap_or("");
         Self::increment(&mut self.native_message_types, message_type);
+        if message_type == "tool_return_message" {
+            self.saw_tool_return_ack = true;
+        }
         Self::increment(&mut self.native_event_types, event_type);
     }
 
@@ -1699,7 +1707,11 @@ impl AcpStreamDiagnostics {
     }
 
     fn empty_turn_error_event(&mut self, context: &AcpStreamContext) -> Option<AcpGatewayEvent> {
-        if self.emitted_empty_turn_error || self.saw_visible_output || self.saw_error {
+        if self.emitted_empty_turn_error
+            || self.saw_visible_output
+            || self.saw_error
+            || self.saw_tool_return_ack
+        {
             return None;
         }
         self.emitted_empty_turn_error = true;
@@ -1736,6 +1748,7 @@ impl AcpStreamDiagnostics {
             saw_visible_output = self.saw_visible_output,
             saw_error = self.saw_error,
             saw_turn_complete = self.saw_turn_complete,
+            saw_tool_return_ack = self.saw_tool_return_ack,
             native_message_types = ?self.native_message_types,
             native_event_types = ?self.native_event_types,
             adapter_event_types = ?self.adapter_event_types,
@@ -1929,7 +1942,11 @@ enum AcpPendingFuture {
                             Result<
                                 (
                                     Vec<Bytes>,
-                                    Option<(String, String, oneshot::Receiver<AcpToolResultRequest>)>,
+                                    Option<(
+                                        String,
+                                        String,
+                                        oneshot::Receiver<AcpToolResultRequest>,
+                                    )>,
                                 ),
                                 std::io::Error,
                             >,
@@ -2030,12 +2047,13 @@ impl Stream for AcpLettaSseStream {
                             }
                             if let Some((tool_call_id, tool_name, result_rx)) = result_rx {
                                 this.active_tool_call_ids.push(tool_call_id.clone());
-                                this.persist_future =
-                                    Some(AcpPendingFuture::Tool(Box::pin(async move {
-                                        let timeout_ms = acp_tool_policy_json_for_provider(&tool_name)
-                                            .get("tool_timeout_ms")
-                                            .and_then(serde_json::Value::as_u64)
-                                            .unwrap_or(30_000);
+                                this.persist_future = Some(AcpPendingFuture::Tool(Box::pin(
+                                    async move {
+                                        let timeout_ms =
+                                            acp_tool_policy_json_for_provider(&tool_name)
+                                                .get("tool_timeout_ms")
+                                                .and_then(serde_json::Value::as_u64)
+                                                .unwrap_or(30_000);
                                         tokio::time::timeout(
                                             std::time::Duration::from_millis(timeout_ms),
                                             result_rx,
@@ -2047,7 +2065,8 @@ impl Stream for AcpLettaSseStream {
                                             )
                                         })?
                                         .map_err(|err| err.to_string())
-                                    })));
+                                    },
+                                )));
                             }
                             return self.poll_next(cx);
                         }

@@ -159,8 +159,31 @@ pub fn map_native_letta_stream_event_to_acp_event(
                 message_type == "approval_request_message",
             )
         }
+        "tool_return_message" => Some(AcpGatewayEvent::StatusText {
+            text: letta_tool_return_status_text(inner, event),
+        }),
         _ => native_letta_conversation_resolved_event(event),
     }
+}
+
+fn letta_tool_return_status_text(inner: &serde_json::Value, event: &serde_json::Value) -> String {
+    let tool_call_id = inner
+        .get("tool_call_id")
+        .or_else(|| event.get("tool_call_id"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("tool");
+    let status = inner
+        .get("status")
+        .or_else(|| event.get("status"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("returned");
+    let bytes = inner
+        .get("tool_return")
+        .or_else(|| event.get("tool_return"))
+        .and_then(|v| v.as_str())
+        .map(str::len)
+        .unwrap_or(0);
+    format!("Letta accepted local tool return {tool_call_id} with status {status} ({bytes} bytes)")
 }
 
 fn native_letta_tool_request_event(
@@ -675,7 +698,9 @@ mod tests {
             } => {
                 assert!(approval_required);
                 assert!(approval_request_id.is_none());
-                assert!(approval_reason.unwrap().contains("BEARS requires client approval"));
+                assert!(approval_reason
+                    .unwrap()
+                    .contains("BEARS requires client approval"));
             }
             other => panic!("unexpected event: {other:?}"),
         }
@@ -693,7 +718,12 @@ mod tests {
         );
         let mapped = map_native_letta_stream_event_to_acp_event(&event).expect("mapped event");
         match mapped {
-            AcpGatewayEvent::ToolRequest { tool_name, kind, args, .. } => {
+            AcpGatewayEvent::ToolRequest {
+                tool_name,
+                kind,
+                args,
+                ..
+            } => {
                 assert_eq!(tool_name, "fs_replace_text");
                 assert_eq!(kind, "edit");
                 assert_eq!(args["old_text"], "before");
@@ -733,10 +763,34 @@ mod tests {
         );
         let mapped = map_native_letta_stream_event_to_acp_event(&event).expect("mapped event");
         match mapped {
-            AcpGatewayEvent::Error { error_type, message, context, .. } => {
+            AcpGatewayEvent::Error {
+                error_type,
+                message,
+                context,
+                ..
+            } => {
                 assert_eq!(error_type.as_deref(), Some("invalid_tool_arguments"));
                 assert!(message.contains("fs_replace_text"));
                 assert_eq!(context.unwrap()["missing"], "new_text");
+            }
+            other => panic!("unexpected event: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn maps_tool_return_message_to_status_text() {
+        let event = serde_json::json!({
+            "message_type": "tool_return_message",
+            "tool_call_id": "call-1",
+            "status": "success",
+            "tool_return": "hello"
+        });
+        let mapped = map_native_letta_stream_event_to_acp_event(&event).expect("mapped event");
+        match mapped {
+            AcpGatewayEvent::StatusText { text } => {
+                assert!(text.contains("call-1"));
+                assert!(text.contains("success"));
+                assert!(text.contains("5 bytes"));
             }
             other => panic!("unexpected event: {other:?}"),
         }
