@@ -394,7 +394,7 @@ impl CodePoolClient {
                 "content": user_input,
             },
             "capabilities": {
-                "server_tools": crate::core::den_tools::builtin_den_tool_descriptors(),
+                "server_tools": crate::core::den_tools::builtin_den_tool_descriptors_for_role(agent_role),
                 "supports_cancellation": supports_cancellation,
                 "supports_rich_events": supports_rich_events,
             },

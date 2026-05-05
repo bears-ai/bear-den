@@ -257,6 +257,24 @@ async fn web_chat_send_uses_talk_role_agent_id_for_codepool() {
     assert!(captured["bear"].get("letta_agent_id").is_none());
     assert_eq!(captured["bear"]["agent_role"], "talk");
     assert_eq!(captured["bear"]["runtime_family"], "letta_code_harness");
+    let server_tools = captured["capabilities"]["server_tools"]
+        .as_array()
+        .expect("server tools array");
+    let provider_names: Vec<&str> = server_tools
+        .iter()
+        .map(|tool| {
+            tool["provider_name"]
+                .as_str()
+                .expect("provider name is string")
+        })
+        .collect();
+    assert!(provider_names.contains(&"den_task_write_intent"));
+    assert!(provider_names.contains(&"den_skill_propose"));
+    assert!(!provider_names.contains(&"den_observation_write"));
+    assert!(!provider_names.contains(&"den_run_write_result"));
+    assert!(provider_names
+        .iter()
+        .all(|name| !name.contains('.') && !name.contains('/')));
     assert_eq!(captured["channel"]["family"], "browser_chat");
     assert_eq!(
         captured["message"],
