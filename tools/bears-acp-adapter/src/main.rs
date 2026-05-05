@@ -19,10 +19,11 @@ use std::{
     env, fs,
     path::{Path, PathBuf},
     process::Command,
+    sync::Arc,
 };
 use tokio::{
     io::{self, AsyncBufReadExt, AsyncWriteExt, BufReader},
-    sync::mpsc,
+    sync::{mpsc, Mutex as TokioMutex},
 };
 use uuid::Uuid;
 
@@ -49,8 +50,7 @@ struct RuntimeConfig {
 struct AdapterState {
     client_capabilities: Value,
     session_contexts: HashMap<String, SessionContext>,
-    pending_responses: HashMap<String, tokio::sync::oneshot::Sender<Value>>,
-    deferred_requests: VecDeque<JsonRpcRequest>,
+    pending_responses: Arc<TokioMutex<HashMap<String, tokio::sync::oneshot::Sender<Value>>>>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -278,32 +278,22 @@ async fn run() -> Result<()> {
     }
 
     let (inbound_tx, mut inbound_rx) = mpsc::channel::<InboundMessage>(128);
-    tokio::spawn(read_stdin_messages(inbound_tx));
-
     let mut adapter_state = AdapterState::default();
+    tokio::spawn(read_stdin_messages(
+        inbound_tx,
+        adapter_state.pending_responses.clone(),
+    ));
 
-    while let Some(message) = next_inbound_message(&mut adapter_state, &mut inbound_rx).await {
+    while let Some(message) = inbound_rx.recv().await {
         let value = match message {
-            InboundMessage::Request(value) if !adapter_state.pending_responses.is_empty() => {
-                match request_from_value(value) {
-                    Ok(request) => adapter_state.deferred_requests.push_back(request),
-                    Err(err) => {
-                        write_response(
-                            None,
-                            Err(json_rpc_error(
-                                -32700,
-                                "Parse error",
-                                Some(json!(err.to_string())),
-                            )),
-                        )
-                        .await?;
-                    }
-                }
-                continue;
-            }
             InboundMessage::Request(value) => value,
             InboundMessage::Response { id, value } => {
-                if let Some(tx) = adapter_state.pending_responses.remove(&id_key(&id)) {
+                if let Some(tx) = adapter_state
+                    .pending_responses
+                    .lock()
+                    .await
+                    .remove(&id_key(&id))
+                {
                     let _ = tx.send(value);
                 } else {
                     eprintln!(
@@ -535,7 +525,10 @@ fn normalize_client(raw: &str) -> String {
     }
 }
 
-async fn read_stdin_messages(tx: mpsc::Sender<InboundMessage>) {
+async fn read_stdin_messages(
+    tx: mpsc::Sender<InboundMessage>,
+    pending_responses: Arc<TokioMutex<HashMap<String, tokio::sync::oneshot::Sender<Value>>>>,
+) {
     let stdin = BufReader::new(io::stdin());
     let mut lines = stdin.lines();
     loop {
@@ -547,14 +540,23 @@ async fn read_stdin_messages(tx: mpsc::Sender<InboundMessage>) {
                 }
                 match serde_json::from_str::<Value>(line) {
                     Ok(value) => {
-                        let message = if value.get("method").and_then(Value::as_str).is_some() {
-                            InboundMessage::Request(value)
+                        if value.get("method").and_then(Value::as_str).is_some() {
+                            if tx.send(InboundMessage::Request(value)).await.is_err() {
+                                break;
+                            }
                         } else if let Some(id) = value.get("id").cloned() {
-                            InboundMessage::Response { id, value }
-                        } else {
-                            InboundMessage::Request(value)
-                        };
-                        if tx.send(message).await.is_err() {
+                            if let Some(response_tx) =
+                                pending_responses.lock().await.remove(&id_key(&id))
+                            {
+                                let _ = response_tx.send(value);
+                            } else if tx
+                                .send(InboundMessage::Response { id, value })
+                                .await
+                                .is_err()
+                            {
+                                break;
+                            }
+                        } else if tx.send(InboundMessage::Request(value)).await.is_err() {
                             break;
                         }
                     }
@@ -578,25 +580,6 @@ async fn read_stdin_messages(tx: mpsc::Sender<InboundMessage>) {
             }
         }
     }
-}
-
-async fn next_inbound_message(
-    adapter_state: &mut AdapterState,
-    inbound_rx: &mut mpsc::Receiver<InboundMessage>,
-) -> Option<InboundMessage> {
-    if adapter_state.pending_responses.is_empty() {
-        if let Some(request) = adapter_state.deferred_requests.pop_front() {
-            let mut value = json!({
-                "method": request.method,
-                "params": request.params,
-            });
-            if let Some(id) = request.id {
-                value["id"] = id;
-            }
-            return Some(InboundMessage::Request(value));
-        }
-    }
-    inbound_rx.recv().await
 }
 
 fn request_from_value(value: Value) -> Result<JsonRpcRequest> {
@@ -3701,7 +3684,11 @@ async fn send_request_and_wait(
     let id = json!(format!("req-{}", Uuid::new_v4()));
     let key = id_key(&id);
     let (tx, rx) = tokio::sync::oneshot::channel();
-    adapter_state.pending_responses.insert(key.clone(), tx);
+    adapter_state
+        .pending_responses
+        .lock()
+        .await
+        .insert(key.clone(), tx);
     write_json(json!({
         "jsonrpc": "2.0",
         "id": id,
@@ -3715,7 +3702,7 @@ async fn send_request_and_wait(
             "client response channel closed for {method} id={key}"
         )),
         Err(_) => {
-            adapter_state.pending_responses.remove(&key);
+            adapter_state.pending_responses.lock().await.remove(&key);
             Err(anyhow!(
                 "timed out waiting for client response to {method} id={key}"
             ))
