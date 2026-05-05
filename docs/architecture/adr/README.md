@@ -19,6 +19,7 @@ Use ADRs for cross-cutting product and architecture decisions that are expected 
 | [multi-user-memory.md](multi-user-memory.md) | Proposed | Multi-user memory model and Letta-native memory visibility |
 | [provider-safe-tool-naming.md](provider-safe-tool-naming.md) | Accepted | Provider-safe tool names with scoped canonical BEARS tool identities |
 | [routines-automation.md](routines-automation.md) | Proposed | Den-managed routines, scheduling, output handling, learning constraints |
+| [schema-first-path-strategy.md](schema-first-path-strategy.md) | Accepted | Conservative schema-first path ownership and Den-generated durable artifact paths |
 
 ## Naming
 
