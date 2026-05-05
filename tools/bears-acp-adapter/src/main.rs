@@ -6,8 +6,8 @@ use agent_client_protocol::schema::{
     ReadTextFileRequest, ReadTextFileResponse, RequestPermissionOutcome, RequestPermissionRequest,
     RequestPermissionResponse, ResumeSessionResponse, SessionCapabilities,
     SessionCloseCapabilities, SessionInfo, SessionListCapabilities, SessionResumeCapabilities,
-    SessionUpdate, StopReason, ToolCall, ToolCallContent, ToolCallLocation, ToolCallStatus, ToolCallUpdate,
-    ToolCallUpdateFields, ToolKind,
+    SessionUpdate, StopReason, ToolCall, ToolCallContent, ToolCallLocation, ToolCallStatus,
+    ToolCallUpdate, ToolCallUpdateFields, ToolKind,
 };
 use anyhow::{anyhow, Context, Result};
 use futures_util::StreamExt;
@@ -41,6 +41,7 @@ struct RuntimeConfig {
     config: Option<Config>,
     diagnostics: Vec<String>,
     check_server: bool,
+    doctor: bool,
     api_url: String,
     bear: String,
     token_env: String,
@@ -118,7 +119,13 @@ struct ToolTaskRecord {
 }
 
 impl ApprovalCache {
-    fn key(api_url: &str, bear: &str, client: &str, root_fingerprint: &str, tool_name: &str) -> String {
+    fn key(
+        api_url: &str,
+        bear: &str,
+        client: &str,
+        root_fingerprint: &str,
+        tool_name: &str,
+    ) -> String {
         format!("{api_url}\n{bear}\n{client}\n{root_fingerprint}\n{tool_name}")
     }
 
@@ -228,7 +235,10 @@ impl ApprovalCache {
             .filter(|record| record.expires_at_secs > now)
             .cloned()
             .collect::<Vec<_>>();
-        let file = ApprovalCacheFile { version: 1, entries };
+        let file = ApprovalCacheFile {
+            version: 1,
+            entries,
+        };
         if let Some(parent) = persistence.path.parent() {
             let _ = fs::create_dir_all(parent);
         }
@@ -249,9 +259,12 @@ fn now_secs() -> u64 {
 }
 
 fn env_bool(name: &str) -> bool {
-    env::var(name)
-        .ok()
-        .is_some_and(|value| matches!(value.trim().to_ascii_lowercase().as_str(), "1" | "true" | "yes" | "on"))
+    env::var(name).ok().is_some_and(|value| {
+        matches!(
+            value.trim().to_ascii_lowercase().as_str(),
+            "1" | "true" | "yes" | "on"
+        )
+    })
 }
 
 fn approval_ttl_secs(risk: &str) -> u64 {
@@ -754,10 +767,12 @@ async fn run() -> Result<()> {
         local_head_sha(),
         direct_tools_context()
     );
-    if runtime.is_configured() {
-        eprintln!("bears-acp-adapter: configuration looks valid");
-    } else {
-        eprintln!("{}", runtime.configuration_error_message());
+    if !runtime.doctor {
+        if runtime.is_configured() {
+            eprintln!("bears-acp-adapter: configuration looks valid");
+        } else {
+            eprintln!("{}", runtime.configuration_error_message());
+        }
     }
 
     let http = reqwest::Client::builder()
@@ -765,6 +780,11 @@ async fn run() -> Result<()> {
         .timeout(std::time::Duration::from_secs(300))
         .build()
         .context("build HTTP client")?;
+
+    if runtime.doctor {
+        run_doctor(&http, &runtime).await?;
+        return Ok(());
+    }
 
     if runtime.check_server {
         let Some(config) = runtime.config.as_ref() else {
@@ -844,6 +864,7 @@ impl RuntimeConfig {
         let mut client = env::var("BEARS_ACP_CLIENT").unwrap_or_else(|_| "zed".to_string());
         let mut check_config = false;
         let mut check_server = false;
+        let mut doctor = false;
 
         let mut args = env::args().skip(1);
         while let Some(arg) = args.next() {
@@ -855,6 +876,7 @@ impl RuntimeConfig {
                 "--client" => client = require_arg_value("--client", args.next())?,
                 "--check-config" => check_config = true,
                 "--check-server" => check_server = true,
+                "doctor" | "--doctor" => doctor = true,
                 "--version" | "-V" => {
                     print_version_to_stderr();
                     std::process::exit(0);
@@ -910,6 +932,7 @@ impl RuntimeConfig {
             config,
             diagnostics,
             check_server,
+            doctor,
             api_url,
             bear,
             token_env,
@@ -1014,8 +1037,8 @@ fn local_head_sha() -> String {
 fn print_help_to_stderr() {
     eprintln!(
         "bears-acp-adapter {}\nBuild git SHA: {}\nLocal HEAD SHA: {}\nACP sessions: list/resume/load; conversations bound via Den\n\n\
-Usage: bears-acp-adapter --api-url <url> --bear <slug> [--client zed] [--token-env BEARS_DEN_TOKEN]\n\n\
-Options:\n  --api-url <url>        Den API origin, for example https://api.bears.example\n  --bear <slug>          Bear slug to chat with\n  --token <token>        Den ACP token with acp:chat scope\n  --token-env <env-var>  Read the Den bearer token from this environment variable\n  --client <name>        Client label: zed, opencode, or acp_adapter\n  --check-config         Validate configuration and exit without starting ACP stdio\n  --check-server         Fetch Den /version and exit without starting ACP stdio\n  --version              Show version/build behavior and exit\n  --help                 Show this help\n\n\
+Usage: bears-acp-adapter --api-url <url> --bear <slug> [--client zed] [--token-env BEARS_DEN_TOKEN]\n       bears-acp-adapter doctor\n\n\
+Options:\n  --api-url <url>        Den API origin, for example https://api.bears.example\n  --bear <slug>          Bear slug to chat with\n  --token <token>        Den ACP token with acp:chat scope\n  --token-env <env-var>  Read the Den bearer token from this environment variable\n  --client <name>        Client label: zed, opencode, or acp_adapter\n  --check-config         Validate configuration and exit without starting ACP stdio\n  --check-server         Fetch Den /version and exit without starting ACP stdio\n  doctor, --doctor       Run user-friendly setup checks and exit\n  --version              Show version/build behavior and exit\n  --help                 Show this help\n\n\
 Environment fallbacks:\n  BEARS_DEN_API_URL\n  BEARS_BEAR_SLUG\n  BEARS_DEN_TOKEN\n  BEARS_DEN_TOKEN_ENV\n  BEARS_ACP_CLIENT\n\n\
 BEARS_DEN_API_URL should be the API origin only, not the full /acp/bears/... endpoint.",
         env!("CARGO_PKG_VERSION"),
@@ -3452,6 +3475,135 @@ async fn check_server_version(http: &reqwest::Client, config: &Config) -> Result
     Ok(())
 }
 
+async fn run_doctor(http: &reqwest::Client, runtime: &RuntimeConfig) -> Result<()> {
+    let mut failed = false;
+    eprintln!("BEARS ACP Adapter Doctor\n");
+    eprintln!("✓ Adapter binary runs");
+    eprintln!("  version: {}", env!("CARGO_PKG_VERSION"));
+    eprintln!("  build_git_sha: {}", env!("BEARS_ACP_ADAPTER_GIT_SHA"));
+    eprintln!("  built_at_utc: {}", env!("BEARS_ACP_ADAPTER_BUILT_AT_UTC"));
+    eprintln!("  local_head_sha: {}", local_head_sha());
+    eprintln!("  os_arch: {} {}", env::consts::OS, env::consts::ARCH);
+    if let Ok(exe) = env::current_exe() {
+        eprintln!("  executable: {}", exe.display());
+    }
+    eprintln!("  direct_tools: {}", direct_tools_context());
+    eprintln!();
+
+    if runtime.api_url.trim().is_empty() {
+        failed = true;
+        eprintln!("✗ BEARS_DEN_API_URL is missing");
+    } else {
+        eprintln!("✓ BEARS_DEN_API_URL is set");
+        eprintln!("  {}", runtime.api_url);
+    }
+
+    if runtime.bear.trim().is_empty() {
+        failed = true;
+        eprintln!("✗ BEARS_BEAR_SLUG is missing");
+    } else {
+        eprintln!("✓ BEARS_BEAR_SLUG is set");
+        eprintln!("  {}", runtime.bear);
+    }
+
+    if runtime.token_env.trim().is_empty() {
+        eprintln!("• BEARS_DEN_TOKEN_ENV is not set; checking BEARS_DEN_TOKEN/--token directly");
+    } else {
+        eprintln!("✓ BEARS_DEN_TOKEN_ENV is set");
+        eprintln!("  {}", runtime.token_env);
+    }
+
+    if runtime
+        .config
+        .as_ref()
+        .is_some_and(|config| !config.token.is_empty())
+    {
+        eprintln!("✓ Den bearer token is available");
+    } else {
+        failed = true;
+        eprintln!("✗ Den bearer token is missing");
+    }
+
+    if runtime.client.trim().is_empty() {
+        eprintln!("• Client label is empty; ACP protocol still works, but set BEARS_ACP_CLIENT if you want labeled requests");
+    } else {
+        eprintln!("✓ Client label: {}", runtime.client);
+    }
+
+    if runtime.diagnostics.is_empty() {
+        eprintln!("✓ Configuration values are valid");
+    } else {
+        failed = true;
+        eprintln!("✗ Configuration has problems:");
+        for diagnostic in &runtime.diagnostics {
+            eprintln!("  - {diagnostic}");
+        }
+    }
+    eprintln!();
+
+    if let Some(config) = runtime.config.as_ref() {
+        match fetch_server_version(http, config).await {
+            Ok(server_version) => {
+                eprintln!("✓ Reached BEARS Den server");
+                eprintln!("  service: {}", server_version.service);
+                eprintln!("  version: {}", server_version.version);
+                eprintln!("  git_sha: {}", server_version.git_sha);
+                eprintln!("  built_at_utc: {}", server_version.built_at_utc);
+            }
+            Err(err) => {
+                failed = true;
+                eprintln!("✗ Could not reach BEARS Den server");
+                eprintln!("  {err:#}");
+            }
+        }
+    } else {
+        eprintln!("• Skipping server reachability check until configuration is fixed");
+    }
+    eprintln!();
+
+    eprintln!("ACP client command:");
+    eprintln!("  {}", installed_or_current_command_hint());
+    eprintln!();
+    eprintln!("Required ACP client environment:");
+    let api_url_hint = if runtime.api_url.is_empty() {
+        "https://api.bears.example"
+    } else {
+        &runtime.api_url
+    };
+    let bear_hint = if runtime.bear.is_empty() {
+        "my-bear"
+    } else {
+        &runtime.bear
+    };
+    eprintln!("  BEARS_DEN_API_URL={api_url_hint}");
+    eprintln!("  BEARS_BEAR_SLUG={bear_hint}");
+    if runtime.token_env.is_empty() {
+        eprintln!("  BEARS_DEN_TOKEN=...");
+    } else {
+        eprintln!("  {}=...", runtime.token_env);
+        eprintln!("  BEARS_DEN_TOKEN_ENV={}", runtime.token_env);
+    }
+    eprintln!();
+
+    if failed {
+        eprintln!("Doctor found setup problems. Fix the items marked ✗ above, then run `bears-acp-adapter doctor` again.");
+        std::process::exit(2);
+    }
+
+    eprintln!("Setup looks good.");
+    Ok(())
+}
+
+fn installed_or_current_command_hint() -> String {
+    let installed = Path::new("/usr/local/bin/bears-acp-adapter");
+    if installed.exists() {
+        return installed.display().to_string();
+    }
+    env::current_exe()
+        .map(|path| path.display().to_string())
+        .unwrap_or_else(|_| "bears-acp-adapter".to_string())
+}
+
 async fn fetch_server_version(http: &reqwest::Client, config: &Config) -> Result<ServerVersion> {
     let url = format!("{}/version", config.api_url);
     let response = http
@@ -4015,8 +4167,7 @@ async fn handle_tool_request_event(
             &policy,
         )
         .await;
-        if let Err(err) = permission_decision
-        {
+        if let Err(err) = permission_decision {
             let message = format!("{err:#}");
             let local_err = if message.contains("timed out waiting for client response") {
                 task_registry
@@ -4071,9 +4222,14 @@ async fn handle_tool_request_event(
                 ToolTaskPhase::PermissionGranted,
             )
             .await;
-        if permission_decision.as_ref().is_ok_and(|decision| decision.remember) {
+        if permission_decision
+            .as_ref()
+            .is_ok_and(|decision| decision.remember)
+        {
             if let Some(context) = context_for_approval.as_ref() {
-                approval_cache.remember(context, tool_name, policy.risk()).await;
+                approval_cache
+                    .remember(context, tool_name, policy.risk())
+                    .await;
                 eprintln!(
                     "bears-acp-adapter: approval_remembered session_id={} tool_name={} scope=workspace_roots",
                     session_id, tool_name
@@ -4606,7 +4762,10 @@ fn friendly_tool_status(tool_name: &str, event: &Value, phase: &str) -> String {
     let path = tool_path(event).unwrap_or("the selected workspace path");
     match phase {
         "preparing" => format!("Preparing to {} `{path}`…", display.verb.to_lowercase()),
-        "permission" => format!("Waiting for approval to {} `{path}`.", display.verb.to_lowercase()),
+        "permission" => format!(
+            "Waiting for approval to {} `{path}`.",
+            display.verb.to_lowercase()
+        ),
         "running" => format!("{} `{path}`…", display.verb),
         _ => format!("{} `{path}`…", display.verb),
     }
@@ -5208,10 +5367,8 @@ mod tests {
         let cache = ApprovalCache {
             entries: Arc::new(TokioMutex::new(HashMap::new())),
             persistence: Some(ApprovalPersistence {
-                path: env::temp_dir().join(format!(
-                    "bears-acp-approval-test-{}.json",
-                    Uuid::new_v4()
-                )),
+                path: env::temp_dir()
+                    .join(format!("bears-acp-approval-test-{}.json", Uuid::new_v4())),
                 api_url: "http://den.test".to_string(),
                 bear: "meta".to_string(),
                 client: "zed".to_string(),

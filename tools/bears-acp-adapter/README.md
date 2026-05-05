@@ -69,6 +69,14 @@ You can validate configuration without starting ACP stdio:
 bears-acp-adapter --check-config
 ```
 
+For a more user-friendly setup report, run:
+
+```bash
+bears-acp-adapter doctor
+```
+
+`doctor` prints the installed command path, version/build metadata, OS/architecture, required environment status, Den `/version` reachability when configuration is valid, and copy/paste-ready ACP client environment hints.
+
 You can also validate which Den server build the adapter reaches, without speaking ACP to the editor:
 
 ```bash
@@ -147,6 +155,7 @@ Production distribution should add Developer ID signing and Apple notarization b
 
 ## Debugging
 
+- Run `bears-acp-adapter doctor` for a user-friendly setup report.
 - Run `bears-acp-adapter --check-config` from the same shell or wrapper environment used by your editor.
 - Run `bears-acp-adapter --check-server` to print the Den `/version` response reached by `BEARS_DEN_API_URL`.
 - Open Zed command palette: `dev: open acp logs`.
