@@ -236,7 +236,8 @@ fn native_letta_tool_request_event_with_args(
     }
     let tool_call_id =
         tool_call_id(tool_call, inner, event).unwrap_or_else(|| format!("call-{}", Uuid::new_v4()));
-    let approval_request_id = (approval_required).then(|| {
+    let requires_approval = true;
+    let approval_request_id = approval_required.then(|| {
         event
             .get("id")
             .and_then(|v| v.as_str())
@@ -263,9 +264,10 @@ fn native_letta_tool_request_event_with_args(
         title: descriptor.title.to_string(),
         kind: descriptor.kind.to_string(),
         args,
-        approval_required,
-        approval_reason: approval_required
-            .then(|| "Letta requested approval before running this local ACP tool.".to_string()),
+        approval_required: requires_approval,
+        approval_reason: Some(
+            "BEARS requires client approval before running this local ACP tool.".to_string(),
+        ),
         result_tx: Some(result_tx),
         result_rx: Some(result_rx),
     })
@@ -690,6 +692,32 @@ mod tests {
                 assert_eq!(kind, "search");
                 assert_eq!(args["path"], "/workspace");
                 assert_eq!(args["query"], "needle");
+            }
+            other => panic!("unexpected event: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn tool_call_message_requires_adapter_approval_even_without_letta_approval() {
+        let event = tool_call_event(
+            "fs_replace_text",
+            serde_json::json!({
+                "path": "/workspace/a.txt",
+                "old_text": "before",
+                "new_text": "after"
+            }),
+        );
+        let mapped = map_native_letta_stream_event_to_acp_event(&event).expect("mapped event");
+        match mapped {
+            AcpGatewayEvent::ToolRequest {
+                approval_required,
+                approval_request_id,
+                approval_reason,
+                ..
+            } => {
+                assert!(approval_required);
+                assert!(approval_request_id.is_none());
+                assert!(approval_reason.unwrap().contains("BEARS requires client approval"));
             }
             other => panic!("unexpected event: {other:?}"),
         }
