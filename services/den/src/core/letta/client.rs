@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, CONTENT_TYPE};
 use reqwest::StatusCode;
-use serde_json::json;
+use serde_json::{json, Value};
 
 use crate::{config::Config, errors::CustomError};
 
@@ -34,6 +34,31 @@ pub struct LettaAgentListItem {
 }
 
 /// Thin Letta REST client (create agent, stream chat). Disabled when `letta_base_url` is empty.
+#[derive(Debug, Clone)]
+pub struct LettaContinuationContext {
+    pub conversation_id: String,
+    pub agent_id: Option<String>,
+    pub client_tools: Option<Value>,
+    pub stream_tokens: bool,
+    pub max_steps: u32,
+}
+
+impl LettaContinuationContext {
+    pub fn tool_names(&self) -> Vec<String> {
+        self.client_tools
+            .as_ref()
+            .and_then(|tools| tools.as_array())
+            .map(|items| {
+                items
+                    .iter()
+                    .filter_map(|tool| tool.get("name").and_then(|v| v.as_str()))
+                    .map(str::to_string)
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+}
+
 #[derive(Clone)]
 pub struct LettaClient {
     http: reqwest::Client,
@@ -673,13 +698,11 @@ impl LettaClient {
 
     pub async fn post_conversation_tool_returns_streaming(
         &self,
-        conversation_id: &str,
-        agent_id: Option<&str>,
+        context: &LettaContinuationContext,
         tool_call_id: &str,
         approval_request_id: Option<&str>,
         status: &str,
         tool_return: &str,
-        client_tools: Option<serde_json::Value>,
     ) -> Result<reqwest::Response, CustomError> {
         if !self.is_enabled() {
             return Err(CustomError::System(
@@ -708,18 +731,32 @@ impl LettaClient {
         });
         body.insert("messages".to_string(), json!([message]));
         body.insert("streaming".to_string(), json!(true));
-        body.insert("stream_tokens".to_string(), json!(false));
-        body.insert("max_steps".to_string(), json!(2));
-        if let Some(tools) = client_tools {
+        body.insert("stream_tokens".to_string(), json!(context.stream_tokens));
+        body.insert("max_steps".to_string(), json!(context.max_steps));
+        if let Some(tools) = context.client_tools.clone() {
             body.insert("client_tools".to_string(), tools);
         }
-        if let Some(a) = agent_id.map(str::trim).filter(|s| !s.is_empty()) {
+        if let Some(a) = context
+            .agent_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        {
             body.insert("agent_id".to_string(), json!(a));
         }
+        tracing::info!(
+            conversation_id = %context.conversation_id,
+            agent_id = context.agent_id.as_deref(),
+            tool_call_id,
+            client_tool_names = ?context.tool_names(),
+            max_steps = context.max_steps,
+            stream_tokens = context.stream_tokens,
+            "Posting Letta ACP tool return continuation"
+        );
 
         let url = format!(
             "{}/v1/conversations/{}/messages",
-            self.base_url, conversation_id
+            self.base_url, context.conversation_id
         );
 
         let resp = self

@@ -15,7 +15,9 @@ pub use agent_document::unwrap_letta_agent_document;
 pub use agent_prefill::AgentBearPrefill;
 pub use agent_summary::AgentSummary;
 pub use assistant_display::strip_letta_harness_for_user;
-pub use client::{LettaAgentListItem, LettaClient, LettaModelOption, LettaToolOption};
+pub use client::{
+    LettaAgentListItem, LettaClient, LettaContinuationContext, LettaModelOption, LettaToolOption,
+};
 pub use conversation_title::{
     display_conversation_title, first_user_message_text_for_title, is_acceptable_derived_title,
     is_meaningful_conversation_title, UNTITLED_THREAD,

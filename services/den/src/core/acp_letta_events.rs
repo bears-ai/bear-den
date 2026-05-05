@@ -88,11 +88,27 @@ pub fn map_native_letta_stream_event_to_acp_event(
         .or_else(|| event.get("message_type").and_then(|v| v.as_str()))
         .unwrap_or("");
     match message_type {
-        "assistant_message" => Some(AcpGatewayEvent::AssistantTextDelta {
-            text: letta_stream_text_preserving_whitespace(inner)
+        "assistant_message" => {
+            let text = letta_stream_text_preserving_whitespace(inner)
                 .or_else(|| letta_stream_text_preserving_whitespace(event))
-                .unwrap_or_default(),
-        }),
+                .unwrap_or_default();
+            if let Some(tool_name) = pseudo_tool_call_name(&text) {
+                Some(AcpGatewayEvent::Error {
+                    message: format!(
+                        "Model emitted textual pseudo tool call for {tool_name} instead of a native tool call."
+                    ),
+                    detail: Some("This usually means the callable tool schema was unavailable or drifted during the Letta continuation request. Check descriptor_advertised and tool-return continuation logs.".to_string()),
+                    error_type: Some("pseudo_tool_call_text".to_string()),
+                    request_id: None,
+                    context: Some(serde_json::json!({
+                        "tool_name": tool_name,
+                        "preview": preview_str_truncated(&text, 500),
+                    })),
+                })
+            } else {
+                Some(AcpGatewayEvent::AssistantTextDelta { text })
+            }
+        }
         "reasoning_message" => Some(AcpGatewayEvent::StatusText {
             text: inner
                 .get("reasoning")
@@ -164,6 +180,18 @@ pub fn map_native_letta_stream_event_to_acp_event(
         }),
         _ => native_letta_conversation_resolved_event(event),
     }
+}
+
+fn pseudo_tool_call_name(text: &str) -> Option<String> {
+    for name in supported_provider_tool_names() {
+        if text.contains(&format!("to=functions.{name}"))
+            || text.contains(&format!("functions.{name}"))
+            || text.contains(&format!("<tool_call>{name}"))
+        {
+            return Some(name.to_string());
+        }
+    }
+    None
 }
 
 fn letta_tool_return_status_text(inner: &serde_json::Value, event: &serde_json::Value) -> String {
@@ -772,6 +800,26 @@ mod tests {
                 assert_eq!(error_type.as_deref(), Some("invalid_tool_arguments"));
                 assert!(message.contains("fs_replace_text"));
                 assert_eq!(context.unwrap()["missing"], "new_text");
+            }
+            other => panic!("unexpected event: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn detects_pseudo_tool_call_text() {
+        let event = serde_json::json!({
+            "message_type": "assistant_message",
+            "content": "to=functions.fs_replace_text {\"path\":\"/workspace/README.md\"}"
+        });
+        let mapped = map_native_letta_stream_event_to_acp_event(&event).expect("mapped event");
+        match mapped {
+            AcpGatewayEvent::Error {
+                error_type,
+                context,
+                ..
+            } => {
+                assert_eq!(error_type.as_deref(), Some("pseudo_tool_call_text"));
+                assert_eq!(context.unwrap()["tool_name"], "fs_replace_text");
             }
             other => panic!("unexpected event: {other:?}"),
         }

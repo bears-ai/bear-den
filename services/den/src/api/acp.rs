@@ -54,7 +54,7 @@ use crate::{
         },
         archived_conversations,
         bears::{db as bears_db, Bear, BearAgentRole},
-        letta::load_agent_conversations,
+        letta::{load_agent_conversations, LettaContinuationContext},
         work_plans::{self, WorkPlanLookup},
     },
     errors::CustomError,
@@ -621,7 +621,7 @@ fn acp_direct_tool_prompt_context(
     } else {
         guidance.push("No ACP edit tool is callable in this turn. Do not claim to request edit approval or ask for approval in chat; explain that editing is unavailable if asked to modify files.".to_string());
     }
-    guidance.push("Tool-loop rule: after any ACP tool result, continue from the returned content until the user's original request is complete. Do not stop merely because a tool succeeded. Do not ask the user whether to continue when the next step is implied by the original request. Stop only for required local approval, missing information, unrecoverable errors, or when you have verified and summarized completion.".to_string());
+    guidance.push("Tool-loop rule: after any ACP tool result, continue from the returned content until the user's original request is complete. Do not stop merely because a tool succeeded. Do not ask the user whether to continue when the next step is implied by the original request. Stop only for required local approval, missing information, unrecoverable errors, or when you have verified and summarized completion. Never write textual tool-call syntax such as `to=functions...` or `functions.fs_replace_text`; if a tool is not callable, explain the limitation in normal prose.".to_string());
     format!(
         "\n\n<system-reminder>{}</system-reminder>",
         guidance.join(" ")
@@ -1587,9 +1587,13 @@ async fn prompt_inner(
             request_id,
         },
         state.letta.clone(),
-        pair_agent_id.clone(),
-        conversation_resolution.upstream_target.clone(),
-        client_tool_descriptors,
+        LettaContinuationContext {
+            conversation_id: conversation_resolution.upstream_target.clone(),
+            agent_id: Some(pair_agent_id.clone()),
+            client_tools: client_tool_descriptors,
+            stream_tokens: false,
+            max_steps: 2,
+        },
     );
     let request_id_header = HeaderValue::from_str(&request_id.to_string()).map_err(|_| {
         ApiError::new(
@@ -2001,10 +2005,8 @@ struct AcpLettaSseStream {
     pending: VecDeque<Bytes>,
     context: AcpStreamContext,
     letta: Arc<crate::core::letta::LettaClient>,
-    pair_agent_id: String,
-    upstream_target: String,
+    continuation: LettaContinuationContext,
     pending_tool_result: Option<AcpToolResultRequest>,
-    client_tools: Option<serde_json::Value>,
     diagnostics: AcpStreamDiagnostics,
     logged_summary: bool,
     active_tool_call_ids: Vec<String>,
@@ -2016,9 +2018,7 @@ impl AcpLettaSseStream {
         inner: impl Stream<Item = Result<Bytes, reqwest::Error>> + Send + 'static,
         context: AcpStreamContext,
         letta: Arc<crate::core::letta::LettaClient>,
-        pair_agent_id: String,
-        upstream_target: String,
-        client_tools: Option<serde_json::Value>,
+        continuation: LettaContinuationContext,
     ) -> Self {
         Self {
             inner: Box::pin(inner),
@@ -2027,10 +2027,8 @@ impl AcpLettaSseStream {
             pending: VecDeque::new(),
             context,
             letta,
-            pair_agent_id,
-            upstream_target,
+            continuation,
             pending_tool_result: None,
-            client_tools,
             diagnostics: AcpStreamDiagnostics::default(),
             logged_summary: false,
             active_tool_call_ids: Vec::new(),
@@ -2245,9 +2243,7 @@ impl Stream for AcpLettaSseStream {
                     self.poll_next(cx)
                 } else if let Some(tool_result) = this.pending_tool_result.take() {
                     let letta = this.letta.clone();
-                    let upstream_target = this.upstream_target.clone();
-                    let pair_agent_id = this.pair_agent_id.clone();
-                    let client_tools = this.client_tools.clone();
+                    let continuation = this.continuation.clone();
                     let tool_name = tool_result
                         .tool_name
                         .as_deref()
@@ -2264,13 +2260,11 @@ impl Stream for AcpLettaSseStream {
                         Some(AcpPendingFuture::ContinueTool(Box::pin(async move {
                             letta
                                 .post_conversation_tool_returns_streaming(
-                                    &upstream_target,
-                                    Some(&pair_agent_id),
+                                    &continuation,
                                     &tool_call_id,
                                     approval_request_id.as_deref(),
                                     &status,
                                     &tool_return,
-                                    client_tools,
                                 )
                                 .await
                         })));
@@ -2371,9 +2365,13 @@ mod tests {
             upstream,
             context,
             letta,
-            "agent-12345678-1234-4567-89ab-123456789abc".to_string(),
-            "conv-test-continuation".to_string(),
-            Some(serde_json::json!([{ "name": "fs_read_text_file" }])),
+            LettaContinuationContext {
+                conversation_id: "conv-test-continuation".to_string(),
+                agent_id: Some("agent-12345678-1234-4567-89ab-123456789abc".to_string()),
+                client_tools: Some(serde_json::json!([{ "name": "fs_read_text_file" }])),
+                stream_tokens: false,
+                max_steps: 2,
+            },
         );
 
         let first = stream.next().await.unwrap().unwrap();
