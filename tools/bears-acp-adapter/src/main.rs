@@ -250,9 +250,10 @@ async fn main() {
 async fn run() -> Result<()> {
     let mut runtime = RuntimeConfig::from_env_and_args()?;
     eprintln!(
-        "bears-acp-adapter: starting version={} build_git_sha={} local_head_sha={} ACP sessions=list/resume/load supported direct_tools={}",
+        "bears-acp-adapter: starting version={} build_git_sha={} built_at_utc={} local_head_sha={} ACP sessions=list/resume/load supported direct_tools={}",
         env!("CARGO_PKG_VERSION"),
         env!("BEARS_ACP_ADAPTER_GIT_SHA"),
+        env!("BEARS_ACP_ADAPTER_BUILT_AT_UTC"),
         local_head_sha(),
         direct_tools_context()
     );

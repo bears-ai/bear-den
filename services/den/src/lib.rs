@@ -66,6 +66,15 @@ pub async fn run() -> Result<(), StartupError> {
         .try_init()
         .map_err(|e| StartupError::Tracing(e.to_string()))?;
 
+    let build = crate::build_info::snapshot();
+    tracing::info!(
+        service = build.service,
+        version = build.version,
+        git_sha = build.git_sha,
+        built_at_utc = build.built_at_utc,
+        "Starting build",
+    );
+
     let config = Arc::new(Config::load());
     validate_runtime_config(config.as_ref())?;
     validate_upstream_connections(config.as_ref()).await?;
