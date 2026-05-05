@@ -1584,6 +1584,7 @@ async fn prompt_inner(
             bear_slug: bear.slug.clone(),
             acp_session_id: session_id.to_string(),
             request_id,
+            original_prompt: prompt.to_string(),
         },
         state.letta.clone(),
         pair_agent_id.clone(),
@@ -1623,6 +1624,7 @@ struct AcpStreamContext {
     bear_slug: String,
     acp_session_id: String,
     request_id: Uuid,
+    original_prompt: String,
 }
 
 async fn persist_stream_event_side_effects(
@@ -1964,6 +1966,26 @@ async fn map_letta_stream_frame_to_acp_adapter_events_with_persistence(
     Ok((vec![acp_event_to_adapter_sse(event)], result_rx))
 }
 
+fn format_tool_return_with_continuation_nudge(
+    original_prompt: &str,
+    tool_name: &str,
+    tool_return: &str,
+) -> String {
+    format!(
+        concat!(
+            "{tool_return}\n\n",
+            "---\n",
+            "ACP continuation instruction: Continue the original user request using this `{tool_name}` result. ",
+            "Do not stop just because the tool succeeded. If the original request is not complete, call the next needed ACP tool. ",
+            "For edit requests, verify the edit with `fs_read_text_file` before final response. ",
+            "Original user request: {original_prompt}"
+        ),
+        tool_return = tool_return,
+        tool_name = tool_name,
+        original_prompt = preview_str_truncated(original_prompt, 500),
+    )
+}
+
 enum AcpPendingFuture {
     Frame(
         Pin<
@@ -2251,7 +2273,12 @@ impl Stream for AcpLettaSseStream {
                         .tool_call_id
                         .clone()
                         .unwrap_or_else(|| tool_name.clone());
-                    let tool_return = tool_result.content.clone().unwrap_or_default();
+                    let tool_return_raw = tool_result.content.clone().unwrap_or_default();
+                    let tool_return = format_tool_return_with_continuation_nudge(
+                        &this.context.original_prompt,
+                        &tool_name,
+                        &tool_return_raw,
+                    );
                     let status = tool_result.status.clone();
                     let approval_request_id = tool_result.approval_request_id.clone();
                     this.persist_future =
@@ -2349,6 +2376,7 @@ mod tests {
             bear_slug: "test-bear".to_string(),
             acp_session_id: "acp-test-session".to_string(),
             request_id: Uuid::new_v4(),
+            original_prompt: "read the test file and tell me what it says".to_string(),
         };
         let upstream = futures::stream::iter(vec![
             Ok::<Bytes, reqwest::Error>(Bytes::from(concat!(
