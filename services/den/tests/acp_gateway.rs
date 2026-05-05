@@ -659,6 +659,7 @@ async fn acp_prompt_advertises_all_read_only_tool_descriptors() {
     assert!(names.contains(&"fs_read_text_file"));
     assert!(names.contains(&"fs_list_directory"));
     assert!(names.contains(&"fs_search_files"));
+    assert!(names.contains(&"fs_replace_text"));
     assert!(names
         .iter()
         .all(|name| !name.contains('.') && !name.contains('/')));
@@ -893,6 +894,80 @@ async fn acp_search_files_tool_request_round_trips_result_to_letta() {
         requests[1]["messages"][0]["approvals"][0]["tool_return"],
         "/tmp/acp-workspace/a.txt:1: needle"
     );
+}
+
+#[tokio::test]
+async fn acp_replace_text_tool_request_round_trips_result_to_letta() {
+    let fixture = test_app().await;
+    let user_bear = create_test_user_bear(&fixture.pool, true).await;
+    fixture.letta_script.lock().await.extend([
+        format!(
+            "{}{}",
+            letta_tool_request_sse(
+                "fs_replace_text",
+                "call-replace-e2e",
+                json!({
+                    "path": "/tmp/acp-workspace/a.txt",
+                    "old_text": "before",
+                    "new_text": "after"
+                })
+            ),
+            letta_stop_sse()
+        ),
+        "data: {\"message_type\":\"assistant_message\",\"content\":\"replace complete\"}\n\n\
+         data: {\"message_type\":\"stop_reason\",\"stop_reason\":\"end_turn\"}\n\n"
+            .to_string(),
+    ]);
+
+    let app_for_prompt = fixture.app.clone();
+    let slug = user_bear.bear_slug.clone();
+    let token = user_bear.raw_token.clone();
+    let prompt_task = tokio::spawn(async move {
+        post_prompt(
+            app_for_prompt,
+            &slug,
+            "session-replace-e2e",
+            Some(&token),
+            json!({ "message": "replace text", "client": "zed" }),
+        )
+        .await
+    });
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    let result = post_tool_result(
+        fixture.app.clone(),
+        &user_bear.bear_slug,
+        "session-replace-e2e",
+        "call-replace-e2e",
+        Some(&user_bear.raw_token),
+        json!({
+            "tool_call_id": "call-replace-e2e",
+            "tool_name": "fs_replace_text",
+            "approval_request_id": "approval-call-replace-e2e",
+            "status": "ok",
+            "content": "Replaced 1 occurrence in /tmp/acp-workspace/a.txt",
+            "structured_content": {
+                "path": "/tmp/acp-workspace/a.txt",
+                "replacements": 1
+            },
+            "diagnostic": { "source": "test" }
+        }),
+    )
+    .await;
+    assert_eq!(result.status(), StatusCode::OK);
+    let result_json: Value = serde_json::from_str(&response_text(result).await).unwrap();
+    assert_eq!(result_json["accepted"], true);
+
+    let prompt = prompt_task.await.unwrap();
+    assert_eq!(prompt.status(), StatusCode::OK);
+    let text = response_text(prompt).await;
+    assert!(text.contains("fs_replace_text"));
+    assert!(text.contains("\"risk\":\"writes_workspace\""));
+    assert!(text.contains("replace complete"));
+
+    let requests = fixture.letta_requests.lock().await.clone();
+    assert_eq!(requests.len(), 2);
+    assert_eq!(requests[1]["messages"][0]["approvals"][0]["tool_call_id"], "call-replace-e2e");
+    assert_eq!(requests[1]["messages"][0]["approvals"][0]["status"], "success");
 }
 
 #[tokio::test]

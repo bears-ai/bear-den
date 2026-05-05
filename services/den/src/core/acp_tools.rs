@@ -5,6 +5,7 @@ pub enum AcpToolName {
     ReadTextFile,
     ListDirectory,
     SearchFiles,
+    ReplaceText,
 }
 
 impl AcpToolName {
@@ -13,11 +14,17 @@ impl AcpToolName {
             Self::ReadTextFile => &ACP_READ_TEXT_FILE_TOOL,
             Self::ListDirectory => &ACP_LIST_DIRECTORY_TOOL,
             Self::SearchFiles => &ACP_SEARCH_FILES_TOOL,
+            Self::ReplaceText => &ACP_REPLACE_TEXT_TOOL,
         }
     }
 
     pub fn all() -> &'static [Self] {
-        &[Self::ReadTextFile, Self::ListDirectory, Self::SearchFiles]
+        &[
+            Self::ReadTextFile,
+            Self::ListDirectory,
+            Self::SearchFiles,
+            Self::ReplaceText,
+        ]
     }
 
     pub fn from_provider_alias(raw: &str) -> Option<Self> {
@@ -33,6 +40,11 @@ impl AcpToolName {
             | "list_directory" => Some(Self::ListDirectory),
             "bears/search_files" | "fs/search_files" | "fs.search_files" | "fs_search_files"
             | "search_files" => Some(Self::SearchFiles),
+            "bears/replace_text"
+            | "fs/replace_text"
+            | "fs.replace_text"
+            | "fs_replace_text"
+            | "replace_text" => Some(Self::ReplaceText),
             _ => None,
         }
     }
@@ -167,6 +179,16 @@ pub const ACP_SEARCH_FILES_TOOL: AcpToolDescriptor = AcpToolDescriptor {
     risk: "read_only",
 };
 
+pub const ACP_REPLACE_TEXT_TOOL: AcpToolDescriptor = AcpToolDescriptor {
+    provider_name: "fs_replace_text",
+    canonical_name: "acp.fs.replace_text",
+    adapter_method: "bears/replace_text",
+    client_method: "fs/replace_text",
+    title: "Replace text",
+    kind: "edit",
+    risk: "writes_workspace",
+};
+
 pub fn provider_tool_name_is_safe(name: &str) -> bool {
     !name.is_empty()
         && name
@@ -219,11 +241,27 @@ const ACP_SEARCH_FILES_POLICY: AcpToolPolicy = AcpToolPolicy {
     include_hidden_default: Some(false),
 };
 
+const ACP_REPLACE_TEXT_POLICY: AcpToolPolicy = AcpToolPolicy {
+    scope_basis: "acp:tools",
+    role_basis: "pair_agent",
+    allowed_roots_basis: "acp_session.workspace_roots",
+    path_containment: "adapter_enforced_absolute_path_under_allowed_roots",
+    approval_required: true,
+    sensitive_path_policy: "deny_sensitive_paths",
+    max_lines: None,
+    max_entries: None,
+    max_results: Some(1),
+    max_bytes: Some(1_048_576),
+    recursive_default: None,
+    include_hidden_default: Some(false),
+};
+
 pub fn acp_tool_policy(tool: AcpToolName) -> AcpToolPolicy {
     match tool {
         AcpToolName::ReadTextFile => ACP_READ_TEXT_FILE_POLICY,
         AcpToolName::ListDirectory => ACP_LIST_DIRECTORY_POLICY,
         AcpToolName::SearchFiles => ACP_SEARCH_FILES_POLICY,
+        AcpToolName::ReplaceText => ACP_REPLACE_TEXT_POLICY,
     }
 }
 
@@ -326,6 +364,30 @@ pub fn acp_client_tool_descriptor(tool: &AcpToolDescriptor) -> serde_json::Value
                 "required": ["path", "query"]
             }
         }),
+        "fs_replace_text" => json!({
+            "name": tool.provider_name,
+            "description": format!(
+                "ACP local workspace tool ({}, target={}, adapter={}, client={}, kind={}, risk={}). Replaces exact UTF-8 text in an existing workspace file through the local adapter. Approval is required and sensitive paths are denied.",
+                tool.canonical_name,
+                "acp_client",
+                tool.adapter_method,
+                tool.client_method,
+                tool.kind,
+                tool.risk,
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": { "type": "string", "description": "Absolute local file path under the workspace." },
+                    "old_text": { "type": "string", "description": "Exact text to replace. Must occur exactly once by default." },
+                    "new_text": { "type": "string", "description": "Replacement text." },
+                    "expected_replacements": { "type": "integer", "minimum": 1, "maximum": 1, "description": "Expected replacement count. Currently only 1 is allowed." },
+                    "allow_multiple": { "type": "boolean", "default": false, "description": "Reserved for future use; currently must be false." },
+                    "create_if_missing": { "type": "boolean", "default": false, "description": "Reserved for future use; currently must be false." }
+                },
+                "required": ["path", "old_text", "new_text"]
+            }
+        }),
         _ => unreachable!("unknown ACP tool descriptor: {}", tool.provider_name),
     }
 }
@@ -347,7 +409,7 @@ mod tests {
     fn descriptors_use_provider_name_only() {
         let descriptors = acp_client_tool_descriptors();
         let descriptors = descriptors.as_array().expect("descriptor array");
-        assert_eq!(descriptors.len(), 3);
+        assert_eq!(descriptors.len(), 4);
         for descriptor in descriptors {
             let name = descriptor["name"].as_str().expect("descriptor name");
             assert!(provider_tool_name_is_safe(name));
@@ -380,5 +442,11 @@ mod tests {
         assert_eq!(search_policy["max_results"], 200);
         assert_eq!(search_policy["max_bytes"], 1_048_576);
         assert_eq!(search_policy["approval_required"], true);
+
+        let replace_policy = acp_tool_policy_json_for_provider("fs_replace_text");
+        assert_eq!(replace_policy["risk"], "writes_workspace");
+        assert_eq!(replace_policy["sensitive_path_policy"], "deny_sensitive_paths");
+        assert_eq!(replace_policy["max_results"], 1);
+        assert_eq!(replace_policy["approval_required"], true);
     }
 }

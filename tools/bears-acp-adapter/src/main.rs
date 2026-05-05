@@ -69,6 +69,7 @@ struct ToolPolicy {
     max_bytes: Option<u64>,
     recursive_default: Option<bool>,
     include_hidden_default: Option<bool>,
+    sensitive_path_policy: Option<String>,
 }
 
 #[derive(Debug)]
@@ -922,6 +923,7 @@ fn session_context_from_params(params: &Value) -> Result<SessionContext> {
             "fs_read_text_file": true,
             "fs_list_directory": true,
             "fs_search_files": true,
+            "fs_replace_text": true,
         },
     });
     Ok(SessionContext {
@@ -1250,6 +1252,10 @@ fn policy_from_event(event: &Value) -> ToolPolicy {
             .map(|v| v.clamp(1, 5_242_880)),
         recursive_default: policy.get("recursive_default").and_then(Value::as_bool),
         include_hidden_default: policy.get("include_hidden_default").and_then(Value::as_bool),
+        sensitive_path_policy: policy
+            .get("sensitive_path_policy")
+            .and_then(Value::as_str)
+            .map(str::to_string),
     }
 }
 
@@ -1277,6 +1283,7 @@ async fn execute_local_tool(
             handle_direct_list_directory(adapter_state, session_id, &args, policy).await
         }
         "fs_search_files" => handle_direct_search_files(adapter_state, session_id, &args, policy).await,
+        "fs_replace_text" => handle_direct_replace_text(adapter_state, session_id, &args, policy).await,
         _ => Err(anyhow!(
             "unsupported Den tool_request tool_name {tool_name}"
         )),
@@ -1515,6 +1522,150 @@ async fn handle_direct_search_files(
             "include_hidden_default": policy.include_hidden_default,
         },
     }))
+}
+
+async fn handle_direct_replace_text(
+    adapter_state: &AdapterState,
+    session_id: &str,
+    args: &Value,
+    policy: &ToolPolicy,
+) -> Result<Value> {
+    let path = args
+        .get("path")
+        .and_then(Value::as_str)
+        .ok_or_else(|| anyhow!("fs_replace_text args missing path"))?;
+    let old_text = args
+        .get("old_text")
+        .and_then(Value::as_str)
+        .ok_or_else(|| anyhow!("fs_replace_text args missing old_text"))?;
+    let new_text = args
+        .get("new_text")
+        .and_then(Value::as_str)
+        .ok_or_else(|| anyhow!("fs_replace_text args missing new_text"))?;
+    if old_text.is_empty() {
+        return Err(anyhow!("fs_replace_text old_text must not be empty"));
+    }
+    if args
+        .get("create_if_missing")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+    {
+        return Err(anyhow!("fs_replace_text does not create files yet"));
+    }
+    if args
+        .get("allow_multiple")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+    {
+        return Err(anyhow!("fs_replace_text does not allow multiple replacements yet"));
+    }
+    let expected_replacements = args
+        .get("expected_replacements")
+        .and_then(Value::as_u64)
+        .unwrap_or(1);
+    if expected_replacements != 1 {
+        return Err(anyhow!(
+            "fs_replace_text currently requires expected_replacements=1"
+        ));
+    }
+    let policy_max_bytes = policy.max_bytes.unwrap_or(1_048_576).clamp(1, 5_242_880);
+    let context = session_context(adapter_state, session_id)?;
+    let path = normalize_requested_tool_path(path)?;
+    ensure_path_allowed_for_session(context, &path)?;
+    ensure_replace_text_path_allowed(&path, policy)?;
+    let started = std::time::Instant::now();
+    let metadata = fs::metadata(&path).with_context(|| format!("stat {}", path.display()))?;
+    if !metadata.is_file() {
+        return Err(anyhow!("fs_replace_text path must be an existing file"));
+    }
+    if metadata.len() > policy_max_bytes {
+        return Err(anyhow!(
+            "fs_replace_text file exceeds policy max_bytes: {} > {}",
+            metadata.len(),
+            policy_max_bytes
+        ));
+    }
+    let raw = fs::read_to_string(&path)
+        .with_context(|| format!("read text file for replace {}", path.display()))?;
+    let matches = raw.matches(old_text).count();
+    if matches != 1 {
+        return Err(anyhow!(
+            "fs_replace_text expected exactly 1 match for old_text, found {matches}"
+        ));
+    }
+    let updated = raw.replacen(old_text, new_text, 1);
+    fs::write(&path, updated.as_bytes())
+        .with_context(|| format!("write replaced text file {}", path.display()))?;
+    let content = format!(
+        "Replaced 1 occurrence in {} ({} bytes -> {} bytes)",
+        path.display(),
+        raw.len(),
+        updated.len()
+    );
+    eprintln!(
+        "bears-acp-adapter: replace_text session_id={} path={} bytes_before={} bytes_after={} duration_ms={}",
+        session_id,
+        path.display(),
+        raw.len(),
+        updated.len(),
+        started.elapsed().as_millis(),
+    );
+    Ok(json!({
+        "ok": true,
+        "path": path.to_string_lossy(),
+        "replacements": 1,
+        "bytes_before": raw.len(),
+        "bytes_after": updated.len(),
+        "source": "adapter_local",
+        "content": content,
+        "policy": {
+            "max_bytes": policy_max_bytes,
+            "sensitive_path_policy": policy.sensitive_path_policy,
+            "max_replacements": 1,
+            "create_files": false,
+        },
+    }))
+}
+
+fn ensure_replace_text_path_allowed(path: &Path, policy: &ToolPolicy) -> Result<()> {
+    if policy.sensitive_path_policy.as_deref() == Some("deny_sensitive_paths")
+        && is_sensitive_path(path)
+    {
+        return Err(anyhow!(
+            "fs_replace_text denied sensitive path {}",
+            path.display()
+        ));
+    }
+    if policy.include_hidden_default != Some(true) && is_hidden_path_component(path, Path::new("/"))
+    {
+        return Err(anyhow!(
+            "fs_replace_text denied hidden path {}",
+            path.display()
+        ));
+    }
+    Ok(())
+}
+
+fn is_sensitive_path(path: &Path) -> bool {
+    let path_str = path.to_string_lossy();
+    if path_str.contains("/.git/") || path_str.ends_with("/.git") {
+        return true;
+    }
+    path.components().any(|component| {
+        let Some(part) = component.as_os_str().to_str() else {
+            return false;
+        };
+        let lower = part.to_ascii_lowercase();
+        lower == ".env"
+            || lower.starts_with(".env.")
+            || lower.contains("id_rsa")
+            || lower.contains("id_ed25519")
+            || lower.contains("private_key")
+            || lower.contains("secret")
+            || lower.contains("token")
+            || lower.ends_with(".pem")
+            || lower.ends_with(".key")
+    })
 }
 
 fn session_context<'a>(
@@ -3243,6 +3394,104 @@ mod tests {
         assert_eq!(result["include_hidden"], true);
         assert_eq!(result["policy"]["max_results"], 1);
         assert_eq!(result["policy"]["applied_limit"], 1);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn replace_text_successfully_edits_existing_file() {
+        let root = unique_test_dir("replace-success");
+        let file = root.join("a.txt");
+        fs::write(&file, "hello old world\n").unwrap();
+        let state = test_adapter_state("session-1", &root);
+        let result = handle_direct_replace_text(
+            &state,
+            "session-1",
+            &json!({
+                "path": file.to_string_lossy(),
+                "old_text": "old",
+                "new_text": "new"
+            }),
+            &ToolPolicy {
+                max_bytes: Some(1024),
+                sensitive_path_policy: Some("deny_sensitive_paths".to_string()),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(result["replacements"], 1);
+        assert_eq!(fs::read_to_string(&file).unwrap(), "hello new world\n");
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn replace_text_denies_multiple_matches_by_default() {
+        let root = unique_test_dir("replace-multiple");
+        let file = root.join("a.txt");
+        fs::write(&file, "old old\n").unwrap();
+        let state = test_adapter_state("session-1", &root);
+        let result = handle_direct_replace_text(
+            &state,
+            "session-1",
+            &json!({
+                "path": file.to_string_lossy(),
+                "old_text": "old",
+                "new_text": "new"
+            }),
+            &ToolPolicy::default(),
+        )
+        .await;
+        assert!(format!("{:#}", result.unwrap_err()).contains("expected exactly 1 match"));
+        assert_eq!(fs::read_to_string(&file).unwrap(), "old old\n");
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn replace_text_denies_sensitive_paths() {
+        let root = unique_test_dir("replace-sensitive");
+        let file = root.join(".env");
+        fs::write(&file, "TOKEN=old\n").unwrap();
+        let state = test_adapter_state("session-1", &root);
+        let result = handle_direct_replace_text(
+            &state,
+            "session-1",
+            &json!({
+                "path": file.to_string_lossy(),
+                "old_text": "old",
+                "new_text": "new"
+            }),
+            &ToolPolicy {
+                sensitive_path_policy: Some("deny_sensitive_paths".to_string()),
+                ..Default::default()
+            },
+        )
+        .await;
+        assert!(format!("{:#}", result.unwrap_err()).contains("denied sensitive path"));
+        assert_eq!(fs::read_to_string(&file).unwrap(), "TOKEN=old\n");
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn replace_text_applies_policy_max_bytes() {
+        let root = unique_test_dir("replace-max-bytes");
+        let file = root.join("a.txt");
+        fs::write(&file, "old text longer than five bytes\n").unwrap();
+        let state = test_adapter_state("session-1", &root);
+        let result = handle_direct_replace_text(
+            &state,
+            "session-1",
+            &json!({
+                "path": file.to_string_lossy(),
+                "old_text": "old",
+                "new_text": "new"
+            }),
+            &ToolPolicy {
+                max_bytes: Some(5),
+                ..Default::default()
+            },
+        )
+        .await;
+        assert!(format!("{:#}", result.unwrap_err()).contains("exceeds policy max_bytes"));
         let _ = fs::remove_dir_all(root);
     }
 

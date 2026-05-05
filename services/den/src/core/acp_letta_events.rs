@@ -298,6 +298,22 @@ fn missing_required_tool_arg(tool: AcpToolName, args: &serde_json::Value) -> Opt
                 None
             }
         }
+        AcpToolName::ReplaceText => {
+            if args
+                .get("path")
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.trim().is_empty())
+                .is_none()
+            {
+                Some("path")
+            } else if args.get("old_text").and_then(|v| v.as_str()).is_none() {
+                Some("old_text")
+            } else if args.get("new_text").and_then(|v| v.as_str()).is_none() {
+                Some("new_text")
+            } else {
+                None
+            }
+        }
     }
 }
 
@@ -680,6 +696,28 @@ mod tests {
     }
 
     #[test]
+    fn maps_replace_text_tool_call() {
+        let event = tool_call_event(
+            "fs_replace_text",
+            serde_json::json!({
+                "path": "/workspace/a.txt",
+                "old_text": "before",
+                "new_text": "after"
+            }),
+        );
+        let mapped = map_native_letta_stream_event_to_acp_event(&event).expect("mapped event");
+        match mapped {
+            AcpGatewayEvent::ToolRequest { tool_name, kind, args, .. } => {
+                assert_eq!(tool_name, "fs_replace_text");
+                assert_eq!(kind, "edit");
+                assert_eq!(args["old_text"], "before");
+                assert_eq!(args["new_text"], "after");
+            }
+            other => panic!("unexpected event: {other:?}"),
+        }
+    }
+
+    #[test]
     fn search_files_requires_query() {
         let event = tool_call_event(
             "fs_search_files",
@@ -696,6 +734,23 @@ mod tests {
                 assert_eq!(error_type.as_deref(), Some("invalid_tool_arguments"));
                 assert!(message.contains("fs_search_files"));
                 assert_eq!(context.unwrap()["missing"], "query");
+            }
+            other => panic!("unexpected event: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn replace_text_requires_new_text() {
+        let event = tool_call_event(
+            "fs_replace_text",
+            serde_json::json!({ "path": "/workspace/a.txt", "old_text": "before" }),
+        );
+        let mapped = map_native_letta_stream_event_to_acp_event(&event).expect("mapped event");
+        match mapped {
+            AcpGatewayEvent::Error { error_type, message, context, .. } => {
+                assert_eq!(error_type.as_deref(), Some("invalid_tool_arguments"));
+                assert!(message.contains("fs_replace_text"));
+                assert_eq!(context.unwrap()["missing"], "new_text");
             }
             other => panic!("unexpected event: {other:?}"),
         }

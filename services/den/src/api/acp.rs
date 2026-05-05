@@ -598,11 +598,11 @@ fn acp_direct_tool_prompt_context(
     format!(
         concat!(
             "\n\n<system-reminder>",
-            "BEARS ACP direct local read-only workspace tools are available for this turn. ",
-            "Use `fs_list_directory` with {{\"path\":\"/absolute/dir\",\"limit\":200}} to discover files, `fs_search_files` with {{\"path\":\"/absolute/path\",\"query\":\"text\",\"limit\":50}} to search, and `fs_read_text_file` with {{\"path\":\"/absolute/file\",\"line\":1,\"limit\":400}} to read. ",
-            "Den routes these through the local ACP adapter using read-only workspace policy. Current ACP session id is `{session_id}`. ",
+            "BEARS ACP direct local workspace tools are available for this turn. ",
+            "Use `fs_list_directory` with {{\"path\":\"/absolute/dir\",\"limit\":200}} to discover files, `fs_search_files` with {{\"path\":\"/absolute/path\",\"query\":\"text\",\"limit\":50}} to search, `fs_read_text_file` with {{\"path\":\"/absolute/file\",\"line\":1,\"limit\":400}} to read, and `fs_replace_text` with {{\"path\":\"/absolute/file\",\"old_text\":\"exact\",\"new_text\":\"replacement\"}} to edit existing files. ",
+            "Den routes these through the local ACP adapter using workspace policy; edits require approval and sensitive paths are denied. Current ACP session id is `{session_id}`. ",
             "Use absolute paths under these workspace roots: {roots}. ",
-            "Do not guess file contents; discover, search, or read files and use the returned content. ",
+            "Do not guess file contents; discover, search, or read files before editing and use the returned content. ",
             "</system-reminder>"
         ),
         session_id = session_id,
