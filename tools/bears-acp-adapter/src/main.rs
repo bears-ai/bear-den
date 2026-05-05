@@ -63,7 +63,22 @@ struct AdapterSharedState {
     transport: JsonRpcTransport,
     session_contexts: Arc<TokioMutex<HashMap<String, SessionContext>>>,
     tool_tasks: ToolTaskRegistry,
+    approval_cache: ApprovalCache,
     cancellation_tx: broadcast::Sender<String>,
+}
+
+#[derive(Clone, Default)]
+struct ApprovalCache {
+    entries: Arc<TokioMutex<HashMap<String, ApprovalRecord>>>,
+}
+
+#[allow(dead_code)]
+#[derive(Clone, Debug)]
+struct ApprovalRecord {
+    session_id: String,
+    tool_name: String,
+    root_fingerprint: String,
+    created_at: std::time::Instant,
 }
 
 #[derive(Clone, Default)]
@@ -80,6 +95,54 @@ struct ToolTaskRecord {
     phase: ToolTaskPhase,
     started_at: std::time::Instant,
     updated_at: std::time::Instant,
+}
+
+impl ApprovalCache {
+    fn key(session_id: &str, tool_name: &str) -> String {
+        format!("{session_id}\n{tool_name}")
+    }
+
+    async fn remember(&self, context: &SessionContext, session_id: &str, tool_name: &str) {
+        let record = ApprovalRecord {
+            session_id: session_id.to_string(),
+            tool_name: tool_name.to_string(),
+            root_fingerprint: approval_root_fingerprint(context),
+            created_at: std::time::Instant::now(),
+        };
+        self.entries
+            .lock()
+            .await
+            .insert(Self::key(session_id, tool_name), record);
+    }
+
+    async fn is_allowed(&self, context: &SessionContext, session_id: &str, tool_name: &str) -> bool {
+        self.entries
+            .lock()
+            .await
+            .get(&Self::key(session_id, tool_name))
+            .is_some_and(|record| {
+                record.session_id == session_id
+                    && record.tool_name == tool_name
+                    && record.root_fingerprint == approval_root_fingerprint(context)
+            })
+    }
+
+    async fn clear_session(&self, session_id: &str) {
+        let prefix = format!("{session_id}\n");
+        self.entries
+            .lock()
+            .await
+            .retain(|key, _| !key.starts_with(&prefix));
+    }
+}
+
+fn approval_root_fingerprint(context: &SessionContext) -> String {
+    let roots = if context.roots.is_empty() {
+        vec![context.cwd.clone()]
+    } else {
+        context.roots.clone()
+    };
+    roots.join("|")
 }
 
 impl ToolTaskRegistry {
@@ -562,6 +625,7 @@ async fn run() -> Result<()> {
         transport: adapter_state.transport.clone(),
         session_contexts: Arc::new(TokioMutex::new(HashMap::new())),
         tool_tasks: ToolTaskRegistry::default(),
+        approval_cache: ApprovalCache::default(),
         cancellation_tx,
     };
     tokio::spawn(read_stdin_messages(
@@ -1205,7 +1269,7 @@ async fn handle_request(
                     .await?;
                     return Ok(());
                 };
-                match handle_session_close(http, config, request.params).await {
+                match handle_session_close(http, config, &shared_state, request.params).await {
                     Ok(()) => {
                         write_response(id, Ok(serde_json::to_value(CloseSessionResponse::new())?))
                             .await?
@@ -2980,12 +3044,14 @@ fn session_lifecycle_result() -> Result<Value> {
 async fn handle_session_close(
     http: &reqwest::Client,
     config: &Config,
+    shared_state: &AdapterSharedState,
     params: Value,
 ) -> Result<()> {
     let session_id = params
         .get("sessionId")
         .and_then(Value::as_str)
         .ok_or_else(|| anyhow!("session/close params missing sessionId"))?;
+    shared_state.approval_cache.clear_session(session_id).await;
     post_session_lifecycle_action(http, config, session_id, "close").await
 }
 
@@ -2999,6 +3065,7 @@ async fn handle_session_cancel(
         .get("sessionId")
         .and_then(Value::as_str)
         .ok_or_else(|| anyhow!("session/cancel params missing sessionId"))?;
+    shared_state.approval_cache.clear_session(session_id).await;
     let _ = shared_state.cancellation_tx.send(session_id.to_string());
     post_session_lifecycle_action(http, config, session_id, "cancel").await
 }
@@ -3630,6 +3697,7 @@ fn spawn_tool_request_task(
             &config,
             &mut task_state,
             &shared_state.tool_tasks,
+            &shared_state.approval_cache,
             &session_id,
             &event,
         );
@@ -3689,6 +3757,7 @@ async fn handle_tool_request_event(
     config: &Config,
     adapter_state: &mut AdapterState,
     task_registry: &ToolTaskRegistry,
+    approval_cache: &ApprovalCache,
     session_id: &str,
     event: &Value,
 ) -> Result<()> {
@@ -3728,11 +3797,26 @@ async fn handle_tool_request_event(
     } else {
         None
     };
-    if event
-        .get("approval")
-        .and_then(|v| v.get("required"))
-        .and_then(Value::as_bool)
-        .unwrap_or(false)
+    let context_for_approval = session_context(adapter_state, session_id).ok().cloned();
+    let approval_reused = if let Some(context) = context_for_approval.as_ref() {
+        approval_cache.is_allowed(context, session_id, tool_name).await
+    } else {
+        false
+    };
+    if approval_reused {
+        eprintln!(
+            "bears-acp-adapter: approval_reused session_id={} tool_name={} path={}",
+            session_id,
+            tool_name,
+            tool_path(event).unwrap_or("<unknown>")
+        );
+    }
+    if !approval_reused
+        && event
+            .get("approval")
+            .and_then(|v| v.get("required"))
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
     {
         task_registry
             .set_phase(
@@ -3764,7 +3848,7 @@ async fn handle_tool_request_event(
         )
         .await?;
         let replace_plan_ref = replace_plan.as_ref();
-        if let Err(err) = request_tool_permission(
+        let permission_decision = request_tool_permission(
             adapter_state,
             session_id,
             tool_call_id,
@@ -3773,7 +3857,8 @@ async fn handle_tool_request_event(
             replace_plan_ref,
             &policy,
         )
-        .await
+        .await;
+        if let Err(err) = permission_decision
         {
             let message = format!("{err:#}");
             let local_err = if message.contains("timed out waiting for client response") {
@@ -3829,6 +3914,15 @@ async fn handle_tool_request_event(
                 ToolTaskPhase::PermissionGranted,
             )
             .await;
+        if permission_decision.as_ref().is_ok_and(|decision| decision.remember) {
+            if let Some(context) = context_for_approval.as_ref() {
+                approval_cache.remember(context, session_id, tool_name).await;
+                eprintln!(
+                    "bears-acp-adapter: approval_remembered session_id={} tool_name={} scope=workspace_roots",
+                    session_id, tool_name
+                );
+            }
+        }
         log_tool_task_phase(
             session_id,
             tool_call_id,
@@ -4070,7 +4164,7 @@ async fn request_tool_permission(
     event: &Value,
     replace_plan: Option<&ReplaceTextPlan>,
     policy: &ToolPolicy,
-) -> Result<()> {
+) -> Result<PermissionDecision> {
     let path = event
         .get("args")
         .and_then(|v| v.get("path"))
@@ -4102,8 +4196,18 @@ async fn request_tool_permission(
         session_id.to_string(),
         tool_call,
         vec![
-            PermissionOption::new("allow", "Allow", PermissionOptionKind::AllowOnce),
-            PermissionOption::new("reject", "Deny", PermissionOptionKind::RejectOnce),
+            PermissionOption::new("allow", "Allow once", PermissionOptionKind::AllowOnce),
+            PermissionOption::new(
+                "allow_always",
+                "Always allow local file operations in this session",
+                PermissionOptionKind::AllowAlways,
+            ),
+            PermissionOption::new("reject", "Deny once", PermissionOptionKind::RejectOnce),
+            PermissionOption::new(
+                "reject_always",
+                "Always deny this session",
+                PermissionOptionKind::RejectAlways,
+            ),
         ],
     );
     let response = adapter_state
@@ -4118,26 +4222,44 @@ async fn request_tool_permission(
         return Err(anyhow!("permission request failed: {error}"));
     }
     let result = response.get("result").cloned().unwrap_or(Value::Null);
-    let approved = parse_permission_approved(&result)?;
-    if approved {
-        Ok(())
+    let decision = parse_permission_decision(&result)?;
+    if decision.approved {
+        Ok(decision)
     } else {
         Err(anyhow!("permission denied for {tool_name} on {path}"))
     }
 }
 
-fn parse_permission_approved(result: &Value) -> Result<bool> {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct PermissionDecision {
+    approved: bool,
+    remember: bool,
+}
+
+fn parse_permission_decision(result: &Value) -> Result<PermissionDecision> {
     if let Ok(response) = serde_json::from_value::<RequestPermissionResponse>(result.clone()) {
         return Ok(match response.outcome {
             RequestPermissionOutcome::Selected(selected) => {
                 let id = selected.option_id.to_string();
-                matches!(id.as_str(), "allow" | "approve" | "approved" | "yes")
+                PermissionDecision {
+                    approved: matches!(
+                        id.as_str(),
+                        "allow" | "allow_always" | "approve" | "approved" | "yes"
+                    ),
+                    remember: matches!(id.as_str(), "allow_always"),
+                }
             }
-            RequestPermissionOutcome::Cancelled => false,
-            _ => false,
+            RequestPermissionOutcome::Cancelled => PermissionDecision {
+                approved: false,
+                remember: false,
+            },
+            _ => PermissionDecision {
+                approved: false,
+                remember: false,
+            },
         });
     }
-    Ok(result
+    let approved = result
         .get("approved")
         .or_else(|| result.get("approve"))
         .or_else(|| result.get("granted"))
@@ -4145,7 +4267,15 @@ fn parse_permission_approved(result: &Value) -> Result<bool> {
         .unwrap_or_else(|| {
             // Some clients answer `{}` after applying their own auto-approval policy.
             result.is_object()
-        }))
+        });
+    Ok(PermissionDecision {
+        approved,
+        remember: false,
+    })
+}
+
+fn parse_permission_approved(result: &Value) -> Result<bool> {
+    Ok(parse_permission_decision(result)?.approved)
 }
 
 async fn post_tool_result(
@@ -4914,6 +5044,42 @@ mod tests {
                 .route_response(&json!("missing"), json!({ "id": "missing" }))
                 .await
         );
+    }
+
+    #[tokio::test]
+    async fn approval_cache_remembers_and_clears_session_scope() {
+        let cache = ApprovalCache::default();
+        let context = SessionContext {
+            cwd: "/workspace".to_string(),
+            roots: vec!["/workspace".to_string()],
+            ..Default::default()
+        };
+        assert!(!cache
+            .is_allowed(&context, "session-1", "fs_read_text_file")
+            .await);
+        cache
+            .remember(&context, "session-1", "fs_read_text_file")
+            .await;
+        assert!(cache
+            .is_allowed(&context, "session-1", "fs_read_text_file")
+            .await);
+        cache.clear_session("session-1").await;
+        assert!(!cache
+            .is_allowed(&context, "session-1", "fs_read_text_file")
+            .await);
+    }
+
+    #[test]
+    fn parse_permission_decision_remembers_allow_always() {
+        let result = json!({
+            "outcome": {
+                "outcome": "selected",
+                "optionId": "allow_always"
+            }
+        });
+        let decision = parse_permission_decision(&result).unwrap();
+        assert!(decision.approved);
+        assert!(decision.remember);
     }
 
     #[tokio::test]
