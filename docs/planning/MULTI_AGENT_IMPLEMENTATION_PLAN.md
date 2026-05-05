@@ -15,6 +15,138 @@ As of the current Den slice:
 - ACP is being migrated to strict `pair` role routing: no Codepool fallback and no `talk`/legacy fallback. Missing `pair` must produce an operator-actionable error directing admins to provision missing role agents.
 - Historical ACP naming such as `codepool_session_id` is being retired in favor of runtime-neutral session binding names such as `runtime_session_id`.
 
+## Runtime completion checklist
+
+This checklist translates the durable role model in [`../concepts/BEAR_AGENT_ROLES.md`](../concepts/BEAR_AGENT_ROLES.md) and the Den implementation spec in [`../../services/den/docs/bear-spec.md`](../../services/den/docs/bear-spec.md) into PR-sized remaining runtime work. The existing numbered phases below remain the broader rollout plan; this section is the current implementation queue for finishing the active multi-agent runtime.
+
+### A. Dropped single-agent cleanup — done
+
+- Runtime payloads use `role_agent_id`; Codepool no longer accepts `bear.letta_agent_id` or `metadata.bear_agent_id`.
+- Active docs describe `bears.letta_agent_id` as dropped/retired and route through `bear_agents(role, letta_agent_id)`.
+- Tests and fixtures should insert role agents through `bear_agents`; schema tests should assert the bear-level Letta id column is absent after migrations.
+
+### B. Role-scoped Den tools framework — done
+
+- Den tool descriptors are role-scoped with `allowed_roles`.
+- Den validates the trusted invocation context against `bear_agents` using `role_agent_id` and, when supplied, `agent_role`.
+- Architecture-critical tool names and JSON schemas are registered, even where handlers intentionally return not-yet-implemented errors.
+- Current registered runtime-critical tool groups:
+  - `talk` / `pair`: `den.task.write_intent`, `den.skill.propose`, work-plan read/update/handoff tools.
+  - `curate`: `den.task.approve_intent`, `den.task.reject_intent`, `den.core.write_result_summary`, `den.skill.approve_proposal`, `den.skill.reject_proposal`, `den.skill.propose`, work-plan read tools.
+  - `work`: `den.run.write_result`, work-plan read/update tools, `den.skill.propose`.
+  - `watch`: `den.observation.write`, `den.skill.propose`.
+
+### C. Task intent capture for `talk` and `pair` — next
+
+Goal: `talk` and `pair` can capture requests for autonomous or external-effect work without executing that work directly.
+
+Tasks:
+
+1. Implement the `den.task.write_intent` handler.
+2. Validate task intent payloads against [`../architecture/tasks-schema.md`](../architecture/tasks-schema.md): id format, lifecycle starting at `pending_review`, schedule/subscription validity, non-empty tools/scope, no wildcard scope, bounded body length, and source metadata.
+3. Write intents only to the caller role's branch path: `talk/tasks/` for `talk`, `pair/tasks/` for `pair`.
+4. Commit and push through the approved MemFS path.
+5. Add tests for valid `talk` and `pair` intents, invalid schema, wrong-role access, wrong-path access, and no direct work dispatch.
+
+Acceptance:
+
+- A `talk` or `pair` agent can write a pending task intent through Den.
+- No other role can call `den.task.write_intent`.
+- The handler cannot write outside the caller role's task-intent path.
+- Invalid or unsafe task intents are rejected before any MemFS write.
+
+### D. Skill proposal and review lifecycle
+
+Goal: any role can propose durable skills, while only `curate` can approve or reject installation into the canonical skill manifest.
+
+Tasks:
+
+1. Implement `den.skill.propose` using `bear_skill_proposals` with payload validation, provenance, content hash, and proposed role applicability.
+2. Implement `den.skill.approve_proposal` and `den.skill.reject_proposal` for `curate` only.
+3. On approval, update `bear_skills_manifest`, record reviewer metadata, and trigger provisioning/reconciliation for affected roles.
+4. Replace placeholder skill projection hashing in role config with a hash of the role-relevant manifest slice.
+5. Add tests for proposal creation, invalid payload rejection, curate-only approval/rejection, manifest updates, and affected-role reconciliation triggers.
+
+Acceptance:
+
+- Agents cannot install skills directly through Den; proposals enter `pending_review`.
+- `curate` can approve/reject proposals with audit data.
+- Approved skills update the manifest and are reflected in role reconciliation inputs.
+
+### E. Curate review runtime
+
+Goal: `curate` becomes the semantic integration and review authority described in the role model.
+
+Tasks:
+
+1. Add a Den-controlled curate cycle runner, initially admin-triggered or worker-triggered.
+2. Gather pending task intents, skill proposals, watch observations, and work results into a bounded review context.
+3. Invoke the `curate` role agent via the Letta API with only curate-appropriate Den tools.
+4. Implement durable review outcomes through Den tools rather than raw cross-branch writes.
+5. Add operator visibility for cycle status, failures, and pending review queues.
+
+Acceptance:
+
+- `curate` can approve/reject task intents and skill proposals through Den tools.
+- `curate` can promote reviewed durable learnings into `core/` through Den-controlled writers.
+- `curate` has no outbound external communication tools.
+
+### F. Work dispatcher and result lifecycle
+
+Goal: `work` executes only approved tasks within a Den-issued run context.
+
+Tasks:
+
+1. Index or scan approved `core/tasks/` definitions as the dispatch source of truth.
+2. Create a Den run context containing task id, run id, allowed tools, approved external scopes, limits, and result path.
+3. Add a Codepool/Letta Code invocation path for the `work` role instead of reusing the hardcoded `talk` path.
+4. Implement `den.run.write_result` with schema validation for `work/results/<task-id>/<run-id>.md`.
+5. Enforce that `work` cannot self-approve, exceed the task scope, or write outside `work/`.
+6. Add tests for dispatch, scoped tool policy, result validation, and rejected out-of-scope attempts.
+
+Acceptance:
+
+- Den dispatches approved tasks to the `work` role.
+- `work` receives and is constrained by a Den run context.
+- Results are written only through `den.run.write_result` and pass schema validation.
+
+### G. Watch ingestion and observation lifecycle
+
+Goal: `watch` receives inbound external events and writes observations for `curate` review without taking outbound action.
+
+Tasks:
+
+1. Implement subscription registry APIs and/or operator UI backed by `bear_subscriptions`.
+2. Add webhook, polling, queue, or stream ingestion paths as needed by configured subscription sources.
+3. Deliver inbound events to the `watch` role with Den-issued event context.
+4. Implement `den.observation.write` with schema validation for `watch/observations/<observation-id>.md`.
+5. Route observations into the curate review queue.
+6. Add tests for event validation, watch-only observation writes, no outbound action, and curate review handoff.
+
+Acceptance:
+
+- `watch` can record structured inbound observations.
+- `watch` cannot dispatch work or promote memory directly.
+- Observations become curate-reviewable inputs.
+
+### H. Trust-boundary hardening and end-to-end proof
+
+Goal: prove the architecture's safety boundaries are enforced by code, not only by prompts.
+
+Tasks:
+
+1. Add role-aware tool roster tests for every role.
+2. Add MemFS write/read policy tests for role branches and schema-managed paths.
+3. Add end-to-end tests for `talk`/`pair` intent → `curate` approval → `work` dispatch → result → `curate` promotion.
+4. Add end-to-end tests for `watch` event → observation → `curate` review.
+5. Audit operator UI and docs so every Letta agent id is displayed with role context.
+
+Acceptance:
+
+- A new engineer can trace each role's runtime capabilities to tests.
+- No role can access tools or paths outside the trust model in [`../concepts/BEAR_AGENT_ROLES.md`](../concepts/BEAR_AGENT_ROLES.md).
+- The full cooperation loop is covered by automated tests or documented smoke tests.
+
 ## Glossary (read first)
 
 - **Bear** — a logical agent identity. Implemented as a quintet of Letta agents (talk, pair, curate, work, watch) sharing memory.
