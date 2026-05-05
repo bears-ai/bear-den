@@ -106,9 +106,79 @@ struct ReplaceTextPlan {
     policy_allow_multiple: bool,
 }
 
+#[allow(dead_code)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum LocalToolStatus {
+    Ok,
+    Error,
+    PermissionDenied,
+    Timeout,
+    Cancelled,
+    Unsupported,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ToolTaskPhase {
+    Received,
+    PermissionRequested,
+    PermissionGranted,
+    PermissionDenied,
+    PermissionTimeout,
+    ExecutionStarted,
+    ExecutionSucceeded,
+    ExecutionFailed,
+    ResultPosted,
+    ResultPostFailed,
+}
+
+impl ToolTaskPhase {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Received => "received",
+            Self::PermissionRequested => "permission_requested",
+            Self::PermissionGranted => "permission_granted",
+            Self::PermissionDenied => "permission_denied",
+            Self::PermissionTimeout => "permission_timeout",
+            Self::ExecutionStarted => "execution_started",
+            Self::ExecutionSucceeded => "execution_succeeded",
+            Self::ExecutionFailed => "execution_failed",
+            Self::ResultPosted => "result_posted",
+            Self::ResultPostFailed => "result_post_failed",
+        }
+    }
+}
+
+impl LocalToolStatus {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Ok => "ok",
+            Self::Error => "error",
+            Self::PermissionDenied => "permission_denied",
+            Self::Timeout => "timeout",
+            Self::Cancelled => "cancelled",
+            Self::Unsupported => "unsupported",
+        }
+    }
+}
+
+fn log_tool_task_phase(
+    session_id: &str,
+    tool_call_id: &str,
+    tool_name: &str,
+    phase: ToolTaskPhase,
+) {
+    eprintln!(
+        "bears-acp-adapter: tool_task phase={} session_id={} tool_call_id={} tool_name={}",
+        phase.as_str(),
+        session_id,
+        tool_call_id,
+        tool_name
+    );
+}
+
 #[derive(Debug)]
 struct LocalToolError {
-    status: &'static str,
+    status: LocalToolStatus,
     message: String,
     diagnostic: Value,
 }
@@ -116,7 +186,7 @@ struct LocalToolError {
 impl LocalToolError {
     fn error(message: impl Into<String>) -> Self {
         Self {
-            status: "error",
+            status: LocalToolStatus::Error,
             message: message.into(),
             diagnostic: json!({}),
         }
@@ -124,7 +194,7 @@ impl LocalToolError {
 
     fn permission_denied(message: impl Into<String>) -> Self {
         Self {
-            status: "permission_denied",
+            status: LocalToolStatus::PermissionDenied,
             message: message.into(),
             diagnostic: json!({
                 "component": "bears-acp-adapter",
@@ -132,6 +202,22 @@ impl LocalToolError {
                 "reason": "client_permission_rejected",
             }),
         }
+    }
+
+    fn timeout(message: impl Into<String>) -> Self {
+        Self {
+            status: LocalToolStatus::Timeout,
+            message: message.into(),
+            diagnostic: json!({
+                "component": "bears-acp-adapter",
+                "phase": "adapter_permission_timeout",
+                "reason": "client_permission_timeout",
+            }),
+        }
+    }
+
+    fn status_str(&self) -> &'static str {
+        self.status.as_str()
     }
 }
 
@@ -201,7 +287,8 @@ struct SseStreamDiagnostics {
     event_types: HashMap<String, usize>,
     unknown_event_samples: Vec<String>,
     saw_turn_complete: bool,
-    saw_assistant_output: bool,
+    saw_visible_output: bool,
+    saw_tool_activity: bool,
     saw_error: bool,
 }
 
@@ -225,13 +312,14 @@ impl SseStreamDiagnostics {
 
     fn summary(&self) -> String {
         format!(
-            "frames={}, events={}, event_types={:?}, unknown_samples={:?}, saw_turn_complete={}, saw_assistant_output={}, saw_error={}",
+            "frames={}, events={}, event_types={:?}, unknown_samples={:?}, saw_turn_complete={}, saw_visible_output={}, saw_tool_activity={}, saw_error={}",
             self.frames,
             self.events,
             self.event_types,
             self.unknown_event_samples,
             self.saw_turn_complete,
-            self.saw_assistant_output,
+            self.saw_visible_output,
+            self.saw_tool_activity,
             self.saw_error,
         )
     }
@@ -240,9 +328,19 @@ impl SseStreamDiagnostics {
 #[derive(Default)]
 struct SseFrameOutcome {
     saw_done: bool,
-    saw_assistant_output: bool,
+    saw_visible_output: bool,
+    saw_tool_activity: bool,
     saw_error: bool,
     upstream_errors: Vec<String>,
+}
+
+fn stream_has_successful_terminal_condition(
+    saw_visible_output: bool,
+    saw_error: bool,
+    saw_done: bool,
+    saw_tool_activity: bool,
+) -> bool {
+    saw_visible_output || saw_error || (saw_done && saw_tool_activity)
 }
 
 #[tokio::main]
@@ -2854,7 +2952,8 @@ async fn handle_prompt(
 
     let mut stream_diagnostics = SseStreamDiagnostics::default();
     let mut saw_done = false;
-    let mut saw_assistant_output = false;
+    let mut saw_visible_output = false;
+    let mut saw_tool_activity = false;
     let mut saw_error = false;
     let mut upstream_errors = Vec::new();
     let mut buffer = Vec::<u8>::new();
@@ -2874,7 +2973,8 @@ async fn handle_prompt(
             )
             .await?;
             saw_done |= outcome.saw_done;
-            saw_assistant_output |= outcome.saw_assistant_output;
+            saw_visible_output |= outcome.saw_visible_output;
+            saw_tool_activity |= outcome.saw_tool_activity;
             saw_error |= outcome.saw_error;
             upstream_errors.extend(outcome.upstream_errors);
         }
@@ -2891,15 +2991,16 @@ async fn handle_prompt(
         )
         .await?;
         saw_done |= outcome.saw_done;
-        saw_assistant_output |= outcome.saw_assistant_output;
+        saw_visible_output |= outcome.saw_visible_output;
+        saw_tool_activity |= outcome.saw_tool_activity;
         saw_error |= outcome.saw_error;
         upstream_errors.extend(outcome.upstream_errors);
     }
 
     if !upstream_errors.is_empty() {
-        if saw_assistant_output {
+        if saw_visible_output {
             eprintln!(
-                "bears-acp-adapter: ignoring upstream error after assistant output: {}",
+                "bears-acp-adapter: ignoring upstream error after visible output: {}",
                 upstream_errors.join("; ")
             );
         } else {
@@ -2915,9 +3016,14 @@ async fn handle_prompt(
         session_id,
         stream_diagnostics.summary()
     );
-    if !saw_assistant_output && !saw_error {
+    if !stream_has_successful_terminal_condition(
+        saw_visible_output,
+        saw_error,
+        saw_done,
+        saw_tool_activity,
+    ) {
         return Err(anyhow!(
-            "BEARS ACP stream completed without assistant output or an error. Diagnostics: {}",
+            "BEARS ACP stream completed without visible output, tool activity, or an error. Diagnostics: {}",
             stream_diagnostics.summary()
         ));
     }
@@ -3264,7 +3370,10 @@ async fn handle_sse_frame(
         let ty = event.get("type").and_then(Value::as_str).unwrap_or("");
         if ty == "assistant_text_delta" || ty == "status_text" {
             let text = event.get("text").and_then(Value::as_str).unwrap_or("");
-            outcome.saw_assistant_output |= !text.is_empty();
+            outcome.saw_visible_output |= !text.is_empty();
+        } else if ty == "tool_request" {
+            outcome.saw_tool_activity = true;
+            diagnostics.saw_tool_activity = true;
         } else if ty == "error" {
             outcome.saw_error = true;
             diagnostics.saw_error = true;
@@ -3274,7 +3383,7 @@ async fn handle_sse_frame(
             handle_den_event(config, adapter_state, shared_state, session_id, &event).await?;
         outcome.saw_done |= handled;
         diagnostics.saw_turn_complete |= handled;
-        diagnostics.saw_assistant_output |= outcome.saw_assistant_output;
+        diagnostics.saw_visible_output |= outcome.saw_visible_output;
         if !matches!(
             ty,
             "assistant_text_delta"
@@ -3371,6 +3480,7 @@ async fn handle_tool_request_event(
         .get("tool_name")
         .and_then(Value::as_str)
         .ok_or_else(|| anyhow!("tool_request missing tool_name"))?;
+    log_tool_task_phase(session_id, tool_call_id, tool_name, ToolTaskPhase::Received);
     send_tool_call_update(session_id, tool_call_id, "pending", "Preparing local tool").await?;
     let args = event.get("args").cloned().unwrap_or_else(|| json!({}));
     let policy = policy_from_event(event);
@@ -3390,6 +3500,12 @@ async fn handle_tool_request_event(
         .and_then(Value::as_bool)
         .unwrap_or(false)
     {
+        log_tool_task_phase(
+            session_id,
+            tool_call_id,
+            tool_name,
+            ToolTaskPhase::PermissionRequested,
+        );
         send_tool_call_update(
             session_id,
             tool_call_id,
@@ -3409,7 +3525,24 @@ async fn handle_tool_request_event(
         )
         .await
         {
-            let local_err = LocalToolError::permission_denied(format!("{err:#}"));
+            let message = format!("{err:#}");
+            let local_err = if message.contains("timed out waiting for client response") {
+                log_tool_task_phase(
+                    session_id,
+                    tool_call_id,
+                    tool_name,
+                    ToolTaskPhase::PermissionTimeout,
+                );
+                LocalToolError::timeout(message)
+            } else {
+                log_tool_task_phase(
+                    session_id,
+                    tool_call_id,
+                    tool_name,
+                    ToolTaskPhase::PermissionDenied,
+                );
+                LocalToolError::permission_denied(message)
+            };
             post_local_tool_error_result(
                 config,
                 session_id,
@@ -3422,9 +3555,21 @@ async fn handle_tool_request_event(
             .await?;
             return Ok(());
         }
+        log_tool_task_phase(
+            session_id,
+            tool_call_id,
+            tool_name,
+            ToolTaskPhase::PermissionGranted,
+        );
     }
     send_tool_call_update(session_id, tool_call_id, "pending", "Running local tool").await?;
     let started = std::time::Instant::now();
+    log_tool_task_phase(
+        session_id,
+        tool_call_id,
+        tool_name,
+        ToolTaskPhase::ExecutionStarted,
+    );
     let result = if let Some(plan) = replace_plan {
         let context = session_context(adapter_state, session_id)?;
         plan.apply(context, &policy)
@@ -3439,14 +3584,24 @@ async fn handle_tool_request_event(
         "approval_request_id": event.get("approval_request_id").and_then(Value::as_str),
         "tool_name": tool_name,
         "diagnostic": {
+            "component": "bears-acp-adapter",
             "adapter_version": env!("CARGO_PKG_VERSION"),
             "phase": "adapter_execution_started",
+            "session_id": session_id,
+            "tool_call_id": tool_call_id,
+            "tool_name": tool_name,
             "duration_ms": started.elapsed().as_millis(),
         }
     });
     match result {
         Ok(value) => {
             status = "ok";
+            log_tool_task_phase(
+                session_id,
+                tool_call_id,
+                tool_name,
+                ToolTaskPhase::ExecutionSucceeded,
+            );
             payload["status"] = json!(status);
             let preview = tool_completion_preview(tool_name, &value);
             payload["content"] = value.get("content").cloned().unwrap_or_else(|| json!(""));
@@ -3455,7 +3610,13 @@ async fn handle_tool_request_event(
         }
         Err(err) => {
             let local_err = LocalToolError::from(err);
-            status = local_err.status;
+            status = local_err.status_str();
+            log_tool_task_phase(
+                session_id,
+                tool_call_id,
+                tool_name,
+                ToolTaskPhase::ExecutionFailed,
+            );
             payload["status"] = json!(status);
             payload["content"] = json!(local_err.message);
             payload["diagnostic"]["phase"] = json!("adapter_execution_failed");
@@ -3469,7 +3630,21 @@ async fn handle_tool_request_event(
             .await?;
         }
     }
-    post_tool_result(config, session_id, tool_call_id, payload).await?;
+    if let Err(err) = post_tool_result(config, session_id, tool_call_id, payload).await {
+        log_tool_task_phase(
+            session_id,
+            tool_call_id,
+            tool_name,
+            ToolTaskPhase::ResultPostFailed,
+        );
+        return Err(err);
+    }
+    log_tool_task_phase(
+        session_id,
+        tool_call_id,
+        tool_name,
+        ToolTaskPhase::ResultPosted,
+    );
     Ok(())
 }
 
@@ -3503,12 +3678,16 @@ async fn post_local_tool_error_result(
         "tool_call_id": tool_call_id,
         "approval_request_id": event.get("approval_request_id").and_then(Value::as_str),
         "tool_name": tool_name,
-        "status": local_err.status,
+        "status": local_err.status_str(),
         "content": local_err.message,
         "structured_content": {},
         "diagnostic": {
+            "component": "bears-acp-adapter",
             "adapter_version": env!("CARGO_PKG_VERSION"),
             "phase": "adapter_execution_failed",
+            "session_id": session_id,
+            "tool_call_id": tool_call_id,
+            "tool_name": tool_name,
             "duration_ms": started.elapsed().as_millis(),
         }
     });
@@ -3912,6 +4091,38 @@ mod tests {
         state
     }
 
+    #[test]
+    fn stream_terminal_condition_allows_visible_output_error_or_tool_completion() {
+        assert!(stream_has_successful_terminal_condition(
+            true, false, false, false
+        ));
+        assert!(stream_has_successful_terminal_condition(
+            false, true, false, false
+        ));
+        assert!(stream_has_successful_terminal_condition(
+            false, false, true, true
+        ));
+        assert!(!stream_has_successful_terminal_condition(
+            false, false, true, false
+        ));
+        assert!(!stream_has_successful_terminal_condition(
+            false, false, false, true
+        ));
+    }
+
+    #[test]
+    fn local_tool_status_strings_are_protocol_stable() {
+        assert_eq!(LocalToolStatus::Ok.as_str(), "ok");
+        assert_eq!(LocalToolStatus::Error.as_str(), "error");
+        assert_eq!(
+            LocalToolStatus::PermissionDenied.as_str(),
+            "permission_denied"
+        );
+        assert_eq!(LocalToolStatus::Timeout.as_str(), "timeout");
+        assert_eq!(LocalToolStatus::Cancelled.as_str(), "cancelled");
+        assert_eq!(LocalToolStatus::Unsupported.as_str(), "unsupported");
+    }
+
     #[tokio::test]
     async fn list_directory_enforces_root_containment() {
         let root = unique_test_dir("list-root");
@@ -4246,7 +4457,7 @@ mod tests {
     #[test]
     fn permission_denied_error_sets_status_and_diagnostic() {
         let err = LocalToolError::permission_denied("nope");
-        assert_eq!(err.status, "permission_denied");
+        assert_eq!(err.status_str(), "permission_denied");
         assert_eq!(err.diagnostic["reason"], "client_permission_rejected");
     }
 
