@@ -82,10 +82,7 @@ impl AcpToolName {
             | "list_directory" => Some(Self::ListDirectory),
             "bears/search_files" | "fs/search_files" | "fs.search_files" | "fs_search_files"
             | "search_files" => Some(Self::SearchFiles),
-            "bears/replace_text"
-            | "fs/replace_text"
-            | "fs.replace_text"
-            | "fs_replace_text"
+            "bears/replace_text" | "fs/replace_text" | "fs.replace_text" | "fs_replace_text"
             | "replace_text" => Some(Self::ReplaceText),
             _ => None,
         }
@@ -156,7 +153,7 @@ pub struct AcpToolPolicy {
     pub create_files: Option<bool>,
     pub allow_multiple: Option<bool>,
     pub deny_hidden_paths: Option<bool>,
-    pub tool_timeout_ms: u64,
+    pub total_timeout_ms: u64,
     pub permission_timeout_ms: u64,
 }
 
@@ -174,7 +171,8 @@ impl AcpToolPolicy {
             "provider_tool": descriptor.provider_name,
             "adapter_method": descriptor.adapter_method,
             "client_method": descriptor.client_method,
-            "tool_timeout_ms": self.tool_timeout_ms,
+            "tool_timeout_ms": self.total_timeout_ms,
+            "total_timeout_ms": self.total_timeout_ms,
             "permission_timeout_ms": self.permission_timeout_ms,
         });
         if let Some(max_lines) = self.max_lines {
@@ -275,7 +273,7 @@ const ACP_READ_TEXT_FILE_POLICY: AcpToolPolicy = AcpToolPolicy {
     create_files: None,
     allow_multiple: None,
     deny_hidden_paths: None,
-    tool_timeout_ms: 30_000,
+    total_timeout_ms: 150_000,
     permission_timeout_ms: 120_000,
 };
 
@@ -296,7 +294,7 @@ const ACP_LIST_DIRECTORY_POLICY: AcpToolPolicy = AcpToolPolicy {
     create_files: None,
     allow_multiple: None,
     deny_hidden_paths: None,
-    tool_timeout_ms: 30_000,
+    total_timeout_ms: 150_000,
     permission_timeout_ms: 120_000,
 };
 
@@ -317,7 +315,7 @@ const ACP_SEARCH_FILES_POLICY: AcpToolPolicy = AcpToolPolicy {
     create_files: None,
     allow_multiple: None,
     deny_hidden_paths: None,
-    tool_timeout_ms: 60_000,
+    total_timeout_ms: 180_000,
     permission_timeout_ms: 120_000,
 };
 
@@ -338,7 +336,7 @@ const ACP_REPLACE_TEXT_POLICY: AcpToolPolicy = AcpToolPolicy {
     create_files: Some(false),
     allow_multiple: Some(false),
     deny_hidden_paths: Some(true),
-    tool_timeout_ms: 30_000,
+    total_timeout_ms: 150_000,
     permission_timeout_ms: 120_000,
 };
 
@@ -631,7 +629,10 @@ mod tests {
         let list_policy = acp_tool_policy_json_for_provider("fs_list_directory");
         assert_eq!(list_policy["scope_basis"], "acp:tools");
         assert_eq!(list_policy["role_basis"], "pair_agent");
-        assert_eq!(list_policy["allowed_roots_basis"], "acp_session.workspace_roots");
+        assert_eq!(
+            list_policy["allowed_roots_basis"],
+            "acp_session.workspace_roots"
+        );
         assert_eq!(list_policy["max_entries"], 1000);
         assert_eq!(list_policy["include_hidden_default"], false);
 
@@ -642,7 +643,10 @@ mod tests {
 
         let replace_policy = acp_tool_policy_json_for_provider("fs_replace_text");
         assert_eq!(replace_policy["risk"], "writes_workspace");
-        assert_eq!(replace_policy["sensitive_path_policy"], "deny_sensitive_paths");
+        assert_eq!(
+            replace_policy["sensitive_path_policy"],
+            "deny_sensitive_paths"
+        );
         assert_eq!(replace_policy["max_replacements"], 1);
         assert_eq!(replace_policy["create_files"], false);
         assert_eq!(replace_policy["allow_multiple"], false);

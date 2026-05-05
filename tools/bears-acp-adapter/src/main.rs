@@ -50,6 +50,7 @@ struct AdapterState {
     client_capabilities: Value,
     session_contexts: HashMap<String, SessionContext>,
     pending_responses: HashMap<String, tokio::sync::oneshot::Sender<Value>>,
+    deferred_requests: VecDeque<JsonRpcRequest>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -280,8 +281,25 @@ async fn run() -> Result<()> {
 
     let mut adapter_state = AdapterState::default();
 
-    while let Some(message) = inbound_rx.recv().await {
+    while let Some(message) = next_inbound_message(&mut adapter_state, &mut inbound_rx).await {
         let value = match message {
+            InboundMessage::Request(value) if !adapter_state.pending_responses.is_empty() => {
+                match request_from_value(value) {
+                    Ok(request) => adapter_state.deferred_requests.push_back(request),
+                    Err(err) => {
+                        write_response(
+                            None,
+                            Err(json_rpc_error(
+                                -32700,
+                                "Parse error",
+                                Some(json!(err.to_string())),
+                            )),
+                        )
+                        .await?;
+                    }
+                }
+                continue;
+            }
             InboundMessage::Request(value) => value,
             InboundMessage::Response { id, value } => {
                 if let Some(tx) = adapter_state.pending_responses.remove(&id_key(&id)) {
@@ -561,6 +579,25 @@ async fn read_stdin_messages(tx: mpsc::Sender<InboundMessage>) {
     }
 }
 
+async fn next_inbound_message(
+    adapter_state: &mut AdapterState,
+    inbound_rx: &mut mpsc::Receiver<InboundMessage>,
+) -> Option<InboundMessage> {
+    if adapter_state.pending_responses.is_empty() {
+        if let Some(request) = adapter_state.deferred_requests.pop_front() {
+            let mut value = json!({
+                "method": request.method,
+                "params": request.params,
+            });
+            if let Some(id) = request.id {
+                value["id"] = id;
+            }
+            return Some(InboundMessage::Request(value));
+        }
+    }
+    inbound_rx.recv().await
+}
+
 fn request_from_value(value: Value) -> Result<JsonRpcRequest> {
     let method = value
         .get("method")
@@ -594,7 +631,13 @@ async fn handle_request(
         }
         "bears/read_text_file" => {
             if let Some(id) = request.id {
-                match handle_direct_read_text_file(adapter_state, request.params, &ToolPolicy::default()).await {
+                match handle_direct_read_text_file(
+                    adapter_state,
+                    request.params,
+                    &ToolPolicy::default(),
+                )
+                .await
+                {
                     Ok(result) => write_response(id, Ok(result)).await?,
                     Err(err) => {
                         write_response(
@@ -652,7 +695,11 @@ async fn handle_request(
                     session_id,
                     context.cwd,
                     context.roots.join(","),
-                    context.raw.get("direct_tools").cloned().unwrap_or(Value::Null)
+                    context
+                        .raw
+                        .get("direct_tools")
+                        .cloned()
+                        .unwrap_or(Value::Null)
                 );
                 adapter_state
                     .session_contexts
@@ -1324,7 +1371,9 @@ fn policy_from_event(event: &Value) -> ToolPolicy {
             .and_then(Value::as_u64)
             .map(|v| v.clamp(1, 5_242_880)),
         recursive_default: policy.get("recursive_default").and_then(Value::as_bool),
-        include_hidden_default: policy.get("include_hidden_default").and_then(Value::as_bool),
+        include_hidden_default: policy
+            .get("include_hidden_default")
+            .and_then(Value::as_bool),
         sensitive_path_policy: policy
             .get("sensitive_path_policy")
             .and_then(Value::as_str)
@@ -1336,9 +1385,7 @@ fn policy_from_event(event: &Value) -> ToolPolicy {
         create_files: policy.get("create_files").and_then(Value::as_bool),
         allow_multiple: policy.get("allow_multiple").and_then(Value::as_bool),
         deny_hidden_paths: policy.get("deny_hidden_paths").and_then(Value::as_bool),
-        permission_timeout_ms: policy
-            .get("permission_timeout_ms")
-            .and_then(Value::as_u64),
+        permission_timeout_ms: policy.get("permission_timeout_ms").and_then(Value::as_u64),
     }
 }
 
@@ -1365,8 +1412,12 @@ async fn execute_local_tool(
         "fs_list_directory" => {
             handle_direct_list_directory(adapter_state, session_id, &args, policy).await
         }
-        "fs_search_files" => handle_direct_search_files(adapter_state, session_id, &args, policy).await,
-        "fs_replace_text" => handle_direct_replace_text(adapter_state, session_id, &args, policy).await,
+        "fs_search_files" => {
+            handle_direct_search_files(adapter_state, session_id, &args, policy).await
+        }
+        "fs_replace_text" => {
+            handle_direct_replace_text(adapter_state, session_id, &args, policy).await
+        }
         _ => Err(anyhow!(
             "unsupported Den tool_request tool_name {tool_name}"
         )),
@@ -1671,7 +1722,9 @@ impl ReplaceTextArgs {
             .unwrap_or(false);
         let policy_allow_multiple = policy.allow_multiple.unwrap_or(false);
         if allow_multiple && !policy_allow_multiple {
-            return Err(anyhow!("fs_replace_text does not allow multiple replacements yet"));
+            return Err(anyhow!(
+                "fs_replace_text does not allow multiple replacements yet"
+            ));
         }
         let expected_replacements = args
             .get("expected_replacements")
@@ -1698,7 +1751,11 @@ impl ReplaceTextArgs {
 }
 
 impl ReplaceTextPlan {
-    fn preflight(context: &SessionContext, args: ReplaceTextArgs, policy: &ToolPolicy) -> Result<Self> {
+    fn preflight(
+        context: &SessionContext,
+        args: ReplaceTextArgs,
+        policy: &ToolPolicy,
+    ) -> Result<Self> {
         let policy_max_bytes = policy.max_bytes.unwrap_or(1_048_576).clamp(1, 5_242_880);
         let policy_max_replacements = policy.max_replacements.unwrap_or(1).clamp(1, 100);
         let policy_create_files = policy.create_files.unwrap_or(false);
@@ -1862,8 +1919,7 @@ fn ensure_replace_text_path_allowed(path: &Path, policy: &ToolPolicy) -> Result<
             path.display()
         ));
     }
-    if policy.deny_hidden_paths.unwrap_or(true) && is_hidden_path_component(path, Path::new("/"))
-    {
+    if policy.deny_hidden_paths.unwrap_or(true) && is_hidden_path_component(path, Path::new("/")) {
         return Err(anyhow!(
             "fs_replace_text denied hidden path {}",
             path.display()
@@ -1992,9 +2048,7 @@ fn search_filters_from_args(args: &Value) -> Result<SearchFilters> {
 }
 
 fn normalize_extension(raw: &str) -> String {
-    raw.trim()
-        .trim_start_matches('.')
-        .to_ascii_lowercase()
+    raw.trim().trim_start_matches('.').to_ascii_lowercase()
 }
 
 fn search_file_passes_filters(root: &Path, path: &Path, filters: &SearchFilters) -> bool {
@@ -2537,7 +2591,11 @@ async fn restore_session_from_den(
         session_id,
         context.cwd,
         context.roots.join(","),
-        context.raw.get("direct_tools").cloned().unwrap_or(Value::Null)
+        context
+            .raw
+            .get("direct_tools")
+            .cloned()
+            .unwrap_or(Value::Null)
     );
     adapter_state
         .session_contexts
@@ -2584,7 +2642,11 @@ async fn handle_session_load(
         session_id,
         context.cwd,
         context.roots.join(","),
-        context.raw.get("direct_tools").cloned().unwrap_or(Value::Null)
+        context
+            .raw
+            .get("direct_tools")
+            .cloned()
+            .unwrap_or(Value::Null)
     );
     adapter_state
         .session_contexts
@@ -3247,9 +3309,28 @@ async fn handle_tool_request_event(
         )
         .await?;
         let replace_plan_ref = replace_plan.as_ref();
-        if let Err(err) = request_tool_permission(adapter_state, session_id, tool_call_id, tool_name, event, replace_plan_ref, &policy).await {
+        if let Err(err) = request_tool_permission(
+            adapter_state,
+            session_id,
+            tool_call_id,
+            tool_name,
+            event,
+            replace_plan_ref,
+            &policy,
+        )
+        .await
+        {
             let local_err = LocalToolError::permission_denied(format!("{err:#}"));
-            post_local_tool_error_result(config, session_id, tool_call_id, tool_name, event, local_err, std::time::Instant::now()).await?;
+            post_local_tool_error_result(
+                config,
+                session_id,
+                tool_call_id,
+                tool_name,
+                event,
+                local_err,
+                std::time::Instant::now(),
+            )
+            .await?;
             return Ok(());
         }
     }
@@ -3932,7 +4013,9 @@ mod tests {
         let plan = ReplaceTextPlan::preflight(context, args, &policy).unwrap();
         assert!(plan.preview.contains("--- before"));
         assert!(plan.preview.contains("+++ after"));
-        assert!(plan.permission_prompt("fs_replace_text", "approve?").contains("hello old world"));
+        assert!(plan
+            .permission_prompt("fs_replace_text", "approve?")
+            .contains("hello old world"));
         fs::write(&file, "hello changed world\n").unwrap();
         let result = plan.apply(context, &policy);
         assert!(format!("{:#}", result.unwrap_err()).contains("stale preflight"));
@@ -4038,7 +4121,10 @@ mod tests {
         assert_eq!(policy.create_files, Some(false));
         assert_eq!(policy.allow_multiple, Some(false));
         assert_eq!(policy.deny_hidden_paths, Some(true));
-        assert_eq!(policy.sensitive_path_policy.as_deref(), Some("deny_sensitive_paths"));
+        assert_eq!(
+            policy.sensitive_path_policy.as_deref(),
+            Some("deny_sensitive_paths")
+        );
     }
 
     #[test]
