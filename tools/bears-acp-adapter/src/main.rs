@@ -20,6 +20,7 @@ use std::{
     path::{Path, PathBuf},
     process::Command,
     sync::Arc,
+    time::{SystemTime, UNIX_EPOCH},
 };
 use tokio::{
     io::{self, AsyncBufReadExt, AsyncWriteExt, BufReader},
@@ -70,15 +71,34 @@ struct AdapterSharedState {
 #[derive(Clone, Default)]
 struct ApprovalCache {
     entries: Arc<TokioMutex<HashMap<String, ApprovalRecord>>>,
+    persistence: Option<ApprovalPersistence>,
+}
+
+#[derive(Clone, Debug)]
+struct ApprovalPersistence {
+    path: PathBuf,
+    api_url: String,
+    bear: String,
+    client: String,
 }
 
 #[allow(dead_code)]
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Deserialize, serde::Serialize)]
 struct ApprovalRecord {
-    session_id: String,
+    api_url: String,
+    bear: String,
+    client: String,
     tool_name: String,
     root_fingerprint: String,
-    created_at: std::time::Instant,
+    risk: String,
+    created_at_secs: u64,
+    expires_at_secs: u64,
+}
+
+#[derive(Debug, serde::Deserialize, serde::Serialize)]
+struct ApprovalCacheFile {
+    version: u32,
+    entries: Vec<ApprovalRecord>,
 }
 
 #[derive(Clone, Default)]
@@ -98,42 +118,164 @@ struct ToolTaskRecord {
 }
 
 impl ApprovalCache {
-    fn key(session_id: &str, tool_name: &str) -> String {
-        format!("{session_id}\n{tool_name}")
+    fn key(api_url: &str, bear: &str, client: &str, root_fingerprint: &str, tool_name: &str) -> String {
+        format!("{api_url}\n{bear}\n{client}\n{root_fingerprint}\n{tool_name}")
     }
 
-    async fn remember(&self, context: &SessionContext, session_id: &str, tool_name: &str) {
-        let record = ApprovalRecord {
-            session_id: session_id.to_string(),
-            tool_name: tool_name.to_string(),
-            root_fingerprint: approval_root_fingerprint(context),
-            created_at: std::time::Instant::now(),
+    async fn load_for_runtime(runtime: &RuntimeConfig) -> Self {
+        if env_bool("BEARS_ACP_DISABLE_PERSISTENT_APPROVALS") {
+            return Self::default();
+        }
+        let Some(config) = runtime.config.as_ref() else {
+            return Self::default();
         };
-        self.entries
-            .lock()
-            .await
-            .insert(Self::key(session_id, tool_name), record);
+        let path = approval_cache_path();
+        let persistence = ApprovalPersistence {
+            path: path.clone(),
+            api_url: config.api_url.clone(),
+            bear: config.bear.clone(),
+            client: config.client.clone(),
+        };
+        let cache = Self {
+            entries: Arc::new(TokioMutex::new(HashMap::new())),
+            persistence: Some(persistence),
+        };
+        if env_bool("BEARS_ACP_CLEAR_APPROVALS") {
+            let _ = fs::remove_file(&path);
+            return cache;
+        }
+        if let Ok(raw) = fs::read_to_string(&path) {
+            if let Ok(file) = serde_json::from_str::<ApprovalCacheFile>(&raw) {
+                let now = now_secs();
+                let mut entries = cache.entries.lock().await;
+                for record in file.entries.into_iter().filter(|r| r.expires_at_secs > now) {
+                    let key = Self::key(
+                        &record.api_url,
+                        &record.bear,
+                        &record.client,
+                        &record.root_fingerprint,
+                        &record.tool_name,
+                    );
+                    entries.insert(key, record);
+                }
+            }
+        }
+        cache
     }
 
-    async fn is_allowed(&self, context: &SessionContext, session_id: &str, tool_name: &str) -> bool {
-        self.entries
-            .lock()
-            .await
-            .get(&Self::key(session_id, tool_name))
-            .is_some_and(|record| {
-                record.session_id == session_id
-                    && record.tool_name == tool_name
-                    && record.root_fingerprint == approval_root_fingerprint(context)
-            })
+    async fn remember(&self, context: &SessionContext, tool_name: &str, risk: &str) {
+        let Some(persistence) = self.persistence.as_ref() else {
+            return;
+        };
+        let root_fingerprint = approval_root_fingerprint(context);
+        let now = now_secs();
+        let record = ApprovalRecord {
+            api_url: persistence.api_url.clone(),
+            bear: persistence.bear.clone(),
+            client: persistence.client.clone(),
+            tool_name: tool_name.to_string(),
+            root_fingerprint: root_fingerprint.clone(),
+            risk: risk.to_string(),
+            created_at_secs: now,
+            expires_at_secs: now + approval_ttl_secs(risk),
+        };
+        self.entries.lock().await.insert(
+            Self::key(
+                &record.api_url,
+                &record.bear,
+                &record.client,
+                &record.root_fingerprint,
+                &record.tool_name,
+            ),
+            record,
+        );
+        self.save().await;
     }
 
-    async fn clear_session(&self, session_id: &str) {
-        let prefix = format!("{session_id}\n");
-        self.entries
+    async fn is_allowed(&self, context: &SessionContext, tool_name: &str) -> bool {
+        let Some(persistence) = self.persistence.as_ref() else {
+            return false;
+        };
+        let root_fingerprint = approval_root_fingerprint(context);
+        let key = Self::key(
+            &persistence.api_url,
+            &persistence.bear,
+            &persistence.client,
+            &root_fingerprint,
+            tool_name,
+        );
+        let now = now_secs();
+        let mut entries = self.entries.lock().await;
+        entries.retain(|_, record| record.expires_at_secs > now);
+        entries.get(&key).is_some()
+    }
+
+    async fn clear_session(&self, _session_id: &str) {
+        // Persistent approvals intentionally survive ACP session boundaries.
+        // Use BEARS_ACP_CLEAR_APPROVALS=1 or remove the cache file to revoke.
+    }
+
+    async fn save(&self) {
+        let Some(persistence) = self.persistence.as_ref() else {
+            return;
+        };
+        let now = now_secs();
+        let entries = self
+            .entries
             .lock()
             .await
-            .retain(|key, _| !key.starts_with(&prefix));
+            .values()
+            .filter(|record| record.expires_at_secs > now)
+            .cloned()
+            .collect::<Vec<_>>();
+        let file = ApprovalCacheFile { version: 1, entries };
+        if let Some(parent) = persistence.path.parent() {
+            let _ = fs::create_dir_all(parent);
+        }
+        let tmp = persistence.path.with_extension("tmp");
+        if let Ok(raw) = serde_json::to_string_pretty(&file) {
+            if fs::write(&tmp, raw).is_ok() {
+                let _ = fs::rename(tmp, &persistence.path);
+            }
+        }
     }
+}
+
+fn now_secs() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_secs())
+        .unwrap_or(0)
+}
+
+fn env_bool(name: &str) -> bool {
+    env::var(name)
+        .ok()
+        .is_some_and(|value| matches!(value.trim().to_ascii_lowercase().as_str(), "1" | "true" | "yes" | "on"))
+}
+
+fn approval_ttl_secs(risk: &str) -> u64 {
+    if risk == "writes_workspace" {
+        7 * 24 * 60 * 60
+    } else {
+        28 * 24 * 60 * 60
+    }
+}
+
+fn approval_cache_path() -> PathBuf {
+    if let Ok(path) = env::var("BEARS_ACP_APPROVALS_PATH") {
+        let trimmed = path.trim();
+        if !trimmed.is_empty() {
+            return PathBuf::from(trimmed);
+        }
+    }
+    if let Ok(home) = env::var("HOME") {
+        return PathBuf::from(home)
+            .join(".config")
+            .join("bears")
+            .join("acp-approvals.json");
+    }
+    PathBuf::from(".bears-acp-approvals.json")
 }
 
 fn approval_root_fingerprint(context: &SessionContext) -> String {
@@ -305,6 +447,20 @@ struct ToolPolicy {
     allow_multiple: Option<bool>,
     deny_hidden_paths: Option<bool>,
     permission_timeout_ms: Option<u64>,
+}
+
+impl ToolPolicy {
+    fn risk(&self) -> &str {
+        if self.create_files.is_some()
+            || self.allow_multiple.is_some()
+            || self.max_replacements.is_some()
+            || self.sensitive_path_policy.as_deref() == Some("deny_sensitive_paths")
+        {
+            "writes_workspace"
+        } else {
+            "read_only"
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -620,12 +776,13 @@ async fn run() -> Result<()> {
 
     let (inbound_tx, mut inbound_rx) = mpsc::channel::<InboundMessage>(128);
     let mut adapter_state = AdapterState::default();
+    let approval_cache = ApprovalCache::load_for_runtime(&runtime).await;
     let (cancellation_tx, _) = broadcast::channel(64);
     let shared_state = AdapterSharedState {
         transport: adapter_state.transport.clone(),
         session_contexts: Arc::new(TokioMutex::new(HashMap::new())),
         tool_tasks: ToolTaskRegistry::default(),
-        approval_cache: ApprovalCache::default(),
+        approval_cache,
         cancellation_tx,
     };
     tokio::spawn(read_stdin_messages(
@@ -3799,7 +3956,7 @@ async fn handle_tool_request_event(
     };
     let context_for_approval = session_context(adapter_state, session_id).ok().cloned();
     let approval_reused = if let Some(context) = context_for_approval.as_ref() {
-        approval_cache.is_allowed(context, session_id, tool_name).await
+        approval_cache.is_allowed(context, tool_name).await
     } else {
         false
     };
@@ -3916,7 +4073,7 @@ async fn handle_tool_request_event(
             .await;
         if permission_decision.as_ref().is_ok_and(|decision| decision.remember) {
             if let Some(context) = context_for_approval.as_ref() {
-                approval_cache.remember(context, session_id, tool_name).await;
+                approval_cache.remember(context, tool_name, policy.risk()).await;
                 eprintln!(
                     "bears-acp-adapter: approval_remembered session_id={} tool_name={} scope=workspace_roots",
                     session_id, tool_name
@@ -5047,26 +5204,37 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn approval_cache_remembers_and_clears_session_scope() {
-        let cache = ApprovalCache::default();
+    async fn approval_cache_remembers_persistent_scope() {
+        let cache = ApprovalCache {
+            entries: Arc::new(TokioMutex::new(HashMap::new())),
+            persistence: Some(ApprovalPersistence {
+                path: env::temp_dir().join(format!(
+                    "bears-acp-approval-test-{}.json",
+                    Uuid::new_v4()
+                )),
+                api_url: "http://den.test".to_string(),
+                bear: "meta".to_string(),
+                client: "zed".to_string(),
+            }),
+        };
         let context = SessionContext {
             cwd: "/workspace".to_string(),
             roots: vec!["/workspace".to_string()],
             ..Default::default()
         };
-        assert!(!cache
-            .is_allowed(&context, "session-1", "fs_read_text_file")
-            .await);
+        assert!(!cache.is_allowed(&context, "fs_read_text_file").await);
         cache
-            .remember(&context, "session-1", "fs_read_text_file")
+            .remember(&context, "fs_read_text_file", "read_only")
             .await;
-        assert!(cache
-            .is_allowed(&context, "session-1", "fs_read_text_file")
-            .await);
+        assert!(cache.is_allowed(&context, "fs_read_text_file").await);
         cache.clear_session("session-1").await;
-        assert!(!cache
-            .is_allowed(&context, "session-1", "fs_read_text_file")
-            .await);
+        assert!(cache.is_allowed(&context, "fs_read_text_file").await);
+    }
+
+    #[test]
+    fn approval_ttl_matches_product_policy() {
+        assert_eq!(approval_ttl_secs("writes_workspace"), 7 * 24 * 60 * 60);
+        assert_eq!(approval_ttl_secs("read_only"), 28 * 24 * 60 * 60);
     }
 
     #[test]
