@@ -380,14 +380,28 @@ pub fn acp_client_tool_descriptors() -> serde_json::Value {
 pub fn acp_client_tool_descriptors_for_client_context(
     client_context: &serde_json::Value,
 ) -> serde_json::Value {
+    let mut names = Vec::new();
     let descriptors = AcpToolName::all()
         .iter()
         .filter(|tool| adapter_supports_tool(client_context, tool.descriptor().provider_name))
-        .map(|tool| acp_client_tool_descriptor(tool.descriptor()))
+        .map(|tool| {
+            names.push(tool.descriptor().provider_name);
+            acp_client_tool_descriptor(tool.descriptor())
+        })
         .collect::<Vec<_>>();
     if descriptors.is_empty() {
+        tracing::info!(
+            phase = acp_diag_phase::DESCRIPTOR_ADVERTISED,
+            tools = ?[ACP_READ_TEXT_FILE_TOOL.provider_name],
+            "ACP adapter did not advertise direct tools; falling back to read-text descriptor only"
+        );
         json!([acp_client_tool_descriptor(&ACP_READ_TEXT_FILE_TOOL)])
     } else {
+        tracing::info!(
+            phase = acp_diag_phase::DESCRIPTOR_ADVERTISED,
+            tools = ?names,
+            "ACP client tool descriptors advertised"
+        );
         json!(descriptors)
     }
 }

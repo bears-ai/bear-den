@@ -646,10 +646,11 @@ async fn handle_request(
                     }
                 };
                 eprintln!(
-                    "bears-acp-adapter: session/new session_id={} cwd={} roots={}",
+                    "bears-acp-adapter: session/new session_id={} cwd={} roots={} direct_tools={}",
                     session_id,
                     context.cwd,
-                    context.roots.join(",")
+                    context.roots.join(","),
+                    context.raw.get("direct_tools").cloned().unwrap_or(Value::Null)
                 );
                 adapter_state
                     .session_contexts
@@ -2478,6 +2479,13 @@ async fn restore_session_from_den(
         .ok_or_else(|| anyhow!("session params missing sessionId"))?;
     let den = den_get_acp_session(http, config, session_id).await?;
     let context = session_context_from_den_session(params, &den)?;
+    eprintln!(
+        "bears-acp-adapter: session/resume session_id={} cwd={} roots={} direct_tools={}",
+        session_id,
+        context.cwd,
+        context.roots.join(","),
+        context.raw.get("direct_tools").cloned().unwrap_or(Value::Null)
+    );
     adapter_state
         .session_contexts
         .insert(session_id.to_string(), context);
@@ -2498,6 +2506,13 @@ async fn handle_session_load(
         .ok_or_else(|| anyhow!("session/load params missing sessionId"))?;
     let den = den_get_acp_session(http, config, session_id).await?;
     let context = session_context_from_den_session(params, &den)?;
+    eprintln!(
+        "bears-acp-adapter: session/load session_id={} cwd={} roots={} direct_tools={}",
+        session_id,
+        context.cwd,
+        context.roots.join(","),
+        context.raw.get("direct_tools").cloned().unwrap_or(Value::Null)
+    );
     adapter_state
         .session_contexts
         .insert(session_id.to_string(), context);
