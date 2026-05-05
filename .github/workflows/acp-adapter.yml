@@ -88,7 +88,7 @@ jobs:
                   files: dist/*
 
     macos-pkg:
-        name: Build macOS installer package
+        name: Build macOS arm64 installer package
         runs-on: macos-14
         needs: build
 
@@ -111,22 +111,12 @@ jobs:
                   name: bears-acp-adapter-aarch64-apple-darwin
                   path: dist/input/aarch64-apple-darwin
 
-            - name: Download x86_64 macOS binary
-              uses: actions/download-artifact@v4
-              with:
-                  name: bears-acp-adapter-x86_64-apple-darwin
-                  path: dist/input/x86_64-apple-darwin
-
-            - name: Create universal binary
+            - name: Stage arm64 macOS binary
               run: |
                   mkdir -p dist/macos
-                  chmod +x dist/input/aarch64-apple-darwin/bears-acp-adapter-aarch64-apple-darwin
-                  chmod +x dist/input/x86_64-apple-darwin/bears-acp-adapter-x86_64-apple-darwin
-                  lipo -create \
-                    dist/input/aarch64-apple-darwin/bears-acp-adapter-aarch64-apple-darwin \
-                    dist/input/x86_64-apple-darwin/bears-acp-adapter-x86_64-apple-darwin \
-                    -output dist/macos/bears-acp-adapter
-                  lipo -info dist/macos/bears-acp-adapter
+                  cp dist/input/aarch64-apple-darwin/bears-acp-adapter-aarch64-apple-darwin dist/macos/bears-acp-adapter
+                  chmod +x dist/macos/bears-acp-adapter
+                  file dist/macos/bears-acp-adapter
 
             - name: Import Apple signing certificates
               if: env.MACOS_CERTIFICATES_P12_BASE64 != ''
@@ -149,7 +139,7 @@ jobs:
               run: |
                   ./packaging/macos/build-pkg.sh \
                     --binary dist/macos/bears-acp-adapter \
-                    --output dist/macos/bears-acp-adapter-universal.pkg
+                    --output dist/macos/bears-acp-adapter-aarch64-apple-darwin.pkg
 
             - name: Prepare App Store Connect API key
               if: env.APP_STORE_CONNECT_API_KEY_BASE64 != ''
@@ -160,17 +150,17 @@ jobs:
 
             - name: Notarize and staple macOS package
               if: env.APP_STORE_CONNECT_API_KEY_BASE64 != '' && env.MACOS_INSTALLER_CERT_IDENTITY != ''
-              run: ./packaging/macos/notarize.sh --pkg dist/macos/bears-acp-adapter-universal.pkg
+              run: ./packaging/macos/notarize.sh --pkg dist/macos/bears-acp-adapter-aarch64-apple-darwin.pkg
 
             - name: Upload macOS package artifact
               uses: actions/upload-artifact@v4
               with:
-                  name: bears-acp-adapter-universal-macos-pkg
-                  path: dist/macos/bears-acp-adapter-universal.pkg
+                  name: bears-acp-adapter-aarch64-apple-darwin-pkg
+                  path: dist/macos/bears-acp-adapter-aarch64-apple-darwin.pkg
                   if-no-files-found: error
 
             - name: Attach macOS package to GitHub release
               if: github.event_name == 'release'
               uses: softprops/action-gh-release@v2
               with:
-                  files: dist/macos/bears-acp-adapter-universal.pkg
+                  files: dist/macos/bears-acp-adapter-aarch64-apple-darwin.pkg

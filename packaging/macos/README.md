@@ -26,7 +26,7 @@ Then build an unsigned package:
   --output dist/macos/bears-acp-adapter-test.pkg
 ```
 
-For local Intel builds, use the `x86_64-apple-darwin` target path. For release builds, GitHub Actions combines arm64 and x86_64 artifacts into one universal binary before packaging.
+Release builds currently package the arm64 macOS binary only to keep CI fast. Add an `x86_64-apple-darwin` build and a `lipo` combine step later if Intel Mac support becomes necessary.
 
 ## Signing and notarization
 
@@ -52,7 +52,7 @@ After importing your Developer ID certificates into your local keychain:
 ```bash
 ./packaging/macos/build-pkg.sh \
   --binary dist/macos/bears-acp-adapter \
-  --output dist/macos/bears-acp-adapter-universal.pkg \
+  --output dist/macos/bears-acp-adapter-aarch64-apple-darwin.pkg \
   --application-identity "Developer ID Application: Your Org (TEAMID)" \
   --installer-identity "Developer ID Installer: Your Org (TEAMID)"
 ```
@@ -63,7 +63,7 @@ Then notarize and staple:
 APP_STORE_CONNECT_API_KEY_ID="..." \
 APP_STORE_CONNECT_API_ISSUER_ID="..." \
 APP_STORE_CONNECT_API_KEY_PATH="/path/to/AuthKey_XXXX.p8" \
-./packaging/macos/notarize.sh --pkg dist/macos/bears-acp-adapter-universal.pkg
+./packaging/macos/notarize.sh --pkg dist/macos/bears-acp-adapter-aarch64-apple-darwin.pkg
 ```
 
 ## Installing and validating
@@ -71,7 +71,7 @@ APP_STORE_CONNECT_API_KEY_PATH="/path/to/AuthKey_XXXX.p8" \
 Install the package by double-clicking it, or with:
 
 ```bash
-sudo installer -pkg dist/macos/bears-acp-adapter-universal.pkg -target /
+sudo installer -pkg dist/macos/bears-acp-adapter-aarch64-apple-darwin.pkg -target /
 ```
 
 Validate the installed adapter:
