@@ -291,6 +291,29 @@ pub fn acp_client_tool_descriptors() -> serde_json::Value {
         .collect::<Vec<_>>())
 }
 
+pub fn acp_client_tool_descriptors_for_client_context(
+    client_context: &serde_json::Value,
+) -> serde_json::Value {
+    let Some(direct_tools) = client_context.get("direct_tools").and_then(|v| v.as_object()) else {
+        return json!([acp_client_tool_descriptor(&ACP_READ_TEXT_FILE_TOOL)]);
+    };
+    let descriptors = AcpToolName::all()
+        .iter()
+        .filter(|tool| {
+            direct_tools
+                .get(tool.descriptor().provider_name)
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false)
+        })
+        .map(|tool| acp_client_tool_descriptor(tool.descriptor()))
+        .collect::<Vec<_>>();
+    if descriptors.is_empty() {
+        json!([acp_client_tool_descriptor(&ACP_READ_TEXT_FILE_TOOL)])
+    } else {
+        json!(descriptors)
+    }
+}
+
 pub fn acp_read_text_file_client_tool_descriptor() -> serde_json::Value {
     acp_client_tool_descriptor(&ACP_READ_TEXT_FILE_TOOL)
 }
@@ -424,6 +447,39 @@ mod tests {
         let serialized = serde_json::to_string(&descriptors).expect("serialize descriptors");
         assert!(!serialized.contains("\"name\":\"fs.read_text_file\""));
         assert!(!serialized.contains("\"name\":\"fs/read_text_file\""));
+    }
+
+    #[test]
+    fn descriptors_filter_by_adapter_direct_tools() {
+        let descriptors = acp_client_tool_descriptors_for_client_context(&json!({
+            "direct_tools": {
+                "fs_read_text_file": true,
+                "fs_list_directory": true,
+                "fs_search_files": true
+            }
+        }));
+        let names = descriptors
+            .as_array()
+            .expect("descriptor array")
+            .iter()
+            .map(|descriptor| descriptor["name"].as_str().unwrap())
+            .collect::<Vec<_>>();
+        assert!(names.contains(&"fs_read_text_file"));
+        assert!(names.contains(&"fs_list_directory"));
+        assert!(names.contains(&"fs_search_files"));
+        assert!(!names.contains(&"fs_replace_text"));
+    }
+
+    #[test]
+    fn missing_direct_tools_defaults_to_read_text_only() {
+        let descriptors = acp_client_tool_descriptors_for_client_context(&json!({}));
+        let names = descriptors
+            .as_array()
+            .expect("descriptor array")
+            .iter()
+            .map(|descriptor| descriptor["name"].as_str().unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(names, vec!["fs_read_text_file"]);
     }
 
     #[test]

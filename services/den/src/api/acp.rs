@@ -47,7 +47,7 @@ use crate::{
             AcpToolResultDelivery, AcpToolResultRequest, AcpToolTurnCoordinator,
             AcpToolTurnRegistration,
         },
-        acp_tools::{acp_client_tool_descriptors, AcpToolStatus},
+        acp_tools::{acp_client_tool_descriptors_for_client_context, AcpToolStatus},
         archived_conversations,
         bears::{db as bears_db, Bear, BearAgentRole},
         letta::load_agent_conversations,
@@ -1511,7 +1511,7 @@ async fn prompt_inner(
             &conversation_resolution.upstream_target,
             Some(&pair_agent_id),
             &prompt_with_tool_context,
-            tools_enabled.then(acp_client_tool_descriptors),
+            tools_enabled.then(|| acp_client_tool_descriptors_for_client_context(&body.client_context)),
         )
         .await
     {

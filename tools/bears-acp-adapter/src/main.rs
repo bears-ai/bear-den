@@ -2078,6 +2078,9 @@ fn session_context_from_den_session(params: &Value, den_session: &Value) -> Resu
         "adapter_version": env!("CARGO_PKG_VERSION"),
         "direct_tools": {
             "fs_read_text_file": true,
+            "fs_list_directory": true,
+            "fs_search_files": true,
+            "fs_replace_text": true,
         },
         "den_acp_session": den_session.clone(),
     });
