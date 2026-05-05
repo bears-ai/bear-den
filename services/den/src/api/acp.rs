@@ -616,8 +616,8 @@ fn acp_direct_tool_prompt_context(
         guidance.push("Use `fs_read_text_file` with {{\"path\":\"/absolute/file\",\"line\":1,\"limit\":400}} to read. Do not guess file contents.".to_string());
     }
     if tool_names.contains(&"fs_replace_text") {
-        guidance.push("Use `fs_replace_text` with {{\"path\":\"/absolute/file\",\"old_text\":\"exact\",\"new_text\":\"replacement\"}} to edit existing files. Edits require approval; do not ask for approval in chat. To append, first read the file, then replace a unique end-of-file suffix with that suffix plus the appended text.".to_string());
-        guidance.push("ACP edit workflow: discover/read the target, call the edit tool, wait for its result, verify the change with `fs_read_text_file`, then provide a concise final answer naming the changed file and what changed.".to_string());
+        guidance.push("Use `fs_replace_text` with {{\"path\":\"/absolute/file\",\"old_text\":\"exact\",\"new_text\":\"replacement\"}} to edit existing files. Calling `fs_replace_text` is how you request local approval; do not wait for approval before invoking it and do not ask for approval in chat. To append, first read the file, then replace a unique end-of-file suffix with that suffix plus the appended text.".to_string());
+        guidance.push("ACP edit workflow: discover/read the target, call `fs_replace_text` to request approval and perform the edit, wait for its result, verify the change with `fs_read_text_file`, then provide a concise final answer naming the changed file and what changed. Never claim you are blocked by approval if `fs_replace_text` is callable; invoke it instead.".to_string());
     } else {
         guidance.push("No ACP edit tool is callable in this turn. Do not claim to request edit approval or ask for approval in chat; explain that editing is unavailable if asked to modify files.".to_string());
     }
@@ -1584,7 +1584,6 @@ async fn prompt_inner(
             bear_slug: bear.slug.clone(),
             acp_session_id: session_id.to_string(),
             request_id,
-            original_prompt: prompt.to_string(),
         },
         state.letta.clone(),
         pair_agent_id.clone(),
@@ -1624,7 +1623,6 @@ struct AcpStreamContext {
     bear_slug: String,
     acp_session_id: String,
     request_id: Uuid,
-    original_prompt: String,
 }
 
 async fn persist_stream_event_side_effects(
@@ -1966,26 +1964,6 @@ async fn map_letta_stream_frame_to_acp_adapter_events_with_persistence(
     Ok((vec![acp_event_to_adapter_sse(event)], result_rx))
 }
 
-fn format_tool_return_with_continuation_nudge(
-    original_prompt: &str,
-    tool_name: &str,
-    tool_return: &str,
-) -> String {
-    format!(
-        concat!(
-            "{tool_return}\n\n",
-            "---\n",
-            "ACP continuation instruction: Continue the original user request using this `{tool_name}` result. ",
-            "Do not stop just because the tool succeeded. If the original request is not complete, call the next needed ACP tool. ",
-            "For edit requests, verify the edit with `fs_read_text_file` before final response. ",
-            "Original user request: {original_prompt}"
-        ),
-        tool_return = tool_return,
-        tool_name = tool_name,
-        original_prompt = preview_str_truncated(original_prompt, 500),
-    )
-}
-
 enum AcpPendingFuture {
     Frame(
         Pin<
@@ -2273,12 +2251,7 @@ impl Stream for AcpLettaSseStream {
                         .tool_call_id
                         .clone()
                         .unwrap_or_else(|| tool_name.clone());
-                    let tool_return_raw = tool_result.content.clone().unwrap_or_default();
-                    let tool_return = format_tool_return_with_continuation_nudge(
-                        &this.context.original_prompt,
-                        &tool_name,
-                        &tool_return_raw,
-                    );
+                    let tool_return = tool_result.content.clone().unwrap_or_default();
                     let status = tool_result.status.clone();
                     let approval_request_id = tool_result.approval_request_id.clone();
                     this.persist_future =
@@ -2376,7 +2349,6 @@ mod tests {
             bear_slug: "test-bear".to_string(),
             acp_session_id: "acp-test-session".to_string(),
             request_id: Uuid::new_v4(),
-            original_prompt: "read the test file and tell me what it says".to_string(),
         };
         let upstream = futures::stream::iter(vec![
             Ok::<Bytes, reqwest::Error>(Bytes::from(concat!(
