@@ -29,12 +29,16 @@ use uuid::Uuid;
 #[derive(Clone)]
 struct TestLettaState {
     captured: Arc<Mutex<Option<Value>>>,
+    requests: Arc<Mutex<Vec<Value>>>,
+    script: Arc<Mutex<Vec<String>>>,
 }
 
 struct TestApp {
     app: axum::Router,
     pool: sqlx::PgPool,
     captured_letta_body: Arc<Mutex<Option<Value>>>,
+    letta_requests: Arc<Mutex<Vec<Value>>>,
+    letta_script: Arc<Mutex<Vec<String>>>,
 }
 
 struct TestUserBear {
@@ -50,10 +54,14 @@ async fn apply_app_migrations(pool: &sqlx::PgPool) {
         .expect("sqlx migrations for ACP integration test");
 }
 
-async fn start_fake_letta() -> (String, Arc<Mutex<Option<Value>>>) {
+async fn start_fake_letta() -> (String, Arc<Mutex<Option<Value>>>, Arc<Mutex<Vec<Value>>>, Arc<Mutex<Vec<String>>>) {
     let captured = Arc::new(Mutex::new(None));
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let script = Arc::new(Mutex::new(Vec::new()));
     let state = TestLettaState {
         captured: captured.clone(),
+        requests: requests.clone(),
+        script: script.clone(),
     };
     let app = Router::new()
         .route(
@@ -68,7 +76,7 @@ async fn start_fake_letta() -> (String, Arc<Mutex<Option<Value>>>) {
     tokio::spawn(async move {
         axum::serve(listener, app).await.expect("fake Letta server");
     });
-    (format!("http://{addr}"), captured)
+    (format!("http://{addr}"), captured, requests, script)
 }
 
 async fn fake_letta_conversation_messages(
@@ -77,15 +85,28 @@ async fn fake_letta_conversation_messages(
     Json(mut body): Json<Value>,
 ) -> Response {
     body["conversation_id"] = json!(conversation_id);
-    *state.captured.lock().await = Some(body);
-    (
-        [(header::CONTENT_TYPE, "text/event-stream; charset=utf-8")],
+    state.requests.lock().await.push(body.clone());
+    *state.captured.lock().await = Some(body.clone());
+    let scripted = {
+        let mut script = state.script.lock().await;
+        if script.is_empty() {
+            None
+        } else {
+            Some(script.remove(0))
+        }
+    };
+    let response = scripted.unwrap_or_else(|| {
         concat!(
             "data: {\"message_type\":\"conversation_resolved\",\"conversation_id\":\"conv-fake-resolved123\"}\n\n",
             "data: {\"message_type\":\"assistant_message\",\"content\":\"hello from fake Letta\"}\n\n",
             "data: {\"message_type\":\"reasoning_message\",\"reasoning\":\"thinking\"}\n\n",
             "data: {\"message_type\":\"stop_reason\",\"stop_reason\":\"end_turn\"}\n\n"
-        ),
+        )
+        .to_string()
+    });
+    (
+        [(header::CONTENT_TYPE, "text/event-stream; charset=utf-8")],
+        response,
     )
         .into_response()
 }
@@ -102,7 +123,7 @@ async fn test_app() -> TestApp {
         .expect("connect postgres");
     apply_app_migrations(&pool).await;
 
-    let (letta_base_url, captured_letta_body) = start_fake_letta().await;
+    let (letta_base_url, captured_letta_body, letta_requests, letta_script) = start_fake_letta().await;
     let mut config = Config::load();
     config.database_url = database_url;
     config.run_api = true;
@@ -125,6 +146,8 @@ async fn test_app() -> TestApp {
         app,
         pool,
         captured_letta_body,
+        letta_requests,
+        letta_script,
     }
 }
 
@@ -272,6 +295,66 @@ async fn post_prompt(
     app.oneshot(builder.body(Body::from(body.to_string())).unwrap())
         .await
         .expect("ACP prompt response")
+}
+
+async fn post_tool_result(
+    app: axum::Router,
+    slug: &str,
+    session_id: &str,
+    tool_call_id: &str,
+    token: Option<&str>,
+    body: Value,
+) -> axum::response::Response {
+    let mut builder = Request::builder()
+        .method("POST")
+        .uri(format!(
+            "/acp/bears/{slug}/sessions/{session_id}/tool-results/{tool_call_id}"
+        ))
+        .header(header::CONTENT_TYPE, "application/json");
+    if let Some(token) = token {
+        builder = builder.header(header::AUTHORIZATION, format!("Bearer {token}"));
+    }
+    app.oneshot(builder.body(Body::from(body.to_string())).unwrap())
+        .await
+        .expect("ACP tool result response")
+}
+
+fn letta_tool_request_sse(tool_name: &str, tool_call_id: &str, args: Value) -> String {
+    format!(
+        "data: {}\n\n",
+        json!({
+            "id": format!("approval-{tool_call_id}"),
+            "message_type": "approval_request_message",
+            "tool_call": {
+                "name": tool_name,
+                "tool_call_id": tool_call_id,
+                "arguments": args.to_string(),
+            }
+        })
+    )
+}
+
+fn letta_malformed_tool_request_sse(tool_name: &str, tool_call_id: &str, args: Value) -> String {
+    format!(
+        "data: {}\n\n",
+        json!({
+            "message_type": "tool_call_message",
+            "tool_call": {
+                "name": tool_name,
+                "tool_call_id": tool_call_id,
+                "arguments": args.to_string(),
+            }
+        })
+    )
+}
+
+fn letta_stop_sse() -> String {
+    "data: {\"message_type\":\"stop_reason\",\"stop_reason\":\"end_turn\"}\n\n".to_string()
+}
+
+async fn response_text(response: axum::response::Response) -> String {
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    String::from_utf8(body.to_vec()).expect("response body is UTF-8")
 }
 
 #[tokio::test]
@@ -530,6 +613,364 @@ async fn acp_prompt_streams_to_pair_agent_and_maps_sse() {
     assert_eq!(captured["agent_id"], "agent-acp-pair-test");
     assert_eq!(captured["messages"][0]["content"], "hello bear");
     assert_ne!(captured["agent_id"], "agent-acp-talk-test");
+}
+
+#[tokio::test]
+async fn acp_prompt_advertises_all_read_only_tool_descriptors() {
+    let fixture = test_app().await;
+    let user_bear = create_test_user_bear(&fixture.pool, true).await;
+
+    let res = post_prompt(
+        fixture.app,
+        &user_bear.bear_slug,
+        "session-tool-descriptors",
+        Some(&user_bear.raw_token),
+        json!({ "message": "what tools exist?", "client": "zed" }),
+    )
+    .await;
+    assert_eq!(res.status(), StatusCode::OK);
+    let _ = response_text(res).await;
+
+    let captured = fixture
+        .captured_letta_body
+        .lock()
+        .await
+        .clone()
+        .expect("Letta request captured");
+    let client_tools = captured["client_tools"]
+        .as_array()
+        .expect("client_tools array");
+    let names = client_tools
+        .iter()
+        .map(|tool| tool["name"].as_str().unwrap())
+        .collect::<Vec<_>>();
+    assert!(names.contains(&"fs_read_text_file"));
+    assert!(names.contains(&"fs_list_directory"));
+    assert!(names.contains(&"fs_search_files"));
+    assert!(names.iter().all(|name| !name.contains('.') && !name.contains('/')));
+}
+
+#[tokio::test]
+async fn acp_read_text_file_tool_request_round_trips_result_to_letta() {
+    let fixture = test_app().await;
+    let user_bear = create_test_user_bear(&fixture.pool, true).await;
+    fixture.letta_script.lock().await.extend([
+        format!(
+            "{}{}",
+            letta_tool_request_sse(
+                "fs_read_text_file",
+                "call-read-e2e",
+                json!({ "path": "/tmp/acp-workspace/README.md", "line": 1, "limit": 10 })
+            ),
+            letta_stop_sse()
+        ),
+        "data: {\"message_type\":\"assistant_message\",\"content\":\"read complete\"}\n\n\
+         data: {\"message_type\":\"stop_reason\",\"stop_reason\":\"end_turn\"}\n\n"
+            .to_string(),
+    ]);
+
+    let app_for_prompt = fixture.app.clone();
+    let slug = user_bear.bear_slug.clone();
+    let token = user_bear.raw_token.clone();
+    let prompt_task = tokio::spawn(async move {
+        post_prompt(
+            app_for_prompt,
+            &slug,
+            "session-read-e2e",
+            Some(&token),
+            json!({ "message": "read a file", "client": "zed" }),
+        )
+        .await
+    });
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    let result = post_tool_result(
+        fixture.app.clone(),
+        &user_bear.bear_slug,
+        "session-read-e2e",
+        "call-read-e2e",
+        Some(&user_bear.raw_token),
+        json!({
+            "tool_call_id": "call-read-e2e",
+            "tool_name": "fs_read_text_file",
+            "approval_request_id": "approval-call-read-e2e",
+            "status": "ok",
+            "content": "# README\n",
+            "structured_content": { "path": "/tmp/acp-workspace/README.md" },
+            "diagnostic": { "source": "test" }
+        }),
+    )
+    .await;
+    assert_eq!(result.status(), StatusCode::OK);
+    let result_json: Value = serde_json::from_str(&response_text(result).await).unwrap();
+    assert_eq!(result_json["accepted"], true);
+
+    let prompt = prompt_task.await.unwrap();
+    assert_eq!(prompt.status(), StatusCode::OK);
+    let text = response_text(prompt).await;
+    assert!(text.contains("\"type\":\"tool_request\""));
+    assert!(text.contains("fs_read_text_file"));
+    assert!(text.contains("Local tool fs_read_text_file completed"));
+    assert!(text.contains("read complete"));
+
+    let requests = fixture.letta_requests.lock().await.clone();
+    assert_eq!(requests.len(), 2, "expected original prompt and tool return");
+    assert_eq!(requests[1]["messages"][0]["type"], "approval");
+    assert_eq!(requests[1]["messages"][0]["approvals"][0]["tool_call_id"], "call-read-e2e");
+    assert_eq!(requests[1]["messages"][0]["approvals"][0]["tool_return"], "# README\n");
+}
+
+#[tokio::test]
+async fn acp_list_directory_tool_request_round_trips_result_to_letta() {
+    let fixture = test_app().await;
+    let user_bear = create_test_user_bear(&fixture.pool, true).await;
+    fixture.letta_script.lock().await.extend([
+        format!(
+            "{}{}",
+            letta_tool_request_sse(
+                "fs_list_directory",
+                "call-list-e2e",
+                json!({ "path": "/tmp/acp-workspace", "limit": 2 })
+            ),
+            letta_stop_sse()
+        ),
+        "data: {\"message_type\":\"assistant_message\",\"content\":\"list complete\"}\n\n\
+         data: {\"message_type\":\"stop_reason\",\"stop_reason\":\"end_turn\"}\n\n"
+            .to_string(),
+    ]);
+
+    let app_for_prompt = fixture.app.clone();
+    let slug = user_bear.bear_slug.clone();
+    let token = user_bear.raw_token.clone();
+    let prompt_task = tokio::spawn(async move {
+        post_prompt(
+            app_for_prompt,
+            &slug,
+            "session-list-e2e",
+            Some(&token),
+            json!({ "message": "list files", "client": "zed" }),
+        )
+        .await
+    });
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    let result = post_tool_result(
+        fixture.app.clone(),
+        &user_bear.bear_slug,
+        "session-list-e2e",
+        "call-list-e2e",
+        Some(&user_bear.raw_token),
+        json!({
+            "tool_call_id": "call-list-e2e",
+            "tool_name": "fs_list_directory",
+            "approval_request_id": "approval-call-list-e2e",
+            "status": "ok",
+            "content": "file\t/tmp/acp-workspace/a.txt",
+            "structured_content": {
+                "entries": [{ "path": "/tmp/acp-workspace/a.txt", "kind": "file" }],
+                "truncated": false
+            },
+            "diagnostic": { "source": "test" }
+        }),
+    )
+    .await;
+    assert_eq!(result.status(), StatusCode::OK);
+    let result_json: Value = serde_json::from_str(&response_text(result).await).unwrap();
+    assert_eq!(result_json["accepted"], true);
+
+    let prompt = prompt_task.await.unwrap();
+    assert_eq!(prompt.status(), StatusCode::OK);
+    let text = response_text(prompt).await;
+    assert!(text.contains("fs_list_directory"));
+    assert!(text.contains("\"max_entries\":1000"));
+    assert!(text.contains("list complete"));
+
+    let requests = fixture.letta_requests.lock().await.clone();
+    assert_eq!(requests.len(), 2);
+    assert_eq!(requests[1]["messages"][0]["approvals"][0]["tool_call_id"], "call-list-e2e");
+    assert_eq!(requests[1]["messages"][0]["approvals"][0]["status"], "success");
+}
+
+#[tokio::test]
+async fn acp_search_files_tool_request_round_trips_result_to_letta() {
+    let fixture = test_app().await;
+    let user_bear = create_test_user_bear(&fixture.pool, true).await;
+    fixture.letta_script.lock().await.extend([
+        format!(
+            "{}{}",
+            letta_tool_request_sse(
+                "fs_search_files",
+                "call-search-e2e",
+                json!({ "path": "/tmp/acp-workspace", "query": "needle", "limit": 5 })
+            ),
+            letta_stop_sse()
+        ),
+        "data: {\"message_type\":\"assistant_message\",\"content\":\"search complete\"}\n\n\
+         data: {\"message_type\":\"stop_reason\",\"stop_reason\":\"end_turn\"}\n\n"
+            .to_string(),
+    ]);
+
+    let app_for_prompt = fixture.app.clone();
+    let slug = user_bear.bear_slug.clone();
+    let token = user_bear.raw_token.clone();
+    let prompt_task = tokio::spawn(async move {
+        post_prompt(
+            app_for_prompt,
+            &slug,
+            "session-search-e2e",
+            Some(&token),
+            json!({ "message": "search files", "client": "zed" }),
+        )
+        .await
+    });
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    let result = post_tool_result(
+        fixture.app.clone(),
+        &user_bear.bear_slug,
+        "session-search-e2e",
+        "call-search-e2e",
+        Some(&user_bear.raw_token),
+        json!({
+            "tool_call_id": "call-search-e2e",
+            "tool_name": "fs_search_files",
+            "approval_request_id": "approval-call-search-e2e",
+            "status": "ok",
+            "content": "/tmp/acp-workspace/a.txt:1: needle",
+            "structured_content": {
+                "matches": [{ "path": "/tmp/acp-workspace/a.txt", "line": 1, "preview": "needle" }],
+                "truncated": false
+            },
+            "diagnostic": { "source": "test" }
+        }),
+    )
+    .await;
+    assert_eq!(result.status(), StatusCode::OK);
+    let result_json: Value = serde_json::from_str(&response_text(result).await).unwrap();
+    assert_eq!(result_json["accepted"], true);
+
+    let prompt = prompt_task.await.unwrap();
+    assert_eq!(prompt.status(), StatusCode::OK);
+    let text = response_text(prompt).await;
+    assert!(text.contains("fs_search_files"));
+    assert!(text.contains("\"max_results\":200"));
+    assert!(text.contains("search complete"));
+
+    let requests = fixture.letta_requests.lock().await.clone();
+    assert_eq!(requests.len(), 2);
+    assert_eq!(requests[1]["messages"][0]["approvals"][0]["tool_call_id"], "call-search-e2e");
+    assert_eq!(requests[1]["messages"][0]["approvals"][0]["tool_return"], "/tmp/acp-workspace/a.txt:1: needle");
+}
+
+#[tokio::test]
+async fn acp_tool_malformed_args_surface_error_without_registration() {
+    let fixture = test_app().await;
+    let user_bear = create_test_user_bear(&fixture.pool, true).await;
+    fixture.letta_script.lock().await.push(format!(
+        "{}{}",
+        letta_malformed_tool_request_sse(
+            "fs_search_files",
+            "call-search-bad-args",
+            json!({ "path": "/tmp/acp-workspace" })
+        ),
+        letta_stop_sse()
+    ));
+
+    let res = post_prompt(
+        fixture.app.clone(),
+        &user_bear.bear_slug,
+        "session-malformed-tool",
+        Some(&user_bear.raw_token),
+        json!({ "message": "bad search", "client": "zed" }),
+    )
+    .await;
+    assert_eq!(res.status(), StatusCode::OK);
+    let text = response_text(res).await;
+    assert!(text.contains("invalid_tool_arguments"));
+    assert!(text.contains("fs_search_files"));
+    assert!(text.contains("query"));
+
+    let result = post_tool_result(
+        fixture.app,
+        &user_bear.bear_slug,
+        "session-malformed-tool",
+        "call-search-bad-args",
+        Some(&user_bear.raw_token),
+        json!({
+            "tool_call_id": "call-search-bad-args",
+            "tool_name": "fs_search_files",
+            "status": "ok",
+            "content": "should not be accepted"
+        }),
+    )
+    .await;
+    assert_eq!(result.status(), StatusCode::OK);
+    let result_json: Value = serde_json::from_str(&response_text(result).await).unwrap();
+    assert_eq!(result_json["accepted"], false);
+    assert_eq!(result_json["reason"], "turn_missing");
+}
+
+#[tokio::test]
+async fn acp_tool_permission_denied_result_continues_as_error_return() {
+    let fixture = test_app().await;
+    let user_bear = create_test_user_bear(&fixture.pool, true).await;
+    fixture.letta_script.lock().await.extend([
+        format!(
+            "{}{}",
+            letta_tool_request_sse(
+                "fs_list_directory",
+                "call-list-denied",
+                json!({ "path": "/tmp/acp-workspace" })
+            ),
+            letta_stop_sse()
+        ),
+        "data: {\"message_type\":\"assistant_message\",\"content\":\"permission handled\"}\n\n\
+         data: {\"message_type\":\"stop_reason\",\"stop_reason\":\"end_turn\"}\n\n"
+            .to_string(),
+    ]);
+
+    let app_for_prompt = fixture.app.clone();
+    let slug = user_bear.bear_slug.clone();
+    let token = user_bear.raw_token.clone();
+    let prompt_task = tokio::spawn(async move {
+        post_prompt(
+            app_for_prompt,
+            &slug,
+            "session-permission-denied",
+            Some(&token),
+            json!({ "message": "list denied", "client": "zed" }),
+        )
+        .await
+    });
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    let result = post_tool_result(
+        fixture.app.clone(),
+        &user_bear.bear_slug,
+        "session-permission-denied",
+        "call-list-denied",
+        Some(&user_bear.raw_token),
+        json!({
+            "tool_call_id": "call-list-denied",
+            "tool_name": "fs_list_directory",
+            "approval_request_id": "approval-call-list-denied",
+            "status": "permission_denied",
+            "content": "permission denied by client",
+            "structured_content": {},
+            "diagnostic": { "source": "test" }
+        }),
+    )
+    .await;
+    assert_eq!(result.status(), StatusCode::OK);
+    let result_json: Value = serde_json::from_str(&response_text(result).await).unwrap();
+    assert_eq!(result_json["accepted"], true);
+
+    let prompt = prompt_task.await.unwrap();
+    assert_eq!(prompt.status(), StatusCode::OK);
+    let text = response_text(prompt).await;
+    assert!(text.contains("Local tool fs_list_directory completed with status permission_denied"));
+    assert!(text.contains("permission handled"));
+
+    let requests = fixture.letta_requests.lock().await.clone();
+    assert_eq!(requests.len(), 2);
+    assert_eq!(requests[1]["messages"][0]["approvals"][0]["status"], "error");
+    assert_eq!(requests[1]["messages"][0]["approvals"][0]["tool_return"], "permission denied by client");
 }
 
 #[tokio::test]

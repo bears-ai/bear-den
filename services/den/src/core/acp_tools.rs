@@ -84,6 +84,59 @@ pub struct AcpToolDescriptor {
     pub risk: &'static str,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct AcpToolPolicy {
+    pub scope_basis: &'static str,
+    pub role_basis: &'static str,
+    pub allowed_roots_basis: &'static str,
+    pub path_containment: &'static str,
+    pub approval_required: bool,
+    pub sensitive_path_policy: &'static str,
+    pub max_lines: Option<u32>,
+    pub max_entries: Option<u32>,
+    pub max_results: Option<u32>,
+    pub max_bytes: Option<u64>,
+    pub recursive_default: Option<bool>,
+    pub include_hidden_default: Option<bool>,
+}
+
+impl AcpToolPolicy {
+    pub fn to_json(self, descriptor: &AcpToolDescriptor) -> serde_json::Value {
+        let mut policy = json!({
+            "scope_basis": self.scope_basis,
+            "role_basis": self.role_basis,
+            "allowed_roots_basis": self.allowed_roots_basis,
+            "path_containment": self.path_containment,
+            "risk": descriptor.risk,
+            "approval_required": self.approval_required,
+            "sensitive_path_policy": self.sensitive_path_policy,
+            "canonical_tool": descriptor.canonical_name,
+            "provider_tool": descriptor.provider_name,
+            "adapter_method": descriptor.adapter_method,
+            "client_method": descriptor.client_method,
+        });
+        if let Some(max_lines) = self.max_lines {
+            policy["max_lines"] = json!(max_lines);
+        }
+        if let Some(max_entries) = self.max_entries {
+            policy["max_entries"] = json!(max_entries);
+        }
+        if let Some(max_results) = self.max_results {
+            policy["max_results"] = json!(max_results);
+        }
+        if let Some(max_bytes) = self.max_bytes {
+            policy["max_bytes"] = json!(max_bytes);
+        }
+        if let Some(recursive_default) = self.recursive_default {
+            policy["recursive_default"] = json!(recursive_default);
+        }
+        if let Some(include_hidden_default) = self.include_hidden_default {
+            policy["include_hidden_default"] = json!(include_hidden_default);
+        }
+        policy
+    }
+}
+
 pub const ACP_READ_TEXT_FILE_TOOL: AcpToolDescriptor = AcpToolDescriptor {
     provider_name: "fs_read_text_file",
     canonical_name: "acp.fs.read_text_file",
@@ -119,6 +172,71 @@ pub fn provider_tool_name_is_safe(name: &str) -> bool {
         && name
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+}
+
+const ACP_READ_TEXT_FILE_POLICY: AcpToolPolicy = AcpToolPolicy {
+    scope_basis: "acp:tools",
+    role_basis: "pair_agent",
+    allowed_roots_basis: "acp_session.workspace_roots",
+    path_containment: "adapter_enforced_absolute_path_under_allowed_roots",
+    approval_required: true,
+    sensitive_path_policy: "client_permission_required",
+    max_lines: Some(2_000),
+    max_entries: None,
+    max_results: None,
+    max_bytes: None,
+    recursive_default: None,
+    include_hidden_default: None,
+};
+
+const ACP_LIST_DIRECTORY_POLICY: AcpToolPolicy = AcpToolPolicy {
+    scope_basis: "acp:tools",
+    role_basis: "pair_agent",
+    allowed_roots_basis: "acp_session.workspace_roots",
+    path_containment: "adapter_enforced_absolute_path_under_allowed_roots",
+    approval_required: true,
+    sensitive_path_policy: "client_permission_required",
+    max_lines: None,
+    max_entries: Some(1_000),
+    max_results: None,
+    max_bytes: None,
+    recursive_default: Some(false),
+    include_hidden_default: Some(false),
+};
+
+const ACP_SEARCH_FILES_POLICY: AcpToolPolicy = AcpToolPolicy {
+    scope_basis: "acp:tools",
+    role_basis: "pair_agent",
+    allowed_roots_basis: "acp_session.workspace_roots",
+    path_containment: "adapter_enforced_absolute_path_under_allowed_roots",
+    approval_required: true,
+    sensitive_path_policy: "client_permission_required",
+    max_lines: None,
+    max_entries: None,
+    max_results: Some(200),
+    max_bytes: Some(1_048_576),
+    recursive_default: None,
+    include_hidden_default: Some(false),
+};
+
+pub fn acp_tool_policy(tool: AcpToolName) -> AcpToolPolicy {
+    match tool {
+        AcpToolName::ReadTextFile => ACP_READ_TEXT_FILE_POLICY,
+        AcpToolName::ListDirectory => ACP_LIST_DIRECTORY_POLICY,
+        AcpToolName::SearchFiles => ACP_SEARCH_FILES_POLICY,
+    }
+}
+
+pub fn acp_tool_policy_json_for_provider(tool_name: &str) -> serde_json::Value {
+    let Some(tool) = AcpToolName::from_provider_alias(tool_name) else {
+        return json!({
+            "scope_basis": "acp:tools",
+            "risk": "read_only",
+            "approval_required": true,
+            "sensitive_path_policy": "client_permission_required",
+        });
+    };
+    acp_tool_policy(tool).to_json(tool.descriptor())
 }
 
 pub fn supported_provider_tool_names() -> Vec<&'static str> {
@@ -247,5 +365,20 @@ mod tests {
     fn read_text_file_descriptor_wrapper_still_works() {
         let descriptor = acp_read_text_file_client_tool_descriptor();
         assert_eq!(descriptor["name"], ACP_READ_TEXT_FILE_TOOL.provider_name);
+    }
+
+    #[test]
+    fn tool_policy_includes_authoritative_limits_and_scope() {
+        let list_policy = acp_tool_policy_json_for_provider("fs_list_directory");
+        assert_eq!(list_policy["scope_basis"], "acp:tools");
+        assert_eq!(list_policy["role_basis"], "pair_agent");
+        assert_eq!(list_policy["allowed_roots_basis"], "acp_session.workspace_roots");
+        assert_eq!(list_policy["max_entries"], 1000);
+        assert_eq!(list_policy["include_hidden_default"], false);
+
+        let search_policy = acp_tool_policy_json_for_provider("fs_search_files");
+        assert_eq!(search_policy["max_results"], 200);
+        assert_eq!(search_policy["max_bytes"], 1_048_576);
+        assert_eq!(search_policy["approval_required"], true);
     }
 }

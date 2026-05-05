@@ -109,6 +109,8 @@ struct AcpToolResultResponse {
     reason: String,
     turn_id: Option<String>,
     tool_call_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    diagnostic: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Serialize)]
@@ -1173,6 +1175,7 @@ async fn tool_result_inner(
                 reason: "delivered".to_string(),
                 turn_id: body.turn_id,
                 tool_call_id,
+                diagnostic: None,
             })
             .into_response())
         }
@@ -1184,6 +1187,7 @@ async fn tool_result_inner(
             reason: "turn_missing".to_string(),
             turn_id,
             tool_call_id,
+            diagnostic: None,
         })
         .into_response()),
         AcpToolResultDelivery::AlreadySettled {
@@ -1193,7 +1197,23 @@ async fn tool_result_inner(
             accepted: false,
             reason: "already_settled".to_string(),
             turn_id,
+            tool_call_id: tool_call_id.clone(),
+            diagnostic: state
+                .acp_tool_turns
+                .recently_settled(&session_id, &tool_call_id)
+                .map(|cached| cached.diagnostic()),
+        })
+        .into_response()),
+        AcpToolResultDelivery::RecentlySettled {
+            turn_id,
             tool_call_id,
+            cached,
+        } => Ok(Json(AcpToolResultResponse {
+            accepted: false,
+            reason: "recently_settled".to_string(),
+            turn_id,
+            tool_call_id,
+            diagnostic: Some(cached.diagnostic()),
         })
         .into_response()),
     }

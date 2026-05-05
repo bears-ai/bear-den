@@ -6,7 +6,7 @@ use uuid::Uuid;
 
 use crate::core::{
     acp_tool_turns::AcpToolResultRequest,
-    acp_tools::{supported_provider_tool_names, AcpToolName},
+    acp_tools::{acp_tool_policy_json_for_provider, supported_provider_tool_names, AcpToolName},
 };
 
 #[derive(Debug)]
@@ -535,34 +535,6 @@ pub fn acp_event_has_visible_output(event: &AcpGatewayEvent) -> bool {
     }
 }
 
-fn policy_for_tool_name(tool_name: &str) -> serde_json::Value {
-    let risk = AcpToolName::from_provider_alias(tool_name)
-        .map(|tool| tool.descriptor().risk)
-        .unwrap_or("read_only");
-    let mut policy = serde_json::json!({
-        "scope_basis": "acp:tools",
-        "risk": risk,
-        "sensitive_path_policy": "client_permission_required",
-    });
-    match AcpToolName::from_provider_alias(tool_name) {
-        Some(AcpToolName::ReadTextFile) => {
-            policy["max_lines"] = serde_json::json!(2000);
-        }
-        Some(AcpToolName::ListDirectory) => {
-            policy["max_entries"] = serde_json::json!(1000);
-            policy["recursive_default"] = serde_json::json!(false);
-            policy["include_hidden_default"] = serde_json::json!(false);
-        }
-        Some(AcpToolName::SearchFiles) => {
-            policy["max_results"] = serde_json::json!(200);
-            policy["max_bytes"] = serde_json::json!(1048576);
-            policy["include_hidden_default"] = serde_json::json!(false);
-        }
-        None => {}
-    }
-    policy
-}
-
 pub fn acp_event_to_adapter_sse(event: AcpGatewayEvent) -> Bytes {
     let mapped = match event {
         AcpGatewayEvent::AssistantTextDelta { text } => serde_json::json!({
@@ -625,7 +597,7 @@ pub fn acp_event_to_adapter_sse(event: AcpGatewayEvent) -> Bytes {
                 "required": approval_required,
                 "reason": approval_reason,
             },
-            "policy": policy_for_tool_name(&tool_name),
+            "policy": acp_tool_policy_json_for_provider(&tool_name),
             "diagnostic": {
                 "component": "den.acp",
                 "transport_version": 3,
