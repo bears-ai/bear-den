@@ -23,11 +23,16 @@ pub const DEN_CAPABILITIES_LIST_SELF: &str = "den.capabilities.list_self";
 pub const DEN_CHANNEL_GET_CONTEXT: &str = "den.channel.get_context";
 pub const DEN_POLICY_GET_SELF: &str = "den.policy.get_self";
 pub const DEN_SKILL_PROPOSE: &str = "den.skill.propose";
+pub const DEN_SKILL_APPROVE_PROPOSAL: &str = "den.skill.approve_proposal";
+pub const DEN_SKILL_REJECT_PROPOSAL: &str = "den.skill.reject_proposal";
 pub const DEN_WORK_PLAN_LIST: &str = "den.work_plan.list";
 pub const DEN_WORK_PLAN_GET_STATUS: &str = "den.work_plan.get_status";
 pub const DEN_WORK_PLAN_UPDATE: &str = "den.work_plan.update";
 pub const DEN_WORK_PLAN_REQUEST_HANDOFF: &str = "den.work_plan.request_handoff";
 pub const DEN_TASK_WRITE_INTENT: &str = "den.task.write_intent";
+pub const DEN_TASK_APPROVE_INTENT: &str = "den.task.approve_intent";
+pub const DEN_TASK_REJECT_INTENT: &str = "den.task.reject_intent";
+pub const DEN_CORE_WRITE_RESULT_SUMMARY: &str = "den.core.write_result_summary";
 pub const DEN_OBSERVATION_WRITE: &str = "den.observation.write";
 pub const DEN_RUN_WRITE_RESULT: &str = "den.run.write_result";
 
@@ -35,6 +40,7 @@ const ALL_ROLES: &[&str] = &["talk", "pair", "curate", "work", "watch"];
 const WORK_PLAN_READ_ROLES: &[&str] = &["talk", "pair", "curate", "work"];
 const WORK_PLAN_UPDATE_ROLES: &[&str] = &["talk", "pair", "work"];
 const TALK_AND_PAIR_ROLES: &[&str] = &["talk", "pair"];
+const CURATE_ROLES: &[&str] = &["curate"];
 const WATCH_ROLES: &[&str] = &["watch"];
 const WORK_ROLES: &[&str] = &["work"];
 
@@ -152,6 +158,48 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
                     "provenance": { "type": "object" }
                 },
                 "required": ["skill_name", "rationale", "proposed_content"],
+                "additionalProperties": false
+            }),
+        ),
+        descriptor(
+            DEN_SKILL_APPROVE_PROPOSAL,
+            "Approve skill proposal",
+            "Approve a pending skill proposal, update the manifest, and queue reconciliation for affected roles.",
+            "bear.skills",
+            &["skill.proposal.approve"],
+            CURATE_ROLES,
+            json!({
+                "type": "object",
+                "properties": {
+                    "proposal_id": { "type": "string", "format": "uuid" },
+                    "skill_name": { "type": "string" },
+                    "skill_version": { "type": "string" },
+                    "applies_to_roles": {
+                        "type": "array",
+                        "items": { "enum": ALL_ROLES },
+                        "minItems": 1
+                    },
+                    "review_notes": { "type": "string" }
+                },
+                "required": ["proposal_id", "applies_to_roles"],
+                "additionalProperties": false
+            }),
+        ),
+        descriptor(
+            DEN_SKILL_REJECT_PROPOSAL,
+            "Reject skill proposal",
+            "Reject a pending skill proposal with reviewer metadata and a rejection reason.",
+            "bear.skills",
+            &["skill.proposal.reject"],
+            CURATE_ROLES,
+            json!({
+                "type": "object",
+                "properties": {
+                    "proposal_id": { "type": "string", "format": "uuid" },
+                    "rejection_reason": { "type": "string" },
+                    "review_notes": { "type": "string" }
+                },
+                "required": ["proposal_id", "rejection_reason"],
                 "additionalProperties": false
             }),
         ),
@@ -274,6 +322,66 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
             }),
         ),
         descriptor(
+            DEN_TASK_APPROVE_INTENT,
+            "Approve task intent",
+            "Approve a talk/pair task intent, write the canonical core task, and update source intent audit metadata.",
+            "bear.tasks",
+            &["task.intent.approve"],
+            CURATE_ROLES,
+            json!({
+                "type": "object",
+                "properties": {
+                    "source_intent_path": { "type": "string" },
+                    "task_id": { "type": "string" },
+                    "title": { "type": "string" },
+                    "approved_scope": { "type": "object" },
+                    "allowed_tools": { "type": "array", "items": { "type": "string" } },
+                    "expires_at": { "type": "string" },
+                    "review_notes": { "type": "string" }
+                },
+                "required": ["source_intent_path", "task_id", "title", "approved_scope", "allowed_tools"],
+                "additionalProperties": false
+            }),
+        ),
+        descriptor(
+            DEN_TASK_REJECT_INTENT,
+            "Reject task intent",
+            "Reject a talk/pair task intent and update source intent audit metadata with the rejection reason.",
+            "bear.tasks",
+            &["task.intent.reject"],
+            CURATE_ROLES,
+            json!({
+                "type": "object",
+                "properties": {
+                    "source_intent_path": { "type": "string" },
+                    "rejection_reason": { "type": "string" },
+                    "review_notes": { "type": "string" }
+                },
+                "required": ["source_intent_path", "rejection_reason"],
+                "additionalProperties": false
+            }),
+        ),
+        descriptor(
+            DEN_CORE_WRITE_RESULT_SUMMARY,
+            "Write core result summary",
+            "Write a curate-reviewed summary of work results into shared core memory through Den-controlled validation.",
+            "bear.core",
+            &["core.result_summary.write"],
+            CURATE_ROLES,
+            json!({
+                "type": "object",
+                "properties": {
+                    "task_id": { "type": "string" },
+                    "run_id": { "type": "string" },
+                    "summary": { "type": "string" },
+                    "durable_learnings": { "type": "array", "items": { "type": "string" } },
+                    "source_result_path": { "type": "string" }
+                },
+                "required": ["task_id", "summary"],
+                "additionalProperties": false
+            }),
+        ),
+        descriptor(
             DEN_OBSERVATION_WRITE,
             "Write observation",
             "Write a schema-validated inbound observation from a Den-delivered watch event.",
@@ -374,11 +482,16 @@ pub fn is_builtin_den_tool(name: &str) -> bool {
             | DEN_CHANNEL_GET_CONTEXT
             | DEN_POLICY_GET_SELF
             | DEN_SKILL_PROPOSE
+            | DEN_SKILL_APPROVE_PROPOSAL
+            | DEN_SKILL_REJECT_PROPOSAL
             | DEN_WORK_PLAN_LIST
             | DEN_WORK_PLAN_GET_STATUS
             | DEN_WORK_PLAN_UPDATE
             | DEN_WORK_PLAN_REQUEST_HANDOFF
             | DEN_TASK_WRITE_INTENT
+            | DEN_TASK_APPROVE_INTENT
+            | DEN_TASK_REJECT_INTENT
+            | DEN_CORE_WRITE_RESULT_SUMMARY
             | DEN_OBSERVATION_WRITE
             | DEN_RUN_WRITE_RESULT
     )
@@ -389,6 +502,7 @@ pub struct DenToolInvocationContext {
     pub bear_id: Uuid,
     pub bear_slug: String,
     pub role_agent_id: String,
+    pub agent_role: Option<BearAgentRole>,
     pub user_id: i32,
     pub username: Option<String>,
     pub membership_role: Option<String>,
@@ -466,8 +580,13 @@ pub async fn invoke_den_tool(
         DEN_WORK_PLAN_GET_STATUS => get_work_plan_status(pool, &context, role, arguments).await,
         DEN_WORK_PLAN_UPDATE => update_work_plan(pool, &context, role, arguments).await,
         DEN_SKILL_PROPOSE
+        | DEN_SKILL_APPROVE_PROPOSAL
+        | DEN_SKILL_REJECT_PROPOSAL
         | DEN_WORK_PLAN_REQUEST_HANDOFF
         | DEN_TASK_WRITE_INTENT
+        | DEN_TASK_APPROVE_INTENT
+        | DEN_TASK_REJECT_INTENT
+        | DEN_CORE_WRITE_RESULT_SUMMARY
         | DEN_OBSERVATION_WRITE
         | DEN_RUN_WRITE_RESULT => Err(CustomError::System(format!(
             "Den tool `{tool_name}` is registered and role-authorized but not implemented yet"
@@ -513,14 +632,21 @@ async fn context_role(
     .bind(agent_id)
     .fetch_optional(pool)
     .await?;
-    let role = row
+    let registered_role: BearAgentRole = row
         .ok_or_else(|| {
             CustomError::Authorization("role_agent_id is not registered for this bear".to_string())
         })?
         .0
         .parse()
         .map_err(CustomError::System)?;
-    Ok(role)
+    if let Some(declared_role) = context.agent_role {
+        if declared_role != registered_role {
+            return Err(CustomError::Authorization(format!(
+                "Den tool context role `{declared_role}` does not match registered role `{registered_role}` for role_agent_id"
+            )));
+        }
+    }
+    Ok(registered_role)
 }
 
 fn authorize_tool_for_role(tool_name: &str, role: BearAgentRole) -> Result<(), CustomError> {
@@ -632,6 +758,7 @@ fn channel_context(context: &DenToolInvocationContext) -> Value {
     json!({
         "bear_id": context.bear_id,
         "role_agent_id": context.role_agent_id,
+        "agent_role": context.agent_role,
         "user_id": context.user_id,
         "conversation_id": context.conversation_id,
         "session_id": context.session_id,
@@ -852,6 +979,17 @@ mod tests {
         assert!(!pair.contains(DEN_OBSERVATION_WRITE));
         assert!(!pair.contains(DEN_RUN_WRITE_RESULT));
 
+        let curate = names_for_role(BearAgentRole::Curate);
+        assert!(curate.contains(DEN_TASK_APPROVE_INTENT));
+        assert!(curate.contains(DEN_TASK_REJECT_INTENT));
+        assert!(curate.contains(DEN_CORE_WRITE_RESULT_SUMMARY));
+        assert!(curate.contains(DEN_SKILL_APPROVE_PROPOSAL));
+        assert!(curate.contains(DEN_SKILL_REJECT_PROPOSAL));
+        assert!(curate.contains(DEN_SKILL_PROPOSE));
+        assert!(!curate.contains(DEN_TASK_WRITE_INTENT));
+        assert!(!curate.contains(DEN_OBSERVATION_WRITE));
+        assert!(!curate.contains(DEN_RUN_WRITE_RESULT));
+
         let watch = names_for_role(BearAgentRole::Watch);
         assert!(watch.contains(DEN_OBSERVATION_WRITE));
         assert!(watch.contains(DEN_SKILL_PROPOSE));
@@ -883,6 +1021,10 @@ mod tests {
         assert!(authorize_tool_for_role(DEN_TASK_WRITE_INTENT, BearAgentRole::Watch).is_err());
         assert!(authorize_tool_for_role(DEN_RUN_WRITE_RESULT, BearAgentRole::Work).is_ok());
         assert!(authorize_tool_for_role(DEN_RUN_WRITE_RESULT, BearAgentRole::Talk).is_err());
+        assert!(authorize_tool_for_role(DEN_TASK_APPROVE_INTENT, BearAgentRole::Curate).is_ok());
+        assert!(authorize_tool_for_role(DEN_TASK_APPROVE_INTENT, BearAgentRole::Pair).is_err());
+        assert!(authorize_tool_for_role(DEN_SKILL_APPROVE_PROPOSAL, BearAgentRole::Curate).is_ok());
+        assert!(authorize_tool_for_role(DEN_SKILL_APPROVE_PROPOSAL, BearAgentRole::Work).is_err());
         assert!(authorize_tool_for_role(DEN_WORK_PLAN_UPDATE, BearAgentRole::Pair).is_ok());
         assert!(authorize_tool_for_role(DEN_WORK_PLAN_UPDATE, BearAgentRole::Watch).is_err());
         assert!(

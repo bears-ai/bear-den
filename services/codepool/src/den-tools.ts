@@ -13,6 +13,7 @@ export type DenToolRuntimeContext = {
     bear_id: string;
     bear_slug?: string;
     role_agent_id: string;
+    agent_role?: string;
     user_id: number | string;
     username?: string;
     membership_role?: string | null;
@@ -62,6 +63,7 @@ export function buildDenToolRuntimeContext(
         bear_id: bearId,
         bear_slug: body.bear?.slug,
         role_agent_id: agentId,
+        agent_role: body.bear?.agent_role,
         user_id: userId,
         username: body.user?.username,
         membership_role: body.user?.membership_role,

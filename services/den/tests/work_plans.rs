@@ -92,6 +92,7 @@ fn den_context(bear_id: Uuid, user_id: i32, role_agent_id: &str) -> DenToolInvoc
         bear_id,
         bear_slug: "work-plan-test".to_string(),
         role_agent_id: role_agent_id.to_string(),
+        agent_role: Some(BearAgentRole::Pair),
         user_id,
         username: Some("work-plan-user".to_string()),
         membership_role: Some(bears_db::BEAR_ROLE_ADMIN.to_string()),
