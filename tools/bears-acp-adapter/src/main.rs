@@ -3200,7 +3200,7 @@ async fn handle_sse_frame(
         let event: Value = serde_json::from_str(data).context("parse Den SSE event JSON")?;
         diagnostics.observe_event(&event);
         let ty = event.get("type").and_then(Value::as_str).unwrap_or("");
-        if ty == "assistant_text_delta" {
+        if ty == "assistant_text_delta" || ty == "status_text" {
             let text = event.get("text").and_then(Value::as_str).unwrap_or("");
             outcome.saw_assistant_output |= !text.is_empty();
         } else if ty == "error" {
