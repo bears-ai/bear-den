@@ -75,6 +75,8 @@ impl AcpSettledToolResult {
             "content_bytes": self.content_bytes,
             "structured_content_bytes": self.structured_content_bytes,
             "age_ms": self.settled_at.elapsed().as_millis(),
+            "component": "den.acp",
+            "phase": crate::core::acp_tools::acp_diag_phase::RECENTLY_SETTLED_RESULT,
         })
     }
 }

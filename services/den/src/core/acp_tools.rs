@@ -1,5 +1,21 @@
 use serde_json::json;
 
+pub mod acp_diag_phase {
+    pub const DESCRIPTOR_ADVERTISED: &str = "descriptor_advertised";
+    pub const LETTA_TOOL_CALL_MAPPED: &str = "letta_tool_call_mapped";
+    pub const TOOL_REQUEST_REGISTERED: &str = "tool_request_registered";
+    pub const ADAPTER_PERMISSION_REQUESTED: &str = "adapter_permission_requested";
+    pub const ADAPTER_PERMISSION_DENIED: &str = "adapter_permission_denied";
+    pub const ADAPTER_EXECUTION_STARTED: &str = "adapter_execution_started";
+    pub const ADAPTER_EXECUTION_FAILED: &str = "adapter_execution_failed";
+    pub const ADAPTER_RESULT_POSTED: &str = "adapter_result_posted";
+    pub const DEN_RESULT_DELIVERED: &str = "den_result_delivered";
+    pub const LETTA_CONTINUATION_STARTED: &str = "letta_continuation_started";
+    pub const LETTA_CONTINUATION_FAILED: &str = "letta_continuation_failed";
+    pub const TOOL_RESULT_TIMEOUT: &str = "tool_result_timeout";
+    pub const RECENTLY_SETTLED_RESULT: &str = "recently_settled_result";
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AcpToolName {
     ReadTextFile,
@@ -140,6 +156,8 @@ pub struct AcpToolPolicy {
     pub create_files: Option<bool>,
     pub allow_multiple: Option<bool>,
     pub deny_hidden_paths: Option<bool>,
+    pub tool_timeout_ms: u64,
+    pub permission_timeout_ms: u64,
 }
 
 impl AcpToolPolicy {
@@ -156,6 +174,8 @@ impl AcpToolPolicy {
             "provider_tool": descriptor.provider_name,
             "adapter_method": descriptor.adapter_method,
             "client_method": descriptor.client_method,
+            "tool_timeout_ms": self.tool_timeout_ms,
+            "permission_timeout_ms": self.permission_timeout_ms,
         });
         if let Some(max_lines) = self.max_lines {
             policy["max_lines"] = json!(max_lines);
@@ -255,6 +275,8 @@ const ACP_READ_TEXT_FILE_POLICY: AcpToolPolicy = AcpToolPolicy {
     create_files: None,
     allow_multiple: None,
     deny_hidden_paths: None,
+    tool_timeout_ms: 30_000,
+    permission_timeout_ms: 120_000,
 };
 
 const ACP_LIST_DIRECTORY_POLICY: AcpToolPolicy = AcpToolPolicy {
@@ -274,6 +296,8 @@ const ACP_LIST_DIRECTORY_POLICY: AcpToolPolicy = AcpToolPolicy {
     create_files: None,
     allow_multiple: None,
     deny_hidden_paths: None,
+    tool_timeout_ms: 30_000,
+    permission_timeout_ms: 120_000,
 };
 
 const ACP_SEARCH_FILES_POLICY: AcpToolPolicy = AcpToolPolicy {
@@ -293,6 +317,8 @@ const ACP_SEARCH_FILES_POLICY: AcpToolPolicy = AcpToolPolicy {
     create_files: None,
     allow_multiple: None,
     deny_hidden_paths: None,
+    tool_timeout_ms: 60_000,
+    permission_timeout_ms: 120_000,
 };
 
 const ACP_REPLACE_TEXT_POLICY: AcpToolPolicy = AcpToolPolicy {
@@ -312,6 +338,8 @@ const ACP_REPLACE_TEXT_POLICY: AcpToolPolicy = AcpToolPolicy {
     create_files: Some(false),
     allow_multiple: Some(false),
     deny_hidden_paths: Some(true),
+    tool_timeout_ms: 30_000,
+    permission_timeout_ms: 120_000,
 };
 
 pub fn acp_tool_policy(tool: AcpToolName) -> AcpToolPolicy {
@@ -352,17 +380,9 @@ pub fn acp_client_tool_descriptors() -> serde_json::Value {
 pub fn acp_client_tool_descriptors_for_client_context(
     client_context: &serde_json::Value,
 ) -> serde_json::Value {
-    let Some(direct_tools) = client_context.get("direct_tools").and_then(|v| v.as_object()) else {
-        return json!([acp_client_tool_descriptor(&ACP_READ_TEXT_FILE_TOOL)]);
-    };
     let descriptors = AcpToolName::all()
         .iter()
-        .filter(|tool| {
-            direct_tools
-                .get(tool.descriptor().provider_name)
-                .and_then(|v| v.as_bool())
-                .unwrap_or(false)
-        })
+        .filter(|tool| adapter_supports_tool(client_context, tool.descriptor().provider_name))
         .map(|tool| acp_client_tool_descriptor(tool.descriptor()))
         .collect::<Vec<_>>();
     if descriptors.is_empty() {
@@ -370,6 +390,18 @@ pub fn acp_client_tool_descriptors_for_client_context(
     } else {
         json!(descriptors)
     }
+}
+
+fn adapter_supports_tool(client_context: &serde_json::Value, provider_name: &str) -> bool {
+    client_context
+        .pointer(&format!("/adapter/direct_tools/{provider_name}/supported"))
+        .and_then(|v| v.as_bool())
+        .or_else(|| {
+            client_context
+                .pointer(&format!("/direct_tools/{provider_name}"))
+                .and_then(|v| v.as_bool())
+        })
+        .unwrap_or(false)
 }
 
 pub fn acp_read_text_file_client_tool_descriptor() -> serde_json::Value {
@@ -526,6 +558,27 @@ mod tests {
         assert!(names.contains(&"fs_list_directory"));
         assert!(names.contains(&"fs_search_files"));
         assert!(!names.contains(&"fs_replace_text"));
+    }
+
+    #[test]
+    fn descriptors_filter_by_structured_adapter_capabilities() {
+        let descriptors = acp_client_tool_descriptors_for_client_context(&json!({
+            "adapter": {
+                "name": "bears-acp-adapter",
+                "version": "0.1.0",
+                "direct_tools": {
+                    "fs_read_text_file": { "supported": true, "version": 1 },
+                    "fs_replace_text": { "supported": true, "version": 1 }
+                }
+            }
+        }));
+        let names = descriptors
+            .as_array()
+            .expect("descriptor array")
+            .iter()
+            .map(|descriptor| descriptor["name"].as_str().unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(names, vec!["fs_read_text_file", "fs_replace_text"]);
     }
 
     #[test]

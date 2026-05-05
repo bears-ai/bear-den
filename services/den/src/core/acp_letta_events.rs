@@ -6,7 +6,10 @@ use uuid::Uuid;
 
 use crate::core::{
     acp_tool_turns::AcpToolResultRequest,
-    acp_tools::{acp_tool_policy_json_for_provider, supported_provider_tool_names, AcpToolName},
+    acp_tools::{
+        acp_diag_phase, acp_tool_policy_json_for_provider, supported_provider_tool_names,
+        AcpToolName,
+    },
 };
 
 #[derive(Debug)]
@@ -572,6 +575,7 @@ pub fn acp_event_to_adapter_sse(event: AcpGatewayEvent) -> Bytes {
             "policy": acp_tool_policy_json_for_provider(&tool_name),
             "diagnostic": {
                 "component": "den.acp",
+                "phase": acp_diag_phase::LETTA_TOOL_CALL_MAPPED,
                 "transport_version": 3,
             },
         }),
@@ -736,6 +740,26 @@ mod tests {
             }
             other => panic!("unexpected event: {other:?}"),
         }
+    }
+
+    #[test]
+    fn maps_tool_call_to_adapter_sse_without_database() {
+        let event = tool_call_event(
+            "fs_replace_text",
+            serde_json::json!({
+                "path": "/workspace/a.txt",
+                "old_text": "before",
+                "new_text": "after"
+            }),
+        );
+        let mapped = map_native_letta_stream_event_to_acp_event(&event).expect("mapped event");
+        let bytes = acp_event_to_adapter_sse(mapped);
+        let raw = std::str::from_utf8(&bytes).expect("utf8 sse");
+        assert!(raw.contains("\"type\":\"tool_request\""));
+        assert!(raw.contains("\"tool_name\":\"fs_replace_text\""));
+        assert!(raw.contains("\"required\":true"));
+        assert!(raw.contains("\"risk\":\"writes_workspace\""));
+        assert!(raw.contains("\"phase\":\"letta_tool_call_mapped\""));
     }
 
     #[test]

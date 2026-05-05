@@ -47,7 +47,10 @@ use crate::{
             AcpToolResultDelivery, AcpToolResultRequest, AcpToolTurnCoordinator,
             AcpToolTurnRegistration,
         },
-        acp_tools::{acp_client_tool_descriptors_for_client_context, AcpToolStatus},
+        acp_tools::{
+            acp_client_tool_descriptors_for_client_context, acp_diag_phase,
+            acp_tool_policy_json_for_provider, AcpToolStatus,
+        },
         archived_conversations,
         bears::{db as bears_db, Bear, BearAgentRole},
         letta::load_agent_conversations,
@@ -1168,6 +1171,7 @@ async fn tool_result_inner(
                 content_bytes = body.content.as_deref().map(str::len).unwrap_or(0),
                 structured_content_bytes = body.structured_content.to_string().len(),
                 diagnostic = ?body.diagnostic,
+                phase = acp_diag_phase::DEN_RESULT_DELIVERED,
                 "ACP tool result received"
             );
             Ok(Json(AcpToolResultResponse {
@@ -1175,7 +1179,11 @@ async fn tool_result_inner(
                 reason: "delivered".to_string(),
                 turn_id: body.turn_id,
                 tool_call_id,
-                diagnostic: None,
+                diagnostic: Some(serde_json::json!({
+                    "component": "den.acp",
+                    "phase": acp_diag_phase::DEN_RESULT_DELIVERED,
+                    "status": parsed_status.as_str(),
+                })),
             })
             .into_response())
         }
@@ -1187,7 +1195,10 @@ async fn tool_result_inner(
             reason: "turn_missing".to_string(),
             turn_id,
             tool_call_id,
-            diagnostic: None,
+            diagnostic: Some(serde_json::json!({
+                "component": "den.acp",
+                "phase": "tool_result_missing",
+            })),
         })
         .into_response()),
         AcpToolResultDelivery::AlreadySettled {
@@ -1835,7 +1846,7 @@ async fn map_letta_stream_frame_to_acp_adapter_events_with_persistence(
 ) -> Result<
     (
         Vec<Bytes>,
-        Option<(String, oneshot::Receiver<AcpToolResultRequest>)>,
+        Option<(String, String, oneshot::Receiver<AcpToolResultRequest>)>,
     ),
     std::io::Error,
 > {
@@ -1865,11 +1876,14 @@ async fn map_letta_stream_frame_to_acp_adapter_events_with_persistence(
     };
     let result_rx = if let AcpGatewayEvent::ToolRequest {
         tool_call_id,
+        tool_name,
         result_rx,
         ..
     } = &mut event
     {
-        result_rx.take().map(|rx| (tool_call_id.clone(), rx))
+        result_rx
+            .take()
+            .map(|rx| (tool_call_id.clone(), tool_name.clone(), rx))
     } else {
         None
     };
@@ -1906,7 +1920,7 @@ enum AcpPendingFuture {
                             Result<
                                 (
                                     Vec<Bytes>,
-                                    Option<(String, oneshot::Receiver<AcpToolResultRequest>)>,
+                                    Option<(String, String, oneshot::Receiver<AcpToolResultRequest>)>,
                                 ),
                                 std::io::Error,
                             >,
@@ -2005,18 +2019,23 @@ impl Stream for AcpLettaSseStream {
                             for item in bytes {
                                 this.pending.push_back(item);
                             }
-                            if let Some((tool_call_id, result_rx)) = result_rx {
-                                this.active_tool_call_ids.push(tool_call_id);
+                            if let Some((tool_call_id, tool_name, result_rx)) = result_rx {
+                                this.active_tool_call_ids.push(tool_call_id.clone());
                                 this.persist_future =
                                     Some(AcpPendingFuture::Tool(Box::pin(async move {
+                                        let timeout_ms = acp_tool_policy_json_for_provider(&tool_name)
+                                            .get("tool_timeout_ms")
+                                            .and_then(serde_json::Value::as_u64)
+                                            .unwrap_or(30_000);
                                         tokio::time::timeout(
-                                            std::time::Duration::from_secs(30),
+                                            std::time::Duration::from_millis(timeout_ms),
                                             result_rx,
                                         )
                                         .await
                                         .map_err(|_| {
-                                            "timed out waiting for ACP local tool result"
-                                                .to_string()
+                                            format!(
+                                                "timed out waiting for ACP local tool result after {timeout_ms}ms"
+                                            )
                                         })?
                                         .map_err(|err| err.to_string())
                                     })));

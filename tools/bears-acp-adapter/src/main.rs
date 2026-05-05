@@ -74,6 +74,7 @@ struct ToolPolicy {
     create_files: Option<bool>,
     allow_multiple: Option<bool>,
     deny_hidden_paths: Option<bool>,
+    permission_timeout_ms: Option<u64>,
 }
 
 #[derive(Clone, Debug)]
@@ -120,6 +121,7 @@ impl LocalToolError {
             message: message.into(),
             diagnostic: json!({
                 "component": "bears-acp-adapter",
+                "phase": "adapter_permission_denied",
                 "reason": "client_permission_rejected",
             }),
         }
@@ -928,6 +930,28 @@ async fn handle_request(
     Ok(())
 }
 
+fn adapter_capabilities_context() -> Value {
+    json!({
+        "name": "bears-acp-adapter",
+        "version": env!("CARGO_PKG_VERSION"),
+        "direct_tools": {
+            "fs_read_text_file": { "supported": true, "version": 1 },
+            "fs_list_directory": { "supported": true, "version": 1 },
+            "fs_search_files": { "supported": true, "version": 1 },
+            "fs_replace_text": { "supported": true, "version": 1 }
+        }
+    })
+}
+
+fn direct_tools_context() -> Value {
+    json!({
+        "fs_read_text_file": true,
+        "fs_list_directory": true,
+        "fs_search_files": true,
+        "fs_replace_text": true,
+    })
+}
+
 fn session_context_from_params(params: &Value) -> Result<SessionContext> {
     validate_mcp_servers_unsupported(params)?;
     let roots = workspace_roots_from_params(params);
@@ -945,12 +969,8 @@ fn session_context_from_params(params: &Value) -> Result<SessionContext> {
         "cwd": cwd,
         "workspace_roots": roots,
         "adapter_version": env!("CARGO_PKG_VERSION"),
-        "direct_tools": {
-            "fs_read_text_file": true,
-            "fs_list_directory": true,
-            "fs_search_files": true,
-            "fs_replace_text": true,
-        },
+        "adapter": adapter_capabilities_context(),
+        "direct_tools": direct_tools_context(),
     });
     Ok(SessionContext {
         cwd,
@@ -1296,6 +1316,9 @@ fn policy_from_event(event: &Value) -> ToolPolicy {
         create_files: policy.get("create_files").and_then(Value::as_bool),
         allow_multiple: policy.get("allow_multiple").and_then(Value::as_bool),
         deny_hidden_paths: policy.get("deny_hidden_paths").and_then(Value::as_bool),
+        permission_timeout_ms: policy
+            .get("permission_timeout_ms")
+            .and_then(Value::as_u64),
     }
 }
 
@@ -2244,12 +2267,8 @@ fn session_context_from_den_session(params: &Value, den_session: &Value) -> Resu
         "cwd": ctx.cwd.clone(),
         "workspace_roots": ctx.roots.clone(),
         "adapter_version": env!("CARGO_PKG_VERSION"),
-        "direct_tools": {
-            "fs_read_text_file": true,
-            "fs_list_directory": true,
-            "fs_search_files": true,
-            "fs_replace_text": true,
-        },
+        "adapter": adapter_capabilities_context(),
+        "direct_tools": direct_tools_context(),
         "den_acp_session": den_session.clone(),
     });
     Ok(ctx)
@@ -3120,7 +3139,7 @@ async fn handle_tool_request_event(
         )
         .await?;
         let replace_plan_ref = replace_plan.as_ref();
-        if let Err(err) = request_tool_permission(adapter_state, session_id, tool_call_id, tool_name, event, replace_plan_ref).await {
+        if let Err(err) = request_tool_permission(adapter_state, session_id, tool_call_id, tool_name, event, replace_plan_ref, &policy).await {
             let local_err = LocalToolError::permission_denied(format!("{err:#}"));
             post_local_tool_error_result(config, session_id, tool_call_id, tool_name, event, local_err, std::time::Instant::now()).await?;
             return Ok(());
@@ -3143,6 +3162,7 @@ async fn handle_tool_request_event(
         "tool_name": tool_name,
         "diagnostic": {
             "adapter_version": env!("CARGO_PKG_VERSION"),
+            "phase": "adapter_execution_started",
             "duration_ms": started.elapsed().as_millis(),
         }
     });
@@ -3165,6 +3185,7 @@ async fn handle_tool_request_event(
             status = local_err.status;
             payload["status"] = json!(status);
             payload["content"] = json!(local_err.message);
+            payload["diagnostic"]["phase"] = json!("adapter_execution_failed");
             merge_diagnostic(&mut payload["diagnostic"], local_err.diagnostic);
             send_tool_call_update(
                 session_id,
@@ -3199,6 +3220,7 @@ async fn post_local_tool_error_result(
         "structured_content": {},
         "diagnostic": {
             "adapter_version": env!("CARGO_PKG_VERSION"),
+            "phase": "adapter_execution_failed",
             "duration_ms": started.elapsed().as_millis(),
         }
     });
@@ -3232,6 +3254,7 @@ async fn request_tool_permission(
     tool_name: &str,
     event: &Value,
     replace_plan: Option<&ReplaceTextPlan>,
+    policy: &ToolPolicy,
 ) -> Result<()> {
     let path = event
         .get("args")
@@ -3272,7 +3295,7 @@ async fn request_tool_permission(
         adapter_state,
         "session/request_permission",
         serde_json::to_value(request)?,
-        std::time::Duration::from_secs(120),
+        std::time::Duration::from_millis(policy.permission_timeout_ms.unwrap_or(120_000)),
     )
     .await?;
     if let Some(error) = response.get("error") {
