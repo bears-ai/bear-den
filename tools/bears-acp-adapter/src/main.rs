@@ -76,6 +76,28 @@ struct ToolPolicy {
     deny_hidden_paths: Option<bool>,
 }
 
+#[derive(Clone, Debug)]
+struct ReplaceTextArgs {
+    path: String,
+    old_text: String,
+    new_text: String,
+    expected_replacements: usize,
+}
+
+#[derive(Clone, Debug)]
+struct ReplaceTextPlan {
+    args: ReplaceTextArgs,
+    path: PathBuf,
+    replacements: usize,
+    bytes_before: usize,
+    bytes_after: usize,
+    preview: String,
+    policy_max_bytes: u64,
+    policy_max_replacements: usize,
+    policy_create_files: bool,
+    policy_allow_multiple: bool,
+}
+
 #[derive(Debug)]
 struct LocalToolError {
     status: &'static str,
@@ -1556,61 +1578,174 @@ async fn handle_direct_replace_text(
     args: &Value,
     policy: &ToolPolicy,
 ) -> Result<Value> {
-    let path = args
-        .get("path")
-        .and_then(Value::as_str)
-        .ok_or_else(|| anyhow!("fs_replace_text args missing path"))?;
-    let old_text = args
-        .get("old_text")
-        .and_then(Value::as_str)
-        .ok_or_else(|| anyhow!("fs_replace_text args missing old_text"))?;
-    let new_text = args
-        .get("new_text")
-        .and_then(Value::as_str)
-        .ok_or_else(|| anyhow!("fs_replace_text args missing new_text"))?;
-    if old_text.is_empty() {
-        return Err(anyhow!("fs_replace_text old_text must not be empty"));
-    }
-    let policy_create_files = policy.create_files.unwrap_or(false);
-    if args
-        .get("create_if_missing")
-        .and_then(Value::as_bool)
-        .unwrap_or(false)
-        && !policy_create_files
-    {
-        return Err(anyhow!("fs_replace_text does not create files yet"));
-    }
-    let policy_allow_multiple = policy.allow_multiple.unwrap_or(false);
-    if args
-        .get("allow_multiple")
-        .and_then(Value::as_bool)
-        .unwrap_or(false)
-        && !policy_allow_multiple
-    {
-        return Err(anyhow!("fs_replace_text does not allow multiple replacements yet"));
-    }
-    let expected_replacements = args
-        .get("expected_replacements")
-        .and_then(Value::as_u64)
-        .unwrap_or(1);
-    let policy_max_replacements = policy.max_replacements.unwrap_or(1).clamp(1, 100);
-    if expected_replacements == 0 || expected_replacements as usize > policy_max_replacements {
-        return Err(anyhow!(
-            "fs_replace_text expected_replacements exceeds policy max_replacements={policy_max_replacements}"
-        ));
-    }
-    if expected_replacements != 1 || policy_allow_multiple {
-        return Err(anyhow!(
-            "fs_replace_text currently supports exactly one replacement"
-        ));
-    }
-    let policy_max_bytes = policy.max_bytes.unwrap_or(1_048_576).clamp(1, 5_242_880);
     let context = session_context(adapter_state, session_id)?;
-    let path = normalize_requested_tool_path(path)?;
-    ensure_path_allowed_for_session(context, &path)?;
-    ensure_replace_text_path_allowed(&path, policy)?;
+    let args = ReplaceTextArgs::from_value(args, policy)?;
     let started = std::time::Instant::now();
-    let metadata = fs::metadata(&path).with_context(|| format!("stat {}", path.display()))?;
+    let plan = ReplaceTextPlan::preflight(context, args, policy)?;
+    let applied = plan.apply(context, policy)?;
+    eprintln!(
+        "bears-acp-adapter: replace_text session_id={} path={} bytes_before={} bytes_after={} duration_ms={}",
+        session_id,
+        applied["path"].as_str().unwrap_or(""),
+        applied["bytes_before"].as_u64().unwrap_or(0),
+        applied["bytes_after"].as_u64().unwrap_or(0),
+        started.elapsed().as_millis(),
+    );
+    Ok(applied)
+}
+
+impl ReplaceTextArgs {
+    fn from_value(args: &Value, policy: &ToolPolicy) -> Result<Self> {
+        let path = args
+            .get("path")
+            .and_then(Value::as_str)
+            .ok_or_else(|| anyhow!("fs_replace_text args missing path"))?
+            .to_string();
+        let old_text = args
+            .get("old_text")
+            .and_then(Value::as_str)
+            .ok_or_else(|| anyhow!("fs_replace_text args missing old_text"))?
+            .to_string();
+        let new_text = args
+            .get("new_text")
+            .and_then(Value::as_str)
+            .ok_or_else(|| anyhow!("fs_replace_text args missing new_text"))?
+            .to_string();
+        if old_text.is_empty() {
+            return Err(anyhow!("fs_replace_text old_text must not be empty"));
+        }
+        let create_if_missing = args
+            .get("create_if_missing")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        let policy_create_files = policy.create_files.unwrap_or(false);
+        if create_if_missing && !policy_create_files {
+            return Err(anyhow!("fs_replace_text does not create files yet"));
+        }
+        let allow_multiple = args
+            .get("allow_multiple")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        let policy_allow_multiple = policy.allow_multiple.unwrap_or(false);
+        if allow_multiple && !policy_allow_multiple {
+            return Err(anyhow!("fs_replace_text does not allow multiple replacements yet"));
+        }
+        let expected_replacements = args
+            .get("expected_replacements")
+            .and_then(Value::as_u64)
+            .unwrap_or(1) as usize;
+        let policy_max_replacements = policy.max_replacements.unwrap_or(1).clamp(1, 100);
+        if expected_replacements == 0 || expected_replacements > policy_max_replacements {
+            return Err(anyhow!(
+                "fs_replace_text expected_replacements exceeds policy max_replacements={policy_max_replacements}"
+            ));
+        }
+        if expected_replacements != 1 || allow_multiple || policy_allow_multiple {
+            return Err(anyhow!(
+                "fs_replace_text currently supports exactly one replacement"
+            ));
+        }
+        Ok(Self {
+            path,
+            old_text,
+            new_text,
+            expected_replacements,
+        })
+    }
+}
+
+impl ReplaceTextPlan {
+    fn preflight(context: &SessionContext, args: ReplaceTextArgs, policy: &ToolPolicy) -> Result<Self> {
+        let policy_max_bytes = policy.max_bytes.unwrap_or(1_048_576).clamp(1, 5_242_880);
+        let policy_max_replacements = policy.max_replacements.unwrap_or(1).clamp(1, 100);
+        let policy_create_files = policy.create_files.unwrap_or(false);
+        let policy_allow_multiple = policy.allow_multiple.unwrap_or(false);
+        let path = normalize_requested_tool_path(&args.path)?;
+        ensure_path_allowed_for_session(context, &path)?;
+        ensure_replace_text_path_allowed(&path, policy)?;
+        let raw = read_replace_text_input(&path, policy_max_bytes)?;
+        let replacements = raw.matches(&args.old_text).count();
+        if replacements != args.expected_replacements {
+            return Err(anyhow!(
+                "fs_replace_text expected {} match for old_text, found {replacements}",
+                args.expected_replacements
+            ));
+        }
+        let updated = raw.replacen(&args.old_text, &args.new_text, args.expected_replacements);
+        let preview = replace_text_preview(&path, &args, &raw, &updated);
+        Ok(Self {
+            args,
+            path,
+            replacements,
+            bytes_before: raw.len(),
+            bytes_after: updated.len(),
+            preview,
+            policy_max_bytes,
+            policy_max_replacements,
+            policy_create_files,
+            policy_allow_multiple,
+        })
+    }
+
+    fn apply(&self, context: &SessionContext, policy: &ToolPolicy) -> Result<Value> {
+        ensure_path_allowed_for_session(context, &self.path)?;
+        ensure_replace_text_path_allowed(&self.path, policy)?;
+        let raw = read_replace_text_input(&self.path, self.policy_max_bytes)?;
+        let replacements = raw.matches(&self.args.old_text).count();
+        if replacements != self.args.expected_replacements {
+            return Err(anyhow!(
+                "fs_replace_text stale preflight: expected {} match for old_text, found {replacements}",
+                self.args.expected_replacements
+            ));
+        }
+        let updated = raw.replacen(
+            &self.args.old_text,
+            &self.args.new_text,
+            self.args.expected_replacements,
+        );
+        fs::write(&self.path, updated.as_bytes())
+            .with_context(|| format!("write replaced text file {}", self.path.display()))?;
+        let content = format!(
+            "Replaced {} occurrence in {} ({} bytes -> {} bytes)",
+            self.replacements,
+            self.path.display(),
+            raw.len(),
+            updated.len()
+        );
+        Ok(json!({
+            "ok": true,
+            "path": self.path.to_string_lossy(),
+            "replacements": self.replacements,
+            "bytes_before": raw.len(),
+            "bytes_after": updated.len(),
+            "source": "adapter_local",
+            "content": content,
+            "preview": self.preview,
+            "policy": {
+                "max_bytes": self.policy_max_bytes,
+                "sensitive_path_policy": policy.sensitive_path_policy,
+                "max_replacements": self.policy_max_replacements,
+                "create_files": self.policy_create_files,
+                "allow_multiple": self.policy_allow_multiple,
+                "deny_hidden_paths": policy.deny_hidden_paths.unwrap_or(true),
+            },
+        }))
+    }
+
+    fn permission_prompt(&self, tool_name: &str, reason: &str) -> String {
+        format!(
+            "{reason}\n\nTool: {tool_name}\nPath: {}\nReplacing {} occurrence\nBytes: {} -> {}\n\n{}",
+            self.path.display(),
+            self.replacements,
+            self.bytes_before,
+            self.bytes_after,
+            self.preview,
+        )
+    }
+}
+
+fn read_replace_text_input(path: &Path, policy_max_bytes: u64) -> Result<String> {
+    let metadata = fs::metadata(path).with_context(|| format!("stat {}", path.display()))?;
     if !metadata.is_file() {
         return Err(anyhow!("fs_replace_text path must be an existing file"));
     }
@@ -1621,48 +1756,58 @@ async fn handle_direct_replace_text(
             policy_max_bytes
         ));
     }
-    let raw = fs::read_to_string(&path)
-        .with_context(|| format!("read text file for replace {}", path.display()))?;
-    let matches = raw.matches(old_text).count();
-    if matches != 1 {
-        return Err(anyhow!(
-            "fs_replace_text expected exactly 1 match for old_text, found {matches}"
-        ));
+    fs::read_to_string(path)
+        .with_context(|| format!("read text file for replace {}", path.display()))
+}
+
+fn replace_text_preview(path: &Path, args: &ReplaceTextArgs, raw: &str, updated: &str) -> String {
+    let before = preview_around(raw, &args.old_text, 320);
+    let after = preview_around(updated, &args.new_text, 320);
+    format!(
+        "Preview for {}\n--- before\n{}\n+++ after\n{}",
+        path.display(),
+        before,
+        after,
+    )
+}
+
+fn preview_around(text: &str, needle: &str, max_chars: usize) -> String {
+    let Some(pos) = text.find(needle) else {
+        return truncate_chars(text, max_chars);
+    };
+    let before = truncate_chars_reverse(&text[..pos], max_chars / 2);
+    let after_start = pos.saturating_add(needle.len()).min(text.len());
+    let after = truncate_chars(&text[after_start..], max_chars / 2);
+    let mut out = String::new();
+    if before.chars().count() < text[..pos].chars().count() {
+        out.push_str("...");
     }
-    let updated = raw.replacen(old_text, new_text, 1);
-    fs::write(&path, updated.as_bytes())
-        .with_context(|| format!("write replaced text file {}", path.display()))?;
-    let content = format!(
-        "Replaced 1 occurrence in {} ({} bytes -> {} bytes)",
-        path.display(),
-        raw.len(),
-        updated.len()
-    );
-    eprintln!(
-        "bears-acp-adapter: replace_text session_id={} path={} bytes_before={} bytes_after={} duration_ms={}",
-        session_id,
-        path.display(),
-        raw.len(),
-        updated.len(),
-        started.elapsed().as_millis(),
-    );
-    Ok(json!({
-        "ok": true,
-        "path": path.to_string_lossy(),
-        "replacements": 1,
-        "bytes_before": raw.len(),
-        "bytes_after": updated.len(),
-        "source": "adapter_local",
-        "content": content,
-        "policy": {
-            "max_bytes": policy_max_bytes,
-            "sensitive_path_policy": policy.sensitive_path_policy,
-            "max_replacements": policy_max_replacements,
-            "create_files": policy_create_files,
-            "allow_multiple": policy_allow_multiple,
-            "deny_hidden_paths": policy.deny_hidden_paths.unwrap_or(true),
-        },
-    }))
+    out.push_str(&before);
+    out.push_str(needle);
+    out.push_str(&after);
+    if after.chars().count() < text[after_start..].chars().count() {
+        out.push_str("...");
+    }
+    out
+}
+
+fn truncate_chars_reverse(text: &str, max_chars: usize) -> String {
+    let count = text.chars().count();
+    if count <= max_chars {
+        text.to_string()
+    } else {
+        text.chars().skip(count - max_chars).collect()
+    }
+}
+
+fn truncate_chars(text: &str, max_chars: usize) -> String {
+    if text.chars().count() <= max_chars {
+        text.to_string()
+    } else {
+        let mut out = text.chars().take(max_chars).collect::<String>();
+        out.push_str("...");
+        out
+    }
 }
 
 fn ensure_replace_text_path_allowed(path: &Path, policy: &ToolPolicy) -> Result<()> {
@@ -2949,6 +3094,18 @@ async fn handle_tool_request_event(
         .and_then(Value::as_str)
         .ok_or_else(|| anyhow!("tool_request missing tool_name"))?;
     send_tool_call_update(session_id, tool_call_id, "pending", "Preparing local tool").await?;
+    let args = event.get("args").cloned().unwrap_or_else(|| json!({}));
+    let policy = policy_from_event(event);
+    let replace_plan = if tool_name == "fs_replace_text" {
+        let context = session_context(adapter_state, session_id)?;
+        Some(ReplaceTextPlan::preflight(
+            context,
+            ReplaceTextArgs::from_value(&args, &policy)?,
+            &policy,
+        )?)
+    } else {
+        None
+    };
     if event
         .get("approval")
         .and_then(|v| v.get("required"))
@@ -2962,7 +3119,8 @@ async fn handle_tool_request_event(
             "Waiting for permission",
         )
         .await?;
-        if let Err(err) = request_tool_permission(adapter_state, session_id, tool_call_id, tool_name, event).await {
+        let replace_plan_ref = replace_plan.as_ref();
+        if let Err(err) = request_tool_permission(adapter_state, session_id, tool_call_id, tool_name, event, replace_plan_ref).await {
             let local_err = LocalToolError::permission_denied(format!("{err:#}"));
             post_local_tool_error_result(config, session_id, tool_call_id, tool_name, event, local_err, std::time::Instant::now()).await?;
             return Ok(());
@@ -2970,9 +3128,12 @@ async fn handle_tool_request_event(
     }
     send_tool_call_update(session_id, tool_call_id, "pending", "Running local tool").await?;
     let started = std::time::Instant::now();
-    let args = event.get("args").cloned().unwrap_or_else(|| json!({}));
-    let policy = policy_from_event(event);
-    let result = execute_local_tool(adapter_state, session_id, tool_name, args, &policy).await;
+    let result = if let Some(plan) = replace_plan {
+        let context = session_context(adapter_state, session_id)?;
+        plan.apply(context, &policy)
+    } else {
+        execute_local_tool(adapter_state, session_id, tool_name, args, &policy).await
+    };
     let status;
     let mut payload = json!({
         "turn_id": event.get("turn_id").and_then(Value::as_str),
@@ -3070,6 +3231,7 @@ async fn request_tool_permission(
     tool_call_id: &str,
     tool_name: &str,
     event: &Value,
+    replace_plan: Option<&ReplaceTextPlan>,
 ) -> Result<()> {
     let path = event
         .get("args")
@@ -3089,13 +3251,14 @@ async fn request_tool_permission(
         "bears-acp-adapter: requesting permission session_id={} tool_call_id={} tool_name={} path={}",
         session_id, tool_call_id, tool_name, path
     );
+    let permission_content = replace_plan
+        .map(|plan| plan.permission_prompt(tool_name, reason))
+        .unwrap_or_else(|| format!("{reason}\n\nTool: {tool_name}\nPath: {path}"));
     let fields = ToolCallUpdateFields::new()
         .kind(Some(ToolKind::Read))
         .status(Some(ToolCallStatus::Pending))
         .title(Some(title.to_string()))
-        .content(Some(vec![ToolCallContent::from(format!(
-            "{reason}\n\nTool: {tool_name}\nPath: {path}"
-        ))]));
+        .content(Some(vec![ToolCallContent::from(permission_content)]));
     let tool_call = ToolCallUpdate::new(tool_call_id.to_string(), fields);
     let request = RequestPermissionRequest::new(
         session_id.to_string(),
@@ -3611,6 +3774,42 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn replace_text_preflight_preview_and_revalidates_before_write() {
+        let root = unique_test_dir("replace-preflight");
+        let file = root.join("a.txt");
+        fs::write(&file, "hello old world\n").unwrap();
+        let state = test_adapter_state("session-1", &root);
+        let context = state.session_contexts.get("session-1").unwrap();
+        let policy = ToolPolicy {
+            max_bytes: Some(1024),
+            sensitive_path_policy: Some("deny_sensitive_paths".to_string()),
+            max_replacements: Some(1),
+            create_files: Some(false),
+            allow_multiple: Some(false),
+            deny_hidden_paths: Some(true),
+            ..Default::default()
+        };
+        let args = ReplaceTextArgs::from_value(
+            &json!({
+                "path": file.to_string_lossy(),
+                "old_text": "old",
+                "new_text": "new"
+            }),
+            &policy,
+        )
+        .unwrap();
+        let plan = ReplaceTextPlan::preflight(context, args, &policy).unwrap();
+        assert!(plan.preview.contains("--- before"));
+        assert!(plan.preview.contains("+++ after"));
+        assert!(plan.permission_prompt("fs_replace_text", "approve?").contains("hello old world"));
+        fs::write(&file, "hello changed world\n").unwrap();
+        let result = plan.apply(context, &policy);
+        assert!(format!("{:#}", result.unwrap_err()).contains("stale preflight"));
+        assert_eq!(fs::read_to_string(&file).unwrap(), "hello changed world\n");
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
     async fn replace_text_denies_multiple_matches_by_default() {
         let root = unique_test_dir("replace-multiple");
         let file = root.join("a.txt");
@@ -3627,7 +3826,7 @@ mod tests {
             &ToolPolicy::default(),
         )
         .await;
-        assert!(format!("{:#}", result.unwrap_err()).contains("expected exactly 1 match"));
+        assert!(format!("{:#}", result.unwrap_err()).contains("expected 1 match"));
         assert_eq!(fs::read_to_string(&file).unwrap(), "old old\n");
         let _ = fs::remove_dir_all(root);
     }
