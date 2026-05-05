@@ -1,12 +1,12 @@
 use agent_client_protocol::schema::{
     AgentCapabilities, AuthEnvVar, AuthMethod, AuthMethodEnvVar, AuthenticateResponse,
-    CloseSessionResponse, ContentBlock, ContentChunk, Implementation, InitializeResponse,
+    CloseSessionResponse, ContentBlock, ContentChunk, Diff, Implementation, InitializeResponse,
     ListSessionsResponse, LoadSessionResponse, McpCapabilities, NewSessionResponse,
     PermissionOption, PermissionOptionKind, PromptCapabilities, PromptResponse, ProtocolVersion,
     ReadTextFileRequest, ReadTextFileResponse, RequestPermissionOutcome, RequestPermissionRequest,
     RequestPermissionResponse, ResumeSessionResponse, SessionCapabilities,
     SessionCloseCapabilities, SessionInfo, SessionListCapabilities, SessionResumeCapabilities,
-    SessionUpdate, StopReason, ToolCall, ToolCallContent, ToolCallStatus, ToolCallUpdate,
+    SessionUpdate, StopReason, ToolCall, ToolCallContent, ToolCallLocation, ToolCallStatus, ToolCallUpdate,
     ToolCallUpdateFields, ToolKind,
 };
 use anyhow::{anyhow, Context, Result};
@@ -2204,6 +2204,13 @@ fn truncate_chars(text: &str, max_chars: usize) -> String {
     }
 }
 
+fn replace_text_diff_content(plan: &ReplaceTextPlan) -> ToolCallContent {
+    ToolCallContent::from(
+        Diff::new(plan.path.clone(), plan.args.new_text.clone())
+            .old_text(Some(plan.args.old_text.clone())),
+    )
+}
+
 fn ensure_replace_text_path_allowed(path: &Path, policy: &ToolPolicy) -> Result<()> {
     if policy.sensitive_path_policy.as_deref() == Some("deny_sensitive_paths")
         && is_sensitive_path(path)
@@ -3698,7 +3705,17 @@ async fn handle_tool_request_event(
         .await;
     log_tool_task_phase(session_id, tool_call_id, tool_name, ToolTaskPhase::Received);
     let preparing = friendly_tool_status(tool_name, event, "preparing");
-    send_tool_call_update(session_id, tool_call_id, tool_name, "pending", &preparing).await?;
+    send_tool_call_update(
+        session_id,
+        tool_call_id,
+        tool_name,
+        "pending",
+        &preparing,
+        Some(event),
+        None,
+        Vec::new(),
+    )
+    .await?;
     let args = event.get("args").cloned().unwrap_or_else(|| json!({}));
     let policy = policy_from_event(event);
     let replace_plan = if tool_name == "fs_replace_text" {
@@ -3732,8 +3749,20 @@ async fn handle_tool_request_event(
             ToolTaskPhase::PermissionRequested,
         );
         let permission = friendly_tool_status(tool_name, event, "permission");
-        send_tool_call_update(session_id, tool_call_id, tool_name, "pending", &permission)
-            .await?;
+        send_tool_call_update(
+            session_id,
+            tool_call_id,
+            tool_name,
+            "pending",
+            &permission,
+            Some(event),
+            None,
+            replace_plan
+                .as_ref()
+                .map(|plan| vec![replace_text_diff_content(plan)])
+                .unwrap_or_default(),
+        )
+        .await?;
         let replace_plan_ref = replace_plan.as_ref();
         if let Err(err) = request_tool_permission(
             adapter_state,
@@ -3808,7 +3837,17 @@ async fn handle_tool_request_event(
         );
     }
     let running = friendly_tool_status(tool_name, event, "running");
-    send_tool_call_update(session_id, tool_call_id, tool_name, "pending", &running).await?;
+    send_tool_call_update(
+        session_id,
+        tool_call_id,
+        tool_name,
+        "pending",
+        &running,
+        Some(event),
+        None,
+        Vec::new(),
+    )
+    .await?;
     let started = std::time::Instant::now();
     task_registry
         .set_phase(
@@ -3824,7 +3863,7 @@ async fn handle_tool_request_event(
         tool_name,
         ToolTaskPhase::ExecutionStarted,
     );
-    let result = if let Some(plan) = replace_plan {
+    let result = if let Some(ref plan) = replace_plan {
         let context = session_context(adapter_state, session_id)?;
         plan.apply(context, &policy)
     } else {
@@ -3867,8 +3906,23 @@ async fn handle_tool_request_event(
             payload["status"] = json!(status);
             let preview = tool_completion_preview(tool_name, &value);
             payload["content"] = value.get("content").cloned().unwrap_or_else(|| json!(""));
+            let raw_output = value.clone();
+            let extra_content = replace_plan
+                .as_ref()
+                .map(|plan| vec![replace_text_diff_content(plan)])
+                .unwrap_or_default();
             payload["structured_content"] = value;
-            send_tool_call_update(session_id, tool_call_id, tool_name, "completed", &preview).await?;
+            send_tool_call_update(
+                session_id,
+                tool_call_id,
+                tool_name,
+                "completed",
+                &preview,
+                Some(event),
+                Some(raw_output),
+                extra_content,
+            )
+            .await?;
         }
         Err(err) => {
             let local_err = LocalToolError::from(err);
@@ -3897,6 +3951,9 @@ async fn handle_tool_request_event(
                 tool_name,
                 "failed",
                 payload["content"].as_str().unwrap_or("Local tool failed"),
+                Some(event),
+                None,
+                Vec::new(),
             )
             .await?;
         }
@@ -3985,6 +4042,9 @@ async fn post_local_tool_error_result(
         tool_name,
         "failed",
         payload["content"].as_str().unwrap_or("Local tool failed"),
+        Some(event),
+        None,
+        Vec::new(),
     )
     .await?;
     post_tool_result(config, session_id, tool_call_id, payload).await
@@ -4217,12 +4277,12 @@ fn tool_display(tool_name: &str) -> ToolDisplay {
         },
         "fs_search_files" => ToolDisplay {
             title: "Search files",
-            kind: ToolKind::Read,
+            kind: ToolKind::Search,
             verb: "Searching",
         },
         "fs_replace_text" => ToolDisplay {
             title: "Edit file",
-            kind: ToolKind::Read,
+            kind: ToolKind::Edit,
             verb: "Editing",
         },
         _ => ToolDisplay {
@@ -4238,6 +4298,20 @@ fn tool_path(event: &Value) -> Option<&str> {
         .get("args")
         .and_then(|v| v.get("path"))
         .and_then(Value::as_str)
+}
+
+fn tool_locations_from_event(event: &Value) -> Option<Vec<ToolCallLocation>> {
+    let path = tool_path(event)?;
+    let mut location = ToolCallLocation::new(PathBuf::from(path));
+    if let Some(line) = event
+        .get("args")
+        .and_then(|v| v.get("line"))
+        .and_then(Value::as_u64)
+        .filter(|line| *line > 0)
+    {
+        location = location.line(Some(line.min(u32::MAX as u64) as u32));
+    }
+    Some(vec![location])
 }
 
 fn friendly_tool_status(tool_name: &str, event: &Value, phase: &str) -> String {
@@ -4267,12 +4341,28 @@ async fn send_tool_call_update(
     tool_name: &str,
     status: &str,
     text: &str,
+    event: Option<&Value>,
+    raw_output: Option<Value>,
+    extra_content: Vec<ToolCallContent>,
 ) -> Result<()> {
     let display = tool_display(tool_name);
-    let tool_call = ToolCall::new(tool_call_id.to_string(), display.title)
+    let mut content = vec![ToolCallContent::from(text.to_string())];
+    content.extend(extra_content);
+    let mut tool_call = ToolCall::new(tool_call_id.to_string(), display.title)
         .kind(display.kind)
         .status(tool_status_from_str(status))
-        .content(vec![ToolCallContent::from(text.to_string())]);
+        .content(content);
+    if let Some(event) = event {
+        if let Some(locations) = tool_locations_from_event(event) {
+            tool_call = tool_call.locations(locations);
+        }
+        if let Some(args) = event.get("args") {
+            tool_call = tool_call.raw_input(Some(args.clone()));
+        }
+    }
+    if let Some(raw_output) = raw_output {
+        tool_call = tool_call.raw_output(Some(raw_output));
+    }
     write_notification(
         "session/update",
         json!({
