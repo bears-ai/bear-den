@@ -53,6 +53,12 @@ struct AdapterState {
     pending_responses: Arc<TokioMutex<HashMap<String, tokio::sync::oneshot::Sender<Value>>>>,
 }
 
+#[derive(Clone)]
+struct AdapterSharedState {
+    pending_responses: Arc<TokioMutex<HashMap<String, tokio::sync::oneshot::Sender<Value>>>>,
+    session_contexts: Arc<TokioMutex<HashMap<String, SessionContext>>>,
+}
+
 #[derive(Clone, Debug, Default)]
 struct SessionContext {
     cwd: String,
@@ -279,6 +285,10 @@ async fn run() -> Result<()> {
 
     let (inbound_tx, mut inbound_rx) = mpsc::channel::<InboundMessage>(128);
     let mut adapter_state = AdapterState::default();
+    let shared_state = AdapterSharedState {
+        pending_responses: adapter_state.pending_responses.clone(),
+        session_contexts: Arc::new(TokioMutex::new(HashMap::new())),
+    };
     tokio::spawn(read_stdin_messages(
         inbound_tx,
         adapter_state.pending_responses.clone(),
@@ -320,7 +330,15 @@ async fn run() -> Result<()> {
             }
         };
 
-        if let Err(err) = handle_request(&http, &mut runtime, &mut adapter_state, request).await {
+        if let Err(err) = handle_request(
+            &http,
+            &mut runtime,
+            &mut adapter_state,
+            &shared_state,
+            request,
+        )
+        .await
+        {
             eprintln!("bears-acp-adapter: request handling failed: {err:#}");
         }
     }
@@ -597,6 +615,7 @@ async fn handle_request(
     http: &reqwest::Client,
     runtime: &mut RuntimeConfig,
     adapter_state: &mut AdapterState,
+    shared_state: &AdapterSharedState,
     request: JsonRpcRequest,
 ) -> Result<()> {
     match request.method.as_str() {
@@ -685,6 +704,11 @@ async fn handle_request(
                         .cloned()
                         .unwrap_or(Value::Null)
                 );
+                shared_state
+                    .session_contexts
+                    .lock()
+                    .await
+                    .insert(session_id.clone(), context.clone());
                 adapter_state
                     .session_contexts
                     .insert(session_id.clone(), context);
@@ -773,7 +797,15 @@ async fn handle_request(
                     .await?;
                     return Ok(());
                 }
-                match restore_session_from_den(http, config, adapter_state, &request.params).await {
+                match restore_session_from_den(
+                    http,
+                    config,
+                    adapter_state,
+                    &shared_state,
+                    &request.params,
+                )
+                .await
+                {
                     Ok(()) => {
                         write_response(id, Ok(serde_json::to_value(ResumeSessionResponse::new())?))
                             .await?
@@ -815,8 +847,15 @@ async fn handle_request(
                     .await?;
                     return Ok(());
                 }
-                match handle_session_load(http, config, adapter_state, id.clone(), &request.params)
-                    .await
+                match handle_session_load(
+                    http,
+                    config,
+                    adapter_state,
+                    &shared_state,
+                    id.clone(),
+                    &request.params,
+                )
+                .await
                 {
                     Ok(()) => {}
                     Err(err) => {
@@ -859,8 +898,15 @@ async fn handle_request(
                     return Ok(());
                 }
 
-                if let Err(err) =
-                    handle_prompt(http, config, adapter_state, id.clone(), request.params).await
+                if let Err(err) = handle_prompt(
+                    http,
+                    config,
+                    adapter_state,
+                    &shared_state,
+                    id.clone(),
+                    request.params,
+                )
+                .await
                 {
                     let server_version = fetch_server_version(http, config).await.ok();
                     let mut message = format!("{err:#}");
@@ -2544,6 +2590,7 @@ async fn restore_session_from_den(
     http: &reqwest::Client,
     config: &Config,
     adapter_state: &mut AdapterState,
+    shared_state: &AdapterSharedState,
     params: &Value,
 ) -> Result<()> {
     let session_id = params
@@ -2581,6 +2628,11 @@ async fn restore_session_from_den(
             .cloned()
             .unwrap_or(Value::Null)
     );
+    shared_state
+        .session_contexts
+        .lock()
+        .await
+        .insert(session_id.to_string(), context.clone());
     adapter_state
         .session_contexts
         .insert(session_id.to_string(), context);
@@ -2594,6 +2646,7 @@ async fn handle_session_load(
     http: &reqwest::Client,
     config: &Config,
     adapter_state: &mut AdapterState,
+    shared_state: &AdapterSharedState,
     response_id: Value,
     params: &Value,
 ) -> Result<()> {
@@ -2632,6 +2685,11 @@ async fn handle_session_load(
             .cloned()
             .unwrap_or(Value::Null)
     );
+    shared_state
+        .session_contexts
+        .lock()
+        .await
+        .insert(session_id.to_string(), context.clone());
     adapter_state
         .session_contexts
         .insert(session_id.to_string(), context);
@@ -2710,6 +2768,7 @@ async fn handle_prompt(
     http: &reqwest::Client,
     config: &Config,
     adapter_state: &mut AdapterState,
+    shared_state: &AdapterSharedState,
     response_id: Value,
     params: Value,
 ) -> Result<()> {
@@ -2808,6 +2867,7 @@ async fn handle_prompt(
             let outcome = handle_sse_frame(
                 config,
                 adapter_state,
+                shared_state,
                 session_id,
                 &frame,
                 &mut stream_diagnostics,
@@ -2824,6 +2884,7 @@ async fn handle_prompt(
         let outcome = handle_sse_frame(
             config,
             adapter_state,
+            shared_state,
             session_id,
             &frame,
             &mut stream_diagnostics,
@@ -3182,6 +3243,7 @@ fn prompt_text_from_params_with_resource_mode(
 async fn handle_sse_frame(
     config: &Config,
     adapter_state: &mut AdapterState,
+    shared_state: &AdapterSharedState,
     session_id: &str,
     frame: &[u8],
     diagnostics: &mut SseStreamDiagnostics,
@@ -3208,7 +3270,8 @@ async fn handle_sse_frame(
             diagnostics.saw_error = true;
             outcome.upstream_errors.push(format_den_event_error(&event));
         }
-        let handled = handle_den_event(config, adapter_state, session_id, &event).await?;
+        let handled =
+            handle_den_event(config, adapter_state, shared_state, session_id, &event).await?;
         outcome.saw_done |= handled;
         diagnostics.saw_turn_complete |= handled;
         diagnostics.saw_assistant_output |= outcome.saw_assistant_output;
@@ -3250,6 +3313,48 @@ fn format_den_event_error(event: &Value) -> String {
         out.push_str(request_id);
     }
     out
+}
+
+fn spawn_tool_request_task(
+    config: Config,
+    shared_state: AdapterSharedState,
+    session_id: String,
+    event: Value,
+) {
+    tokio::spawn(async move {
+        let mut task_state = AdapterState {
+            client_capabilities: Value::Null,
+            session_contexts: shared_state.session_contexts.lock().await.clone(),
+            pending_responses: shared_state.pending_responses.clone(),
+        };
+        if let Err(err) =
+            handle_tool_request_event(&config, &mut task_state, &session_id, &event).await
+        {
+            let tool_call_id = event
+                .get("tool_call_id")
+                .and_then(Value::as_str)
+                .unwrap_or("unknown");
+            let tool_name = event
+                .get("tool_name")
+                .and_then(Value::as_str)
+                .unwrap_or("unknown");
+            eprintln!(
+                "bears-acp-adapter: local tool task failed session_id={} tool_call_id={} tool_name={} error={err:#}",
+                session_id, tool_call_id, tool_name
+            );
+            let local_err = LocalToolError::error(format!("local tool task failed: {err:#}"));
+            let _ = post_local_tool_error_result(
+                &config,
+                &session_id,
+                tool_call_id,
+                tool_name,
+                &event,
+                local_err,
+                std::time::Instant::now(),
+            )
+            .await;
+        }
+    });
 }
 
 async fn handle_tool_request_event(
@@ -3559,6 +3664,7 @@ async fn post_tool_result(
 async fn handle_den_event(
     config: &Config,
     adapter_state: &mut AdapterState,
+    shared_state: &AdapterSharedState,
     session_id: &str,
     event: &Value,
 ) -> Result<bool> {
@@ -3583,7 +3689,12 @@ async fn handle_den_event(
             Ok(false)
         }
         "tool_request" => {
-            handle_tool_request_event(config, adapter_state, session_id, event).await?;
+            spawn_tool_request_task(
+                config.clone(),
+                shared_state.clone(),
+                session_id.to_string(),
+                event.clone(),
+            );
             Ok(false)
         }
         "conversation_resolved" => {
@@ -3598,6 +3709,13 @@ async fn handle_den_event(
                     .entry(session_id.to_string())
                     .or_default();
                 context.resolved_conversation_id = Some(conversation_id.to_string());
+                shared_state
+                    .session_contexts
+                    .lock()
+                    .await
+                    .entry(session_id.to_string())
+                    .or_default()
+                    .resolved_conversation_id = Some(conversation_id.to_string());
                 eprintln!(
                     "bears-acp-adapter: session_id={} resolved conversation_id={}",
                     session_id, conversation_id
