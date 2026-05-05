@@ -2230,6 +2230,10 @@ fn conversation_id_for_history(den_session: &Value) -> Option<String> {
     None
 }
 
+fn local_session_context_from_params(params: &Value) -> Result<SessionContext> {
+    session_context_from_params(params)
+}
+
 fn session_context_from_den_session(params: &Value, den_session: &Value) -> Result<SessionContext> {
     validate_mcp_servers_unsupported(params)?;
     let roots = workspace_roots_from_params(params);
@@ -2334,6 +2338,20 @@ async fn den_list_acp_sessions(
     serde_json::from_str(&body).with_context(|| "parse Den session list JSON")
 }
 
+#[derive(Debug)]
+struct DenHttpError {
+    status: reqwest::StatusCode,
+    body: String,
+}
+
+impl std::fmt::Display for DenHttpError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "HTTP {}: {}", self.status, self.body.trim())
+    }
+}
+
+impl std::error::Error for DenHttpError {}
+
 async fn den_get_acp_session(
     http: &reqwest::Client,
     config: &Config,
@@ -2357,10 +2375,7 @@ async fn den_get_acp_session(
     let status = response.status();
     let body = response.text().await.unwrap_or_default();
     if !status.is_success() {
-        return Err(anyhow!(
-            "Den get session returned HTTP {status}: {}",
-            body.trim()
-        ));
+        return Err(anyhow!(DenHttpError { status, body }));
     }
     serde_json::from_str(&body).with_context(|| "parse Den get session JSON")
 }
@@ -2477,8 +2492,26 @@ async fn restore_session_from_den(
         .get("sessionId")
         .and_then(Value::as_str)
         .ok_or_else(|| anyhow!("session params missing sessionId"))?;
-    let den = den_get_acp_session(http, config, session_id).await?;
-    let context = session_context_from_den_session(params, &den)?;
+    let den = match den_get_acp_session(http, config, session_id).await {
+        Ok(den) => Some(den),
+        Err(err)
+            if err
+                .downcast_ref::<DenHttpError>()
+                .is_some_and(|http| http.status == reqwest::StatusCode::NOT_FOUND) =>
+        {
+            eprintln!(
+                "bears-acp-adapter: session/resume session_id={} not found in Den; restoring as local pending session",
+                session_id
+            );
+            None
+        }
+        Err(err) => return Err(err),
+    };
+    let context = if let Some(den) = den.as_ref() {
+        session_context_from_den_session(params, den)?
+    } else {
+        local_session_context_from_params(params)?
+    };
     eprintln!(
         "bears-acp-adapter: session/resume session_id={} cwd={} roots={} direct_tools={}",
         session_id,
@@ -2489,7 +2522,9 @@ async fn restore_session_from_den(
     adapter_state
         .session_contexts
         .insert(session_id.to_string(), context);
-    replay_history_for_den_session(http, config, session_id, &den, "session/resume").await?;
+    if let Some(den) = den.as_ref() {
+        replay_history_for_den_session(http, config, session_id, den, "session/resume").await?;
+    }
     Ok(())
 }
 
@@ -2504,8 +2539,26 @@ async fn handle_session_load(
         .get("sessionId")
         .and_then(Value::as_str)
         .ok_or_else(|| anyhow!("session/load params missing sessionId"))?;
-    let den = den_get_acp_session(http, config, session_id).await?;
-    let context = session_context_from_den_session(params, &den)?;
+    let den = match den_get_acp_session(http, config, session_id).await {
+        Ok(den) => Some(den),
+        Err(err)
+            if err
+                .downcast_ref::<DenHttpError>()
+                .is_some_and(|http| http.status == reqwest::StatusCode::NOT_FOUND) =>
+        {
+            eprintln!(
+                "bears-acp-adapter: session/load session_id={} not found in Den; loading as local pending session",
+                session_id
+            );
+            None
+        }
+        Err(err) => return Err(err),
+    };
+    let context = if let Some(den) = den.as_ref() {
+        session_context_from_den_session(params, den)?
+    } else {
+        local_session_context_from_params(params)?
+    };
     eprintln!(
         "bears-acp-adapter: session/load session_id={} cwd={} roots={} direct_tools={}",
         session_id,
@@ -2517,7 +2570,9 @@ async fn handle_session_load(
         .session_contexts
         .insert(session_id.to_string(), context);
 
-    replay_history_for_den_session(http, config, session_id, &den, "session/load").await?;
+    if let Some(den) = den.as_ref() {
+        replay_history_for_den_session(http, config, session_id, den, "session/load").await?;
+    }
 
     write_response(response_id, Ok(session_lifecycle_result()?)).await?;
     Ok(())
