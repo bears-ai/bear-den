@@ -1,6 +1,6 @@
 # 🐻 BEARS — Basic Environment for Agent Runtimes Stack
 
-**BEARS** is the stack name. Each product assistant is a **bear** — a logical identity on [Letta](https://github.com/letta-ai/letta) (today often one Letta agent per bear; **multi-agent-per-bear** rollout and doc/UI alignment are in [docs/planning/MULTI_AGENT_IMPLEMENTATION_PLAN.md](docs/planning/MULTI_AGENT_IMPLEMENTATION_PLAN.md)). **Den** (Rust, in `services/den/`) is the control plane: provisioning, **users↔bears** membership, first-party web chat (Deep Chat), and Cabinet when Outline is deployed.
+**BEARS** is the stack name. Each product assistant is a **bear**: one logical assistant backed by role-specific Letta agents for conversation, collaboration, curation, approved work, and inbound observation. **Den** (Rust, in `services/den/`) is the control plane: provisioning, **users↔bears** membership, first-party web chat (Deep Chat), and Cabinet when Outline is deployed.
 
 This repo is a **light monorepo**: `docs/`, `services/den/` for Den, `services/codepool/` for Codepool, `services/memfs-manager/` for MemFS Manager, and supporting service assets under `services/`.
 

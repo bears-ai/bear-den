@@ -113,7 +113,7 @@ async fn m1b_bears_has_system_prompt_column() {
 }
 
 #[tokio::test]
-async fn m1b_letta_agent_id_nullable() {
+async fn m1b_bears_letta_agent_id_absent() {
     dotenvy::dotenv().ok();
     let url = std::env::var("DATABASE_URL").expect("DATABASE_URL for integration test");
     let pool = PgPoolOptions::new()
@@ -124,9 +124,9 @@ async fn m1b_letta_agent_id_nullable() {
 
     apply_migrations(&pool).await;
 
-    let nullable: String = sqlx::query_scalar(
+    let n: i64 = sqlx::query_scalar(
         r#"
-        SELECT is_nullable
+        SELECT COUNT(*)::bigint
         FROM information_schema.columns
         WHERE table_schema = 'public'
           AND table_name = 'bears'
@@ -137,10 +137,7 @@ async fn m1b_letta_agent_id_nullable() {
     .await
     .expect("information_schema query");
 
-    assert_eq!(
-        nullable, "YES",
-        "letta_agent_id should be nullable until Letta provisions the agent"
-    );
+    assert_eq!(n, 0, "bears.letta_agent_id should be dropped");
 }
 
 #[tokio::test]

@@ -156,13 +156,6 @@ async fn create_test_user_bear(pool: &sqlx::PgPool) -> TestUserBear {
     .await
     .expect("create test bear");
 
-    sqlx::query("UPDATE bears SET letta_agent_id = $2, updated_at = NOW() WHERE id = $1")
-        .bind(bear_id)
-        .bind("agent-legacy-web")
-        .execute(pool)
-        .await
-        .expect("set legacy agent id");
-
     sqlx::query(
         r#"
         INSERT INTO bear_agents (bear_id, role, letta_agent_id, provisioning_status, last_synced_at)
