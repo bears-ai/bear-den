@@ -62,7 +62,87 @@ struct AdapterState {
 struct AdapterSharedState {
     transport: JsonRpcTransport,
     session_contexts: Arc<TokioMutex<HashMap<String, SessionContext>>>,
+    tool_tasks: ToolTaskRegistry,
     cancellation_tx: broadcast::Sender<String>,
+}
+
+#[derive(Clone, Default)]
+struct ToolTaskRegistry {
+    tasks: Arc<TokioMutex<HashMap<String, ToolTaskRecord>>>,
+}
+
+#[allow(dead_code)]
+#[derive(Clone, Debug)]
+struct ToolTaskRecord {
+    session_id: String,
+    tool_call_id: String,
+    tool_name: String,
+    phase: ToolTaskPhase,
+    started_at: std::time::Instant,
+    updated_at: std::time::Instant,
+}
+
+impl ToolTaskRegistry {
+    fn key(session_id: &str, tool_call_id: &str) -> String {
+        format!("{session_id}\n{tool_call_id}")
+    }
+
+    async fn register(&self, session_id: &str, tool_call_id: &str, tool_name: &str) {
+        let now = std::time::Instant::now();
+        self.tasks.lock().await.insert(
+            Self::key(session_id, tool_call_id),
+            ToolTaskRecord {
+                session_id: session_id.to_string(),
+                tool_call_id: tool_call_id.to_string(),
+                tool_name: tool_name.to_string(),
+                phase: ToolTaskPhase::Received,
+                started_at: now,
+                updated_at: now,
+            },
+        );
+    }
+
+    async fn set_phase(
+        &self,
+        session_id: &str,
+        tool_call_id: &str,
+        tool_name: &str,
+        phase: ToolTaskPhase,
+    ) {
+        let mut tasks = self.tasks.lock().await;
+        let key = Self::key(session_id, tool_call_id);
+        let entry = tasks.entry(key).or_insert_with(|| {
+            let now = std::time::Instant::now();
+            ToolTaskRecord {
+                session_id: session_id.to_string(),
+                tool_call_id: tool_call_id.to_string(),
+                tool_name: tool_name.to_string(),
+                phase,
+                started_at: now,
+                updated_at: now,
+            }
+        });
+        entry.phase = phase;
+        entry.updated_at = std::time::Instant::now();
+    }
+
+    async fn remove(&self, session_id: &str, tool_call_id: &str) -> Option<ToolTaskRecord> {
+        self.tasks
+            .lock()
+            .await
+            .remove(&Self::key(session_id, tool_call_id))
+    }
+
+    #[allow(dead_code)]
+    async fn list_for_session(&self, session_id: &str) -> Vec<ToolTaskRecord> {
+        self.tasks
+            .lock()
+            .await
+            .values()
+            .filter(|task| task.session_id == session_id)
+            .cloned()
+            .collect()
+    }
 }
 
 impl JsonRpcTransport {
@@ -458,6 +538,7 @@ async fn run() -> Result<()> {
     let shared_state = AdapterSharedState {
         transport: adapter_state.transport.clone(),
         session_contexts: Arc::new(TokioMutex::new(HashMap::new())),
+        tool_tasks: ToolTaskRegistry::default(),
         cancellation_tx,
     };
     tokio::spawn(read_stdin_messages(
@@ -3495,38 +3576,55 @@ fn spawn_tool_request_task(
     event: Value,
 ) {
     tokio::spawn(async move {
+        let tool_call_id = event
+            .get("tool_call_id")
+            .and_then(Value::as_str)
+            .unwrap_or("unknown")
+            .to_string();
+        let tool_name = event
+            .get("tool_name")
+            .and_then(Value::as_str)
+            .unwrap_or("unknown")
+            .to_string();
+        shared_state
+            .tool_tasks
+            .register(&session_id, &tool_call_id, &tool_name)
+            .await;
         let mut task_state = AdapterState {
             client_capabilities: Value::Null,
             session_contexts: shared_state.session_contexts.lock().await.clone(),
             transport: shared_state.transport.clone(),
         };
         let mut cancellation_rx = shared_state.cancellation_tx.subscribe();
-        let tool_future = handle_tool_request_event(&config, &mut task_state, &session_id, &event);
+        let tool_future = handle_tool_request_event(
+            &config,
+            &mut task_state,
+            &shared_state.tool_tasks,
+            &session_id,
+            &event,
+        );
         let result = tokio::select! {
             result = tool_future => result,
             cancelled = cancellation_rx.recv() => {
                 match cancelled {
                     Ok(cancelled_session_id) if cancelled_session_id == session_id => {
-                        let tool_call_id = event
-                            .get("tool_call_id")
-                            .and_then(Value::as_str)
-                            .unwrap_or("unknown");
-                        let tool_name = event
-                            .get("tool_name")
-                            .and_then(Value::as_str)
-                            .unwrap_or("unknown");
-                        log_tool_task_phase(&session_id, tool_call_id, tool_name, ToolTaskPhase::Cancelled);
+                        shared_state
+                            .tool_tasks
+                            .set_phase(&session_id, &tool_call_id, &tool_name, ToolTaskPhase::Cancelled)
+                            .await;
+                        log_tool_task_phase(&session_id, &tool_call_id, &tool_name, ToolTaskPhase::Cancelled);
                         let local_err = LocalToolError::cancelled("ACP session was cancelled before local tool completed");
                         let _ = post_local_tool_error_result(
                             &config,
                             &session_id,
-                            tool_call_id,
-                            tool_name,
+                            &tool_call_id,
+                            &tool_name,
                             &event,
                             local_err,
                             std::time::Instant::now(),
                         )
                         .await;
+                        let _ = shared_state.tool_tasks.remove(&session_id, &tool_call_id).await;
                         return;
                     }
                     _ => Ok(()),
@@ -3534,14 +3632,6 @@ fn spawn_tool_request_task(
             }
         };
         if let Err(err) = result {
-            let tool_call_id = event
-                .get("tool_call_id")
-                .and_then(Value::as_str)
-                .unwrap_or("unknown");
-            let tool_name = event
-                .get("tool_name")
-                .and_then(Value::as_str)
-                .unwrap_or("unknown");
             eprintln!(
                 "bears-acp-adapter: local tool task failed session_id={} tool_call_id={} tool_name={} error={err:#}",
                 session_id, tool_call_id, tool_name
@@ -3550,20 +3640,25 @@ fn spawn_tool_request_task(
             let _ = post_local_tool_error_result(
                 &config,
                 &session_id,
-                tool_call_id,
-                tool_name,
+                &tool_call_id,
+                &tool_name,
                 &event,
                 local_err,
                 std::time::Instant::now(),
             )
             .await;
         }
+        let _ = shared_state
+            .tool_tasks
+            .remove(&session_id, &tool_call_id)
+            .await;
     });
 }
 
 async fn handle_tool_request_event(
     config: &Config,
     adapter_state: &mut AdapterState,
+    task_registry: &ToolTaskRegistry,
     session_id: &str,
     event: &Value,
 ) -> Result<()> {
@@ -3575,6 +3670,9 @@ async fn handle_tool_request_event(
         .get("tool_name")
         .and_then(Value::as_str)
         .ok_or_else(|| anyhow!("tool_request missing tool_name"))?;
+    task_registry
+        .set_phase(session_id, tool_call_id, tool_name, ToolTaskPhase::Received)
+        .await;
     log_tool_task_phase(session_id, tool_call_id, tool_name, ToolTaskPhase::Received);
     send_tool_call_update(session_id, tool_call_id, "pending", "Preparing local tool").await?;
     let args = event.get("args").cloned().unwrap_or_else(|| json!({}));
@@ -3595,6 +3693,14 @@ async fn handle_tool_request_event(
         .and_then(Value::as_bool)
         .unwrap_or(false)
     {
+        task_registry
+            .set_phase(
+                session_id,
+                tool_call_id,
+                tool_name,
+                ToolTaskPhase::PermissionRequested,
+            )
+            .await;
         log_tool_task_phase(
             session_id,
             tool_call_id,
@@ -3622,6 +3728,14 @@ async fn handle_tool_request_event(
         {
             let message = format!("{err:#}");
             let local_err = if message.contains("timed out waiting for client response") {
+                task_registry
+                    .set_phase(
+                        session_id,
+                        tool_call_id,
+                        tool_name,
+                        ToolTaskPhase::PermissionTimeout,
+                    )
+                    .await;
                 log_tool_task_phase(
                     session_id,
                     tool_call_id,
@@ -3630,6 +3744,14 @@ async fn handle_tool_request_event(
                 );
                 LocalToolError::timeout(message)
             } else {
+                task_registry
+                    .set_phase(
+                        session_id,
+                        tool_call_id,
+                        tool_name,
+                        ToolTaskPhase::PermissionDenied,
+                    )
+                    .await;
                 log_tool_task_phase(
                     session_id,
                     tool_call_id,
@@ -3650,6 +3772,14 @@ async fn handle_tool_request_event(
             .await?;
             return Ok(());
         }
+        task_registry
+            .set_phase(
+                session_id,
+                tool_call_id,
+                tool_name,
+                ToolTaskPhase::PermissionGranted,
+            )
+            .await;
         log_tool_task_phase(
             session_id,
             tool_call_id,
@@ -3659,6 +3789,14 @@ async fn handle_tool_request_event(
     }
     send_tool_call_update(session_id, tool_call_id, "pending", "Running local tool").await?;
     let started = std::time::Instant::now();
+    task_registry
+        .set_phase(
+            session_id,
+            tool_call_id,
+            tool_name,
+            ToolTaskPhase::ExecutionStarted,
+        )
+        .await;
     log_tool_task_phase(
         session_id,
         tool_call_id,
@@ -3691,6 +3829,14 @@ async fn handle_tool_request_event(
     match result {
         Ok(value) => {
             status = "ok";
+            task_registry
+                .set_phase(
+                    session_id,
+                    tool_call_id,
+                    tool_name,
+                    ToolTaskPhase::ExecutionSucceeded,
+                )
+                .await;
             log_tool_task_phase(
                 session_id,
                 tool_call_id,
@@ -3706,6 +3852,14 @@ async fn handle_tool_request_event(
         Err(err) => {
             let local_err = LocalToolError::from(err);
             status = local_err.status_str();
+            task_registry
+                .set_phase(
+                    session_id,
+                    tool_call_id,
+                    tool_name,
+                    ToolTaskPhase::ExecutionFailed,
+                )
+                .await;
             log_tool_task_phase(
                 session_id,
                 tool_call_id,
@@ -3726,6 +3880,14 @@ async fn handle_tool_request_event(
         }
     }
     if let Err(err) = post_tool_result(config, session_id, tool_call_id, payload).await {
+        task_registry
+            .set_phase(
+                session_id,
+                tool_call_id,
+                tool_name,
+                ToolTaskPhase::ResultPostFailed,
+            )
+            .await;
         log_tool_task_phase(
             session_id,
             tool_call_id,
@@ -3734,6 +3896,14 @@ async fn handle_tool_request_event(
         );
         return Err(err);
     }
+    task_registry
+        .set_phase(
+            session_id,
+            tool_call_id,
+            tool_name,
+            ToolTaskPhase::ResultPosted,
+        )
+        .await;
     log_tool_task_phase(
         session_id,
         tool_call_id,
@@ -4515,6 +4685,56 @@ mod tests {
         let err = LocalToolError::permission_denied("nope");
         assert_eq!(err.status_str(), "permission_denied");
         assert_eq!(err.diagnostic["reason"], "client_permission_rejected");
+    }
+
+    #[tokio::test]
+    async fn json_rpc_transport_routes_matching_response() {
+        let transport = JsonRpcTransport::default();
+        let id = json!("req-test");
+        let key = id_key(&id);
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        transport.pending_responses.lock().await.insert(key, tx);
+        assert!(
+            transport
+                .route_response(&id, json!({ "id": "req-test", "result": { "ok": true } }))
+                .await
+        );
+        let routed = rx.await.unwrap();
+        assert_eq!(routed["result"]["ok"], true);
+    }
+
+    #[tokio::test]
+    async fn json_rpc_transport_reports_unmatched_response() {
+        let transport = JsonRpcTransport::default();
+        assert!(
+            !transport
+                .route_response(&json!("missing"), json!({ "id": "missing" }))
+                .await
+        );
+    }
+
+    #[tokio::test]
+    async fn tool_task_registry_tracks_phase_and_session_entries() {
+        let registry = ToolTaskRegistry::default();
+        registry
+            .register("session-1", "call-1", "fs_list_directory")
+            .await;
+        registry
+            .set_phase(
+                "session-1",
+                "call-1",
+                "fs_list_directory",
+                ToolTaskPhase::PermissionRequested,
+            )
+            .await;
+        let items = registry.list_for_session("session-1").await;
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].phase, ToolTaskPhase::PermissionRequested);
+        assert_eq!(items[0].tool_name, "fs_list_directory");
+        assert!(items[0].updated_at >= items[0].started_at);
+        let removed = registry.remove("session-1", "call-1").await.unwrap();
+        assert_eq!(removed.tool_call_id, "call-1");
+        assert!(registry.list_for_session("session-1").await.is_empty());
     }
 
     #[test]
