@@ -17,6 +17,7 @@ High-level implementation roadmap for BEARS. This file is the planning hub: it s
 - [ACP discovery prompt](ACP_DISCOVERY_PROMPT.md)
 - [ACP direct local tool runtime](ACP_DIRECT_LOCAL_TOOL_RUNTIME_PLAN.md)
 - [Multi-agent bear implementation (doc + UI Phase 8.5)](MULTI_AGENT_IMPLEMENTATION_PLAN.md)
+- [Task system implementation](TASK_SYSTEM_IMPLEMENTATION_PLAN.md)
 
 
 **Reading order:** Use [§3](#3-phased-roadmap) for delivery sequencing. Use [§1](#1-system-architecture)–[§2](#2-capability-contracts-pseudo) only as historical planning context where the architecture docs do not yet cover a topic.

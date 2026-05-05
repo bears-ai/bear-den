@@ -19,11 +19,17 @@ pub const DEN_CAPABILITIES_LIST_SELF: &str = "den.capabilities.list_self";
 pub const DEN_CHANNEL_GET_CONTEXT: &str = "den.channel.get_context";
 pub const DEN_POLICY_GET_SELF: &str = "den.policy.get_self";
 pub const DEN_SKILL_PROPOSE: &str = "den.skill.propose";
+pub const DEN_WORK_PLAN_LIST: &str = "den.work_plan.list";
+pub const DEN_WORK_PLAN_GET_STATUS: &str = "den.work_plan.get_status";
+pub const DEN_WORK_PLAN_UPDATE: &str = "den.work_plan.update";
+pub const DEN_WORK_PLAN_REQUEST_HANDOFF: &str = "den.work_plan.request_handoff";
 pub const DEN_TASK_WRITE_INTENT: &str = "den.task.write_intent";
 pub const DEN_OBSERVATION_WRITE: &str = "den.observation.write";
 pub const DEN_RUN_WRITE_RESULT: &str = "den.run.write_result";
 
 const ALL_ROLES: &[&str] = &["talk", "pair", "curate", "work", "watch"];
+const WORK_PLAN_READ_ROLES: &[&str] = &["talk", "pair", "curate", "work"];
+const WORK_PLAN_UPDATE_ROLES: &[&str] = &["talk", "pair", "work"];
 const TALK_AND_PAIR_ROLES: &[&str] = &["talk", "pair"];
 const WATCH_ROLES: &[&str] = &["watch"];
 const WORK_ROLES: &[&str] = &["work"];
@@ -142,6 +148,103 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
                     "provenance": { "type": "object" }
                 },
                 "required": ["skill_name", "rationale", "proposed_content"],
+                "additionalProperties": false
+            }),
+        ),
+        descriptor(
+            DEN_WORK_PLAN_LIST,
+            "List work plans",
+            "List visible Den workboard plans for the current bear with role-safe projection.",
+            "bear.work_plans",
+            &["work_plan.read"],
+            WORK_PLAN_READ_ROLES,
+            json!({
+                "type": "object",
+                "properties": {
+                    "status": {
+                        "type": "array",
+                        "items": { "enum": ["active", "blocked", "completed", "cancelled", "archived"] }
+                    },
+                    "owner_role": { "enum": ALL_ROLES },
+                    "include_archived": { "type": "boolean" }
+                },
+                "additionalProperties": false
+            }),
+        ),
+        descriptor(
+            DEN_WORK_PLAN_GET_STATUS,
+            "Get work plan status",
+            "Return current status for one visible Den workboard plan or this session's active plan.",
+            "bear.work_plans",
+            &["work_plan.read"],
+            WORK_PLAN_READ_ROLES,
+            json!({
+                "type": "object",
+                "properties": {
+                    "plan_id": { "type": "string", "format": "uuid" },
+                    "source_acp_session_id": { "type": "string" },
+                    "source_conversation_id": { "type": "string" }
+                },
+                "additionalProperties": false
+            }),
+        ),
+        descriptor(
+            DEN_WORK_PLAN_UPDATE,
+            "Update work plan",
+            "Create or update the current role's live Den workboard plan for user-visible task planning.",
+            "bear.work_plans",
+            &["work_plan.write"],
+            WORK_PLAN_UPDATE_ROLES,
+            json!({
+                "type": "object",
+                "properties": {
+                    "plan_id": { "type": "string", "format": "uuid" },
+                    "expected_version": { "type": "integer", "minimum": 1 },
+                    "title": { "type": "string" },
+                    "summary": { "type": "string" },
+                    "visibility": { "enum": ["private_to_role", "same_user", "bear_visible", "handoff_requested"] },
+                    "status": { "enum": ["active", "blocked", "completed", "cancelled", "archived"] },
+                    "items": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "id": { "type": "string" },
+                                "title": { "type": "string" },
+                                "summary": { "type": "string" },
+                                "status": { "enum": ["pending", "in_progress", "blocked", "completed", "cancelled"] },
+                                "blocked_reason": { "type": "string" },
+                                "source_refs": { "type": "array", "items": { "type": "string" } }
+                            },
+                            "required": ["id", "title", "status"],
+                            "additionalProperties": false
+                        }
+                    },
+                    "workspace_context": { "type": "object" }
+                },
+                "required": ["title", "visibility", "status", "items"],
+                "additionalProperties": false
+            }),
+        ),
+        descriptor(
+            DEN_WORK_PLAN_REQUEST_HANDOFF,
+            "Request task handoff",
+            "Request conversion of selected live plan items into a schema-validated task intent for curate review.",
+            "bear.work_plans",
+            &["work_plan.handoff.request"],
+            TALK_AND_PAIR_ROLES,
+            json!({
+                "type": "object",
+                "properties": {
+                    "plan_id": { "type": "string", "format": "uuid" },
+                    "item_ids": { "type": "array", "items": { "type": "string" } },
+                    "title": { "type": "string" },
+                    "summary": { "type": "string" },
+                    "requested_outcome": { "type": "string" },
+                    "constraints": { "type": "array", "items": { "type": "string" } },
+                    "allowed_tools_hint": { "type": "array", "items": { "type": "string" } }
+                },
+                "required": ["plan_id", "item_ids", "title", "summary", "requested_outcome"],
                 "additionalProperties": false
             }),
         ),
@@ -267,6 +370,10 @@ pub fn is_builtin_den_tool(name: &str) -> bool {
             | DEN_CHANNEL_GET_CONTEXT
             | DEN_POLICY_GET_SELF
             | DEN_SKILL_PROPOSE
+            | DEN_WORK_PLAN_LIST
+            | DEN_WORK_PLAN_GET_STATUS
+            | DEN_WORK_PLAN_UPDATE
+            | DEN_WORK_PLAN_REQUEST_HANDOFF
             | DEN_TASK_WRITE_INTENT
             | DEN_OBSERVATION_WRITE
             | DEN_RUN_WRITE_RESULT
@@ -311,6 +418,10 @@ pub async fn invoke_den_tool(
         DEN_CHANNEL_GET_CONTEXT => Ok(channel_context(&context)),
         DEN_POLICY_GET_SELF => policy_self(pool, &context).await,
         DEN_SKILL_PROPOSE
+        | DEN_WORK_PLAN_LIST
+        | DEN_WORK_PLAN_GET_STATUS
+        | DEN_WORK_PLAN_UPDATE
+        | DEN_WORK_PLAN_REQUEST_HANDOFF
         | DEN_TASK_WRITE_INTENT
         | DEN_OBSERVATION_WRITE
         | DEN_RUN_WRITE_RESULT => Err(CustomError::System(format!(
@@ -574,6 +685,8 @@ mod tests {
 
         let pair = names_for_role(BearAgentRole::Pair);
         assert!(pair.contains(DEN_TASK_WRITE_INTENT));
+        assert!(pair.contains(DEN_WORK_PLAN_UPDATE));
+        assert!(pair.contains(DEN_WORK_PLAN_REQUEST_HANDOFF));
         assert!(pair.contains(DEN_SKILL_PROPOSE));
         assert!(!pair.contains(DEN_OBSERVATION_WRITE));
         assert!(!pair.contains(DEN_RUN_WRITE_RESULT));
@@ -581,11 +694,16 @@ mod tests {
         let watch = names_for_role(BearAgentRole::Watch);
         assert!(watch.contains(DEN_OBSERVATION_WRITE));
         assert!(watch.contains(DEN_SKILL_PROPOSE));
+        assert!(!watch.contains(DEN_WORK_PLAN_LIST));
+        assert!(!watch.contains(DEN_WORK_PLAN_UPDATE));
         assert!(!watch.contains(DEN_TASK_WRITE_INTENT));
         assert!(!watch.contains(DEN_RUN_WRITE_RESULT));
 
         let work = names_for_role(BearAgentRole::Work);
         assert!(work.contains(DEN_RUN_WRITE_RESULT));
+        assert!(work.contains(DEN_WORK_PLAN_LIST));
+        assert!(work.contains(DEN_WORK_PLAN_UPDATE));
+        assert!(!work.contains(DEN_WORK_PLAN_REQUEST_HANDOFF));
         assert!(work.contains(DEN_SKILL_PROPOSE));
         assert!(!work.contains(DEN_TASK_WRITE_INTENT));
         assert!(!work.contains(DEN_OBSERVATION_WRITE));
@@ -604,5 +722,10 @@ mod tests {
         assert!(authorize_tool_for_role(DEN_TASK_WRITE_INTENT, BearAgentRole::Watch).is_err());
         assert!(authorize_tool_for_role(DEN_RUN_WRITE_RESULT, BearAgentRole::Work).is_ok());
         assert!(authorize_tool_for_role(DEN_RUN_WRITE_RESULT, BearAgentRole::Talk).is_err());
+        assert!(authorize_tool_for_role(DEN_WORK_PLAN_UPDATE, BearAgentRole::Pair).is_ok());
+        assert!(authorize_tool_for_role(DEN_WORK_PLAN_UPDATE, BearAgentRole::Watch).is_err());
+        assert!(
+            authorize_tool_for_role(DEN_WORK_PLAN_REQUEST_HANDOFF, BearAgentRole::Work).is_err()
+        );
     }
 }

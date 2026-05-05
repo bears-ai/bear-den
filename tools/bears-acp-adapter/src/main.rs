@@ -249,10 +249,11 @@ async fn main() {
 async fn run() -> Result<()> {
     let mut runtime = RuntimeConfig::from_env_and_args()?;
     eprintln!(
-        "bears-acp-adapter: starting version={} build_git_sha={} local_head_sha={} ACP sessions=list/resume/load supported",
+        "bears-acp-adapter: starting version={} build_git_sha={} local_head_sha={} ACP sessions=list/resume/load supported direct_tools={}",
         env!("CARGO_PKG_VERSION"),
         env!("BEARS_ACP_ADAPTER_GIT_SHA"),
-        local_head_sha()
+        local_head_sha(),
+        direct_tools_context()
     );
     if runtime.is_configured() {
         eprintln!("bears-acp-adapter: configuration looks valid");
@@ -475,10 +476,11 @@ fn require_arg_value(flag: &str, value: Option<String>) -> Result<String> {
 
 fn print_version_to_stderr() {
     eprintln!(
-        "bears-acp-adapter {}\nBuild git SHA: {}\nLocal HEAD SHA: {}\nACP sessions: list/resume/load; conversations bound via Den",
+        "bears-acp-adapter {}\nBuild git SHA: {}\nLocal HEAD SHA: {}\nACP sessions: list/resume/load; conversations bound via Den\nDirect tools: {}",
         env!("CARGO_PKG_VERSION"),
         env!("BEARS_ACP_ADAPTER_GIT_SHA"),
-        local_head_sha()
+        local_head_sha(),
+        direct_tools_context()
     );
 }
 
@@ -953,6 +955,21 @@ fn direct_tools_context() -> Value {
     })
 }
 
+fn ensure_session_context_capabilities(context: &mut SessionContext) {
+    if !context.raw.is_object() {
+        context.raw = json!({});
+    }
+    context.raw["adapter_version"] = json!(env!("CARGO_PKG_VERSION"));
+    context.raw["adapter"] = adapter_capabilities_context();
+    context.raw["direct_tools"] = direct_tools_context();
+    if !context.cwd.trim().is_empty() {
+        context.raw["cwd"] = json!(context.cwd.clone());
+    }
+    if !context.roots.is_empty() {
+        context.raw["workspace_roots"] = json!(context.roots.clone());
+    }
+}
+
 fn session_context_from_params(params: &Value) -> Result<SessionContext> {
     validate_mcp_servers_unsupported(params)?;
     let roots = workspace_roots_from_params(params);
@@ -973,13 +990,15 @@ fn session_context_from_params(params: &Value) -> Result<SessionContext> {
         "adapter": adapter_capabilities_context(),
         "direct_tools": direct_tools_context(),
     });
-    Ok(SessionContext {
+    let mut context = SessionContext {
         cwd,
         roots,
         raw,
         conversation_id: None,
         resolved_conversation_id: None,
-    })
+    };
+    ensure_session_context_capabilities(&mut context);
+    Ok(context)
 }
 
 fn validate_mcp_servers_unsupported(params: &Value) -> Result<()> {
@@ -2276,6 +2295,7 @@ fn session_context_from_den_session(params: &Value, den_session: &Value) -> Resu
         "direct_tools": direct_tools_context(),
         "den_acp_session": den_session.clone(),
     });
+    ensure_session_context_capabilities(&mut ctx);
     Ok(ctx)
 }
 
@@ -2653,11 +2673,25 @@ async fn handle_prompt(
         .ok_or_else(|| anyhow!("session/prompt params missing sessionId"))?;
     let prompt = prompt_text_from_params(&params)?;
     let display_prompt = prompt_display_text_from_params(&params).unwrap_or_else(|| prompt.clone());
-    let client_context = adapter_state
+    let mut client_context = adapter_state
         .session_contexts
         .get(session_id)
         .cloned()
-        .unwrap_or_default();
+        .unwrap_or_else(|| {
+            eprintln!(
+                "bears-acp-adapter: session/prompt session_id={} had no cached session context; using fallback direct tool context",
+                session_id
+            );
+            SessionContext {
+                raw: json!({
+                    "adapter_version": env!("CARGO_PKG_VERSION"),
+                    "adapter": adapter_capabilities_context(),
+                    "direct_tools": direct_tools_context(),
+                }),
+                ..Default::default()
+            }
+        });
+    ensure_session_context_capabilities(&mut client_context);
     let conversation_id = client_context
         .resolved_conversation_id
         .as_deref()
@@ -2665,8 +2699,12 @@ async fn handle_prompt(
         .map(str::to_string);
     let conversation_log = conversation_id.as_deref().unwrap_or("<den-selected>");
     eprintln!(
-        "bears-acp-adapter: session/prompt session_id={} bear={} conversation_id={} client={}",
-        session_id, config.bear, conversation_log, config.client
+        "bears-acp-adapter: session/prompt session_id={} bear={} conversation_id={} client={} direct_tools={}",
+        session_id,
+        config.bear,
+        conversation_log,
+        config.client,
+        client_context.raw.get("direct_tools").cloned().unwrap_or(Value::Null)
     );
 
     send_user_message_chunk(session_id, &display_prompt).await?;
