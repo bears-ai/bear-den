@@ -3697,7 +3697,8 @@ async fn handle_tool_request_event(
         .set_phase(session_id, tool_call_id, tool_name, ToolTaskPhase::Received)
         .await;
     log_tool_task_phase(session_id, tool_call_id, tool_name, ToolTaskPhase::Received);
-    send_tool_call_update(session_id, tool_call_id, "pending", "Preparing local tool").await?;
+    let preparing = friendly_tool_status(tool_name, event, "preparing");
+    send_tool_call_update(session_id, tool_call_id, tool_name, "pending", &preparing).await?;
     let args = event.get("args").cloned().unwrap_or_else(|| json!({}));
     let policy = policy_from_event(event);
     let replace_plan = if tool_name == "fs_replace_text" {
@@ -3730,13 +3731,9 @@ async fn handle_tool_request_event(
             tool_name,
             ToolTaskPhase::PermissionRequested,
         );
-        send_tool_call_update(
-            session_id,
-            tool_call_id,
-            "pending",
-            "Waiting for permission",
-        )
-        .await?;
+        let permission = friendly_tool_status(tool_name, event, "permission");
+        send_tool_call_update(session_id, tool_call_id, tool_name, "pending", &permission)
+            .await?;
         let replace_plan_ref = replace_plan.as_ref();
         if let Err(err) = request_tool_permission(
             adapter_state,
@@ -3810,7 +3807,8 @@ async fn handle_tool_request_event(
             ToolTaskPhase::PermissionGranted,
         );
     }
-    send_tool_call_update(session_id, tool_call_id, "pending", "Running local tool").await?;
+    let running = friendly_tool_status(tool_name, event, "running");
+    send_tool_call_update(session_id, tool_call_id, tool_name, "pending", &running).await?;
     let started = std::time::Instant::now();
     task_registry
         .set_phase(
@@ -3870,7 +3868,7 @@ async fn handle_tool_request_event(
             let preview = tool_completion_preview(tool_name, &value);
             payload["content"] = value.get("content").cloned().unwrap_or_else(|| json!(""));
             payload["structured_content"] = value;
-            send_tool_call_update(session_id, tool_call_id, "completed", &preview).await?;
+            send_tool_call_update(session_id, tool_call_id, tool_name, "completed", &preview).await?;
         }
         Err(err) => {
             let local_err = LocalToolError::from(err);
@@ -3896,6 +3894,7 @@ async fn handle_tool_request_event(
             send_tool_call_update(
                 session_id,
                 tool_call_id,
+                tool_name,
                 "failed",
                 payload["content"].as_str().unwrap_or("Local tool failed"),
             )
@@ -3983,6 +3982,7 @@ async fn post_local_tool_error_result(
     send_tool_call_update(
         session_id,
         tool_call_id,
+        tool_name,
         "failed",
         payload["content"].as_str().unwrap_or("Local tool failed"),
     )
@@ -4197,6 +4197,60 @@ async fn handle_den_event(
     }
 }
 
+struct ToolDisplay {
+    title: &'static str,
+    kind: ToolKind,
+    verb: &'static str,
+}
+
+fn tool_display(tool_name: &str) -> ToolDisplay {
+    match tool_name {
+        "fs_read_text_file" | "fs.read_text_file" => ToolDisplay {
+            title: "Read file",
+            kind: ToolKind::Read,
+            verb: "Reading",
+        },
+        "fs_list_directory" => ToolDisplay {
+            title: "List directory",
+            kind: ToolKind::Read,
+            verb: "Listing",
+        },
+        "fs_search_files" => ToolDisplay {
+            title: "Search files",
+            kind: ToolKind::Read,
+            verb: "Searching",
+        },
+        "fs_replace_text" => ToolDisplay {
+            title: "Edit file",
+            kind: ToolKind::Read,
+            verb: "Editing",
+        },
+        _ => ToolDisplay {
+            title: "Local tool",
+            kind: ToolKind::Read,
+            verb: "Running",
+        },
+    }
+}
+
+fn tool_path(event: &Value) -> Option<&str> {
+    event
+        .get("args")
+        .and_then(|v| v.get("path"))
+        .and_then(Value::as_str)
+}
+
+fn friendly_tool_status(tool_name: &str, event: &Value, phase: &str) -> String {
+    let display = tool_display(tool_name);
+    let path = tool_path(event).unwrap_or("the selected workspace path");
+    match phase {
+        "preparing" => format!("Preparing to {} `{path}`…", display.verb.to_lowercase()),
+        "permission" => format!("Waiting for approval to {} `{path}`.", display.verb.to_lowercase()),
+        "running" => format!("{} `{path}`…", display.verb),
+        _ => format!("{} `{path}`…", display.verb),
+    }
+}
+
 fn tool_status_from_str(status: &str) -> ToolCallStatus {
     match status {
         "pending" => ToolCallStatus::Pending,
@@ -4210,11 +4264,13 @@ fn tool_status_from_str(status: &str) -> ToolCallStatus {
 async fn send_tool_call_update(
     session_id: &str,
     tool_call_id: &str,
+    tool_name: &str,
     status: &str,
     text: &str,
 ) -> Result<()> {
-    let tool_call = ToolCall::new(tool_call_id.to_string(), "Read file")
-        .kind(ToolKind::Read)
+    let display = tool_display(tool_name);
+    let tool_call = ToolCall::new(tool_call_id.to_string(), display.title)
+        .kind(display.kind)
         .status(tool_status_from_str(status))
         .content(vec![ToolCallContent::from(text.to_string())]);
     write_notification(
@@ -4357,6 +4413,40 @@ mod tests {
         assert!(!stream_has_successful_terminal_condition(
             false, false, false, true
         ));
+    }
+
+    #[test]
+    fn tool_display_uses_specific_titles() {
+        assert_eq!(tool_display("fs_read_text_file").title, "Read file");
+        assert_eq!(tool_display("fs_list_directory").title, "List directory");
+        assert_eq!(tool_display("fs_search_files").title, "Search files");
+        assert_eq!(tool_display("fs_replace_text").title, "Edit file");
+    }
+
+    #[test]
+    fn tool_completion_preview_includes_content_and_truncates() {
+        let value = json!({ "content": "abc" });
+        assert_eq!(
+            tool_completion_preview("fs_list_directory", &value),
+            "Local tool fs_list_directory completed.\n\nabc"
+        );
+        let long = json!({ "content": "x".repeat(4_100) });
+        let preview = tool_completion_preview("fs_read_text_file", &long);
+        assert!(preview.contains("... truncated"));
+        assert!(preview.chars().count() < 4_050);
+    }
+
+    #[test]
+    fn friendly_tool_status_mentions_path_and_action() {
+        let event = json!({ "args": { "path": "/workspace/README.md" } });
+        assert_eq!(
+            friendly_tool_status("fs_replace_text", &event, "permission"),
+            "Waiting for approval to editing `/workspace/README.md`."
+        );
+        assert_eq!(
+            friendly_tool_status("fs_list_directory", &event, "running"),
+            "Listing `/workspace/README.md`…"
+        );
     }
 
     #[test]

@@ -175,9 +175,7 @@ pub fn map_native_letta_stream_event_to_acp_event(
                 message_type == "approval_request_message",
             )
         }
-        "tool_return_message" => Some(AcpGatewayEvent::StatusText {
-            text: letta_tool_return_status_text(inner, event),
-        }),
+        "tool_return_message" => None,
         _ => native_letta_conversation_resolved_event(event),
     }
 }
@@ -192,26 +190,6 @@ fn pseudo_tool_call_name(text: &str) -> Option<String> {
         }
     }
     None
-}
-
-fn letta_tool_return_status_text(inner: &serde_json::Value, event: &serde_json::Value) -> String {
-    let tool_call_id = inner
-        .get("tool_call_id")
-        .or_else(|| event.get("tool_call_id"))
-        .and_then(|v| v.as_str())
-        .unwrap_or("tool");
-    let status = inner
-        .get("status")
-        .or_else(|| event.get("status"))
-        .and_then(|v| v.as_str())
-        .unwrap_or("returned");
-    let bytes = inner
-        .get("tool_return")
-        .or_else(|| event.get("tool_return"))
-        .and_then(|v| v.as_str())
-        .map(str::len)
-        .unwrap_or(0);
-    format!("Letta accepted local tool return {tool_call_id} with status {status} ({bytes} bytes)")
 }
 
 fn native_letta_tool_request_event(
@@ -826,22 +804,14 @@ mod tests {
     }
 
     #[test]
-    fn maps_tool_return_message_to_status_text() {
+    fn tool_return_message_is_diagnostic_only() {
         let event = serde_json::json!({
             "message_type": "tool_return_message",
             "tool_call_id": "call-1",
             "status": "success",
             "tool_return": "hello"
         });
-        let mapped = map_native_letta_stream_event_to_acp_event(&event).expect("mapped event");
-        match mapped {
-            AcpGatewayEvent::StatusText { text } => {
-                assert!(text.contains("call-1"));
-                assert!(text.contains("success"));
-                assert!(text.contains("5 bytes"));
-            }
-            other => panic!("unexpected event: {other:?}"),
-        }
+        assert!(map_native_letta_stream_event_to_acp_event(&event).is_none());
     }
 
     #[test]
