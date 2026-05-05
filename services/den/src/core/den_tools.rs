@@ -8,6 +8,10 @@ use crate::{
     core::{
         bears::{db as bears_db, db::role_is_bear_admin, BearAgentRole},
         user,
+        work_plans::{
+            self, WorkPlanListFilter, WorkPlanLookup, WorkPlanStatus, WorkPlanUpdate,
+            WorkPlanUpsert, WorkPlanVisibility,
+        },
     },
     errors::CustomError,
 };
@@ -402,10 +406,51 @@ pub struct DenToolChannelContext {
     pub protocol: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+struct WorkPlanListArguments {
+    #[serde(default, rename = "status")]
+    statuses: Option<Vec<WorkPlanStatus>>,
+    #[serde(default)]
+    owner_role: Option<BearAgentRole>,
+    #[serde(default)]
+    include_archived: bool,
+}
+
+#[derive(Debug, Deserialize)]
+struct WorkPlanGetStatusArguments {
+    #[serde(default)]
+    plan_id: Option<Uuid>,
+    #[serde(default)]
+    source_conversation_id: Option<String>,
+    #[serde(default)]
+    source_acp_session_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct WorkPlanUpdateArguments {
+    #[serde(default)]
+    plan_id: Option<Uuid>,
+    #[serde(default)]
+    expected_version: Option<i32>,
+    title: String,
+    #[serde(default)]
+    summary: String,
+    visibility: WorkPlanVisibility,
+    status: WorkPlanStatus,
+    #[serde(default)]
+    items: Vec<work_plans::WorkPlanItem>,
+    #[serde(default = "empty_json_object")]
+    workspace_context: Value,
+}
+
+fn empty_json_object() -> Value {
+    json!({})
+}
+
 pub async fn invoke_den_tool(
     pool: &PgPool,
     tool_name: &str,
-    _arguments: Value,
+    arguments: Value,
     context: DenToolInvocationContext,
 ) -> Result<Value, CustomError> {
     let role = authorize_context(pool, &context).await?;
@@ -417,10 +462,10 @@ pub async fn invoke_den_tool(
         DEN_CAPABILITIES_LIST_SELF => list_capabilities_self(pool, &context).await,
         DEN_CHANNEL_GET_CONTEXT => Ok(channel_context(&context)),
         DEN_POLICY_GET_SELF => policy_self(pool, &context).await,
+        DEN_WORK_PLAN_LIST => list_work_plans(pool, &context, role, arguments).await,
+        DEN_WORK_PLAN_GET_STATUS => get_work_plan_status(pool, &context, role, arguments).await,
+        DEN_WORK_PLAN_UPDATE => update_work_plan(pool, &context, role, arguments).await,
         DEN_SKILL_PROPOSE
-        | DEN_WORK_PLAN_LIST
-        | DEN_WORK_PLAN_GET_STATUS
-        | DEN_WORK_PLAN_UPDATE
         | DEN_WORK_PLAN_REQUEST_HANDOFF
         | DEN_TASK_WRITE_INTENT
         | DEN_OBSERVATION_WRITE
@@ -618,6 +663,122 @@ async fn policy_self(
             "Emails and authentication internals are not exposed through these tools."
         ]
     }))
+}
+
+async fn list_work_plans(
+    pool: &PgPool,
+    context: &DenToolInvocationContext,
+    role: BearAgentRole,
+    arguments: Value,
+) -> Result<Value, CustomError> {
+    let args: WorkPlanListArguments = serde_json::from_value(arguments)?;
+    let plans = work_plans::list_visible_work_plans(
+        pool,
+        context.bear_id,
+        role,
+        context.user_id,
+        WorkPlanListFilter {
+            statuses: args.statuses,
+            owner_role: args.owner_role,
+            include_archived: args.include_archived,
+        },
+    )
+    .await?;
+    Ok(json!({
+        "bear_id": context.bear_id,
+        "plans": plans,
+    }))
+}
+
+async fn get_work_plan_status(
+    pool: &PgPool,
+    context: &DenToolInvocationContext,
+    role: BearAgentRole,
+    arguments: Value,
+) -> Result<Value, CustomError> {
+    let args: WorkPlanGetStatusArguments = serde_json::from_value(arguments)?;
+    let lookup = WorkPlanLookup {
+        plan_id: args.plan_id,
+        source_conversation_id: args
+            .source_conversation_id
+            .or_else(|| clean_optional(&context.conversation_id)),
+        source_acp_session_id: args
+            .source_acp_session_id
+            .or_else(|| source_acp_session_id(context)),
+    };
+    let plan =
+        work_plans::get_visible_work_plan(pool, context.bear_id, role, context.user_id, lookup)
+            .await?;
+    Ok(json!({
+        "bear_id": context.bear_id,
+        "plan": plan,
+    }))
+}
+
+async fn update_work_plan(
+    pool: &PgPool,
+    context: &DenToolInvocationContext,
+    role: BearAgentRole,
+    arguments: Value,
+) -> Result<Value, CustomError> {
+    let args: WorkPlanUpdateArguments = serde_json::from_value(arguments)?;
+    let row = work_plans::create_or_update_work_plan(
+        pool,
+        WorkPlanUpsert {
+            bear_id: context.bear_id,
+            owner_role: role,
+            owner_agent_id: clean_optional(&context.role_agent_id),
+            created_by_user_id: Some(context.user_id),
+            source_conversation_id: clean_optional(&context.conversation_id),
+            source_acp_session_id: source_acp_session_id(context),
+            source_channel: serde_json::to_value(&context.channel)?,
+            plan_id: args.plan_id,
+            expected_version: args.expected_version,
+            update: WorkPlanUpdate {
+                title: args.title,
+                summary: args.summary,
+                visibility: args.visibility,
+                status: args.status,
+                items: args.items,
+                workspace_context: args.workspace_context,
+            },
+        },
+    )
+    .await?;
+    let plan = row
+        .project_for_role(role, context.user_id)?
+        .ok_or_else(|| {
+            CustomError::System("updated work plan was not visible to its owner".to_string())
+        })?;
+    Ok(json!({
+        "bear_id": context.bear_id,
+        "plan": plan,
+    }))
+}
+
+fn source_acp_session_id(context: &DenToolInvocationContext) -> Option<String> {
+    let is_acp = [
+        context.channel.family.as_deref(),
+        context.channel.client.as_deref(),
+        context.channel.protocol.as_deref(),
+    ]
+    .into_iter()
+    .flatten()
+    .any(|value| value.to_ascii_lowercase().contains("acp"));
+    if is_acp {
+        clean_optional(&context.session_id)
+    } else {
+        None
+    }
+}
+
+fn clean_optional(value: &str) -> Option<String> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_string())
+    }
 }
 
 fn format_rfc3339(value: time::OffsetDateTime) -> String {
