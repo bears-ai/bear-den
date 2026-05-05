@@ -710,6 +710,7 @@ impl LettaClient {
         body.insert("messages".to_string(), json!([message]));
         body.insert("streaming".to_string(), json!(true));
         body.insert("stream_tokens".to_string(), json!(false));
+        body.insert("max_steps".to_string(), json!(2));
         if let Some(a) = agent_id.map(str::trim).filter(|s| !s.is_empty()) {
             body.insert("agent_id".to_string(), json!(a));
         }

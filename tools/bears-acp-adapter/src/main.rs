@@ -3343,15 +3343,10 @@ async fn handle_tool_request_event(
         Ok(value) => {
             status = "ok";
             payload["status"] = json!(status);
+            let preview = tool_completion_preview(tool_name, &value);
             payload["content"] = value.get("content").cloned().unwrap_or_else(|| json!(""));
             payload["structured_content"] = value;
-            send_tool_call_update(
-                session_id,
-                tool_call_id,
-                "completed",
-                "Local tool completed",
-            )
-            .await?;
+            send_tool_call_update(session_id, tool_call_id, "completed", &preview).await?;
         }
         Err(err) => {
             let local_err = LocalToolError::from(err);
@@ -3371,6 +3366,21 @@ async fn handle_tool_request_event(
     }
     post_tool_result(config, session_id, tool_call_id, payload).await?;
     Ok(())
+}
+
+fn tool_completion_preview(tool_name: &str, value: &Value) -> String {
+    let content = value.get("content").and_then(Value::as_str).unwrap_or("");
+    let mut text = if content.trim().is_empty() {
+        format!("Local tool {tool_name} completed.")
+    } else {
+        format!("Local tool {tool_name} completed.\n\n{content}")
+    };
+    let max_chars = 4_000;
+    if text.chars().count() > max_chars {
+        text = text.chars().take(max_chars).collect::<String>();
+        text.push_str("\n... truncated");
+    }
+    text
 }
 
 async fn post_local_tool_error_result(
