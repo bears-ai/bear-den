@@ -359,7 +359,10 @@ pub fn acp_client_tool_descriptor(tool: &AcpToolDescriptor) -> serde_json::Value
                     "query": { "type": "string", "description": "Literal text to search for." },
                     "limit": { "type": "integer", "minimum": 1, "maximum": 200, "description": "Maximum matches to return." },
                     "max_bytes": { "type": "integer", "minimum": 1, "maximum": 1048576, "description": "Maximum total bytes to scan." },
-                    "include_hidden": { "type": "boolean", "default": false, "description": "Include hidden dotfiles and dot-directories. Defaults to false." }
+                    "include_hidden": { "type": "boolean", "default": false, "description": "Include hidden dotfiles and dot-directories. Defaults to false." },
+                    "case_sensitive": { "type": "boolean", "default": true, "description": "Whether literal matching is case-sensitive. Defaults to true." },
+                    "pattern": { "type": "string", "description": "Optional simple wildcard pattern matched against relative file paths. Supports `*` and `?`." },
+                    "extensions": { "type": "array", "items": { "type": "string" }, "maxItems": 10, "description": "Optional list of file extensions to include, such as [\"rs\", \"ts\"]." }
                 },
                 "required": ["path", "query"]
             }

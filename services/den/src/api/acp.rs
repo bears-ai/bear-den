@@ -599,7 +599,7 @@ fn acp_direct_tool_prompt_context(
         concat!(
             "\n\n<system-reminder>",
             "BEARS ACP direct local workspace tools are available for this turn. ",
-            "Use `fs_list_directory` with {{\"path\":\"/absolute/dir\",\"limit\":200}} to discover files, `fs_search_files` with {{\"path\":\"/absolute/path\",\"query\":\"text\",\"limit\":50}} to search, `fs_read_text_file` with {{\"path\":\"/absolute/file\",\"line\":1,\"limit\":400}} to read, and `fs_replace_text` with {{\"path\":\"/absolute/file\",\"old_text\":\"exact\",\"new_text\":\"replacement\"}} to edit existing files. ",
+            "Use `fs_list_directory` with {{\"path\":\"/absolute/dir\",\"limit\":200}} to discover files, `fs_search_files` with {{\"path\":\"/absolute/path\",\"query\":\"text\",\"limit\":50,\"extensions\":[\"rs\"],\"pattern\":\"src/*\"}} to search, `fs_read_text_file` with {{\"path\":\"/absolute/file\",\"line\":1,\"limit\":400}} to read, and `fs_replace_text` with {{\"path\":\"/absolute/file\",\"old_text\":\"exact\",\"new_text\":\"replacement\"}} to edit existing files. ",
             "Den routes these through the local ACP adapter using workspace policy; edits require approval and sensitive paths are denied. Current ACP session id is `{session_id}`. ",
             "Use absolute paths under these workspace roots: {roots}. ",
             "Do not guess file contents; discover, search, or read files before editing and use the returned content. ",

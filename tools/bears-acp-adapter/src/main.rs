@@ -1231,6 +1231,13 @@ async fn handle_direct_read_text_file(
     }))
 }
 
+#[derive(Clone, Debug, Default)]
+struct SearchFilters {
+    case_sensitive: bool,
+    pattern: Option<String>,
+    extensions: Vec<String>,
+}
+
 fn policy_from_event(event: &Value) -> ToolPolicy {
     let policy = event.get("policy").unwrap_or(&Value::Null);
     ToolPolicy {
@@ -1433,19 +1440,23 @@ async fn handle_direct_search_files(
         .and_then(Value::as_bool)
         .or(policy.include_hidden_default)
         .unwrap_or(false);
+    let filters = search_filters_from_args(args)?;
     let context = session_context(adapter_state, session_id)?;
     let path = normalize_requested_tool_path(path)?;
     ensure_path_allowed_for_session(context, &path)?;
     let started = std::time::Instant::now();
     let mut files = Vec::new();
     let mut file_collection_truncated = false;
+    let mut skipped_by_filter = 0usize;
     collect_search_files(
         context,
         &path,
         &path,
         include_hidden,
+        &filters,
         5_000,
         &mut file_collection_truncated,
+        &mut skipped_by_filter,
         &mut files,
     )?;
     files.sort();
@@ -1471,7 +1482,7 @@ async fn handle_direct_search_files(
         bytes_scanned = bytes_scanned.saturating_add(metadata.len());
         files_scanned += 1;
         for (idx, line) in raw.lines().enumerate() {
-            if line.contains(query) {
+            if line_matches_query(line, query, filters.case_sensitive) {
                 matches.push(json!({
                     "path": file.to_string_lossy(),
                     "line": idx + 1,
@@ -1512,6 +1523,10 @@ async fn handle_direct_search_files(
         "bytes_scanned": bytes_scanned,
         "max_bytes": max_bytes,
         "include_hidden": include_hidden,
+        "case_sensitive": filters.case_sensitive,
+        "pattern": filters.pattern,
+        "extensions": filters.extensions,
+        "skipped_by_filter": skipped_by_filter,
         "source": "adapter_local",
         "content": content,
         "policy": {
@@ -1683,8 +1698,10 @@ fn collect_search_files(
     root: &Path,
     path: &Path,
     include_hidden: bool,
+    filters: &SearchFilters,
     max_files: usize,
     truncated: &mut bool,
+    skipped_by_filter: &mut usize,
     out: &mut Vec<PathBuf>,
 ) -> Result<()> {
     if *truncated {
@@ -1696,6 +1713,10 @@ fn collect_search_files(
     ensure_path_allowed_for_session(context, path)?;
     let metadata = fs::metadata(path).with_context(|| format!("stat {}", path.display()))?;
     if metadata.is_file() {
+        if !search_file_passes_filters(root, path, filters) {
+            *skipped_by_filter += 1;
+            return Ok(());
+        }
         if out.len() >= max_files {
             *truncated = true;
         } else {
@@ -1715,8 +1736,10 @@ fn collect_search_files(
             root,
             &entry.path(),
             include_hidden,
+            filters,
             max_files,
             truncated,
+            skipped_by_filter,
             out,
         )?;
         if *truncated {
@@ -1724,6 +1747,104 @@ fn collect_search_files(
         }
     }
     Ok(())
+}
+
+fn search_filters_from_args(args: &Value) -> Result<SearchFilters> {
+    let case_sensitive = args
+        .get("case_sensitive")
+        .and_then(Value::as_bool)
+        .unwrap_or(true);
+    let pattern = args
+        .get("pattern")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string);
+    let extensions = args
+        .get("extensions")
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(Value::as_str)
+                .map(normalize_extension)
+                .filter(|s| !s.is_empty())
+                .take(10)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    Ok(SearchFilters {
+        case_sensitive,
+        pattern,
+        extensions,
+    })
+}
+
+fn normalize_extension(raw: &str) -> String {
+    raw.trim()
+        .trim_start_matches('.')
+        .to_ascii_lowercase()
+}
+
+fn search_file_passes_filters(root: &Path, path: &Path, filters: &SearchFilters) -> bool {
+    if !filters.extensions.is_empty() {
+        let ext = path
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .map(|ext| ext.to_ascii_lowercase())
+            .unwrap_or_default();
+        if !filters.extensions.iter().any(|allowed| allowed == &ext) {
+            return false;
+        }
+    }
+    if let Some(pattern) = filters.pattern.as_deref() {
+        let relative = path
+            .strip_prefix(root)
+            .unwrap_or(path)
+            .to_string_lossy()
+            .replace('\\', "/");
+        if !wildcard_match(pattern, &relative) {
+            return false;
+        }
+    }
+    true
+}
+
+fn line_matches_query(line: &str, query: &str, case_sensitive: bool) -> bool {
+    if case_sensitive {
+        line.contains(query)
+    } else {
+        line.to_lowercase().contains(&query.to_lowercase())
+    }
+}
+
+fn wildcard_match(pattern: &str, text: &str) -> bool {
+    let pattern = pattern.as_bytes();
+    let text = text.as_bytes();
+    let mut p = 0usize;
+    let mut t = 0usize;
+    let mut star = None;
+    let mut match_after_star = 0usize;
+    while t < text.len() {
+        if p < pattern.len() && (pattern[p] == b'?' || pattern[p] == text[t]) {
+            p += 1;
+            t += 1;
+        } else if p < pattern.len() && pattern[p] == b'*' {
+            star = Some(p);
+            match_after_star = t;
+            p += 1;
+        } else if let Some(star_pos) = star {
+            p = star_pos + 1;
+            match_after_star += 1;
+            t = match_after_star;
+        } else {
+            return false;
+        }
+    }
+    while p < pattern.len() && pattern[p] == b'*' {
+        p += 1;
+    }
+    p == pattern.len()
 }
 
 fn is_hidden_path_component(path: &Path, root: &Path) -> bool {
@@ -3395,6 +3516,45 @@ mod tests {
         assert_eq!(result["policy"]["max_results"], 1);
         assert_eq!(result["policy"]["applied_limit"], 1);
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn search_files_supports_case_insensitive_extension_and_pattern_filters() {
+        let root = unique_test_dir("search-filters");
+        fs::create_dir_all(root.join("src")).unwrap();
+        fs::create_dir_all(root.join("docs")).unwrap();
+        fs::write(root.join("src").join("lib.rs"), "Needle visible\n").unwrap();
+        fs::write(root.join("src").join("lib.txt"), "Needle wrong extension\n").unwrap();
+        fs::write(root.join("docs").join("guide.rs"), "Needle wrong pattern\n").unwrap();
+        let state = test_adapter_state("session-1", &root);
+        let result = handle_direct_search_files(
+            &state,
+            "session-1",
+            &json!({
+                "path": root.to_string_lossy(),
+                "query": "needle",
+                "case_sensitive": false,
+                "extensions": ["rs"],
+                "pattern": "src/*"
+            }),
+            &ToolPolicy::default(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(result["returned_matches"], 1);
+        assert_eq!(
+            result["matches"][0]["path"].as_str().unwrap(),
+            root.join("src").join("lib.rs").to_string_lossy()
+        );
+        assert_eq!(result["skipped_by_filter"], 2);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn wildcard_match_supports_star_and_question_mark() {
+        assert!(wildcard_match("src/*.rs", "src/lib.rs"));
+        assert!(wildcard_match("src/lib.?s", "src/lib.rs"));
+        assert!(!wildcard_match("src/*.rs", "tests/lib.rs"));
     }
 
     #[tokio::test]
