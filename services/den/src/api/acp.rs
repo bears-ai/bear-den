@@ -49,7 +49,8 @@ use crate::{
         },
         acp_tools::{
             acp_client_tool_descriptors_for_client_context, acp_diag_phase,
-            acp_tool_policy_json_for_provider, AcpToolStatus,
+            acp_provider_tool_names_for_client_context, acp_tool_policy_json_for_provider,
+            AcpToolStatus,
         },
         archived_conversations,
         bears::{db as bears_db, Bear, BearAgentRole},
@@ -598,20 +599,27 @@ fn acp_direct_tool_prompt_context(
         })
         .filter(|items| !items.is_empty())
         .unwrap_or_else(|| vec![cwd.to_string()]);
-    format!(
-        concat!(
-            "\n\n<system-reminder>",
-            "BEARS ACP direct local workspace tools are available for this turn. ",
-            "Use `fs_list_directory` with {{\"path\":\"/absolute/dir\",\"limit\":200}} to discover files, `fs_search_files` with {{\"path\":\"/absolute/path\",\"query\":\"text\",\"limit\":50,\"extensions\":[\"rs\"],\"pattern\":\"src/*\"}} to search, `fs_read_text_file` with {{\"path\":\"/absolute/file\",\"line\":1,\"limit\":400}} to read, and `fs_replace_text` with {{\"path\":\"/absolute/file\",\"old_text\":\"exact\",\"new_text\":\"replacement\"}} to edit existing files. ",
-            "Den routes these through the local ACP adapter using workspace policy; edits require approval and sensitive paths are denied. Current ACP session id is `{session_id}`. ",
-            "Do not ask the user to approve edits in chat. To request approval, invoke `fs_replace_text`; the ACP adapter will show the local approval UI. For appends, first read the file, then replace a unique end-of-file suffix with that suffix plus the appended text. ",
-            "Use absolute paths under these workspace roots: {roots}. ",
-            "Do not guess file contents; discover, search, or read files before editing and use the returned content. If an edit is needed, call the edit tool rather than describing a pending approval in prose. ",
-            "</system-reminder>"
-        ),
-        session_id = session_id,
-        roots = roots.join(", "),
-    )
+    let tool_names = acp_provider_tool_names_for_client_context(client_context);
+    let mut guidance = vec![format!(
+        "BEARS ACP direct local workspace tools available this turn: {}. Current ACP session id is `{session_id}`. Use absolute paths under these workspace roots: {}.",
+        tool_names.join(", "),
+        roots.join(", ")
+    )];
+    if tool_names.contains(&"fs_list_directory") {
+        guidance.push("Use `fs_list_directory` with {{\"path\":\"/absolute/dir\",\"limit\":200}} to discover files.".to_string());
+    }
+    if tool_names.contains(&"fs_search_files") {
+        guidance.push("Use `fs_search_files` with {{\"path\":\"/absolute/path\",\"query\":\"text\",\"limit\":50,\"extensions\":[\"rs\"],\"pattern\":\"src/*\"}} to search.".to_string());
+    }
+    if tool_names.contains(&"fs_read_text_file") {
+        guidance.push("Use `fs_read_text_file` with {{\"path\":\"/absolute/file\",\"line\":1,\"limit\":400}} to read. Do not guess file contents.".to_string());
+    }
+    if tool_names.contains(&"fs_replace_text") {
+        guidance.push("Use `fs_replace_text` with {{\"path\":\"/absolute/file\",\"old_text\":\"exact\",\"new_text\":\"replacement\"}} to edit existing files. Edits require approval; do not ask for approval in chat. To append, first read the file, then replace a unique end-of-file suffix with that suffix plus the appended text.".to_string());
+    } else {
+        guidance.push("No ACP edit tool is callable in this turn. Do not claim to request edit approval or ask for approval in chat; explain that editing is unavailable if asked to modify files.".to_string());
+    }
+    format!("\n\n<system-reminder>{}</system-reminder>", guidance.join(" "))
 }
 
 fn normalize_acp_conversation_id(raw: Option<&str>) -> Result<String, CustomError> {

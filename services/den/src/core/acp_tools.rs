@@ -380,29 +380,42 @@ pub fn acp_client_tool_descriptors() -> serde_json::Value {
 pub fn acp_client_tool_descriptors_for_client_context(
     client_context: &serde_json::Value,
 ) -> serde_json::Value {
-    let mut names = Vec::new();
-    let descriptors = AcpToolName::all()
+    let names = acp_provider_tool_names_for_client_context(client_context);
+    let descriptors = names
         .iter()
-        .filter(|tool| adapter_supports_tool(client_context, tool.descriptor().provider_name))
-        .map(|tool| {
-            names.push(tool.descriptor().provider_name);
-            acp_client_tool_descriptor(tool.descriptor())
-        })
+        .filter_map(|name| AcpToolName::from_provider_alias(name))
+        .map(|tool| acp_client_tool_descriptor(tool.descriptor()))
         .collect::<Vec<_>>();
-    if descriptors.is_empty() {
+    if names == vec![ACP_READ_TEXT_FILE_TOOL.provider_name]
+        && !adapter_supports_tool(client_context, ACP_READ_TEXT_FILE_TOOL.provider_name)
+    {
         tracing::info!(
             phase = acp_diag_phase::DESCRIPTOR_ADVERTISED,
-            tools = ?[ACP_READ_TEXT_FILE_TOOL.provider_name],
+            tools = ?names,
             "ACP adapter did not advertise direct tools; falling back to read-text descriptor only"
         );
-        json!([acp_client_tool_descriptor(&ACP_READ_TEXT_FILE_TOOL)])
     } else {
         tracing::info!(
             phase = acp_diag_phase::DESCRIPTOR_ADVERTISED,
             tools = ?names,
             "ACP client tool descriptors advertised"
         );
-        json!(descriptors)
+    }
+    json!(descriptors)
+}
+
+pub fn acp_provider_tool_names_for_client_context(
+    client_context: &serde_json::Value,
+) -> Vec<&'static str> {
+    let names = AcpToolName::all()
+        .iter()
+        .filter(|tool| adapter_supports_tool(client_context, tool.descriptor().provider_name))
+        .map(|tool| tool.descriptor().provider_name)
+        .collect::<Vec<_>>();
+    if names.is_empty() {
+        vec![ACP_READ_TEXT_FILE_TOOL.provider_name]
+    } else {
+        names
     }
 }
 
