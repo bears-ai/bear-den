@@ -2396,14 +2396,22 @@ impl ReplaceTextPlan {
         }))
     }
 
-    fn permission_prompt(&self, tool_name: &str, reason: &str) -> String {
+    fn permission_summary(&self, tool_name: &str, reason: &str) -> String {
         format!(
-            "{reason}\n\nTool: {tool_name}\nPath: {}\nReplacing {} occurrence\nBytes: {} -> {}\n\n{}",
+            "{reason}\n\nTool: {tool_name}\nPath: {}\nReplacing {} occurrence\nBytes: {} -> {}\n\nReview the diff below before approving.",
             self.path.display(),
             self.replacements,
             self.bytes_before,
             self.bytes_after,
-            self.preview,
+        )
+    }
+
+    #[cfg(test)]
+    fn permission_prompt(&self, tool_name: &str, reason: &str) -> String {
+        format!(
+            "{}\n\n{}",
+            self.permission_summary(tool_name, reason),
+            self.preview
         )
     }
 }
@@ -4775,7 +4783,7 @@ async fn request_tool_permission(
     let title = event
         .get("title")
         .and_then(Value::as_str)
-        .unwrap_or("Run local tool");
+        .unwrap_or_else(|| tool_display(tool_name).title);
     let reason = event
         .get("approval")
         .and_then(|v| v.get("reason"))
@@ -4786,13 +4794,24 @@ async fn request_tool_permission(
         session_id, tool_call_id, tool_name, path
     );
     let permission_content = replace_plan
-        .map(|plan| plan.permission_prompt(tool_name, reason))
+        .map(|plan| plan.permission_summary(tool_name, reason))
         .unwrap_or_else(|| format!("{reason}\n\nTool: {tool_name}\nPath: {path}"));
-    let fields = ToolCallUpdateFields::new()
-        .kind(Some(ToolKind::Read))
+    let mut content = vec![ToolCallContent::from(permission_content)];
+    if let Some(plan) = replace_plan {
+        content.push(replace_text_diff_content(plan));
+    }
+    let display = tool_display(tool_name);
+    let mut fields = ToolCallUpdateFields::new()
+        .kind(Some(display.kind))
         .status(Some(ToolCallStatus::Pending))
         .title(Some(title.to_string()))
-        .content(Some(vec![ToolCallContent::from(permission_content)]));
+        .content(Some(content));
+    if let Some(locations) = tool_locations_from_event(event) {
+        fields = fields.locations(Some(locations));
+    }
+    if let Some(args) = event.get("args") {
+        fields = fields.raw_input(Some(args.clone()));
+    }
     let tool_call = ToolCallUpdate::new(tool_call_id.to_string(), fields);
     let permission_class = permission_class_for_tool(tool_name);
     let allow_always_label = match permission_class {
