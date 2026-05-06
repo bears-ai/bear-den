@@ -186,6 +186,19 @@ Candidate tools:
 - `docs_search`
 - `docs_fetch`
 
+Current implementation:
+
+- `den.web.fetch` is implemented with SSRF guards, timeouts, redirect limits, and bounded content extraction.
+- `den.web.search` supports Brave Search when configured:
+
+```bash
+DEN_SEARCH_PROVIDER=brave
+BRAVE_SEARCH_API_KEY=...
+DEN_SEARCH_MAX_RESULTS=5
+```
+
+If these variables are not set, `den.web.search` returns a clear configuration error and `pair` should ask the user for a direct URL or explain that search is unavailable.
+
 Policy expectations:
 
 - read-only,

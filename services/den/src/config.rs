@@ -159,6 +159,13 @@ pub struct Config {
     pub ghcr_packages_owner: String,
     /// `org` or `user` — used with GitHub Packages REST paths.
     pub ghcr_packages_owner_kind: String,
+
+    /// Search provider for Den web search tools (`DEN_SEARCH_PROVIDER`, e.g. `brave`). Empty disables search.
+    pub den_search_provider: String,
+    /// Brave Search API key (`BRAVE_SEARCH_API_KEY`) when `DEN_SEARCH_PROVIDER=brave`.
+    pub brave_search_api_key: String,
+    /// Max results returned by Den search tools (`DEN_SEARCH_MAX_RESULTS`, default 5, clamped 1..10).
+    pub den_search_max_results: usize,
 }
 
 impl Config {
@@ -378,6 +385,20 @@ impl Config {
             String::new()
         };
 
+        let den_search_provider = std::env::var("DEN_SEARCH_PROVIDER")
+            .unwrap_or_default()
+            .trim()
+            .to_ascii_lowercase();
+        let brave_search_api_key = std::env::var("BRAVE_SEARCH_API_KEY").unwrap_or_default();
+        let den_search_max_results = std::env::var("DEN_SEARCH_MAX_RESULTS")
+            .unwrap_or_else(|_| "5".to_string())
+            .parse::<usize>()
+            .unwrap_or_else(|_| {
+                tracing::warn!("Invalid DEN_SEARCH_MAX_RESULTS, defaulting to 5");
+                5
+            })
+            .clamp(1, 10);
+
         Config {
             templates_dir: std::env::var("TEMPLATES_DIR")
                 .unwrap_or("src/web/templates".to_string()),
@@ -425,6 +446,9 @@ impl Config {
             github_packages_token,
             ghcr_packages_owner,
             ghcr_packages_owner_kind,
+            den_search_provider,
+            brave_search_api_key,
+            den_search_max_results,
         }
     }
 }
@@ -492,6 +516,9 @@ impl Config {
             github_packages_token: String::new(),
             ghcr_packages_owner: String::new(),
             ghcr_packages_owner_kind: String::new(),
+            den_search_provider: String::new(),
+            brave_search_api_key: String::new(),
+            den_search_max_results: 5,
         }
     }
 }

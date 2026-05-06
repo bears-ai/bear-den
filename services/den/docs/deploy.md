@@ -27,6 +27,8 @@ Trestle expects a **working PostgreSQL service** you operate separately. The app
 
 **Optional** keys your stack may need include: `WEB_SERVER_URL`, `API_SERVER_URL`, `SESSION_COOKIE_DOMAIN` (production cookie `Domain`; leave unset for host-only cookies), `MAILGUN_API_KEY`, `MAILGUN_DOMAIN`, `TEMPLATES_DIR`, and legacy `SERVER_MODE` (prefer `RUN_*`). Mail can stay empty for a minimal check.
 
+**Optional pair web search:** set `DEN_SEARCH_PROVIDER=brave` and `BRAVE_SEARCH_API_KEY` to enable the `den.web.search` tool for the `pair` role. `DEN_SEARCH_MAX_RESULTS` defaults to `5` and is clamped to `1..10`. Without these settings, `den.web.search` returns a clear configuration error; `den.web.fetch` still works for direct URLs.
+
 **Migration contract:** The `_sqlx_migrations` table in Postgres tracks which files from `migrations/` have been applied. Deploy the same binary (or same migration set) against each environment so history stays consistent; Coolify/CI should not mix ad-hoc SQL with Den’s embedded migrator without updating the repo.
 
 **Health checks:** web and API expose `GET /healthcheck` (liveness) and `GET /health/ready` (readiness; **503** if the database is unreachable). Details per service are in [infrastructure-and-ops.md](infrastructure-and-ops.md).
