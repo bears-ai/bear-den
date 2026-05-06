@@ -621,6 +621,9 @@ fn acp_direct_tool_prompt_context(
     } else {
         guidance.push("No ACP edit tool is callable in this turn. Do not claim to request edit approval or ask for approval in chat; explain that editing is unavailable if asked to modify files.".to_string());
     }
+    if tool_names.contains(&"fs_create_text_file") {
+        guidance.push("Use `fs_create_text_file` with {{\"path\":\"/absolute/new-file.txt\",\"content\":\"text\"}} to create new UTF-8 text files. It will not overwrite existing files; use `create_parent_dirs:true` only when parent directories should be created.".to_string());
+    }
     if tool_names.contains(&"fs_delete_path") {
         guidance.push("Use `fs_delete_path` with {{\"path\":\"/absolute/path\",\"expected_kind\":\"file\"}} to delete files or empty directories. For non-empty directories, `recursive:true` is required. Deleting workspace roots, hidden paths, and sensitive paths is denied.".to_string());
     }

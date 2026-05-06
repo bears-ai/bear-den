@@ -22,6 +22,7 @@ pub enum AcpToolName {
     ListDirectory,
     SearchFiles,
     ReplaceText,
+    CreateTextFile,
     DeletePath,
 }
 
@@ -32,6 +33,7 @@ impl AcpToolName {
             Self::ListDirectory => &ACP_LIST_DIRECTORY_TOOL,
             Self::SearchFiles => &ACP_SEARCH_FILES_TOOL,
             Self::ReplaceText => &ACP_REPLACE_TEXT_TOOL,
+            Self::CreateTextFile => &ACP_CREATE_TEXT_FILE_TOOL,
             Self::DeletePath => &ACP_DELETE_PATH_TOOL,
         }
     }
@@ -42,6 +44,7 @@ impl AcpToolName {
             Self::ListDirectory,
             Self::SearchFiles,
             Self::ReplaceText,
+            Self::CreateTextFile,
             Self::DeletePath,
         ]
     }
@@ -65,12 +68,14 @@ impl AcpToolName {
             Self::ReadTextFile | Self::ListDirectory => &["path"],
             Self::SearchFiles => &["path", "query"],
             Self::ReplaceText => &["path", "old_text", "new_text"],
+            Self::CreateTextFile => &["path", "content"],
             Self::DeletePath => &["path"],
         }
     }
 
     fn allow_empty_required_string(self, arg: &str) -> bool {
-        matches!(self, Self::ReplaceText) && matches!(arg, "old_text" | "new_text")
+        matches!(self, Self::ReplaceText | Self::CreateTextFile)
+            && matches!(arg, "old_text" | "new_text" | "content")
     }
 
     pub fn from_provider_alias(raw: &str) -> Option<Self> {
@@ -88,6 +93,11 @@ impl AcpToolName {
             | "search_files" => Some(Self::SearchFiles),
             "bears/replace_text" | "fs/replace_text" | "fs.replace_text" | "fs_replace_text"
             | "replace_text" => Some(Self::ReplaceText),
+            "bears/create_text_file"
+            | "fs/create_text_file"
+            | "fs.create_text_file"
+            | "fs_create_text_file"
+            | "create_text_file" => Some(Self::CreateTextFile),
             "bears/delete_path" | "fs/delete_path" | "fs.delete_path" | "fs_delete_path"
             | "delete_path" => Some(Self::DeletePath),
             _ => None,
@@ -255,6 +265,16 @@ pub const ACP_REPLACE_TEXT_TOOL: AcpToolDescriptor = AcpToolDescriptor {
     risk: "writes_workspace",
 };
 
+pub const ACP_CREATE_TEXT_FILE_TOOL: AcpToolDescriptor = AcpToolDescriptor {
+    provider_name: "fs_create_text_file",
+    canonical_name: "acp.fs.create_text_file",
+    adapter_method: "bears/create_text_file",
+    client_method: "fs/create_text_file",
+    title: "Create text file",
+    kind: "edit",
+    risk: "writes_workspace",
+};
+
 pub const ACP_DELETE_PATH_TOOL: AcpToolDescriptor = AcpToolDescriptor {
     provider_name: "fs_delete_path",
     canonical_name: "acp.fs.delete_path",
@@ -356,6 +376,27 @@ const ACP_REPLACE_TEXT_POLICY: AcpToolPolicy = AcpToolPolicy {
     permission_timeout_ms: 120_000,
 };
 
+const ACP_CREATE_TEXT_FILE_POLICY: AcpToolPolicy = AcpToolPolicy {
+    scope_basis: "acp:tools",
+    role_basis: "pair_agent",
+    allowed_roots_basis: "acp_session.workspace_roots",
+    path_containment: "adapter_enforced_absolute_path_under_allowed_roots",
+    approval_required: true,
+    sensitive_path_policy: "deny_sensitive_paths",
+    max_lines: None,
+    max_entries: None,
+    max_results: None,
+    max_bytes: Some(1_048_576),
+    recursive_default: None,
+    include_hidden_default: Some(false),
+    max_replacements: None,
+    create_files: Some(true),
+    allow_multiple: None,
+    deny_hidden_paths: Some(true),
+    total_timeout_ms: 150_000,
+    permission_timeout_ms: 120_000,
+};
+
 const ACP_DELETE_PATH_POLICY: AcpToolPolicy = AcpToolPolicy {
     scope_basis: "acp:tools",
     role_basis: "pair_agent",
@@ -383,6 +424,7 @@ pub fn acp_tool_policy(tool: AcpToolName) -> AcpToolPolicy {
         AcpToolName::ListDirectory => ACP_LIST_DIRECTORY_POLICY,
         AcpToolName::SearchFiles => ACP_SEARCH_FILES_POLICY,
         AcpToolName::ReplaceText => ACP_REPLACE_TEXT_POLICY,
+        AcpToolName::CreateTextFile => ACP_CREATE_TEXT_FILE_POLICY,
         AcpToolName::DeletePath => ACP_DELETE_PATH_POLICY,
     }
 }
@@ -567,6 +609,28 @@ pub fn acp_client_tool_descriptor(tool: &AcpToolDescriptor) -> serde_json::Value
                 "required": ["path", "old_text", "new_text"]
             }
         }),
+        "fs_create_text_file" => json!({
+            "name": tool.provider_name,
+            "description": format!(
+                "ACP local workspace tool ({}, target={}, adapter={}, client={}, kind={}, risk={}). Creates a new UTF-8 text file in the workspace through the local adapter. Approval is required; overwrite is disabled by default and sensitive paths are denied.",
+                tool.canonical_name,
+                "acp_client",
+                tool.adapter_method,
+                tool.client_method,
+                tool.kind,
+                tool.risk,
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": { "type": "string", "description": "Absolute local file path under the workspace." },
+                    "content": { "type": "string", "description": "UTF-8 text content for the new file." },
+                    "create_parent_dirs": { "type": "boolean", "default": false, "description": "Create parent directories if needed. Defaults to false." },
+                    "overwrite": { "type": "boolean", "default": false, "description": "Reserved for future use; currently must be false." }
+                },
+                "required": ["path", "content"]
+            }
+        }),
         "fs_delete_path" => json!({
             "name": tool.provider_name,
             "description": format!(
@@ -610,7 +674,7 @@ mod tests {
     fn descriptors_use_provider_name_only() {
         let descriptors = acp_client_tool_descriptors();
         let descriptors = descriptors.as_array().expect("descriptor array");
-        assert_eq!(descriptors.len(), 5);
+        assert_eq!(descriptors.len(), 6);
         for descriptor in descriptors {
             let name = descriptor["name"].as_str().expect("descriptor name");
             assert!(provider_tool_name_is_safe(name));
@@ -656,6 +720,7 @@ mod tests {
                 "direct_tools": {
                     "fs_read_text_file": { "supported": true, "version": 1 },
                     "fs_replace_text": { "supported": true, "version": 1 },
+                    "fs_create_text_file": { "supported": true, "version": 1 },
                     "fs_delete_path": { "supported": true, "version": 1 }
                 }
             }
@@ -668,7 +733,12 @@ mod tests {
             .collect::<Vec<_>>();
         assert_eq!(
             names,
-            vec!["fs_read_text_file", "fs_replace_text", "fs_delete_path"]
+            vec![
+                "fs_read_text_file",
+                "fs_replace_text",
+                "fs_create_text_file",
+                "fs_delete_path"
+            ]
         );
     }
 
@@ -719,6 +789,11 @@ mod tests {
         assert_eq!(replace_policy["deny_hidden_paths"], true);
         assert!(replace_policy.get("max_results").is_none());
         assert_eq!(replace_policy["approval_required"], true);
+
+        let create_policy = acp_tool_policy_json_for_provider("fs_create_text_file");
+        assert_eq!(create_policy["risk"], "writes_workspace");
+        assert_eq!(create_policy["create_files"], true);
+        assert_eq!(create_policy["max_bytes"], 1_048_576);
 
         let delete_policy = acp_tool_policy_json_for_provider("fs_delete_path");
         assert_eq!(delete_policy["risk"], "deletes_workspace");

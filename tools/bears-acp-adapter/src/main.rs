@@ -301,7 +301,7 @@ fn permission_class_for_tool(tool_name: &str) -> &'static str {
     match tool_name {
         "fs_read_text_file" | "fs_list_directory" | "fs_search_files" | "fs.read_text_file"
         | "read_text_file" => "read_files",
-        "fs_replace_text" => "edit_files",
+        "fs_replace_text" | "fs_create_text_file" => "edit_files",
         "fs_delete_path" => "delete_files",
         _ => "local_files",
     }
@@ -1542,6 +1542,7 @@ fn adapter_capabilities_context() -> Value {
             "fs_list_directory": { "supported": true, "version": 1 },
             "fs_search_files": { "supported": true, "version": 1 },
             "fs_replace_text": { "supported": true, "version": 1 },
+            "fs_create_text_file": { "supported": true, "version": 1 },
             "fs_delete_path": { "supported": true, "version": 1 }
         }
     })
@@ -1553,6 +1554,7 @@ fn direct_tools_context() -> Value {
         "fs_list_directory": true,
         "fs_search_files": true,
         "fs_replace_text": true,
+        "fs_create_text_file": true,
         "fs_delete_path": true,
     })
 }
@@ -1973,6 +1975,9 @@ async fn execute_local_tool(
         }
         "fs_replace_text" => {
             handle_direct_replace_text(adapter_state, session_id, &args, policy).await
+        }
+        "fs_create_text_file" => {
+            handle_direct_create_text_file(adapter_state, session_id, &args, policy).await
         }
         "fs_delete_path" => {
             handle_direct_delete_path(adapter_state, session_id, &args, policy).await
@@ -2469,6 +2474,88 @@ fn truncate_chars(text: &str, max_chars: usize) -> String {
     }
 }
 
+async fn handle_direct_create_text_file(
+    adapter_state: &AdapterState,
+    session_id: &str,
+    args: &Value,
+    policy: &ToolPolicy,
+) -> Result<Value> {
+    let raw_path = args
+        .get("path")
+        .and_then(Value::as_str)
+        .ok_or_else(|| anyhow!("fs_create_text_file args missing path"))?;
+    let content = args
+        .get("content")
+        .and_then(Value::as_str)
+        .ok_or_else(|| anyhow!("fs_create_text_file args missing content"))?;
+    if args
+        .get("overwrite")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+    {
+        return Err(anyhow!(
+            "fs_create_text_file does not support overwrite yet"
+        ));
+    }
+    let create_parent_dirs = args
+        .get("create_parent_dirs")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let max_bytes = policy.max_bytes.unwrap_or(1_048_576).clamp(1, 5_242_880);
+    if content.len() as u64 > max_bytes {
+        return Err(anyhow!(
+            "fs_create_text_file content exceeds policy max_bytes: {} > {}",
+            content.len(),
+            max_bytes
+        ));
+    }
+    let context = session_context(adapter_state, session_id)?;
+    let path = normalize_requested_tool_path(raw_path)?;
+    ensure_path_allowed_for_session(context, &path)?;
+    ensure_replace_text_path_allowed(&path, policy)?;
+    if path.exists() {
+        return Err(anyhow!("fs_create_text_file path already exists"));
+    }
+    if let Some(parent) = path.parent() {
+        ensure_path_allowed_for_session(context, parent)?;
+        if !parent.exists() {
+            if create_parent_dirs {
+                fs::create_dir_all(parent)
+                    .with_context(|| format!("create parent directories {}", parent.display()))?;
+            } else {
+                return Err(anyhow!(
+                    "fs_create_text_file parent directory does not exist; set create_parent_dirs=true"
+                ));
+            }
+        }
+    }
+    let started = std::time::Instant::now();
+    fs::write(&path, content.as_bytes())
+        .with_context(|| format!("create text file {}", path.display()))?;
+    let result = json!({
+        "ok": true,
+        "path": path.to_string_lossy(),
+        "bytes": content.len(),
+        "created": true,
+        "source": "adapter_local",
+        "content": format!("Created text file {} ({} bytes)", path.display(), content.len()),
+        "policy": {
+            "max_bytes": max_bytes,
+            "create_files": policy.create_files.unwrap_or(true),
+            "deny_hidden_paths": policy.deny_hidden_paths.unwrap_or(true),
+            "sensitive_path_policy": policy.sensitive_path_policy,
+        }
+    });
+    eprintln!(
+        "bears-acp-adapter: create_text_file session_id={} path={} bytes={} duration_ms={}",
+        session_id,
+        path.display(),
+        content.len(),
+        started.elapsed().as_millis(),
+    );
+    Ok(result)
+}
+
 async fn handle_direct_delete_path(
     adapter_state: &AdapterState,
     session_id: &str,
@@ -2633,6 +2720,18 @@ fn collect_delete_entries(path: &Path, out: &mut Vec<PathBuf>, limit: usize) -> 
         }
     }
     Ok(())
+}
+
+fn create_text_file_diff_content(event: &Value) -> Option<ToolCallContent> {
+    let path = tool_path(event)?;
+    let content = event
+        .get("args")
+        .and_then(|v| v.get("content"))
+        .and_then(Value::as_str)?;
+    Some(ToolCallContent::from(Diff::new(
+        PathBuf::from(path),
+        content.to_string(),
+    )))
 }
 
 fn replace_text_diff_content(plan: &ReplaceTextPlan) -> ToolCallContent {
@@ -4501,10 +4600,13 @@ async fn handle_tool_request_event(
             let preview = tool_completion_preview(tool_name, &value);
             payload["content"] = value.get("content").cloned().unwrap_or_else(|| json!(""));
             let raw_output = value.clone();
-            let extra_content = replace_plan
-                .as_ref()
-                .map(|plan| vec![replace_text_diff_content(plan)])
-                .unwrap_or_default();
+            let extra_content = if let Some(plan) = replace_plan.as_ref() {
+                vec![replace_text_diff_content(plan)]
+            } else if tool_name == "fs_create_text_file" {
+                create_text_file_diff_content(event).into_iter().collect()
+            } else {
+                Vec::new()
+            };
             payload["structured_content"] = value;
             send_tool_call_update(
                 session_id,
@@ -4929,6 +5031,11 @@ fn tool_display(tool_name: &str) -> ToolDisplay {
             kind: ToolKind::Edit,
             verb: "Editing",
         },
+        "fs_create_text_file" => ToolDisplay {
+            title: "Create file",
+            kind: ToolKind::Edit,
+            verb: "Creating",
+        },
         "fs_delete_path" => ToolDisplay {
             title: "Delete path",
             kind: ToolKind::Delete,
@@ -5332,6 +5439,56 @@ mod tests {
         assert_eq!(result["include_hidden"], true);
         assert_eq!(result["policy"]["max_results"], 1);
         assert_eq!(result["policy"]["applied_limit"], 1);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn create_text_file_creates_new_file_and_refuses_overwrite() {
+        let root = unique_test_dir("create-file");
+        let file = root.join("new.txt");
+        let state = test_adapter_state("session-1", &root);
+        let result = handle_direct_create_text_file(
+            &state,
+            "session-1",
+            &json!({ "path": file.to_string_lossy(), "content": "hello\n" }),
+            &ToolPolicy {
+                max_bytes: Some(1024),
+                sensitive_path_policy: Some("deny_sensitive_paths".to_string()),
+                deny_hidden_paths: Some(true),
+                create_files: Some(true),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(result["created"], true);
+        assert_eq!(fs::read_to_string(&file).unwrap(), "hello\n");
+        let denied = handle_direct_create_text_file(
+            &state,
+            "session-1",
+            &json!({ "path": file.to_string_lossy(), "content": "again\n" }),
+            &ToolPolicy::default(),
+        )
+        .await;
+        assert!(format!("{:#}", denied.unwrap_err()).contains("already exists"));
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn create_text_file_can_create_parent_dirs() {
+        let root = unique_test_dir("create-parents");
+        let file = root.join("nested").join("new.txt");
+        let state = test_adapter_state("session-1", &root);
+        let result = handle_direct_create_text_file(
+            &state,
+            "session-1",
+            &json!({ "path": file.to_string_lossy(), "content": "hello\n", "create_parent_dirs": true }),
+            &ToolPolicy { create_files: Some(true), ..Default::default() },
+        )
+        .await
+        .unwrap();
+        assert_eq!(result["created"], true);
+        assert_eq!(fs::read_to_string(&file).unwrap(), "hello\n");
         let _ = fs::remove_dir_all(root);
     }
 
