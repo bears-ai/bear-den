@@ -89,6 +89,10 @@ pub fn router() -> Router<ApiState> {
             "/bears/{slug}/sessions/{session_id}/cancel",
             post(cancel_session),
         )
+        .route(
+            "/bears/{slug}/sessions/{session_id}/unwedge",
+            post(unwedge_session),
+        )
         .route("/bears/{slug}/conversations", get(conversations))
         .route(
             "/bears/{slug}/conversations/{conversation_id}/history",
@@ -1327,6 +1331,74 @@ async fn tool_result_inner(
     }
 }
 
+async fn unwedge_session(
+    State(state): State<ApiState>,
+    Path((slug, session_id)): Path<(String, String)>,
+    headers: HeaderMap,
+    Json(body): Json<serde_json::Value>,
+) -> Response {
+    let response_request_id = Uuid::new_v4();
+    match unwedge_session_inner(state, slug, session_id, headers, body).await {
+        Ok(response) => response,
+        Err(err) => acp_error_response(err, response_request_id),
+    }
+}
+
+async fn unwedge_session_inner(
+    state: ApiState,
+    slug: String,
+    session_id: String,
+    headers: HeaderMap,
+    body: serde_json::Value,
+) -> Result<Response, CustomError> {
+    let user_id = authenticate_acp_code_token(&state, &headers, &slug).await?;
+    let Some(session) =
+        acp_sessions::find_for_user_bear_session(&state.sqlx_pool, user_id, &slug, &session_id)
+            .await?
+    else {
+        return Err(CustomError::NotFound("ACP session not found".to_string()));
+    };
+    let pair_agent_id = bears_db::role_agent_id(
+        &state.sqlx_pool,
+        session.bear_id,
+        BearAgentRole::Pair,
+    )
+    .await?
+    .ok_or_else(|| {
+        CustomError::ValidationError("bear has no ready pair role agent".to_string())
+    })?;
+    let run_ids = body
+        .get("run_ids")
+        .and_then(|v| v.as_array())
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| item.as_str())
+                .map(str::trim)
+                .filter(|s| s.starts_with("run-"))
+                .map(str::to_string)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    let cancel_result = state.letta.cancel_agent_runs(&pair_agent_id, &run_ids).await?;
+    state.acp_tool_turns.cleanup_session(&session_id);
+    tracing::warn!(
+        acp_session_id = %session_id,
+        bear_id = %session.bear_id,
+        pair_agent_id = %pair_agent_id,
+        run_ids = ?run_ids,
+        "ACP session unwedge requested; cancelled Letta runs and cleaned local tool turns"
+    );
+    Ok(Json(serde_json::json!({
+        "ok": true,
+        "acp_session_id": session_id,
+        "pair_agent_id": pair_agent_id,
+        "run_ids": run_ids,
+        "letta_cancel_result": cancel_result,
+    }))
+    .into_response())
+}
+
 async fn close_session(
     State(state): State<ApiState>,
     Path((slug, session_id)): Path<(String, String)>,
@@ -1916,6 +1988,7 @@ struct AcpStreamDiagnostics {
     tool_request_counts: BTreeMap<String, usize>,
     tool_call_accumulator: LettaToolCallAccumulator,
     unmapped_event_samples: Vec<String>,
+    run_ids: Vec<String>,
     saw_visible_output: bool,
     saw_error: bool,
     saw_turn_complete: bool,
@@ -1940,11 +2013,25 @@ impl AcpStreamDiagnostics {
             .and_then(|v| v.as_str())
             .unwrap_or("");
         let event_type = value.get("type").and_then(|v| v.as_str()).unwrap_or("");
+        if let Some(run_id) = value.get("run_id").and_then(|v| v.as_str()) {
+            self.observe_run_id(run_id);
+        }
+        if let Some(run_ids) = value.get("run_ids").and_then(|v| v.as_array()) {
+            for run_id in run_ids.iter().filter_map(|v| v.as_str()) {
+                self.observe_run_id(run_id);
+            }
+        }
         Self::increment(&mut self.native_message_types, message_type);
         if message_type == "tool_return_message" {
             self.saw_tool_return_ack = true;
         }
         Self::increment(&mut self.native_event_types, event_type);
+    }
+
+    fn observe_run_id(&mut self, run_id: &str) {
+        if !run_id.trim().is_empty() && !self.run_ids.iter().any(|known| known == run_id) {
+            self.run_ids.push(run_id.to_string());
+        }
     }
 
     fn observe_mapped_event(&mut self, event: &AcpGatewayEvent) {
@@ -1992,6 +2079,7 @@ impl AcpStreamDiagnostics {
             context: Some(serde_json::json!({
                 "acp_session_id": context.acp_session_id,
                 "unmapped_event_samples": self.unmapped_event_samples,
+                "run_ids": self.run_ids,
             })),
         })
     }
@@ -2015,6 +2103,7 @@ impl AcpStreamDiagnostics {
             pending_tool_argument_buffers = self.tool_call_accumulator.pending_argument_buffers(),
             pending_tool_name_buffers = self.tool_call_accumulator.pending_name_buffers(),
             unmapped_event_samples = ?self.unmapped_event_samples,
+            run_ids = ?self.run_ids,
             "ACP Letta stream summary"
         );
     }

@@ -709,6 +709,42 @@ impl LettaClient {
         Ok(resp)
     }
 
+    pub async fn cancel_agent_runs(
+        &self,
+        agent_id: &str,
+        run_ids: &[String],
+    ) -> Result<serde_json::Value, CustomError> {
+        if !self.is_enabled() {
+            return Err(CustomError::System(
+                "Letta is not configured (set LETTA_BASE_URL)".to_string(),
+            ));
+        }
+        let url = format!("{}/v1/agents/{}/messages/cancel", self.base_url, agent_id);
+        let mut body = serde_json::Map::new();
+        if !run_ids.is_empty() {
+            body.insert("run_ids".to_string(), json!(run_ids));
+        }
+        let resp = self
+            .http
+            .post(url)
+            .headers(self.auth_headers())
+            .header(CONTENT_TYPE, "application/json")
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| CustomError::System(format!("Letta cancel runs request failed: {e}")))?;
+        let status = resp.status();
+        let text = resp.text().await.unwrap_or_default();
+        if !status.is_success() {
+            return Err(CustomError::System(letta_http_error_message(
+                "cancel runs",
+                status,
+                &text,
+            )));
+        }
+        serde_json::from_str(&text).or_else(|_| Ok(json!({ "raw": text })))
+    }
+
     pub async fn post_conversation_tool_returns_streaming(
         &self,
         context: &LettaContinuationContext,
