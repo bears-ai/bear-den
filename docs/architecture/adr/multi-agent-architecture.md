@@ -113,20 +113,20 @@ External work is requested through the architecture, never invoked directly by c
 
 1. A user asks the talk or pair agent to do something with external effects ("check deploy status hourly", "post a daily standup summary to #team").
 2. The channel agent writes a structured task intent to its own branch (`talk/tasks/<intent-id>.md` or `pair/tasks/<intent-id>.md`).
-3. On its next cycle, the curate agent reads pending task intents from channel branches. For each, it decides approve or reject and invokes privileged Den tooling to perform the mutation:
-   - Approval validates and writes `core/tasks/<task-id>.md` with appropriate metadata (schedule, scope, allowed tools, risk level), then updates the source intent audit metadata; or
+3. On its next cycle, the curate agent reads pending task intents from channel branches. For each, it decides approve or reject and invokes privileged task-management tooling to perform the mutation:
+   - Approval validates and writes the approved task into **Docket**, with appropriate metadata (schedule, scope, allowed tools, risk level), then updates the source intent audit metadata; or
    - Rejection updates the source intent audit metadata with a reason for the channel agent to surface to the user.
 
-The curate agent is not granted raw write access to channel branches; Den tools perform these cross-branch audit updates as controlled operations.
-4. Den picks up approved tasks from `core/tasks/` and dispatches them to the work agent on schedule or trigger.
-5. The work agent executes, writing logs and results to `work/results/<task-id>/<run-id>.md`.
-6. On its next cycle, the curate agent promotes summary results to `core/results/` for visibility to channel agents (so the user can ask "what did you do overnight?" via talk or pair).
+The curate agent is not granted raw write access to channel branches; Den- or Docket-mediated tools perform these audit updates as controlled operations.
+4. Den picks up approved tasks from **Docket** and dispatches them to the work agent on schedule or trigger.
+5. The work agent executes and records structured run results in **Docket**. Bear-visible summaries may also be projected back into `core/results/` for agent visibility, but Docket is the system of record for the operational task lifecycle.
+6. On its next cycle, the curate agent may promote summary results to `core/results/` for visibility to channel agents (so the user can ask "what did you do overnight?" via talk or pair).
 
 For high-risk operations (any task that would be destructive or irreversible), Den implements an additional human-in-the-loop approval queue per run, surfaced in the management UI. Routine, low-risk tasks (read-only checks, idempotent posts) flow through curate-agent approval alone.
 
-Tasks may also originate from watch observations (§5a). The dispatch and execution path from `core/tasks/` onward is identical regardless of origin.
+Tasks may also originate from watch observations (§5a). The dispatch and execution path from **Docket** onward is identical regardless of origin.
 
-The full schema for intent files, approved task files, and result files is specified in the **Bear/Den Tasks Schema** document.
+The task file pipeline described in earlier notes should be read as a possible projection format for Bear-visible summaries and audit artifacts, not as the primary system of record. The canonical operational task model lives in Docket, which also supports direct human collaboration through its own UI.
 
 ### 5a. Observation flow
 
