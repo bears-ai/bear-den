@@ -443,8 +443,8 @@ impl CodePoolClient {
     }
 
     /// Same contract as [`crate::core::letta::LettaClient::post_conversation_messages_streaming`],
-    /// plus `bear_id` and `runtime_plan` for codepool memfs provisioning. Kept for compatibility;
-    /// Den web chat should use [`Self::post_bear_channel_message_streaming`].
+    /// plus `bear_id`, `role_agent_id`, and `runtime_plan` for codepool memfs provisioning.
+    /// Kept for compatibility; Den web chat should use [`Self::post_bear_channel_message_streaming`].
     pub async fn post_conversation_messages_streaming(
         &self,
         conversation_id: &str,
@@ -472,9 +472,13 @@ impl CodePoolClient {
         body.insert("stream_tokens".to_string(), json!(true));
         body.insert("bear_id".to_string(), json!(bear_id.to_string()));
         body.insert("runtime_plan".to_string(), runtime_plan.clone());
-        if let Some(a) = agent_id.map(str::trim).filter(|s| !s.is_empty()) {
-            body.insert("agent_id".to_string(), json!(a));
-        }
+        let role_agent_id = agent_id
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .ok_or_else(|| {
+                CustomError::System("role_agent_id is required for Codepool".to_string())
+            })?;
+        body.insert("role_agent_id".to_string(), json!(role_agent_id));
 
         let url = format!(
             "{}/v1/conversations/{}/messages",

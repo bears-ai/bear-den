@@ -6,7 +6,7 @@
 {% block admin_content %}
 <div class="box">
 <h3>Edit bear</h3>
-<p>Changes are saved in Den and applied to the Letta agent when one is linked. If Letta rejects an update, an error appears below; Den may still have saved your edits.</p>
+<p>Changes are saved in Den and applied to this Bear’s role-scoped Letta agents when they are linked. If Letta rejects an update, an error appears below; Den may still have saved your edits.</p>
 {% if letta_sync_error %}
 <p class="form-errors"><strong>Letta sync failed</strong>: {{ letta_sync_error }}</p>
 {% endif %}
@@ -22,14 +22,14 @@
     <span class="form-hint form-errors">Submission error: {{ errors.system_prompt | map(attribute="message", default="unknown error") | join(", ") }}</span>
     {% endif %}
   </div>
-  <label for="letta_agent_type_field" {% if errors and errors.letta_agent_type %}class="has-error"{% endif %}>Letta agent type</label>
+  <label for="letta_agent_type_field" {% if errors and errors.letta_agent_type %}class="has-error"{% endif %}>Default Letta agent type for role agents</label>
   <div class="form-field{% if errors and errors.letta_agent_type %} has-error{% endif %}">
     <select id="letta_agent_type_field" name="letta_agent_type">
       {% for row in letta_agent_type_rows %}
       <option value="{{ row.value | e }}"{% if form and form.letta_agent_type == row.value %} selected{% endif %}>{{ row.label | e }}</option>
       {% endfor %}
     </select>
-    <span class="form-hint">Sent to Letta as <code>agent_type</code> when set.</span>
+    <span class="form-hint">Sent to Letta as <code>agent_type</code> when provisioning or syncing role agents.</span>
     {% if errors and errors.letta_agent_type %}
     <span class="form-hint form-errors">Submission error: {{ errors.letta_agent_type | map(attribute="message", default="unknown error") | join(", ") }}</span>
     {% endif %}
@@ -65,14 +65,14 @@
   <p class="form-errors">{{ letta_tools_fetch_error }}</p>
   {% endif %}
   {% if letta_tools_configured and letta_tool_options and letta_tool_options | length > 0 %}
-  <label for="letta_tool_ids_field" {% if errors and errors.letta_tool_ids %}class="has-error"{% endif %}>Letta tools</label>
+  <label for="letta_tool_ids_field" {% if errors and errors.letta_tool_ids %}class="has-error"{% endif %}>Default Letta tools for role agents</label>
   <div class="form-field{% if errors and errors.letta_tool_ids %} has-error{% endif %}">
     <select id="letta_tool_ids_field" name="letta_tool_ids" multiple size="12">
       {% for t in letta_tool_options %}
       <option value="{{ t.id | e }}"{% if form and t.id in form.letta_tool_ids %} selected{% endif %}>{{ t.label | e }} — <code>{{ t.id | e }}</code></option>
       {% endfor %}
     </select>
-    <span class="form-hint">Hold Ctrl/Cmd to select multiple. Sent to Letta as <code>tool_ids</code>.</span>
+    <span class="form-hint">Hold Ctrl/Cmd to select multiple. Sent to Letta as <code>tool_ids</code> when provisioning or syncing role agents.</span>
     {% if errors and errors.letta_tool_ids %}
     <span class="form-hint form-errors">Submission error: {{ errors.letta_tool_ids | map(attribute="message", default="unknown error") | join(", ") }}</span>
     {% endif %}

@@ -654,13 +654,13 @@ export function attachRoutes(
             const body = req.body as {
                 messages?: Array<{ role?: string; content?: unknown }>;
                 streaming?: boolean;
-                agent_id?: string;
+                role_agent_id?: string;
                 bear_id?: string;
                 runtime_plan?: unknown;
             };
-            const agentId = (body.agent_id as string | undefined)?.trim();
+            const agentId = body.role_agent_id?.trim();
             if (!agentId) {
-                res.status(400).json({ error: "agent_id is required" });
+                res.status(400).json({ error: "role_agent_id is required" });
                 return;
             }
             const bearId = (body.bear_id as string | undefined)?.trim();
