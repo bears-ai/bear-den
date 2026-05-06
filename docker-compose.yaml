@@ -39,6 +39,9 @@ x-preflight-environment: &preflight-environment
     LETTA_BASE_URL: ${LETTA_BASE_URL:-http://bears-letta:8283}
     CODEPOOL_BASE_URL: ${CODEPOOL_BASE_URL:-http://bears-codepool:3030}
     LETTA_MEMFS_SERVICE_URL: ${LETTA_MEMFS_SERVICE_URL:-http://bears-memfs-manager:8285}
+    DEN_SEARCH_PROVIDER: ${DEN_SEARCH_PROVIDER:-}
+    BRAVE_SEARCH_API_KEY: ${BRAVE_SEARCH_API_KEY:-}
+    DEN_SEARCH_MAX_RESULTS: ${DEN_SEARCH_MAX_RESULTS:-5}
     MEMFS_DEFAULT_ORG: ${MEMFS_DEFAULT_ORG:-org-00000000-0000-4000-8000-000000000000}
 
 x-preflight-depends: &preflight-depends
@@ -349,6 +352,10 @@ services:
             BIFROST_METADATA_URL: ${BIFROST_METADATA_URL:-http://bears-bifrost:8081/bears/models}
             LLM_API_URL: ${LLM_API_URL:-http://bears-bifrost:8080/v1}
             OPENAI_API_KEY: ${OPENAI_API_KEY:-SETME}
+            # Optional Den pair-role web search provider.
+            DEN_SEARCH_PROVIDER: ${DEN_SEARCH_PROVIDER:-}
+            BRAVE_SEARCH_API_KEY: ${BRAVE_SEARCH_API_KEY:-}
+            DEN_SEARCH_MAX_RESULTS: ${DEN_SEARCH_MAX_RESULTS:-5}
             # Same as Letta / preflight: Memory Manager (git smart-HTTP + JSON management API) for private-memory UI.
             LETTA_MEMFS_SERVICE_URL: ${LETTA_MEMFS_SERVICE_URL:-http://bears-memfs-manager:8285}
             S3_ENDPOINT: ${S3_ENDPOINT:-}
