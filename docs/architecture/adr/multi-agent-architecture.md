@@ -126,7 +126,12 @@ For high-risk operations (any task that would be destructive or irreversible), D
 
 Tasks may also originate from watch observations (§5a). The dispatch and execution path from **Docket** onward is identical regardless of origin.
 
-The task file pipeline described in earlier notes should be read as a possible projection format for Bear-visible summaries and audit artifacts, not as the primary system of record. The canonical operational task model lives in Docket, which also supports direct human collaboration through its own UI.
+This implies a two-layer model:
+
+- **Canonical operational state lives in Docket** — task intents, approvals/rejections, approved task definitions, run history, review queues, planning metadata, and reporting/retention.
+- **MemFS artifacts are optional Bear-visible projections** — readable summaries or stubs in `core/tasks/` and `core/results/` may exist when helpful for agent cognition or audit convenience, but they are derived from Docket and must link back to Docket IDs rather than acting as an independent source of truth.
+
+A deployment may support a documented standalone fallback with file-based tasks when Docket is absent, but the full architecture described by this ADR is Docket-authoritative. The design explicitly avoids a dual-canonical model where both Docket and MemFS task files can independently be "the real" task store.
 
 ### 5a. Observation flow
 
@@ -138,7 +143,7 @@ External events are received through the watch agent, never directly by other ag
 4. The watch agent writes a structured observation file to `watch/observations/<observation-id>.md`, including a salience hint (`low | medium | high`).
 5. On its next cycle, the curate agent reviews pending observations and decides for each:
    - **Promote to `core/`** — the observation is a durable fact worth integrating into the Bear's shared knowledge.
-   - **Generate a derived task intent** — the observation warrants outbound action (e.g., a deploy-failure observation triggers a Slack post task). Curate writes a task intent directly to `core/tasks/` with `parent_intent` pointing to the observation file. The task then dispatches normally (§5 step 4 onward).
+   - **Generate a derived task intent** — the observation warrants outbound action (e.g., a deploy-failure observation triggers a Slack post task). Curate creates a new task intent in **Docket**, with provenance pointing to the observation file. Optional MemFS projections may mirror that relationship for Bear visibility, but Docket remains authoritative. The task then dispatches normally (§5 step 4 onward).
    - **Dismiss** — the observation is not actionable. Recorded for audit but not promoted.
 
 This pipeline ensures that no inbound external payload reaches the work agent without curate-agent mediation. An attacker who controls a webhook payload cannot directly cause outbound action; they can only get an observation written, which curate must then approve into a task.
@@ -154,7 +159,7 @@ Den must:
 - Run the cycle runner for the curate agent: fetch peer branches before each cycle, construct the curate prompt, drive the Letta API stream, execute curate's privileged tool calls (task-intent approval/rejection, skill-proposal approval, etc.), record cycle metadata.
 - Run the event-reception loop for the watch agent: receive validated webhook payloads or polling results, route them to watch via the Letta API, persist observation commits.
 - Trigger curate cycles on appropriate cadence (idle detection, message-count thresholds, pending-intent/observation/result/proposal triggers, manual trigger).
-- Manage the work-task queue: pick up approved tasks from `core/tasks/`, dispatch to the work agent's harness on schedule, log results.
+- Manage the work-task queue: pick up approved tasks from **Docket**, dispatch to the work agent's harness on schedule, log results, and optionally project Bear-visible summaries into MemFS.
 - Manage the watch subscription registry: register approved subscriptions, run polling jobs, validate inbound webhook signatures, route events to the watch agent.
 - Implement the human-in-the-loop approval queue for high-risk work-task runs.
 - Rate-limit the work agent's external calls; alert on novel destinations or unusually high volume.
@@ -258,7 +263,7 @@ The trifecta argument in §3 is the same argument the design-patterns paper make
 
 These are intentional departures or known gaps relative to the strictest form of each pattern. They are recorded here so they remain visible and reviewable; each is a candidate for a follow-up ADR and none change the core decision above.
 
-1. **The `curate` agent is not strictly quarantined.** It reads raw `talk/`, `pair/`, and `watch/` branches, which contain potentially-injected content, and it is also the sole writer to `core/`. In strict Dual LLM, only the Q-LLM touches untrusted tokens. The trifecta is still structurally split because curate has no external comms, but an injection-driven promotion to `core/` does compromise the work agent. Tracked mitigations: provenance metadata on every `core/` entry; an LLM Map-Reduce shape for the curate cycle (per-branch quarantined summarizers feeding a reducer that does not see raw content); a non-LLM policy engine validating `core/tasks/<task-id>.md` against an allowlist DSL before Den dispatches.
+1. **The `curate` agent is not strictly quarantined.** It reads raw `talk/`, `pair/`, and `watch/` branches, which contain potentially-injected content, and it is also the sole writer to `core/`. In strict Dual LLM, only the Q-LLM touches untrusted tokens. The trifecta is still structurally split because curate has no external comms, but an injection-driven promotion to `core/` does compromise the work agent. Tracked mitigations: provenance metadata on every `core/` entry; an LLM Map-Reduce shape for the curate cycle (per-branch quarantined summarizers feeding a reducer that does not see raw content); a non-LLM policy engine validating Docket task definitions against an allowlist DSL before Den dispatches.
 2. **Inter-agent communication is integrity-checked but not authenticated per agent.** Git push/fetch with `pre-receive` enforces who-writes-what-where but does not cryptographically bind a commit to a specific agent identity. OWASP ASI07 calls this out as a distinct class of risk. Tracked mitigation: per-agent commit signing, with Den verifying signer-vs-branch on each fetch and the `pre-receive` hook rejecting unsigned or mis-signed commits.
 3. **Memory poisoning has no first-class rollback story.** `core/` is durable and influences every subsequent system prompt. IBM's A2AS framing recommends data-provenance plus rollback at the memory layer. Git history makes rollback mechanically possible; what is missing is an audit cadence and a documented rollback path. Tracked mitigation: periodic `core/`-audit curate cycles that replay evidence trails for high-impact entries, plus a Den-side procedure for reverting `core/` to a prior known-good commit and reconstructing affected agent contexts.
 4. **The `curate` agent is both reviewer and planner.** Strongest-guarantee instances of these patterns place a deterministic policy engine between planner and executor. Today curate plays both roles. Tracked mitigation: split "curate proposes promotion" from "Den policy-engine validates" as a Den responsibility, alongside the existing per-run HITL queue for high-risk tasks. The policy engine is a non-LLM component and applies regardless of how curate was reasoning at the time.
