@@ -1730,14 +1730,58 @@ async fn persist_stream_event_side_effects(
             approval_reason,
             ..
         } => {
-            if let Some(canonical_name) = acp_den_provider_to_canonical_tool_name(tool_name) {
+            if args.get("_unsupported_detail").is_some() {
+                let result_tx = result_tx.take().ok_or_else(|| {
+                    CustomError::System("ACP unsupported tool request missing result channel".to_string())
+                })?;
+                *approval_required = false;
+                *approval_reason = None;
+                let detail = args
+                    .get("_unsupported_detail")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("Unsupported ACP/Den tool")
+                    .to_string();
+                let result = AcpToolResultRequest {
+                    turn_id: None,
+                    request_id: Some(context.request_id.to_string()),
+                    tool_call_id: Some(tool_call_id.clone()),
+                    tool_name: Some(tool_name.clone()),
+                    approval_request_id: approval_request_id.clone(),
+                    status: "unsupported".to_string(),
+                    content: Some(detail.clone()),
+                    structured_content: serde_json::json!({}),
+                    diagnostic: serde_json::json!({
+                        "component": "den.acp",
+                        "phase": "unsupported_tool_settled",
+                        "tool_name": tool_name,
+                        "tool_call_id": tool_call_id,
+                    }),
+                };
+                let _ = result_tx.send(result);
+                tracing::warn!(
+                    request_id = %context.request_id,
+                    acp_session_id = %context.acp_session_id,
+                    tool_request_id = %request_id,
+                    tool_call_id = %tool_call_id,
+                    tool_name = %tool_name,
+                    detail = %detail,
+                    "ACP unsupported tool request settled with error result"
+                );
+            } else if let Some(canonical_name) = acp_den_provider_to_canonical_tool_name(tool_name) {
                 let result_tx = result_tx.take().ok_or_else(|| {
                     CustomError::System("ACP Den tool request missing result channel".to_string())
                 })?;
                 *approval_required = false;
                 *approval_reason = None;
-                let result =
-                    invoke_acp_den_tool(context, canonical_name, tool_name, args.clone()).await;
+                let result = invoke_acp_den_tool(
+                    context,
+                    canonical_name,
+                    tool_name,
+                    tool_call_id,
+                    approval_request_id.as_deref(),
+                    args.clone(),
+                )
+                .await;
                 let _ = result_tx.send(result);
                 tracing::info!(
                     request_id = %context.request_id,
@@ -1782,6 +1826,8 @@ async fn invoke_acp_den_tool(
     context: &AcpStreamContext,
     canonical_name: &str,
     provider_name: &str,
+    tool_call_id: &str,
+    approval_request_id: Option<&str>,
     args: serde_json::Value,
 ) -> AcpToolResultRequest {
     let membership_role =
@@ -1825,9 +1871,9 @@ async fn invoke_acp_den_tool(
         Ok(value) => AcpToolResultRequest {
             turn_id: None,
             request_id: Some(context.request_id.to_string()),
-            tool_call_id: None,
+            tool_call_id: Some(tool_call_id.to_string()),
             tool_name: Some(provider_name.to_string()),
-            approval_request_id: None,
+            approval_request_id: approval_request_id.map(str::to_string),
             status: "ok".to_string(),
             content: Some(
                 serde_json::to_string_pretty(&value).unwrap_or_else(|_| value.to_string()),
@@ -1842,9 +1888,9 @@ async fn invoke_acp_den_tool(
         Err(err) => AcpToolResultRequest {
             turn_id: None,
             request_id: Some(context.request_id.to_string()),
-            tool_call_id: None,
+            tool_call_id: Some(tool_call_id.to_string()),
             tool_name: Some(provider_name.to_string()),
-            approval_request_id: None,
+            approval_request_id: approval_request_id.map(str::to_string),
             status: "error".to_string(),
             content: Some(err.to_string()),
             structured_content: serde_json::json!({}),
@@ -2425,10 +2471,20 @@ impl Stream for AcpLettaSseStream {
                         .as_deref()
                         .unwrap_or("tool")
                         .to_string();
-                    let tool_call_id = tool_result
-                        .tool_call_id
-                        .clone()
-                        .unwrap_or_else(|| tool_name.clone());
+                    let Some(tool_call_id) = tool_result.tool_call_id.clone() else {
+                        this.pending.push_back(acp_event_to_adapter_sse(
+                            AcpGatewayEvent::Error {
+                                message: "Cannot continue Letta after ACP tool result without original tool_call_id.".to_string(),
+                                detail: Some(format!(
+                                    "Tool result for {tool_name} did not include a tool_call_id; refusing to use tool name as a fallback."
+                                )),
+                                error_type: Some("missing_tool_call_id".to_string()),
+                                request_id: Some(this.context.request_id.to_string()),
+                                context: None,
+                            },
+                        ));
+                        return self.poll_next(cx);
+                    };
                     let tool_return = tool_result.content.clone().unwrap_or_default();
                     let status = tool_result.status.clone();
                     let approval_request_id = tool_result.approval_request_id.clone();

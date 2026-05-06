@@ -43,6 +43,17 @@ pub struct LettaContinuationContext {
     pub max_steps: u32,
 }
 
+fn letta_http_error_message(operation: &str, status: StatusCode, text: &str) -> String {
+    let base = format!("Letta {operation} HTTP {status}: {text}");
+    if status == StatusCode::CONFLICT && text.contains("waiting for approval") {
+        format!(
+            "{base}. The Letta conversation is waiting on an unresolved tool approval. This usually means a prior tool call was not settled correctly; start a new ACP session or resolve/clear the pending approval in Letta."
+        )
+    } else {
+        base
+    }
+}
+
 impl LettaContinuationContext {
     pub fn tool_names(&self) -> Vec<String> {
         self.client_tools
@@ -688,8 +699,10 @@ impl LettaClient {
                 .text()
                 .await
                 .unwrap_or_else(|_| "(no body)".to_string());
-            return Err(CustomError::System(format!(
-                "Letta conversation messages HTTP {status}: {text}"
+            return Err(CustomError::System(letta_http_error_message(
+                "conversation messages",
+                status,
+                &text,
             )));
         }
 
@@ -719,7 +732,7 @@ impl LettaClient {
             "tool_return": tool_return,
         });
         let message = if let Some(approval_request_id) = approval_request_id {
-            if status == "timeout" || status == "permission_denied" || status == "cancelled" {
+            if matches!(status, "timeout" | "permission_denied" | "cancelled" | "unsupported") {
                 tracing::info!(
                     approval_request_id,
                     tool_call_id,
@@ -800,8 +813,10 @@ impl LettaClient {
                 .text()
                 .await
                 .unwrap_or_else(|_| "(no body)".to_string());
-            return Err(CustomError::System(format!(
-                "Letta tool return HTTP {status}: {text}"
+            return Err(CustomError::System(letta_http_error_message(
+                "tool return",
+                status,
+                &text,
             )));
         }
 

@@ -214,7 +214,7 @@ fn native_letta_tool_request_event_with_args(
     let tool_name = tool_name_override.or_else(|| tool_call_name(tool_call, inner, event))?;
     let acp_tool = AcpToolName::from_provider_alias(tool_name);
     let den_server_tool = ACP_DEN_SERVER_TOOL_PROVIDER_NAMES.contains(&tool_name);
-    if acp_tool.is_none() && !den_server_tool {
+    let unsupported_tool_detail = if acp_tool.is_none() && !den_server_tool {
         let mut supported = supported_provider_tool_names()
             .into_iter()
             .map(str::to_string)
@@ -224,17 +224,13 @@ fn native_letta_tool_request_event_with_args(
                 .iter()
                 .map(|name| name.to_string()),
         );
-        return Some(AcpGatewayEvent::Error {
-            message: format!("Letta requested unsupported ACP/Den tool: {tool_name}"),
-            detail: Some(format!(
-                "Supported ACP/Den tools: {}.",
-                supported.join(", ")
-            )),
-            error_type: Some("unsupported_tool".to_string()),
-            request_id: None,
-            context: Some(serde_json::json!({ "tool_name": tool_name })),
-        });
-    }
+        Some(format!(
+            "Unsupported ACP/Den tool: {tool_name}. Supported ACP/Den tools: {}.",
+            supported.join(", ")
+        ))
+    } else {
+        None
+    };
     let args = if let Some(args) = args_override {
         args
     } else {
@@ -312,12 +308,22 @@ fn native_letta_tool_request_event_with_args(
         title: acp_tool
             .map(|tool| tool.descriptor().title.to_string())
             .unwrap_or_else(|| tool_name.to_string()),
-        kind: acp_tool
-            .map(|tool| tool.descriptor().kind.to_string())
-            .unwrap_or_else(|| "server_tool".to_string()),
-        args,
-        approval_required: client_approval_required && !den_server_tool,
-        approval_reason: (!den_server_tool).then(|| {
+        kind: if unsupported_tool_detail.is_some() {
+            "unsupported".to_string()
+        } else {
+            acp_tool
+                .map(|tool| tool.descriptor().kind.to_string())
+                .unwrap_or_else(|| "server_tool".to_string())
+        },
+        args: if let Some(detail) = unsupported_tool_detail.as_ref() {
+            let mut args = args;
+            args["_unsupported_detail"] = serde_json::json!(detail);
+            args
+        } else {
+            args
+        },
+        approval_required: client_approval_required && !den_server_tool && unsupported_tool_detail.is_none(),
+        approval_reason: (!den_server_tool && unsupported_tool_detail.is_none()).then(|| {
             "BEARS requires client approval before running this local ACP tool.".to_string()
         }),
         result_tx: Some(result_tx),
