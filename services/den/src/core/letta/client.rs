@@ -711,13 +711,6 @@ impl LettaClient {
         }
 
         let letta_status = if status == "ok" { "success" } else { "error" };
-        if let Some(approval_request_id) = approval_request_id {
-            tracing::debug!(
-                approval_request_id,
-                tool_call_id,
-                "normalizing Letta approval-originated ACP client tool result to preferred tool_return message"
-            );
-        }
         let mut body = serde_json::Map::new();
         let tool_return_value = json!({
             "type": "tool",
@@ -725,10 +718,42 @@ impl LettaClient {
             "tool_call_id": tool_call_id,
             "tool_return": tool_return,
         });
-        let message = json!({
-            "type": "tool_return",
-            "tool_returns": [tool_return_value]
-        });
+        let message = if let Some(approval_request_id) = approval_request_id {
+            if status == "timeout" || status == "permission_denied" || status == "cancelled" {
+                tracing::info!(
+                    approval_request_id,
+                    tool_call_id,
+                    status,
+                    "sending Letta approval denial for ACP local tool result"
+                );
+                json!({
+                    "type": "approval",
+                    "approval_request_id": approval_request_id,
+                    "approve": false,
+                    "approvals": [{
+                        "type": "approval",
+                        "approve": false,
+                        "tool_call_id": tool_call_id,
+                        "reason": tool_return,
+                    }]
+                })
+            } else {
+                tracing::debug!(
+                    approval_request_id,
+                    tool_call_id,
+                    "normalizing Letta approval-originated ACP client tool result to preferred tool_return message"
+                );
+                json!({
+                    "type": "tool_return",
+                    "tool_returns": [tool_return_value]
+                })
+            }
+        } else {
+            json!({
+                "type": "tool_return",
+                "tool_returns": [tool_return_value]
+            })
+        };
         body.insert("messages".to_string(), json!([message]));
         body.insert("streaming".to_string(), json!(true));
         body.insert("stream_tokens".to_string(), json!(context.stream_tokens));
