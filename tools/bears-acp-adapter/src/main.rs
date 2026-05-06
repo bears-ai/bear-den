@@ -1189,7 +1189,7 @@ async fn handle_request(
                     Err(err) => {
                         write_response(
                             id,
-                            Err(bears_auth_error(Some(json!({
+                            Err(auth_challenge_error(Some(json!({
                                 "message": format!("{err:#}")
                             })))),
                         )
@@ -1247,7 +1247,7 @@ async fn handle_request(
                 let Some(config) = runtime.config.as_ref() else {
                     write_response(
                         id,
-                        Err(bears_auth_error(Some(json!({
+                        Err(configuration_error(Some(json!({
                             "message": runtime.configuration_error_message(),
                             "problems": runtime.diagnostics,
                         })))),
@@ -1258,7 +1258,7 @@ async fn handle_request(
                 if let Err(err) = validate_den_code_token(http, config).await {
                     write_response(
                         id,
-                        Err(bears_auth_error(Some(json!({
+                        Err(token_validation_error(Some(json!({
                             "message": format!("BEARS Code token authentication failed: {err:#}"),
                             "hint": "Generate a fresh Den Code token for this bear."
                         })))),
@@ -1302,7 +1302,7 @@ async fn handle_request(
                 let Some(config) = runtime.config.as_ref() else {
                     write_response(
                         id,
-                        Err(bears_auth_error(Some(json!({
+                        Err(configuration_error(Some(json!({
                             "message": runtime.configuration_error_message(),
                             "problems": runtime.diagnostics,
                         })))),
@@ -1313,7 +1313,7 @@ async fn handle_request(
                 if let Err(err) = validate_den_code_token(http, config).await {
                     write_response(
                         id,
-                        Err(bears_auth_error(Some(json!({
+                        Err(token_validation_error(Some(json!({
                             "message": format!("BEARS Code token authentication failed: {err:#}"),
                         })))),
                     )
@@ -1352,7 +1352,7 @@ async fn handle_request(
                 let Some(config) = runtime.config.as_ref() else {
                     write_response(
                         id,
-                        Err(bears_auth_error(Some(json!({
+                        Err(configuration_error(Some(json!({
                             "message": runtime.configuration_error_message(),
                             "problems": runtime.diagnostics,
                         })))),
@@ -1363,7 +1363,7 @@ async fn handle_request(
                 if let Err(err) = validate_den_code_token(http, config).await {
                     write_response(
                         id,
-                        Err(bears_auth_error(Some(json!({
+                        Err(token_validation_error(Some(json!({
                             "message": format!("BEARS Code token authentication failed: {err:#}"),
                         })))),
                     )
@@ -1400,7 +1400,7 @@ async fn handle_request(
                 let Some(config) = runtime.config.as_ref() else {
                     write_response(
                         id,
-                        Err(bears_auth_error(Some(json!({
+                        Err(configuration_error(Some(json!({
                             "message": runtime.configuration_error_message(),
                             "problems": runtime.diagnostics,
                         })))),
@@ -1412,7 +1412,7 @@ async fn handle_request(
                 if let Err(err) = validate_den_code_token(http, config).await {
                     write_response(
                         id,
-                        Err(bears_auth_error(Some(json!({
+                        Err(token_validation_error(Some(json!({
                             "message": format!("BEARS Code token authentication failed: {err:#}"),
                             "hint": "Generate a fresh Den Code token for this bear. Code tokens must include acp:chat."
                         })))),
@@ -1457,7 +1457,7 @@ async fn handle_request(
                 let Some(config) = runtime.config.as_ref() else {
                     write_response(
                         id,
-                        Err(bears_auth_error(Some(json!({
+                        Err(configuration_error(Some(json!({
                             "message": runtime.configuration_error_message(),
                             "problems": runtime.diagnostics,
                         })))),
@@ -1489,7 +1489,7 @@ async fn handle_request(
                 let Some(config) = runtime.config.as_ref() else {
                     write_response(
                         id,
-                        Err(bears_auth_error(Some(json!({
+                        Err(configuration_error(Some(json!({
                             "message": runtime.configuration_error_message(),
                             "problems": runtime.diagnostics,
                         })))),
@@ -5099,8 +5099,16 @@ async fn write_json(value: Value) -> Result<()> {
     Ok(())
 }
 
-fn bears_auth_error(data: Option<Value>) -> Value {
-    json_rpc_error(-32000, "BEARS authentication failed", data)
+fn auth_challenge_error(data: Option<Value>) -> Value {
+    json_rpc_error(-32000, "Authentication required", data)
+}
+
+fn configuration_error(data: Option<Value>) -> Value {
+    json_rpc_error(-32010, "BEARS configuration incomplete", data)
+}
+
+fn token_validation_error(data: Option<Value>) -> Value {
+    json_rpc_error(-32011, "BEARS Code token validation failed", data)
 }
 
 fn json_rpc_error(code: i64, message: &str, data: Option<Value>) -> Value {
