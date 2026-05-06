@@ -145,6 +145,42 @@ struct MemfsViewRegisterResponse {
     error: Option<String>,
 }
 
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct MemfsWriteRoleNoteRequest {
+    pub title: String,
+    pub body: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tags: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub author: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub conversation_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
+}
+
+#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
+pub struct MemfsWriteRoleNoteResponse {
+    #[serde(default)]
+    pub ok: bool,
+    #[serde(default)]
+    pub bear_id: String,
+    #[serde(default)]
+    pub role: String,
+    #[serde(default)]
+    pub path: String,
+    #[serde(default)]
+    pub commit: Option<String>,
+    #[serde(default)]
+    pub canonical_tip: Option<String>,
+    #[serde(default)]
+    pub view: Option<MemfsViewHealth>,
+    #[serde(default)]
+    pub error: Option<String>,
+}
+
 impl From<MemoryManagerStatusResponse> for MemoryManagerStatusView {
     fn from(status: MemoryManagerStatusResponse) -> Self {
         let state = if status.state.trim().is_empty() {
@@ -326,6 +362,53 @@ pub async fn register_memfs_role_view(
         )));
     }
     Ok(payload.view)
+}
+
+pub async fn write_memfs_role_note(
+    http: &reqwest::Client,
+    base_url: &str,
+    bear_id: uuid::Uuid,
+    role: &str,
+    request: &MemfsWriteRoleNoteRequest,
+) -> Result<Option<MemfsWriteRoleNoteResponse>, CustomError> {
+    let base = base_url.trim().trim_end_matches('/');
+    if base.is_empty() {
+        return Ok(None);
+    }
+    let url = format!(
+        "{}/v1/management/bears/{}/roles/{}/notes",
+        base,
+        bear_id,
+        urlencoding::encode(role)
+    );
+    let resp = http
+        .post(&url)
+        .header("X-Organization-Id", DEFAULT_ORG)
+        .json(request)
+        .timeout(Duration::from_secs(30))
+        .send()
+        .await
+        .map_err(|e| CustomError::System(format!("MemFS role note write request failed: {e}")))?;
+    let status = resp.status();
+    let text = resp.text().await.unwrap_or_default();
+    if !status.is_success() {
+        return Err(CustomError::System(format!(
+            "MemFS role note write HTTP {status}: {text}"
+        )));
+    }
+    let payload: MemfsWriteRoleNoteResponse = serde_json::from_str(&text).map_err(|e| {
+        CustomError::Parsing(format!("MemFS role note write JSON: {e}; body: {text}"))
+    })?;
+    if !payload.ok {
+        return Err(CustomError::System(format!(
+            "MemFS role note write failed: {}",
+            payload
+                .error
+                .clone()
+                .unwrap_or_else(|| "unknown error".to_string())
+        )));
+    }
+    Ok(Some(payload))
 }
 
 pub async fn fetch_memfs_role_view_health(

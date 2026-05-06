@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import tempfile
@@ -640,7 +641,7 @@ def _ensure_canonical_branch(repo: Path, bear_id: str, role: str) -> None:
         _git("-C", str(work), "config", "user.email", "memfs-sidecar@bears.local")
         paths = {
             "talk": ["talk/tasks"],
-            "pair": ["pair/tasks"],
+            "pair": ["pair/tasks", "pair/notes"],
             "curate": ["curate", "core/tasks", "core/results"],
             "work": ["work/results"],
             "watch": ["watch/observations", "watch/subscriptions"],
@@ -781,6 +782,103 @@ def _forward_view_to_canonical(
         canonical_tip=canonical_tip,
     )
     return "forwarded", None
+
+
+def _slugify_note_title(title: str) -> str:
+    slug = re.sub(r"[^a-zA-Z0-9]+", "-", title.strip().lower()).strip("-")
+    return slug[:80] or "note"
+
+
+def _yaml_quote(value: str) -> str:
+    return json.dumps(value, ensure_ascii=False)
+
+
+def _write_role_note(bear_id: str, role: str, body: dict, org_id: str) -> dict:
+    if role not in ROLE_BRANCHES:
+        raise ValueError("valid role is required")
+    if role != "pair":
+        raise ValueError("role note writes are currently enabled only for pair")
+    title = str(body.get("title") or "").strip()
+    note_body = str(body.get("body") or "").strip()
+    if not title:
+        raise ValueError("title is required")
+    if not note_body:
+        raise ValueError("body is required")
+    tags = [str(tag).strip() for tag in body.get("tags") or [] if str(tag).strip()]
+    canonical = ensure_canonical_repo(bear_id)
+    timestamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
+    slug = _slugify_note_title(title)
+    rel_path = f"{role}/notes/{timestamp}-{slug}.md"
+    with tempfile.TemporaryDirectory() as tmp:
+        work = Path(tmp) / "w"
+        _git("clone", "--branch", role, str(canonical), str(work))
+        _git("-C", str(work), "config", "user.name", "BEARS Den")
+        _git("-C", str(work), "config", "user.email", "den@bears.local")
+        target = work / rel_path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        metadata = [
+            "---",
+            f"title: {_yaml_quote(title)}",
+            f"role: {_yaml_quote(role)}",
+            f"bear_id: {_yaml_quote(bear_id)}",
+            f"created_at: {_yaml_quote(timestamp)}",
+        ]
+        author = str(body.get("author") or "").strip()
+        if author:
+            metadata.append(f"author: {_yaml_quote(author)}")
+        conversation_id = str(body.get("conversation_id") or "").strip()
+        if conversation_id:
+            metadata.append(f"conversation_id: {_yaml_quote(conversation_id)}")
+        session_id = str(body.get("session_id") or "").strip()
+        if session_id:
+            metadata.append(f"session_id: {_yaml_quote(session_id)}")
+        if tags:
+            metadata.append("tags:")
+            for tag in tags[:20]:
+                metadata.append(f"  - {_yaml_quote(tag)}")
+        source = body.get("source")
+        if isinstance(source, dict) and source:
+            metadata.append("source_json: |")
+            for line in json.dumps(
+                source, ensure_ascii=False, sort_keys=True, indent=2
+            ).splitlines():
+                metadata.append(f"  {line}")
+        metadata.extend(["---", "", f"# {title}", "", note_body.rstrip(), ""])
+        target.write_text("\n".join(metadata), encoding="utf-8")
+        _git("add", rel_path, cwd=work)
+        _git("commit", "-m", f"pair note: {title[:80]}", cwd=work)
+        _git("push", "origin", f"HEAD:refs/heads/{role}", cwd=work)
+    canonical_tip = _branch_tip(canonical, role)
+    data = _read_view_registry()
+    for agent_id, record in data.get("views", {}).items():
+        if str(record.get("bear_id")) == bear_id and str(record.get("role")) == role:
+            try:
+                ensure_view_repo(agent_id, str(record.get("org_id") or org_id), record)
+                _force_reset_view_to_canonical(
+                    Path(record["view_repo"]), canonical, role
+                )
+                record["last_reconciled_at"] = time.time()
+                record["last_reconcile_status"] = "note_write_view_reset"
+            except Exception as e:
+                record["last_reconcile_status"] = "note_write_view_update_failed"
+                record["last_reconcile_reason"] = str(e)
+            data.setdefault("views", {})[agent_id] = record
+    _write_view_registry(data)
+    log_activity(
+        "role_note_written",
+        bear_id=bear_id,
+        role=role,
+        path=rel_path,
+        canonical_tip=canonical_tip,
+    )
+    return {
+        "ok": True,
+        "bear_id": bear_id,
+        "role": role,
+        "path": rel_path,
+        "commit": canonical_tip,
+        "canonical_tip": canonical_tip,
+    }
 
 
 def ensure_view_repo(agent_id: str, org_id: str, record: dict) -> Path:
@@ -1211,6 +1309,23 @@ class GitHTTPHandler(BaseHTTPRequestHandler):
             except Exception as e:
                 self._send_json(400, {"ok": False, "error": str(e)})
                 return True
+        if (
+            len(parts) == 7
+            and parts[:3] == ["v1", "management", "bears"]
+            and parts[4] == "roles"
+            and parts[6] == "notes"
+        ):
+            bear_id = parts[3]
+            role = parts[5]
+            try:
+                body = json.loads(self._read_body().decode("utf-8") or "{}")
+                org_id = resolve_org_id(self.headers.get("X-Organization-Id"))
+                self._send_json(200, _write_role_note(bear_id, role, body, org_id))
+                return True
+            except Exception as e:
+                self._send_json(400, {"ok": False, "error": str(e)})
+                return True
+
         if parts == ["v1", "management", "views", "reconcile-all"]:
             try:
                 self._send_json(

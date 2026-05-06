@@ -12,6 +12,9 @@ use crate::core::{
     },
 };
 
+const ACP_DEN_SERVER_TOOL_PROVIDER_NAMES: &[&str] =
+    &["den_web_fetch", "den_web_search", "den_write_note"];
+
 #[derive(Debug)]
 pub enum AcpGatewayEvent {
     AssistantTextDelta {
@@ -209,19 +212,29 @@ fn native_letta_tool_request_event_with_args(
 ) -> Option<AcpGatewayEvent> {
     let tool_call = tool_call_value(inner, event);
     let tool_name = tool_name_override.or_else(|| tool_call_name(tool_call, inner, event))?;
-    let Some(tool) = AcpToolName::from_provider_alias(tool_name) else {
+    let acp_tool = AcpToolName::from_provider_alias(tool_name);
+    let den_server_tool = ACP_DEN_SERVER_TOOL_PROVIDER_NAMES.contains(&tool_name);
+    if acp_tool.is_none() && !den_server_tool {
+        let mut supported = supported_provider_tool_names()
+            .into_iter()
+            .map(str::to_string)
+            .collect::<Vec<_>>();
+        supported.extend(
+            ACP_DEN_SERVER_TOOL_PROVIDER_NAMES
+                .iter()
+                .map(|name| name.to_string()),
+        );
         return Some(AcpGatewayEvent::Error {
-            message: format!("Letta requested unsupported ACP local tool: {tool_name}"),
+            message: format!("Letta requested unsupported ACP/Den tool: {tool_name}"),
             detail: Some(format!(
-                "Supported ACP local tools: {}.",
-                supported_provider_tool_names().join(", ")
+                "Supported ACP/Den tools: {}.",
+                supported.join(", ")
             )),
             error_type: Some("unsupported_tool".to_string()),
             request_id: None,
             context: Some(serde_json::json!({ "tool_name": tool_name })),
         });
-    };
-    let descriptor = tool.descriptor();
+    }
     let args = if let Some(args) = args_override {
         args
     } else {
@@ -240,31 +253,34 @@ fn native_letta_tool_request_event_with_args(
             _ => return None,
         }
     };
-    if let Some(missing) = tool.missing_required_string_arg(&args) {
-        if !args.is_object() || args.as_object().is_some_and(|m| m.is_empty()) {
-            return None;
+    if let Some(tool) = acp_tool {
+        let descriptor = tool.descriptor();
+        if let Some(missing) = tool.missing_required_string_arg(&args) {
+            if !args.is_object() || args.as_object().is_some_and(|m| m.is_empty()) {
+                return None;
+            }
+            return Some(AcpGatewayEvent::Error {
+                message: format!(
+                    "Letta requested {} without a {missing} argument.",
+                    descriptor.provider_name
+                ),
+                detail: Some(format!(
+                    "Parsed arguments did not contain required string field `{missing}`; args={}",
+                    preview_str_truncated(&args.to_string(), 240)
+                )),
+                error_type: Some("invalid_tool_arguments".to_string()),
+                request_id: None,
+                context: Some(serde_json::json!({
+                    "tool_name": tool_name,
+                    "tool_call_id": tool_call
+                        .and_then(|v| v.get("tool_call_id"))
+                        .or_else(|| tool_call.and_then(|v| v.get("id")))
+                        .and_then(|v| v.as_str()),
+                    "args": args,
+                    "missing": missing,
+                })),
+            });
         }
-        return Some(AcpGatewayEvent::Error {
-            message: format!(
-                "Letta requested {} without a {missing} argument.",
-                descriptor.provider_name
-            ),
-            detail: Some(format!(
-                "Parsed arguments did not contain required string field `{missing}`; args={}",
-                preview_str_truncated(&args.to_string(), 240)
-            )),
-            error_type: Some("invalid_tool_arguments".to_string()),
-            request_id: None,
-            context: Some(serde_json::json!({
-                "tool_name": tool_name,
-                "tool_call_id": tool_call
-                    .and_then(|v| v.get("tool_call_id"))
-                    .or_else(|| tool_call.and_then(|v| v.get("id")))
-                    .and_then(|v| v.as_str()),
-                "args": args,
-                "missing": missing,
-            })),
-        });
     }
     let tool_call_id =
         tool_call_id(tool_call, inner, event).unwrap_or_else(|| format!("call-{}", Uuid::new_v4()));
@@ -292,14 +308,18 @@ fn native_letta_tool_request_event_with_args(
         turn_id,
         tool_call_id,
         approval_request_id: letta_approval_request_id,
-        tool_name: descriptor.provider_name.to_string(),
-        title: descriptor.title.to_string(),
-        kind: descriptor.kind.to_string(),
+        tool_name: tool_name.to_string(),
+        title: acp_tool
+            .map(|tool| tool.descriptor().title.to_string())
+            .unwrap_or_else(|| tool_name.to_string()),
+        kind: acp_tool
+            .map(|tool| tool.descriptor().kind.to_string())
+            .unwrap_or_else(|| "server_tool".to_string()),
         args,
-        approval_required: client_approval_required,
-        approval_reason: Some(
-            "BEARS requires client approval before running this local ACP tool.".to_string(),
-        ),
+        approval_required: client_approval_required && !den_server_tool,
+        approval_reason: (!den_server_tool).then(|| {
+            "BEARS requires client approval before running this local ACP tool.".to_string()
+        }),
         result_tx: Some(result_tx),
         result_rx: Some(result_rx),
     })

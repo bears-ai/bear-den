@@ -16,6 +16,7 @@ use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use bytes::Bytes;
 use futures::{ready, Stream};
 use serde::{Deserialize, Serialize};
+use sqlx::PgPool;
 use std::{
     collections::{BTreeMap, VecDeque},
     future::Future,
@@ -54,6 +55,7 @@ use crate::{
         },
         archived_conversations,
         bears::{db as bears_db, Bear, BearAgentRole},
+        den_tools::{self, DenToolChannelContext, DenToolInvocationContext},
         letta::{load_agent_conversations, LettaContinuationContext},
         work_plans::{self, WorkPlanLookup},
     },
@@ -578,6 +580,46 @@ fn letta_conversation_id_from_create_response(value: &serde_json::Value) -> Opti
         .map(str::to_string)
 }
 
+fn acp_pair_den_tool_descriptors() -> serde_json::Value {
+    let descriptors = den_tools::builtin_den_tool_descriptors_for_role(BearAgentRole::Pair)
+        .into_iter()
+        .filter(|descriptor| {
+            matches!(
+                descriptor.name,
+                den_tools::DEN_WEB_FETCH | den_tools::DEN_WEB_SEARCH | den_tools::DEN_WRITE_NOTE
+            )
+        })
+        .map(|descriptor| {
+            serde_json::json!({
+                "name": descriptor.provider_name,
+                "description": format!(
+                    "Den server tool ({}). {}",
+                    descriptor.name, descriptor.description
+                ),
+                "parameters": descriptor.input_schema,
+            })
+        })
+        .collect::<Vec<_>>();
+    serde_json::json!(descriptors)
+}
+
+fn acp_den_provider_to_canonical_tool_name(provider_name: &str) -> Option<&'static str> {
+    match provider_name {
+        "den_web_fetch" => Some(den_tools::DEN_WEB_FETCH),
+        "den_web_search" => Some(den_tools::DEN_WEB_SEARCH),
+        "den_write_note" => Some(den_tools::DEN_WRITE_NOTE),
+        _ => None,
+    }
+}
+
+fn merge_acp_pair_tool_descriptors(client_tools: serde_json::Value) -> serde_json::Value {
+    let mut merged = client_tools.as_array().cloned().unwrap_or_default();
+    if let Some(server_tools) = acp_pair_den_tool_descriptors().as_array() {
+        merged.extend(server_tools.iter().cloned());
+    }
+    serde_json::json!(merged)
+}
+
 fn acp_direct_tool_prompt_context(
     session_id: &str,
     cwd: &str,
@@ -601,9 +643,20 @@ fn acp_direct_tool_prompt_context(
         .filter(|items| !items.is_empty())
         .unwrap_or_else(|| vec![cwd.to_string()]);
     let tool_names = acp_provider_tool_names_for_client_context(client_context);
+    let den_tool_descriptors = acp_pair_den_tool_descriptors();
+    let den_tool_names = den_tool_descriptors
+        .as_array()
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| item.get("name").and_then(|v| v.as_str()))
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
     let mut guidance = vec![format!(
-        "BEARS ACP direct local workspace tools available this turn: {}. Current ACP session id is `{session_id}`. Use absolute paths under these workspace roots: {}.",
+        "BEARS ACP direct local workspace tools available this turn: {}. Den server tools available to pair: {}. Current ACP session id is `{session_id}`. Use absolute paths under these workspace roots: {}.",
         tool_names.join(", "),
+        den_tool_names.join(", "),
         roots.join(", ")
     )];
     if tool_names.contains(&"fs_list_directory") {
@@ -615,6 +668,7 @@ fn acp_direct_tool_prompt_context(
     if tool_names.contains(&"fs_read_text_file") {
         guidance.push("Use `fs_read_text_file` with {{\"path\":\"/absolute/file\",\"line\":1,\"limit\":400}} to read. Do not guess file contents.".to_string());
     }
+    guidance.push("Use Den server tools for non-local capabilities: `den_web_fetch` for bounded HTTP(S) page fetching, `den_web_search` only when a Den search provider is configured, and `den_write_note` to write durable pair notes under `pair/notes/`.".to_string());
     if tool_names.contains(&"fs_replace_text") {
         guidance.push("Use `fs_replace_text` with {{\"path\":\"/absolute/file\",\"old_text\":\"exact\",\"new_text\":\"replacement\"}} to edit existing files. Calling `fs_replace_text` is how you request local approval; do not wait for approval before invoking it and do not ask for approval in chat. To append, first read the file, then replace a unique end-of-file suffix with that suffix plus the appended text.".to_string());
         guidance.push("ACP edit workflow: discover/read the target, call `fs_replace_text` to request approval and perform the edit, wait for its result, verify the change with `fs_read_text_file`, then provide a concise final answer naming the changed file and what changed. Never claim you are blocked by approval if `fs_replace_text` is callable; invoke it instead.".to_string());
@@ -1565,8 +1619,11 @@ async fn prompt_inner(
             ApiError::new(status, code, message)
         })?;
     let prompt_with_tool_context = format!("{prompt}{workboard_context}{tool_prompt_context}");
-    let client_tool_descriptors =
-        tools_enabled.then(|| acp_client_tool_descriptors_for_client_context(&body.client_context));
+    let client_tool_descriptors = tools_enabled.then(|| {
+        merge_acp_pair_tool_descriptors(acp_client_tool_descriptors_for_client_context(
+            &body.client_context,
+        ))
+    });
     let upstream = match state
         .letta
         .post_conversation_messages_streaming(
@@ -1591,6 +1648,8 @@ async fn prompt_inner(
             bear_slug: bear.slug.clone(),
             acp_session_id: session_id.to_string(),
             request_id,
+            pair_agent_id: pair_agent_id.clone(),
+            config: state.config.clone(),
         },
         state.letta.clone(),
         LettaContinuationContext {
@@ -1628,13 +1687,15 @@ async fn prompt_inner(
 
 #[derive(Clone)]
 struct AcpStreamContext {
-    pool: sqlx::PgPool,
+    pool: PgPool,
     tool_turns: AcpToolTurnCoordinator,
     user_id: i32,
     bear_id: Uuid,
     bear_slug: String,
     acp_session_id: String,
     request_id: Uuid,
+    pair_agent_id: String,
+    config: Arc<crate::config::Config>,
 }
 
 async fn persist_stream_event_side_effects(
@@ -1657,35 +1718,132 @@ async fn persist_stream_event_side_effects(
             approval_request_id,
             tool_name,
             request_id,
+            args,
             result_tx,
+            approval_required,
+            approval_reason,
             ..
         } => {
-            let result_tx = result_tx.take().ok_or_else(|| {
-                CustomError::System("ACP tool request missing result channel".to_string())
-            })?;
-            context.tool_turns.register(AcpToolTurnRegistration {
-                user_id: context.user_id,
-                bear_id: context.bear_id,
-                bear_slug: context.bear_slug.clone(),
-                acp_session_id: context.acp_session_id.clone(),
-                request_id: context.request_id,
-                tool_call_id: tool_call_id.clone(),
-                tool_name: tool_name.clone(),
-                approval_request_id: approval_request_id.clone(),
-                result_tx,
-            })?;
-            tracing::info!(
-                request_id = %context.request_id,
-                acp_session_id = %context.acp_session_id,
-                tool_request_id = %request_id,
-                tool_call_id = %tool_call_id,
-                tool_name = %tool_name,
-                "ACP tool request registered"
-            );
+            if let Some(canonical_name) = acp_den_provider_to_canonical_tool_name(tool_name) {
+                let result_tx = result_tx.take().ok_or_else(|| {
+                    CustomError::System("ACP Den tool request missing result channel".to_string())
+                })?;
+                *approval_required = false;
+                *approval_reason = None;
+                let result =
+                    invoke_acp_den_tool(context, canonical_name, tool_name, args.clone()).await;
+                let _ = result_tx.send(result);
+                tracing::info!(
+                    request_id = %context.request_id,
+                    acp_session_id = %context.acp_session_id,
+                    tool_request_id = %request_id,
+                    tool_call_id = %tool_call_id,
+                    tool_name = %tool_name,
+                    canonical_tool_name = %canonical_name,
+                    "ACP Den server tool executed"
+                );
+            } else {
+                let result_tx = result_tx.take().ok_or_else(|| {
+                    CustomError::System("ACP tool request missing result channel".to_string())
+                })?;
+                context.tool_turns.register(AcpToolTurnRegistration {
+                    user_id: context.user_id,
+                    bear_id: context.bear_id,
+                    bear_slug: context.bear_slug.clone(),
+                    acp_session_id: context.acp_session_id.clone(),
+                    request_id: context.request_id,
+                    tool_call_id: tool_call_id.clone(),
+                    tool_name: tool_name.clone(),
+                    approval_request_id: approval_request_id.clone(),
+                    result_tx,
+                })?;
+                tracing::info!(
+                    request_id = %context.request_id,
+                    acp_session_id = %context.acp_session_id,
+                    tool_request_id = %request_id,
+                    tool_call_id = %tool_call_id,
+                    tool_name = %tool_name,
+                    "ACP tool request registered"
+                );
+            }
         }
         _ => {}
     }
     Ok(())
+}
+
+async fn invoke_acp_den_tool(
+    context: &AcpStreamContext,
+    canonical_name: &str,
+    provider_name: &str,
+    args: serde_json::Value,
+) -> AcpToolResultRequest {
+    let membership_role =
+        bears_db::membership_role_for_user(&context.pool, context.user_id, context.bear_id)
+            .await
+            .ok()
+            .flatten()
+            .flatten();
+    let tool_context = DenToolInvocationContext {
+        bear_id: context.bear_id,
+        bear_slug: context.bear_slug.clone(),
+        role_agent_id: context.pair_agent_id.clone(),
+        agent_role: Some(BearAgentRole::Pair),
+        user_id: context.user_id,
+        username: None,
+        membership_role,
+        conversation_id: context.acp_session_id.clone(),
+        session_id: context.acp_session_id.clone(),
+        request_id: Some(context.request_id.to_string()),
+        channel: DenToolChannelContext {
+            family: Some("acp".to_string()),
+            client: Some("api-direct".to_string()),
+            protocol: Some("acp".to_string()),
+        },
+    };
+    match den_tools::invoke_den_tool(
+        &context.pool,
+        context.config.as_ref(),
+        canonical_name,
+        args,
+        tool_context,
+    )
+    .await
+    {
+        Ok(value) => AcpToolResultRequest {
+            turn_id: None,
+            request_id: Some(context.request_id.to_string()),
+            tool_call_id: None,
+            tool_name: Some(provider_name.to_string()),
+            approval_request_id: None,
+            status: "ok".to_string(),
+            content: Some(
+                serde_json::to_string_pretty(&value).unwrap_or_else(|_| value.to_string()),
+            ),
+            structured_content: value,
+            diagnostic: serde_json::json!({
+                "component": "den.acp",
+                "phase": "den_server_tool_result",
+                "canonical_tool_name": canonical_name,
+            }),
+        },
+        Err(err) => AcpToolResultRequest {
+            turn_id: None,
+            request_id: Some(context.request_id.to_string()),
+            tool_call_id: None,
+            tool_name: Some(provider_name.to_string()),
+            approval_request_id: None,
+            status: "error".to_string(),
+            content: Some(err.to_string()),
+            structured_content: serde_json::json!({}),
+            diagnostic: serde_json::json!({
+                "component": "den.acp",
+                "phase": "den_server_tool_error",
+                "canonical_tool_name": canonical_name,
+                "error": err.to_string(),
+            }),
+        },
+    }
 }
 
 #[derive(Debug, Default)]
@@ -2356,6 +2514,8 @@ mod tests {
             bear_slug: "test-bear".to_string(),
             acp_session_id: "acp-test-session".to_string(),
             request_id: Uuid::new_v4(),
+            pair_agent_id: "agent-12345678-1234-4567-89ab-123456789abc".to_string(),
+            config: Arc::new(crate::config::Config::test_stub()),
         };
         let upstream = futures::stream::iter(vec![
             Ok::<Bytes, reqwest::Error>(Bytes::from(concat!(

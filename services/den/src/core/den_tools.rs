@@ -1,3 +1,5 @@
+use std::net::{IpAddr, ToSocketAddrs};
+
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sqlx::PgPool;
@@ -5,8 +7,10 @@ use time::format_description::well_known::Rfc3339;
 use uuid::Uuid;
 
 use crate::{
+    config::Config,
     core::{
         bears::{db as bears_db, db::role_is_bear_admin, BearAgentRole},
+        memory_manager_head::{write_memfs_role_note, MemfsWriteRoleNoteRequest},
         user,
         work_plans::{
             self, WorkPlanListFilter, WorkPlanLookup, WorkPlanStatus, WorkPlanUpdate,
@@ -22,6 +26,9 @@ pub const DEN_BEAR_LIST_MEMBERS: &str = "den.bear.list_members";
 pub const DEN_CAPABILITIES_LIST_SELF: &str = "den.capabilities.list_self";
 pub const DEN_CHANNEL_GET_CONTEXT: &str = "den.channel.get_context";
 pub const DEN_POLICY_GET_SELF: &str = "den.policy.get_self";
+pub const DEN_WEB_FETCH: &str = "den.web.fetch";
+pub const DEN_WEB_SEARCH: &str = "den.web.search";
+pub const DEN_WRITE_NOTE: &str = "den.write_note";
 pub const DEN_SKILL_PROPOSE: &str = "den.skill.propose";
 pub const DEN_SKILL_APPROVE_PROPOSAL: &str = "den.skill.approve_proposal";
 pub const DEN_SKILL_REJECT_PROPOSAL: &str = "den.skill.reject_proposal";
@@ -40,6 +47,7 @@ const ALL_ROLES: &[&str] = &["talk", "pair", "curate", "work", "watch"];
 const WORK_PLAN_READ_ROLES: &[&str] = &["talk", "pair", "curate", "work"];
 const WORK_PLAN_UPDATE_ROLES: &[&str] = &["talk", "pair", "work"];
 const TALK_AND_PAIR_ROLES: &[&str] = &["talk", "pair"];
+const PAIR_ROLES: &[&str] = &["pair"];
 const CURATE_ROLES: &[&str] = &["curate"];
 const WATCH_ROLES: &[&str] = &["watch"];
 const WORK_ROLES: &[&str] = &["work"];
@@ -136,6 +144,59 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
             &["policy.read"],
             ALL_ROLES,
             empty_schema(),
+        ),
+        descriptor(
+            DEN_WEB_FETCH,
+            "Fetch web page",
+            "Fetch an HTTP(S) URL through Den with SSRF guards and return a bounded text excerpt.",
+            "web",
+            &["web.fetch"],
+            PAIR_ROLES,
+            json!({
+                "type": "object",
+                "properties": {
+                    "url": { "type": "string", "description": "HTTP or HTTPS URL to fetch." },
+                    "max_chars": { "type": "integer", "minimum": 1, "maximum": 20000, "description": "Maximum characters of extracted text to return. Defaults to 8000." }
+                },
+                "required": ["url"],
+                "additionalProperties": false
+            }),
+        ),
+        descriptor(
+            DEN_WEB_SEARCH,
+            "Search web",
+            "Search the web through a configured Den search provider. Returns a clear configuration error when no provider is configured.",
+            "web",
+            &["web.search"],
+            PAIR_ROLES,
+            json!({
+                "type": "object",
+                "properties": {
+                    "query": { "type": "string" },
+                    "max_results": { "type": "integer", "minimum": 1, "maximum": 10 }
+                },
+                "required": ["query"],
+                "additionalProperties": false
+            }),
+        ),
+        descriptor(
+            DEN_WRITE_NOTE,
+            "Write pair note",
+            "Write a role-scoped durable note for the current pair role under pair/notes/ in MemFS.",
+            "bear.memory",
+            &["memory.note.write"],
+            PAIR_ROLES,
+            json!({
+                "type": "object",
+                "properties": {
+                    "title": { "type": "string" },
+                    "body": { "type": "string" },
+                    "tags": { "type": "array", "items": { "type": "string" }, "maxItems": 20 },
+                    "source": { "type": "object" }
+                },
+                "required": ["title", "body"],
+                "additionalProperties": false
+            }),
         ),
         descriptor(
             DEN_SKILL_PROPOSE,
@@ -481,6 +542,9 @@ pub fn is_builtin_den_tool(name: &str) -> bool {
             | DEN_CAPABILITIES_LIST_SELF
             | DEN_CHANNEL_GET_CONTEXT
             | DEN_POLICY_GET_SELF
+            | DEN_WEB_FETCH
+            | DEN_WEB_SEARCH
+            | DEN_WRITE_NOTE
             | DEN_SKILL_PROPOSE
             | DEN_SKILL_APPROVE_PROPOSAL
             | DEN_SKILL_REJECT_PROPOSAL
@@ -557,12 +621,37 @@ struct WorkPlanUpdateArguments {
     workspace_context: Value,
 }
 
+#[derive(Debug, Deserialize)]
+struct WebFetchArguments {
+    url: String,
+    #[serde(default)]
+    max_chars: Option<usize>,
+}
+
+#[derive(Debug, Deserialize)]
+struct WebSearchArguments {
+    query: String,
+    #[serde(default)]
+    max_results: Option<usize>,
+}
+
+#[derive(Debug, Deserialize)]
+struct WriteNoteArguments {
+    title: String,
+    body: String,
+    #[serde(default)]
+    tags: Vec<String>,
+    #[serde(default)]
+    source: Option<Value>,
+}
+
 fn empty_json_object() -> Value {
     json!({})
 }
 
 pub async fn invoke_den_tool(
     pool: &PgPool,
+    config: &Config,
     tool_name: &str,
     arguments: Value,
     context: DenToolInvocationContext,
@@ -576,6 +665,9 @@ pub async fn invoke_den_tool(
         DEN_CAPABILITIES_LIST_SELF => list_capabilities_self(pool, &context).await,
         DEN_CHANNEL_GET_CONTEXT => Ok(channel_context(&context)),
         DEN_POLICY_GET_SELF => policy_self(pool, &context).await,
+        DEN_WEB_FETCH => web_fetch(arguments).await,
+        DEN_WEB_SEARCH => web_search(arguments).await,
+        DEN_WRITE_NOTE => write_note(pool, config, &context, role, arguments).await,
         DEN_WORK_PLAN_LIST => list_work_plans(pool, &context, role, arguments).await,
         DEN_WORK_PLAN_GET_STATUS => get_work_plan_status(pool, &context, role, arguments).await,
         DEN_WORK_PLAN_UPDATE => update_work_plan(pool, &context, role, arguments).await,
@@ -792,6 +884,141 @@ async fn policy_self(
     }))
 }
 
+async fn web_fetch(arguments: Value) -> Result<Value, CustomError> {
+    let args: WebFetchArguments = serde_json::from_value(arguments)?;
+    let max_chars = args.max_chars.unwrap_or(8_000).clamp(1, 20_000);
+    let url = validate_public_http_url(&args.url)?;
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(20))
+        .connect_timeout(std::time::Duration::from_secs(5))
+        .redirect(reqwest::redirect::Policy::limited(5))
+        .build()
+        .map_err(|e| CustomError::System(format!("web fetch client build failed: {e}")))?;
+    let resp = client
+        .get(url.as_str())
+        .header(reqwest::header::USER_AGENT, "BEARS Den web_fetch/0.1")
+        .send()
+        .await
+        .map_err(|e| CustomError::System(format!("web fetch request failed: {e}")))?;
+    let final_url = resp.url().clone();
+    validate_public_http_url(final_url.as_str())?;
+    let status = resp.status();
+    let content_type = resp
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .to_string();
+    let bytes = resp
+        .bytes()
+        .await
+        .map_err(|e| CustomError::System(format!("web fetch response read failed: {e}")))?;
+    const MAX_BYTES: usize = 1_000_000;
+    let bytes_truncated = bytes.len() > MAX_BYTES;
+    let slice = if bytes_truncated {
+        &bytes[..MAX_BYTES]
+    } else {
+        &bytes[..]
+    };
+    let raw = String::from_utf8_lossy(slice).to_string();
+    let text = if content_type.to_ascii_lowercase().contains("html") {
+        html_to_text_excerpt(&raw)
+    } else {
+        raw
+    };
+    let (text_excerpt, char_truncated) = truncate_chars(&text, max_chars);
+    Ok(json!({
+        "url": final_url.as_str(),
+        "status": status.as_u16(),
+        "content_type": content_type,
+        "text_excerpt": text_excerpt,
+        "truncated": bytes_truncated || char_truncated,
+    }))
+}
+
+async fn web_search(arguments: Value) -> Result<Value, CustomError> {
+    let args: WebSearchArguments = serde_json::from_value(arguments)?;
+    if args.query.trim().is_empty() {
+        return Err(CustomError::ValidationError(
+            "query must not be empty".to_string(),
+        ));
+    }
+    let max_results = args.max_results.unwrap_or(5).clamp(1, 10);
+    Err(CustomError::System(format!(
+        "den.web.search is registered but no search provider is configured yet (query={}, max_results={max_results}). Configure a Den search provider before using this tool.",
+        serde_json::Value::String(args.query.trim().to_string())
+    )))
+}
+
+async fn write_note(
+    _pool: &PgPool,
+    config: &Config,
+    context: &DenToolInvocationContext,
+    role: BearAgentRole,
+    arguments: Value,
+) -> Result<Value, CustomError> {
+    if role != BearAgentRole::Pair {
+        return Err(CustomError::Authorization(
+            "den.write_note is currently available only to the pair role".to_string(),
+        ));
+    }
+    let args: WriteNoteArguments = serde_json::from_value(arguments)?;
+    let title = args.title.trim();
+    let body = args.body.trim();
+    if title.is_empty() {
+        return Err(CustomError::ValidationError(
+            "title must not be empty".to_string(),
+        ));
+    }
+    if body.is_empty() {
+        return Err(CustomError::ValidationError(
+            "body must not be empty".to_string(),
+        ));
+    }
+    let tags = args
+        .tags
+        .into_iter()
+        .map(|tag| tag.trim().to_string())
+        .filter(|tag| !tag.is_empty())
+        .take(20)
+        .collect::<Vec<_>>();
+    let request = MemfsWriteRoleNoteRequest {
+        title: title.to_string(),
+        body: body.to_string(),
+        tags,
+        source: args.source,
+        author: context.username.clone(),
+        conversation_id: clean_optional(&context.conversation_id),
+        session_id: source_acp_session_id(context).or_else(|| clean_optional(&context.session_id)),
+    };
+    let http = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .connect_timeout(std::time::Duration::from_secs(5))
+        .build()
+        .map_err(|e| CustomError::System(format!("MemFS note client build failed: {e}")))?;
+    let response = write_memfs_role_note(
+        &http,
+        &config.letta_memfs_service_url,
+        context.bear_id,
+        role.as_str(),
+        &request,
+    )
+    .await?;
+    let Some(response) = response else {
+        return Err(CustomError::System(
+            "MemFS sidecar is not configured (set LETTA_MEMFS_SERVICE_URL)".to_string(),
+        ));
+    };
+    Ok(json!({
+        "bear_id": context.bear_id,
+        "role": role.as_str(),
+        "path": response.path,
+        "commit": response.commit,
+        "canonical_tip": response.canonical_tip,
+        "view": response.view,
+    }))
+}
+
 async fn list_work_plans(
     pool: &PgPool,
     context: &DenToolInvocationContext,
@@ -881,6 +1108,110 @@ async fn update_work_plan(
         "bear_id": context.bear_id,
         "plan": plan,
     }))
+}
+
+fn validate_public_http_url(raw: &str) -> Result<url::Url, CustomError> {
+    let url = url::Url::parse(raw.trim()).map_err(|e| {
+        CustomError::ValidationError(format!("url must be a valid HTTP(S) URL: {e}"))
+    })?;
+    match url.scheme() {
+        "http" | "https" => {}
+        _ => {
+            return Err(CustomError::ValidationError(
+                "url scheme must be http or https".to_string(),
+            ));
+        }
+    }
+    let host = url
+        .host_str()
+        .ok_or_else(|| CustomError::ValidationError("url must include a host".to_string()))?;
+    let lower_host = host.trim_end_matches('.').to_ascii_lowercase();
+    if lower_host == "localhost" || lower_host.ends_with(".localhost") {
+        return Err(CustomError::ValidationError(
+            "localhost URLs are not allowed for den.web.fetch".to_string(),
+        ));
+    }
+    if let Ok(ip) = lower_host.parse::<IpAddr>() {
+        if !is_public_ip(ip) {
+            return Err(CustomError::ValidationError(
+                "private, loopback, link-local, multicast, and unspecified IP URLs are not allowed for den.web.fetch".to_string(),
+            ));
+        }
+        return Ok(url);
+    }
+    let port = url.port_or_known_default().unwrap_or(443);
+    let addrs = (host, port).to_socket_addrs().map_err(|e| {
+        CustomError::ValidationError(format!("url host could not be resolved safely: {e}"))
+    })?;
+    for addr in addrs {
+        if !is_public_ip(addr.ip()) {
+            return Err(CustomError::ValidationError(format!(
+                "url host resolves to a non-public address: {}",
+                addr.ip()
+            )));
+        }
+    }
+    Ok(url)
+}
+
+fn is_public_ip(ip: IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(ip) => {
+            !(ip.is_private()
+                || ip.is_loopback()
+                || ip.is_link_local()
+                || ip.is_multicast()
+                || ip.is_broadcast()
+                || ip.is_documentation()
+                || ip.octets()[0] == 0)
+        }
+        IpAddr::V6(ip) => {
+            !(ip.is_loopback()
+                || ip.is_unspecified()
+                || ip.is_multicast()
+                || ip.segments()[0] & 0xfe00 == 0xfc00
+                || ip.segments()[0] & 0xffc0 == 0xfe80)
+        }
+    }
+}
+
+fn html_to_text_excerpt(raw: &str) -> String {
+    let mut text = String::with_capacity(raw.len().min(64_000));
+    let mut in_tag = false;
+    for ch in raw.chars() {
+        match ch {
+            '<' => {
+                in_tag = true;
+                text.push(' ');
+            }
+            '>' => in_tag = false,
+            _ if !in_tag => text.push(ch),
+            _ => {}
+        }
+    }
+    text.replace("&nbsp;", " ")
+        .replace("&amp;", "&")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&quot;", "\"")
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn truncate_chars(value: &str, max_chars: usize) -> (String, bool) {
+    let mut out = String::new();
+    let mut truncated = false;
+    for (idx, ch) in value.chars().enumerate() {
+        if idx >= max_chars {
+            truncated = true;
+            break;
+        }
+        out.push(ch);
+    }
+    (out, truncated)
 }
 
 fn source_acp_session_id(context: &DenToolInvocationContext) -> Option<String> {
