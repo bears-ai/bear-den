@@ -274,7 +274,7 @@ fn env_bool(name: &str) -> bool {
 }
 
 fn approval_ttl_secs(risk: &str) -> u64 {
-    if risk == "writes_workspace" {
+    if matches!(risk, "writes_workspace" | "deletes_workspace") {
         7 * 24 * 60 * 60
     } else {
         28 * 24 * 60 * 60
@@ -1189,9 +1189,9 @@ async fn handle_request(
                     Err(err) => {
                         write_response(
                             id,
-                            Err(auth_required_error(Some(
-                                json!({ "message": format!("{err:#}") }),
-                            ))),
+                            Err(bears_auth_error(Some(json!({
+                                "message": format!("{err:#}")
+                            })))),
                         )
                         .await?;
                     }
@@ -1247,7 +1247,7 @@ async fn handle_request(
                 let Some(config) = runtime.config.as_ref() else {
                     write_response(
                         id,
-                        Err(auth_required_error(Some(json!({
+                        Err(bears_auth_error(Some(json!({
                             "message": runtime.configuration_error_message(),
                             "problems": runtime.diagnostics,
                         })))),
@@ -1258,7 +1258,7 @@ async fn handle_request(
                 if let Err(err) = validate_den_code_token(http, config).await {
                     write_response(
                         id,
-                        Err(auth_required_error(Some(json!({
+                        Err(bears_auth_error(Some(json!({
                             "message": format!("BEARS Code token authentication failed: {err:#}"),
                             "hint": "Generate a fresh Den Code token for this bear."
                         })))),
@@ -1302,7 +1302,7 @@ async fn handle_request(
                 let Some(config) = runtime.config.as_ref() else {
                     write_response(
                         id,
-                        Err(auth_required_error(Some(json!({
+                        Err(bears_auth_error(Some(json!({
                             "message": runtime.configuration_error_message(),
                             "problems": runtime.diagnostics,
                         })))),
@@ -1313,7 +1313,7 @@ async fn handle_request(
                 if let Err(err) = validate_den_code_token(http, config).await {
                     write_response(
                         id,
-                        Err(auth_required_error(Some(json!({
+                        Err(bears_auth_error(Some(json!({
                             "message": format!("BEARS Code token authentication failed: {err:#}"),
                         })))),
                     )
@@ -1352,7 +1352,7 @@ async fn handle_request(
                 let Some(config) = runtime.config.as_ref() else {
                     write_response(
                         id,
-                        Err(auth_required_error(Some(json!({
+                        Err(bears_auth_error(Some(json!({
                             "message": runtime.configuration_error_message(),
                             "problems": runtime.diagnostics,
                         })))),
@@ -1363,7 +1363,7 @@ async fn handle_request(
                 if let Err(err) = validate_den_code_token(http, config).await {
                     write_response(
                         id,
-                        Err(auth_required_error(Some(json!({
+                        Err(bears_auth_error(Some(json!({
                             "message": format!("BEARS Code token authentication failed: {err:#}"),
                         })))),
                     )
@@ -1400,7 +1400,7 @@ async fn handle_request(
                 let Some(config) = runtime.config.as_ref() else {
                     write_response(
                         id,
-                        Err(auth_required_error(Some(json!({
+                        Err(bears_auth_error(Some(json!({
                             "message": runtime.configuration_error_message(),
                             "problems": runtime.diagnostics,
                         })))),
@@ -1412,7 +1412,7 @@ async fn handle_request(
                 if let Err(err) = validate_den_code_token(http, config).await {
                     write_response(
                         id,
-                        Err(auth_required_error(Some(json!({
+                        Err(bears_auth_error(Some(json!({
                             "message": format!("BEARS Code token authentication failed: {err:#}"),
                             "hint": "Generate a fresh Den Code token for this bear. Code tokens must include acp:chat."
                         })))),
@@ -1457,7 +1457,7 @@ async fn handle_request(
                 let Some(config) = runtime.config.as_ref() else {
                     write_response(
                         id,
-                        Err(auth_required_error(Some(json!({
+                        Err(bears_auth_error(Some(json!({
                             "message": runtime.configuration_error_message(),
                             "problems": runtime.diagnostics,
                         })))),
@@ -1489,7 +1489,7 @@ async fn handle_request(
                 let Some(config) = runtime.config.as_ref() else {
                     write_response(
                         id,
-                        Err(auth_required_error(Some(json!({
+                        Err(bears_auth_error(Some(json!({
                             "message": runtime.configuration_error_message(),
                             "problems": runtime.diagnostics,
                         })))),
@@ -4787,6 +4787,7 @@ fn parse_permission_decision(result: &Value) -> Result<PermissionDecision> {
     })
 }
 
+#[allow(dead_code)]
 fn parse_permission_approved(result: &Value) -> Result<bool> {
     Ok(parse_permission_decision(result)?.approved)
 }
@@ -5098,8 +5099,8 @@ async fn write_json(value: Value) -> Result<()> {
     Ok(())
 }
 
-fn auth_required_error(data: Option<Value>) -> Value {
-    json_rpc_error(-32000, "Authentication required", data)
+fn bears_auth_error(data: Option<Value>) -> Value {
+    json_rpc_error(-32000, "BEARS authentication failed", data)
 }
 
 fn json_rpc_error(code: i64, message: &str, data: Option<Value>) -> Value {
@@ -5323,6 +5324,66 @@ mod tests {
         assert_eq!(result["include_hidden"], true);
         assert_eq!(result["policy"]["max_results"], 1);
         assert_eq!(result["policy"]["applied_limit"], 1);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn delete_path_removes_file_and_denies_workspace_root() {
+        let root = unique_test_dir("delete-file");
+        let file = root.join("delete-me.txt");
+        fs::write(&file, "bye").unwrap();
+        let state = test_adapter_state("session-1", &root);
+        let result = handle_direct_delete_path(
+            &state,
+            "session-1",
+            &json!({ "path": file.to_string_lossy(), "expected_kind": "file" }),
+            &ToolPolicy {
+                max_entries: Some(100),
+                sensitive_path_policy: Some("deny_sensitive_paths".to_string()),
+                deny_hidden_paths: Some(true),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(result["deleted"], true);
+        assert!(!file.exists());
+        let denied = handle_direct_delete_path(
+            &state,
+            "session-1",
+            &json!({ "path": root.to_string_lossy(), "expected_kind": "directory" }),
+            &ToolPolicy::default(),
+        )
+        .await;
+        assert!(format!("{:#}", denied.unwrap_err()).contains("workspace root"));
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn delete_path_requires_recursive_for_non_empty_directory() {
+        let root = unique_test_dir("delete-dir");
+        let dir = root.join("dir");
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("file.txt"), "bye").unwrap();
+        let state = test_adapter_state("session-1", &root);
+        let denied = handle_direct_delete_path(
+            &state,
+            "session-1",
+            &json!({ "path": dir.to_string_lossy(), "expected_kind": "directory" }),
+            &ToolPolicy::default(),
+        )
+        .await;
+        assert!(format!("{:#}", denied.unwrap_err()).contains("recursive=true"));
+        let result = handle_direct_delete_path(
+            &state,
+            "session-1",
+            &json!({ "path": dir.to_string_lossy(), "expected_kind": "directory", "recursive": true }),
+            &ToolPolicy { max_entries: Some(100), ..Default::default() },
+        )
+        .await
+        .unwrap();
+        assert_eq!(result["deleted"], true);
+        assert!(!dir.exists());
         let _ = fs::remove_dir_all(root);
     }
 
@@ -5586,9 +5647,11 @@ mod tests {
         };
         assert!(!cache.is_allowed(&context, "fs_read_text_file").await);
         cache
-            .remember(&context, "fs_read_text_file", "read_only")
+            .remember(&context, "fs_list_directory", "read_only")
             .await;
         assert!(cache.is_allowed(&context, "fs_read_text_file").await);
+        assert!(cache.is_allowed(&context, "fs_search_files").await);
+        assert!(!cache.is_allowed(&context, "fs_replace_text").await);
         cache.clear_session("session-1").await;
         assert!(cache.is_allowed(&context, "fs_read_text_file").await);
     }
@@ -5596,6 +5659,7 @@ mod tests {
     #[test]
     fn approval_ttl_matches_product_policy() {
         assert_eq!(approval_ttl_secs("writes_workspace"), 7 * 24 * 60 * 60);
+        assert_eq!(approval_ttl_secs("deletes_workspace"), 7 * 24 * 60 * 60);
         assert_eq!(approval_ttl_secs("read_only"), 28 * 24 * 60 * 60);
     }
 

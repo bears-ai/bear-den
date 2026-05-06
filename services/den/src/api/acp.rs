@@ -621,6 +621,9 @@ fn acp_direct_tool_prompt_context(
     } else {
         guidance.push("No ACP edit tool is callable in this turn. Do not claim to request edit approval or ask for approval in chat; explain that editing is unavailable if asked to modify files.".to_string());
     }
+    if tool_names.contains(&"fs_delete_path") {
+        guidance.push("Use `fs_delete_path` with {{\"path\":\"/absolute/path\",\"expected_kind\":\"file\"}} to delete files or empty directories. For non-empty directories, `recursive:true` is required. Deleting workspace roots, hidden paths, and sensitive paths is denied.".to_string());
+    }
     guidance.push("Tool-loop rule: after any ACP tool result, continue from the returned content until the user's original request is complete. Do not stop merely because a tool succeeded. Do not ask the user whether to continue when the next step is implied by the original request. Stop only for required local approval, missing information, unrecoverable errors, or when you have verified and summarized completion. Never write textual tool-call syntax such as `to=functions...` or `functions.fs_replace_text`; if a tool is not callable, explain the limitation in normal prose.".to_string());
     format!(
         "\n\n<system-reminder>{}</system-reminder>",
