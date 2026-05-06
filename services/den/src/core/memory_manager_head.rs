@@ -159,6 +159,18 @@ pub struct MemfsWriteRoleNoteRequest {
     pub conversation_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub session_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub acp_session_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub conversation_selection: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub runtime_target: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub role_agent_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_role: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub request_id: Option<String>,
 }
 
 #[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]

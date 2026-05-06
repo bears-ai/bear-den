@@ -20,7 +20,7 @@ Zed / OpenCode / coding clients
   -> Future slices delegate client tools back through Den / ACP permission flows
 ```
 
-`bear_channel` is the internal Den -> Codepool channel contract for Letta Code-backed chat/work surfaces such as browser chat and Slack. ACP is the external protocol for coding clients and routes to the API-direct `pair` role; it must not use Codepool `bear_channel`. OpenAI-compatible APIs remain compatibility/browser-facing surfaces, not the canonical Den -> runtime boundary.
+`bear_channel` is the internal Den -> Codepool channel contract for Letta Code-backed chat/work surfaces such as browser chat and Slack. ACP is the external protocol for coding clients and routes to the API-direct `pair` role; it must not use Codepool `bear_channel`. OpenAI-compatible APIs remain compatibility/browser-facing surfaces, not the canonical Den -> runtime boundary; when used, they must identify the selected role with `metadata.role_agent_id` (not the retired `metadata.bear_agent_id`).
 
 ## Responsibilities
 

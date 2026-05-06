@@ -572,6 +572,12 @@ pub struct DenToolInvocationContext {
     pub membership_role: Option<String>,
     pub conversation_id: String,
     pub session_id: String,
+    #[serde(default)]
+    pub acp_session_id: Option<String>,
+    #[serde(default)]
+    pub conversation_selection: Option<String>,
+    #[serde(default)]
+    pub runtime_target: Option<String>,
     pub request_id: Option<String>,
     #[serde(default)]
     pub channel: DenToolChannelContext,
@@ -990,6 +996,15 @@ async fn write_note(
         author: context.username.clone(),
         conversation_id: clean_optional(&context.conversation_id),
         session_id: source_acp_session_id(context).or_else(|| clean_optional(&context.session_id)),
+        acp_session_id: context
+            .acp_session_id
+            .clone()
+            .or_else(|| source_acp_session_id(context)),
+        conversation_selection: context.conversation_selection.clone(),
+        runtime_target: context.runtime_target.clone(),
+        role_agent_id: Some(context.role_agent_id.clone()),
+        agent_role: context.agent_role.map(|role| role.as_str().to_string()),
+        request_id: context.request_id.clone(),
     };
     let http = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(30))

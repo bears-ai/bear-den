@@ -826,12 +826,19 @@ def _write_role_note(bear_id: str, role: str, body: dict, org_id: str) -> dict:
         author = str(body.get("author") or "").strip()
         if author:
             metadata.append(f"author: {_yaml_quote(author)}")
-        conversation_id = str(body.get("conversation_id") or "").strip()
-        if conversation_id:
-            metadata.append(f"conversation_id: {_yaml_quote(conversation_id)}")
-        session_id = str(body.get("session_id") or "").strip()
-        if session_id:
-            metadata.append(f"session_id: {_yaml_quote(session_id)}")
+        for key in [
+            "conversation_id",
+            "session_id",
+            "acp_session_id",
+            "conversation_selection",
+            "runtime_target",
+            "role_agent_id",
+            "agent_role",
+            "request_id",
+        ]:
+            value = str(body.get(key) or "").strip()
+            if value:
+                metadata.append(f"{key}: {_yaml_quote(value)}")
         if tags:
             metadata.append("tags:")
             for tag in tags[:20]:

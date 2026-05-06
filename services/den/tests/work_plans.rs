@@ -1,6 +1,7 @@
 //! Integration coverage for Den-owned Bear work plans. Requires `DATABASE_URL`.
 
 use den::{
+    config::Config,
     core::{
         bears::{db as bears_db, BearAgentRole},
         den_tools::{
@@ -98,6 +99,9 @@ fn den_context(bear_id: Uuid, user_id: i32, role_agent_id: &str) -> DenToolInvoc
         membership_role: Some(bears_db::BEAR_ROLE_ADMIN.to_string()),
         conversation_id: "conv-den-tool-work-plan".to_string(),
         session_id: "session-den-tool-work-plan".to_string(),
+        acp_session_id: Some("session-den-tool-work-plan".to_string()),
+        conversation_selection: Some("conv-den-tool-work-plan".to_string()),
+        runtime_target: Some("conv-den-tool-work-plan".to_string()),
         request_id: Some(Uuid::new_v4().to_string()),
         channel: DenToolChannelContext {
             family: Some("acp".to_string()),
@@ -250,8 +254,10 @@ async fn work_plan_den_tools_update_and_list_current_role_plans() {
     )
     .await;
 
+    let config = Config::load();
     let update_result = den_tools::invoke_den_tool(
         &pool,
+        &config,
         DEN_WORK_PLAN_UPDATE,
         json!({
             "title": "Pair implementation plan",
@@ -274,6 +280,7 @@ async fn work_plan_den_tools_update_and_list_current_role_plans() {
 
     let list_result = den_tools::invoke_den_tool(
         &pool,
+        &config,
         DEN_WORK_PLAN_LIST,
         json!({}),
         den_context(bear_id, user_id, "agent-pair-den-tool-plan"),
