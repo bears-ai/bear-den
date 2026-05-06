@@ -2415,7 +2415,29 @@ impl Stream for AcpLettaSseStream {
                             }
                             return self.poll_next(cx);
                         }
-                        Err(err) => return Poll::Ready(Some(Err(err))),
+                        Err(err) => {
+                            let message = err.to_string();
+                            tracing::warn!(
+                                request_id = %this.context.request_id,
+                                acp_session_id = %this.context.acp_session_id,
+                                error = %message,
+                                "ACP stream frame processing failed"
+                            );
+                            let event = AcpGatewayEvent::Error {
+                                message: "BEARS failed while processing an ACP stream event."
+                                    .to_string(),
+                                detail: Some(message),
+                                error_type: Some("acp_stream_frame_processing_failed".to_string()),
+                                request_id: Some(this.context.request_id.to_string()),
+                                context: Some(serde_json::json!({
+                                    "component": "den.acp",
+                                    "acp_session_id": this.context.acp_session_id,
+                                })),
+                            };
+                            this.diagnostics.observe_mapped_event(&event);
+                            this.pending.push_back(acp_event_to_adapter_sse(event));
+                            return self.poll_next(cx);
+                        }
                     }
                 }
                 AcpPendingFuture::Tool(fut) => {
@@ -2738,10 +2760,12 @@ mod tests {
 
         let body = captured.lock().await.clone().unwrap();
         assert_eq!(body["client_tools"][0]["name"], "fs_read_text_file");
-        assert_eq!(body["messages"][0]["type"], "tool_return");
-        assert_eq!(body["messages"][0]["tool_returns"][0]["type"], "tool");
+        assert_eq!(body["messages"][0]["type"], "approval");
+        assert_eq!(body["messages"][0]["approval_request_id"], "approval-1");
+        assert_eq!(body["messages"][0]["approve"], true);
+        assert_eq!(body["messages"][0]["approvals"][0]["type"], "tool");
         assert_eq!(
-            body["messages"][0]["tool_returns"][0]["tool_call_id"],
+            body["messages"][0]["approvals"][0]["tool_call_id"],
             "call_test"
         );
     }

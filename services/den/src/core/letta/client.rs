@@ -790,11 +790,13 @@ impl LettaClient {
                 tracing::debug!(
                     approval_request_id,
                     tool_call_id,
-                    "normalizing Letta approval-originated ACP client tool result to preferred tool_return message"
+                    "sending Letta approval response with ACP client tool result"
                 );
                 json!({
-                    "type": "tool_return",
-                    "tool_returns": [tool_return_value]
+                    "type": "approval",
+                    "approval_request_id": approval_request_id,
+                    "approve": true,
+                    "approvals": [tool_return_value]
                 })
             }
         } else {

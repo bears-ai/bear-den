@@ -3674,8 +3674,25 @@ async fn handle_prompt(
     let mut upstream_errors = Vec::new();
     let mut buffer = Vec::<u8>::new();
     let mut stream = response.bytes_stream();
-    while let Some(chunk) = stream.next().await {
-        let chunk = chunk.context("read Den SSE chunk")?;
+    while let Some(chunk_result) = stream.next().await {
+        let chunk = match chunk_result {
+            Ok(chunk) => chunk,
+            Err(err)
+                if stream_has_successful_terminal_condition(
+                    saw_visible_output,
+                    saw_error,
+                    saw_done,
+                    saw_tool_activity,
+                ) =>
+            {
+                eprintln!(
+                    "bears-acp-adapter: Den SSE stream ended with recoverable read error after terminal/progress events session_id={} error={err:#}",
+                    session_id
+                );
+                break;
+            }
+            Err(err) => return Err(err).context("read Den SSE chunk"),
+        };
         buffer.extend_from_slice(&chunk);
         while let Some(pos) = buffer.windows(2).position(|w| w == b"\n\n") {
             let frame: Vec<u8> = buffer.drain(..pos + 2).collect();
