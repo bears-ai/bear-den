@@ -91,7 +91,12 @@ struct ApprovalRecord {
     client: String,
     tool_name: String,
     permission_class: String,
+    // Legacy workspace-root fingerprint. Kept so existing cache files remain readable.
     root_fingerprint: String,
+    #[serde(default = "default_approval_scope_kind")]
+    scope_kind: String,
+    #[serde(default)]
+    scope_fingerprint: String,
     risk: String,
     created_at_secs: u64,
     expires_at_secs: u64,
@@ -119,15 +124,39 @@ struct ToolTaskRecord {
     updated_at: std::time::Instant,
 }
 
+fn default_approval_scope_kind() -> String {
+    ApprovalScope::Workspace.as_str().to_string()
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ApprovalScope {
+    Directory,
+    Workspace,
+    Global,
+}
+
+impl ApprovalScope {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Directory => "directory",
+            Self::Workspace => "workspace",
+            Self::Global => "global",
+        }
+    }
+}
+
 impl ApprovalCache {
     fn key(
         api_url: &str,
         bear: &str,
         client: &str,
-        root_fingerprint: &str,
         permission_class: &str,
+        scope_kind: &str,
+        scope_fingerprint: &str,
     ) -> String {
-        format!("{api_url}\n{bear}\n{client}\n{root_fingerprint}\n{permission_class}")
+        format!(
+            "{api_url}\n{bear}\n{client}\n{permission_class}\n{scope_kind}\n{scope_fingerprint}"
+        )
     }
 
     async fn load_for_runtime(runtime: &RuntimeConfig) -> Self {
@@ -161,12 +190,16 @@ impl ApprovalCache {
                         record.permission_class =
                             permission_class_for_tool(&record.tool_name).to_string();
                     }
+                    if record.scope_fingerprint.trim().is_empty() {
+                        record.scope_fingerprint = record.root_fingerprint.clone();
+                    }
                     let key = Self::key(
                         &record.api_url,
                         &record.bear,
                         &record.client,
-                        &record.root_fingerprint,
                         &record.permission_class,
+                        &record.scope_kind,
+                        &record.scope_fingerprint,
                     );
                     entries.insert(key, record);
                 }
@@ -175,11 +208,21 @@ impl ApprovalCache {
         cache
     }
 
-    async fn remember(&self, context: &SessionContext, tool_name: &str, risk: &str) {
+    async fn remember(
+        &self,
+        context: &SessionContext,
+        tool_name: &str,
+        risk: &str,
+        scope: ApprovalScope,
+        target_path: Option<&Path>,
+    ) {
         let Some(persistence) = self.persistence.as_ref() else {
             return;
         };
         let root_fingerprint = approval_root_fingerprint(context);
+        let Some(scope_fingerprint) = approval_scope_fingerprint(context, scope, target_path) else {
+            return;
+        };
         let now = now_secs();
         let record = ApprovalRecord {
             api_url: persistence.api_url.clone(),
@@ -187,7 +230,9 @@ impl ApprovalCache {
             client: persistence.client.clone(),
             tool_name: tool_name.to_string(),
             permission_class: permission_class_for_tool(tool_name).to_string(),
-            root_fingerprint: root_fingerprint.clone(),
+            root_fingerprint,
+            scope_kind: scope.as_str().to_string(),
+            scope_fingerprint,
             risk: risk.to_string(),
             created_at_secs: now,
             expires_at_secs: now + approval_ttl_secs(risk),
@@ -197,30 +242,49 @@ impl ApprovalCache {
                 &record.api_url,
                 &record.bear,
                 &record.client,
-                &record.root_fingerprint,
                 &record.permission_class,
+                &record.scope_kind,
+                &record.scope_fingerprint,
             ),
             record,
         );
         self.save().await;
     }
 
-    async fn is_allowed(&self, context: &SessionContext, tool_name: &str) -> bool {
+    async fn is_allowed(
+        &self,
+        context: &SessionContext,
+        tool_name: &str,
+        target_path: Option<&Path>,
+    ) -> bool {
         let Some(persistence) = self.persistence.as_ref() else {
             return false;
         };
-        let root_fingerprint = approval_root_fingerprint(context);
-        let key = Self::key(
-            &persistence.api_url,
-            &persistence.bear,
-            &persistence.client,
-            &root_fingerprint,
-            permission_class_for_tool(tool_name),
-        );
+        let permission_class = permission_class_for_tool(tool_name);
+        let candidate_scopes = [
+            ApprovalScope::Directory,
+            ApprovalScope::Workspace,
+            ApprovalScope::Global,
+        ];
+        let candidate_keys = candidate_scopes
+            .into_iter()
+            .filter_map(|scope| {
+                approval_scope_fingerprint(context, scope, target_path).map(|fingerprint| {
+                    Self::key(
+                        &persistence.api_url,
+                        &persistence.bear,
+                        &persistence.client,
+                        permission_class,
+                        scope.as_str(),
+                        &fingerprint,
+                    )
+                })
+            })
+            .collect::<Vec<_>>();
         let now = now_secs();
         let mut entries = self.entries.lock().await;
         entries.retain(|_, record| record.expires_at_secs > now);
-        entries.get(&key).is_some()
+        candidate_keys.iter().any(|key| entries.contains_key(key))
     }
 
     async fn clear_session(&self, _session_id: &str) {
@@ -314,6 +378,44 @@ fn approval_root_fingerprint(context: &SessionContext) -> String {
         context.roots.clone()
     };
     roots.join("|")
+}
+
+fn approval_scope_fingerprint(
+    context: &SessionContext,
+    scope: ApprovalScope,
+    target_path: Option<&Path>,
+) -> Option<String> {
+    match scope {
+        ApprovalScope::Directory => target_path.map(|path| approval_directory_scope(path).display().to_string()),
+        ApprovalScope::Workspace => Some(approval_root_fingerprint(context)),
+        ApprovalScope::Global => Some("global".to_string()),
+    }
+}
+
+fn approval_directory_scope(path: &Path) -> PathBuf {
+    if path.is_dir() {
+        path.to_path_buf()
+    } else {
+        path.parent()
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|| path.to_path_buf())
+    }
+}
+
+fn approval_workspace_scope_label(context: &SessionContext) -> String {
+    let roots = if context.roots.is_empty() {
+        vec![context.cwd.clone()]
+    } else {
+        context.roots.clone()
+    };
+    if roots.len() == 1 {
+        roots
+            .first()
+            .map(|root| Path::new(root).display().to_string())
+            .unwrap_or_else(|| "this workspace".to_string())
+    } else {
+        "workspace roots".to_string()
+    }
 }
 
 impl ToolTaskRegistry {
@@ -4443,8 +4545,12 @@ async fn handle_tool_request_event(
         None
     };
     let context_for_approval = session_context(adapter_state, session_id).ok().cloned();
+    let target_path_for_approval = tool_path(event)
+        .and_then(|path| normalize_requested_tool_path(path).ok());
     let approval_reused = if let Some(context) = context_for_approval.as_ref() {
-        approval_cache.is_allowed(context, tool_name).await
+        approval_cache
+            .is_allowed(context, tool_name, target_path_for_approval.as_deref())
+            .await
     } else {
         false
     };
@@ -4501,6 +4607,8 @@ async fn handle_tool_request_event(
             event,
             replace_plan_ref,
             &policy,
+            context_for_approval.as_ref(),
+            target_path_for_approval.as_deref(),
         )
         .await;
         if let Err(err) = permission_decision {
@@ -4563,12 +4671,24 @@ async fn handle_tool_request_event(
             .is_ok_and(|decision| decision.remember)
         {
             if let Some(context) = context_for_approval.as_ref() {
+                let scope = permission_decision
+                    .as_ref()
+                    .map(|decision| decision.scope)
+                    .unwrap_or(ApprovalScope::Workspace);
                 approval_cache
-                    .remember(context, tool_name, policy.risk())
+                    .remember(
+                        context,
+                        tool_name,
+                        policy.risk(),
+                        scope,
+                        target_path_for_approval.as_deref(),
+                    )
                     .await;
                 eprintln!(
-                    "bears-acp-adapter: approval_remembered session_id={} tool_name={} scope=workspace_roots",
-                    session_id, tool_name
+                    "bears-acp-adapter: approval_remembered session_id={} tool_name={} scope={}",
+                    session_id,
+                    tool_name,
+                    scope.as_str()
                 );
             }
         }
@@ -4816,6 +4936,8 @@ async fn request_tool_permission(
     event: &Value,
     replace_plan: Option<&ReplaceTextPlan>,
     policy: &ToolPolicy,
+    context: Option<&SessionContext>,
+    target_path: Option<&Path>,
 ) -> Result<PermissionDecision> {
     let path = event
         .get("args")
@@ -4855,37 +4977,36 @@ async fn request_tool_permission(
         fields = fields.raw_input(Some(args.clone()));
     }
     let tool_call = ToolCallUpdate::new(tool_call_id.to_string(), fields);
-    let permission_class = permission_class_for_tool(tool_name);
-    let allow_always_label = match permission_class {
-        "read_files" => "Always allow reading files in this workspace",
-        "edit_files" => "Always allow editing files in this workspace",
-        "delete_files" => "Always allow deleting files in this workspace",
-        _ => "Always allow matching local file operations",
-    };
-    let reject_always_label = match permission_class {
-        "read_files" => "Always deny reading files in this workspace",
-        "edit_files" => "Always deny editing files in this workspace",
-        "delete_files" => "Always deny deleting files in this workspace",
-        _ => "Always deny matching local file operations",
-    };
-    let request = RequestPermissionRequest::new(
-        session_id.to_string(),
-        tool_call,
-        vec![
-            PermissionOption::new("allow", "Allow once", PermissionOptionKind::AllowOnce),
-            PermissionOption::new(
-                "allow_always",
-                allow_always_label,
-                PermissionOptionKind::AllowAlways,
-            ),
-            PermissionOption::new("reject", "Deny once", PermissionOptionKind::RejectOnce),
-            PermissionOption::new(
-                "reject_always",
-                reject_always_label,
-                PermissionOptionKind::RejectAlways,
-            ),
-        ],
-    );
+    let mut options = vec![PermissionOption::new(
+        "allow_once",
+        "Only this time",
+        PermissionOptionKind::AllowOnce,
+    )];
+    if let Some(path) = target_path {
+        options.push(PermissionOption::new(
+            "allow_directory",
+            format!("Always for {}", approval_directory_scope(path).display()),
+            PermissionOptionKind::AllowAlways,
+        ));
+    }
+    if let Some(context) = context {
+        options.push(PermissionOption::new(
+            "allow_workspace",
+            format!("Always for {}", approval_workspace_scope_label(context)),
+            PermissionOptionKind::AllowAlways,
+        ));
+    }
+    options.push(PermissionOption::new(
+        "allow_global",
+        "Always",
+        PermissionOptionKind::AllowAlways,
+    ));
+    options.push(PermissionOption::new(
+        "reject_once",
+        "Deny",
+        PermissionOptionKind::RejectOnce,
+    ));
+    let request = RequestPermissionRequest::new(session_id.to_string(), tool_call, options);
     let response = adapter_state
         .transport
         .request(
@@ -4910,28 +5031,24 @@ async fn request_tool_permission(
 struct PermissionDecision {
     approved: bool,
     remember: bool,
+    scope: ApprovalScope,
 }
 
 fn parse_permission_decision(result: &Value) -> Result<PermissionDecision> {
     if let Ok(response) = serde_json::from_value::<RequestPermissionResponse>(result.clone()) {
         return Ok(match response.outcome {
             RequestPermissionOutcome::Selected(selected) => {
-                let id = selected.option_id.to_string();
-                PermissionDecision {
-                    approved: matches!(
-                        id.as_str(),
-                        "allow" | "allow_always" | "approve" | "approved" | "yes"
-                    ),
-                    remember: matches!(id.as_str(), "allow_always"),
-                }
+                permission_decision_from_option_id(&selected.option_id.to_string())
             }
             RequestPermissionOutcome::Cancelled => PermissionDecision {
                 approved: false,
                 remember: false,
+                scope: ApprovalScope::Workspace,
             },
             _ => PermissionDecision {
                 approved: false,
                 remember: false,
+                scope: ApprovalScope::Workspace,
             },
         });
     }
@@ -4947,7 +5064,38 @@ fn parse_permission_decision(result: &Value) -> Result<PermissionDecision> {
     Ok(PermissionDecision {
         approved,
         remember: false,
+        scope: ApprovalScope::Workspace,
     })
+}
+
+fn permission_decision_from_option_id(id: &str) -> PermissionDecision {
+    match id {
+        "allow_once" | "allow" | "approve" | "approved" | "yes" => PermissionDecision {
+            approved: true,
+            remember: false,
+            scope: ApprovalScope::Workspace,
+        },
+        "allow_directory" => PermissionDecision {
+            approved: true,
+            remember: true,
+            scope: ApprovalScope::Directory,
+        },
+        "allow_workspace" | "allow_always" => PermissionDecision {
+            approved: true,
+            remember: true,
+            scope: ApprovalScope::Workspace,
+        },
+        "allow_global" => PermissionDecision {
+            approved: true,
+            remember: true,
+            scope: ApprovalScope::Global,
+        },
+        _ => PermissionDecision {
+            approved: false,
+            remember: false,
+            scope: ApprovalScope::Workspace,
+        },
+    }
 }
 
 #[allow(dead_code)]
@@ -5871,15 +6019,32 @@ mod tests {
             roots: vec!["/workspace".to_string()],
             ..Default::default()
         };
-        assert!(!cache.is_allowed(&context, "fs_read_text_file").await);
+        let target = Path::new("/workspace/src/main.rs");
+        assert!(!cache
+            .is_allowed(&context, "fs_read_text_file", Some(target))
+            .await);
         cache
-            .remember(&context, "fs_list_directory", "read_only")
+            .remember(
+                &context,
+                "fs_list_directory",
+                "read_only",
+                ApprovalScope::Workspace,
+                Some(target),
+            )
             .await;
-        assert!(cache.is_allowed(&context, "fs_read_text_file").await);
-        assert!(cache.is_allowed(&context, "fs_search_files").await);
-        assert!(!cache.is_allowed(&context, "fs_replace_text").await);
+        assert!(cache
+            .is_allowed(&context, "fs_read_text_file", Some(target))
+            .await);
+        assert!(cache
+            .is_allowed(&context, "fs_search_files", Some(target))
+            .await);
+        assert!(!cache
+            .is_allowed(&context, "fs_replace_text", Some(target))
+            .await);
         cache.clear_session("session-1").await;
-        assert!(cache.is_allowed(&context, "fs_read_text_file").await);
+        assert!(cache
+            .is_allowed(&context, "fs_read_text_file", Some(target))
+            .await);
     }
 
     #[test]
@@ -5900,6 +6065,24 @@ mod tests {
         let decision = parse_permission_decision(&result).unwrap();
         assert!(decision.approved);
         assert!(decision.remember);
+        assert_eq!(decision.scope, ApprovalScope::Workspace);
+    }
+
+    #[test]
+    fn parse_permission_decision_supports_granular_scopes() {
+        let directory = permission_decision_from_option_id("allow_directory");
+        assert!(directory.approved);
+        assert!(directory.remember);
+        assert_eq!(directory.scope, ApprovalScope::Directory);
+
+        let global = permission_decision_from_option_id("allow_global");
+        assert!(global.approved);
+        assert!(global.remember);
+        assert_eq!(global.scope, ApprovalScope::Global);
+
+        let once = permission_decision_from_option_id("allow_once");
+        assert!(once.approved);
+        assert!(!once.remember);
     }
 
     #[tokio::test]
