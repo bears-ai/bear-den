@@ -87,3 +87,35 @@ pub(crate) async fn write_json(value: Value) -> Result<()> {
     stdout.flush().await?;
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn routes_matching_response() {
+        let transport = JsonRpcTransport::default();
+        let id = json!("req-test");
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        transport
+            .insert_pending_response_for_test(id.clone(), tx)
+            .await;
+        assert!(
+            transport
+                .route_response(&id, json!({ "id": "req-test", "result": { "ok": true } }))
+                .await
+        );
+        let routed = rx.await.unwrap();
+        assert_eq!(routed["result"]["ok"], true);
+    }
+
+    #[tokio::test]
+    async fn reports_unmatched_response() {
+        let transport = JsonRpcTransport::default();
+        assert!(
+            !transport
+                .route_response(&json!("missing"), json!({ "id": "missing" }))
+                .await
+        );
+    }
+}

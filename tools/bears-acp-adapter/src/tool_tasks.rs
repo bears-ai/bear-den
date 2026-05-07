@@ -72,7 +72,11 @@ impl ToolTaskRegistry {
         );
     }
 
-    pub(crate) async fn remove(&self, session_id: &str, tool_call_id: &str) -> Option<ToolTaskRecord> {
+    pub(crate) async fn remove(
+        &self,
+        session_id: &str,
+        tool_call_id: &str,
+    ) -> Option<ToolTaskRecord> {
         let removed = self
             .tasks
             .lock()
@@ -149,4 +153,33 @@ pub(crate) fn log_tool_task_phase(
         tool_call_id,
         tool_name
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn registry_tracks_phase_and_session_entries() {
+        let registry = ToolTaskRegistry::default();
+        registry
+            .register("session-1", "call-1", "fs_list_directory")
+            .await;
+        registry
+            .set_phase(
+                "session-1",
+                "call-1",
+                "fs_list_directory",
+                ToolTaskPhase::PermissionRequested,
+            )
+            .await;
+        let items = registry.list_for_session("session-1").await;
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].phase, ToolTaskPhase::PermissionRequested);
+        assert_eq!(items[0].tool_name, "fs_list_directory");
+        assert!(items[0].updated_at >= items[0].started_at);
+        let removed = registry.remove("session-1", "call-1").await.unwrap();
+        assert_eq!(removed.tool_call_id, "call-1");
+        assert!(registry.list_for_session("session-1").await.is_empty());
+    }
 }

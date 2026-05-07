@@ -4736,33 +4736,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn json_rpc_transport_routes_matching_response() {
-        let transport = JsonRpcTransport::default();
-        let id = json!("req-test");
-        let (tx, rx) = tokio::sync::oneshot::channel();
-        transport
-            .insert_pending_response_for_test(id.clone(), tx)
-            .await;
-        assert!(
-            transport
-                .route_response(&id, json!({ "id": "req-test", "result": { "ok": true } }))
-                .await
-        );
-        let routed = rx.await.unwrap();
-        assert_eq!(routed["result"]["ok"], true);
-    }
-
-    #[tokio::test]
-    async fn json_rpc_transport_reports_unmatched_response() {
-        let transport = JsonRpcTransport::default();
-        assert!(
-            !transport
-                .route_response(&json!("missing"), json!({ "id": "missing" }))
-                .await
-        );
-    }
-
-    #[tokio::test]
     async fn approval_cache_remembers_persistent_scope() {
         let cache = test_approval_cache("http://den.test", "meta", "zed");
         let context = SessionContext {
@@ -5291,30 +5264,6 @@ mod tests {
         assert!(serialized
             .to_string()
             .contains("Always for docs.example.test:8443"));
-    }
-
-    #[tokio::test]
-    async fn tool_task_registry_tracks_phase_and_session_entries() {
-        let registry = ToolTaskRegistry::default();
-        registry
-            .register("session-1", "call-1", "fs_list_directory")
-            .await;
-        registry
-            .set_phase(
-                "session-1",
-                "call-1",
-                "fs_list_directory",
-                ToolTaskPhase::PermissionRequested,
-            )
-            .await;
-        let items = registry.list_for_session("session-1").await;
-        assert_eq!(items.len(), 1);
-        assert_eq!(items[0].phase, ToolTaskPhase::PermissionRequested);
-        assert_eq!(items[0].tool_name, "fs_list_directory");
-        assert!(items[0].updated_at >= items[0].started_at);
-        let removed = registry.remove("session-1", "call-1").await.unwrap();
-        assert_eq!(removed.tool_call_id, "call-1");
-        assert!(registry.list_for_session("session-1").await.is_empty());
     }
 
     #[test]
