@@ -63,7 +63,7 @@ Give agents, especially `pair`, safe Den-hosted access to Bear memory:
 | `den.memory.write_entry` | `den_memory_write_entry` | `pair` first | Write role-local semantic entries under `pair/`. |
 | `den.memory.status` | `den_memory_status` | `pair` first | Return MemFS health for the current bear/role. |
 
-P0 should retire the existing `den.write_note` / `den_write_note` pair tool and replace it with `den.memory.write_entry` / `den_memory_write_entry`. Backward compatibility is notalias for `den.memory.write_entry` with `kind: note`.
+P0 should retire the existing `den.write_note` / `den_write_note` pair tool and replace it with `den.memory.write_entry` / `den_memory_write_entry`. Backward compatibility is not required.
 
 ### P1 — pair read/search/browse
 
@@ -250,7 +250,7 @@ Do not use title-derived slugs as identity. Optional display slugs can be added 
 
 ## MemFS Manager changes
 
-The existing MemFS Manager has a pair-only role note endpoint. It should evolve rather than be replaced abruptly.
+The existing MemFS Manager has a pair-only role note endpoint. Backward compatibility is not required, so it can be replaced by the role memory-entry endpoint once Den no longer calls it.
 
 ### Existing behavior
 
@@ -258,6 +258,8 @@ The existing MemFS Manager has a pair-only role note endpoint. It should evolve 
 - Writes under `pair/notes/<timestamp>-<slug>.md`.
 - Rejects roles other than pair.
 - Resets/updates role view repos after note writes.
+
+This endpoint should be removed or left unreachable after `den.memory.write_entry` is implemented. Do not keep model-visible compatibility aliases.
 
 ### New endpoints
 
@@ -357,7 +359,8 @@ Extend Den's tool dispatcher:
 Update ACP direct pair descriptors:
 
 - Continue exposing existing client/local tools filtered by adapter capabilities.
-- Continue exposing `den_web_fetch`, `den_web_search`, and compatibility `den_write_note` initially.
+- Continue exposing `den_web_fetch` and `den_web_search` initially.
+- Remove `den_write_note` from ACP pair descriptors when `den_memory_write_entry` is added.
 - Add `den_situation_get`, `den_memory_write_entry`, and `den_memory_status` in P0.
 - Add read/search/tree after MemFS Manager read endpoints are ready.
 
@@ -431,7 +434,7 @@ Deliverables:
 1. Confirm canonical/provider-safe tool names.
 2. Confirm memory entry schema and path conventions.
 3. Add this plan to docs index.
-4. Add tests/docs references for the existing `den_write_note` compatibility behavior.
+4. Add tests/docs references confirming `den_write_note` is retired from model-visible descriptors once `den_memory_write_entry` is available.
 
 ### Slice 1 — pair `den.situation.get`
 
@@ -457,7 +460,7 @@ Deliverables:
 3. Validation of kind, lifecycle, refs, tags, size, and role.
 4. Path generation based on role + kind + entry id.
 5. Markdown/frontmatter writer.
-6. Compatibility path: `den_write_note` maps to `kind: note`.
+6. Remove `den_write_note` provider/canonical mapping from ACP pair exposure and prefer `den_memory_write_entry` for all role-local entries, including notes.
 7. Tests for allowed kinds, denied role, denied arbitrary path, and generated path.
 8. ACP pair prompt guidance update.
 
@@ -537,7 +540,7 @@ Deliverables:
 
 - Den `den.memory.write_entry` writes through MemFS Manager.
 - ACP pair sees and can call memory tools.
-- `den_write_note` compatibility still works.
+- `den_write_note` is no longer advertised once `den_memory_write_entry` is available.
 - Cross-role reads/writes denied.
 - MemFS unavailable returns clear configuration error.
 
@@ -571,6 +574,6 @@ Implement these three tools for `pair` first:
 2. `den_memory_write_entry`
 3. `den_memory_status`
 
-Keep `den_write_note` as compatibility.
+Retire `den_write_note` rather than maintaining compatibility.
 
 This creates a useful pair memory vertical slice while avoiding the harder read/search and promotion work until the write model and situation briefing are proven.
