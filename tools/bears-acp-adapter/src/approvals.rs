@@ -1,4 +1,4 @@
-use crate::{env_bool, session_workspace_roots, RuntimeConfig, SessionContext};
+use crate::{env_bool, paths::session_workspace_roots, RuntimeConfig, SessionContext};
 use agent_client_protocol::schema::{
     PermissionOption, PermissionOptionKind, RequestPermissionOutcome, RequestPermissionResponse,
 };
@@ -244,16 +244,18 @@ impl ApprovalCache {
         let candidate_keys = candidate_scopes
             .into_iter()
             .filter_map(|scope| {
-                approval_scope_fingerprint(context, scope, target_path, target_url).map(|fingerprint| {
-                    Self::key(
-                        &persistence.api_url,
-                        &persistence.bear,
-                        &persistence.client,
-                        permission_class,
-                        scope.as_str(),
-                        &fingerprint,
-                    )
-                })
+                approval_scope_fingerprint(context, scope, target_path, target_url).map(
+                    |fingerprint| {
+                        Self::key(
+                            &persistence.api_url,
+                            &persistence.bear,
+                            &persistence.client,
+                            permission_class,
+                            scope.as_str(),
+                            &fingerprint,
+                        )
+                    },
+                )
             })
             .collect::<Vec<_>>();
         let now = now_secs();
@@ -331,8 +333,12 @@ pub(crate) fn permission_class_for_tool(tool_name: &str) -> &'static str {
     match tool_name {
         "fs_read_text_file" | "fs_list_directory" | "fs_search_files" | "fs_find_paths"
         | "fs_stat" | "fs.read_text_file" | "read_text_file" => "read_files",
-        "fs_replace_text" | "fs_create_text_file" | "fs_create_directory" | "fs_move_path"
-        | "fs_copy_path" | "fs_apply_patch" => "edit_files",
+        "fs_replace_text"
+        | "fs_create_text_file"
+        | "fs_create_directory"
+        | "fs_move_path"
+        | "fs_copy_path"
+        | "fs_apply_patch" => "edit_files",
         "fs_delete_path" => "delete_files",
         "git_status" | "git_diff" | "git_log" | "git_show" | "git_blame" => "git_read",
         "git_add" | "git_restore" | "git_commit" | "git_stash" => "git_write",
@@ -358,8 +364,9 @@ fn approval_scope_fingerprint(
     target_url: Option<&str>,
 ) -> Option<String> {
     match scope {
-        ApprovalScope::Directory => approval_directory_scope(context, target_path)
-            .map(|path| path.display().to_string()),
+        ApprovalScope::Directory => {
+            approval_directory_scope(context, target_path).map(|path| path.display().to_string())
+        }
         ApprovalScope::Workspace => Some(approval_root_fingerprint(context)),
         ApprovalScope::Host => target_url.and_then(approval_url_host_scope),
         ApprovalScope::Global => Some("global".to_string()),
