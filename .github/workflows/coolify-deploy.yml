@@ -3,6 +3,17 @@ name: Coolify deploy
 on:
     push:
         branches: [main]
+        paths:
+            - "docker-compose.yaml"
+            - ".github/workflows/coolify-deploy.yml"
+            - ".github/workflows/den-image.yml"
+            - ".github/workflows/codepool-image.yml"
+            - "services/den/**"
+            - "services/codepool/**"
+            - "services/bifrost/**"
+            - "services/letta/**"
+            - "services/memfs-manager/**"
+            - "services/preflight/**"
     workflow_dispatch:
 
 permissions:
