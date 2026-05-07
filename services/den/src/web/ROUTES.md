@@ -38,7 +38,8 @@ Axum routes for the web server (`RUN_WEB=true`). Update this file when you add o
 - `GET|POST /bear/{slug}/details/edit/configuration` — edit default model, default Letta agent type, and default tool ids for role agents (bear admins)
 - `GET /bear/{slug}/details/access` — manage members (add/remove); bear admins only
 - `GET /bear/{slug}/details/conversations` — all threads including archived (Letta); membership required
-- `GET /bear/{slug}/details/memory` — memory block details from Letta
+- `GET /bear/{slug}/details/memory` — Bear MemFS memory browser for members: role-aware memory overview, path/content search (`role`, `q`), tree browse, selected file inspection (`path`), activity/status summary, and link to runtime memory blocks.
+- `GET /bear/{slug}/details/memory/runtime-blocks` — Letta-native runtime memory blocks by role agent; separated from Bear MemFS memory and expected to trend toward zero blocks.
 - `POST /bear/{slug}/details/delete` — delete bear row (bear admins only); form field `confirm_slug` must match the slug
 - `POST /bear/{slug}/details/members/add` — add or update a user by username (`username`, `role` = `member` or `admin`) — bear admins only
 - `POST /bear/{slug}/details/members/remove` — remove membership (`remove_user_id`) — bear admins only; cannot remove the last admin

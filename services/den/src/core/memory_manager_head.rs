@@ -221,6 +221,8 @@ pub struct MemfsRoleMemoryStatusResponse {
     #[serde(default)]
     pub registered_view_count: usize,
     #[serde(default)]
+    pub recent_activity: serde_json::Value,
+    #[serde(default)]
     pub error: Option<String>,
 }
 

@@ -138,6 +138,7 @@ pub async fn server_with_state(
 ) -> Result<Router, Box<dyn std::error::Error>> {
     let mut env = Environment::new();
     env.add_filter("hexadecimal", filters::hexadecimal);
+    env.add_filter("urlencode", filters::urlencode);
     env.add_filter("markdown", filters::markdown);
     env.add_filter("timeago", filters::time::timeago);
     env.add_filter("humanize_time", filters::time::timeago);

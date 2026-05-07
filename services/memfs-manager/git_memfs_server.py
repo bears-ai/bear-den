@@ -388,6 +388,12 @@ def _memory_status_for_role(bear_id: str, role: str) -> ResponseDict:
             and str(record_obj.get("bear_id")) == bear_id
             and str(record_obj.get("role")) == role
         )
+    recent = [
+        event
+        for event in recent_activity(None, 100)
+        if str(event.get("bear_id") or "") == bear_id
+        and str(event.get("role") or "") == role
+    ][-20:]
     return {
         "ok": True,
         "bear_id": bear_id,
@@ -399,6 +405,7 @@ def _memory_status_for_role(bear_id: str, role: str) -> ResponseDict:
         "file_count": len(files),
         "entry_count_by_kind": by_kind,
         "registered_view_count": view_count,
+        "recent_activity": recent,
     }
 
 
@@ -467,6 +474,11 @@ def _snippet_for_match(content: str, query: str, max_len: int = 240) -> str:
     return snippet[: max_len + 6]
 
 
+def _snippet_for_path_match(path: str, max_len: int = 240) -> str:
+    snippet = f"Path: {path}"
+    return snippet[:max_len]
+
+
 def _memory_search_response(
     bear_id: str, role: str, query: str, limit: int
 ) -> ResponseDict:
@@ -480,31 +492,42 @@ def _memory_search_response(
     files = _bounded_role_memory_files(canonical, role)
     results: list[ResponseDict] = []
     scanned = 0
+    query_lower = query.lower()
     for path in files:
         if len(results) >= limit:
             break
+        path_score = path.lower().count(query_lower)
+        content = ""
+        content_score = 0
         try:
             size = _git_blob_size(canonical, role, path)
-            if size > MEMORY_SEARCH_FILE_MAX_BYTES:
-                continue
-            content = _git_show_text(
-                canonical, role, path, MEMORY_SEARCH_FILE_MAX_BYTES
-            )
+            if size <= MEMORY_SEARCH_FILE_MAX_BYTES:
+                content = _git_show_text(
+                    canonical, role, path, MEMORY_SEARCH_FILE_MAX_BYTES
+                )
+                scanned += 1
+                content_score = content.lower().count(query_lower)
         except (FileNotFoundError, ValueError):
             continue
-        scanned += 1
-        lower = content.lower()
-        score = lower.count(query.lower())
+        score = path_score + content_score
         if score <= 0:
             continue
         results.append(
             {
                 "path": path,
-                "title": _extract_frontmatter_string(content, "title"),
-                "kind": _extract_frontmatter_string(content, "kind"),
-                "entry_id": _extract_frontmatter_string(content, "entry_id"),
+                "title": _extract_frontmatter_string(content, "title")
+                if content
+                else None,
+                "kind": _extract_frontmatter_string(content, "kind")
+                if content
+                else None,
+                "entry_id": _extract_frontmatter_string(content, "entry_id")
+                if content
+                else None,
                 "score": score,
-                "snippet": _snippet_for_match(content, query),
+                "snippet": _snippet_for_match(content, query)
+                if content_score > 0
+                else _snippet_for_path_match(path),
                 "size_bytes": size,
             }
         )

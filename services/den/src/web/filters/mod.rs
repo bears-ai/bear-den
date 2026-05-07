@@ -12,6 +12,13 @@ pub fn hexadecimal(value: Value) -> String {
     }
 }
 
+pub fn urlencode(value: Value) -> String {
+    value
+        .as_str()
+        .map(|s| urlencoding::encode(s).into_owned())
+        .unwrap_or_default()
+}
+
 pub fn markdown(value: Value) -> Value {
     if let Some(markdown) = value.as_str() {
         let md_parser = Parser::new_ext(markdown, Options::all());

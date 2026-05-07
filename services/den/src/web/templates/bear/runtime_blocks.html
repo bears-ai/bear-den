@@ -1,0 +1,72 @@
+{% extends "base.html" %} {% block title %}Runtime memory blocks · {{ bear.name
+| e }}{% endblock %} {% block content %}
+<section>
+    <h2>Runtime memory blocks</h2>
+    <p>
+        <a href="/bear/{{ bear.slug | e }}/details/memory"
+            >Back to Bear memory</a
+        >
+    </p>
+    <p class="form-hint">
+        Runtime memory blocks are Letta-native state attached to role agents.
+        They are separate from Bear MemFS memory files. Long term, this count
+        should be 0 for most Bears.
+    </p>
+
+    {% if not letta_configured %}
+    <p class="form-hint">Letta is not configured.</p>
+    {% endif %} {% for row in runtime_block_rows %}
+    <section class="box full-width">
+        <h3>{{ row.role | e }} — {{ row.label | e }}</h3>
+        <p>
+            {% if row.letta_agent_id %}<code>{{ row.letta_agent_id | e }}</code
+            >{% else %}<em>No Letta agent linked.</em>{% endif %} · Runtime
+            blocks: {{ row.block_count }}
+        </p>
+        {% if row.error %}
+        <p class="form-errors">
+            Could not load role agent from Letta: {{ row.error | e }}
+        </p>
+        {% elif row.diagnostics and row.diagnostics.blocks and
+        row.diagnostics.blocks | length > 0 %}
+        <div class="den-letta-memory-blocks">
+            {% for b in row.diagnostics.blocks %}
+            <details class="den-letta-memory-block">
+                <summary class="den-letta-memory-block-summary">
+                    {% if b.label %}<span class="den-letta-memory-block-label"
+                        ><strong>{{ b.label | e }}</strong></span
+                    >{% else %}<span class="den-letta-memory-block-label"
+                        ><em>(no label)</em></span
+                    >{% endif %} {% if b.id %}<span
+                        class="den-letta-memory-block-id"
+                        ><code>{{ b.id | e }}</code></span
+                    >{% endif %} {% if b.char_count %}<span
+                        class="den-letta-memory-block-meta"
+                        >~{{ b.char_count }} chars</span
+                    >{% endif %}
+                </summary>
+                <div class="den-letta-memory-block-body">
+                    {% if b.content %}
+                    <pre class="den-letta-memory-block-pre">
+{{ b.content | e }}</pre
+                    >
+                    {% else %}
+                    <p class="form-hint">
+                        <em>No value in the Letta payload for this block.</em>
+                    </p>
+                    {% endif %}
+                </div>
+            </details>
+            {% endfor %}
+        </div>
+        {% else %}
+        <p class="form-hint">
+            No runtime memory blocks reported for this role.
+        </p>
+        {% endif %}
+    </section>
+    {% else %}
+    <p class="form-hint">No role agents found for this Bear.</p>
+    {% endfor %}
+</section>
+{% endblock %}
