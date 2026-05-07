@@ -1025,6 +1025,169 @@ async fn acp_replace_text_tool_request_round_trips_result_to_letta() {
 }
 
 #[tokio::test]
+async fn acp_create_text_file_tool_request_round_trips_result_to_letta() {
+    let fixture = test_app().await;
+    let user_bear = create_test_user_bear(&fixture.pool, true).await;
+    fixture.letta_script.lock().await.extend([
+        format!(
+            "{}{}",
+            letta_tool_request_sse(
+                "fs_create_text_file",
+                "call-create-e2e",
+                json!({
+                    "path": "/tmp/acp-workspace/new.txt",
+                    "content": "hello\n",
+                    "create_parent_dirs": false
+                })
+            ),
+            letta_stop_sse()
+        ),
+        "data: {\"message_type\":\"assistant_message\",\"content\":\"create complete\"}\n\n\
+         data: {\"message_type\":\"stop_reason\",\"stop_reason\":\"end_turn\"}\n\n"
+            .to_string(),
+    ]);
+
+    let app_for_prompt = fixture.app.clone();
+    let slug = user_bear.bear_slug.clone();
+    let token = user_bear.raw_token.clone();
+    let prompt_task = tokio::spawn(async move {
+        post_prompt(
+            app_for_prompt,
+            &slug,
+            "session-create-e2e",
+            Some(&token),
+            json!({ "message": "create file", "client": "zed" }),
+        )
+        .await
+    });
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    let result = post_tool_result(
+        fixture.app.clone(),
+        &user_bear.bear_slug,
+        "session-create-e2e",
+        "call-create-e2e",
+        Some(&user_bear.raw_token),
+        json!({
+            "tool_call_id": "call-create-e2e",
+            "tool_name": "fs_create_text_file",
+            "approval_request_id": "approval-call-create-e2e",
+            "status": "ok",
+            "content": "Created text file /tmp/acp-workspace/new.txt (6 bytes)",
+            "structured_content": {
+                "path": "/tmp/acp-workspace/new.txt",
+                "created": true,
+                "bytes": 6
+            },
+            "diagnostic": { "source": "test" }
+        }),
+    )
+    .await;
+    assert_eq!(result.status(), StatusCode::OK);
+    let result_json: Value = serde_json::from_str(&response_text(result).await).unwrap();
+    assert_eq!(result_json["accepted"], true);
+
+    let prompt = prompt_task.await.unwrap();
+    assert_eq!(prompt.status(), StatusCode::OK);
+    let text = response_text(prompt).await;
+    assert!(text.contains("fs_create_text_file"));
+    assert!(text.contains("\"risk\":\"writes_workspace\""));
+    assert!(text.contains("\"create_files\":true"));
+    assert!(text.contains("create complete"));
+
+    let requests = fixture.letta_requests.lock().await.clone();
+    assert_eq!(requests.len(), 2);
+    assert_eq!(
+        requests[1]["messages"][0]["approvals"][0]["tool_call_id"],
+        "call-create-e2e"
+    );
+    assert_eq!(
+        requests[1]["messages"][0]["approvals"][0]["status"],
+        "success"
+    );
+}
+
+#[tokio::test]
+async fn acp_delete_path_tool_request_round_trips_result_to_letta() {
+    let fixture = test_app().await;
+    let user_bear = create_test_user_bear(&fixture.pool, true).await;
+    fixture.letta_script.lock().await.extend([
+        format!(
+            "{}{}",
+            letta_tool_request_sse(
+                "fs_delete_path",
+                "call-delete-e2e",
+                json!({
+                    "path": "/tmp/acp-workspace/old.txt",
+                    "expected_kind": "file"
+                })
+            ),
+            letta_stop_sse()
+        ),
+        "data: {\"message_type\":\"assistant_message\",\"content\":\"delete complete\"}\n\n\
+         data: {\"message_type\":\"stop_reason\",\"stop_reason\":\"end_turn\"}\n\n"
+            .to_string(),
+    ]);
+
+    let app_for_prompt = fixture.app.clone();
+    let slug = user_bear.bear_slug.clone();
+    let token = user_bear.raw_token.clone();
+    let prompt_task = tokio::spawn(async move {
+        post_prompt(
+            app_for_prompt,
+            &slug,
+            "session-delete-e2e",
+            Some(&token),
+            json!({ "message": "delete file", "client": "zed" }),
+        )
+        .await
+    });
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    let result = post_tool_result(
+        fixture.app.clone(),
+        &user_bear.bear_slug,
+        "session-delete-e2e",
+        "call-delete-e2e",
+        Some(&user_bear.raw_token),
+        json!({
+            "tool_call_id": "call-delete-e2e",
+            "tool_name": "fs_delete_path",
+            "approval_request_id": "approval-call-delete-e2e",
+            "status": "ok",
+            "content": "Deleted file /tmp/acp-workspace/old.txt",
+            "structured_content": {
+                "path": "/tmp/acp-workspace/old.txt",
+                "deleted": true,
+                "kind": "file"
+            },
+            "diagnostic": { "source": "test" }
+        }),
+    )
+    .await;
+    assert_eq!(result.status(), StatusCode::OK);
+    let result_json: Value = serde_json::from_str(&response_text(result).await).unwrap();
+    assert_eq!(result_json["accepted"], true);
+
+    let prompt = prompt_task.await.unwrap();
+    assert_eq!(prompt.status(), StatusCode::OK);
+    let text = response_text(prompt).await;
+    assert!(text.contains("fs_delete_path"));
+    assert!(text.contains("\"risk\":\"deletes_workspace\""));
+    assert!(text.contains("\"max_entries\":100"));
+    assert!(text.contains("delete complete"));
+
+    let requests = fixture.letta_requests.lock().await.clone();
+    assert_eq!(requests.len(), 2);
+    assert_eq!(
+        requests[1]["messages"][0]["approvals"][0]["tool_call_id"],
+        "call-delete-e2e"
+    );
+    assert_eq!(
+        requests[1]["messages"][0]["approvals"][0]["status"],
+        "success"
+    );
+}
+
+#[tokio::test]
 async fn acp_tool_malformed_args_surface_error_without_registration() {
     let fixture = test_app().await;
     let user_bear = create_test_user_bear(&fixture.pool, true).await;

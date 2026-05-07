@@ -363,10 +363,15 @@ fn approval_cache_path() -> PathBuf {
 
 fn permission_class_for_tool(tool_name: &str) -> &'static str {
     match tool_name {
-        "fs_read_text_file" | "fs_list_directory" | "fs_search_files" | "fs.read_text_file"
-        | "read_text_file" => "read_files",
-        "fs_replace_text" | "fs_create_text_file" => "edit_files",
+        "fs_read_text_file" | "fs_list_directory" | "fs_search_files" | "fs_find_paths"
+        | "fs_stat" | "fs.read_text_file" | "read_text_file" => "read_files",
+        "fs_replace_text" | "fs_create_text_file" | "fs_create_directory" | "fs_move_path"
+        | "fs_copy_path" | "fs_apply_patch" => "edit_files",
         "fs_delete_path" => "delete_files",
+        "git_status" | "git_diff" | "git_log" | "git_show" | "git_blame" => "git_read",
+        "git_add" | "git_restore" | "git_commit" | "git_stash" => "git_write",
+        "process_run" => "command_run",
+        "web_search" | "web_fetch" | "http_request" => "network",
         _ => "local_files",
     }
 }
@@ -4997,6 +5002,33 @@ async fn request_tool_permission(
     meta.insert("risk".to_string(), json!(policy.risk()));
     meta.insert("operation".to_string(), json!(display.permission_operation));
     let tool_call = ToolCallUpdate::new(tool_call_id.to_string(), fields).meta(Some(meta.clone()));
+    let options = permission_options_for_context(context, target_path);
+    let request = RequestPermissionRequest::new(session_id.to_string(), tool_call, options)
+        .meta(Some(meta));
+    let response = adapter_state
+        .transport
+        .request(
+            "session/request_permission",
+            serde_json::to_value(request)?,
+            std::time::Duration::from_millis(policy.permission_timeout_ms.unwrap_or(120_000)),
+        )
+        .await?;
+    if let Some(error) = response.get("error") {
+        return Err(anyhow!("permission request failed: {error}"));
+    }
+    let result = response.get("result").cloned().unwrap_or(Value::Null);
+    let decision = parse_permission_decision(&result)?;
+    if decision.approved {
+        Ok(decision)
+    } else {
+        Err(anyhow!("permission denied for {tool_name} on {path}"))
+    }
+}
+
+fn permission_options_for_context(
+    context: Option<&SessionContext>,
+    target_path: Option<&Path>,
+) -> Vec<PermissionOption> {
     let mut options = vec![PermissionOption::new(
         "allow_once",
         "Only this time",
@@ -5026,26 +5058,12 @@ async fn request_tool_permission(
         "Deny",
         PermissionOptionKind::RejectOnce,
     ));
-    let request = RequestPermissionRequest::new(session_id.to_string(), tool_call, options)
-        .meta(Some(meta));
-    let response = adapter_state
-        .transport
-        .request(
-            "session/request_permission",
-            serde_json::to_value(request)?,
-            std::time::Duration::from_millis(policy.permission_timeout_ms.unwrap_or(120_000)),
-        )
-        .await?;
-    if let Some(error) = response.get("error") {
-        return Err(anyhow!("permission request failed: {error}"));
-    }
-    let result = response.get("result").cloned().unwrap_or(Value::Null);
-    let decision = parse_permission_decision(&result)?;
-    if decision.approved {
-        Ok(decision)
-    } else {
-        Err(anyhow!("permission denied for {tool_name} on {path}"))
-    }
+    options.push(PermissionOption::new(
+        "reject_always",
+        "Always deny",
+        PermissionOptionKind::RejectAlways,
+    ));
+    options
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -5514,6 +5532,19 @@ mod tests {
             },
         );
         state
+    }
+
+    fn test_approval_cache(api_url: &str, bear: &str, client: &str) -> ApprovalCache {
+        ApprovalCache {
+            entries: Arc::new(TokioMutex::new(HashMap::new())),
+            persistence: Some(ApprovalPersistence {
+                path: env::temp_dir()
+                    .join(format!("bears-acp-approval-test-{}.json", Uuid::new_v4())),
+                api_url: api_url.to_string(),
+                bear: bear.to_string(),
+                client: client.to_string(),
+            }),
+        }
     }
 
     #[test]
@@ -6058,16 +6089,7 @@ mod tests {
 
     #[tokio::test]
     async fn approval_cache_remembers_persistent_scope() {
-        let cache = ApprovalCache {
-            entries: Arc::new(TokioMutex::new(HashMap::new())),
-            persistence: Some(ApprovalPersistence {
-                path: env::temp_dir()
-                    .join(format!("bears-acp-approval-test-{}.json", Uuid::new_v4())),
-                api_url: "http://den.test".to_string(),
-                bear: "meta".to_string(),
-                client: "zed".to_string(),
-            }),
-        };
+        let cache = test_approval_cache("http://den.test", "meta", "zed");
         let context = SessionContext {
             cwd: "/workspace".to_string(),
             roots: vec!["/workspace".to_string()],
@@ -6099,6 +6121,179 @@ mod tests {
         assert!(cache
             .is_allowed(&context, "fs_read_text_file", Some(target))
             .await);
+    }
+
+    #[test]
+    fn permission_classes_cover_current_and_planned_tool_families() {
+        for tool in [
+            "fs_read_text_file",
+            "fs_list_directory",
+            "fs_search_files",
+            "fs_find_paths",
+            "fs_stat",
+        ] {
+            assert_eq!(permission_class_for_tool(tool), "read_files", "{tool}");
+        }
+        for tool in [
+            "fs_replace_text",
+            "fs_create_text_file",
+            "fs_create_directory",
+            "fs_move_path",
+            "fs_copy_path",
+            "fs_apply_patch",
+        ] {
+            assert_eq!(permission_class_for_tool(tool), "edit_files", "{tool}");
+        }
+        assert_eq!(permission_class_for_tool("fs_delete_path"), "delete_files");
+        for tool in ["git_status", "git_diff", "git_log", "git_show", "git_blame"] {
+            assert_eq!(permission_class_for_tool(tool), "git_read", "{tool}");
+        }
+        for tool in ["git_add", "git_restore", "git_commit", "git_stash"] {
+            assert_eq!(permission_class_for_tool(tool), "git_write", "{tool}");
+        }
+        assert_eq!(permission_class_for_tool("process_run"), "command_run");
+        assert_eq!(permission_class_for_tool("web_fetch"), "network");
+    }
+
+    #[tokio::test]
+    async fn approval_cache_workspace_scope_is_isolated_by_identity_and_permission_class() {
+        let context = SessionContext {
+            cwd: "/workspace".to_string(),
+            roots: vec!["/workspace".to_string()],
+            ..Default::default()
+        };
+        let target = Path::new("/workspace/src/main.rs");
+        let cache = test_approval_cache("http://den.test", "meta", "zed");
+        cache
+            .remember(
+                &context,
+                "fs_list_directory",
+                "read_only",
+                ApprovalScope::Workspace,
+                Some(target),
+            )
+            .await;
+
+        assert!(cache
+            .is_allowed(&context, "fs_find_paths", Some(Path::new("/workspace/tests/t.rs")))
+            .await);
+        assert!(!cache
+            .is_allowed(&context, "fs_create_text_file", Some(target))
+            .await);
+        assert!(!cache
+            .is_allowed(&context, "git_status", Some(target))
+            .await);
+
+        let entries = cache.entries.lock().await.clone();
+        let other_bear_cache = test_approval_cache("http://den.test", "other", "zed");
+        *other_bear_cache.entries.lock().await = entries.clone();
+        assert!(!other_bear_cache
+            .is_allowed(&context, "fs_read_text_file", Some(target))
+            .await);
+
+        let other_client_cache = test_approval_cache("http://den.test", "meta", "other-client");
+        *other_client_cache.entries.lock().await = entries;
+        assert!(!other_client_cache
+            .is_allowed(&context, "fs_read_text_file", Some(target))
+            .await);
+    }
+
+    #[tokio::test]
+    async fn approval_cache_directory_scope_does_not_leak_to_sibling_directories() {
+        let cache = test_approval_cache("http://den.test", "meta", "zed");
+        let context = SessionContext {
+            cwd: "/workspace".to_string(),
+            roots: vec!["/workspace".to_string()],
+            ..Default::default()
+        };
+        cache
+            .remember(
+                &context,
+                "fs_read_text_file",
+                "read_only",
+                ApprovalScope::Directory,
+                Some(Path::new("/workspace/src/main.rs")),
+            )
+            .await;
+        assert!(cache
+            .is_allowed(&context, "fs_search_files", Some(Path::new("/workspace/src/lib.rs")))
+            .await);
+        assert!(!cache
+            .is_allowed(&context, "fs_search_files", Some(Path::new("/workspace/tests/lib.rs")))
+            .await);
+    }
+
+    #[tokio::test]
+    async fn approval_cache_global_scope_crosses_workspace_roots_for_same_identity_and_class() {
+        let cache = test_approval_cache("http://den.test", "meta", "zed");
+        let first_context = SessionContext {
+            cwd: "/workspace-one".to_string(),
+            roots: vec!["/workspace-one".to_string()],
+            ..Default::default()
+        };
+        let second_context = SessionContext {
+            cwd: "/workspace-two".to_string(),
+            roots: vec!["/workspace-two".to_string()],
+            ..Default::default()
+        };
+        cache
+            .remember(
+                &first_context,
+                "git_status",
+                "read_only",
+                ApprovalScope::Global,
+                Some(Path::new("/workspace-one")),
+            )
+            .await;
+        assert!(cache
+            .is_allowed(&second_context, "git_diff", Some(Path::new("/workspace-two")))
+            .await);
+        assert!(!cache
+            .is_allowed(&second_context, "git_commit", Some(Path::new("/workspace-two")))
+            .await);
+    }
+
+    #[tokio::test]
+    async fn approval_cache_prunes_expired_records_on_lookup() {
+        let cache = test_approval_cache("http://den.test", "meta", "zed");
+        let context = SessionContext {
+            cwd: "/workspace".to_string(),
+            roots: vec!["/workspace".to_string()],
+            ..Default::default()
+        };
+        let fingerprint = approval_root_fingerprint(&context);
+        let key = ApprovalCache::key(
+            "http://den.test",
+            "meta",
+            "zed",
+            "read_files",
+            ApprovalScope::Workspace.as_str(),
+            &fingerprint,
+        );
+        cache.entries.lock().await.insert(
+            key,
+            ApprovalRecord {
+                api_url: "http://den.test".to_string(),
+                bear: "meta".to_string(),
+                client: "zed".to_string(),
+                tool_name: "fs_read_text_file".to_string(),
+                permission_class: "read_files".to_string(),
+                root_fingerprint: fingerprint.clone(),
+                scope_kind: ApprovalScope::Workspace.as_str().to_string(),
+                scope_fingerprint: fingerprint,
+                risk: "read_only".to_string(),
+                created_at_secs: 1,
+                expires_at_secs: 1,
+            },
+        );
+        assert!(!cache
+            .is_allowed(
+                &context,
+                "fs_read_text_file",
+                Some(Path::new("/workspace/src/main.rs"))
+            )
+            .await);
+        assert!(cache.entries.lock().await.is_empty());
     }
 
     #[test]
@@ -6153,6 +6348,74 @@ mod tests {
         let once = permission_decision_from_option_id("allow_once");
         assert!(once.approved);
         assert!(!once.remember);
+    }
+
+    #[test]
+    fn permission_options_include_once_scoped_always_and_reject_choices() {
+        let context = SessionContext {
+            cwd: "/workspace".to_string(),
+            roots: vec!["/workspace".to_string()],
+            ..Default::default()
+        };
+        let options = permission_options_for_context(
+            Some(&context),
+            Some(Path::new("/workspace/src/main.rs")),
+        );
+        let serialized = serde_json::to_value(&options).unwrap();
+        let option_ids = serialized
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|option| option["optionId"].as_str().unwrap().to_string())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            option_ids,
+            vec![
+                "allow_once",
+                "allow_directory",
+                "allow_workspace",
+                "allow_global",
+                "reject_once",
+                "reject_always",
+            ]
+        );
+        assert!(serialized
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|option| option["kind"] == "allow_always"));
+        assert!(serialized
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|option| option["kind"] == "reject_always"));
+    }
+
+    #[test]
+    fn permission_options_omit_directory_scope_for_workspace_root_target() {
+        let context = SessionContext {
+            cwd: "/workspace".to_string(),
+            roots: vec!["/workspace".to_string()],
+            ..Default::default()
+        };
+        let options = permission_options_for_context(Some(&context), Some(Path::new("/workspace")));
+        let serialized = serde_json::to_value(&options).unwrap();
+        let option_ids = serialized
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|option| option["optionId"].as_str().unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            option_ids,
+            vec![
+                "allow_once",
+                "allow_workspace",
+                "allow_global",
+                "reject_once",
+                "reject_always",
+            ]
+        );
     }
 
     #[tokio::test]

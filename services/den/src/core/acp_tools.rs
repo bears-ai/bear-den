@@ -813,4 +813,53 @@ mod tests {
         assert_eq!(delete_policy["max_entries"], 100);
         assert_eq!(delete_policy["deny_hidden_paths"], true);
     }
+
+    #[test]
+    fn all_advertised_tools_require_approval_and_adapter_path_containment() {
+        for tool in AcpToolName::all() {
+            let descriptor = tool.descriptor();
+            let policy = acp_tool_policy(*tool).to_json(descriptor);
+            assert_eq!(policy["approval_required"], true, "{}", descriptor.provider_name);
+            assert_eq!(
+                policy["path_containment"],
+                "adapter_enforced_absolute_path_under_allowed_roots",
+                "{}",
+                descriptor.provider_name
+            );
+            assert_eq!(
+                policy["allowed_roots_basis"],
+                "acp_session.workspace_roots",
+                "{}",
+                descriptor.provider_name
+            );
+            assert!(
+                policy["permission_timeout_ms"].as_u64().unwrap() <= policy["total_timeout_ms"].as_u64().unwrap(),
+                "permission timeout must fit inside tool timeout for {}",
+                descriptor.provider_name
+            );
+        }
+    }
+
+    #[test]
+    fn mutating_tools_deny_sensitive_and_hidden_paths_by_policy() {
+        for name in ["fs_replace_text", "fs_create_text_file", "fs_delete_path"] {
+            let policy = acp_tool_policy_json_for_provider(name);
+            assert_eq!(policy["sensitive_path_policy"], "deny_sensitive_paths", "{name}");
+            assert_eq!(policy["deny_hidden_paths"], true, "{name}");
+            assert!(
+                matches!(policy["risk"].as_str(), Some("writes_workspace" | "deletes_workspace")),
+                "{name} must have mutating risk"
+            );
+        }
+    }
+
+    #[test]
+    fn descriptor_schemas_keep_search_query_optional_for_path_discovery() {
+        let descriptor = acp_client_tool_descriptor(&ACP_SEARCH_FILES_TOOL);
+        let required = descriptor["parameters"]["required"].as_array().unwrap();
+        assert_eq!(required, &vec![json!("path")]);
+        assert!(descriptor["parameters"]["properties"].get("pattern").is_some());
+        assert!(descriptor["parameters"]["properties"].get("extensions").is_some());
+        assert!(descriptor["parameters"]["properties"].get("case_sensitive").is_some());
+    }
 }
