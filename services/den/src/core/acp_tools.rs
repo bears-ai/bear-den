@@ -32,6 +32,8 @@ pub enum AcpToolName {
     DeletePath,
     GitStatus,
     GitDiff,
+    GitLog,
+    GitShow,
 }
 
 impl AcpToolName {
@@ -51,6 +53,8 @@ impl AcpToolName {
             Self::DeletePath => &ACP_DELETE_PATH_TOOL,
             Self::GitStatus => &ACP_GIT_STATUS_TOOL,
             Self::GitDiff => &ACP_GIT_DIFF_TOOL,
+            Self::GitLog => &ACP_GIT_LOG_TOOL,
+            Self::GitShow => &ACP_GIT_SHOW_TOOL,
         }
     }
 
@@ -70,6 +74,8 @@ impl AcpToolName {
             Self::DeletePath,
             Self::GitStatus,
             Self::GitDiff,
+            Self::GitLog,
+            Self::GitShow,
         ]
     }
 
@@ -106,7 +112,8 @@ impl AcpToolName {
             Self::CreateDirectory | Self::DeletePath => &["path"],
             Self::MovePath | Self::CopyPath => &["source_path", "destination_path"],
             Self::ApplyPatch => &["patch"],
-            Self::GitStatus | Self::GitDiff => &[],
+            Self::GitStatus | Self::GitDiff | Self::GitLog => &[],
+            Self::GitShow => &["revision"],
         }
     }
 
@@ -157,6 +164,8 @@ impl AcpToolName {
                 Some(Self::GitStatus)
             }
             "bears/git_diff" | "git/diff" | "git.diff" | "git_diff" => Some(Self::GitDiff),
+            "bears/git_log" | "git/log" | "git.log" | "git_log" => Some(Self::GitLog),
+            "bears/git_show" | "git/show" | "git.show" | "git_show" => Some(Self::GitShow),
             _ => None,
         }
     }
@@ -418,6 +427,26 @@ pub const ACP_GIT_DIFF_TOOL: AcpToolDescriptor = AcpToolDescriptor {
     adapter_method: "bears/git_diff",
     client_method: "git/diff",
     title: "Git diff",
+    kind: "read",
+    risk: "read_only",
+};
+
+pub const ACP_GIT_LOG_TOOL: AcpToolDescriptor = AcpToolDescriptor {
+    provider_name: "git_log",
+    canonical_name: "acp.git.log",
+    adapter_method: "bears/git_log",
+    client_method: "git/log",
+    title: "Git log",
+    kind: "read",
+    risk: "read_only",
+};
+
+pub const ACP_GIT_SHOW_TOOL: AcpToolDescriptor = AcpToolDescriptor {
+    provider_name: "git_show",
+    canonical_name: "acp.git.show",
+    adapter_method: "bears/git_show",
+    client_method: "git/show",
+    title: "Git show",
     kind: "read",
     risk: "read_only",
 };
@@ -723,6 +752,48 @@ const ACP_GIT_DIFF_POLICY: AcpToolPolicy = AcpToolPolicy {
     permission_timeout_ms: 120_000,
 };
 
+const ACP_GIT_LOG_POLICY: AcpToolPolicy = AcpToolPolicy {
+    scope_basis: "acp:tools",
+    role_basis: "pair_agent",
+    allowed_roots_basis: "acp_session.workspace_roots",
+    path_containment: "adapter_enforced_absolute_path_under_allowed_roots",
+    approval_required: true,
+    sensitive_path_policy: "client_permission_required",
+    max_lines: None,
+    max_entries: None,
+    max_results: Some(100),
+    max_bytes: Some(262_144),
+    recursive_default: None,
+    include_hidden_default: None,
+    max_replacements: None,
+    create_files: None,
+    allow_multiple: None,
+    deny_hidden_paths: None,
+    total_timeout_ms: 150_000,
+    permission_timeout_ms: 120_000,
+};
+
+const ACP_GIT_SHOW_POLICY: AcpToolPolicy = AcpToolPolicy {
+    scope_basis: "acp:tools",
+    role_basis: "pair_agent",
+    allowed_roots_basis: "acp_session.workspace_roots",
+    path_containment: "adapter_enforced_absolute_path_under_allowed_roots",
+    approval_required: true,
+    sensitive_path_policy: "client_permission_required",
+    max_lines: None,
+    max_entries: None,
+    max_results: None,
+    max_bytes: Some(262_144),
+    recursive_default: None,
+    include_hidden_default: None,
+    max_replacements: None,
+    create_files: None,
+    allow_multiple: None,
+    deny_hidden_paths: None,
+    total_timeout_ms: 150_000,
+    permission_timeout_ms: 120_000,
+};
+
 pub fn acp_tool_policy(tool: AcpToolName) -> AcpToolPolicy {
     match tool {
         AcpToolName::ReadTextFile => ACP_READ_TEXT_FILE_POLICY,
@@ -739,6 +810,8 @@ pub fn acp_tool_policy(tool: AcpToolName) -> AcpToolPolicy {
         AcpToolName::DeletePath => ACP_DELETE_PATH_POLICY,
         AcpToolName::GitStatus => ACP_GIT_STATUS_POLICY,
         AcpToolName::GitDiff => ACP_GIT_DIFF_POLICY,
+        AcpToolName::GitLog => ACP_GIT_LOG_POLICY,
+        AcpToolName::GitShow => ACP_GIT_SHOW_POLICY,
     }
 }
 
@@ -1129,6 +1202,39 @@ pub fn acp_client_tool_descriptor(tool: &AcpToolDescriptor) -> serde_json::Value
                 "required": []
             }
         }),
+        "git_log" => json!({
+            "name": tool.provider_name,
+            "description": format!(
+                "ACP local workspace tool ({}, target={}, adapter={}, client={}, kind={}, risk={}). Returns a bounded git commit log for a workspace repository through the local adapter.",
+                tool.canonical_name, "acp_client", tool.adapter_method, tool.client_method, tool.kind, tool.risk,
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "repo_path": { "type": "string", "description": "Optional absolute path under the workspace. Defaults to the workspace root." },
+                    "max_count": { "type": "integer", "minimum": 1, "maximum": 100, "description": "Maximum commits to return." },
+                    "paths": { "type": "array", "items": { "type": "string" }, "description": "Optional paths under the repository to limit the log." }
+                },
+                "required": []
+            }
+        }),
+        "git_show" => json!({
+            "name": tool.provider_name,
+            "description": format!(
+                "ACP local workspace tool ({}, target={}, adapter={}, client={}, kind={}, risk={}). Shows a bounded git revision or file at revision for a workspace repository through the local adapter.",
+                tool.canonical_name, "acp_client", tool.adapter_method, tool.client_method, tool.kind, tool.risk,
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "repo_path": { "type": "string", "description": "Optional absolute path under the workspace. Defaults to the workspace root." },
+                    "revision": { "type": "string", "description": "Git revision, such as HEAD or a commit SHA." },
+                    "path": { "type": "string", "description": "Optional path under the repository to show at the revision." },
+                    "max_bytes": { "type": "integer", "minimum": 1, "maximum": 262144, "description": "Maximum output bytes to return." }
+                },
+                "required": ["revision"]
+            }
+        }),
         _ => unreachable!("unknown ACP tool descriptor: {}", tool.provider_name),
     }
 }
@@ -1207,6 +1313,8 @@ mod tests {
                     "fs_stat": { "supported": true, "version": 1 },
                     "git_status": { "supported": true, "version": 1 },
                     "git_diff": { "supported": true, "version": 1 },
+                    "git_log": { "supported": true, "version": 1 },
+                    "git_show": { "supported": true, "version": 1 },
                     "fs_replace_text": { "supported": true, "version": 1 },
                     "fs_create_text_file": { "supported": true, "version": 1 },
                     "fs_create_directory": { "supported": true, "version": 1 },
@@ -1233,7 +1341,9 @@ mod tests {
                 "fs_move_path",
                 "fs_delete_path",
                 "git_status",
-                "git_diff"
+                "git_diff",
+                "git_log",
+                "git_show"
             ]
         );
     }
@@ -1289,6 +1399,15 @@ mod tests {
         let git_diff_policy = acp_tool_policy_json_for_provider("git_diff");
         assert_eq!(git_diff_policy["risk"], "read_only");
         assert_eq!(git_diff_policy["max_bytes"], 262_144);
+
+        let git_log_policy = acp_tool_policy_json_for_provider("git_log");
+        assert_eq!(git_log_policy["risk"], "read_only");
+        assert_eq!(git_log_policy["max_results"], 100);
+        assert_eq!(git_log_policy["max_bytes"], 262_144);
+
+        let git_show_policy = acp_tool_policy_json_for_provider("git_show");
+        assert_eq!(git_show_policy["risk"], "read_only");
+        assert_eq!(git_show_policy["max_bytes"], 262_144);
 
         let replace_policy = acp_tool_policy_json_for_provider("fs_replace_text");
         assert_eq!(replace_policy["risk"], "writes_workspace");
@@ -1427,6 +1546,16 @@ mod tests {
         assert_eq!(git_diff["parameters"]["required"], json!([]));
         assert!(git_diff["parameters"]["properties"].get("paths").is_some());
         assert!(git_diff["parameters"]["properties"].get("staged").is_some());
+
+        let git_log = acp_client_tool_descriptor(&ACP_GIT_LOG_TOOL);
+        assert_eq!(git_log["parameters"]["required"], json!([]));
+        assert!(git_log["parameters"]["properties"].get("max_count").is_some());
+        assert!(git_log["parameters"]["properties"].get("paths").is_some());
+
+        let git_show = acp_client_tool_descriptor(&ACP_GIT_SHOW_TOOL);
+        assert_eq!(git_show["parameters"]["required"], json!(["revision"]));
+        assert!(git_show["parameters"]["properties"].get("path").is_some());
+        assert!(git_show["parameters"]["properties"].get("max_bytes").is_some());
     }
 
     #[test]

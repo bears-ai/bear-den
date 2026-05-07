@@ -89,6 +89,95 @@ pub(crate) async fn handle_git_diff(
     }))
 }
 
+pub(crate) async fn handle_git_log(
+    context: &SessionContext,
+    args: &Value,
+    policy: &ToolPolicy,
+) -> Result<Value> {
+    let repo = git_repo_path_from_args(context, args)?;
+    let policy_max_results = policy.max_results.unwrap_or(100).clamp(1, 100);
+    let max_count = args
+        .get("max_count")
+        .and_then(Value::as_u64)
+        .map(|v| v.clamp(1, policy_max_results as u64) as usize)
+        .unwrap_or(20.min(policy_max_results));
+    let max_bytes = policy.max_bytes.unwrap_or(262_144).clamp(1, 1_048_576) as usize;
+    let mut command_args = vec![
+        "log".to_string(),
+        format!("--max-count={max_count}"),
+        "--date=iso-strict".to_string(),
+        "--pretty=format:%H%x1f%h%x1f%an%x1f%ad%x1f%s".to_string(),
+    ];
+    let paths = git_paths_from_args(context, &repo, args)?;
+    if !paths.is_empty() {
+        command_args.push("--".to_string());
+        command_args.extend(paths.iter().map(|path| path.to_string_lossy().to_string()));
+    }
+    let output = run_git_command(&repo, &command_args, max_bytes)?;
+    let commits = parse_git_log(&output.stdout);
+    let content = format_git_log_content(&commits, output.truncated);
+    Ok(json!({
+        "ok": true,
+        "repo_path": repo.to_string_lossy(),
+        "commits": commits,
+        "returned_commits": commits.len(),
+        "paths": paths.iter().map(|path| path.to_string_lossy().to_string()).collect::<Vec<_>>(),
+        "exit_code": output.exit_code,
+        "stderr": output.stderr,
+        "truncated": output.truncated,
+        "source": "adapter_local",
+        "content": content,
+        "policy": { "max_results": policy_max_results, "applied_max_count": max_count, "max_bytes": max_bytes },
+    }))
+}
+
+pub(crate) async fn handle_git_show(
+    context: &SessionContext,
+    args: &Value,
+    policy: &ToolPolicy,
+) -> Result<Value> {
+    let repo = git_repo_path_from_args(context, args)?;
+    let revision = args
+        .get("revision")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| anyhow!("git_show args missing revision"))?;
+    validate_revision_arg(revision)?;
+    let policy_max_bytes = policy.max_bytes.unwrap_or(262_144).clamp(1, 1_048_576);
+    let max_bytes = args
+        .get("max_bytes")
+        .and_then(Value::as_u64)
+        .map(|v| v.clamp(1, policy_max_bytes) as usize)
+        .unwrap_or(policy_max_bytes as usize);
+    let mut command_args = vec!["show".to_string(), "--no-ext-diff".to_string()];
+    let path = if let Some(raw_path) = args.get("path").and_then(Value::as_str) {
+        let paths_arg = json!({ "paths": [raw_path] });
+        let mut paths = git_paths_from_args(context, &repo, &paths_arg)?;
+        let path = paths.pop().ok_or_else(|| anyhow!("git_show path did not resolve"))?;
+        command_args.push(format!("{revision}:{}", path.to_string_lossy()));
+        Some(path)
+    } else {
+        command_args.push(revision.to_string());
+        None
+    };
+    let output = run_git_command(&repo, &command_args, max_bytes)?;
+    let content = if output.truncated { format!("{}\n... truncated", output.stdout) } else { output.stdout.clone() };
+    Ok(json!({
+        "ok": true,
+        "repo_path": repo.to_string_lossy(),
+        "revision": revision,
+        "path": path.as_ref().map(|p| p.to_string_lossy().to_string()),
+        "output": output.stdout,
+        "exit_code": output.exit_code,
+        "stderr": output.stderr,
+        "truncated": output.truncated,
+        "source": "adapter_local",
+        "content": content,
+        "policy": { "max_bytes": policy_max_bytes, "applied_max_bytes": max_bytes },
+    }))
+}
+
 #[derive(Debug)]
 struct GitCommandOutput {
     stdout: String,
@@ -257,4 +346,48 @@ fn format_git_status_content(status: &ParsedGitStatus, truncated: bool) -> Strin
         lines.push("... truncated".to_string());
     }
     lines.join("\n")
+}
+
+fn parse_git_log(raw: &str) -> Vec<Value> {
+    raw.lines()
+        .filter_map(|line| {
+            let parts = line.split('\x1f').collect::<Vec<_>>();
+            if parts.len() < 5 {
+                return None;
+            }
+            Some(json!({
+                "hash": parts[0],
+                "short_hash": parts[1],
+                "author": parts[2],
+                "date": parts[3],
+                "subject": parts[4],
+            }))
+        })
+        .collect()
+}
+
+fn format_git_log_content(commits: &[Value], truncated: bool) -> String {
+    let mut lines = Vec::new();
+    if commits.is_empty() {
+        lines.push("No commits found.".to_string());
+    } else {
+        for commit in commits {
+            lines.push(format!(
+                "{} {}",
+                commit.get("short_hash").and_then(Value::as_str).unwrap_or(""),
+                commit.get("subject").and_then(Value::as_str).unwrap_or("")
+            ));
+        }
+    }
+    if truncated {
+        lines.push("... truncated".to_string());
+    }
+    lines.join("\n")
+}
+
+fn validate_revision_arg(revision: &str) -> Result<()> {
+    if revision.starts_with('-') || revision.contains("..") || revision.contains(':') || revision.contains('\0') {
+        return Err(anyhow!("git_show revision contains unsupported characters"));
+    }
+    Ok(())
 }

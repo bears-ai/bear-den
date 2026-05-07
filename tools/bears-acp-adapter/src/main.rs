@@ -47,7 +47,7 @@ use tools::fs::{
     handle_read_text_file, handle_replace_text, handle_search_files, handle_stat, ReplaceTextArgs,
     ReplaceTextPlan,
 };
-use tools::git::{handle_git_diff, handle_git_status};
+use tools::git::{handle_git_diff, handle_git_log, handle_git_show, handle_git_status};
 use uuid::Uuid;
 
 #[derive(Clone, Debug)]
@@ -1110,6 +1110,8 @@ fn adapter_capabilities_context() -> Value {
             "fs_stat": { "supported": true, "version": 1 },
             "git_status": { "supported": true, "version": 1 },
             "git_diff": { "supported": true, "version": 1 },
+            "git_log": { "supported": true, "version": 1 },
+            "git_show": { "supported": true, "version": 1 },
             "fs_replace_text": { "supported": true, "version": 1 },
             "fs_create_text_file": { "supported": true, "version": 1 },
             "fs_create_directory": { "supported": true, "version": 1 },
@@ -1130,6 +1132,8 @@ fn direct_tools_context() -> Value {
         "fs_stat": true,
         "git_status": true,
         "git_diff": true,
+        "git_log": true,
+        "git_show": true,
         "fs_replace_text": true,
         "fs_create_text_file": true,
         "fs_create_directory": true,
@@ -1484,6 +1488,14 @@ async fn execute_local_tool(
         "git_diff" => {
             let context = session_context(adapter_state, session_id)?;
             handle_git_diff(context, &args, policy).await
+        }
+        "git_log" => {
+            let context = session_context(adapter_state, session_id)?;
+            handle_git_log(context, &args, policy).await
+        }
+        "git_show" => {
+            let context = session_context(adapter_state, session_id)?;
+            handle_git_show(context, &args, policy).await
         }
         "fs_replace_text" => {
             handle_direct_replace_text(adapter_state, session_id, &args, policy).await
@@ -3638,6 +3650,18 @@ fn tool_display(tool_name: &str) -> ToolDisplay {
             verb: "Reading git diff for",
             permission_operation: "read git diff",
         },
+        "git_log" => ToolDisplay {
+            title: "Git log",
+            kind: ToolKind::Read,
+            verb: "Reading git log for",
+            permission_operation: "read git log",
+        },
+        "git_show" => ToolDisplay {
+            title: "Git show",
+            kind: ToolKind::Read,
+            verb: "Reading git revision for",
+            permission_operation: "read git revision",
+        },
         "fs_replace_text" => ToolDisplay {
             title: "Edit file",
             kind: ToolKind::Edit,
@@ -3714,7 +3738,7 @@ fn tool_target_kind(tool_name: &str) -> &'static str {
         "fs_create_directory" => "directory",
         "fs_move_path" | "fs_copy_path" => "path",
         "fs_apply_patch" => "patch",
-        "git_status" | "git_diff" => "repository",
+        "git_status" | "git_diff" | "git_log" | "git_show" => "repository",
         "fs_delete_path" => "path",
         _ => "file",
     }
@@ -5078,6 +5102,86 @@ mod tests {
         .await;
         assert!(format!("{:#}", outside_path.unwrap_err()).contains("outside repo"));
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn git_log_and_show_report_commits_and_files() {
+        let root = unique_test_dir("git-log-show");
+        Command::new("git").args(["init"]).current_dir(&root).output().unwrap();
+        Command::new("git").args(["config", "user.email", "test@example.test"]).current_dir(&root).output().unwrap();
+        Command::new("git").args(["config", "user.name", "Test User"]).current_dir(&root).output().unwrap();
+        fs::write(root.join("one.txt"), "one\n").unwrap();
+        Command::new("git").args(["add", "one.txt"]).current_dir(&root).output().unwrap();
+        Command::new("git").args(["commit", "-m", "first"]).current_dir(&root).output().unwrap();
+        fs::write(root.join("two.txt"), "two\n").unwrap();
+        Command::new("git").args(["add", "two.txt"]).current_dir(&root).output().unwrap();
+        Command::new("git").args(["commit", "-m", "second"]).current_dir(&root).output().unwrap();
+        let state = test_adapter_state("session-1", &root);
+        let context = session_context(&state, "session-1").unwrap();
+        let log = handle_git_log(
+            context,
+            &json!({ "repo_path": root.to_string_lossy(), "max_count": 1 }),
+            &ToolPolicy { max_results: Some(100), max_bytes: Some(4096), ..Default::default() },
+        )
+        .await
+        .unwrap();
+        assert_eq!(log["returned_commits"], 1);
+        assert_eq!(log["commits"][0]["subject"], "second");
+        let show_file = handle_git_show(
+            context,
+            &json!({ "repo_path": root.to_string_lossy(), "revision": "HEAD", "path": "two.txt" }),
+            &ToolPolicy { max_bytes: Some(4096), ..Default::default() },
+        )
+        .await
+        .unwrap();
+        assert_eq!(show_file["output"], "two\n");
+        let show_commit = handle_git_show(
+            context,
+            &json!({ "repo_path": root.to_string_lossy(), "revision": "HEAD", "max_bytes": 32 }),
+            &ToolPolicy { max_bytes: Some(32), ..Default::default() },
+        )
+        .await
+        .unwrap();
+        assert_eq!(show_commit["truncated"], true);
+        assert!(show_commit["output"].as_str().unwrap().len() <= 32);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn git_log_and_show_enforce_path_and_revision_safety() {
+        let root = unique_test_dir("git-log-show-safety");
+        let outside = unique_test_dir("git-log-show-outside");
+        Command::new("git").args(["init"]).current_dir(&root).output().unwrap();
+        Command::new("git").args(["config", "user.email", "test@example.test"]).current_dir(&root).output().unwrap();
+        Command::new("git").args(["config", "user.name", "Test User"]).current_dir(&root).output().unwrap();
+        fs::write(root.join("one.txt"), "one\n").unwrap();
+        Command::new("git").args(["add", "one.txt"]).current_dir(&root).output().unwrap();
+        Command::new("git").args(["commit", "-m", "first"]).current_dir(&root).output().unwrap();
+        let state = test_adapter_state("session-1", &root);
+        let context = session_context(&state, "session-1").unwrap();
+        let outside_log = handle_git_log(
+            context,
+            &json!({ "repo_path": outside.to_string_lossy() }),
+            &ToolPolicy::default(),
+        )
+        .await;
+        assert!(format!("{:#}", outside_log.unwrap_err()).contains("outside the ACP session workspace roots"));
+        let outside_show = handle_git_show(
+            context,
+            &json!({ "repo_path": root.to_string_lossy(), "revision": "HEAD", "path": outside.join("x.txt").to_string_lossy() }),
+            &ToolPolicy::default(),
+        )
+        .await;
+        assert!(format!("{:#}", outside_show.unwrap_err()).contains("outside the ACP session workspace roots"));
+        let bad_revision = handle_git_show(
+            context,
+            &json!({ "repo_path": root.to_string_lossy(), "revision": "--help" }),
+            &ToolPolicy::default(),
+        )
+        .await;
+        assert!(format!("{:#}", bad_revision.unwrap_err()).contains("unsupported"));
+        let _ = fs::remove_dir_all(root);
+        let _ = fs::remove_dir_all(outside);
     }
 
     #[tokio::test]
