@@ -42,9 +42,10 @@ use tokio::{
 use tool_tasks::{log_tool_task_phase, ToolTaskPhase, ToolTaskRegistry};
 
 use tools::fs::{
-    handle_create_directory, handle_create_text_file, handle_delete_path, handle_find_paths,
-    handle_list_directory, handle_move_path, handle_read_text_file, handle_replace_text,
-    handle_search_files, handle_stat, ReplaceTextArgs, ReplaceTextPlan,
+    handle_apply_patch, handle_copy_path, handle_create_directory, handle_create_text_file,
+    handle_delete_path, handle_find_paths, handle_list_directory, handle_move_path,
+    handle_read_text_file, handle_replace_text, handle_search_files, handle_stat, ReplaceTextArgs,
+    ReplaceTextPlan,
 };
 use tools::git::{handle_git_diff, handle_git_status};
 use uuid::Uuid;
@@ -1113,6 +1114,8 @@ fn adapter_capabilities_context() -> Value {
             "fs_create_text_file": { "supported": true, "version": 1 },
             "fs_create_directory": { "supported": true, "version": 1 },
             "fs_move_path": { "supported": true, "version": 1 },
+            "fs_copy_path": { "supported": true, "version": 1 },
+            "fs_apply_patch": { "supported": true, "version": 1 },
             "fs_delete_path": { "supported": true, "version": 1 }
         }
     })
@@ -1131,6 +1134,8 @@ fn direct_tools_context() -> Value {
         "fs_create_text_file": true,
         "fs_create_directory": true,
         "fs_move_path": true,
+        "fs_copy_path": true,
+        "fs_apply_patch": true,
         "fs_delete_path": true,
     })
 }
@@ -1490,6 +1495,10 @@ async fn execute_local_tool(
             handle_direct_create_directory(adapter_state, session_id, &args, policy).await
         }
         "fs_move_path" => handle_direct_move_path(adapter_state, session_id, &args, policy).await,
+        "fs_copy_path" => handle_direct_copy_path(adapter_state, session_id, &args, policy).await,
+        "fs_apply_patch" => {
+            handle_direct_apply_patch(adapter_state, session_id, &args, policy).await
+        }
         "fs_delete_path" => {
             handle_direct_delete_path(adapter_state, session_id, &args, policy).await
         }
@@ -1577,6 +1586,26 @@ async fn handle_direct_move_path(
 ) -> Result<Value> {
     let context = session_context(adapter_state, session_id)?;
     handle_move_path(context, session_id, args, policy).await
+}
+
+async fn handle_direct_copy_path(
+    adapter_state: &AdapterState,
+    session_id: &str,
+    args: &Value,
+    policy: &ToolPolicy,
+) -> Result<Value> {
+    let context = session_context(adapter_state, session_id)?;
+    handle_copy_path(context, session_id, args, policy).await
+}
+
+async fn handle_direct_apply_patch(
+    adapter_state: &AdapterState,
+    session_id: &str,
+    args: &Value,
+    policy: &ToolPolicy,
+) -> Result<Value> {
+    let context = session_context(adapter_state, session_id)?;
+    handle_apply_patch(context, session_id, args, policy).await
 }
 
 async fn handle_direct_delete_path(
@@ -3633,6 +3662,18 @@ fn tool_display(tool_name: &str) -> ToolDisplay {
             verb: "Moving",
             permission_operation: "move this path",
         },
+        "fs_copy_path" => ToolDisplay {
+            title: "Copy path",
+            kind: ToolKind::Edit,
+            verb: "Copying",
+            permission_operation: "copy this path",
+        },
+        "fs_apply_patch" => ToolDisplay {
+            title: "Apply patch",
+            kind: ToolKind::Edit,
+            verb: "Applying patch to",
+            permission_operation: "apply this patch",
+        },
         "fs_delete_path" => ToolDisplay {
             title: "Delete path",
             kind: ToolKind::Delete,
@@ -3671,7 +3712,8 @@ fn tool_target_kind(tool_name: &str) -> &'static str {
         "fs_search_files" => "directory",
         "fs_stat" => "path",
         "fs_create_directory" => "directory",
-        "fs_move_path" => "path",
+        "fs_move_path" | "fs_copy_path" => "path",
+        "fs_apply_patch" => "patch",
         "git_status" | "git_diff" => "repository",
         "fs_delete_path" => "path",
         _ => "file",
@@ -3685,6 +3727,7 @@ fn tool_path(event: &Value) -> Option<&str> {
             v.get("path")
                 .or_else(|| v.get("source_path"))
                 .or_else(|| v.get("destination_path"))
+                .or_else(|| v.get("base_path"))
         })
         .and_then(Value::as_str)
 }
@@ -4465,6 +4508,210 @@ mod tests {
             .contains("outside the ACP session workspace roots"));
         let _ = fs::remove_dir_all(root);
         let _ = fs::remove_dir_all(outside);
+    }
+
+    #[tokio::test]
+    async fn copy_path_copies_file_and_directory_with_limits() {
+        let root = unique_test_dir("copy-path");
+        let source = root.join("source.txt");
+        let destination = root.join("destination.txt");
+        fs::write(&source, "hello").unwrap();
+        let state = test_adapter_state("session-1", &root);
+        let result = handle_direct_copy_path(
+            &state,
+            "session-1",
+            &json!({ "source_path": source.to_string_lossy(), "destination_path": destination.to_string_lossy() }),
+            &ToolPolicy { max_bytes: Some(1024), ..Default::default() },
+        )
+        .await
+        .unwrap();
+        assert_eq!(result["copied"], true);
+        assert_eq!(fs::read_to_string(&destination).unwrap(), "hello");
+
+        let dir = root.join("dir");
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("child.txt"), "child").unwrap();
+        let dir_copy = root.join("dir-copy");
+        let denied = handle_direct_copy_path(
+            &state,
+            "session-1",
+            &json!({ "source_path": dir.to_string_lossy(), "destination_path": dir_copy.to_string_lossy() }),
+            &ToolPolicy::default(),
+        )
+        .await;
+        assert!(format!("{:#}", denied.unwrap_err()).contains("recursive=true"));
+        let result = handle_direct_copy_path(
+            &state,
+            "session-1",
+            &json!({ "source_path": dir.to_string_lossy(), "destination_path": dir_copy.to_string_lossy(), "recursive": true }),
+            &ToolPolicy { max_entries: Some(10), max_bytes: Some(1024), ..Default::default() },
+        )
+        .await
+        .unwrap();
+        assert_eq!(result["kind"], "directory");
+        assert_eq!(fs::read_to_string(dir_copy.join("child.txt")).unwrap(), "child");
+
+        let too_large = handle_direct_copy_path(
+            &state,
+            "session-1",
+            &json!({ "source_path": source.to_string_lossy(), "destination_path": root.join("too-large.txt").to_string_lossy() }),
+            &ToolPolicy { max_bytes: Some(1), ..Default::default() },
+        )
+        .await;
+        assert!(format!("{:#}", too_large.unwrap_err()).contains("max_bytes"));
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn copy_path_refuses_overwrite_and_denies_hidden_sensitive_outside() {
+        let root = unique_test_dir("copy-path-policy");
+        let outside = unique_test_dir("copy-path-outside");
+        let source = root.join("source.txt");
+        let destination = root.join("destination.txt");
+        fs::write(&source, "source").unwrap();
+        fs::write(&destination, "destination").unwrap();
+        let state = test_adapter_state("session-1", &root);
+        let denied = handle_direct_copy_path(
+            &state,
+            "session-1",
+            &json!({ "source_path": source.to_string_lossy(), "destination_path": destination.to_string_lossy() }),
+            &ToolPolicy::default(),
+        )
+        .await;
+        assert!(format!("{:#}", denied.unwrap_err()).contains("destination already exists"));
+        let overwritten = handle_direct_copy_path(
+            &state,
+            "session-1",
+            &json!({ "source_path": source.to_string_lossy(), "destination_path": destination.to_string_lossy(), "overwrite": true }),
+            &ToolPolicy::default(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(overwritten["overwrite"], true);
+        assert_eq!(fs::read_to_string(&destination).unwrap(), "source");
+        let hidden = handle_direct_copy_path(
+            &state,
+            "session-1",
+            &json!({ "source_path": source.to_string_lossy(), "destination_path": root.join(".hidden-copy").to_string_lossy() }),
+            &ToolPolicy { deny_hidden_paths: Some(true), ..Default::default() },
+        )
+        .await;
+        assert!(format!("{:#}", hidden.unwrap_err()).contains("denied hidden path"));
+        let sensitive = handle_direct_copy_path(
+            &state,
+            "session-1",
+            &json!({ "source_path": source.to_string_lossy(), "destination_path": root.join("secret-copy").to_string_lossy() }),
+            &ToolPolicy { sensitive_path_policy: Some("deny_sensitive_paths".to_string()), ..Default::default() },
+        )
+        .await;
+        assert!(format!("{:#}", sensitive.unwrap_err()).contains("denied sensitive path"));
+        let outside_denied = handle_direct_copy_path(
+            &state,
+            "session-1",
+            &json!({ "source_path": source.to_string_lossy(), "destination_path": outside.join("copy.txt").to_string_lossy() }),
+            &ToolPolicy::default(),
+        )
+        .await;
+        assert!(format!("{:#}", outside_denied.unwrap_err()).contains("outside the ACP session workspace roots"));
+        let _ = fs::remove_dir_all(root);
+        let _ = fs::remove_dir_all(outside);
+    }
+
+    #[tokio::test]
+    async fn apply_patch_creates_updates_deletes_and_dry_runs() {
+        let root = unique_test_dir("apply-patch");
+        let state = test_adapter_state("session-1", &root);
+        let create_patch = "--- /dev/null\n+++ b/new.txt\n@@\n+hello\n";
+        let dry = handle_direct_apply_patch(
+            &state,
+            "session-1",
+            &json!({ "base_path": root.to_string_lossy(), "patch": create_patch, "dry_run": true }),
+            &ToolPolicy::default(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(dry["dry_run"], true);
+        assert!(!root.join("new.txt").exists());
+        handle_direct_apply_patch(
+            &state,
+            "session-1",
+            &json!({ "base_path": root.to_string_lossy(), "patch": create_patch }),
+            &ToolPolicy::default(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(fs::read_to_string(root.join("new.txt")).unwrap(), "hello\n");
+        let update_patch = "--- a/new.txt\n+++ b/new.txt\n@@\n-hello\n+goodbye\n";
+        handle_direct_apply_patch(
+            &state,
+            "session-1",
+            &json!({ "base_path": root.to_string_lossy(), "patch": update_patch }),
+            &ToolPolicy::default(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(fs::read_to_string(root.join("new.txt")).unwrap(), "goodbye\n");
+        let delete_patch = "--- a/new.txt\n+++ /dev/null\n@@\n-goodbye\n";
+        let denied = handle_direct_apply_patch(
+            &state,
+            "session-1",
+            &json!({ "base_path": root.to_string_lossy(), "patch": delete_patch }),
+            &ToolPolicy::default(),
+        )
+        .await;
+        assert!(format!("{:#}", denied.unwrap_err()).contains("allow_delete=false"));
+        handle_direct_apply_patch(
+            &state,
+            "session-1",
+            &json!({ "base_path": root.to_string_lossy(), "patch": delete_patch, "allow_delete": true }),
+            &ToolPolicy::default(),
+        )
+        .await
+        .unwrap();
+        assert!(!root.join("new.txt").exists());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn apply_patch_denies_invalid_sensitive_outside_and_disallowed_create() {
+        let root = unique_test_dir("apply-patch-policy");
+        let state = test_adapter_state("session-1", &root);
+        let create_patch = "--- /dev/null\n+++ b/new.txt\n@@\n+hello\n";
+        let denied_create = handle_direct_apply_patch(
+            &state,
+            "session-1",
+            &json!({ "base_path": root.to_string_lossy(), "patch": create_patch, "allow_create": false }),
+            &ToolPolicy::default(),
+        )
+        .await;
+        assert!(format!("{:#}", denied_create.unwrap_err()).contains("allow_create=false"));
+        let sensitive_patch = "--- /dev/null\n+++ b/secret-file\n@@\n+secret\n";
+        let sensitive = handle_direct_apply_patch(
+            &state,
+            "session-1",
+            &json!({ "base_path": root.to_string_lossy(), "patch": sensitive_patch }),
+            &ToolPolicy { sensitive_path_policy: Some("deny_sensitive_paths".to_string()), ..Default::default() },
+        )
+        .await;
+        assert!(format!("{:#}", sensitive.unwrap_err()).contains("denied sensitive path"));
+        let outside_patch = "--- /dev/null\n+++ b/../outside.txt\n@@\n+bad\n";
+        let outside = handle_direct_apply_patch(
+            &state,
+            "session-1",
+            &json!({ "base_path": root.to_string_lossy(), "patch": outside_patch }),
+            &ToolPolicy::default(),
+        )
+        .await;
+        assert!(format!("{:#}", outside.unwrap_err()).contains("must be relative"));
+        let invalid = handle_direct_apply_patch(
+            &state,
+            "session-1",
+            &json!({ "base_path": root.to_string_lossy(), "patch": "not a patch" }),
+            &ToolPolicy::default(),
+        )
+        .await;
+        assert!(format!("{:#}", invalid.unwrap_err()).contains("did not contain"));
+        let _ = fs::remove_dir_all(root);
     }
 
     #[tokio::test]

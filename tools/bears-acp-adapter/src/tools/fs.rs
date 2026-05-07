@@ -761,6 +761,241 @@ pub(crate) async fn handle_move_path(
     }))
 }
 
+pub(crate) async fn handle_copy_path(
+    context: &SessionContext,
+    session_id: &str,
+    args: &Value,
+    policy: &ToolPolicy,
+) -> Result<Value> {
+    let raw_source = args
+        .get("source_path")
+        .and_then(Value::as_str)
+        .ok_or_else(|| anyhow!("fs_copy_path args missing source_path"))?;
+    let raw_destination = args
+        .get("destination_path")
+        .and_then(Value::as_str)
+        .ok_or_else(|| anyhow!("fs_copy_path args missing destination_path"))?;
+    let overwrite = args
+        .get("overwrite")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let recursive = args
+        .get("recursive")
+        .and_then(Value::as_bool)
+        .or(policy.recursive_default)
+        .unwrap_or(false);
+    let expected_kind = args
+        .get("expected_kind")
+        .and_then(Value::as_str)
+        .unwrap_or("any");
+    let max_entries = policy.max_entries.unwrap_or(1_000).clamp(1, 10_000);
+    let max_bytes = policy.max_bytes.unwrap_or(5_242_880).clamp(1, 52_428_800);
+    let source = normalize_requested_tool_path(raw_source)?;
+    let destination = normalize_requested_tool_path(raw_destination)?;
+    ensure_path_allowed_for_session(context, &source)?;
+    ensure_path_allowed_for_session(context, &destination)?;
+    ensure_replace_text_path_allowed(&source, policy)?;
+    ensure_replace_text_path_allowed(&destination, policy)?;
+    if source == destination {
+        return Err(anyhow!(
+            "fs_copy_path source_path and destination_path are the same"
+        ));
+    }
+    let metadata = fs::metadata(&source).with_context(|| format!("stat {}", source.display()))?;
+    let kind = if metadata.is_file() {
+        "file"
+    } else if metadata.is_dir() {
+        "directory"
+    } else {
+        "other"
+    };
+    if expected_kind != "any" && expected_kind != kind {
+        return Err(anyhow!(
+            "fs_copy_path expected kind {expected_kind}, found {kind}"
+        ));
+    }
+    if destination.exists() && !overwrite {
+        return Err(anyhow!(
+            "fs_copy_path destination already exists; set overwrite=true"
+        ));
+    }
+    if let Some(parent) = destination.parent() {
+        ensure_path_allowed_for_session(context, parent)?;
+        if !parent.exists() {
+            return Err(anyhow!(
+                "fs_copy_path destination parent directory does not exist"
+            ));
+        }
+    }
+    let mut entries = Vec::new();
+    let total_bytes = if metadata.is_file() {
+        metadata.len()
+    } else if metadata.is_dir() {
+        if !recursive {
+            return Err(anyhow!(
+                "fs_copy_path requires recursive=true for directories"
+            ));
+        }
+        collect_copy_entries(&source, &mut entries, max_entries + 1)?;
+        if entries.len() > max_entries {
+            return Err(anyhow!(
+                "fs_copy_path directory has more than policy max_entries={max_entries}"
+            ));
+        }
+        entries
+            .iter()
+            .filter_map(|path| fs::metadata(path).ok())
+            .filter(|m| m.is_file())
+            .map(|m| m.len())
+            .sum()
+    } else {
+        return Err(anyhow!("fs_copy_path only copies files or directories"));
+    };
+    if total_bytes > max_bytes {
+        return Err(anyhow!(
+            "fs_copy_path source exceeds policy max_bytes: {total_bytes} > {max_bytes}"
+        ));
+    }
+    let started = std::time::Instant::now();
+    if destination.exists() && overwrite {
+        let destination_metadata = fs::metadata(&destination)
+            .with_context(|| format!("stat destination {}", destination.display()))?;
+        if destination_metadata.is_dir() {
+            fs::remove_dir_all(&destination).with_context(|| {
+                format!("remove destination directory {}", destination.display())
+            })?;
+        } else if destination_metadata.is_file() {
+            fs::remove_file(&destination)
+                .with_context(|| format!("remove destination file {}", destination.display()))?;
+        }
+    }
+    if metadata.is_file() {
+        fs::copy(&source, &destination)
+            .with_context(|| format!("copy {} to {}", source.display(), destination.display()))?;
+    } else {
+        copy_dir_recursive(&source, &destination)?;
+    }
+    eprintln!(
+        "bears-acp-adapter: copy_path session_id={} source={} destination={} kind={} bytes={} entries={} duration_ms={}",
+        session_id, source.display(), destination.display(), kind, total_bytes, entries.len(), started.elapsed().as_millis(),
+    );
+    Ok(json!({
+        "ok": true,
+        "source_path": source.to_string_lossy(),
+        "destination_path": destination.to_string_lossy(),
+        "copied": true,
+        "kind": kind,
+        "recursive": recursive,
+        "overwrite": overwrite,
+        "bytes": total_bytes,
+        "entries": entries.iter().map(|p| p.to_string_lossy().to_string()).collect::<Vec<_>>(),
+        "source": "adapter_local",
+        "content": format!("Copied {kind} {} to {}", source.display(), destination.display()),
+        "policy": { "max_entries": max_entries, "max_bytes": max_bytes, "deny_hidden_paths": policy.deny_hidden_paths.unwrap_or(true), "sensitive_path_policy": policy.sensitive_path_policy }
+    }))
+}
+
+pub(crate) async fn handle_apply_patch(
+    context: &SessionContext,
+    session_id: &str,
+    args: &Value,
+    policy: &ToolPolicy,
+) -> Result<Value> {
+    let patch = args
+        .get("patch")
+        .and_then(Value::as_str)
+        .ok_or_else(|| anyhow!("fs_apply_patch args missing patch"))?;
+    let dry_run = args
+        .get("dry_run")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let allow_create = args
+        .get("allow_create")
+        .and_then(Value::as_bool)
+        .unwrap_or(true);
+    let allow_delete = args
+        .get("allow_delete")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let max_bytes = policy.max_bytes.unwrap_or(1_048_576).clamp(1, 5_242_880);
+    if patch.len() as u64 > max_bytes {
+        return Err(anyhow!(
+            "fs_apply_patch patch exceeds policy max_bytes: {} > {}",
+            patch.len(),
+            max_bytes
+        ));
+    }
+    let base = args
+        .get("base_path")
+        .and_then(Value::as_str)
+        .map(normalize_requested_tool_path)
+        .transpose()?
+        .unwrap_or_else(|| session_workspace_roots(context)[0].clone());
+    ensure_path_allowed_for_session(context, &base)?;
+    let files = parse_simple_unified_patch(patch)?;
+    let max_entries = policy.max_entries.unwrap_or(100).clamp(1, 1_000);
+    if files.len() > max_entries {
+        return Err(anyhow!(
+            "fs_apply_patch affects more than policy max_entries={max_entries}"
+        ));
+    }
+    let mut changed = Vec::new();
+    for patch_file in &files {
+        let path = base.join(&patch_file.path);
+        ensure_path_allowed_for_session(context, &path)?;
+        ensure_replace_text_path_allowed(&path, policy)?;
+        if patch_file.is_delete && !allow_delete {
+            return Err(anyhow!(
+                "fs_apply_patch deletes {}, but allow_delete=false",
+                path.display()
+            ));
+        }
+        if patch_file.is_create && !allow_create {
+            return Err(anyhow!(
+                "fs_apply_patch creates {}, but allow_create=false",
+                path.display()
+            ));
+        }
+        if !patch_file.is_create && !path.exists() {
+            return Err(anyhow!(
+                "fs_apply_patch target does not exist: {}",
+                path.display()
+            ));
+        }
+        if dry_run {
+            changed.push(path.to_string_lossy().to_string());
+            continue;
+        }
+        if patch_file.is_delete {
+            fs::remove_file(&path)
+                .with_context(|| format!("delete patched file {}", path.display()))?;
+        } else {
+            if let Some(parent) = path.parent() {
+                ensure_path_allowed_for_session(context, parent)?;
+                fs::create_dir_all(parent)
+                    .with_context(|| format!("create parent directories {}", parent.display()))?;
+            }
+            fs::write(&path, patch_file.new_content.as_bytes())
+                .with_context(|| format!("write patched file {}", path.display()))?;
+        }
+        changed.push(path.to_string_lossy().to_string());
+    }
+    eprintln!(
+        "bears-acp-adapter: apply_patch session_id={} files={} dry_run={}",
+        session_id,
+        changed.len(),
+        dry_run,
+    );
+    Ok(json!({
+        "ok": true,
+        "dry_run": dry_run,
+        "changed_files": changed,
+        "source": "adapter_local",
+        "content": if dry_run { format!("Patch dry run succeeded for {} file(s)", files.len()) } else { format!("Applied patch to {} file(s)", files.len()) },
+        "policy": { "max_entries": max_entries, "max_bytes": max_bytes, "create_files": policy.create_files.unwrap_or(true), "allow_multiple": policy.allow_multiple.unwrap_or(true), "deny_hidden_paths": policy.deny_hidden_paths.unwrap_or(true), "sensitive_path_policy": policy.sensitive_path_policy }
+    }))
+}
+
 pub(crate) async fn handle_delete_path(
     context: &SessionContext,
     session_id: &str,
@@ -1154,6 +1389,139 @@ fn ensure_delete_path_allowed(
         ));
     }
     Ok(())
+}
+
+fn collect_copy_entries(path: &Path, out: &mut Vec<PathBuf>, limit: usize) -> Result<()> {
+    if out.len() >= limit {
+        return Ok(());
+    }
+    for entry in fs::read_dir(path).with_context(|| format!("scan directory {}", path.display()))? {
+        let entry = entry?;
+        let path = entry.path();
+        out.push(path.clone());
+        if out.len() >= limit {
+            return Ok(());
+        }
+        if entry.metadata().map(|m| m.is_dir()).unwrap_or(false) {
+            collect_copy_entries(&path, out, limit)?;
+        }
+    }
+    Ok(())
+}
+
+fn copy_dir_recursive(source: &Path, destination: &Path) -> Result<()> {
+    fs::create_dir(destination)
+        .with_context(|| format!("create directory {}", destination.display()))?;
+    for entry in
+        fs::read_dir(source).with_context(|| format!("copy directory {}", source.display()))?
+    {
+        let entry = entry?;
+        let source_path = entry.path();
+        let destination_path = destination.join(entry.file_name());
+        let metadata = entry.metadata()?;
+        if metadata.is_dir() {
+            copy_dir_recursive(&source_path, &destination_path)?;
+        } else if metadata.is_file() {
+            fs::copy(&source_path, &destination_path).with_context(|| {
+                format!(
+                    "copy {} to {}",
+                    source_path.display(),
+                    destination_path.display()
+                )
+            })?;
+        }
+    }
+    Ok(())
+}
+
+#[derive(Debug)]
+struct PatchFile {
+    path: PathBuf,
+    new_content: String,
+    is_create: bool,
+    is_delete: bool,
+}
+
+fn parse_simple_unified_patch(patch: &str) -> Result<Vec<PatchFile>> {
+    let lines = patch.lines().collect::<Vec<_>>();
+    let mut files = Vec::new();
+    let mut idx = 0usize;
+    while idx < lines.len() {
+        if !lines[idx].starts_with("--- ") {
+            idx += 1;
+            continue;
+        }
+        let old_raw = lines[idx]
+            .trim_start_matches("--- ")
+            .split_whitespace()
+            .next()
+            .unwrap_or("");
+        idx += 1;
+        if idx >= lines.len() || !lines[idx].starts_with("+++ ") {
+            return Err(anyhow!(
+                "fs_apply_patch invalid unified diff: missing +++ header"
+            ));
+        }
+        let new_raw = lines[idx]
+            .trim_start_matches("+++ ")
+            .split_whitespace()
+            .next()
+            .unwrap_or("");
+        idx += 1;
+        let is_create = old_raw == "/dev/null";
+        let is_delete = new_raw == "/dev/null";
+        let path_raw = if is_delete { old_raw } else { new_raw };
+        let path = normalize_patch_path(path_raw)?;
+        let mut new_content = String::new();
+        while idx < lines.len() && !lines[idx].starts_with("--- ") {
+            let line = lines[idx];
+            if line.starts_with("@@") || line.starts_with("\\ No newline") {
+                idx += 1;
+                continue;
+            }
+            if is_delete {
+                idx += 1;
+                continue;
+            }
+            if let Some(rest) = line.strip_prefix('+') {
+                new_content.push_str(rest);
+                new_content.push('\n');
+            } else if let Some(rest) = line.strip_prefix(' ') {
+                new_content.push_str(rest);
+                new_content.push('\n');
+            }
+            idx += 1;
+        }
+        files.push(PatchFile {
+            path,
+            new_content,
+            is_create,
+            is_delete,
+        });
+    }
+    if files.is_empty() {
+        return Err(anyhow!(
+            "fs_apply_patch patch did not contain any file diffs"
+        ));
+    }
+    Ok(files)
+}
+
+fn normalize_patch_path(raw: &str) -> Result<PathBuf> {
+    let raw = raw
+        .strip_prefix("a/")
+        .or_else(|| raw.strip_prefix("b/"))
+        .unwrap_or(raw);
+    if raw.trim().is_empty() || raw == "/dev/null" {
+        return Err(anyhow!("fs_apply_patch invalid patch path"));
+    }
+    let path = PathBuf::from(raw);
+    if path.is_absolute() || raw.contains("..") {
+        return Err(anyhow!(
+            "fs_apply_patch path must be relative and must not contain .."
+        ));
+    }
+    Ok(path)
 }
 
 fn collect_delete_entries(path: &Path, out: &mut Vec<PathBuf>, limit: usize) -> Result<()> {

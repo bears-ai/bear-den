@@ -27,6 +27,8 @@ pub enum AcpToolName {
     CreateTextFile,
     CreateDirectory,
     MovePath,
+    CopyPath,
+    ApplyPatch,
     DeletePath,
     GitStatus,
     GitDiff,
@@ -44,6 +46,8 @@ impl AcpToolName {
             Self::CreateTextFile => &ACP_CREATE_TEXT_FILE_TOOL,
             Self::CreateDirectory => &ACP_CREATE_DIRECTORY_TOOL,
             Self::MovePath => &ACP_MOVE_PATH_TOOL,
+            Self::CopyPath => &ACP_COPY_PATH_TOOL,
+            Self::ApplyPatch => &ACP_APPLY_PATCH_TOOL,
             Self::DeletePath => &ACP_DELETE_PATH_TOOL,
             Self::GitStatus => &ACP_GIT_STATUS_TOOL,
             Self::GitDiff => &ACP_GIT_DIFF_TOOL,
@@ -61,6 +65,8 @@ impl AcpToolName {
             Self::CreateTextFile,
             Self::CreateDirectory,
             Self::MovePath,
+            Self::CopyPath,
+            Self::ApplyPatch,
             Self::DeletePath,
             Self::GitStatus,
             Self::GitDiff,
@@ -98,7 +104,8 @@ impl AcpToolName {
             Self::ReplaceText => &["path", "old_text", "new_text"],
             Self::CreateTextFile => &["path", "content"],
             Self::CreateDirectory | Self::DeletePath => &["path"],
-            Self::MovePath => &["source_path", "destination_path"],
+            Self::MovePath | Self::CopyPath => &["source_path", "destination_path"],
+            Self::ApplyPatch => &["patch"],
             Self::GitStatus | Self::GitDiff => &[],
         }
     }
@@ -139,6 +146,11 @@ impl AcpToolName {
             "bears/move_path" | "fs/move_path" | "fs.move_path" | "fs_move_path" | "move_path" => {
                 Some(Self::MovePath)
             }
+            "bears/copy_path" | "fs/copy_path" | "fs.copy_path" | "fs_copy_path" | "copy_path" => {
+                Some(Self::CopyPath)
+            }
+            "bears/apply_patch" | "fs/apply_patch" | "fs.apply_patch" | "fs_apply_patch"
+            | "apply_patch" => Some(Self::ApplyPatch),
             "bears/delete_path" | "fs/delete_path" | "fs.delete_path" | "fs_delete_path"
             | "delete_path" => Some(Self::DeletePath),
             "bears/git_status" | "git/status" | "git.status" | "git_status" => {
@@ -357,6 +369,26 @@ pub const ACP_MOVE_PATH_TOOL: AcpToolDescriptor = AcpToolDescriptor {
     client_method: "fs/move_path",
     title: "Move path",
     kind: "move",
+    risk: "writes_workspace",
+};
+
+pub const ACP_COPY_PATH_TOOL: AcpToolDescriptor = AcpToolDescriptor {
+    provider_name: "fs_copy_path",
+    canonical_name: "acp.fs.copy_path",
+    adapter_method: "bears/copy_path",
+    client_method: "fs/copy_path",
+    title: "Copy path",
+    kind: "edit",
+    risk: "writes_workspace",
+};
+
+pub const ACP_APPLY_PATCH_TOOL: AcpToolDescriptor = AcpToolDescriptor {
+    provider_name: "fs_apply_patch",
+    canonical_name: "acp.fs.apply_patch",
+    adapter_method: "bears/apply_patch",
+    client_method: "fs/apply_patch",
+    title: "Apply patch",
+    kind: "edit",
     risk: "writes_workspace",
 };
 
@@ -586,6 +618,48 @@ const ACP_MOVE_PATH_POLICY: AcpToolPolicy = AcpToolPolicy {
     permission_timeout_ms: 120_000,
 };
 
+const ACP_COPY_PATH_POLICY: AcpToolPolicy = AcpToolPolicy {
+    scope_basis: "acp:tools",
+    role_basis: "pair_agent",
+    allowed_roots_basis: "acp_session.workspace_roots",
+    path_containment: "adapter_enforced_absolute_path_under_allowed_roots",
+    approval_required: true,
+    sensitive_path_policy: "deny_sensitive_paths",
+    max_lines: None,
+    max_entries: Some(1_000),
+    max_results: None,
+    max_bytes: Some(5_242_880),
+    recursive_default: Some(false),
+    include_hidden_default: Some(false),
+    max_replacements: None,
+    create_files: None,
+    allow_multiple: None,
+    deny_hidden_paths: Some(true),
+    total_timeout_ms: 150_000,
+    permission_timeout_ms: 120_000,
+};
+
+const ACP_APPLY_PATCH_POLICY: AcpToolPolicy = AcpToolPolicy {
+    scope_basis: "acp:tools",
+    role_basis: "pair_agent",
+    allowed_roots_basis: "acp_session.workspace_roots",
+    path_containment: "adapter_enforced_absolute_path_under_allowed_roots",
+    approval_required: true,
+    sensitive_path_policy: "deny_sensitive_paths",
+    max_lines: None,
+    max_entries: Some(100),
+    max_results: None,
+    max_bytes: Some(1_048_576),
+    recursive_default: None,
+    include_hidden_default: Some(false),
+    max_replacements: None,
+    create_files: Some(true),
+    allow_multiple: Some(true),
+    deny_hidden_paths: Some(true),
+    total_timeout_ms: 150_000,
+    permission_timeout_ms: 120_000,
+};
+
 const ACP_DELETE_PATH_POLICY: AcpToolPolicy = AcpToolPolicy {
     scope_basis: "acp:tools",
     role_basis: "pair_agent",
@@ -660,6 +734,8 @@ pub fn acp_tool_policy(tool: AcpToolName) -> AcpToolPolicy {
         AcpToolName::CreateTextFile => ACP_CREATE_TEXT_FILE_POLICY,
         AcpToolName::CreateDirectory => ACP_CREATE_DIRECTORY_POLICY,
         AcpToolName::MovePath => ACP_MOVE_PATH_POLICY,
+        AcpToolName::CopyPath => ACP_COPY_PATH_POLICY,
+        AcpToolName::ApplyPatch => ACP_APPLY_PATCH_POLICY,
         AcpToolName::DeletePath => ACP_DELETE_PATH_POLICY,
         AcpToolName::GitStatus => ACP_GIT_STATUS_POLICY,
         AcpToolName::GitDiff => ACP_GIT_DIFF_POLICY,
@@ -951,6 +1027,42 @@ pub fn acp_client_tool_descriptor(tool: &AcpToolDescriptor) -> serde_json::Value
                     "expected_kind": { "type": "string", "enum": ["file", "directory", "any"], "description": "Optional expected source path kind. Defaults to any." }
                 },
                 "required": ["source_path", "destination_path"]
+            }
+        }),
+        "fs_copy_path" => json!({
+            "name": tool.provider_name,
+            "description": format!(
+                "ACP local workspace tool ({}, target={}, adapter={}, client={}, kind={}, risk={}). Copies a workspace file or directory through the local adapter. Approval is required; sensitive and hidden paths are denied by policy.",
+                tool.canonical_name, "acp_client", tool.adapter_method, tool.client_method, tool.kind, tool.risk,
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "source_path": { "type": "string", "description": "Absolute local source path under the workspace." },
+                    "destination_path": { "type": "string", "description": "Absolute local destination path under the workspace." },
+                    "overwrite": { "type": "boolean", "default": false },
+                    "recursive": { "type": "boolean", "default": false },
+                    "expected_kind": { "type": "string", "enum": ["file", "directory", "any"] }
+                },
+                "required": ["source_path", "destination_path"]
+            }
+        }),
+        "fs_apply_patch" => json!({
+            "name": tool.provider_name,
+            "description": format!(
+                "ACP local workspace tool ({}, target={}, adapter={}, client={}, kind={}, risk={}). Applies a unified diff patch to workspace text files through the local adapter. Approval is required; sensitive and hidden paths are denied by policy.",
+                tool.canonical_name, "acp_client", tool.adapter_method, tool.client_method, tool.kind, tool.risk,
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "patch": { "type": "string", "description": "Unified diff patch." },
+                    "base_path": { "type": "string", "description": "Optional absolute workspace directory path used to resolve relative patch paths." },
+                    "dry_run": { "type": "boolean", "default": false },
+                    "allow_create": { "type": "boolean", "default": true },
+                    "allow_delete": { "type": "boolean", "default": false }
+                },
+                "required": ["patch"]
             }
         }),
         "fs_delete_path" => json!({
