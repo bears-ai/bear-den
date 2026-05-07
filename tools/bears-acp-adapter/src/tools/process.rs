@@ -1,7 +1,7 @@
 use crate::{paths::{ensure_path_allowed_for_session, is_absolute_local_path, normalize_requested_tool_path}, SessionContext, ToolPolicy};
 use anyhow::{anyhow, Context, Result};
 use serde_json::{json, Value};
-use std::{collections::HashMap, path::PathBuf, process::Stdio, time::Duration};
+use std::{collections::HashMap, process::Stdio, time::Duration};
 use tokio::{io::AsyncReadExt, process::Command};
 
 pub(crate) async fn handle_process_run(
@@ -42,11 +42,12 @@ pub(crate) async fn handle_process_run(
             return Err(anyhow!("process_run args must not contain NUL bytes"));
         }
     }
+    let policy_timeout_ms = policy.total_timeout_ms.unwrap_or(120_000).clamp(1, 120_000);
     let timeout_ms = args
         .get("timeout_ms")
         .and_then(Value::as_u64)
         .unwrap_or(30_000)
-        .clamp(1, policy.total_timeout_ms);
+        .clamp(1, policy_timeout_ms);
     let policy_max_output = policy.max_bytes.unwrap_or(65_536).clamp(1, 1_048_576) as usize;
     let max_output_bytes = args
         .get("max_output_bytes")
@@ -71,14 +72,9 @@ pub(crate) async fn handle_process_run(
     let stderr = child.stderr.take().ok_or_else(|| anyhow!("process_run missing stderr pipe"))?;
     let stdout_task = tokio::spawn(read_limited(stdout, max_output_bytes));
     let stderr_task = tokio::spawn(read_limited(stderr, max_output_bytes));
-    let timed_out;
     let status = match tokio::time::timeout(Duration::from_millis(timeout_ms), child.wait()).await {
-        Ok(status) => {
-            timed_out = false;
-            status.with_context(|| format!("wait for process_run command {command:?}"))?
-        }
+        Ok(status) => status.with_context(|| format!("wait for process_run command {command:?}"))?,
         Err(_) => {
-            timed_out = true;
             let _ = child.kill().await;
             let _ = child.wait().await;
             let stdout_result = stdout_task.await.unwrap_or_else(|err| Err(anyhow!("stdout task failed: {err}")))?;
@@ -123,7 +119,7 @@ pub(crate) async fn handle_process_run(
         command_args.len(),
         cwd.display(),
         exit_code,
-        timed_out,
+        false,
         started.elapsed().as_millis(),
     );
     Ok(json!({
