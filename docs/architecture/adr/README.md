@@ -20,6 +20,7 @@ Use ADRs for cross-cutting product and architecture decisions that are expected 
 | [provider-safe-tool-naming.md](provider-safe-tool-naming.md) | Accepted | Provider-safe tool names with scoped canonical BEARS tool identities |
 | [routines-automation.md](routines-automation.md) | Proposed | Den-managed routines, scheduling, output handling, learning constraints |
 | [schema-first-path-strategy.md](schema-first-path-strategy.md) | Accepted | Conservative schema-first path ownership and Den-generated durable artifact paths |
+| [semantic-bear-memory.md](semantic-bear-memory.md) | Accepted | Semantic memory model: locality, kind, references, lifecycle, Cabinet spaces, and situation briefings |
 
 ## Naming
 

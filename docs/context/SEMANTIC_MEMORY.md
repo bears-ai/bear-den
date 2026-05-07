@@ -1,0 +1,184 @@
+# Semantic Memory Context
+
+This summary explains how BEARS thinks about semantic memory across Cabinet, Bear MemFS, role-local memory, and future operator UI.
+
+## Core idea
+
+Not every Bear memory belongs in Cabinet, and not every role-local memory needs promotion to `core/`.
+
+A memory object can be complete and valuable while remaining local to one role forever. Role-local memory is not merely a staging area for shared truth.
+
+## Memory surfaces
+
+| Surface | Purpose |
+|---|---|
+| **Cabinet** | Shared, human-editable canonical knowledge. |
+| **Bear `core/`** | Compact curated memory useful across Bear roles. |
+| **Role memory** | Durable local memory for one role: `talk/`, `pair/`, `curate/`, `work/`, or `watch/`. |
+| **Letta memory blocks / archival** | Letta-native runtime memory. |
+| **Artifacts** | Files and outputs; may be referenced by memory but are not memory themselves. |
+| **Conversation/session state** | Interaction-local state; not automatically durable memory. |
+
+## Cabinet spaces
+
+Cabinet should use three top-level semantic spaces:
+
+| Space | Purpose |
+|---|---|
+| **People** | Knowledge about people, preferences, relationships, identity-sensitive facts, and stakeholders. |
+| **Missions** | Projects, goals, initiatives, responsibilities, routines, and long-running areas of effort. |
+| **Knowledge** | General reusable knowledge, policies, procedures, decisions, concepts, and references. |
+
+Bear memory may reference these spaces, but it does not mirror Cabinet one-to-one. A role-local memory can relate to a mission without having a Cabinet page.
+
+## Semantic memory model
+
+BEARS describes memory with four dimensions.
+
+### 1. Locality
+
+Where the memory lives and who should use it:
+
+- `role-local`
+- `core`
+- `cabinet`
+- `artifact`
+- `conversation` / `session`
+
+### 2. Kind
+
+What type of memory it is:
+
+| Kind | Meaning |
+|---|---|
+| `note` | Synthesized memory, reminder, fact, or explanation. |
+| `log` | Chronological activity record. |
+| `decision` | Tactical or strategic choice with rationale. |
+| `reflection` | Self-analysis, lessons learned, or review note. |
+| `scratch` | Temporary working memory. |
+| `summary` | Condensed form of longer material. |
+| `proposal` | Explicit request for review or promotion. |
+| `observation` | Event-derived record, usually schema-managed. |
+| `result` | Task/run output summary, usually schema-managed. |
+
+General role-local entry tools should focus on `note`, `log`, `decision`, `reflection`, `scratch`, and `summary`. Schema-owned kinds such as `proposal`, `observation`, and `result` should use dedicated tools.
+
+### 3. References
+
+What the memory is about. References are optional.
+
+Examples:
+
+- `person_ref`
+- `mission_ref`
+- `knowledge_ref`
+- `cabinet_ref`
+- `artifact_ref`
+- `task_ref`
+- `conversation_ref`
+
+A `mission_ref` does not imply a Cabinet object. A `cabinet_ref` is explicit.
+
+### 4. Lifecycle
+
+What should happen to the memory over time:
+
+| Field | Example values |
+|---|---|
+| `scope` | `role-local`, `core-candidate`, `cabinet-candidate` |
+| `retention` | `session`, `short`, `durable`, `archive` |
+| `promotion` | `none`, `maybe`, `proposed`, `rejected`, `approved` |
+| `status` | `active`, `superseded`, `stale`, `archived` |
+
+A role-local memory with `promotion: none` is a valid final memory, not a failed promotion.
+
+## Situation briefings
+
+Use **situation**, not “current context,” for the trusted Den briefing an agent can request about the current interaction.
+
+Planned tool name:
+
+| Canonical | Provider-safe |
+|---|---|
+| `den.situation.get` | `den_situation_get` |
+
+A situation briefing may include:
+
+- bear identity,
+- role,
+- user/channel/session identity,
+- active mission hints,
+- allowed memory scopes,
+- relevant Cabinet spaces,
+- policy reminders,
+- MemFS health,
+- available tools.
+
+The word “context” should be avoided here because it can be confused with model context windows or compiled prompt context.
+
+## Tool direction
+
+Prefer flexible tools with semantic metadata over rigid tools for every category.
+
+Important planned tools:
+
+| Canonical | Provider-safe | Purpose |
+|---|---|---|
+| `den.situation.get` | `den_situation_get` | Trusted interaction situation briefing. |
+| `den.memory.write_entry` | `den_memory_write_entry` | Write a role-local entry with kind, refs, lifecycle, and provenance. |
+| `den.memory.tree` | `den_memory_tree` | Browse allowed memory paths. |
+| `den.memory.read` | `den_memory_read` | Read allowed memory files/entries. |
+| `den.memory.search` | `den_memory_search` | Search memory by text, role, kind, refs, and lifecycle. |
+| `den.memory.history` | `den_memory_history` | Inspect memory history. |
+| `den.memory.status` | `den_memory_status` | Inspect MemFS health. |
+
+The existing `den.write_note` / `den_write_note` pair tool can remain as a compatibility alias for `den.memory.write_entry` with `kind: note`.
+
+## Role-local path conventions
+
+Use predictable paths, but keep semantics in metadata:
+
+```text
+<role>/notes/
+<role>/logs/
+<role>/decisions/
+<role>/reflections/
+<role>/scratch/
+<role>/summaries/
+```
+
+Reserved schema-owned paths should remain behind dedicated tools:
+
+```text
+<role>/tasks/
+<role>/results/
+<role>/observations/
+<role>/subscriptions/
+```
+
+Do not create rigid directories such as `mission-notes/` by default. Use `kind: note` plus `mission_ref` instead.
+
+## Future operator UI
+
+The next product step is a UI that allows human operators to browse, search, and inspect a Bear's memory.
+
+The UI should support:
+
+- browsing by role and path,
+- filtering by kind,
+- filtering by mission/person/knowledge references,
+- filtering by lifecycle,
+- inspecting full entries and frontmatter,
+- viewing provenance,
+- viewing commit/history metadata,
+- seeing MemFS health/quarantine status,
+- opening Cabinet links when present,
+- making clear that many memories have no Cabinet mapping by design.
+
+## Related docs
+
+- [Semantic Bear Memory ADR](../architecture/adr/semantic-bear-memory.md)
+- [Memory Model](../concepts/MEMORY_MODEL.md)
+- [Bear Memory Tool Boundary ADR](../architecture/adr/bear-memory-tool-boundary.md)
+- [MemFS Sidecar Repo Views ADR](../architecture/adr/memfs-sidecar-repo-views.md)
+- [Multi-User Memory ADR](../architecture/adr/multi-user-memory.md)

@@ -1,6 +1,6 @@
 # Memory Model
 
-Bear memory is the durable knowledge a Bear can use across surfaces and time. Raw interactions enter role-specific memory first; durable shared knowledge is promoted into `core/` by `curate`.
+Bear memory is the durable knowledge a Bear can use across surfaces and time. Raw interactions may enter role-specific memory first; durable shared knowledge can be promoted into `core/` by `curate` when it is useful across roles. Role-local memory can also be a final destination.
 
 ## Summary
 
@@ -8,6 +8,7 @@ Bear memory is the durable knowledge a Bear can use across surfaces and time. Ra
 - `core/` is the shared, curated memory every role can use.
 - `talk/`, `pair/`, `curate/`, `work/`, and `watch/` are role-specific memory areas.
 - Raw inputs should not automatically become shared truth.
+- Role-local memory is not merely a staging area; it may stay local forever.
 - `curate` is responsible for deciding what becomes durable shared memory.
 
 ## What is Bear memory?
@@ -52,19 +53,32 @@ Each internal Bear agent role has its own memory area:
 | `watch/` | Structured observations from inbound events. |
 | `core/` | Shared durable memory curated for the whole Bear. |
 
-Role-specific memory lets each role keep useful local context without exposing every raw input to every other role.
+Role-specific memory lets each role keep useful local memory without exposing every raw input to every other role. A role-local memory can be complete and valid even when it has no Cabinet reference and no `core/` promotion target.
+
+Common role-local memory kinds include:
+
+| Kind | Purpose |
+|------|---------|
+| `note` | Synthesized memory, reminder, fact, or explanation. |
+| `log` | Chronological record of activity or attempts. |
+| `decision` | Tactical or strategic choice with rationale. |
+| `reflection` | Lessons learned, self-analysis, or review notes. |
+| `scratch` | Temporary working memory. |
+| `summary` | Condensed form of longer local material. |
 
 ## How memory becomes shared
 
-The normal memory flow is:
+A common memory sharing flow is:
 
-1. `talk`, `pair`, `work`, or `watch` writes role-specific notes, results, intents, or observations.
+1. `talk`, `pair`, `work`, or `watch` writes role-specific notes, logs, decisions, results, intents, or observations.
 2. `curate` reviews those branches on its cycle.
 3. `curate` decides what is durable, useful, and safe to share.
-4. `curate` promotes the distilled knowledge into `core/`.
+4. `curate` promotes the distilled knowledge into `core/` when multiple roles should rely on it.
 5. Other roles can use the updated `core/` on future turns or runs.
 
 This keeps shared memory deliberate rather than accidental.
+
+Promotion is optional. Some memories remain role-local because they are tactical, operational, noisy, private, or useful only to one role.
 
 ## What should not be remembered
 
@@ -80,6 +94,14 @@ Bear memory should not store:
 
 Secrets belong in secret-management systems, not in Bear memory.
 
+## Cabinet and semantic references
+
+Cabinet is the shared, human-editable knowledge base. Cabinet should use top-level spaces for **People**, **Missions**, and **Knowledge**.
+
+Bear memory may reference Cabinet objects or semantic spaces, but it does not mirror Cabinet one-to-one. A role-local memory can relate to a mission or person without having a Cabinet page.
+
+Use **situation** for trusted interaction briefings, not “current context.” This avoids confusion with model context windows and compiled prompt context.
+
 ## Product language
 
 Prefer:
@@ -87,6 +109,9 @@ Prefer:
 - “The Bear remembers durable knowledge through curated memory.”
 - “`core/` is shared memory; role branches hold local context.”
 - “Raw interactions are reviewed before they become shared memory.”
+- “Some memories are intentionally role-local.”
+- “Cabinet is shared knowledge; Bear memory can reference Cabinet without mirroring it.”
+- “Situation briefings tell the Bear where it is operating and what boundaries apply.”
 - “`curate` decides what the Bear should carry forward.”
 
 Avoid:
@@ -95,6 +120,9 @@ Avoid:
 - “All roles see all history.”
 - “Memory is just conversation history.”
 - “Shared memory is automatically updated by every agent.”
+- “Every memory must become Cabinet knowledge.”
+- “Every role memory is waiting for promotion.”
+- “Current context” when referring to Den’s situation briefing.
 
 ## Related docs
 
@@ -102,5 +130,7 @@ Avoid:
 - [Bear agent roles](BEAR_AGENT_ROLES.md)
 - [Tasks and autonomy](TASKS_AND_AUTONOMY.md)
 - [Observations and subscriptions](OBSERVATIONS_AND_SUBSCRIPTIONS.md)
+- [Semantic memory context](../context/SEMANTIC_MEMORY.md)
+- [Semantic Bear Memory ADR](../architecture/adr/semantic-bear-memory.md)
 - [Multi-agent architecture ADR](../architecture/adr/multi-agent-architecture.md)
 - [Den Bear spec](../../services/den/docs/bear-spec.md)
