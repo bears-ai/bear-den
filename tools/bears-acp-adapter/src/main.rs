@@ -1,5 +1,7 @@
 mod approvals;
+mod json_rpc;
 mod paths;
+mod tool_tasks;
 
 use agent_client_protocol::schema::{
     AgentCapabilities, AuthEnvVar, AuthMethod, AuthMethodEnvVar, AuthenticateResponse,
@@ -17,11 +19,13 @@ use approvals::{
     permission_class_for_tool, permission_decision_from_option_id, permission_options_for_context,
     ApprovalCache, ApprovalPersistence, ApprovalRecord, ApprovalScope, PermissionDecision,
 };
+use json_rpc::{id_key, write_json, JsonRpcTransport};
 use paths::{
     ensure_path_allowed_for_session, file_uri_or_path_to_path, is_absolute_local_path,
     is_hidden_path_component, is_sensitive_path, normalize_requested_tool_path,
     session_workspace_roots,
 };
+use tool_tasks::{log_tool_task_phase, ToolTaskPhase, ToolTaskRegistry};
 use anyhow::{anyhow, Context, Result};
 use futures_util::StreamExt;
 use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, CONTENT_TYPE};
@@ -36,7 +40,7 @@ use std::{
     time::UNIX_EPOCH,
 };
 use tokio::{
-    io::{self, AsyncBufReadExt, AsyncWriteExt, BufReader},
+    io::{self, AsyncBufReadExt, BufReader},
     sync::{broadcast, mpsc, Mutex as TokioMutex},
 };
 use uuid::Uuid;
@@ -61,11 +65,6 @@ struct RuntimeConfig {
     client: String,
 }
 
-#[derive(Clone, Default)]
-struct JsonRpcTransport {
-    pending_responses: Arc<TokioMutex<HashMap<String, tokio::sync::oneshot::Sender<Value>>>>,
-}
-
 #[derive(Default)]
 struct AdapterState {
     client_capabilities: Value,
@@ -82,22 +81,6 @@ struct AdapterSharedState {
     cancellation_tx: broadcast::Sender<String>,
 }
 
-#[derive(Clone, Default)]
-struct ToolTaskRegistry {
-    tasks: Arc<TokioMutex<HashMap<String, ToolTaskRecord>>>,
-}
-
-#[allow(dead_code)]
-#[derive(Clone, Debug)]
-struct ToolTaskRecord {
-    session_id: String,
-    tool_call_id: String,
-    tool_name: String,
-    phase: ToolTaskPhase,
-    started_at: std::time::Instant,
-    updated_at: std::time::Instant,
-}
-
 fn env_bool(name: &str) -> bool {
     env::var(name).ok().is_some_and(|value| {
         matches!(
@@ -105,143 +88,6 @@ fn env_bool(name: &str) -> bool {
             "1" | "true" | "yes" | "on"
         )
     })
-}
-
-impl ToolTaskRegistry {
-    fn key(session_id: &str, tool_call_id: &str) -> String {
-        format!("{session_id}\n{tool_call_id}")
-    }
-
-    async fn register(&self, session_id: &str, tool_call_id: &str, tool_name: &str) {
-        let now = std::time::Instant::now();
-        self.tasks.lock().await.insert(
-            Self::key(session_id, tool_call_id),
-            ToolTaskRecord {
-                session_id: session_id.to_string(),
-                tool_call_id: tool_call_id.to_string(),
-                tool_name: tool_name.to_string(),
-                phase: ToolTaskPhase::Received,
-                started_at: now,
-                updated_at: now,
-            },
-        );
-    }
-
-    async fn set_phase(
-        &self,
-        session_id: &str,
-        tool_call_id: &str,
-        tool_name: &str,
-        phase: ToolTaskPhase,
-    ) {
-        let mut tasks = self.tasks.lock().await;
-        let key = Self::key(session_id, tool_call_id);
-        let now = std::time::Instant::now();
-        let entry = tasks.entry(key).or_insert_with(|| ToolTaskRecord {
-            session_id: session_id.to_string(),
-            tool_call_id: tool_call_id.to_string(),
-            tool_name: tool_name.to_string(),
-            phase,
-            started_at: now,
-            updated_at: now,
-        });
-        let previous_phase = entry.phase;
-        let previous_elapsed_ms = now.duration_since(entry.updated_at).as_millis();
-        let total_elapsed_ms = now.duration_since(entry.started_at).as_millis();
-        entry.phase = phase;
-        entry.updated_at = now;
-        eprintln!(
-            "bears-acp-adapter: tool_task transition session_id={} tool_call_id={} tool_name={} from_phase={} to_phase={} phase_duration_ms={} total_duration_ms={}",
-            session_id,
-            tool_call_id,
-            tool_name,
-            previous_phase.as_str(),
-            phase.as_str(),
-            previous_elapsed_ms,
-            total_elapsed_ms,
-        );
-    }
-
-    async fn remove(&self, session_id: &str, tool_call_id: &str) -> Option<ToolTaskRecord> {
-        let removed = self
-            .tasks
-            .lock()
-            .await
-            .remove(&Self::key(session_id, tool_call_id));
-        if let Some(record) = removed.as_ref() {
-            eprintln!(
-                "bears-acp-adapter: tool_task finished session_id={} tool_call_id={} tool_name={} final_phase={} total_duration_ms={}",
-                record.session_id,
-                record.tool_call_id,
-                record.tool_name,
-                record.phase.as_str(),
-                record.started_at.elapsed().as_millis(),
-            );
-        }
-        removed
-    }
-
-    #[allow(dead_code)]
-    async fn list_for_session(&self, session_id: &str) -> Vec<ToolTaskRecord> {
-        self.tasks
-            .lock()
-            .await
-            .values()
-            .filter(|task| task.session_id == session_id)
-            .cloned()
-            .collect()
-    }
-}
-
-impl JsonRpcTransport {
-    async fn route_response(&self, id: &Value, value: Value) -> bool {
-        if let Some(tx) = self.pending_responses.lock().await.remove(&id_key(id)) {
-            let _ = tx.send(value);
-            true
-        } else {
-            false
-        }
-    }
-
-    async fn request(
-        &self,
-        method: &str,
-        params: Value,
-        timeout: std::time::Duration,
-    ) -> Result<Value> {
-        let id = json!(format!("req-{}", Uuid::new_v4()));
-        let key = id_key(&id);
-        let (tx, rx) = tokio::sync::oneshot::channel();
-        self.pending_responses.lock().await.insert(key.clone(), tx);
-        write_json(json!({
-            "jsonrpc": "2.0",
-            "id": id,
-            "method": method,
-            "params": params,
-        }))
-        .await?;
-        match tokio::time::timeout(timeout, rx).await {
-            Ok(Ok(value)) => Ok(value),
-            Ok(Err(_)) => Err(anyhow!(
-                "client response channel closed for {method} id={key}"
-            )),
-            Err(_) => {
-                self.pending_responses.lock().await.remove(&key);
-                Err(anyhow!(
-                    "timed out waiting for client response to {method} id={key}"
-                ))
-            }
-        }
-    }
-
-    async fn notify(&self, method: &str, params: Value) -> Result<()> {
-        write_json(json!({
-            "jsonrpc": "2.0",
-            "method": method,
-            "params": params,
-        }))
-        .await
-    }
 }
 
 #[derive(Clone, Debug, Default)]
@@ -316,39 +162,6 @@ enum LocalToolStatus {
     Unsupported,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum ToolTaskPhase {
-    Received,
-    PermissionRequested,
-    PermissionGranted,
-    PermissionDenied,
-    PermissionTimeout,
-    ExecutionStarted,
-    ExecutionSucceeded,
-    ExecutionFailed,
-    ResultPosted,
-    ResultPostFailed,
-    Cancelled,
-}
-
-impl ToolTaskPhase {
-    fn as_str(self) -> &'static str {
-        match self {
-            Self::Received => "received",
-            Self::PermissionRequested => "permission_requested",
-            Self::PermissionGranted => "permission_granted",
-            Self::PermissionDenied => "permission_denied",
-            Self::PermissionTimeout => "permission_timeout",
-            Self::ExecutionStarted => "execution_started",
-            Self::ExecutionSucceeded => "execution_succeeded",
-            Self::ExecutionFailed => "execution_failed",
-            Self::ResultPosted => "result_posted",
-            Self::ResultPostFailed => "result_post_failed",
-            Self::Cancelled => "cancelled",
-        }
-    }
-}
-
 impl LocalToolStatus {
     fn as_str(self) -> &'static str {
         match self {
@@ -360,21 +173,6 @@ impl LocalToolStatus {
             Self::Unsupported => "unsupported",
         }
     }
-}
-
-fn log_tool_task_phase(
-    session_id: &str,
-    tool_call_id: &str,
-    tool_name: &str,
-    phase: ToolTaskPhase,
-) {
-    eprintln!(
-        "bears-acp-adapter: tool_task phase={} session_id={} tool_call_id={} tool_name={}",
-        phase.as_str(),
-        session_id,
-        tool_call_id,
-        tool_name
-    );
 }
 
 #[derive(Debug)]
@@ -475,13 +273,6 @@ impl ServerVersion {
             "Den server version: service={}, version={}, git_sha={}, built_at_utc={}",
             self.service, self.version, self.git_sha, self.built_at_utc
         )
-    }
-}
-
-fn id_key(id: &Value) -> String {
-    match id {
-        Value::String(s) => s.clone(),
-        _ => id.to_string(),
     }
 }
 
@@ -5480,15 +5271,6 @@ async fn write_response(id: impl Into<Option<Value>>, result: Result<Value, Valu
     write_json(message).await
 }
 
-async fn write_json(value: Value) -> Result<()> {
-    let mut stdout = io::stdout();
-    let line = serde_json::to_string(&value)?;
-    stdout.write_all(line.as_bytes()).await?;
-    stdout.write_all(b"\n").await?;
-    stdout.flush().await?;
-    Ok(())
-}
-
 fn auth_challenge_error(data: Option<Value>) -> Value {
     json_rpc_error(-32000, "Authentication required", data)
 }
@@ -6324,9 +6106,8 @@ mod tests {
     async fn json_rpc_transport_routes_matching_response() {
         let transport = JsonRpcTransport::default();
         let id = json!("req-test");
-        let key = id_key(&id);
         let (tx, rx) = tokio::sync::oneshot::channel();
-        transport.pending_responses.lock().await.insert(key, tx);
+        transport.insert_pending_response_for_test(id.clone(), tx).await;
         assert!(
             transport
                 .route_response(&id, json!({ "id": "req-test", "result": { "ok": true } }))
