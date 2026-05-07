@@ -40,6 +40,11 @@ pub enum AcpToolName {
     GitStash,
     ProcessRun,
     WebFetch,
+    ChromeOpen,
+    ChromeSnapshot,
+    ChromeConsoleMessages,
+    ChromeNetworkRequests,
+    ChromeScreenshot,
 }
 
 impl AcpToolName {
@@ -67,6 +72,11 @@ impl AcpToolName {
             Self::GitStash => &ACP_GIT_STASH_TOOL,
             Self::ProcessRun => &ACP_PROCESS_RUN_TOOL,
             Self::WebFetch => &ACP_WEB_FETCH_TOOL,
+            Self::ChromeOpen => &ACP_CHROME_OPEN_TOOL,
+            Self::ChromeSnapshot => &ACP_CHROME_SNAPSHOT_TOOL,
+            Self::ChromeConsoleMessages => &ACP_CHROME_CONSOLE_MESSAGES_TOOL,
+            Self::ChromeNetworkRequests => &ACP_CHROME_NETWORK_REQUESTS_TOOL,
+            Self::ChromeScreenshot => &ACP_CHROME_SCREENSHOT_TOOL,
         }
     }
 
@@ -94,6 +104,11 @@ impl AcpToolName {
             Self::GitStash,
             Self::ProcessRun,
             Self::WebFetch,
+            Self::ChromeOpen,
+            Self::ChromeSnapshot,
+            Self::ChromeConsoleMessages,
+            Self::ChromeNetworkRequests,
+            Self::ChromeScreenshot,
         ]
     }
 
@@ -136,7 +151,11 @@ impl AcpToolName {
             Self::GitCommit => &["message"],
             Self::GitStash => &[],
             Self::ProcessRun => &["command", "cwd"],
-            Self::WebFetch => &["url"],
+            Self::WebFetch | Self::ChromeOpen => &["url"],
+            Self::ChromeSnapshot
+            | Self::ChromeConsoleMessages
+            | Self::ChromeNetworkRequests
+            | Self::ChromeScreenshot => &[],
         }
     }
 
@@ -197,6 +216,11 @@ impl AcpToolName {
                 Some(Self::ProcessRun)
             }
             "bears/web_fetch" | "web/fetch" | "web.fetch" | "web_fetch" => Some(Self::WebFetch),
+            "bears/chrome_open" | "chrome/open" | "chrome.open" | "chrome_open" => Some(Self::ChromeOpen),
+            "bears/chrome_snapshot" | "chrome/snapshot" | "chrome.snapshot" | "chrome_snapshot" => Some(Self::ChromeSnapshot),
+            "bears/chrome_console_messages" | "chrome/console_messages" | "chrome.console_messages" | "chrome_console_messages" => Some(Self::ChromeConsoleMessages),
+            "bears/chrome_network_requests" | "chrome/network_requests" | "chrome.network_requests" | "chrome_network_requests" => Some(Self::ChromeNetworkRequests),
+            "bears/chrome_screenshot" | "chrome/screenshot" | "chrome.screenshot" | "chrome_screenshot" => Some(Self::ChromeScreenshot),
             _ => None,
         }
     }
@@ -541,6 +565,12 @@ pub const ACP_WEB_FETCH_TOOL: AcpToolDescriptor = AcpToolDescriptor {
     kind: "fetch",
     risk: "network_access",
 };
+
+pub const ACP_CHROME_OPEN_TOOL: AcpToolDescriptor = AcpToolDescriptor { provider_name: "chrome_open", canonical_name: "acp.chrome.open", adapter_method: "bears/chrome_open", client_method: "chrome/open", title: "Chrome open", kind: "fetch", risk: "browser_access" };
+pub const ACP_CHROME_SNAPSHOT_TOOL: AcpToolDescriptor = AcpToolDescriptor { provider_name: "chrome_snapshot", canonical_name: "acp.chrome.snapshot", adapter_method: "bears/chrome_snapshot", client_method: "chrome/snapshot", title: "Chrome snapshot", kind: "read", risk: "browser_access" };
+pub const ACP_CHROME_CONSOLE_MESSAGES_TOOL: AcpToolDescriptor = AcpToolDescriptor { provider_name: "chrome_console_messages", canonical_name: "acp.chrome.console_messages", adapter_method: "bears/chrome_console_messages", client_method: "chrome/console_messages", title: "Chrome console messages", kind: "read", risk: "browser_access" };
+pub const ACP_CHROME_NETWORK_REQUESTS_TOOL: AcpToolDescriptor = AcpToolDescriptor { provider_name: "chrome_network_requests", canonical_name: "acp.chrome.network_requests", adapter_method: "bears/chrome_network_requests", client_method: "chrome/network_requests", title: "Chrome network requests", kind: "read", risk: "browser_access" };
+pub const ACP_CHROME_SCREENSHOT_TOOL: AcpToolDescriptor = AcpToolDescriptor { provider_name: "chrome_screenshot", canonical_name: "acp.chrome.screenshot", adapter_method: "bears/chrome_screenshot", client_method: "chrome/screenshot", title: "Chrome screenshot", kind: "read", risk: "browser_access" };
 
 pub fn provider_tool_name_is_safe(name: &str) -> bool {
     !name.is_empty()
@@ -948,6 +978,27 @@ const ACP_WEB_FETCH_POLICY: AcpToolPolicy = AcpToolPolicy {
     permission_timeout_ms: 120_000,
 };
 
+const ACP_CHROME_POLICY: AcpToolPolicy = AcpToolPolicy {
+    scope_basis: "acp:tools",
+    role_basis: "pair_agent",
+    allowed_roots_basis: "chrome_cdp_endpoint",
+    path_containment: "adapter_enforced_chrome_cdp_endpoint",
+    approval_required: true,
+    sensitive_path_policy: "client_permission_required",
+    max_lines: None,
+    max_entries: Some(500),
+    max_results: None,
+    max_bytes: Some(1_048_576),
+    recursive_default: None,
+    include_hidden_default: None,
+    max_replacements: None,
+    create_files: None,
+    allow_multiple: None,
+    deny_hidden_paths: None,
+    total_timeout_ms: 120_000,
+    permission_timeout_ms: 120_000,
+};
+
 pub fn acp_tool_policy(tool: AcpToolName) -> AcpToolPolicy {
     match tool {
         AcpToolName::ReadTextFile => ACP_READ_TEXT_FILE_POLICY,
@@ -972,6 +1023,11 @@ pub fn acp_tool_policy(tool: AcpToolName) -> AcpToolPolicy {
         AcpToolName::GitStash => ACP_GIT_WRITE_POLICY,
         AcpToolName::ProcessRun => ACP_PROCESS_RUN_POLICY,
         AcpToolName::WebFetch => ACP_WEB_FETCH_POLICY,
+        AcpToolName::ChromeOpen
+        | AcpToolName::ChromeSnapshot
+        | AcpToolName::ChromeConsoleMessages
+        | AcpToolName::ChromeNetworkRequests
+        | AcpToolName::ChromeScreenshot => ACP_CHROME_POLICY,
     }
 }
 
@@ -1057,6 +1113,25 @@ fn adapter_supports_tool(client_context: &serde_json::Value, provider_name: &str
 
 pub fn acp_read_text_file_client_tool_descriptor() -> serde_json::Value {
     acp_client_tool_descriptor(&ACP_READ_TEXT_FILE_TOOL)
+}
+
+fn chrome_descriptor(
+    tool: &AcpToolDescriptor,
+    properties: serde_json::Value,
+    required: Vec<&str>,
+) -> serde_json::Value {
+    json!({
+        "name": tool.provider_name,
+        "description": format!(
+            "ACP Chrome DevTools tool ({}, adapter={}, kind={}, risk={}). Requires BEARS_CHROME_CDP_URL or BEARS_BROWSER_CDP_URL pointing to a Chrome/Chromium/Edge CDP endpoint.",
+            tool.canonical_name, tool.adapter_method, tool.kind, tool.risk,
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": properties,
+            "required": required,
+        }
+    })
 }
 
 pub fn acp_client_tool_descriptor(tool: &AcpToolDescriptor) -> serde_json::Value {
@@ -1467,6 +1542,11 @@ pub fn acp_client_tool_descriptor(tool: &AcpToolDescriptor) -> serde_json::Value
                 "required": ["url"]
             }
         }),
+        "chrome_open" => chrome_descriptor(tool, json!({ "url": { "type": "string" } }), vec!["url"]),
+        "chrome_snapshot" => chrome_descriptor(tool, json!({}), Vec::<&str>::new()),
+        "chrome_console_messages" => chrome_descriptor(tool, json!({ "limit": { "type": "integer", "minimum": 1, "maximum": 500 } }), Vec::<&str>::new()),
+        "chrome_network_requests" => chrome_descriptor(tool, json!({ "limit": { "type": "integer", "minimum": 1, "maximum": 500 } }), Vec::<&str>::new()),
+        "chrome_screenshot" => chrome_descriptor(tool, json!({ "format": { "type": "string", "enum": ["png", "jpeg"] } }), Vec::<&str>::new()),
         _ => unreachable!("unknown ACP tool descriptor: {}", tool.provider_name),
     }
 }
@@ -1695,6 +1775,7 @@ mod tests {
                         "adapter_enforced_absolute_path_under_allowed_roots"
                             | "adapter_enforced_absolute_cwd_under_allowed_roots"
                             | "adapter_enforced_url_host_scope"
+                            | "adapter_enforced_chrome_cdp_endpoint"
                     )
                 ),
                 "{}",
@@ -1703,7 +1784,7 @@ mod tests {
             assert!(
                 matches!(
                     policy["allowed_roots_basis"].as_str(),
-                    Some("acp_session.workspace_roots" | "url.host")
+                    Some("acp_session.workspace_roots" | "url.host" | "chrome_cdp_endpoint")
                 ),
                 "{}",
                 descriptor.provider_name

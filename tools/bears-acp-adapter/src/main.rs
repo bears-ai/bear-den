@@ -40,6 +40,10 @@ use tokio::{
     sync::{broadcast, mpsc, Mutex as TokioMutex},
 };
 use tool_tasks::{log_tool_task_phase, ToolTaskPhase, ToolTaskRegistry};
+use tools::chrome::{
+    handle_chrome_console_messages, handle_chrome_network_requests, handle_chrome_open,
+    handle_chrome_screenshot, handle_chrome_snapshot,
+};
 
 use tools::fs::{
     handle_apply_patch, handle_copy_path, handle_create_directory, handle_create_text_file,
@@ -1124,6 +1128,11 @@ fn adapter_capabilities_context() -> Value {
             "git_stash": { "supported": true, "version": 1 },
             "process_run": { "supported": true, "version": 1 },
             "web_fetch": { "supported": true, "version": 1 },
+            "chrome_open": { "supported": true, "version": 1 },
+            "chrome_snapshot": { "supported": true, "version": 1 },
+            "chrome_console_messages": { "supported": true, "version": 1 },
+            "chrome_network_requests": { "supported": true, "version": 1 },
+            "chrome_screenshot": { "supported": true, "version": 1 },
             "fs_replace_text": { "supported": true, "version": 1 },
             "fs_create_text_file": { "supported": true, "version": 1 },
             "fs_create_directory": { "supported": true, "version": 1 },
@@ -1152,6 +1161,11 @@ fn direct_tools_context() -> Value {
         "git_stash": true,
         "process_run": true,
         "web_fetch": true,
+        "chrome_open": true,
+        "chrome_snapshot": true,
+        "chrome_console_messages": true,
+        "chrome_network_requests": true,
+        "chrome_screenshot": true,
         "fs_replace_text": true,
         "fs_create_text_file": true,
         "fs_create_directory": true,
@@ -1540,6 +1554,11 @@ async fn execute_local_tool(
             handle_process_run(context, session_id, &args, policy).await
         }
         "web_fetch" => handle_web_fetch(session_id, &args, policy).await,
+        "chrome_open" => handle_chrome_open(&args, policy).await,
+        "chrome_snapshot" => handle_chrome_snapshot(&args, policy).await,
+        "chrome_console_messages" => handle_chrome_console_messages(&args, policy).await,
+        "chrome_network_requests" => handle_chrome_network_requests(&args, policy).await,
+        "chrome_screenshot" => handle_chrome_screenshot(&args, policy).await,
         "fs_replace_text" => {
             handle_direct_replace_text(adapter_state, session_id, &args, policy).await
         }
@@ -3741,6 +3760,11 @@ fn tool_display(tool_name: &str) -> ToolDisplay {
             verb: "Fetching",
             permission_operation: "fetch this URL",
         },
+        "chrome_open" => ToolDisplay { title: "Chrome open", kind: ToolKind::Fetch, verb: "Opening Chrome URL", permission_operation: "open this Chrome URL" },
+        "chrome_snapshot" => ToolDisplay { title: "Chrome snapshot", kind: ToolKind::Read, verb: "Reading Chrome snapshot", permission_operation: "read Chrome snapshot" },
+        "chrome_console_messages" => ToolDisplay { title: "Chrome console", kind: ToolKind::Read, verb: "Reading Chrome console", permission_operation: "read Chrome console messages" },
+        "chrome_network_requests" => ToolDisplay { title: "Chrome network", kind: ToolKind::Read, verb: "Reading Chrome network", permission_operation: "read Chrome network requests" },
+        "chrome_screenshot" => ToolDisplay { title: "Chrome screenshot", kind: ToolKind::Read, verb: "Capturing Chrome screenshot", permission_operation: "capture Chrome screenshot" },
         "fs_replace_text" => ToolDisplay {
             title: "Edit file",
             kind: ToolKind::Edit,
@@ -3819,7 +3843,8 @@ fn tool_target_kind(tool_name: &str) -> &'static str {
         "fs_apply_patch" => "patch",
         "git_status" | "git_diff" | "git_log" | "git_show" | "git_add" | "git_restore" | "git_commit" | "git_stash" => "repository",
         "process_run" => "command",
-        "web_fetch" => "url",
+        "web_fetch" | "chrome_open" => "url",
+        "chrome_snapshot" | "chrome_console_messages" | "chrome_network_requests" | "chrome_screenshot" => "chrome",
         "fs_delete_path" => "path",
         _ => "file",
     }
