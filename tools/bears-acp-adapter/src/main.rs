@@ -386,32 +386,41 @@ fn approval_scope_fingerprint(
     target_path: Option<&Path>,
 ) -> Option<String> {
     match scope {
-        ApprovalScope::Directory => target_path.map(|path| approval_directory_scope(path).display().to_string()),
+        ApprovalScope::Directory => approval_directory_scope(context, target_path)
+            .map(|path| path.display().to_string()),
         ApprovalScope::Workspace => Some(approval_root_fingerprint(context)),
         ApprovalScope::Global => Some("global".to_string()),
     }
 }
 
-fn approval_directory_scope(path: &Path) -> PathBuf {
-    if path.is_dir() {
-        path.to_path_buf()
+fn approval_directory_scope(context: &SessionContext, target_path: Option<&Path>) -> Option<PathBuf> {
+    let path = target_path?;
+    let directory = if path.is_dir() {
+        path.parent()?.to_path_buf()
     } else {
-        path.parent()
-            .map(Path::to_path_buf)
-            .unwrap_or_else(|| path.to_path_buf())
+        path.parent()?.to_path_buf()
+    };
+    let roots = session_workspace_roots(context);
+    if roots.iter().any(|root| directory == *root) {
+        return None;
+    }
+    Some(directory)
+}
+
+fn session_workspace_roots(context: &SessionContext) -> Vec<PathBuf> {
+    if context.roots.is_empty() {
+        vec![PathBuf::from(&context.cwd)]
+    } else {
+        context.roots.iter().map(PathBuf::from).collect()
     }
 }
 
 fn approval_workspace_scope_label(context: &SessionContext) -> String {
-    let roots = if context.roots.is_empty() {
-        vec![context.cwd.clone()]
-    } else {
-        context.roots.clone()
-    };
+    let roots = session_workspace_roots(context);
     if roots.len() == 1 {
         roots
             .first()
-            .map(|root| Path::new(root).display().to_string())
+            .map(|root| root.display().to_string())
             .unwrap_or_else(|| "this workspace".to_string())
     } else {
         "workspace roots".to_string()
@@ -4976,20 +4985,28 @@ async fn request_tool_permission(
     if let Some(args) = event.get("args") {
         fields = fields.raw_input(Some(args.clone()));
     }
-    let tool_call = ToolCallUpdate::new(tool_call_id.to_string(), fields);
+    let mut meta = serde_json::Map::new();
+    meta.insert("toolName".to_string(), json!(tool_name));
+    meta.insert("toolKind".to_string(), json!(tool_kind_str(display.kind)));
+    meta.insert("targetKind".to_string(), json!(tool_target_kind(tool_name)));
+    meta.insert("targetPath".to_string(), json!(path));
+    meta.insert("permissionClass".to_string(), json!(permission_class_for_tool(tool_name)));
+    meta.insert("risk".to_string(), json!(policy.risk()));
+    meta.insert("operation".to_string(), json!(display.permission_operation));
+    let tool_call = ToolCallUpdate::new(tool_call_id.to_string(), fields).meta(Some(meta.clone()));
     let mut options = vec![PermissionOption::new(
         "allow_once",
         "Only this time",
         PermissionOptionKind::AllowOnce,
     )];
-    if let Some(path) = target_path {
-        options.push(PermissionOption::new(
-            "allow_directory",
-            format!("Always for {}", approval_directory_scope(path).display()),
-            PermissionOptionKind::AllowAlways,
-        ));
-    }
     if let Some(context) = context {
+        if let Some(directory) = approval_directory_scope(context, target_path) {
+            options.push(PermissionOption::new(
+                "allow_directory",
+                format!("Always for {}", directory.display()),
+                PermissionOptionKind::AllowAlways,
+            ));
+        }
         options.push(PermissionOption::new(
             "allow_workspace",
             format!("Always for {}", approval_workspace_scope_label(context)),
@@ -5006,7 +5023,8 @@ async fn request_tool_permission(
         "Deny",
         PermissionOptionKind::RejectOnce,
     ));
-    let request = RequestPermissionRequest::new(session_id.to_string(), tool_call, options);
+    let request = RequestPermissionRequest::new(session_id.to_string(), tool_call, options)
+        .meta(Some(meta));
     let response = adapter_state
         .transport
         .request(
@@ -5216,6 +5234,7 @@ struct ToolDisplay {
     title: &'static str,
     kind: ToolKind,
     verb: &'static str,
+    permission_operation: &'static str,
 }
 
 fn tool_display(tool_name: &str) -> ToolDisplay {
@@ -5224,37 +5243,69 @@ fn tool_display(tool_name: &str) -> ToolDisplay {
             title: "Read file",
             kind: ToolKind::Read,
             verb: "Reading",
+            permission_operation: "read this file",
         },
         "fs_list_directory" => ToolDisplay {
             title: "List directory",
             kind: ToolKind::Read,
             verb: "Listing",
+            permission_operation: "list this directory",
         },
         "fs_search_files" => ToolDisplay {
             title: "Search files",
             kind: ToolKind::Search,
             verb: "Searching",
+            permission_operation: "search files",
         },
         "fs_replace_text" => ToolDisplay {
             title: "Edit file",
             kind: ToolKind::Edit,
             verb: "Editing",
+            permission_operation: "modify this file",
         },
         "fs_create_text_file" => ToolDisplay {
             title: "Create file",
             kind: ToolKind::Edit,
             verb: "Creating",
+            permission_operation: "create this file",
         },
         "fs_delete_path" => ToolDisplay {
             title: "Delete path",
             kind: ToolKind::Delete,
             verb: "Deleting",
+            permission_operation: "delete this path",
         },
         _ => ToolDisplay {
             title: "Local tool",
             kind: ToolKind::Read,
             verb: "Running",
+            permission_operation: "run this local tool",
         },
+    }
+}
+
+fn tool_kind_str(kind: ToolKind) -> &'static str {
+    match kind {
+        ToolKind::Read => "read",
+        ToolKind::Edit => "edit",
+        ToolKind::Delete => "delete",
+        ToolKind::Move => "move",
+        ToolKind::Search => "search",
+        ToolKind::Execute => "execute",
+        ToolKind::Think => "think",
+        ToolKind::Fetch => "fetch",
+        ToolKind::SwitchMode => "switch_mode",
+        ToolKind::Other => "other",
+        _ => "other",
+    }
+}
+
+fn tool_target_kind(tool_name: &str) -> &'static str {
+    match tool_name {
+        "fs_list_directory" => "directory",
+        "fs_search_files" => "directory",
+        "fs_delete_path" => "path",
+        _ => "file",
     }
 }
 
@@ -6048,7 +6099,22 @@ mod tests {
     }
 
     #[test]
-    fn approval_ttl_matches_product_policy() {
+    fn approval_directory_scope_uses_parent_and_skips_workspace_root() {
+        let context = SessionContext {
+            cwd: "/workspace".to_string(),
+            roots: vec!["/workspace".to_string()],
+            ..Default::default()
+        };
+        assert_eq!(
+            approval_directory_scope(&context, Some(Path::new("/workspace/src/main.rs")))
+                .unwrap(),
+            PathBuf::from("/workspace/src")
+        );
+        assert!(approval_directory_scope(&context, Some(Path::new("/workspace/src"))).is_none());
+        assert!(approval_directory_scope(&context, Some(Path::new("/workspace"))).is_none());
+    }
+
+    #[test]uct_policy() {
         assert_eq!(approval_ttl_secs("writes_workspace"), 7 * 24 * 60 * 60);
         assert_eq!(approval_ttl_secs("deletes_workspace"), 7 * 24 * 60 * 60);
         assert_eq!(approval_ttl_secs("read_only"), 28 * 24 * 60 * 60);
