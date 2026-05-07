@@ -3286,7 +3286,7 @@ fn collect_find_paths(
             .unwrap_or(path)
             .to_string_lossy()
             .replace('\\', "/");
-        if wildcard_match(glob, &relative) {
+        if glob_match(glob, &relative) {
             if out.len() >= limit {
                 *truncated = true;
                 return Ok(());
@@ -3431,7 +3431,7 @@ fn search_file_passes_filters(root: &Path, path: &Path, filters: &SearchFilters)
             .unwrap_or(path)
             .to_string_lossy()
             .replace('\\', "/");
-        if !wildcard_match(pattern, &relative) {
+        if !glob_match(pattern, &relative) {
             return false;
         }
     }
@@ -3446,7 +3446,28 @@ fn line_matches_query(line: &str, query: &str, case_sensitive: bool) -> bool {
     }
 }
 
-fn wildcard_match(pattern: &str, text: &str) -> bool {
+fn glob_match(pattern: &str, text: &str) -> bool {
+    let pattern = pattern.replace('\\', "/");
+    let text = text.replace('\\', "/");
+    let pattern_parts = pattern.split('/').collect::<Vec<_>>();
+    let text_parts = text.split('/').collect::<Vec<_>>();
+    glob_match_parts(&pattern_parts, &text_parts)
+}
+
+fn glob_match_parts(pattern: &[&str], text: &[&str]) -> bool {
+    if pattern.is_empty() {
+        return text.is_empty();
+    }
+    if pattern[0] == "**" {
+        if glob_match_parts(&pattern[1..], text) {
+            return true;
+        }
+        return !text.is_empty() && glob_match_parts(pattern, &text[1..]);
+    }
+    !text.is_empty() && wildcard_segment_match(pattern[0], text[0]) && glob_match_parts(&pattern[1..], &text[1..])
+}
+
+fn wildcard_segment_match(pattern: &str, text: &str) -> bool {
     let pattern = pattern.as_bytes();
     let text = text.as_bytes();
     let mut p = 0usize;
@@ -3561,12 +3582,26 @@ struct ParsedGitStatus {
 }
 
 fn git_repo_path_from_args(context: &SessionContext, args: &Value) -> Result<PathBuf> {
-    let repo = args
+    let requested = args
         .get("repo_path")
         .and_then(Value::as_str)
         .map(normalize_requested_tool_path)
         .transpose()?
         .unwrap_or_else(|| session_workspace_roots(context)[0].clone());
+    ensure_path_allowed_for_session(context, &requested)?;
+    let output = Command::new("git")
+        .args(["rev-parse", "--show-toplevel"])
+        .current_dir(&requested)
+        .output()
+        .with_context(|| format!("resolve git repository root for {}", requested.display()))?;
+    if !output.status.success() {
+        return Err(anyhow!(
+            "{} is not inside a git work tree: {}",
+            requested.display(),
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+    let repo = PathBuf::from(String::from_utf8_lossy(&output.stdout).trim());
     ensure_path_allowed_for_session(context, &repo)?;
     Ok(repo)
 }
@@ -6596,10 +6631,15 @@ mod tests {
     }
 
     #[test]
-    fn wildcard_match_supports_star_and_question_mark() {
-        assert!(wildcard_match("src/*.rs", "src/lib.rs"));
-        assert!(wildcard_match("src/lib.?s", "src/lib.rs"));
-        assert!(!wildcard_match("src/*.rs", "tests/lib.rs"));
+    fn glob_match_supports_star_question_mark_and_globstar() {
+        assert!(glob_match("src/*.rs", "src/lib.rs"));
+        assert!(glob_match("src/lib.?s", "src/lib.rs"));
+        assert!(!glob_match("src/*.rs", "src/nested/lib.rs"));
+        assert!(!glob_match("src/*.rs", "tests/lib.rs"));
+        assert!(glob_match("**/*.rs", "src/lib.rs"));
+        assert!(glob_match("**/*.rs", "services/den/src/lib.rs"));
+        assert!(glob_match("src/**", "src/nested/lib.rs"));
+        assert!(glob_match("**/Cargo.toml", "services/den/Cargo.toml"));
     }
 
     #[tokio::test]
@@ -6637,6 +6677,87 @@ mod tests {
         assert!(diff["diff"].as_str().unwrap().contains("-before"));
         assert!(diff["diff"].as_str().unwrap().contains("+after"));
         assert_eq!(diff["truncated"], false);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn find_paths_supports_globstar_patterns() {
+        let root = unique_test_dir("find-globstar");
+        fs::create_dir_all(root.join("src").join("nested")).unwrap();
+        fs::write(root.join("src").join("nested").join("lib.rs"), "").unwrap();
+        fs::write(root.join("src").join("main.ts"), "").unwrap();
+        let state = test_adapter_state("session-1", &root);
+        let result = handle_direct_find_paths(
+            &state,
+            "session-1",
+            &json!({ "root": root.to_string_lossy(), "glob": "**/*.rs" }),
+            &ToolPolicy::default(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(result["returned_matches"], 1);
+        assert_eq!(result["matches"][0]["relative_path"], "src/nested/lib.rs");
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn git_tools_resolve_nested_repo_paths_to_toplevel() {
+        let root = unique_test_dir("git-nested");
+        let nested = root.join("nested");
+        fs::create_dir_all(&nested).unwrap();
+        Command::new("git").args(["init"]).current_dir(&root).output().unwrap();
+        Command::new("git").args(["config", "user.email", "test@example.test"]).current_dir(&root).output().unwrap();
+        Command::new("git").args(["config", "user.name", "Test User"]).current_dir(&root).output().unwrap();
+        fs::write(nested.join("file.txt"), "hello\n").unwrap();
+        Command::new("git").args(["add", "nested/file.txt"]).current_dir(&root).output().unwrap();
+        Command::new("git").args(["commit", "-m", "initial"]).current_dir(&root).output().unwrap();
+        fs::write(nested.join("file.txt"), "changed\n").unwrap();
+        let state = test_adapter_state("session-1", &root);
+        let status = handle_direct_git_status(
+            &state,
+            "session-1",
+            &json!({ "repo_path": nested.to_string_lossy() }),
+            &ToolPolicy::default(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(status["repo_path"].as_str().unwrap(), root.to_string_lossy());
+        assert!(status["entries"].as_array().unwrap().iter().any(|entry| entry["path"] == "nested/file.txt"));
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn git_tools_reject_non_repo_and_diff_paths_outside_repo() {
+        let root = unique_test_dir("git-invalid");
+        let repo = root.join("repo");
+        let sibling = root.join("sibling");
+        fs::create_dir_all(&repo).unwrap();
+        fs::create_dir_all(&sibling).unwrap();
+        Command::new("git").args(["init"]).current_dir(&repo).output().unwrap();
+        Command::new("git").args(["config", "user.email", "test@example.test"]).current_dir(&repo).output().unwrap();
+        Command::new("git").args(["config", "user.name", "Test User"]).current_dir(&repo).output().unwrap();
+        fs::write(repo.join("file.txt"), "before\n").unwrap();
+        Command::new("git").args(["add", "file.txt"]).current_dir(&repo).output().unwrap();
+        Command::new("git").args(["commit", "-m", "initial"]).current_dir(&repo).output().unwrap();
+        fs::write(repo.join("file.txt"), "after\n").unwrap();
+        fs::write(sibling.join("outside.txt"), "outside\n").unwrap();
+        let state = test_adapter_state("session-1", &root);
+        let non_repo = handle_direct_git_status(
+            &state,
+            "session-1",
+            &json!({ "repo_path": sibling.to_string_lossy() }),
+            &ToolPolicy::default(),
+        )
+        .await;
+        assert!(format!("{:#}", non_repo.unwrap_err()).contains("not inside a git work tree"));
+        let outside_path = handle_direct_git_diff(
+            &state,
+            "session-1",
+            &json!({ "repo_path": repo.to_string_lossy(), "paths": [sibling.join("outside.txt").to_string_lossy()] }),
+            &ToolPolicy::default(),
+        )
+        .await;
+        assert!(format!("{:#}", outside_path.unwrap_err()).contains("outside repo"));
         let _ = fs::remove_dir_all(root);
     }
 
