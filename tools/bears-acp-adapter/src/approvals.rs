@@ -139,6 +139,7 @@ impl ApprovalCache {
         cache
     }
 
+    #[allow(dead_code)]
     pub(crate) async fn remember(
         &self,
         context: &SessionContext,
@@ -151,6 +152,7 @@ impl ApprovalCache {
             .await;
     }
 
+    #[allow(dead_code)]
     pub(crate) async fn remember_for_url(
         &self,
         context: &SessionContext,
@@ -209,6 +211,7 @@ impl ApprovalCache {
         self.save().await;
     }
 
+    #[allow(dead_code)]
     pub(crate) async fn is_allowed(
         &self,
         context: &SessionContext,
@@ -219,6 +222,7 @@ impl ApprovalCache {
             .await
     }
 
+    #[allow(dead_code)]
     pub(crate) async fn is_allowed_for_url(
         &self,
         context: &SessionContext,
@@ -554,4 +558,538 @@ pub(crate) fn permission_decision_from_option_id(id: &str) -> PermissionDecision
 #[allow(dead_code)]
 pub(crate) fn parse_permission_approved(result: &Value) -> Result<bool> {
     Ok(parse_permission_decision(result)?.approved)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+    use std::{collections::HashMap, env, path::Path, sync::Arc};
+    use tokio::sync::Mutex as TokioMutex;
+    use uuid::Uuid;
+
+    fn test_approval_cache(api_url: &str, bear: &str, client: &str) -> ApprovalCache {
+        ApprovalCache {
+            entries: Arc::new(TokioMutex::new(HashMap::new())),
+            persistence: Some(ApprovalPersistence {
+                path: env::temp_dir()
+                    .join(format!("bears-acp-approval-test-{}.json", Uuid::new_v4())),
+                api_url: api_url.to_string(),
+                bear: bear.to_string(),
+                client: client.to_string(),
+            }),
+        }
+    }
+
+    fn workspace_context(root: &str) -> SessionContext {
+        SessionContext {
+            cwd: root.to_string(),
+            roots: vec![root.to_string()],
+            ..Default::default()
+        }
+    }
+
+    #[tokio::test]
+    async fn approval_cache_remembers_persistent_scope() {
+        let cache = test_approval_cache("http://den.test", "meta", "zed");
+        let context = workspace_context("/workspace");
+        let target = Path::new("/workspace/src/main.rs");
+        assert!(
+            !cache
+                .is_allowed(&context, "fs_read_text_file", Some(target))
+                .await
+        );
+        cache
+            .remember(
+                &context,
+                "fs_list_directory",
+                "read_only",
+                ApprovalScope::Workspace,
+                Some(target),
+            )
+            .await;
+        assert!(
+            cache
+                .is_allowed(&context, "fs_read_text_file", Some(target))
+                .await
+        );
+        assert!(
+            cache
+                .is_allowed(&context, "fs_search_files", Some(target))
+                .await
+        );
+        assert!(
+            !cache
+                .is_allowed(&context, "fs_replace_text", Some(target))
+                .await
+        );
+        cache.clear_session("session-1").await;
+        assert!(
+            cache
+                .is_allowed(&context, "fs_read_text_file", Some(target))
+                .await
+        );
+    }
+
+    #[test]
+    fn permission_classes_cover_current_and_planned_tool_families() {
+        for tool in [
+            "fs_read_text_file",
+            "fs_list_directory",
+            "fs_search_files",
+            "fs_find_paths",
+            "fs_stat",
+        ] {
+            assert_eq!(permission_class_for_tool(tool), "read_files", "{tool}");
+        }
+        for tool in [
+            "fs_replace_text",
+            "fs_create_text_file",
+            "fs_create_directory",
+            "fs_move_path",
+            "fs_copy_path",
+            "fs_apply_patch",
+        ] {
+            assert_eq!(permission_class_for_tool(tool), "edit_files", "{tool}");
+        }
+        assert_eq!(permission_class_for_tool("fs_delete_path"), "delete_files");
+        for tool in ["git_status", "git_diff", "git_log", "git_show", "git_blame"] {
+            assert_eq!(permission_class_for_tool(tool), "git_read", "{tool}");
+        }
+        for tool in ["git_add", "git_restore", "git_commit", "git_stash"] {
+            assert_eq!(permission_class_for_tool(tool), "git_write", "{tool}");
+        }
+        assert_eq!(permission_class_for_tool("process_run"), "command_run");
+        assert_eq!(permission_class_for_tool("web_fetch"), "network");
+    }
+
+    #[tokio::test]
+    async fn approval_cache_workspace_scope_is_isolated_by_identity_and_permission_class() {
+        let context = workspace_context("/workspace");
+        let target = Path::new("/workspace/src/main.rs");
+        let cache = test_approval_cache("http://den.test", "meta", "zed");
+        cache
+            .remember(
+                &context,
+                "fs_list_directory",
+                "read_only",
+                ApprovalScope::Workspace,
+                Some(target),
+            )
+            .await;
+
+        assert!(
+            cache
+                .is_allowed(
+                    &context,
+                    "fs_find_paths",
+                    Some(Path::new("/workspace/tests/t.rs"))
+                )
+                .await
+        );
+        assert!(
+            !cache
+                .is_allowed(&context, "fs_create_text_file", Some(target))
+                .await
+        );
+        assert!(!cache.is_allowed(&context, "git_status", Some(target)).await);
+
+        let entries = cache.entries.lock().await.clone();
+        let other_bear_cache = test_approval_cache("http://den.test", "other", "zed");
+        *other_bear_cache.entries.lock().await = entries.clone();
+        assert!(
+            !other_bear_cache
+                .is_allowed(&context, "fs_read_text_file", Some(target))
+                .await
+        );
+
+        let other_client_cache = test_approval_cache("http://den.test", "meta", "other-client");
+        *other_client_cache.entries.lock().await = entries;
+        assert!(
+            !other_client_cache
+                .is_allowed(&context, "fs_read_text_file", Some(target))
+                .await
+        );
+    }
+
+    #[tokio::test]
+    async fn approval_cache_directory_scope_does_not_leak_to_sibling_directories() {
+        let cache = test_approval_cache("http://den.test", "meta", "zed");
+        let context = workspace_context("/workspace");
+        cache
+            .remember(
+                &context,
+                "fs_read_text_file",
+                "read_only",
+                ApprovalScope::Directory,
+                Some(Path::new("/workspace/src/main.rs")),
+            )
+            .await;
+        assert!(
+            cache
+                .is_allowed(
+                    &context,
+                    "fs_search_files",
+                    Some(Path::new("/workspace/src/lib.rs"))
+                )
+                .await
+        );
+        assert!(
+            !cache
+                .is_allowed(
+                    &context,
+                    "fs_search_files",
+                    Some(Path::new("/workspace/tests/lib.rs"))
+                )
+                .await
+        );
+    }
+
+    #[tokio::test]
+    async fn approval_cache_host_scope_reuses_same_url_host_and_port_only() {
+        let cache = test_approval_cache("http://den.test", "meta", "zed");
+        let context = workspace_context("/workspace");
+        cache
+            .remember_for_url(
+                &context,
+                "web_fetch",
+                "read_only",
+                ApprovalScope::Host,
+                Some("https://Docs.Example.test:8443/reference/page"),
+            )
+            .await;
+
+        assert!(
+            cache
+                .is_allowed_for_url(
+                    &context,
+                    "web_fetch",
+                    Some("https://docs.example.test:8443/other")
+                )
+                .await
+        );
+        assert!(
+            !cache
+                .is_allowed_for_url(
+                    &context,
+                    "web_fetch",
+                    Some("https://docs.example.test/reference/page")
+                )
+                .await
+        );
+        assert!(
+            !cache
+                .is_allowed_for_url(
+                    &context,
+                    "web_fetch",
+                    Some("https://api.example.test:8443/reference/page")
+                )
+                .await
+        );
+        assert!(
+            !cache
+                .is_allowed_for_url(
+                    &context,
+                    "git_status",
+                    Some("https://docs.example.test:8443/other")
+                )
+                .await
+        );
+    }
+
+    #[tokio::test]
+    async fn approval_cache_global_scope_crosses_url_hosts_for_same_identity_and_class() {
+        let cache = test_approval_cache("http://den.test", "meta", "zed");
+        let context = workspace_context("/workspace");
+        cache
+            .remember_for_url(
+                &context,
+                "web_fetch",
+                "read_only",
+                ApprovalScope::Global,
+                Some("https://docs.example.test/reference/page"),
+            )
+            .await;
+        assert!(
+            cache
+                .is_allowed_for_url(&context, "web_fetch", Some("https://api.example.test/v1"))
+                .await
+        );
+        assert!(
+            !cache
+                .is_allowed_for_url(&context, "process_run", Some("https://api.example.test/v1"))
+                .await
+        );
+    }
+
+    #[tokio::test]
+    async fn approval_cache_global_scope_crosses_workspace_roots_for_same_identity_and_class() {
+        let cache = test_approval_cache("http://den.test", "meta", "zed");
+        let first_context = workspace_context("/workspace-one");
+        let second_context = workspace_context("/workspace-two");
+        cache
+            .remember(
+                &first_context,
+                "git_status",
+                "read_only",
+                ApprovalScope::Global,
+                Some(Path::new("/workspace-one")),
+            )
+            .await;
+        assert!(
+            cache
+                .is_allowed(
+                    &second_context,
+                    "git_diff",
+                    Some(Path::new("/workspace-two"))
+                )
+                .await
+        );
+        assert!(
+            !cache
+                .is_allowed(
+                    &second_context,
+                    "git_commit",
+                    Some(Path::new("/workspace-two"))
+                )
+                .await
+        );
+    }
+
+    #[tokio::test]
+    async fn approval_cache_prunes_expired_records_on_lookup() {
+        let cache = test_approval_cache("http://den.test", "meta", "zed");
+        let context = workspace_context("/workspace");
+        let fingerprint = approval_root_fingerprint(&context);
+        let key = ApprovalCache::key(
+            "http://den.test",
+            "meta",
+            "zed",
+            "read_files",
+            ApprovalScope::Workspace.as_str(),
+            &fingerprint,
+        );
+        cache.entries.lock().await.insert(
+            key,
+            ApprovalRecord {
+                api_url: "http://den.test".to_string(),
+                bear: "meta".to_string(),
+                client: "zed".to_string(),
+                tool_name: "fs_read_text_file".to_string(),
+                permission_class: "read_files".to_string(),
+                root_fingerprint: fingerprint.clone(),
+                scope_kind: ApprovalScope::Workspace.as_str().to_string(),
+                scope_fingerprint: fingerprint,
+                risk: "read_only".to_string(),
+                created_at_secs: 1,
+                expires_at_secs: 1,
+            },
+        );
+        assert!(
+            !cache
+                .is_allowed(
+                    &context,
+                    "fs_read_text_file",
+                    Some(Path::new("/workspace/src/main.rs"))
+                )
+                .await
+        );
+        assert!(cache.entries.lock().await.is_empty());
+    }
+
+    #[test]
+    fn approval_url_host_scope_normalizes_host_and_preserves_explicit_port() {
+        assert_eq!(
+            approval_url_host_scope("https://Docs.Example.test:8443/path").as_deref(),
+            Some("docs.example.test:8443")
+        );
+        assert_eq!(
+            approval_url_host_scope("https://Docs.Example.test/path").as_deref(),
+            Some("docs.example.test")
+        );
+        assert_eq!(approval_url_host_scope("not a url"), None);
+    }
+
+    #[test]
+    fn candidate_approval_scopes_prefers_host_for_urls() {
+        assert_eq!(
+            candidate_approval_scopes(None, Some("https://example.test:3030/path")),
+            vec![ApprovalScope::Host, ApprovalScope::Global]
+        );
+        assert_eq!(
+            candidate_approval_scopes(Some(Path::new("/workspace/src/main.rs")), None),
+            vec![
+                ApprovalScope::Directory,
+                ApprovalScope::Workspace,
+                ApprovalScope::Global
+            ]
+        );
+    }
+
+    #[test]
+    fn approval_directory_scope_uses_parent_and_skips_workspace_root() {
+        let context = workspace_context("/workspace");
+        assert_eq!(
+            approval_directory_scope(&context, Some(Path::new("/workspace/src/main.rs"))).unwrap(),
+            PathBuf::from("/workspace/src")
+        );
+        assert!(approval_directory_scope(&context, Some(Path::new("/workspace/src"))).is_none());
+        assert!(approval_directory_scope(&context, Some(Path::new("/workspace"))).is_none());
+    }
+
+    #[test]
+    fn approval_ttl_matches_product_policy() {
+        assert_eq!(approval_ttl_secs("writes_workspace"), 7 * 24 * 60 * 60);
+        assert_eq!(approval_ttl_secs("deletes_workspace"), 7 * 24 * 60 * 60);
+        assert_eq!(approval_ttl_secs("read_only"), 28 * 24 * 60 * 60);
+    }
+
+    #[test]
+    fn parse_permission_decision_remembers_allow_always() {
+        let result = json!({
+            "outcome": {
+                "outcome": "selected",
+                "optionId": "allow_always"
+            }
+        });
+        let decision = parse_permission_decision(&result).unwrap();
+        assert!(decision.approved);
+        assert!(decision.remember);
+        assert_eq!(decision.scope, ApprovalScope::Workspace);
+    }
+
+    #[test]
+    fn parse_permission_decision_supports_granular_scopes() {
+        let directory = permission_decision_from_option_id("allow_directory");
+        assert!(directory.approved);
+        assert!(directory.remember);
+        assert_eq!(directory.scope, ApprovalScope::Directory);
+
+        let host = permission_decision_from_option_id("allow_host");
+        assert!(host.approved);
+        assert!(host.remember);
+        assert_eq!(host.scope, ApprovalScope::Host);
+
+        let global = permission_decision_from_option_id("allow_global");
+        assert!(global.approved);
+        assert!(global.remember);
+        assert_eq!(global.scope, ApprovalScope::Global);
+
+        let once = permission_decision_from_option_id("allow_once");
+        assert!(once.approved);
+        assert!(!once.remember);
+    }
+
+    #[test]
+    fn permission_options_include_once_scoped_always_and_reject_choices() {
+        let context = workspace_context("/workspace");
+        let options = permission_options_for_context(
+            Some(&context),
+            Some(Path::new("/workspace/src/main.rs")),
+            None,
+        );
+        let serialized = serde_json::to_value(&options).unwrap();
+        let option_ids = serialized
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|option| option["optionId"].as_str().unwrap().to_string())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            option_ids,
+            vec![
+                "allow_once",
+                "allow_directory",
+                "allow_workspace",
+                "allow_global",
+                "reject_once",
+                "reject_always",
+            ]
+        );
+        assert!(serialized
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|option| option["kind"] == "allow_always"));
+        assert!(serialized
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|option| option["kind"] == "reject_always"));
+    }
+
+    #[test]
+    fn permission_options_omit_directory_scope_for_workspace_root_target() {
+        let context = workspace_context("/workspace");
+        let options =
+            permission_options_for_context(Some(&context), Some(Path::new("/workspace")), None);
+        let serialized = serde_json::to_value(&options).unwrap();
+        let option_ids = serialized
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|option| option["optionId"].as_str().unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            option_ids,
+            vec![
+                "allow_once",
+                "allow_workspace",
+                "allow_global",
+                "reject_once",
+                "reject_always",
+            ]
+        );
+    }
+
+    #[test]
+    fn permission_options_use_host_scope_for_url_targets() {
+        let context = workspace_context("/workspace");
+        let options = permission_options_for_context(
+            Some(&context),
+            None,
+            Some("https://docs.example.test:8443/reference"),
+        );
+        let serialized = serde_json::to_value(&options).unwrap();
+        let option_ids = serialized
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|option| option["optionId"].as_str().unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            option_ids,
+            vec![
+                "allow_once",
+                "allow_host",
+                "allow_global",
+                "reject_once",
+                "reject_always",
+            ]
+        );
+        assert!(serialized
+            .to_string()
+            .contains("Always for docs.example.test:8443"));
+    }
+
+    #[test]
+    fn parses_typed_acp_permission_selection() {
+        let result = json!({
+            "outcome": {
+                "outcome": "selected",
+                "optionId": "allow"
+            }
+        });
+        assert!(parse_permission_approved(&result).unwrap());
+    }
+
+    #[test]
+    fn parses_typed_acp_permission_cancelled() {
+        let result = json!({
+            "outcome": {
+                "outcome": "cancelled"
+            }
+        });
+        assert!(!parse_permission_approved(&result).unwrap());
+    }
 }

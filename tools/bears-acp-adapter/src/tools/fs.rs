@@ -1307,3 +1307,20 @@ fn format_search_results(query: &str, matches: &[Value], truncated: bool) -> Str
     }
     lines.join("\n")
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn glob_match_supports_star_question_mark_and_globstar() {
+        assert!(glob_match("src/*.rs", "src/lib.rs"));
+        assert!(glob_match("src/lib.?s", "src/lib.rs"));
+        assert!(!glob_match("src/*.rs", "src/nested/lib.rs"));
+        assert!(!glob_match("src/*.rs", "tests/lib.rs"));
+        assert!(glob_match("**/*.rs", "src/lib.rs"));
+        assert!(glob_match("**/*.rs", "services/den/src/lib.rs"));
+        assert!(glob_match("src/**", "src/nested/lib.rs"));
+        assert!(glob_match("**/Cargo.toml", "services/den/Cargo.toml"));
+    }
+}
