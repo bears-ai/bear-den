@@ -28,7 +28,17 @@ import threading
 import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
+from typing import Any, TypeAlias, cast
 from urllib.parse import parse_qs, urlparse
+
+JSONValue: TypeAlias = Any
+JSONDict: TypeAlias = dict[str, Any]
+ResponseDict: TypeAlias = dict[str, Any]
+TreeNode: TypeAlias = dict[str, Any]
+ViewRecord: TypeAlias = dict[str, Any]
+ViewRegistry: TypeAlias = dict[str, Any]
+ReconcileResult: TypeAlias = dict[str, Any]
+ReconcileSummary: TypeAlias = dict[str, Any]
 
 PORT = int(os.environ.get("PORT", "8285"))
 _MEMFS = os.environ.get("MEMFS_BASE", "/root/.letta/memfs/repository")
@@ -86,7 +96,7 @@ def log_activity(event: str, **fields: object) -> None:
         print(f"[memfs-manager] activity log write failed: {e}", flush=True)
 
 
-def recent_activity(agent_id: str | None = None, limit: int = 100) -> list[dict]:
+def recent_activity(agent_id: str | None = None, limit: int = 100) -> list[JSONDict]:
     if limit < 1:
         limit = 1
     if limit > 500:
@@ -97,15 +107,18 @@ def recent_activity(agent_id: str | None = None, limit: int = 100) -> list[dict]
         lines = ACTIVITY_LOG.read_text(encoding="utf-8").splitlines()
     except OSError:
         return []
-    out: list[dict] = []
+    out: list[JSONDict] = []
     for line in reversed(lines):
         try:
             entry = json.loads(line)
         except json.JSONDecodeError:
             continue
-        if agent_id and entry.get("agent_id") != agent_id:
+        if not isinstance(entry, dict):
             continue
-        out.append(entry)
+        typed_entry = cast(JSONDict, entry)
+        if agent_id and typed_entry.get("agent_id") != agent_id:
+            continue
+        out.append(typed_entry)
         if len(out) >= limit:
             break
     out.reverse()
@@ -144,7 +157,7 @@ def _remove_bare_if_empty_or_broken(repo: Path) -> None:
 
 def _git(
     *args: str, cwd: Path | None = None, check: bool = True
-) -> subprocess.CompletedProcess:
+) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         ["git", *args], cwd=cwd, capture_output=True, text=True, check=check
     )
@@ -230,29 +243,34 @@ def _paths_allowed(role: str, paths: list[str]) -> tuple[bool, str | None]:
     return True, None
 
 
-def _read_view_registry() -> dict:
+def _read_view_registry() -> ViewRegistry:
     if not VIEW_REGISTRY_PATH.exists():
         return {"version": 1, "views": {}}
     try:
         data = json.loads(VIEW_REGISTRY_PATH.read_text(encoding="utf-8"))
         if not isinstance(data, dict):
             return {"version": 1, "views": {}}
-        data.setdefault("version", 1)
-        data.setdefault("views", {})
-        return data
+        registry = cast(ViewRegistry, data)
+        registry.setdefault("version", 1)
+        registry.setdefault("views", {})
+        return registry
     except (OSError, json.JSONDecodeError):
         return {"version": 1, "views": {}}
 
 
-def _write_view_registry(data: dict) -> None:
+def _write_view_registry(data: ViewRegistry) -> None:
     VIEW_REGISTRY_PATH.parent.mkdir(parents=True, exist_ok=True)
     tmp = VIEW_REGISTRY_PATH.with_suffix(".tmp")
     tmp.write_text(json.dumps(data, indent=2, sort_keys=True), encoding="utf-8")
     tmp.replace(VIEW_REGISTRY_PATH)
 
 
-def _view_record(agent_id: str) -> dict | None:
-    return _read_view_registry().get("views", {}).get(agent_id)
+def _view_record(agent_id: str) -> ViewRecord | None:
+    views = _read_view_registry().get("views", {})
+    if not isinstance(views, dict):
+        return None
+    record = views.get(agent_id)
+    return cast(ViewRecord, record) if isinstance(record, dict) else None
 
 
 def _canonical_repo_path(bear_id: str) -> Path:
@@ -429,7 +447,7 @@ def find_existing_repo_only(agent_id: str, org_id: str) -> Path | None:
     return None
 
 
-def git_head_info(repo: Path) -> dict:
+def git_head_info(repo: Path) -> ResponseDict:
     """Latest commit on HEAD: sha, ISO date, message, short ref name if any."""
     r = subprocess.run(
         [
@@ -502,7 +520,7 @@ def _git_last_commit_for_path(
     return (date or None), (message or None)
 
 
-def _sort_tree_nodes(nodes: list[dict]) -> None:
+def _sort_tree_nodes(nodes: list[TreeNode]) -> None:
     nodes.sort(
         key=lambda n: (
             0 if n.get("type") == "directory" else 1,
@@ -512,10 +530,10 @@ def _sort_tree_nodes(nodes: list[dict]) -> None:
     for n in nodes:
         children = n.get("children")
         if isinstance(children, list) and children:
-            _sort_tree_nodes(children)
+            _sort_tree_nodes(cast(list[TreeNode], children))
 
 
-def git_repository_file_tree(repo: Path) -> list[dict]:
+def git_repository_file_tree(repo: Path) -> list[TreeNode]:
     r = subprocess.run(
         ["git", "-C", str(repo), "ls-tree", "-r", "--name-only", "HEAD"],
         capture_output=True,
@@ -540,7 +558,7 @@ def git_repository_file_tree(repo: Path) -> list[dict]:
     all_paths = set(files) | dir_paths
     ordered_paths = sorted(all_paths, key=lambda p: (p.count("/"), p.lower()))
 
-    nodes: dict[str, dict] = {}
+    nodes: dict[str, TreeNode] = {}
     for path in ordered_paths:
         is_dir = path in dir_paths
         lookup_path = f"{path}/" if is_dir else path
@@ -554,7 +572,7 @@ def git_repository_file_tree(repo: Path) -> list[dict]:
             "children": [],
         }
 
-    roots: list[dict] = []
+    roots: list[TreeNode] = []
     for path in ordered_paths:
         node = nodes[path]
         if "/" in path:
@@ -563,7 +581,7 @@ def git_repository_file_tree(repo: Path) -> list[dict]:
             if parent is None:
                 roots.append(node)
             else:
-                parent["children"].append(node)
+                cast(list[TreeNode], parent["children"]).append(node)
         else:
             roots.append(node)
 
@@ -585,7 +603,7 @@ def git_repository_file_paths(repo: Path) -> list[str]:
     )
 
 
-def repository_status(agent_id: str, org_id: str) -> dict:
+def repository_status(agent_id: str, org_id: str) -> ResponseDict:
     repo = find_existing_repo_only(agent_id, org_id)
     if repo is None:
         return {
@@ -690,7 +708,7 @@ def _force_reset_view_to_canonical(
 
 
 def _forward_view_to_canonical(
-    record: dict, old_tip: str | None = None
+    record: ViewRecord, old_tip: str | None = None
 ) -> tuple[str, str | None]:
     role = str(record["role"])
     bear_id = str(record["bear_id"])
@@ -793,7 +811,9 @@ def _yaml_quote(value: str) -> str:
     return json.dumps(value, ensure_ascii=False)
 
 
-def _write_role_note(bear_id: str, role: str, body: dict, org_id: str) -> dict:
+def _write_role_note(
+    bear_id: str, role: str, body: JSONDict, org_id: str
+) -> ResponseDict:
     if role not in ROLE_BRANCHES:
         raise ValueError("valid role is required")
     if role != "pair":
@@ -857,7 +877,14 @@ def _write_role_note(bear_id: str, role: str, body: dict, org_id: str) -> dict:
         _git("push", "origin", f"HEAD:refs/heads/{role}", cwd=work)
     canonical_tip = _branch_tip(canonical, role)
     data = _read_view_registry()
-    for agent_id, record in data.get("views", {}).items():
+    views = data.setdefault("views", {})
+    if not isinstance(views, dict):
+        views = {}
+        data["views"] = views
+    for agent_id, record_obj in views.items():
+        if not isinstance(record_obj, dict):
+            continue
+        record = cast(ViewRecord, record_obj)
         if str(record.get("bear_id")) == bear_id and str(record.get("role")) == role:
             try:
                 ensure_view_repo(agent_id, str(record.get("org_id") or org_id), record)
@@ -869,7 +896,7 @@ def _write_role_note(bear_id: str, role: str, body: dict, org_id: str) -> dict:
             except Exception as e:
                 record["last_reconcile_status"] = "note_write_view_update_failed"
                 record["last_reconcile_reason"] = str(e)
-            data.setdefault("views", {})[agent_id] = record
+            views[agent_id] = record
     _write_view_registry(data)
     log_activity(
         "role_note_written",
@@ -888,7 +915,7 @@ def _write_role_note(bear_id: str, role: str, body: dict, org_id: str) -> dict:
     }
 
 
-def ensure_view_repo(agent_id: str, org_id: str, record: dict) -> Path:
+def ensure_view_repo(agent_id: str, org_id: str, record: ViewRecord) -> Path:
     canonical = ensure_canonical_repo(str(record["bear_id"]))
     view = _view_repo_path(org_id, agent_id)
     record["canonical_repo"] = str(canonical)
@@ -964,6 +991,12 @@ class GitHTTPHandler(BaseHTTPRequestHandler):
         agent_id = parts[1]
         git_op = "/" + "/".join(parts[3:]) if len(parts) > 3 else "/"
         return agent_id, git_op, parsed.query or ""
+
+    def _read_json_body(self) -> JSONDict:
+        body = json.loads(self._read_body().decode("utf-8") or "{}")
+        if not isinstance(body, dict):
+            raise ValueError("request body must be a JSON object")
+        return cast(JSONDict, body)
 
     def _try_management(self) -> bool:
         """Handle GET /v1/management/agents/{id}/head|files|status."""
@@ -1074,8 +1107,14 @@ class GitHTTPHandler(BaseHTTPRequestHandler):
             bear_id = parts[3]
             role = parts[5]
             data = _read_view_registry()
-            rows = []
-            for record in data.get("views", {}).values():
+            rows: list[ResponseDict] = []
+            views = data.get("views", {})
+            if not isinstance(views, dict):
+                views = {}
+            for record_obj in views.values():
+                if not isinstance(record_obj, dict):
+                    continue
+                record = cast(ViewRecord, record_obj)
                 if (
                     str(record.get("bear_id")) == bear_id
                     and str(record.get("role")) == role
@@ -1085,7 +1124,7 @@ class GitHTTPHandler(BaseHTTPRequestHandler):
             return True
         return False
 
-    def _view_health(self, record: dict) -> dict:
+    def _view_health(self, record: ViewRecord) -> ResponseDict:
         role = str(record.get("role", ""))
         canonical = Path(
             str(
@@ -1151,7 +1190,7 @@ class GitHTTPHandler(BaseHTTPRequestHandler):
             "recommended_action": recommended_action,
         }
 
-    def _require_override_reason(self, body: dict, action: str) -> str:
+    def _require_override_reason(self, body: JSONDict, action: str) -> str:
         reason = str(body.get("reason") or "").strip()
         confirm = str(body.get("confirm") or "").strip()
         if not reason:
@@ -1160,7 +1199,9 @@ class GitHTTPHandler(BaseHTTPRequestHandler):
             raise ValueError(f"operator override requires confirm='{action}'")
         return reason
 
-    def _operator_override(self, agent_id: str, action: str, body: dict) -> dict:
+    def _operator_override(
+        self, agent_id: str, action: str, body: JSONDict
+    ) -> ResponseDict:
         record = _view_record(agent_id)
         if not record:
             raise KeyError("view_not_registered")
@@ -1267,7 +1308,7 @@ class GitHTTPHandler(BaseHTTPRequestHandler):
             agent_id = parts[3]
             action = parts[5]
             try:
-                body = json.loads(self._read_body().decode("utf-8") or "{}")
+                body = self._read_json_body()
                 self._send_json(200, self._operator_override(agent_id, action, body))
                 return True
             except KeyError as e:
@@ -1279,7 +1320,7 @@ class GitHTTPHandler(BaseHTTPRequestHandler):
 
         if parts == ["v1", "management", "views", "register"]:
             try:
-                body = json.loads(self._read_body().decode("utf-8") or "{}")
+                body = self._read_json_body()
                 agent_id = str(body["agent_id"]).strip()
                 bear_id = str(body["bear_id"]).strip()
                 role = str(body["role"]).strip()
@@ -1290,7 +1331,7 @@ class GitHTTPHandler(BaseHTTPRequestHandler):
                 if not agent_id or not bear_id or role not in ROLE_BRANCHES:
                     raise ValueError("agent_id, bear_id, and valid role are required")
                 canonical = ensure_canonical_repo(bear_id)
-                record = {
+                record: ViewRecord = {
                     "agent_id": agent_id,
                     "bear_id": bear_id,
                     "role": role,
@@ -1325,7 +1366,7 @@ class GitHTTPHandler(BaseHTTPRequestHandler):
             bear_id = parts[3]
             role = parts[5]
             try:
-                body = json.loads(self._read_body().decode("utf-8") or "{}")
+                body = self._read_json_body()
                 org_id = resolve_org_id(self.headers.get("X-Organization-Id"))
                 self._send_json(200, _write_role_note(bear_id, role, body, org_id))
                 return True
@@ -1349,17 +1390,19 @@ class GitHTTPHandler(BaseHTTPRequestHandler):
             and parts[4] == "reconcile"
         ):
             agent_id = parts[3]
-            record = _view_record(agent_id)
-            if not record:
+            view_record = _view_record(agent_id)
+            if view_record is None:
                 self._send_json(404, {"ok": False, "error": "view_not_registered"})
                 return True
             try:
                 ensure_view_repo(
-                    agent_id, str(record.get("org_id") or resolve_org_id(None)), record
+                    agent_id,
+                    str(view_record.get("org_id") or resolve_org_id(None)),
+                    view_record,
                 )
-                status, reason = _forward_view_to_canonical(record)
+                status, reason = _forward_view_to_canonical(view_record)
                 data = _read_view_registry()
-                data.setdefault("views", {})[agent_id] = record
+                data.setdefault("views", {})[agent_id] = view_record
                 _write_view_registry(data)
                 self._send_json(
                     200,
@@ -1367,14 +1410,18 @@ class GitHTTPHandler(BaseHTTPRequestHandler):
                         "ok": status not in {"quarantined", "missing_view_tip"},
                         "status": status,
                         "reason": reason,
-                        "view": self._view_health(record),
+                        "view": self._view_health(view_record),
                     },
                 )
                 return True
             except Exception as e:
                 self._send_json(
                     500,
-                    {"ok": False, "error": str(e), "view": self._view_health(record)},
+                    {
+                        "ok": False,
+                        "error": str(e),
+                        "view": self._view_health(view_record),
+                    },
                 )
                 return True
         return False
@@ -1420,7 +1467,7 @@ class GitHTTPHandler(BaseHTTPRequestHandler):
         project_root = str(repo_path.parent).replace("\\", "/")
         path_info = f"/{repo_path.name}{git_op}"
 
-        env: dict = {
+        env: dict[str, str] = {
             **os.environ,
             "GIT_HTTP_EXPORT_ALL": "1",
             "GIT_PROJECT_ROOT": project_root,
@@ -1566,7 +1613,7 @@ class GitHTTPHandler(BaseHTTPRequestHandler):
 
     def _send_diagnostics(self) -> None:
         """Return diagnostics about the memfs state."""
-        result = {
+        result: ResponseDict = {
             "memfs_base": str(MEMFS_BASE),
             "memfs_base_exists": MEMFS_BASE.exists(),
             "default_org": DEFAULT_ORG,
@@ -1583,7 +1630,7 @@ class GitHTTPHandler(BaseHTTPRequestHandler):
             for org_dir in sorted(MEMFS_BASE.iterdir()):
                 if not org_dir.is_dir():
                     continue
-                org_info = {
+                org_info: ResponseDict = {
                     "org": org_dir.name,
                     "agents": [],
                 }
@@ -1591,7 +1638,7 @@ class GitHTTPHandler(BaseHTTPRequestHandler):
                     if not agent_dir.is_dir():
                         continue
                     repo = agent_dir / "repo.git"
-                    info = {
+                    info: ResponseDict = {
                         "agent_id": agent_dir.name,
                         "repo_exists": repo.exists(),
                         "repo_usable": _is_usable_bare_repo(repo)
@@ -1613,8 +1660,8 @@ class GitHTTPHandler(BaseHTTPRequestHandler):
                             info["files"] = files[:10]
                         except Exception as e:
                             info["files_error"] = str(e)
-                    org_info["agents"].append(info)
-                result["repos"].append(org_info)
+                    cast(list[ResponseDict], org_info["agents"]).append(info)
+                cast(list[ResponseDict], result["repos"]).append(org_info)
         self._send_json(200, result)
 
     def do_POST(self) -> None:  # noqa: N802
@@ -1622,17 +1669,20 @@ class GitHTTPHandler(BaseHTTPRequestHandler):
             return
         self._run_backend()
 
-    def log_message(self, fmt: str, *args) -> None:
+    def log_message(self, format: str, *args: object) -> None:
         parsed = urlparse(self.path)
         if parsed.path == "/health" and not LOG_HEALTHCHECKS:
             return
-        print(f"[memfs-manager] {self.address_string()} {fmt % args}", flush=True)
+        print(f"[memfs-manager] {self.address_string()} {format % args}", flush=True)
 
 
-def reconcile_all_views_once() -> dict:
+def reconcile_all_views_once() -> ReconcileSummary:
     data = _read_view_registry()
     views = data.setdefault("views", {})
-    summary = {
+    if not isinstance(views, dict):
+        views = {}
+        data["views"] = views
+    summary: ReconcileSummary = {
         "checked": 0,
         "ok": 0,
         "corrected": 0,
