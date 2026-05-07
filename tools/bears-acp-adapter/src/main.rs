@@ -395,12 +395,15 @@ fn approval_scope_fingerprint(
 
 fn approval_directory_scope(context: &SessionContext, target_path: Option<&Path>) -> Option<PathBuf> {
     let path = target_path?;
+    let roots = session_workspace_roots(context);
+    if roots.iter().any(|root| path == root) {
+        return None;
+    }
     let directory = if path.is_dir() {
         path.parent()?.to_path_buf()
     } else {
         path.parent()?.to_path_buf()
     };
-    let roots = session_workspace_roots(context);
     if roots.iter().any(|root| directory == *root) {
         return None;
     }
@@ -6114,7 +6117,8 @@ mod tests {
         assert!(approval_directory_scope(&context, Some(Path::new("/workspace"))).is_none());
     }
 
-    #[test]uct_policy() {
+    #[test]
+    fn approval_ttl_matches_product_policy() {
         assert_eq!(approval_ttl_secs("writes_workspace"), 7 * 24 * 60 * 60);
         assert_eq!(approval_ttl_secs("deletes_workspace"), 7 * 24 * 60 * 60);
         assert_eq!(approval_ttl_secs("read_only"), 28 * 24 * 60 * 60);
