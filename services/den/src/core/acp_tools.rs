@@ -25,6 +25,7 @@ pub enum AcpToolName {
     Stat,
     ReplaceText,
     CreateTextFile,
+    CreateDirectory,
     DeletePath,
     GitStatus,
     GitDiff,
@@ -40,6 +41,7 @@ impl AcpToolName {
             Self::Stat => &ACP_STAT_TOOL,
             Self::ReplaceText => &ACP_REPLACE_TEXT_TOOL,
             Self::CreateTextFile => &ACP_CREATE_TEXT_FILE_TOOL,
+            Self::CreateDirectory => &ACP_CREATE_DIRECTORY_TOOL,
             Self::DeletePath => &ACP_DELETE_PATH_TOOL,
             Self::GitStatus => &ACP_GIT_STATUS_TOOL,
             Self::GitDiff => &ACP_GIT_DIFF_TOOL,
@@ -55,6 +57,7 @@ impl AcpToolName {
             Self::Stat,
             Self::ReplaceText,
             Self::CreateTextFile,
+            Self::CreateDirectory,
             Self::DeletePath,
             Self::GitStatus,
             Self::GitDiff,
@@ -91,7 +94,7 @@ impl AcpToolName {
             Self::SearchFiles => &["path", "query"],
             Self::ReplaceText => &["path", "old_text", "new_text"],
             Self::CreateTextFile => &["path", "content"],
-            Self::DeletePath => &["path"],
+            Self::CreateDirectory | Self::DeletePath => &["path"],
             Self::GitStatus | Self::GitDiff => &[],
         }
     }
@@ -124,6 +127,11 @@ impl AcpToolName {
             | "fs.create_text_file"
             | "fs_create_text_file"
             | "create_text_file" => Some(Self::CreateTextFile),
+            "bears/create_directory"
+            | "fs/create_directory"
+            | "fs.create_directory"
+            | "fs_create_directory"
+            | "create_directory" => Some(Self::CreateDirectory),
             "bears/delete_path" | "fs/delete_path" | "fs.delete_path" | "fs_delete_path"
             | "delete_path" => Some(Self::DeletePath),
             "bears/git_status" | "git/status" | "git.status" | "git_status" => {
@@ -325,6 +333,16 @@ pub const ACP_CREATE_TEXT_FILE_TOOL: AcpToolDescriptor = AcpToolDescriptor {
     risk: "writes_workspace",
 };
 
+pub const ACP_CREATE_DIRECTORY_TOOL: AcpToolDescriptor = AcpToolDescriptor {
+    provider_name: "fs_create_directory",
+    canonical_name: "acp.fs.create_directory",
+    adapter_method: "bears/create_directory",
+    client_method: "fs/create_directory",
+    title: "Create directory",
+    kind: "edit",
+    risk: "writes_workspace",
+};
+
 pub const ACP_DELETE_PATH_TOOL: AcpToolDescriptor = AcpToolDescriptor {
     provider_name: "fs_delete_path",
     canonical_name: "acp.fs.delete_path",
@@ -509,6 +527,27 @@ const ACP_CREATE_TEXT_FILE_POLICY: AcpToolPolicy = AcpToolPolicy {
     permission_timeout_ms: 120_000,
 };
 
+const ACP_CREATE_DIRECTORY_POLICY: AcpToolPolicy = AcpToolPolicy {
+    scope_basis: "acp:tools",
+    role_basis: "pair_agent",
+    allowed_roots_basis: "acp_session.workspace_roots",
+    path_containment: "adapter_enforced_absolute_path_under_allowed_roots",
+    approval_required: true,
+    sensitive_path_policy: "deny_sensitive_paths",
+    max_lines: None,
+    max_entries: None,
+    max_results: None,
+    max_bytes: None,
+    recursive_default: None,
+    include_hidden_default: Some(false),
+    max_replacements: None,
+    create_files: Some(true),
+    allow_multiple: None,
+    deny_hidden_paths: Some(true),
+    total_timeout_ms: 150_000,
+    permission_timeout_ms: 120_000,
+};
+
 const ACP_DELETE_PATH_POLICY: AcpToolPolicy = AcpToolPolicy {
     scope_basis: "acp:tools",
     role_basis: "pair_agent",
@@ -581,6 +620,7 @@ pub fn acp_tool_policy(tool: AcpToolName) -> AcpToolPolicy {
         AcpToolName::Stat => ACP_STAT_POLICY,
         AcpToolName::ReplaceText => ACP_REPLACE_TEXT_POLICY,
         AcpToolName::CreateTextFile => ACP_CREATE_TEXT_FILE_POLICY,
+        AcpToolName::CreateDirectory => ACP_CREATE_DIRECTORY_POLICY,
         AcpToolName::DeletePath => ACP_DELETE_PATH_POLICY,
         AcpToolName::GitStatus => ACP_GIT_STATUS_POLICY,
         AcpToolName::GitDiff => ACP_GIT_DIFF_POLICY,
@@ -831,6 +871,27 @@ pub fn acp_client_tool_descriptor(tool: &AcpToolDescriptor) -> serde_json::Value
                 "required": ["path", "content"]
             }
         }),
+        "fs_create_directory" => json!({
+            "name": tool.provider_name,
+            "description": format!(
+                "ACP local workspace tool ({}, target={}, adapter={}, client={}, kind={}, risk={}). Creates a directory in the workspace through the local adapter. Approval is required; sensitive and hidden paths are denied by policy.",
+                tool.canonical_name,
+                "acp_client",
+                tool.adapter_method,
+                tool.client_method,
+                tool.kind,
+                tool.risk,
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": { "type": "string", "description": "Absolute local directory path under the workspace." },
+                    "parents": { "type": "boolean", "default": false, "description": "Create parent directories if needed. Defaults to false." },
+                    "allow_existing": { "type": "boolean", "default": false, "description": "Treat an existing directory as success. Defaults to false." }
+                },
+                "required": ["path"]
+            }
+        }),
         "fs_delete_path" => json!({
             "name": tool.provider_name,
             "description": format!(
@@ -975,6 +1036,7 @@ mod tests {
                     "git_diff": { "supported": true, "version": 1 },
                     "fs_replace_text": { "supported": true, "version": 1 },
                     "fs_create_text_file": { "supported": true, "version": 1 },
+                    "fs_create_directory": { "supported": true, "version": 1 },
                     "fs_delete_path": { "supported": true, "version": 1 }
                 }
             }
@@ -993,6 +1055,7 @@ mod tests {
                 "fs_stat",
                 "fs_replace_text",
                 "fs_create_text_file",
+                "fs_create_directory",
                 "fs_delete_path",
                 "git_status",
                 "git_diff"
@@ -1070,6 +1133,11 @@ mod tests {
         assert_eq!(create_policy["create_files"], true);
         assert_eq!(create_policy["max_bytes"], 1_048_576);
 
+        let create_directory_policy = acp_tool_policy_json_for_provider("fs_create_directory");
+        assert_eq!(create_directory_policy["risk"], "writes_workspace");
+        assert_eq!(create_directory_policy["create_files"], true);
+        assert_eq!(create_directory_policy["deny_hidden_paths"], true);
+
         let delete_policy = acp_tool_policy_json_for_provider("fs_delete_path");
         assert_eq!(delete_policy["risk"], "deletes_workspace");
         assert_eq!(
@@ -1085,21 +1153,24 @@ mod tests {
         for tool in AcpToolName::all() {
             let descriptor = tool.descriptor();
             let policy = acp_tool_policy(*tool).to_json(descriptor);
-            assert_eq!(policy["approval_required"], true, "{}", descriptor.provider_name);
             assert_eq!(
-                policy["path_containment"],
-                "adapter_enforced_absolute_path_under_allowed_roots",
+                policy["approval_required"], true,
                 "{}",
                 descriptor.provider_name
             );
             assert_eq!(
-                policy["allowed_roots_basis"],
-                "acp_session.workspace_roots",
+                policy["path_containment"], "adapter_enforced_absolute_path_under_allowed_roots",
+                "{}",
+                descriptor.provider_name
+            );
+            assert_eq!(
+                policy["allowed_roots_basis"], "acp_session.workspace_roots",
                 "{}",
                 descriptor.provider_name
             );
             assert!(
-                policy["permission_timeout_ms"].as_u64().unwrap() <= policy["total_timeout_ms"].as_u64().unwrap(),
+                policy["permission_timeout_ms"].as_u64().unwrap()
+                    <= policy["total_timeout_ms"].as_u64().unwrap(),
                 "permission timeout must fit inside tool timeout for {}",
                 descriptor.provider_name
             );
@@ -1108,12 +1179,23 @@ mod tests {
 
     #[test]
     fn mutating_tools_deny_sensitive_and_hidden_paths_by_policy() {
-        for name in ["fs_replace_text", "fs_create_text_file", "fs_delete_path"] {
+        for name in [
+            "fs_replace_text",
+            "fs_create_text_file",
+            "fs_create_directory",
+            "fs_delete_path",
+        ] {
             let policy = acp_tool_policy_json_for_provider(name);
-            assert_eq!(policy["sensitive_path_policy"], "deny_sensitive_paths", "{name}");
+            assert_eq!(
+                policy["sensitive_path_policy"], "deny_sensitive_paths",
+                "{name}"
+            );
             assert_eq!(policy["deny_hidden_paths"], true, "{name}");
             assert!(
-                matches!(policy["risk"].as_str(), Some("writes_workspace" | "deletes_workspace")),
+                matches!(
+                    policy["risk"].as_str(),
+                    Some("writes_workspace" | "deletes_workspace")
+                ),
                 "{name} must have mutating risk"
             );
         }
@@ -1124,15 +1206,30 @@ mod tests {
         let find = acp_client_tool_descriptor(&ACP_FIND_PATHS_TOOL);
         assert_eq!(find["parameters"]["required"], json!(["glob"]));
         assert!(find["parameters"]["properties"].get("root").is_some());
-        assert!(find["parameters"]["properties"].get("include_hidden").is_some());
+        assert!(find["parameters"]["properties"]
+            .get("include_hidden")
+            .is_some());
 
         let stat = acp_client_tool_descriptor(&ACP_STAT_TOOL);
         assert_eq!(stat["parameters"]["required"], json!(["path"]));
-        assert!(stat["parameters"]["properties"].get("include_symlink_target").is_some());
+        assert!(stat["parameters"]["properties"]
+            .get("include_symlink_target")
+            .is_some());
+
+        let create_directory = acp_client_tool_descriptor(&ACP_CREATE_DIRECTORY_TOOL);
+        assert_eq!(create_directory["parameters"]["required"], json!(["path"]));
+        assert!(create_directory["parameters"]["properties"]
+            .get("parents")
+            .is_some());
+        assert!(create_directory["parameters"]["properties"]
+            .get("allow_existing")
+            .is_some());
 
         let git_status = acp_client_tool_descriptor(&ACP_GIT_STATUS_TOOL);
         assert_eq!(git_status["parameters"]["required"], json!([]));
-        assert!(git_status["parameters"]["properties"].get("repo_path").is_some());
+        assert!(git_status["parameters"]["properties"]
+            .get("repo_path")
+            .is_some());
 
         let git_diff = acp_client_tool_descriptor(&ACP_GIT_DIFF_TOOL);
         assert_eq!(git_diff["parameters"]["required"], json!([]));
@@ -1145,8 +1242,14 @@ mod tests {
         let descriptor = acp_client_tool_descriptor(&ACP_SEARCH_FILES_TOOL);
         let required = descriptor["parameters"]["required"].as_array().unwrap();
         assert_eq!(required, &vec![json!("path")]);
-        assert!(descriptor["parameters"]["properties"].get("pattern").is_some());
-        assert!(descriptor["parameters"]["properties"].get("extensions").is_some());
-        assert!(descriptor["parameters"]["properties"].get("case_sensitive").is_some());
+        assert!(descriptor["parameters"]["properties"]
+            .get("pattern")
+            .is_some());
+        assert!(descriptor["parameters"]["properties"]
+            .get("extensions")
+            .is_some());
+        assert!(descriptor["parameters"]["properties"]
+            .get("case_sensitive")
+            .is_some());
     }
 }

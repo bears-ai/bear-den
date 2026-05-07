@@ -575,6 +575,89 @@ pub(crate) async fn handle_create_text_file(
     Ok(result)
 }
 
+pub(crate) async fn handle_create_directory(
+    context: &SessionContext,
+    session_id: &str,
+    args: &Value,
+    policy: &ToolPolicy,
+) -> Result<Value> {
+    let raw_path = args
+        .get("path")
+        .and_then(Value::as_str)
+        .ok_or_else(|| anyhow!("fs_create_directory args missing path"))?;
+    let parents = args
+        .get("parents")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let allow_existing = args
+        .get("allow_existing")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let path = normalize_requested_tool_path(raw_path)?;
+    ensure_path_allowed_for_session(context, &path)?;
+    ensure_replace_text_path_allowed(&path, policy)?;
+    if path.exists() {
+        if path.is_dir() && allow_existing {
+            return Ok(json!({
+                "ok": true,
+                "path": path.to_string_lossy(),
+                "created": false,
+                "existed": true,
+                "source": "adapter_local",
+                "content": format!("Directory {} already exists.", path.display()),
+                "policy": {
+                    "create_files": policy.create_files.unwrap_or(true),
+                    "deny_hidden_paths": policy.deny_hidden_paths.unwrap_or(true),
+                    "sensitive_path_policy": policy.sensitive_path_policy,
+                }
+            }));
+        }
+        if path.is_dir() {
+            return Err(anyhow!(
+                "fs_create_directory path already exists; set allow_existing=true"
+            ));
+        }
+        return Err(anyhow!(
+            "fs_create_directory path already exists and is not a directory"
+        ));
+    }
+    if let Some(parent) = path.parent() {
+        ensure_path_allowed_for_session(context, parent)?;
+        if !parent.exists() && !parents {
+            return Err(anyhow!(
+                "fs_create_directory parent directory does not exist; set parents=true"
+            ));
+        }
+    }
+    let started = std::time::Instant::now();
+    if parents {
+        fs::create_dir_all(&path)
+            .with_context(|| format!("create directory tree {}", path.display()))?;
+    } else {
+        fs::create_dir(&path).with_context(|| format!("create directory {}", path.display()))?;
+    }
+    eprintln!(
+        "bears-acp-adapter: create_directory session_id={} path={} parents={} duration_ms={}",
+        session_id,
+        path.display(),
+        parents,
+        started.elapsed().as_millis(),
+    );
+    Ok(json!({
+        "ok": true,
+        "path": path.to_string_lossy(),
+        "created": true,
+        "parents": parents,
+        "source": "adapter_local",
+        "content": format!("Created directory {}", path.display()),
+        "policy": {
+            "create_files": policy.create_files.unwrap_or(true),
+            "deny_hidden_paths": policy.deny_hidden_paths.unwrap_or(true),
+            "sensitive_path_policy": policy.sensitive_path_policy,
+        }
+    }))
+}
+
 pub(crate) async fn handle_delete_path(
     context: &SessionContext,
     session_id: &str,

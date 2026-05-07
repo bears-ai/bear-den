@@ -42,9 +42,9 @@ use tokio::{
 use tool_tasks::{log_tool_task_phase, ToolTaskPhase, ToolTaskRegistry};
 
 use tools::fs::{
-    handle_create_text_file, handle_delete_path, handle_find_paths, handle_list_directory,
-    handle_read_text_file, handle_replace_text, handle_search_files, handle_stat, ReplaceTextArgs,
-    ReplaceTextPlan,
+    handle_create_directory, handle_create_text_file, handle_delete_path, handle_find_paths,
+    handle_list_directory, handle_read_text_file, handle_replace_text, handle_search_files,
+    handle_stat, ReplaceTextArgs, ReplaceTextPlan,
 };
 use tools::git::{handle_git_diff, handle_git_status};
 use uuid::Uuid;
@@ -1111,6 +1111,7 @@ fn adapter_capabilities_context() -> Value {
             "git_diff": { "supported": true, "version": 1 },
             "fs_replace_text": { "supported": true, "version": 1 },
             "fs_create_text_file": { "supported": true, "version": 1 },
+            "fs_create_directory": { "supported": true, "version": 1 },
             "fs_delete_path": { "supported": true, "version": 1 }
         }
     })
@@ -1127,6 +1128,7 @@ fn direct_tools_context() -> Value {
         "git_diff": true,
         "fs_replace_text": true,
         "fs_create_text_file": true,
+        "fs_create_directory": true,
         "fs_delete_path": true,
     })
 }
@@ -1482,6 +1484,9 @@ async fn execute_local_tool(
         "fs_create_text_file" => {
             handle_direct_create_text_file(adapter_state, session_id, &args, policy).await
         }
+        "fs_create_directory" => {
+            handle_direct_create_directory(adapter_state, session_id, &args, policy).await
+        }
         "fs_delete_path" => {
             handle_direct_delete_path(adapter_state, session_id, &args, policy).await
         }
@@ -1549,6 +1554,16 @@ async fn handle_direct_create_text_file(
 ) -> Result<Value> {
     let context = session_context(adapter_state, session_id)?;
     handle_create_text_file(context, session_id, args, policy).await
+}
+
+async fn handle_direct_create_directory(
+    adapter_state: &AdapterState,
+    session_id: &str,
+    args: &Value,
+    policy: &ToolPolicy,
+) -> Result<Value> {
+    let context = session_context(adapter_state, session_id)?;
+    handle_create_directory(context, session_id, args, policy).await
 }
 
 async fn handle_direct_delete_path(
@@ -3593,6 +3608,12 @@ fn tool_display(tool_name: &str) -> ToolDisplay {
             verb: "Creating",
             permission_operation: "create this file",
         },
+        "fs_create_directory" => ToolDisplay {
+            title: "Create directory",
+            kind: ToolKind::Edit,
+            verb: "Creating directory",
+            permission_operation: "create this directory",
+        },
         "fs_delete_path" => ToolDisplay {
             title: "Delete path",
             kind: ToolKind::Delete,
@@ -3630,6 +3651,7 @@ fn tool_target_kind(tool_name: &str) -> &'static str {
         "fs_find_paths" => "directory",
         "fs_search_files" => "directory",
         "fs_stat" => "path",
+        "fs_create_directory" => "directory",
         "git_status" | "git_diff" => "repository",
         "fs_delete_path" => "path",
         _ => "file",
@@ -4179,6 +4201,112 @@ mod tests {
         assert_eq!(result["created"], true);
         assert_eq!(fs::read_to_string(&file).unwrap(), "hello\n");
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn create_directory_creates_dir_and_refuses_existing_without_flag() {
+        let root = unique_test_dir("create-directory");
+        let dir = root.join("new-dir");
+        let state = test_adapter_state("session-1", &root);
+        let result = handle_direct_create_directory(
+            &state,
+            "session-1",
+            &json!({ "path": dir.to_string_lossy() }),
+            &ToolPolicy {
+                sensitive_path_policy: Some("deny_sensitive_paths".to_string()),
+                deny_hidden_paths: Some(true),
+                create_files: Some(true),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(result["created"], true);
+        assert!(dir.is_dir());
+
+        let denied = handle_direct_create_directory(
+            &state,
+            "session-1",
+            &json!({ "path": dir.to_string_lossy() }),
+            &ToolPolicy::default(),
+        )
+        .await;
+        assert!(format!("{:#}", denied.unwrap_err()).contains("already exists"));
+
+        let existing = handle_direct_create_directory(
+            &state,
+            "session-1",
+            &json!({ "path": dir.to_string_lossy(), "allow_existing": true }),
+            &ToolPolicy::default(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(existing["created"], false);
+        assert_eq!(existing["existed"], true);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn create_directory_creates_parents_and_denies_hidden_sensitive_and_outside_paths() {
+        let root = unique_test_dir("create-directory-policy");
+        let outside = unique_test_dir("create-directory-outside");
+        let nested = root.join("a").join("b").join("c");
+        let state = test_adapter_state("session-1", &root);
+        let missing_parent = handle_direct_create_directory(
+            &state,
+            "session-1",
+            &json!({ "path": nested.to_string_lossy() }),
+            &ToolPolicy::default(),
+        )
+        .await;
+        assert!(format!("{:#}", missing_parent.unwrap_err()).contains("parents=true"));
+
+        let result = handle_direct_create_directory(
+            &state,
+            "session-1",
+            &json!({ "path": nested.to_string_lossy(), "parents": true }),
+            &ToolPolicy::default(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(result["created"], true);
+        assert!(nested.is_dir());
+
+        let hidden = handle_direct_create_directory(
+            &state,
+            "session-1",
+            &json!({ "path": root.join(".hidden").to_string_lossy() }),
+            &ToolPolicy {
+                deny_hidden_paths: Some(true),
+                ..Default::default()
+            },
+        )
+        .await;
+        assert!(format!("{:#}", hidden.unwrap_err()).contains("denied hidden path"));
+
+        let sensitive = handle_direct_create_directory(
+            &state,
+            "session-1",
+            &json!({ "path": root.join("secret-dir").to_string_lossy() }),
+            &ToolPolicy {
+                sensitive_path_policy: Some("deny_sensitive_paths".to_string()),
+                ..Default::default()
+            },
+        )
+        .await;
+        assert!(format!("{:#}", sensitive.unwrap_err()).contains("denied sensitive path"));
+
+        let outside_denied = handle_direct_create_directory(
+            &state,
+            "session-1",
+            &json!({ "path": outside.join("dir").to_string_lossy(), "parents": true }),
+            &ToolPolicy::default(),
+        )
+        .await;
+        assert!(format!("{:#}", outside_denied.unwrap_err())
+            .contains("outside the ACP session workspace roots"));
+        let _ = fs::remove_dir_all(root);
+        let _ = fs::remove_dir_all(outside);
     }
 
     #[tokio::test]
