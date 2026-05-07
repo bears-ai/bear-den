@@ -35,6 +35,7 @@ pub enum AcpToolName {
     GitLog,
     GitShow,
     ProcessRun,
+    WebFetch,
 }
 
 impl AcpToolName {
@@ -57,6 +58,7 @@ impl AcpToolName {
             Self::GitLog => &ACP_GIT_LOG_TOOL,
             Self::GitShow => &ACP_GIT_SHOW_TOOL,
             Self::ProcessRun => &ACP_PROCESS_RUN_TOOL,
+            Self::WebFetch => &ACP_WEB_FETCH_TOOL,
         }
     }
 
@@ -79,6 +81,7 @@ impl AcpToolName {
             Self::GitLog,
             Self::GitShow,
             Self::ProcessRun,
+            Self::WebFetch,
         ]
     }
 
@@ -118,6 +121,7 @@ impl AcpToolName {
             Self::GitStatus | Self::GitDiff | Self::GitLog => &[],
             Self::GitShow => &["revision"],
             Self::ProcessRun => &["command", "cwd"],
+            Self::WebFetch => &["url"],
         }
     }
 
@@ -173,6 +177,7 @@ impl AcpToolName {
             "bears/process_run" | "process/run" | "process.run" | "process_run" => {
                 Some(Self::ProcessRun)
             }
+            "bears/web_fetch" | "web/fetch" | "web.fetch" | "web_fetch" => Some(Self::WebFetch),
             _ => None,
         }
     }
@@ -466,6 +471,16 @@ pub const ACP_PROCESS_RUN_TOOL: AcpToolDescriptor = AcpToolDescriptor {
     title: "Run process",
     kind: "execute",
     risk: "executes_process",
+};
+
+pub const ACP_WEB_FETCH_TOOL: AcpToolDescriptor = AcpToolDescriptor {
+    provider_name: "web_fetch",
+    canonical_name: "acp.web.fetch",
+    adapter_method: "bears/web_fetch",
+    client_method: "web/fetch",
+    title: "Fetch URL",
+    kind: "fetch",
+    risk: "network_access",
 };
 
 pub fn provider_tool_name_is_safe(name: &str) -> bool {
@@ -832,6 +847,27 @@ const ACP_PROCESS_RUN_POLICY: AcpToolPolicy = AcpToolPolicy {
     permission_timeout_ms: 120_000,
 };
 
+const ACP_WEB_FETCH_POLICY: AcpToolPolicy = AcpToolPolicy {
+    scope_basis: "acp:tools",
+    role_basis: "pair_agent",
+    allowed_roots_basis: "url.host",
+    path_containment: "adapter_enforced_url_host_scope",
+    approval_required: true,
+    sensitive_path_policy: "client_permission_required",
+    max_lines: None,
+    max_entries: None,
+    max_results: None,
+    max_bytes: Some(262_144),
+    recursive_default: None,
+    include_hidden_default: None,
+    max_replacements: None,
+    create_files: None,
+    allow_multiple: None,
+    deny_hidden_paths: None,
+    total_timeout_ms: 120_000,
+    permission_timeout_ms: 120_000,
+};
+
 pub fn acp_tool_policy(tool: AcpToolName) -> AcpToolPolicy {
     match tool {
         AcpToolName::ReadTextFile => ACP_READ_TEXT_FILE_POLICY,
@@ -851,6 +887,7 @@ pub fn acp_tool_policy(tool: AcpToolName) -> AcpToolPolicy {
         AcpToolName::GitLog => ACP_GIT_LOG_POLICY,
         AcpToolName::GitShow => ACP_GIT_SHOW_POLICY,
         AcpToolName::ProcessRun => ACP_PROCESS_RUN_POLICY,
+        AcpToolName::WebFetch => ACP_WEB_FETCH_POLICY,
     }
 }
 
@@ -1293,6 +1330,22 @@ pub fn acp_client_tool_descriptor(tool: &AcpToolDescriptor) -> serde_json::Value
                 "required": ["command", "cwd"]
             }
         }),
+        "web_fetch" => json!({
+            "name": tool.provider_name,
+            "description": format!(
+                "ACP local network tool ({}, target={}, adapter={}, client={}, kind={}, risk={}). Fetches a URL with bounded response size through the local adapter. Approval may be scoped to the URL host including explicit port.",
+                tool.canonical_name, "url_host", tool.adapter_method, tool.client_method, tool.kind, tool.risk,
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "url": { "type": "string", "description": "HTTP or HTTPS URL to fetch." },
+                    "max_bytes": { "type": "integer", "minimum": 1, "maximum": 262144 },
+                    "format": { "type": "string", "enum": ["text", "raw"], "description": "Response format hint. Defaults to text." }
+                },
+                "required": ["url"]
+            }
+        }),
         _ => unreachable!("unknown ACP tool descriptor: {}", tool.provider_name),
     }
 }
@@ -1520,13 +1573,17 @@ mod tests {
                     Some(
                         "adapter_enforced_absolute_path_under_allowed_roots"
                             | "adapter_enforced_absolute_cwd_under_allowed_roots"
+                            | "adapter_enforced_url_host_scope"
                     )
                 ),
                 "{}",
                 descriptor.provider_name
             );
-            assert_eq!(
-                policy["allowed_roots_basis"], "acp_session.workspace_roots",
+            assert!(
+                matches!(
+                    policy["allowed_roots_basis"].as_str(),
+                    Some("acp_session.workspace_roots" | "url.host")
+                ),
                 "{}",
                 descriptor.provider_name
             );

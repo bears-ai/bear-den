@@ -49,6 +49,7 @@ use tools::fs::{
 };
 use tools::git::{handle_git_diff, handle_git_log, handle_git_show, handle_git_status};
 use tools::process::handle_process_run;
+use tools::web::handle_web_fetch;
 use uuid::Uuid;
 
 #[derive(Clone, Debug)]
@@ -1115,6 +1116,7 @@ fn adapter_capabilities_context() -> Value {
             "git_log": { "supported": true, "version": 1 },
             "git_show": { "supported": true, "version": 1 },
             "process_run": { "supported": true, "version": 1 },
+            "web_fetch": { "supported": true, "version": 1 },
             "fs_replace_text": { "supported": true, "version": 1 },
             "fs_create_text_file": { "supported": true, "version": 1 },
             "fs_create_directory": { "supported": true, "version": 1 },
@@ -1138,6 +1140,7 @@ fn direct_tools_context() -> Value {
         "git_log": true,
         "git_show": true,
         "process_run": true,
+        "web_fetch": true,
         "fs_replace_text": true,
         "fs_create_text_file": true,
         "fs_create_directory": true,
@@ -1509,6 +1512,7 @@ async fn execute_local_tool(
             let context = session_context(adapter_state, session_id)?;
             handle_process_run(context, session_id, &args, policy).await
         }
+        "web_fetch" => handle_web_fetch(session_id, &args, policy).await,
         "fs_replace_text" => {
             handle_direct_replace_text(adapter_state, session_id, &args, policy).await
         }
@@ -3680,6 +3684,12 @@ fn tool_display(tool_name: &str) -> ToolDisplay {
             verb: "Running process in",
             permission_operation: "run this command",
         },
+        "web_fetch" => ToolDisplay {
+            title: "Fetch URL",
+            kind: ToolKind::Fetch,
+            verb: "Fetching",
+            permission_operation: "fetch this URL",
+        },
         "fs_replace_text" => ToolDisplay {
             title: "Edit file",
             kind: ToolKind::Edit,
@@ -3758,6 +3768,7 @@ fn tool_target_kind(tool_name: &str) -> &'static str {
         "fs_apply_patch" => "patch",
         "git_status" | "git_diff" | "git_log" | "git_show" => "repository",
         "process_run" => "command",
+        "web_fetch" => "url",
         "fs_delete_path" => "path",
         _ => "file",
     }
@@ -3772,6 +3783,7 @@ fn tool_path(event: &Value) -> Option<&str> {
                 .or_else(|| v.get("destination_path"))
                 .or_else(|| v.get("base_path"))
                 .or_else(|| v.get("cwd"))
+                .or_else(|| v.get("url"))
         })
         .and_then(Value::as_str)
 }
@@ -5492,6 +5504,63 @@ mod tests {
         assert!(format!("{:#}", secret_env.unwrap_err()).contains("secret-like"));
         let _ = fs::remove_dir_all(root);
         let _ = fs::remove_dir_all(outside);
+    }
+
+    #[tokio::test]
+    async fn web_fetch_fetches_and_truncates_http_response() {
+        std::env::set_var("BEARS_ACP_ALLOW_LOCAL_WEB_FETCH_FOR_TESTS", "1");
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            if let Ok((mut stream, _)) = listener.accept().await {
+                use tokio::io::{AsyncReadExt, AsyncWriteExt};
+                let mut buf = [0u8; 1024];
+                let _ = stream.read(&mut buf).await;
+                let body = "hello world";
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    body.len(), body
+                );
+                let _ = stream.write_all(response.as_bytes()).await;
+            }
+        });
+        let result = handle_web_fetch(
+            "session-1",
+            &json!({ "url": format!("http://{}", addr), "max_bytes": 5 }),
+            &ToolPolicy { max_bytes: Some(5), total_timeout_ms: Some(10_000), ..Default::default() },
+        )
+        .await
+        .unwrap();
+        assert_eq!(result["status"], 200);
+        assert_eq!(result["body"], "hello");
+        assert_eq!(result["truncated"], true);
+        std::env::remove_var("BEARS_ACP_ALLOW_LOCAL_WEB_FETCH_FOR_TESTS");
+    }
+
+    #[tokio::test]
+    async fn web_fetch_rejects_unsafe_urls() {
+        std::env::remove_var("BEARS_ACP_ALLOW_LOCAL_WEB_FETCH_FOR_TESTS");
+        let localhost = handle_web_fetch(
+            "session-1",
+            &json!({ "url": "http://localhost:3000" }),
+            &ToolPolicy::default(),
+        )
+        .await;
+        assert!(format!("{:#}", localhost.unwrap_err()).contains("localhost"));
+        let metadata = handle_web_fetch(
+            "session-1",
+            &json!({ "url": "http://169.254.169.254/latest" }),
+            &ToolPolicy::default(),
+        )
+        .await;
+        assert!(format!("{:#}", metadata.unwrap_err()).contains("private"));
+        let invalid = handle_web_fetch(
+            "session-1",
+            &json!({ "url": "file:///tmp/x" }),
+            &ToolPolicy::default(),
+        )
+        .await;
+        assert!(format!("{:#}", invalid.unwrap_err()).contains("http and https"));
     }
 
     #[test]
