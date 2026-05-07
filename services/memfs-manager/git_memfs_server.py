@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# pyright: reportAny=false, reportExplicitAny=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnknownLambdaType=false, reportUnusedCallResult=false, reportUnusedFunction=false, reportImplicitOverride=false
 """
 MemFS Manager: git smart-HTTP for self-hosted Letta. Letta proxies /v1/git/* to
 LETTA_MEMFS_SERVICE_URL (e.g. http://bears-memfs-manager:8285); this process implements
