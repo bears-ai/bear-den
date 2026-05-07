@@ -658,6 +658,109 @@ pub(crate) async fn handle_create_directory(
     }))
 }
 
+pub(crate) async fn handle_move_path(
+    context: &SessionContext,
+    session_id: &str,
+    args: &Value,
+    policy: &ToolPolicy,
+) -> Result<Value> {
+    let raw_source = args
+        .get("source_path")
+        .and_then(Value::as_str)
+        .ok_or_else(|| anyhow!("fs_move_path args missing source_path"))?;
+    let raw_destination = args
+        .get("destination_path")
+        .and_then(Value::as_str)
+        .ok_or_else(|| anyhow!("fs_move_path args missing destination_path"))?;
+    let overwrite = args
+        .get("overwrite")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let expected_kind = args
+        .get("expected_kind")
+        .and_then(Value::as_str)
+        .unwrap_or("any");
+    let source = normalize_requested_tool_path(raw_source)?;
+    let destination = normalize_requested_tool_path(raw_destination)?;
+    ensure_path_allowed_for_session(context, &source)?;
+    ensure_path_allowed_for_session(context, &destination)?;
+    ensure_replace_text_path_allowed(&source, policy)?;
+    ensure_replace_text_path_allowed(&destination, policy)?;
+    if source == destination {
+        return Err(anyhow!(
+            "fs_move_path source_path and destination_path are the same"
+        ));
+    }
+    let metadata = fs::metadata(&source).with_context(|| format!("stat {}", source.display()))?;
+    let kind = if metadata.is_file() {
+        "file"
+    } else if metadata.is_dir() {
+        "directory"
+    } else {
+        "other"
+    };
+    if expected_kind != "any" && expected_kind != kind {
+        return Err(anyhow!(
+            "fs_move_path expected kind {expected_kind}, found {kind}"
+        ));
+    }
+    if destination.exists() {
+        if !overwrite {
+            return Err(anyhow!(
+                "fs_move_path destination already exists; set overwrite=true"
+            ));
+        }
+        let destination_metadata = fs::metadata(&destination)
+            .with_context(|| format!("stat destination {}", destination.display()))?;
+        if destination_metadata.is_dir() {
+            fs::remove_dir_all(&destination).with_context(|| {
+                format!("remove destination directory {}", destination.display())
+            })?;
+        } else if destination_metadata.is_file() {
+            fs::remove_file(&destination)
+                .with_context(|| format!("remove destination file {}", destination.display()))?;
+        } else {
+            return Err(anyhow!(
+                "fs_move_path destination exists and is not a file or directory"
+            ));
+        }
+    }
+    if let Some(parent) = destination.parent() {
+        ensure_path_allowed_for_session(context, parent)?;
+        if !parent.exists() {
+            return Err(anyhow!(
+                "fs_move_path destination parent directory does not exist"
+            ));
+        }
+    }
+    let started = std::time::Instant::now();
+    fs::rename(&source, &destination)
+        .with_context(|| format!("move {} to {}", source.display(), destination.display()))?;
+    eprintln!(
+        "bears-acp-adapter: move_path session_id={} source={} destination={} kind={} overwrite={} duration_ms={}",
+        session_id,
+        source.display(),
+        destination.display(),
+        kind,
+        overwrite,
+        started.elapsed().as_millis(),
+    );
+    Ok(json!({
+        "ok": true,
+        "source_path": source.to_string_lossy(),
+        "destination_path": destination.to_string_lossy(),
+        "moved": true,
+        "kind": kind,
+        "overwrite": overwrite,
+        "source": "adapter_local",
+        "content": format!("Moved {kind} {} to {}", source.display(), destination.display()),
+        "policy": {
+            "deny_hidden_paths": policy.deny_hidden_paths.unwrap_or(true),
+            "sensitive_path_policy": policy.sensitive_path_policy,
+        }
+    }))
+}
+
 pub(crate) async fn handle_delete_path(
     context: &SessionContext,
     session_id: &str,

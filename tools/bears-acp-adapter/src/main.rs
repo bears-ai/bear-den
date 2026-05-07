@@ -43,8 +43,8 @@ use tool_tasks::{log_tool_task_phase, ToolTaskPhase, ToolTaskRegistry};
 
 use tools::fs::{
     handle_create_directory, handle_create_text_file, handle_delete_path, handle_find_paths,
-    handle_list_directory, handle_read_text_file, handle_replace_text, handle_search_files,
-    handle_stat, ReplaceTextArgs, ReplaceTextPlan,
+    handle_list_directory, handle_move_path, handle_read_text_file, handle_replace_text,
+    handle_search_files, handle_stat, ReplaceTextArgs, ReplaceTextPlan,
 };
 use tools::git::{handle_git_diff, handle_git_status};
 use uuid::Uuid;
@@ -1112,6 +1112,7 @@ fn adapter_capabilities_context() -> Value {
             "fs_replace_text": { "supported": true, "version": 1 },
             "fs_create_text_file": { "supported": true, "version": 1 },
             "fs_create_directory": { "supported": true, "version": 1 },
+            "fs_move_path": { "supported": true, "version": 1 },
             "fs_delete_path": { "supported": true, "version": 1 }
         }
     })
@@ -1129,6 +1130,7 @@ fn direct_tools_context() -> Value {
         "fs_replace_text": true,
         "fs_create_text_file": true,
         "fs_create_directory": true,
+        "fs_move_path": true,
         "fs_delete_path": true,
     })
 }
@@ -1487,6 +1489,7 @@ async fn execute_local_tool(
         "fs_create_directory" => {
             handle_direct_create_directory(adapter_state, session_id, &args, policy).await
         }
+        "fs_move_path" => handle_direct_move_path(adapter_state, session_id, &args, policy).await,
         "fs_delete_path" => {
             handle_direct_delete_path(adapter_state, session_id, &args, policy).await
         }
@@ -1564,6 +1567,16 @@ async fn handle_direct_create_directory(
 ) -> Result<Value> {
     let context = session_context(adapter_state, session_id)?;
     handle_create_directory(context, session_id, args, policy).await
+}
+
+async fn handle_direct_move_path(
+    adapter_state: &AdapterState,
+    session_id: &str,
+    args: &Value,
+    policy: &ToolPolicy,
+) -> Result<Value> {
+    let context = session_context(adapter_state, session_id)?;
+    handle_move_path(context, session_id, args, policy).await
 }
 
 async fn handle_direct_delete_path(
@@ -3614,6 +3627,12 @@ fn tool_display(tool_name: &str) -> ToolDisplay {
             verb: "Creating directory",
             permission_operation: "create this directory",
         },
+        "fs_move_path" => ToolDisplay {
+            title: "Move path",
+            kind: ToolKind::Move,
+            verb: "Moving",
+            permission_operation: "move this path",
+        },
         "fs_delete_path" => ToolDisplay {
             title: "Delete path",
             kind: ToolKind::Delete,
@@ -3652,6 +3671,7 @@ fn tool_target_kind(tool_name: &str) -> &'static str {
         "fs_search_files" => "directory",
         "fs_stat" => "path",
         "fs_create_directory" => "directory",
+        "fs_move_path" => "path",
         "git_status" | "git_diff" => "repository",
         "fs_delete_path" => "path",
         _ => "file",
@@ -3661,7 +3681,11 @@ fn tool_target_kind(tool_name: &str) -> &'static str {
 fn tool_path(event: &Value) -> Option<&str> {
     event
         .get("args")
-        .and_then(|v| v.get("path"))
+        .and_then(|v| {
+            v.get("path")
+                .or_else(|| v.get("source_path"))
+                .or_else(|| v.get("destination_path"))
+        })
         .and_then(Value::as_str)
 }
 
@@ -4300,6 +4324,140 @@ mod tests {
             &state,
             "session-1",
             &json!({ "path": outside.join("dir").to_string_lossy(), "parents": true }),
+            &ToolPolicy::default(),
+        )
+        .await;
+        assert!(format!("{:#}", outside_denied.unwrap_err())
+            .contains("outside the ACP session workspace roots"));
+        let _ = fs::remove_dir_all(root);
+        let _ = fs::remove_dir_all(outside);
+    }
+
+    #[tokio::test]
+    async fn move_path_moves_file_and_directory_and_refuses_overwrite_by_default() {
+        let root = unique_test_dir("move-path");
+        let source = root.join("source.txt");
+        let destination = root.join("destination.txt");
+        fs::write(&source, "hello").unwrap();
+        let state = test_adapter_state("session-1", &root);
+        let result = handle_direct_move_path(
+            &state,
+            "session-1",
+            &json!({
+                "source_path": source.to_string_lossy(),
+                "destination_path": destination.to_string_lossy(),
+                "expected_kind": "file"
+            }),
+            &ToolPolicy::default(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(result["moved"], true);
+        assert!(!source.exists());
+        assert_eq!(fs::read_to_string(&destination).unwrap(), "hello");
+
+        let source_dir = root.join("dir");
+        let destination_dir = root.join("renamed-dir");
+        fs::create_dir_all(&source_dir).unwrap();
+        fs::write(source_dir.join("child.txt"), "child").unwrap();
+        let result = handle_direct_move_path(
+            &state,
+            "session-1",
+            &json!({
+                "source_path": source_dir.to_string_lossy(),
+                "destination_path": destination_dir.to_string_lossy(),
+                "expected_kind": "directory"
+            }),
+            &ToolPolicy::default(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(result["kind"], "directory");
+        assert!(!source_dir.exists());
+        assert!(destination_dir.join("child.txt").exists());
+
+        let second_source = root.join("second-source.txt");
+        fs::write(&second_source, "second").unwrap();
+        let denied = handle_direct_move_path(
+            &state,
+            "session-1",
+            &json!({
+                "source_path": second_source.to_string_lossy(),
+                "destination_path": destination.to_string_lossy()
+            }),
+            &ToolPolicy::default(),
+        )
+        .await;
+        assert!(format!("{:#}", denied.unwrap_err()).contains("destination already exists"));
+        assert!(second_source.exists());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn move_path_supports_overwrite_and_denies_invalid_paths() {
+        let root = unique_test_dir("move-path-policy");
+        let outside = unique_test_dir("move-path-outside");
+        let source = root.join("source.txt");
+        let destination = root.join("destination.txt");
+        fs::write(&source, "source").unwrap();
+        fs::write(&destination, "destination").unwrap();
+        let state = test_adapter_state("session-1", &root);
+        let result = handle_direct_move_path(
+            &state,
+            "session-1",
+            &json!({
+                "source_path": source.to_string_lossy(),
+                "destination_path": destination.to_string_lossy(),
+                "overwrite": true
+            }),
+            &ToolPolicy::default(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(result["overwrite"], true);
+        assert_eq!(fs::read_to_string(&destination).unwrap(), "source");
+
+        let hidden_source = root.join("visible.txt");
+        fs::write(&hidden_source, "hidden").unwrap();
+        let hidden = handle_direct_move_path(
+            &state,
+            "session-1",
+            &json!({
+                "source_path": hidden_source.to_string_lossy(),
+                "destination_path": root.join(".hidden-dest").to_string_lossy()
+            }),
+            &ToolPolicy {
+                deny_hidden_paths: Some(true),
+                ..Default::default()
+            },
+        )
+        .await;
+        assert!(format!("{:#}", hidden.unwrap_err()).contains("denied hidden path"));
+
+        let sensitive_source = root.join("plain.txt");
+        fs::write(&sensitive_source, "secret").unwrap();
+        let sensitive = handle_direct_move_path(
+            &state,
+            "session-1",
+            &json!({
+                "source_path": sensitive_source.to_string_lossy(),
+                "destination_path": root.join("secret-dest").to_string_lossy()
+            }),
+            &ToolPolicy {
+                sensitive_path_policy: Some("deny_sensitive_paths".to_string()),
+                ..Default::default()
+            },
+        )
+        .await;
+        assert!(format!("{:#}", sensitive.unwrap_err()).contains("denied sensitive path"));
+
+        let outside_denied = handle_direct_move_path(
+            &state,
+            "session-1",
+            &json!({
+                "source_path": destination.to_string_lossy(),
+                "destination_path": outside.join("moved.txt").to_string_lossy()
+            }),
             &ToolPolicy::default(),
         )
         .await;
