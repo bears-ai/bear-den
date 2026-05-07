@@ -1733,7 +1733,11 @@ fn adapter_capabilities_context() -> Value {
         "direct_tools": {
             "fs_read_text_file": { "supported": true, "version": 1 },
             "fs_list_directory": { "supported": true, "version": 1 },
+            "fs_find_paths": { "supported": true, "version": 1 },
             "fs_search_files": { "supported": true, "version": 1 },
+            "fs_stat": { "supported": true, "version": 1 },
+            "git_status": { "supported": true, "version": 1 },
+            "git_diff": { "supported": true, "version": 1 },
             "fs_replace_text": { "supported": true, "version": 1 },
             "fs_create_text_file": { "supported": true, "version": 1 },
             "fs_delete_path": { "supported": true, "version": 1 }
@@ -1745,7 +1749,11 @@ fn direct_tools_context() -> Value {
     json!({
         "fs_read_text_file": true,
         "fs_list_directory": true,
+        "fs_find_paths": true,
         "fs_search_files": true,
+        "fs_stat": true,
+        "git_status": true,
+        "git_diff": true,
         "fs_replace_text": true,
         "fs_create_text_file": true,
         "fs_delete_path": true,
@@ -2163,8 +2171,20 @@ async fn execute_local_tool(
         "fs_list_directory" => {
             handle_direct_list_directory(adapter_state, session_id, &args, policy).await
         }
+        "fs_find_paths" => {
+            handle_direct_find_paths(adapter_state, session_id, &args, policy).await
+        }
         "fs_search_files" => {
             handle_direct_search_files(adapter_state, session_id, &args, policy).await
+        }
+        "fs_stat" => {
+            handle_direct_stat(adapter_state, session_id, &args, policy).await
+        }
+        "git_status" => {
+            handle_direct_git_status(adapter_state, session_id, &args, policy).await
+        }
+        "git_diff" => {
+            handle_direct_git_diff(adapter_state, session_id, &args, policy).await
         }
         "fs_replace_text" => {
             handle_direct_replace_text(adapter_state, session_id, &args, policy).await
@@ -2286,6 +2306,90 @@ async fn handle_direct_list_directory(
             "max_entries": policy_max_entries,
             "applied_limit": limit,
             "recursive_default": policy.recursive_default,
+            "include_hidden_default": policy.include_hidden_default,
+        },
+    }))
+}
+
+async fn handle_direct_find_paths(
+    adapter_state: &AdapterState,
+    session_id: &str,
+    args: &Value,
+    policy: &ToolPolicy,
+) -> Result<Value> {
+    let glob = args
+        .get("glob")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| anyhow!("fs_find_paths args missing glob"))?;
+    let context = session_context(adapter_state, session_id)?;
+    let root = args
+        .get("root")
+        .and_then(Value::as_str)
+        .map(normalize_requested_tool_path)
+        .transpose()?
+        .unwrap_or_else(|| session_workspace_roots(context)[0].clone());
+    ensure_path_allowed_for_session(context, &root)?;
+    let include_hidden = args
+        .get("include_hidden")
+        .and_then(Value::as_bool)
+        .or(policy.include_hidden_default)
+        .unwrap_or(false);
+    let policy_max_results = policy.max_results.unwrap_or(500).clamp(1, 500);
+    let limit = args
+        .get("limit")
+        .and_then(Value::as_u64)
+        .map(|v| v.clamp(1, policy_max_results as u64) as usize)
+        .unwrap_or(100.min(policy_max_results));
+    let started = std::time::Instant::now();
+    let mut matches = Vec::new();
+    let mut visited = 0usize;
+    let mut skipped_by_filter = 0usize;
+    let mut truncated = false;
+    collect_find_paths(
+        context,
+        &root,
+        &root,
+        glob,
+        include_hidden,
+        limit,
+        &mut visited,
+        &mut skipped_by_filter,
+        &mut truncated,
+        &mut matches,
+    )?;
+    matches.sort();
+    let content = format_find_path_results(glob, &matches, truncated);
+    eprintln!(
+        "bears-acp-adapter: find_paths session_id={} root={} glob={} limit={} matches={} visited={} truncated={} duration_ms={}",
+        session_id,
+        root.display(),
+        glob,
+        limit,
+        matches.len(),
+        visited,
+        truncated,
+        started.elapsed().as_millis(),
+    );
+    Ok(json!({
+        "ok": true,
+        "root": root.to_string_lossy(),
+        "glob": glob,
+        "matches": matches.iter().map(|path| json!({
+            "path": path.to_string_lossy(),
+            "relative_path": path.strip_prefix(&root).unwrap_or(path).to_string_lossy(),
+        })).collect::<Vec<_>>(),
+        "returned_matches": matches.len(),
+        "visited": visited,
+        "skipped_by_filter": skipped_by_filter,
+        "truncated": truncated,
+        "include_hidden": include_hidden,
+        "source": "adapter_local",
+        "content": content,
+        "policy": {
+            "max_results": policy_max_results,
+            "applied_limit": limit,
             "include_hidden_default": policy.include_hidden_default,
         },
     }))
@@ -2436,6 +2540,153 @@ async fn handle_direct_search_files(
             "applied_max_bytes": max_bytes,
             "include_hidden_default": policy.include_hidden_default,
         },
+    }))
+}
+
+async fn handle_direct_stat(
+    adapter_state: &AdapterState,
+    session_id: &str,
+    args: &Value,
+    _policy: &ToolPolicy,
+) -> Result<Value> {
+    let raw_path = args
+        .get("path")
+        .and_then(Value::as_str)
+        .ok_or_else(|| anyhow!("fs_stat args missing path"))?;
+    let include_symlink_target = args
+        .get("include_symlink_target")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let context = session_context(adapter_state, session_id)?;
+    let path = normalize_requested_tool_path(raw_path)?;
+    ensure_path_allowed_for_session(context, &path)?;
+    let metadata = fs::symlink_metadata(&path)
+        .with_context(|| format!("stat {}", path.display()))?;
+    let file_type = metadata.file_type();
+    let kind = if file_type.is_symlink() {
+        "symlink"
+    } else if metadata.is_dir() {
+        "directory"
+    } else if metadata.is_file() {
+        "file"
+    } else {
+        "other"
+    };
+    let modified_at_unix_secs = metadata
+        .modified()
+        .ok()
+        .and_then(|modified| modified.duration_since(UNIX_EPOCH).ok())
+        .map(|duration| duration.as_secs());
+    let symlink_target = if include_symlink_target && file_type.is_symlink() {
+        fs::read_link(&path)
+            .ok()
+            .map(|target| target.to_string_lossy().to_string())
+    } else {
+        None
+    };
+    let content = format!(
+        "{}\t{}\t{} bytes",
+        kind,
+        path.display(),
+        metadata.len()
+    );
+    Ok(json!({
+        "ok": true,
+        "path": path.to_string_lossy(),
+        "exists": true,
+        "kind": kind,
+        "size_bytes": metadata.len(),
+        "readonly": metadata.permissions().readonly(),
+        "modified_at_unix_secs": modified_at_unix_secs,
+        "symlink_target": symlink_target,
+        "source": "adapter_local",
+        "content": content,
+    }))
+}
+
+async fn handle_direct_git_status(
+    adapter_state: &AdapterState,
+    session_id: &str,
+    args: &Value,
+    policy: &ToolPolicy,
+) -> Result<Value> {
+    let context = session_context(adapter_state, session_id)?;
+    let repo = git_repo_path_from_args(context, args)?;
+    let include_untracked = args
+        .get("include_untracked")
+        .and_then(Value::as_bool)
+        .unwrap_or(true);
+    let mut command_args = vec!["status".to_string(), "--porcelain=v1".to_string(), "-b".to_string()];
+    if !include_untracked {
+        command_args.push("-uno".to_string());
+    }
+    let max_bytes = policy.max_bytes.unwrap_or(262_144).clamp(1, 1_048_576) as usize;
+    let output = run_git_command(&repo, &command_args, max_bytes)?;
+    let parsed = parse_git_status_porcelain(&output.stdout);
+    let content = format_git_status_content(&parsed, output.truncated);
+    Ok(json!({
+        "ok": true,
+        "repo_path": repo.to_string_lossy(),
+        "branch": parsed.branch,
+        "upstream": parsed.upstream,
+        "ahead": parsed.ahead,
+        "behind": parsed.behind,
+        "clean": parsed.entries.is_empty(),
+        "entries": parsed.entries,
+        "include_untracked": include_untracked,
+        "exit_code": output.exit_code,
+        "stderr": output.stderr,
+        "truncated": output.truncated,
+        "source": "adapter_local",
+        "content": content,
+        "policy": { "max_bytes": max_bytes },
+    }))
+}
+
+async fn handle_direct_git_diff(
+    adapter_state: &AdapterState,
+    session_id: &str,
+    args: &Value,
+    policy: &ToolPolicy,
+) -> Result<Value> {
+    let context = session_context(adapter_state, session_id)?;
+    let repo = git_repo_path_from_args(context, args)?;
+    let staged = args.get("staged").and_then(Value::as_bool).unwrap_or(false);
+    let policy_max_bytes = policy.max_bytes.unwrap_or(262_144).clamp(1, 1_048_576);
+    let max_bytes = args
+        .get("max_bytes")
+        .and_then(Value::as_u64)
+        .map(|v| v.clamp(1, policy_max_bytes) as usize)
+        .unwrap_or(policy_max_bytes as usize);
+    let mut command_args = vec!["diff".to_string(), "--no-ext-diff".to_string()];
+    if staged {
+        command_args.push("--staged".to_string());
+    }
+    let paths = git_paths_from_args(context, &repo, args)?;
+    if !paths.is_empty() {
+        command_args.push("--".to_string());
+        command_args.extend(paths.iter().map(|path| path.to_string_lossy().to_string()));
+    }
+    let output = run_git_command(&repo, &command_args, max_bytes)?;
+    let content = if output.stdout.trim().is_empty() {
+        "No git diff.".to_string()
+    } else if output.truncated {
+        format!("{}\n... truncated", output.stdout)
+    } else {
+        output.stdout.clone()
+    };
+    Ok(json!({
+        "ok": true,
+        "repo_path": repo.to_string_lossy(),
+        "staged": staged,
+        "paths": paths.iter().map(|path| path.to_string_lossy().to_string()).collect::<Vec<_>>(),
+        "diff": output.stdout,
+        "exit_code": output.exit_code,
+        "stderr": output.stderr,
+        "truncated": output.truncated,
+        "source": "adapter_local",
+        "content": content,
+        "policy": { "max_bytes": policy_max_bytes, "applied_max_bytes": max_bytes },
     }))
 }
 
@@ -3008,6 +3259,70 @@ fn session_context<'a>(
         .ok_or_else(|| anyhow!("ACP session {session_id} is not known to this adapter"))
 }
 
+fn collect_find_paths(
+    context: &SessionContext,
+    root: &Path,
+    path: &Path,
+    glob: &str,
+    include_hidden: bool,
+    limit: usize,
+    visited: &mut usize,
+    skipped_by_filter: &mut usize,
+    truncated: &mut bool,
+    out: &mut Vec<PathBuf>,
+) -> Result<()> {
+    if *truncated {
+        return Ok(());
+    }
+    if !include_hidden && is_hidden_path_component(path, root) {
+        return Ok(());
+    }
+    ensure_path_allowed_for_session(context, path)?;
+    let metadata = fs::metadata(path).with_context(|| format!("stat {}", path.display()))?;
+    if path != root {
+        *visited += 1;
+        let relative = path
+            .strip_prefix(root)
+            .unwrap_or(path)
+            .to_string_lossy()
+            .replace('\\', "/");
+        if wildcard_match(glob, &relative) {
+            if out.len() >= limit {
+                *truncated = true;
+                return Ok(());
+            }
+            out.push(path.to_path_buf());
+        } else {
+            *skipped_by_filter += 1;
+        }
+    }
+    if !metadata.is_dir() {
+        return Ok(());
+    }
+    let mut entries = fs::read_dir(path)
+        .with_context(|| format!("find paths in directory {}", path.display()))?
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+    entries.sort_by_key(|entry| entry.path());
+    for entry in entries {
+        collect_find_paths(
+            context,
+            root,
+            &entry.path(),
+            glob,
+            include_hidden,
+            limit,
+            visited,
+            skipped_by_filter,
+            truncated,
+            out,
+        )?;
+        if *truncated {
+            break;
+        }
+    }
+    Ok(())
+}
+
 fn collect_search_files(
     context: &SessionContext,
     root: &Path,
@@ -3172,6 +3487,20 @@ fn is_hidden_path_component(path: &Path, root: &Path) -> bool {
         })
 }
 
+fn format_find_path_results(glob: &str, matches: &[PathBuf], truncated: bool) -> String {
+    let mut lines = vec![format!("Path matches for {glob:?}")];
+    for path in matches {
+        lines.push(path.display().to_string());
+    }
+    if matches.is_empty() {
+        lines.push("No paths found.".to_string());
+    }
+    if truncated {
+        lines.push("... truncated".to_string());
+    }
+    lines.join("\n")
+}
+
 fn format_directory_listing(path: &Path, entries: &[Value], truncated: bool) -> String {
     let mut lines = vec![format!("Directory listing for {}", path.display())];
     for entry in entries {
@@ -3207,6 +3536,159 @@ fn format_search_results(query: &str, matches: &[Value], truncated: bool) -> Str
     }
     if matches.is_empty() {
         lines.push("No matches found.".to_string());
+    }
+    if truncated {
+        lines.push("... truncated".to_string());
+    }
+    lines.join("\n")
+}
+
+#[derive(Debug)]
+struct GitCommandOutput {
+    stdout: String,
+    stderr: String,
+    exit_code: i32,
+    truncated: bool,
+}
+
+#[derive(Debug)]
+struct ParsedGitStatus {
+    branch: Option<String>,
+    upstream: Option<String>,
+    ahead: Option<u32>,
+    behind: Option<u32>,
+    entries: Vec<Value>,
+}
+
+fn git_repo_path_from_args(context: &SessionContext, args: &Value) -> Result<PathBuf> {
+    let repo = args
+        .get("repo_path")
+        .and_then(Value::as_str)
+        .map(normalize_requested_tool_path)
+        .transpose()?
+        .unwrap_or_else(|| session_workspace_roots(context)[0].clone());
+    ensure_path_allowed_for_session(context, &repo)?;
+    Ok(repo)
+}
+
+fn git_paths_from_args(context: &SessionContext, repo: &Path, args: &Value) -> Result<Vec<PathBuf>> {
+    let Some(paths) = args.get("paths").and_then(Value::as_array) else {
+        return Ok(Vec::new());
+    };
+    let mut out = Vec::new();
+    for value in paths.iter().take(100) {
+        let raw = value
+            .as_str()
+            .ok_or_else(|| anyhow!("git_diff paths entries must be strings"))?;
+        let path = if is_absolute_local_path(raw) {
+            normalize_requested_tool_path(raw)?
+        } else {
+            repo.join(raw)
+        };
+        ensure_path_allowed_for_session(context, &path)?;
+        let relative = path
+            .strip_prefix(repo)
+            .map(Path::to_path_buf)
+            .map_err(|_| anyhow!("git_diff path {} is outside repo {}", path.display(), repo.display()))?;
+        out.push(relative);
+    }
+    Ok(out)
+}
+
+fn run_git_command(repo: &Path, args: &[String], max_stdout_bytes: usize) -> Result<GitCommandOutput> {
+    let output = Command::new("git")
+        .args(args)
+        .current_dir(repo)
+        .output()
+        .with_context(|| format!("run git {} in {}", args.join(" "), repo.display()))?;
+    let exit_code = output.status.code().unwrap_or(-1);
+    let mut stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    let truncated = stdout.len() > max_stdout_bytes;
+    if truncated {
+        stdout.truncate(max_stdout_bytes);
+    }
+    let stderr = truncate_for_log(&String::from_utf8_lossy(&output.stderr), 8_192);
+    if !output.status.success() {
+        return Err(anyhow!(
+            "git {} failed with exit code {}: {}",
+            args.join(" "),
+            exit_code,
+            stderr.trim()
+        ));
+    }
+    Ok(GitCommandOutput {
+        stdout,
+        stderr,
+        exit_code,
+        truncated,
+    })
+}
+
+fn parse_git_status_porcelain(raw: &str) -> ParsedGitStatus {
+    let mut branch = None;
+    let mut upstream = None;
+    let mut ahead = None;
+    let mut behind = None;
+    let mut entries = Vec::new();
+    for line in raw.lines() {
+        if let Some(rest) = line.strip_prefix("## ") {
+            let mut parts = rest.splitn(2, "...");
+            branch = parts.next().map(str::to_string).filter(|s| !s.is_empty());
+            if let Some(upstream_part) = parts.next() {
+                let mut upstream_part = upstream_part.to_string();
+                if let Some(idx) = upstream_part.find(" [") {
+                    let meta = upstream_part[idx + 2..].trim_end_matches(']');
+                    for item in meta.split(',').map(str::trim) {
+                        if let Some(n) = item.strip_prefix("ahead ") {
+                            ahead = n.parse().ok();
+                        } else if let Some(n) = item.strip_prefix("behind ") {
+                            behind = n.parse().ok();
+                        }
+                    }
+                    upstream_part.truncate(idx);
+                }
+                upstream = Some(upstream_part).filter(|s| !s.is_empty());
+            }
+            continue;
+        }
+        if line.len() >= 3 {
+            let xy = &line[..2];
+            let path = line[3..].to_string();
+            entries.push(json!({
+                "xy": xy,
+                "index_status": &xy[0..1],
+                "worktree_status": &xy[1..2],
+                "path": path,
+            }));
+        }
+    }
+    ParsedGitStatus {
+        branch,
+        upstream,
+        ahead,
+        behind,
+        entries,
+    }
+}
+
+fn format_git_status_content(status: &ParsedGitStatus, truncated: bool) -> String {
+    let mut lines = vec![format!(
+        "On branch {}",
+        status.branch.as_deref().unwrap_or("<unknown>")
+    )];
+    if let Some(upstream) = status.upstream.as_deref() {
+        lines.push(format!("Upstream: {upstream}"));
+    }
+    if status.entries.is_empty() {
+        lines.push("Working tree clean.".to_string());
+    } else {
+        for entry in &status.entries {
+            lines.push(format!(
+                "{} {}",
+                entry.get("xy").and_then(Value::as_str).unwrap_or("??"),
+                entry.get("path").and_then(Value::as_str).unwrap_or("")
+            ));
+        }
     }
     if truncated {
         lines.push("... truncated".to_string());
@@ -5374,11 +5856,35 @@ fn tool_display(tool_name: &str) -> ToolDisplay {
             verb: "Listing",
             permission_operation: "list this directory",
         },
+        "fs_find_paths" => ToolDisplay {
+            title: "Find paths",
+            kind: ToolKind::Search,
+            verb: "Finding paths under",
+            permission_operation: "find paths",
+        },
         "fs_search_files" => ToolDisplay {
             title: "Search files",
             kind: ToolKind::Search,
             verb: "Searching",
             permission_operation: "search files",
+        },
+        "fs_stat" => ToolDisplay {
+            title: "Stat path",
+            kind: ToolKind::Read,
+            verb: "Inspecting",
+            permission_operation: "inspect this path",
+        },
+        "git_status" => ToolDisplay {
+            title: "Git status",
+            kind: ToolKind::Read,
+            verb: "Checking git status for",
+            permission_operation: "read git status",
+        },
+        "git_diff" => ToolDisplay {
+            title: "Git diff",
+            kind: ToolKind::Read,
+            verb: "Reading git diff for",
+            permission_operation: "read git diff",
         },
         "fs_replace_text" => ToolDisplay {
             title: "Edit file",
@@ -5426,7 +5932,10 @@ fn tool_kind_str(kind: ToolKind) -> &'static str {
 fn tool_target_kind(tool_name: &str) -> &'static str {
     match tool_name {
         "fs_list_directory" => "directory",
+        "fs_find_paths" => "directory",
         "fs_search_files" => "directory",
+        "fs_stat" => "path",
+        "git_status" | "git_diff" => "repository",
         "fs_delete_path" => "path",
         _ => "file",
     }
@@ -5760,6 +6269,105 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn find_paths_matches_glob_and_hides_dotfiles_by_default() {
+        let root = unique_test_dir("find-paths");
+        fs::create_dir_all(root.join("src")).unwrap();
+        fs::create_dir_all(root.join(".hidden")).unwrap();
+        fs::write(root.join("src").join("lib.rs"), "").unwrap();
+        fs::write(root.join("src").join("main.ts"), "").unwrap();
+        fs::write(root.join(".hidden").join("secret.rs"), "").unwrap();
+        let state = test_adapter_state("session-1", &root);
+        let result = handle_direct_find_paths(
+            &state,
+            "session-1",
+            &json!({ "root": root.to_string_lossy(), "glob": "src/*.rs" }),
+            &ToolPolicy::default(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(result["returned_matches"], 1);
+        assert_eq!(result["matches"][0]["relative_path"], "src/lib.rs");
+        let hidden = handle_direct_find_paths(
+            &state,
+            "session-1",
+            &json!({ "root": root.to_string_lossy(), "glob": ".hidden/*.rs" }),
+            &ToolPolicy::default(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(hidden["returned_matches"], 0);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn find_paths_enforces_root_containment_and_policy_limit() {
+        let root = unique_test_dir("find-root");
+        let outside = unique_test_dir("find-outside");
+        fs::write(root.join("a.txt"), "").unwrap();
+        fs::write(root.join("b.txt"), "").unwrap();
+        let state = test_adapter_state("session-1", &root);
+        let denied = handle_direct_find_paths(
+            &state,
+            "session-1",
+            &json!({ "root": outside.to_string_lossy(), "glob": "*.txt" }),
+            &ToolPolicy::default(),
+        )
+        .await;
+        assert!(format!("{:#}", denied.unwrap_err()).contains("outside the ACP session workspace roots"));
+        let limited = handle_direct_find_paths(
+            &state,
+            "session-1",
+            &json!({ "root": root.to_string_lossy(), "glob": "*.txt", "limit": 99 }),
+            &ToolPolicy { max_results: Some(1), ..Default::default() },
+        )
+        .await
+        .unwrap();
+        assert_eq!(limited["returned_matches"], 1);
+        assert_eq!(limited["truncated"], true);
+        assert_eq!(limited["policy"]["applied_limit"], 1);
+        let _ = fs::remove_dir_all(root);
+        let _ = fs::remove_dir_all(outside);
+    }
+
+    #[tokio::test]
+    async fn stat_reports_file_directory_and_denies_outside_root() {
+        let root = unique_test_dir("stat-root");
+        let outside = unique_test_dir("stat-outside");
+        let file = root.join("file.txt");
+        fs::write(&file, "hello").unwrap();
+        let state = test_adapter_state("session-1", &root);
+        let file_stat = handle_direct_stat(
+            &state,
+            "session-1",
+            &json!({ "path": file.to_string_lossy() }),
+            &ToolPolicy::default(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(file_stat["kind"], "file");
+        assert_eq!(file_stat["size_bytes"], 5);
+        let dir_stat = handle_direct_stat(
+            &state,
+            "session-1",
+            &json!({ "path": root.to_string_lossy() }),
+            &ToolPolicy::default(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(dir_stat["kind"], "directory");
+        let denied = handle_direct_stat(
+            &state,
+            "session-1",
+            &json!({ "path": outside.to_string_lossy() }),
+            &ToolPolicy::default(),
+        )
+        .await;
+        assert!(format!("{:#}", denied.unwrap_err()).contains("outside the ACP session workspace roots"));
+        let _ = fs::remove_dir_all(root);
+        let _ = fs::remove_dir_all(outside);
+    }
+
+    #[tokio::test]
     async fn search_files_enforces_root_containment() {
         let root = unique_test_dir("search-root");
         let outside = unique_test_dir("search-outside");
@@ -5992,6 +6600,78 @@ mod tests {
         assert!(wildcard_match("src/*.rs", "src/lib.rs"));
         assert!(wildcard_match("src/lib.?s", "src/lib.rs"));
         assert!(!wildcard_match("src/*.rs", "tests/lib.rs"));
+    }
+
+    #[tokio::test]
+    async fn git_status_and_diff_report_workspace_repo_state() {
+        let root = unique_test_dir("git-tools");
+        Command::new("git").args(["init"]).current_dir(&root).output().unwrap();
+        Command::new("git").args(["config", "user.email", "test@example.test"]).current_dir(&root).output().unwrap();
+        Command::new("git").args(["config", "user.name", "Test User"]).current_dir(&root).output().unwrap();
+        fs::write(root.join("tracked.txt"), "before\n").unwrap();
+        Command::new("git").args(["add", "tracked.txt"]).current_dir(&root).output().unwrap();
+        Command::new("git").args(["commit", "-m", "initial"]).current_dir(&root).output().unwrap();
+        fs::write(root.join("tracked.txt"), "after\n").unwrap();
+        fs::write(root.join("untracked.txt"), "new\n").unwrap();
+        let state = test_adapter_state("session-1", &root);
+        let status = handle_direct_git_status(
+            &state,
+            "session-1",
+            &json!({ "repo_path": root.to_string_lossy() }),
+            &ToolPolicy { max_bytes: Some(4096), ..Default::default() },
+        )
+        .await
+        .unwrap();
+        assert_eq!(status["clean"], false);
+        assert!(status["entries"].as_array().unwrap().iter().any(|entry| entry["path"] == "tracked.txt"));
+        assert!(status["entries"].as_array().unwrap().iter().any(|entry| entry["path"] == "untracked.txt"));
+
+        let diff = handle_direct_git_diff(
+            &state,
+            "session-1",
+            &json!({ "repo_path": root.to_string_lossy(), "paths": ["tracked.txt"] }),
+            &ToolPolicy { max_bytes: Some(4096), ..Default::default() },
+        )
+        .await
+        .unwrap();
+        assert!(diff["diff"].as_str().unwrap().contains("-before"));
+        assert!(diff["diff"].as_str().unwrap().contains("+after"));
+        assert_eq!(diff["truncated"], false);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn git_tools_enforce_root_containment_and_diff_byte_limit() {
+        let root = unique_test_dir("git-limit");
+        let outside = unique_test_dir("git-outside");
+        Command::new("git").args(["init"]).current_dir(&root).output().unwrap();
+        fs::write(root.join("file.txt"), "before\n").unwrap();
+        Command::new("git").args(["add", "file.txt"]).current_dir(&root).output().unwrap();
+        Command::new("git").args(["config", "user.email", "test@example.test"]).current_dir(&root).output().unwrap();
+        Command::new("git").args(["config", "user.name", "Test User"]).current_dir(&root).output().unwrap();
+        Command::new("git").args(["commit", "-m", "initial"]).current_dir(&root).output().unwrap();
+        fs::write(root.join("file.txt"), "after after after\n").unwrap();
+        let state = test_adapter_state("session-1", &root);
+        let denied = handle_direct_git_status(
+            &state,
+            "session-1",
+            &json!({ "repo_path": outside.to_string_lossy() }),
+            &ToolPolicy::default(),
+        )
+        .await;
+        assert!(format!("{:#}", denied.unwrap_err()).contains("outside the ACP session workspace roots"));
+        let diff = handle_direct_git_diff(
+            &state,
+            "session-1",
+            &json!({ "repo_path": root.to_string_lossy(), "max_bytes": 10 }),
+            &ToolPolicy { max_bytes: Some(10), ..Default::default() },
+        )
+        .await
+        .unwrap();
+        assert_eq!(diff["truncated"], true);
+        assert!(diff["diff"].as_str().unwrap().len() <= 10);
+        let _ = fs::remove_dir_all(root);
+        let _ = fs::remove_dir_all(outside);
     }
 
     #[tokio::test]

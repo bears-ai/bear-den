@@ -20,10 +20,14 @@ pub mod acp_diag_phase {
 pub enum AcpToolName {
     ReadTextFile,
     ListDirectory,
+    FindPaths,
     SearchFiles,
+    Stat,
     ReplaceText,
     CreateTextFile,
     DeletePath,
+    GitStatus,
+    GitDiff,
 }
 
 impl AcpToolName {
@@ -31,10 +35,14 @@ impl AcpToolName {
         match self {
             Self::ReadTextFile => &ACP_READ_TEXT_FILE_TOOL,
             Self::ListDirectory => &ACP_LIST_DIRECTORY_TOOL,
+            Self::FindPaths => &ACP_FIND_PATHS_TOOL,
             Self::SearchFiles => &ACP_SEARCH_FILES_TOOL,
+            Self::Stat => &ACP_STAT_TOOL,
             Self::ReplaceText => &ACP_REPLACE_TEXT_TOOL,
             Self::CreateTextFile => &ACP_CREATE_TEXT_FILE_TOOL,
             Self::DeletePath => &ACP_DELETE_PATH_TOOL,
+            Self::GitStatus => &ACP_GIT_STATUS_TOOL,
+            Self::GitDiff => &ACP_GIT_DIFF_TOOL,
         }
     }
 
@@ -42,10 +50,14 @@ impl AcpToolName {
         &[
             Self::ReadTextFile,
             Self::ListDirectory,
+            Self::FindPaths,
             Self::SearchFiles,
+            Self::Stat,
             Self::ReplaceText,
             Self::CreateTextFile,
             Self::DeletePath,
+            Self::GitStatus,
+            Self::GitDiff,
         ]
     }
 
@@ -74,11 +86,13 @@ impl AcpToolName {
 
     pub fn required_string_args(self) -> &'static [&'static str] {
         match self {
-            Self::ReadTextFile | Self::ListDirectory => &["path"],
+            Self::ReadTextFile | Self::ListDirectory | Self::Stat => &["path"],
+            Self::FindPaths => &["glob"],
             Self::SearchFiles => &["path", "query"],
             Self::ReplaceText => &["path", "old_text", "new_text"],
             Self::CreateTextFile => &["path", "content"],
             Self::DeletePath => &["path"],
+            Self::GitStatus | Self::GitDiff => &[],
         }
     }
 
@@ -98,8 +112,11 @@ impl AcpToolName {
             | "fs.list_directory"
             | "fs_list_directory"
             | "list_directory" => Some(Self::ListDirectory),
+            "bears/find_paths" | "fs/find_paths" | "fs.find_paths" | "fs_find_paths"
+            | "find_paths" => Some(Self::FindPaths),
             "bears/search_files" | "fs/search_files" | "fs.search_files" | "fs_search_files"
             | "search_files" => Some(Self::SearchFiles),
+            "bears/stat" | "fs/stat" | "fs.stat" | "fs_stat" | "stat" => Some(Self::Stat),
             "bears/replace_text" | "fs/replace_text" | "fs.replace_text" | "fs_replace_text"
             | "replace_text" => Some(Self::ReplaceText),
             "bears/create_text_file"
@@ -109,6 +126,10 @@ impl AcpToolName {
             | "create_text_file" => Some(Self::CreateTextFile),
             "bears/delete_path" | "fs/delete_path" | "fs.delete_path" | "fs_delete_path"
             | "delete_path" => Some(Self::DeletePath),
+            "bears/git_status" | "git/status" | "git.status" | "git_status" => {
+                Some(Self::GitStatus)
+            }
+            "bears/git_diff" | "git/diff" | "git.diff" | "git_diff" => Some(Self::GitDiff),
             _ => None,
         }
     }
@@ -254,6 +275,16 @@ pub const ACP_LIST_DIRECTORY_TOOL: AcpToolDescriptor = AcpToolDescriptor {
     risk: "read_only",
 };
 
+pub const ACP_FIND_PATHS_TOOL: AcpToolDescriptor = AcpToolDescriptor {
+    provider_name: "fs_find_paths",
+    canonical_name: "acp.fs.find_paths",
+    adapter_method: "bears/find_paths",
+    client_method: "fs/find_paths",
+    title: "Find paths",
+    kind: "search",
+    risk: "read_only",
+};
+
 pub const ACP_SEARCH_FILES_TOOL: AcpToolDescriptor = AcpToolDescriptor {
     provider_name: "fs_search_files",
     canonical_name: "acp.fs.search_files",
@@ -261,6 +292,16 @@ pub const ACP_SEARCH_FILES_TOOL: AcpToolDescriptor = AcpToolDescriptor {
     client_method: "fs/search_files",
     title: "Search files",
     kind: "search",
+    risk: "read_only",
+};
+
+pub const ACP_STAT_TOOL: AcpToolDescriptor = AcpToolDescriptor {
+    provider_name: "fs_stat",
+    canonical_name: "acp.fs.stat",
+    adapter_method: "bears/stat",
+    client_method: "fs/stat",
+    title: "Stat path",
+    kind: "read",
     risk: "read_only",
 };
 
@@ -292,6 +333,26 @@ pub const ACP_DELETE_PATH_TOOL: AcpToolDescriptor = AcpToolDescriptor {
     title: "Delete path",
     kind: "delete",
     risk: "deletes_workspace",
+};
+
+pub const ACP_GIT_STATUS_TOOL: AcpToolDescriptor = AcpToolDescriptor {
+    provider_name: "git_status",
+    canonical_name: "acp.git.status",
+    adapter_method: "bears/git_status",
+    client_method: "git/status",
+    title: "Git status",
+    kind: "read",
+    risk: "read_only",
+};
+
+pub const ACP_GIT_DIFF_TOOL: AcpToolDescriptor = AcpToolDescriptor {
+    provider_name: "git_diff",
+    canonical_name: "acp.git.diff",
+    adapter_method: "bears/git_diff",
+    client_method: "git/diff",
+    title: "Git diff",
+    kind: "read",
+    risk: "read_only",
 };
 
 pub fn provider_tool_name_is_safe(name: &str) -> bool {
@@ -343,6 +404,27 @@ const ACP_LIST_DIRECTORY_POLICY: AcpToolPolicy = AcpToolPolicy {
     permission_timeout_ms: 120_000,
 };
 
+const ACP_FIND_PATHS_POLICY: AcpToolPolicy = AcpToolPolicy {
+    scope_basis: "acp:tools",
+    role_basis: "pair_agent",
+    allowed_roots_basis: "acp_session.workspace_roots",
+    path_containment: "adapter_enforced_absolute_path_under_allowed_roots",
+    approval_required: true,
+    sensitive_path_policy: "client_permission_required",
+    max_lines: None,
+    max_entries: None,
+    max_results: Some(500),
+    max_bytes: None,
+    recursive_default: None,
+    include_hidden_default: Some(false),
+    max_replacements: None,
+    create_files: None,
+    allow_multiple: None,
+    deny_hidden_paths: None,
+    total_timeout_ms: 150_000,
+    permission_timeout_ms: 120_000,
+};
+
 const ACP_SEARCH_FILES_POLICY: AcpToolPolicy = AcpToolPolicy {
     scope_basis: "acp:tools",
     role_basis: "pair_agent",
@@ -361,6 +443,27 @@ const ACP_SEARCH_FILES_POLICY: AcpToolPolicy = AcpToolPolicy {
     allow_multiple: None,
     deny_hidden_paths: None,
     total_timeout_ms: 180_000,
+    permission_timeout_ms: 120_000,
+};
+
+const ACP_STAT_POLICY: AcpToolPolicy = AcpToolPolicy {
+    scope_basis: "acp:tools",
+    role_basis: "pair_agent",
+    allowed_roots_basis: "acp_session.workspace_roots",
+    path_containment: "adapter_enforced_absolute_path_under_allowed_roots",
+    approval_required: true,
+    sensitive_path_policy: "client_permission_required",
+    max_lines: None,
+    max_entries: None,
+    max_results: None,
+    max_bytes: None,
+    recursive_default: None,
+    include_hidden_default: None,
+    max_replacements: None,
+    create_files: None,
+    allow_multiple: None,
+    deny_hidden_paths: None,
+    total_timeout_ms: 150_000,
     permission_timeout_ms: 120_000,
 };
 
@@ -427,14 +530,60 @@ const ACP_DELETE_PATH_POLICY: AcpToolPolicy = AcpToolPolicy {
     permission_timeout_ms: 120_000,
 };
 
+const ACP_GIT_STATUS_POLICY: AcpToolPolicy = AcpToolPolicy {
+    scope_basis: "acp:tools",
+    role_basis: "pair_agent",
+    allowed_roots_basis: "acp_session.workspace_roots",
+    path_containment: "adapter_enforced_absolute_path_under_allowed_roots",
+    approval_required: true,
+    sensitive_path_policy: "client_permission_required",
+    max_lines: None,
+    max_entries: None,
+    max_results: Some(500),
+    max_bytes: Some(262_144),
+    recursive_default: None,
+    include_hidden_default: None,
+    max_replacements: None,
+    create_files: None,
+    allow_multiple: None,
+    deny_hidden_paths: None,
+    total_timeout_ms: 150_000,
+    permission_timeout_ms: 120_000,
+};
+
+const ACP_GIT_DIFF_POLICY: AcpToolPolicy = AcpToolPolicy {
+    scope_basis: "acp:tools",
+    role_basis: "pair_agent",
+    allowed_roots_basis: "acp_session.workspace_roots",
+    path_containment: "adapter_enforced_absolute_path_under_allowed_roots",
+    approval_required: true,
+    sensitive_path_policy: "client_permission_required",
+    max_lines: None,
+    max_entries: None,
+    max_results: None,
+    max_bytes: Some(262_144),
+    recursive_default: None,
+    include_hidden_default: None,
+    max_replacements: None,
+    create_files: None,
+    allow_multiple: None,
+    deny_hidden_paths: None,
+    total_timeout_ms: 150_000,
+    permission_timeout_ms: 120_000,
+};
+
 pub fn acp_tool_policy(tool: AcpToolName) -> AcpToolPolicy {
     match tool {
         AcpToolName::ReadTextFile => ACP_READ_TEXT_FILE_POLICY,
         AcpToolName::ListDirectory => ACP_LIST_DIRECTORY_POLICY,
+        AcpToolName::FindPaths => ACP_FIND_PATHS_POLICY,
         AcpToolName::SearchFiles => ACP_SEARCH_FILES_POLICY,
+        AcpToolName::Stat => ACP_STAT_POLICY,
         AcpToolName::ReplaceText => ACP_REPLACE_TEXT_POLICY,
         AcpToolName::CreateTextFile => ACP_CREATE_TEXT_FILE_POLICY,
         AcpToolName::DeletePath => ACP_DELETE_PATH_POLICY,
+        AcpToolName::GitStatus => ACP_GIT_STATUS_POLICY,
+        AcpToolName::GitDiff => ACP_GIT_DIFF_POLICY,
     }
 }
 
@@ -568,6 +717,28 @@ pub fn acp_client_tool_descriptor(tool: &AcpToolDescriptor) -> serde_json::Value
                 "required": ["path"]
             }
         }),
+        "fs_find_paths" => json!({
+            "name": tool.provider_name,
+            "description": format!(
+                "ACP local workspace tool ({}, target={}, adapter={}, client={}, kind={}, risk={}). Finds workspace paths matching a glob pattern through the local adapter with bounded results.",
+                tool.canonical_name,
+                "acp_client",
+                tool.adapter_method,
+                tool.client_method,
+                tool.kind,
+                tool.risk,
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "root": { "type": "string", "description": "Optional absolute directory path under the workspace. Defaults to the workspace root." },
+                    "glob": { "type": "string", "description": "Glob pattern to match against relative paths, such as **/*.rs or package.json." },
+                    "limit": { "type": "integer", "minimum": 1, "maximum": 500, "description": "Maximum paths to return." },
+                    "include_hidden": { "type": "boolean", "default": false, "description": "Include hidden dotfiles and dot-directories. Defaults to false." }
+                },
+                "required": ["glob"]
+            }
+        }),
         "fs_search_files" => json!({
             "name": tool.provider_name,
             "description": format!(
@@ -590,6 +761,26 @@ pub fn acp_client_tool_descriptor(tool: &AcpToolDescriptor) -> serde_json::Value
                     "case_sensitive": { "type": "boolean", "default": true, "description": "Whether literal matching is case-sensitive. Defaults to true." },
                     "pattern": { "type": "string", "description": "Optional simple wildcard pattern matched against relative file paths. Supports `*` and `?`." },
                     "extensions": { "type": "array", "items": { "type": "string" }, "maxItems": 10, "description": "Optional list of file extensions to include, such as [\"rs\", \"ts\"]." }
+                },
+                "required": ["path"]
+            }
+        }),
+        "fs_stat" => json!({
+            "name": tool.provider_name,
+            "description": format!(
+                "ACP local workspace tool ({}, target={}, adapter={}, client={}, kind={}, risk={}). Returns metadata for a workspace file or directory without reading file contents.",
+                tool.canonical_name,
+                "acp_client",
+                tool.adapter_method,
+                tool.client_method,
+                tool.kind,
+                tool.risk,
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": { "type": "string", "description": "Absolute local path under the workspace." },
+                    "include_symlink_target": { "type": "boolean", "default": false, "description": "Include symlink target when the path is a symlink." }
                 },
                 "required": ["path"]
             }
@@ -662,6 +853,48 @@ pub fn acp_client_tool_descriptor(tool: &AcpToolDescriptor) -> serde_json::Value
                 "required": ["path"]
             }
         }),
+        "git_status" => json!({
+            "name": tool.provider_name,
+            "description": format!(
+                "ACP local workspace tool ({}, target={}, adapter={}, client={}, kind={}, risk={}). Returns git status for a workspace repository through the local adapter.",
+                tool.canonical_name,
+                "acp_client",
+                tool.adapter_method,
+                tool.client_method,
+                tool.kind,
+                tool.risk,
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "repo_path": { "type": "string", "description": "Optional absolute path under the workspace. Defaults to the workspace root." },
+                    "include_untracked": { "type": "boolean", "default": true, "description": "Include untracked files. Defaults to true." }
+                },
+                "required": []
+            }
+        }),
+        "git_diff" => json!({
+            "name": tool.provider_name,
+            "description": format!(
+                "ACP local workspace tool ({}, target={}, adapter={}, client={}, kind={}, risk={}). Returns a bounded git diff for a workspace repository through the local adapter.",
+                tool.canonical_name,
+                "acp_client",
+                tool.adapter_method,
+                tool.client_method,
+                tool.kind,
+                tool.risk,
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "repo_path": { "type": "string", "description": "Optional absolute path under the workspace. Defaults to the workspace root." },
+                    "paths": { "type": "array", "items": { "type": "string" }, "description": "Optional paths under the repository to limit the diff." },
+                    "staged": { "type": "boolean", "default": false, "description": "Return staged diff instead of unstaged working-tree diff." },
+                    "max_bytes": { "type": "integer", "minimum": 1, "maximum": 262144, "description": "Maximum diff bytes to return." }
+                },
+                "required": []
+            }
+        }),
         _ => unreachable!("unknown ACP tool descriptor: {}", tool.provider_name),
     }
 }
@@ -683,7 +916,7 @@ mod tests {
     fn descriptors_use_provider_name_only() {
         let descriptors = acp_client_tool_descriptors();
         let descriptors = descriptors.as_array().expect("descriptor array");
-        assert_eq!(descriptors.len(), 6);
+        assert_eq!(descriptors.len(), AcpToolName::all().len());
         for descriptor in descriptors {
             let name = descriptor["name"].as_str().expect("descriptor name");
             assert!(provider_tool_name_is_safe(name));
@@ -703,7 +936,11 @@ mod tests {
             "direct_tools": {
                 "fs_read_text_file": true,
                 "fs_list_directory": true,
+                "fs_find_paths": true,
                 "fs_search_files": true,
+                "fs_stat": true,
+                "git_status": true,
+                "git_diff": true,
                 "fs_delete_path": true
             }
         }));
@@ -715,7 +952,11 @@ mod tests {
             .collect::<Vec<_>>();
         assert!(names.contains(&"fs_read_text_file"));
         assert!(names.contains(&"fs_list_directory"));
+        assert!(names.contains(&"fs_find_paths"));
         assert!(names.contains(&"fs_search_files"));
+        assert!(names.contains(&"fs_stat"));
+        assert!(names.contains(&"git_status"));
+        assert!(names.contains(&"git_diff"));
         assert!(names.contains(&"fs_delete_path"));
         assert!(!names.contains(&"fs_replace_text"));
     }
@@ -728,6 +969,10 @@ mod tests {
                 "version": "0.1.0",
                 "direct_tools": {
                     "fs_read_text_file": { "supported": true, "version": 1 },
+                    "fs_find_paths": { "supported": true, "version": 1 },
+                    "fs_stat": { "supported": true, "version": 1 },
+                    "git_status": { "supported": true, "version": 1 },
+                    "git_diff": { "supported": true, "version": 1 },
                     "fs_replace_text": { "supported": true, "version": 1 },
                     "fs_create_text_file": { "supported": true, "version": 1 },
                     "fs_delete_path": { "supported": true, "version": 1 }
@@ -744,9 +989,13 @@ mod tests {
             names,
             vec![
                 "fs_read_text_file",
+                "fs_find_paths",
+                "fs_stat",
                 "fs_replace_text",
                 "fs_create_text_file",
-                "fs_delete_path"
+                "fs_delete_path",
+                "git_status",
+                "git_diff"
             ]
         );
     }
@@ -781,10 +1030,27 @@ mod tests {
         assert_eq!(list_policy["max_entries"], 1000);
         assert_eq!(list_policy["include_hidden_default"], false);
 
+        let find_policy = acp_tool_policy_json_for_provider("fs_find_paths");
+        assert_eq!(find_policy["max_results"], 500);
+        assert_eq!(find_policy["include_hidden_default"], false);
+
         let search_policy = acp_tool_policy_json_for_provider("fs_search_files");
         assert_eq!(search_policy["max_results"], 200);
         assert_eq!(search_policy["max_bytes"], 1_048_576);
         assert_eq!(search_policy["approval_required"], true);
+
+        let stat_policy = acp_tool_policy_json_for_provider("fs_stat");
+        assert_eq!(stat_policy["risk"], "read_only");
+        assert_eq!(stat_policy["approval_required"], true);
+
+        let git_status_policy = acp_tool_policy_json_for_provider("git_status");
+        assert_eq!(git_status_policy["risk"], "read_only");
+        assert_eq!(git_status_policy["max_results"], 500);
+        assert_eq!(git_status_policy["max_bytes"], 262_144);
+
+        let git_diff_policy = acp_tool_policy_json_for_provider("git_diff");
+        assert_eq!(git_diff_policy["risk"], "read_only");
+        assert_eq!(git_diff_policy["max_bytes"], 262_144);
 
         let replace_policy = acp_tool_policy_json_for_provider("fs_replace_text");
         assert_eq!(replace_policy["risk"], "writes_workspace");
@@ -851,6 +1117,27 @@ mod tests {
                 "{name} must have mutating risk"
             );
         }
+    }
+
+    #[test]
+    fn milestone_1_descriptor_schemas_are_present() {
+        let find = acp_client_tool_descriptor(&ACP_FIND_PATHS_TOOL);
+        assert_eq!(find["parameters"]["required"], json!(["glob"]));
+        assert!(find["parameters"]["properties"].get("root").is_some());
+        assert!(find["parameters"]["properties"].get("include_hidden").is_some());
+
+        let stat = acp_client_tool_descriptor(&ACP_STAT_TOOL);
+        assert_eq!(stat["parameters"]["required"], json!(["path"]));
+        assert!(stat["parameters"]["properties"].get("include_symlink_target").is_some());
+
+        let git_status = acp_client_tool_descriptor(&ACP_GIT_STATUS_TOOL);
+        assert_eq!(git_status["parameters"]["required"], json!([]));
+        assert!(git_status["parameters"]["properties"].get("repo_path").is_some());
+
+        let git_diff = acp_client_tool_descriptor(&ACP_GIT_DIFF_TOOL);
+        assert_eq!(git_diff["parameters"]["required"], json!([]));
+        assert!(git_diff["parameters"]["properties"].get("paths").is_some());
+        assert!(git_diff["parameters"]["properties"].get("staged").is_some());
     }
 
     #[test]
