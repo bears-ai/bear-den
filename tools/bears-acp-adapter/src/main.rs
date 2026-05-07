@@ -47,7 +47,10 @@ use tools::fs::{
     handle_read_text_file, handle_replace_text, handle_search_files, handle_stat, ReplaceTextArgs,
     ReplaceTextPlan,
 };
-use tools::git::{handle_git_diff, handle_git_log, handle_git_show, handle_git_status};
+use tools::git::{
+    handle_git_add, handle_git_commit, handle_git_diff, handle_git_log, handle_git_restore,
+    handle_git_show, handle_git_stash, handle_git_status,
+};
 use tools::process::handle_process_run;
 use tools::web::handle_web_fetch;
 use uuid::Uuid;
@@ -1115,6 +1118,10 @@ fn adapter_capabilities_context() -> Value {
             "git_diff": { "supported": true, "version": 1 },
             "git_log": { "supported": true, "version": 1 },
             "git_show": { "supported": true, "version": 1 },
+            "git_add": { "supported": true, "version": 1 },
+            "git_restore": { "supported": true, "version": 1 },
+            "git_commit": { "supported": true, "version": 1 },
+            "git_stash": { "supported": true, "version": 1 },
             "process_run": { "supported": true, "version": 1 },
             "web_fetch": { "supported": true, "version": 1 },
             "fs_replace_text": { "supported": true, "version": 1 },
@@ -1139,6 +1146,10 @@ fn direct_tools_context() -> Value {
         "git_diff": true,
         "git_log": true,
         "git_show": true,
+        "git_add": true,
+        "git_restore": true,
+        "git_commit": true,
+        "git_stash": true,
         "process_run": true,
         "web_fetch": true,
         "fs_replace_text": true,
@@ -1507,6 +1518,22 @@ async fn execute_local_tool(
         "git_show" => {
             let context = session_context(adapter_state, session_id)?;
             handle_git_show(context, &args, policy).await
+        }
+        "git_add" => {
+            let context = session_context(adapter_state, session_id)?;
+            handle_git_add(context, &args, policy).await
+        }
+        "git_restore" => {
+            let context = session_context(adapter_state, session_id)?;
+            handle_git_restore(context, &args, policy).await
+        }
+        "git_commit" => {
+            let context = session_context(adapter_state, session_id)?;
+            handle_git_commit(context, &args, policy).await
+        }
+        "git_stash" => {
+            let context = session_context(adapter_state, session_id)?;
+            handle_git_stash(context, &args, policy).await
         }
         "process_run" => {
             let context = session_context(adapter_state, session_id)?;
@@ -3678,6 +3705,30 @@ fn tool_display(tool_name: &str) -> ToolDisplay {
             verb: "Reading git revision for",
             permission_operation: "read git revision",
         },
+        "git_add" => ToolDisplay {
+            title: "Git add",
+            kind: ToolKind::Edit,
+            verb: "Staging git paths in",
+            permission_operation: "stage git paths",
+        },
+        "git_restore" => ToolDisplay {
+            title: "Git restore",
+            kind: ToolKind::Edit,
+            verb: "Restoring git paths in",
+            permission_operation: "restore git paths",
+        },
+        "git_commit" => ToolDisplay {
+            title: "Git commit",
+            kind: ToolKind::Edit,
+            verb: "Creating git commit in",
+            permission_operation: "create git commit",
+        },
+        "git_stash" => ToolDisplay {
+            title: "Git stash",
+            kind: ToolKind::Edit,
+            verb: "Creating git stash in",
+            permission_operation: "create git stash",
+        },
         "process_run" => ToolDisplay {
             title: "Run process",
             kind: ToolKind::Execute,
@@ -3766,7 +3817,7 @@ fn tool_target_kind(tool_name: &str) -> &'static str {
         "fs_create_directory" => "directory",
         "fs_move_path" | "fs_copy_path" => "path",
         "fs_apply_patch" => "patch",
-        "git_status" | "git_diff" | "git_log" | "git_show" => "repository",
+        "git_status" | "git_diff" | "git_log" | "git_show" | "git_add" | "git_restore" | "git_commit" | "git_stash" => "repository",
         "process_run" => "command",
         "web_fetch" => "url",
         "fs_delete_path" => "path",
@@ -5407,6 +5458,79 @@ mod tests {
         .await;
         assert!(format!("{:#}", result.unwrap_err()).contains("exceeds policy max_bytes"));
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn git_add_commit_restore_and_stash_workflows() {
+        let root = unique_test_dir("git-write");
+        Command::new("git").args(["init"]).current_dir(&root).output().unwrap();
+        Command::new("git").args(["config", "user.email", "test@example.test"]).current_dir(&root).output().unwrap();
+        Command::new("git").args(["config", "user.name", "Test User"]).current_dir(&root).output().unwrap();
+        let state = test_adapter_state("session-1", &root);
+        let context = session_context(&state, "session-1").unwrap();
+        fs::write(root.join("file.txt"), "one\n").unwrap();
+        let added = handle_git_add(
+            context,
+            &json!({ "repo_path": root.to_string_lossy(), "paths": ["file.txt"] }),
+            &ToolPolicy::default(),
+        ).await.unwrap();
+        assert_eq!(added["ok"], true);
+        let committed = handle_git_commit(
+            context,
+            &json!({ "repo_path": root.to_string_lossy(), "message": "initial" }),
+            &ToolPolicy::default(),
+        ).await.unwrap();
+        assert_eq!(committed["ok"], true);
+        fs::write(root.join("file.txt"), "two\n").unwrap();
+        handle_git_restore(
+            context,
+            &json!({ "repo_path": root.to_string_lossy(), "paths": ["file.txt"] }),
+            &ToolPolicy::default(),
+        ).await.unwrap();
+        assert_eq!(fs::read_to_string(root.join("file.txt")).unwrap(), "one\n");
+        fs::write(root.join("scratch.txt"), "scratch\n").unwrap();
+        let stashed = handle_git_stash(
+            context,
+            &json!({ "repo_path": root.to_string_lossy(), "message": "scratch", "include_untracked": true }),
+            &ToolPolicy::default(),
+        ).await.unwrap();
+        assert_eq!(stashed["ok"], true);
+        assert!(!root.join("scratch.txt").exists());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn git_write_tools_reject_empty_or_outside_paths_and_bad_messages() {
+        let root = unique_test_dir("git-write-policy");
+        let outside = unique_test_dir("git-write-outside");
+        Command::new("git").args(["init"]).current_dir(&root).output().unwrap();
+        Command::new("git").args(["config", "user.email", "test@example.test"]).current_dir(&root).output().unwrap();
+        Command::new("git").args(["config", "user.name", "Test User"]).current_dir(&root).output().unwrap();
+        fs::write(root.join("file.txt"), "one\n").unwrap();
+        let state = test_adapter_state("session-1", &root);
+        let context = session_context(&state, "session-1").unwrap();
+        let empty = handle_git_add(context, &json!({ "repo_path": root.to_string_lossy(), "paths": [] }), &ToolPolicy::default()).await;
+        assert!(format!("{:#}", empty.unwrap_err()).contains("at least one path"));
+        let outside_path = handle_git_add(
+            context,
+            &json!({ "repo_path": root.to_string_lossy(), "paths": [outside.join("x.txt").to_string_lossy()] }),
+            &ToolPolicy::default(),
+        ).await;
+        assert!(format!("{:#}", outside_path.unwrap_err()).contains("outside the ACP session workspace roots"));
+        let bad_commit = handle_git_commit(
+            context,
+            &json!({ "repo_path": root.to_string_lossy(), "message": "" }),
+            &ToolPolicy::default(),
+        ).await;
+        assert!(format!("{:#}", bad_commit.unwrap_err()).contains("missing message"));
+        let too_many = handle_git_add(
+            context,
+            &json!({ "repo_path": root.to_string_lossy(), "paths": ["file.txt"] }),
+            &ToolPolicy { max_entries: Some(0), ..Default::default() },
+        ).await;
+        assert!(too_many.is_ok(), "max_entries clamps to at least 1");
+        let _ = fs::remove_dir_all(root);
+        let _ = fs::remove_dir_all(outside);
     }
 
     #[tokio::test]

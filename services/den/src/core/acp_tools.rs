@@ -34,6 +34,10 @@ pub enum AcpToolName {
     GitDiff,
     GitLog,
     GitShow,
+    GitAdd,
+    GitRestore,
+    GitCommit,
+    GitStash,
     ProcessRun,
     WebFetch,
 }
@@ -57,6 +61,10 @@ impl AcpToolName {
             Self::GitDiff => &ACP_GIT_DIFF_TOOL,
             Self::GitLog => &ACP_GIT_LOG_TOOL,
             Self::GitShow => &ACP_GIT_SHOW_TOOL,
+            Self::GitAdd => &ACP_GIT_ADD_TOOL,
+            Self::GitRestore => &ACP_GIT_RESTORE_TOOL,
+            Self::GitCommit => &ACP_GIT_COMMIT_TOOL,
+            Self::GitStash => &ACP_GIT_STASH_TOOL,
             Self::ProcessRun => &ACP_PROCESS_RUN_TOOL,
             Self::WebFetch => &ACP_WEB_FETCH_TOOL,
         }
@@ -80,6 +88,10 @@ impl AcpToolName {
             Self::GitDiff,
             Self::GitLog,
             Self::GitShow,
+            Self::GitAdd,
+            Self::GitRestore,
+            Self::GitCommit,
+            Self::GitStash,
             Self::ProcessRun,
             Self::WebFetch,
         ]
@@ -120,6 +132,9 @@ impl AcpToolName {
             Self::ApplyPatch => &["patch"],
             Self::GitStatus | Self::GitDiff | Self::GitLog => &[],
             Self::GitShow => &["revision"],
+            Self::GitAdd | Self::GitRestore => &["paths"],
+            Self::GitCommit => &["message"],
+            Self::GitStash => &[],
             Self::ProcessRun => &["command", "cwd"],
             Self::WebFetch => &["url"],
         }
@@ -174,6 +189,10 @@ impl AcpToolName {
             "bears/git_diff" | "git/diff" | "git.diff" | "git_diff" => Some(Self::GitDiff),
             "bears/git_log" | "git/log" | "git.log" | "git_log" => Some(Self::GitLog),
             "bears/git_show" | "git/show" | "git.show" | "git_show" => Some(Self::GitShow),
+            "bears/git_add" | "git/add" | "git.add" | "git_add" => Some(Self::GitAdd),
+            "bears/git_restore" | "git/restore" | "git.restore" | "git_restore" => Some(Self::GitRestore),
+            "bears/git_commit" | "git/commit" | "git.commit" | "git_commit" => Some(Self::GitCommit),
+            "bears/git_stash" | "git/stash" | "git.stash" | "git_stash" => Some(Self::GitStash),
             "bears/process_run" | "process/run" | "process.run" | "process_run" => {
                 Some(Self::ProcessRun)
             }
@@ -461,6 +480,46 @@ pub const ACP_GIT_SHOW_TOOL: AcpToolDescriptor = AcpToolDescriptor {
     title: "Git show",
     kind: "read",
     risk: "read_only",
+};
+
+pub const ACP_GIT_ADD_TOOL: AcpToolDescriptor = AcpToolDescriptor {
+    provider_name: "git_add",
+    canonical_name: "acp.git.add",
+    adapter_method: "bears/git_add",
+    client_method: "git/add",
+    title: "Git add",
+    kind: "edit",
+    risk: "writes_workspace",
+};
+
+pub const ACP_GIT_RESTORE_TOOL: AcpToolDescriptor = AcpToolDescriptor {
+    provider_name: "git_restore",
+    canonical_name: "acp.git.restore",
+    adapter_method: "bears/git_restore",
+    client_method: "git/restore",
+    title: "Git restore",
+    kind: "edit",
+    risk: "writes_workspace",
+};
+
+pub const ACP_GIT_COMMIT_TOOL: AcpToolDescriptor = AcpToolDescriptor {
+    provider_name: "git_commit",
+    canonical_name: "acp.git.commit",
+    adapter_method: "bears/git_commit",
+    client_method: "git/commit",
+    title: "Git commit",
+    kind: "edit",
+    risk: "writes_workspace",
+};
+
+pub const ACP_GIT_STASH_TOOL: AcpToolDescriptor = AcpToolDescriptor {
+    provider_name: "git_stash",
+    canonical_name: "acp.git.stash",
+    adapter_method: "bears/git_stash",
+    client_method: "git/stash",
+    title: "Git stash",
+    kind: "edit",
+    risk: "writes_workspace",
 };
 
 pub const ACP_PROCESS_RUN_TOOL: AcpToolDescriptor = AcpToolDescriptor {
@@ -826,6 +885,27 @@ const ACP_GIT_SHOW_POLICY: AcpToolPolicy = AcpToolPolicy {
     permission_timeout_ms: 120_000,
 };
 
+const ACP_GIT_WRITE_POLICY: AcpToolPolicy = AcpToolPolicy {
+    scope_basis: "acp:tools",
+    role_basis: "pair_agent",
+    allowed_roots_basis: "acp_session.workspace_roots",
+    path_containment: "adapter_enforced_absolute_path_under_allowed_roots",
+    approval_required: true,
+    sensitive_path_policy: "client_permission_required",
+    max_lines: None,
+    max_entries: Some(100),
+    max_results: None,
+    max_bytes: Some(262_144),
+    recursive_default: None,
+    include_hidden_default: None,
+    max_replacements: None,
+    create_files: None,
+    allow_multiple: None,
+    deny_hidden_paths: None,
+    total_timeout_ms: 150_000,
+    permission_timeout_ms: 120_000,
+};
+
 const ACP_PROCESS_RUN_POLICY: AcpToolPolicy = AcpToolPolicy {
     scope_basis: "acp:tools",
     role_basis: "pair_agent",
@@ -886,6 +966,10 @@ pub fn acp_tool_policy(tool: AcpToolName) -> AcpToolPolicy {
         AcpToolName::GitDiff => ACP_GIT_DIFF_POLICY,
         AcpToolName::GitLog => ACP_GIT_LOG_POLICY,
         AcpToolName::GitShow => ACP_GIT_SHOW_POLICY,
+        AcpToolName::GitAdd => ACP_GIT_WRITE_POLICY,
+        AcpToolName::GitRestore => ACP_GIT_WRITE_POLICY,
+        AcpToolName::GitCommit => ACP_GIT_WRITE_POLICY,
+        AcpToolName::GitStash => ACP_GIT_WRITE_POLICY,
         AcpToolName::ProcessRun => ACP_PROCESS_RUN_POLICY,
         AcpToolName::WebFetch => ACP_WEB_FETCH_POLICY,
     }
@@ -1310,6 +1394,43 @@ pub fn acp_client_tool_descriptor(tool: &AcpToolDescriptor) -> serde_json::Value
                 },
                 "required": ["revision"]
             }
+        }),
+        "git_add" => json!({
+            "name": tool.provider_name,
+            "description": "Stages explicit workspace repository paths with git add. Approval is required.",
+            "parameters": { "type": "object", "properties": {
+                "repo_path": { "type": "string" },
+                "paths": { "type": "array", "items": { "type": "string" }, "minItems": 1 }
+            }, "required": ["paths"] }
+        }),
+        "git_restore" => json!({
+            "name": tool.provider_name,
+            "description": "Restores explicit workspace repository paths with git restore. Approval is required because this can discard worktree or staged changes.",
+            "parameters": { "type": "object", "properties": {
+                "repo_path": { "type": "string" },
+                "paths": { "type": "array", "items": { "type": "string" }, "minItems": 1 },
+                "staged": { "type": "boolean", "default": false },
+                "worktree": { "type": "boolean", "default": true },
+                "source": { "type": "string" }
+            }, "required": ["paths"] }
+        }),
+        "git_commit" => json!({
+            "name": tool.provider_name,
+            "description": "Creates a git commit from already staged changes. Approval is required.",
+            "parameters": { "type": "object", "properties": {
+                "repo_path": { "type": "string" },
+                "message": { "type": "string" },
+                "allow_empty": { "type": "boolean", "default": false }
+            }, "required": ["message"] }
+        }),
+        "git_stash" => json!({
+            "name": tool.provider_name,
+            "description": "Creates a git stash for workspace repository changes. Approval is required.",
+            "parameters": { "type": "object", "properties": {
+                "repo_path": { "type": "string" },
+                "message": { "type": "string" },
+                "include_untracked": { "type": "boolean", "default": false }
+            }, "required": [] }
         }),
         "process_run" => json!({
             "name": tool.provider_name,
