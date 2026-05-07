@@ -132,6 +132,7 @@ fn default_approval_scope_kind() -> String {
 enum ApprovalScope {
     Directory,
     Workspace,
+    Host,
     Global,
 }
 
@@ -140,6 +141,7 @@ impl ApprovalScope {
         match self {
             Self::Directory => "directory",
             Self::Workspace => "workspace",
+            Self::Host => "host",
             Self::Global => "global",
         }
     }
@@ -216,11 +218,38 @@ impl ApprovalCache {
         scope: ApprovalScope,
         target_path: Option<&Path>,
     ) {
+        self.remember_for_target(context, tool_name, risk, scope, target_path, None)
+            .await;
+    }
+
+    async fn remember_for_url(
+        &self,
+        context: &SessionContext,
+        tool_name: &str,
+        risk: &str,
+        scope: ApprovalScope,
+        target_url: Option<&str>,
+    ) {
+        self.remember_for_target(context, tool_name, risk, scope, None, target_url)
+            .await;
+    }
+
+    async fn remember_for_target(
+        &self,
+        context: &SessionContext,
+        tool_name: &str,
+        risk: &str,
+        scope: ApprovalScope,
+        target_path: Option<&Path>,
+        target_url: Option<&str>,
+    ) {
         let Some(persistence) = self.persistence.as_ref() else {
             return;
         };
         let root_fingerprint = approval_root_fingerprint(context);
-        let Some(scope_fingerprint) = approval_scope_fingerprint(context, scope, target_path) else {
+        let Some(scope_fingerprint) =
+            approval_scope_fingerprint(context, scope, target_path, target_url)
+        else {
             return;
         };
         let now = now_secs();
@@ -257,19 +286,36 @@ impl ApprovalCache {
         tool_name: &str,
         target_path: Option<&Path>,
     ) -> bool {
+        self.is_allowed_for_target(context, tool_name, target_path, None)
+            .await
+    }
+
+    async fn is_allowed_for_url(
+        &self,
+        context: &SessionContext,
+        tool_name: &str,
+        target_url: Option<&str>,
+    ) -> bool {
+        self.is_allowed_for_target(context, tool_name, None, target_url)
+            .await
+    }
+
+    async fn is_allowed_for_target(
+        &self,
+        context: &SessionContext,
+        tool_name: &str,
+        target_path: Option<&Path>,
+        target_url: Option<&str>,
+    ) -> bool {
         let Some(persistence) = self.persistence.as_ref() else {
             return false;
         };
         let permission_class = permission_class_for_tool(tool_name);
-        let candidate_scopes = [
-            ApprovalScope::Directory,
-            ApprovalScope::Workspace,
-            ApprovalScope::Global,
-        ];
+        let candidate_scopes = candidate_approval_scopes(target_path, target_url);
         let candidate_keys = candidate_scopes
             .into_iter()
             .filter_map(|scope| {
-                approval_scope_fingerprint(context, scope, target_path).map(|fingerprint| {
+                approval_scope_fingerprint(context, scope, target_path, target_url).map(|fingerprint| {
                     Self::key(
                         &persistence.api_url,
                         &persistence.bear,
@@ -389,13 +435,41 @@ fn approval_scope_fingerprint(
     context: &SessionContext,
     scope: ApprovalScope,
     target_path: Option<&Path>,
+    target_url: Option<&str>,
 ) -> Option<String> {
     match scope {
         ApprovalScope::Directory => approval_directory_scope(context, target_path)
             .map(|path| path.display().to_string()),
         ApprovalScope::Workspace => Some(approval_root_fingerprint(context)),
+        ApprovalScope::Host => target_url.and_then(approval_url_host_scope),
         ApprovalScope::Global => Some("global".to_string()),
     }
+}
+
+fn candidate_approval_scopes(
+    target_path: Option<&Path>,
+    target_url: Option<&str>,
+) -> Vec<ApprovalScope> {
+    if target_url.and_then(approval_url_host_scope).is_some() {
+        return vec![ApprovalScope::Host, ApprovalScope::Global];
+    }
+    if target_path.is_some() {
+        return vec![
+            ApprovalScope::Directory,
+            ApprovalScope::Workspace,
+            ApprovalScope::Global,
+        ];
+    }
+    vec![ApprovalScope::Workspace, ApprovalScope::Global]
+}
+
+fn approval_url_host_scope(raw_url: &str) -> Option<String> {
+    let url = Url::parse(raw_url.trim()).ok()?;
+    let host = url.host_str()?.to_ascii_lowercase();
+    Some(match url.port() {
+        Some(port) => format!("{host}:{port}"),
+        None => host,
+    })
 }
 
 fn approval_directory_scope(context: &SessionContext, target_path: Option<&Path>) -> Option<PathBuf> {
@@ -4564,9 +4638,15 @@ async fn handle_tool_request_event(
     let context_for_approval = session_context(adapter_state, session_id).ok().cloned();
     let target_path_for_approval = tool_path(event)
         .and_then(|path| normalize_requested_tool_path(path).ok());
+    let target_url_for_approval = tool_url(event).map(str::to_string);
     let approval_reused = if let Some(context) = context_for_approval.as_ref() {
         approval_cache
-            .is_allowed(context, tool_name, target_path_for_approval.as_deref())
+            .is_allowed_for_target(
+                context,
+                tool_name,
+                target_path_for_approval.as_deref(),
+                target_url_for_approval.as_deref(),
+            )
             .await
     } else {
         false
@@ -4626,6 +4706,7 @@ async fn handle_tool_request_event(
             &policy,
             context_for_approval.as_ref(),
             target_path_for_approval.as_deref(),
+            target_url_for_approval.as_deref(),
         )
         .await;
         if let Err(err) = permission_decision {
@@ -4693,12 +4774,13 @@ async fn handle_tool_request_event(
                     .map(|decision| decision.scope)
                     .unwrap_or(ApprovalScope::Workspace);
                 approval_cache
-                    .remember(
+                    .remember_for_target(
                         context,
                         tool_name,
                         policy.risk(),
                         scope,
                         target_path_for_approval.as_deref(),
+                        target_url_for_approval.as_deref(),
                     )
                     .await;
                 eprintln!(
@@ -4955,12 +5037,14 @@ async fn request_tool_permission(
     policy: &ToolPolicy,
     context: Option<&SessionContext>,
     target_path: Option<&Path>,
+    target_url: Option<&str>,
 ) -> Result<PermissionDecision> {
     let path = event
         .get("args")
         .and_then(|v| v.get("path"))
         .and_then(Value::as_str)
-        .unwrap_or("the requested file");
+        .or(target_url)
+        .unwrap_or("the requested target");
     let title = event
         .get("title")
         .and_then(Value::as_str)
@@ -4998,11 +5082,17 @@ async fn request_tool_permission(
     meta.insert("toolKind".to_string(), json!(tool_kind_str(display.kind)));
     meta.insert("targetKind".to_string(), json!(tool_target_kind(tool_name)));
     meta.insert("targetPath".to_string(), json!(path));
+    if let Some(url) = target_url {
+        meta.insert("targetUrl".to_string(), json!(url));
+        if let Some(host) = approval_url_host_scope(url) {
+            meta.insert("targetHost".to_string(), json!(host));
+        }
+    }
     meta.insert("permissionClass".to_string(), json!(permission_class_for_tool(tool_name)));
     meta.insert("risk".to_string(), json!(policy.risk()));
     meta.insert("operation".to_string(), json!(display.permission_operation));
     let tool_call = ToolCallUpdate::new(tool_call_id.to_string(), fields).meta(Some(meta.clone()));
-    let options = permission_options_for_context(context, target_path);
+    let options = permission_options_for_context(context, target_path, target_url);
     let request = RequestPermissionRequest::new(session_id.to_string(), tool_call, options)
         .meta(Some(meta));
     let response = adapter_state
@@ -5028,13 +5118,20 @@ async fn request_tool_permission(
 fn permission_options_for_context(
     context: Option<&SessionContext>,
     target_path: Option<&Path>,
+    target_url: Option<&str>,
 ) -> Vec<PermissionOption> {
     let mut options = vec![PermissionOption::new(
         "allow_once",
         "Only this time",
         PermissionOptionKind::AllowOnce,
     )];
-    if let Some(context) = context {
+    if let Some(host) = target_url.and_then(approval_url_host_scope) {
+        options.push(PermissionOption::new(
+            "allow_host",
+            format!("Always for {host}"),
+            PermissionOptionKind::AllowAlways,
+        ));
+    } else if let Some(context) = context {
         if let Some(directory) = approval_directory_scope(context, target_path) {
             options.push(PermissionOption::new(
                 "allow_directory",
@@ -5123,6 +5220,11 @@ fn permission_decision_from_option_id(id: &str) -> PermissionDecision {
             approved: true,
             remember: true,
             scope: ApprovalScope::Workspace,
+        },
+        "allow_host" => PermissionDecision {
+            approved: true,
+            remember: true,
+            scope: ApprovalScope::Host,
         },
         "allow_global" => PermissionDecision {
             approved: true,
@@ -5334,6 +5436,13 @@ fn tool_path(event: &Value) -> Option<&str> {
     event
         .get("args")
         .and_then(|v| v.get("path"))
+        .and_then(Value::as_str)
+}
+
+fn tool_url(event: &Value) -> Option<&str> {
+    event
+        .get("args")
+        .and_then(|v| v.get("url"))
         .and_then(Value::as_str)
 }
 
@@ -6224,6 +6333,79 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn approval_cache_host_scope_reuses_same_url_host_and_port_only() {
+        let cache = test_approval_cache("http://den.test", "meta", "zed");
+        let context = SessionContext {
+            cwd: "/workspace".to_string(),
+            roots: vec!["/workspace".to_string()],
+            ..Default::default()
+        };
+        cache
+            .remember_for_url(
+                &context,
+                "web_fetch",
+                "read_only",
+                ApprovalScope::Host,
+                Some("https://Docs.Example.test:8443/reference/page"),
+            )
+            .await;
+
+        assert!(cache
+            .is_allowed_for_url(
+                &context,
+                "web_fetch",
+                Some("https://docs.example.test:8443/other")
+            )
+            .await);
+        assert!(!cache
+            .is_allowed_for_url(
+                &context,
+                "web_fetch",
+                Some("https://docs.example.test/reference/page")
+            )
+            .await);
+        assert!(!cache
+            .is_allowed_for_url(
+                &context,
+                "web_fetch",
+                Some("https://api.example.test:8443/reference/page")
+            )
+            .await);
+        assert!(!cache
+            .is_allowed_for_url(
+                &context,
+                "git_status",
+                Some("https://docs.example.test:8443/other")
+            )
+            .await);
+    }
+
+    #[tokio::test]
+    async fn approval_cache_global_scope_crosses_url_hosts_for_same_identity_and_class() {
+        let cache = test_approval_cache("http://den.test", "meta", "zed");
+        let context = SessionContext {
+            cwd: "/workspace".to_string(),
+            roots: vec!["/workspace".to_string()],
+            ..Default::default()
+        };
+        cache
+            .remember_for_url(
+                &context,
+                "web_fetch",
+                "read_only",
+                ApprovalScope::Global,
+                Some("https://docs.example.test/reference/page"),
+            )
+            .await;
+        assert!(cache
+            .is_allowed_for_url(&context, "web_fetch", Some("https://api.example.test/v1"))
+            .await);
+        assert!(!cache
+            .is_allowed_for_url(&context, "process_run", Some("https://api.example.test/v1"))
+            .await);
+    }
+
+    #[tokio::test]
     async fn approval_cache_global_scope_crosses_workspace_roots_for_same_identity_and_class() {
         let cache = test_approval_cache("http://den.test", "meta", "zed");
         let first_context = SessionContext {
@@ -6297,6 +6479,38 @@ mod tests {
     }
 
     #[test]
+    fn approval_url_host_scope_normalizes_host_and_preserves_explicit_port() {
+        assert_eq!(
+            approval_url_host_scope("https://Docs.Example.test:8443/path").as_deref(),
+            Some("docs.example.test:8443")
+        );
+        assert_eq!(
+            approval_url_host_scope("https://Docs.Example.test/path").as_deref(),
+            Some("docs.example.test")
+        );
+        assert_eq!(
+            approval_url_host_scope("not a url"),
+            None
+        );
+    }
+
+    #[test]
+    fn candidate_approval_scopes_prefers_host_for_urls() {
+        assert_eq!(
+            candidate_approval_scopes(None, Some("https://example.test:3030/path")),
+            vec![ApprovalScope::Host, ApprovalScope::Global]
+        );
+        assert_eq!(
+            candidate_approval_scopes(Some(Path::new("/workspace/src/main.rs")), None),
+            vec![
+                ApprovalScope::Directory,
+                ApprovalScope::Workspace,
+                ApprovalScope::Global
+            ]
+        );
+    }
+
+    #[test]
     fn approval_directory_scope_uses_parent_and_skips_workspace_root() {
         let context = SessionContext {
             cwd: "/workspace".to_string(),
@@ -6340,6 +6554,11 @@ mod tests {
         assert!(directory.remember);
         assert_eq!(directory.scope, ApprovalScope::Directory);
 
+        let host = permission_decision_from_option_id("allow_host");
+        assert!(host.approved);
+        assert!(host.remember);
+        assert_eq!(host.scope, ApprovalScope::Host);
+
         let global = permission_decision_from_option_id("allow_global");
         assert!(global.approved);
         assert!(global.remember);
@@ -6360,6 +6579,7 @@ mod tests {
         let options = permission_options_for_context(
             Some(&context),
             Some(Path::new("/workspace/src/main.rs")),
+            None,
         );
         let serialized = serde_json::to_value(&options).unwrap();
         let option_ids = serialized
@@ -6398,7 +6618,7 @@ mod tests {
             roots: vec!["/workspace".to_string()],
             ..Default::default()
         };
-        let options = permission_options_for_context(Some(&context), Some(Path::new("/workspace")));
+        let options = permission_options_for_context(Some(&context), Some(Path::new("/workspace")), None);
         let serialized = serde_json::to_value(&options).unwrap();
         let option_ids = serialized
             .as_array()
@@ -6416,6 +6636,38 @@ mod tests {
                 "reject_always",
             ]
         );
+    }
+
+    #[test]
+    fn permission_options_use_host_scope_for_url_targets() {
+        let context = SessionContext {
+            cwd: "/workspace".to_string(),
+            roots: vec!["/workspace".to_string()],
+            ..Default::default()
+        };
+        let options = permission_options_for_context(
+            Some(&context),
+            None,
+            Some("https://docs.example.test:8443/reference"),
+        );
+        let serialized = serde_json::to_value(&options).unwrap();
+        let option_ids = serialized
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|option| option["optionId"].as_str().unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            option_ids,
+            vec![
+                "allow_once",
+                "allow_host",
+                "allow_global",
+                "reject_once",
+                "reject_always",
+            ]
+        );
+        assert!(serialized.to_string().contains("Always for docs.example.test:8443"));
     }
 
     #[tokio::test]
