@@ -12,8 +12,16 @@ use crate::core::{
     },
 };
 
-const ACP_DEN_SERVER_TOOL_PROVIDER_NAMES: &[&str] =
-    &["den_web_fetch", "den_web_search", "den_write_note"];
+const ACP_DEN_SERVER_TOOL_PROVIDER_NAMES: &[&str] = &[
+    "den_web_fetch",
+    "den_web_search",
+    "den_situation_get",
+    "den_memory_write_entry",
+    "den_memory_status",
+    "den_memory_tree",
+    "den_memory_read",
+    "den_memory_search",
+];
 
 #[derive(Debug)]
 pub enum AcpGatewayEvent {

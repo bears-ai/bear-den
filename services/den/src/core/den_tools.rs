@@ -10,7 +10,11 @@ use crate::{
     config::Config,
     core::{
         bears::{db as bears_db, db::role_is_bear_admin, BearAgentRole},
-        memory_manager_head::{write_memfs_role_note, MemfsWriteRoleNoteRequest},
+        memory_manager_head::{
+            fetch_memfs_role_memory_file, fetch_memfs_role_memory_status,
+            fetch_memfs_role_memory_tree, search_memfs_role_memory,
+            write_memfs_role_memory_entry, MemfsWriteRoleMemoryEntryRequest,
+        },
         user,
         work_plans::{
             self, WorkPlanListFilter, WorkPlanLookup, WorkPlanStatus, WorkPlanUpdate,
@@ -28,7 +32,12 @@ pub const DEN_CHANNEL_GET_CONTEXT: &str = "den.channel.get_context";
 pub const DEN_POLICY_GET_SELF: &str = "den.policy.get_self";
 pub const DEN_WEB_FETCH: &str = "den.web.fetch";
 pub const DEN_WEB_SEARCH: &str = "den.web.search";
-pub const DEN_WRITE_NOTE: &str = "den.write_note";
+pub const DEN_SITUATION_GET: &str = "den.situation.get";
+pub const DEN_MEMORY_WRITE_ENTRY: &str = "den.memory.write_entry";
+pub const DEN_MEMORY_STATUS: &str = "den.memory.status";
+pub const DEN_MEMORY_TREE: &str = "den.memory.tree";
+pub const DEN_MEMORY_READ: &str = "den.memory.read";
+pub const DEN_MEMORY_SEARCH: &str = "den.memory.search";
 pub const DEN_SKILL_PROPOSE: &str = "den.skill.propose";
 pub const DEN_SKILL_APPROVE_PROPOSAL: &str = "den.skill.approve_proposal";
 pub const DEN_SKILL_REJECT_PROPOSAL: &str = "den.skill.reject_proposal";
@@ -180,21 +189,71 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
             }),
         ),
         descriptor(
-            DEN_WRITE_NOTE,
-            "Write pair note",
-            "Write a role-scoped durable note for the current pair role under pair/notes/ in MemFS.",
+            DEN_SITUATION_GET,
+            "Current situation",
+            "Return Den's trusted briefing for this interaction: bear, role, user/session identity, memory scopes, policy notes, and memory health hints.",
+            "session",
+            &["situation.read"],
+            PAIR_ROLES,
+            empty_schema(),
+        ),
+        descriptor(
+            DEN_MEMORY_WRITE_ENTRY,
+            "Write memory entry",
+            "Write a role-local semantic memory entry such as a note, log, decision, reflection, scratch item, or summary. Does not write core, Cabinet, tasks, observations, or run results.",
             "bear.memory",
-            &["memory.note.write"],
+            &["memory.entry.write"],
+            PAIR_ROLES,
+            memory_write_entry_schema(),
+        ),
+        descriptor(
+            DEN_MEMORY_STATUS,
+            "Memory status",
+            "Return MemFS memory health and entry counts for the current bear role.",
+            "bear.memory",
+            &["memory.status.read"],
+            PAIR_ROLES,
+            empty_schema(),
+        ),
+        descriptor(
+            DEN_MEMORY_TREE,
+            "Browse memory tree",
+            "Browse allowed Bear memory paths for the current role.",
+            "bear.memory",
+            &["memory.tree.read"],
+            PAIR_ROLES,
+            empty_schema(),
+        ),
+        descriptor(
+            DEN_MEMORY_READ,
+            "Read memory file",
+            "Read an allowed Bear memory file for the current role.",
+            "bear.memory",
+            &["memory.file.read"],
             PAIR_ROLES,
             json!({
                 "type": "object",
                 "properties": {
-                    "title": { "type": "string" },
-                    "body": { "type": "string" },
-                    "tags": { "type": "array", "items": { "type": "string" }, "maxItems": 20 },
-                    "source": { "type": "object" }
+                    "path": { "type": "string", "description": "Allowed memory path, for example pair/notes/mem_abc.md or core/missions.md." }
                 },
-                "required": ["title", "body"],
+                "required": ["path"],
+                "additionalProperties": false
+            }),
+        ),
+        descriptor(
+            DEN_MEMORY_SEARCH,
+            "Search memory",
+            "Search allowed Bear memory files for the current role.",
+            "bear.memory",
+            &["memory.search"],
+            PAIR_ROLES,
+            json!({
+                "type": "object",
+                "properties": {
+                    "query": { "type": "string" },
+                    "limit": { "type": "integer", "minimum": 1, "maximum": 50 }
+                },
+                "required": ["query"],
                 "additionalProperties": false
             }),
         ),
@@ -527,6 +586,50 @@ fn empty_schema() -> Value {
     })
 }
 
+fn memory_write_entry_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "kind": {
+                "type": "string",
+                "enum": ["note", "log", "decision", "reflection", "scratch", "summary"]
+            },
+            "title": { "type": "string", "minLength": 1, "maxLength": 200 },
+            "body": { "type": "string", "minLength": 1, "maxLength": 50000 },
+            "tags": {
+                "type": "array",
+                "items": { "type": "string", "minLength": 1, "maxLength": 80 },
+                "maxItems": 20
+            },
+            "refs": {
+                "type": "object",
+                "properties": {
+                    "people": { "type": "array", "items": { "type": "string" }, "maxItems": 20 },
+                    "missions": { "type": "array", "items": { "type": "string" }, "maxItems": 20 },
+                    "knowledge": { "type": "array", "items": { "type": "string" }, "maxItems": 20 },
+                    "cabinet": { "type": "array", "items": { "type": "string" }, "maxItems": 20 },
+                    "artifacts": { "type": "array", "items": { "type": "string" }, "maxItems": 20 },
+                    "tasks": { "type": "array", "items": { "type": "string" }, "maxItems": 20 }
+                },
+                "additionalProperties": false
+            },
+            "lifecycle": {
+                "type": "object",
+                "properties": {
+                    "scope": { "type": "string", "enum": ["role-local", "core-candidate", "cabinet-candidate"] },
+                    "retention": { "type": "string", "enum": ["session", "short", "durable", "archive"] },
+                    "promotion": { "type": "string", "enum": ["none", "maybe", "proposed"] },
+                    "status": { "type": "string", "enum": ["active", "superseded", "stale", "archived"] }
+                },
+                "additionalProperties": false
+            },
+            "source": { "type": "object" }
+        },
+        "required": ["kind", "title", "body"],
+        "additionalProperties": false
+    })
+}
+
 impl DenToolDescriptor {
     pub fn allows_role(&self, role: BearAgentRole) -> bool {
         self.allowed_roles.contains(&role.as_str())
@@ -544,7 +647,12 @@ pub fn is_builtin_den_tool(name: &str) -> bool {
             | DEN_POLICY_GET_SELF
             | DEN_WEB_FETCH
             | DEN_WEB_SEARCH
-            | DEN_WRITE_NOTE
+            | DEN_SITUATION_GET
+            | DEN_MEMORY_WRITE_ENTRY
+            | DEN_MEMORY_STATUS
+            | DEN_MEMORY_TREE
+            | DEN_MEMORY_READ
+            | DEN_MEMORY_SEARCH
             | DEN_SKILL_PROPOSE
             | DEN_SKILL_APPROVE_PROPOSAL
             | DEN_SKILL_REJECT_PROPOSAL
@@ -642,13 +750,30 @@ struct WebSearchArguments {
 }
 
 #[derive(Debug, Deserialize)]
-struct WriteNoteArguments {
+struct MemoryWriteEntryArguments {
+    kind: String,
     title: String,
     body: String,
     #[serde(default)]
     tags: Vec<String>,
     #[serde(default)]
+    refs: Option<Value>,
+    #[serde(default)]
+    lifecycle: Option<Value>,
+    #[serde(default)]
     source: Option<Value>,
+}
+
+#[derive(Debug, Deserialize)]
+struct MemoryReadArguments {
+    path: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct MemorySearchArguments {
+    query: String,
+    #[serde(default)]
+    limit: Option<usize>,
 }
 
 fn empty_json_object() -> Value {
@@ -673,7 +798,12 @@ pub async fn invoke_den_tool(
         DEN_POLICY_GET_SELF => policy_self(pool, &context).await,
         DEN_WEB_FETCH => web_fetch(arguments).await,
         DEN_WEB_SEARCH => web_search(config, arguments).await,
-        DEN_WRITE_NOTE => write_note(pool, config, &context, role, arguments).await,
+        DEN_SITUATION_GET => situation_get(pool, config, &context, role).await,
+        DEN_MEMORY_WRITE_ENTRY => write_memory_entry(config, &context, role, arguments).await,
+        DEN_MEMORY_STATUS => memory_status(config, &context, role).await,
+        DEN_MEMORY_TREE => memory_tree(config, &context, role).await,
+        DEN_MEMORY_READ => memory_read(config, &context, role, arguments).await,
+        DEN_MEMORY_SEARCH => memory_search(config, &context, role, arguments).await,
         DEN_WORK_PLAN_LIST => list_work_plans(pool, &context, role, arguments).await,
         DEN_WORK_PLAN_GET_STATUS => get_work_plan_status(pool, &context, role, arguments).await,
         DEN_WORK_PLAN_UPDATE => update_work_plan(pool, &context, role, arguments).await,
@@ -1033,8 +1163,64 @@ async fn brave_web_search(
     }))
 }
 
-async fn write_note(
-    _pool: &PgPool,
+async fn situation_get(
+    pool: &PgPool,
+    config: &Config,
+    context: &DenToolInvocationContext,
+    role: BearAgentRole,
+) -> Result<Value, CustomError> {
+    let member_count = bears_db::count_bear_members(pool, context.bear_id).await?;
+    let memory_status = memory_status_value(config, context, role).await.unwrap_or_else(|err| {
+        json!({
+            "configured": !config.letta_memfs_service_url.trim().is_empty(),
+            "available": false,
+            "error": err.to_string()
+        })
+    });
+    Ok(json!({
+        "bear": {
+            "bear_id": context.bear_id,
+            "bear_slug": context.bear_slug,
+            "member_count": member_count
+        },
+        "role": role.as_str(),
+        "role_agent_id": context.role_agent_id,
+        "user": {
+            "user_id": context.user_id,
+            "username": context.username,
+            "membership_role": context.membership_role,
+            "is_bear_admin": role_is_bear_admin(context.membership_role.as_deref())
+        },
+        "session": {
+            "conversation_id": context.conversation_id,
+            "session_id": context.session_id,
+            "acp_session_id": context.acp_session_id,
+            "conversation_selection": context.conversation_selection,
+            "runtime_target": context.runtime_target,
+            "request_id": context.request_id,
+            "channel": context.channel
+        },
+        "memory": {
+            "read_scopes": memory_read_scopes(role),
+            "write_scopes": memory_write_scopes(role),
+            "available_tools": [
+                "den_memory_write_entry",
+                "den_memory_status",
+                "den_memory_tree",
+                "den_memory_read",
+                "den_memory_search"
+            ],
+            "status": memory_status
+        },
+        "policy_notes": [
+            "Situation is a Den-trusted briefing, not the model context window.",
+            "Use den_memory_write_entry only for role-local notes, logs, decisions, reflections, scratch, and summaries.",
+            "Do not use memory entry tools for tasks, observations, run results, Cabinet writes, or direct core updates."
+        ]
+    }))
+}
+
+async fn write_memory_entry(
     config: &Config,
     context: &DenToolInvocationContext,
     role: BearAgentRole,
@@ -1042,33 +1228,24 @@ async fn write_note(
 ) -> Result<Value, CustomError> {
     if role != BearAgentRole::Pair {
         return Err(CustomError::Authorization(
-            "den.write_note is currently available only to the pair role".to_string(),
+            "den.memory.write_entry is currently available only to the pair role".to_string(),
         ));
     }
-    let args: WriteNoteArguments = serde_json::from_value(arguments)?;
-    let title = args.title.trim();
-    let body = args.body.trim();
-    if title.is_empty() {
-        return Err(CustomError::ValidationError(
-            "title must not be empty".to_string(),
-        ));
-    }
-    if body.is_empty() {
-        return Err(CustomError::ValidationError(
-            "body must not be empty".to_string(),
-        ));
-    }
-    let tags = args
-        .tags
-        .into_iter()
-        .map(|tag| tag.trim().to_string())
-        .filter(|tag| !tag.is_empty())
-        .take(20)
-        .collect::<Vec<_>>();
-    let request = MemfsWriteRoleNoteRequest {
-        title: title.to_string(),
-        body: body.to_string(),
+    let args: MemoryWriteEntryArguments = serde_json::from_value(arguments)?;
+    let kind = validate_memory_kind(&args.kind)?;
+    let title = validate_bounded_text("title", &args.title, 1, 200)?;
+    let body = validate_bounded_text("body", &args.body, 1, 50_000)?;
+    let tags = clean_limited_strings(args.tags, 20, 80);
+    validate_optional_object("refs", &args.refs)?;
+    validate_optional_object("lifecycle", &args.lifecycle)?;
+    validate_optional_object("source", &args.source)?;
+    let request = MemfsWriteRoleMemoryEntryRequest {
+        kind,
+        title,
+        body,
         tags,
+        refs: args.refs,
+        lifecycle: args.lifecycle,
         source: args.source,
         author: context.username.clone(),
         conversation_id: clean_optional(&context.conversation_id),
@@ -1083,12 +1260,8 @@ async fn write_note(
         agent_role: context.agent_role.map(|role| role.as_str().to_string()),
         request_id: context.request_id.clone(),
     };
-    let http = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(30))
-        .connect_timeout(std::time::Duration::from_secs(5))
-        .build()
-        .map_err(|e| CustomError::System(format!("MemFS note client build failed: {e}")))?;
-    let response = write_memfs_role_note(
+    let http = memfs_http_client("MemFS memory entry client build failed")?;
+    let response = write_memfs_role_memory_entry(
         &http,
         &config.letta_memfs_service_url,
         context.bear_id,
@@ -1104,11 +1277,150 @@ async fn write_note(
     Ok(json!({
         "bear_id": context.bear_id,
         "role": role.as_str(),
+        "kind": response.kind,
+        "entry_id": response.entry_id,
         "path": response.path,
         "commit": response.commit,
         "canonical_tip": response.canonical_tip,
         "view": response.view,
     }))
+}
+
+async fn memory_status(
+    config: &Config,
+    context: &DenToolInvocationContext,
+    role: BearAgentRole,
+) -> Result<Value, CustomError> {
+    memory_status_value(config, context, role).await
+}
+
+async fn memory_status_value(
+    config: &Config,
+    context: &DenToolInvocationContext,
+    role: BearAgentRole,
+) -> Result<Value, CustomError> {
+    let http = memfs_http_client("MemFS memory status client build failed")?;
+    let response = fetch_memfs_role_memory_status(
+        &http,
+        &config.letta_memfs_service_url,
+        context.bear_id,
+        role.as_str(),
+    )
+    .await?;
+    let Some(response) = response else {
+        return Ok(json!({
+            "configured": false,
+            "available": false,
+            "message": "MemFS sidecar is not configured (set LETTA_MEMFS_SERVICE_URL)"
+        }));
+    };
+    Ok(json!({
+        "configured": true,
+        "available": response.ok,
+        "bear_id": context.bear_id,
+        "role": role.as_str(),
+        "canonical_tip": response.canonical_tip,
+        "allowed_prefixes": response.allowed_prefixes,
+        "file_count": response.file_count,
+        "entry_count_by_kind": response.entry_count_by_kind,
+        "registered_view_count": response.registered_view_count,
+    }))
+}
+
+async fn memory_tree(
+    config: &Config,
+    context: &DenToolInvocationContext,
+    role: BearAgentRole,
+) -> Result<Value, CustomError> {
+    let http = memfs_http_client("MemFS memory tree client build failed")?;
+    let response = fetch_memfs_role_memory_tree(
+        &http,
+        &config.letta_memfs_service_url,
+        context.bear_id,
+        role.as_str(),
+    )
+    .await?;
+    response
+        .map(|value| {
+            serde_json::to_value(value)
+                .map_err(|e| CustomError::Parsing(format!("memory tree JSON: {e}")))
+        })
+        .unwrap_or_else(|| {
+            Ok(json!({
+                "ok": false,
+                "configured": false,
+                "message": "MemFS sidecar is not configured (set LETTA_MEMFS_SERVICE_URL)"
+            }))
+        })
+}
+
+async fn memory_read(
+    config: &Config,
+    context: &DenToolInvocationContext,
+    role: BearAgentRole,
+    arguments: Value,
+) -> Result<Value, CustomError> {
+    let args: MemoryReadArguments = serde_json::from_value(arguments)?;
+    let path = args.path.trim();
+    if path.is_empty() {
+        return Err(CustomError::ValidationError("path must not be empty".to_string()));
+    }
+    let http = memfs_http_client("MemFS memory read client build failed")?;
+    let response = fetch_memfs_role_memory_file(
+        &http,
+        &config.letta_memfs_service_url,
+        context.bear_id,
+        role.as_str(),
+        path,
+    )
+    .await?;
+    response
+        .map(|value| {
+            serde_json::to_value(value)
+                .map_err(|e| CustomError::Parsing(format!("memory file JSON: {e}")))
+        })
+        .unwrap_or_else(|| {
+            Ok(json!({
+                "ok": false,
+                "configured": false,
+                "message": "MemFS sidecar is not configured (set LETTA_MEMFS_SERVICE_URL)"
+            }))
+        })
+}
+
+async fn memory_search(
+    config: &Config,
+    context: &DenToolInvocationContext,
+    role: BearAgentRole,
+    arguments: Value,
+) -> Result<Value, CustomError> {
+    let args: MemorySearchArguments = serde_json::from_value(arguments)?;
+    let query = args.query.trim();
+    if query.is_empty() {
+        return Err(CustomError::ValidationError("query must not be empty".to_string()));
+    }
+    let http = memfs_http_client("MemFS memory search client build failed")?;
+    let response = search_memfs_role_memory(
+        &http,
+        &config.letta_memfs_service_url,
+        context.bear_id,
+        role.as_str(),
+        query,
+        args.limit.map(|n| n.clamp(1, 50)),
+    )
+    .await?;
+    response
+        .map(|value| {
+            serde_json::to_value(value)
+                .map_err(|e| CustomError::Parsing(format!("memory search JSON: {e}")))
+        })
+        .unwrap_or_else(|| {
+            Ok(json!({
+                "ok": false,
+                "configured": false,
+                "message": "MemFS sidecar is not configured (set LETTA_MEMFS_SERVICE_URL)"
+            }))
+        })
 }
 
 async fn list_work_plans(
@@ -1200,6 +1512,83 @@ async fn update_work_plan(
         "bear_id": context.bear_id,
         "plan": plan,
     }))
+}
+
+fn memfs_http_client(error_prefix: &str) -> Result<reqwest::Client, CustomError> {
+    reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .connect_timeout(std::time::Duration::from_secs(5))
+        .build()
+        .map_err(|e| CustomError::System(format!("{error_prefix}: {e}")))
+}
+
+fn validate_memory_kind(value: &str) -> Result<String, CustomError> {
+    let kind = value.trim().to_ascii_lowercase();
+    match kind.as_str() {
+        "note" | "log" | "decision" | "reflection" | "scratch" | "summary" => Ok(kind),
+        _ => Err(CustomError::ValidationError(
+            "kind must be one of note, log, decision, reflection, scratch, summary".to_string(),
+        )),
+    }
+}
+
+fn validate_bounded_text(
+    field: &str,
+    value: &str,
+    min_chars: usize,
+    max_chars: usize,
+) -> Result<String, CustomError> {
+    let trimmed = value.trim();
+    let char_count = trimmed.chars().count();
+    if char_count < min_chars {
+        return Err(CustomError::ValidationError(format!(
+            "{field} must not be empty"
+        )));
+    }
+    if char_count > max_chars {
+        return Err(CustomError::ValidationError(format!(
+            "{field} must be at most {max_chars} characters"
+        )));
+    }
+    Ok(trimmed.to_string())
+}
+
+fn clean_limited_strings(values: Vec<String>, max_items: usize, max_chars: usize) -> Vec<String> {
+    values
+        .into_iter()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .map(|value| value.chars().take(max_chars).collect::<String>())
+        .take(max_items)
+        .collect()
+}
+
+fn validate_optional_object(field: &str, value: &Option<Value>) -> Result<(), CustomError> {
+    if let Some(value) = value {
+        if !value.is_object() {
+            return Err(CustomError::ValidationError(format!(
+                "{field} must be an object"
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn memory_read_scopes(role: BearAgentRole) -> Vec<&'static str> {
+    match role {
+        BearAgentRole::Pair => vec!["pair/", "core/"],
+        BearAgentRole::Talk => vec!["talk/", "core/"],
+        BearAgentRole::Curate => vec!["talk/", "pair/", "curate/", "work/", "watch/", "core/"],
+        BearAgentRole::Work => vec!["work/", "core/"],
+        BearAgentRole::Watch => vec!["watch/", "core/"],
+    }
+}
+
+fn memory_write_scopes(role: BearAgentRole) -> Vec<&'static str> {
+    match role {
+        BearAgentRole::Pair => vec!["pair/notes/", "pair/logs/", "pair/decisions/", "pair/reflections/", "pair/scratch/", "pair/summaries/"],
+        _ => Vec::new(),
+    }
 }
 
 fn validate_public_http_url(raw: &str) -> Result<url::Url, CustomError> {
@@ -1439,16 +1828,21 @@ mod tests {
     }
 
     #[test]
-    fn pair_has_web_search_and_fetch_tools() {
+    fn pair_has_web_and_memory_tools() {
         let pair = names_for_role(BearAgentRole::Pair);
         assert!(pair.contains(DEN_WEB_FETCH));
         assert!(pair.contains(DEN_WEB_SEARCH));
-        assert!(pair.contains(DEN_WRITE_NOTE));
+        assert!(pair.contains(DEN_SITUATION_GET));
+        assert!(pair.contains(DEN_MEMORY_WRITE_ENTRY));
+        assert!(pair.contains(DEN_MEMORY_STATUS));
+        assert!(pair.contains(DEN_MEMORY_TREE));
+        assert!(pair.contains(DEN_MEMORY_READ));
+        assert!(pair.contains(DEN_MEMORY_SEARCH));
 
         let talk = names_for_role(BearAgentRole::Talk);
         assert!(!talk.contains(DEN_WEB_FETCH));
         assert!(!talk.contains(DEN_WEB_SEARCH));
-        assert!(!talk.contains(DEN_WRITE_NOTE));
+        assert!(!talk.contains(DEN_MEMORY_WRITE_ENTRY));
     }
 
     #[tokio::test]

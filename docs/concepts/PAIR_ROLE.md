@@ -213,21 +213,21 @@ Policy expectations:
 
 ### Role-local memory tools
 
-Candidate tool:
+Current tool:
 
-- `write_note`
+- `den_memory_write_entry`
 
-`write_note` is intentionally role-aware. The same tool name may be available to multiple roles, but Den resolves the caller's Bear role and writes to that role's allowed memory location.
+`den_memory_write_entry` is intentionally role-aware. Den resolves the caller's Bear role and writes to that role's allowed memory location. It supports semantic kinds such as `note`, `log`, `decision`, `reflection`, `scratch`, and `summary`.
 
-For `pair`, `write_note` writes only under `pair/`, for example:
+For `pair`, it writes only under pair-local paths, for example:
 
 ```text
-pair/notes/<note-id>.md
+pair/notes/<entry-id>.md
+pair/logs/<entry-id>.md
+pair/decisions/<entry-id>.md
 ```
 
-or another Den-managed pair-local note path.
-
-It must not write `core/` directly.
+It must not write `core/` directly, Cabinet, tasks, observations, or run results.
 
 ### Structured delegation tools
 
@@ -247,40 +247,40 @@ Candidate tool:
 
 Pair uses this when the user asks it to learn a reusable procedure.
 
-## `write_note` naming
+## `den_memory_write_entry` naming
 
-A shared tool name like `write_note` is a good fit if the tool is explicitly role-aware.
+A shared tool name like `den_memory_write_entry` is a better fit than `write_note` because role-local memory includes more than notes.
 
 Benefits:
 
-- The agent-facing action is simple: "write a note."
+- The agent-facing action is explicit: write a typed memory entry.
 - The policy remains centralized in Den.
 - Different roles can use the same affordance without gaining the same filesystem authority.
-- UI and logs can show a common action shape with role-specific outcomes.
+- UI and logs can show a common action shape with role-specific outcomes and `kind` metadata.
 
 Required behavior:
 
 ```text
-write_note(context, args)
+den_memory_write_entry(context, args)
   -> Den authenticates caller context
   -> Den resolves Bear + role
-  -> Den selects allowed destination for that role
-  -> Den validates size/title/body/provenance
+  -> Den validates kind/title/body/refs/lifecycle/provenance
+  -> Den selects allowed destination for that role and kind
   -> Den writes only to that role's memory area
   -> Den records audit metadata
 ```
 
 For example:
 
-| Role | `write_note` destination |
-|------|--------------------------|
-| `talk` | `talk/notes/` |
-| `pair` | `pair/notes/` |
-| `curate` | `curate/notes/` or reviewed `core/` tooling, depending on intent |
-| `work` | `work/notes/` or task run notes |
-| `watch` | usually not notes; prefer observations |
+| Role | `den_memory_write_entry` destinations |
+|------|---------------------------------------|
+| `talk` | `talk/notes/`, `talk/logs/`, `talk/decisions/`, ... |
+| `pair` | `pair/notes/`, `pair/logs/`, `pair/decisions/`, ... |
+| `curate` | `curate/notes/`, `curate/reflections/`, `curate/decisions/`, ... |
+| `work` | task/run-bound `work/logs/`, `work/decisions/`, `work/summaries/` |
+| `watch` | `watch/logs/` and summaries; observations should use observation tooling |
 
-For now, we can implement the first slice for `pair` only and keep the tool name general.
+The first implemented slice is `pair` only.
 
 ## Memory edge: explicit content vs durable memory
 
@@ -297,8 +297,8 @@ Pair should not treat every docs lookup as memory. It should only write notes wh
 ## Recommended first implementation order
 
 1. Implement Den-mediated `web_search` / `web_fetch` or docs-oriented equivalents for pair.
-2. Implement role-aware `write_note` for pair-local memory.
-3. Expose both tools to the pair prompt/tool profile.
+2. Implement role-aware `den_memory_write_entry` for pair-local memory.
+3. Expose web, situation, and memory tools to the pair prompt/tool profile.
 4. Add diagnostics and tests showing pair can write to `pair/notes/` but cannot write `core/`.
 5. Implement Docket-backed `write_task_intent` later for broad research delegation.
 

@@ -132,7 +132,7 @@ Important planned tools:
 | `den.memory.history` | `den_memory_history` | Inspect memory history. |
 | `den.memory.status` | `den_memory_status` | Inspect MemFS health. |
 
-The existing `den.write_note` / `den_write_note` pair tool can remain as a compatibility alias for `den.memory.write_entry` with `kind: note`.
+The retired `den.write_note` / `den_write_note` pair tool is replaced by `den.memory.write_entry` / `den_memory_write_entry`; notes are written with `kind: note`.
 
 ## Role-local path conventions
 

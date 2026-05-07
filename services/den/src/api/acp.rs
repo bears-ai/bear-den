@@ -590,7 +590,14 @@ fn acp_pair_den_tool_descriptors() -> serde_json::Value {
         .filter(|descriptor| {
             matches!(
                 descriptor.name,
-                den_tools::DEN_WEB_FETCH | den_tools::DEN_WEB_SEARCH | den_tools::DEN_WRITE_NOTE
+                den_tools::DEN_WEB_FETCH
+                    | den_tools::DEN_WEB_SEARCH
+                    | den_tools::DEN_SITUATION_GET
+                    | den_tools::DEN_MEMORY_WRITE_ENTRY
+                    | den_tools::DEN_MEMORY_STATUS
+                    | den_tools::DEN_MEMORY_TREE
+                    | den_tools::DEN_MEMORY_READ
+                    | den_tools::DEN_MEMORY_SEARCH
             )
         })
         .map(|descriptor| {
@@ -611,7 +618,12 @@ fn acp_den_provider_to_canonical_tool_name(provider_name: &str) -> Option<&'stat
     match provider_name {
         "den_web_fetch" => Some(den_tools::DEN_WEB_FETCH),
         "den_web_search" => Some(den_tools::DEN_WEB_SEARCH),
-        "den_write_note" => Some(den_tools::DEN_WRITE_NOTE),
+        "den_situation_get" => Some(den_tools::DEN_SITUATION_GET),
+        "den_memory_write_entry" => Some(den_tools::DEN_MEMORY_WRITE_ENTRY),
+        "den_memory_status" => Some(den_tools::DEN_MEMORY_STATUS),
+        "den_memory_tree" => Some(den_tools::DEN_MEMORY_TREE),
+        "den_memory_read" => Some(den_tools::DEN_MEMORY_READ),
+        "den_memory_search" => Some(den_tools::DEN_MEMORY_SEARCH),
         _ => None,
     }
 }
@@ -672,7 +684,7 @@ fn acp_direct_tool_prompt_context(
     if tool_names.contains(&"fs_read_text_file") {
         guidance.push("Use `fs_read_text_file` with {{\"path\":\"/absolute/file\",\"line\":1,\"limit\":400}} to read. Do not guess file contents.".to_string());
     }
-    guidance.push("Use Den server tools for non-local capabilities: `den_web_fetch` for bounded HTTP(S) page fetching, `den_web_search` only when a Den search provider is configured, and `den_write_note` to write durable pair notes under `pair/notes/`.".to_string());
+    guidance.push("Use Den server tools for non-local capabilities: `den_situation_get` for a trusted briefing about the current bear, role, session, memory scopes, and policy; `den_memory_write_entry` for durable pair-local notes, logs, decisions, reflections, scratch, and summaries; `den_memory_status`, `den_memory_tree`, `den_memory_read`, and `den_memory_search` to inspect Bear memory; `den_web_fetch` for bounded HTTP(S) page fetching; and `den_web_search` only when a Den search provider is configured. Do not use memory entry tools for tasks, observations, run results, Cabinet writes, or direct core updates.".to_string());
     if tool_names.contains(&"fs_replace_text") {
         guidance.push("Use `fs_replace_text` with {{\"path\":\"/absolute/file\",\"old_text\":\"exact\",\"new_text\":\"replacement\"}} to edit existing files. Calling `fs_replace_text` is how you request local approval; do not wait for approval before invoking it and do not ask for approval in chat. To append, first read the file, then replace a unique end-of-file suffix with that suffix plus the appended text.".to_string());
         guidance.push("ACP edit workflow: discover/read the target, call `fs_replace_text` to request approval and perform the edit, wait for its result, verify the change with `fs_read_text_file`, then provide a concise final answer naming the changed file and what changed. Never claim you are blocked by approval if `fs_replace_text` is callable; invoke it instead.".to_string());

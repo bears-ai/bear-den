@@ -146,11 +146,16 @@ struct MemfsViewRegisterResponse {
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
-pub struct MemfsWriteRoleNoteRequest {
+pub struct MemfsWriteRoleMemoryEntryRequest {
+    pub kind: String,
     pub title: String,
     pub body: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub tags: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub refs: Option<serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lifecycle: Option<serde_json::Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source: Option<serde_json::Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -174,7 +179,75 @@ pub struct MemfsWriteRoleNoteRequest {
 }
 
 #[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
-pub struct MemfsWriteRoleNoteResponse {
+pub struct MemfsWriteRoleMemoryEntryResponse {
+    #[serde(default)]
+    pub ok: bool,
+    #[serde(default)]
+    pub bear_id: String,
+    #[serde(default)]
+    pub role: String,
+    #[serde(default)]
+    pub kind: Option<String>,
+    #[serde(default)]
+    pub entry_id: Option<String>,
+    #[serde(default)]
+    pub path: String,
+    #[serde(default)]
+    pub commit: Option<String>,
+    #[serde(default)]
+    pub canonical_tip: Option<String>,
+    #[serde(default)]
+    pub view: Option<MemfsViewHealth>,
+    #[serde(default)]
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
+pub struct MemfsRoleMemoryStatusResponse {
+    #[serde(default)]
+    pub ok: bool,
+    #[serde(default)]
+    pub bear_id: String,
+    #[serde(default)]
+    pub role: String,
+    #[serde(default)]
+    pub canonical_tip: Option<String>,
+    #[serde(default)]
+    pub allowed_prefixes: Vec<String>,
+    #[serde(default)]
+    pub file_count: usize,
+    #[serde(default)]
+    pub entry_count_by_kind: serde_json::Value,
+    #[serde(default)]
+    pub registered_view_count: usize,
+    #[serde(default)]
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
+pub struct MemfsRoleMemoryTreeResponse {
+    #[serde(default)]
+    pub ok: bool,
+    #[serde(default)]
+    pub bear_id: String,
+    #[serde(default)]
+    pub role: String,
+    #[serde(default)]
+    pub canonical_tip: Option<String>,
+    #[serde(default)]
+    pub files: serde_json::Value,
+    #[serde(default)]
+    pub truncated: bool,
+    #[serde(default)]
+    pub total_file_count: usize,
+    #[serde(default)]
+    pub limit: usize,
+    #[serde(default)]
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
+pub struct MemfsRoleMemoryFileResponse {
     #[serde(default)]
     pub ok: bool,
     #[serde(default)]
@@ -184,11 +257,35 @@ pub struct MemfsWriteRoleNoteResponse {
     #[serde(default)]
     pub path: String,
     #[serde(default)]
-    pub commit: Option<String>,
+    pub canonical_tip: Option<String>,
+    #[serde(default)]
+    pub content: String,
+    #[serde(default)]
+    pub size_bytes: usize,
+    #[serde(default)]
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
+pub struct MemfsRoleMemorySearchResponse {
+    #[serde(default)]
+    pub ok: bool,
+    #[serde(default)]
+    pub bear_id: String,
+    #[serde(default)]
+    pub role: String,
+    #[serde(default)]
+    pub query: String,
     #[serde(default)]
     pub canonical_tip: Option<String>,
     #[serde(default)]
-    pub view: Option<MemfsViewHealth>,
+    pub results: serde_json::Value,
+    #[serde(default)]
+    pub result_count: usize,
+    #[serde(default)]
+    pub scanned_file_count: usize,
+    #[serde(default)]
+    pub limit: usize,
     #[serde(default)]
     pub error: Option<String>,
 }
@@ -376,19 +473,19 @@ pub async fn register_memfs_role_view(
     Ok(payload.view)
 }
 
-pub async fn write_memfs_role_note(
+pub async fn write_memfs_role_memory_entry(
     http: &reqwest::Client,
     base_url: &str,
     bear_id: uuid::Uuid,
     role: &str,
-    request: &MemfsWriteRoleNoteRequest,
-) -> Result<Option<MemfsWriteRoleNoteResponse>, CustomError> {
+    request: &MemfsWriteRoleMemoryEntryRequest,
+) -> Result<Option<MemfsWriteRoleMemoryEntryResponse>, CustomError> {
     let base = base_url.trim().trim_end_matches('/');
     if base.is_empty() {
         return Ok(None);
     }
     let url = format!(
-        "{}/v1/management/bears/{}/roles/{}/notes",
+        "{}/v1/management/bears/{}/roles/{}/memory-entries",
         base,
         bear_id,
         urlencoding::encode(role)
@@ -400,26 +497,140 @@ pub async fn write_memfs_role_note(
         .timeout(Duration::from_secs(30))
         .send()
         .await
-        .map_err(|e| CustomError::System(format!("MemFS role note write request failed: {e}")))?;
+        .map_err(|e| CustomError::System(format!("MemFS role memory entry write request failed: {e}")))?;
     let status = resp.status();
     let text = resp.text().await.unwrap_or_default();
     if !status.is_success() {
         return Err(CustomError::System(format!(
-            "MemFS role note write HTTP {status}: {text}"
+            "MemFS role memory entry write HTTP {status}: {text}"
         )));
     }
-    let payload: MemfsWriteRoleNoteResponse = serde_json::from_str(&text).map_err(|e| {
-        CustomError::Parsing(format!("MemFS role note write JSON: {e}; body: {text}"))
+    let payload: MemfsWriteRoleMemoryEntryResponse = serde_json::from_str(&text).map_err(|e| {
+        CustomError::Parsing(format!("MemFS role memory entry write JSON: {e}; body: {text}"))
     })?;
     if !payload.ok {
         return Err(CustomError::System(format!(
-            "MemFS role note write failed: {}",
+            "MemFS role memory entry write failed: {}",
             payload
                 .error
                 .clone()
                 .unwrap_or_else(|| "unknown error".to_string())
         )));
     }
+    Ok(Some(payload))
+}
+
+pub async fn fetch_memfs_role_memory_status(
+    http: &reqwest::Client,
+    base_url: &str,
+    bear_id: uuid::Uuid,
+    role: &str,
+) -> Result<Option<MemfsRoleMemoryStatusResponse>, CustomError> {
+    fetch_memfs_role_memory_json(
+        http,
+        base_url,
+        bear_id,
+        role,
+        "memory-status",
+        &[],
+    )
+    .await
+}
+
+pub async fn fetch_memfs_role_memory_tree(
+    http: &reqwest::Client,
+    base_url: &str,
+    bear_id: uuid::Uuid,
+    role: &str,
+) -> Result<Option<MemfsRoleMemoryTreeResponse>, CustomError> {
+    fetch_memfs_role_memory_json(http, base_url, bear_id, role, "memory-tree", &[]).await
+}
+
+pub async fn fetch_memfs_role_memory_file(
+    http: &reqwest::Client,
+    base_url: &str,
+    bear_id: uuid::Uuid,
+    role: &str,
+    path: &str,
+) -> Result<Option<MemfsRoleMemoryFileResponse>, CustomError> {
+    fetch_memfs_role_memory_json(
+        http,
+        base_url,
+        bear_id,
+        role,
+        "memory-files",
+        &[("path", path)],
+    )
+    .await
+}
+
+pub async fn search_memfs_role_memory(
+    http: &reqwest::Client,
+    base_url: &str,
+    bear_id: uuid::Uuid,
+    role: &str,
+    query: &str,
+    limit: Option<usize>,
+) -> Result<Option<MemfsRoleMemorySearchResponse>, CustomError> {
+    let limit_string = limit.map(|n| n.to_string());
+    let mut params = vec![("query", query)];
+    if let Some(limit_ref) = limit_string.as_deref() {
+        params.push(("limit", limit_ref));
+    }
+    fetch_memfs_role_memory_json(
+        http,
+        base_url,
+        bear_id,
+        role,
+        "memory-search",
+        &params,
+    )
+    .await
+}
+
+async fn fetch_memfs_role_memory_json<T>(
+    http: &reqwest::Client,
+    base_url: &str,
+    bear_id: uuid::Uuid,
+    role: &str,
+    endpoint: &str,
+    query: &[(&str, &str)],
+) -> Result<Option<T>, CustomError>
+where
+    T: serde::de::DeserializeOwned,
+{
+    let base = base_url.trim().trim_end_matches('/');
+    if base.is_empty() {
+        return Ok(None);
+    }
+    let url = format!(
+        "{}/v1/management/bears/{}/roles/{}/{}",
+        base,
+        bear_id,
+        urlencoding::encode(role),
+        endpoint
+    );
+    let resp = http
+        .get(&url)
+        .header("X-Organization-Id", DEFAULT_ORG)
+        .query(query)
+        .timeout(Duration::from_secs(15))
+        .send()
+        .await
+        .map_err(|e| CustomError::System(format!("MemFS role memory {endpoint} request failed: {e}")))?;
+    if resp.status() == reqwest::StatusCode::NOT_FOUND {
+        return Ok(None);
+    }
+    let status = resp.status();
+    let text = resp.text().await.unwrap_or_default();
+    if !status.is_success() {
+        return Err(CustomError::System(format!(
+            "MemFS role memory {endpoint} HTTP {status}: {text}"
+        )));
+    }
+    let payload: T = serde_json::from_str(&text).map_err(|e| {
+        CustomError::Parsing(format!("MemFS role memory {endpoint} JSON: {e}; body: {text}"))
+    })?;
     Ok(Some(payload))
 }
 

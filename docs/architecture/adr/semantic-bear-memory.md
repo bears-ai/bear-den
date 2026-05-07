@@ -157,7 +157,7 @@ Prefer a general role-local entry tool:
 |---|---|---|
 | `den.memory.write_entry` | `den_memory_write_entry` | Write a role-local memory entry with `kind`, semantic references, lifecycle metadata, and provenance. |
 
-The existing `den.write_note` / `den_write_note` pair tool can remain as a compatibility alias for a `den.memory.write_entry` call with `kind: note`.
+The retired `den.write_note` / `den_write_note` pair tool is replaced by `den.memory.write_entry` / `den_memory_write_entry`; backward compatibility is not required.
 
 ### Keep directories conventional, not conceptual
 
@@ -278,7 +278,7 @@ Recommended first write capability:
 ## Follow-up Work
 
 1. Add a Den `den.situation.get` design and eventually tool/API implementation.
-2. Generalize `den.write_note` into `den.memory.write_entry` while keeping compatibility for ACP `pair`.
+2. Replace `den.write_note` with `den.memory.write_entry` for ACP `pair`.
 3. Add memory browse/search/read/status APIs that can support both agents and the future human operator UI.
 4. Define the frontmatter schema for role-local memory entries.
 5. Update MemFS Manager role branch initialization to include conventional directories as needed.

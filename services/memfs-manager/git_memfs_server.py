@@ -27,10 +27,11 @@ import subprocess
 import tempfile
 import threading
 import time
+import uuid
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from typing import Any, TypeAlias, cast
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 
 JSONValue: TypeAlias = Any
 JSONDict: TypeAlias = dict[str, Any]
@@ -69,11 +70,25 @@ VIEW_REGISTRY_PATH = Path(
 ROLE_BRANCHES = {"talk", "pair", "curate", "work", "watch"}
 ROLE_ALLOWED_PREFIXES = {
     "talk": ["talk/"],
-    "pair": ["pair/"],
+    "pair": ["pair/", "core/"],
     "curate": ["curate/", "core/"],
     "work": ["work/"],
     "watch": ["watch/"],
 }
+MEMORY_ENTRY_KIND_DIRS = {
+    "note": "notes",
+    "log": "logs",
+    "decision": "decisions",
+    "reflection": "reflections",
+    "scratch": "scratch",
+    "summary": "summaries",
+}
+MEMORY_TREE_MAX_FILES = int(os.environ.get("MEMFS_MEMORY_TREE_MAX_FILES", "500"))
+MEMORY_SEARCH_MAX_RESULTS = int(os.environ.get("MEMFS_MEMORY_SEARCH_MAX_RESULTS", "50"))
+MEMORY_FILE_MAX_BYTES = int(os.environ.get("MEMFS_MEMORY_FILE_MAX_BYTES", "131072"))
+MEMORY_SEARCH_FILE_MAX_BYTES = int(
+    os.environ.get("MEMFS_MEMORY_SEARCH_FILE_MAX_BYTES", "65536")
+)
 
 
 def log_activity(event: str, **fields: object) -> None:
@@ -242,6 +257,269 @@ def _paths_allowed(role: str, paths: list[str]) -> tuple[bool, str | None]:
         if not any(path.startswith(prefix) for prefix in prefixes):
             return False, path
     return True, None
+
+
+def _normalize_memory_path(raw_path: str) -> str:
+    path = unquote(raw_path).strip().lstrip("/")
+    if not path or path.endswith("/"):
+        raise ValueError("path is required")
+    parts = [part for part in path.split("/") if part]
+    if any(part in {".", ".."} for part in parts):
+        raise ValueError("path must not contain . or .. components")
+    return "/".join(parts)
+
+
+def _role_memory_prefixes(role: str) -> list[str]:
+    return ROLE_ALLOWED_PREFIXES.get(role, [])
+
+
+def _role_memory_path_allowed(role: str, path: str) -> bool:
+    prefixes = _role_memory_prefixes(role)
+    return bool(prefixes) and any(path.startswith(prefix) for prefix in prefixes)
+
+
+def _git_branch_file_paths(repo: Path, branch: str) -> list[str]:
+    r = subprocess.run(
+        ["git", "-C", str(repo), "ls-tree", "-r", "--name-only", branch],
+        capture_output=True,
+        text=True,
+    )
+    if r.returncode != 0:
+        msg = (r.stderr or r.stdout or "").strip()
+        raise RuntimeError(f"git ls-tree: {msg}")
+    return sorted(
+        {line.strip() for line in (r.stdout or "").splitlines() if line.strip()}
+    )
+
+
+def _bounded_role_memory_files(repo: Path, role: str) -> list[str]:
+    return [
+        path
+        for path in _git_branch_file_paths(repo, role)
+        if _role_memory_path_allowed(role, path) and not path.endswith("/.gitkeep")
+    ]
+
+
+def _git_blob_size(repo: Path, branch: str, path: str) -> int:
+    r = subprocess.run(
+        ["git", "-C", str(repo), "cat-file", "-s", f"{branch}:{path}"],
+        capture_output=True,
+        text=True,
+    )
+    if r.returncode != 0:
+        raise FileNotFoundError(path)
+    try:
+        return int((r.stdout or "0").strip() or 0)
+    except ValueError:
+        return 0
+
+
+def _git_show_text(repo: Path, branch: str, path: str, max_bytes: int) -> str:
+    size = _git_blob_size(repo, branch, path)
+    if size > max_bytes:
+        raise ValueError(f"file too large: {size} bytes exceeds {max_bytes} byte limit")
+    r = subprocess.run(
+        ["git", "-C", str(repo), "show", f"{branch}:{path}"],
+        capture_output=True,
+        text=True,
+    )
+    if r.returncode != 0:
+        raise FileNotFoundError(path)
+    return r.stdout or ""
+
+
+def _memory_tree_for_role(repo: Path, role: str) -> tuple[list[TreeNode], bool, int]:
+    all_files = _bounded_role_memory_files(repo, role)
+    truncated = len(all_files) > MEMORY_TREE_MAX_FILES
+    files = all_files[:MEMORY_TREE_MAX_FILES]
+    dir_paths: set[str] = set()
+    for f in files:
+        parts = [p for p in f.split("/") if p]
+        for i in range(1, len(parts)):
+            dir_paths.add("/".join(parts[:i]))
+    all_paths = set(files) | dir_paths
+    ordered_paths = sorted(all_paths, key=lambda p: (p.count("/"), p.lower()))
+    nodes: dict[str, TreeNode] = {}
+    for path in ordered_paths:
+        is_dir = path in dir_paths
+        nodes[path] = {
+            "name": path.rsplit("/", 1)[-1],
+            "path": path,
+            "type": "directory" if is_dir else "file",
+            "children": [],
+        }
+    roots: list[TreeNode] = []
+    for path in ordered_paths:
+        node = nodes[path]
+        if "/" in path:
+            parent = nodes.get(path.rsplit("/", 1)[0])
+            if parent is None:
+                roots.append(node)
+            else:
+                cast(list[TreeNode], parent["children"]).append(node)
+        else:
+            roots.append(node)
+    _sort_tree_nodes(roots)
+    return roots, truncated, len(all_files)
+
+
+def _memory_status_for_role(bear_id: str, role: str) -> ResponseDict:
+    if role not in ROLE_BRANCHES:
+        raise ValueError("valid role is required")
+    canonical = ensure_canonical_repo(bear_id)
+    tip = _branch_tip(canonical, role)
+    files = _bounded_role_memory_files(canonical, role) if tip else []
+    by_kind: dict[str, int] = {kind: 0 for kind in MEMORY_ENTRY_KIND_DIRS}
+    for path in files:
+        parts = path.split("/")
+        if len(parts) >= 3:
+            for kind, kind_dir in MEMORY_ENTRY_KIND_DIRS.items():
+                if parts[0] == role and parts[1] == kind_dir:
+                    by_kind[kind] += 1
+                    break
+    data = _read_view_registry()
+    views_obj = data.get("views", {})
+    view_count = 0
+    if isinstance(views_obj, dict):
+        view_count = sum(
+            1
+            for record_obj in views_obj.values()
+            if isinstance(record_obj, dict)
+            and str(record_obj.get("bear_id")) == bear_id
+            and str(record_obj.get("role")) == role
+        )
+    return {
+        "ok": True,
+        "bear_id": bear_id,
+        "role": role,
+        "canonical_repo": str(canonical),
+        "canonical_branch": role,
+        "canonical_tip": tip,
+        "allowed_prefixes": _role_memory_prefixes(role),
+        "file_count": len(files),
+        "entry_count_by_kind": by_kind,
+        "registered_view_count": view_count,
+    }
+
+
+def _memory_tree_response(bear_id: str, role: str) -> ResponseDict:
+    if role not in ROLE_BRANCHES:
+        raise ValueError("valid role is required")
+    canonical = ensure_canonical_repo(bear_id)
+    tree, truncated, total_file_count = _memory_tree_for_role(canonical, role)
+    return {
+        "ok": True,
+        "bear_id": bear_id,
+        "role": role,
+        "canonical_tip": _branch_tip(canonical, role),
+        "files": tree,
+        "truncated": truncated,
+        "total_file_count": total_file_count,
+        "limit": MEMORY_TREE_MAX_FILES,
+    }
+
+
+def _memory_file_response(bear_id: str, role: str, raw_path: str) -> ResponseDict:
+    if role not in ROLE_BRANCHES:
+        raise ValueError("valid role is required")
+    rel_path = _normalize_memory_path(raw_path)
+    if not _role_memory_path_allowed(role, rel_path):
+        raise PermissionError(f"path is not allowed for role {role}: {rel_path}")
+    canonical = ensure_canonical_repo(bear_id)
+    content = _git_show_text(canonical, role, rel_path, MEMORY_FILE_MAX_BYTES)
+    return {
+        "ok": True,
+        "bear_id": bear_id,
+        "role": role,
+        "path": rel_path,
+        "canonical_tip": _branch_tip(canonical, role),
+        "content": content,
+        "size_bytes": len(content.encode("utf-8")),
+    }
+
+
+def _extract_frontmatter_string(content: str, key: str) -> str | None:
+    match = re.search(rf"^\s*{re.escape(key)}:\s*(.+?)\s*$", content, re.MULTILINE)
+    if not match:
+        return None
+    value = match.group(1).strip()
+    if len(value) >= 2 and value[0] == '"' and value[-1] == '"':
+        try:
+            parsed = json.loads(value)
+            return str(parsed)
+        except json.JSONDecodeError:
+            return value.strip('"')
+    return value
+
+
+def _snippet_for_match(content: str, query: str, max_len: int = 240) -> str:
+    lower = content.lower()
+    pos = lower.find(query.lower())
+    if pos < 0:
+        return content[:max_len].replace("\n", " ").strip()
+    start = max(0, pos - 80)
+    end = min(len(content), pos + len(query) + 160)
+    snippet = content[start:end].replace("\n", " ").strip()
+    if start > 0:
+        snippet = "..." + snippet
+    if end < len(content):
+        snippet += "..."
+    return snippet[: max_len + 6]
+
+
+def _memory_search_response(
+    bear_id: str, role: str, query: str, limit: int
+) -> ResponseDict:
+    if role not in ROLE_BRANCHES:
+        raise ValueError("valid role is required")
+    query = query.strip()
+    if not query:
+        raise ValueError("query is required")
+    limit = max(1, min(limit, MEMORY_SEARCH_MAX_RESULTS))
+    canonical = ensure_canonical_repo(bear_id)
+    files = _bounded_role_memory_files(canonical, role)
+    results: list[ResponseDict] = []
+    scanned = 0
+    for path in files:
+        if len(results) >= limit:
+            break
+        try:
+            size = _git_blob_size(canonical, role, path)
+            if size > MEMORY_SEARCH_FILE_MAX_BYTES:
+                continue
+            content = _git_show_text(
+                canonical, role, path, MEMORY_SEARCH_FILE_MAX_BYTES
+            )
+        except (FileNotFoundError, ValueError):
+            continue
+        scanned += 1
+        lower = content.lower()
+        score = lower.count(query.lower())
+        if score <= 0:
+            continue
+        results.append(
+            {
+                "path": path,
+                "title": _extract_frontmatter_string(content, "title"),
+                "kind": _extract_frontmatter_string(content, "kind"),
+                "entry_id": _extract_frontmatter_string(content, "entry_id"),
+                "score": score,
+                "snippet": _snippet_for_match(content, query),
+                "size_bytes": size,
+            }
+        )
+    results.sort(key=lambda item: (-int(item.get("score") or 0), str(item.get("path"))))
+    return {
+        "ok": True,
+        "bear_id": bear_id,
+        "role": role,
+        "query": query,
+        "canonical_tip": _branch_tip(canonical, role),
+        "results": results[:limit],
+        "result_count": len(results[:limit]),
+        "scanned_file_count": scanned,
+        "limit": limit,
+    }
 
 
 def _read_view_registry() -> ViewRegistry:
@@ -659,11 +937,53 @@ def _ensure_canonical_branch(repo: Path, bear_id: str, role: str) -> None:
         _git("-C", str(work), "config", "user.name", "BEARS MemFS Sidecar")
         _git("-C", str(work), "config", "user.email", "memfs-sidecar@bears.local")
         paths = {
-            "talk": ["talk/tasks"],
-            "pair": ["pair/tasks", "pair/notes"],
-            "curate": ["curate", "core/tasks", "core/results"],
-            "work": ["work/results"],
-            "watch": ["watch/observations", "watch/subscriptions"],
+            "talk": [
+                "talk/tasks",
+                "talk/notes",
+                "talk/logs",
+                "talk/decisions",
+                "talk/reflections",
+                "talk/scratch",
+                "talk/summaries",
+            ],
+            "pair": [
+                "pair/tasks",
+                "pair/notes",
+                "pair/logs",
+                "pair/decisions",
+                "pair/reflections",
+                "pair/scratch",
+                "pair/summaries",
+            ],
+            "curate": [
+                "curate/notes",
+                "curate/logs",
+                "curate/decisions",
+                "curate/reflections",
+                "curate/scratch",
+                "curate/summaries",
+                "core/tasks",
+                "core/results",
+            ],
+            "work": [
+                "work/results",
+                "work/notes",
+                "work/logs",
+                "work/decisions",
+                "work/reflections",
+                "work/scratch",
+                "work/summaries",
+            ],
+            "watch": [
+                "watch/observations",
+                "watch/subscriptions",
+                "watch/notes",
+                "watch/logs",
+                "watch/decisions",
+                "watch/reflections",
+                "watch/scratch",
+                "watch/summaries",
+            ],
         }[role]
         for rel in paths:
             d = work / rel
@@ -812,71 +1132,30 @@ def _yaml_quote(value: str) -> str:
     return json.dumps(value, ensure_ascii=False)
 
 
-def _write_role_note(
-    bear_id: str, role: str, body: JSONDict, org_id: str
-) -> ResponseDict:
-    if role not in ROLE_BRANCHES:
-        raise ValueError("valid role is required")
-    if role != "pair":
-        raise ValueError("role note writes are currently enabled only for pair")
-    title = str(body.get("title") or "").strip()
-    note_body = str(body.get("body") or "").strip()
-    if not title:
-        raise ValueError("title is required")
-    if not note_body:
-        raise ValueError("body is required")
-    tags = [str(tag).strip() for tag in body.get("tags") or [] if str(tag).strip()]
-    canonical = ensure_canonical_repo(bear_id)
-    timestamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
-    slug = _slugify_note_title(title)
-    rel_path = f"{role}/notes/{timestamp}-{slug}.md"
-    with tempfile.TemporaryDirectory() as tmp:
-        work = Path(tmp) / "w"
-        _git("clone", "--branch", role, str(canonical), str(work))
-        _git("-C", str(work), "config", "user.name", "BEARS Den")
-        _git("-C", str(work), "config", "user.email", "den@bears.local")
-        target = work / rel_path
-        target.parent.mkdir(parents=True, exist_ok=True)
-        metadata = [
-            "---",
-            f"title: {_yaml_quote(title)}",
-            f"role: {_yaml_quote(role)}",
-            f"bear_id: {_yaml_quote(bear_id)}",
-            f"created_at: {_yaml_quote(timestamp)}",
-        ]
-        author = str(body.get("author") or "").strip()
-        if author:
-            metadata.append(f"author: {_yaml_quote(author)}")
-        for key in [
-            "conversation_id",
-            "session_id",
-            "acp_session_id",
-            "conversation_selection",
-            "runtime_target",
-            "role_agent_id",
-            "agent_role",
-            "request_id",
-        ]:
-            value = str(body.get(key) or "").strip()
-            if value:
-                metadata.append(f"{key}: {_yaml_quote(value)}")
-        if tags:
-            metadata.append("tags:")
-            for tag in tags[:20]:
-                metadata.append(f"  - {_yaml_quote(tag)}")
-        source = body.get("source")
-        if isinstance(source, dict) and source:
-            metadata.append("source_json: |")
-            for line in json.dumps(
-                source, ensure_ascii=False, sort_keys=True, indent=2
-            ).splitlines():
-                metadata.append(f"  {line}")
-        metadata.extend(["---", "", f"# {title}", "", note_body.rstrip(), ""])
-        target.write_text("\n".join(metadata), encoding="utf-8")
-        _git("add", rel_path, cwd=work)
-        _git("commit", "-m", f"pair note: {title[:80]}", cwd=work)
-        _git("push", "origin", f"HEAD:refs/heads/{role}", cwd=work)
-    canonical_tip = _branch_tip(canonical, role)
+def _frontmatter_list(
+    lines: list[str], key: str, values: list[str], limit: int
+) -> None:
+    clean = [str(value).strip() for value in values if str(value).strip()]
+    if not clean:
+        return
+    lines.append(f"{key}:")
+    for value in clean[:limit]:
+        lines.append(f"  - {_yaml_quote(value)}")
+
+
+def _frontmatter_json(lines: list[str], key: str, value: object) -> None:
+    if value is None or value == {} or value == []:
+        return
+    lines.append(f"{key}: |")
+    for line in json.dumps(
+        value, ensure_ascii=False, sort_keys=True, indent=2
+    ).splitlines():
+        lines.append(f"  {line}")
+
+
+def _sync_role_views_after_canonical_write(
+    bear_id: str, role: str, org_id: str, canonical: Path, status: str
+) -> None:
     data = _read_view_registry()
     views = data.setdefault("views", {})
     if not isinstance(views, dict):
@@ -893,16 +1172,94 @@ def _write_role_note(
                     Path(record["view_repo"]), canonical, role
                 )
                 record["last_reconciled_at"] = time.time()
-                record["last_reconcile_status"] = "note_write_view_reset"
+                record["last_reconcile_status"] = status
             except Exception as e:
-                record["last_reconcile_status"] = "note_write_view_update_failed"
+                record["last_reconcile_status"] = f"{status}_failed"
                 record["last_reconcile_reason"] = str(e)
             views[agent_id] = record
     _write_view_registry(data)
+
+
+def _write_role_memory_entry(
+    bear_id: str, role: str, body: JSONDict, org_id: str
+) -> ResponseDict:
+    if role not in ROLE_BRANCHES:
+        raise ValueError("valid role is required")
+    if role != "pair":
+        raise ValueError("role memory entry writes are currently enabled only for pair")
+    kind = str(body.get("kind") or "note").strip().lower()
+    kind_dir = MEMORY_ENTRY_KIND_DIRS.get(kind)
+    if not kind_dir:
+        raise ValueError(
+            "kind must be one of note, log, decision, reflection, scratch, summary"
+        )
+    title = str(body.get("title") or "").strip()
+    entry_body = str(body.get("body") or "").strip()
+    if not title:
+        raise ValueError("title is required")
+    if not entry_body:
+        raise ValueError("body is required")
+    tags = [str(tag).strip() for tag in body.get("tags") or [] if str(tag).strip()]
+    refs = [str(ref).strip() for ref in body.get("refs") or [] if str(ref).strip()]
+    lifecycle = str(body.get("lifecycle") or "active").strip() or "active"
+    entry_id = f"mem_{uuid.uuid4().hex}"
+    rel_path = f"{role}/{kind_dir}/{entry_id}.md"
+    if not _role_memory_path_allowed(role, rel_path):
+        raise ValueError(f"role path policy rejected {rel_path}")
+    canonical = ensure_canonical_repo(bear_id)
+    timestamp = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    with tempfile.TemporaryDirectory() as tmp:
+        work = Path(tmp) / "w"
+        _git("clone", "--branch", role, str(canonical), str(work))
+        _git("-C", str(work), "config", "user.name", "BEARS Den")
+        _git("-C", str(work), "config", "user.email", "den@bears.local")
+        target = work / rel_path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        metadata = [
+            "---",
+            f"entry_id: {_yaml_quote(entry_id)}",
+            f"kind: {_yaml_quote(kind)}",
+            f"title: {_yaml_quote(title)}",
+            f"role: {_yaml_quote(role)}",
+            f"bear_id: {_yaml_quote(bear_id)}",
+            f"path: {_yaml_quote(rel_path)}",
+            f"lifecycle: {_yaml_quote(lifecycle)}",
+            f"created_at: {_yaml_quote(timestamp)}",
+        ]
+        for key in [
+            "author",
+            "conversation_id",
+            "session_id",
+            "acp_session_id",
+            "conversation_selection",
+            "runtime_target",
+            "role_agent_id",
+            "agent_role",
+            "request_id",
+            "provenance",
+        ]:
+            value = str(body.get(key) or "").strip()
+            if value:
+                metadata.append(f"{key}: {_yaml_quote(value)}")
+        _frontmatter_list(metadata, "tags", tags, 50)
+        _frontmatter_list(metadata, "refs", refs, 50)
+        _frontmatter_json(metadata, "source_json", body.get("source"))
+        _frontmatter_json(metadata, "provenance_json", body.get("provenance_json"))
+        metadata.extend(["---", "", f"# {title}", "", entry_body.rstrip(), ""])
+        target.write_text("\n".join(metadata), encoding="utf-8")
+        _git("add", rel_path, cwd=work)
+        _git("commit", "-m", f"{role} {kind}: {title[:80]}", cwd=work)
+        _git("push", "origin", f"HEAD:refs/heads/{role}", cwd=work)
+    canonical_tip = _branch_tip(canonical, role)
+    _sync_role_views_after_canonical_write(
+        bear_id, role, org_id, canonical, "memory_entry_write_view_reset"
+    )
     log_activity(
-        "role_note_written",
+        "role_memory_entry_written",
         bear_id=bear_id,
         role=role,
+        kind=kind,
+        entry_id=entry_id,
         path=rel_path,
         canonical_tip=canonical_tip,
     )
@@ -910,10 +1267,20 @@ def _write_role_note(
         "ok": True,
         "bear_id": bear_id,
         "role": role,
+        "kind": kind,
+        "entry_id": entry_id,
         "path": rel_path,
         "commit": canonical_tip,
         "canonical_tip": canonical_tip,
     }
+
+
+def _write_role_note(
+    bear_id: str, role: str, body: JSONDict, org_id: str
+) -> ResponseDict:
+    note_body = dict(body)
+    note_body["kind"] = "note"
+    return _write_role_memory_entry(bear_id, role, note_body, org_id)
 
 
 def ensure_view_repo(agent_id: str, org_id: str, record: ViewRecord) -> Path:
@@ -1100,6 +1467,50 @@ class GitHTTPHandler(BaseHTTPRequestHandler):
             data = _read_view_registry()
             self._send_json(200, data)
             return True
+        if (
+            len(parts) >= 7
+            and parts[:3] == ["v1", "management", "bears"]
+            and parts[4] == "roles"
+        ):
+            bear_id = parts[3]
+            role = parts[5]
+            endpoint = parts[6]
+            query = parse_qs(parsed.query)
+            try:
+                if endpoint == "memory-status" and len(parts) == 7:
+                    self._send_json(200, _memory_status_for_role(bear_id, role))
+                    return True
+                if endpoint == "memory-tree" and len(parts) == 7:
+                    self._send_json(200, _memory_tree_response(bear_id, role))
+                    return True
+                if endpoint == "memory-files":
+                    raw_path = "/".join(parts[7:]) or (query.get("path") or [""])[0]
+                    self._send_json(200, _memory_file_response(bear_id, role, raw_path))
+                    return True
+                if endpoint == "memory-search" and len(parts) == 7:
+                    raw_limit = (
+                        query.get("limit") or [str(MEMORY_SEARCH_MAX_RESULTS)]
+                    )[0]
+                    try:
+                        limit = int(raw_limit)
+                    except ValueError:
+                        limit = MEMORY_SEARCH_MAX_RESULTS
+                    self._send_json(
+                        200,
+                        _memory_search_response(
+                            bear_id, role, (query.get("query") or [""])[0], limit
+                        ),
+                    )
+                    return True
+            except PermissionError as e:
+                self._send_json(403, {"ok": False, "error": str(e)})
+                return True
+            except FileNotFoundError as e:
+                self._send_json(404, {"ok": False, "error": str(e) or "not found"})
+                return True
+            except (ValueError, RuntimeError, subprocess.CalledProcessError) as e:
+                self._send_json(400, {"ok": False, "error": str(e)})
+                return True
         if (
             len(parts) == 6
             and parts[:3] == ["v1", "management", "bears"]
@@ -1362,14 +1773,19 @@ class GitHTTPHandler(BaseHTTPRequestHandler):
             len(parts) == 7
             and parts[:3] == ["v1", "management", "bears"]
             and parts[4] == "roles"
-            and parts[6] == "notes"
+            and parts[6] in {"memory-entries", "notes"}
         ):
             bear_id = parts[3]
             role = parts[5]
             try:
                 body = self._read_json_body()
                 org_id = resolve_org_id(self.headers.get("X-Organization-Id"))
-                self._send_json(200, _write_role_note(bear_id, role, body, org_id))
+                if parts[6] == "notes":
+                    self._send_json(200, _write_role_note(bear_id, role, body, org_id))
+                else:
+                    self._send_json(
+                        200, _write_role_memory_entry(bear_id, role, body, org_id)
+                    )
                 return True
             except Exception as e:
                 self._send_json(400, {"ok": False, "error": str(e)})

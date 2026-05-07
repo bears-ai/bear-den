@@ -49,7 +49,7 @@ Give agents, especially `pair`, safe Den-hosted access to Bear memory:
 - It does not run through Codepool / Letta Code, so native Letta Code MemFS tools are not the natural path.
 - ACP local filesystem tools operate on the user's workspace, not Bear memory.
 - Pair sessions produce useful local tactical memory: coding notes, logs, decisions, debugging records, and summaries.
-- Pair memory tools can reuse the existing Den ACP server-tool path currently used for `den_web_fetch`, `den_web_search`, and `den_write_note`.
+- Pair memory tools can reuse the existing Den ACP server-tool path used for Den-hosted pair tools such as `den_web_fetch` and `den_web_search`.
 
 ---
 
