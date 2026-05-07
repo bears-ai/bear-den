@@ -4549,7 +4549,10 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(result["kind"], "directory");
-        assert_eq!(fs::read_to_string(dir_copy.join("child.txt")).unwrap(), "child");
+        assert_eq!(
+            fs::read_to_string(dir_copy.join("child.txt")).unwrap(),
+            "child"
+        );
 
         let too_large = handle_direct_copy_path(
             &state,
@@ -4612,7 +4615,8 @@ mod tests {
             &ToolPolicy::default(),
         )
         .await;
-        assert!(format!("{:#}", outside_denied.unwrap_err()).contains("outside the ACP session workspace roots"));
+        assert!(format!("{:#}", outside_denied.unwrap_err())
+            .contains("outside the ACP session workspace roots"));
         let _ = fs::remove_dir_all(root);
         let _ = fs::remove_dir_all(outside);
     }
@@ -4650,7 +4654,10 @@ mod tests {
         )
         .await
         .unwrap();
-        assert_eq!(fs::read_to_string(root.join("new.txt")).unwrap(), "goodbye\n");
+        assert_eq!(
+            fs::read_to_string(root.join("new.txt")).unwrap(),
+            "goodbye\n"
+        );
         let delete_patch = "--- a/new.txt\n+++ /dev/null\n@@\n-goodbye\n";
         let denied = handle_direct_apply_patch(
             &state,
@@ -4690,7 +4697,10 @@ mod tests {
             &state,
             "session-1",
             &json!({ "base_path": root.to_string_lossy(), "patch": sensitive_patch }),
-            &ToolPolicy { sensitive_path_policy: Some("deny_sensitive_paths".to_string()), ..Default::default() },
+            &ToolPolicy {
+                sensitive_path_policy: Some("deny_sensitive_paths".to_string()),
+                ..Default::default()
+            },
         )
         .await;
         assert!(format!("{:#}", sensitive.unwrap_err()).contains("denied sensitive path"));
@@ -4711,6 +4721,72 @@ mod tests {
         )
         .await;
         assert!(format!("{:#}", invalid.unwrap_err()).contains("did not contain"));
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn apply_patch_supports_multifile_and_enforces_limits() {
+        let root = unique_test_dir("apply-patch-limits");
+        let state = test_adapter_state("session-1", &root);
+        let patch = "--- /dev/null\n+++ b/a.txt\n@@\n+a\n--- /dev/null\n+++ b/b.txt\n@@\n+b\n";
+        handle_direct_apply_patch(
+            &state,
+            "session-1",
+            &json!({ "base_path": root.to_string_lossy(), "patch": patch }),
+            &ToolPolicy {
+                max_entries: Some(2),
+                max_bytes: Some(1024),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(fs::read_to_string(root.join("a.txt")).unwrap(), "a\n");
+        assert_eq!(fs::read_to_string(root.join("b.txt")).unwrap(), "b\n");
+
+        let too_many = handle_direct_apply_patch(
+            &state,
+            "session-1",
+            &json!({ "base_path": root.to_string_lossy(), "patch": patch }),
+            &ToolPolicy {
+                max_entries: Some(1),
+                max_bytes: Some(1024),
+                ..Default::default()
+            },
+        )
+        .await;
+        assert!(format!("{:#}", too_many.unwrap_err()).contains("max_entries"));
+
+        let too_large = handle_direct_apply_patch(
+            &state,
+            "session-1",
+            &json!({ "base_path": root.to_string_lossy(), "patch": patch }),
+            &ToolPolicy {
+                max_bytes: Some(10),
+                ..Default::default()
+            },
+        )
+        .await;
+        assert!(format!("{:#}", too_large.unwrap_err()).contains("max_bytes"));
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn apply_patch_denies_hidden_targets() {
+        let root = unique_test_dir("apply-patch-hidden");
+        let state = test_adapter_state("session-1", &root);
+        let patch = "--- /dev/null\n+++ b/.hidden\n@@\n+hidden\n";
+        let hidden = handle_direct_apply_patch(
+            &state,
+            "session-1",
+            &json!({ "base_path": root.to_string_lossy(), "patch": patch }),
+            &ToolPolicy {
+                deny_hidden_paths: Some(true),
+                ..Default::default()
+            },
+        )
+        .await;
+        assert!(format!("{:#}", hidden.unwrap_err()).contains("denied hidden path"));
         let _ = fs::remove_dir_all(root);
     }
 

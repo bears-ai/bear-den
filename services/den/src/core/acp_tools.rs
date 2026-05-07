@@ -1050,7 +1050,7 @@ pub fn acp_client_tool_descriptor(tool: &AcpToolDescriptor) -> serde_json::Value
         "fs_apply_patch" => json!({
             "name": tool.provider_name,
             "description": format!(
-                "ACP local workspace tool ({}, target={}, adapter={}, client={}, kind={}, risk={}). Applies a unified diff patch to workspace text files through the local adapter. Approval is required; sensitive and hidden paths are denied by policy.",
+                "ACP local workspace tool ({}, target={}, adapter={}, client={}, kind={}, risk={}). Applies a simple unified diff patch to workspace text files through the local adapter. This is not a fuzzy patch engine: provide full intended file content via context and added lines for each affected file. Approval is required; sensitive and hidden paths are denied by policy.",
                 tool.canonical_name, "acp_client", tool.adapter_method, tool.client_method, tool.kind, tool.risk,
             ),
             "parameters": {

@@ -895,6 +895,14 @@ pub(crate) async fn handle_copy_path(
     }))
 }
 
+/// Applies a deliberately simple unified-diff-like patch.
+///
+/// This is not a fuzzy/context-aware patch engine like `git apply` or `patch(1)`.
+/// For each affected file, the parser reconstructs the complete target content
+/// from hunk context lines (` `) and added lines (`+`), while ignoring removed
+/// lines (`-`). This means callers should provide all intended resulting file
+/// content for each file in the patch. The implementation is intentionally
+/// conservative so approval previews and policy checks stay straightforward.
 pub(crate) async fn handle_apply_patch(
     context: &SessionContext,
     session_id: &str,
@@ -1442,6 +1450,19 @@ struct PatchFile {
     is_delete: bool,
 }
 
+/// Parses the restricted patch format used by `handle_apply_patch`.
+///
+/// Supported:
+/// - file headers: `--- a/path` / `+++ b/path`
+/// - creates: `--- /dev/null` / `+++ b/path`
+/// - deletes: `--- a/path` / `+++ /dev/null`
+/// - hunk lines beginning with ` `, `+`, or `-`
+///
+/// Unsupported by design:
+/// - fuzzy hunk application
+/// - partial hunks that rely on omitted unchanged file content
+/// - binary patches
+/// - rename/copy patch metadata
 fn parse_simple_unified_patch(patch: &str) -> Result<Vec<PatchFile>> {
     let lines = patch.lines().collect::<Vec<_>>();
     let mut files = Vec::new();
