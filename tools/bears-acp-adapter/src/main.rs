@@ -48,6 +48,7 @@ use tools::fs::{
     ReplaceTextPlan,
 };
 use tools::git::{handle_git_diff, handle_git_log, handle_git_show, handle_git_status};
+use tools::process::handle_process_run;
 use uuid::Uuid;
 
 #[derive(Clone, Debug)]
@@ -117,6 +118,7 @@ struct ToolPolicy {
     create_files: Option<bool>,
     allow_multiple: Option<bool>,
     deny_hidden_paths: Option<bool>,
+    total_timeout_ms: Option<u64>,
     permission_timeout_ms: Option<u64>,
 }
 
@@ -1112,6 +1114,7 @@ fn adapter_capabilities_context() -> Value {
             "git_diff": { "supported": true, "version": 1 },
             "git_log": { "supported": true, "version": 1 },
             "git_show": { "supported": true, "version": 1 },
+            "process_run": { "supported": true, "version": 1 },
             "fs_replace_text": { "supported": true, "version": 1 },
             "fs_create_text_file": { "supported": true, "version": 1 },
             "fs_create_directory": { "supported": true, "version": 1 },
@@ -1134,6 +1137,7 @@ fn direct_tools_context() -> Value {
         "git_diff": true,
         "git_log": true,
         "git_show": true,
+        "process_run": true,
         "fs_replace_text": true,
         "fs_create_text_file": true,
         "fs_create_directory": true,
@@ -1449,6 +1453,10 @@ fn policy_from_event(event: &Value) -> ToolPolicy {
         create_files: policy.get("create_files").and_then(Value::as_bool),
         allow_multiple: policy.get("allow_multiple").and_then(Value::as_bool),
         deny_hidden_paths: policy.get("deny_hidden_paths").and_then(Value::as_bool),
+        total_timeout_ms: policy
+            .get("total_timeout_ms")
+            .or_else(|| policy.get("tool_timeout_ms"))
+            .and_then(Value::as_u64),
         permission_timeout_ms: policy.get("permission_timeout_ms").and_then(Value::as_u64),
     }
 }
@@ -1496,6 +1504,10 @@ async fn execute_local_tool(
         "git_show" => {
             let context = session_context(adapter_state, session_id)?;
             handle_git_show(context, &args, policy).await
+        }
+        "process_run" => {
+            let context = session_context(adapter_state, session_id)?;
+            handle_process_run(context, session_id, &args, policy).await
         }
         "fs_replace_text" => {
             handle_direct_replace_text(adapter_state, session_id, &args, policy).await
@@ -3662,6 +3674,12 @@ fn tool_display(tool_name: &str) -> ToolDisplay {
             verb: "Reading git revision for",
             permission_operation: "read git revision",
         },
+        "process_run" => ToolDisplay {
+            title: "Run process",
+            kind: ToolKind::Execute,
+            verb: "Running process in",
+            permission_operation: "run this command",
+        },
         "fs_replace_text" => ToolDisplay {
             title: "Edit file",
             kind: ToolKind::Edit,
@@ -3739,6 +3757,7 @@ fn tool_target_kind(tool_name: &str) -> &'static str {
         "fs_move_path" | "fs_copy_path" => "path",
         "fs_apply_patch" => "patch",
         "git_status" | "git_diff" | "git_log" | "git_show" => "repository",
+        "process_run" => "command",
         "fs_delete_path" => "path",
         _ => "file",
     }
@@ -3752,6 +3771,7 @@ fn tool_path(event: &Value) -> Option<&str> {
                 .or_else(|| v.get("source_path"))
                 .or_else(|| v.get("destination_path"))
                 .or_else(|| v.get("base_path"))
+                .or_else(|| v.get("cwd"))
         })
         .and_then(Value::as_str)
 }
@@ -5377,6 +5397,103 @@ mod tests {
         let _ = fs::remove_dir_all(root);
     }
 
+    #[tokio::test]
+    async fn process_run_executes_command_and_caps_output() {
+        let root = unique_test_dir("process-run");
+        let state = test_adapter_state("session-1", &root);
+        let context = session_context(&state, "session-1").unwrap();
+        let result = handle_process_run(
+            context,
+            "session-1",
+            &json!({
+                "command": "printf",
+                "args": ["hello"],
+                "cwd": root.to_string_lossy(),
+                "max_output_bytes": 10
+            }),
+            &ToolPolicy { max_bytes: Some(64), total_timeout_ms: Some(10_000), ..Default::default() },
+        )
+        .await
+        .unwrap();
+        assert_eq!(result["ok"], true);
+        assert_eq!(result["stdout"], "hello");
+        assert_eq!(result["truncated"], false);
+
+        let truncated = handle_process_run(
+            context,
+            "session-1",
+            &json!({
+                "command": "printf",
+                "args": ["hello world"],
+                "cwd": root.to_string_lossy(),
+                "max_output_bytes": 5
+            }),
+            &ToolPolicy { max_bytes: Some(5), total_timeout_ms: Some(10_000), ..Default::default() },
+        )
+        .await
+        .unwrap();
+        assert_eq!(truncated["stdout"], "hello");
+        assert_eq!(truncated["stdout_truncated"], true);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn process_run_reports_nonzero_timeout_and_rejects_unsafe_inputs() {
+        let root = unique_test_dir("process-run-policy");
+        let outside = unique_test_dir("process-run-outside");
+        let state = test_adapter_state("session-1", &root);
+        let context = session_context(&state, "session-1").unwrap();
+        let nonzero = handle_process_run(
+            context,
+            "session-1",
+            &json!({ "command": "sh", "args": ["-c", "exit 7"], "cwd": root.to_string_lossy() }),
+            &ToolPolicy { max_bytes: Some(1024), total_timeout_ms: Some(10_000), ..Default::default() },
+        )
+        .await
+        .unwrap();
+        assert_eq!(nonzero["ok"], false);
+        assert_eq!(nonzero["exit_code"], 7);
+
+        let timed_out = handle_process_run(
+            context,
+            "session-1",
+            &json!({ "command": "sleep", "args": ["1"], "cwd": root.to_string_lossy(), "timeout_ms": 1 }),
+            &ToolPolicy { max_bytes: Some(1024), total_timeout_ms: Some(100), ..Default::default() },
+        )
+        .await
+        .unwrap();
+        assert_eq!(timed_out["timed_out"], true);
+
+        let outside_cwd = handle_process_run(
+            context,
+            "session-1",
+            &json!({ "command": "printf", "args": ["x"], "cwd": outside.to_string_lossy() }),
+            &ToolPolicy::default(),
+        )
+        .await;
+        assert!(format!("{:#}", outside_cwd.unwrap_err()).contains("outside the ACP session workspace roots"));
+
+        let shell_string = handle_process_run(
+            context,
+            "session-1",
+            &json!({ "command": "echo hello", "cwd": root.to_string_lossy() }),
+            &ToolPolicy::default(),
+        )
+        .await;
+        assert!(format!("{:#}", shell_string.unwrap_err()).contains("shell command string"));
+
+        let secret_env = handle_process_run(
+            context,
+            "session-1",
+            &json!({ "command": "printf", "args": ["x"], "cwd": root.to_string_lossy(), "env": { "API_TOKEN": "secret" } }),
+            &ToolPolicy::default(),
+        )
+        .await;
+        assert!(format!("{:#}", secret_env.unwrap_err()).contains("secret-like"));
+        let _ = fs::remove_dir_all(root);
+        let _ = fs::remove_dir_all(outside);
+    }
+
     #[test]
     fn policy_from_event_reads_den_limits() {
         let policy = policy_from_event(&json!({
@@ -5391,6 +5508,7 @@ mod tests {
                 "create_files": false,
                 "allow_multiple": false,
                 "deny_hidden_paths": true,
+                "total_timeout_ms": 1234,
                 "sensitive_path_policy": "deny_sensitive_paths"
             }
         }));
@@ -5404,6 +5522,7 @@ mod tests {
         assert_eq!(policy.create_files, Some(false));
         assert_eq!(policy.allow_multiple, Some(false));
         assert_eq!(policy.deny_hidden_paths, Some(true));
+        assert_eq!(policy.total_timeout_ms, Some(1234));
         assert_eq!(
             policy.sensitive_path_policy.as_deref(),
             Some("deny_sensitive_paths")

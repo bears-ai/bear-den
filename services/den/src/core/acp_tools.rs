@@ -34,6 +34,7 @@ pub enum AcpToolName {
     GitDiff,
     GitLog,
     GitShow,
+    ProcessRun,
 }
 
 impl AcpToolName {
@@ -55,6 +56,7 @@ impl AcpToolName {
             Self::GitDiff => &ACP_GIT_DIFF_TOOL,
             Self::GitLog => &ACP_GIT_LOG_TOOL,
             Self::GitShow => &ACP_GIT_SHOW_TOOL,
+            Self::ProcessRun => &ACP_PROCESS_RUN_TOOL,
         }
     }
 
@@ -76,6 +78,7 @@ impl AcpToolName {
             Self::GitDiff,
             Self::GitLog,
             Self::GitShow,
+            Self::ProcessRun,
         ]
     }
 
@@ -114,6 +117,7 @@ impl AcpToolName {
             Self::ApplyPatch => &["patch"],
             Self::GitStatus | Self::GitDiff | Self::GitLog => &[],
             Self::GitShow => &["revision"],
+            Self::ProcessRun => &["command", "cwd"],
         }
     }
 
@@ -166,6 +170,9 @@ impl AcpToolName {
             "bears/git_diff" | "git/diff" | "git.diff" | "git_diff" => Some(Self::GitDiff),
             "bears/git_log" | "git/log" | "git.log" | "git_log" => Some(Self::GitLog),
             "bears/git_show" | "git/show" | "git.show" | "git_show" => Some(Self::GitShow),
+            "bears/process_run" | "process/run" | "process.run" | "process_run" => {
+                Some(Self::ProcessRun)
+            }
             _ => None,
         }
     }
@@ -449,6 +456,16 @@ pub const ACP_GIT_SHOW_TOOL: AcpToolDescriptor = AcpToolDescriptor {
     title: "Git show",
     kind: "read",
     risk: "read_only",
+};
+
+pub const ACP_PROCESS_RUN_TOOL: AcpToolDescriptor = AcpToolDescriptor {
+    provider_name: "process_run",
+    canonical_name: "acp.process.run",
+    adapter_method: "bears/process_run",
+    client_method: "process/run",
+    title: "Run process",
+    kind: "execute",
+    risk: "executes_process",
 };
 
 pub fn provider_tool_name_is_safe(name: &str) -> bool {
@@ -794,6 +811,27 @@ const ACP_GIT_SHOW_POLICY: AcpToolPolicy = AcpToolPolicy {
     permission_timeout_ms: 120_000,
 };
 
+const ACP_PROCESS_RUN_POLICY: AcpToolPolicy = AcpToolPolicy {
+    scope_basis: "acp:tools",
+    role_basis: "pair_agent",
+    allowed_roots_basis: "acp_session.workspace_roots",
+    path_containment: "adapter_enforced_absolute_cwd_under_allowed_roots",
+    approval_required: true,
+    sensitive_path_policy: "client_permission_required",
+    max_lines: None,
+    max_entries: None,
+    max_results: None,
+    max_bytes: Some(65_536),
+    recursive_default: None,
+    include_hidden_default: None,
+    max_replacements: None,
+    create_files: None,
+    allow_multiple: None,
+    deny_hidden_paths: None,
+    total_timeout_ms: 120_000,
+    permission_timeout_ms: 120_000,
+};
+
 pub fn acp_tool_policy(tool: AcpToolName) -> AcpToolPolicy {
     match tool {
         AcpToolName::ReadTextFile => ACP_READ_TEXT_FILE_POLICY,
@@ -812,6 +850,7 @@ pub fn acp_tool_policy(tool: AcpToolName) -> AcpToolPolicy {
         AcpToolName::GitDiff => ACP_GIT_DIFF_POLICY,
         AcpToolName::GitLog => ACP_GIT_LOG_POLICY,
         AcpToolName::GitShow => ACP_GIT_SHOW_POLICY,
+        AcpToolName::ProcessRun => ACP_PROCESS_RUN_POLICY,
     }
 }
 
@@ -1235,6 +1274,25 @@ pub fn acp_client_tool_descriptor(tool: &AcpToolDescriptor) -> serde_json::Value
                 "required": ["revision"]
             }
         }),
+        "process_run" => json!({
+            "name": tool.provider_name,
+            "description": format!(
+                "ACP local workspace tool ({}, target={}, adapter={}, client={}, kind={}, risk={}). Runs a bounded non-interactive process in an explicit workspace cwd through the local adapter. Approval is required.",
+                tool.canonical_name, "acp_client", tool.adapter_method, tool.client_method, tool.kind, tool.risk,
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "command": { "type": "string", "description": "Executable name or absolute executable path. Shell strings are not accepted." },
+                    "args": { "type": "array", "items": { "type": "string" }, "description": "Command arguments." },
+                    "cwd": { "type": "string", "description": "Absolute working directory under the workspace." },
+                    "timeout_ms": { "type": "integer", "minimum": 1, "maximum": 120000 },
+                    "max_output_bytes": { "type": "integer", "minimum": 1, "maximum": 65536 },
+                    "env": { "type": "object", "additionalProperties": { "type": "string" }, "description": "Optional non-secret environment values." }
+                },
+                "required": ["command", "cwd"]
+            }
+        }),
         _ => unreachable!("unknown ACP tool descriptor: {}", tool.provider_name),
     }
 }
@@ -1456,8 +1514,14 @@ mod tests {
                 "{}",
                 descriptor.provider_name
             );
-            assert_eq!(
-                policy["path_containment"], "adapter_enforced_absolute_path_under_allowed_roots",
+            assert!(
+                matches!(
+                    policy["path_containment"].as_str(),
+                    Some(
+                        "adapter_enforced_absolute_path_under_allowed_roots"
+                            | "adapter_enforced_absolute_cwd_under_allowed_roots"
+                    )
+                ),
                 "{}",
                 descriptor.provider_name
             );
