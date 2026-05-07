@@ -2112,8 +2112,7 @@ async fn handle_direct_search_files(
         .get("query")
         .and_then(Value::as_str)
         .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .ok_or_else(|| anyhow!("fs_search_files args missing non-empty query"))?;
+        .unwrap_or("");
     let policy_max_results = policy.max_results.unwrap_or(200).clamp(1, 200);
     let limit = args
         .get("limit")
@@ -2172,21 +2171,38 @@ async fn handle_direct_search_files(
         };
         bytes_scanned = bytes_scanned.saturating_add(metadata.len());
         files_scanned += 1;
-        for (idx, line) in raw.lines().enumerate() {
-            if line_matches_query(line, query, filters.case_sensitive) {
-                matches.push(json!({
-                    "path": file.to_string_lossy(),
-                    "line": idx + 1,
-                    "preview": truncate_for_log(line.trim(), 240),
-                }));
-                if matches.len() >= limit {
-                    truncated = true;
-                    break;
+        if query.is_empty() {
+            matches.push(json!({
+                "path": file.to_string_lossy(),
+                "line": null,
+                "preview": file
+                    .strip_prefix(&path)
+                    .unwrap_or(&file)
+                    .to_string_lossy(),
+                "match_type": "path",
+            }));
+            if matches.len() >= limit {
+                truncated = true;
+                break;
+            }
+        } else {
+            for (idx, line) in raw.lines().enumerate() {
+                if line_matches_query(line, query, filters.case_sensitive) {
+                    matches.push(json!({
+                        "path": file.to_string_lossy(),
+                        "line": idx + 1,
+                        "preview": truncate_for_log(line.trim(), 240),
+                        "match_type": "content",
+                    }));
+                    if matches.len() >= limit {
+                        truncated = true;
+                        break;
+                    }
                 }
             }
-        }
-        if matches.len() >= limit {
-            break;
+            if matches.len() >= limit {
+                break;
+            }
         }
     }
     let content = format_search_results(query, &matches, truncated);
@@ -2980,12 +2996,21 @@ fn format_directory_listing(path: &Path, entries: &[Value], truncated: bool) -> 
 }
 
 fn format_search_results(query: &str, matches: &[Value], truncated: bool) -> String {
-    let mut lines = vec![format!("Search results for {query:?}")];
+    let mut lines = if query.is_empty() {
+        vec!["Path search results".to_string()]
+    } else {
+        vec![format!("Search results for {query:?}")]
+    };
     for item in matches {
         let path = item.get("path").and_then(Value::as_str).unwrap_or("");
-        let line = item.get("line").and_then(Value::as_u64).unwrap_or(0);
         let preview = item.get("preview").and_then(Value::as_str).unwrap_or("");
-        lines.push(format!("{path}:{line}: {preview}"));
+        if let Some(line) = item.get("line").and_then(Value::as_u64) {
+            lines.push(format!("{path}:{line}: {preview}"));
+        } else if preview.is_empty() {
+            lines.push(path.to_string());
+        } else {
+            lines.push(format!("{path}: {preview}"));
+        }
     }
     if matches.is_empty() {
         lines.push("No matches found.".to_string());

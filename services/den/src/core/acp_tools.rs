@@ -51,6 +51,15 @@ impl AcpToolName {
 
     pub fn missing_required_string_arg(self, args: &serde_json::Value) -> Option<&'static str> {
         for arg in self.required_string_args() {
+            if self == Self::SearchFiles
+                && *arg == "query"
+                && args
+                    .get("pattern")
+                    .and_then(|v| v.as_str())
+                    .is_some_and(|s| !s.trim().is_empty())
+            {
+                continue;
+            }
             if args
                 .get(arg)
                 .and_then(|v| v.as_str())
@@ -562,7 +571,7 @@ pub fn acp_client_tool_descriptor(tool: &AcpToolDescriptor) -> serde_json::Value
         "fs_search_files" => json!({
             "name": tool.provider_name,
             "description": format!(
-                "ACP local workspace tool ({}, target={}, adapter={}, client={}, kind={}, risk={}). Searches UTF-8 text files under a workspace path through the local adapter with bounded results and bytes.",
+                "ACP local workspace tool ({}, target={}, adapter={}, client={}, kind={}, risk={}). Searches UTF-8 text files under a workspace path through the local adapter with bounded results and bytes. For filename/path discovery, set pattern (for example *notes*) and omit query or set query to an empty string.",
                 tool.canonical_name,
                 "acp_client",
                 tool.adapter_method,
@@ -574,7 +583,7 @@ pub fn acp_client_tool_descriptor(tool: &AcpToolDescriptor) -> serde_json::Value
                 "type": "object",
                 "properties": {
                     "path": { "type": "string", "description": "Absolute local file or directory path under the workspace." },
-                    "query": { "type": "string", "description": "Literal text to search for." },
+                    "query": { "type": "string", "description": "Optional literal text to search for inside files. If omitted or empty, pattern is used for filename/path discovery only." },
                     "limit": { "type": "integer", "minimum": 1, "maximum": 200, "description": "Maximum matches to return." },
                     "max_bytes": { "type": "integer", "minimum": 1, "maximum": 1048576, "description": "Maximum total bytes to scan." },
                     "include_hidden": { "type": "boolean", "default": false, "description": "Include hidden dotfiles and dot-directories. Defaults to false." },
@@ -582,7 +591,7 @@ pub fn acp_client_tool_descriptor(tool: &AcpToolDescriptor) -> serde_json::Value
                     "pattern": { "type": "string", "description": "Optional simple wildcard pattern matched against relative file paths. Supports `*` and `?`." },
                     "extensions": { "type": "array", "items": { "type": "string" }, "maxItems": 10, "description": "Optional list of file extensions to include, such as [\"rs\", \"ts\"]." }
                 },
-                "required": ["path", "query"]
+                "required": ["path"]
             }
         }),
         "fs_replace_text" => json!({
