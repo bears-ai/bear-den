@@ -15,8 +15,7 @@ use crate::{
             fetch_memfs_role_memory_tree, search_memfs_role_memory, write_memfs_role_memory_entry,
             MemfsWriteRoleMemoryEntryRequest,
         },
-        user,
-        web_policy,
+        user, web_policy,
         work_plans::{
             self, WorkPlanListFilter, WorkPlanLookup, WorkPlanStatus, WorkPlanUpdate,
             WorkPlanUpsert, WorkPlanVisibility,
@@ -1181,7 +1180,12 @@ async fn web_search(
                 }
             }
         }
-        results.sort_by_key(|item| !item.get("preferred_source").and_then(Value::as_bool).unwrap_or(false));
+        results.sort_by_key(|item| {
+            !item
+                .get("preferred_source")
+                .and_then(Value::as_bool)
+                .unwrap_or(false)
+        });
     }
     value["preferred_hosts"] = json!(preferred_hosts);
     value["instruction"] = json!("Prefer results with preferred_source=true when they are relevant; otherwise use ordinary relevance judgment.");

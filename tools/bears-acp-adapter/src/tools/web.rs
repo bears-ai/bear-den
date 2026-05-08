@@ -4,7 +4,7 @@ use reqwest::Url;
 use serde_json::{json, Value};
 use std::{net::{IpAddr, Ipv4Addr, Ipv6Addr}, time::Duration};
 
-pub(crate) async fn handle_web_fetch(
+pub(crate) async fn handle_local_web_fetch(
     session_id: &str,
     args: &Value,
     policy: &ToolPolicy,
@@ -16,7 +16,7 @@ pub(crate) async fn handle_web_fetch(
         .filter(|s| !s.is_empty())
         .ok_or_else(|| anyhow!("web_fetch args missing url"))?;
     let url = Url::parse(raw_url).map_err(|err| anyhow!("web_fetch invalid url: {err}"))?;
-    validate_fetch_url(&url)?;
+    validate_local_fetch_url(&url)?;
     let policy_max_bytes = policy.max_bytes.unwrap_or(262_144).clamp(1, 1_048_576);
     let max_bytes = args
         .get("max_bytes")
@@ -71,6 +71,19 @@ pub(crate) async fn handle_web_fetch(
     }))
 }
 
+fn validate_local_fetch_url(url: &Url) -> Result<()> {
+    match url.scheme() {
+        "http" | "https" => {}
+        other => return Err(anyhow!("local_web_fetch only supports http and https URLs, got {other:?}")),
+    }
+    let host = url.host_str().ok_or_else(|| anyhow!("local_web_fetch URL must include a host"))?;
+    let normalized = normalize_host(host, url.port());
+    if local_web_hosts().iter().any(|allowed| allowed == &normalized || allowed == host) {
+        return Ok(());
+    }
+    Err(anyhow!("local_web_fetch host {normalized:?} is not in BEARS_LOCAL_WEB_HOSTS"))
+}
+
 fn validate_fetch_url(url: &Url) -> Result<()> {
     match url.scheme() {
         "http" | "https" => {}
@@ -96,6 +109,23 @@ fn validate_fetch_url(url: &Url) -> Result<()> {
 
 fn allow_local_web_fetch_for_tests() -> bool {
     cfg!(test) && std::env::var("BEARS_ACP_ALLOW_LOCAL_WEB_FETCH_FOR_TESTS").ok().as_deref() == Some("1")
+}
+
+fn local_web_hosts() -> Vec<String> {
+    std::env::var("BEARS_LOCAL_WEB_HOSTS")
+        .unwrap_or_else(|_| "localhost,127.0.0.1,::1".to_string())
+        .split(',')
+        .map(|s| s.trim().trim_matches('[').trim_matches(']').to_ascii_lowercase())
+        .filter(|s| !s.is_empty())
+        .collect()
+}
+
+fn normalize_host(host: &str, port: Option<u16>) -> String {
+    let host = host.trim_matches('[').trim_matches(']').to_ascii_lowercase();
+    match port {
+        Some(port) => format!("{host}:{port}"),
+        None => host,
+    }
 }
 
 fn is_denied_ip(ip: IpAddr) -> bool {
@@ -129,5 +159,6 @@ mod tests {
         assert!(validate_fetch_url(&Url::parse("http://127.0.0.1").unwrap()).is_err());
         assert!(validate_fetch_url(&Url::parse("http://169.254.169.254").unwrap()).is_err());
         assert!(validate_fetch_url(&Url::parse("https://example.com").unwrap()).is_ok());
+        assert!(validate_local_fetch_url(&Url::parse("http://localhost:3000").unwrap()).is_ok());
     }
 }

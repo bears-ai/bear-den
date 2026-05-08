@@ -56,6 +56,7 @@ use tools::git::{
     handle_git_show, handle_git_stash, handle_git_status,
 };
 use tools::process::handle_process_run;
+use tools::web::handle_local_web_fetch;
 
 use uuid::Uuid;
 
@@ -1551,6 +1552,7 @@ async fn execute_local_tool(
             let context = session_context(adapter_state, session_id)?;
             handle_process_run(context, session_id, &args, policy).await
         }
+        "local_web_fetch" => handle_local_web_fetch(session_id, &args, policy).await,
         "chrome_open" => handle_chrome_open(&args, policy).await,
         "chrome_snapshot" => handle_chrome_snapshot(&args, policy).await,
         "chrome_console_messages" => handle_chrome_console_messages(&args, policy).await,
@@ -3973,7 +3975,7 @@ fn tool_target_kind(tool_name: &str) -> &'static str {
         "fs_move_path" | "fs_copy_path" => "path",
         "fs_apply_patch" => "patch",
         "git_status" | "git_diff" | "git_log" | "git_show" | "git_add" | "git_restore" | "git_commit" | "git_stash" => "repository",
-        "web_fetch" => "url",
+        "web_fetch" | "local_web_fetch" => "url",
         "process_run" => "command",
         "chrome_open" => "url",
         "chrome_snapshot" | "chrome_console_messages" | "chrome_network_requests" | "chrome_screenshot" => "chrome",
@@ -5813,7 +5815,7 @@ mod tests {
                 let _ = stream.write_all(response.as_bytes()).await;
             }
         });
-        let result = crate::tools::web::handle_web_fetch(
+        let result = crate::tools::web::handle_local_web_fetch(
             "session-1",
             &json!({ "url": format!("http://{}", addr), "max_bytes": 5 }),
             &ToolPolicy { max_bytes: Some(5), total_timeout_ms: Some(10_000), ..Default::default() },
@@ -5830,21 +5832,21 @@ mod tests {
     #[tokio::test]
     async fn web_fetch_rejects_unsafe_urls() {
         std::env::remove_var("BEARS_ACP_ALLOW_LOCAL_WEB_FETCH_FOR_TESTS");
-        let localhost = crate::tools::web::handle_web_fetch(
+        let localhost = crate::tools::web::handle_local_web_fetch(
             "session-1",
             &json!({ "url": "http://localhost:3000" }),
             &ToolPolicy::default(),
         )
         .await;
         assert!(format!("{:#}", localhost.unwrap_err()).contains("localhost"));
-        let metadata = crate::tools::web::handle_web_fetch(
+        let metadata = crate::tools::web::handle_local_web_fetch(
             "session-1",
             &json!({ "url": "http://169.254.169.254/latest" }),
             &ToolPolicy::default(),
         )
         .await;
         assert!(format!("{:#}", metadata.unwrap_err()).contains("private"));
-        let invalid = crate::tools::web::handle_web_fetch(
+        let invalid = crate::tools::web::handle_local_web_fetch(
             "session-1",
             &json!({ "url": "file:///tmp/x" }),
             &ToolPolicy::default(),

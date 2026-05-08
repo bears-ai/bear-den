@@ -27,7 +27,10 @@ impl WebApprovalDecision {
     }
 
     pub fn is_approved(&self) -> bool {
-        matches!(self, Self::Preferred | Self::Allowed | Self::ApprovedUrl | Self::ApprovedHost)
+        matches!(
+            self,
+            Self::Preferred | Self::Allowed | Self::ApprovedUrl | Self::ApprovedHost
+        )
     }
 }
 
@@ -153,6 +156,26 @@ async fn approval_exists(
     Ok(exists)
 }
 
+pub fn is_local_web_url(normalized: &NormalizedWebUrl) -> bool {
+    local_web_hosts().iter().any(|host| {
+        host == &normalized.host || host == normalized.host.split(':').next().unwrap_or("")
+    })
+}
+
+pub fn local_web_hosts() -> Vec<String> {
+    std::env::var("BEARS_LOCAL_WEB_HOSTS")
+        .unwrap_or_else(|_| "localhost,127.0.0.1,::1".to_string())
+        .split(',')
+        .map(|s| {
+            s.trim()
+                .trim_matches('[')
+                .trim_matches(']')
+                .to_ascii_lowercase()
+        })
+        .filter(|s| !s.is_empty())
+        .collect()
+}
+
 pub async fn record_web_approval(
     pool: &PgPool,
     bear_id: Uuid,
@@ -163,9 +186,12 @@ pub async fn record_web_approval(
     ttl_seconds: Option<i64>,
 ) -> Result<(), CustomError> {
     if !matches!(scope_kind, "url" | "host") {
-        return Err(CustomError::ValidationError("web approval scope_kind must be url or host".to_string()));
+        return Err(CustomError::ValidationError(
+            "web approval scope_kind must be url or host".to_string(),
+        ));
     }
-    let expires_expr = ttl_seconds.map(|seconds| format!("now() + interval '{} seconds'", seconds.clamp(1, 86_400)));
+    let expires_expr = ttl_seconds
+        .map(|seconds| format!("now() + interval '{} seconds'", seconds.clamp(1, 86_400)));
     let sql = if expires_expr.is_some() {
         r#"
         INSERT INTO bear_web_approvals (bear_id, scope_kind, scope_value, approved_by_user_id, source, expires_at)
@@ -237,7 +263,10 @@ pub async fn record_web_fetch_attempt(
     Ok(())
 }
 
-pub async fn preferred_hosts_for_bear(pool: &PgPool, bear_id: Uuid) -> Result<Vec<String>, CustomError> {
+pub async fn preferred_hosts_for_bear(
+    pool: &PgPool,
+    bear_id: Uuid,
+) -> Result<Vec<String>, CustomError> {
     let rows: Vec<(String,)> = sqlx::query_as(
         r#"
         SELECT scope_value
@@ -274,5 +303,13 @@ mod tests {
     #[test]
     fn rejects_non_http_urls() {
         assert!(normalize_web_url("file:///tmp/x").is_err());
+    }
+
+    #[test]
+    fn detects_default_local_hosts() {
+        let n = normalize_web_url("http://localhost:3000/docs").unwrap();
+        assert!(is_local_web_url(&n));
+        let n = normalize_web_url("https://example.com/docs").unwrap();
+        assert!(!is_local_web_url(&n));
     }
 }

@@ -53,11 +53,11 @@ use crate::{
             acp_provider_tool_names_for_client_context, acp_tool_policy_json_for_provider,
             AcpToolStatus,
         },
-        web_policy,
         archived_conversations,
         bears::{db as bears_db, Bear, BearAgentRole},
         den_tools::{self, DenToolChannelContext, DenToolInvocationContext},
         letta::{load_agent_conversations, LettaContinuationContext},
+        web_policy,
         work_plans::{self, WorkPlanLookup},
     },
     errors::CustomError,
@@ -74,7 +74,8 @@ fn acp_debug_event_sample_chars() -> usize {
 }
 
 type PendingWebFetchMap = Arc<TokioMutex<HashMap<String, PendingWebFetchApproval>>>;
-static PENDING_WEB_FETCH_APPROVALS: std::sync::OnceLock<PendingWebFetchMap> = std::sync::OnceLock::new();
+static PENDING_WEB_FETCH_APPROVALS: std::sync::OnceLock<PendingWebFetchMap> =
+    std::sync::OnceLock::new();
 
 fn pending_web_fetch_approvals() -> PendingWebFetchMap {
     PENDING_WEB_FETCH_APPROVALS
@@ -1297,12 +1298,21 @@ async fn permission_result_inner(
         .await
         .remove(&permission_id)
         .ok_or_else(|| CustomError::NotFound("pending permission request not found".to_string()))?;
-    if pending.user_id != auth.user_id || pending.context.bear_slug != slug || pending.context.acp_session_id != session_id {
-        return Err(CustomError::Authorization("permission request does not belong to this ACP session".to_string()));
+    if pending.user_id != auth.user_id
+        || pending.context.bear_slug != slug
+        || pending.context.acp_session_id != session_id
+    {
+        return Err(CustomError::Authorization(
+            "permission request does not belong to this ACP session".to_string(),
+        ));
     }
     let decision = body.decision.as_str();
     if matches!(decision, "allow_url" | "allow_host") {
-        let scope_kind = if decision == "allow_url" { "url" } else { "host" };
+        let scope_kind = if decision == "allow_url" {
+            "url"
+        } else {
+            "host"
+        };
         let scope_value = if scope_kind == "url" {
             pending.normalized_url.url.clone()
         } else {
@@ -1343,7 +1353,11 @@ async fn permission_result_inner(
         }
     };
     let _ = pending.result_tx.send(result);
-    Ok(Json(AcpPermissionDecisionResponse { accepted: true, reason: "delivered".to_string() }).into_response())
+    Ok(Json(AcpPermissionDecisionResponse {
+        accepted: true,
+        reason: "delivered".to_string(),
+    })
+    .into_response())
 }
 
 async fn tool_result(
@@ -1981,13 +1995,30 @@ async fn persist_stream_event_side_effects(
                 *approval_required = false;
                 *approval_reason = None;
                 if canonical_name == den_tools::DEN_WEB_FETCH {
-                    let url = args
-                        .get("url")
-                        .and_then(|v| v.as_str())
-                        .ok_or_else(|| CustomError::ValidationError("web_fetch missing url".to_string()))?;
+                    let url = args.get("url").and_then(|v| v.as_str()).ok_or_else(|| {
+                        CustomError::ValidationError("web_fetch missing url".to_string())
+                    })?;
                     let (normalized, decision) =
                         web_policy::decide_web_fetch_approval(&context.pool, context.bear_id, url)
                             .await?;
+                    if decision.is_approved() && web_policy::is_local_web_url(&normalized) {
+                        *tool_name = "local_web_fetch".to_string();
+                        args["url"] = serde_json::json!(normalized.url);
+                        *approval_required = false;
+                        *approval_reason = None;
+                        context.tool_turns.register(AcpToolTurnRegistration {
+                            user_id: context.user_id,
+                            bear_id: context.bear_id,
+                            bear_slug: context.bear_slug.clone(),
+                            acp_session_id: context.acp_session_id.clone(),
+                            request_id: context.request_id,
+                            tool_call_id: tool_call_id.clone(),
+                            tool_name: tool_name.clone(),
+                            approval_request_id: approval_request_id.clone(),
+                            result_tx,
+                        })?;
+                        return Ok(());
+                    }
                     if matches!(decision, web_policy::WebApprovalDecision::RequiresApproval) {
                         let permission_id = format!("perm-{}", Uuid::new_v4());
                         pending_web_fetch_approvals().lock().await.insert(
@@ -2010,12 +2041,40 @@ async fn persist_stream_event_side_effects(
                             tool_call_id: tool_call_id.clone(),
                             tool_name: tool_name.clone(),
                             title: "Fetch URL".to_string(),
-                            reason: format!("BEARS wants to fetch {}. Approve this URL or host?", normalized.url),
+                            reason: format!(
+                                "BEARS wants to fetch {}. Approve this URL or host?",
+                                normalized.url
+                            ),
                             target: serde_json::json!({ "kind": "url", "url": normalized.url, "host": normalized.host }),
-                            options: vec!["allow_once".to_string(), "allow_url".to_string(), "allow_host".to_string(), "reject_once".to_string()],
+                            options: vec![
+                                "allow_once".to_string(),
+                                "allow_url".to_string(),
+                                "allow_host".to_string(),
+                                "reject_once".to_string(),
+                            ],
                         };
                         return Ok(());
                     }
+                }
+                if web_policy::is_local_web_url(&web_policy::normalize_web_url(
+                    args.get("url").and_then(|v| v.as_str()).unwrap_or(""),
+                )?) {
+                    let result = AcpToolResultRequest {
+                        turn_id: None,
+                        request_id: Some(context.request_id.to_string()),
+                        tool_call_id: Some(tool_call_id.clone()),
+                        tool_name: Some(tool_name.clone()),
+                        approval_request_id: approval_request_id.clone(),
+                        status: "error".to_string(),
+                        content: Some(
+                            "local web_fetch requires approval before adapter delegation"
+                                .to_string(),
+                        ),
+                        structured_content: serde_json::json!({}),
+                        diagnostic: serde_json::json!({ "component": "den.acp", "phase": "local_web_fetch_requires_approval" }),
+                    };
+                    let _ = result_tx.send(result);
+                    return Ok(());
                 }
                 let result = invoke_acp_den_tool(
                     context,
