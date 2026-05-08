@@ -292,6 +292,28 @@ pub struct MemfsRoleMemorySearchResponse {
     pub error: Option<String>,
 }
 
+#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
+pub struct MemfsRoleMemoryDeleteResponse {
+    #[serde(default)]
+    pub ok: bool,
+    #[serde(default)]
+    pub bear_id: String,
+    #[serde(default)]
+    pub role: String,
+    #[serde(default)]
+    pub deleted: Vec<String>,
+    #[serde(default)]
+    pub missing: Vec<String>,
+    #[serde(default)]
+    pub commit: Option<String>,
+    #[serde(default)]
+    pub canonical_tip: Option<String>,
+    #[serde(default)]
+    pub message: Option<String>,
+    #[serde(default)]
+    pub error: Option<String>,
+}
+
 impl From<MemoryManagerStatusResponse> for MemoryManagerStatusView {
     fn from(status: MemoryManagerStatusResponse) -> Self {
         let state = if status.state.trim().is_empty() {
@@ -517,6 +539,56 @@ pub async fn write_memfs_role_memory_entry(
     if !payload.ok {
         return Err(CustomError::System(format!(
             "MemFS role memory entry write failed: {}",
+            payload
+                .error
+                .clone()
+                .unwrap_or_else(|| "unknown error".to_string())
+        )));
+    }
+    Ok(Some(payload))
+}
+
+pub async fn delete_memfs_role_memory_entries(
+    http: &reqwest::Client,
+    base_url: &str,
+    bear_id: uuid::Uuid,
+    role: &str,
+    paths: &[String],
+) -> Result<Option<MemfsRoleMemoryDeleteResponse>, CustomError> {
+    let base = base_url.trim().trim_end_matches('/');
+    if base.is_empty() {
+        return Ok(None);
+    }
+    let url = format!(
+        "{}/v1/management/bears/{}/roles/{}/memory-delete",
+        base,
+        bear_id,
+        urlencoding::encode(role)
+    );
+    let body = serde_json::json!({ "paths": paths });
+    let resp = http
+        .post(&url)
+        .header("X-Organization-Id", DEFAULT_ORG)
+        .json(&body)
+        .timeout(Duration::from_secs(30))
+        .send()
+        .await
+        .map_err(|e| {
+            CustomError::System(format!("MemFS role memory delete request failed: {e}"))
+        })?;
+    let status = resp.status();
+    let text = resp.text().await.unwrap_or_default();
+    if !status.is_success() {
+        return Err(CustomError::System(format!(
+            "MemFS role memory delete HTTP {status}: {text}"
+        )));
+    }
+    let payload: MemfsRoleMemoryDeleteResponse = serde_json::from_str(&text).map_err(|e| {
+        CustomError::Parsing(format!("MemFS role memory delete JSON: {e}; body: {text}"))
+    })?;
+    if !payload.ok {
+        return Err(CustomError::System(format!(
+            "MemFS role memory delete failed: {}",
             payload
                 .error
                 .clone()

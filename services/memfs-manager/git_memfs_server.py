@@ -1298,6 +1298,78 @@ def _write_role_memory_entry(
     }
 
 
+def _delete_role_memory_entries(
+    bear_id: str, role: str, body: JSONDict, org_id: str
+) -> ResponseDict:
+    if role not in ROLE_BRANCHES:
+        raise ValueError("valid role is required")
+    paths_raw = body.get("paths") or []
+    if not isinstance(paths_raw, list):
+        raise ValueError("paths must be an array")
+    paths: list[str] = []
+    for raw in paths_raw:
+        rel_path = _normalize_memory_path(str(raw))
+        if not _role_memory_path_allowed(role, rel_path):
+            raise PermissionError(f"path is not allowed for role {role}: {rel_path}")
+        if not rel_path.endswith(".md"):
+            raise ValueError(f"only Markdown memory files can be deleted: {rel_path}")
+        paths.append(rel_path)
+    paths = sorted(set(paths))
+    if not paths:
+        raise ValueError("at least one path is required")
+    if len(paths) > 100:
+        raise ValueError("cannot delete more than 100 memory files at once")
+    canonical = ensure_canonical_repo(bear_id)
+    deleted: list[str] = []
+    missing: list[str] = []
+    with tempfile.TemporaryDirectory() as tmp:
+        work = Path(tmp) / "w"
+        _git("clone", "--branch", role, str(canonical), str(work))
+        _git("-C", str(work), "config", "user.name", "BEARS Den")
+        _git("-C", str(work), "config", "user.email", "den@bears.local")
+        for rel_path in paths:
+            target = work / rel_path
+            if target.exists() and target.is_file():
+                target.unlink()
+                deleted.append(rel_path)
+            else:
+                missing.append(rel_path)
+        if not deleted:
+            return {
+                "ok": True,
+                "bear_id": bear_id,
+                "role": role,
+                "deleted": [],
+                "missing": missing,
+                "commit": _branch_tip(canonical, role),
+                "canonical_tip": _branch_tip(canonical, role),
+                "message": "No selected files existed in canonical memory.",
+            }
+        _git("add", "-A", cwd=work)
+        _git("commit", "-m", f"delete {role} memory entries ({len(deleted)})", cwd=work)
+        _git("push", "origin", f"HEAD:refs/heads/{role}", cwd=work)
+    canonical_tip = _branch_tip(canonical, role)
+    _sync_role_views_after_canonical_write(
+        bear_id, role, org_id, canonical, "memory_entry_delete_view_reset"
+    )
+    log_activity(
+        "role_memory_entries_deleted",
+        bear_id=bear_id,
+        role=role,
+        deleted_count=len(deleted),
+        canonical_tip=canonical_tip,
+    )
+    return {
+        "ok": True,
+        "bear_id": bear_id,
+        "role": role,
+        "deleted": deleted,
+        "missing": missing,
+        "commit": canonical_tip,
+        "canonical_tip": canonical_tip,
+    }
+
+
 def _write_role_note(
     bear_id: str, role: str, body: JSONDict, org_id: str
 ) -> ResponseDict:
@@ -1796,7 +1868,7 @@ class GitHTTPHandler(BaseHTTPRequestHandler):
             len(parts) == 7
             and parts[:3] == ["v1", "management", "bears"]
             and parts[4] == "roles"
-            and parts[6] in {"memory-entries", "notes"}
+            and parts[6] in {"memory-entries", "notes", "memory-delete"}
         ):
             bear_id = parts[3]
             role = parts[5]
@@ -1805,6 +1877,10 @@ class GitHTTPHandler(BaseHTTPRequestHandler):
                 org_id = resolve_org_id(self.headers.get("X-Organization-Id"))
                 if parts[6] == "notes":
                     self._send_json(200, _write_role_note(bear_id, role, body, org_id))
+                elif parts[6] == "memory-delete":
+                    self._send_json(
+                        200, _delete_role_memory_entries(bear_id, role, body, org_id)
+                    )
                 else:
                     self._send_json(
                         200, _write_role_memory_entry(bear_id, role, body, org_id)

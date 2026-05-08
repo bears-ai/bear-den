@@ -26,10 +26,10 @@ use crate::{
         },
         letta::{load_agent_conversations, AgentSummary, LettaAgentDiagnostics},
         memory_manager_head::{
-            fetch_memfs_role_memory_file, fetch_memfs_role_memory_status,
-            fetch_memfs_role_memory_tree, fetch_memfs_role_view_health,
-            fetch_memory_manager_repository_files, fetch_memory_manager_repository_status,
-            search_memfs_role_memory,
+            delete_memfs_role_memory_entries, fetch_memfs_role_memory_file,
+            fetch_memfs_role_memory_status, fetch_memfs_role_memory_tree,
+            fetch_memfs_role_view_health, fetch_memory_manager_repository_files,
+            fetch_memory_manager_repository_status, search_memfs_role_memory,
         },
         user,
         user::db as user_db,
@@ -77,7 +77,10 @@ pub fn router() -> Router<AppState> {
             get(bear_conversations_get),
         )
         .route_with_tsr("/bear/{slug}/details/roles/{role}", get(bear_role_get))
-        .route_with_tsr("/bear/{slug}/details/memory", get(bear_memory_get))
+        .route_with_tsr(
+            "/bear/{slug}/details/memory",
+            get(bear_memory_get).post(bear_memory_delete_post),
+        )
         .route_with_tsr(
             "/bear/{slug}/details/memory/runtime-blocks",
             get(bear_runtime_blocks_get),
@@ -151,6 +154,16 @@ struct BearMemoryQuery {
     role: Option<String>,
     q: Option<String>,
     path: Option<String>,
+    deleted: Option<usize>,
+    error: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct BearMemoryDeleteForm {
+    role: String,
+    #[serde(default)]
+    paths: Vec<String>,
+    confirm: String,
 }
 
 #[derive(Serialize)]
@@ -1811,6 +1824,8 @@ async fn bear_memory_get(
     let selected_role_name = selected_role.as_str().to_string();
     let search_query = q.q.as_deref().map(str::trim).filter(|s| !s.is_empty());
     let selected_path = q.path.as_deref().map(str::trim).filter(|s| !s.is_empty());
+    let delete_notice = q.deleted;
+    let delete_error = q.error.as_deref().map(str::trim).filter(|s| !s.is_empty());
 
     bears_db::ensure_bear_agent_rows(state.sqlx_pool(), bear.id).await?;
     let agents = bears_db::list_bear_agents(state.sqlx_pool(), bear.id).await?;
@@ -1974,9 +1989,100 @@ async fn bear_memory_get(
             selected_file,
             runtime_block_count,
             memfs_configured => !memfs_url.is_empty(),
+            delete_notice,
+            delete_error,
         },
     )
     .await
+}
+
+async fn bear_memory_delete_post(
+    Path(slug): Path<String>,
+    State(state): State<AppState>,
+    auth_session: AuthSession,
+    Form(form): Form<BearMemoryDeleteForm>,
+) -> Result<Response, CustomError> {
+    let user = auth_session
+        .user
+        .as_ref()
+        .ok_or_else(|| CustomError::Authentication("login required".to_string()))?;
+    if let Some(r) = email_verify_redirect(state.sqlx_pool(), user.id).await? {
+        return Ok(r.into_response());
+    }
+    let bear = load_bear_member(state.sqlx_pool(), user.id, &slug).await?;
+    if !viewer_can_manage_bear(state.sqlx_pool(), user, bear.id).await? {
+        return Err(CustomError::Authorization(
+            "bear admin or site admin role required".to_string(),
+        ));
+    }
+    let role = form
+        .role
+        .parse::<BearAgentRole>()
+        .map_err(CustomError::ValidationError)?;
+    let confirm = form.confirm.trim();
+    if confirm != role.as_str() && confirm != bear.slug {
+        let target = format!(
+            "/bear/{}/details/memory?role={}&error={}",
+            bear.slug,
+            role.as_str(),
+            urlencoding::encode("Type the role name or Bear slug to confirm deletion.")
+        );
+        return Ok(Redirect::to(&target).into_response());
+    }
+    let mut paths = form
+        .paths
+        .into_iter()
+        .map(|path| path.trim().to_string())
+        .filter(|path| !path.is_empty())
+        .collect::<Vec<_>>();
+    paths.sort();
+    paths.dedup();
+    if paths.is_empty() {
+        let target = format!(
+            "/bear/{}/details/memory?role={}&error={}",
+            bear.slug,
+            role.as_str(),
+            urlencoding::encode("Select at least one memory file to delete.")
+        );
+        return Ok(Redirect::to(&target).into_response());
+    }
+    let memfs_url = state.config.letta_memfs_service_url.as_str();
+    let deleted = match delete_memfs_role_memory_entries(
+        state.letta.http(),
+        memfs_url,
+        bear.id,
+        role.as_str(),
+        &paths,
+    )
+    .await
+    {
+        Ok(Some(response)) => response.deleted.len(),
+        Ok(None) => {
+            let target = format!(
+                "/bear/{}/details/memory?role={}&error={}",
+                bear.slug,
+                role.as_str(),
+                urlencoding::encode("MemFS Manager is not configured.")
+            );
+            return Ok(Redirect::to(&target).into_response());
+        }
+        Err(err) => {
+            let target = format!(
+                "/bear/{}/details/memory?role={}&error={}",
+                bear.slug,
+                role.as_str(),
+                urlencoding::encode(&err.to_string())
+            );
+            return Ok(Redirect::to(&target).into_response());
+        }
+    };
+    let target = format!(
+        "/bear/{}/details/memory?role={}&deleted={}",
+        bear.slug,
+        role.as_str(),
+        deleted
+    );
+    Ok(Redirect::to(&target).into_response())
 }
 
 async fn bear_runtime_blocks_get(

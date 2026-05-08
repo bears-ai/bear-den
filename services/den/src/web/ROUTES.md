@@ -43,7 +43,8 @@ Axum routes for the web server (`RUN_WEB=true`). Update this file when you add o
 - `GET /bear/{slug}/details/access` — manage members (add/remove); bear admins only
 - `GET /bear/{slug}/details/conversations` — all threads including archived (Letta); membership required
 - `GET /bear/{slug}/details/roles/{role}` — server-rendered role detail page for `talk`, `pair`, `curate`, `work`, or `watch`; used directly without JS and as progressive-enhancement pane content
-- `GET /bear/{slug}/details/memory` — Bear MemFS memory browser for members: role-aware memory overview, path/content search (`role`, `q`), tree browse, selected file inspection (`path`), activity/status summary, and link to runtime memory blocks.
+- `GET /bear/{slug}/details/memory` — Bear MemFS memory browser for members: role-aware memory overview, path/content search (`role`, `q`), tree browse, selected file inspection (`path`), activity/status summary, select-and-delete form for bear admins, and link to runtime memory blocks.
+- `POST /bear/{slug}/details/memory` — bear admin memory cleanup action; deletes selected Markdown memory files from the selected role branch after confirmation and resets registered role views to canonical.
 - `GET /bear/{slug}/details/memory/runtime-blocks` — Letta-native runtime memory blocks by role agent; separated from Bear MemFS memory and expected to trend toward zero blocks.
 - `POST /bear/{slug}/details/delete` — delete bear row (bear admins only); form field `confirm_slug` must match the slug
 - `POST /bear/{slug}/details/members/add` — add or update a user by username (`username`, `role` = `member` or `admin`) — bear admins only

@@ -10,6 +10,13 @@
         Bear memory is split between shared and role-local memory. Role-local memory can be useful permanently without being promoted to shared memory or Cabinet.
     </p>
 
+    {% if delete_notice %}
+    <p class="form-hint"><span class="success">Deleted {{ delete_notice }} selected memory file{% if delete_notice != 1 %}s{% endif %}.</span></p>
+    {% endif %}
+    {% if delete_error %}
+    <p class="form-errors">{{ delete_error | e }}</p>
+    {% endif %}
+
     <section class="box full-width">
         <h3>Memory overview</h3>
         {% if not memfs_configured %}
@@ -87,8 +94,9 @@
 
     <section class="two-columns">
         <div>
-            <div class="box full-width">
+            <form class="box full-width" method="post" action="/bear/{{ bear.slug | e }}/details/memory">
                 <h3>{{ selected_role | e }} memory tree</h3>
+                <input type="hidden" name="role" value="{{ selected_role | e }}">
                 {% if selected_tree and selected_tree.files and selected_tree.files | length > 0 %}
                 <ul class="den-bear-memory-summary den-private-mem-tree">
                     {% for node in selected_tree.files recursive %}
@@ -99,17 +107,27 @@
                             {% if node.children and node.children | length > 0 %}<ul>{{ loop(node.children) }}</ul>{% endif %}
                         </details>
                         {% else %}
-                        <a href="/bear/{{ bear.slug | e }}/details/memory?role={{ selected_role | e }}&path={{ node.path | urlencode }}"><code>📄 {{ node.path | e }}</code></a>
+                        <label>
+                            <input type="checkbox" name="paths" value="{{ node.path | e }}">
+                            <a href="/bear/{{ bear.slug | e }}/details/memory?role={{ selected_role | e }}&path={{ node.path | urlencode }}"><code>📄 {{ node.path | e }}</code></a>
+                        </label>
                         {% endif %}
                     </li>
                     {% endfor %}
                 </ul>
+                <div class="box full-width">
+                    <h4>Delete selected memory files</h4>
+                    <p class="form-hint">This removes selected Markdown files from the canonical <code>{{ selected_role | e }}</code> memory branch and then resets registered role views to canonical. It is intended for cleanup of test or unwanted role-local memory.</p>
+                    <label for="memory-delete-confirm">Type <code>{{ selected_role | e }}</code> or <code>{{ bear.slug | e }}</code> to confirm</label>
+                    <input id="memory-delete-confirm" name="confirm" autocomplete="off">
+                    <p><button type="submit">Delete selected memory files</button></p>
+                </div>
                 {% elif selected_tree %}
                 <p class="form-hint">No memory files found for this role.</p>
                 {% else %}
                 <p class="form-hint">Memory tree unavailable.</p>
                 {% endif %}
-            </div>
+            </form>
         </div>
         <div>
             <div class="box full-width">
