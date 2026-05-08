@@ -516,12 +516,14 @@ This effort will probably uncover several smaller projects.
 - Decide draft vs autosubmit.
 - Support safe carryover from onboarding to chat.
 - Make the first chat moment feel intentional.
+- Surface template starter prompts and saved first task on chat/details until the user acts on them.
 
 ### Recovery/idempotency
 
 - Handle partially created bears.
 - Handle Letta provisioning failures.
-- Let users retry or create with reduced capability.
+- Redirect to the saved Bear when provisioning fails after creation, instead of leaving the user on a stale create form.
+- Let users retry provisioning or continue with reduced capability.
 
 ### Admin/operator controls
 
@@ -568,5 +570,30 @@ Suggested first slice:
 6. Create the bear using existing provisioning logic.
 7. Store the role-aware `context_profile` in Den.
 8. Redirect to chat with the first task prefilled or shown as a prominent starter action.
+
+## Completed MVP slice
+
+The initial onboarding MVP now includes:
+
+- `/onboarding/first-bear`
+- redirect from home/email verification for verified users with no Bear memberships
+- three hardcoded role-aware templates
+- single-page setup form
+- role contract materialization
+- user steering and Bear context capture
+- `context_profile` storage
+- current provisioning-path prompt generation
+
+## Remaining near-term work
+
+Next onboarding work should add:
+
+1. Better first-task handoff into chat or details.
+2. Display of starter prompts after Bear creation.
+3. Retry/recovery UX for partially provisioned Bears.
+4. Explicit analytics/observability for template choice and completion.
+5. Optional persistence for in-progress onboarding if the single POST form proves too fragile.
+6. Safer transactionality or cleanup around Bear row creation plus membership grant.
+7. A later helper-assisted re-run/tuning path for existing Bears.
 
 This gives users a meaningful guided workflow while avoiding a large multi-step state machine as the very first implementation.

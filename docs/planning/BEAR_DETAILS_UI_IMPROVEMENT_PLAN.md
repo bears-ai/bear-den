@@ -474,6 +474,7 @@ Add a view/modal that shows the full agent-visible prompt for a role.
 Needs:
 
 - role selector
+- previews for all five roles (`talk`, `pair`, `curate`, `work`, `watch`)
 - layer headings
 - copy button
 - links to edit steering/context
@@ -498,6 +499,27 @@ Needs:
 - question forms
 - generated text proposal
 - save/cancel
+
+### Role-aware drift display
+
+Update drift/diagnostic UI to compare against the actual composed role prompts.
+
+Needs:
+
+- expected prompt per role from the role-aware composer
+- per-role drift indicators where practical
+- legacy prompt comparison only for Bears without `context_profile`
+- clear labels if only one role is being compared
+
+### First task and starter prompts
+
+Expose onboarding starter metadata after creation.
+
+Needs:
+
+- show saved `first_task` when present
+- show template starter prompts where useful
+- provide a handoff into chat, such as a prefilled draft or one-click starter
 
 ### Legacy/manual prompt compatibility
 
@@ -545,5 +567,28 @@ Suggested slice:
 5. Show inspectable role contracts.
 6. Keep existing prompt editing path for legacy/manual Bears.
 7. Defer helper-assisted editing and role contract editing.
+
+## Completed MVP slice
+
+The first details-page implementation now includes:
+
+- role-aware `context_profile` support
+- user steering display
+- Bear context display
+- composed prompt previews for `talk` and `pair`
+- legacy prompt fallback
+- a clearer label for role-aware Bears where `system_prompt` is a generated talk prompt snapshot
+
+## Remaining near-term work
+
+Next details UI work should add:
+
+1. Edit forms for `User steering` and `Bear context`.
+2. Inspectable role contracts for all five roles.
+3. Composed prompt previews for `curate`, `work`, and `watch`.
+4. Copy/export buttons for composed role prompts.
+5. First task and starter prompt display/handoff.
+6. Role-aware drift and sync diagnostics.
+7. Explicit manual/legacy prompt conversion behavior.
 
 This gets the details page moving toward transparency and education while respecting the multi-agent Bear architecture.

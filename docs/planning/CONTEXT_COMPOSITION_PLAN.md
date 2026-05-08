@@ -534,7 +534,38 @@ Initial helper behavior:
 
 Helpers should not casually rewrite role contracts.
 
-### Project 9: Future richer model
+### Project 9: Role-aware drift and sync verification
+
+Goal: Make Den compare Letta role agents against the prompts Den actually composes.
+
+Needed work:
+
+- Compute expected prompt per role with the role-aware composer.
+- Compare Letta state against composed role prompts, not raw `bears.system_prompt`, for role-aware Bears.
+- Show per-role drift or clearly label any remaining drift view as role-specific.
+- Keep legacy drift behavior for Bears without `context_profile`.
+
+### Project 10: First-task and starter-prompt handoff
+
+Goal: Make onboarding output actionable after Bear creation.
+
+Needed work:
+
+- Surface `first_task` and template starter prompts on the Bear chat/details page.
+- Decide whether the first task is prefilled, shown as a one-click starter, or autosubmitted with explicit consent.
+- Preserve first task metadata in `context_profile` for details/debug views.
+
+### Project 11: Manual prompt and role-aware mode reconciliation
+
+Goal: Avoid confusing edits where users change `system_prompt` but role-aware composition ignores it.
+
+Needed work:
+
+- Decide whether raw prompt editing on a role-aware Bear is hidden, disabled, or treated as conversion to manual/legacy mode.
+- Add UI copy explaining `system_prompt` as compatibility output for role-aware Bears.
+- Provide an explicit conversion path if manual mode is supported.
+
+### Project 12: Future richer model
 
 Goal: Split the simple role-aware model only when real needs appear.
 
@@ -609,5 +640,27 @@ Implement the foundation in this order:
 5. Add inspectable role contracts.
 6. Update bear creation/provisioning to write generated prompt text where current paths require `system_prompt`.
 7. Build first-bear onboarding on top.
+
+## Completed MVP slice
+
+The initial MVP implementation now covers the first slice above:
+
+- `context_profile` storage exists on `bears`.
+- Role-aware composition exists with Den baseline, role contracts, user steering, Bear context, runtime context, and legacy fallback.
+- First-Bear onboarding writes role-aware context profiles.
+- Bear details displays user steering, Bear context, and composed `talk`/`pair` prompts.
+- Current provisioning paths generate prompt text from the context profile where available.
+
+## Remaining near-term work
+
+The next implementation passes should focus on:
+
+1. Editing UI for `User steering` and `Bear context`.
+2. Composed prompt previews for all five roles, not only `talk` and `pair`.
+3. Inspectable role contract text for all five roles.
+4. Role-aware drift detection using composed role prompts.
+5. First-task/starter-prompt handoff into chat or details.
+6. Clear manual/legacy prompt conversion behavior for role-aware Bears.
+7. Recovery/idempotency improvements around partially provisioned onboarding Bears.
 
 This keeps the model simple enough for v1 while respecting the multi-agent Bear architecture.
