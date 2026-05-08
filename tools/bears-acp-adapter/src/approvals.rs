@@ -565,6 +565,11 @@ pub(crate) fn permission_decision_from_option_id(id: &str) -> PermissionDecision
             remember: true,
             scope: ApprovalScope::Workspace,
         },
+        "allow_url" => PermissionDecision {
+            approved: true,
+            remember: true,
+            scope: ApprovalScope::Workspace,
+        },
         "allow_host" => PermissionDecision {
             approved: true,
             remember: true,

@@ -3538,24 +3538,68 @@ async fn request_tool_permission(
     let options = permission_options_for_context(context, target_path, target_url, target_command);
     let request =
         RequestPermissionRequest::new(session_id.to_string(), tool_call, options).meta(Some(meta));
-    let response = adapter_state
-        .transport
-        .request(
-            "session/request_permission",
-            serde_json::to_value(request)?,
-            std::time::Duration::from_millis(policy.permission_timeout_ms.unwrap_or(120_000)),
-        )
-        .await?;
-    if let Some(error) = response.get("error") {
-        return Err(anyhow!("permission request failed: {error}"));
-    }
-    let result = response.get("result").cloned().unwrap_or(Value::Null);
-    let decision = parse_permission_decision(&result)?;
+    let decision = send_permission_request(
+        adapter_state,
+        request,
+        std::time::Duration::from_millis(policy.permission_timeout_ms.unwrap_or(120_000)),
+    )
+    .await?;
     if decision.approved {
         Ok(decision)
     } else {
         Err(anyhow!("permission denied for {tool_name} on {path}"))
     }
+}
+
+async fn send_permission_request(
+    adapter_state: &mut AdapterState,
+    request: RequestPermissionRequest,
+    timeout: std::time::Duration,
+) -> Result<PermissionDecision> {
+    let response = adapter_state
+        .transport
+        .request("session/request_permission", serde_json::to_value(request)?, timeout)
+        .await?;
+    if let Some(error) = response.get("error") {
+        return Err(anyhow!("permission request failed: {error}"));
+    }
+    let result = response.get("result").cloned().unwrap_or(Value::Null);
+    parse_permission_decision(&result)
+}
+
+async fn post_permission_result(
+    config: &Config,
+    session_id: &str,
+    permission_id: &str,
+    payload: Value,
+) -> Result<()> {
+    let url = format!(
+        "{}/acp/bears/{}/sessions/{}/permissions/{}",
+        config.api_url,
+        urlencoding::encode(&config.bear),
+        urlencoding::encode(session_id),
+        urlencoding::encode(permission_id),
+    );
+    let response = reqwest::Client::new()
+        .post(&url)
+        .header(
+            AUTHORIZATION,
+            HeaderValue::from_str(&format!("Bearer {}", config.token))?,
+        )
+        .header(CONTENT_TYPE, HeaderValue::from_static("application/json"))
+        .json(&payload)
+        .send()
+        .await
+        .with_context(|| format!("post ACP permission decision to Den at {url}"))?;
+    let status = response.status();
+    let body = response.text().await.unwrap_or_default();
+    if !status.is_success() {
+        return Err(anyhow!(
+            "Den permission endpoint returned HTTP {status}: {}",
+            body.trim()
+        ));
+    }
+    Ok(())
 }
 
 async fn post_tool_result(
@@ -3635,6 +3679,10 @@ async fn handle_den_event(
             );
             Ok(false)
         }
+        "permission_request" => {
+            handle_permission_request_event(config, adapter_state, session_id, event).await?;
+            Ok(false)
+        }
         "conversation_resolved" => {
             if let Some(conversation_id) = event
                 .get("conversation_id")
@@ -3665,6 +3713,83 @@ async fn handle_den_event(
         "turn_complete" => Ok(true),
         _ => Ok(false),
     }
+}
+
+async fn handle_permission_request_event(
+    config: &Config,
+    adapter_state: &mut AdapterState,
+    session_id: &str,
+    event: &Value,
+) -> Result<()> {
+    let permission_id = event
+        .get("permission_id")
+        .and_then(Value::as_str)
+        .ok_or_else(|| anyhow!("permission_request missing permission_id"))?;
+    let tool_call_id = event
+        .get("tool_call_id")
+        .and_then(Value::as_str)
+        .unwrap_or(permission_id);
+    let tool_name = event
+        .get("tool_name")
+        .and_then(Value::as_str)
+        .unwrap_or("web_fetch");
+    let title = event
+        .get("title")
+        .and_then(Value::as_str)
+        .unwrap_or("Permission request");
+    let reason = event
+        .get("reason")
+        .and_then(Value::as_str)
+        .unwrap_or("BEARS requests permission.");
+    let target = event.get("target").cloned().unwrap_or_else(|| json!({}));
+    let url = target.get("url").and_then(Value::as_str);
+    let host = target.get("host").and_then(Value::as_str);
+    let display = tool_display(tool_name);
+    let mut content = vec![ToolCallContent::from(format!(
+        "{reason}\n\nTool: {tool_name}\nTarget: {}",
+        url.or(host).unwrap_or("the requested target")
+    ))];
+    let fields = ToolCallUpdateFields::new()
+        .kind(Some(display.kind))
+        .status(Some(ToolCallStatus::Pending))
+        .title(Some(title.to_string()))
+        .content(Some(content.drain(..).collect()))
+        .raw_input(Some(target.clone()));
+    let tool_call = ToolCallUpdate::new(tool_call_id.to_string(), fields).meta(Some({
+        let mut meta = serde_json::Map::new();
+        meta.insert("toolName".to_string(), json!(tool_name));
+        meta.insert("permissionId".to_string(), json!(permission_id));
+        if let Some(url) = url { meta.insert("targetUrl".to_string(), json!(url)); }
+        if let Some(host) = host { meta.insert("targetHost".to_string(), json!(host)); }
+        meta
+    }));
+    let mut options = vec![
+        agent_client_protocol::schema::PermissionOption::new("allow_once", "Allow this fetch once", agent_client_protocol::schema::PermissionOptionKind::AllowOnce),
+    ];
+    if url.is_some() {
+        options.push(agent_client_protocol::schema::PermissionOption::new("allow_url", "Always allow this exact URL", agent_client_protocol::schema::PermissionOptionKind::AllowAlways));
+    }
+    if let Some(host) = host {
+        options.push(agent_client_protocol::schema::PermissionOption::new("allow_host", format!("Always allow this host: {host}"), agent_client_protocol::schema::PermissionOptionKind::AllowAlways));
+    }
+    options.push(agent_client_protocol::schema::PermissionOption::new("reject_once", "Deny this fetch", agent_client_protocol::schema::PermissionOptionKind::RejectOnce));
+    let request = RequestPermissionRequest::new(session_id.to_string(), tool_call, options);
+    let decision = send_permission_request(adapter_state, request, std::time::Duration::from_secs(120)).await?;
+    let decision_str = match decision.scope {
+        ApprovalScope::Host if decision.approved => "allow_host",
+        ApprovalScope::Workspace | ApprovalScope::Directory | ApprovalScope::Command | ApprovalScope::Global if decision.approved => {
+            if decision.remember && url.is_some() { "allow_url" } else { "allow_once" }
+        }
+        _ => "reject_once",
+    };
+    post_permission_result(
+        config,
+        session_id,
+        permission_id,
+        json!({ "decision": decision_str }),
+    )
+    .await?;
+    Ok(())
 }
 
 struct ToolDisplay {
@@ -3754,6 +3879,12 @@ fn tool_display(tool_name: &str) -> ToolDisplay {
             verb: "Creating git stash in",
             permission_operation: "create git stash",
         },
+        "web_fetch" => ToolDisplay {
+            title: "Fetch URL",
+            kind: ToolKind::Fetch,
+            verb: "Fetching",
+            permission_operation: "fetch this URL",
+        },
         "process_run" => ToolDisplay {
             title: "Run process",
             kind: ToolKind::Execute,
@@ -3842,6 +3973,7 @@ fn tool_target_kind(tool_name: &str) -> &'static str {
         "fs_move_path" | "fs_copy_path" => "path",
         "fs_apply_patch" => "patch",
         "git_status" | "git_diff" | "git_log" | "git_show" | "git_add" | "git_restore" | "git_commit" | "git_stash" => "repository",
+        "web_fetch" => "url",
         "process_run" => "command",
         "chrome_open" => "url",
         "chrome_snapshot" | "chrome_console_messages" | "chrome_network_requests" | "chrome_screenshot" => "chrome",
