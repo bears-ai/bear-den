@@ -20,6 +20,7 @@ use crate::{
         bears::{db as bears_db, provision, sync, BearAgent, BearAgentRole},
         letta::{AgentSummary, LettaAgentListItem},
         memory_manager_head::fetch_memfs_role_view_health,
+        web_policy,
     },
     errors::CustomError,
     web::{self, AppState},
@@ -43,12 +44,61 @@ pub fn router() -> Router<AppState> {
         )
         .route_with_tsr("/bears/new", get(new_view).post(new_action))
         .route_with_tsr("/bears/{id}/edit", get(edit_view).post(edit_action))
+        .route_with_tsr("/bears/{id}/web-sources", post(add_web_source_action))
+        .route_with_tsr(
+            "/bears/{id}/web-sources/{source_id}/delete",
+            post(delete_web_source_action),
+        )
+        .route_with_tsr("/bears/{id}/web-approvals", post(add_web_approval_action))
+        .route_with_tsr(
+            "/bears/{id}/web-approvals/{approval_id}/revoke",
+            post(revoke_web_approval_action),
+        )
         .route_with_tsr(
             "/bears/{id}/provision-missing-roles",
             post(provision_missing_roles_action),
         )
         .route_with_tsr("/bears/{id}/retry-letta", post(retry_letta_action))
         .route_with_tsr("/bears/{id}", get(detail_view))
+}
+
+#[derive(Debug, Serialize)]
+struct BearWebSourceRow {
+    id: Uuid,
+    scope_kind: String,
+    scope_value: String,
+    label: Option<String>,
+    policy: String,
+    priority: i32,
+    created_at: String,
+}
+
+#[derive(Debug, Serialize)]
+struct BearWebApprovalRow {
+    id: Uuid,
+    scope_kind: String,
+    scope_value: String,
+    source: String,
+    approved_by_user_id: Option<i32>,
+    created_at: String,
+    expires_at: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct AddWebSourceForm {
+    scope_kind: String,
+    scope_value: String,
+    policy: String,
+    #[serde(default)]
+    label: String,
+    #[serde(default)]
+    priority: Option<i32>,
+}
+
+#[derive(Debug, Deserialize)]
+struct AddWebApprovalForm {
+    scope_kind: String,
+    scope_value: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -170,6 +220,58 @@ impl BearAgentHealthRow {
     }
 }
 
+async fn bear_web_sources(pool: &sqlx::PgPool, bear_id: Uuid) -> Result<Vec<BearWebSourceRow>, CustomError> {
+    let rows = sqlx::query_as::<_, (Uuid, String, String, Option<String>, String, i32, time::OffsetDateTime)>(
+        r#"
+        SELECT id, scope_kind, scope_value, label, policy, priority, created_at
+        FROM bear_web_sources
+        WHERE bear_id = $1
+        ORDER BY policy ASC, priority DESC, scope_kind ASC, scope_value ASC
+        "#,
+    )
+    .bind(bear_id)
+    .fetch_all(pool)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .map(|(id, scope_kind, scope_value, label, policy, priority, created_at)| BearWebSourceRow {
+            id,
+            scope_kind,
+            scope_value,
+            label,
+            policy,
+            priority,
+            created_at: created_at.to_string(),
+        })
+        .collect())
+}
+
+async fn bear_web_approvals(pool: &sqlx::PgPool, bear_id: Uuid) -> Result<Vec<BearWebApprovalRow>, CustomError> {
+    let rows = sqlx::query_as::<_, (Uuid, String, String, String, Option<i32>, time::OffsetDateTime, Option<time::OffsetDateTime>)>(
+        r#"
+        SELECT id, scope_kind, scope_value, source, approved_by_user_id, created_at, expires_at
+        FROM bear_web_approvals
+        WHERE bear_id = $1 AND revoked_at IS NULL
+        ORDER BY created_at DESC
+        "#,
+    )
+    .bind(bear_id)
+    .fetch_all(pool)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .map(|(id, scope_kind, scope_value, source, approved_by_user_id, created_at, expires_at)| BearWebApprovalRow {
+            id,
+            scope_kind,
+            scope_value,
+            source,
+            approved_by_user_id,
+            created_at: created_at.to_string(),
+            expires_at: expires_at.map(|t| t.to_string()),
+        })
+        .collect())
+}
+
 async fn bear_agent_health_rows(
     state: &AppState,
     bear_id: Uuid,
@@ -243,6 +345,8 @@ async fn bear_detail_response(
     let letta_configured = state.letta.is_enabled();
 
     let agent_health_rows = bear_agent_health_rows(state, id, letta_configured).await?;
+    let web_sources = bear_web_sources(state.sqlx_pool(), id).await?;
+    let web_approvals = bear_web_approvals(state.sqlx_pool(), id).await?;
 
     let talk_agent_id = bears_db::role_agent_id(state.sqlx_pool(), bear.id, BearAgentRole::Talk)
         .await?
@@ -295,6 +399,8 @@ async fn bear_detail_response(
             letta_configured,
             talk_agent_id,
             agent_health_rows,
+            web_sources,
+            web_approvals,
             letta_agent_summary,
             letta_agent_fetch_error,
             letta_retry_message,
@@ -721,6 +827,87 @@ async fn edit_action(
         )
         .await
     }
+}
+
+async fn add_web_source_action(
+    Path(id): Path<Uuid>,
+    State(state): State<AppState>,
+    auth_session: AuthSession,
+    Form(form): Form<AddWebSourceForm>,
+) -> Result<Response, CustomError> {
+    let scope_kind = form.scope_kind.trim();
+    let policy = form.policy.trim();
+    if !matches!(scope_kind, "host" | "url") || !matches!(policy, "preferred" | "allowed" | "blocked") {
+        return bear_detail_response(&state, auth_session, id, Some("Invalid web source policy form.".to_string())).await;
+    }
+    let scope_value = if scope_kind == "url" {
+        web_policy::normalize_web_url(&form.scope_value)?.url
+    } else {
+        form.scope_value.trim().trim_end_matches('.').to_ascii_lowercase()
+    };
+    sqlx::query(
+        r#"
+        INSERT INTO bear_web_sources (bear_id, scope_kind, scope_value, label, policy, priority)
+        VALUES ($1, $2, $3, NULLIF($4, ''), $5, $6)
+        ON CONFLICT (bear_id, scope_kind, scope_value)
+        DO UPDATE SET label = EXCLUDED.label,
+                      policy = EXCLUDED.policy,
+                      priority = EXCLUDED.priority,
+                      updated_at = now()
+        "#,
+    )
+    .bind(id)
+    .bind(scope_kind)
+    .bind(scope_value)
+    .bind(form.label.trim())
+    .bind(policy)
+    .bind(form.priority.unwrap_or(0))
+    .execute(state.sqlx_pool())
+    .await?;
+    Ok(Redirect::to(&format!("/admin/bears/{id}")).into_response())
+}
+
+async fn delete_web_source_action(
+    Path((id, source_id)): Path<(Uuid, Uuid)>,
+    State(state): State<AppState>,
+) -> Result<Response, CustomError> {
+    sqlx::query("DELETE FROM bear_web_sources WHERE bear_id = $1 AND id = $2")
+        .bind(id)
+        .bind(source_id)
+        .execute(state.sqlx_pool())
+        .await?;
+    Ok(Redirect::to(&format!("/admin/bears/{id}")).into_response())
+}
+
+async fn add_web_approval_action(
+    Path(id): Path<Uuid>,
+    State(state): State<AppState>,
+    auth_session: AuthSession,
+    Form(form): Form<AddWebApprovalForm>,
+) -> Result<Response, CustomError> {
+    let scope_kind = form.scope_kind.trim();
+    if !matches!(scope_kind, "host" | "url") {
+        return bear_detail_response(&state, auth_session, id, Some("Invalid web approval scope.".to_string())).await;
+    }
+    let scope_value = if scope_kind == "url" {
+        web_policy::normalize_web_url(&form.scope_value)?.url
+    } else {
+        form.scope_value.trim().trim_end_matches('.').to_ascii_lowercase()
+    };
+    web_policy::record_web_approval(state.sqlx_pool(), id, scope_kind, &scope_value, None, "admin", None).await?;
+    Ok(Redirect::to(&format!("/admin/bears/{id}")).into_response())
+}
+
+async fn revoke_web_approval_action(
+    Path((id, approval_id)): Path<(Uuid, Uuid)>,
+    State(state): State<AppState>,
+) -> Result<Response, CustomError> {
+    sqlx::query("UPDATE bear_web_approvals SET revoked_at = now() WHERE bear_id = $1 AND id = $2")
+        .bind(id)
+        .bind(approval_id)
+        .execute(state.sqlx_pool())
+        .await?;
+    Ok(Redirect::to(&format!("/admin/bears/{id}")).into_response())
 }
 
 async fn provision_missing_roles_action(

@@ -40,6 +40,66 @@
 <p><strong>{{ member_count }}</strong> user(s) can use this bear via <code>user_bear</code>.
   <a href="/admin/membership/">Manage membership</a></p>
 
+<h3>Web sources and approvals</h3>
+<p class="form-hint">Preferred sources are pre-approved and are prioritized in web search results. Approvals are user/admin grants created for specific hosts or URLs.</p>
+
+<h4>Preferred, allowed, and blocked sources</h4>
+<form method="post" action="/admin/bears/{{ bear.id }}/web-sources" style="margin-bottom: 1rem; display: flex; gap: 0.5rem; flex-wrap: wrap; align-items: end;">
+  <label>Scope<br><select name="scope_kind"><option value="host">host</option><option value="url">url</option></select></label>
+  <label>Value<br><input type="text" name="scope_value" placeholder="docs.rs or https://example.com/docs" size="36" required></label>
+  <label>Policy<br><select name="policy"><option value="preferred">preferred</option><option value="allowed">allowed</option><option value="blocked">blocked</option></select></label>
+  <label>Label<br><input type="text" name="label" placeholder="Rust docs" size="18"></label>
+  <label>Priority<br><input type="number" name="priority" value="0" style="width: 6rem;"></label>
+  <button type="submit">Save source</button>
+</form>
+{% if web_sources %}
+<table>
+  <thead><tr><th>Policy</th><th>Scope</th><th>Value</th><th>Label</th><th>Priority</th><th>Created</th><th></th></tr></thead>
+  <tbody>
+  {% for source in web_sources %}
+    <tr>
+      <td><code>{{ source.policy }}</code></td>
+      <td><code>{{ source.scope_kind }}</code></td>
+      <td><code>{{ source.scope_value }}</code></td>
+      <td>{% if source.label %}{{ source.label }}{% else %}<em>none</em>{% endif %}</td>
+      <td>{{ source.priority }}</td>
+      <td>{{ source.created_at }}</td>
+      <td><form method="post" action="/admin/bears/{{ bear.id }}/web-sources/{{ source.id }}/delete"><button type="submit">Delete</button></form></td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p><em>No web sources configured.</em></p>
+{% endif %}
+
+<h4>Web fetch approvals</h4>
+<form method="post" action="/admin/bears/{{ bear.id }}/web-approvals" style="margin-bottom: 1rem; display: flex; gap: 0.5rem; flex-wrap: wrap; align-items: end;">
+  <label>Scope<br><select name="scope_kind"><option value="host">host</option><option value="url">url</option></select></label>
+  <label>Value<br><input type="text" name="scope_value" placeholder="docs.rs or https://example.com/docs" size="40" required></label>
+  <button type="submit">Add approval</button>
+</form>
+{% if web_approvals %}
+<table>
+  <thead><tr><th>Scope</th><th>Value</th><th>Source</th><th>User</th><th>Created</th><th>Expires</th><th></th></tr></thead>
+  <tbody>
+  {% for approval in web_approvals %}
+    <tr>
+      <td><code>{{ approval.scope_kind }}</code></td>
+      <td><code>{{ approval.scope_value }}</code></td>
+      <td><code>{{ approval.source }}</code></td>
+      <td>{% if approval.approved_by_user_id %}{{ approval.approved_by_user_id }}{% else %}<em>none</em>{% endif %}</td>
+      <td>{{ approval.created_at }}</td>
+      <td>{% if approval.expires_at %}{{ approval.expires_at }}{% else %}<em>never</em>{% endif %}</td>
+      <td><form method="post" action="/admin/bears/{{ bear.id }}/web-approvals/{{ approval.id }}/revoke"><button type="submit">Revoke</button></form></td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p><em>No active web approvals.</em></p>
+{% endif %}
+
 <h3>Associated Letta agents</h3>
 {% if not letta_configured %}
 <p><em>Letta is not configured on this Den instance</em> (<code>LETTA_BASE_URL</code> empty). Stored role agent ids, if any, are not verified against Letta.</p>
