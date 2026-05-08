@@ -153,6 +153,51 @@ async fn approval_exists(
     Ok(exists)
 }
 
+pub async fn record_web_approval(
+    pool: &PgPool,
+    bear_id: Uuid,
+    scope_kind: &str,
+    scope_value: &str,
+    approved_by_user_id: Option<i32>,
+    source: &str,
+    ttl_seconds: Option<i64>,
+) -> Result<(), CustomError> {
+    if !matches!(scope_kind, "url" | "host") {
+        return Err(CustomError::ValidationError("web approval scope_kind must be url or host".to_string()));
+    }
+    let expires_expr = ttl_seconds.map(|seconds| format!("now() + interval '{} seconds'", seconds.clamp(1, 86_400)));
+    let sql = if expires_expr.is_some() {
+        r#"
+        INSERT INTO bear_web_approvals (bear_id, scope_kind, scope_value, approved_by_user_id, source, expires_at)
+        VALUES ($1, $2, $3, $4, $5, now() + ($6::text || ' seconds')::interval)
+        ON CONFLICT (bear_id, scope_kind, scope_value) WHERE revoked_at IS NULL
+        DO UPDATE SET approved_by_user_id = EXCLUDED.approved_by_user_id,
+                      source = EXCLUDED.source,
+                      expires_at = EXCLUDED.expires_at
+        "#
+    } else {
+        r#"
+        INSERT INTO bear_web_approvals (bear_id, scope_kind, scope_value, approved_by_user_id, source, expires_at)
+        VALUES ($1, $2, $3, $4, $5, NULL)
+        ON CONFLICT (bear_id, scope_kind, scope_value) WHERE revoked_at IS NULL
+        DO UPDATE SET approved_by_user_id = EXCLUDED.approved_by_user_id,
+                      source = EXCLUDED.source,
+                      expires_at = NULL
+        "#
+    };
+    let mut query = sqlx::query(sql)
+        .bind(bear_id)
+        .bind(scope_kind)
+        .bind(scope_value)
+        .bind(approved_by_user_id)
+        .bind(source);
+    if let Some(seconds) = ttl_seconds {
+        query = query.bind(seconds.to_string());
+    }
+    query.execute(pool).await?;
+    Ok(())
+}
+
 pub async fn record_web_fetch_attempt(
     pool: &PgPool,
     bear_id: Uuid,

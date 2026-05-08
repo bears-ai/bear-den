@@ -56,6 +56,16 @@ pub enum AcpGatewayEvent {
         result_tx: Option<oneshot::Sender<AcpToolResultRequest>>,
         result_rx: Option<oneshot::Receiver<AcpToolResultRequest>>,
     },
+    PermissionRequest {
+        request_id: String,
+        permission_id: String,
+        tool_call_id: String,
+        tool_name: String,
+        title: String,
+        reason: String,
+        target: serde_json::Value,
+        options: Vec<String>,
+    },
     ConversationResolved {
         conversation_id: String,
     },
@@ -560,6 +570,7 @@ pub fn acp_event_adapter_type(event: &AcpGatewayEvent) -> &'static str {
         AcpGatewayEvent::TurnComplete { .. } => "turn_complete",
         AcpGatewayEvent::Error { .. } => "error",
         AcpGatewayEvent::ToolRequest { .. } => "tool_request",
+        AcpGatewayEvent::PermissionRequest { .. } => "permission_request",
         AcpGatewayEvent::ConversationResolved { .. } => "conversation_resolved",
     }
 }
@@ -572,6 +583,7 @@ pub fn acp_event_has_visible_output(event: &AcpGatewayEvent) -> bool {
         AcpGatewayEvent::Error { .. } => true,
         AcpGatewayEvent::TurnComplete { .. }
         | AcpGatewayEvent::ToolRequest { .. }
+        | AcpGatewayEvent::PermissionRequest { .. }
         | AcpGatewayEvent::ConversationResolved { .. } => false,
     }
 }
@@ -644,6 +656,31 @@ pub fn acp_event_to_adapter_sse(event: AcpGatewayEvent) -> Bytes {
                 "phase": acp_diag_phase::LETTA_TOOL_CALL_MAPPED,
                 "transport_version": 3,
             },
+        }),
+        AcpGatewayEvent::PermissionRequest {
+            request_id,
+            permission_id,
+            tool_call_id,
+            tool_name,
+            title,
+            reason,
+            target,
+            options,
+        } => serde_json::json!({
+            "type": "permission_request",
+            "request_id": request_id,
+            "permission_id": permission_id,
+            "tool_call_id": tool_call_id,
+            "tool_name": tool_name,
+            "title": title,
+            "reason": reason,
+            "target": target,
+            "options": options,
+            "diagnostic": {
+                "component": "den.acp",
+                "phase": "permission_request_mapped",
+                "transport_version": 3,
+            }
         }),
         AcpGatewayEvent::ConversationResolved { conversation_id } => serde_json::json!({
             "type": "conversation_resolved",
