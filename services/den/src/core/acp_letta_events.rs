@@ -13,6 +13,7 @@ use crate::core::{
 };
 
 const ACP_DEN_SERVER_TOOL_PROVIDER_NAMES: &[&str] = &[
+    "web_fetch",
     "den_web_fetch",
     "den_web_search",
     "den_situation_get",

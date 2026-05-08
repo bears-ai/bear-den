@@ -56,7 +56,7 @@ use tools::git::{
     handle_git_show, handle_git_stash, handle_git_status,
 };
 use tools::process::handle_process_run;
-use tools::web::handle_web_fetch;
+
 use uuid::Uuid;
 
 #[derive(Clone, Debug)]
@@ -1127,7 +1127,6 @@ fn adapter_capabilities_context() -> Value {
             "git_commit": { "supported": true, "version": 1 },
             "git_stash": { "supported": true, "version": 1 },
             "process_run": { "supported": true, "version": 1 },
-            "web_fetch": { "supported": true, "version": 1 },
             "chrome_open": { "supported": true, "version": 1 },
             "chrome_snapshot": { "supported": true, "version": 1 },
             "chrome_console_messages": { "supported": true, "version": 1 },
@@ -1160,7 +1159,6 @@ fn direct_tools_context() -> Value {
         "git_commit": true,
         "git_stash": true,
         "process_run": true,
-        "web_fetch": true,
         "chrome_open": true,
         "chrome_snapshot": true,
         "chrome_console_messages": true,
@@ -1553,7 +1551,6 @@ async fn execute_local_tool(
             let context = session_context(adapter_state, session_id)?;
             handle_process_run(context, session_id, &args, policy).await
         }
-        "web_fetch" => handle_web_fetch(session_id, &args, policy).await,
         "chrome_open" => handle_chrome_open(&args, policy).await,
         "chrome_snapshot" => handle_chrome_snapshot(&args, policy).await,
         "chrome_console_messages" => handle_chrome_console_messages(&args, policy).await,
@@ -3763,12 +3760,6 @@ fn tool_display(tool_name: &str) -> ToolDisplay {
             verb: "Running process in",
             permission_operation: "run this command",
         },
-        "web_fetch" => ToolDisplay {
-            title: "Fetch URL",
-            kind: ToolKind::Fetch,
-            verb: "Fetching",
-            permission_operation: "fetch this URL",
-        },
         "chrome_open" => ToolDisplay { title: "Chrome open", kind: ToolKind::Fetch, verb: "Opening Chrome URL", permission_operation: "open this Chrome URL" },
         "chrome_snapshot" => ToolDisplay { title: "Chrome snapshot", kind: ToolKind::Read, verb: "Reading Chrome snapshot", permission_operation: "read Chrome snapshot" },
         "chrome_console_messages" => ToolDisplay { title: "Chrome console", kind: ToolKind::Read, verb: "Reading Chrome console", permission_operation: "read Chrome console messages" },
@@ -3852,7 +3843,7 @@ fn tool_target_kind(tool_name: &str) -> &'static str {
         "fs_apply_patch" => "patch",
         "git_status" | "git_diff" | "git_log" | "git_show" | "git_add" | "git_restore" | "git_commit" | "git_stash" => "repository",
         "process_run" => "command",
-        "web_fetch" | "chrome_open" => "url",
+        "chrome_open" => "url",
         "chrome_snapshot" | "chrome_console_messages" | "chrome_network_requests" | "chrome_screenshot" => "chrome",
         "fs_delete_path" => "path",
         _ => "file",
@@ -5671,6 +5662,7 @@ mod tests {
         let _ = fs::remove_dir_all(outside);
     }
 
+    #[ignore = "canonical web_fetch is Den-executed; adapter local fetch will be renamed if reintroduced"]
     #[tokio::test]
     async fn web_fetch_fetches_and_truncates_http_response() {
         std::env::set_var("BEARS_ACP_ALLOW_LOCAL_WEB_FETCH_FOR_TESTS", "1");
@@ -5689,7 +5681,7 @@ mod tests {
                 let _ = stream.write_all(response.as_bytes()).await;
             }
         });
-        let result = handle_web_fetch(
+        let result = crate::tools::web::handle_web_fetch(
             "session-1",
             &json!({ "url": format!("http://{}", addr), "max_bytes": 5 }),
             &ToolPolicy { max_bytes: Some(5), total_timeout_ms: Some(10_000), ..Default::default() },
@@ -5702,24 +5694,25 @@ mod tests {
         std::env::remove_var("BEARS_ACP_ALLOW_LOCAL_WEB_FETCH_FOR_TESTS");
     }
 
+    #[ignore = "canonical web_fetch is Den-executed; adapter local fetch will be renamed if reintroduced"]
     #[tokio::test]
     async fn web_fetch_rejects_unsafe_urls() {
         std::env::remove_var("BEARS_ACP_ALLOW_LOCAL_WEB_FETCH_FOR_TESTS");
-        let localhost = handle_web_fetch(
+        let localhost = crate::tools::web::handle_web_fetch(
             "session-1",
             &json!({ "url": "http://localhost:3000" }),
             &ToolPolicy::default(),
         )
         .await;
         assert!(format!("{:#}", localhost.unwrap_err()).contains("localhost"));
-        let metadata = handle_web_fetch(
+        let metadata = crate::tools::web::handle_web_fetch(
             "session-1",
             &json!({ "url": "http://169.254.169.254/latest" }),
             &ToolPolicy::default(),
         )
         .await;
         assert!(format!("{:#}", metadata.unwrap_err()).contains("private"));
-        let invalid = handle_web_fetch(
+        let invalid = crate::tools::web::handle_web_fetch(
             "session-1",
             &json!({ "url": "file:///tmp/x" }),
             &ToolPolicy::default(),

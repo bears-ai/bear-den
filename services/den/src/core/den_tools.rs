@@ -31,6 +31,8 @@ pub const DEN_CAPABILITIES_LIST_SELF: &str = "den.capabilities.list_self";
 pub const DEN_CHANNEL_GET_CONTEXT: &str = "den.channel.get_context";
 pub const DEN_POLICY_GET_SELF: &str = "den.policy.get_self";
 pub const DEN_WEB_FETCH: &str = "den.web.fetch";
+pub const DEN_WEB_FETCH_PROVIDER: &str = "web_fetch";
+pub const DEN_WEB_FETCH_LEGACY_PROVIDER: &str = "den_web_fetch";
 pub const DEN_WEB_SEARCH: &str = "den.web.search";
 pub const DEN_SITUATION_GET: &str = "den.situation.get";
 pub const DEN_MEMORY_WRITE_ENTRY: &str = "den.memory.write_entry";
@@ -62,6 +64,9 @@ const WATCH_ROLES: &[&str] = &["watch"];
 const WORK_ROLES: &[&str] = &["work"];
 
 pub fn provider_safe_tool_name(name: &str) -> String {
+    if name == DEN_WEB_FETCH {
+        return DEN_WEB_FETCH_PROVIDER.to_string();
+    }
     let safe: String = name
         .chars()
         .map(|c| {

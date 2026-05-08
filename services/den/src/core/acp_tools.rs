@@ -39,7 +39,6 @@ pub enum AcpToolName {
     GitCommit,
     GitStash,
     ProcessRun,
-    WebFetch,
     ChromeOpen,
     ChromeSnapshot,
     ChromeConsoleMessages,
@@ -71,7 +70,6 @@ impl AcpToolName {
             Self::GitCommit => &ACP_GIT_COMMIT_TOOL,
             Self::GitStash => &ACP_GIT_STASH_TOOL,
             Self::ProcessRun => &ACP_PROCESS_RUN_TOOL,
-            Self::WebFetch => &ACP_WEB_FETCH_TOOL,
             Self::ChromeOpen => &ACP_CHROME_OPEN_TOOL,
             Self::ChromeSnapshot => &ACP_CHROME_SNAPSHOT_TOOL,
             Self::ChromeConsoleMessages => &ACP_CHROME_CONSOLE_MESSAGES_TOOL,
@@ -103,7 +101,6 @@ impl AcpToolName {
             Self::GitCommit,
             Self::GitStash,
             Self::ProcessRun,
-            Self::WebFetch,
             Self::ChromeOpen,
             Self::ChromeSnapshot,
             Self::ChromeConsoleMessages,
@@ -151,7 +148,7 @@ impl AcpToolName {
             Self::GitCommit => &["message"],
             Self::GitStash => &[],
             Self::ProcessRun => &["command", "cwd"],
-            Self::WebFetch | Self::ChromeOpen => &["url"],
+            Self::ChromeOpen => &["url"],
             Self::ChromeSnapshot
             | Self::ChromeConsoleMessages
             | Self::ChromeNetworkRequests
@@ -219,7 +216,6 @@ impl AcpToolName {
             "bears/process_run" | "process/run" | "process.run" | "process_run" => {
                 Some(Self::ProcessRun)
             }
-            "bears/web_fetch" | "web/fetch" | "web.fetch" | "web_fetch" => Some(Self::WebFetch),
             "bears/chrome_open" | "chrome/open" | "chrome.open" | "chrome_open" => {
                 Some(Self::ChromeOpen)
             }
@@ -571,16 +567,6 @@ pub const ACP_PROCESS_RUN_TOOL: AcpToolDescriptor = AcpToolDescriptor {
     title: "Run process",
     kind: "execute",
     risk: "executes_process",
-};
-
-pub const ACP_WEB_FETCH_TOOL: AcpToolDescriptor = AcpToolDescriptor {
-    provider_name: "web_fetch",
-    canonical_name: "acp.web.fetch",
-    adapter_method: "bears/web_fetch",
-    client_method: "web/fetch",
-    title: "Fetch URL",
-    kind: "fetch",
-    risk: "network_access",
 };
 
 pub const ACP_CHROME_OPEN_TOOL: AcpToolDescriptor = AcpToolDescriptor {
@@ -1014,27 +1000,6 @@ const ACP_PROCESS_RUN_POLICY: AcpToolPolicy = AcpToolPolicy {
     permission_timeout_ms: 120_000,
 };
 
-const ACP_WEB_FETCH_POLICY: AcpToolPolicy = AcpToolPolicy {
-    scope_basis: "acp:tools",
-    role_basis: "pair_agent",
-    allowed_roots_basis: "url.host",
-    path_containment: "adapter_enforced_url_host_scope",
-    approval_required: true,
-    sensitive_path_policy: "client_permission_required",
-    max_lines: None,
-    max_entries: None,
-    max_results: None,
-    max_bytes: Some(262_144),
-    recursive_default: None,
-    include_hidden_default: None,
-    max_replacements: None,
-    create_files: None,
-    allow_multiple: None,
-    deny_hidden_paths: None,
-    total_timeout_ms: 120_000,
-    permission_timeout_ms: 120_000,
-};
-
 const ACP_CHROME_POLICY: AcpToolPolicy = AcpToolPolicy {
     scope_basis: "acp:tools",
     role_basis: "pair_agent",
@@ -1079,7 +1044,6 @@ pub fn acp_tool_policy(tool: AcpToolName) -> AcpToolPolicy {
         AcpToolName::GitCommit => ACP_GIT_WRITE_POLICY,
         AcpToolName::GitStash => ACP_GIT_WRITE_POLICY,
         AcpToolName::ProcessRun => ACP_PROCESS_RUN_POLICY,
-        AcpToolName::WebFetch => ACP_WEB_FETCH_POLICY,
         AcpToolName::ChromeOpen
         | AcpToolName::ChromeSnapshot
         | AcpToolName::ChromeConsoleMessages
@@ -1581,22 +1545,6 @@ pub fn acp_client_tool_descriptor(tool: &AcpToolDescriptor) -> serde_json::Value
                     "env": { "type": "object", "additionalProperties": { "type": "string" }, "description": "Optional non-secret environment values." }
                 },
                 "required": ["command", "cwd"]
-            }
-        }),
-        "web_fetch" => json!({
-            "name": tool.provider_name,
-            "description": format!(
-                "ACP local network tool ({}, target={}, adapter={}, client={}, kind={}, risk={}). Fetches a URL with bounded response size through the local adapter. Approval may be scoped to the URL host including explicit port.",
-                tool.canonical_name, "url_host", tool.adapter_method, tool.client_method, tool.kind, tool.risk,
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "url": { "type": "string", "description": "HTTP or HTTPS URL to fetch." },
-                    "max_bytes": { "type": "integer", "minimum": 1, "maximum": 262144 },
-                    "format": { "type": "string", "enum": ["text", "raw"], "description": "Response format hint. Defaults to text." }
-                },
-                "required": ["url"]
             }
         }),
         "chrome_open" => {
