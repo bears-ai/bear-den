@@ -209,18 +209,35 @@ impl AcpToolName {
             "bears/git_log" | "git/log" | "git.log" | "git_log" => Some(Self::GitLog),
             "bears/git_show" | "git/show" | "git.show" | "git_show" => Some(Self::GitShow),
             "bears/git_add" | "git/add" | "git.add" | "git_add" => Some(Self::GitAdd),
-            "bears/git_restore" | "git/restore" | "git.restore" | "git_restore" => Some(Self::GitRestore),
-            "bears/git_commit" | "git/commit" | "git.commit" | "git_commit" => Some(Self::GitCommit),
+            "bears/git_restore" | "git/restore" | "git.restore" | "git_restore" => {
+                Some(Self::GitRestore)
+            }
+            "bears/git_commit" | "git/commit" | "git.commit" | "git_commit" => {
+                Some(Self::GitCommit)
+            }
             "bears/git_stash" | "git/stash" | "git.stash" | "git_stash" => Some(Self::GitStash),
             "bears/process_run" | "process/run" | "process.run" | "process_run" => {
                 Some(Self::ProcessRun)
             }
             "bears/web_fetch" | "web/fetch" | "web.fetch" | "web_fetch" => Some(Self::WebFetch),
-            "bears/chrome_open" | "chrome/open" | "chrome.open" | "chrome_open" => Some(Self::ChromeOpen),
-            "bears/chrome_snapshot" | "chrome/snapshot" | "chrome.snapshot" | "chrome_snapshot" => Some(Self::ChromeSnapshot),
-            "bears/chrome_console_messages" | "chrome/console_messages" | "chrome.console_messages" | "chrome_console_messages" => Some(Self::ChromeConsoleMessages),
-            "bears/chrome_network_requests" | "chrome/network_requests" | "chrome.network_requests" | "chrome_network_requests" => Some(Self::ChromeNetworkRequests),
-            "bears/chrome_screenshot" | "chrome/screenshot" | "chrome.screenshot" | "chrome_screenshot" => Some(Self::ChromeScreenshot),
+            "bears/chrome_open" | "chrome/open" | "chrome.open" | "chrome_open" => {
+                Some(Self::ChromeOpen)
+            }
+            "bears/chrome_snapshot" | "chrome/snapshot" | "chrome.snapshot" | "chrome_snapshot" => {
+                Some(Self::ChromeSnapshot)
+            }
+            "bears/chrome_console_messages"
+            | "chrome/console_messages"
+            | "chrome.console_messages"
+            | "chrome_console_messages" => Some(Self::ChromeConsoleMessages),
+            "bears/chrome_network_requests"
+            | "chrome/network_requests"
+            | "chrome.network_requests"
+            | "chrome_network_requests" => Some(Self::ChromeNetworkRequests),
+            "bears/chrome_screenshot"
+            | "chrome/screenshot"
+            | "chrome.screenshot"
+            | "chrome_screenshot" => Some(Self::ChromeScreenshot),
             _ => None,
         }
     }
@@ -566,11 +583,51 @@ pub const ACP_WEB_FETCH_TOOL: AcpToolDescriptor = AcpToolDescriptor {
     risk: "network_access",
 };
 
-pub const ACP_CHROME_OPEN_TOOL: AcpToolDescriptor = AcpToolDescriptor { provider_name: "chrome_open", canonical_name: "acp.chrome.open", adapter_method: "bears/chrome_open", client_method: "chrome/open", title: "Chrome open", kind: "fetch", risk: "browser_access" };
-pub const ACP_CHROME_SNAPSHOT_TOOL: AcpToolDescriptor = AcpToolDescriptor { provider_name: "chrome_snapshot", canonical_name: "acp.chrome.snapshot", adapter_method: "bears/chrome_snapshot", client_method: "chrome/snapshot", title: "Chrome snapshot", kind: "read", risk: "browser_access" };
-pub const ACP_CHROME_CONSOLE_MESSAGES_TOOL: AcpToolDescriptor = AcpToolDescriptor { provider_name: "chrome_console_messages", canonical_name: "acp.chrome.console_messages", adapter_method: "bears/chrome_console_messages", client_method: "chrome/console_messages", title: "Chrome console messages", kind: "read", risk: "browser_access" };
-pub const ACP_CHROME_NETWORK_REQUESTS_TOOL: AcpToolDescriptor = AcpToolDescriptor { provider_name: "chrome_network_requests", canonical_name: "acp.chrome.network_requests", adapter_method: "bears/chrome_network_requests", client_method: "chrome/network_requests", title: "Chrome network requests", kind: "read", risk: "browser_access" };
-pub const ACP_CHROME_SCREENSHOT_TOOL: AcpToolDescriptor = AcpToolDescriptor { provider_name: "chrome_screenshot", canonical_name: "acp.chrome.screenshot", adapter_method: "bears/chrome_screenshot", client_method: "chrome/screenshot", title: "Chrome screenshot", kind: "read", risk: "browser_access" };
+pub const ACP_CHROME_OPEN_TOOL: AcpToolDescriptor = AcpToolDescriptor {
+    provider_name: "chrome_open",
+    canonical_name: "acp.chrome.open",
+    adapter_method: "bears/chrome_open",
+    client_method: "chrome/open",
+    title: "Chrome open",
+    kind: "fetch",
+    risk: "browser_access",
+};
+pub const ACP_CHROME_SNAPSHOT_TOOL: AcpToolDescriptor = AcpToolDescriptor {
+    provider_name: "chrome_snapshot",
+    canonical_name: "acp.chrome.snapshot",
+    adapter_method: "bears/chrome_snapshot",
+    client_method: "chrome/snapshot",
+    title: "Chrome snapshot",
+    kind: "read",
+    risk: "browser_access",
+};
+pub const ACP_CHROME_CONSOLE_MESSAGES_TOOL: AcpToolDescriptor = AcpToolDescriptor {
+    provider_name: "chrome_console_messages",
+    canonical_name: "acp.chrome.console_messages",
+    adapter_method: "bears/chrome_console_messages",
+    client_method: "chrome/console_messages",
+    title: "Chrome console messages",
+    kind: "read",
+    risk: "browser_access",
+};
+pub const ACP_CHROME_NETWORK_REQUESTS_TOOL: AcpToolDescriptor = AcpToolDescriptor {
+    provider_name: "chrome_network_requests",
+    canonical_name: "acp.chrome.network_requests",
+    adapter_method: "bears/chrome_network_requests",
+    client_method: "chrome/network_requests",
+    title: "Chrome network requests",
+    kind: "read",
+    risk: "browser_access",
+};
+pub const ACP_CHROME_SCREENSHOT_TOOL: AcpToolDescriptor = AcpToolDescriptor {
+    provider_name: "chrome_screenshot",
+    canonical_name: "acp.chrome.screenshot",
+    adapter_method: "bears/chrome_screenshot",
+    client_method: "chrome/screenshot",
+    title: "Chrome screenshot",
+    kind: "read",
+    risk: "browser_access",
+};
 
 pub fn provider_tool_name_is_safe(name: &str) -> bool {
     !name.is_empty()
@@ -1542,11 +1599,25 @@ pub fn acp_client_tool_descriptor(tool: &AcpToolDescriptor) -> serde_json::Value
                 "required": ["url"]
             }
         }),
-        "chrome_open" => chrome_descriptor(tool, json!({ "url": { "type": "string" } }), vec!["url"]),
+        "chrome_open" => {
+            chrome_descriptor(tool, json!({ "url": { "type": "string" } }), vec!["url"])
+        }
         "chrome_snapshot" => chrome_descriptor(tool, json!({}), Vec::<&str>::new()),
-        "chrome_console_messages" => chrome_descriptor(tool, json!({ "limit": { "type": "integer", "minimum": 1, "maximum": 500 } }), Vec::<&str>::new()),
-        "chrome_network_requests" => chrome_descriptor(tool, json!({ "limit": { "type": "integer", "minimum": 1, "maximum": 500 } }), Vec::<&str>::new()),
-        "chrome_screenshot" => chrome_descriptor(tool, json!({ "format": { "type": "string", "enum": ["png", "jpeg"] } }), Vec::<&str>::new()),
+        "chrome_console_messages" => chrome_descriptor(
+            tool,
+            json!({ "limit": { "type": "integer", "minimum": 1, "maximum": 500 } }),
+            Vec::<&str>::new(),
+        ),
+        "chrome_network_requests" => chrome_descriptor(
+            tool,
+            json!({ "limit": { "type": "integer", "minimum": 1, "maximum": 500 } }),
+            Vec::<&str>::new(),
+        ),
+        "chrome_screenshot" => chrome_descriptor(
+            tool,
+            json!({ "format": { "type": "string", "enum": ["png", "jpeg"] } }),
+            Vec::<&str>::new(),
+        ),
         _ => unreachable!("unknown ACP tool descriptor: {}", tool.provider_name),
     }
 }
@@ -1872,13 +1943,17 @@ mod tests {
 
         let git_log = acp_client_tool_descriptor(&ACP_GIT_LOG_TOOL);
         assert_eq!(git_log["parameters"]["required"], json!([]));
-        assert!(git_log["parameters"]["properties"].get("max_count").is_some());
+        assert!(git_log["parameters"]["properties"]
+            .get("max_count")
+            .is_some());
         assert!(git_log["parameters"]["properties"].get("paths").is_some());
 
         let git_show = acp_client_tool_descriptor(&ACP_GIT_SHOW_TOOL);
         assert_eq!(git_show["parameters"]["required"], json!(["revision"]));
         assert!(git_show["parameters"]["properties"].get("path").is_some());
-        assert!(git_show["parameters"]["properties"].get("max_bytes").is_some());
+        assert!(git_show["parameters"]["properties"]
+            .get("max_bytes")
+            .is_some());
     }
 
     #[test]

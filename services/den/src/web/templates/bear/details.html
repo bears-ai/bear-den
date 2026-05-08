@@ -144,6 +144,53 @@ block subnav %}
         </div>
     </section>
 
+    <section class="two-columns">
+        <div>
+            <div id="user-steering" class="box full-width">
+                <h3>User steering</h3>
+                <p class="form-hint">These instructions steer how this Bear works with you without changing internal role boundaries.</p>
+                {% if template_label %}
+                <p class="caption">Started from template: {{ template_label | e }}</p>
+                {% endif %}
+                {% if user_steering %}
+                <pre class="den-bear-prompt-pre">{{ user_steering | e }}</pre>
+                {% elif context_profile_enabled %}
+                <p class="caption">No user steering saved.</p>
+                {% else %}
+                <p class="caption">This Bear uses a legacy/manual prompt.</p>
+                {% endif %}
+            </div>
+        </div>
+        <div>
+            <div id="bear-context" class="box full-width">
+                <h3>Bear context</h3>
+                <p class="form-hint">Stable context this Bear should know. Onboarding and setup helpers write here.</p>
+                {% if bear_context %}
+                <pre class="den-bear-prompt-pre">{{ bear_context | e }}</pre>
+                {% elif context_profile_enabled %}
+                <p class="caption">No Bear context saved.</p>
+                {% else %}
+                <p class="caption">No role-aware context profile is stored yet.</p>
+                {% endif %}
+            </div>
+        </div>
+    </section>
+
+    <section>
+        <div id="composed-prompts" class="box full-width">
+            <h3>Composed role prompts</h3>
+            <p class="form-hint">Den combines the Den baseline, protected role contract, user steering, Bear context, and runtime context into the prompt each role sees.</p>
+            <details>
+                <summary>Talk prompt</summary>
+                <pre class="den-bear-prompt-pre">{{ talk_composed_prompt | e }}</pre>
+            </details>
+            <details>
+                <summary>Pair prompt</summary>
+                <pre class="den-bear-prompt-pre">{{ pair_composed_prompt | e }}</pre>
+            </details>
+        </div>
+    </section>
+
     <section>
         <div id="role-agents" class="box full-width">
             <h3>Role agents</h3>
@@ -183,7 +230,10 @@ block subnav %}
     <section class="two-columns">
         <div>
             <div id="prompt" class="box full-width">
-                <h3>System prompt</h3>
+                <h3>{% if context_profile_enabled %}Talk prompt snapshot{% else %}System prompt{% endif %}</h3>
+                {% if context_profile_enabled %}
+                <p class="form-hint">This is generated from Den baseline, the talk role contract, user steering, and Bear context. Edit steering/context above rather than this snapshot.</p>
+                {% endif %}
                 {% if letta_resync_notice == 'ok' %}
                 <p class="form-hint">
                     <span class="success">Letta was updated from Den.</span>
@@ -229,7 +279,7 @@ block subnav %}
                 <pre class="den-bear-prompt-pre">
 {{ bear.system_prompt | e }}</pre
                 >
-                {% if can_manage_bear %}
+                {% if can_manage_bear and not context_profile_enabled %}
                 <ul class="button-row">
                     <li>
                         <a

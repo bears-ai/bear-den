@@ -202,6 +202,16 @@ async fn verify_email_process(
 
     tracing::debug!("Verification result: {}", message_key);
 
+    if matches!(
+        verify_outcome.status,
+        VerifyAttemptStatus::Success | VerifyAttemptStatus::Redundant
+    ) {
+        let bears = crate::core::bears::db::list_bears_for_user(&sqlx_pool, user_id).await?;
+        if bears.is_empty() {
+            return Ok(Redirect::to("/onboarding/first-bear").into_response());
+        }
+    }
+
     Ok(web::render_template(
         &state,
         "settings/email/verify_result.html",

@@ -25,7 +25,11 @@ Axum routes for the web server (`RUN_WEB=true`). Update this file when you add o
 
 ## Home (`src/web/home.rs`)
 
-- `GET /` — marketing home when logged out; logged-in users see `dashboard.html` listing bears they may use (links to `/bear/{slug}` and `/bear/{slug}/details`), a link to create bears (`/bears/new`), or redirect to email verify if needed
+- `GET /` — marketing home when logged out; logged-in verified users with bears see `dashboard.html`; verified users with no bears redirect to `/onboarding/first-bear`; unverified users redirect to email verify
+
+## Onboarding (`src/web/onboarding.rs`)
+
+- `GET|POST /onboarding/first-bear` — first Bear setup flow for verified users with no Bear memberships; creates a role-aware `context_profile`, provisions/syncs role agents, and redirects to chat
 
 ## Member bear management (`src/web/bear_management.rs`)
 

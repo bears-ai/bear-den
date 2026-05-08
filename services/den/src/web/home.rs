@@ -42,6 +42,9 @@ async fn home(
                 return Ok(Redirect::to("/settings/email/verify").into_response());
             }
             let rows = bears_db::list_bears_for_user(&state.sqlx_pool, user_id).await?;
+            if rows.is_empty() {
+                return Ok(Redirect::to("/onboarding/first-bear").into_response());
+            }
             let bears: Vec<DashboardBear> = rows
                 .into_iter()
                 .map(|row| DashboardBear {

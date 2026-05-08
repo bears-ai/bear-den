@@ -13,7 +13,7 @@ pub async fn list_bears(pool: &PgPool) -> Result<Vec<Bear>, CustomError> {
     sqlx::query_as::<_, Bear>(
         r#"
         SELECT id, slug, name, description, default_model, tools_enabled,
-               letta_agent_type, letta_tool_ids, runtime_plan,
+               letta_agent_type, letta_tool_ids, runtime_plan, context_profile,
                memfs_repo_path, provisioning_version, system_prompt, created_at, updated_at
         FROM bears
         ORDER BY slug
@@ -28,7 +28,7 @@ pub async fn get_bear(pool: &PgPool, id: Uuid) -> Result<Option<Bear>, CustomErr
     sqlx::query_as::<_, Bear>(
         r#"
         SELECT id, slug, name, description, default_model, tools_enabled,
-               letta_agent_type, letta_tool_ids, runtime_plan,
+               letta_agent_type, letta_tool_ids, runtime_plan, context_profile,
                memfs_repo_path, provisioning_version, system_prompt, created_at, updated_at
         FROM bears
         WHERE id = $1
@@ -118,13 +118,41 @@ pub async fn create_bear(
     letta_agent_type: Option<&str>,
     letta_tool_ids: Json<Vec<String>>,
 ) -> Result<Uuid, CustomError> {
+    create_bear_with_context_profile(
+        pool,
+        slug,
+        name,
+        description,
+        system_prompt,
+        default_model,
+        tools_enabled,
+        letta_agent_type,
+        letta_tool_ids,
+        None,
+    )
+    .await
+}
+
+/// Creates a logical Bear row with optional role-aware context composition profile.
+pub async fn create_bear_with_context_profile(
+    pool: &PgPool,
+    slug: &str,
+    name: &str,
+    description: &str,
+    system_prompt: &str,
+    default_model: Option<&str>,
+    tools_enabled: Option<Json<serde_json::Value>>,
+    letta_agent_type: Option<&str>,
+    letta_tool_ids: Json<Vec<String>>,
+    context_profile: Option<Json<serde_json::Value>>,
+) -> Result<Uuid, CustomError> {
     let row: (Uuid,) = sqlx::query_as(
         r#"
         INSERT INTO bears (
             slug, name, description, system_prompt, default_model, tools_enabled,
-            letta_agent_type, letta_tool_ids
+            letta_agent_type, letta_tool_ids, context_profile
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
         RETURNING id
         "#,
     )
@@ -136,9 +164,36 @@ pub async fn create_bear(
     .bind(tools_enabled)
     .bind(letta_agent_type)
     .bind(letta_tool_ids)
+    .bind(context_profile)
     .fetch_one(pool)
     .await?;
     Ok(row.0)
+}
+
+pub async fn update_bear_context_profile(
+    pool: &PgPool,
+    id: Uuid,
+    context_profile: Option<Json<serde_json::Value>>,
+    system_prompt: &str,
+) -> Result<(), CustomError> {
+    let r = sqlx::query(
+        r#"
+        UPDATE bears
+        SET context_profile = $1,
+            system_prompt = $2,
+            updated_at = NOW()
+        WHERE id = $3
+        "#,
+    )
+    .bind(context_profile)
+    .bind(system_prompt)
+    .bind(id)
+    .execute(pool)
+    .await?;
+    if r.rows_affected() == 0 {
+        return Err(CustomError::NotFound("bear not found".to_string()));
+    }
+    Ok(())
 }
 
 /// Canonical role for users who manage membership and bear settings (not site `users.is_admin`).
@@ -291,7 +346,7 @@ pub async fn list_bears_for_user(
     sqlx::query_as::<_, BearWithMembership>(
         r#"
         SELECT b.id, b.slug, b.name, b.description, b.default_model, b.tools_enabled,
-               b.letta_agent_type, b.letta_tool_ids, b.runtime_plan,
+               b.letta_agent_type, b.letta_tool_ids, b.runtime_plan, b.context_profile,
                b.memfs_repo_path, b.provisioning_version, b.system_prompt, b.created_at, b.updated_at,
                ub.role AS membership_role
         FROM bears b
@@ -315,7 +370,7 @@ pub async fn bear_for_user_by_slug(
     sqlx::query_as::<_, Bear>(
         r#"
         SELECT b.id, b.slug, b.name, b.description, b.default_model, b.tools_enabled,
-               b.letta_agent_type, b.letta_tool_ids, b.runtime_plan,
+               b.letta_agent_type, b.letta_tool_ids, b.runtime_plan, b.context_profile,
                b.memfs_repo_path, b.provisioning_version, b.system_prompt, b.created_at, b.updated_at
         FROM bears b
         INNER JOIN user_bear ub ON ub.bear_id = b.id

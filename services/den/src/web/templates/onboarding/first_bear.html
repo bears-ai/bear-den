@@ -1,0 +1,181 @@
+{% extends "base.html" %}
+
+{% block title %}Set up your first Bear{% endblock %}
+
+{% block content %}
+<section>
+    <h2>Set up your first Bear</h2>
+    <p>
+        Choose a starting point, then steer how this Bear should work with you. Den will preserve the Bear's internal role contracts while your steering and context shape the prompts its roles see.
+    </p>
+
+    {% if provision_error %}
+    <p class="form-errors"><strong>Letta provisioning failed</strong> (Bear was saved): {{ provision_error }}</p>
+    {% endif %}
+    {% if letta_sync_error %}
+    <p class="form-errors"><strong>Letta sync failed</strong> (Bear was saved): {{ letta_sync_error }}</p>
+    {% endif %}
+
+    <form method="post" class="box den-first-bear-form">
+        <h3>1. Choose a template</h3>
+        <div class="den-template-options">
+            {% for t in templates %}
+            <label class="den-template-card{% if form.template_id == t.id %} den-template-card-selected{% endif %}">
+                <input
+                    type="radio"
+                    name="template_id"
+                    value="{{ t.id | e }}"
+                    required
+                    {% if form.template_id == t.id %}checked{% endif %}
+                    data-default-name="{{ t.default_bear_name | e }}"
+                    data-description="{{ t.description | e }}"
+                    data-user-steering="{{ t.default_user_steering | e }}"
+                    data-context-placeholder="{{ t.context_placeholder | e }}"
+                    data-starter-prompt="{{ t.starter_prompts[0] | e }}"
+                />
+                <strong>{{ t.name | e }}</strong>
+                <span>{{ t.description | e }}</span>
+                <small>Try: {{ t.starter_prompts[0] | e }}</small>
+            </label>
+            {% endfor %}
+        </div>
+        {% if errors and errors.template_id %}
+        <p class="form-errors">{{ errors.template_id | map(attribute="message", default="Choose a template.") | join(", ") }}</p>
+        {% endif %}
+
+        <h3>2. Name it</h3>
+        <label for="first_bear_name">Name</label>
+        <div class="form-field{% if errors and errors.name %} has-error{% endif %}">
+            <input id="first_bear_name" name="name" type="text" maxlength="255" required value="{{ form.name | e }}" />
+            {% if errors and errors.name %}
+            <span class="form-hint form-errors">{{ errors.name | map(attribute="message", default="Name is required.") | join(", ") }}</span>
+            {% endif %}
+        </div>
+
+        <label for="first_bear_slug">Slug</label>
+        <div class="form-field{% if errors and errors.slug %} has-error{% endif %}">
+            <input id="first_bear_slug" name="slug" type="text" maxlength="120" required value="{{ form.slug | e }}" />
+            <span class="form-hint">Used in the URL. You can edit it later.</span>
+            {% if errors and errors.slug %}
+            <span class="form-hint form-errors">{{ errors.slug | map(attribute="message", default="Invalid slug.") | join(", ") }}</span>
+            {% endif %}
+        </div>
+
+        <label for="first_bear_description">Description</label>
+        <div class="form-field{% if errors and errors.description %} has-error{% endif %}">
+            <input id="first_bear_description" name="description" type="text" maxlength="2000" value="{{ form.description | e }}" />
+            {% if errors and errors.description %}
+            <span class="form-hint form-errors">{{ errors.description | map(attribute="message", default="Invalid description.") | join(", ") }}</span>
+            {% endif %}
+        </div>
+
+        <h3>3. Steer how it works</h3>
+        <p class="form-hint">
+            This text steers tone, priorities, and collaboration style. It does not replace the protected role contracts for talk, pair, curate, work, and watch.
+        </p>
+        <label for="first_bear_user_steering">User steering</label>
+        <div class="form-field{% if errors and errors.user_steering %} has-error{% endif %}">
+            <textarea id="first_bear_user_steering" name="user_steering" rows="6" cols="72">{{ form.user_steering | e }}</textarea>
+            {% if errors and errors.user_steering %}
+            <span class="form-hint form-errors">{{ errors.user_steering | map(attribute="message", default="Invalid steering text.") | join(", ") }}</span>
+            {% endif %}
+        </div>
+
+        <h3>4. Give it context</h3>
+        <label for="first_bear_context">Bear context</label>
+        <div class="form-field{% if errors and errors.bear_context %} has-error{% endif %}">
+            <textarea id="first_bear_context" name="bear_context" rows="6" cols="72" placeholder="Add stable context this Bear should know.">{{ form.bear_context | e }}</textarea>
+            {% if errors and errors.bear_context %}
+            <span class="form-hint form-errors">{{ errors.bear_context | map(attribute="message", default="Invalid context text.") | join(", ") }}</span>
+            {% endif %}
+        </div>
+
+        <h3>5. First task</h3>
+        <label for="first_bear_task">What should this Bear help you with first?</label>
+        <div class="form-field{% if errors and errors.first_task %} has-error{% endif %}">
+            <textarea id="first_bear_task" name="first_task" rows="3" cols="72">{{ form.first_task | e }}</textarea>
+            <span class="form-hint">For this MVP, this is saved in the Bear context profile. You can start this task after the Bear is created.</span>
+            {% if errors and errors.first_task %}
+            <span class="form-hint form-errors">{{ errors.first_task | map(attribute="message", default="Invalid first task.") | join(", ") }}</span>
+            {% endif %}
+        </div>
+
+        <h3>6. Model</h3>
+        {% if letta_configured %}
+        <label for="default_model_field" {% if errors and errors.default_model %}class="has-error"{% endif %}>Model</label>
+        {% if letta_models_fetch_error %}
+        <p class="form-errors">{{ letta_models_fetch_error }}</p>
+        {% endif %}
+        <div class="form-field{% if errors and errors.default_model %} has-error{% endif %}">
+            {% if letta_model_options and letta_model_options | length > 0 %}
+            <select id="default_model_field" name="default_model" required>
+                <option value="" disabled{% if not form.default_model %} selected{% endif %}>— Choose a model —</option>
+                {% for m in letta_model_options %}
+                <option value="{{ m.handle | e }}"{% if form.default_model == m.handle %} selected{% endif %}>{{ m.label | e }} — {{ m.handle | e }}</option>
+                {% endfor %}
+            </select>
+            {% else %}
+            <input id="default_model_field" name="default_model" type="text" maxlength="255" required placeholder="provider/model-handle" value="{{ form.default_model | e }}" />
+            {% endif %}
+            {% if errors and errors.default_model %}
+            <span class="form-hint form-errors">{{ errors.default_model | map(attribute="message", default="Choose a model.") | join(", ") }}</span>
+            {% endif %}
+        </div>
+        {% else %}
+        <input type="hidden" name="default_model" value="{{ form.default_model | e }}" />
+        {% endif %}
+
+        <p><button type="submit">Create my first Bear</button></p>
+    </form>
+</section>
+
+<script>
+(function () {
+    function slugify(value) {
+        return (value || "")
+            .toLowerCase()
+            .replace(/[^a-z0-9]+/g, "-")
+            .replace(/^-+|-+$/g, "")
+            .slice(0, 120);
+    }
+
+    var nameInput = document.getElementById("first_bear_name");
+    var slugInput = document.getElementById("first_bear_slug");
+    var descriptionInput = document.getElementById("first_bear_description");
+    var steeringInput = document.getElementById("first_bear_user_steering");
+    var contextInput = document.getElementById("first_bear_context");
+    var taskInput = document.getElementById("first_bear_task");
+    var slugTouched = false;
+
+    if (slugInput) {
+        slugInput.addEventListener("input", function () { slugTouched = true; });
+    }
+
+    document.querySelectorAll('input[name="template_id"]').forEach(function (input) {
+        input.addEventListener("change", function () {
+            document.querySelectorAll(".den-template-card").forEach(function (card) {
+                card.classList.remove("den-template-card-selected");
+            });
+            var card = input.closest(".den-template-card");
+            if (card) card.classList.add("den-template-card-selected");
+
+            if (nameInput && !nameInput.value.trim()) nameInput.value = input.dataset.defaultName || "";
+            if (descriptionInput) descriptionInput.value = input.dataset.description || "";
+            if (steeringInput) steeringInput.value = input.dataset.userSteering || "";
+            if (contextInput) contextInput.placeholder = input.dataset.contextPlaceholder || "Add stable context this Bear should know.";
+            if (taskInput && !taskInput.value.trim()) taskInput.value = input.dataset.starterPrompt || "";
+            if (slugInput && !slugTouched && nameInput) slugInput.value = slugify(nameInput.value);
+        });
+    });
+
+    if (nameInput && slugInput) {
+        nameInput.addEventListener("input", function () {
+            if (!slugTouched) slugInput.value = slugify(nameInput.value);
+        });
+    }
+
+    var checked = document.querySelector('input[name="template_id"]:checked');
+    if (checked && contextInput) contextInput.placeholder = checked.dataset.contextPlaceholder || contextInput.placeholder;
+})();
+</script>
+{% endblock %}

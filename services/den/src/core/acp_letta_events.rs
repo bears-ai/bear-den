@@ -330,7 +330,9 @@ fn native_letta_tool_request_event_with_args(
         } else {
             args
         },
-        approval_required: client_approval_required && !den_server_tool && unsupported_tool_detail.is_none(),
+        approval_required: client_approval_required
+            && !den_server_tool
+            && unsupported_tool_detail.is_none(),
         approval_reason: (!den_server_tool && unsupported_tool_detail.is_none()).then(|| {
             "BEARS requires client approval before running this local ACP tool.".to_string()
         }),

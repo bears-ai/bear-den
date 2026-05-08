@@ -6,6 +6,7 @@ pub mod bear_management;
 pub mod design;
 pub mod filters;
 pub mod home;
+pub mod onboarding;
 pub mod public;
 pub mod stack_health;
 pub mod status;
@@ -247,6 +248,7 @@ pub async fn server(
         .merge(
             Router::new()
                 .merge(bear_management::router())
+                .merge(onboarding::router())
                 // TSR: conversation links use `/bear/{slug}/?conversation_id=…`; plain `/bear/{slug}` is the canonical chat URL.
                 .route_with_tsr("/bear/{slug}", get(bear_chat::bear_page))
                 .route_layer(login_required!(Backend, login_url = "/login")),

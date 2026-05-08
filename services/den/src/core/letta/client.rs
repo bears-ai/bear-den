@@ -768,7 +768,10 @@ impl LettaClient {
             "tool_return": tool_return,
         });
         let message = if let Some(approval_request_id) = approval_request_id {
-            if matches!(status, "timeout" | "permission_denied" | "cancelled" | "unsupported") {
+            if matches!(
+                status,
+                "timeout" | "permission_denied" | "cancelled" | "unsupported"
+            ) {
                 tracing::info!(
                     approval_request_id,
                     tool_call_id,

@@ -1370,15 +1370,12 @@ async fn unwedge_session_inner(
     else {
         return Err(CustomError::NotFound("ACP session not found".to_string()));
     };
-    let pair_agent_id = bears_db::role_agent_id(
-        &state.sqlx_pool,
-        session.bear_id,
-        BearAgentRole::Pair,
-    )
-    .await?
-    .ok_or_else(|| {
-        CustomError::ValidationError("bear has no ready pair role agent".to_string())
-    })?;
+    let pair_agent_id =
+        bears_db::role_agent_id(&state.sqlx_pool, session.bear_id, BearAgentRole::Pair)
+            .await?
+            .ok_or_else(|| {
+                CustomError::ValidationError("bear has no ready pair role agent".to_string())
+            })?;
     let run_ids = body
         .get("run_ids")
         .and_then(|v| v.as_array())
@@ -1392,7 +1389,10 @@ async fn unwedge_session_inner(
                 .collect::<Vec<_>>()
         })
         .unwrap_or_default();
-    let cancel_result = state.letta.cancel_agent_runs(&pair_agent_id, &run_ids).await?;
+    let cancel_result = state
+        .letta
+        .cancel_agent_runs(&pair_agent_id, &run_ids)
+        .await?;
     state.acp_tool_turns.cleanup_session(&session_id);
     tracing::warn!(
         acp_session_id = %session_id,
@@ -1816,7 +1816,9 @@ async fn persist_stream_event_side_effects(
         } => {
             if args.get("_unsupported_detail").is_some() {
                 let result_tx = result_tx.take().ok_or_else(|| {
-                    CustomError::System("ACP unsupported tool request missing result channel".to_string())
+                    CustomError::System(
+                        "ACP unsupported tool request missing result channel".to_string(),
+                    )
                 })?;
                 *approval_required = false;
                 *approval_reason = None;
@@ -1851,7 +1853,8 @@ async fn persist_stream_event_side_effects(
                     detail = %detail,
                     "ACP unsupported tool request settled with error result"
                 );
-            } else if let Some(canonical_name) = acp_den_provider_to_canonical_tool_name(tool_name) {
+            } else if let Some(canonical_name) = acp_den_provider_to_canonical_tool_name(tool_name)
+            {
                 let result_tx = result_tx.take().ok_or_else(|| {
                     CustomError::System("ACP Den tool request missing result channel".to_string())
                 })?;

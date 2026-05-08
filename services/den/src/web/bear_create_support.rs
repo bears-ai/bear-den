@@ -8,7 +8,10 @@ use validator::{Validate, ValidationError, ValidationErrors};
 
 use crate::{
     core::{
-        bears::{db as bears_db, Bear},
+        bears::{
+            context_profile_to_json, db as bears_db, templates::first_bear_template, Bear,
+            BearAgentRole,
+        },
         letta::{LettaModelOption, LettaToolOption},
     },
     errors::CustomError,
@@ -436,6 +439,45 @@ pub async fn bear_edit_page_context(
     }
 }
 
+pub fn composed_system_prompt_for_profile_json(
+    name: &str,
+    context_profile: &Json<serde_json::Value>,
+) -> Result<String, CustomError> {
+    let bear = Bear {
+        id: Uuid::nil(),
+        slug: "preview".to_string(),
+        name: name.to_string(),
+        description: String::new(),
+        default_model: None,
+        tools_enabled: None,
+        letta_agent_type: None,
+        letta_tool_ids: Json(Vec::new()),
+        runtime_plan: None,
+        context_profile: Some(context_profile.clone()),
+        memfs_repo_path: None,
+        provisioning_version: 1,
+        system_prompt: String::new(),
+        created_at: time::OffsetDateTime::UNIX_EPOCH,
+        updated_at: time::OffsetDateTime::UNIX_EPOCH,
+    };
+    crate::core::bears::compose_role_context(&bear, BearAgentRole::Talk, None)
+        .map(|context| context.composed_prompt)
+}
+
+pub fn build_context_profile_json_for_template(
+    template_id: &str,
+    bear_name: &str,
+    user_steering: &str,
+    bear_context: &str,
+    first_task: Option<&str>,
+) -> Result<Json<serde_json::Value>, CustomError> {
+    let template = first_bear_template(template_id).ok_or_else(|| {
+        CustomError::ValidationError(format!("unknown first-bear template: {template_id}"))
+    })?;
+    let profile = template.context_profile(bear_name, user_steering, bear_context, first_task);
+    context_profile_to_json(&profile)
+}
+
 /// Shared DB write for creating a bear row (operator or member flow).
 pub async fn insert_new_bear_row(
     pool: &sqlx::PgPool,
@@ -454,6 +496,32 @@ pub async fn insert_new_bear_row(
         None::<Json<serde_json::Value>>,
         letta_agent_type_db.as_deref(),
         Json(letta_tool_ids),
+    )
+    .await
+}
+
+/// Shared DB write for creating a role-aware context-profile bear row.
+pub async fn insert_new_bear_row_with_context_profile(
+    pool: &sqlx::PgPool,
+    form: &NewBearForm,
+    letta_tool_ids: Vec<String>,
+    letta_agent_type_db: Option<String>,
+    default_model_opt: Option<&str>,
+    context_profile: Json<serde_json::Value>,
+) -> Result<Uuid, CustomError> {
+    let system_prompt =
+        composed_system_prompt_for_profile_json(form.name.trim(), &context_profile)?;
+    bears_db::create_bear_with_context_profile(
+        pool,
+        form.slug.trim(),
+        form.name.trim(),
+        form.description.trim(),
+        system_prompt.trim(),
+        default_model_opt,
+        None::<Json<serde_json::Value>>,
+        letta_agent_type_db.as_deref(),
+        Json(letta_tool_ids),
+        Some(context_profile),
     )
     .await
 }

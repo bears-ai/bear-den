@@ -499,7 +499,9 @@ pub async fn write_memfs_role_memory_entry(
         .timeout(Duration::from_secs(30))
         .send()
         .await
-        .map_err(|e| CustomError::System(format!("MemFS role memory entry write request failed: {e}")))?;
+        .map_err(|e| {
+            CustomError::System(format!("MemFS role memory entry write request failed: {e}"))
+        })?;
     let status = resp.status();
     let text = resp.text().await.unwrap_or_default();
     if !status.is_success() {
@@ -508,7 +510,9 @@ pub async fn write_memfs_role_memory_entry(
         )));
     }
     let payload: MemfsWriteRoleMemoryEntryResponse = serde_json::from_str(&text).map_err(|e| {
-        CustomError::Parsing(format!("MemFS role memory entry write JSON: {e}; body: {text}"))
+        CustomError::Parsing(format!(
+            "MemFS role memory entry write JSON: {e}; body: {text}"
+        ))
     })?;
     if !payload.ok {
         return Err(CustomError::System(format!(
@@ -528,15 +532,7 @@ pub async fn fetch_memfs_role_memory_status(
     bear_id: uuid::Uuid,
     role: &str,
 ) -> Result<Option<MemfsRoleMemoryStatusResponse>, CustomError> {
-    fetch_memfs_role_memory_json(
-        http,
-        base_url,
-        bear_id,
-        role,
-        "memory-status",
-        &[],
-    )
-    .await
+    fetch_memfs_role_memory_json(http, base_url, bear_id, role, "memory-status", &[]).await
 }
 
 pub async fn fetch_memfs_role_memory_tree(
@@ -579,15 +575,7 @@ pub async fn search_memfs_role_memory(
     if let Some(limit_ref) = limit_string.as_deref() {
         params.push(("limit", limit_ref));
     }
-    fetch_memfs_role_memory_json(
-        http,
-        base_url,
-        bear_id,
-        role,
-        "memory-search",
-        &params,
-    )
-    .await
+    fetch_memfs_role_memory_json(http, base_url, bear_id, role, "memory-search", &params).await
 }
 
 async fn fetch_memfs_role_memory_json<T>(
@@ -619,7 +607,9 @@ where
         .timeout(Duration::from_secs(15))
         .send()
         .await
-        .map_err(|e| CustomError::System(format!("MemFS role memory {endpoint} request failed: {e}")))?;
+        .map_err(|e| {
+            CustomError::System(format!("MemFS role memory {endpoint} request failed: {e}"))
+        })?;
     if resp.status() == reqwest::StatusCode::NOT_FOUND {
         return Ok(None);
     }
@@ -631,7 +621,9 @@ where
         )));
     }
     let payload: T = serde_json::from_str(&text).map_err(|e| {
-        CustomError::Parsing(format!("MemFS role memory {endpoint} JSON: {e}; body: {text}"))
+        CustomError::Parsing(format!(
+            "MemFS role memory {endpoint} JSON: {e}; body: {text}"
+        ))
     })?;
     Ok(Some(payload))
 }

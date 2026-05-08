@@ -444,6 +444,56 @@ body.bear_chat .den-conv-button-container:hover {
     font-size: smaller;
 }
 
+/* ---- First Bear onboarding (/onboarding/first-bear) ---- */
+.den-template-options {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: var(--spacing-unit);
+    margin-bottom: calc(var(--spacing-unit) * 1.5);
+}
+
+.den-template-card {
+    display: block;
+    border: solid var(--thin-line-unit) var(--border-color);
+    padding: var(--spacing-unit);
+    cursor: pointer;
+    background: var(--page-color);
+}
+
+.den-template-card-selected,
+.den-template-card:hover {
+    background-color: var(--selected-color);
+    color: var(--selected-text-color);
+}
+
+.den-template-card input {
+    margin-right: calc(var(--spacing-unit) * 0.5);
+}
+
+.den-template-card strong,
+.den-template-card span,
+.den-template-card small {
+    display: block;
+    margin-top: calc(var(--spacing-unit) * 0.5);
+}
+
+.den-template-card small {
+    font-size: smaller;
+}
+
+.den-first-bear-form textarea,
+.den-first-bear-form input[type="text"],
+.den-first-bear-form select {
+    width: 100%;
+    box-sizing: border-box;
+}
+
+@media (max-width: 899px) {
+    .den-template-options {
+        grid-template-columns: 1fr;
+    }
+}
+
 /* ---- Bear details (/bear/:slug/details) ---- */
 .den-bear-inline-list {
     margin-top: 0;

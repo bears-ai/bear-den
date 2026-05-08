@@ -218,6 +218,7 @@ mod tests {
             letta_agent_type: Some("memgpt_agent".into()),
             letta_tool_ids: Json(vec!["t1".into()]),
             runtime_plan: None,
+            context_profile: None,
             memfs_repo_path: None,
             provisioning_version: 1,
             created_at: OffsetDateTime::UNIX_EPOCH,

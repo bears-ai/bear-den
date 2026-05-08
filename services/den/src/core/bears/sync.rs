@@ -148,7 +148,20 @@ async fn sync_one_role(
         None
     };
 
-    let prompt = render_role_prompt(bear, role);
+    let prompt = match render_role_prompt(bear, role) {
+        Ok(prompt) => prompt,
+        Err(err) => {
+            let msg = format!("role prompt rendering failed: {err}");
+            let _ = bears_db::mark_bear_agent_drifted(pool, bear.id, role, &msg).await;
+            tracing::warn!(bear_id = %bear.id, role = %role, letta_agent_id = %agent_id, error = %err, "role sync failed rendering prompt");
+            return BearRoleSyncOutcome {
+                role: role.as_str().to_string(),
+                letta_agent_id: Some(agent_id),
+                status: "failed".to_string(),
+                message: Some(msg),
+            };
+        }
+    };
     let role_name = role_agent_name(bear, role);
 
     if let Err(err) = letta

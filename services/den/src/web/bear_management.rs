@@ -720,6 +720,35 @@ async fn render_bear_details_page(
         (Vec::new(), 0)
     };
 
+    let context_profile = crate::core::bears::context_profile_from_json(&bear.context_profile)?;
+    let user_steering = context_profile
+        .as_ref()
+        .map(|p| p.user_steering.trim().to_string())
+        .filter(|s| !s.is_empty());
+    let bear_context = context_profile
+        .as_ref()
+        .map(|p| p.bear_context.trim().to_string())
+        .filter(|s| !s.is_empty());
+    let template_label = context_profile.as_ref().and_then(|p| {
+        p.template_id.as_deref().and_then(|id| {
+            crate::core::bears::templates::first_bear_template(id)
+                .map(|template| template.name.to_string())
+                .or_else(|| Some(id.to_string()))
+        })
+    });
+    let talk_composed_prompt = crate::core::bears::compose_role_context(
+        &bear,
+        BearAgentRole::Talk,
+        Some("Runtime/thread context is injected when this role handles a specific chat."),
+    )?
+    .composed_prompt;
+    let pair_composed_prompt = crate::core::bears::compose_role_context(
+        &bear,
+        BearAgentRole::Pair,
+        Some("Runtime/thread context is injected when this role handles a specific ACP/client session."),
+    )?
+    .composed_prompt;
+
     let letta_tool_ids_display = if bear.letta_tool_ids.0.is_empty() {
         None
     } else {
@@ -790,6 +819,12 @@ async fn render_bear_details_page(
             letta_api_base,
             talk_agent_id,
             role_rows,
+            context_profile_enabled => bear.context_profile.is_some(),
+            user_steering,
+            bear_context,
+            template_label,
+            talk_composed_prompt,
+            pair_composed_prompt,
             letta_agent_summary,
             letta_agent_fetch_error,
             letta_drift,
@@ -1508,10 +1543,22 @@ async fn bear_memory_get(
             error: None,
         };
         if !memfs_url.is_empty() {
-            match fetch_memfs_role_memory_status(state.letta.http(), memfs_url, bear.id, role.as_str()).await {
+            match fetch_memfs_role_memory_status(
+                state.letta.http(),
+                memfs_url,
+                bear.id,
+                role.as_str(),
+            )
+            .await
+            {
                 Ok(Some(status)) => {
                     row.status_state = status.canonical_tip.as_ref().map(|_| "ok".to_string());
-                    row.status_label = if status.ok { "Available" } else { "Unavailable" }.to_string();
+                    row.status_label = if status.ok {
+                        "Available"
+                    } else {
+                        "Unavailable"
+                    }
+                    .to_string();
                     row.file_count = status.file_count;
                     row.registered_view_count = status.registered_view_count;
                     row.canonical_tip = status.canonical_tip;

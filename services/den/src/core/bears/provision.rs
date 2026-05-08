@@ -11,6 +11,7 @@ use crate::core::{
     bifrost::BifrostClient, letta::LettaClient, memory_manager_head::register_memfs_role_view,
 };
 
+use super::context_composition;
 use super::db as bears_db;
 use super::model::{Bear, BearAgentRole};
 use super::runtime_plan::default_runtime_plan;
@@ -275,7 +276,7 @@ async fn create_role_agent(
     };
 
     let name = role_agent_name(bear, role);
-    let prompt = render_role_prompt(bear, role);
+    let prompt = render_role_prompt(bear, role)?;
     let tags = role.tags_for_bear(bear.id);
 
     letta
@@ -337,36 +338,8 @@ pub(crate) fn desired_role_tool_ids(bear: &Bear, role: BearAgentRole) -> Vec<Str
     }
 }
 
-pub(crate) fn render_role_prompt(bear: &Bear, role: BearAgentRole) -> String {
-    let mut prompt = bear.system_prompt.trim().to_string();
-    if !prompt.is_empty() {
-        prompt.push_str("\n\n");
-    }
-    prompt.push_str("# BEARS role assignment\n");
-    prompt.push_str(&format!(
-        "You are the `{}` role agent for the logical Bear `{}`. \
-         Preserve the Bear identity while obeying this role boundary.\n",
-        role.as_str(),
-        bear.name
-    ));
-    prompt.push_str(match role {
-        BearAgentRole::Talk => {
-            "Use conversational channels only. Read core/ and talk/; write only talk/. Use den.work_plan.update for live planning/status, Den tools for task intents, and skill proposals."
-        }
-        BearAgentRole::Pair => {
-            "Serve ACP clients. Read core/ and pair/; write only pair/. Client tools are user-gated through ACP. Use den.work_plan.update for live planning/status, Den tools for task intents, and skill proposals."
-        }
-        BearAgentRole::Curate => {
-            "Review branches, task intents, observations, results, and skill proposals. Write directly only to curate/ and core/. No external communication tools are allowed."
-        }
-        BearAgentRole::Work => {
-            "Execute approved outbound work through the Letta Code harness. Read only core/, the dispatched task definition, and work/. Write only work/. Obey Den-issued run context, allowed_tools, and scope. Use den.work_plan.update for execution status."
-        }
-        BearAgentRole::Watch => {
-            "Record inbound external observations. Read only core/, delivered event payloads, and watch/. Write only watch/. No outbound action tools are allowed."
-        }
-    });
-    prompt
+pub(crate) fn render_role_prompt(bear: &Bear, role: BearAgentRole) -> Result<String, CustomError> {
+    context_composition::render_role_prompt(bear, role)
 }
 
 pub(crate) fn role_config_hash(bear: &Bear, role: BearAgentRole) -> serde_json::Value {
@@ -376,7 +349,7 @@ pub(crate) fn role_config_hash(bear: &Bear, role: BearAgentRole) -> serde_json::
         "runtime_family": role.runtime_family(),
         "bear_provisioning_version": bear.provisioning_version,
         "tool_ids": desired_role_tool_ids(bear, role),
-        "prompt_strategy": "base_prompt_plus_role_suffix_v1",
+        "prompt_strategy": if bear.context_profile.is_some() { "role_aware_context_profile_v1" } else { "legacy_system_prompt_v1" },
         "skills": {
             "manifest_projection": "pending"
         }
@@ -400,6 +373,7 @@ mod tests {
             letta_agent_type: None,
             letta_tool_ids: Json(Vec::new()),
             runtime_plan: None,
+            context_profile: None,
             memfs_repo_path: None,
             provisioning_version: 1,
             system_prompt: String::new(),

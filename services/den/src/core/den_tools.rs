@@ -12,8 +12,8 @@ use crate::{
         bears::{db as bears_db, db::role_is_bear_admin, BearAgentRole},
         memory_manager_head::{
             fetch_memfs_role_memory_file, fetch_memfs_role_memory_status,
-            fetch_memfs_role_memory_tree, search_memfs_role_memory,
-            write_memfs_role_memory_entry, MemfsWriteRoleMemoryEntryRequest,
+            fetch_memfs_role_memory_tree, search_memfs_role_memory, write_memfs_role_memory_entry,
+            MemfsWriteRoleMemoryEntryRequest,
         },
         user,
         work_plans::{
@@ -1170,13 +1170,15 @@ async fn situation_get(
     role: BearAgentRole,
 ) -> Result<Value, CustomError> {
     let member_count = bears_db::count_bear_members(pool, context.bear_id).await?;
-    let memory_status = memory_status_value(config, context, role).await.unwrap_or_else(|err| {
-        json!({
-            "configured": !config.letta_memfs_service_url.trim().is_empty(),
-            "available": false,
-            "error": err.to_string()
-        })
-    });
+    let memory_status = memory_status_value(config, context, role)
+        .await
+        .unwrap_or_else(|err| {
+            json!({
+                "configured": !config.letta_memfs_service_url.trim().is_empty(),
+                "available": false,
+                "error": err.to_string()
+            })
+        });
     Ok(json!({
         "bear": {
             "bear_id": context.bear_id,
@@ -1363,7 +1365,9 @@ async fn memory_read(
     let args: MemoryReadArguments = serde_json::from_value(arguments)?;
     let path = args.path.trim();
     if path.is_empty() {
-        return Err(CustomError::ValidationError("path must not be empty".to_string()));
+        return Err(CustomError::ValidationError(
+            "path must not be empty".to_string(),
+        ));
     }
     let http = memfs_http_client("MemFS memory read client build failed")?;
     let response = fetch_memfs_role_memory_file(
@@ -1397,7 +1401,9 @@ async fn memory_search(
     let args: MemorySearchArguments = serde_json::from_value(arguments)?;
     let query = args.query.trim();
     if query.is_empty() {
-        return Err(CustomError::ValidationError("query must not be empty".to_string()));
+        return Err(CustomError::ValidationError(
+            "query must not be empty".to_string(),
+        ));
     }
     let http = memfs_http_client("MemFS memory search client build failed")?;
     let response = search_memfs_role_memory(
@@ -1586,7 +1592,14 @@ fn memory_read_scopes(role: BearAgentRole) -> Vec<&'static str> {
 
 fn memory_write_scopes(role: BearAgentRole) -> Vec<&'static str> {
     match role {
-        BearAgentRole::Pair => vec!["pair/notes/", "pair/logs/", "pair/decisions/", "pair/reflections/", "pair/scratch/", "pair/summaries/"],
+        BearAgentRole::Pair => vec![
+            "pair/notes/",
+            "pair/logs/",
+            "pair/decisions/",
+            "pair/reflections/",
+            "pair/scratch/",
+            "pair/summaries/",
+        ],
         _ => Vec::new(),
     }
 }
