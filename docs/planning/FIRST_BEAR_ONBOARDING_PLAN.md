@@ -2,17 +2,17 @@
 
 ## Summary
 
-After email verification, new users should be sent directly into a guided "first bear" setup flow. The flow should use **heavy templates with simple language**: internally, templates may shape prompts, memory posture, capabilities, initial context, and follow-up workflows; externally, users should feel like they are answering practical questions about how they want their bear to work with them.
+After email verification, new users should be sent directly into a guided "first bear" setup flow. The flow should use **heavy templates with simple language**: internally, templates materialize role contracts for the Bear's five internal roles and collect user steering/context; externally, users should feel like they are answering practical questions about how they want their Bear to work with them.
 
 The goal is not merely to create a bear record. The goal is to introduce the product model and create a first bear that is immediately useful.
 
 ## Product thesis
 
-A bear should not feel like a generic chat window with a name. It should feel like a persistent helper with:
+A Bear should not feel like a generic chat window with a name. It should feel like one coherent assistant backed by specialized internal roles, with:
 
-- a role
-- a working style
-- remembered context
+- protected role contracts for `talk`, `pair`, `curate`, `work`, and `watch`
+- user steering for working style and preferences
+- remembered/stable context
 - clear capabilities and boundaries
 - starter tasks
 - a reason to come back
@@ -109,7 +109,7 @@ Instead, ask users:
 - What should it help with first?
 - Which actions should require confirmation?
 
-The implementation maps these answers to system prompt fragments, stored configuration, memory seeds, capability expectations, and future integrations.
+The implementation maps these answers primarily to **user steering** and **Bear context**. Template defaults provide the protected role contracts that preserve the multi-agent Bear architecture.
 
 ## Onboarding flow
 
@@ -181,7 +181,7 @@ Examples for Research & Writing Partner:
 - Should it ask clarifying questions before drafting?
 - Should it focus more on learning, research, or writing output?
 
-These answers should be stored as structured setup answers and incorporated into generated prompt/context.
+These answers should be stored as structured setup answers and incorporated into generated **user steering**, not into protected role contracts.
 
 ### Step 4: Context seeding
 
@@ -320,9 +320,9 @@ Each template should include:
 - short description
 - example tasks
 - default bear name
-- base system prompt fragment
-- setup questions
-- memory seed mapping
+- role contracts or role contract references for `talk`, `pair`, `curate`, `work`, and `watch`
+- setup questions that generate user steering
+- context questions that generate Bear context
 - capability expectations
 - optional runtime/tool hints
 - intro message
@@ -330,19 +330,19 @@ Each template should include:
 
 Expected enabling project: design template definition format.
 
-#### 4. Prompt assembly service
+#### 4. Role-aware context composition service
 
-A service should assemble the final bear prompt from:
+A service should assemble role-specific prompts from:
 
-- base organization policy / global defaults
-- selected template prompt
-- structured setup answers
-- user-provided context
-- safe capability/permission language
+- Den baseline
+- the selected role contract
+- generated user steering
+- user-provided Bear context
+- runtime/thread context when available
 
-This should avoid stringly ad hoc prompt construction in route handlers.
+This should avoid stringly ad hoc prompt construction in route handlers and preserve the internal `talk`, `pair`, `curate`, `work`, and `watch` boundaries.
 
-Expected enabling project: define prompt composition rules and test fixtures.
+Expected enabling project: define role-aware context composition rules and test fixtures.
 
 #### 5. Bear provisioning integration
 
@@ -372,8 +372,8 @@ Examples:
 
 Possible approaches:
 
-- include in system prompt only
-- seed Letta memory blocks
+- include in Bear context
+- seed Letta memory blocks when appropriate
 - store onboarding answers in Den and expose them to tools/runtime
 - create an initial assistant/user exchange that captures the context
 
@@ -429,10 +429,12 @@ Conceptual shape:
   "name": "Software Product Builder",
   "default_bear_name": "Product Builder",
   "description": "Build software with a partner who can plan, code, and document.",
-  "prompt_fragments": {
-    "base": "...",
-    "memory_policy": "...",
-    "permissions": "..."
+  "role_contracts": {
+    "talk": "...",
+    "pair": "...",
+    "curate": "...",
+    "work": "...",
+    "watch": "..."
   },
   "questions": [
     {
@@ -442,6 +444,7 @@ Conceptual shape:
       "options": ["Plan first", "Move quickly", "Ask me each time"]
     }
   ],
+  "default_user_steering": "Prefer concise implementation plans before code changes...",
   "capability_intents": ["code_workspace", "docs", "implementation_planning"],
   "starter_prompts": [
     "Help me turn an app idea into an MVP plan.",
@@ -485,11 +488,11 @@ This effort will probably uncover several smaller projects.
 - Choose code vs data-file representation.
 - Add validation/tests for templates.
 
-### Prompt composition
+### Role-aware context composition
 
-- Build a prompt assembly layer.
-- Snapshot expected prompts in tests.
-- Keep operator defaults and template fragments composable.
+- Build a role-aware prompt assembly layer.
+- Snapshot expected role prompts in tests.
+- Keep Den baseline, role contracts, user steering, and Bear context composable.
 
 ### Bear creation service extraction
 
@@ -560,9 +563,10 @@ Suggested first slice:
    - working style
    - initial context
    - first task
-4. Assemble a template-specific system prompt.
-5. Create the bear using existing provisioning logic.
-6. Store onboarding answers in Den JSON for future use if cheap to add.
-7. Redirect to chat with the first task prefilled or shown as a prominent starter action.
+4. Materialize role contracts and generate user steering/Bear context.
+5. Generate prompt output needed by current provisioning paths.
+6. Create the bear using existing provisioning logic.
+7. Store the role-aware `context_profile` in Den.
+8. Redirect to chat with the first task prefilled or shown as a prominent starter action.
 
 This gives users a meaningful guided workflow while avoiding a large multi-step state machine as the very first implementation.

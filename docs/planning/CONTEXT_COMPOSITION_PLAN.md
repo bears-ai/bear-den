@@ -2,100 +2,145 @@
 
 ## Summary
 
-Before building first-bear onboarding or significantly redesigning the bear details UI, BEARS should define a simple context composition model.
+Before building first-bear onboarding or significantly redesigning the bear details UI, BEARS should define a **role-aware context composition model**.
 
-The earlier instruction-section architecture remains directionally useful, but the first implementation should be much simpler. We should avoid building a prompt CMS too early. Instead, start with three legible layers:
+A Bear feels like one coherent assistant to a user, but internally it has five specialized roles: `talk`, `pair`, `curate`, `work`, and `watch`. Context composition must therefore let users steer their Bear without accidentally breaking the role boundaries that make the Bear useful and safe.
+
+The first implementation should still be simple. Avoid building a prompt CMS too early. Start with five legible layers:
 
 1. **Den baseline**
-2. **Bear instructions**
-3. **Bear context**
+2. **Role contracts**
+3. **User steering**
+4. **Bear context**
+5. **Runtime/thread context**
 
-The composed prompt is the agent-visible output of those layers.
-
-This gives us enough structure to support heavy onboarding templates, transparent bear details, and future prompt helpers without prematurely modeling every possible instruction section.
+The composed role prompt is the agent-visible output for a specific Bear role.
 
 ## Core principle
 
-Context composition should be principled, but v1 should stay small.
+Context composition should be principled, role-aware, and transparent.
 
-BEARS should teach users that bears are shaped by written instructions and stable context. The user should be able to inspect what the agent will see. Prompt composition tools are authoring shortcuts, not hidden abstractions.
+BEARS should teach users that Bears are shaped by instructions and context. Users should be able to inspect what each role will see. Prompt composition tools are authoring shortcuts, not hidden abstractions.
 
 The UI should communicate:
 
-> Den combines a baseline, this bear's instructions, and this bear's context into the prompt the agent sees.
+> Den combines a baseline, protected role contracts, your steering, and this Bear's context into the prompt each role sees.
+
+## Why role-aware composition is necessary
+
+The earlier simplified model of `Den baseline + Bear instructions + Bear context` is too single-agent. It does not preserve the five-role Bear architecture.
+
+Users should be able to steer preferences such as:
+
+- tone
+- answer depth
+- planning style
+- proactivity
+- output format
+- preferred workflows
+- project priorities
+
+But user steering should not casually override structural role boundaries, such as:
+
+- `talk` should not perform arbitrary autonomous outbound work.
+- `pair` should remain client-mediated and user-gated.
+- `curate` should remain the semantic integration and review authority.
+- `work` should execute only approved outbound tasks in approved scope.
+- `watch` should observe inbound events and produce observations, not take outbound action.
+
+The core rule is:
+
+> Users steer priorities and collaboration style; Den preserves role contracts.
 
 ## Concept model
 
 ### 1. Den baseline
 
-The Den baseline is the platform-level instruction layer applied to bears.
+The Den baseline is the platform-level instruction layer applied to Bear roles.
 
 It is controlled by Den/operators, not by normal users.
 
 It may include:
 
 - safety boundaries
-- BEARS/Den operating model
-- basic self-awareness for a bear
+- Den/BEARS operating model
+- global role-boundary reminders
 - global tool-use expectations
 - global memory/privacy posture
-- instruction to avoid claiming unavailable capabilities
 - confirmation requirements for risky actions
-
-The Den baseline should not be the primary thing users edit. It can eventually be inspectable, but it should not dominate the first details-page redesign.
+- instruction to avoid claiming unavailable capabilities
 
 Example responsibilities:
 
 ```/dev/null/den-baseline.md#L1-10
-You are operating as a bear in Den.
-You may have access to configured tools, memory, and thread context.
-Do not claim access to systems or tools unless they are available in the current runtime.
+You are operating as a Bear role in Den.
+A Bear feels like one assistant to the user, but internally it has specialized roles.
+Preserve role boundaries and do not claim tools or authority unavailable in the current runtime.
 Ask before destructive or externally visible actions.
 Do not intentionally remember secrets or credentials.
 ```
 
-### 2. Bear instructions
+### 2. Role contracts
 
-Bear instructions are the main user/admin-controlled instruction block.
+Role contracts are the protected structural instructions for the Bear's internal agents.
 
-This is where heavy templates should write most of their output.
+They define what each role is for, what it can do, what it must not do, and how it cooperates with other roles.
 
-It includes:
+The five initial role contracts correspond to:
 
-- bear purpose
-- role
-- working style
-- personality/tone
-- template-specific behavior
-- capability posture in plain language
-- collaboration rules
-- boundaries specific to this bear
+- `talk` — conversational front door
+- `pair` — collaborative client/tool role
+- `curate` — semantic integration and review role
+- `work` — approved outbound executor
+- `watch` — inbound observer
 
-For v1, do not split purpose, personality, working style, and capability guidance into separate stored objects. Use one editable instruction block with readable headings if useful.
+Role contracts may be derived from Den defaults plus the selected Bear template. They should be inspectable, but not the normal user editing surface.
+
+Example `pair` contract fragment:
+
+```/dev/null/pair-role-contract.md#L1-10
+You are the Bear's pair role: the collaborative agent that works alongside the user inside client tools.
+Use client-mediated tools with user approval where appropriate.
+When modifying code, inspect relevant context first, prefer small reviewable changes, and report what changed.
+Do not perform autonomous outbound work outside the client-mediated permission model.
+Do not promote shared memory directly; write durable notes to the pair branch or propose changes for review.
+```
+
+### 3. User steering
+
+User steering is the main user/admin-editable behavior layer.
+
+It captures preferences and priorities without redefining role authority.
+
+It may include:
+
+- preferred tone
+- planning depth
+- proactivity
+- output format
+- coding/detail preferences
+- communication style
+- research/writing style
+- risk tolerance
+- workflow preferences
+
+Templates and onboarding should primarily write to user steering, not directly rewrite role contracts.
 
 Example:
 
-```/dev/null/bear-instructions.md#L1-18
-# Purpose
-Help the user design, build, document, and ship software products.
-
-# Working style
-Be practical, direct, and collaborative. Prefer concrete next steps.
-When product intent is unclear, ask focused clarifying questions.
-
-# Engineering posture
-Prefer small, reviewable changes. When code tools are available, inspect files before proposing edits.
-Do not claim a file was changed unless a tool call succeeded.
-
-# Documentation posture
-When behavior changes, consider whether README, API docs, or release notes should be updated.
+```/dev/null/user-steering.md#L1-12
+The user prefers concise implementation plans before code changes.
+Challenge unclear product assumptions respectfully.
+Keep documentation in sync when behavior changes.
+Prefer small, reviewable code changes.
+When uncertainty matters, call out tradeoffs briefly.
 ```
 
-### 3. Bear context
+### 4. Bear context
 
-Bear context is stable context this bear should know.
+Bear context is stable context this Bear should know.
 
-This is not the same as general memory, though it may overlap with memory later. It is explicit, user-visible context that can be produced during onboarding and edited afterward.
+This is explicit, user-visible context that can be produced during onboarding and edited later.
 
 It may include:
 
@@ -110,95 +155,124 @@ It may include:
 
 Example:
 
-```/dev/null/bear-context.md#L1-11
-The user is building BEARS, a system for persistent AI agents called bears.
+```/dev/null/bear-context.md#L1-10
+The user is building BEARS, a system for persistent AI agents called Bears.
 They prefer transparent AI workflows where users can inspect and improve agent instructions.
 The backend is Rust, the codepool service is TypeScript, and the UI is server-rendered where practical.
 ```
 
-## Composed prompt
+### 5. Runtime/thread context
 
-The composed prompt is generated by concatenating the layers in a stable order:
+Runtime/thread context is injected dynamically.
 
-1. Den baseline
-2. Bear instructions
-3. Bear context
+It may include:
+
+- active role (`talk`, `pair`, `curate`, `work`, or `watch`)
+- current surface/channel/client
+- tool availability
+- current thread/task context
+- retrieved memory/knowledge
+- user/session identity
+- task scope and approvals
+
+This context should be visible in debugging/advanced views over time, but it should not be the main v1 editing surface.
+
+## Composed role prompt
+
+The composer should produce a composed prompt for a specific role.
 
 Conceptually:
 
-```/dev/null/composed-prompt.md#L1-15
+```/dev/null/composed-role-prompt.md#L1-21
 # Den baseline
 ...
 
-# Bear instructions
+# Role contract: pair
+...
+
+# User steering
 ...
 
 # Bear context
 ...
+
+# Runtime/thread context
+...
 ```
 
-The exact rendering format can evolve, but the order should be deterministic and tested.
+The same Bear may therefore have multiple composed prompts depending on which internal role is running.
 
-## Why this simpler model is enough for v1
+The ordering should be deterministic and tested.
 
-This model supports heavy templates because templates can generate rich `bear_instructions` and `bear_context`.
+## Why this model is still simple enough for v1
+
+This model adds only one critical layer compared to the earlier simple model: **role contracts**.
+
+It supports heavy templates because templates can materialize role contracts and default steering.
 
 It supports onboarding because onboarding has clear outputs:
 
 - selected template
-- bear name/description
-- bear instructions
+- role contract version/materialized contracts
+- user steering
 - bear context
 - first task
 
 It supports bear details because the page can show:
 
-- the bear-specific instructions
-- the bear-specific context
-- the full composed prompt preview
+- editable user steering
+- editable bear context
+- inspectable role contracts
+- composed prompts per role, or at least for currently available roles
 
-It supports education because users can see and edit the actual agent-visible text.
+It supports education because users can see the actual instructions each role will see.
 
 It avoids premature complexity by deferring:
 
-- many section types
-- per-section ownership metadata
-- provenance maps
+- many granular instruction section types
+- detailed provenance maps
 - prompt diff/audit history
 - template migrations
-- raw prompt override reconciliation
-- detailed runtime context visualization
+- full raw prompt override reconciliation
+- detailed runtime visualization
 
 ## Relationship to existing `system_prompt`
 
-Today, the bear table already has a `system_prompt` field. The first composition implementation should preserve compatibility.
+Today, bears have a `system_prompt` field. The first role-aware composition implementation should preserve compatibility.
 
 Recommended transitional model:
 
 - For legacy bears, `system_prompt` remains the prompt.
-- For composed bears, Den stores `bear_instructions` and `bear_context`, then generates `system_prompt` from Den baseline + those blocks.
-- The composed prompt preview shows the generated text.
-- Existing edit prompt flows can remain while new section-aware editing is introduced.
+- For role-aware bears, Den stores role contracts, user steering, and bear context in a profile.
+- Den generates role-specific prompts from that profile.
+- Where existing provisioning/sync paths still require a single `system_prompt`, Den can generate a default visible-role prompt, likely for `talk` or the currently provisioned agent type, until role-specific provisioning is implemented.
 
-Long-term, structured composition may become canonical, with `system_prompt` as generated output. But v1 should not require a big migration.
+Long-term, role-aware context profile should become canonical, with prompt text generated as output.
 
 ## Minimal data model
 
-Use a single JSONB profile first rather than a fully normalized section table.
+Use JSONB first rather than a normalized role/section schema.
 
-Possible field:
+Recommended field:
 
-- `bears.setup_profile JSONB`
-- or `bears.context_profile JSONB`
+- `bears.context_profile JSONB`
 
 Conceptual shape:
 
-```/dev/null/context-profile.json#L1-17
+```/dev/null/context-profile.json#L1-38
 {
   "composition_version": 1,
   "template_id": "software_product_builder",
   "template_version": "1",
-  "bear_instructions": "# Purpose\nHelp the user design, build, document, and ship software products...",
+  "role_contract_version": "1",
+  "role_contracts": {
+    "talk": "You are the Bear's talk role...",
+    "pair": "You are the Bear's pair role...",
+    "curate": "You are the Bear's curate role...",
+    "work": "You are the Bear's work role...",
+    "watch": "You are the Bear's watch role..."
+  },
+  "user_steering": "The user prefers concise implementation plans before code changes...",
   "bear_context": "The user is building BEARS...",
   "starter_prompts": [
     "Help me turn an app idea into an MVP plan.",
@@ -208,135 +282,187 @@ Conceptual shape:
 }
 ```
 
-This can later evolve into a richer section model.
+This can later evolve into separate tables or richer sections when usage demands it.
 
 ## Bear details UI implications
 
 The details page should eventually show:
 
-### Bear instructions
+### User steering
 
-Primary editable block.
+Primary editable behavior block.
 
 Copy:
 
-> These are the bear-specific instructions included in the prompt.
+> These instructions steer how your Bear works with you. They should guide the Bear without changing its internal role boundaries.
 
 Actions:
 
-- Edit instructions
+- Edit steering
 - Use setup helper, later
 
 ### Bear context
 
-Secondary editable block.
+Primary editable context block.
 
 Copy:
 
-> This is stable context this bear should know.
+> This is stable context this Bear should know.
 
 Actions:
 
 - Edit context
 - Use setup helper, later
 
-### Full composed prompt
+### Role contracts
 
-Preview of what the agent sees.
+Inspectable protected block.
 
 Copy:
 
-> Den combines the Den baseline, bear instructions, and bear context into the prompt sent to the agent.
+> Role contracts define what the Bear's internal roles are allowed and expected to do. They preserve trust boundaries.
 
 Actions:
 
-- View composed prompt
-- Copy prompt
+- View role contracts
+- View composed prompt for role
 
-The Den baseline can be shown inside the composed prompt preview, possibly collapsed by default.
+### Composed prompts
+
+Preview of what role agents see.
+
+Copy:
+
+> Den combines the Den baseline, a role contract, user steering, Bear context, and runtime context into the prompt a role sees.
+
+Actions:
+
+- View `talk` prompt
+- View `pair` prompt
+- View `curate` prompt
+- View `work` prompt
+- View `watch` prompt
+- Copy prompt
 
 ## First-bear onboarding implications
 
 Onboarding should produce:
 
-1. template id
+1. template id/version
 2. bear name
 3. bear description
-4. bear instructions
-5. bear context
-6. optional first task
+4. materialized role contracts or role contract version
+5. user steering
+6. bear context
+7. optional first task
 
-A heavy template workflow can still ask rich questions, but the output remains simple.
+A heavy template workflow can still ask rich questions, but those answers should primarily become **user steering** and **bear context**.
 
-For example:
+Template defaults supply the role contracts.
 
-- Software Product Builder template generates strong bear instructions and project context.
-- Personal Assistant template generates planning/communication instructions and personal logistics context.
-- Research & Writing Partner template generates research/writing instructions and topics/style context.
+## Template implications
+
+Each template should define role contracts for all five Bear roles, even if some are not active in the initial product surface.
+
+### Software Product Builder
+
+Possible role emphasis:
+
+- `talk`: product discussion, synchronous planning, task intent capture
+- `pair`: IDE/client collaboration, code changes, debugging, docs updates
+- `curate`: product/project memory integration, skill proposal review
+- `work`: approved background build/product/release tasks
+- `watch`: approved observation of dev/product events
+
+### Personal Assistant
+
+Possible role emphasis:
+
+- `talk`: conversational planning, drafting, follow-up capture
+- `pair`: collaboration inside productivity tools, when available
+- `curate`: durable preference/contact/routine integration
+- `work`: approved scheduling, follow-up, and admin tasks
+- `watch`: inbound observations from calendar/email/events, when connected
+
+### Research & Writing Partner
+
+Possible role emphasis:
+
+- `talk`: exploratory conversation, explanations, drafting support
+- `pair`: collaboration inside document/editor tools
+- `curate`: durable topic/project/style integration
+- `work`: approved research or writing tasks
+- `watch`: inbound observation of subscribed sources or document changes
 
 ## Project plan
 
-### Project 1: Context composition design and terminology
+### Project 1: Role-aware context composition design
 
-Goal: Lock down the simplified v1 model.
+Goal: Lock down terminology and boundaries.
 
 Deliverables:
 
-- define `Den baseline`, `Bear instructions`, `Bear context`, and `Composed prompt`
-- decide naming for the JSONB field
-- define how legacy `system_prompt` maps into the model
+- define `Den baseline`, `Role contracts`, `User steering`, `Bear context`, `Runtime/thread context`, and `Composed role prompt`
+- define how the five role contracts relate to `talk`, `pair`, `curate`, `work`, and `watch`
+- define how legacy `system_prompt` maps into this model
 - define composition order
 - define what is user-visible in v1
 
-This document is the starting point.
+### Project 2: Minimal role-aware composition engine
 
-### Project 2: Minimal composition engine
-
-Goal: Implement a small Rust service that composes prompt text.
+Goal: Implement a small Rust service that composes prompt text for a specific role.
 
 Responsibilities:
 
 - load Den baseline text/config
-- load bear instructions/context when present
-- fall back to legacy `system_prompt` when structured context is absent
+- load role contract for requested role
+- load user steering and bear context when present
+- accept optional runtime/thread context
+- fall back to legacy `system_prompt` when role-aware context is absent
 - render composed prompt in stable order
-- expose a structured representation for UI/debugging
+- expose structured representation for UI/debugging
 
 Possible API shape:
 
-```/dev/null/context-composer.rs#L1-15
+```/dev/null/context-composer.rs#L1-24
+#[derive(Clone)]
 struct BearContextProfile {
     template_id: Option<String>,
     template_version: Option<String>,
-    bear_instructions: String,
+    role_contract_version: Option<String>,
+    role_contracts: RoleContracts,
+    user_steering: String,
     bear_context: String,
     starter_prompts: Vec<String>,
     first_task: Option<String>,
 }
 
-struct ComposedBearContext {
+struct RoleContracts {
+    talk: String,
+    pair: String,
+    curate: String,
+    work: String,
+    watch: String,
+}
+
+struct ComposedRoleContext {
+    role: BearRole,
     den_baseline: String,
-    bear_instructions: Option<String>,
+    role_contract: String,
+    user_steering: Option<String>,
     bear_context: Option<String>,
+    runtime_context: Option<String>,
     composed_prompt: String,
 }
 ```
 
 ### Project 3: Storage migration
 
-Goal: Add storage for the simplified context profile.
+Goal: Add storage for the role-aware context profile.
 
 Likely migration:
 
-- add `setup_profile JSONB` or `context_profile JSONB` to `bears`
-
-Open naming question:
-
-- `setup_profile` emphasizes onboarding/tuning
-- `context_profile` emphasizes runtime composition
-- `instruction_profile` emphasizes prompt sections
-
-Recommendation: `context_profile`, because it covers both instructions and context without implying it only comes from onboarding.
+- add `context_profile JSONB` to `bears`
 
 ### Project 4: Legacy compatibility
 
@@ -346,20 +472,21 @@ Behavior:
 
 - If `context_profile` is absent, treat `system_prompt` as legacy manual prompt.
 - Details UI can show `Legacy prompt` or current prompt block.
-- New composed bears still write generated text into `system_prompt` for existing Letta sync paths.
+- New role-aware bears still write generated text into `system_prompt` where existing Letta sync paths need it.
 
-### Project 5: Template materialization
+### Project 5: Template role contract materialization
 
-Goal: Define the three onboarding templates as generators of simple context profiles.
+Goal: Define the three onboarding templates as generators of role-aware context profiles.
 
 Each template should provide:
 
 - template id/version
 - default bear name
 - default description
+- role contracts or role contract references for `talk`, `pair`, `curate`, `work`, `watch`
 - question set
-- instruction generation function/text
-- context generation function/text
+- default user steering generation
+- default bear context generation
 - starter prompts
 
 For v1, templates can be hardcoded Rust definitions or data files. Avoid a dynamic admin-editable template system initially.
@@ -370,72 +497,77 @@ Goal: Add transparency without a complete page redesign.
 
 Changes:
 
-- show `Bear instructions` if `context_profile` exists
+- show `User steering` if `context_profile` exists
 - show `Bear context` if `context_profile` exists
-- add `View composed prompt`
-- keep existing system prompt editing path
-- for legacy bears, show current system prompt as legacy/manual instructions
-
-This project should not wait for onboarding to be complete; it can improve prompt legibility first.
+- add `View role contracts`
+- add `View composed prompt` for at least `talk` and `pair`, as available
+- keep existing system prompt editing path for legacy/manual prompts
 
 ### Project 7: First-bear onboarding v1
 
-Goal: Create first bear from a heavy template workflow using the simplified context profile model.
+Goal: Create first bear from a heavy template workflow using the role-aware context profile model.
 
 Flow outputs:
 
 - name
 - description
 - template id/version
-- bear instructions
+- role contract version/materialized contracts
+- user steering
 - bear context
 - starter prompts
 - first task draft or handoff
 
-The onboarding controller creates the bear, generates `system_prompt`, provisions/syncs Letta, and redirects to chat.
+The onboarding controller creates the bear, generates necessary prompt output for current provisioning, syncs/provisions Letta, and redirects to chat.
 
 ### Project 8: Helper-assisted editing
 
-Goal: Add composition helpers as shortcuts for editing `Bear instructions` and `Bear context`.
+Goal: Add composition helpers as shortcuts for editing user-owned layers.
 
 Initial helper behavior:
 
-- ask a few practical questions
+- edit `User steering`
+- edit `Bear context`
+- ask practical questions
 - generate replacement text for one block
 - show proposed text before saving
 
-No diff/audit/history needed in the first helper slice.
+Helpers should not casually rewrite role contracts.
 
-### Project 9: Future richer section model
+### Project 9: Future richer model
 
-Goal: Split the simple model only when real needs appear.
+Goal: Split the simple role-aware model only when real needs appear.
 
 Potential future splits:
 
-- `Bear instructions` -> purpose, working style, capability guidance, memory policy
+- `User steering` -> style, priorities, workflow preferences, role-specific steering
 - `Bear context` -> setup context, project context, user preferences
+- `Role contracts` -> platform base role contracts + template overlays
 - Den baseline -> platform safety, Den operating model, global tool rules
 
-Do not build this until the simple three-layer model becomes insufficient.
+Do not build this until the simple role-aware model becomes insufficient.
 
 ## Adjusted answers to prior open questions
 
 ### Should users edit sections or full prompt?
 
-For v1, users edit two blocks:
+For v1, users edit:
 
-- Bear instructions
+- User steering
 - Bear context
 
-They can view the full composed prompt.
+They inspect:
+
+- Role contracts
+- Composed role prompts
 
 ### Should `system_prompt` remain canonical?
 
 Short term: yes, for compatibility.
 
-For composed bears, it is generated from Den baseline + bear instructions + bear context and then stored/synced through existing paths.
+For role-aware bears, generated prompt text may still be written into `system_prompt` for existing provisioning/sync paths.
 
-Long term: context profile can become canonical.
+Long term: `context_profile` should become canonical.
 
 ### How should raw prompt edits work?
 
@@ -444,16 +576,15 @@ For v1, avoid solving full reconciliation.
 Options:
 
 - legacy bears keep raw prompt editing
-- composed bears prefer block editing
-- if raw prompt edit is used on a composed bear, mark it as manual/legacy or regenerate `bear_instructions` from the raw prompt only by explicit user action
+- role-aware bears prefer steering/context editing
+- if raw prompt edit is used on a role-aware bear, mark it as manual/legacy or require explicit conversion
 
-This can be deferred until raw editing and composed editing collide in practice.
+### Which instructions are protected?
 
-### Which instructions are platform-owned?
+In v1:
 
-Only Den baseline in v1.
-
-Do not over-model sub-ownership until necessary.
+- Den baseline
+- Role contracts
 
 ### Should onboarding answers be shown as provenance?
 
@@ -463,19 +594,20 @@ Not in v1. Store answers if useful, but do not build provenance UI yet.
 
 Not in v1.
 
-### Should users copy/export the composed prompt?
+### Should users copy/export composed prompts?
 
-Yes, probably as part of the composed prompt view, because it supports education and debugging.
+Yes, especially for `talk` and `pair`, because it supports education and debugging.
 
 ## Recommended first slice
 
 Implement the foundation in this order:
 
-1. Add context composition service with Den baseline + legacy prompt fallback.
+1. Add role-aware context composition service with Den baseline + legacy prompt fallback.
 2. Add `context_profile` storage.
-3. Add composed prompt preview to bear details.
-4. Add Bear instructions / Bear context blocks for composed bears.
-5. Update bear creation/provisioning to write generated `system_prompt` from context profile when present.
-6. Build first-bear onboarding on top.
+3. Add composed prompt preview to bear details for at least current user-facing roles.
+4. Add editable User steering / Bear context blocks for role-aware bears.
+5. Add inspectable role contracts.
+6. Update bear creation/provisioning to write generated prompt text where current paths require `system_prompt`.
+7. Build first-bear onboarding on top.
 
-This keeps the model simple, gives the details page an educational foundation, and avoids designing a complex section system before there is real usage pressure.
+This keeps the model simple enough for v1 while respecting the multi-agent Bear architecture.
