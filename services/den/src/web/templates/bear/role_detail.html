@@ -1,0 +1,88 @@
+{% extends "base.html" %}
+
+{% block title %}{{ role_detail.role }} role · {{ bear.name | e }}{% endblock %}
+
+{% block subnav %}
+<li><a class="button-link" href="/bear/{{ bear.slug | e }}/details">Bear details</a></li>
+<li><a class="button-link" href="/bear/{{ bear.slug | e }}">Chat</a></li>
+{% endblock %}
+
+{% block content %}
+<section data-role-detail-content>
+    <h2><code>{{ role_detail.role | e }}</code> — {{ role_detail.plain_name | e }}</h2>
+    <p>{{ role_detail.description | e }}</p>
+
+    {% if role_detail.actions and role_detail.actions | length > 0 %}
+    <ul class="button-row">
+        {% for action in role_detail.actions %}
+        <li><a class="button-link" href="{{ action.href | e }}">{{ action.label | e }}</a></li>
+        {% endfor %}
+    </ul>
+    {% endif %}
+
+    <section class="two-columns">
+        <div>
+            <div class="box full-width">
+                <h3>Purpose</h3>
+                <p>{{ role_detail.description | e }}</p>
+                <h4>Surfaces</h4>
+                <ul>
+                    {% for item in role_detail.surfaces %}<li>{{ item | e }}</li>{% endfor %}
+                </ul>
+                <h4>Capabilities</h4>
+                <ul>
+                    {% for item in role_detail.capabilities %}<li>{{ item | e }}</li>{% endfor %}
+                </ul>
+            </div>
+        </div>
+        <div>
+            <div class="box full-width">
+                <h3>Memory</h3>
+                <p class="form-hint">Role-specific branch memory. Shared <code>core/</code> memory is Bear-wide.</p>
+                <ul>
+                    {% for item in role_detail.memory %}<li>{{ item | e }}</li>{% endfor %}
+                </ul>
+                <dl class="fields-grid">
+                    <dt>Status</dt><dd>{{ role_detail.memory_status_label | e }}</dd>
+                    <dt>Files</dt><dd>{{ role_detail.memory_file_count }}</dd>
+                    <dt>Prefixes</dt><dd>{% if role_detail.memory_allowed_prefixes and role_detail.memory_allowed_prefixes | length > 0 %}{% for p in role_detail.memory_allowed_prefixes %}{% if not loop.first %}, {% endif %}<code>{{ p | e }}</code>{% endfor %}{% else %}<span class="caption">none reported</span>{% endif %}</dd>
+                    <dt>Typed entries</dt><dd>{% if role_detail.memory_entry_counts and role_detail.memory_entry_counts | length > 0 %}{% for c in role_detail.memory_entry_counts %}{% if not loop.first %}, {% endif %}{{ c.kind | e }}: {{ c.count | e }}{% endfor %}{% else %}<span class="caption">none reported</span>{% endif %}</dd>
+                </dl>
+                {% if role_detail.memory_recent_activity and role_detail.memory_recent_activity | length > 0 %}
+                <p class="caption">Recent: {% for a in role_detail.memory_recent_activity %}{% if not loop.first %}; {% endif %}{{ a.event | e }}{% if a.detail %} ({{ a.detail | e }}){% endif %}{% endfor %}</p>
+                {% endif %}
+            </div>
+        </div>
+    </section>
+
+    <section class="two-columns">
+        <div>
+            <div class="box full-width">
+                <h3>Runtime status</h3>
+                <dl class="fields-grid">
+                    <dt>Provisioning</dt><dd><code>{{ role_detail.provisioning_status | e }}</code></dd>
+                    <dt>Runtime</dt><dd><code>{{ role_detail.runtime_family | e }}</code></dd>
+                    <dt>Letta id</dt><dd>{% if role_detail.letta_agent_id %}<code>{{ role_detail.letta_agent_id | e }}</code>{% else %}<em>none</em>{% endif %}</dd>
+                    <dt>Last sync</dt><dd>{% if role_detail.last_synced_at %}{{ role_detail.last_synced_at | e }}{% else %}<em>never</em>{% endif %}</dd>
+                    <dt>MemFS view</dt><dd>{% if role_detail.memfs_view_state %}{% if role_detail.memfs_view_quarantined %}<span class="form-errors">quarantined</span>{% else %}<code>{{ role_detail.memfs_view_state | e }}</code>{% endif %}{% else %}<em>not registered</em>{% endif %}</dd>
+                </dl>
+                {% if role_detail.last_provisioning_error %}<p class="form-errors">{{ role_detail.last_provisioning_error | e }}</p>{% endif %}
+                {% if role_detail.memfs_view_diagnostic %}<p class="form-errors">{{ role_detail.memfs_view_diagnostic | e }}</p>{% endif %}
+            </div>
+        </div>
+        <div>
+            <div class="box full-width">
+                <h3>Contract</h3>
+                <p class="form-hint">Protected role instructions and boundaries.</p>
+                <pre class="den-bear-prompt-pre">{{ role_detail.role_contract | e }}</pre>
+            </div>
+        </div>
+    </section>
+
+    <section class="box full-width">
+        <h3>Composed prompt</h3>
+        <p class="form-hint">What this role sees after Den combines the Den baseline, role contract, user steering, Bear context, and runtime context.</p>
+        <pre class="den-bear-prompt-pre">{{ role_detail.composed_prompt | e }}</pre>
+    </section>
+</section>
+{% endblock %}

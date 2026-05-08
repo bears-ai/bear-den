@@ -495,6 +495,67 @@ body.bear_chat .den-conv-button-container:hover {
 }
 
 /* ---- Bear details (/bear/:slug/details) ---- */
+.den-command-center {
+    gap: var(--spacing-unit);
+}
+
+.den-command-center-status .den-status-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+}
+
+.den-command-center-status .den-status-list li {
+    margin-bottom: calc(var(--spacing-unit) * 0.4);
+}
+
+.den-command-center-actions {
+    flex: unset;
+}
+
+.den-role-card-grid {
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: var(--spacing-unit);
+}
+
+.den-role-card {
+    border: solid var(--thin-line-unit) var(--border-color);
+    padding: var(--spacing-unit);
+    background: var(--page-color);
+}
+
+.den-role-card-warn {
+    border-color: var(--error-color);
+}
+
+.den-role-card h4 {
+    margin-top: 0;
+}
+
+.den-role-card .fields-grid {
+    grid-template-columns: auto 1fr;
+    font-size: smaller;
+}
+
+.den-role-detail-pane {
+    margin-top: var(--spacing-unit);
+    border-top: solid var(--thin-line-unit) var(--border-color);
+    padding-top: var(--spacing-unit);
+}
+
+@media (max-width: 1100px) {
+    .den-role-card-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+}
+
+@media (max-width: 699px) {
+    .den-role-card-grid {
+        grid-template-columns: 1fr;
+    }
+}
+
 .den-bear-inline-list {
     margin-top: 0;
     line-height: 1.5;

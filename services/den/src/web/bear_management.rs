@@ -76,6 +76,7 @@ pub fn router() -> Router<AppState> {
             "/bear/{slug}/details/conversations",
             get(bear_conversations_get),
         )
+        .route_with_tsr("/bear/{slug}/details/roles/{role}", get(bear_role_get))
         .route_with_tsr("/bear/{slug}/details/memory", get(bear_memory_get))
         .route_with_tsr(
             "/bear/{slug}/details/memory/runtime-blocks",
@@ -185,6 +186,39 @@ struct BearMemoryEntryCountRow {
 }
 
 #[derive(Serialize)]
+struct RoleDetailView {
+    role: String,
+    label: String,
+    plain_name: &'static str,
+    description: String,
+    surfaces: Vec<&'static str>,
+    capabilities: Vec<&'static str>,
+    memory: Vec<&'static str>,
+    actions: Vec<RoleActionLink>,
+    runtime_family: String,
+    letta_agent_id: Option<String>,
+    provisioning_status: String,
+    last_synced_at: Option<String>,
+    last_provisioning_error: Option<String>,
+    memfs_view_state: Option<String>,
+    memfs_view_quarantined: bool,
+    memfs_view_diagnostic: Option<String>,
+    memory_status_label: String,
+    memory_file_count: usize,
+    memory_entry_counts: Vec<BearMemoryEntryCountRow>,
+    memory_allowed_prefixes: Vec<String>,
+    memory_recent_activity: Vec<BearMemoryActivityRow>,
+    role_contract: String,
+    composed_prompt: String,
+}
+
+#[derive(Serialize)]
+struct RoleActionLink {
+    label: &'static str,
+    href: String,
+}
+
+#[derive(Serialize)]
 struct RuntimeBlockRoleRow {
     role: String,
     label: String,
@@ -211,6 +245,102 @@ fn role_memory_description(role: BearAgentRole) -> &'static str {
         BearAgentRole::Curate => "Review, reflection, and memory integration work.",
         BearAgentRole::Work => "Task execution logs, decisions, and summaries.",
         BearAgentRole::Watch => "Event/subscription logs and summaries.",
+    }
+}
+
+fn role_plain_name(role: BearAgentRole) -> &'static str {
+    match role {
+        BearAgentRole::Talk => "Conversational front door",
+        BearAgentRole::Pair => "Collaborative tool/IDE partner",
+        BearAgentRole::Curate => "Memory and integration reviewer",
+        BearAgentRole::Work => "Approved outbound executor",
+        BearAgentRole::Watch => "Inbound observer",
+    }
+}
+
+fn role_surfaces(role: BearAgentRole) -> Vec<&'static str> {
+    match role {
+        BearAgentRole::Talk => vec!["Web chat", "Future chat surfaces"],
+        BearAgentRole::Pair => vec!["ACP clients", "IDEs", "Future design/productivity tools"],
+        BearAgentRole::Curate => vec!["Internal review and integration"],
+        BearAgentRole::Work => vec!["Den task dispatch", "Schedules", "Approved background jobs"],
+        BearAgentRole::Watch => vec![
+            "Webhooks",
+            "Polling",
+            "Queues",
+            "Subscriptions",
+            "Event streams",
+        ],
+    }
+}
+
+fn role_capabilities(role: BearAgentRole) -> Vec<&'static str> {
+    match role {
+        BearAgentRole::Talk => vec![
+            "Synchronous conversation",
+            "Task intent capture",
+            "Channel-safe tools",
+            "Work plan updates",
+        ],
+        BearAgentRole::Pair => vec![
+            "Client-mediated tool use",
+            "Code/workspace context",
+            "User-gated actions",
+            "File/document collaboration",
+        ],
+        BearAgentRole::Curate => vec![
+            "Memory review",
+            "Task intent review",
+            "Observation review",
+            "Skill proposal review",
+            "Shared memory promotion",
+        ],
+        BearAgentRole::Work => vec![
+            "Approved API calls",
+            "Scheduled tasks",
+            "Event-triggered work",
+            "Run-status reporting",
+        ],
+        BearAgentRole::Watch => vec![
+            "Inbound event parsing",
+            "Observation creation",
+            "Subscription monitoring",
+            "Event summarization",
+        ],
+    }
+}
+
+fn role_memory_rules(role: BearAgentRole) -> Vec<&'static str> {
+    match role {
+        BearAgentRole::Talk => vec![
+            "Reads core/",
+            "Reads and writes talk/",
+            "Does not directly promote to core/",
+        ],
+        BearAgentRole::Pair => vec![
+            "Reads core/",
+            "Reads and writes pair/",
+            "Does not directly promote to core/",
+        ],
+        BearAgentRole::Curate => vec![
+            "Reads across role branches, subject to policy",
+            "Writes curate/",
+            "Promotes durable knowledge into core/",
+            "Does not write directly to other role branches",
+        ],
+        BearAgentRole::Work => vec![
+            "Reads core/",
+            "Reads task definition/run context",
+            "Reads and writes work/",
+            "Does not read raw talk/, pair/, or watch/ directly",
+        ],
+        BearAgentRole::Watch => vec![
+            "Reads core/",
+            "Reads delivered event payloads",
+            "Reads and writes watch/",
+            "Does not write core/ directly",
+            "Does not trigger outbound action directly",
+        ],
     }
 }
 
@@ -298,6 +428,132 @@ impl BearRoleViewRow {
             memfs_view_diagnostic: None,
         }
     }
+}
+
+async fn build_role_detail_view(
+    state: &AppState,
+    bear: &Bear,
+    role: BearAgentRole,
+) -> Result<RoleDetailView, CustomError> {
+    bears_db::ensure_bear_agent_rows(state.sqlx_pool(), bear.id).await?;
+    let agent = bears_db::get_bear_agent(state.sqlx_pool(), bear.id, role)
+        .await?
+        .ok_or_else(|| CustomError::NotFound("role agent not found".to_string()))?;
+
+    let memfs_url = state.config.letta_memfs_service_url.trim().to_string();
+    let mut role_row = BearRoleViewRow::from_agent(agent.clone(), role);
+    if !memfs_url.is_empty() {
+        match fetch_memfs_role_view_health(state.letta.http(), &memfs_url, bear.id, role.as_str())
+            .await
+        {
+            Ok(Some(view)) => {
+                role_row.memfs_view_state = Some(view.state);
+                role_row.memfs_view_quarantined = view.quarantined;
+                role_row.memfs_view_diagnostic = view.diagnostic;
+            }
+            Ok(None) => {}
+            Err(err) => {
+                role_row.memfs_view_state = Some("error".to_string());
+                role_row.memfs_view_diagnostic = Some(err.to_string());
+            }
+        }
+    }
+
+    let mut memory_status_label = if memfs_url.is_empty() {
+        "MemFS not configured".to_string()
+    } else {
+        "Unavailable".to_string()
+    };
+    let mut memory_file_count = 0usize;
+    let mut memory_entry_counts = Vec::new();
+    let mut memory_allowed_prefixes = Vec::new();
+    let mut memory_recent_activity = Vec::new();
+    if !memfs_url.is_empty() {
+        match fetch_memfs_role_memory_status(state.letta.http(), &memfs_url, bear.id, role.as_str())
+            .await
+        {
+            Ok(Some(status)) => {
+                memory_status_label = if status.ok {
+                    "Available"
+                } else {
+                    "Unavailable"
+                }
+                .to_string();
+                memory_file_count = status.file_count;
+                memory_entry_counts = value_object_count_rows(&status.entry_count_by_kind);
+                memory_allowed_prefixes = status.allowed_prefixes;
+                memory_recent_activity = memory_activity_rows(&status.recent_activity);
+            }
+            Ok(None) => {
+                memory_status_label = "MemFS not configured".to_string();
+            }
+            Err(err) => {
+                memory_status_label = format!("Error: {err}");
+            }
+        }
+    }
+
+    let composed = crate::core::bears::compose_role_context(
+        bear,
+        role,
+        Some("Runtime/thread context is injected when this role handles a specific task."),
+    )?;
+    let role_contract = if composed.role_contract.trim().is_empty() {
+        "Legacy/manual Bear prompt; no role-aware contract is stored yet.".to_string()
+    } else {
+        composed.role_contract
+    };
+
+    let mut actions = Vec::new();
+    match role {
+        BearAgentRole::Talk => {
+            actions.push(RoleActionLink {
+                label: "Open chat",
+                href: format!("/bear/{}", bear.slug),
+            });
+            actions.push(RoleActionLink {
+                label: "All threads",
+                href: format!("/bear/{}/details/conversations", bear.slug),
+            });
+        }
+        BearAgentRole::Pair => {
+            actions.push(RoleActionLink {
+                label: "Code with this Bear",
+                href: format!("/bear/{}/details/code-token", bear.slug),
+            });
+        }
+        _ => {}
+    }
+    actions.push(RoleActionLink {
+        label: "Role memory",
+        href: format!("/bear/{}/details/memory?role={}", bear.slug, role.as_str()),
+    });
+
+    Ok(RoleDetailView {
+        role: role.as_str().to_string(),
+        label: role_memory_label(role).to_string(),
+        plain_name: role_plain_name(role),
+        description: role_memory_description(role).to_string(),
+        surfaces: role_surfaces(role),
+        capabilities: role_capabilities(role),
+        memory: role_memory_rules(role),
+        actions,
+        runtime_family: role.runtime_family().to_string(),
+        letta_agent_id: role_row.letta_agent_id,
+        provisioning_status: role_row.provisioning_status,
+        last_synced_at: role_row.last_synced_at,
+        last_provisioning_error: agent.last_provisioning_error,
+        memfs_view_state: role_row.memfs_view_state,
+        memfs_view_quarantined: role_row.memfs_view_quarantined,
+        memfs_view_diagnostic: role_row.memfs_view_diagnostic,
+        memory_status_label,
+        memory_file_count,
+        memory_entry_counts,
+        memory_allowed_prefixes,
+        memory_recent_activity,
+        role_contract,
+        composed_prompt: composed.composed_prompt,
+    })
 }
 
 async fn bear_role_rows(
@@ -629,6 +885,10 @@ async fn render_bear_details_page(
     let talk_agent_id = talk_agent_id_for_bear(state.sqlx_pool(), &bear).await?;
     let pair_agent_id = pair_agent_id_for_bear(state.sqlx_pool(), &bear).await?;
     let role_rows = bear_role_rows(state, bear.id).await?;
+    let mut role_details = Vec::new();
+    for role in BearAgentRole::ALL {
+        role_details.push(build_role_detail_view(state, &bear, role).await?);
+    }
 
     let (letta_agent_summary, letta_agent_fetch_error, letta_drift) = if letta_configured {
         if let Some(agent_id) = talk_agent_id.as_deref() {
@@ -819,6 +1079,7 @@ async fn render_bear_details_page(
             letta_api_base,
             talk_agent_id,
             role_rows,
+            role_details,
             context_profile_enabled => bear.context_profile.is_some(),
             user_steering,
             bear_context,
@@ -1368,6 +1629,40 @@ async fn bear_edit_configuration_post(
             form => form,
             bear,
             ..page
+        },
+    )
+    .await
+}
+
+async fn bear_role_get(
+    Path((slug, role)): Path<(String, String)>,
+    State(state): State<AppState>,
+    auth_session: AuthSession,
+) -> Result<Response, CustomError> {
+    let user_id = auth_session
+        .user
+        .as_ref()
+        .map(|u| u.id)
+        .ok_or_else(|| CustomError::Authentication("login required".to_string()))?;
+    if let Some(r) = email_verify_redirect(state.sqlx_pool(), user_id).await? {
+        return Ok(r.into_response());
+    }
+
+    let bear = load_bear_member(state.sqlx_pool(), user_id, &slug).await?;
+    let role = role
+        .parse::<BearAgentRole>()
+        .map_err(|err| CustomError::NotFound(err.to_string()))?;
+    let role_detail = build_role_detail_view(&state, &bear, role).await?;
+    let role_rows = bear_role_rows(&state, bear.id).await?;
+
+    render_template(
+        &state,
+        "bear/role_detail.html",
+        auth_session,
+        context! {
+            bear,
+            role_detail,
+            role_rows,
         },
     )
     .await
