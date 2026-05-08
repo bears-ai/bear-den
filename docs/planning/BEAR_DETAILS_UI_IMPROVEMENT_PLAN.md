@@ -2,593 +2,638 @@
 
 ## Summary
 
-The bear details page should evolve from a mostly administrative/debug view into a clear, educational control room for understanding and managing a Bear.
+The Bear details page should become the Bear's workspace home: a vanilla, progressive-enhancement UI that makes one coherent Bear legible while preserving the five-role internal architecture (`talk`, `pair`, `curate`, `work`, `watch`).
 
-A Bear feels like one coherent assistant to the user, but internally it has five specialized roles: `talk`, `pair`, `curate`, `work`, and `watch`. The details UI should respect that architecture.
+The page should not be organized around database fields, Letta ids, or one-agent prompt concepts. It should be organized around the user's mental model of a Bear:
 
-The page should help users understand that a Bear is shaped by:
+- what this Bear is for
+- what it is helping with now
+- how the user steers it
+- what stable context it has
+- how its roles are organized
+- what shared memory it has built
+- who can access it
+- which advanced operations need admin attention
 
-- Den baseline instructions
-- protected role contracts
-- user steering
-- Bear context
-- capabilities/tools
-- memory
-- threads/activity
-- access
-- advanced runtime/Letta details
-
-The key design constraint is transparency: BEARS may use prompt composition helpers and structured context composition, but users should be able to see what the role agents will actually see. Prompt composition should be framed as a shortcut for authoring steering/context, not as an abstraction that hides how the Bear works.
+This plan supersedes earlier narrower plans that treated Bear details primarily as a prompt/section editor.
 
 ## Product principle
 
-BEARS should make users better AI operators. The details page should therefore make the Bear legible.
+A Bear feels like one assistant, but internally it has five specialized roles. The details UI should preserve that distinction without forcing the user to mentally reassemble role-specific information across many unrelated sections.
 
-Do not over-humanize the page into an opaque profile/personality editor. Instead, show the user:
+The key IA rule is:
 
-- what they can steer
-- what stable context the Bear has
-- which internal role contracts are protected
-- which parts were generated from onboarding/template setup
-- what composed role prompts look like
+> Role-specific capabilities, memory branches, contracts, prompts, and runtime details belong with the role they describe.
 
-Friendly summaries are useful, but they should point back to agent-visible instructions.
+Shared Bear-wide concepts remain top-level:
 
-## Revised mental model
+- command center
+- current work
+- steering
+- context
+- shared memory
+- people/access
+- advanced operations
 
-A Bear is not just a chat. A Bear is a persistent multi-agent system configured by role-aware context composition plus memory, tools, and threads.
+## Progressive enhancement requirement
 
-The user-facing mental model should be:
+Implement this as vanilla, progressively enhanced pages.
 
-> This Bear behaves this way because Den combines protected role contracts, your steering, this Bear's context, and runtime context into the prompt each role sees.
+Baseline behavior:
 
-The details page should reinforce that model.
+- every major page and role detail must work as normal server-rendered HTML
+- role detail cards should have their own URLs/pages
+- no JavaScript should be required to inspect role details or complete admin actions
 
-## Role-aware instruction architecture
+Enhanced behavior:
 
-The details UI should present a simple role-aware model, not a large prompt CMS.
+- JavaScript may load role detail pages into content panes/tabs within the Bear-level page
+- links remain real links
+- content panes should preserve accessibility and browser navigation as much as practical
+- enhancement should be additive, not a separate SPA
 
-Recommended v1 layers:
+Example route shape:
 
-1. Den baseline
-2. Role contracts
-3. User steering
-4. Bear context
-5. Runtime/thread context
-
-### Den baseline
-
-Platform-level instructions controlled by Den/operators. Usually read-only for normal users.
-
-### Role contracts
-
-Protected structural instructions for `talk`, `pair`, `curate`, `work`, and `watch`.
-
-These define role authority, trust boundaries, and cooperation rules. They should be inspectable but not the normal user editing surface.
-
-### User steering
-
-The main user/admin-editable behavior layer.
-
-This guides preferences, priorities, tone, depth, and workflows without redefining role boundaries.
-
-### Bear context
-
-Stable context this Bear should know. User/admin editable.
-
-### Runtime/thread context
-
-Dynamically injected current task, tool, surface, memory, and thread context. Advanced/debug surface initially.
-
-## UI concept: steering first, role contracts protected
-
-The top of the details page should not hide prompts behind profile abstractions, and it should not invite users to accidentally rewrite role contracts.
-
-Recommended primary editable sections:
-
-- `User steering`
-- `Bear context`
-
-Recommended inspectable sections:
-
-- `Role contracts`
-- `Composed role prompts`
-- `Den baseline`, likely inside composed prompt view or advanced view
-
-Composition helpers should be available, but framed as shortcuts:
-
-- `Use setup helper`
-- `Generate steering changes`
-- `Review setup answers`
-
-Direct text editing should remain available for user-owned layers:
-
-- `Edit steering`
-- `Edit context`
-
-## User steering section
-
-This replaces the earlier over-broad `Purpose & instructions` / `Working style instructions` concept.
-
-It should show the user-editable steering text that influences the Bear across roles without changing the roles themselves.
-
-Suggested copy:
-
-> These instructions steer how your Bear works with you. They guide tone, priorities, and collaboration style without changing the Bear's internal role boundaries.
-
-Example:
-
-```/dev/null/user-steering.md#L1-10
-The user prefers concise implementation plans before code changes.
-Challenge unclear product assumptions respectfully.
-Keep documentation in sync when behavior changes.
-Prefer small, reviewable code changes.
-When uncertainty matters, call out tradeoffs briefly.
+```/dev/null/routes.md#L1-8
+GET /bear/{slug}/details
+GET /bear/{slug}/details/roles/{role}
+GET /bear/{slug}/details/roles/{role}/prompt
+GET /bear/{slug}/details/roles/{role}/memory
+GET /bear/{slug}/details/context
+GET /bear/{slug}/details/steering
 ```
 
-Actions:
+Exact route names can change, but role details should be independently addressable.
 
-- Edit steering
-- Use setup helper, later
-- View composed prompts
+## Approved three-level IA
 
-## Bear context section
+### 1. Command center
 
-This should show stable context the Bear should know.
+#### 1.1 Identity
 
-Suggested copy:
+- Bear name
+- Slug
+- Short description / purpose
+- Template origin, if any
 
-> This is stable context this Bear should know. It may come from onboarding, later edits, or explicit user-provided setup notes.
+#### 1.2 Readiness summary
 
-Example:
+- Overall Bear status
+- Chat readiness
+- Pairing readiness
+- Memory health summary
+- Role provisioning warning summary, if any
 
-```/dev/null/bear-context.md#L1-8
-The user is building BEARS, a system for persistent AI agents called Bears.
-They prefer transparent AI workflows where users can inspect and improve agent instructions.
-The backend is Rust, the codepool service is TypeScript, and the UI is server-rendered where practical.
-```
+#### 1.3 Primary actions
 
-Actions:
+- Chat
+- Start new thread
+- Pair / Code with this Bear
+- All threads
+- Tune steering
+- Manage access, if permitted
+
+## 2. Current work
+
+### 2.1 Active threads
+
+- Web / `talk` threads
+- ACP / `pair` threads
+- Last activity
+- Open action
+
+### 2.2 Work plans
+
+- Current workboard/work plan status
+- In-progress items
+- Recently completed items
+- Blocked items
+
+### 2.3 Task intents
+
+- Captured requests that may require review
+- Source role: `talk` or `pair`
+- Status: pending / approved / rejected / dispatched
+
+### 2.4 Background work
+
+- Active `work` runs
+- Recent `work` results
+- Failed work requiring attention
+
+### 2.5 Observations
+
+- Recent `watch` observations
+- Observations awaiting `curate` review
+
+### 2.6 Archive
+
+- Archived thread count
+- All threads link
+
+## 3. Steering
+
+### 3.1 User steering text
+
+- Current steering block
+- Template-generated defaults, if any
+- User edits
+
+### 3.2 Steering helpers
+
+- Use setup helper
+- Regenerate steering suggestion
+- Review generated change before save
+
+### 3.3 Steering explanation
+
+- Steering affects all roles
+- Steering does not change protected role boundaries
+
+## 4. Context
+
+### 4.1 Bear context text
+
+- Stable context block
+- Project/user/domain context
+- Setup-derived context
+
+### 4.2 Starter context
+
+- First task from onboarding
+- Starter prompts
+- Template examples
+
+### 4.3 Context helpers
 
 - Edit context
-- Use setup helper, later
-- View composed prompts
+- Use setup helper
+- Add project/background notes
 
-## Role contracts section
+## 5. Roles
 
-This is an inspectable protected section.
+The Roles section is the home for role-specific details. Do not create separate top-level Memory/Capabilities/Contracts/Prompts sections that repeat the five-role structure independently.
 
-Suggested copy:
+Each role detail follows the same pattern:
 
-> Role contracts define what the Bear's internal roles are allowed and expected to do. They preserve trust boundaries.
+```/dev/null/role-detail-pattern.md#L1-38
+## {role} — {plain English name}
 
-Show the five roles:
+### Purpose
+What this role is responsible for.
 
-- `talk` — conversational front door
-- `pair` — collaborative client/tool role
-- `curate` — semantic integration and review role
-- `work` — approved outbound executor
-- `watch` — inbound observer
-
-Each role should eventually have an expandable contract text view.
-
-Important UI framing:
-
-- Role contracts are not the normal customization surface.
-- Users steer the Bear through `User steering` and `Bear context`.
-- Advanced/admin editing of role contracts can be considered later.
-
-## Composed role prompt view
-
-The details page should include a way to inspect composed prompts for role agents.
-
-The composed prompt view should be clear that:
-
-> This is the instruction text a role agent sees after Den combines the baseline, role contract, user steering, Bear context, and runtime context.
-
-At minimum, support composed prompt preview for current user-facing roles:
-
-- `talk`
-- `pair`
-
-Later, add:
-
-- `curate`
-- `work`
-- `watch`
-
-Conceptual example:
-
-```/dev/null/composed-role-prompt.md#L1-30
-# Den baseline
-Managed by Den. Read-only.
-...
-
-# Role contract: pair
-Protected role contract.
-...
-
-# User steering
-Editable.
-...
-
-# Bear context
-Editable.
-...
-
-# Runtime/thread context
-Injected at runtime.
-...
-```
-
-Useful actions:
-
-- copy prompt
-- switch role prompt
-- view role contract source
-- edit steering/context
-
-## Composition helper model
-
-Prompt composition helpers should edit user-owned layers, not protected role contracts.
-
-Recommended helper flow:
-
-1. User chooses a target, such as `User steering`.
-2. UI asks practical questions.
-3. System generates proposed replacement text.
-4. User reviews the proposed text.
-5. User accepts, edits, or cancels.
-
-This reinforces that helpers generate agent-visible text. Users review the output before saving.
-
-## Relationship to onboarding
-
-First-bear onboarding should produce role-aware context profiles.
-
-Onboarding outputs should include:
-
-- template id/version
-- materialized role contracts or role contract version
-- user steering
-- Bear context
-- starter prompts
-- first task draft/handoff
-
-The bear details page should expose the user-owned layers and allow inspection of protected role contracts.
-
-This makes onboarding consequential and understandable without making users responsible for maintaining the internal role architecture.
-
-## Relationship to existing `system_prompt`
-
-Today, bears have a `system_prompt` field. The role-aware context model should evolve without breaking existing bears.
-
-Recommended phased approach:
-
-### Phase 1: Preserve legacy prompt behavior
-
-- Existing bears with no `context_profile` continue using `system_prompt`.
-- Details UI can show them as legacy/manual prompt bears.
-- New role-aware bears store `context_profile` and generate prompt text where existing sync/provisioning paths need it.
-
-### Phase 2: Role-aware details UI
-
-- Show `User steering`, `Bear context`, role contracts, and composed prompts for role-aware bears.
-- Keep raw system prompt editing for legacy/manual bears.
-
-### Phase 3: Helper-assisted editing
-
-- Add setup/helper flows that propose changes to steering/context.
-- Avoid role contract editing in normal helper flows.
-
-### Phase 4: Advanced role contract management
-
-- Operator/admin role contract editing.
-- Template role contract versioning.
-- Prompt migration/update helpers.
-- Prompt audit/history.
-
-## Candidate data model
-
-Use JSONB first rather than a fully normalized schema.
-
-Potential field:
-
-- `bears.context_profile JSONB`
-
-Conceptual shape:
-
-```/dev/null/context-profile.json#L1-38
-{
-  "composition_version": 1,
-  "template_id": "software_product_builder",
-  "template_version": "1",
-  "role_contract_version": "1",
-  "role_contracts": {
-    "talk": "You are the Bear's talk role...",
-    "pair": "You are the Bear's pair role...",
-    "curate": "You are the Bear's curate role...",
-    "work": "You are the Bear's work role...",
-    "watch": "You are the Bear's watch role..."
-  },
-  "user_steering": "The user prefers concise implementation plans before code changes...",
-  "bear_context": "The user is building BEARS...",
-  "starter_prompts": [
-    "Help me turn an app idea into an MVP plan.",
-    "Help me understand this codebase."
-  ],
-  "first_task": "Help me plan the onboarding feature."
-}
-```
-
-## Page structure recommendation
-
-A future bear details page could be organized like this:
-
-```/dev/null/bear-details-layout.md#L1-55
-# Product Builder
-
-[Chat] [All threads] [Code with this bear]
-
-## User steering
-These instructions steer how your Bear works with you without changing internal role boundaries.
-
-The user prefers concise implementation plans before code changes...
-
-[Edit steering] [Use setup helper]
-
-## Bear context
-This is stable context this Bear should know.
-
-The user is building BEARS...
-
-[Edit context]
-
-## Role contracts
-A Bear feels like one assistant, but internally it has five specialized roles.
-
-- talk: conversational front door
-- pair: collaborative client/tool role
-- curate: semantic integration and review role
-- work: approved outbound executor
-- watch: inbound observer
-
-[View role contracts]
-
-## Composed prompts
-See what each role sees.
-
-[View talk prompt] [View pair prompt]
-
-## Current threads
-Active and archived threads.
-
-## What this Bear remembers
-Friendly memory summary plus link to detailed Letta memory.
-
-## Capabilities
-Plain-language capability status.
-
-## People
-Membership/access management.
-
-## Advanced
-Legacy prompt, runtime configuration, Letta sync, tool IDs, diagnostics.
-```
-
-## Other details page areas
-
-### Memory
-
-Show friendly summary first:
-
-- `What this Bear remembers`
-
-Then link to technical memory details.
+### Surfaces
+Where this role appears or runs.
 
 ### Capabilities
+What this role can do.
 
-Show plain-language capability cards:
+### Memory
+Which branches it reads/writes.
 
-- available
-- not connected
-- not supported
-- advanced details
+### Contract
+Protected role instructions and boundaries.
 
-Do not expose Letta tool IDs up front.
+### Prompt
+Composed prompt for this role.
 
-### Threads
+### Runtime status
+Provisioning, runtime family, sync, ids, errors.
 
-Use `threads`, not `conversations`, in user-facing UI.
+### Actions
+Relevant user/admin actions.
+```
 
-Show:
+### 5.1 `talk` — conversational front door
 
-- active threads
-- archived threads count
-- all threads link
+#### Purpose
 
-### Access
+- Handles chat-like conversation
+- Captures user intent
+- Explains, plans, answers, and routes requests
 
-Keep member/access management straightforward.
+#### Surfaces
 
-### Advanced
+- Web chat
+- Future Slack/Discord/etc.
 
-Keep low-level details available but visually separated:
+#### Capabilities
 
-- legacy/manual prompt
-- Letta sync/drift
-- model/runtime config
-- tool IDs
-- diagnostics
+- Synchronous conversation
+- Task intent capture
+- Channel-safe tools
+- Work plan updates, if available
 
-## Enabling projects
+#### Memory
 
-### Role-aware context profile storage
+- Reads `core/`
+- Reads/writes `talk/`
+- Does not directly promote to `core/`
 
-Add storage for `context_profile`.
+#### Contract
 
-Questions:
+- View protected role contract
+- Explain role boundaries
 
-- JSONB on `bears` vs separate table?
-- How to represent materialized vs referenced role contracts?
-- How to mark legacy/manual prompt mode?
+#### Prompt
 
-### Role-aware prompt assembly service
+- View composed `talk` prompt
+- Copy prompt
 
-Create one service responsible for composing role prompts.
+#### Runtime status
 
-Responsibilities:
+- Ready / pending / failed
+- Runtime family
+- Letta agent id
+- Last sync
+- Provisioning errors
 
-- stable layer ordering
-- role selection
-- Den baseline loading
-- role contract loading
-- user steering and Bear context inclusion
-- runtime context inclusion
-- legacy fallback
+#### Actions
 
-### Steering/context editor UI
+- Open chat
+- Start new thread
+- View role memory
 
-Create editing UI for user-owned layers.
+### 5.2 `pair` — collaborative tool/IDE partner
 
-Needs:
+#### Purpose
 
-- validation
-- preview
-- save/cancel
+- Works alongside the user inside tools
+- Helps with code, documents, debugging, design, and active collaboration
 
-### Role contracts view
+#### Surfaces
 
-Add UI for inspecting role contracts.
+- ACP clients
+- IDEs
+- Future design/productivity tools
 
-Needs:
+#### Capabilities
 
-- list all five roles
-- expandable contract text
-- clear protected/structural labeling
+- Client-mediated tool use
+- Code/workspace context
+- User-gated actions
+- File/document collaboration
 
-### Composed role prompt view
+#### Memory
 
-Add a view/modal that shows the full agent-visible prompt for a role.
+- Reads `core/`
+- Reads/writes `pair/`
+- Does not directly promote to `core/`
 
-Needs:
+#### Contract
 
-- role selector
-- previews for all five roles (`talk`, `pair`, `curate`, `work`, `watch`)
-- layer headings
-- copy button
-- links to edit steering/context
+- View protected role contract
+- Explain client-mediated boundary
 
-### Onboarding integration
+#### Prompt
 
-First-bear onboarding should create role-aware context profiles.
+- View composed `pair` prompt
+- Copy prompt
 
-Needs:
+#### Runtime status
 
-- map template to role contracts
-- map setup answers to steering/context
-- preserve starter prompts and first task handoff
+- Ready / pending / failed
+- Runtime family
+- Letta agent id
+- Last sync
+- Provisioning errors
 
-### Helper-assisted editing
+#### Actions
 
-Add helper flows that propose changes to user-owned layers.
+- Code with this Bear
+- Create/view code token
+- View role memory
 
-Needs:
+### 5.3 `curate` — memory and integration reviewer
 
-- target steering or context
-- question forms
-- generated text proposal
-- save/cancel
+#### Purpose
 
-### Role-aware drift display
+- Integrates durable knowledge
+- Reviews memories, task intents, observations, results, and skill proposals
+- Promotes durable knowledge into shared `core/`
 
-Update drift/diagnostic UI to compare against the actual composed role prompts.
+#### Surfaces
 
-Needs:
+- Not directly user-facing
+- Internal review/integration role
 
-- expected prompt per role from the role-aware composer
-- per-role drift indicators where practical
-- legacy prompt comparison only for Bears without `context_profile`
-- clear labels if only one role is being compared
+#### Capabilities
 
-### First task and starter prompts
+- Memory review
+- Task intent review
+- Observation review
+- Skill proposal review
+- Shared memory promotion through Den-controlled mechanisms
 
-Expose onboarding starter metadata after creation.
+#### Memory
 
-Needs:
+- Reads across role branches, subject to policy
+- Writes `curate/`
+- Promotes to `core/`
+- Does not write directly to other role branches
 
-- show saved `first_task` when present
-- show template starter prompts where useful
-- provide a handoff into chat, such as a prefilled draft or one-click starter
+#### Contract
 
-### Legacy/manual prompt compatibility
+- View protected role contract
+- Explain semantic authority / review boundary
 
-Support existing bears and admins who edit raw prompts today.
+#### Prompt
 
-Questions:
+- View composed `curate` prompt
+- Copy prompt
 
-- What happens if a user directly edits `system_prompt` on a role-aware Bear?
-- Does that switch it to manual mode?
-- Can it be converted back later?
+#### Runtime status
 
-### Template role contract versioning
+- Ready / pending / failed
+- Runtime family
+- Letta agent id
+- Last sync
+- Provisioning errors
 
-If templates change, decide whether existing Bears are updated, offered migrations, or left unchanged.
+#### Actions
 
-Likely recommendation:
+- View review queue, future
+- View memory promotions, future
+- View role memory
 
-- Existing Bears keep materialized contracts or role contract version references.
-- UI can show `Started from template X version Y`.
-- Later, offer optional template update/migration.
+### 5.4 `work` — approved outbound executor
 
-## Open questions
+#### Purpose
 
-1. Which roles should have composed prompt previews in the first UI slice?
-2. Should role contracts be materialized per Bear, referenced by version, or both?
-3. Should normal bear admins ever edit role contracts directly?
-4. How should raw `system_prompt` editing interact with role-aware Bears?
-5. Should `context_profile` become canonical immediately for new Bears?
-6. How should runtime/thread context be explained without exposing Letta internals?
-7. Should onboarding answers be shown as provenance for steering/context?
-8. Should role prompt changes have audit history?
-9. Should users be able to copy/export role prompts?
-10. How should role-aware composition map onto current Letta provisioning if only one linked agent exists today?
+- Executes approved scheduled/event-triggered/background work
+- Performs external actions only within reviewed task scope
 
-## Recommended first implementation slice
+#### Surfaces
 
-Start with a minimal role-aware foundation that improves the details page without requiring the full five-agent runtime to be complete.
+- Den task dispatch
+- Schedules
+- Approved background jobs
 
-Suggested slice:
+#### Capabilities
 
-1. Add `context_profile` storage.
-2. Add a role-aware composer with Den baseline, role contract, user steering, Bear context, and legacy fallback.
-3. Support composed prompt preview for `talk` and `pair` first.
-4. Show/edit `User steering` and `Bear context` for role-aware Bears.
-5. Show inspectable role contracts.
-6. Keep existing prompt editing path for legacy/manual Bears.
-7. Defer helper-assisted editing and role contract editing.
+- Approved API calls
+- Scheduled tasks
+- Event-triggered work
+- Run-status reporting
+
+#### Memory
+
+- Reads `core/`
+- Reads task definition/run context
+- Reads/writes `work/`
+- Does not read raw `talk/`, `pair/`, or `watch/` branches directly
+
+#### Contract
+
+- View protected role contract
+- Explain approved-scope boundary
+
+#### Prompt
+
+- View composed `work` prompt
+- Copy prompt
+
+#### Runtime status
+
+- Ready / pending / failed
+- Runtime family
+- Letta agent id
+- Last sync
+- Provisioning errors
+
+#### Actions
+
+- View approved tasks, future
+- View recent work results, future
+- View role memory
+
+### 5.5 `watch` — inbound observer
+
+#### Purpose
+
+- Receives external events
+- Turns webhooks, polling results, and subscriptions into structured observations
+- Does not act outward
+
+#### Surfaces
+
+- Webhooks
+- Polling
+- Queues
+- Subscriptions
+- Event streams
+
+#### Capabilities
+
+- Inbound event parsing
+- Observation creation
+- Subscription monitoring
+- Event summarization
+
+#### Memory
+
+- Reads `core/`
+- Reads delivered event payloads
+- Reads/writes `watch/`
+- Does not write `core/` directly
+- Does not trigger outbound action directly
+
+#### Contract
+
+- View protected role contract
+- Explain inbound-only boundary
+
+#### Prompt
+
+- View composed `watch` prompt
+- Copy prompt
+
+#### Runtime status
+
+- Ready / pending / failed
+- Runtime family
+- Letta agent id
+- Last sync
+- Provisioning errors
+
+#### Actions
+
+- View subscriptions, future
+- View observations, future
+- View role memory
+
+## 6. Shared memory
+
+Shared memory is Bear-wide memory, not role-specific branch memory. Role-specific memory belongs inside the role detail pages/cards.
+
+### 6.1 `core/` memory
+
+- Durable shared Bear memory
+- Promoted knowledge
+- Stable preferences
+- Important context
+
+### 6.2 Memory health
+
+- Repo status
+- Commit count
+- Memory file count
+- Recent memory manager events
+- Warnings/errors
+
+### 6.3 Recent memory changes
+
+- Recent promotions into `core/`
+- Recent updates by `curate`
+- Recent role branch changes, summarized
+
+### 6.4 Memory details
+
+- Link to full memory browser
+- Link to runtime memory blocks
+- Advanced tree/file view
+
+## 7. People & access
+
+### 7.1 Members
+
+- Users with access
+- Admin/member role labels
+
+### 7.2 Access management
+
+- Add member
+- Remove member
+- Change role
+
+### 7.3 Sharing/invites, future
+
+- Invite links
+- Team/household/workspace access
+
+## 8. Advanced operations
+
+### 8.1 Model and runtime configuration
+
+- Default model
+- Agent type
+- Runtime plan
+- Role runtime families
+
+### 8.2 Tool and skill configuration
+
+- Tool IDs
+- Skill manifest
+- Skill proposals
+- Role applicability
+
+### 8.3 Letta sync and diagnostics
+
+- Per-role sync status
+- Drift status
+- Force sync
+- Recompile status
+- Raw Letta agent state links/details
+
+### 8.4 Prompt compatibility output
+
+- Generated prompt snapshots
+- Legacy migration notes
+- Raw `system_prompt` compatibility field, if still present internally
+
+### 8.5 Danger zone
+
+- Delete Bear
+- Reset/reprovision roles
+- Clear/rebuild derived state, future
+
+## Placement of technical details
+
+Technical details should appear in the context that gives them meaning:
+
+- Letta agent IDs → role detail runtime status
+- Runtime family → role detail runtime status
+- Role provisioning status → role details and command-center health summary
+- MemFS role view status → role detail memory status
+- Shared MemFS health → shared memory
+- Tool IDs → capabilities/advanced operations
+- Prompt snapshots → role prompt views / advanced prompt compatibility
+- Letta sync/drift → advanced operations, summarized in command center if unhealthy
+- Members → people & access
+- Conversations → current work as threads
+
+## Relationship to context composition
+
+This IA depends on role-aware context composition but should not be reduced to it.
+
+Context composition answers:
+
+> What text does each role see?
+
+The Bear details IA answers:
+
+> What is this Bear doing, how do I steer it, what does it know, what can each role do, and what needs attention?
+
+## Implementation plan
+
+### Project 1: Restructure Bear details into the approved IA
+
+- Command center
+- Current work
+- Steering
+- Context
+- Roles
+- Shared memory
+- People & access
+- Advanced operations
+
+### Project 2: Role detail pages
+
+- Add server-rendered pages for `/bear/{slug}/details/roles/{role}`.
+- Each role detail page follows the shared role detail pattern.
+- Include role contract, composed prompt, memory branch status, capabilities, and runtime status.
+
+### Project 3: Progressive role panes
+
+- Enhance the Bear details page with JS that loads role detail pages into content panes.
+- Keep links functional without JS.
+- Prefer semantic links/buttons and preserve accessible focus behavior.
+
+### Project 4: Shared memory redesign
+
+- Present `core/` memory separately from role branch memory.
+- Move role branch memory status into role detail pages/cards.
+- Keep detailed memory browser links.
+
+### Project 5: Capabilities in role context
+
+- Move role-specific capabilities into role details.
+- Add command-center capability summary.
+- Keep raw tools/skills in advanced operations.
+
+### Project 6: Advanced operations cleanup
+
+- Consolidate model/config, Letta sync, raw tool IDs, runtime diagnostics, and danger-zone actions.
+- Remove legacy one-agent prompt framing from primary UI.
 
 ## Completed MVP slice
 
-The first details-page implementation now includes:
+Current implementation has pieces of the future IA but not the final organization:
 
-- role-aware `context_profile` support
 - user steering display
 - Bear context display
-- composed prompt previews for `talk` and `pair`
-- legacy prompt fallback
-- a clearer label for role-aware Bears where `system_prompt` is a generated talk prompt snapshot
+- role agents table
+- composed `talk`/`pair` prompt previews
+- memory health/details
+- active/all threads
+- advanced prompt/config blocks
 
 ## Remaining near-term work
 
-Next details UI work should add:
-
-1. Edit forms for `User steering` and `Bear context`.
-2. Inspectable role contracts for all five roles.
-3. Composed prompt previews for `curate`, `work`, and `watch`.
-4. Copy/export buttons for composed role prompts.
-5. First task and starter prompt display/handoff.
-6. Role-aware drift and sync diagnostics.
-7. Explicit manual/legacy prompt conversion behavior.
-
-This gets the details page moving toward transparency and education while respecting the multi-agent Bear architecture.
+1. Reorder Bear details page around the approved IA.
+2. Add role detail pages for all five roles.
+3. Move composed prompts into role detail pages/panes.
+4. Move role-specific memory/capabilities into role detail pages/panes.
+5. Present shared `core/` memory separately from role branches.
+6. Remove legacy single-agent prompt framing from primary UI.
+7. Add progressive enhancement for role content panes.
