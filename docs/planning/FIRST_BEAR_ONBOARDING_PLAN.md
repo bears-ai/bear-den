@@ -2,9 +2,9 @@
 
 ## Summary
 
-After email verification, new users should be sent directly into a guided "first bear" setup flow. The flow should use **heavy templates with simple language**: internally, templates materialize role contracts for the Bear's five internal roles and collect user steering/context; externally, users should feel like they are answering practical questions about how they want their Bear to work with them.
+New users with no bears should be sent directly into a guided "first bear" setup flow. The flow should use **heavy templates with simple language**: internally, templates materialize role contracts for the Bear's five internal roles and collect user steering/context; externally, users should feel like they are answering practical questions about how they want their Bear to work with them.
 
-The goal is not merely to create a bear record. The goal is to introduce the product model and create a first bear that is immediately useful.
+The goal is not merely to create a bear record. The goal is to introduce the product model and create a first bear that is immediately useful. After creation, the Bear details/workspace home should follow the IA in [`BEAR_DETAILS_UI_IMPROVEMENT_PLAN.md`](BEAR_DETAILS_UI_IMPROVEMENT_PLAN.md), with onboarding output surfaced as steering, context, starter prompts, and role-aware details.
 
 ## Product thesis
 

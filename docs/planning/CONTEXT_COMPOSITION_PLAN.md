@@ -286,63 +286,17 @@ This can later evolve into separate tables or richer sections when usage demands
 
 ## Bear details UI implications
 
-The details page should eventually show:
+The authoritative Bear details IA lives in [`BEAR_DETAILS_UI_IMPROVEMENT_PLAN.md`](BEAR_DETAILS_UI_IMPROVEMENT_PLAN.md).
 
-### User steering
+Context composition supports that UI by providing:
 
-Primary editable behavior block.
+- role contracts for `talk`, `pair`, `curate`, `work`, and `watch`
+- user steering
+- Bear context
+- composed role prompts
+- runtime/thread context representation
 
-Copy:
-
-> These instructions steer how your Bear works with you. They should guide the Bear without changing its internal role boundaries.
-
-Actions:
-
-- Edit steering
-- Use setup helper, later
-
-### Bear context
-
-Primary editable context block.
-
-Copy:
-
-> This is stable context this Bear should know.
-
-Actions:
-
-- Edit context
-- Use setup helper, later
-
-### Role contracts
-
-Inspectable protected block.
-
-Copy:
-
-> Role contracts define what the Bear's internal roles are allowed and expected to do. They preserve trust boundaries.
-
-Actions:
-
-- View role contracts
-- View composed prompt for role
-
-### Composed prompts
-
-Preview of what role agents see.
-
-Copy:
-
-> Den combines the Den baseline, a role contract, user steering, Bear context, and runtime context into the prompt a role sees.
-
-Actions:
-
-- View `talk` prompt
-- View `pair` prompt
-- View `curate` prompt
-- View `work` prompt
-- View `watch` prompt
-- Copy prompt
+The Bear details page should not be organized merely as a context-composition editor. It should organize role-specific memory, capabilities, contracts, prompts, and runtime state together under each role, while keeping shared Bear-wide concepts such as current work, steering, context, shared `core/` memory, people/access, and advanced operations at the Bear level.
 
 ## First-bear onboarding implications
 
@@ -499,8 +453,8 @@ Changes:
 
 - show `User steering` if `context_profile` exists
 - show `Bear context` if `context_profile` exists
-- add `View role contracts`
-- add `View composed prompt` for at least `talk` and `pair`, as available
+- link to role detail pages/panes as defined in `BEAR_DETAILS_UI_IMPROVEMENT_PLAN.md`
+- expose composed role prompts through role detail pages rather than a standalone prompt-only section
 - keep existing system prompt editing path for legacy/manual prompts
 
 ### Project 7: First-bear onboarding v1
@@ -635,9 +589,9 @@ Implement the foundation in this order:
 
 1. Add role-aware context composition service with Den baseline + legacy prompt fallback.
 2. Add `context_profile` storage.
-3. Add composed prompt preview to bear details for at least current user-facing roles.
+3. Add composed prompt previews through role detail pages/panes.
 4. Add editable User steering / Bear context blocks for role-aware bears.
-5. Add inspectable role contracts.
+5. Add inspectable role contracts within role detail pages.
 6. Update bear creation/provisioning to write generated prompt text where current paths require `system_prompt`.
 7. Build first-bear onboarding on top.
 
