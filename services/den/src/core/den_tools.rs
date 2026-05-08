@@ -1149,6 +1149,15 @@ async fn web_search(
     context: &DenToolInvocationContext,
     arguments: Value,
 ) -> Result<Value, CustomError> {
+    web_search_inner(Some(pool), config, Some(context), arguments).await
+}
+
+async fn web_search_inner(
+    pool: Option<&PgPool>,
+    config: &Config,
+    context: Option<&DenToolInvocationContext>,
+    arguments: Value,
+) -> Result<Value, CustomError> {
     let args: WebSearchArguments = serde_json::from_value(arguments)?;
     if args.query.trim().is_empty() {
         return Err(CustomError::ValidationError(
@@ -1169,7 +1178,11 @@ async fn web_search(
             "unsupported DEN_SEARCH_PROVIDER={other:?}; supported providers: brave"
         ))),
     }?;
-    let preferred_hosts = web_policy::preferred_hosts_for_bear(pool, context.bear_id).await?;
+    let preferred_hosts = if let (Some(pool), Some(context)) = (pool, context) {
+        web_policy::preferred_hosts_for_bear(pool, context.bear_id).await?
+    } else {
+        Vec::new()
+    };
     if let Some(results) = value.get_mut("results").and_then(Value::as_array_mut) {
         for result in results.iter_mut() {
             if let Some(url) = result.get("url").and_then(Value::as_str) {
@@ -1961,9 +1974,14 @@ mod tests {
         assert!(!talk.contains(DEN_MEMORY_WRITE_ENTRY));
     }
 
-    #[ignore = "web_search now needs DB-backed context for preferred host annotation"]
     #[tokio::test]
-    async fn web_search_reports_missing_provider_config() {}
+    async fn web_search_reports_missing_provider_config() {
+        let config = Config::test_stub();
+        let err = web_search_inner(None, &config, None, json!({ "query": "rust docs" }))
+            .await
+            .expect_err("missing provider should fail clearly");
+        assert!(err.to_string().contains("DEN_SEARCH_PROVIDER"));
+    }
 
     #[test]
     fn role_authorization_rejects_disallowed_tools() {

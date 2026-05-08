@@ -29,6 +29,7 @@ use tokio::sync::Mutex;
 use tower::ServiceExt;
 use tower_sessions_sqlx_store::PostgresStore;
 use uuid::Uuid;
+use regex::Regex;
 
 #[derive(Clone)]
 struct TestLettaState {
@@ -347,6 +348,28 @@ async fn post_prompt(
     app.oneshot(builder.body(Body::from(body.to_string())).unwrap())
         .await
         .expect("ACP prompt response")
+}
+
+async fn post_permission_result(
+    app: axum::Router,
+    slug: &str,
+    session_id: &str,
+    permission_id: &str,
+    token: Option<&str>,
+    body: Value,
+) -> axum::response::Response {
+    let mut builder = Request::builder()
+        .method("POST")
+        .uri(format!(
+            "/acp/bears/{slug}/sessions/{session_id}/permissions/{permission_id}"
+        ))
+        .header(header::CONTENT_TYPE, "application/json");
+    if let Some(token) = token {
+        builder = builder.header(header::AUTHORIZATION, format!("Bearer {token}"));
+    }
+    app.oneshot(builder.body(Body::from(body.to_string())).unwrap())
+        .await
+        .expect("ACP permission result response")
 }
 
 async fn post_tool_result(
@@ -1233,6 +1256,83 @@ async fn acp_tool_malformed_args_surface_error_without_registration() {
     let result_json: Value = serde_json::from_str(&response_text(result).await).unwrap();
     assert_eq!(result_json["accepted"], false);
     assert_eq!(result_json["reason"], "turn_missing");
+}
+
+
+
+#[tokio::test]
+async fn acp_web_fetch_permission_allow_host_persists_and_continues() {
+    let fixture = test_app().await;
+    let user_bear = create_test_user_bear(&fixture.pool, true).await;
+    fixture.letta_script.lock().await.extend([
+        format!(
+            "{}{}",
+            letta_tool_request_sse(
+                "web_fetch",
+                "call-web-fetch-host",
+                json!({ "url": "https://example.com/docs" })
+            ),
+            letta_stop_sse()
+        ),
+        "data: {\"message_type\":\"assistant_message\",\"content\":\"fetch approved\"}\n\n\
+         data: {\"message_type\":\"stop_reason\",\"stop_reason\":\"end_turn\"}\n\n"
+            .to_string(),
+    ]);
+
+    let app_for_prompt = fixture.app.clone();
+    let slug = user_bear.bear_slug.clone();
+    let token = user_bear.raw_token.clone();
+    let prompt_task = tokio::spawn(async move {
+        post_prompt(
+            app_for_prompt,
+            &slug,
+            "session-web-fetch-host",
+            Some(&token),
+            json!({ "message": "fetch docs", "client": "zed" }),
+        )
+        .await
+    });
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+    // First response should contain permission_request and generated permission id.
+    let prompt = prompt_task.await.unwrap();
+    assert_eq!(prompt.status(), StatusCode::OK);
+    let text = response_text(prompt).await;
+    assert!(text.contains("permission_request"));
+    assert!(text.contains("web_fetch"));
+    assert!(text.contains("allow_host"));
+    let permission_id = Regex::new(r#"\"permission_id\":\"([^\"]+)\""#)
+        .unwrap()
+        .captures(&text)
+        .and_then(|captures| captures.get(1).map(|m| m.as_str().to_string()))
+        .expect("permission id in stream");
+
+    let res = post_permission_result(
+        fixture.app.clone(),
+        &user_bear.bear_slug,
+        "session-web-fetch-host",
+        &permission_id,
+        Some(&user_bear.raw_token),
+        json!({ "decision": "allow_host" }),
+    )
+    .await;
+    assert_eq!(res.status(), StatusCode::OK, "{}", response_text(res).await);
+
+    let count: i64 = sqlx::query_scalar(
+        r#"
+        SELECT COUNT(*)::bigint
+        FROM bear_web_approvals
+        WHERE bear_id = $1
+          AND scope_kind = 'host'
+          AND scope_value = 'example.com'
+          AND revoked_at IS NULL
+        "#,
+    )
+    .bind(user_bear.bear_id)
+    .fetch_one(&fixture.pool)
+    .await
+    .expect("approval count");
+    assert_eq!(count, 1);
 }
 
 #[tokio::test]

@@ -3574,7 +3574,7 @@ async fn post_permission_result(
     session_id: &str,
     permission_id: &str,
     payload: Value,
-) -> Result<()> {
+) -> Result<Value> {
     let url = format!(
         "{}/acp/bears/{}/sessions/{}/permissions/{}",
         config.api_url,
@@ -3601,7 +3601,7 @@ async fn post_permission_result(
             body.trim()
         ));
     }
-    Ok(())
+    Ok(serde_json::from_str(&body).unwrap_or_else(|_| json!({ "raw": body })))
 }
 
 async fn post_tool_result(
@@ -3784,13 +3784,51 @@ async fn handle_permission_request_event(
         }
         _ => "reject_once",
     };
-    post_permission_result(
+    let response = post_permission_result(
         config,
         session_id,
         permission_id,
         json!({ "decision": decision_str }),
     )
     .await?;
+    if let Some(local_tool) = response.get("local_tool_request") {
+        let tool_call_id = local_tool
+            .get("tool_call_id")
+            .and_then(Value::as_str)
+            .unwrap_or(tool_call_id);
+        let tool_name = local_tool
+            .get("tool_name")
+            .and_then(Value::as_str)
+            .unwrap_or("local_web_fetch");
+        let args = local_tool.get("args").cloned().unwrap_or_else(|| json!({}));
+        let policy = policy_from_event(local_tool);
+        let result = execute_local_tool(adapter_state, session_id, tool_name, args, &policy).await;
+        let started = std::time::Instant::now();
+        match result {
+            Ok(value) => {
+                let mut payload = json!({
+                    "tool_call_id": tool_call_id,
+                    "tool_name": tool_name,
+                    "status": "ok",
+                    "content": value.get("content").cloned().unwrap_or_else(|| json!("")),
+                    "structured_content": value,
+                    "diagnostic": { "component": "bears-acp-adapter", "phase": "permission_local_tool_completed", "duration_ms": started.elapsed().as_millis() }
+                });
+                post_tool_result(config, session_id, tool_call_id, payload).await?;
+            }
+            Err(err) => {
+                let payload = json!({
+                    "tool_call_id": tool_call_id,
+                    "tool_name": tool_name,
+                    "status": "error",
+                    "content": format!("{err:#}"),
+                    "structured_content": {},
+                    "diagnostic": { "component": "bears-acp-adapter", "phase": "permission_local_tool_failed", "duration_ms": started.elapsed().as_millis() }
+                });
+                post_tool_result(config, session_id, tool_call_id, payload).await?;
+            }
+        }
+    }
     Ok(())
 }
 

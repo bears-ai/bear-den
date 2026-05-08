@@ -160,6 +160,8 @@ struct AcpPermissionDecisionRequest {
 struct AcpPermissionDecisionResponse {
     accepted: bool,
     reason: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    local_tool_request: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Serialize)]
@@ -1329,6 +1331,32 @@ async fn permission_result_inner(
         )
         .await?;
     }
+    if matches!(decision, "allow_once" | "allow_url" | "allow_host")
+        && web_policy::is_local_web_url(&pending.normalized_url)
+    {
+        pending.context.tool_turns.register(AcpToolTurnRegistration {
+            user_id: pending.user_id,
+            bear_id: pending.bear_id,
+            bear_slug: pending.context.bear_slug.clone(),
+            acp_session_id: pending.context.acp_session_id.clone(),
+            request_id: pending.context.request_id,
+            tool_call_id: pending.tool_call_id.clone(),
+            tool_name: "local_web_fetch".to_string(),
+            approval_request_id: pending.approval_request_id.clone(),
+            result_tx: pending.result_tx,
+        })?;
+        return Ok(Json(AcpPermissionDecisionResponse {
+            accepted: true,
+            reason: "local_tool_required".to_string(),
+            local_tool_request: Some(serde_json::json!({
+                "tool_call_id": pending.tool_call_id,
+                "tool_name": "local_web_fetch",
+                "args": { "url": pending.normalized_url.url },
+                "policy": { "max_bytes": 262144, "total_timeout_ms": 120000 }
+            })),
+        })
+        .into_response());
+    }
     let result = if matches!(decision, "allow_once" | "allow_url" | "allow_host") {
         invoke_acp_den_tool(
             &pending.context,
@@ -1356,6 +1384,7 @@ async fn permission_result_inner(
     Ok(Json(AcpPermissionDecisionResponse {
         accepted: true,
         reason: "delivered".to_string(),
+        local_tool_request: None,
     })
     .into_response())
 }
