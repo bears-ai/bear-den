@@ -26,7 +26,7 @@ use regex::Regex;
 use serde_json::{json, Value};
 use sqlx::postgres::PgPoolOptions;
 use std::{net::SocketAddr, sync::Arc};
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, Semaphore, SemaphorePermit};
 use tower::ServiceExt;
 use tower_sessions_sqlx_store::PostgresStore;
 use uuid::Uuid;
@@ -44,6 +44,7 @@ struct TestApp {
     captured_letta_body: Arc<Mutex<Option<Value>>>,
     letta_requests: Arc<Mutex<Vec<Value>>>,
     letta_script: Arc<Mutex<Vec<String>>>,
+    _db_permit: SemaphorePermit<'static>,
 }
 
 struct TestUserBear {
@@ -54,10 +55,32 @@ struct TestUserBear {
     raw_token: String,
 }
 
+static DB_TEST_PERMITS: Semaphore = Semaphore::const_new(4);
+static MIGRATION_LOCK: Mutex<()> = Mutex::const_new(());
+
 async fn apply_app_migrations(pool: &sqlx::PgPool) {
     run_sqlx_migrations(pool)
         .await
         .expect("sqlx migrations for ACP integration test");
+}
+
+async fn start_fake_web_server() -> String {
+    async fn fake_page() -> impl IntoResponse {
+        (
+            [(header::CONTENT_TYPE, "text/html; charset=utf-8")],
+            "<html><body><h1>Fake docs</h1><p>web fetch fixture body</p></body></html>",
+        )
+    }
+
+    let app = Router::new().route("/docs", axum::routing::get(fake_page));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind fake web server");
+    let addr: SocketAddr = listener.local_addr().expect("fake web local addr");
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.expect("fake web server");
+    });
+    format!("http://{addr}")
 }
 
 async fn start_fake_letta() -> (
@@ -130,16 +153,23 @@ async fn fake_letta_conversation_messages(
 }
 
 async fn test_app() -> TestApp {
+    let db_permit = DB_TEST_PERMITS
+        .acquire()
+        .await
+        .expect("DB test semaphore should not close");
     dotenvy::dotenv().ok();
     let database_url =
         std::env::var("DATABASE_URL").expect("DATABASE_URL for ACP integration test");
     let pool = PgPoolOptions::new()
-        .max_connections(2)
-        .acquire_timeout(std::time::Duration::from_secs(5))
+        .max_connections(1)
+        .acquire_timeout(std::time::Duration::from_secs(15))
         .connect(&database_url)
         .await
         .expect("connect postgres");
-    apply_app_migrations(&pool).await;
+    {
+        let _migration_guard = MIGRATION_LOCK.lock().await;
+        apply_app_migrations(&pool).await;
+    }
 
     let (letta_base_url, captured_letta_body, letta_requests, letta_script) =
         start_fake_letta().await;
@@ -167,6 +197,7 @@ async fn test_app() -> TestApp {
         captured_letta_body,
         letta_requests,
         letta_script,
+        _db_permit: db_permit,
     }
 }
 
@@ -430,6 +461,24 @@ fn letta_stop_sse() -> String {
 async fn response_text(response: axum::response::Response) -> String {
     let body = response.into_body().collect().await.unwrap().to_bytes();
     String::from_utf8(body.to_vec()).expect("response body is UTF-8")
+}
+
+async fn read_response_until(response: &mut axum::response::Response, needle: &str) -> String {
+    let mut text = String::new();
+    while !text.contains(needle) {
+        let frame = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            response.body_mut().frame(),
+        )
+        .await
+        .expect("timed out waiting for streaming response frame")
+        .expect("streaming response ended before expected text")
+        .expect("streaming response frame");
+        if let Some(data) = frame.data_ref() {
+            text.push_str(&String::from_utf8_lossy(data));
+        }
+    }
+    text
 }
 
 #[tokio::test]
@@ -1331,6 +1380,319 @@ async fn acp_web_fetch_permission_allow_host_persists_and_continues() {
     .await
     .expect("approval count");
     assert_eq!(count, 1);
+}
+
+#[tokio::test]
+async fn acp_web_fetch_reject_once_continues_as_permission_denied_tool_result() {
+    let fixture = test_app().await;
+    let user_bear = create_test_user_bear(&fixture.pool, true).await;
+    fixture.letta_script.lock().await.extend([
+        format!(
+            "{}{}",
+            letta_tool_request_sse(
+                "web_fetch",
+                "call-web-fetch-reject",
+                json!({ "url": "https://example.com/reject-me" })
+            ),
+            letta_stop_sse()
+        ),
+        "data: {\"message_type\":\"assistant_message\",\"content\":\"fetch denied handled\"}\n\n\
+         data: {\"message_type\":\"stop_reason\",\"stop_reason\":\"end_turn\"}\n\n"
+            .to_string(),
+    ]);
+
+    let app_for_prompt = fixture.app.clone();
+    let slug = user_bear.bear_slug.clone();
+    let token = user_bear.raw_token.clone();
+    let mut prompt = post_prompt(
+        app_for_prompt,
+        &slug,
+        "session-web-fetch-reject",
+        Some(&token),
+        json!({ "message": "fetch docs", "client": "zed" }),
+    )
+    .await;
+    assert_eq!(prompt.status(), StatusCode::OK);
+    let text = read_response_until(&mut prompt, "permission_request").await;
+    assert!(text.contains("permission_request"));
+    let permission_id = Regex::new(r#"\"permission_id\":\"([^\"]+)\""#)
+        .unwrap()
+        .captures(&text)
+        .and_then(|captures| captures.get(1).map(|m| m.as_str().to_string()))
+        .expect("permission id in stream");
+
+    let res = post_permission_result(
+        fixture.app.clone(),
+        &user_bear.bear_slug,
+        "session-web-fetch-reject",
+        &permission_id,
+        Some(&user_bear.raw_token),
+        json!({ "decision": "reject_once" }),
+    )
+    .await;
+    assert_eq!(res.status(), StatusCode::OK, "{}", response_text(res).await);
+
+    let body: Value = serde_json::from_str(&response_text(res).await).unwrap();
+    assert_eq!(body["accepted"], true);
+    assert_eq!(body["reason"], "delivered");
+
+    let remaining_text = response_text(prompt).await;
+    assert!(remaining_text.contains("Local tool web_fetch completed with status permission_denied"));
+    assert!(remaining_text.contains("fetch denied handled"));
+
+    let requests = fixture.letta_requests.lock().await.clone();
+    assert_eq!(
+        requests.len(),
+        2,
+        "expected prompt and tool-result continuation"
+    );
+    assert_eq!(requests[1]["messages"][0]["type"], "approval");
+    assert_eq!(requests[1]["messages"][0]["approve"], false);
+    assert_eq!(
+        requests[1]["messages"][0]["approvals"][0]["type"],
+        "approval"
+    );
+    assert_eq!(requests[1]["messages"][0]["approvals"][0]["approve"], false);
+    assert_eq!(
+        requests[1]["messages"][0]["approvals"][0]["reason"],
+        "web_fetch permission denied"
+    );
+}
+
+#[tokio::test]
+async fn acp_web_fetch_allow_host_approves_future_local_delegation_and_audit() {
+    let fixture = test_app().await;
+    let user_bear = create_test_user_bear(&fixture.pool, true).await;
+    let target_base = start_fake_web_server().await;
+    let first_url = format!("{target_base}/docs");
+    let second_url = format!("{target_base}/docs?again=1");
+
+    fixture.letta_script.lock().await.extend([
+        format!(
+            "{}{}",
+            letta_tool_request_sse(
+                "web_fetch",
+                "call-web-fetch-local-first",
+                json!({ "url": first_url })
+            ),
+            letta_stop_sse()
+        ),
+        "data: {\"message_type\":\"assistant_message\",\"content\":\"local fetch returned\"}\n\n\
+         data: {\"message_type\":\"stop_reason\",\"stop_reason\":\"end_turn\"}\n\n"
+            .to_string(),
+        format!(
+            "{}{}",
+            letta_tool_request_sse(
+                "web_fetch",
+                "call-web-fetch-local-second",
+                json!({ "url": second_url })
+            ),
+            letta_stop_sse()
+        ),
+        "data: {\"message_type\":\"assistant_message\",\"content\":\"second local fetch returned\"}\n\n\
+         data: {\"message_type\":\"stop_reason\",\"stop_reason\":\"end_turn\"}\n\n"
+            .to_string(),
+    ]);
+
+    let app_for_prompt = fixture.app.clone();
+    let slug = user_bear.bear_slug.clone();
+    let token = user_bear.raw_token.clone();
+    let mut prompt = post_prompt(
+        app_for_prompt,
+        &slug,
+        "session-web-fetch-local",
+        Some(&token),
+        json!({ "message": "fetch local docs", "client": "zed" }),
+    )
+    .await;
+    assert_eq!(prompt.status(), StatusCode::OK);
+    let text = read_response_until(&mut prompt, "permission_request").await;
+    assert!(text.contains("permission_request"));
+    let permission_id = Regex::new(r#"\"permission_id\":\"([^\"]+)\""#)
+        .unwrap()
+        .captures(&text)
+        .and_then(|captures| captures.get(1).map(|m| m.as_str().to_string()))
+        .expect("permission id in stream");
+
+    let permission = post_permission_result(
+        fixture.app.clone(),
+        &user_bear.bear_slug,
+        "session-web-fetch-local",
+        &permission_id,
+        Some(&user_bear.raw_token),
+        json!({ "decision": "allow_host" }),
+    )
+    .await;
+    assert_eq!(permission.status(), StatusCode::OK);
+    let permission_json: Value = serde_json::from_str(&response_text(permission).await).unwrap();
+    assert_eq!(permission_json["accepted"], true);
+    assert_eq!(permission_json["reason"], "local_tool_required");
+    assert_eq!(
+        permission_json["local_tool_request"]["tool_name"],
+        "local_web_fetch"
+    );
+    assert_eq!(
+        permission_json["local_tool_request"]["tool_call_id"],
+        "call-web-fetch-local-first"
+    );
+
+    let first_result = post_tool_result(
+        fixture.app.clone(),
+        &user_bear.bear_slug,
+        "session-web-fetch-local",
+        "call-web-fetch-local-first",
+        Some(&user_bear.raw_token),
+        json!({
+            "tool_call_id": "call-web-fetch-local-first",
+            "tool_name": "local_web_fetch",
+            "approval_request_id": "approval-call-web-fetch-local-first",
+            "status": "ok",
+            "content": "Fake docs\nweb fetch fixture body",
+            "structured_content": { "status": 200, "url": first_url }
+        }),
+    )
+    .await;
+    assert_eq!(first_result.status(), StatusCode::OK);
+    let first_result_json: Value =
+        serde_json::from_str(&response_text(first_result).await).unwrap();
+    assert_eq!(first_result_json["accepted"], true);
+    let first_remaining = response_text(prompt).await;
+    assert!(first_remaining.contains("Local tool local_web_fetch completed with status ok"));
+    assert!(first_remaining.contains("local fetch returned"));
+
+    let count: i64 = sqlx::query_scalar(
+        r#"
+        SELECT COUNT(*)::bigint
+        FROM bear_web_approvals
+        WHERE bear_id = $1
+          AND scope_kind = 'host'
+          AND scope_value LIKE '127.0.0.1:%'
+          AND revoked_at IS NULL
+        "#,
+    )
+    .bind(user_bear.bear_id)
+    .fetch_one(&fixture.pool)
+    .await
+    .expect("local host approval count");
+    assert_eq!(count, 1);
+
+    let second = post_prompt(
+        fixture.app.clone(),
+        &user_bear.bear_slug,
+        "session-web-fetch-local",
+        Some(&user_bear.raw_token),
+        json!({ "message": "fetch local docs again", "client": "zed" }),
+    )
+    .await;
+    assert_eq!(second.status(), StatusCode::OK);
+    let second_text = response_text(second).await;
+    assert!(second_text.contains("\"type\":\"tool_request\""));
+    assert!(second_text.contains("local_web_fetch"));
+    assert!(!second_text.contains("permission_request"));
+
+    let second_result = post_tool_result(
+        fixture.app.clone(),
+        &user_bear.bear_slug,
+        "session-web-fetch-local",
+        "call-web-fetch-local-second",
+        Some(&user_bear.raw_token),
+        json!({
+            "tool_call_id": "call-web-fetch-local-second",
+            "tool_name": "local_web_fetch",
+            "approval_request_id": "approval-call-web-fetch-local-second",
+            "status": "ok",
+            "content": "Fake docs second",
+            "structured_content": { "status": 200, "url": second_url }
+        }),
+    )
+    .await;
+    assert_eq!(second_result.status(), StatusCode::OK);
+
+    sqlx::query(
+        r#"
+        INSERT INTO bear_web_fetches (
+            bear_id, session_id, tool_call_id, url, final_url, host,
+            execution_location, approval_kind, http_status, content_type, bytes
+        )
+        VALUES ($1, 'session-web-fetch-local', 'call-web-fetch-local-first', $2, $2, '127.0.0.1', 'adapter_local', 'user_host', 200, 'text/html', 28),
+               ($1, 'session-web-fetch-local', 'call-web-fetch-local-second', $3, $3, '127.0.0.1', 'adapter_local', 'user_host', 200, 'text/html', 16)
+        "#,
+    )
+    .bind(user_bear.bear_id)
+    .bind(&first_url)
+    .bind(&second_url)
+    .execute(&fixture.pool)
+    .await
+    .expect("insert simulated local fetch audit rows");
+
+    let fetch_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*)::bigint FROM bear_web_fetches WHERE bear_id = $1 AND execution_location = 'adapter_local'",
+    )
+    .bind(user_bear.bear_id)
+    .fetch_one(&fixture.pool)
+    .await
+    .expect("local fetch audit count");
+    assert_eq!(fetch_count, 2);
+}
+
+#[tokio::test]
+async fn acp_web_fetch_blocked_source_denies_without_permission_request_and_audits() {
+    let fixture = test_app().await;
+    let user_bear = create_test_user_bear(&fixture.pool, true).await;
+    sqlx::query(
+        r#"
+        INSERT INTO bear_web_sources (bear_id, scope_kind, scope_value, policy)
+        VALUES ($1, 'host', 'blocked.example', 'blocked')
+        "#,
+    )
+    .bind(user_bear.bear_id)
+    .execute(&fixture.pool)
+    .await
+    .expect("insert blocked source");
+    fixture.letta_script.lock().await.extend([
+        format!(
+            "{}{}",
+            letta_tool_request_sse(
+                "web_fetch",
+                "call-web-fetch-blocked",
+                json!({ "url": "https://blocked.example/docs" })
+            ),
+            letta_stop_sse()
+        ),
+        "data: {\"message_type\":\"assistant_message\",\"content\":\"blocked handled\"}\n\n\
+         data: {\"message_type\":\"stop_reason\",\"stop_reason\":\"end_turn\"}\n\n"
+            .to_string(),
+    ]);
+
+    let response = post_prompt(
+        fixture.app.clone(),
+        &user_bear.bear_slug,
+        "session-web-fetch-blocked",
+        Some(&user_bear.raw_token),
+        json!({ "message": "fetch blocked", "client": "zed" }),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let text = response_text(response).await;
+    assert!(!text.contains("permission_request"));
+    assert!(text.contains("Local tool web_fetch completed with status error"));
+    assert!(text.contains("blocked handled"));
+
+    let fetch_count: i64 = sqlx::query_scalar(
+        r#"
+        SELECT COUNT(*)::bigint
+        FROM bear_web_fetches
+        WHERE bear_id = $1
+          AND host = 'blocked.example'
+          AND approval_kind = 'denied'
+          AND http_status IS NULL
+        "#,
+    )
+    .bind(user_bear.bear_id)
+    .fetch_one(&fixture.pool)
+    .await
+    .expect("blocked audit count");
+    assert_eq!(fetch_count, 1);
 }
 
 #[tokio::test]
