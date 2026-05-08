@@ -71,10 +71,58 @@ pub fn normalize_host_for_url(url: &url::Url) -> Result<String, CustomError> {
             if !((url.scheme() == "https" && port == 443)
                 || (url.scheme() == "http" && port == 80)) =>
         {
-            format!("{host}:{port}")
+            if host.contains(':') {
+                format!("[{host}]:{port}")
+            } else {
+                format!("{host}:{port}")
+            }
         }
         _ => host,
     })
+}
+
+pub fn normalize_web_scope_value(scope_kind: &str, raw_value: &str) -> Result<String, CustomError> {
+    match scope_kind {
+        "url" => Ok(normalize_web_url(raw_value)?.url),
+        "host" => normalize_web_host(raw_value),
+        _ => Err(CustomError::ValidationError(
+            "web scope_kind must be host or url".to_string(),
+        )),
+    }
+}
+
+pub fn normalize_web_host(raw: &str) -> Result<String, CustomError> {
+    let value = raw.trim().trim_end_matches('.');
+    if value.is_empty() {
+        return Err(CustomError::ValidationError("host is required".to_string()));
+    }
+    if value.contains("://")
+        || value.contains('/')
+        || value.contains('?')
+        || value.contains('#')
+        || value.contains('@')
+        || value.contains('*')
+        || value.chars().any(char::is_whitespace)
+    {
+        return Err(CustomError::ValidationError(
+            "host must be a bare hostname or hostname:port, not a URL or pattern".to_string(),
+        ));
+    }
+
+    let probe = format!("https://{value}/");
+    let parsed = url::Url::parse(&probe).map_err(|err| {
+        CustomError::ValidationError(format!(
+            "host must be a valid hostname or hostname:port: {err}"
+        ))
+    })?;
+    let normalized = normalize_host_for_url(&parsed)?;
+    let host_only = parsed
+        .host_str()
+        .ok_or_else(|| CustomError::ValidationError("host is required".to_string()))?;
+    if host_only.is_empty() {
+        return Err(CustomError::ValidationError("host is required".to_string()));
+    }
+    Ok(normalized)
 }
 
 pub async fn decide_web_fetch_approval(
@@ -303,6 +351,23 @@ mod tests {
     #[test]
     fn rejects_non_http_urls() {
         assert!(normalize_web_url("file:///tmp/x").is_err());
+    }
+
+    #[test]
+    fn normalizes_bare_host_scope_values() {
+        assert_eq!(normalize_web_host("Example.COM.").unwrap(), "example.com");
+        assert_eq!(
+            normalize_web_host("Example.COM:8443").unwrap(),
+            "example.com:8443"
+        );
+    }
+
+    #[test]
+    fn rejects_url_or_pattern_host_scope_values() {
+        assert!(normalize_web_host("https://example.com/docs").is_err());
+        assert!(normalize_web_host("*.example.com").is_err());
+        assert!(normalize_web_host("example.com/path").is_err());
+        assert!(normalize_web_host("example .com").is_err());
     }
 
     #[test]

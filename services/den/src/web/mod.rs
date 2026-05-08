@@ -93,6 +93,29 @@ impl AppState {
     pub fn sqlx_pool(&self) -> &PgPool {
         &self.sqlx_pool
     }
+
+    #[cfg(test)]
+    pub(crate) fn test_with_template_env(
+        sqlx_pool: PgPool,
+        template_env: Environment<'static>,
+        config: Arc<Config>,
+    ) -> Self {
+        let letta = std::sync::Arc::new(crate::core::letta::LettaClient::new(config.as_ref()));
+        let bifrost =
+            std::sync::Arc::new(crate::core::bifrost::BifrostClient::new(config.as_ref()));
+        let codepool =
+            std::sync::Arc::new(crate::core::codepool::CodePoolClient::new(config.as_ref()));
+        Self {
+            sqlx_pool,
+            template_env,
+            asset_router: Arc::new(Router::new()),
+            config,
+            letta,
+            bifrost,
+            codepool,
+            media: None,
+        }
+    }
 }
 
 async fn web_manifest(State(state): State<AppState>) -> impl IntoResponse {

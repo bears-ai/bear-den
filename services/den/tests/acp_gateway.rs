@@ -22,6 +22,7 @@ use den::{
     startup::run_sqlx_migrations,
 };
 use http_body_util::BodyExt;
+use regex::Regex;
 use serde_json::{json, Value};
 use sqlx::postgres::PgPoolOptions;
 use std::{net::SocketAddr, sync::Arc};
@@ -29,7 +30,6 @@ use tokio::sync::Mutex;
 use tower::ServiceExt;
 use tower_sessions_sqlx_store::PostgresStore;
 use uuid::Uuid;
-use regex::Regex;
 
 #[derive(Clone)]
 struct TestLettaState {
@@ -1257,8 +1257,6 @@ async fn acp_tool_malformed_args_surface_error_without_registration() {
     assert_eq!(result_json["accepted"], false);
     assert_eq!(result_json["reason"], "turn_missing");
 }
-
-
 
 #[tokio::test]
 async fn acp_web_fetch_permission_allow_host_persists_and_continues() {

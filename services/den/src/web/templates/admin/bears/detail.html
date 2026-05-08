@@ -41,6 +41,9 @@
   <a href="/admin/membership/">Manage membership</a></p>
 
 <h3>Web sources and approvals</h3>
+{% if web_message %}
+<p><strong>{{ web_message }}</strong></p>
+{% endif %}
 <p class="form-hint">Preferred sources are pre-approved and are prioritized in web search results. Approvals are user/admin grants created for specific hosts or URLs.</p>
 
 <h4>Preferred, allowed, and blocked sources</h4>
@@ -88,7 +91,7 @@
       <td><code>{{ approval.scope_kind }}</code></td>
       <td><code>{{ approval.scope_value }}</code></td>
       <td><code>{{ approval.source }}</code></td>
-      <td>{% if approval.approved_by_user_id %}{{ approval.approved_by_user_id }}{% else %}<em>none</em>{% endif %}</td>
+      <td>{% if approval.approved_by_user_label %}{{ approval.approved_by_user_label }}{% else %}<em>admin/system</em>{% endif %}</td>
       <td>{{ approval.created_at }}</td>
       <td>{% if approval.expires_at %}{{ approval.expires_at }}{% else %}<em>never</em>{% endif %}</td>
       <td><form method="post" action="/admin/bears/{{ bear.id }}/web-approvals/{{ approval.id }}/revoke"><button type="submit">Revoke</button></form></td>
@@ -98,6 +101,29 @@
 </table>
 {% else %}
 <p><em>No active web approvals.</em></p>
+{% endif %}
+
+<h4>Recent web fetch audit</h4>
+{% if web_fetches %}
+<table>
+  <thead><tr><th>Fetched</th><th>Host</th><th>URL</th><th>Location</th><th>Approval</th><th>Status</th><th>Content</th><th>Bytes</th></tr></thead>
+  <tbody>
+  {% for fetch in web_fetches %}
+    <tr>
+      <td>{{ fetch.fetched_at }}</td>
+      <td><code>{{ fetch.host }}</code></td>
+      <td><a href="{{ fetch.final_url if fetch.final_url else fetch.url }}" rel="noreferrer">{{ fetch.url }}</a>{% if fetch.final_url and fetch.final_url != fetch.url %}<br><span class="form-hint">Final: {{ fetch.final_url }}</span>{% endif %}</td>
+      <td><code>{{ fetch.execution_location }}</code></td>
+      <td><code>{{ fetch.approval_kind }}</code></td>
+      <td>{% if fetch.http_status is not none %}{{ fetch.http_status }}{% else %}<em>n/a</em>{% endif %}</td>
+      <td>{% if fetch.content_type %}<code>{{ fetch.content_type }}</code>{% else %}<em>unknown</em>{% endif %}</td>
+      <td>{% if fetch.bytes is not none %}{{ fetch.bytes }}{% else %}<em>unknown</em>{% endif %}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p><em>No web fetches recorded yet.</em></p>
 {% endif %}
 
 <h3>Associated Letta agents</h3>
