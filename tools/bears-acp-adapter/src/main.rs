@@ -3073,6 +3073,7 @@ async fn handle_tool_request_event(
     let target_path_for_approval =
         tool_path(event).and_then(|path| normalize_requested_tool_path(path).ok());
     let target_url_for_approval = tool_url(event).map(str::to_string);
+    let target_command_for_approval = tool_command(event).map(str::to_string);
     let approval_reused = if let Some(context) = context_for_approval.as_ref() {
         approval_cache
             .is_allowed_for_target(
@@ -3080,6 +3081,7 @@ async fn handle_tool_request_event(
                 tool_name,
                 target_path_for_approval.as_deref(),
                 target_url_for_approval.as_deref(),
+                target_command_for_approval.as_deref(),
             )
             .await
     } else {
@@ -3141,6 +3143,7 @@ async fn handle_tool_request_event(
             context_for_approval.as_ref(),
             target_path_for_approval.as_deref(),
             target_url_for_approval.as_deref(),
+            target_command_for_approval.as_deref(),
         )
         .await;
         if let Err(err) = permission_decision {
@@ -3215,6 +3218,7 @@ async fn handle_tool_request_event(
                         scope,
                         target_path_for_approval.as_deref(),
                         target_url_for_approval.as_deref(),
+                        target_command_for_approval.as_deref(),
                     )
                     .await;
                 eprintln!(
@@ -3472,12 +3476,14 @@ async fn request_tool_permission(
     context: Option<&SessionContext>,
     target_path: Option<&Path>,
     target_url: Option<&str>,
+    target_command: Option<&str>,
 ) -> Result<PermissionDecision> {
     let path = event
         .get("args")
         .and_then(|v| v.get("path"))
         .and_then(Value::as_str)
         .or(target_url)
+        .or(target_command)
         .unwrap_or("the requested target");
     let title = event
         .get("title")
@@ -3522,6 +3528,9 @@ async fn request_tool_permission(
             meta.insert("targetHost".to_string(), json!(host));
         }
     }
+    if let Some(command) = target_command {
+        meta.insert("targetCommand".to_string(), json!(command));
+    }
     meta.insert(
         "permissionClass".to_string(),
         json!(permission_class_for_tool(tool_name)),
@@ -3529,7 +3538,7 @@ async fn request_tool_permission(
     meta.insert("risk".to_string(), json!(policy.risk()));
     meta.insert("operation".to_string(), json!(display.permission_operation));
     let tool_call = ToolCallUpdate::new(tool_call_id.to_string(), fields).meta(Some(meta.clone()));
-    let options = permission_options_for_context(context, target_path, target_url);
+    let options = permission_options_for_context(context, target_path, target_url, target_command);
     let request =
         RequestPermissionRequest::new(session_id.to_string(), tool_call, options).meta(Some(meta));
     let response = adapter_state
@@ -3868,6 +3877,13 @@ fn tool_url(event: &Value) -> Option<&str> {
     event
         .get("args")
         .and_then(|v| v.get("url"))
+        .and_then(Value::as_str)
+}
+
+fn tool_command(event: &Value) -> Option<&str> {
+    event
+        .get("args")
+        .and_then(|v| v.get("command"))
         .and_then(Value::as_str)
 }
 

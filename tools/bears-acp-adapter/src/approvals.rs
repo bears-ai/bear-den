@@ -62,6 +62,7 @@ pub(crate) enum ApprovalScope {
     Directory,
     Workspace,
     Host,
+    Command,
     Global,
 }
 
@@ -71,6 +72,7 @@ impl ApprovalScope {
             Self::Directory => "directory",
             Self::Workspace => "workspace",
             Self::Host => "host",
+            Self::Command => "command",
             Self::Global => "global",
         }
     }
@@ -148,7 +150,7 @@ impl ApprovalCache {
         scope: ApprovalScope,
         target_path: Option<&Path>,
     ) {
-        self.remember_for_target(context, tool_name, risk, scope, target_path, None)
+        self.remember_for_target(context, tool_name, risk, scope, target_path, None, None)
             .await;
     }
 
@@ -161,7 +163,7 @@ impl ApprovalCache {
         scope: ApprovalScope,
         target_url: Option<&str>,
     ) {
-        self.remember_for_target(context, tool_name, risk, scope, None, target_url)
+        self.remember_for_target(context, tool_name, risk, scope, None, target_url, None)
             .await;
     }
 
@@ -173,13 +175,14 @@ impl ApprovalCache {
         scope: ApprovalScope,
         target_path: Option<&Path>,
         target_url: Option<&str>,
+        target_command: Option<&str>,
     ) {
         let Some(persistence) = self.persistence.as_ref() else {
             return;
         };
         let root_fingerprint = approval_root_fingerprint(context);
         let Some(scope_fingerprint) =
-            approval_scope_fingerprint(context, scope, target_path, target_url)
+            approval_scope_fingerprint(context, scope, target_path, target_url, target_command)
         else {
             return;
         };
@@ -218,7 +221,7 @@ impl ApprovalCache {
         tool_name: &str,
         target_path: Option<&Path>,
     ) -> bool {
-        self.is_allowed_for_target(context, tool_name, target_path, None)
+        self.is_allowed_for_target(context, tool_name, target_path, None, None)
             .await
     }
 
@@ -229,7 +232,7 @@ impl ApprovalCache {
         tool_name: &str,
         target_url: Option<&str>,
     ) -> bool {
-        self.is_allowed_for_target(context, tool_name, None, target_url)
+        self.is_allowed_for_target(context, tool_name, None, target_url, None)
             .await
     }
 
@@ -239,16 +242,17 @@ impl ApprovalCache {
         tool_name: &str,
         target_path: Option<&Path>,
         target_url: Option<&str>,
+        target_command: Option<&str>,
     ) -> bool {
         let Some(persistence) = self.persistence.as_ref() else {
             return false;
         };
         let permission_class = permission_class_for_tool(tool_name);
-        let candidate_scopes = candidate_approval_scopes(target_path, target_url);
+        let candidate_scopes = candidate_approval_scopes(target_path, target_url, target_command);
         let candidate_keys = candidate_scopes
             .into_iter()
             .filter_map(|scope| {
-                approval_scope_fingerprint(context, scope, target_path, target_url).map(
+                approval_scope_fingerprint(context, scope, target_path, target_url, target_command).map(
                     |fingerprint| {
                         Self::key(
                             &persistence.api_url,
@@ -317,6 +321,10 @@ pub(crate) fn approval_ttl_secs(risk: &str) -> u64 {
     }
 }
 
+fn normalize_command_scope(command: &str) -> String {
+    command.trim().to_string()
+}
+
 fn approval_cache_path() -> PathBuf {
     if let Ok(path) = env::var("BEARS_ACP_APPROVALS_PATH") {
         let trimmed = path.trim();
@@ -366,6 +374,7 @@ fn approval_scope_fingerprint(
     scope: ApprovalScope,
     target_path: Option<&Path>,
     target_url: Option<&str>,
+    target_command: Option<&str>,
 ) -> Option<String> {
     match scope {
         ApprovalScope::Directory => {
@@ -373,6 +382,7 @@ fn approval_scope_fingerprint(
         }
         ApprovalScope::Workspace => Some(approval_root_fingerprint(context)),
         ApprovalScope::Host => target_url.and_then(approval_url_host_scope),
+        ApprovalScope::Command => target_command.map(normalize_command_scope),
         ApprovalScope::Global => Some("global".to_string()),
     }
 }
@@ -380,9 +390,13 @@ fn approval_scope_fingerprint(
 pub(crate) fn candidate_approval_scopes(
     target_path: Option<&Path>,
     target_url: Option<&str>,
+    target_command: Option<&str>,
 ) -> Vec<ApprovalScope> {
     if target_url.and_then(approval_url_host_scope).is_some() {
         return vec![ApprovalScope::Host, ApprovalScope::Global];
+    }
+    if target_command.map(str::trim).is_some_and(|s| !s.is_empty()) {
+        return vec![ApprovalScope::Command, ApprovalScope::Workspace, ApprovalScope::Global];
     }
     if target_path.is_some() {
         return vec![
@@ -435,6 +449,7 @@ pub(crate) fn permission_options_for_context(
     context: Option<&SessionContext>,
     target_path: Option<&Path>,
     target_url: Option<&str>,
+    target_command: Option<&str>,
 ) -> Vec<PermissionOption> {
     let mut options = vec![PermissionOption::new(
         "allow_once",
@@ -447,23 +462,36 @@ pub(crate) fn permission_options_for_context(
             format!("Always for {host}"),
             PermissionOptionKind::AllowAlways,
         ));
+    } else if let Some(command) = target_command.map(str::trim).filter(|s| !s.is_empty()) {
+        options.push(PermissionOption::new(
+            "allow_command_workspace",
+            format!("Always allow `{}` in this workspace", command),
+            PermissionOptionKind::AllowAlways,
+        ));
+        if let Some(context) = context {
+            options.push(PermissionOption::new(
+                "allow_workspace",
+                format!("Always allow this tool family in {}", approval_workspace_scope_label(context)),
+                PermissionOptionKind::AllowAlways,
+            ));
+        }
     } else if let Some(context) = context {
         if let Some(directory) = approval_directory_scope(context, target_path) {
             options.push(PermissionOption::new(
                 "allow_directory",
-                format!("Always for {}", directory.display()),
+                format!("Always allow this directory ({})", directory.display()),
                 PermissionOptionKind::AllowAlways,
             ));
         }
         options.push(PermissionOption::new(
             "allow_workspace",
-            format!("Always for {}", approval_workspace_scope_label(context)),
+            format!("Always allow this tool family in {}", approval_workspace_scope_label(context)),
             PermissionOptionKind::AllowAlways,
         ));
     }
     options.push(PermissionOption::new(
         "allow_global",
-        "Always",
+        "Always allow this tool family globally",
         PermissionOptionKind::AllowAlways,
     ));
     options.push(PermissionOption::new(
@@ -541,6 +569,11 @@ pub(crate) fn permission_decision_from_option_id(id: &str) -> PermissionDecision
             approved: true,
             remember: true,
             scope: ApprovalScope::Host,
+        },
+        "allow_command_workspace" => PermissionDecision {
+            approved: true,
+            remember: true,
+            scope: ApprovalScope::Command,
         },
         "allow_global" => PermissionDecision {
             approved: true,
@@ -913,16 +946,20 @@ mod tests {
     #[test]
     fn candidate_approval_scopes_prefers_host_for_urls() {
         assert_eq!(
-            candidate_approval_scopes(None, Some("https://example.test:3030/path")),
+            candidate_approval_scopes(None, Some("https://example.test:3030/path"), None),
             vec![ApprovalScope::Host, ApprovalScope::Global]
         );
         assert_eq!(
-            candidate_approval_scopes(Some(Path::new("/workspace/src/main.rs")), None),
+            candidate_approval_scopes(Some(Path::new("/workspace/src/main.rs")), None, None),
             vec![
                 ApprovalScope::Directory,
                 ApprovalScope::Workspace,
                 ApprovalScope::Global
             ]
+        );
+        assert_eq!(
+            candidate_approval_scopes(None, None, Some("cargo")),
+            vec![ApprovalScope::Command, ApprovalScope::Workspace, ApprovalScope::Global]
         );
     }
 
@@ -987,6 +1024,7 @@ mod tests {
             Some(&context),
             Some(Path::new("/workspace/src/main.rs")),
             None,
+            None,
         );
         let serialized = serde_json::to_value(&options).unwrap();
         let option_ids = serialized
@@ -1022,7 +1060,7 @@ mod tests {
     fn permission_options_omit_directory_scope_for_workspace_root_target() {
         let context = workspace_context("/workspace");
         let options =
-            permission_options_for_context(Some(&context), Some(Path::new("/workspace")), None);
+            permission_options_for_context(Some(&context), Some(Path::new("/workspace")), None, None);
         let serialized = serde_json::to_value(&options).unwrap();
         let option_ids = serialized
             .as_array()
@@ -1049,6 +1087,7 @@ mod tests {
             Some(&context),
             None,
             Some("https://docs.example.test:8443/reference"),
+            None,
         );
         let serialized = serde_json::to_value(&options).unwrap();
         let option_ids = serialized
@@ -1070,6 +1109,31 @@ mod tests {
         assert!(serialized
             .to_string()
             .contains("Always for docs.example.test:8443"));
+    }
+
+    #[test]
+    fn permission_options_use_command_scope_for_process_targets() {
+        let context = workspace_context("/workspace");
+        let options = permission_options_for_context(Some(&context), None, None, Some("cargo"));
+        let serialized = serde_json::to_value(&options).unwrap();
+        let option_ids = serialized
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|option| option["optionId"].as_str().unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            option_ids,
+            vec![
+                "allow_once",
+                "allow_command_workspace",
+                "allow_workspace",
+                "allow_global",
+                "reject_once",
+                "reject_always",
+            ]
+        );
+        assert!(serialized.to_string().contains("Always allow `cargo` in this workspace"));
     }
 
     #[test]
