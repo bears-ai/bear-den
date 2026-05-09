@@ -91,11 +91,11 @@ Typical archives:
 | Cabinet mission archive | Optional semantic recall for a Cabinet Mission, shared by the Bears/roles assigned to that Mission. |
 | Role-local archive | Optional later long-tail recall for one role; should not duplicate `core/`. |
 
-A Bear has a **Charter**: the Bear's durable purpose and responsibility boundary. Bear-specific knowledge lives under that Charter. **Domains** are the durable areas of knowledge and responsibility under a Charter, such as smart home, renovations, billing, or infrastructure.
+A Bear has a **charter**: the Bear's durable purpose and responsibility boundary. Bear-specific knowledge lives under the Bear. **Domains** are durable areas of knowledge and responsibility within the Bear's scope, such as smart home, renovations, billing, or infrastructure.
 
 Cabinet **Missions** are different: they are shared knowledge/work containers that may contain multiple projects and may involve multiple Bears. The Bear↔Mission relationship is many-to-many.
 
-For one Bear working on one long-lived responsibility, the Bear's curated archive over its Charter and Domains may be enough. Create Cabinet Mission archives only when a Cabinet Mission needs semantic recall shared across Bears or role agents.
+For one Bear working on one long-lived responsibility, the Bear's curated archive over its Domains may be enough. Create Cabinet Mission archives only when a Cabinet Mission needs semantic recall shared across Bears or role agents.
 
 ## How memory becomes shared
 
@@ -143,9 +143,9 @@ Letta and Letta Code provide several memory mechanisms. BEARS should use them at
 
 Cabinet is the shared, human-editable knowledge base. Cabinet should use top-level spaces for **People**, **Missions**, and **Knowledge**.
 
-A Cabinet **Mission** is not the same as a Bear's Charter. A Mission can contain multiple projects and can map to zero, one, or many Bears. A Bear can participate in many Cabinet Missions, and a Cabinet Mission can involve many Bears.
+A Cabinet **Mission** is not the same as a Bear's charter. A Mission can contain multiple projects and can map to zero, one, or many Bears. A Bear can participate in many Cabinet Missions, and a Cabinet Mission can involve many Bears.
 
-Use **Domains** for Bear-specific knowledge areas under the Bear's Charter. Do not describe bear-specific work as being under a Cabinet Mission unless it is actually part of a shared Cabinet Mission.
+Use **Domains** for Bear-specific knowledge areas. Do not describe bear-specific work as being under a Cabinet Mission unless it is actually part of a shared Cabinet Mission.
 
 Bear memory may reference Cabinet objects or semantic spaces, but it does not mirror Cabinet one-to-one. A role-local memory can relate to a Cabinet Mission, project, or person without having a Cabinet page.
 
@@ -161,7 +161,7 @@ Prefer:
 - “Raw interactions are reviewed before they become shared memory.”
 - “Some memories are intentionally role-local.”
 - “Cabinet is shared knowledge; Bear memory can reference Cabinet without mirroring it.”
-- “A Bear has a Charter; Domains organize bear-specific knowledge under that Charter.”
+- “A Bear has a charter; Domains organize bear-specific knowledge.”
 - “Cabinet Missions are shared work/knowledge containers that can involve many Bears.”
 - “Situation briefings tell the Bear where it is operating and what boundaries apply.”
 - “`curate` decides what the Bear should carry forward.”

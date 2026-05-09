@@ -22,7 +22,7 @@ Earlier memory architecture established that raw role-local memory can be review
 The system also needs a semantic vocabulary for shared knowledge. Cabinet should contain designated spaces for:
 
 - **People** — knowledge about people, relationships, preferences, and identity-sensitive facts.
-- **Missions** — shared work/knowledge containers that may contain multiple projects and may involve multiple Bears. These are distinct from a Bear's Charter.
+- **Missions** — shared work/knowledge containers that may contain multiple projects and may involve multiple Bears.
 - **Knowledge** — general reusable knowledge, policies, procedures, decisions, concepts, and references.
 
 The question is how this semantic structure should influence Bear memory without forcing every memory object to map to a Cabinet object or become a `core/` candidate.
@@ -83,14 +83,14 @@ Important distinction:
 
 | Field | Meaning |
 |---|---|
-| `domain_ref` | This memory relates to a Domain under the Bear's Charter. Bear scope is implied by `bear_id`; do not add a separate `charter_ref`. |
+| `domain_ref` | This memory relates to a Domain within the Bear's scope. |
 | `mission_ref` | This memory relates to a Cabinet Mission. It does not imply Cabinet mapping or promotion. |
 | `person_ref` | This memory relates to a person. It may require privacy policy checks. |
 | `knowledge_ref` | This memory relates to a knowledge area or concept. |
 | `cabinet_ref` | This memory points to a Cabinet object. |
 | `promotion_target` | This memory is intended or proposed for promotion. |
 
-Domain/mission/person/knowledge references must not imply that a Cabinet object exists. Cabinet references are explicit. Bear-scoped references should use `bear_id`; Charter is not a separate reference target.
+Domain/mission/person/knowledge references must not imply that a Cabinet object exists. Cabinet references are explicit. Bear-scoped references use `bear_id`.
 
 ### Lifecycle
 
@@ -137,9 +137,9 @@ Recommended archive types:
 | Cabinet Mission archive | Optional semantic recall for a Cabinet Mission, shared by assigned Bears/roles when needed. |
 | Role-local archive | Optional later role-specific long-tail recall; should not duplicate `core/`. |
 
-`core/` remains the canonical curated orientation layer for a Bear's Charter and Domains. Archive passages are derived recall aids, not a mirror of all `core/` content.
+`core/` remains the canonical curated orientation layer for a Bear and its Domains. Archive passages are derived recall aids, not a mirror of all `core/` content.
 
-For a Bear with one Charter and no cross-Bear Mission needs, the Bear curated archive may be sufficient. Create Cabinet Mission archives only when a Cabinet Mission needs semantic recall shared across Bears or role agents.
+For a Bear with no cross-Bear Mission needs, the Bear curated archive may be sufficient. Create Cabinet Mission archives only when a Cabinet Mission needs semantic recall shared across Bears or role agents.
 
 ### Relationship to Letta reflection and compaction
 
@@ -167,7 +167,7 @@ Cabinet will use these top-level semantic spaces as the canonical shared knowled
 
 Bear memory may reference Cabinet spaces, but Bear memory does not mirror Cabinet one-to-one. Cabinet is the library. Bear memory is each role's working notebook, operational history, orientation map, and governance trail.
 
-A Bear's **Charter** is not a Cabinet Mission. A Charter belongs to the Bear: it describes why the Bear exists and what responsibility boundary its `core/` should stay oriented around. Bear-specific knowledge should be described as under the Charter. **Domains** are durable areas of knowledge/responsibility under that Charter. Cabinet Missions are many-to-many with Bears: a Bear can participate in many Missions, and a Mission can involve many Bears.
+A Bear's **charter** is its durable purpose and responsibility boundary. It is a characteristic of the Bear, not a Cabinet Mission. Bear-specific knowledge lives under the Bear and is organized with Domains where useful. Cabinet Missions are many-to-many with Bears: a Bear can participate in many Missions, and a Mission can involve many Bears.
 
 ### Situation instead of current context
 
@@ -235,7 +235,7 @@ Reserved schema-owned paths should stay behind dedicated tools:
 <role>/subscriptions/
 ```
 
-A Cabinet Mission-related tactical decision should be represented as `kind: decision` with `mission_ref`, not forced into a special `mission-decisions/` path. Domain-specific memory can use `domain_ref`; Bear-wide Charter orientation should use `bear_id` scope and usually live in `core/`.
+A Cabinet Mission-related tactical decision should be represented as `kind: decision` with `mission_ref`, not forced into a special `mission-decisions/` path. Domain-specific memory can use `domain_ref`; Bear-wide orientation should use `bear_id` scope and usually live in `core/`.
 
 ### Read/search/browse tools should support human and agent inspection
 

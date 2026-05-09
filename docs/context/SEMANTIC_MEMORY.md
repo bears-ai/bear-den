@@ -27,12 +27,12 @@ Cabinet should use three top-level semantic spaces:
 | Space | Purpose |
 |---|---|
 | **People** | Knowledge about people, preferences, relationships, identity-sensitive facts, and stakeholders. |
-| **Missions** | Shared work/knowledge containers that may contain multiple projects and may involve multiple Bears. Not the same as a Bear's Charter. |
+| **Missions** | Shared work/knowledge containers that may contain multiple projects and may involve multiple Bears. |
 | **Knowledge** | General reusable knowledge, policies, procedures, decisions, concepts, and references. |
 
 Bear memory may reference these spaces, but it does not mirror Cabinet one-to-one. A role-local memory can relate to a Cabinet Mission without having a Cabinet page.
 
-A **Bear Charter** is the Bear's durable purpose and responsibility boundary. It is singular and is not a separate addressable layer; use `bear_id` for Bear-scoped records. Bear-specific knowledge lives under that Charter. **Domains** are durable areas of knowledge and responsibility under a Charter. A Cabinet **Mission** is a shared work/knowledge container. The relationship is many-to-many: a Bear can participate in many Missions, and a Mission can involve many Bears.
+A Bear's **charter** is its durable purpose and responsibility boundary. Bear-specific knowledge lives under the Bear. **Domains** are durable areas of knowledge and responsibility within the Bear's scope. A Cabinet **Mission** is a shared work/knowledge container. The relationship is many-to-many: a Bear can participate in many Missions, and a Mission can involve many Bears.
 
 ## Semantic memory model
 
@@ -118,9 +118,9 @@ Recommended archive types:
 | Cabinet Mission archive | Optional semantic recall for a Cabinet Mission, shared by assigned Bears/roles when needed. |
 | Role-local archive | Optional later role-specific long-tail recall; should not duplicate `core/`. |
 
-`core/` remains canonical shared orientation for a Bear's Charter and Domains. Letta Archives provide fuzzy recall over selected derived passages.
+`core/` remains canonical shared orientation for a Bear and its Domains. Letta Archives provide fuzzy recall over selected derived passages.
 
-For a Bear with one Charter and no cross-Bear Mission needs, the Bear curated archive may be sufficient. Add Cabinet Mission archives only when the Cabinet Mission needs semantic recall shared across Bears or role agents.
+For a Bear with no cross-Bear Mission needs, the Bear curated archive may be sufficient. Add Cabinet Mission archives only when the Cabinet Mission needs semantic recall shared across Bears or role agents.
 
 ## Relationship to Letta reflection
 

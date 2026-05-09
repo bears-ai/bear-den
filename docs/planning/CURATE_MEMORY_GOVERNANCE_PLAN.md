@@ -229,7 +229,7 @@ Archive passages should usually be summaries or pointers. On retrieval hit, tool
 | Cabinet Mission archive | Optional semantic recall for a Cabinet Mission, shared by assigned Bears/roles when needed. | Den/curate indexer | Bears/roles assigned to that Cabinet Mission |
 | Role-local archive | Optional later role-specific long-tail recall. | Role or Den by policy | Owning role |
 
-Prefer Cabinet Mission archives over a broad generic “technical” archive when knowledge needs to be shared across Bears for a Cabinet Mission. For a single-Bear Charter, the Bear curated archive is usually sufficient.
+Prefer Cabinet Mission archives over a broad generic “technical” archive when knowledge needs to be shared across Bears for a Cabinet Mission. For Bear-scoped knowledge, the Bear curated archive is usually sufficient.
 
 ### Passage provenance
 
@@ -382,7 +382,7 @@ Initial implementation should support autonomous review first, with human review
 
 A curate cycle prompt should include:
 
-- Bear identity and Charter;
+- Bear identity and purpose;
 - role, policy, and relevant Domains;
 - pending proposals;
 - recent role-local memory activity;
