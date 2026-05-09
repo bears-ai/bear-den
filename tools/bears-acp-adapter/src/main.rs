@@ -7,12 +7,14 @@ mod tools;
 use agent_client_protocol::schema::{
     AgentCapabilities, AuthEnvVar, AuthMethod, AuthMethodEnvVar, AuthenticateResponse,
     CloseSessionResponse, ContentBlock, ContentChunk, Diff, Implementation, InitializeResponse,
-    ListSessionsResponse, LoadSessionResponse, McpCapabilities, NewSessionResponse,
+    ConfigOptionUpdate, CurrentModeUpdate, ListSessionsResponse, LoadSessionResponse,
+    McpCapabilities, NewSessionResponse, Plan, PlanEntry, PlanEntryPriority, PlanEntryStatus,
     PromptCapabilities, PromptResponse, ProtocolVersion, ReadTextFileRequest, ReadTextFileResponse,
     RequestPermissionRequest, ResumeSessionResponse, SessionCapabilities, SessionCloseCapabilities,
-    SessionInfo, SessionListCapabilities, SessionResumeCapabilities, SessionUpdate, StopReason,
-    ToolCall, ToolCallContent, ToolCallLocation, ToolCallStatus, ToolCallUpdate,
-    ToolCallUpdateFields, ToolKind,
+    SessionConfigOption, SessionConfigOptionCategory, SessionConfigSelectOption, SessionInfo,
+    SessionListCapabilities, SessionMode, SessionModeState, SessionResumeCapabilities,
+    SessionUpdate, StopReason, ToolCall, ToolCallContent, ToolCallLocation, ToolCallStatus,
+    ToolCallUpdate, ToolCallUpdateFields, ToolKind,
 };
 use anyhow::{anyhow, Context, Result};
 
@@ -131,6 +133,10 @@ struct ToolPolicy {
     permission_timeout_ms: Option<u64>,
 }
 
+const MODE_ASK: &str = "ask";
+const MODE_PLAN: &str = "plan";
+const MODE_WRITE: &str = "write";
+
 impl ToolPolicy {
     fn risk(&self) -> &str {
         if self.create_files.is_some()
@@ -174,6 +180,151 @@ struct LocalToolError {
     status: LocalToolStatus,
     message: String,
     diagnostic: Value,
+}
+
+fn session_config_options_for_mode(mode: &str) -> Vec<SessionConfigOption> {
+    vec![SessionConfigOption::select(
+        "mode",
+        "Session Mode",
+        mode.to_string(),
+        vec![
+            SessionConfigSelectOption::new(MODE_ASK, "Ask")
+                .description("Normal pair mode; mutating workspace actions request client approval."),
+            SessionConfigSelectOption::new(MODE_PLAN, "Plan")
+                .description("Read, search, and inspect only; write actions are blocked until the plan is approved."),
+            SessionConfigSelectOption::new(MODE_WRITE, "Write")
+                .description("Implementation mode after plan approval; workspace changes still follow client approval policy."),
+        ],
+    )
+    .description("Controls whether pair is planning or ready to write changes.")
+    .category(SessionConfigOptionCategory::Mode)]
+}
+
+fn session_modes_for_mode(mode: &str) -> SessionModeState {
+    SessionModeState::new(
+        mode.to_string(),
+        vec![
+            SessionMode::new(MODE_ASK, "Ask")
+                .description("Normal pair mode; mutating workspace actions request client approval."),
+            SessionMode::new(MODE_PLAN, "Plan")
+                .description("Read, search, and inspect only; write actions are blocked until the plan is approved."),
+            SessionMode::new(MODE_WRITE, "Write")
+                .description("Implementation mode after plan approval; workspace changes still follow client approval policy."),
+        ],
+    )
+}
+
+fn infer_mode_from_plan_mode_state(plan_mode: Option<&Value>) -> &'static str {
+    match plan_mode
+        .and_then(|value| value.get("state"))
+        .and_then(Value::as_str)
+    {
+        Some("active" | "submitted") => MODE_PLAN,
+        Some("approved") => MODE_WRITE,
+        _ => MODE_ASK,
+    }
+}
+
+fn session_id_from_config_params(params: &Value) -> Result<&str> {
+    params
+        .get("sessionId")
+        .and_then(Value::as_str)
+        .ok_or_else(|| anyhow!("session config params missing sessionId"))
+}
+
+fn mode_value_from_config_params(params: &Value) -> Result<&str> {
+    params
+        .get("value")
+        .and_then(|value| {
+            if let Some(raw) = value.as_str() {
+                Some(raw)
+            } else {
+                value.get("value").and_then(Value::as_str)
+            }
+        })
+        .ok_or_else(|| anyhow!("session config params missing mode value"))
+}
+
+fn plan_entry_from_work_plan_item(item: &Value) -> Option<PlanEntry> {
+    let title = item.get("title").and_then(Value::as_str)?.trim();
+    if title.is_empty() {
+        return None;
+    }
+    let raw_status = item.get("status").and_then(Value::as_str).unwrap_or("pending");
+    let blocked_reason = item
+        .get("blocked_reason")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
+    let summary = item
+        .get("summary")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
+    let content = match (raw_status, blocked_reason, summary) {
+        ("blocked", Some(reason), _) => format!("Blocked: {title} — {reason}"),
+        ("blocked", None, _) => format!("Blocked: {title}"),
+        ("cancelled", _, _) => format!("Cancelled: {title}"),
+        (_, _, Some(summary)) => format!("{title} — {summary}"),
+        _ => title.to_string(),
+    };
+    let status = match raw_status {
+        "in_progress" => PlanEntryStatus::InProgress,
+        "completed" | "cancelled" => PlanEntryStatus::Completed,
+        _ => PlanEntryStatus::Pending,
+    };
+    let priority = if raw_status == "in_progress" {
+        PlanEntryPriority::High
+    } else {
+        PlanEntryPriority::Medium
+    };
+    Some(PlanEntry::new(content, priority, status))
+}
+
+fn plan_entries_from_work_plan_args(args: &Value) -> Vec<PlanEntry> {
+    args.get("items")
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(plan_entry_from_work_plan_item)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default()
+}
+
+async fn send_plan_update(session_id: &str, entries: Vec<PlanEntry>) -> Result<()> {
+    write_notification(
+        "session/update",
+        json!({
+            "sessionId": session_id,
+            "update": serde_json::to_value(SessionUpdate::Plan(Plan::new(entries)))?,
+        }),
+    )
+    .await
+}
+
+async fn notify_mode_state(session_id: &str, mode: &str) -> Result<()> {
+    write_notification(
+        "session/update",
+        json!({
+            "sessionId": session_id,
+            "update": serde_json::to_value(SessionUpdate::ConfigOptionUpdate(
+                ConfigOptionUpdate::new(session_config_options_for_mode(mode))
+            ))?,
+        }),
+    )
+    .await?;
+    write_notification(
+        "session/update",
+        json!({
+            "sessionId": session_id,
+            "update": serde_json::to_value(SessionUpdate::CurrentModeUpdate(
+                CurrentModeUpdate::new(mode.to_string())
+            ))?,
+        }),
+    )
+    .await
 }
 
 impl LocalToolError {
@@ -811,11 +962,108 @@ async fn handle_request(
                 adapter_state
                     .session_contexts
                     .insert(session_id.clone(), context);
+                let mode = MODE_ASK;
+                let response = NewSessionResponse::new(session_id)
+                    .config_options(session_config_options_for_mode(mode))
+                    .modes(session_modes_for_mode(mode));
+                write_response(id, Ok(serde_json::to_value(response)?)).await?;
+            }
+        }
+        "session/set_config_option" => {
+            if let Some(id) = request.id.clone() {
+                let config_id = request
+                    .params
+                    .get("configId")
+                    .and_then(Value::as_str)
+                    .unwrap_or("");
+                if config_id != "mode" {
+                    write_response(
+                        id,
+                        Err(json_rpc_error(
+                            -32602,
+                            "Unsupported config option",
+                            Some(json!({ "configId": config_id })),
+                        )),
+                    )
+                    .await?;
+                    return Ok(());
+                }
+                let session_id = match session_id_from_config_params(&request.params) {
+                    Ok(session_id) => session_id,
+                    Err(err) => {
+                        write_response(
+                            id,
+                            Err(json_rpc_error(
+                                -32602,
+                                "Invalid session config params",
+                                Some(json!({ "message": format!("{err:#}") })),
+                            )),
+                        )
+                        .await?;
+                        return Ok(());
+                    }
+                };
+                let mode = match mode_value_from_config_params(&request.params) {
+                    Ok(MODE_ASK | MODE_PLAN | MODE_WRITE) => mode_value_from_config_params(&request.params)?,
+                    Ok(other) => {
+                        write_response(
+                            id,
+                            Err(json_rpc_error(
+                                -32602,
+                                "Unsupported mode",
+                                Some(json!({ "mode": other, "supported": [MODE_ASK, MODE_PLAN, MODE_WRITE] })),
+                            )),
+                        )
+                        .await?;
+                        return Ok(());
+                    }
+                    Err(err) => {
+                        write_response(
+                            id,
+                            Err(json_rpc_error(
+                                -32602,
+                                "Invalid session config params",
+                                Some(json!({ "message": format!("{err:#}") })),
+                            )),
+                        )
+                        .await?;
+                        return Ok(());
+                    }
+                };
+                notify_mode_state(session_id, mode).await?;
                 write_response(
                     id,
-                    Ok(serde_json::to_value(NewSessionResponse::new(session_id))?),
+                    Ok(json!({ "configOptions": session_config_options_for_mode(mode) })),
                 )
                 .await?;
+            }
+        }
+        "session/set_mode" => {
+            if let Some(id) = request.id.clone() {
+                let session_id = request
+                    .params
+                    .get("sessionId")
+                    .and_then(Value::as_str)
+                    .unwrap_or("");
+                let mode = request
+                    .params
+                    .get("modeId")
+                    .and_then(Value::as_str)
+                    .unwrap_or("");
+                if !matches!(mode, MODE_ASK | MODE_PLAN | MODE_WRITE) || session_id.is_empty() {
+                    write_response(
+                        id,
+                        Err(json_rpc_error(
+                            -32602,
+                            "Invalid session mode params",
+                            Some(json!({ "mode": mode, "supported": [MODE_ASK, MODE_PLAN, MODE_WRITE] })),
+                        )),
+                    )
+                    .await?;
+                    return Ok(());
+                }
+                notify_mode_state(session_id, mode).await?;
+                write_response(id, Ok(json!({ "modes": session_modes_for_mode(mode) }))).await?;
             }
         }
         "session/list" => {
@@ -905,9 +1153,11 @@ async fn handle_request(
                 )
                 .await
                 {
-                    Ok(()) => {
-                        write_response(id, Ok(serde_json::to_value(ResumeSessionResponse::new())?))
-                            .await?
+                    Ok(mode) => {
+                        let response = ResumeSessionResponse::new()
+                            .config_options(session_config_options_for_mode(mode))
+                            .modes(session_modes_for_mode(mode));
+                        write_response(id, Ok(serde_json::to_value(response)?)).await?
                     }
                     Err(err) => {
                         write_response(
@@ -2095,7 +2345,7 @@ async fn restore_session_from_den(
     adapter_state: &mut AdapterState,
     shared_state: &AdapterSharedState,
     params: &Value,
-) -> Result<()> {
+) -> Result<&'static str> {
     let session_id = params
         .get("sessionId")
         .and_then(Value::as_str)
@@ -2142,7 +2392,9 @@ async fn restore_session_from_den(
     if let Some(den) = den.as_ref() {
         replay_history_for_den_session(http, config, session_id, den, "session/resume").await?;
     }
-    Ok(())
+    Ok(infer_mode_from_plan_mode_state(
+        den.as_ref().and_then(|value| value.get("plan_mode")),
+    ))
 }
 
 async fn handle_session_load(
@@ -3288,6 +3540,18 @@ async fn handle_tool_request_event(
     match result {
         Ok(value) => {
             status = "ok";
+            if tool_name == "den_work_plan_update" {
+                let entries = value
+                    .get("plan")
+                    .map(plan_entries_from_work_plan_args)
+                    .unwrap_or_default();
+                send_plan_update(session_id, entries).await?;
+            }
+            if let Some(mode) = value.get("mode_update").and_then(Value::as_str) {
+                if matches!(mode, MODE_ASK | MODE_PLAN | MODE_WRITE) {
+                    notify_mode_state(session_id, mode).await?;
+                }
+            }
             task_registry
                 .set_phase(
                     session_id,
@@ -3685,6 +3949,20 @@ async fn handle_den_event(
             handle_permission_request_event(config, adapter_state, session_id, event).await?;
             Ok(false)
         }
+        "plan_update" => {
+            let entries = event
+                .get("entries")
+                .and_then(Value::as_array)
+                .map(|items| {
+                    items
+                        .iter()
+                        .filter_map(plan_entry_from_work_plan_item)
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            send_plan_update(session_id, entries).await?;
+            Ok(false)
+        }
         "conversation_resolved" => {
             if let Some(conversation_id) = event
                 .get("conversation_id")
@@ -3752,7 +4030,7 @@ async fn handle_permission_request_event(
     let mut display = tool_display(tool_name);
     if is_plan_mode {
         display.title = "Approve implementation plan";
-        display.kind = ToolKind::Think;
+        display.kind = ToolKind::SwitchMode;
         display.verb = "Reviewing plan";
         display.permission_operation = "approve this implementation plan";
     }
@@ -3817,6 +4095,10 @@ async fn handle_permission_request_event(
         json!({ "decision": decision_str, "plan_mode_id": plan_mode_id }),
     )
     .await?;
+    if is_plan_mode {
+        let mode = if decision_str == "approve" { MODE_WRITE } else { MODE_PLAN };
+        notify_mode_state(session_id, mode).await?;
+    }
     if let Some(local_tool) = response.get("local_tool_request") {
         let tool_call_id = local_tool
             .get("tool_call_id")
@@ -3832,6 +4114,18 @@ async fn handle_permission_request_event(
         let started = std::time::Instant::now();
         match result {
             Ok(value) => {
+                if tool_name == "den_work_plan_update" {
+                    let entries = value
+                        .get("plan")
+                        .map(plan_entries_from_work_plan_args)
+                        .unwrap_or_default();
+                    send_plan_update(session_id, entries).await?;
+                }
+                if let Some(mode) = value.get("mode_update").and_then(Value::as_str) {
+                    if matches!(mode, MODE_ASK | MODE_PLAN | MODE_WRITE) {
+                        notify_mode_state(session_id, mode).await?;
+                    }
+                }
                 let payload = json!({
                     "tool_call_id": tool_call_id,
                     "tool_name": tool_name,

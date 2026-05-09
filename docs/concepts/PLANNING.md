@@ -30,7 +30,7 @@ Letta Code also has a separate gate: `EnterPlanMode` and `ExitPlanMode`.
 
 In Letta Code, entering plan mode requires user approval, switches permissions to a `plan` mode, allows read/search/inspection, denies code edits and non-read-only shell commands, allows writing only to `~/.letta/plans/*.md`, and then exits by presenting the generated markdown plan for user approval. Approval restores the prior permission mode and allows implementation.
 
-BEARS' ACP `pair` plan-mode gate is implemented as a Den-managed session gate. It is conceptually aligned with Letta Code-backed `work` sessions while remaining explicit about ACP client-tool boundaries.
+BEARS' ACP `pair` plan-mode gate is implemented as a Den-managed session gate. It is conceptually aligned with Letta Code-backed `work` sessions while remaining explicit about ACP client-tool boundaries. In ACP UI, BEARS uses the mode names **Ask**, **Plan**, and **Write**; `Write` means implementation is allowed after approval, while normal client permissions still apply.
 
 The BEARS version is:
 
@@ -104,6 +104,9 @@ Implemented:
 - ACP permission request emission when `den.plan_mode.exit` submits a plan artifact.
 - ACP permission decision handling for plan-mode approve/reject.
 - ACP adapter rendering of plan-mode approval options as approve/reject instead of URL-style allow/reject labels.
+- ACP native `plan` updates projected from Den workboard items.
+- ACP native mode/config updates using `Ask`, `Plan`, and `Write` modes.
+- ACP `session/new` / `session/resume` mode state with both modern `configOptions` and legacy `modes` compatibility.
 
 Planned:
 

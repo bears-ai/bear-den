@@ -256,6 +256,8 @@ struct AcpSessionHttp {
     archived_at: Option<String>,
     created_at: String,
     updated_at: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    plan_mode: Option<serde_json::Value>,
 }
 
 fn format_acp_session_timestamp(t: time::OffsetDateTime) -> String {
@@ -263,6 +265,13 @@ fn format_acp_session_timestamp(t: time::OffsetDateTime) -> String {
 }
 
 fn acp_session_row_to_http(row: acp_sessions::AcpSessionRow) -> AcpSessionHttp {
+    acp_session_row_to_http_with_plan_mode(row, None)
+}
+
+fn acp_session_row_to_http_with_plan_mode(
+    row: acp_sessions::AcpSessionRow,
+    plan_mode: Option<serde_json::Value>,
+) -> AcpSessionHttp {
     AcpSessionHttp {
         acp_session_id: row.acp_session_id,
         runtime_session_id: row.runtime_session_id,
@@ -274,6 +283,7 @@ fn acp_session_row_to_http(row: acp_sessions::AcpSessionRow) -> AcpSessionHttp {
         archived_at: row.archived_at.map(format_acp_session_timestamp),
         created_at: format_acp_session_timestamp(row.created_at),
         updated_at: format_acp_session_timestamp(row.updated_at),
+        plan_mode,
     }
 }
 
@@ -790,28 +800,6 @@ async fn acp_plan_mode_prompt_context(
     ))
 }
 
-async fn acp_workboard_prompt_context(
-    state: &ApiState,
-    bear_id: Uuid,
-    user_id: i32,
-    session_id: &str,
-) -> Result<String, CustomError> {
-    let plan = work_plans::get_visible_work_plan(
-        &state.sqlx_pool,
-        bear_id,
-        BearAgentRole::Pair,
-        user_id,
-        WorkPlanLookup {
-            plan_id: None,
-            source_conversation_id: None,
-            source_acp_session_id: Some(session_id.to_string()),
-        },
-    )
-    .await?;
-    let plans = plan.into_iter().collect::<Vec<_>>();
-    Ok(work_plans::render_workboard_prompt_context(&plans))
-}
-
 fn normalize_acp_conversation_id(raw: Option<&str>) -> Result<String, CustomError> {
     let s = raw
         .map(str::trim)
@@ -1168,7 +1156,16 @@ async fn get_acp_session_inner(
         acp_sessions::find_for_user_bear_session(&state.sqlx_pool, user_id, &bear.slug, session_id)
             .await?
             .ok_or_else(|| CustomError::NotFound("ACP session not found".to_string()))?;
-    Ok(Json(acp_session_row_to_http(row)).into_response())
+    let plan_mode = acp_plan_mode::active_for_session(
+        &state.sqlx_pool,
+        user_id,
+        bear.id,
+        session_id,
+    )
+    .await?
+    .map(serde_json::to_value)
+    .transpose()?;
+    Ok(Json(acp_session_row_to_http_with_plan_mode(row, plan_mode)).into_response())
 }
 
 async fn conversations(
@@ -1951,12 +1948,25 @@ async fn prompt_inner(
             let (status, code, message) = acp_error_status_message(&err);
             ApiError::new(status, code, message)
         })?;
-    let workboard_context = acp_workboard_prompt_context(&state, bear.id, user_id, session_id)
-        .await
-        .map_err(|err| {
-            let (status, code, message) = acp_error_status_message(&err);
-            ApiError::new(status, code, message)
-        })?;
+    let current_workboard_plan = work_plans::get_visible_work_plan(
+        &state.sqlx_pool,
+        bear.id,
+        BearAgentRole::Pair,
+        user_id,
+        WorkPlanLookup {
+            plan_id: None,
+            source_conversation_id: None,
+            source_acp_session_id: Some(session_id.to_string()),
+        },
+    )
+    .await
+    .map_err(|err| {
+        let (status, code, message) = acp_error_status_message(&err);
+        ApiError::new(status, code, message)
+    })?;
+    let plans = current_workboard_plan.clone().into_iter().collect::<Vec<_>>();
+    let workboard_context = work_plans::render_workboard_prompt_context(&plans);
+    let initial_plan_event = current_workboard_plan.map(AcpGatewayEvent::PlanUpdate);
     let prompt_with_tool_context = format!("{prompt}{plan_mode_context}{workboard_context}{tool_prompt_context}");
     let client_tool_descriptors = tools_enabled.then(|| {
         merge_acp_pair_tool_descriptors(acp_client_tool_descriptors_for_client_context(
@@ -1993,6 +2003,7 @@ async fn prompt_inner(
             pair_agent_id: pair_agent_id.clone(),
             config: state.config.clone(),
         },
+        initial_plan_event,
         state.letta.clone(),
         LettaContinuationContext {
             conversation_id: conversation_resolution.upstream_target.clone(),
@@ -2227,20 +2238,23 @@ async fn persist_stream_event_side_effects(
                     args.clone(),
                 )
                 .await;
-                let submitted_plan_mode_id = if canonical_name == den_tools::DEN_PLAN_MODE_EXIT
+                let submitted_plan_mode = if canonical_name == den_tools::DEN_PLAN_MODE_EXIT
                     && result.status == "ok"
                 {
-                    result
-                        .structured_content
-                        .get("plan_mode")
-                        .and_then(|plan_mode| plan_mode.get("id"))
-                        .and_then(|id| id.as_str())
-                        .map(str::to_string)
+                    result.structured_content.get("plan_mode").cloned()
                 } else {
                     None
                 };
+                let submitted_plan = result.structured_content.get("submitted_plan").cloned();
                 let _ = result_tx.send(result);
-                if let Some(plan_mode_id) = submitted_plan_mode_id {
+                if let Some(submitted_plan_mode) = submitted_plan_mode {
+                    let Some(plan_mode_id) = submitted_plan_mode
+                        .get("id")
+                        .and_then(|id| id.as_str())
+                        .map(str::to_string)
+                    else {
+                        return Ok(());
+                    };
                     *event = AcpGatewayEvent::PermissionRequest {
                         request_id: request_id.clone(),
                         permission_id: format!("plan-mode-{plan_mode_id}"),
@@ -2251,6 +2265,7 @@ async fn persist_stream_event_side_effects(
                         target: serde_json::json!({
                             "kind": "acp_plan_mode",
                             "plan_mode_id": plan_mode_id,
+                            "plan": submitted_plan,
                         }),
                         options: vec!["approve".to_string(), "reject".to_string()],
                     };
@@ -2796,14 +2811,19 @@ impl AcpLettaSseStream {
     fn new(
         inner: impl Stream<Item = Result<Bytes, reqwest::Error>> + Send + 'static,
         context: AcpStreamContext,
+        initial_plan_event: Option<AcpGatewayEvent>,
         letta: Arc<crate::core::letta::LettaClient>,
         continuation: LettaContinuationContext,
     ) -> Self {
+        let mut pending = VecDeque::new();
+        if let Some(event) = initial_plan_event {
+            pending.push_back(acp_event_to_adapter_sse(event));
+        }
         Self {
             inner: Box::pin(inner),
             buffer: Vec::new(),
             pending_raw_frames: VecDeque::new(),
-            pending: VecDeque::new(),
+            pending,
             context,
             letta,
             continuation,
@@ -3180,6 +3200,7 @@ mod tests {
         let mut stream = AcpLettaSseStream::new(
             upstream,
             context,
+            None,
             letta,
             LettaContinuationContext {
                 conversation_id: "conv-test-continuation".to_string(),

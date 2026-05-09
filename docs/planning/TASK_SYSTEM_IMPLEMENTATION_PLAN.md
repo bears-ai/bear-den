@@ -63,7 +63,7 @@ The read API should return projections, not raw rows. For example, `talk` asking
 
 Add a separate gate for ACP `pair`, modeled after Letta Code's `EnterPlanMode` / `ExitPlanMode`.
 
-Implementation status: schema, core model, Den tools, ACP prompt reminders, MemFS `pair/plans/` artifacts, server-side policy denial for mutating tools, ACP permission request emission, Den approve/reject handling, and ACP adapter approve/reject rendering are implemented.
+Implementation status: schema, core model, Den tools, ACP prompt reminders, MemFS `pair/plans/` artifacts, server-side policy denial for mutating tools, ACP permission request emission, Den approve/reject handling, ACP adapter approve/reject rendering, native ACP `plan` updates, and native ACP `Ask` / `Plan` / `Write` mode/config updates are implemented.
 
 Acceptance:
 
@@ -71,7 +71,7 @@ Acceptance:
 - While plan mode is active, ACP permits read/search/inspect tools and Den read-only tools, but denies mutating workspace tools and non-read-only shell operations.
 - Pair can write a markdown plan artifact only under `pair/plans/`.
 - Exiting plan mode stores the markdown plan artifact and marks the gate `submitted`.
-- Approval restores the previous permission mode and records an audit event linking the plan artifact, ACP session, Bear, role, and user.
+- Approval restores the previous permission mode, switches ACP UI to `Write`, and records an audit event linking the plan artifact, ACP session, Bear, role, and user.
 - Rejection keeps mutation blocked or exits without implementation, according to the user's decision.
 
 This is intentionally separate from `den.work_plan.update`. The workboard is the visible current status list; the plan-mode artifact is the reviewable proposal before mutation.

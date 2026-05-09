@@ -1450,6 +1450,7 @@ async fn enter_plan_mode(
     Ok(json!({
         "plan_mode": row,
         "mode": "plan",
+        "mode_update": "plan",
         "instructions": [
             "Plan mode is active for this ACP session.",
             "Inspect, read, search, and use read-only Den tools as needed.",
@@ -1550,6 +1551,12 @@ async fn exit_plan_mode(
             "commit": memfs_response.commit,
         },
         "approval_required": true,
+        "mode_update": "plan",
+        "submitted_plan": {
+            "title": row.plan_title,
+            "body": row.plan_body,
+            "artifact_path": row.plan_artifact_path,
+        },
         "instructions": [
             "Present this plan artifact to the user for approval.",
             "Do not begin implementation until the approval request is approved by the ACP client."
@@ -1573,7 +1580,7 @@ async fn cancel_plan_mode(
         args.plan_mode_id,
     )
     .await?;
-    Ok(json!({ "plan_mode": row, "mode": "normal" }))
+    Ok(json!({ "plan_mode": row, "mode": "ask", "mode_update": "ask" }))
 }
 
 async fn write_memory_entry(

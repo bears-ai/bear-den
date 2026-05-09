@@ -10,6 +10,7 @@ use crate::core::{
         acp_diag_phase, acp_tool_policy_json_for_provider, supported_provider_tool_names,
         AcpToolName,
     },
+    work_plans::{WorkPlanItemStatus, WorkPlanProjection},
 };
 
 const ACP_DEN_SERVER_TOOL_PROVIDER_NAMES: &[&str] = &[
@@ -66,6 +67,7 @@ pub enum AcpGatewayEvent {
         target: serde_json::Value,
         options: Vec<String>,
     },
+    PlanUpdate(WorkPlanProjection),
     ConversationResolved {
         conversation_id: String,
     },
@@ -571,6 +573,7 @@ pub fn acp_event_adapter_type(event: &AcpGatewayEvent) -> &'static str {
         AcpGatewayEvent::Error { .. } => "error",
         AcpGatewayEvent::ToolRequest { .. } => "tool_request",
         AcpGatewayEvent::PermissionRequest { .. } => "permission_request",
+        AcpGatewayEvent::PlanUpdate { .. } => "plan_update",
         AcpGatewayEvent::ConversationResolved { .. } => "conversation_resolved",
     }
 }
@@ -584,6 +587,7 @@ pub fn acp_event_has_visible_output(event: &AcpGatewayEvent) -> bool {
         AcpGatewayEvent::TurnComplete { .. }
         | AcpGatewayEvent::ToolRequest { .. }
         | AcpGatewayEvent::PermissionRequest { .. }
+        | AcpGatewayEvent::PlanUpdate { .. }
         | AcpGatewayEvent::ConversationResolved { .. } => false,
     }
 }
@@ -679,6 +683,47 @@ pub fn acp_event_to_adapter_sse(event: AcpGatewayEvent) -> Bytes {
             "diagnostic": {
                 "component": "den.acp",
                 "phase": "permission_request_mapped",
+                "transport_version": 3,
+            }
+        }),
+        AcpGatewayEvent::PlanUpdate(plan) => serde_json::json!({
+            "type": "plan_update",
+            "plan_id": plan.id,
+            "version": plan.version,
+            "title": plan.title,
+            "entries": plan.items.iter().map(|item| {
+                let blocked_reason = item.blocked_reason.as_deref().unwrap_or("").trim();
+                let summary = item.summary.as_deref().unwrap_or("").trim();
+                let content = match item.status {
+                    WorkPlanItemStatus::Blocked if !blocked_reason.is_empty() => format!("Blocked: {} — {}", item.title, blocked_reason),
+                    WorkPlanItemStatus::Blocked => format!("Blocked: {}", item.title),
+                    WorkPlanItemStatus::Cancelled => format!("Cancelled: {}", item.title),
+                    _ if !summary.is_empty() => format!("{} — {}", item.title, summary),
+                    _ => item.title.clone(),
+                };
+                let status = match item.status {
+                    WorkPlanItemStatus::InProgress => "in_progress",
+                    WorkPlanItemStatus::Completed | WorkPlanItemStatus::Cancelled => "completed",
+                    _ => "pending",
+                };
+                let priority = if item.status == WorkPlanItemStatus::InProgress { "high" } else { "medium" };
+                serde_json::json!({
+                    "content": content,
+                    "priority": priority,
+                    "status": status,
+                    "_meta": {
+                        "bears": {
+                            "item_id": item.id,
+                            "status": item.status.as_str(),
+                            "blocked_reason": item.blocked_reason,
+                            "source_refs": item.source_refs,
+                        }
+                    }
+                })
+            }).collect::<Vec<_>>(),
+            "diagnostic": {
+                "component": "den.acp",
+                "phase": "plan_update_mapped",
                 "transport_version": 3,
             }
         }),
