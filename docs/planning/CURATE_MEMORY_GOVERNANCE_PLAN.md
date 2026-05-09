@@ -25,6 +25,7 @@ Give BEARS a governed, inspectable mechanism for memory movement:
 4. Approved durable shared knowledge is written to `core/`.
 5. Cabinet-worthy knowledge is proposed or written through Cabinet-specific workflows, not silently copied from MemFS.
 6. Every movement records provenance and leaves an audit trail.
+7. Letta Archives are used as derived semantic retrieval indexes; BEARS does not introduce a separate vector store.
 
 ---
 
@@ -36,6 +37,8 @@ Give BEARS a governed, inspectable mechanism for memory movement:
 - Do not require promoted memories to have Cabinet objects.
 - Do not treat Cabinet as a mirror of Bear memory.
 - Do not allow agents to run destructive Git resets or MemFS operator overrides.
+- Do not let every role independently archive `core/` content.
+- Do not make Letta Archives the source of truth.
 
 ---
 
@@ -171,7 +174,7 @@ Fields:
   - `cabinet_update`
   - `supersede`
 - `target_ref text null`
-  - e.g. `core/missions.md`, `cabinet:missions/bears`, or freeform target hint
+  - e.g. `core/charter.md`, `core/projects.md`, `cabinet:missions/bears`, or freeform target hint
 - `title text not null`
 - `summary text not null`
 - `rationale text not null default ''`
@@ -200,7 +203,104 @@ The UI should show proposal state without assuming a fixed list of memory kinds.
 
 ---
 
-### Core write strategy
+## Letta Archives integration
+
+Letta Archives should be used for semantic retrieval, not canonical storage. This follows Letta's recommended pattern: keep external systems canonical and treat archival memory as a derived retrieval index.
+
+### Canonical ownership
+
+Canonical stores own IDs, versions, ACLs, deletes, and full content:
+
+| Canonical source | Store |
+|---|---|
+| Shared Bear orientation | `core/` MemFS |
+| Role-local memory | role MemFS branches |
+| Human-facing shared knowledge | Cabinet |
+| Workflow state | Den DB and schema artifacts |
+| Files/results | Garage artifacts |
+
+Archive passages should usually be summaries or pointers. On retrieval hit, tools should fetch the canonical object by ID/path when exact truth matters.
+
+### Archive types
+
+| Archive | Purpose | Writers | Readers |
+|---|---|---|---|
+| Bear curated archive | Shared semantic recall over selected `core/` summaries, approved proposals, durable references. | Den/curate indexer | Attached role agents by policy |
+| Cabinet Mission archive | Optional semantic recall for a Cabinet Mission, shared by assigned Bears/roles when needed. | Den/curate indexer | Bears/roles assigned to that Cabinet Mission |
+| Role-local archive | Optional later role-specific long-tail recall. | Role or Den by policy | Owning role |
+
+Prefer Cabinet Mission archives over a broad generic “technical” archive when knowledge needs to be shared across Bears for a Cabinet Mission. For a single-Bear Charter, the Bear curated archive is usually sufficient.
+
+### Passage provenance
+
+Archive passage `metadata` should include:
+
+- `canonical_id`
+- `source_uri`
+- `source_path`
+- `source_role`
+- `version` or source commit
+- `hash`
+- `updated_at`
+- `indexed_by`
+- `index_kind`
+
+Tags should be coarse query filters, for example:
+
+- `bear:{bear_id}`
+- `source:core`
+- `mission:{mission_id}`
+- `kind:decision`
+- `role:curate`
+
+### Index mapping
+
+Letta passage create has no first-class external id/idempotency key and archive passages have no update endpoint. Den should maintain a source-to-passage mapping table for indexed material.
+
+Suggested table: `bear_archive_index_entries`.
+
+Fields:
+
+- `id uuid primary key`
+- `bear_id uuid not null`
+- `archive_id text not null`
+- `passage_id text not null`
+- `canonical_kind text not null`
+  - `core_memory`, `role_memory`, `cabinet`, `artifact_summary`, `proposal_summary`
+- `canonical_id text not null`
+- `source_uri text not null`
+- `source_path text null`
+- `source_role text null`
+- `source_version text not null`
+- `source_hash text not null`
+- `chunk_key text not null`
+- `chunk_index integer not null default 0`
+- `text_hash text not null`
+- `metadata jsonb not null default '{}'`
+- `tags text[] not null default '{}'`
+- `indexed_at timestamptz not null default now()`
+- `deleted_at timestamptz null`
+
+Recommended uniqueness:
+
+```text
+unique (bear_id, archive_id, canonical_id, chunk_key)
+```
+
+Sync behavior:
+
+1. If source hash is unchanged, do nothing.
+2. If source hash changed, delete the old passage and create a new passage.
+3. If canonical source is deleted, delete the passage and mark the index row deleted.
+4. Search results should verify canonical id/hash where strict correctness matters.
+
+### Write boundary
+
+Agents may search attached archives, but shared archives should not be collaboratively maintained by every agent. Shared archive writes should go through Den/curate indexing workflows using `/v1/archives/{archive_id}/passages` rather than agent-scoped `archival_memory_insert`.
+
+`pair` can contribute technical notes to role-local memory and request curation. `curate` decides whether to index a summary into the Bear curated archive, a Cabinet Mission archive, Cabinet, or `core/`.
+
+## Core write strategy
 
 `curate` writes `core/` through Den-mediated tools, not raw arbitrary paths.
 
@@ -213,8 +313,10 @@ This makes memory maintenance a first-class curate responsibility, not a later c
 Start with a small, human-readable set:
 
 ```text
+core/charter.md
+core/domains.md
+core/projects.md
 core/people.md
-core/missions.md
 core/knowledge.md
 core/decisions.md
 core/policies.md
@@ -280,13 +382,15 @@ Initial implementation should support autonomous review first, with human review
 
 A curate cycle prompt should include:
 
-- Bear identity;
-- role and policy;
+- Bear identity and Charter;
+- role, policy, and relevant Domains;
 - pending proposals;
 - recent role-local memory activity;
 - search/read tools;
+- semantic search tools over attached Letta Archives when available;
 - explicit instruction that role-local memory can remain local;
-- explicit instruction to prefer concise `core/` summaries over copying raw logs.
+- explicit instruction to prefer concise `core/` summaries over copying raw logs;
+- explicit instruction that archive passages are derived indexes and should point back to canonical sources.
 
 Curate should produce one of:
 
@@ -402,13 +506,24 @@ Deliverables:
 3. Den records curation cycle activity: inputs considered, decisions made, proposals approved/rejected, core files changed, compactions performed, and escalations.
 4. UI surfaces the extent of curate activity so humans can understand what the god-agent has been doing without approving every action.
 
-### Slice 6 — Cabinet proposal integration
+### Slice 6 — Letta Archives indexing
+
+Deliverables:
+
+1. Create/provision Bear curated archives in Letta.
+2. Attach Bear curated archives to selected role agents by policy.
+3. Add `bear_archive_index_entries` or equivalent source-to-passage mapping.
+4. Add Den indexer operations for selected `core/` summaries and approved proposal outcomes.
+5. Add `den.memory.semantic_search` backed by Letta passage search / attached archives.
+6. Add Cabinet Mission archive design hooks once Cabinet Missions and Bear↔Mission assignments are defined.
+
+### Slice 7 — Cabinet proposal integration
 
 Deliverables:
 
 1. `den.memory.propose_cabinet_update` creates proposal rows with Cabinet target hints.
 2. Cabinet UI/tooling can accept, edit, or reject proposed updates.
-3. Link approved Cabinet entries back to source memory proposals.
+3. Link approved Cabinet entries back to source memory proposals and derived archive passages where applicable.
 
 ---
 
@@ -420,6 +535,8 @@ Deliverables:
 - Work and watch should not see raw talk/pair memory except through `core/` or approved proposals.
 - Promotion should summarize and distill; do not copy raw logs into `core/`.
 - Cabinet promotion requires separate Cabinet policy.
+- Letta Archives are derived indexes; Den/curate owns shared archive indexing.
+- Non-curate roles must not independently archive `core/` content.
 - Destructive cleanup remains admin/operator action, not curate autonomy.
 
 ---
@@ -433,6 +550,9 @@ Deliverables:
 5. Should `core/` writes live on the `curate` branch, a separate `core` branch, or a sidecar-managed projection into all role views?
 6. How should Cabinet proposal permissions differ from `core` proposal permissions?
 7. What bounded compaction/dreaming operations are safe enough for autonomous curate to perform without human approval?
+8. What is the initial Bear archive attachment policy by role?
+9. How should Cabinet Mission archives be scoped and attached once Cabinet Missions and Bear↔Mission assignments are defined?
+10. Which `core/` sections should be indexed into Archives as summaries/pointers, and which should remain only in MemFS?
 
 ---
 

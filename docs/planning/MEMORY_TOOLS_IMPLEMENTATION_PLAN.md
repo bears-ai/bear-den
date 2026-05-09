@@ -113,6 +113,22 @@ Future tools:
 | `den.memory.reject_proposal` | `den_memory_reject_proposal` | `curate` | Reject proposal with rationale. |
 | `den.memory.history` | `den_memory_history` | role-scoped, curate broader | Inspect commit/file history. |
 | `den.memory.diff` | `den_memory_diff` | role-scoped, curate broader | Inspect diffs between commits or proposal states. |
+| `den.memory.semantic_search` | `den_memory_semantic_search` | role-scoped by archive attachment/policy | Search Letta Archives as derived semantic indexes. |
+| `den.memory.index_curated_summary` | `den_memory_index_curated_summary` | `curate` / Den internal | Index selected curated summaries or pointers into Bear/mission Letta Archives. |
+
+### P5 — Letta Archives semantic retrieval
+
+Use Letta Archives instead of introducing a BEARS vector store.
+
+Planned behavior:
+
+- Create one Bear curated archive per Bear.
+- Add Cabinet Mission archives once Cabinet Missions and Bear↔Mission assignments are defined.
+- Attach shared archives to role agents by policy.
+- Den/curate owns writes to shared archives through `/v1/archives/{archive_id}/passages`.
+- Non-curate roles may search attached archives but must not independently archive `core/`.
+- Passage metadata stores canonical IDs, source URIs, version/hash, updated timestamps, and provenance.
+- Den maintains source-to-passage mappings because Letta does not provide passage external IDs/upsert.
 
 ---
 
@@ -141,6 +157,8 @@ Initial input schema:
       "type": "object",
       "properties": {
         "people": { "type": "array", "items": { "type": "string" }, "maxItems": 20 },
+        "charters": { "type": "array", "items": { "type": "string" }, "maxItems": 20 },
+        "domains": { "type": "array", "items": { "type": "string" }, "maxItems": 20 },
         "missions": { "type": "array", "items": { "type": "string" }, "maxItems": 20 },
         "knowledge": { "type": "array", "items": { "type": "string" }, "maxItems": 20 },
         "cabinet": { "type": "array", "items": { "type": "string" }, "maxItems": 20 },

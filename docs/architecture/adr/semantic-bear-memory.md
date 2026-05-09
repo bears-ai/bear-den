@@ -12,7 +12,8 @@ BEARS has several memory and knowledge surfaces that must remain distinct:
 
 - **Cabinet** is the shared, human-editable knowledge base.
 - **Bear MemFS** is durable bear memory with role-scoped branches (`talk/`, `pair/`, `curate/`, `work/`, `watch/`) and curated shared `core/` memory.
-- **Letta memory blocks and archival memory** remain Letta-native runtime memory.
+- **Letta Archives / archival memory** provide Letta-native semantic retrieval and should be treated as derived indexes over canonical BEARS sources.
+- **Letta memory blocks** are legacy/runtime state for BEARS direction and should not be the primary long-term memory architecture.
 - **Artifacts** store files and outputs, not memory.
 - **Conversation/session state** is operational context for an interaction, not necessarily durable memory.
 
@@ -21,7 +22,7 @@ Earlier memory architecture established that raw role-local memory can be review
 The system also needs a semantic vocabulary for shared knowledge. Cabinet should contain designated spaces for:
 
 - **People** — knowledge about people, relationships, preferences, and identity-sensitive facts.
-- **Missions** — projects, goals, initiatives, responsibilities, and long-running areas of effort.
+- **Missions** — shared work/knowledge containers that may contain multiple projects and may involve multiple Bears. These are distinct from a Bear's Charter.
 - **Knowledge** — general reusable knowledge, policies, procedures, decisions, concepts, and references.
 
 The question is how this semantic structure should influence Bear memory without forcing every memory object to map to a Cabinet object or become a `core/` candidate.
@@ -82,13 +83,15 @@ Important distinction:
 
 | Field | Meaning |
 |---|---|
-| `mission_ref` | This memory relates to a mission. It does not imply Cabinet mapping or promotion. |
+| `charter_ref` | This memory relates to the Bear's Charter or responsibility boundary. |
+| `domain_ref` | This memory relates to a Domain under the Bear's Charter. |
+| `mission_ref` | This memory relates to a Cabinet Mission. It does not imply Cabinet mapping or promotion. |
 | `person_ref` | This memory relates to a person. It may require privacy policy checks. |
 | `knowledge_ref` | This memory relates to a knowledge area or concept. |
 | `cabinet_ref` | This memory points to a Cabinet object. |
 | `promotion_target` | This memory is intended or proposed for promotion. |
 
-Mission/person/knowledge references must not imply that a Cabinet object exists. Cabinet references are explicit.
+Charter/domain/mission/person/knowledge references must not imply that a Cabinet object exists. Cabinet references are explicit.
 
 ### Lifecycle
 
@@ -105,6 +108,54 @@ Common lifecycle metadata:
 
 A role-local memory with `promotion: none` is complete and valid. It is not a failed proposal.
 
+### Letta Archives as semantic retrieval indexes
+
+BEARS will use **Letta Archives** as the preferred semantic retrieval layer and will not introduce a separate embedding strategy or vector store while Archives satisfy retrieval needs.
+
+Letta Archives are not canonical memory. They are derived indexes over canonical sources such as:
+
+- `core/` MemFS;
+- role-local MemFS branches;
+- Cabinet pages;
+- Den DB workflow state;
+- Garage artifact summaries.
+
+Rules:
+
+1. Canonical stores own IDs, versions, ACLs, deletes, and full content.
+2. Archive passages store summaries or pointers plus provenance metadata.
+3. Passage metadata should include canonical id, source URI, version/hash, updated timestamp, and source role when applicable.
+4. Tags are coarse query filters, not the primary provenance store.
+5. Since Letta passage creation has no first-class external id/upsert and no passage update endpoint, Den should keep source-to-passage index records and use delete-and-create when source hashes change.
+6. Agents may search attached archives, but shared archives should be written by Den/curate indexing workflows, not collaboratively maintained by every role agent.
+7. Search results should point back to canonical sources when exact truth is needed.
+
+Recommended archive types:
+
+| Archive | Purpose |
+|---|---|
+| Bear curated archive | Shared semantic recall over selected `core/` summaries, approved proposals, and durable references. |
+| Cabinet Mission archive | Optional semantic recall for a Cabinet Mission, shared by assigned Bears/roles when needed. |
+| Role-local archive | Optional later role-specific long-tail recall; should not duplicate `core/`. |
+
+`core/` remains the canonical curated orientation layer for a Bear's Charter and Domains. Archive passages are derived recall aids, not a mirror of all `core/` content.
+
+For a Bear with one Charter and no cross-Bear Mission needs, the Bear curated archive may be sufficient. Create Cabinet Mission archives only when a Cabinet Mission needs semantic recall shared across Bears or role agents.
+
+### Relationship to Letta reflection and compaction
+
+Letta Code reflection should remain the preferred role-local memory maintenance mechanism for Letta Code-backed roles such as `talk` and `work`. BEARS should not duplicate Letta Code reflection for those roles.
+
+`pair` and `watch` are API-direct. Do not add separate `pair` or `watch` dream agents initially. Instead:
+
+- `pair` writes role-local entries;
+- `watch` writes observations/logs;
+- `curate` performs autonomous cross-role review, consolidation, `core/` cleanup, and archive indexing policy.
+
+Letta conversation compaction remains Letta's responsibility. BEARS curation is durable memory governance, not context-window management.
+
+Letta API sleep-time / memory-block management should not be enabled by default for BEARS role agents because BEARS is moving away from memory blocks as the long-term shared-memory mechanism.
+
 ### Cabinet semantic spaces
 
 Cabinet will use these top-level semantic spaces as the canonical shared knowledge structure:
@@ -112,10 +163,13 @@ Cabinet will use these top-level semantic spaces as the canonical shared knowled
 | Space | Purpose |
 |---|---|
 | `People` | Human/person knowledge, identity-sensitive facts, preferences, relationships, and stakeholders. |
-| `Missions` | Projects, goals, initiatives, responsibilities, routines, and ongoing efforts. |
+| `Missions` | Shared work/knowledge containers that may contain multiple projects and involve multiple Bears. |
+| `Charters` | Not a Cabinet top-level space by default; a Bear's Charter is its durable purpose/responsibility boundary and usually belongs in Bear configuration plus `core/`. |
 | `Knowledge` | General reusable knowledge, policies, procedures, decisions, concepts, and references. |
 
 Bear memory may reference Cabinet spaces, but Bear memory does not mirror Cabinet one-to-one. Cabinet is the library. Bear memory is each role's working notebook, operational history, orientation map, and governance trail.
+
+A Bear's **Charter** is not a Cabinet Mission. A Charter belongs to the Bear: it describes why the Bear exists and what responsibility boundary its `core/` should stay oriented around. Bear-specific knowledge should be described as under the Charter. **Domains** are durable areas of knowledge/responsibility under that Charter. Cabinet Missions are many-to-many with Bears: a Bear can participate in many Missions, and a Mission can involve many Bears.
 
 ### Situation instead of current context
 
@@ -183,7 +237,7 @@ Reserved schema-owned paths should stay behind dedicated tools:
 <role>/subscriptions/
 ```
 
-A mission-related tactical decision should be represented as `kind: decision` with `mission_ref`, not forced into a special `mission-decisions/` path.
+A Cabinet Mission-related tactical decision should be represented as `kind: decision` with `mission_ref`, not forced into a special `mission-decisions/` path. A Bear Charter-related memory can use `charter_ref`; a Domain-specific memory can use `domain_ref`; shared orientation can simply live in `core/`.
 
 ### Read/search/browse tools should support human and agent inspection
 
@@ -207,6 +261,7 @@ Candidate tool/API names:
 | `den.memory.tree` | `den_memory_tree` | Browse allowed memory paths. |
 | `den.memory.read` | `den_memory_read` | Read an allowed memory file or entry. |
 | `den.memory.search` | `den_memory_search` | Search memory with role/kind/reference filters. |
+| `den.memory.semantic_search` | `den_memory_semantic_search` | Search Letta Archives attached to or governed for this Bear/role. |
 | `den.memory.history` | `den_memory_history` | Inspect commit/file history. |
 | `den.memory.status` | `den_memory_status` | Inspect MemFS role/canonical health. |
 
@@ -257,6 +312,8 @@ Recommended first write capability:
 - Supports tactical local decisions and logs without over-promoting them.
 - Reduces tool sprawl by using `kind`, references, and lifecycle metadata.
 - Avoids confusion between situation briefings and model context windows.
+- Uses Letta Archives for semantic retrieval instead of creating a BEARS-owned vector store.
+- Preserves `core/` as canonical orientation while allowing derived semantic recall.
 
 ### Tradeoffs
 
@@ -264,6 +321,7 @@ Recommended first write capability:
 - Search and UI need to understand both paths and metadata.
 - `curate` must handle more nuanced lifecycle states than simple promote/reject.
 - Some memory objects will have no Cabinet link, which is intentional but requires clear UI copy.
+- Den must maintain source-to-passage index records for reliable Letta Archive sync because Letta does not provide first-class external ids/upsert for passages.
 
 ### Non-goals
 
@@ -272,6 +330,9 @@ Recommended first write capability:
 - Do not require every role memory to become `core/`.
 - Do not use agent tools for destructive memory resets or operator overrides.
 - Do not use “context” as the label for situation briefing tools.
+- Do not make Letta Archives the source of truth.
+- Do not let every role independently archive `core/` content.
+- Do not build a separate BEARS vector store while Letta Archives are sufficient.
 
 ---
 
@@ -284,3 +345,4 @@ Recommended first write capability:
 5. Update MemFS Manager role branch initialization to include conventional directories as needed.
 6. Design Cabinet metadata for `People`, `Missions`, and `Knowledge` spaces.
 7. Design the operator UI for browsing, searching, inspecting, and understanding Bear memory without implying everything is Cabinet-backed.
+8. Design Bear curated and Cabinet Mission archive provisioning, attachment, and source-to-passage index tables.
