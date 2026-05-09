@@ -132,6 +132,38 @@
         </p>
     </section>
 
+    <section id="acp-tool-details" class="box full-width">
+        <h3>ACP tool approvals</h3>
+        <p class="form-hint">These local tools are exposed to the <strong>pair</strong> role through ACP clients such as Zed. The adapter asks for approval before running user-gated tools, and persistent approval choices are stored locally by the adapter.</p>
+        {% if acp_tool_details %}
+        <div class="den-role-card-grid">
+            {% for tool in acp_tool_details %}
+            <article class="den-role-card{% if tool.highlighted %} den-role-card-warn{% endif %}">
+                <h4>{{ tool.title | e }} <code>{{ tool.name | e }}</code></h4>
+                <p>{{ tool.usage_hint | e }}</p>
+                <dl class="fields-grid">
+                    <dt>Kind</dt><dd><code>{{ tool.kind | e }}</code></dd>
+                    <dt>Risk</dt><dd><code>{{ tool.risk | e }}</code></dd>
+                    <dt>Approval choices</dt><dd>{{ tool.approval_label | e }}</dd>
+                    <dt>Scope</dt><dd>{{ tool.scope_label | e }}</dd>
+                </dl>
+                {% if tool.parameter_summary %}
+                <p class="caption">Parameters: {% for param in tool.parameter_summary %}{% if not loop.first %}, {% endif %}<code>{{ param | e }}</code>{% endfor %}</p>
+                {% endif %}
+                {% if tool.policy_summary %}
+                <ul class="caption">
+                    {% for item in tool.policy_summary %}<li>{{ item | e }}</li>{% endfor %}
+                </ul>
+                {% endif %}
+            </article>
+            {% endfor %}
+        </div>
+        <p class="form-hint"><strong>Note:</strong> <code>terminal_run_command</code> uses the ACP client terminal and waits for process exit, which avoids brute-force polling when tools such as Cargo wait on file locks.</p>
+        {% else %}
+        <p class="caption">No ACP tool details are available.</p>
+        {% endif %}
+    </section>
+
     <section id="advanced-operations" class="box full-width">
         <h3>Advanced operations</h3>
         <details>

@@ -19,6 +19,7 @@ use crate::{
     auth_backend::{AuthSession, SessionUser},
     core::{
         acp_sessions, acp_tokens, archived_conversations,
+        acp_tools::{acp_tool_policy_json_for_provider, AcpToolName},
         bears::{
             compute_letta_drift_with_expected_tool_ids, db as bears_db,
             db::{role_is_bear_admin, BearMemberRow, BEAR_ROLE_ADMIN, BEAR_ROLE_MEMBER},
@@ -241,6 +242,20 @@ struct RuntimeBlockRoleRow {
     error: Option<String>,
 }
 
+#[derive(Serialize)]
+struct AcpToolDetailRow {
+    name: &'static str,
+    title: &'static str,
+    kind: &'static str,
+    risk: &'static str,
+    approval_label: &'static str,
+    scope_label: &'static str,
+    policy_summary: Vec<String>,
+    parameter_summary: Vec<&'static str>,
+    usage_hint: &'static str,
+    highlighted: bool,
+}
+
 fn role_memory_label(role: BearAgentRole) -> &'static str {
     match role {
         BearAgentRole::Talk => "Conversation memory",
@@ -320,6 +335,90 @@ fn role_capabilities(role: BearAgentRole) -> Vec<&'static str> {
             "Subscription monitoring",
             "Event summarization",
         ],
+    }
+}
+
+fn acp_tool_detail_rows() -> Vec<AcpToolDetailRow> {
+    AcpToolName::all()
+        .iter()
+        .filter(|tool| matches!(tool, AcpToolName::TerminalRunCommand | AcpToolName::ProcessRun | AcpToolName::ReadTextFile | AcpToolName::ListDirectory | AcpToolName::SearchFiles | AcpToolName::ReplaceText | AcpToolName::CreateTextFile | AcpToolName::DeletePath))
+        .map(|tool| {
+            let descriptor = tool.descriptor();
+            let policy = acp_tool_policy_json_for_provider(descriptor.provider_name);
+            let mut policy_summary = Vec::new();
+            if policy.get("approval_required").and_then(|v| v.as_bool()).unwrap_or(false) {
+                policy_summary.push("User approval required before execution".to_string());
+            }
+            if let Some(timeout) = policy.get("total_timeout_ms").and_then(|v| v.as_u64()) {
+                policy_summary.push(format!("Timeout: {}s", timeout / 1000));
+            }
+            if let Some(max_bytes) = policy.get("max_bytes").and_then(|v| v.as_u64()) {
+                policy_summary.push(format!("Output/input cap: {} KiB", max_bytes / 1024));
+            }
+            if let Some(path_policy) = policy.get("path_containment").and_then(|v| v.as_str()) {
+                policy_summary.push(path_policy.replace('_', " "));
+            }
+            AcpToolDetailRow {
+                name: descriptor.provider_name,
+                title: descriptor.title,
+                kind: descriptor.kind,
+                risk: descriptor.risk,
+                approval_label: acp_tool_approval_label(descriptor.provider_name),
+                scope_label: acp_tool_scope_label(descriptor.provider_name),
+                policy_summary,
+                parameter_summary: acp_tool_parameter_summary(descriptor.provider_name),
+                usage_hint: acp_tool_usage_hint(descriptor.provider_name),
+                highlighted: descriptor.provider_name == "terminal_run_command",
+            }
+        })
+        .collect()
+}
+
+fn acp_tool_approval_label(provider_name: &str) -> &'static str {
+    match provider_name {
+        "terminal_run_command" => "Only once, by command in workspace, by workspace, or globally",
+        "process_run" => "Only once, by command in workspace, by workspace, or globally",
+        "fs_read_text_file" | "fs_list_directory" | "fs_search_files" => "Only once, by directory, by workspace, or globally",
+        "fs_replace_text" | "fs_create_text_file" => "Only once, by directory, by workspace, or globally",
+        "fs_delete_path" => "Only once, by directory, by workspace, or globally",
+        _ => "Tool-family approval through ACP client",
+    }
+}
+
+fn acp_tool_scope_label(provider_name: &str) -> &'static str {
+    match provider_name {
+        "terminal_run_command" => "Workspace cwd + allowlisted build/test commands",
+        "process_run" => "Workspace cwd + adapter process policy",
+        "fs_read_text_file" | "fs_list_directory" | "fs_search_files" => "Absolute paths under ACP workspace roots",
+        "fs_replace_text" | "fs_create_text_file" | "fs_delete_path" => "Absolute paths under ACP workspace roots; hidden/sensitive paths restricted",
+        _ => "ACP session workspace/policy scope",
+    }
+}
+
+fn acp_tool_parameter_summary(provider_name: &str) -> Vec<&'static str> {
+    match provider_name {
+        "terminal_run_command" | "process_run" => vec!["command", "args[]", "cwd", "timeout_ms", "max_output_bytes", "env"],
+        "fs_read_text_file" => vec!["path", "line", "limit"],
+        "fs_list_directory" => vec!["path", "recursive", "limit", "include_hidden"],
+        "fs_search_files" => vec!["path", "query", "pattern", "extensions", "case_sensitive"],
+        "fs_replace_text" => vec!["path", "old_text", "new_text", "expected_replacements"],
+        "fs_create_text_file" => vec!["path", "content", "create_parent_dirs"],
+        "fs_delete_path" => vec!["path", "recursive", "expected_kind"],
+        _ => Vec::new(),
+    }
+}
+
+fn acp_tool_usage_hint(provider_name: &str) -> &'static str {
+    match provider_name {
+        "terminal_run_command" => "Use for build/test commands that should run in Zed's client terminal and wait for actual process exit, including Cargo file-lock waits.",
+        "process_run" => "Legacy bounded adapter-local process execution; prefer terminal_run_command for visible build/test workflows.",
+        "fs_read_text_file" => "Read bounded text from a workspace file.",
+        "fs_list_directory" => "Discover workspace files and directories without reading file contents.",
+        "fs_search_files" => "Search text or path patterns under a workspace directory.",
+        "fs_replace_text" => "Safely replace exact text in an existing file with preview and stale-file revalidation.",
+        "fs_create_text_file" => "Create a new UTF-8 text file without overwriting existing content.",
+        "fs_delete_path" => "Delete files or empty directories; recursive deletion requires explicit opt-in.",
+        _ => "ACP local tool.",
     }
 }
 
@@ -1034,6 +1133,7 @@ async fn render_bear_details_page(
         Some("drift") => Some("drift"),
         _ => None,
     };
+    let acp_tool_details = acp_tool_detail_rows();
 
     let memfs_url = state.config.letta_memfs_service_url.as_str();
     let (
@@ -1106,6 +1206,7 @@ async fn render_bear_details_page(
             conversation_rows,
             archived_conversation_count,
             letta_resync_notice,
+            acp_tool_details,
             mem_private_files,
             mem_private_error,
             mem_private_skipped,
