@@ -910,7 +910,7 @@ pub async fn invoke_den_tool(
         DEN_WEB_FETCH => web_fetch(pool, &context, arguments).await,
         DEN_WEB_SEARCH => web_search(pool, config, &context, arguments).await,
         DEN_SITUATION_GET => situation_get(pool, config, &context, role).await,
-        DEN_MEMORY_WRITE_ENTRY => write_memory_entry(config, &context, role, arguments).await,
+        DEN_MEMORY_WRITE_ENTRY => write_memory_entry(pool, config, &context, role, arguments).await,
         DEN_MEMORY_STATUS => memory_status(config, &context, role).await,
         DEN_MEMORY_TREE => memory_tree(config, &context, role).await,
         DEN_MEMORY_READ => memory_read(config, &context, role, arguments).await,
@@ -1390,6 +1390,7 @@ async fn situation_get(
     role: BearAgentRole,
 ) -> Result<Value, CustomError> {
     let member_count = bears_db::count_bear_members(pool, context.bear_id).await?;
+    let current_user = user::user_by_id(pool, context.user_id).await.ok();
     let memory_status = memory_status_value(config, context, role)
         .await
         .unwrap_or_else(|err| {
@@ -1407,9 +1408,19 @@ async fn situation_get(
         },
         "role": role.as_str(),
         "role_agent_id": context.role_agent_id,
+        "human": {
+            "user_id": context.user_id,
+            "username": current_user.as_ref().map(|user| user.username.clone()).or_else(|| context.username.clone()),
+            "display_name": current_user.as_ref().map(|user| user.display_name.clone()),
+            "email_verified": current_user.as_ref().map(|user| user.email_verified.unwrap_or(false)),
+            "membership_role": context.membership_role,
+            "is_bear_admin": role_is_bear_admin(context.membership_role.as_deref()),
+            "relationship": "authenticated ACP token owner; memory entries and logs should attribute work to this human"
+        },
         "user": {
             "user_id": context.user_id,
-            "username": context.username,
+            "username": current_user.as_ref().map(|user| user.username.clone()).or_else(|| context.username.clone()),
+            "display_name": current_user.as_ref().map(|user| user.display_name.clone()),
             "membership_role": context.membership_role,
             "is_bear_admin": role_is_bear_admin(context.membership_role.as_deref())
         },
@@ -1436,7 +1447,7 @@ async fn situation_get(
         },
         "policy_notes": [
             "Situation is a Den-trusted briefing, not the model context window.",
-            "Use memory_write_entry only for role-local notes, logs, decisions, reflections, scratch, and summaries.",
+            "Use memory_write_entry only for role-local notes, logs, decisions, reflections, scratch, and summaries; entries are attributed to the authenticated human in this situation.",
             "Do not use memory entry tools for tasks, observations, run results, Cabinet writes, or direct core updates."
         ]
     }))
@@ -1599,6 +1610,7 @@ async fn cancel_plan_mode(
 }
 
 async fn write_memory_entry(
+    pool: &PgPool,
     config: &Config,
     context: &DenToolInvocationContext,
     role: BearAgentRole,
@@ -1617,6 +1629,8 @@ async fn write_memory_entry(
     validate_optional_object("refs", &args.refs)?;
     validate_optional_object("lifecycle", &args.lifecycle)?;
     validate_optional_object("source", &args.source)?;
+    let current_user = user::user_by_id(pool, context.user_id).await.ok();
+    let source = merge_memory_entry_source_with_human(args.source, context, current_user.as_ref());
     let request = MemfsWriteRoleMemoryEntryRequest {
         kind,
         title,
@@ -1624,7 +1638,7 @@ async fn write_memory_entry(
         tags,
         refs: args.refs,
         lifecycle: args.lifecycle,
-        source: args.source,
+        source,
         author: context.username.clone(),
         conversation_id: clean_optional(&context.conversation_id),
         session_id: source_acp_session_id(context).or_else(|| clean_optional(&context.session_id)),
@@ -1894,6 +1908,40 @@ async fn update_work_plan(
         "bear_id": context.bear_id,
         "plan": plan,
     }))
+}
+
+fn merge_memory_entry_source_with_human(
+    source: Option<Value>,
+    context: &DenToolInvocationContext,
+    current_user: Option<&user::User>,
+) -> Option<Value> {
+    let mut source_obj = source
+        .and_then(|value| value.as_object().cloned())
+        .unwrap_or_default();
+    source_obj.insert(
+        "human".to_string(),
+        json!({
+            "user_id": context.user_id,
+            "username": current_user
+                .map(|user| user.username.clone())
+                .or_else(|| context.username.clone()),
+            "display_name": current_user.map(|user| user.display_name.clone()),
+            "membership_role": context.membership_role,
+            "authenticated_by": "acp_token"
+        }),
+    );
+    source_obj.insert(
+        "session".to_string(),
+        json!({
+            "conversation_id": clean_optional(&context.conversation_id),
+            "session_id": clean_optional(&context.session_id),
+            "acp_session_id": context.acp_session_id,
+            "conversation_selection": context.conversation_selection,
+            "runtime_target": context.runtime_target,
+            "request_id": context.request_id,
+        }),
+    );
+    Some(Value::Object(source_obj))
 }
 
 fn memfs_http_client(error_prefix: &str) -> Result<reqwest::Client, CustomError> {
