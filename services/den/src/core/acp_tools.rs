@@ -39,6 +39,7 @@ pub enum AcpToolName {
     GitCommit,
     GitStash,
     ProcessRun,
+    TerminalRunCommand,
     ChromeOpen,
     ChromeSnapshot,
     ChromeConsoleMessages,
@@ -70,6 +71,7 @@ impl AcpToolName {
             Self::GitCommit => &ACP_GIT_COMMIT_TOOL,
             Self::GitStash => &ACP_GIT_STASH_TOOL,
             Self::ProcessRun => &ACP_PROCESS_RUN_TOOL,
+            Self::TerminalRunCommand => &ACP_TERMINAL_RUN_COMMAND_TOOL,
             Self::ChromeOpen => &ACP_CHROME_OPEN_TOOL,
             Self::ChromeSnapshot => &ACP_CHROME_SNAPSHOT_TOOL,
             Self::ChromeConsoleMessages => &ACP_CHROME_CONSOLE_MESSAGES_TOOL,
@@ -101,6 +103,7 @@ impl AcpToolName {
             Self::GitCommit,
             Self::GitStash,
             Self::ProcessRun,
+            Self::TerminalRunCommand,
             Self::ChromeOpen,
             Self::ChromeSnapshot,
             Self::ChromeConsoleMessages,
@@ -147,7 +150,7 @@ impl AcpToolName {
             Self::GitAdd | Self::GitRestore => &["paths"],
             Self::GitCommit => &["message"],
             Self::GitStash => &[],
-            Self::ProcessRun => &["command", "cwd"],
+            Self::ProcessRun | Self::TerminalRunCommand => &["command", "cwd"],
             Self::ChromeOpen => &["url"],
             Self::ChromeSnapshot
             | Self::ChromeConsoleMessages
@@ -216,6 +219,10 @@ impl AcpToolName {
             "bears/process_run" | "process/run" | "process.run" | "process_run" => {
                 Some(Self::ProcessRun)
             }
+            "bears/terminal_run_command"
+            | "terminal/run_command"
+            | "terminal.run_command"
+            | "terminal_run_command" => Some(Self::TerminalRunCommand),
             "bears/chrome_open" | "chrome/open" | "chrome.open" | "chrome_open" => {
                 Some(Self::ChromeOpen)
             }
@@ -565,6 +572,16 @@ pub const ACP_PROCESS_RUN_TOOL: AcpToolDescriptor = AcpToolDescriptor {
     adapter_method: "bears/process_run",
     client_method: "process/run",
     title: "Run process",
+    kind: "execute",
+    risk: "executes_process",
+};
+
+pub const ACP_TERMINAL_RUN_COMMAND_TOOL: AcpToolDescriptor = AcpToolDescriptor {
+    provider_name: "terminal_run_command",
+    canonical_name: "acp.terminal.run_command",
+    adapter_method: "bears/terminal_run_command",
+    client_method: "terminal/run_command",
+    title: "Run terminal command",
     kind: "execute",
     risk: "executes_process",
 };
@@ -1043,7 +1060,7 @@ pub fn acp_tool_policy(tool: AcpToolName) -> AcpToolPolicy {
         AcpToolName::GitRestore => ACP_GIT_WRITE_POLICY,
         AcpToolName::GitCommit => ACP_GIT_WRITE_POLICY,
         AcpToolName::GitStash => ACP_GIT_WRITE_POLICY,
-        AcpToolName::ProcessRun => ACP_PROCESS_RUN_POLICY,
+        AcpToolName::ProcessRun | AcpToolName::TerminalRunCommand => ACP_PROCESS_RUN_POLICY,
         AcpToolName::ChromeOpen
         | AcpToolName::ChromeSnapshot
         | AcpToolName::ChromeConsoleMessages
@@ -1553,20 +1570,27 @@ pub fn acp_client_tool_descriptor(tool: &AcpToolDescriptor) -> serde_json::Value
                 "include_untracked": { "type": "boolean", "default": false }
             }, "required": [] }
         }),
-        "process_run" => json!({
+        "process_run" | "terminal_run_command" => json!({
             "name": tool.provider_name,
-            "description": format!(
-                "ACP local workspace tool ({}, target={}, adapter={}, client={}, kind={}, risk={}). Runs a bounded non-interactive process in an explicit workspace cwd through the local adapter. Approval is required.",
-                tool.canonical_name, "acp_client", tool.adapter_method, tool.client_method, tool.kind, tool.risk,
-            ),
+            "description": if tool.provider_name == "terminal_run_command" {
+                format!(
+                    "ACP local workspace tool ({}, target={}, adapter={}, client={}, kind={}, risk={}). Runs an allowlisted build/test command in the client terminal and waits efficiently for terminal exit (useful when cargo waits for file locks). Approval is required.",
+                    tool.canonical_name, "acp_client_terminal", tool.adapter_method, tool.client_method, tool.kind, tool.risk,
+                )
+            } else {
+                format!(
+                    "ACP local workspace tool ({}, target={}, adapter={}, client={}, kind={}, risk={}). Runs a bounded non-interactive process in an explicit workspace cwd through the local adapter. Approval is required.",
+                    tool.canonical_name, "acp_client", tool.adapter_method, tool.client_method, tool.kind, tool.risk,
+                )
+            },
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "command": { "type": "string", "description": "Executable name or absolute executable path. Shell strings are not accepted." },
+                    "command": { "type": "string", "description": if tool.provider_name == "terminal_run_command" { "Allowlisted executable name, e.g. cargo, npm, pnpm, yarn, pytest, python3. Shell strings and paths are not accepted." } else { "Executable name or absolute executable path. Shell strings are not accepted." } },
                     "args": { "type": "array", "items": { "type": "string" }, "description": "Command arguments." },
                     "cwd": { "type": "string", "description": "Absolute working directory under the workspace." },
-                    "timeout_ms": { "type": "integer", "minimum": 1, "maximum": 120000 },
-                    "max_output_bytes": { "type": "integer", "minimum": 1, "maximum": 65536 },
+                    "timeout_ms": { "type": "integer", "minimum": 1, "maximum": if tool.provider_name == "terminal_run_command" { 600000 } else { 120000 } },
+                    "max_output_bytes": { "type": "integer", "minimum": 1, "maximum": if tool.provider_name == "terminal_run_command" { 131072 } else { 65536 } },
                     "env": { "type": "object", "additionalProperties": { "type": "string" }, "description": "Optional non-secret environment values." }
                 },
                 "required": ["command", "cwd"]

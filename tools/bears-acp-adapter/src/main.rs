@@ -6,15 +6,18 @@ mod tools;
 
 use agent_client_protocol::schema::{
     AgentCapabilities, AuthEnvVar, AuthMethod, AuthMethodEnvVar, AuthenticateResponse,
-    CloseSessionResponse, ContentBlock, ContentChunk, Diff, Implementation, InitializeResponse,
+    CloseSessionResponse, ContentBlock, ContentChunk, CreateTerminalRequest,
+    CreateTerminalResponse, Diff, EnvVariable, Implementation, InitializeResponse,
     ConfigOptionUpdate, CurrentModeUpdate, ListSessionsResponse, LoadSessionResponse,
     McpCapabilities, NewSessionResponse, Plan, PlanEntry, PlanEntryPriority, PlanEntryStatus,
     PromptCapabilities, PromptResponse, ProtocolVersion, ReadTextFileRequest, ReadTextFileResponse,
-    RequestPermissionRequest, ResumeSessionResponse, SessionCapabilities, SessionCloseCapabilities,
-    SessionConfigOption, SessionConfigOptionCategory, SessionConfigSelectOption, SessionInfo,
-    SessionListCapabilities, SessionMode, SessionModeState, SessionResumeCapabilities,
-    SessionUpdate, StopReason, ToolCall, ToolCallContent, ToolCallLocation, ToolCallStatus,
-    ToolCallUpdate, ToolCallUpdateFields, ToolKind,
+    ReleaseTerminalRequest, RequestPermissionRequest, ResumeSessionResponse, SessionCapabilities,
+    SessionCloseCapabilities, SessionConfigOption, SessionConfigOptionCategory,
+    SessionConfigSelectOption, SessionInfo, SessionListCapabilities, SessionMode,
+    SessionModeState, SessionResumeCapabilities, SessionUpdate, StopReason,
+    TerminalOutputRequest, TerminalOutputResponse, ToolCall, ToolCallContent, ToolCallLocation,
+    ToolCallStatus, ToolCallUpdate, ToolCallUpdateFields, ToolKind, WaitForTerminalExitRequest,
+    WaitForTerminalExitResponse,
 };
 use anyhow::{anyhow, Context, Result};
 
@@ -58,6 +61,7 @@ use tools::git::{
     handle_git_show, handle_git_stash, handle_git_status,
 };
 use tools::process::handle_process_run;
+use tools::terminal::handle_terminal_run_command;
 use tools::web::handle_local_web_fetch;
 
 use uuid::Uuid;
@@ -92,6 +96,7 @@ struct AdapterState {
 #[derive(Clone)]
 struct AdapterSharedState {
     transport: JsonRpcTransport,
+    client_capabilities: Arc<TokioMutex<Value>>,
     session_contexts: Arc<TokioMutex<HashMap<String, SessionContext>>>,
     tool_tasks: ToolTaskRegistry,
     approval_cache: ApprovalCache,
@@ -543,6 +548,7 @@ async fn run() -> Result<()> {
     let (cancellation_tx, _) = broadcast::channel(64);
     let shared_state = AdapterSharedState {
         transport: adapter_state.transport.clone(),
+        client_capabilities: Arc::new(TokioMutex::new(Value::Null)),
         session_contexts: Arc::new(TokioMutex::new(HashMap::new())),
         tool_tasks: ToolTaskRegistry::default(),
         approval_cache,
@@ -878,6 +884,7 @@ async fn handle_request(
                     .cloned()
                     .unwrap_or(Value::Null),
             );
+            *shared_state.client_capabilities.lock().await = adapter_state.client_capabilities.clone();
             if let Some(id) = request.id {
                 write_response(id, Ok(initialize_result()?)).await?;
             }
@@ -1378,6 +1385,7 @@ fn adapter_capabilities_context() -> Value {
             "git_commit": { "supported": true, "version": 1 },
             "git_stash": { "supported": true, "version": 1 },
             "process_run": { "supported": true, "version": 1 },
+            "terminal_run_command": { "supported": true, "version": 1 },
             "chrome_open": { "supported": true, "version": 1 },
             "chrome_snapshot": { "supported": true, "version": 1 },
             "chrome_console_messages": { "supported": true, "version": 1 },
@@ -1410,6 +1418,7 @@ fn direct_tools_context() -> Value {
         "git_commit": true,
         "git_stash": true,
         "process_run": true,
+        "terminal_run_command": true,
         "chrome_open": true,
         "chrome_snapshot": true,
         "chrome_console_messages": true,
@@ -1629,6 +1638,14 @@ fn client_supports_read_text_file(adapter_state: &AdapterState) -> bool {
         == Some(true)
 }
 
+fn client_supports_terminal(adapter_state: &AdapterState) -> bool {
+    adapter_state
+        .client_capabilities
+        .get("terminal")
+        .map(capability_value_bool)
+        .unwrap_or(false)
+}
+
 async fn handle_client_read_text_file(
     adapter_state: &mut AdapterState,
     session_id: &str,
@@ -1801,6 +1818,10 @@ async fn execute_local_tool(
         "process_run" => {
             let context = session_context(adapter_state, session_id)?;
             handle_process_run(context, session_id, &args, policy).await
+        }
+        "terminal_run_command" => {
+            let context = session_context(adapter_state, session_id)?.clone();
+            handle_terminal_run_command(adapter_state, &context, session_id, &args, policy).await
         }
         "local_web_fetch" => handle_local_web_fetch(session_id, &args, policy).await,
         "chrome_open" => handle_chrome_open(&args, policy).await,
@@ -2974,6 +2995,15 @@ fn normalize_client_capabilities(mut capabilities: Value) -> Value {
             "/filesystem/write_text_file/supported",
         ],
     );
+    let terminal = capability_bool(
+        &capabilities,
+        &[
+            "/terminal",
+            "/terminal/supported",
+            "/client/terminal",
+            "/client/terminal/supported",
+        ],
+    );
     if read_text_file || write_text_file {
         if capabilities.get("fs").is_none() {
             capabilities["fs"] = json!({});
@@ -2985,6 +3015,9 @@ fn normalize_client_capabilities(mut capabilities: Value) -> Value {
             capabilities["fs"]["writeTextFile"] = json!(true);
         }
     }
+    if terminal {
+        capabilities["terminal"] = json!(true);
+    }
     capabilities
 }
 
@@ -2992,9 +3025,21 @@ fn capability_bool(capabilities: &Value, pointers: &[&str]) -> bool {
     pointers.iter().any(|pointer| {
         capabilities
             .pointer(pointer)
-            .and_then(Value::as_bool)
+            .map(capability_value_bool)
             .unwrap_or(false)
     })
+}
+
+fn capability_value_bool(value: &Value) -> bool {
+    match value {
+        Value::Bool(value) => *value,
+        Value::Object(map) => map
+            .get("supported")
+            .or_else(|| map.get("enabled"))
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+        _ => false,
+    }
 }
 
 fn workspace_roots_from_params(params: &Value) -> Vec<String> {
@@ -3211,7 +3256,7 @@ fn spawn_tool_request_task(
             .register(&session_id, &tool_call_id, &tool_name)
             .await;
         let mut task_state = AdapterState {
-            client_capabilities: Value::Null,
+            client_capabilities: shared_state.client_capabilities.lock().await.clone(),
             session_contexts: shared_state.session_contexts.lock().await.clone(),
             transport: shared_state.transport.clone(),
         };
@@ -4251,6 +4296,12 @@ fn tool_display(tool_name: &str) -> ToolDisplay {
             verb: "Running process in",
             permission_operation: "run this command",
         },
+        "terminal_run_command" => ToolDisplay {
+            title: "Run terminal command",
+            kind: ToolKind::Execute,
+            verb: "Running terminal command in",
+            permission_operation: "run this terminal command",
+        },
         "chrome_open" => ToolDisplay { title: "Chrome open", kind: ToolKind::Fetch, verb: "Opening Chrome URL", permission_operation: "open this Chrome URL" },
         "chrome_snapshot" => ToolDisplay { title: "Chrome snapshot", kind: ToolKind::Read, verb: "Reading Chrome snapshot", permission_operation: "read Chrome snapshot" },
         "chrome_console_messages" => ToolDisplay { title: "Chrome console", kind: ToolKind::Read, verb: "Reading Chrome console", permission_operation: "read Chrome console messages" },
@@ -4334,7 +4385,7 @@ fn tool_target_kind(tool_name: &str) -> &'static str {
         "fs_apply_patch" => "patch",
         "git_status" | "git_diff" | "git_log" | "git_show" | "git_add" | "git_restore" | "git_commit" | "git_stash" => "repository",
         "web_fetch" | "local_web_fetch" => "url",
-        "process_run" => "command",
+        "process_run" | "terminal_run_command" => "command",
         "chrome_open" => "url",
         "chrome_snapshot" | "chrome_console_messages" | "chrome_network_requests" | "chrome_screenshot" => "chrome",
         "fs_delete_path" => "path",
