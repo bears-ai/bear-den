@@ -152,6 +152,27 @@ These names may contain `/` because they are JSON-RPC method names, not OpenAI-c
 
 ---
 
+## Den server-tool provider aliases
+
+For Den-executed server tools, canonical names keep the `den.` ownership prefix, but model-facing provider aliases should usually omit a redundant `den_` prefix.
+
+Rules:
+
+1. Keep canonical Den identities scoped and dotted, for example `den.web.search`, `den.situation.get`, and `den.memory.read`.
+2. Expose concise semantic provider aliases to the model when there is no collision, for example `web_search`, `situation_get`, and `memory_read`.
+3. Do not expose `den_*` aliases to the model solely to indicate that Den executes the tool. Execution/provenance belongs in descriptor metadata and descriptions.
+4. Accept legacy `den_*` aliases at routing boundaries only for backward compatibility, for example accept `den_situation_get` but advertise `situation_get`.
+5. Add a scope prefix only when required for uniqueness or safety, not as a default branding convention.
+
+Examples:
+
+| Canonical name | Advertised provider alias | Legacy accepted alias |
+| --- | --- | --- |
+| `den.web.fetch` | `web_fetch` | `den_web_fetch` |
+| `den.web.search` | `web_search` | `den_web_search` |
+| `den.situation.get` | `situation_get` | `den_situation_get` |
+| `den.memory.read` | `memory_read` | `den_memory_read` |
+
 ## Scope preservation rule
 
 Provider-safe names may be short, but scope must be preserved elsewhere.

@@ -780,6 +780,12 @@ async fn acp_prompt_advertises_all_read_only_tool_descriptors() {
     assert!(names.contains(&"fs_list_directory"));
     assert!(names.contains(&"fs_search_files"));
     assert!(names.contains(&"fs_replace_text"));
+    assert!(names.contains(&"situation_get"));
+    assert!(names.contains(&"web_search"));
+    assert!(names.contains(&"memory_read"));
+    assert!(!names.contains(&"den_situation_get"));
+    assert!(!names.contains(&"den_web_search"));
+    assert!(!names.contains(&"den_memory_read"));
     assert!(names
         .iter()
         .all(|name| !name.contains('.') && !name.contains('/')));

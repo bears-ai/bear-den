@@ -2228,12 +2228,28 @@ mod tests {
             .find(|descriptor| descriptor.name == DEN_SITUATION_GET)
             .expect("situation descriptor exists");
         assert_eq!(situation.provider_name, DEN_SITUATION_GET_PROVIDER);
+        assert_eq!(situation.provider_name, "situation_get");
+        assert_ne!(situation.provider_name, "den_situation_get");
 
         let memory = descriptors
             .iter()
             .find(|descriptor| descriptor.name == DEN_MEMORY_WRITE_ENTRY)
             .expect("memory write descriptor exists");
         assert_eq!(memory.provider_name, DEN_MEMORY_WRITE_ENTRY_PROVIDER);
+    }
+
+    #[test]
+    fn den_server_tools_advertise_semantic_aliases_not_legacy_den_prefixes() {
+        let provider_names = builtin_den_tool_descriptors_for_role(BearAgentRole::Pair)
+            .into_iter()
+            .map(|descriptor| descriptor.provider_name)
+            .collect::<HashSet<_>>();
+        assert!(provider_names.contains("situation_get"));
+        assert!(provider_names.contains("web_search"));
+        assert!(provider_names.contains("memory_read"));
+        assert!(!provider_names.contains("den_situation_get"));
+        assert!(!provider_names.contains("den_web_search"));
+        assert!(!provider_names.contains("den_memory_read"));
     }
 
     #[test]
