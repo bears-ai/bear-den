@@ -31,10 +31,11 @@ This checklist translates the durable role model in [`../concepts/BEAR_AGENT_ROL
 - Den validates the trusted invocation context against `bear_agents` using `role_agent_id` and, when supplied, `agent_role`.
 - Architecture-critical tool names and JSON schemas are registered, even where handlers intentionally return not-yet-implemented errors.
 - Current registered runtime-critical tool groups:
-  - `talk` / `pair`: `den.task.write_intent`, `den.skill.propose`, `den.memory.request_review`, work-plan read/update/handoff tools.
-  - `curate`: `den.task.approve_intent`, `den.task.reject_intent`, `den.core.write_result_summary`, `den.skill.approve_proposal`, `den.skill.reject_proposal`, `den.skill.propose`, memory proposal review tools, work-plan read tools.
-  - `work`: `den.run.write_result`, work-plan read/update tools, `den.skill.propose`, `den.memory.request_review`.
-  - `watch`: `den.observation.write`, `den.skill.propose`, `den.memory.request_review`.
+  - `talk` / `pair`: `den.task.write_intent`, `den.skill.propose`, work-plan read/update/handoff tools.
+  - `curate`: `den.task.approve_intent`, `den.task.reject_intent`, `den.core.write_result_summary`, `den.skill.approve_proposal`, `den.skill.reject_proposal`, `den.skill.propose`, work-plan read tools.
+  - `work`: `den.run.write_result`, work-plan read/update tools, `den.skill.propose`.
+  - `watch`: `den.observation.write`, `den.skill.propose`.
+- Memory proposal tools such as `den.memory.request_review` and curate-side memory proposal review tools are planned as part of the Reflection/memory governance follow-up, not part of the completed role-scoped Den tools framework.
 
 ### C. Task intent capture for `talk` and `pair` — next
 
