@@ -157,7 +157,6 @@ Initial input schema:
       "type": "object",
       "properties": {
         "people": { "type": "array", "items": { "type": "string" }, "maxItems": 20 },
-        "charters": { "type": "array", "items": { "type": "string" }, "maxItems": 20 },
         "domains": { "type": "array", "items": { "type": "string" }, "maxItems": 20 },
         "missions": { "type": "array", "items": { "type": "string" }, "maxItems": 20 },
         "knowledge": { "type": "array", "items": { "type": "string" }, "maxItems": 20 },

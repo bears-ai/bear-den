@@ -83,15 +83,14 @@ Important distinction:
 
 | Field | Meaning |
 |---|---|
-| `charter_ref` | This memory relates to the Bear's Charter or responsibility boundary. |
-| `domain_ref` | This memory relates to a Domain under the Bear's Charter. |
+| `domain_ref` | This memory relates to a Domain under the Bear's Charter. Bear scope is implied by `bear_id`; do not add a separate `charter_ref`. |
 | `mission_ref` | This memory relates to a Cabinet Mission. It does not imply Cabinet mapping or promotion. |
 | `person_ref` | This memory relates to a person. It may require privacy policy checks. |
 | `knowledge_ref` | This memory relates to a knowledge area or concept. |
 | `cabinet_ref` | This memory points to a Cabinet object. |
 | `promotion_target` | This memory is intended or proposed for promotion. |
 
-Charter/domain/mission/person/knowledge references must not imply that a Cabinet object exists. Cabinet references are explicit.
+Domain/mission/person/knowledge references must not imply that a Cabinet object exists. Cabinet references are explicit. Bear-scoped references should use `bear_id`; Charter is not a separate reference target.
 
 ### Lifecycle
 
@@ -164,7 +163,6 @@ Cabinet will use these top-level semantic spaces as the canonical shared knowled
 |---|---|
 | `People` | Human/person knowledge, identity-sensitive facts, preferences, relationships, and stakeholders. |
 | `Missions` | Shared work/knowledge containers that may contain multiple projects and involve multiple Bears. |
-| `Charters` | Not a Cabinet top-level space by default; a Bear's Charter is its durable purpose/responsibility boundary and usually belongs in Bear configuration plus `core/`. |
 | `Knowledge` | General reusable knowledge, policies, procedures, decisions, concepts, and references. |
 
 Bear memory may reference Cabinet spaces, but Bear memory does not mirror Cabinet one-to-one. Cabinet is the library. Bear memory is each role's working notebook, operational history, orientation map, and governance trail.
@@ -237,7 +235,7 @@ Reserved schema-owned paths should stay behind dedicated tools:
 <role>/subscriptions/
 ```
 
-A Cabinet Mission-related tactical decision should be represented as `kind: decision` with `mission_ref`, not forced into a special `mission-decisions/` path. A Bear Charter-related memory can use `charter_ref`; a Domain-specific memory can use `domain_ref`; shared orientation can simply live in `core/`.
+A Cabinet Mission-related tactical decision should be represented as `kind: decision` with `mission_ref`, not forced into a special `mission-decisions/` path. Domain-specific memory can use `domain_ref`; Bear-wide Charter orientation should use `bear_id` scope and usually live in `core/`.
 
 ### Read/search/browse tools should support human and agent inspection
 

@@ -32,7 +32,7 @@ Cabinet should use three top-level semantic spaces:
 
 Bear memory may reference these spaces, but it does not mirror Cabinet one-to-one. A role-local memory can relate to a Cabinet Mission without having a Cabinet page.
 
-A **Bear Charter** is the Bear's durable purpose and responsibility boundary. Bear-specific knowledge lives under that Charter. **Domains** are durable areas of knowledge and responsibility under a Charter. A Cabinet **Mission** is a shared work/knowledge container. The relationship is many-to-many: a Bear can participate in many Missions, and a Mission can involve many Bears.
+A **Bear Charter** is the Bear's durable purpose and responsibility boundary. It is singular and is not a separate addressable layer; use `bear_id` for Bear-scoped records. Bear-specific knowledge lives under that Charter. **Domains** are durable areas of knowledge and responsibility under a Charter. A Cabinet **Mission** is a shared work/knowledge container. The relationship is many-to-many: a Bear can participate in many Missions, and a Mission can involve many Bears.
 
 ## Semantic memory model
 
@@ -73,7 +73,6 @@ What the memory is about. References are optional.
 Examples:
 
 - `person_ref`
-- `charter_ref`
 - `domain_ref`
 - `mission_ref`
 - `knowledge_ref`
