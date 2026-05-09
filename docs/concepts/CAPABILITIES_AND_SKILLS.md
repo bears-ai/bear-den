@@ -8,7 +8,7 @@ Capabilities describe what a Bear is allowed to do. Tools are the concrete actio
 - A tool is an executable action exposed to one or more Bear agent roles.
 - A skill is reusable know-how installed for selected roles.
 - Den owns the canonical capability and skill configuration.
-- Durable skill learning happens through proposal and review, not raw self-installation.
+- Durable skill learning happens through Reflection proposal and review, not raw self-installation.
 
 ## Capabilities
 
@@ -71,16 +71,18 @@ Role applicability keeps the Bear useful without giving every internal agent eve
 
 ## Skill proposals
 
-Agents do not install durable skills directly.
+Agents do not install durable skills directly. Skill learning belongs to the **adaptation** side of BEARS Reflection system and should remain separate from memory curation.
 
 The normal skill-learning flow is:
 
-1. A role identifies a reusable procedure or convention.
-2. The role submits a skill proposal through Den.
-3. `curate` reviews the proposal.
-4. `curate` chooses whether to approve it and which roles it applies to.
-5. Den updates the Bear skill manifest.
+1. A role or Reflection lane identifies a reusable procedure, convention, failure mode, or checklist.
+2. The role or lane submits a skill proposal through Den.
+3. `curate` or a future skill-review lane reviews the proposal.
+4. The reviewer chooses whether to approve it and which roles it applies to.
+5. Den updates the Bear skill manifest only when policy allows.
 6. Den provisions or reconciles affected roles.
+
+High-risk adaptation, such as changing role prompts, tool permissions, global execution strategy, code-backed tools, or deployment/runtime configuration, should initially require human approval.
 
 This gives the Bear a way to learn without letting any one role mutate shared capability unchecked.
 
@@ -117,7 +119,9 @@ Avoid:
 - [Bears and Den](BEARS_AND_DEN.md)
 - [Bear agent roles](BEAR_AGENT_ROLES.md)
 - [Memory model](MEMORY_MODEL.md)
+- [Reflection system](REFLECTION_SYSTEM.md)
 - [Tasks and autonomy](TASKS_AND_AUTONOMY.md)
 - [Observations and subscriptions](OBSERVATIONS_AND_SUBSCRIPTIONS.md)
 - [Multi-agent architecture ADR](../architecture/adr/multi-agent-architecture.md)
+- [Reflection System ADR](../architecture/adr/reflection-system.md)
 - [Den Bear spec](../../services/den/docs/bear-spec.md)

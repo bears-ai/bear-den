@@ -10,6 +10,7 @@ Bear memory is the durable knowledge a Bear can use across surfaces and time. Ra
 - Raw inputs should not automatically become shared truth.
 - Role-local memory is not merely a staging area; it may stay local forever.
 - `curate` is responsible for deciding what becomes durable shared memory.
+- Memory curation is a lane within the broader **Reflection** system.
 - Letta Archives provide semantic retrieval indexes over selected canonical memory; they are not the source of truth.
 - BEARS should not introduce its own embedding strategy or vector store while Letta Archives satisfy retrieval needs.
 
@@ -96,6 +97,12 @@ A Bear has a **charter**: the Bear's durable purpose and responsibility boundary
 Cabinet **Missions** are different: they are shared knowledge/work containers that may contain multiple projects and may involve multiple Bears. The Bear↔Mission relationship is many-to-many.
 
 For one Bear working on one long-lived responsibility, the Bear's curated archive over its Domains may be enough. Create Cabinet Mission archives only when a Cabinet Mission needs semantic recall shared across Bears or role agents.
+
+## Reflection and memory curation
+
+Memory curation is part of BEARS **Reflection**: the auditable background review and learning system. Reflection can be triggered by heartbeat, manual request, memory write, task completion, or other events. Heartbeat cadence is throttled, so an active Bear can reflect more frequently than a dormant Bear.
+
+`curate` performs the memory curation lane of Reflection. Other Reflection lanes may handle archive indexing, introspection, health checks, cleanup, and skill review.
 
 ## How memory becomes shared
 
@@ -185,8 +192,10 @@ Avoid:
 - [Bears and Den](BEARS_AND_DEN.md)
 - [Bear agent roles](BEAR_AGENT_ROLES.md)
 - [Tasks and autonomy](TASKS_AND_AUTONOMY.md)
+- [Reflection system](REFLECTION_SYSTEM.md)
 - [Observations and subscriptions](OBSERVATIONS_AND_SUBSCRIPTIONS.md)
 - [Semantic memory context](../context/SEMANTIC_MEMORY.md)
 - [Semantic Bear Memory ADR](../architecture/adr/semantic-bear-memory.md)
+- [Reflection System ADR](../architecture/adr/reflection-system.md)
 - [Multi-agent architecture ADR](../architecture/adr/multi-agent-architecture.md)
 - [Den Bear spec](../../services/den/docs/bear-spec.md)

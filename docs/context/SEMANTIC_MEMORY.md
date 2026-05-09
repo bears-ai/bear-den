@@ -1,6 +1,6 @@
 # Semantic Memory Context
 
-This summary explains how BEARS thinks about semantic memory across Cabinet, Bear MemFS, role-local memory, and future operator UI.
+This summary explains how BEARS thinks about semantic memory across Cabinet, Bear MemFS, role-local memory, Reflection, and future operator UI.
 
 ## Core idea
 
@@ -19,6 +19,7 @@ A memory object can be complete and valuable while remaining local to one role f
 | **Letta memory blocks** | Legacy/runtime state for BEARS direction; should not be the primary long-term memory architecture. |
 | **Artifacts** | Files and outputs; may be referenced by memory but are not memory themselves. |
 | **Conversation/session state** | Interaction-local state; not automatically durable memory. |
+| **Reflection** | Auditable background review and learning system; memory curation is one lane. |
 
 ## Cabinet spaces
 
@@ -122,9 +123,15 @@ Recommended archive types:
 
 For a Bear with no cross-Bear Mission needs, the Bear curated archive may be sufficient. Add Cabinet Mission archives only when the Cabinet Mission needs semantic recall shared across Bears or role agents.
 
+## BEARS Reflection
+
+BEARS **Reflection** is the auditable background review and learning system. Memory curation is one Reflection lane; other lanes may handle archive indexing, introspection, skill review, health checks, cleanup, and human-review escalation.
+
+Reflection may be triggered by heartbeat, manual request, memory write, task completion, proposal creation, tool failure, or other system events. Heartbeat cadence is throttled: active Bears can reflect more frequently than dormant Bears, while every run remains bounded by budgets and policy.
+
 ## Relationship to Letta reflection
 
-Letta Code reflection should be used where Letta Code is the runtime, such as `talk` and `work`. BEARS should not duplicate that reflection for those roles.
+Letta Code reflection should be used where Letta Code is the runtime, such as `talk` and `work`. BEARS Reflection should not duplicate Letta Code's local reflection for those roles.
 
 `pair` and `watch` are API-direct. Do not add separate pair/watch dream agents initially. Instead:
 

@@ -18,6 +18,7 @@ Use ADRs for cross-cutting product and architecture decisions that are expected 
 | [memfs-sidecar-repo-views.md](memfs-sidecar-repo-views.md) | Accepted | Canonical Bear MemFS repo plus per-agent sidecar repo views |
 | [multi-user-memory.md](multi-user-memory.md) | Proposed | Multi-user memory model and Letta-native memory visibility |
 | [provider-safe-tool-naming.md](provider-safe-tool-naming.md) | Accepted | Provider-safe tool names with scoped canonical BEARS tool identities |
+| [reflection-system.md](reflection-system.md) | Accepted | Reflection as the auditable background review, memory curation, indexing, and adaptation system |
 | [routines-automation.md](routines-automation.md) | Proposed | Den-managed routines, scheduling, output handling, learning constraints |
 | [schema-first-path-strategy.md](schema-first-path-strategy.md) | Accepted | Conservative schema-first path ownership and Den-generated durable artifact paths |
 | [semantic-bear-memory.md](semantic-bear-memory.md) | Accepted | Semantic memory model: locality, kind, references, lifecycle, Cabinet spaces, and situation briefings |

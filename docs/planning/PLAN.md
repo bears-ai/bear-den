@@ -13,11 +13,14 @@ High-level implementation roadmap for BEARS. This file is the planning hub: it s
 
 - [Phase 1 bootstrap](PHASE1_BOOTSTRAP.md)
 - [Phase 1 locked decisions](PHASE1_DECISIONS.md)
-- [`bear_channel` Phase 7+](BEAR_CHANNEL_PHASE7_PLANS.md)
+- [`bear_channel` Phase 7+](BEAR_CHANNEL_PLANS.md)
+- [Reflection system](REFLECTION_SYSTEM_PLAN.md)
 - [ACP discovery prompt](ACP_DISCOVERY_PROMPT.md)
 - [ACP direct local tool runtime](ACP_DIRECT_LOCAL_TOOL_RUNTIME_PLAN.md)
 - [Multi-agent bear implementation (doc + UI Phase 8.5)](MULTI_AGENT_IMPLEMENTATION_PLAN.md)
 - [Task system implementation](TASK_SYSTEM_IMPLEMENTATION_PLAN.md)
+- [Memory tools implementation](MEMORY_TOOLS_IMPLEMENTATION_PLAN.md)
+- [Curate memory governance](CURATE_MEMORY_GOVERNANCE_PLAN.md)
 
 
 **Reading order:** Use [§3](#3-phased-roadmap) for delivery sequencing. Use [§1](#1-system-architecture)–[§2](#2-capability-contracts-pseudo) only as historical planning context where the architecture docs do not yet cover a topic.

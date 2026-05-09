@@ -2,11 +2,13 @@
 
 Status: proposed design plan.
 
-This plan designs how memories move between role-local branches and shared Bear memory. It focuses on the `curate` role as the only role allowed to integrate role-local memory into shared `core/` memory or propose/promote Cabinet updates.
+This plan designs how memories move between role-local branches and shared Bear memory. It focuses on the `memory_curate` lane of BEARS **Reflection** system and the `curate` role as the only role allowed to integrate role-local memory into shared `core/` memory or propose/promote Cabinet updates.
 
 Related docs:
 
+- [Reflection system implementation plan](REFLECTION_SYSTEM_PLAN.md)
 - [Memory tools implementation plan](MEMORY_TOOLS_IMPLEMENTATION_PLAN.md)
+- [Reflection System ADR](../architecture/adr/reflection-system.md)
 - [Semantic Bear Memory ADR](../architecture/adr/semantic-bear-memory.md)
 - [MemFS Sidecar Repo Views ADR](../architecture/adr/memfs-sidecar-repo-views.md)
 - [Multi-agent architecture ADR](../architecture/adr/multi-agent-architecture.md)
@@ -26,6 +28,8 @@ Give BEARS a governed, inspectable mechanism for memory movement:
 5. Cabinet-worthy knowledge is proposed or written through Cabinet-specific workflows, not silently copied from MemFS.
 6. Every movement records provenance and leaves an audit trail.
 7. Letta Archives are used as derived semantic retrieval indexes; BEARS does not introduce a separate vector store.
+8. Curation runs as a bounded Reflection lane that can be triggered by heartbeat, proposals, memory writes, or manual request.
+9. Heartbeat cadence is throttled: active Bears can run memory curation more frequently than dormant Bears.
 
 ---
 
@@ -59,7 +63,7 @@ Candidate sources:
 - explicit proposal from the writing role;
 - `curate` finds it during review;
 - a human marks it for review in the Den UI;
-- a future scheduled curation cycle surfaces it.
+- a future Reflection heartbeat or event-triggered curation run surfaces it.
 
 ### Proposal
 
