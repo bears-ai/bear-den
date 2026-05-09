@@ -49,7 +49,7 @@ Give agents, especially `pair`, safe Den-hosted access to Bear memory:
 - It does not run through Codepool / Letta Code, so native Letta Code MemFS tools are not the natural path.
 - ACP local filesystem tools operate on the user's workspace, not Bear memory.
 - Pair sessions produce useful local tactical memory: coding notes, logs, decisions, debugging records, and summaries.
-- Pair memory tools can reuse the existing Den ACP server-tool path used for Den-hosted pair tools such as `den_web_fetch` and `den_web_search`.
+- Pair memory tools can reuse the existing Den ACP server-tool path used for Den-hosted pair tools such as `web_fetch` and `web_search`.
 
 ---
 
@@ -59,19 +59,19 @@ Give agents, especially `pair`, safe Den-hosted access to Bear memory:
 
 | Canonical | Provider-safe | Role | Purpose |
 |---|---|---|---|
-| `den.situation.get` | `den_situation_get` | `pair` first, then all roles | Return trusted briefing for the current interaction. |
-| `den.memory.write_entry` | `den_memory_write_entry` | `pair` first | Write role-local semantic entries under `pair/`. |
-| `den.memory.status` | `den_memory_status` | `pair` first | Return MemFS health for the current bear/role. |
+| `den.situation.get` | `situation_get` | `pair` first, then all roles | Return trusted briefing for the current interaction. |
+| `den.memory.write_entry` | `memory_write_entry` | `pair` first | Write role-local semantic entries under `pair/`. |
+| `den.memory.status` | `memory_status` | `pair` first | Return MemFS health for the current bear/role. |
 
-P0 should retire the existing `den.write_note` / `den_write_note` pair tool and replace it with `den.memory.write_entry` / `den_memory_write_entry`. Backward compatibility is not required.
+P0 should retire the existing `den.write_note` / `den_write_note` pair tool and replace it with `den.memory.write_entry` / `memory_write_entry`. Backward compatibility is not required.
 
 ### P1 — pair read/search/browse
 
 | Canonical | Provider-safe | Role | Purpose |
 |---|---|---|---|
-| `den.memory.tree` | `den_memory_tree` | `pair` first | Browse allowed memory paths. |
-| `den.memory.read` | `den_memory_read` | `pair` first | Read allowed memory files/entries. |
-| `den.memory.search` | `den_memory_search` | `pair` first | Search allowed memory by text, role, kind, references, and lifecycle. |
+| `den.memory.tree` | `memory_tree` | `pair` first | Browse allowed memory paths. |
+| `den.memory.read` | `memory_read` | `pair` first | Read allowed memory files/entries. |
+| `den.memory.search` | `memory_search` | `pair` first | Search allowed memory by text, role, kind, references, and lifecycle. |
 
 For `pair`, read/search scope should include:
 
@@ -107,16 +107,16 @@ Future tools:
 
 | Canonical | Provider-safe | Roles | Purpose |
 |---|---|---|---|
-| `den.memory.request_review` | `den_memory_request_review` | `talk`, `pair`, `work`, `watch` | Request curation of role-local memory without choosing the final outcome. |
-| `den.memory.list_proposals` | `den_memory_list_proposals` | `curate` | List memory review proposals. |
-| `den.memory.read_proposal` | `den_memory_read_proposal` | `curate` | Read one memory review proposal with source pointers and status. |
-| `den.memory.resolve_proposal` | `den_memory_resolve_proposal` | `curate` | Resolve a proposal as approved, rejected, retained local, deferred, superseded, or human-review-needed. |
-| `den.memory.apply_core_update` | `den_memory_apply_core_update` | `curate` | Apply a reviewed `core/` update with provenance. |
-| `den.memory.supersede_entry` | `den_memory_supersede_entry` | `curate` | Mark or record that source memory has been superseded by a `core`/Cabinet outcome. |
-| `den.memory.history` | `den_memory_history` | role-scoped, curate broader | Inspect commit/file history. |
-| `den.memory.diff` | `den_memory_diff` | role-scoped, curate broader | Inspect diffs between commits or proposal states. |
-| `den.memory.semantic_search` | `den_memory_semantic_search` | role-scoped by archive attachment/policy | Search Letta Archives as derived semantic indexes. |
-| `den.memory.index_curated_summary` | `den_memory_index_curated_summary` | `curate` / Den internal | Index selected curated summaries or pointers into Bear/mission Letta Archives. |
+| `den.memory.request_review` | `memory_request_review` | `talk`, `pair`, `work`, `watch` | Request curation of role-local memory without choosing the final outcome. |
+| `den.memory.list_proposals` | `memory_list_proposals` | `curate` | List memory review proposals. |
+| `den.memory.read_proposal` | `memory_read_proposal` | `curate` | Read one memory review proposal with source pointers and status. |
+| `den.memory.resolve_proposal` | `memory_resolve_proposal` | `curate` | Resolve a proposal as approved, rejected, retained local, deferred, superseded, or human-review-needed. |
+| `den.memory.apply_core_update` | `memory_apply_core_update` | `curate` | Apply a reviewed `core/` update with provenance. |
+| `den.memory.supersede_entry` | `memory_supersede_entry` | `curate` | Mark or record that source memory has been superseded by a `core`/Cabinet outcome. |
+| `den.memory.history` | `memory_history` | role-scoped, curate broader | Inspect commit/file history. |
+| `den.memory.diff` | `memory_diff` | role-scoped, curate broader | Inspect diffs between commits or proposal states. |
+| `den.memory.semantic_search` | `memory_semantic_search` | role-scoped by archive attachment/policy | Search Letta Archives as derived semantic indexes. |
+| `den.memory.index_curated_summary` | `memory_index_curated_summary` | `curate` / Den internal | Index selected curated summaries or pointers into Bear/mission Letta Archives. |
 
 `den.memory.request_review` supersedes narrower producer-side names such as `den.memory.propose_core_write` or `den.memory.propose_core_update`. The caller may provide a `suggested_action`, but `curate` decides the final outcome.
 
@@ -357,12 +357,12 @@ Add descriptors in Den's built-in tool catalog:
 
 For ACP pair exposure, add provider-safe names:
 
-- `den_situation_get`
-- `den_memory_write_entry`
-- `den_memory_status`
-- `den_memory_tree`
-- `den_memory_read`
-- `den_memory_search`
+- `situation_get`
+- `memory_write_entry`
+- `memory_status`
+- `memory_tree`
+- `memory_read`
+- `memory_search`
 
 Initially expose only P0 for pair, then P1.
 
@@ -380,16 +380,16 @@ Extend Den's tool dispatcher:
 Update ACP direct pair descriptors:
 
 - Continue exposing existing client/local tools filtered by adapter capabilities.
-- Continue exposing `den_web_fetch` and `den_web_search` initially.
-- Remove `den_write_note` from ACP pair descriptors when `den_memory_write_entry` is added.
-- Add `den_situation_get`, `den_memory_write_entry`, and `den_memory_status` in P0.
+- Continue exposing `web_fetch` and `web_search` initially.
+- Remove `den_write_note` from ACP pair descriptors when `memory_write_entry` is added.
+- Add `situation_get`, `memory_write_entry`, and `memory_status` in P0.
 - Add read/search/tree after MemFS Manager read endpoints are ready.
 
 Prompt guidance should say:
 
-- Use `den_situation_get` when you need trusted information about the current interaction, role, user, memory scopes, or policy.
-- Use `den_memory_write_entry` for durable pair-local notes, logs, tactical decisions, reflections, scratch, and summaries.
-- Do not use `den_memory_write_entry` for task intents, observations, run results, `core/` updates, or Cabinet writes.
+- Use `situation_get` when you need trusted information about the current interaction, role, user, memory scopes, or policy.
+- Use `memory_write_entry` for durable pair-local notes, logs, tactical decisions, reflections, scratch, and summaries.
+- Do not use `memory_write_entry` for task intents, observations, run results, `core/` updates, or Cabinet writes.
 
 ---
 
@@ -455,7 +455,7 @@ Deliverables:
 1. Confirm canonical/provider-safe tool names.
 2. Confirm memory entry schema and path conventions.
 3. Add this plan to docs index.
-4. Add tests/docs references confirming `den_write_note` is retired from model-visible descriptors once `den_memory_write_entry` is available.
+4. Add tests/docs references confirming `den_write_note` is retired from model-visible descriptors once `memory_write_entry` is available.
 
 ### Slice 1 — pair `den.situation.get`
 
@@ -464,7 +464,7 @@ Goal: first safe read-only vertical slice.
 Deliverables:
 
 1. Den descriptor for `den.situation.get`.
-2. ACP pair exposure as `den_situation_get`.
+2. ACP pair exposure as `situation_get`.
 3. Dispatcher implementation from trusted invocation context.
 4. Include allowed memory scopes and available memory tools.
 5. Include MemFS configured/unconfigured status if cheap; otherwise return unknown with diagnostic.
@@ -481,7 +481,7 @@ Deliverables:
 3. Validation of kind, lifecycle, refs, tags, size, and role.
 4. Path generation based on role + kind + entry id.
 5. Markdown/frontmatter writer.
-6. Remove `den_write_note` provider/canonical mapping from ACP pair exposure and prefer `den_memory_write_entry` for all role-local entries, including notes.
+6. Remove `den_write_note` provider/canonical mapping from ACP pair exposure and prefer `memory_write_entry` for all role-local entries, including notes.
 7. Tests for allowed kinds, denied role, denied arbitrary path, and generated path.
 8. ACP pair prompt guidance update.
 
@@ -493,7 +493,7 @@ Deliverables:
 
 1. MemFS Manager role health endpoint or reuse existing management health.
 2. Den `den.memory.status` descriptor and dispatcher.
-3. ACP exposure as `den_memory_status`.
+3. ACP exposure as `memory_status`.
 4. Return canonical tip, role/view tip if known, quarantine state, last reconcile status, and diagnostic.
 5. Tests for configured/unconfigured MemFS sidecar behavior.
 
@@ -562,7 +562,7 @@ Deliverables:
 
 - Den `den.memory.write_entry` writes through MemFS Manager.
 - ACP pair sees and can call memory tools.
-- `den_write_note` is no longer advertised once `den_memory_write_entry` is available.
+- `den_write_note` is no longer advertised once `memory_write_entry` is available.
 - Cross-role reads/writes denied.
 - MemFS unavailable returns clear configuration error.
 
@@ -592,9 +592,9 @@ Add or extend stack smoke coverage for:
 
 Implement these three tools for `pair` first:
 
-1. `den_situation_get`
-2. `den_memory_write_entry`
-3. `den_memory_status`
+1. `situation_get`
+2. `memory_write_entry`
+3. `memory_status`
 
 Retire `den_write_note` rather than maintaining compatibility.
 

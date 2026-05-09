@@ -37,12 +37,19 @@ pub const DEN_WEB_FETCH: &str = "den.web.fetch";
 pub const DEN_WEB_FETCH_PROVIDER: &str = "web_fetch";
 pub const DEN_WEB_FETCH_LEGACY_PROVIDER: &str = "den_web_fetch";
 pub const DEN_WEB_SEARCH: &str = "den.web.search";
+pub const DEN_WEB_SEARCH_PROVIDER: &str = "web_search";
 pub const DEN_SITUATION_GET: &str = "den.situation.get";
+pub const DEN_SITUATION_GET_PROVIDER: &str = "situation_get";
 pub const DEN_MEMORY_WRITE_ENTRY: &str = "den.memory.write_entry";
+pub const DEN_MEMORY_WRITE_ENTRY_PROVIDER: &str = "memory_write_entry";
 pub const DEN_MEMORY_STATUS: &str = "den.memory.status";
+pub const DEN_MEMORY_STATUS_PROVIDER: &str = "memory_status";
 pub const DEN_MEMORY_TREE: &str = "den.memory.tree";
+pub const DEN_MEMORY_TREE_PROVIDER: &str = "memory_tree";
 pub const DEN_MEMORY_READ: &str = "den.memory.read";
+pub const DEN_MEMORY_READ_PROVIDER: &str = "memory_read";
 pub const DEN_MEMORY_SEARCH: &str = "den.memory.search";
+pub const DEN_MEMORY_SEARCH_PROVIDER: &str = "memory_search";
 pub const DEN_SKILL_PROPOSE: &str = "den.skill.propose";
 pub const DEN_SKILL_APPROVE_PROPOSAL: &str = "den.skill.approve_proposal";
 pub const DEN_SKILL_REJECT_PROPOSAL: &str = "den.skill.reject_proposal";
@@ -71,8 +78,16 @@ const WATCH_ROLES: &[&str] = &["watch"];
 const WORK_ROLES: &[&str] = &["work"];
 
 pub fn provider_safe_tool_name(name: &str) -> String {
-    if name == DEN_WEB_FETCH {
-        return DEN_WEB_FETCH_PROVIDER.to_string();
+    match name {
+        DEN_WEB_FETCH => return DEN_WEB_FETCH_PROVIDER.to_string(),
+        DEN_WEB_SEARCH => return DEN_WEB_SEARCH_PROVIDER.to_string(),
+        DEN_SITUATION_GET => return DEN_SITUATION_GET_PROVIDER.to_string(),
+        DEN_MEMORY_WRITE_ENTRY => return DEN_MEMORY_WRITE_ENTRY_PROVIDER.to_string(),
+        DEN_MEMORY_STATUS => return DEN_MEMORY_STATUS_PROVIDER.to_string(),
+        DEN_MEMORY_TREE => return DEN_MEMORY_TREE_PROVIDER.to_string(),
+        DEN_MEMORY_READ => return DEN_MEMORY_READ_PROVIDER.to_string(),
+        DEN_MEMORY_SEARCH => return DEN_MEMORY_SEARCH_PROVIDER.to_string(),
+        _ => {}
     }
     let safe: String = name
         .chars()
@@ -1411,17 +1426,17 @@ async fn situation_get(
             "read_scopes": memory_read_scopes(role),
             "write_scopes": memory_write_scopes(role),
             "available_tools": [
-                "den_memory_write_entry",
-                "den_memory_status",
-                "den_memory_tree",
-                "den_memory_read",
-                "den_memory_search"
+                DEN_MEMORY_WRITE_ENTRY_PROVIDER,
+                DEN_MEMORY_STATUS_PROVIDER,
+                DEN_MEMORY_TREE_PROVIDER,
+                DEN_MEMORY_READ_PROVIDER,
+                DEN_MEMORY_SEARCH_PROVIDER
             ],
             "status": memory_status
         },
         "policy_notes": [
             "Situation is a Den-trusted briefing, not the model context window.",
-            "Use den_memory_write_entry only for role-local notes, logs, decisions, reflections, scratch, and summaries.",
+            "Use memory_write_entry only for role-local notes, logs, decisions, reflections, scratch, and summaries.",
             "Do not use memory entry tools for tasks, observations, run results, Cabinet writes, or direct core updates."
         ]
     }))
@@ -2153,6 +2168,24 @@ mod tests {
             .find(|descriptor| descriptor.name == DEN_WEB_FETCH)
             .expect("web fetch descriptor exists");
         assert_eq!(web_fetch.provider_name, DEN_WEB_FETCH_PROVIDER);
+
+        let web_search = descriptors
+            .iter()
+            .find(|descriptor| descriptor.name == DEN_WEB_SEARCH)
+            .expect("web search descriptor exists");
+        assert_eq!(web_search.provider_name, DEN_WEB_SEARCH_PROVIDER);
+
+        let situation = descriptors
+            .iter()
+            .find(|descriptor| descriptor.name == DEN_SITUATION_GET)
+            .expect("situation descriptor exists");
+        assert_eq!(situation.provider_name, DEN_SITUATION_GET_PROVIDER);
+
+        let memory = descriptors
+            .iter()
+            .find(|descriptor| descriptor.name == DEN_MEMORY_WRITE_ENTRY)
+            .expect("memory write descriptor exists");
+        assert_eq!(memory.provider_name, DEN_MEMORY_WRITE_ENTRY_PROVIDER);
     }
 
     #[test]

@@ -149,7 +149,7 @@ Planned tool name:
 
 | Canonical | Provider-safe |
 |---|---|
-| `den.situation.get` | `den_situation_get` |
+| `den.situation.get` | `situation_get` |
 
 A situation briefing may include:
 
@@ -173,17 +173,17 @@ Important planned tools:
 
 | Canonical | Provider-safe | Purpose |
 |---|---|---|
-| `den.situation.get` | `den_situation_get` | Trusted interaction situation briefing. |
-| `den.memory.write_entry` | `den_memory_write_entry` | Write a role-local entry with kind, refs, lifecycle, and provenance. |
-| `den.memory.request_review` | `den_memory_request_review` | Request Reflection curation of role-local memory without writing shared memory directly. |
-| `den.memory.tree` | `den_memory_tree` | Browse allowed memory paths. |
-| `den.memory.read` | `den_memory_read` | Read allowed memory files/entries. |
-| `den.memory.search` | `den_memory_search` | Search memory by text, role, kind, refs, and lifecycle. |
-| `den.memory.semantic_search` | `den_memory_semantic_search` | Search Letta Archives attached to or governed for this Bear/role. |
-| `den.memory.history` | `den_memory_history` | Inspect memory history. |
-| `den.memory.status` | `den_memory_status` | Inspect MemFS health. |
+| `den.situation.get` | `situation_get` | Trusted interaction situation briefing. |
+| `den.memory.write_entry` | `memory_write_entry` | Write a role-local entry with kind, refs, lifecycle, and provenance. |
+| `den.memory.request_review` | `memory_request_review` | Request Reflection curation of role-local memory without writing shared memory directly. |
+| `den.memory.tree` | `memory_tree` | Browse allowed memory paths. |
+| `den.memory.read` | `memory_read` | Read allowed memory files/entries. |
+| `den.memory.search` | `memory_search` | Search memory by text, role, kind, refs, and lifecycle. |
+| `den.memory.semantic_search` | `memory_semantic_search` | Search Letta Archives attached to or governed for this Bear/role. |
+| `den.memory.history` | `memory_history` | Inspect memory history. |
+| `den.memory.status` | `memory_status` | Inspect MemFS health. |
 
-The retired `den.write_note` / `den_write_note` pair tool is replaced by `den.memory.write_entry` / `den_memory_write_entry`; notes are written with `kind: note`.
+The retired `den.write_note` / `den_write_note` pair tool is replaced by `den.memory.write_entry` / `memory_write_entry`; notes are written with `kind: note`.
 
 `den.memory.request_review` supersedes narrower producer-side memory proposal names such as `propose_core_update` or `propose_core_write`. A role can provide a `suggested_action`, but `curate` decides the final outcome.
 

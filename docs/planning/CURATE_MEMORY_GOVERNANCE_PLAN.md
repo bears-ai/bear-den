@@ -107,12 +107,12 @@ Promotion should be a new commit with provenance, not a raw file copy.
 
 | Canonical | Provider-safe | Purpose |
 |---|---|---|
-| `den.memory.tree` | `den_memory_tree` | Browse all role branches and `core/`. |
-| `den.memory.read` | `den_memory_read` | Read memory files from any branch. |
-| `den.memory.search` | `den_memory_search` | Search path and content across all branches. |
-| `den.memory.status` | `den_memory_status` | Inspect memory health/status across roles. |
-| `den.memory.history` | `den_memory_history` | Inspect file/commit history. |
-| `den.memory.diff` | `den_memory_diff` | Inspect proposed or committed changes. |
+| `den.memory.tree` | `memory_tree` | Browse all role branches and `core/`. |
+| `den.memory.read` | `memory_read` | Read memory files from any branch. |
+| `den.memory.search` | `memory_search` | Search path and content across all branches. |
+| `den.memory.status` | `memory_status` | Inspect memory health/status across roles. |
+| `den.memory.history` | `memory_history` | Inspect file/commit history. |
+| `den.memory.diff` | `memory_diff` | Inspect proposed or committed changes. |
 
 ### Proposal tools for non-curate roles
 
@@ -120,7 +120,7 @@ Non-curate roles should not write `core/` or Cabinet directly. They can request 
 
 | Canonical | Provider-safe | Roles | Purpose |
 |---|---|---|---|
-| `den.memory.request_review` | `den_memory_request_review` | `talk`, `pair`, `work`, `watch` | Request curation of role-local memory without choosing the final outcome. |
+| `den.memory.request_review` | `memory_request_review` | `talk`, `pair`, `work`, `watch` | Request curation of role-local memory without choosing the final outcome. |
 
 `den.memory.request_review` supersedes narrower producer-side names such as `den.memory.propose_core_update`, `den.memory.propose_core_write`, and `den.memory.propose_cabinet_update`. The request may include a `suggested_action`, such as `summarize_into_core`, `promote_to_core`, `cabinet_update`, `skill_review`, `retain_role_local`, `delete_after_review`, `human_review`, or `unspecified`.
 
@@ -142,11 +142,11 @@ Initial `den.memory.request_review` input shape:
 
 | Canonical | Provider-safe | Purpose |
 |---|---|---|
-| `den.memory.list_proposals` | `den_memory_list_proposals` | List pending memory proposals. |
-| `den.memory.read_proposal` | `den_memory_read_proposal` | Read one proposal with source pointers and status. |
-| `den.memory.resolve_proposal` | `den_memory_resolve_proposal` | Resolve a proposal as approved, rejected, retained local, deferred, superseded, or human-review-needed. |
-| `den.memory.apply_core_update` | `den_memory_apply_core_update` | Apply a reviewed shared memory update into `core/` with provenance. |
-| `den.memory.supersede_entry` | `den_memory_supersede_entry` | Mark or record that a role-local entry has been superseded by a core/Cabinet entry. |
+| `den.memory.list_proposals` | `memory_list_proposals` | List pending memory proposals. |
+| `den.memory.read_proposal` | `memory_read_proposal` | Read one proposal with source pointers and status. |
+| `den.memory.resolve_proposal` | `memory_resolve_proposal` | Resolve a proposal as approved, rejected, retained local, deferred, superseded, or human-review-needed. |
+| `den.memory.apply_core_update` | `memory_apply_core_update` | Apply a reviewed shared memory update into `core/` with provenance. |
+| `den.memory.supersede_entry` | `memory_supersede_entry` | Mark or record that a role-local entry has been superseded by a core/Cabinet entry. |
 
 ### Cabinet tools
 

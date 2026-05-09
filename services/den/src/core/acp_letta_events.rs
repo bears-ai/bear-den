@@ -16,12 +16,19 @@ use crate::core::{
 const ACP_DEN_SERVER_TOOL_PROVIDER_NAMES: &[&str] = &[
     "web_fetch",
     "den_web_fetch",
+    "web_search",
     "den_web_search",
+    "situation_get",
     "den_situation_get",
+    "memory_write_entry",
     "den_memory_write_entry",
+    "memory_status",
     "den_memory_status",
+    "memory_tree",
     "den_memory_tree",
+    "memory_read",
     "den_memory_read",
+    "memory_search",
     "den_memory_search",
 ];
 

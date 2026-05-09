@@ -326,7 +326,7 @@ Add ways to create memory proposals.
 
 Role/tool path:
 
-- add a broad review-request tool such as `den.memory.request_review` / `den_memory_request_review`;
+- add a broad review-request tool such as `den.memory.request_review` / `memory_request_review`;
 - allow `pair`, `talk`, `work`, and maybe `watch` to request review of their own memory outputs;
 - require source refs where possible instead of embedding all content.
 
@@ -515,7 +515,7 @@ After the broader Reflection view is refined, kick off memory governance using t
 
 1. **Add Den proposal queue.** Create DB model, API/service layer, and basic statuses so Den can create/list/read/resolve memory proposals.
 2. **Add UI proposal creation.** From the memory browser, select memory files, create review proposals, and view pending proposals.
-3. **Add `pair` review-request tool.** Expose `den.memory.request_review` / `den_memory_request_review` so `pair` can ask for curation.
+3. **Add `pair` review-request tool.** Expose `den.memory.request_review` / `memory_request_review` so `pair` can ask for curation.
 4. **Add `curate` proposal tools.** Let `curate` list/read/resolve proposals and read source memory.
 5. **Add constrained `core/` write tools.** Let `curate` read and safely update approved `core/` files with provenance.
 6. **Add heartbeat invocation.** Den periodically asks `curate` to process bounded curation work.

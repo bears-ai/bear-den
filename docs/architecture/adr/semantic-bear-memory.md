@@ -179,7 +179,7 @@ The planned tool name is:
 
 | Canonical | Provider-safe |
 |---|---|
-| `den.situation.get` | `den_situation_get` |
+| `den.situation.get` | `situation_get` |
 
 A situation briefing may include:
 
@@ -207,11 +207,11 @@ Prefer a general role-local entry tool:
 
 | Canonical | Provider-safe | Purpose |
 |---|---|---|
-| `den.memory.write_entry` | `den_memory_write_entry` | Write a role-local memory entry with `kind`, semantic references, lifecycle metadata, and provenance. |
+| `den.memory.write_entry` | `memory_write_entry` | Write a role-local memory entry with `kind`, semantic references, lifecycle metadata, and provenance. |
 
-The retired `den.write_note` / `den_write_note` pair tool is replaced by `den.memory.write_entry` / `den_memory_write_entry`; backward compatibility is not required.
+The retired `den.write_note` / `den_write_note` pair tool is replaced by `den.memory.write_entry` / `memory_write_entry`; backward compatibility is not required.
 
-For producer-side curation requests, use `den.memory.request_review` / `den_memory_request_review`. This supersedes narrower names such as `propose_core_update` or `propose_core_write`; the producer can suggest an action, but `curate` decides the final lifecycle outcome.
+For producer-side curation requests, use `den.memory.request_review` / `memory_request_review`. This supersedes narrower names such as `propose_core_update` or `propose_core_write`; the producer can suggest an action, but `curate` decides the final lifecycle outcome.
 
 ### Keep directories conventional, not conceptual
 
@@ -258,13 +258,13 @@ Candidate tool/API names:
 
 | Canonical | Provider-safe | Purpose |
 |---|---|---|
-| `den.memory.request_review` | `den_memory_request_review` | Request Reflection curation of role-local memory without writing shared memory directly. |
-| `den.memory.tree` | `den_memory_tree` | Browse allowed memory paths. |
-| `den.memory.read` | `den_memory_read` | Read an allowed memory file or entry. |
-| `den.memory.search` | `den_memory_search` | Search memory with role/kind/reference filters. |
-| `den.memory.semantic_search` | `den_memory_semantic_search` | Search Letta Archives attached to or governed for this Bear/role. |
-| `den.memory.history` | `den_memory_history` | Inspect commit/file history. |
-| `den.memory.status` | `den_memory_status` | Inspect MemFS role/canonical health. |
+| `den.memory.request_review` | `memory_request_review` | Request Reflection curation of role-local memory without writing shared memory directly. |
+| `den.memory.tree` | `memory_tree` | Browse allowed memory paths. |
+| `den.memory.read` | `memory_read` | Read an allowed memory file or entry. |
+| `den.memory.search` | `memory_search` | Search memory with role/kind/reference filters. |
+| `den.memory.semantic_search` | `memory_semantic_search` | Search Letta Archives attached to or governed for this Bear/role. |
+| `den.memory.history` | `memory_history` | Inspect commit/file history. |
+| `den.memory.status` | `memory_status` | Inspect MemFS role/canonical health. |
 
 ---
 
@@ -276,11 +276,11 @@ Candidate tool/API names:
 
 Recommended first write capability:
 
-- `den_memory_write_entry` for `note`, `log`, `decision`, `reflection`, `scratch`, and `summary`.
+- `memory_write_entry` for `note`, `log`, `decision`, `reflection`, `scratch`, and `summary`.
 
 Recommended follow-up review capability:
 
-- `den_memory_request_review` for asking Reflection/`curate` to review pair-local memory that may belong in `core/`, Cabinet, cleanup, or skill review.
+- `memory_request_review` for asking Reflection/`curate` to review pair-local memory that may belong in `core/`, Cabinet, cleanup, or skill review.
 
 ### `talk`
 

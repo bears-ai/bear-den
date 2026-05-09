@@ -215,9 +215,9 @@ Policy expectations:
 
 Current tool:
 
-- `den_memory_write_entry`
+- `memory_write_entry`
 
-`den_memory_write_entry` is intentionally role-aware. Den resolves the caller's Bear role and writes to that role's allowed memory location. It supports semantic kinds such as `note`, `log`, `decision`, `reflection`, `scratch`, and `summary`.
+`memory_write_entry` is intentionally role-aware. Den resolves the caller's Bear role and writes to that role's allowed memory location. It supports semantic kinds such as `note`, `log`, `decision`, `reflection`, `scratch`, and `summary`.
 
 For `pair`, it writes only under pair-local paths, for example:
 
@@ -233,9 +233,9 @@ It must not write `core/` directly, Cabinet, tasks, observations, or run results
 
 Future tool:
 
-- `den_memory_request_review`
+- `memory_request_review`
 
-`den_memory_request_review` is the producer-side Reflection tool for asking `curate` to review pair-local memory. It creates a memory proposal row for the `memory_curate` lane; it does not write `core/`, Cabinet, skills, tasks, observations, or run results.
+`memory_request_review` is the producer-side Reflection tool for asking `curate` to review pair-local memory. It creates a memory proposal row for the `memory_curate` lane; it does not write `core/`, Cabinet, skills, tasks, observations, or run results.
 
 Pair should use this when local memory may matter beyond future pair sessions. The request can include a `suggested_action`, such as `summarize_into_core`, `promote_to_core`, `cabinet_update`, `skill_review`, `retain_role_local`, `delete_after_review`, `human_review`, or `unspecified`. `curate` decides the final outcome.
 
@@ -255,11 +255,11 @@ Until Docket exists, pair should explain that background task creation is not ye
 
 Skill learning belongs to Reflection's adaptation lane. Pair should not directly install durable skills.
 
-When pair discovers a reusable procedure, repeated failure mode, or user-requested behavior change, it should first write appropriate pair-local memory and then use `den_memory_request_review` with `suggested_action: skill_review` once that tool exists. Future dedicated skill tools may be added under Den's skill namespace, but they should remain proposal-and-review based.
+When pair discovers a reusable procedure, repeated failure mode, or user-requested behavior change, it should first write appropriate pair-local memory and then use `memory_request_review` with `suggested_action: skill_review` once that tool exists. Future dedicated skill tools may be added under Den's skill namespace, but they should remain proposal-and-review based.
 
-## `den_memory_write_entry` naming
+## `memory_write_entry` naming
 
-A shared tool name like `den_memory_write_entry` is a better fit than `write_note` because role-local memory includes more than notes.
+A shared tool name like `memory_write_entry` is a better fit than `write_note` because role-local memory includes more than notes.
 
 Benefits:
 
@@ -271,7 +271,7 @@ Benefits:
 Required behavior:
 
 ```text
-den_memory_write_entry(context, args)
+memory_write_entry(context, args)
   -> Den authenticates caller context
   -> Den resolves Bear + role
   -> Den validates kind/title/body/refs/lifecycle/provenance
@@ -282,7 +282,7 @@ den_memory_write_entry(context, args)
 
 For example:
 
-| Role | `den_memory_write_entry` destinations |
+| Role | `memory_write_entry` destinations |
 |------|---------------------------------------|
 | `talk` | `talk/notes/`, `talk/logs/`, `talk/decisions/`, ... |
 | `pair` | `pair/notes/`, `pair/logs/`, `pair/decisions/`, ... |
@@ -314,10 +314,10 @@ Pair's memory decision ladder:
 ## Recommended first implementation order
 
 1. Implement Den-mediated `web_search` / `web_fetch` or docs-oriented equivalents for pair.
-2. Implement role-aware `den_memory_write_entry` for pair-local memory.
+2. Implement role-aware `memory_write_entry` for pair-local memory.
 3. Expose web, situation, and memory tools to the pair prompt/tool profile.
 4. Add diagnostics and tests showing pair can write to `pair/notes/` but cannot write `core/`.
-5. Implement `den_memory_request_review` so pair can request Reflection curation without writing shared memory.
+5. Implement `memory_request_review` so pair can request Reflection curation without writing shared memory.
 6. Implement Docket-backed `write_task_intent` later for broad research delegation.
 
 ## Good pair behavior examples

@@ -491,7 +491,7 @@ Examples:
 4. Stop adapter advertising canonical `web_fetch`.
 5. Add Den-side URL/host approval flow for unapproved fetches.
 6. Update prompt guidance to prefer `web_fetch`, not `den_web_fetch`.
-7. Later migrate memory/situation provider names away from `den_*` prefixes.
+7. Migrate memory/situation provider names away from `den_*` prefixes: `situation_get`, `memory_write_entry`, `memory_status`, `memory_tree`, `memory_read`, and `memory_search`.
 
 ---
 

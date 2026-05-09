@@ -678,13 +678,13 @@ fn acp_pair_den_tool_descriptors() -> serde_json::Value {
 fn acp_den_provider_to_canonical_tool_name(provider_name: &str) -> Option<&'static str> {
     match provider_name {
         "web_fetch" | "den_web_fetch" => Some(den_tools::DEN_WEB_FETCH),
-        "den_web_search" => Some(den_tools::DEN_WEB_SEARCH),
-        "den_situation_get" => Some(den_tools::DEN_SITUATION_GET),
-        "den_memory_write_entry" => Some(den_tools::DEN_MEMORY_WRITE_ENTRY),
-        "den_memory_status" => Some(den_tools::DEN_MEMORY_STATUS),
-        "den_memory_tree" => Some(den_tools::DEN_MEMORY_TREE),
-        "den_memory_read" => Some(den_tools::DEN_MEMORY_READ),
-        "den_memory_search" => Some(den_tools::DEN_MEMORY_SEARCH),
+        "web_search" | "den_web_search" => Some(den_tools::DEN_WEB_SEARCH),
+        "situation_get" | "den_situation_get" => Some(den_tools::DEN_SITUATION_GET),
+        "memory_write_entry" | "den_memory_write_entry" => Some(den_tools::DEN_MEMORY_WRITE_ENTRY),
+        "memory_status" | "den_memory_status" => Some(den_tools::DEN_MEMORY_STATUS),
+        "memory_tree" | "den_memory_tree" => Some(den_tools::DEN_MEMORY_TREE),
+        "memory_read" | "den_memory_read" => Some(den_tools::DEN_MEMORY_READ),
+        "memory_search" | "den_memory_search" => Some(den_tools::DEN_MEMORY_SEARCH),
         "den_work_plan_list" => Some(den_tools::DEN_WORK_PLAN_LIST),
         "den_work_plan_get_status" => Some(den_tools::DEN_WORK_PLAN_GET_STATUS),
         "den_work_plan_update" => Some(den_tools::DEN_WORK_PLAN_UPDATE),
@@ -753,7 +753,7 @@ fn acp_direct_tool_prompt_context(
     if tool_names.contains(&"fs_read_text_file") {
         guidance.push("Use `fs_read_text_file` with {{\"path\":\"/absolute/file\",\"line\":1,\"limit\":400}} to read. Do not guess file contents.".to_string());
     }
-    guidance.push("Use Den server tools for non-local capabilities: `den_situation_get` for a trusted briefing about the current bear, role, session, memory scopes, and policy; `den_memory_write_entry` for durable pair-local notes, logs, decisions, reflections, scratch, summaries, and approved plan artifacts; `den_memory_status`, `den_memory_tree`, `den_memory_read`, and `den_memory_search` to inspect Bear memory; `den_work_plan_update` to keep a short visible todo/progress plan for the current mini-project with at most one `in_progress` item; `den_work_plan_get_status` and `den_work_plan_list` to recover visible plan state; `den_work_plan_request_handoff` when channel work should become a durable reviewed task intent; `den_plan_mode_enter` before substantial implementation planning that should gate mutation; `den_plan_mode_exit` to submit the markdown implementation plan for user approval; `den_plan_mode_status` and `den_plan_mode_cancel` to manage that gate; `web_fetch` for bounded HTTP(S) page fetching; and `den_web_search` only when a Den search provider is configured. Do not use memory entry tools for tasks, observations, run results, Cabinet writes, or direct core updates.".to_string());
+    guidance.push("Use server tools for non-local capabilities: `situation_get` for a trusted briefing about the current bear, role, session, memory scopes, and policy; `memory_write_entry` for durable pair-local notes, logs, decisions, reflections, scratch, summaries, and approved plan artifacts; `memory_status`, `memory_tree`, `memory_read`, and `memory_search` to inspect Bear memory; `den_work_plan_update` to keep a short visible todo/progress plan for the current mini-project with at most one `in_progress` item; `den_work_plan_get_status` and `den_work_plan_list` to recover visible plan state; `den_work_plan_request_handoff` when channel work should become a durable reviewed task intent; `den_plan_mode_enter` before substantial implementation planning that should gate mutation; `den_plan_mode_exit` to submit the markdown implementation plan for user approval; `den_plan_mode_status` and `den_plan_mode_cancel` to manage that gate; `web_fetch` for bounded HTTP(S) page fetching; and `web_search` only when a Den search provider is configured. Do not use memory entry tools for tasks, observations, run results, Cabinet writes, or direct core updates.".to_string());
     if tool_names.contains(&"fs_replace_text") {
         guidance.push("Use `fs_replace_text` with {{\"path\":\"/absolute/file\",\"old_text\":\"exact\",\"new_text\":\"replacement\"}} to edit existing files. Calling `fs_replace_text` is how you request local approval; do not wait for approval before invoking it and do not ask for approval in chat. To append, first read the file, then replace a unique end-of-file suffix with that suffix plus the appended text.".to_string());
         guidance.push("ACP edit workflow: discover/read the target, call `fs_replace_text` to request approval and perform the edit, wait for its result, verify the change with `fs_read_text_file`, then provide a concise final answer naming the changed file and what changed. Never claim you are blocked by approval if `fs_replace_text` is callable; invoke it instead.".to_string());
