@@ -9,6 +9,9 @@ use uuid::Uuid;
 use crate::{
     config::Config,
     core::{
+        acp_plan_mode::{
+            self, AcpPlanModeRequestedBy, EnterPlanModeParams, SubmitPlanModeParams,
+        },
         bears::{db as bears_db, db::role_is_bear_admin, BearAgentRole},
         memory_manager_head::{
             fetch_memfs_role_memory_file, fetch_memfs_role_memory_status,
@@ -47,6 +50,10 @@ pub const DEN_WORK_PLAN_LIST: &str = "den.work_plan.list";
 pub const DEN_WORK_PLAN_GET_STATUS: &str = "den.work_plan.get_status";
 pub const DEN_WORK_PLAN_UPDATE: &str = "den.work_plan.update";
 pub const DEN_WORK_PLAN_REQUEST_HANDOFF: &str = "den.work_plan.request_handoff";
+pub const DEN_PLAN_MODE_ENTER: &str = "den.plan_mode.enter";
+pub const DEN_PLAN_MODE_STATUS: &str = "den.plan_mode.status";
+pub const DEN_PLAN_MODE_EXIT: &str = "den.plan_mode.exit";
+pub const DEN_PLAN_MODE_CANCEL: &str = "den.plan_mode.cancel";
 pub const DEN_TASK_WRITE_INTENT: &str = "den.task.write_intent";
 pub const DEN_TASK_APPROVE_INTENT: &str = "den.task.approve_intent";
 pub const DEN_TASK_REJECT_INTENT: &str = "den.task.reject_intent";
@@ -426,6 +433,64 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
             }),
         ),
         descriptor(
+            DEN_PLAN_MODE_ENTER,
+            "Enter plan mode",
+            "Enter ACP pair plan mode for read-only investigation and a user-approved markdown implementation plan before mutation.",
+            "bear.planning",
+            &["plan_mode.enter"],
+            PAIR_ROLES,
+            json!({
+                "type": "object",
+                "properties": {
+                    "reason": { "type": "string" },
+                    "previous_permission_mode": { "type": "string" }
+                },
+                "additionalProperties": false
+            }),
+        ),
+        descriptor(
+            DEN_PLAN_MODE_STATUS,
+            "Get plan mode status",
+            "Return the current ACP pair plan-mode gate for this session, if any.",
+            "bear.planning",
+            &["plan_mode.read"],
+            PAIR_ROLES,
+            empty_schema(),
+        ),
+        descriptor(
+            DEN_PLAN_MODE_EXIT,
+            "Exit plan mode",
+            "Submit a markdown implementation plan artifact for user approval before leaving ACP pair plan mode.",
+            "bear.planning",
+            &["plan_mode.exit"],
+            PAIR_ROLES,
+            json!({
+                "type": "object",
+                "properties": {
+                    "plan_mode_id": { "type": "string", "format": "uuid" },
+                    "title": { "type": "string" },
+                    "body": { "type": "string" }
+                },
+                "required": ["title", "body"],
+                "additionalProperties": false
+            }),
+        ),
+        descriptor(
+            DEN_PLAN_MODE_CANCEL,
+            "Cancel plan mode",
+            "Cancel the current ACP pair plan-mode gate without approving implementation.",
+            "bear.planning",
+            &["plan_mode.cancel"],
+            PAIR_ROLES,
+            json!({
+                "type": "object",
+                "properties": {
+                    "plan_mode_id": { "type": "string", "format": "uuid" }
+                },
+                "additionalProperties": false
+            }),
+        ),
+        descriptor(
             DEN_TASK_WRITE_INTENT,
             "Write task intent",
             "Write a schema-validated task intent from talk or pair for later curate review.",
@@ -597,7 +662,7 @@ fn memory_write_entry_schema() -> Value {
         "properties": {
             "kind": {
                 "type": "string",
-                "enum": ["note", "log", "decision", "reflection", "scratch", "summary"]
+                "enum": ["note", "log", "decision", "reflection", "scratch", "summary", "plan"]
             },
             "title": { "type": "string", "minLength": 1, "maxLength": 200 },
             "body": { "type": "string", "minLength": 1, "maxLength": 50000 },
@@ -665,6 +730,10 @@ pub fn is_builtin_den_tool(name: &str) -> bool {
             | DEN_WORK_PLAN_GET_STATUS
             | DEN_WORK_PLAN_UPDATE
             | DEN_WORK_PLAN_REQUEST_HANDOFF
+            | DEN_PLAN_MODE_ENTER
+            | DEN_PLAN_MODE_STATUS
+            | DEN_PLAN_MODE_EXIT
+            | DEN_PLAN_MODE_CANCEL
             | DEN_TASK_WRITE_INTENT
             | DEN_TASK_APPROVE_INTENT
             | DEN_TASK_REJECT_INTENT
@@ -741,6 +810,28 @@ struct WorkPlanUpdateArguments {
 }
 
 #[derive(Debug, Deserialize)]
+struct PlanModeEnterArguments {
+    #[serde(default)]
+    reason: String,
+    #[serde(default)]
+    previous_permission_mode: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct PlanModeExitArguments {
+    #[serde(default)]
+    plan_mode_id: Option<Uuid>,
+    title: String,
+    body: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct PlanModeCancelArguments {
+    #[serde(default)]
+    plan_mode_id: Option<Uuid>,
+}
+
+#[derive(Debug, Deserialize)]
 struct WebFetchArguments {
     url: String,
     #[serde(default)]
@@ -812,6 +903,10 @@ pub async fn invoke_den_tool(
         DEN_WORK_PLAN_LIST => list_work_plans(pool, &context, role, arguments).await,
         DEN_WORK_PLAN_GET_STATUS => get_work_plan_status(pool, &context, role, arguments).await,
         DEN_WORK_PLAN_UPDATE => update_work_plan(pool, &context, role, arguments).await,
+        DEN_PLAN_MODE_ENTER => enter_plan_mode(pool, &context, arguments).await,
+        DEN_PLAN_MODE_STATUS => plan_mode_status(pool, &context).await,
+        DEN_PLAN_MODE_EXIT => exit_plan_mode(pool, config, &context, arguments).await,
+        DEN_PLAN_MODE_CANCEL => cancel_plan_mode(pool, &context, arguments).await,
         DEN_SKILL_PROPOSE
         | DEN_SKILL_APPROVE_PROPOSAL
         | DEN_SKILL_REJECT_PROPOSAL
@@ -1332,6 +1427,155 @@ async fn situation_get(
     }))
 }
 
+async fn enter_plan_mode(
+    pool: &PgPool,
+    context: &DenToolInvocationContext,
+    arguments: Value,
+) -> Result<Value, CustomError> {
+    let args: PlanModeEnterArguments = serde_json::from_value(arguments)?;
+    let row = acp_plan_mode::enter_plan_mode(
+        pool,
+        EnterPlanModeParams {
+            user_id: context.user_id,
+            bear_id: context.bear_id,
+            bear_slug: context.bear_slug.clone(),
+            acp_session_id: source_acp_session_id(context)
+                .ok_or_else(|| CustomError::ValidationError("ACP session id is required for plan mode".to_string()))?,
+            reason: args.reason,
+            requested_by: AcpPlanModeRequestedBy::Pair,
+            previous_permission_mode: args.previous_permission_mode,
+        },
+    )
+    .await?;
+    Ok(json!({
+        "plan_mode": row,
+        "mode": "plan",
+        "instructions": [
+            "Plan mode is active for this ACP session.",
+            "Inspect, read, search, and use read-only Den tools as needed.",
+            "Do not mutate workspace files, run non-read-only shell commands, or perform external side effects until the submitted plan is approved.",
+            "Call den.plan_mode.exit with a concise markdown implementation plan when ready for user approval."
+        ]
+    }))
+}
+
+async fn plan_mode_status(
+    pool: &PgPool,
+    context: &DenToolInvocationContext,
+) -> Result<Value, CustomError> {
+    let acp_session_id = source_acp_session_id(context)
+        .ok_or_else(|| CustomError::ValidationError("ACP session id is required for plan mode".to_string()))?;
+    let row = acp_plan_mode::active_for_session(
+        pool,
+        context.user_id,
+        context.bear_id,
+        &acp_session_id,
+    )
+    .await?;
+    Ok(json!({
+        "bear_id": context.bear_id,
+        "acp_session_id": acp_session_id,
+        "plan_mode": row,
+        "active": row.is_some(),
+    }))
+}
+
+async fn exit_plan_mode(
+    pool: &PgPool,
+    config: &Config,
+    context: &DenToolInvocationContext,
+    arguments: Value,
+) -> Result<Value, CustomError> {
+    let args: PlanModeExitArguments = serde_json::from_value(arguments)?;
+    let acp_session_id = source_acp_session_id(context)
+        .ok_or_else(|| CustomError::ValidationError("ACP session id is required for plan mode".to_string()))?;
+    let title = validate_bounded_text("title", &args.title, 1, 200)?;
+    let body = validate_bounded_text("body", &args.body, 1, 50_000)?;
+    let markdown = acp_plan_mode::render_plan_artifact_markdown(&title, &body);
+    let memory_request = MemfsWriteRoleMemoryEntryRequest {
+        kind: "plan".to_string(),
+        title: title.clone(),
+        body: markdown,
+        tags: vec!["plan-mode".to_string(), "implementation-plan".to_string()],
+        refs: None,
+        lifecycle: Some(json!({ "scope": "role-local", "retention": "durable" })),
+        source: Some(json!({
+            "tool": DEN_PLAN_MODE_EXIT,
+            "acp_session_id": acp_session_id,
+            "conversation_id": clean_optional(&context.conversation_id),
+        })),
+        author: context.username.clone(),
+        conversation_id: clean_optional(&context.conversation_id),
+        session_id: Some(acp_session_id.clone()),
+        acp_session_id: Some(acp_session_id.clone()),
+        conversation_selection: context.conversation_selection.clone(),
+        runtime_target: context.runtime_target.clone(),
+        role_agent_id: Some(context.role_agent_id.clone()),
+        agent_role: Some(BearAgentRole::Pair.as_str().to_string()),
+        request_id: context.request_id.clone(),
+    };
+    let http = memfs_http_client("MemFS plan artifact client build failed")?;
+    let memfs_response = write_memfs_role_memory_entry(
+        &http,
+        &config.letta_memfs_service_url,
+        context.bear_id,
+        BearAgentRole::Pair.as_str(),
+        &memory_request,
+    )
+    .await?;
+    let Some(memfs_response) = memfs_response else {
+        return Err(CustomError::System(
+            "MemFS sidecar is not configured (set LETTA_MEMFS_SERVICE_URL)".to_string(),
+        ));
+    };
+    let row = acp_plan_mode::submit_plan_artifact(
+        pool,
+        SubmitPlanModeParams {
+            user_id: context.user_id,
+            bear_id: context.bear_id,
+            acp_session_id,
+            plan_mode_id: args.plan_mode_id,
+            title,
+            body,
+            artifact_path: memfs_response.path.clone(),
+            approval_request_id: None,
+        },
+    )
+    .await?;
+    Ok(json!({
+        "plan_mode": row,
+        "artifact": {
+            "path": memfs_response.path,
+            "entry_id": memfs_response.entry_id,
+            "commit": memfs_response.commit,
+        },
+        "approval_required": true,
+        "instructions": [
+            "Present this plan artifact to the user for approval.",
+            "Do not begin implementation until the approval request is approved by the ACP client."
+        ]
+    }))
+}
+
+async fn cancel_plan_mode(
+    pool: &PgPool,
+    context: &DenToolInvocationContext,
+    arguments: Value,
+) -> Result<Value, CustomError> {
+    let args: PlanModeCancelArguments = serde_json::from_value(arguments)?;
+    let acp_session_id = source_acp_session_id(context)
+        .ok_or_else(|| CustomError::ValidationError("ACP session id is required for plan mode".to_string()))?;
+    let row = acp_plan_mode::cancel_plan_mode(
+        pool,
+        context.user_id,
+        context.bear_id,
+        &acp_session_id,
+        args.plan_mode_id,
+    )
+    .await?;
+    Ok(json!({ "plan_mode": row, "mode": "normal" }))
+}
+
 async fn write_memory_entry(
     config: &Config,
     context: &DenToolInvocationContext,
@@ -1641,9 +1885,9 @@ fn memfs_http_client(error_prefix: &str) -> Result<reqwest::Client, CustomError>
 fn validate_memory_kind(value: &str) -> Result<String, CustomError> {
     let kind = value.trim().to_ascii_lowercase();
     match kind.as_str() {
-        "note" | "log" | "decision" | "reflection" | "scratch" | "summary" => Ok(kind),
+        "note" | "log" | "decision" | "reflection" | "scratch" | "summary" | "plan" => Ok(kind),
         _ => Err(CustomError::ValidationError(
-            "kind must be one of note, log, decision, reflection, scratch, summary".to_string(),
+            "kind must be one of note, log, decision, reflection, scratch, summary, plan".to_string(),
         )),
     }
 }
@@ -1971,6 +2215,10 @@ mod tests {
         assert!(pair.contains(DEN_WORK_PLAN_GET_STATUS));
         assert!(pair.contains(DEN_WORK_PLAN_UPDATE));
         assert!(pair.contains(DEN_WORK_PLAN_REQUEST_HANDOFF));
+        assert!(pair.contains(DEN_PLAN_MODE_ENTER));
+        assert!(pair.contains(DEN_PLAN_MODE_STATUS));
+        assert!(pair.contains(DEN_PLAN_MODE_EXIT));
+        assert!(pair.contains(DEN_PLAN_MODE_CANCEL));
 
         let talk = names_for_role(BearAgentRole::Talk);
         assert!(!talk.contains(DEN_WEB_FETCH));

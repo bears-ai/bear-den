@@ -115,6 +115,20 @@ struct AddWebApprovalForm {
 }
 
 #[derive(Debug, Serialize)]
+struct BearPlanModeRow {
+    id: Uuid,
+    user_id: i32,
+    username: Option<String>,
+    acp_session_id: String,
+    state: String,
+    reason: String,
+    plan_artifact_path: Option<String>,
+    plan_title: Option<String>,
+    created_at: String,
+    updated_at: String,
+}
+
+#[derive(Debug, Serialize)]
 struct BearAgentHealthRow {
     role: String,
     runtime_family: String,
@@ -386,6 +400,65 @@ async fn bear_web_fetches(
         .collect())
 }
 
+async fn bear_plan_mode_rows(
+    pool: &sqlx::PgPool,
+    bear_id: Uuid,
+) -> Result<Vec<BearPlanModeRow>, CustomError> {
+    let rows = sqlx::query_as::<_, (
+        Uuid,
+        i32,
+        Option<String>,
+        String,
+        String,
+        String,
+        Option<String>,
+        Option<String>,
+        time::OffsetDateTime,
+        time::OffsetDateTime,
+    )>(
+        r#"
+        SELECT p.id, p.user_id, u.username, p.acp_session_id, p.state, p.reason,
+               p.plan_artifact_path, p.plan_title, p.created_at, p.updated_at
+        FROM acp_plan_mode_sessions p
+        LEFT JOIN users u ON u.id = p.user_id
+        WHERE p.bear_id = $1
+        ORDER BY p.updated_at DESC
+        LIMIT 10
+        "#,
+    )
+    .bind(bear_id)
+    .fetch_all(pool)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .map(
+            |(
+                id,
+                user_id,
+                username,
+                acp_session_id,
+                state,
+                reason,
+                plan_artifact_path,
+                plan_title,
+                created_at,
+                updated_at,
+            )| BearPlanModeRow {
+                id,
+                user_id,
+                username,
+                acp_session_id,
+                state,
+                reason,
+                plan_artifact_path,
+                plan_title,
+                created_at: created_at.to_string(),
+                updated_at: updated_at.to_string(),
+            },
+        )
+        .collect())
+}
+
 async fn bear_agent_health_rows(
     state: &AppState,
     bear_id: Uuid,
@@ -463,6 +536,7 @@ async fn bear_detail_response(
     let web_sources = bear_web_sources(state.sqlx_pool(), id).await?;
     let web_approvals = bear_web_approvals(state.sqlx_pool(), id).await?;
     let web_fetches = bear_web_fetches(state.sqlx_pool(), id).await?;
+    let plan_mode_rows = bear_plan_mode_rows(state.sqlx_pool(), id).await?;
 
     let talk_agent_id = bears_db::role_agent_id(state.sqlx_pool(), bear.id, BearAgentRole::Talk)
         .await?
@@ -518,6 +592,7 @@ async fn bear_detail_response(
             web_sources,
             web_approvals,
             web_fetches,
+            plan_mode_rows,
             letta_agent_summary,
             letta_agent_fetch_error,
             letta_retry_message => web_message.clone(),

@@ -89,6 +89,7 @@ MEMORY_ENTRY_KIND_DIRS = {
     "reflection": "reflections",
     "scratch": "scratch",
     "summary": "summaries",
+    "plan": "plans",
 }
 MEMORY_TREE_MAX_FILES = int(os.environ.get("MEMFS_MEMORY_TREE_MAX_FILES", "500"))
 MEMORY_SEARCH_MAX_RESULTS = int(os.environ.get("MEMFS_MEMORY_SEARCH_MAX_RESULTS", "50"))
@@ -983,6 +984,7 @@ def _ensure_canonical_branch(repo: Path, bear_id: str, role: str) -> None:
             ],
             "pair": [
                 "pair/tasks",
+                "pair/plans",
                 "pair/notes",
                 "pair/logs",
                 "pair/decisions",
@@ -1226,7 +1228,7 @@ def _write_role_memory_entry(
     kind_dir = MEMORY_ENTRY_KIND_DIRS.get(kind)
     if not kind_dir:
         raise ValueError(
-            "kind must be one of note, log, decision, reflection, scratch, summary"
+            "kind must be one of note, log, decision, reflection, scratch, summary, plan"
         )
     title = str(body.get("title") or "").strip()
     entry_body = str(body.get("body") or "").strip()

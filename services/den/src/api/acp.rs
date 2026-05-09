@@ -42,6 +42,7 @@ use crate::{
             map_native_letta_stream_event_to_acp_event_with_accumulator, AcpGatewayEvent,
             LettaToolCallAccumulator,
         },
+        acp_plan_mode,
         acp_sessions::{self, UpsertAcpSession},
         acp_tokens,
         acp_tool_turns::{
@@ -50,8 +51,8 @@ use crate::{
         },
         acp_tools::{
             acp_client_tool_descriptors_for_client_context, acp_diag_phase,
-            acp_provider_tool_names_for_client_context, acp_tool_policy_json_for_provider,
-            AcpToolStatus,
+            acp_provider_tool_allowed_in_plan_mode, acp_provider_tool_names_for_client_context,
+            acp_tool_policy_json_for_provider, AcpToolStatus,
         },
         archived_conversations,
         bears::{db as bears_db, Bear, BearAgentRole},
@@ -154,6 +155,8 @@ struct AcpToolResultResponse {
 #[derive(Debug, Deserialize)]
 struct AcpPermissionDecisionRequest {
     decision: String,
+    #[serde(default)]
+    plan_mode_id: Option<Uuid>,
 }
 
 #[derive(Debug, Serialize)]
@@ -642,6 +645,10 @@ fn acp_pair_den_tool_descriptors() -> serde_json::Value {
                     | den_tools::DEN_WORK_PLAN_GET_STATUS
                     | den_tools::DEN_WORK_PLAN_UPDATE
                     | den_tools::DEN_WORK_PLAN_REQUEST_HANDOFF
+                    | den_tools::DEN_PLAN_MODE_ENTER
+                    | den_tools::DEN_PLAN_MODE_STATUS
+                    | den_tools::DEN_PLAN_MODE_EXIT
+                    | den_tools::DEN_PLAN_MODE_CANCEL
             )
         })
         .map(|descriptor| {
@@ -672,6 +679,10 @@ fn acp_den_provider_to_canonical_tool_name(provider_name: &str) -> Option<&'stat
         "den_work_plan_get_status" => Some(den_tools::DEN_WORK_PLAN_GET_STATUS),
         "den_work_plan_update" => Some(den_tools::DEN_WORK_PLAN_UPDATE),
         "den_work_plan_request_handoff" => Some(den_tools::DEN_WORK_PLAN_REQUEST_HANDOFF),
+        "den_plan_mode_enter" => Some(den_tools::DEN_PLAN_MODE_ENTER),
+        "den_plan_mode_status" => Some(den_tools::DEN_PLAN_MODE_STATUS),
+        "den_plan_mode_exit" => Some(den_tools::DEN_PLAN_MODE_EXIT),
+        "den_plan_mode_cancel" => Some(den_tools::DEN_PLAN_MODE_CANCEL),
         _ => None,
     }
 }
@@ -732,7 +743,7 @@ fn acp_direct_tool_prompt_context(
     if tool_names.contains(&"fs_read_text_file") {
         guidance.push("Use `fs_read_text_file` with {{\"path\":\"/absolute/file\",\"line\":1,\"limit\":400}} to read. Do not guess file contents.".to_string());
     }
-    guidance.push("Use Den server tools for non-local capabilities: `den_situation_get` for a trusted briefing about the current bear, role, session, memory scopes, and policy; `den_memory_write_entry` for durable pair-local notes, logs, decisions, reflections, scratch, and summaries; `den_memory_status`, `den_memory_tree`, `den_memory_read`, and `den_memory_search` to inspect Bear memory; `den_work_plan_update` to keep a short visible todo/progress plan for the current mini-project with at most one `in_progress` item; `den_work_plan_get_status` and `den_work_plan_list` to recover visible plan state; `den_work_plan_request_handoff` when channel work should become a durable reviewed task intent; `web_fetch` for bounded HTTP(S) page fetching; and `den_web_search` only when a Den search provider is configured. Do not use memory entry tools for tasks, observations, run results, Cabinet writes, or direct core updates.".to_string());
+    guidance.push("Use Den server tools for non-local capabilities: `den_situation_get` for a trusted briefing about the current bear, role, session, memory scopes, and policy; `den_memory_write_entry` for durable pair-local notes, logs, decisions, reflections, scratch, summaries, and approved plan artifacts; `den_memory_status`, `den_memory_tree`, `den_memory_read`, and `den_memory_search` to inspect Bear memory; `den_work_plan_update` to keep a short visible todo/progress plan for the current mini-project with at most one `in_progress` item; `den_work_plan_get_status` and `den_work_plan_list` to recover visible plan state; `den_work_plan_request_handoff` when channel work should become a durable reviewed task intent; `den_plan_mode_enter` before substantial implementation planning that should gate mutation; `den_plan_mode_exit` to submit the markdown implementation plan for user approval; `den_plan_mode_status` and `den_plan_mode_cancel` to manage that gate; `web_fetch` for bounded HTTP(S) page fetching; and `den_web_search` only when a Den search provider is configured. Do not use memory entry tools for tasks, observations, run results, Cabinet writes, or direct core updates.".to_string());
     if tool_names.contains(&"fs_replace_text") {
         guidance.push("Use `fs_replace_text` with {{\"path\":\"/absolute/file\",\"old_text\":\"exact\",\"new_text\":\"replacement\"}} to edit existing files. Calling `fs_replace_text` is how you request local approval; do not wait for approval before invoking it and do not ask for approval in chat. To append, first read the file, then replace a unique end-of-file suffix with that suffix plus the appended text.".to_string());
         guidance.push("ACP edit workflow: discover/read the target, call `fs_replace_text` to request approval and perform the edit, wait for its result, verify the change with `fs_read_text_file`, then provide a concise final answer naming the changed file and what changed. Never claim you are blocked by approval if `fs_replace_text` is callable; invoke it instead.".to_string());
@@ -750,6 +761,33 @@ fn acp_direct_tool_prompt_context(
         "\n\n<system-reminder>{}</system-reminder>",
         guidance.join(" ")
     )
+}
+
+async fn acp_plan_mode_prompt_context(
+    state: &ApiState,
+    bear_id: Uuid,
+    user_id: i32,
+    session_id: &str,
+) -> Result<String, CustomError> {
+    let plan_mode = acp_plan_mode::active_for_session(
+        &state.sqlx_pool,
+        user_id,
+        bear_id,
+        session_id,
+    )
+    .await?;
+    let Some(plan_mode) = plan_mode else {
+        return Ok(String::new());
+    };
+    Ok(format!(
+        "\n\n<system-reminder>ACP plan mode is active for this session. plan_mode_id={} state={} artifact={}. You may inspect/read/search and use Den read-only tools. Do not mutate workspace files, run non-read-only shell commands, or perform external side effects until the submitted plan is approved. Use `den_plan_mode_exit` to submit the markdown implementation plan for approval.</system-reminder>",
+        plan_mode.id,
+        plan_mode.state,
+        plan_mode
+            .plan_artifact_path
+            .as_deref()
+            .unwrap_or("not_submitted")
+    ))
 }
 
 async fn acp_workboard_prompt_context(
@@ -1303,6 +1341,43 @@ async fn permission_result_inner(
             "ACP token is missing required acp:tools scope".to_string(),
         ));
     }
+    if let Some(plan_mode_id) = body.plan_mode_id.or_else(|| permission_id.strip_prefix("plan-mode-").and_then(|raw| Uuid::parse_str(raw).ok())) {
+        let session = acp_sessions::find_for_user_bear_session(
+            &state.sqlx_pool,
+            auth.user_id,
+            &slug,
+            &session_id,
+        )
+        .await?
+        .ok_or_else(|| CustomError::NotFound("ACP session not found".to_string()))?;
+        let decision = body.decision.trim().to_ascii_lowercase();
+        let row = if matches!(decision.as_str(), "approve" | "approved" | "allow" | "allow_once") {
+            acp_plan_mode::approve_plan_mode(
+                &state.sqlx_pool,
+                auth.user_id,
+                session.bear_id,
+                &session_id,
+                plan_mode_id,
+            )
+            .await?
+        } else {
+            acp_plan_mode::reject_plan_mode(
+                &state.sqlx_pool,
+                auth.user_id,
+                session.bear_id,
+                &session_id,
+                plan_mode_id,
+            )
+            .await?
+        };
+        return Ok(Json(AcpPermissionDecisionResponse {
+            accepted: true,
+            reason: format!("plan_mode_{}", row.state),
+            local_tool_request: None,
+        })
+        .into_response());
+    }
+
     let pending = pending_web_fetch_approvals()
         .lock()
         .await
@@ -1870,13 +1945,19 @@ async fn prompt_inner(
     );
     let tool_prompt_context =
         acp_direct_tool_prompt_context(session_id, &cwd, &body.client_context, tools_enabled);
+    let plan_mode_context = acp_plan_mode_prompt_context(&state, bear.id, user_id, session_id)
+        .await
+        .map_err(|err| {
+            let (status, code, message) = acp_error_status_message(&err);
+            ApiError::new(status, code, message)
+        })?;
     let workboard_context = acp_workboard_prompt_context(&state, bear.id, user_id, session_id)
         .await
         .map_err(|err| {
             let (status, code, message) = acp_error_status_message(&err);
             ApiError::new(status, code, message)
         })?;
-    let prompt_with_tool_context = format!("{prompt}{workboard_context}{tool_prompt_context}");
+    let prompt_with_tool_context = format!("{prompt}{plan_mode_context}{workboard_context}{tool_prompt_context}");
     let client_tool_descriptors = tools_enabled.then(|| {
         merge_acp_pair_tool_descriptors(acp_client_tool_descriptors_for_client_context(
             &body.client_context,
@@ -1966,6 +2047,14 @@ async fn persist_stream_event_side_effects(
     context: &AcpStreamContext,
     event: &mut AcpGatewayEvent,
 ) -> Result<(), CustomError> {
+    let plan_mode_active = acp_plan_mode::active_for_session(
+        &context.pool,
+        context.user_id,
+        context.bear_id,
+        &context.acp_session_id,
+    )
+    .await?
+    .is_some();
     match event {
         AcpGatewayEvent::ConversationResolved { conversation_id } => {
             acp_sessions::mark_resolved(
@@ -2032,6 +2121,19 @@ async fn persist_stream_event_side_effects(
                 let result_tx = result_tx.take().ok_or_else(|| {
                     CustomError::System("ACP Den tool request missing result channel".to_string())
                 })?;
+                if plan_mode_active && !den_tool_allowed_in_plan_mode(canonical_name) {
+                    *approval_required = false;
+                    *approval_reason = None;
+                    let result = plan_mode_denial_result(
+                        context,
+                        tool_call_id,
+                        tool_name,
+                        approval_request_id.as_deref(),
+                        canonical_name,
+                    );
+                    let _ = result_tx.send(result);
+                    return Ok(());
+                }
                 *approval_required = false;
                 *approval_reason = None;
                 if canonical_name == den_tools::DEN_WEB_FETCH {
@@ -2125,7 +2227,35 @@ async fn persist_stream_event_side_effects(
                     args.clone(),
                 )
                 .await;
+                let submitted_plan_mode_id = if canonical_name == den_tools::DEN_PLAN_MODE_EXIT
+                    && result.status == "ok"
+                {
+                    result
+                        .structured_content
+                        .get("plan_mode")
+                        .and_then(|plan_mode| plan_mode.get("id"))
+                        .and_then(|id| id.as_str())
+                        .map(str::to_string)
+                } else {
+                    None
+                };
                 let _ = result_tx.send(result);
+                if let Some(plan_mode_id) = submitted_plan_mode_id {
+                    *event = AcpGatewayEvent::PermissionRequest {
+                        request_id: request_id.clone(),
+                        permission_id: format!("plan-mode-{plan_mode_id}"),
+                        tool_call_id: tool_call_id.clone(),
+                        tool_name: tool_name.clone(),
+                        title: "Approve implementation plan".to_string(),
+                        reason: "Pair submitted a markdown implementation plan. Approve to leave plan mode and allow implementation, or reject to keep mutation blocked.".to_string(),
+                        target: serde_json::json!({
+                            "kind": "acp_plan_mode",
+                            "plan_mode_id": plan_mode_id,
+                        }),
+                        options: vec!["approve".to_string(), "reject".to_string()],
+                    };
+                    return Ok(());
+                }
                 tracing::info!(
                     request_id = %context.request_id,
                     acp_session_id = %context.acp_session_id,
@@ -2139,6 +2269,19 @@ async fn persist_stream_event_side_effects(
                 let result_tx = result_tx.take().ok_or_else(|| {
                     CustomError::System("ACP tool request missing result channel".to_string())
                 })?;
+                if plan_mode_active && !acp_provider_tool_allowed_in_plan_mode(tool_name) {
+                    *approval_required = false;
+                    *approval_reason = None;
+                    let result = plan_mode_denial_result(
+                        context,
+                        tool_call_id,
+                        tool_name,
+                        approval_request_id.as_deref(),
+                        tool_name,
+                    );
+                    let _ = result_tx.send(result);
+                    return Ok(());
+                }
                 context.tool_turns.register(AcpToolTurnRegistration {
                     user_id: context.user_id,
                     bear_id: context.bear_id,
@@ -2163,6 +2306,60 @@ async fn persist_stream_event_side_effects(
         _ => {}
     }
     Ok(())
+}
+
+fn den_tool_allowed_in_plan_mode(canonical_name: &str) -> bool {
+    matches!(
+        canonical_name,
+        den_tools::DEN_BEAR_GET_SELF
+            | den_tools::DEN_USER_GET_CURRENT
+            | den_tools::DEN_BEAR_LIST_MEMBERS
+            | den_tools::DEN_CAPABILITIES_LIST_SELF
+            | den_tools::DEN_CHANNEL_GET_CONTEXT
+            | den_tools::DEN_POLICY_GET_SELF
+            | den_tools::DEN_WEB_FETCH
+            | den_tools::DEN_WEB_SEARCH
+            | den_tools::DEN_SITUATION_GET
+            | den_tools::DEN_MEMORY_STATUS
+            | den_tools::DEN_MEMORY_TREE
+            | den_tools::DEN_MEMORY_READ
+            | den_tools::DEN_MEMORY_SEARCH
+            | den_tools::DEN_WORK_PLAN_LIST
+            | den_tools::DEN_WORK_PLAN_GET_STATUS
+            | den_tools::DEN_PLAN_MODE_STATUS
+            | den_tools::DEN_PLAN_MODE_EXIT
+            | den_tools::DEN_PLAN_MODE_CANCEL
+    )
+}
+
+fn plan_mode_denial_result(
+    context: &AcpStreamContext,
+    tool_call_id: &str,
+    provider_name: &str,
+    approval_request_id: Option<&str>,
+    denied_tool: &str,
+) -> AcpToolResultRequest {
+    AcpToolResultRequest {
+        turn_id: None,
+        request_id: Some(context.request_id.to_string()),
+        tool_call_id: Some(tool_call_id.to_string()),
+        tool_name: Some(provider_name.to_string()),
+        approval_request_id: approval_request_id.map(str::to_string),
+        status: "permission_denied".to_string(),
+        content: Some(format!(
+            "ACP plan mode is active; `{denied_tool}` is blocked until the submitted plan is approved. Use read/search/inspect tools or den_plan_mode_exit to submit the plan."
+        )),
+        structured_content: serde_json::json!({
+            "blocked_by": "acp_plan_mode",
+            "denied_tool": denied_tool,
+            "allowed_action": "submit a plan with den_plan_mode_exit and wait for approval",
+        }),
+        diagnostic: serde_json::json!({
+            "component": "den.acp",
+            "phase": "plan_mode_tool_denied",
+            "denied_tool": denied_tool,
+        }),
+    }
 }
 
 async fn invoke_acp_den_tool(

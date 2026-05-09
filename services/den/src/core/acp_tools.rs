@@ -1052,6 +1052,31 @@ pub fn acp_tool_policy(tool: AcpToolName) -> AcpToolPolicy {
     }
 }
 
+pub fn acp_tool_is_plan_mode_read_only(tool: AcpToolName) -> bool {
+    matches!(
+        tool,
+        AcpToolName::ReadTextFile
+            | AcpToolName::ListDirectory
+            | AcpToolName::FindPaths
+            | AcpToolName::SearchFiles
+            | AcpToolName::Stat
+            | AcpToolName::GitStatus
+            | AcpToolName::GitDiff
+            | AcpToolName::GitLog
+            | AcpToolName::GitShow
+            | AcpToolName::ChromeSnapshot
+            | AcpToolName::ChromeConsoleMessages
+            | AcpToolName::ChromeNetworkRequests
+            | AcpToolName::ChromeScreenshot
+    )
+}
+
+pub fn acp_provider_tool_allowed_in_plan_mode(tool_name: &str) -> bool {
+    AcpToolName::from_provider_alias(tool_name)
+        .map(acp_tool_is_plan_mode_read_only)
+        .unwrap_or(false)
+}
+
 pub fn acp_tool_policy_json_for_provider(tool_name: &str) -> serde_json::Value {
     let Some(tool) = AcpToolName::from_provider_alias(tool_name) else {
         return json!({

@@ -30,9 +30,9 @@ Letta Code also has a separate gate: `EnterPlanMode` and `ExitPlanMode`.
 
 In Letta Code, entering plan mode requires user approval, switches permissions to a `plan` mode, allows read/search/inspection, denies code edits and non-read-only shell commands, allows writing only to `~/.letta/plans/*.md`, and then exits by presenting the generated markdown plan for user approval. Approval restores the prior permission mode and allows implementation.
 
-BEARS does not yet have a first-class ACP pair plan-mode gate. We should add one for `pair` so API-direct pair sessions are conceptually aligned with Letta Code-backed `work` sessions.
+BEARS' ACP `pair` plan-mode gate is implemented as a Den-managed session gate. It is conceptually aligned with Letta Code-backed `work` sessions while remaining explicit about ACP client-tool boundaries.
 
-The BEARS version should be:
+The BEARS version is:
 
 1. User or agent requests plan mode.
 2. ACP/Den records a planning gate for the current session.
@@ -96,10 +96,17 @@ Implemented:
 - Den workboard tools and role policy.
 - ACP prompt injection of current session workboard context.
 - ACP pair exposure of Den workboard tools.
+- ACP pair plan-mode DB schema and audit events.
+- Den plan-mode tools: `den.plan_mode.enter`, `den.plan_mode.status`, `den.plan_mode.exit`, and `den.plan_mode.cancel`.
+- ACP plan-mode prompt reminders.
+- ACP plan-mode tool policy that blocks mutating client tools and mutating Den tools while the gate is active.
+- Pair-local `plan` memory entries under `pair/plans/` for markdown plan artifacts.
+- ACP permission request emission when `den.plan_mode.exit` submits a plan artifact.
+- ACP permission decision handling for plan-mode approve/reject.
+- ACP adapter rendering of plan-mode approval options as approve/reject instead of URL-style allow/reject labels.
 
 Planned:
 
-- First-class pair plan-mode gate with read-only permissions and markdown plan artifact approval.
 - Operator and chat UI for active/completed plans.
 - Handoff implementation from workboard items to durable task intents.
 - Reflection/curate review of completed plan summaries and durable lessons.

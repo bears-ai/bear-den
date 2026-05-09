@@ -126,6 +126,31 @@
 <p><em>No web fetches recorded yet.</em></p>
 {% endif %}
 
+<h3>Planning gates</h3>
+<p class="form-hint">Recent ACP <code>pair</code> pre-implementation plan-mode gates. Active/submitted gates block mutation until approved or cancelled.</p>
+{% if plan_mode_rows %}
+<table>
+  <thead><tr><th>State</th><th>Session</th><th>User</th><th>Plan</th><th>Reason</th><th>Updated</th></tr></thead>
+  <tbody>
+  {% for plan in plan_mode_rows %}
+    <tr>
+      <td><code>{{ plan.state }}</code></td>
+      <td><code>{{ plan.acp_session_id }}</code><br><span class="form-hint">{{ plan.id }}</span></td>
+      <td>{% if plan.username %}{{ plan.username }}{% else %}<code>{{ plan.user_id }}</code>{% endif %}</td>
+      <td>
+        {% if plan.plan_title %}<strong>{{ plan.plan_title }}</strong>{% else %}<em>not submitted</em>{% endif %}
+        {% if plan.plan_artifact_path %}<br><code>{{ plan.plan_artifact_path }}</code>{% endif %}
+      </td>
+      <td>{% if plan.reason %}{{ plan.reason }}{% else %}<em>none</em>{% endif %}</td>
+      <td>{{ plan.updated_at }}<br><span class="form-hint">created {{ plan.created_at }}</span></td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p><em>No ACP plan-mode gates recorded yet.</em></p>
+{% endif %}
+
 <h3>Associated Letta agents</h3>
 {% if not letta_configured %}
 <p><em>Letta is not configured on this Den instance</em> (<code>LETTA_BASE_URL</code> empty). Stored role agent ids, if any, are not verified against Letta.</p>

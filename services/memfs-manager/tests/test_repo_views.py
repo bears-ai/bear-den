@@ -172,6 +172,28 @@ def test_registry_json_is_operator_inspectable(memfs):
     assert data["views"]["agent-work"]["role"] == "work"
 
 
+def test_pair_plan_memory_entry_writes_under_pair_plans(memfs):
+    register_view(memfs, agent_id="agent-pair", bear_id="bear-plan", role="pair")
+    result = memfs._write_role_memory_entry(
+        "bear-plan",
+        "pair",
+        {
+            "kind": "plan",
+            "title": "Implementation Plan",
+            "body": "1. Inspect\n2. Edit after approval",
+        },
+        memfs.DEFAULT_ORG,
+    )
+    assert result["ok"] is True
+    assert result["path"].startswith("pair/plans/")
+    assert result["path"].endswith(".md")
+    canonical = memfs.ensure_canonical_repo("bear-plan")
+    files = run(
+        "git", "--git-dir", str(canonical), "ls-tree", "-r", "--name-only", "pair"
+    ).stdout
+    assert result["path"] in files
+
+
 def test_override_canonical_wins_resets_quarantined_view(memfs, tmp_path):
     record = register_view(memfs, agent_id="agent-talk", role="talk")
     work = clone_view(memfs, "agent-talk", tmp_path=tmp_path)

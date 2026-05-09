@@ -3746,10 +3746,23 @@ async fn handle_permission_request_event(
     let target = event.get("target").cloned().unwrap_or_else(|| json!({}));
     let url = target.get("url").and_then(Value::as_str);
     let host = target.get("host").and_then(Value::as_str);
-    let display = tool_display(tool_name);
-    let mut content = vec![ToolCallContent::from(format!(
-        "{reason}\n\nTool: {tool_name}\nTarget: {}",
+    let plan_mode_id = target.get("plan_mode_id").and_then(Value::as_str);
+    let target_kind = target.get("kind").and_then(Value::as_str);
+    let is_plan_mode = target_kind == Some("acp_plan_mode") || plan_mode_id.is_some();
+    let mut display = tool_display(tool_name);
+    if is_plan_mode {
+        display.title = "Approve implementation plan";
+        display.kind = ToolKind::Think;
+        display.verb = "Reviewing plan";
+        display.permission_operation = "approve this implementation plan";
+    }
+    let target_label = if is_plan_mode {
+        plan_mode_id.unwrap_or("submitted plan artifact")
+    } else {
         url.or(host).unwrap_or("the requested target")
+    };
+    let mut content = vec![ToolCallContent::from(format!(
+        "{reason}\n\nTool: {tool_name}\nTarget: {target_label}"
     ))];
     let fields = ToolCallUpdateFields::new()
         .kind(Some(display.kind))
@@ -3763,32 +3776,45 @@ async fn handle_permission_request_event(
         meta.insert("permissionId".to_string(), json!(permission_id));
         if let Some(url) = url { meta.insert("targetUrl".to_string(), json!(url)); }
         if let Some(host) = host { meta.insert("targetHost".to_string(), json!(host)); }
+        if let Some(plan_mode_id) = plan_mode_id { meta.insert("planModeId".to_string(), json!(plan_mode_id)); }
         meta
     }));
-    let mut options = vec![
-        agent_client_protocol::schema::PermissionOption::new("allow_once", "Allow this fetch once", agent_client_protocol::schema::PermissionOptionKind::AllowOnce),
-    ];
-    if url.is_some() {
-        options.push(agent_client_protocol::schema::PermissionOption::new("allow_url", "Always allow this exact URL", agent_client_protocol::schema::PermissionOptionKind::AllowAlways));
-    }
-    if let Some(host) = host {
-        options.push(agent_client_protocol::schema::PermissionOption::new("allow_host", format!("Always allow this host: {host}"), agent_client_protocol::schema::PermissionOptionKind::AllowAlways));
-    }
-    options.push(agent_client_protocol::schema::PermissionOption::new("reject_once", "Deny this fetch", agent_client_protocol::schema::PermissionOptionKind::RejectOnce));
+    let options = if is_plan_mode {
+        vec![
+            agent_client_protocol::schema::PermissionOption::new("approve", "Approve this plan and allow implementation", agent_client_protocol::schema::PermissionOptionKind::AllowOnce),
+            agent_client_protocol::schema::PermissionOption::new("reject", "Reject this plan and keep implementation blocked", agent_client_protocol::schema::PermissionOptionKind::RejectOnce),
+        ]
+    } else {
+        let mut options = vec![
+            agent_client_protocol::schema::PermissionOption::new("allow_once", "Allow this fetch once", agent_client_protocol::schema::PermissionOptionKind::AllowOnce),
+        ];
+        if url.is_some() {
+            options.push(agent_client_protocol::schema::PermissionOption::new("allow_url", "Always allow this exact URL", agent_client_protocol::schema::PermissionOptionKind::AllowAlways));
+        }
+        if let Some(host) = host {
+            options.push(agent_client_protocol::schema::PermissionOption::new("allow_host", format!("Always allow this host: {host}"), agent_client_protocol::schema::PermissionOptionKind::AllowAlways));
+        }
+        options.push(agent_client_protocol::schema::PermissionOption::new("reject_once", "Deny this fetch", agent_client_protocol::schema::PermissionOptionKind::RejectOnce));
+        options
+    };
     let request = RequestPermissionRequest::new(session_id.to_string(), tool_call, options);
     let decision = send_permission_request(adapter_state, request, std::time::Duration::from_secs(120)).await?;
-    let decision_str = match decision.scope {
-        ApprovalScope::Host if decision.approved => "allow_host",
-        ApprovalScope::Workspace | ApprovalScope::Directory | ApprovalScope::Command | ApprovalScope::Global if decision.approved => {
-            if decision.remember && url.is_some() { "allow_url" } else { "allow_once" }
+    let decision_str = if is_plan_mode {
+        if decision.approved { "approve" } else { "reject" }
+    } else {
+        match decision.scope {
+            ApprovalScope::Host if decision.approved => "allow_host",
+            ApprovalScope::Workspace | ApprovalScope::Directory | ApprovalScope::Command | ApprovalScope::Global if decision.approved => {
+                if decision.remember && url.is_some() { "allow_url" } else { "allow_once" }
+            }
+            _ => "reject_once",
         }
-        _ => "reject_once",
     };
     let response = post_permission_result(
         config,
         session_id,
         permission_id,
-        json!({ "decision": decision_str }),
+        json!({ "decision": decision_str, "plan_mode_id": plan_mode_id }),
     )
     .await?;
     if let Some(local_tool) = response.get("local_tool_request") {
@@ -3806,7 +3832,7 @@ async fn handle_permission_request_event(
         let started = std::time::Instant::now();
         match result {
             Ok(value) => {
-                let mut payload = json!({
+                let payload = json!({
                     "tool_call_id": tool_call_id,
                     "tool_name": tool_name,
                     "status": "ok",

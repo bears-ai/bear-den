@@ -63,12 +63,14 @@ The read API should return projections, not raw rows. For example, `talk` asking
 
 Add a separate gate for ACP `pair`, modeled after Letta Code's `EnterPlanMode` / `ExitPlanMode`.
 
+Implementation status: schema, core model, Den tools, ACP prompt reminders, MemFS `pair/plans/` artifacts, server-side policy denial for mutating tools, ACP permission request emission, Den approve/reject handling, and ACP adapter approve/reject rendering are implemented.
+
 Acceptance:
 
-- Pair can request entering plan mode and Den/ACP asks the user for approval.
+- Pair can request entering plan mode and Den records an active plan-mode gate for the ACP session.
 - While plan mode is active, ACP permits read/search/inspect tools and Den read-only tools, but denies mutating workspace tools and non-read-only shell operations.
-- Pair can write a markdown plan artifact only under an approved plan artifact location.
-- Exiting plan mode presents the markdown plan for user approval.
+- Pair can write a markdown plan artifact only under `pair/plans/`.
+- Exiting plan mode stores the markdown plan artifact and marks the gate `submitted`.
 - Approval restores the previous permission mode and records an audit event linking the plan artifact, ACP session, Bear, role, and user.
 - Rejection keeps mutation blocked or exits without implementation, according to the user's decision.
 
