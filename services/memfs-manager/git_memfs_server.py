@@ -68,9 +68,16 @@ VIEW_REGISTRY_PATH = Path(
     os.environ.get("MEMFS_VIEW_REGISTRY", str(MEMFS_BASE.parent / "bear_views.json"))
 )
 ROLE_BRANCHES = {"talk", "pair", "curate", "work", "watch"}
-ROLE_ALLOWED_PREFIXES = {
-    "talk": ["talk/"],
+ROLE_READ_ALLOWED_PREFIXES = {
+    "talk": ["talk/", "core/"],
     "pair": ["pair/", "core/"],
+    "curate": ["talk/", "pair/", "curate/", "work/", "watch/", "core/"],
+    "work": ["work/", "core/"],
+    "watch": ["watch/", "core/"],
+}
+ROLE_WRITE_ALLOWED_PREFIXES = {
+    "talk": ["talk/"],
+    "pair": ["pair/"],
     "curate": ["curate/", "core/"],
     "work": ["work/"],
     "watch": ["watch/"],
@@ -251,8 +258,8 @@ def _changed_paths(repo: Path, old: str | None, new: str) -> list[str]:
     return [line.strip() for line in (r.stdout or "").splitlines() if line.strip()]
 
 
-def _paths_allowed(role: str, paths: list[str]) -> tuple[bool, str | None]:
-    prefixes = ROLE_ALLOWED_PREFIXES.get(role, [])
+def _write_paths_allowed(role: str, paths: list[str]) -> tuple[bool, str | None]:
+    prefixes = ROLE_WRITE_ALLOWED_PREFIXES.get(role, [])
     for path in paths:
         if not any(path.startswith(prefix) for prefix in prefixes):
             return False, path
@@ -270,11 +277,16 @@ def _normalize_memory_path(raw_path: str) -> str:
 
 
 def _role_memory_prefixes(role: str) -> list[str]:
-    return ROLE_ALLOWED_PREFIXES.get(role, [])
+    return ROLE_READ_ALLOWED_PREFIXES.get(role, [])
 
 
 def _role_memory_path_allowed(role: str, path: str) -> bool:
     prefixes = _role_memory_prefixes(role)
+    return bool(prefixes) and any(path.startswith(prefix) for prefix in prefixes)
+
+
+def _role_write_path_allowed(role: str, path: str) -> bool:
+    prefixes = ROLE_WRITE_ALLOWED_PREFIXES.get(role, [])
     return bool(prefixes) and any(path.startswith(prefix) for prefix in prefixes)
 
 
@@ -1091,7 +1103,7 @@ def _forward_view_to_canonical(
         )
         return "quarantined", reason
     paths = _changed_paths(view, canonical_tip, view_tip)
-    ok, bad_path = _paths_allowed(role, paths)
+    ok, bad_path = _write_paths_allowed(role, paths)
     if not ok:
         reason = f"canonical would reject role {role} path {bad_path}"
         _set_quarantine(view, reason)
@@ -1227,7 +1239,7 @@ def _write_role_memory_entry(
     lifecycle = str(body.get("lifecycle") or "active").strip() or "active"
     entry_id = f"mem_{uuid.uuid4().hex}"
     rel_path = f"{role}/{kind_dir}/{entry_id}.md"
-    if not _role_memory_path_allowed(role, rel_path):
+    if not _role_write_path_allowed(role, rel_path):
         raise ValueError(f"role path policy rejected {rel_path}")
     canonical = ensure_canonical_repo(bear_id)
     timestamp = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
@@ -1309,7 +1321,7 @@ def _delete_role_memory_entries(
     paths: list[str] = []
     for raw in paths_raw:
         rel_path = _normalize_memory_path(str(raw))
-        if not _role_memory_path_allowed(role, rel_path):
+        if not _role_write_path_allowed(role, rel_path):
             raise PermissionError(f"path is not allowed for role {role}: {rel_path}")
         if not rel_path.endswith(".md"):
             raise ValueError(f"only Markdown memory files can be deleted: {rel_path}")
@@ -1734,7 +1746,7 @@ class GitHTTPHandler(BaseHTTPRequestHandler):
             if not old_view_tip:
                 raise ValueError("view main branch missing; cannot apply view-wins")
             paths = _changed_paths(view, old_canonical_tip, old_view_tip)
-            ok, bad_path = _paths_allowed(role, paths)
+            ok, bad_path = _write_paths_allowed(role, paths)
             if not ok and body.get("allow_policy_violation") is not True:
                 raise ValueError(
                     f"view-wins would violate role path policy at {bad_path}; set allow_policy_violation=true only if policy is known wrong"
