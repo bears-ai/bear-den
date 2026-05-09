@@ -1,0 +1,105 @@
+# Planning in BEARS
+
+Planning in BEARS means a small, user-visible mini-project plan for an active body of work. It is distinct from continuation, which keeps an agent going in an existing task loop, and from a Cabinet Mission, which is a larger shared knowledge/work container.
+
+BEARS aligns with Letta Code's two planning layers while adapting them to Den's multi-role Bear architecture.
+
+## Two layers
+
+### 1. Live progress tracking
+
+Live progress tracking is the lightweight todo/status list an agent updates while it works.
+
+Letta Code has this as `TodoWrite` for Claude-style toolsets and `UpdatePlan` for Codex-style toolsets. In Letta Code this is mostly UI/state rendering; `UpdatePlan` is a no-op tool implementation whose arguments drive the visible plan, with a simple list of `{ step, status }` and statuses such as `pending`, `in_progress`, and `completed`.
+
+BEARS' Den equivalent is the **workboard**:
+
+- table: `bear_work_plans`
+- audit stream: `bear_work_plan_events`
+- Den tools:
+  - `den.work_plan.update`
+  - `den.work_plan.get_status`
+  - `den.work_plan.list`
+  - `den.work_plan.request_handoff`
+
+A workboard plan is intentionally small and operational. It records what the role is trying to do now, the current item, blockers, and whether the plan should be private to the role, visible to the same user, visible to the Bear, or ready for handoff.
+
+### 2. Pre-implementation planning gate
+
+Letta Code also has a separate gate: `EnterPlanMode` and `ExitPlanMode`.
+
+In Letta Code, entering plan mode requires user approval, switches permissions to a `plan` mode, allows read/search/inspection, denies code edits and non-read-only shell commands, allows writing only to `~/.letta/plans/*.md`, and then exits by presenting the generated markdown plan for user approval. Approval restores the prior permission mode and allows implementation.
+
+BEARS does not yet have a first-class ACP pair plan-mode gate. We should add one for `pair` so API-direct pair sessions are conceptually aligned with Letta Code-backed `work` sessions.
+
+The BEARS version should be:
+
+1. User or agent requests plan mode.
+2. ACP/Den records a planning gate for the current session.
+3. Pair may inspect/read/search and use Den read-only tools.
+4. Mutating client tools, broad side effects, and non-read-only shell operations are denied by ACP tool policy while the gate is active.
+5. Pair may write a durable markdown plan artifact in an approved plan location.
+6. Pair exits plan mode by presenting that artifact to the user.
+7. User approval closes the gate and restores normal ACP tool permissions for implementation.
+
+## Workboard vs plan artifact vs tasks
+
+These are related but different objects:
+
+| Object | Owner | Purpose | Durability |
+|--------|-------|---------|------------|
+| Workboard plan | Den DB | Current visible todo/progress state | Durable enough for resume/status, but not a project archive |
+| Plan artifact | MemFS or approved local plan file | Proposed implementation plan for user approval before mutation | Durable markdown artifact |
+| Task intent | MemFS | Request for reviewed background/autonomous work | Durable input to `curate` review |
+| Approved task | MemFS | Curate-approved executable work for `work` | Durable task definition |
+| Work result | MemFS/Garage | Result/log/report from `work` | Durable output, curatable into `core/` |
+
+A workboard plan can link to a task intent when `den.work_plan.request_handoff` is used. A pre-implementation plan artifact may later be summarized into a workboard plan, task intent, or role-local memory, but it is not itself a Cabinet Mission.
+
+## Pair role behavior
+
+`pair` should use planning like a collaborative coding agent:
+
+- Use `den.work_plan.update` for non-trivial mini-projects, multi-step edits, debugging loops, and user-visible progress.
+- Keep at most one item `in_progress`.
+- Mark items `completed`, `blocked`, or `cancelled` as reality changes.
+- Use `den.work_plan.get_status` to recover the current ACP session's plan after interruption.
+- Use `den.work_plan.request_handoff` when the plan becomes broader background work that needs `curate` review and `work` execution.
+- Do not treat every response as requiring a plan; very small single-step answers can proceed without one.
+
+## Work role behavior
+
+`work` is Letta Code-backed and should continue to use Letta Code's native planning affordances where available. Den should still expose the workboard tools to `work` so approved tasks can surface status to Den, operators, and other Bear roles.
+
+`work` must execute only approved task definitions, not channel-originated workboard plans directly.
+
+## Memory interaction
+
+Planning state is not shared Bear memory by default.
+
+Use this ladder:
+
+1. Keep tactical progress in the Den workboard.
+2. Write a plan artifact for pre-implementation approval when mutation should be gated.
+3. Write role-local memory only when the plan or its rationale will matter beyond the current mini-project.
+4. Request curation when lessons, decisions, or results should become shared `core/` memory.
+5. Use task intents and approved tasks for autonomous/background work.
+
+A simple Den memory log of plans underway/completed can be derived from `bear_work_plan_events` and selected summaries rather than copying every plan into `core/`.
+
+## Current implementation state
+
+Implemented:
+
+- Den DB-backed workboard schema and event table.
+- Work plan validation with at most one `in_progress` item.
+- Den workboard tools and role policy.
+- ACP prompt injection of current session workboard context.
+- ACP pair exposure of Den workboard tools.
+
+Planned:
+
+- First-class pair plan-mode gate with read-only permissions and markdown plan artifact approval.
+- Operator and chat UI for active/completed plans.
+- Handoff implementation from workboard items to durable task intents.
+- Reflection/curate review of completed plan summaries and durable lessons.

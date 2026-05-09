@@ -1957,7 +1957,7 @@ mod tests {
     }
 
     #[test]
-    fn pair_has_web_and_memory_tools() {
+    fn pair_has_web_memory_and_workboard_tools() {
         let pair = names_for_role(BearAgentRole::Pair);
         assert!(pair.contains(DEN_WEB_FETCH));
         assert!(pair.contains(DEN_WEB_SEARCH));
@@ -1967,6 +1967,10 @@ mod tests {
         assert!(pair.contains(DEN_MEMORY_TREE));
         assert!(pair.contains(DEN_MEMORY_READ));
         assert!(pair.contains(DEN_MEMORY_SEARCH));
+        assert!(pair.contains(DEN_WORK_PLAN_LIST));
+        assert!(pair.contains(DEN_WORK_PLAN_GET_STATUS));
+        assert!(pair.contains(DEN_WORK_PLAN_UPDATE));
+        assert!(pair.contains(DEN_WORK_PLAN_REQUEST_HANDOFF));
 
         let talk = names_for_role(BearAgentRole::Talk);
         assert!(!talk.contains(DEN_WEB_FETCH));

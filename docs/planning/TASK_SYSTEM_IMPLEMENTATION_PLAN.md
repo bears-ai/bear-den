@@ -4,8 +4,9 @@ This plan turns the multi-agent task architecture into implementable Den work. I
 
 ## Decision Summary
 
-- Den owns a per-bear live workboard for current plans and status.
-- MemFS owns durable task artifacts: channel intent files, curate-approved task files, and work result files.
+- Den owns a per-bear live workboard for current plans and status, aligned with Letta Code's lightweight `TodoWrite` / `UpdatePlan` progress layer.
+- BEARS should add a separate ACP `pair` plan-mode gate aligned with Letta Code's `EnterPlanMode` / `ExitPlanMode`: read/search/inspect only, durable markdown plan artifact, then user approval before mutation.
+- MemFS owns durable task artifacts: channel intent files, curate-approved task files, work result files, and likely `pair` plan-mode markdown artifacts.
 - ACP session rows remain protocol bindings only. They may reference a work plan, but they do not own planning state.
 - Channel agents never hand work directly to the work agent. They write or request task intents; curate approval is the promotion boundary.
 - Letta Code-based agents interact with the workboard through Den meta tools and short injected context, not by reading Den database rows directly.
@@ -30,7 +31,9 @@ The initial migration adds `bear_work_plans` and `bear_work_plan_events`.
 
 ## Tool Surface
 
-Add Den meta tools before implementing runtime behavior:
+Add Den meta tools before implementing runtime behavior.
+
+These tools implement the live workboard/progress layer, not the full pre-implementation planning gate:
 
 - `den.work_plan.list`: list visible work plans for the current bear.
 - `den.work_plan.get_status`: read one visible plan or the current session's plan projection.
@@ -55,6 +58,21 @@ Use these visibility values initially:
 - `handoff_requested`: readable by curate and Den task tooling while handoff is pending.
 
 The read API should return projections, not raw rows. For example, `talk` asking about `pair` work should receive title, status, current item, blockers, and timestamps, but not raw ACP workspace paths or unredacted local context unless policy explicitly allows it.
+
+## Pair Plan-Mode Gate
+
+Add a separate gate for ACP `pair`, modeled after Letta Code's `EnterPlanMode` / `ExitPlanMode`.
+
+Acceptance:
+
+- Pair can request entering plan mode and Den/ACP asks the user for approval.
+- While plan mode is active, ACP permits read/search/inspect tools and Den read-only tools, but denies mutating workspace tools and non-read-only shell operations.
+- Pair can write a markdown plan artifact only under an approved plan artifact location.
+- Exiting plan mode presents the markdown plan for user approval.
+- Approval restores the previous permission mode and records an audit event linking the plan artifact, ACP session, Bear, role, and user.
+- Rejection keeps mutation blocked or exits without implementation, according to the user's decision.
+
+This is intentionally separate from `den.work_plan.update`. The workboard is the visible current status list; the plan-mode artifact is the reviewable proposal before mutation.
 
 ## Implementation Phases
 
@@ -81,6 +99,7 @@ Acceptance:
 Acceptance:
 
 - ACP pair prompts receive a short current-plan summary when a plan exists for the ACP session.
+- ACP pair tool descriptors expose `den.work_plan.update`, `den.work_plan.get_status`, `den.work_plan.list`, and `den.work_plan.request_handoff` alongside memory/search/situation tools.
 - Letta Code `talk` and `work` contexts receive a compact workboard summary through existing Den/Codepool trusted context paths.
 - System prompts describe when to call `den.work_plan.update`.
 - The agent-facing wording treats this as normal planning/status, not database manipulation.
@@ -120,6 +139,7 @@ Acceptance:
 - Use optimistic concurrency with `version` on updates to prevent silent status clobbering.
 - Keep work plans short. Durable details belong in MemFS task files, result files, or conversation history.
 - If a plan item implies external effects, prefer `request_handoff` over continuing as live plan state.
+- Planning state is not shared Bear memory by default. Use the workboard for tactical progress, a plan-mode artifact for approval, role-local memory for durable lessons, and curate review for anything that should enter `core/`.
 
 ## Open Questions
 
@@ -127,3 +147,4 @@ Acceptance:
 - Whether ACP local workspace paths should be redacted by default even for the same user in non-ACP surfaces.
 - Whether completed work plans should archive automatically after a fixed age.
 - Whether operator edits to work plans should be allowed or recorded only as administrative events.
+- Whether plan-mode markdown artifacts should live under role-local MemFS paths such as `pair/plans/` or a separate Den-controlled artifact namespace.
