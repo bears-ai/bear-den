@@ -211,6 +211,8 @@ Prefer a general role-local entry tool:
 
 The retired `den.write_note` / `den_write_note` pair tool is replaced by `den.memory.write_entry` / `den_memory_write_entry`; backward compatibility is not required.
 
+For producer-side curation requests, use `den.memory.request_review` / `den_memory_request_review`. This supersedes narrower names such as `propose_core_update` or `propose_core_write`; the producer can suggest an action, but `curate` decides the final lifecycle outcome.
+
 ### Keep directories conventional, not conceptual
 
 Paths should be predictable for humans and tools, but the conceptual model should live in metadata.
@@ -256,6 +258,7 @@ Candidate tool/API names:
 
 | Canonical | Provider-safe | Purpose |
 |---|---|---|
+| `den.memory.request_review` | `den_memory_request_review` | Request Reflection curation of role-local memory without writing shared memory directly. |
 | `den.memory.tree` | `den_memory_tree` | Browse allowed memory paths. |
 | `den.memory.read` | `den_memory_read` | Read an allowed memory file or entry. |
 | `den.memory.search` | `den_memory_search` | Search memory with role/kind/reference filters. |
@@ -274,6 +277,10 @@ Candidate tool/API names:
 Recommended first write capability:
 
 - `den_memory_write_entry` for `note`, `log`, `decision`, `reflection`, `scratch`, and `summary`.
+
+Recommended follow-up review capability:
+
+- `den_memory_request_review` for asking Reflection/`curate` to review pair-local memory that may belong in `core/`, Cabinet, cleanup, or skill review.
 
 ### `talk`
 
@@ -338,9 +345,10 @@ Recommended first write capability:
 
 1. Add a Den `den.situation.get` design and eventually tool/API implementation.
 2. Replace `den.write_note` with `den.memory.write_entry` for ACP `pair`.
-3. Add memory browse/search/read/status APIs that can support both agents and the future human operator UI.
-4. Define the frontmatter schema for role-local memory entries.
-5. Update MemFS Manager role branch initialization to include conventional directories as needed.
-6. Design Cabinet metadata for `People`, `Missions`, and `Knowledge` spaces.
-7. Design the operator UI for browsing, searching, inspecting, and understanding Bear memory without implying everything is Cabinet-backed.
-8. Design Bear curated and Cabinet Mission archive provisioning, attachment, and source-to-passage index tables.
+3. Add `den.memory.request_review` for producer-side curation requests.
+4. Add memory browse/search/read/status APIs that can support both agents and the future human operator UI.
+5. Define the frontmatter schema for role-local memory entries.
+6. Update MemFS Manager role branch initialization to include conventional directories as needed.
+7. Design Cabinet metadata for `People`, `Missions`, and `Knowledge` spaces.
+8. Design the operator UI for browsing, searching, inspecting, and understanding Bear memory without implying everything is Cabinet-backed.
+9. Design Bear curated and Cabinet Mission archive provisioning, attachment, and source-to-passage index tables.

@@ -101,20 +101,24 @@ Extend `den.memory.write_entry` beyond `pair` only after pair is stable.
 | `work` | `log`, `decision`, `summary`, `scratch` | Should usually be bound to a task/run. Prefer `write_run_result` for results. |
 | `watch` | `log`, `summary`, `scratch` | Prefer `write_observation` for observations. |
 
-### P4 — governed promotion and history
+### P4 — governed review, promotion, and history
 
 Future tools:
 
 | Canonical | Provider-safe | Roles | Purpose |
 |---|---|---|---|
-| `den.memory.propose_core_write` | `den_memory_propose_core_write` | `talk`, `pair`, `work`, `watch` | Propose updates to curated `core/`. |
-| `den.memory.list_proposals` | `den_memory_list_proposals` | `curate` | List memory proposals. |
-| `den.memory.approve_core_write` | `den_memory_approve_core_write` | `curate` | Apply approved `core/` update with provenance. |
-| `den.memory.reject_proposal` | `den_memory_reject_proposal` | `curate` | Reject proposal with rationale. |
+| `den.memory.request_review` | `den_memory_request_review` | `talk`, `pair`, `work`, `watch` | Request curation of role-local memory without choosing the final outcome. |
+| `den.memory.list_proposals` | `den_memory_list_proposals` | `curate` | List memory review proposals. |
+| `den.memory.read_proposal` | `den_memory_read_proposal` | `curate` | Read one memory review proposal with source pointers and status. |
+| `den.memory.resolve_proposal` | `den_memory_resolve_proposal` | `curate` | Resolve a proposal as approved, rejected, retained local, deferred, superseded, or human-review-needed. |
+| `den.memory.apply_core_update` | `den_memory_apply_core_update` | `curate` | Apply a reviewed `core/` update with provenance. |
+| `den.memory.supersede_entry` | `den_memory_supersede_entry` | `curate` | Mark or record that source memory has been superseded by a `core`/Cabinet outcome. |
 | `den.memory.history` | `den_memory_history` | role-scoped, curate broader | Inspect commit/file history. |
 | `den.memory.diff` | `den_memory_diff` | role-scoped, curate broader | Inspect diffs between commits or proposal states. |
 | `den.memory.semantic_search` | `den_memory_semantic_search` | role-scoped by archive attachment/policy | Search Letta Archives as derived semantic indexes. |
 | `den.memory.index_curated_summary` | `den_memory_index_curated_summary` | `curate` / Den internal | Index selected curated summaries or pointers into Bear/mission Letta Archives. |
+
+`den.memory.request_review` supersedes narrower producer-side names such as `den.memory.propose_core_write` or `den.memory.propose_core_update`. The caller may provide a `suggested_action`, but `curate` decides the final outcome.
 
 ### P5 — Letta Archives semantic retrieval
 
@@ -528,17 +532,18 @@ Deliverables:
 3. Watch observations remain behind `write_observation`; generic entries avoid `kind: observation` initially.
 4. Tests by role and kind.
 
-### Slice 7 — promotion/history tools
+### Slice 7 — review/promotion/history tools
 
-Goal: implement governed memory lifecycle.
+Goal: implement governed memory lifecycle in a Reflection-compatible way.
 
 Deliverables:
 
-1. `den.memory.propose_core_write`.
+1. `den.memory.request_review` for producer roles, starting with `pair`.
 2. Curate proposal list/read.
-3. Curate approve/reject.
-4. History/diff APIs.
-5. UI-ready audit trail.
+3. Curate proposal resolution through `den.memory.resolve_proposal`.
+4. Constrained `core/` updates through `den.memory.apply_core_update` or equivalent structured core-write tools.
+5. History/diff APIs.
+6. UI-ready audit trail.
 
 ---
 

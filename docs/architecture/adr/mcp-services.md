@@ -43,7 +43,7 @@ The two tiers behave differently in the architecture. `den` is part of Bear's co
 
 The boundaries between the three servers reflect different concerns and different rates of change:
 
-**`den`** is for capabilities tightly coupled to Den's own lifecycle: provisioning, reconciliation, skill manifest mutations, observation recording (called by the watch agent), audit queries. Tools here change when Den itself changes. Examples: `propose_skill`, `write_observation`, `get_bear_health`, `request_memory_rollback`. Required for any Bear deployment.
+**`den`** is for capabilities tightly coupled to Den's own lifecycle: provisioning, reconciliation, skill manifest mutations, observation recording (called by the watch agent), memory review requests, Reflection audit queries. Tools here change when Den itself changes. Examples: `den.skill.propose`, `den.observation.write`, `den.memory.request_review`, `den.reflection.status`, `get_bear_health`, `request_memory_rollback`. Required for any Bear deployment.
 
 **`docket`** is for the task intent → approval → execution → results lifecycle, plus the project-management dimension that grows around it (dependencies, milestones, retrospectives, work-queue views, human reviewer assignments). Tools here change with the project-management feature set. Examples: `write_task_intent`, `approve_task_intent`, `reject_task_intent`, `query_task_status`, `write_run_result`. Although `docket` is necessary for the autonomous-work pipeline (talk and pair writing intents, curate approving them, work executing), it's a distinct service from `den` because:
 
@@ -97,8 +97,9 @@ Other roles' access:
 - `write_task_intent` (in Docket) is callable by talk and pair, rejected for curate, work, and watch.
 - `kb_search` (in Cabinet) is callable by talk, pair, and work; rejected for watch and curate.
 - `kb_contribute` (proposed contribution; in Cabinet) is callable by talk and pair (with curate review of the proposed contribution).
-- `propose_skill` (in `den`) is callable by any agent.
-- `approve_skill` (in `den`) is callable only by curate.
+- `den.skill.propose` (in `den`) is callable by roles allowed to request skill review.
+- `den.skill.approve_proposal` (in `den`) is callable only by curate or an explicitly authorized skill-review lane.
+- `den.memory.request_review` (in `den`) is callable by producer roles such as talk, pair, work, and watch for their own role-local memory.
 - `write_observation` (in `den`) is callable only by watch.
 
 This per-tool, per-role matrix lives in each MCP server's policy configuration. The skill manifest determines which tools are *attached* to each agent (defense in depth); the MCP server determines which calls are *authorized* (the real gate). Tools may be attached but unusable for a given role; that's an acceptable surface area cost.
@@ -137,14 +138,14 @@ Server upgrades are coordinated through Den: deploy the new version alongside th
 
 ### 9. Memory tools and the MemFS overlap
 
-Some `den` tools touch memory: `request_memory_rollback`, `query_memory_history`, `propose_core_write` (for agents that want to suggest a `core/` change without curate having seen it via a branch read). These overlap conceptually with MemFS, which the agents already use natively.
+Some `den` tools touch memory: `request_memory_rollback`, `query_memory_history`, and `den.memory.request_review` for agents that want Reflection/`curate` to review role-local memory. These overlap conceptually with MemFS, which agents may also use natively.
 
 The split:
 
 - **MemFS** is for the agent's natural memory access — files loaded into context, browsable as filesystem operations through Letta's existing MemFS layer. This is plumbing.
 - **`den` memory tools** are for cross-agent operations that require Den mediation — proposing writes, requesting rollbacks, querying historical states, recording provenance. This is governance.
 
-A talk agent reading its own `core/` files goes through MemFS. A talk agent that wants to suggest a `core/` change goes through `den`'s `propose_core_write` (which Den queues for curate review). The two paths to memory have different semantics on purpose: one is in-context plumbing, the other is auditable governance.
+A talk agent reading its own `core/` files goes through MemFS. A talk or pair agent that wants curation of role-local memory goes through `den.memory.request_review`, optionally with `suggested_action: promote_to_core`, `summarize_into_core`, `cabinet_update`, or `skill_review`. Den queues the request for Reflection/`curate` review. The two paths to memory have different semantics on purpose: one is in-context plumbing, the other is auditable governance.
 
 ## Consequences
 

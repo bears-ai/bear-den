@@ -31,10 +31,10 @@ This checklist translates the durable role model in [`../concepts/BEAR_AGENT_ROL
 - Den validates the trusted invocation context against `bear_agents` using `role_agent_id` and, when supplied, `agent_role`.
 - Architecture-critical tool names and JSON schemas are registered, even where handlers intentionally return not-yet-implemented errors.
 - Current registered runtime-critical tool groups:
-  - `talk` / `pair`: `den.task.write_intent`, `den.skill.propose`, work-plan read/update/handoff tools.
-  - `curate`: `den.task.approve_intent`, `den.task.reject_intent`, `den.core.write_result_summary`, `den.skill.approve_proposal`, `den.skill.reject_proposal`, `den.skill.propose`, work-plan read tools.
-  - `work`: `den.run.write_result`, work-plan read/update tools, `den.skill.propose`.
-  - `watch`: `den.observation.write`, `den.skill.propose`.
+  - `talk` / `pair`: `den.task.write_intent`, `den.skill.propose`, `den.memory.request_review`, work-plan read/update/handoff tools.
+  - `curate`: `den.task.approve_intent`, `den.task.reject_intent`, `den.core.write_result_summary`, `den.skill.approve_proposal`, `den.skill.reject_proposal`, `den.skill.propose`, memory proposal review tools, work-plan read tools.
+  - `work`: `den.run.write_result`, work-plan read/update tools, `den.skill.propose`, `den.memory.request_review`.
+  - `watch`: `den.observation.write`, `den.skill.propose`, `den.memory.request_review`.
 
 ### C. Task intent capture for `talk` and `pair` — next
 
@@ -57,12 +57,12 @@ Acceptance:
 
 ### D. Skill proposal and review lifecycle
 
-Goal: any role can propose durable skills, while only `curate` can approve or reject installation into the canonical skill manifest.
+Goal: allowed roles can propose durable skills, while only `curate` or an explicitly authorized skill-review lane can approve or reject installation into the canonical skill manifest.
 
 Tasks:
 
 1. Implement `den.skill.propose` using `bear_skill_proposals` with payload validation, provenance, content hash, and proposed role applicability.
-2. Implement `den.skill.approve_proposal` and `den.skill.reject_proposal` for `curate` only.
+2. Implement `den.skill.approve_proposal` and `den.skill.reject_proposal` for `curate` initially, with room for a future explicitly authorized skill-review lane.
 3. On approval, update `bear_skills_manifest`, record reviewer metadata, and trigger provisioning/reconciliation for affected roles.
 4. Replace placeholder skill projection hashing in role config with a hash of the role-relevant manifest slice.
 5. Add tests for proposal creation, invalid payload rejection, curate-only approval/rejection, manifest updates, and affected-role reconciliation triggers.
@@ -251,7 +251,7 @@ Acceptance:
    - `reconcile_bear(bear_id)` — checks each agent's actual tool/prompt/skill state against canonical, reports drift. Idempotent fix-up.
    - `get_bear(bear_id)` — returns the bear with its five agent IDs and roles.
    - `list_bear_skills(bear_id) -> manifest entries` — returns the current skill manifest for a Bear.
-   - `propose_skill(bear_id, agent_id, payload) -> proposal_id` — registers a skill proposal for curate review (called by the agent-side proposal tool, not directly by humans).
+   - `propose_skill(bear_id, agent_id, payload) -> proposal_id` — internal/service method behind `den.skill.propose`; registers a skill proposal for Reflection/curate review (called by the agent-side proposal tool, not directly by humans).
 3. Write integration tests for these endpoints against a test Letta server.
 
 ### Acceptance
@@ -261,7 +261,7 @@ Acceptance:
 - Admin detail tooling can provision only missing role agents for a Bear without replacing already-recorded role agent ids.
 - `reconcile_bear` returns no drift immediately after provisioning.
 - `reconcile_bear` detects and corrects drift after manually mutating an agent's tool roster via the Letta API.
-- `list_bear_skills` returns the manifest contents and `propose_skill` writes a `pending_review` row.
+- `list_bear_skills` returns the manifest contents and the internal `propose_skill` method behind `den.skill.propose` writes a `pending_review` row.
 
 ---
 

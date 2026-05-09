@@ -116,14 +116,27 @@ Promotion should be a new commit with provenance, not a raw file copy.
 
 ### Proposal tools for non-curate roles
 
-Non-curate roles should not write `core/`. They can create review proposals.
+Non-curate roles should not write `core/` or Cabinet directly. They can request review of role-local memory.
 
 | Canonical | Provider-safe | Roles | Purpose |
 |---|---|---|---|
-| `den.memory.propose_core_update` | `den_memory_propose_core_update` | `talk`, `pair`, `work`, `watch` | Propose a summarized update to shared Bear memory. |
-| `den.memory.propose_cabinet_update` | `den_memory_propose_cabinet_update` | `talk`, `pair`, `work`, `watch`, maybe `curate` | Propose a Cabinet update or new Cabinet page. |
+| `den.memory.request_review` | `den_memory_request_review` | `talk`, `pair`, `work`, `watch` | Request curation of role-local memory without choosing the final outcome. |
 
-Proposals should reference source memory paths rather than embedding all source content.
+`den.memory.request_review` supersedes narrower producer-side names such as `den.memory.propose_core_update`, `den.memory.propose_core_write`, and `den.memory.propose_cabinet_update`. The request may include a `suggested_action`, such as `summarize_into_core`, `promote_to_core`, `cabinet_update`, `skill_review`, `retain_role_local`, `delete_after_review`, `human_review`, or `unspecified`.
+
+Review requests should reference source memory paths rather than embedding all source content.
+
+Initial `den.memory.request_review` input shape:
+
+- `source_paths`: role-local memory paths owned by the caller role;
+- `title`: concise review title;
+- `summary`: what the source memory says;
+- `rationale`: why review is useful;
+- `suggested_action`: optional action hint;
+- `target_ref`: optional `core/`, Cabinet, skill, domain, project, or freeform target hint;
+- `refs`: optional semantic references;
+- `sensitivity`: `normal`, `person`, `secret_risk`, `external_untrusted`, or `unknown`;
+- `requires_human`: optional human-review flag.
 
 ### Review tools for `curate`
 
@@ -131,8 +144,8 @@ Proposals should reference source memory paths rather than embedding all source 
 |---|---|---|
 | `den.memory.list_proposals` | `den_memory_list_proposals` | List pending memory proposals. |
 | `den.memory.read_proposal` | `den_memory_read_proposal` | Read one proposal with source pointers and status. |
-| `den.memory.approve_core_update` | `den_memory_approve_core_update` | Write reviewed shared memory into `core/`. |
-| `den.memory.reject_proposal` | `den_memory_reject_proposal` | Reject or no-op a proposal with rationale. |
+| `den.memory.resolve_proposal` | `den_memory_resolve_proposal` | Resolve a proposal as approved, rejected, retained local, deferred, superseded, or human-review-needed. |
+| `den.memory.apply_core_update` | `den_memory_apply_core_update` | Apply a reviewed shared memory update into `core/` with provenance. |
 | `den.memory.supersede_entry` | `den_memory_supersede_entry` | Mark or record that a role-local entry has been superseded by a core/Cabinet entry. |
 
 ### Cabinet tools
@@ -173,12 +186,20 @@ Fields:
 - `source_paths text[] not null default '{}'`
 - `source_refs jsonb not null default '[]'`
   - each source ref records role, path, canonical commit, and optional content hash at proposal time
-- `proposal_type text not null`
-  - `core_update`
+- `proposal_type text not null default 'memory_review'`
+  - `memory_review`
+  - future specialized values only if needed
+- `suggested_action text not null default 'unspecified'`
+  - `unspecified`
+  - `summarize_into_core`
+  - `promote_to_core`
   - `cabinet_update`
-  - `supersede`
+  - `skill_review`
+  - `retain_role_local`
+  - `delete_after_review`
+  - `human_review`
 - `target_ref text null`
-  - e.g. `core/charter.md`, `core/projects.md`, `cabinet:missions/bears`, or freeform target hint
+  - e.g. `core/charter.md`, `core/projects.md`, `cabinet:missions/bears`, a skill/playbook hint, or freeform target hint
 - `title text not null`
 - `summary text not null`
 - `rationale text not null default ''`
@@ -190,9 +211,13 @@ Fields:
 - `requires_human boolean not null default false`
 - `status text not null`
   - `pending`
+  - `in_review`
   - `approved`
   - `rejected`
+  - `retained_local`
+  - `deferred`
   - `superseded`
+  - `needs_human_review`
 
 - `reviewer_role text null`
 - `reviewer_agent_id text null`
@@ -471,13 +496,13 @@ Deliverables:
 4. Curation queue page.
 5. Curate-visible proposal listing so autonomous curation can operate on the queue.
 
-### Slice 2 — Pair proposes core updates
+### Slice 2 — Pair requests memory review
 
 Deliverables:
 
-1. `den.memory.propose_core_update` descriptor for `pair`.
-2. Tool implementation writes proposal rows, not `core/`.
-3. ACP pair prompt guidance: propose shared updates; do not write core.
+1. `den.memory.request_review` descriptor for `pair`.
+2. Tool implementation writes proposal rows, not `core` or Cabinet.
+3. ACP pair prompt guidance: request curation for cross-role or durable shared candidates; do not write core.
 4. Tests for proposal creation and role authorization.
 
 ### Slice 3 — Curate read/review tools
@@ -489,12 +514,12 @@ Deliverables:
 3. `den.memory.read_proposal` for `curate`.
 4. Tests for curate visibility and non-curate denial.
 
-### Slice 4 — Curate agent approval and core write tools
+### Slice 4 — Curate proposal resolution and core write tools
 
 Deliverables:
 
-1. `den.memory.approve_core_update` for `curate`.
-2. `den.memory.reject_proposal` for `curate`.
+1. `den.memory.resolve_proposal` for `curate`.
+2. `den.memory.apply_core_update` or equivalent constrained core-write tools for `curate`.
 3. `den.memory.compact_core` or equivalent bounded core-cleanup tool.
 4. Den writes normal Git commits to policy-approved `core/` paths.
 5. Registered views are reconciled/reset as needed.
@@ -525,7 +550,7 @@ Deliverables:
 
 Deliverables:
 
-1. `den.memory.propose_cabinet_update` creates proposal rows with Cabinet target hints.
+1. `den.memory.request_review` supports `suggested_action: cabinet_update` and Cabinet target hints.
 2. Cabinet UI/tooling can accept, edit, or reject proposed updates.
 3. Link approved Cabinet entries back to source memory proposals and derived archive passages where applicable.
 

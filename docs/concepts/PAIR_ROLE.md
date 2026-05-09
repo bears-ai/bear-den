@@ -229,6 +229,18 @@ pair/decisions/<entry-id>.md
 
 It must not write `core/` directly, Cabinet, tasks, observations, or run results.
 
+### Memory review tools
+
+Future tool:
+
+- `den_memory_request_review`
+
+`den_memory_request_review` is the producer-side Reflection tool for asking `curate` to review pair-local memory. It creates a memory proposal row for the `memory_curate` lane; it does not write `core/`, Cabinet, skills, tasks, observations, or run results.
+
+Pair should use this when local memory may matter beyond future pair sessions. The request can include a `suggested_action`, such as `summarize_into_core`, `promote_to_core`, `cabinet_update`, `skill_review`, `retain_role_local`, `delete_after_review`, `human_review`, or `unspecified`. `curate` decides the final outcome.
+
+Pair should not request review for every local note. Most tactical notes can remain pair-local forever.
+
 ### Structured delegation tools
 
 Future tool once Docket exists:
@@ -241,11 +253,9 @@ Until Docket exists, pair should explain that background task creation is not ye
 
 ### Skill proposal tools
 
-Candidate tool:
+Skill learning belongs to Reflection's adaptation lane. Pair should not directly install durable skills.
 
-- `propose_skill`
-
-Pair uses this when the user asks it to learn a reusable procedure.
+When pair discovers a reusable procedure, repeated failure mode, or user-requested behavior change, it should first write appropriate pair-local memory and then use `den_memory_request_review` with `suggested_action: skill_review` once that tool exists. Future dedicated skill tools may be added under Den's skill namespace, but they should remain proposal-and-review based.
 
 ## `den_memory_write_entry` naming
 
@@ -294,13 +304,21 @@ Pair should distinguish between:
 
 Pair should not treat every docs lookup as memory. It should only write notes when the information is likely useful beyond the current turn.
 
+Pair's memory decision ladder:
+
+1. **Use only in the current turn** when the information is temporary or already available from source files/docs.
+2. **Write pair-local memory** when the information is durable for future pair sessions.
+3. **Request Reflection review** when the information may matter across roles, belongs in `core/`, suggests a Cabinet update, or indicates a reusable skill/procedure.
+4. **Never directly mutate shared memory or behavior** from pair.
+
 ## Recommended first implementation order
 
 1. Implement Den-mediated `web_search` / `web_fetch` or docs-oriented equivalents for pair.
 2. Implement role-aware `den_memory_write_entry` for pair-local memory.
 3. Expose web, situation, and memory tools to the pair prompt/tool profile.
 4. Add diagnostics and tests showing pair can write to `pair/notes/` but cannot write `core/`.
-5. Implement Docket-backed `write_task_intent` later for broad research delegation.
+5. Implement `den_memory_request_review` so pair can request Reflection curation without writing shared memory.
+6. Implement Docket-backed `write_task_intent` later for broad research delegation.
 
 ## Good pair behavior examples
 
@@ -324,7 +342,7 @@ User:
 
 Pair:
 
-> Noted for future pair sessions. I wrote this to pair-local memory; curate can promote it if it should become shared Bear memory.
+> Noted for future pair sessions. I wrote this to pair-local memory. If you want, I can also request Reflection review so `curate` can decide whether it belongs in shared Bear memory.
 
 ### Broad research
 
