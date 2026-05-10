@@ -57,7 +57,7 @@ use crate::{
         archived_conversations,
         bears::{db as bears_db, Bear, BearAgentRole},
         den_tools::{self, DenToolChannelContext, DenToolInvocationContext},
-        letta::{load_agent_conversations, LettaContinuationContext},
+        letta::{load_agent_conversations, strip_letta_harness_for_user, LettaContinuationContext},
         user, web_policy,
         work_plans::{self, WorkPlanLookup},
     },
@@ -925,6 +925,19 @@ fn letta_message_created_at(msg: &serde_json::Value) -> Option<String> {
         .map(str::to_string)
 }
 
+fn letta_user_message_role_is_human(inner: &serde_json::Value, msg: &serde_json::Value) -> bool {
+    for v in [inner, msg] {
+        let Some(role) = v.get("role").and_then(|x| x.as_str()) else {
+            continue;
+        };
+        let r = role.trim();
+        if r.eq_ignore_ascii_case("system") || r.eq_ignore_ascii_case("developer") {
+            return false;
+        }
+    }
+    true
+}
+
 fn map_acp_history_page(
     body: &serde_json::Value,
     page_limit: u32,
@@ -945,9 +958,16 @@ fn map_acp_history_page(
             "assistant_message" => "assistant",
             _ => continue,
         };
+        if message_type == "user_message" && !letta_user_message_role_is_human(inner, msg) {
+            continue;
+        }
         let Some(text) = letta_message_text(inner).or_else(|| letta_message_text(msg)) else {
             continue;
         };
+        let text = strip_letta_harness_for_user(&text);
+        if text.trim().is_empty() {
+            continue;
+        }
         rows.push(AcpConversationHistoryMessage {
             role: role.to_string(),
             text,
@@ -3248,6 +3268,41 @@ mod tests {
             body["messages"][0]["approvals"][0]["tool_call_id"],
             "call_test"
         );
+    }
+
+    #[test]
+    fn acp_history_filters_system_scoped_user_messages_and_reminder_suffixes() {
+        let body = serde_json::json!({
+            "messages": [
+                {
+                    "id": "msg-system-user",
+                    "date": "2026-05-10T00:00:00Z",
+                    "message_type": "user_message",
+                    "role": "system",
+                    "content": "BEARS ACP direct local workspace tools available this turn: fs_read_text_file."
+                },
+                {
+                    "id": "msg-assistant",
+                    "date": "2026-05-10T00:00:01Z",
+                    "message_type": "assistant_message",
+                    "content": "Done.\n<system-reminder>hidden harness</system-reminder>"
+                },
+                {
+                    "id": "msg-human",
+                    "date": "2026-05-10T00:00:02Z",
+                    "message_type": "user_message",
+                    "content": "Please check this thread.\n<system-reminder>adapter-only instructions</system-reminder>"
+                }
+            ]
+        });
+        let (messages, has_more, next_before) = map_acp_history_page(&body, 50);
+        assert!(!has_more);
+        assert_eq!(next_before.as_deref(), Some("msg-human"));
+        assert_eq!(messages.len(), 2);
+        assert_eq!(messages[0].role, "assistant");
+        assert_eq!(messages[0].text, "Done.");
+        assert_eq!(messages[1].role, "user");
+        assert_eq!(messages[1].text, "Please check this thread.");
     }
 
     #[test]
