@@ -737,7 +737,7 @@ fn acp_direct_tool_prompt_context(
     if tool_names.contains(&"fs_read_text_file") {
         guidance.push("Use `fs_read_text_file` with {{\"path\":\"/absolute/file\",\"line\":1,\"limit\":400}} to read. Do not guess file contents.".to_string());
     }
-    guidance.push("Use server tools for non-local capabilities: `session_info` for trusted information about the authenticated human, current bear, role, session, memory scopes, and policy; `memory_write_entry` for durable pair-local notes, logs, decisions, reflections, scratch, summaries, and approved plan artifacts attributed to the authenticated human; `memory_status`, `memory_browse`, `memory_read`, and `memory_search` to inspect Bear memory; `den_work_plan_update` to keep a short visible todo/progress plan for the current mini-project with at most one `in_progress` item; `den_work_plan_get_status` and `den_work_plan_list` to recover visible plan state; `den_work_plan_request_handoff` when channel work should become a durable reviewed task intent; `den_plan_mode_enter` before substantial implementation planning that should gate mutation; `den_plan_mode_exit` to submit the markdown implementation plan for user approval; `den_plan_mode_status` and `den_plan_mode_cancel` to manage that gate; `web_fetch` for bounded HTTP(S) page fetching; and `web_search` only when a Den search provider is configured. Do not use memory entry tools for tasks, observations, run results, Cabinet writes, or direct core updates.".to_string());
+    guidance.push("Use server tools for non-local capabilities: `session_info` for trusted information about the authenticated human, current bear, role, session, memory scopes, and policy; `memory_write_entry` for durable pair-local notes, logs, decisions, reflections, scratch, summaries, and approved plan artifacts attributed to the authenticated human; `memory_status`, `memory_browse`, `memory_read`, and `memory_search` to inspect Bear memory; `update_plan` to keep a short visible todo/progress plan for the current mini-project with at most one `in_progress` item; `get_plan_status` and `list_plans` to recover visible plan state; `request_work_handoff` when channel work should become a durable reviewed task intent; `enter_plan_mode` before substantial implementation planning that should gate mutation; `exit_plan_mode` to submit the markdown implementation plan for user approval; `get_plan_mode_status` and `cancel_plan_mode` to manage that gate; `web_fetch` for bounded HTTP(S) page fetching; and `web_search` only when a Den search provider is configured. Do not use memory entry tools for tasks, observations, run results, Cabinet writes, or direct core updates.".to_string());
     if tool_names.contains(&"fs_edit_file") {
         guidance.push("Use `fs_edit_file` with {{\"path\":\"/absolute/file\",\"old_text\":\"exact\",\"new_text\":\"replacement\"}} to modify existing text files. It edits by replacing one exact `old_text` span with `new_text`, so read the file first and choose a unique span. Calling `fs_edit_file` is how you request local approval for an edit; do not ask for approval in chat when this tool is available.".to_string());
         guidance.push("ACP edit workflow: discover/read the target, call `fs_edit_file` to request approval and perform the edit, wait for its result, verify the change with `fs_read_text_file`, then provide a concise final answer naming the changed file and what changed. Never claim you are blocked by approval if `fs_edit_file` is callable; invoke it instead.".to_string());
@@ -769,7 +769,7 @@ async fn acp_plan_mode_prompt_context(
         return Ok(String::new());
     };
     Ok(format!(
-        "\n\n<system-reminder>ACP plan mode is active for this session. plan_mode_id={} state={} artifact={}. You may inspect/read/search and use Den read-only tools. Do not mutate workspace files, run non-read-only shell commands, or perform external side effects until the submitted plan is approved. Use `den_plan_mode_exit` to submit the markdown implementation plan for approval.</system-reminder>",
+        "\n\n<system-reminder>ACP plan mode is active for this session. plan_mode_id={} state={} artifact={}. You may inspect/read/search and use Den read-only tools. Do not mutate workspace files, run non-read-only shell commands, or perform external side effects until the submitted plan is approved. Use `exit_plan_mode` to submit the markdown implementation plan for approval.</system-reminder>",
         plan_mode.id,
         plan_mode.state,
         plan_mode
@@ -2349,12 +2349,12 @@ fn plan_mode_denial_result(
         approval_request_id: approval_request_id.map(str::to_string),
         status: "permission_denied".to_string(),
         content: Some(format!(
-            "ACP plan mode is active; `{denied_tool}` is blocked until the submitted plan is approved. Use read/search/inspect tools or den_plan_mode_exit to submit the plan."
+            "ACP plan mode is active; `{denied_tool}` is blocked until the submitted plan is approved. Use read/search/inspect tools or exit_plan_mode to submit the plan."
         )),
         structured_content: serde_json::json!({
             "blocked_by": "acp_plan_mode",
             "denied_tool": denied_tool,
-            "allowed_action": "submit a plan with den_plan_mode_exit and wait for approval",
+            "allowed_action": "submit a plan with exit_plan_mode and wait for approval",
         }),
         diagnostic: serde_json::json!({
             "component": "den.acp",

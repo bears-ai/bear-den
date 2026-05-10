@@ -3573,7 +3573,7 @@ async fn handle_tool_request_event(
     match result {
         Ok(value) => {
             status = "ok";
-            if tool_name == "den_work_plan_update" {
+            if tool_name == "update_plan" {
                 let entries = value
                     .get("plan")
                     .map(plan_entries_from_work_plan_args)
@@ -4198,7 +4198,7 @@ async fn handle_permission_request_event(
         let started = std::time::Instant::now();
         match result {
             Ok(value) => {
-                if tool_name == "den_work_plan_update" {
+                if tool_name == "update_plan" {
                     let entries = value
                         .get("plan")
                         .map(plan_entries_from_work_plan_args)

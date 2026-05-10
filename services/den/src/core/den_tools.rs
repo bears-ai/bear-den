@@ -54,13 +54,21 @@ pub const DEN_SKILL_PROPOSE: &str = "den.skill.propose";
 pub const DEN_SKILL_APPROVE_PROPOSAL: &str = "den.skill.approve_proposal";
 pub const DEN_SKILL_REJECT_PROPOSAL: &str = "den.skill.reject_proposal";
 pub const DEN_WORK_PLAN_LIST: &str = "den.work_plan.list";
+pub const DEN_WORK_PLAN_LIST_PROVIDER: &str = "list_plans";
 pub const DEN_WORK_PLAN_GET_STATUS: &str = "den.work_plan.get_status";
+pub const DEN_WORK_PLAN_GET_STATUS_PROVIDER: &str = "get_plan_status";
 pub const DEN_WORK_PLAN_UPDATE: &str = "den.work_plan.update";
+pub const DEN_WORK_PLAN_UPDATE_PROVIDER: &str = "update_plan";
 pub const DEN_WORK_PLAN_REQUEST_HANDOFF: &str = "den.work_plan.request_handoff";
+pub const DEN_WORK_PLAN_REQUEST_HANDOFF_PROVIDER: &str = "request_work_handoff";
 pub const DEN_PLAN_MODE_ENTER: &str = "den.plan_mode.enter";
+pub const DEN_PLAN_MODE_ENTER_PROVIDER: &str = "enter_plan_mode";
 pub const DEN_PLAN_MODE_STATUS: &str = "den.plan_mode.status";
+pub const DEN_PLAN_MODE_STATUS_PROVIDER: &str = "get_plan_mode_status";
 pub const DEN_PLAN_MODE_EXIT: &str = "den.plan_mode.exit";
+pub const DEN_PLAN_MODE_EXIT_PROVIDER: &str = "exit_plan_mode";
 pub const DEN_PLAN_MODE_CANCEL: &str = "den.plan_mode.cancel";
+pub const DEN_PLAN_MODE_CANCEL_PROVIDER: &str = "cancel_plan_mode";
 pub const DEN_TASK_WRITE_INTENT: &str = "den.task.write_intent";
 pub const DEN_TASK_APPROVE_INTENT: &str = "den.task.approve_intent";
 pub const DEN_TASK_REJECT_INTENT: &str = "den.task.reject_intent";
@@ -87,6 +95,14 @@ pub fn provider_safe_tool_name(name: &str) -> String {
         DEN_MEMORY_TREE => return DEN_MEMORY_TREE_PROVIDER.to_string(),
         DEN_MEMORY_READ => return DEN_MEMORY_READ_PROVIDER.to_string(),
         DEN_MEMORY_SEARCH => return DEN_MEMORY_SEARCH_PROVIDER.to_string(),
+        DEN_WORK_PLAN_LIST => return DEN_WORK_PLAN_LIST_PROVIDER.to_string(),
+        DEN_WORK_PLAN_GET_STATUS => return DEN_WORK_PLAN_GET_STATUS_PROVIDER.to_string(),
+        DEN_WORK_PLAN_UPDATE => return DEN_WORK_PLAN_UPDATE_PROVIDER.to_string(),
+        DEN_WORK_PLAN_REQUEST_HANDOFF => return DEN_WORK_PLAN_REQUEST_HANDOFF_PROVIDER.to_string(),
+        DEN_PLAN_MODE_ENTER => return DEN_PLAN_MODE_ENTER_PROVIDER.to_string(),
+        DEN_PLAN_MODE_STATUS => return DEN_PLAN_MODE_STATUS_PROVIDER.to_string(),
+        DEN_PLAN_MODE_EXIT => return DEN_PLAN_MODE_EXIT_PROVIDER.to_string(),
+        DEN_PLAN_MODE_CANCEL => return DEN_PLAN_MODE_CANCEL_PROVIDER.to_string(),
         _ => {}
     }
     let safe: String = name
@@ -2275,6 +2291,20 @@ mod tests {
             .find(|descriptor| descriptor.name == DEN_MEMORY_WRITE_ENTRY)
             .expect("memory write descriptor exists");
         assert_eq!(memory.provider_name, DEN_MEMORY_WRITE_ENTRY_PROVIDER);
+
+        let update_plan = descriptors
+            .iter()
+            .find(|descriptor| descriptor.name == DEN_WORK_PLAN_UPDATE)
+            .expect("work plan update descriptor exists");
+        assert_eq!(update_plan.provider_name, DEN_WORK_PLAN_UPDATE_PROVIDER);
+        assert_eq!(update_plan.provider_name, "update_plan");
+
+        let enter_plan_mode = descriptors
+            .iter()
+            .find(|descriptor| descriptor.name == DEN_PLAN_MODE_ENTER)
+            .expect("enter plan mode descriptor exists");
+        assert_eq!(enter_plan_mode.provider_name, DEN_PLAN_MODE_ENTER_PROVIDER);
+        assert_eq!(enter_plan_mode.provider_name, "enter_plan_mode");
     }
 
     #[test]
@@ -2287,11 +2317,17 @@ mod tests {
         assert!(provider_names.contains("web_search"));
         assert!(provider_names.contains("memory_browse"));
         assert!(provider_names.contains("memory_read"));
+        assert!(provider_names.contains("update_plan"));
+        assert!(provider_names.contains("enter_plan_mode"));
+        assert!(provider_names.contains("exit_plan_mode"));
+        assert!(provider_names.contains("cancel_plan_mode"));
         assert!(!provider_names.contains("situation_get"));
         assert!(!provider_names.contains("memory_tree"));
         assert!(!provider_names.contains("den_situation_get"));
         assert!(!provider_names.contains("den_web_search"));
         assert!(!provider_names.contains("den_memory_read"));
+        assert!(!provider_names.contains("den_work_plan_update"));
+        assert!(!provider_names.contains("den_plan_mode_enter"));
     }
 
     #[test]
