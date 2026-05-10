@@ -69,6 +69,10 @@ const BEARS_ACP_ADAPTER_CONTRACT_NAME: &str = "bears.acp.adapter";
 const BEARS_ACP_ADAPTER_CONTRACT_CURRENT: u32 = 1;
 const BEARS_ACP_ADAPTER_CONTRACT_MIN_SUPPORTED: u32 = 1;
 const BEARS_ACP_ADAPTER_CONTRACT_MAX_SUPPORTED: u32 = 1;
+// Missing contract metadata is accepted for compatibility with already-running
+// adapter processes. Set this to true only when a Den change is actually
+// incompatible with adapters that do not send `adapter_contract`.
+const BEARS_ACP_ADAPTER_CONTRACT_REQUIRED: bool = false;
 
 fn acp_debug_event_sample_chars() -> usize {
     std::env::var("ACP_DEBUG_EVENT_SAMPLE_CHARS")
@@ -193,6 +197,8 @@ struct AcpErrorResponse {
     minimum_adapter_contract_version: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     current_adapter_contract_version: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    maximum_adapter_contract_version: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     suggested_action: Option<&'static str>,
 }
@@ -409,7 +415,10 @@ fn adapter_contract_from_value(value: &serde_json::Value) -> Option<AdapterContr
 
 fn check_adapter_contract(contract: Option<&AdapterContract>) -> Result<(), AcpCompatibilityError> {
     let Some(contract) = contract else {
-        return Err(AcpCompatibilityError::AdapterOutOfDate { version: 0 });
+        if BEARS_ACP_ADAPTER_CONTRACT_REQUIRED {
+            return Err(AcpCompatibilityError::AdapterOutOfDate { version: 0 });
+        }
+        return Ok(());
     };
     if contract.name != BEARS_ACP_ADAPTER_CONTRACT_NAME {
         return Err(AcpCompatibilityError::AdapterOutOfDate {
@@ -440,14 +449,14 @@ fn acp_compatibility_error_response(err: AcpCompatibilityError, request_id: Uuid
         AcpCompatibilityError::AdapterOutOfDate { version } => (
             StatusCode::UPGRADE_REQUIRED,
             "adapter_out_of_date",
-            "Your BEARS ACP adapter is out of date for this Den server.",
+            "The BEARS ACP adapter is older than this Den server.",
             "Update bears-acp-adapter and restart your ACP client.",
             version,
         ),
         AcpCompatibilityError::DenOutOfDate { version } => (
             StatusCode::CONFLICT,
             "den_out_of_date",
-            "Your BEARS Den server is out of date for this ACP adapter.",
+            "This BEARS Den server is older than the ACP adapter.",
             "Deploy the matching BEARS Den server or use an older adapter.",
             version,
         ),
@@ -469,6 +478,7 @@ fn acp_compatibility_error_response(err: AcpCompatibilityError, request_id: Uuid
         adapter_contract_version: Some(adapter_version),
         minimum_adapter_contract_version: Some(BEARS_ACP_ADAPTER_CONTRACT_MIN_SUPPORTED),
         current_adapter_contract_version: Some(BEARS_ACP_ADAPTER_CONTRACT_CURRENT),
+        maximum_adapter_contract_version: Some(BEARS_ACP_ADAPTER_CONTRACT_MAX_SUPPORTED),
         suggested_action: Some(suggested_action),
     })
     .unwrap_or_else(|_| "{\"error\":\"response serialization failed\"}".to_string());
@@ -488,12 +498,12 @@ fn compatibility_tool_result_body(
     let (status, message, phase) = match err {
         AcpCompatibilityError::AdapterOutOfDate { .. } => (
             "error",
-            "Your BEARS ACP adapter is out of date for this Den server. Update bears-acp-adapter and restart your ACP client.",
+            "The BEARS ACP adapter is older than this Den server. Update bears-acp-adapter and restart your ACP client.",
             "adapter_contract_out_of_date",
         ),
         AcpCompatibilityError::DenOutOfDate { .. } => (
             "error",
-            "Your BEARS Den server is out of date for this ACP adapter. Deploy the matching Den server or use an older adapter.",
+            "This BEARS Den server is older than the ACP adapter. Deploy the matching Den server or use an older adapter.",
             "den_contract_out_of_date",
         ),
     };
@@ -507,6 +517,7 @@ fn compatibility_tool_result_body(
         "tool_call_id": tool_call_id,
         "minimum_adapter_contract_version": BEARS_ACP_ADAPTER_CONTRACT_MIN_SUPPORTED,
         "current_adapter_contract_version": BEARS_ACP_ADAPTER_CONTRACT_CURRENT,
+        "maximum_adapter_contract_version": BEARS_ACP_ADAPTER_CONTRACT_MAX_SUPPORTED,
     });
     original
 }
@@ -548,6 +559,7 @@ fn acp_error_response(err: CustomError, request_id: Uuid) -> Response {
         adapter_contract_version: None,
         minimum_adapter_contract_version: None,
         current_adapter_contract_version: None,
+        maximum_adapter_contract_version: None,
         suggested_action: None,
     })
     .unwrap_or_else(|_| "{\"error\":\"response serialization failed\"}".to_string());
@@ -576,6 +588,7 @@ fn api_auth_error_response(err: ApiError, request_id: Uuid) -> Response {
         adapter_contract_version: None,
         minimum_adapter_contract_version: None,
         current_adapter_contract_version: None,
+        maximum_adapter_contract_version: None,
         suggested_action: None,
     })
     .unwrap_or_else(|_| "{\"error\":\"response serialization failed\"}".to_string());

@@ -4757,7 +4757,7 @@ fn den_compatibility_status_message(body: &str) -> Option<String> {
             let message = value
                 .get("error")
                 .and_then(Value::as_str)
-                .unwrap_or("Your BEARS ACP adapter is out of date for this Den server.");
+                .unwrap_or("The BEARS ACP adapter is older than this Den server.");
             let action = value
                 .get("suggested_action")
                 .and_then(Value::as_str)
@@ -4768,7 +4768,7 @@ fn den_compatibility_status_message(body: &str) -> Option<String> {
             let message = value
                 .get("error")
                 .and_then(Value::as_str)
-                .unwrap_or("Your BEARS Den server is out of date for this ACP adapter.");
+                .unwrap_or("This BEARS Den server is older than the ACP adapter.");
             let action = value
                 .get("suggested_action")
                 .and_then(Value::as_str)
