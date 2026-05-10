@@ -708,6 +708,16 @@ impl RuntimeConfig {
         self.config.is_some()
     }
 
+    fn token_is_present(&self) -> bool {
+        self.config
+            .as_ref()
+            .is_some_and(|config| !config.token.trim().is_empty())
+    }
+
+    fn should_advertise_auth_method(&self) -> bool {
+        !self.token_is_present()
+    }
+
     fn configuration_error_message(&self) -> String {
         let mut message = String::from(
             "bears-acp-adapter: configuration is incomplete, so prompts cannot be sent to BEARS yet. The adapter will stay running so the ACP client can display this message instead of reporting that the server shut down unexpectedly.\n\nFix the following:",
@@ -892,7 +902,7 @@ async fn handle_request(
             *shared_state.client_capabilities.lock().await =
                 adapter_state.client_capabilities.clone();
             if let Some(id) = request.id {
-                write_response(id, Ok(initialize_result()?)).await?;
+                write_response(id, Ok(initialize_result(runtime)?)).await?;
             }
         }
         "bears/read_text_file" => {
@@ -927,7 +937,7 @@ async fn handle_request(
                             .await?
                     }
                     Err(err) => {
-                        write_response(id, Err(auth_check_json_rpc_error(&err, None))).await?;
+                        write_response(id, Err(authenticate_json_rpc_error(&err, runtime))).await?;
                     }
                 }
             }
@@ -1996,7 +2006,7 @@ fn token_env_for_auth_method() -> String {
         .unwrap_or_else(|| "BEARS_DEN_TOKEN".to_string())
 }
 
-fn initialize_result() -> Result<Value> {
+fn initialize_result(runtime: &RuntimeConfig) -> Result<Value> {
     let capabilities = AgentCapabilities::new()
         .load_session(true)
         .mcp_capabilities(McpCapabilities::new().http(false).sse(false))
@@ -2014,24 +2024,29 @@ fn initialize_result() -> Result<Value> {
         );
     let info =
         Implementation::new("bears", env!("CARGO_PKG_VERSION")).title(Some("BEARS".to_string()));
-    let auth = AuthMethod::EnvVar(
-        AuthMethodEnvVar::new(
-            "bears_den_token",
-            "BEARS Code Token",
-            vec![AuthEnvVar::new(token_env_for_auth_method())
-                .label(Some("BEARS Code Token".to_string()))
-                .secret(true)],
-        )
-        .description(Some(
-            "Paste a Den ACP token. Tokens include the acp:chat scope.".to_string(),
-        ))
-        .link(Some("https://github.com/silarsis/BEARS".to_string())),
-    );
+    let auth_methods = if runtime.should_advertise_auth_method() {
+        vec![AuthMethod::EnvVar(
+            AuthMethodEnvVar::new(
+                "bears_den_token",
+                "BEARS Den Code Token",
+                vec![AuthEnvVar::new(token_env_for_auth_method())
+                    .label(Some("BEARS Den Code Token".to_string()))
+                    .secret(true)],
+            )
+            .description(Some(
+                "Bear-scoped Den Code token. Requires BEARS_DEN_API_URL and BEARS_BEAR_SLUG to be configured in the ACP agent server environment. This auth flow cannot fix Den server outages or deployment/version mismatches."
+                    .to_string(),
+            ))
+            .link(Some("https://github.com/silarsis/BEARS".to_string())),
+        )]
+    } else {
+        Vec::new()
+    };
     Ok(serde_json::to_value(
         InitializeResponse::new(ProtocolVersion::V1)
             .agent_capabilities(capabilities)
             .agent_info(Some(info))
-            .auth_methods(vec![auth]),
+            .auth_methods(auth_methods),
     )?)
 }
 
@@ -4664,6 +4679,18 @@ fn with_adapter_contract(mut payload: Value) -> Value {
     payload
 }
 
+fn authenticate_json_rpc_error(err: &anyhow::Error, runtime: &RuntimeConfig) -> Value {
+    let message = format!("{err:#}");
+    if runtime.config.is_none() || looks_like_configuration_error(err) {
+        return configuration_error(Some(json!({
+            "message": message,
+            "problems": runtime.diagnostics,
+            "hint": "Configure BEARS_DEN_API_URL, BEARS_BEAR_SLUG, and BEARS_DEN_TOKEN/BEARS_DEN_TOKEN_ENV in the ACP agent server environment, then restart the agent server.",
+        })));
+    }
+    auth_check_json_rpc_error(err, None)
+}
+
 fn auth_check_json_rpc_error(err: &anyhow::Error, token_hint: Option<&str>) -> Value {
     let message = format!("{err:#}");
     if looks_like_den_connectivity_error(err) {
@@ -4679,6 +4706,16 @@ fn auth_check_json_rpc_error(err: &anyhow::Error, token_hint: Option<&str>) -> V
         data["hint"] = json!(hint);
     }
     token_validation_error(Some(data))
+}
+
+fn looks_like_configuration_error(err: &anyhow::Error) -> bool {
+    err.chain().any(|cause| {
+        let message = cause.to_string();
+        message.contains("Missing BEARS_DEN_TOKEN")
+            || message.contains("Missing BEARS_DEN_API_URL")
+            || message.contains("Missing BEARS_BEAR_SLUG")
+            || message.contains("BEARS_DEN_TOKEN_ENV points at")
+    })
 }
 
 fn looks_like_den_connectivity_error(err: &anyhow::Error) -> bool {
