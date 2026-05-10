@@ -141,6 +141,8 @@ struct ToolPolicy {
 const MODE_ASK: &str = "ask";
 const MODE_PLAN: &str = "plan";
 const MODE_WRITE: &str = "write";
+const BEARS_ACP_ADAPTER_CONTRACT_NAME: &str = "bears.acp.adapter";
+const BEARS_ACP_ADAPTER_CONTRACT_VERSION: u32 = 1;
 
 impl ToolPolicy {
     fn risk(&self) -> &str {
@@ -1354,10 +1356,20 @@ async fn handle_request(
     Ok(())
 }
 
+fn adapter_contract_context() -> Value {
+    json!({
+        "name": BEARS_ACP_ADAPTER_CONTRACT_NAME,
+        "version": BEARS_ACP_ADAPTER_CONTRACT_VERSION,
+    })
+}
+
 fn adapter_capabilities_context() -> Value {
     json!({
         "name": "bears-acp-adapter",
         "version": env!("CARGO_PKG_VERSION"),
+        "git_sha": env!("BEARS_ACP_ADAPTER_GIT_SHA"),
+        "built_at_utc": env!("BEARS_ACP_ADAPTER_BUILT_AT_UTC"),
+        "api_contract": adapter_contract_context(),
         "direct_tools": {
             "fs_read_text_file": { "supported": true, "version": 1 },
             "fs_list_directory": { "supported": true, "version": 1 },
@@ -2519,6 +2531,7 @@ async fn post_session_lifecycle_action(
             HeaderValue::from_str(&format!("Bearer {}", config.token))?,
         )
         .header(CONTENT_TYPE, HeaderValue::from_static("application/json"))
+        .json(&json!({ "adapter_contract": adapter_contract_context() }))
         .send()
         .await
         .with_context(|| format!("post ACP session {action} to Den at {url}"))?;
@@ -2602,6 +2615,7 @@ async fn handle_prompt(
         "client": config.client,
         "client_capabilities": adapter_state.client_capabilities,
         "client_context": client_context.raw,
+        "adapter_contract": adapter_contract_context(),
     });
     if let Some(conversation_id) = conversation_id.as_deref() {
         den_payload["conversation_id"] = json!(conversation_id);
@@ -2936,6 +2950,9 @@ fn den_request_context(url: &str) -> String {
 }
 
 fn den_status_error_message(status: reqwest::StatusCode, body: &str) -> String {
+    if let Some(message) = den_compatibility_status_message(body) {
+        return message;
+    }
     let hint = match status.as_u16() {
         401 => "The bearer token was rejected. Check BEARS_DEN_TOKEN or --token-env and make sure the token is an active Den Code token.",
         403 => "The token authenticated but is not allowed to use this bear or ACP. Check bear membership and token scopes.",
@@ -3876,6 +3893,7 @@ async fn post_permission_result(
     permission_id: &str,
     payload: Value,
 ) -> Result<Value> {
+    let payload = with_adapter_contract(payload);
     let url = format!(
         "{}/acp/bears/{}/sessions/{}/permissions/{}",
         config.api_url,
@@ -3911,6 +3929,7 @@ async fn post_tool_result(
     tool_call_id: &str,
     payload: Value,
 ) -> Result<()> {
+    let payload = with_adapter_contract(payload);
     let url = format!(
         "{}/acp/bears/{}/sessions/{}/tool-results/{}",
         config.api_url,
@@ -4630,6 +4649,14 @@ async fn write_response(id: impl Into<Option<Value>>, result: Result<Value, Valu
     write_json(message).await
 }
 
+fn with_adapter_contract(mut payload: Value) -> Value {
+    if !payload.is_object() {
+        payload = json!({ "value": payload });
+    }
+    payload["adapter_contract"] = adapter_contract_context();
+    payload
+}
+
 fn auth_check_json_rpc_error(err: &anyhow::Error, token_hint: Option<&str>) -> Value {
     let message = format!("{err:#}");
     if looks_like_den_connectivity_error(err) {
@@ -4670,6 +4697,35 @@ fn token_validation_error(data: Option<Value>) -> Value {
 
 fn den_connectivity_error(data: Option<Value>) -> Value {
     json_rpc_error(-32012, "BEARS Den server unreachable", data)
+}
+
+fn den_compatibility_status_message(body: &str) -> Option<String> {
+    let value = serde_json::from_str::<Value>(body).ok()?;
+    match value.get("error_code").and_then(Value::as_str)? {
+        "adapter_out_of_date" => {
+            let message = value
+                .get("error")
+                .and_then(Value::as_str)
+                .unwrap_or("Your BEARS ACP adapter is out of date for this Den server.");
+            let action = value
+                .get("suggested_action")
+                .and_then(Value::as_str)
+                .unwrap_or("Update bears-acp-adapter and restart your ACP client.");
+            Some(format!("{message}\n\n{action}"))
+        }
+        "den_out_of_date" => {
+            let message = value
+                .get("error")
+                .and_then(Value::as_str)
+                .unwrap_or("Your BEARS Den server is out of date for this ACP adapter.");
+            let action = value
+                .get("suggested_action")
+                .and_then(Value::as_str)
+                .unwrap_or("Deploy the matching BEARS Den server or use an older adapter.");
+            Some(format!("{message}\n\n{action}"))
+        }
+        _ => None,
+    }
 }
 
 fn json_rpc_error(code: i64, message: &str, data: Option<Value>) -> Value {

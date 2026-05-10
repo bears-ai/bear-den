@@ -10,7 +10,7 @@ use uuid::Uuid;
 
 use crate::errors::CustomError;
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize)]
 pub struct AcpToolResultRequest {
     pub turn_id: Option<String>,
     pub request_id: Option<String>,
@@ -24,6 +24,8 @@ pub struct AcpToolResultRequest {
     pub structured_content: serde_json::Value,
     #[serde(default)]
     pub diagnostic: serde_json::Value,
+    #[serde(default)]
+    pub adapter_contract: Option<serde_json::Value>,
 }
 
 const SETTLED_RESULT_TTL: Duration = Duration::from_secs(5 * 60);

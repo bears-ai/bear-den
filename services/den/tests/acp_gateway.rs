@@ -369,6 +369,9 @@ async fn post_prompt(
     if body.get("client_context").is_none() {
         body["client_context"] = json!({ "cwd": "/tmp/acp-workspace" });
     }
+    if body.get("adapter_contract").is_none() {
+        body["adapter_contract"] = json!({ "name": "bears.acp.adapter", "version": 1 });
+    }
     let mut builder = Request::builder()
         .method("POST")
         .uri(format!("/acp/bears/{slug}/sessions/{session_id}/prompt"))
@@ -387,8 +390,11 @@ async fn post_permission_result(
     session_id: &str,
     permission_id: &str,
     token: Option<&str>,
-    body: Value,
+    mut body: Value,
 ) -> axum::response::Response {
+    if body.get("adapter_contract").is_none() {
+        body["adapter_contract"] = json!({ "name": "bears.acp.adapter", "version": 1 });
+    }
     let mut builder = Request::builder()
         .method("POST")
         .uri(format!(
@@ -409,8 +415,11 @@ async fn post_tool_result(
     session_id: &str,
     tool_call_id: &str,
     token: Option<&str>,
-    body: Value,
+    mut body: Value,
 ) -> axum::response::Response {
+    if body.get("adapter_contract").is_none() {
+        body["adapter_contract"] = json!({ "name": "bears.acp.adapter", "version": 1 });
+    }
     let mut builder = Request::builder()
         .method("POST")
         .uri(format!(

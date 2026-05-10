@@ -65,6 +65,10 @@ use crate::{
 };
 
 const ACP_SESSIONS_PAGE_SIZE: i64 = 50;
+const BEARS_ACP_ADAPTER_CONTRACT_NAME: &str = "bears.acp.adapter";
+const BEARS_ACP_ADAPTER_CONTRACT_CURRENT: u32 = 1;
+const BEARS_ACP_ADAPTER_CONTRACT_MIN_SUPPORTED: u32 = 1;
+const BEARS_ACP_ADAPTER_CONTRACT_MAX_SUPPORTED: u32 = 1;
 
 fn acp_debug_event_sample_chars() -> usize {
     std::env::var("ACP_DEBUG_EVENT_SAMPLE_CHARS")
@@ -140,6 +144,8 @@ pub struct AcpPromptRequest {
     pub client_capabilities: serde_json::Value,
     #[serde(default)]
     pub client_context: serde_json::Value,
+    #[serde(default)]
+    pub adapter_contract: Option<AdapterContract>,
 }
 
 #[derive(Debug, Serialize)]
@@ -157,6 +163,8 @@ struct AcpPermissionDecisionRequest {
     decision: String,
     #[serde(default)]
     plan_mode_id: Option<Uuid>,
+    #[serde(default)]
+    adapter_contract: Option<AdapterContract>,
 }
 
 #[derive(Debug, Serialize)]
@@ -179,6 +187,20 @@ struct AcpErrorResponse {
     error: String,
     error_code: &'static str,
     request_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    adapter_contract_version: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    minimum_adapter_contract_version: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    current_adapter_contract_version: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    suggested_action: Option<&'static str>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct AdapterContract {
+    name: String,
+    version: u32,
 }
 
 #[derive(Debug, Deserialize)]
@@ -381,6 +403,77 @@ fn require_absolute_cwd(raw: Option<&str>) -> Result<String, CustomError> {
     }
 }
 
+fn adapter_contract_from_value(value: &serde_json::Value) -> Option<AdapterContract> {
+    serde_json::from_value(value.get("adapter_contract")?.clone()).ok()
+}
+
+fn check_adapter_contract(contract: Option<&AdapterContract>) -> Result<(), AcpCompatibilityError> {
+    let Some(contract) = contract else {
+        return Err(AcpCompatibilityError::AdapterOutOfDate { version: 0 });
+    };
+    if contract.name != BEARS_ACP_ADAPTER_CONTRACT_NAME {
+        return Err(AcpCompatibilityError::AdapterOutOfDate { version: contract.version });
+    }
+    if contract.version < BEARS_ACP_ADAPTER_CONTRACT_MIN_SUPPORTED {
+        return Err(AcpCompatibilityError::AdapterOutOfDate { version: contract.version });
+    }
+    if contract.version > BEARS_ACP_ADAPTER_CONTRACT_MAX_SUPPORTED {
+        return Err(AcpCompatibilityError::DenOutOfDate { version: contract.version });
+    }
+    Ok(())
+}
+
+#[derive(Debug, Clone, Copy)]
+enum AcpCompatibilityError {
+    AdapterOutOfDate { version: u32 },
+    DenOutOfDate { version: u32 },
+}
+
+fn acp_compatibility_error_response(err: AcpCompatibilityError, request_id: Uuid) -> Response {
+    let (status, error_code, error, suggested_action, adapter_version) = match err {
+        AcpCompatibilityError::AdapterOutOfDate { version } => (
+            StatusCode::UPGRADE_REQUIRED,
+            "adapter_out_of_date",
+            "Your BEARS ACP adapter is out of date for this Den server.",
+            "Update bears-acp-adapter and restart your ACP client.",
+            version,
+        ),
+        AcpCompatibilityError::DenOutOfDate { version } => (
+            StatusCode::CONFLICT,
+            "den_out_of_date",
+            "Your BEARS Den server is out of date for this ACP adapter.",
+            "Deploy the matching BEARS Den server or use an older adapter.",
+            version,
+        ),
+    };
+    tracing::warn!(
+        %request_id,
+        error_code,
+        adapter_contract_version = adapter_version,
+        minimum_adapter_contract_version = BEARS_ACP_ADAPTER_CONTRACT_MIN_SUPPORTED,
+        current_adapter_contract_version = BEARS_ACP_ADAPTER_CONTRACT_CURRENT,
+        "ACP adapter contract mismatch"
+    );
+    let request_id_header = HeaderValue::from_str(&request_id.to_string())
+        .unwrap_or_else(|_| HeaderValue::from_static("invalid"));
+    let body = serde_json::to_string(&AcpErrorResponse {
+        error: error.to_string(),
+        error_code,
+        request_id: request_id.to_string(),
+        adapter_contract_version: Some(adapter_version),
+        minimum_adapter_contract_version: Some(BEARS_ACP_ADAPTER_CONTRACT_MIN_SUPPORTED),
+        current_adapter_contract_version: Some(BEARS_ACP_ADAPTER_CONTRACT_CURRENT),
+        suggested_action: Some(suggested_action),
+    })
+    .unwrap_or_else(|_| "{\"error\":\"response serialization failed\"}".to_string());
+    Response::builder()
+        .status(status)
+        .header(header::CONTENT_TYPE, "application/json; charset=utf-8")
+        .header(HeaderName::from_static("x-request-id"), request_id_header)
+        .body(Body::from(body))
+        .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())
+}
+
 fn acp_error_status_message(err: &CustomError) -> (StatusCode, &'static str, String) {
     match err {
         CustomError::Authentication(s) => (StatusCode::UNAUTHORIZED, "authentication", s.clone()),
@@ -415,6 +508,10 @@ fn acp_error_response(err: CustomError, request_id: Uuid) -> Response {
         error: message,
         error_code,
         request_id: request_id.to_string(),
+        adapter_contract_version: None,
+        minimum_adapter_contract_version: None,
+        current_adapter_contract_version: None,
+        suggested_action: None,
     })
     .unwrap_or_else(|_| "{\"error\":\"response serialization failed\"}".to_string());
 
@@ -439,6 +536,10 @@ fn api_auth_error_response(err: ApiError, request_id: Uuid) -> Response {
         error: err.message,
         error_code: err.error_code,
         request_id: request_id.to_string(),
+        adapter_contract_version: None,
+        minimum_adapter_contract_version: None,
+        current_adapter_contract_version: None,
+        suggested_action: None,
     })
     .unwrap_or_else(|_| "{\"error\":\"response serialization failed\"}".to_string());
 
@@ -984,6 +1085,9 @@ async fn prompt(
     Json(body): Json<AcpPromptRequest>,
 ) -> impl IntoResponse {
     let request_id = Uuid::new_v4();
+    if let Err(err) = check_adapter_contract(body.adapter_contract.as_ref()) {
+        return acp_compatibility_error_response(err, request_id);
+    }
     let result = async { prompt_inner(state, slug, session_id, headers, body, request_id).await }
         .instrument(tracing::info_span!("acp_prompt", request_id = %request_id))
         .await;
@@ -1311,6 +1415,9 @@ async fn permission_result(
     Json(body): Json<AcpPermissionDecisionRequest>,
 ) -> Response {
     let request_id = Uuid::new_v4();
+    if let Err(err) = check_adapter_contract(body.adapter_contract.as_ref()) {
+        return acp_compatibility_error_response(err, request_id);
+    }
     match permission_result_inner(state, slug, session_id, permission_id, headers, body).await {
         Ok(response) => response,
         Err(err) => acp_error_response(err, request_id),
@@ -1463,6 +1570,7 @@ async fn permission_result_inner(
             content: Some("web_fetch permission denied".to_string()),
             structured_content: serde_json::json!({}),
             diagnostic: serde_json::json!({ "component": "den.acp", "phase": "web_fetch_permission_denied" }),
+            ..Default::default()
         }
     };
     let _ = pending.result_tx.send(result);
@@ -1481,6 +1589,10 @@ async fn tool_result(
     Json(body): Json<AcpToolResultRequest>,
 ) -> Response {
     let request_id = Uuid::new_v4();
+    let contract = body.adapter_contract.as_ref().and_then(adapter_contract_from_value);
+    if let Err(err) = check_adapter_contract(contract.as_ref()) {
+        return acp_compatibility_error_response(err, request_id);
+    }
     match tool_result_inner(state, slug, session_id, tool_call_id, headers, body).await {
         Ok(response) => response,
         Err(err) => acp_error_response(err, request_id),
@@ -1598,6 +1710,10 @@ async fn unwedge_session(
     Json(body): Json<serde_json::Value>,
 ) -> Response {
     let response_request_id = Uuid::new_v4();
+    let contract = adapter_contract_from_value(&body);
+    if let Err(err) = check_adapter_contract(contract.as_ref()) {
+        return acp_compatibility_error_response(err, response_request_id);
+    }
     match unwedge_session_inner(state, slug, session_id, headers, body).await {
         Ok(response) => response,
         Err(err) => acp_error_response(err, response_request_id),
@@ -1663,8 +1779,15 @@ async fn close_session(
     State(state): State<ApiState>,
     Path((slug, session_id)): Path<(String, String)>,
     headers: HeaderMap,
+    body: Option<Json<serde_json::Value>>,
 ) -> Response {
     let response_request_id = Uuid::new_v4();
+    let contract = body
+        .as_ref()
+        .and_then(|Json(value)| adapter_contract_from_value(value));
+    if let Err(err) = check_adapter_contract(contract.as_ref()) {
+        return acp_compatibility_error_response(err, response_request_id);
+    }
     match close_session_inner(state, slug, session_id, headers).await {
         Ok(response) => response,
         Err(err) => acp_error_response(err, response_request_id),
@@ -1675,8 +1798,15 @@ async fn cancel_session(
     State(state): State<ApiState>,
     Path((slug, session_id)): Path<(String, String)>,
     headers: HeaderMap,
+    body: Option<Json<serde_json::Value>>,
 ) -> Response {
     let response_request_id = Uuid::new_v4();
+    let contract = body
+        .as_ref()
+        .and_then(|Json(value)| adapter_contract_from_value(value));
+    if let Err(err) = check_adapter_contract(contract.as_ref()) {
+        return acp_compatibility_error_response(err, response_request_id);
+    }
     match cancel_session_inner(state, slug, session_id, headers).await {
         Ok(response) => response,
         Err(err) => acp_error_response(err, response_request_id),
@@ -2124,6 +2254,7 @@ async fn persist_stream_event_side_effects(
                         "tool_name": tool_name,
                         "tool_call_id": tool_call_id,
                     }),
+                    ..Default::default()
                 };
                 let _ = result_tx.send(result);
                 tracing::warn!(
@@ -2233,6 +2364,7 @@ async fn persist_stream_event_side_effects(
                         ),
                         structured_content: serde_json::json!({}),
                         diagnostic: serde_json::json!({ "component": "den.acp", "phase": "local_web_fetch_requires_approval" }),
+                        ..Default::default()
                     };
                     let _ = result_tx.send(result);
                     return Ok(());
@@ -2381,6 +2513,7 @@ fn plan_mode_denial_result(
             "phase": "plan_mode_tool_denied",
             "denied_tool": denied_tool,
         }),
+        ..Default::default()
     }
 }
 
@@ -2449,6 +2582,7 @@ async fn invoke_acp_den_tool(
                 "phase": "den_server_tool_result",
                 "canonical_tool_name": canonical_name,
             }),
+            ..Default::default()
         },
         Err(err) => AcpToolResultRequest {
             turn_id: None,
@@ -2465,6 +2599,7 @@ async fn invoke_acp_den_tool(
                 "canonical_tool_name": canonical_name,
                 "error": err.to_string(),
             }),
+            ..Default::default()
         },
     }
 }
