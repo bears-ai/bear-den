@@ -768,10 +768,7 @@ impl LettaClient {
             "tool_return": tool_return,
         });
         let message = if let Some(approval_request_id) = approval_request_id {
-            if matches!(
-                status,
-                "timeout" | "permission_denied" | "cancelled" | "unsupported"
-            ) {
+            if status != "ok" {
                 tracing::info!(
                     approval_request_id,
                     tool_call_id,
@@ -940,12 +937,26 @@ impl LettaClient {
             "tool_return": tool_return,
         });
         let message = if let Some(approval_request_id) = approval_request_id {
-            json!({
-                "type": "approval",
-                "approval_request_id": approval_request_id,
-                "approve": letta_status == "success",
-                "approvals": [tool_return_value]
-            })
+            if status == "ok" {
+                json!({
+                    "type": "approval",
+                    "approval_request_id": approval_request_id,
+                    "approve": true,
+                    "approvals": [tool_return_value]
+                })
+            } else {
+                json!({
+                    "type": "approval",
+                    "approval_request_id": approval_request_id,
+                    "approve": false,
+                    "approvals": [{
+                        "type": "approval",
+                        "approve": false,
+                        "tool_call_id": tool_call_id,
+                        "reason": tool_return,
+                    }]
+                })
+            }
         } else {
             json!({
                 "type": "tool_return",
