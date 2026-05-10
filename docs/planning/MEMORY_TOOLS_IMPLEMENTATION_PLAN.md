@@ -59,7 +59,7 @@ Give agents, especially `pair`, safe Den-hosted access to Bear memory:
 
 | Canonical | Provider-safe | Role | Purpose |
 |---|---|---|---|
-| `den.situation.get` | `situation_get` | `pair` first, then all roles | Return trusted briefing for the current interaction. |
+| `den.session.info` | `session_info` | `pair` first, then all roles | Return trusted briefing for the current interaction. |
 | `den.memory.write_entry` | `memory_write_entry` | `pair` first | Write role-local semantic entries under `pair/`. |
 | `den.memory.status` | `memory_status` | `pair` first | Return MemFS health for the current bear/role. |
 
@@ -69,7 +69,7 @@ P0 should retire the existing `den.write_note` / `den_write_note` pair tool and 
 
 | Canonical | Provider-safe | Role | Purpose |
 |---|---|---|---|
-| `den.memory.tree` | `memory_tree` | `pair` first | Browse allowed memory paths. |
+| `den.memory.browse` | `memory_browse` | `pair` first | Browse allowed memory paths. |
 | `den.memory.read` | `memory_read` | `pair` first | Read allowed memory files/entries. |
 | `den.memory.search` | `memory_search` | `pair` first | Search allowed memory by text, role, kind, references, and lifecycle. |
 
@@ -348,19 +348,19 @@ Actual canonical path policy must be checked before expanding writable prefixes.
 
 Add descriptors in Den's built-in tool catalog:
 
-- `den.situation.get`
+- `den.session.info`
 - `den.memory.write_entry`
 - `den.memory.status`
-- `den.memory.tree`
+- `den.memory.browse`
 - `den.memory.read`
 - `den.memory.search`
 
 For ACP pair exposure, add provider-safe names:
 
-- `situation_get`
+- `session_info`
 - `memory_write_entry`
 - `memory_status`
-- `memory_tree`
+- `memory_browse`
 - `memory_read`
 - `memory_search`
 
@@ -370,10 +370,10 @@ Initially expose only P0 for pair, then P1.
 
 Extend Den's tool dispatcher:
 
-- `den.situation.get` returns trusted invocation context, memory scopes, relevant policy, and health summary.
+- `den.session.info` returns trusted invocation context, memory scopes, relevant policy, and health summary.
 - `den.memory.write_entry` validates role, kind, lifecycle, refs, tags, and body limits; calls MemFS Manager; returns path, entry id, commit, and view status.
 - `den.memory.status` calls MemFS Manager health/status endpoints.
-- `den.memory.tree/read/search` call MemFS Manager read endpoints with role-aware scope checks.
+- `den.memory.browse/read/search` call MemFS Manager read endpoints with role-aware scope checks.
 
 ### ACP pair integration
 
@@ -382,12 +382,12 @@ Update ACP direct pair descriptors:
 - Continue exposing existing client/local tools filtered by adapter capabilities.
 - Continue exposing `web_fetch` and `web_search` initially.
 - Remove `den_write_note` from ACP pair descriptors when `memory_write_entry` is added.
-- Add `situation_get`, `memory_write_entry`, and `memory_status` in P0.
+- Add `session_info`, `memory_write_entry`, and `memory_status` in P0.
 - Add read/search/tree after MemFS Manager read endpoints are ready.
 
 Prompt guidance should say:
 
-- Use `situation_get` when you need trusted information about the current interaction, role, user, memory scopes, or policy.
+- Use `session_info` when you need trusted information about the current interaction, role, user, memory scopes, or policy.
 - Use `memory_write_entry` for durable pair-local notes, logs, tactical decisions, reflections, scratch, and summaries.
 - Do not use `memory_write_entry` for task intents, observations, run results, `core/` updates, or Cabinet writes.
 
@@ -399,7 +399,7 @@ Prompt guidance should say:
 
 For `pair`:
 
-- `den.situation.get`: allow for authenticated ACP session with bear membership.
+- `den.session.info`: allow for authenticated ACP session with bear membership.
 - `den.memory.write_entry`: allow only role `pair` initially.
 - `den.memory.status`: allow role `pair` for current bear/role.
 
@@ -457,14 +457,14 @@ Deliverables:
 3. Add this plan to docs index.
 4. Add tests/docs references confirming `den_write_note` is retired from model-visible descriptors once `memory_write_entry` is available.
 
-### Slice 1 — pair `den.situation.get`
+### Slice 1 — pair `den.session.info`
 
 Goal: first safe read-only vertical slice.
 
 Deliverables:
 
-1. Den descriptor for `den.situation.get`.
-2. ACP pair exposure as `situation_get`.
+1. Den descriptor for `den.session.info`.
+2. ACP pair exposure as `session_info`.
 3. Dispatcher implementation from trusted invocation context.
 4. Include allowed memory scopes and available memory tools.
 5. Include MemFS configured/unconfigured status if cheap; otherwise return unknown with diagnostic.
@@ -504,7 +504,7 @@ Goal: let pair inspect Bear memory, not just write it.
 Deliverables:
 
 1. MemFS Manager tree/read/search endpoints with path and size bounds.
-2. Den descriptors and dispatchers for `den.memory.tree`, `den.memory.read`, `den.memory.search`.
+2. Den descriptors and dispatchers for `den.memory.browse`, `den.memory.read`, `den.memory.search`.
 3. Role scope enforcement: pair can read `pair/` and `core/` only.
 4. Search supports text query first; kind/ref/lifecycle filters can initially be best-effort or deferred until frontmatter parsing exists.
 5. Tests for cross-role denial and bounded output.
@@ -579,7 +579,7 @@ Add or extend stack smoke coverage for:
 
 ## Open questions
 
-1. Should P0 expose `den.memory.status`, or should status be included only in `den.situation.get` until P1?
+1. Should P0 expose `den.memory.status`, or should status be included only in `den.session.info` until P1?
 2. Should role-local entry writes use only opaque IDs, or include optional safe display slugs?
 3. How much frontmatter parsing should P1 search implement versus deferring to UI work?
 4. Should `den.memory.write_entry` be visible to `talk` if native Letta Code memory tools are available?
@@ -592,7 +592,7 @@ Add or extend stack smoke coverage for:
 
 Implement these three tools for `pair` first:
 
-1. `situation_get`
+1. `session_info`
 2. `memory_write_entry`
 3. `memory_status`
 

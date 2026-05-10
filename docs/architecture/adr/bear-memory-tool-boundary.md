@@ -159,7 +159,7 @@ Avoid presenting Letta MemFS as a generic fact store in Den-facing names unless 
 
 Preferred names for low-level MemFS-aligned capabilities, if Den ever exposes them, are file/repository-shaped:
 
-- `memory_tree`
+- `memory_browse`
 - `read_memory_file`
 - `search_memory_files`
 - `memory_repo_status`

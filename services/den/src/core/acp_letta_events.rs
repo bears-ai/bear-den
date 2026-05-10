@@ -18,12 +18,14 @@ const ACP_DEN_SERVER_TOOL_PROVIDER_NAMES: &[&str] = &[
     "den_web_fetch",
     "web_search",
     "den_web_search",
+    "session_info",
     "situation_get",
     "den_situation_get",
     "memory_write_entry",
     "den_memory_write_entry",
     "memory_status",
     "den_memory_status",
+    "memory_browse",
     "memory_tree",
     "den_memory_tree",
     "memory_read",
@@ -813,7 +815,7 @@ mod tests {
     #[test]
     fn tool_call_message_requires_adapter_approval_even_without_letta_approval() {
         let event = tool_call_event(
-            "fs_replace_text",
+            "fs_edit_file",
             serde_json::json!({
                 "path": "/workspace/a.txt",
                 "old_text": "before",
@@ -841,7 +843,7 @@ mod tests {
     #[test]
     fn maps_replace_text_tool_call() {
         let event = tool_call_event(
-            "fs_replace_text",
+            "fs_edit_file",
             serde_json::json!({
                 "path": "/workspace/a.txt",
                 "old_text": "before",
@@ -856,7 +858,7 @@ mod tests {
                 args,
                 ..
             } => {
-                assert_eq!(tool_name, "fs_replace_text");
+                assert_eq!(tool_name, "fs_edit_file");
                 assert_eq!(kind, "edit");
                 assert_eq!(args["old_text"], "before");
                 assert_eq!(args["new_text"], "after");
@@ -890,7 +892,7 @@ mod tests {
     #[test]
     fn replace_text_requires_new_text() {
         let event = tool_call_event(
-            "fs_replace_text",
+            "fs_edit_file",
             serde_json::json!({ "path": "/workspace/a.txt", "old_text": "before" }),
         );
         let mapped = map_native_letta_stream_event_to_acp_event(&event).expect("mapped event");
@@ -902,7 +904,7 @@ mod tests {
                 ..
             } => {
                 assert_eq!(error_type.as_deref(), Some("invalid_tool_arguments"));
-                assert!(message.contains("fs_replace_text"));
+                assert!(message.contains("fs_edit_file"));
                 assert_eq!(context.unwrap()["missing"], "new_text");
             }
             other => panic!("unexpected event: {other:?}"),
@@ -913,7 +915,7 @@ mod tests {
     fn detects_pseudo_tool_call_text() {
         let event = serde_json::json!({
             "message_type": "assistant_message",
-            "content": "to=functions.fs_replace_text {\"path\":\"/workspace/README.md\"}"
+            "content": "to=functions.fs_edit_file {\"path\":\"/workspace/README.md\"}"
         });
         let mapped = map_native_letta_stream_event_to_acp_event(&event).expect("mapped event");
         match mapped {
@@ -923,7 +925,7 @@ mod tests {
                 ..
             } => {
                 assert_eq!(error_type.as_deref(), Some("pseudo_tool_call_text"));
-                assert_eq!(context.unwrap()["tool_name"], "fs_replace_text");
+                assert_eq!(context.unwrap()["tool_name"], "fs_edit_file");
             }
             other => panic!("unexpected event: {other:?}"),
         }
@@ -943,7 +945,7 @@ mod tests {
     #[test]
     fn maps_tool_call_to_adapter_sse_without_database() {
         let event = tool_call_event(
-            "fs_replace_text",
+            "fs_edit_file",
             serde_json::json!({
                 "path": "/workspace/a.txt",
                 "old_text": "before",
@@ -954,7 +956,7 @@ mod tests {
         let bytes = acp_event_to_adapter_sse(mapped);
         let raw = std::str::from_utf8(&bytes).expect("utf8 sse");
         assert!(raw.contains("\"type\":\"tool_request\""));
-        assert!(raw.contains("\"tool_name\":\"fs_replace_text\""));
+        assert!(raw.contains("\"tool_name\":\"fs_edit_file\""));
         assert!(raw.contains("\"required\":true"));
         assert!(raw.contains("\"risk\":\"writes_workspace\""));
         assert!(raw.contains("\"phase\":\"letta_tool_call_mapped\""));

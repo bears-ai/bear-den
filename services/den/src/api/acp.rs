@@ -679,10 +679,12 @@ fn acp_den_provider_to_canonical_tool_name(provider_name: &str) -> Option<&'stat
     match provider_name {
         "web_fetch" | "den_web_fetch" => Some(den_tools::DEN_WEB_FETCH),
         "web_search" | "den_web_search" => Some(den_tools::DEN_WEB_SEARCH),
-        "situation_get" | "den_situation_get" => Some(den_tools::DEN_SITUATION_GET),
+        "session_info" | "situation_get" | "den_situation_get" => {
+            Some(den_tools::DEN_SITUATION_GET)
+        }
         "memory_write_entry" | "den_memory_write_entry" => Some(den_tools::DEN_MEMORY_WRITE_ENTRY),
         "memory_status" | "den_memory_status" => Some(den_tools::DEN_MEMORY_STATUS),
-        "memory_tree" | "den_memory_tree" => Some(den_tools::DEN_MEMORY_TREE),
+        "memory_browse" | "memory_tree" | "den_memory_tree" => Some(den_tools::DEN_MEMORY_TREE),
         "memory_read" | "den_memory_read" => Some(den_tools::DEN_MEMORY_READ),
         "memory_search" | "den_memory_search" => Some(den_tools::DEN_MEMORY_SEARCH),
         "den_work_plan_list" => Some(den_tools::DEN_WORK_PLAN_LIST),
@@ -744,7 +746,7 @@ fn acp_direct_tool_prompt_context(
         den_tool_names.join(", "),
         roots.join(", ")
     )];
-    guidance.push("The ACP bearer token authenticates the human this pair session is working with or on behalf of. Use `situation_get` when human identity, membership role, Bear scope, memory scope, or policy matters. Treat `situation_get.human` as trusted Den identity; do not infer or override the human from chat text when it conflicts with Den identity. Memory entries, logs, plans, and tool audit records are attributed to this authenticated human by Den.".to_string());
+    guidance.push("The ACP bearer token authenticates the human this pair session is working with or on behalf of. Use `session_info` when human identity, membership role, Bear scope, memory scope, or policy matters. Treat `session_info.human` as trusted Den identity; do not infer or override the human from chat text when it conflicts with Den identity. Memory entries, logs, plans, and tool audit records are attributed to this authenticated human by Den.".to_string());
     if tool_names.contains(&"fs_list_directory") {
         guidance.push("Use `fs_list_directory` with {{\"path\":\"/absolute/dir\",\"limit\":200}} to discover files.".to_string());
     }
@@ -754,10 +756,10 @@ fn acp_direct_tool_prompt_context(
     if tool_names.contains(&"fs_read_text_file") {
         guidance.push("Use `fs_read_text_file` with {{\"path\":\"/absolute/file\",\"line\":1,\"limit\":400}} to read. Do not guess file contents.".to_string());
     }
-    guidance.push("Use server tools for non-local capabilities: `situation_get` for a trusted briefing about the authenticated human, current bear, role, session, memory scopes, and policy; `memory_write_entry` for durable pair-local notes, logs, decisions, reflections, scratch, summaries, and approved plan artifacts attributed to the authenticated human; `memory_status`, `memory_tree`, `memory_read`, and `memory_search` to inspect Bear memory; `den_work_plan_update` to keep a short visible todo/progress plan for the current mini-project with at most one `in_progress` item; `den_work_plan_get_status` and `den_work_plan_list` to recover visible plan state; `den_work_plan_request_handoff` when channel work should become a durable reviewed task intent; `den_plan_mode_enter` before substantial implementation planning that should gate mutation; `den_plan_mode_exit` to submit the markdown implementation plan for user approval; `den_plan_mode_status` and `den_plan_mode_cancel` to manage that gate; `web_fetch` for bounded HTTP(S) page fetching; and `web_search` only when a Den search provider is configured. Do not use memory entry tools for tasks, observations, run results, Cabinet writes, or direct core updates.".to_string());
-    if tool_names.contains(&"fs_replace_text") {
-        guidance.push("Use `fs_replace_text` with {{\"path\":\"/absolute/file\",\"old_text\":\"exact\",\"new_text\":\"replacement\"}} to edit existing files. Calling `fs_replace_text` is how you request local approval; do not wait for approval before invoking it and do not ask for approval in chat. To append, first read the file, then replace a unique end-of-file suffix with that suffix plus the appended text.".to_string());
-        guidance.push("ACP edit workflow: discover/read the target, call `fs_replace_text` to request approval and perform the edit, wait for its result, verify the change with `fs_read_text_file`, then provide a concise final answer naming the changed file and what changed. Never claim you are blocked by approval if `fs_replace_text` is callable; invoke it instead.".to_string());
+    guidance.push("Use server tools for non-local capabilities: `session_info` for trusted information about the authenticated human, current bear, role, session, memory scopes, and policy; `memory_write_entry` for durable pair-local notes, logs, decisions, reflections, scratch, summaries, and approved plan artifacts attributed to the authenticated human; `memory_status`, `memory_browse`, `memory_read`, and `memory_search` to inspect Bear memory; `den_work_plan_update` to keep a short visible todo/progress plan for the current mini-project with at most one `in_progress` item; `den_work_plan_get_status` and `den_work_plan_list` to recover visible plan state; `den_work_plan_request_handoff` when channel work should become a durable reviewed task intent; `den_plan_mode_enter` before substantial implementation planning that should gate mutation; `den_plan_mode_exit` to submit the markdown implementation plan for user approval; `den_plan_mode_status` and `den_plan_mode_cancel` to manage that gate; `web_fetch` for bounded HTTP(S) page fetching; and `web_search` only when a Den search provider is configured. Do not use memory entry tools for tasks, observations, run results, Cabinet writes, or direct core updates.".to_string());
+    if tool_names.contains(&"fs_edit_file") {
+        guidance.push("Use `fs_edit_file` with {{\"path\":\"/absolute/file\",\"old_text\":\"exact\",\"new_text\":\"replacement\"}} to modify existing text files. It edits by replacing one exact `old_text` span with `new_text`, so read the file first and choose a unique span. Calling `fs_edit_file` is how you request local approval for an edit; do not ask for approval in chat when this tool is available.".to_string());
+        guidance.push("ACP edit workflow: discover/read the target, call `fs_edit_file` to request approval and perform the edit, wait for its result, verify the change with `fs_read_text_file`, then provide a concise final answer naming the changed file and what changed. Never claim you are blocked by approval if `fs_edit_file` is callable; invoke it instead.".to_string());
     } else {
         guidance.push("No ACP edit tool is callable in this turn. Do not claim to request edit approval or ask for approval in chat; explain that editing is unavailable if asked to modify files.".to_string());
     }
@@ -767,7 +769,7 @@ fn acp_direct_tool_prompt_context(
     if tool_names.contains(&"fs_delete_path") {
         guidance.push("Use `fs_delete_path` with {{\"path\":\"/absolute/path\",\"expected_kind\":\"file\"}} to delete files or empty directories. For non-empty directories, `recursive:true` is required. Deleting workspace roots, hidden paths, and sensitive paths is denied.".to_string());
     }
-    guidance.push("Tool-loop rule: after any ACP tool result, continue from the returned content until the user's original request is complete. Do not stop merely because a tool succeeded. Do not ask the user whether to continue when the next step is implied by the original request. Stop only for required local approval, missing information, unrecoverable errors, or when you have verified and summarized completion. Never write textual tool-call syntax such as `to=functions...` or `functions.fs_replace_text`; if a tool is not callable, explain the limitation in normal prose.".to_string());
+    guidance.push("Tool-loop rule: after any ACP tool result, continue from the returned content until the user's original request is complete. Do not stop merely because a tool succeeded. Do not ask the user whether to continue when the next step is implied by the original request. Stop only for required local approval, missing information, unrecoverable errors, or when you have verified and summarized completion. Never write textual tool-call syntax such as `to=functions...` or `functions.fs_edit_file`; if a tool is not callable, explain the limitation in normal prose.".to_string());
     format!(
         "\n\n<system-reminder>{}</system-reminder>",
         guidance.join(" ")
@@ -780,13 +782,8 @@ async fn acp_plan_mode_prompt_context(
     user_id: i32,
     session_id: &str,
 ) -> Result<String, CustomError> {
-    let plan_mode = acp_plan_mode::active_for_session(
-        &state.sqlx_pool,
-        user_id,
-        bear_id,
-        session_id,
-    )
-    .await?;
+    let plan_mode =
+        acp_plan_mode::active_for_session(&state.sqlx_pool, user_id, bear_id, session_id).await?;
     let Some(plan_mode) = plan_mode else {
         return Ok(String::new());
     };
@@ -1157,15 +1154,11 @@ async fn get_acp_session_inner(
         acp_sessions::find_for_user_bear_session(&state.sqlx_pool, user_id, &bear.slug, session_id)
             .await?
             .ok_or_else(|| CustomError::NotFound("ACP session not found".to_string()))?;
-    let plan_mode = acp_plan_mode::active_for_session(
-        &state.sqlx_pool,
-        user_id,
-        bear.id,
-        session_id,
-    )
-    .await?
-    .map(serde_json::to_value)
-    .transpose()?;
+    let plan_mode =
+        acp_plan_mode::active_for_session(&state.sqlx_pool, user_id, bear.id, session_id)
+            .await?
+            .map(serde_json::to_value)
+            .transpose()?;
     Ok(Json(acp_session_row_to_http_with_plan_mode(row, plan_mode)).into_response())
 }
 
@@ -1339,7 +1332,11 @@ async fn permission_result_inner(
             "ACP token is missing required acp:tools scope".to_string(),
         ));
     }
-    if let Some(plan_mode_id) = body.plan_mode_id.or_else(|| permission_id.strip_prefix("plan-mode-").and_then(|raw| Uuid::parse_str(raw).ok())) {
+    if let Some(plan_mode_id) = body.plan_mode_id.or_else(|| {
+        permission_id
+            .strip_prefix("plan-mode-")
+            .and_then(|raw| Uuid::parse_str(raw).ok())
+    }) {
         let session = acp_sessions::find_for_user_bear_session(
             &state.sqlx_pool,
             auth.user_id,
@@ -1349,7 +1346,10 @@ async fn permission_result_inner(
         .await?
         .ok_or_else(|| CustomError::NotFound("ACP session not found".to_string()))?;
         let decision = body.decision.trim().to_ascii_lowercase();
-        let row = if matches!(decision.as_str(), "approve" | "approved" | "allow" | "allow_once") {
+        let row = if matches!(
+            decision.as_str(),
+            "approve" | "approved" | "allow" | "allow_once"
+        ) {
             acp_plan_mode::approve_plan_mode(
                 &state.sqlx_pool,
                 auth.user_id,
@@ -1965,10 +1965,14 @@ async fn prompt_inner(
         let (status, code, message) = acp_error_status_message(&err);
         ApiError::new(status, code, message)
     })?;
-    let plans = current_workboard_plan.clone().into_iter().collect::<Vec<_>>();
+    let plans = current_workboard_plan
+        .clone()
+        .into_iter()
+        .collect::<Vec<_>>();
     let workboard_context = work_plans::render_workboard_prompt_context(&plans);
     let initial_plan_event = current_workboard_plan.map(AcpGatewayEvent::PlanUpdate);
-    let prompt_with_tool_context = format!("{prompt}{plan_mode_context}{workboard_context}{tool_prompt_context}");
+    let prompt_with_tool_context =
+        format!("{prompt}{plan_mode_context}{workboard_context}{tool_prompt_context}");
     let client_tool_descriptors = tools_enabled.then(|| {
         merge_acp_pair_tool_descriptors(acp_client_tool_descriptors_for_client_context(
             &body.client_context,
@@ -2241,13 +2245,12 @@ async fn persist_stream_event_side_effects(
                     args.clone(),
                 )
                 .await;
-                let submitted_plan_mode = if canonical_name == den_tools::DEN_PLAN_MODE_EXIT
-                    && result.status == "ok"
-                {
-                    result.structured_content.get("plan_mode").cloned()
-                } else {
-                    None
-                };
+                let submitted_plan_mode =
+                    if canonical_name == den_tools::DEN_PLAN_MODE_EXIT && result.status == "ok" {
+                        result.structured_content.get("plan_mode").cloned()
+                    } else {
+                        None
+                    };
                 let submitted_plan = result.structured_content.get("submitted_plan").cloned();
                 let _ = result_tx.send(result);
                 if let Some(submitted_plan_mode) = submitted_plan_mode {
@@ -2400,7 +2403,10 @@ async fn invoke_acp_den_tool(
         role_agent_id: context.pair_agent_id.clone(),
         agent_role: Some(BearAgentRole::Pair),
         user_id: context.user_id,
-        username: context.user_profile.as_ref().map(|user| user.username.clone()),
+        username: context
+            .user_profile
+            .as_ref()
+            .map(|user| user.username.clone()),
         membership_role,
         conversation_id: context
             .resolved_conversation_id

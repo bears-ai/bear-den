@@ -149,7 +149,7 @@ Planned tool name:
 
 | Canonical | Provider-safe |
 |---|---|
-| `den.situation.get` | `situation_get` |
+| `den.session.info` | `session_info` |
 
 A situation briefing may include:
 
@@ -173,10 +173,10 @@ Important planned tools:
 
 | Canonical | Provider-safe | Purpose |
 |---|---|---|
-| `den.situation.get` | `situation_get` | Trusted interaction situation briefing. |
+| `den.session.info` | `session_info` | Trusted interaction situation briefing. |
 | `den.memory.write_entry` | `memory_write_entry` | Write a role-local entry with kind, refs, lifecycle, and provenance. |
 | `den.memory.request_review` | `memory_request_review` | Request Reflection curation of role-local memory without writing shared memory directly. |
-| `den.memory.tree` | `memory_tree` | Browse allowed memory paths. |
+| `den.memory.browse` | `memory_browse` | Browse allowed memory paths. |
 | `den.memory.read` | `memory_read` | Read allowed memory files/entries. |
 | `den.memory.search` | `memory_search` | Search memory by text, role, kind, refs, and lifecycle. |
 | `den.memory.semantic_search` | `memory_semantic_search` | Search Letta Archives attached to or governed for this Bear/role. |

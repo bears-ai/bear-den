@@ -22,7 +22,7 @@ Confirmed tools include:
 
 - `fs_list_directory`
 - `fs_read_text_file`
-- `fs_replace_text`
+- `fs_edit_file`
 
 ## Recent reliability fixes
 
@@ -36,7 +36,7 @@ The adapter now sends both a legacy and a structured capability shape:
     "fs_read_text_file": true,
     "fs_list_directory": true,
     "fs_search_files": true,
-    "fs_replace_text": true
+    "fs_edit_file": true
   },
   "adapter": {
     "name": "bears-acp-adapter",
@@ -45,7 +45,7 @@ The adapter now sends both a legacy and a structured capability shape:
       "fs_read_text_file": { "supported": true, "version": 1 },
       "fs_list_directory": { "supported": true, "version": 1 },
       "fs_search_files": { "supported": true, "version": 1 },
-      "fs_replace_text": { "supported": true, "version": 1 }
+      "fs_edit_file": { "supported": true, "version": 1 }
     }
   }
 }
@@ -75,7 +75,7 @@ For example, `fs_list_directory` completion should show the directory listing in
 Den's ACP prompt context now clarifies:
 
 - only tools actually callable this turn are mentioned;
-- `fs_replace_text` invocation is how the model requests local approval;
+- `fs_edit_file` invocation is how the model requests local approval;
 - the model should not ask for edit approval in chat;
 - for edits, the model should read/discover, call the edit tool, verify with read, and summarize.
 
@@ -87,7 +87,7 @@ Observed behavior:
 
 - The agent can list/read/patch successfully.
 - After intermediate tool calls, it may stop and wait for the user to type `continue`.
-- It may claim it is blocked by approval even though `fs_replace_text` is callable.
+- It may claim it is blocked by approval even though `fs_edit_file` is callable.
 
 This appears to be primarily model / tool-loop behavior rather than basic ACP transport failure.
 
@@ -274,7 +274,7 @@ When ACP tool availability seems wrong:
    - `phase="descriptor_advertised"`
    - `tools=[...]`
 3. If Den advertises only `fs_read_text_file`, inspect adapter `client_context` / session context.
-4. If Den advertises `fs_replace_text` but model says unavailable, inspect Letta `client_tools` request payload / provider behavior.
+4. If Den advertises `fs_edit_file` but model says unavailable, inspect Letta `client_tools` request payload / provider behavior.
 
 When tool approval appears but tool result never posts:
 

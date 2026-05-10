@@ -1379,7 +1379,7 @@ fn adapter_capabilities_context() -> Value {
             "chrome_console_messages": { "supported": true, "version": 1 },
             "chrome_network_requests": { "supported": true, "version": 1 },
             "chrome_screenshot": { "supported": true, "version": 1 },
-            "fs_replace_text": { "supported": true, "version": 1 },
+            "fs_edit_file": { "supported": true, "version": 1 },
             "fs_create_text_file": { "supported": true, "version": 1 },
             "fs_create_directory": { "supported": true, "version": 1 },
             "fs_move_path": { "supported": true, "version": 1 },
@@ -1412,7 +1412,7 @@ fn direct_tools_context() -> Value {
         "chrome_console_messages": true,
         "chrome_network_requests": true,
         "chrome_screenshot": true,
-        "fs_replace_text": true,
+        "fs_edit_file": true,
         "fs_create_text_file": true,
         "fs_create_directory": true,
         "fs_move_path": true,
@@ -1817,7 +1817,7 @@ async fn execute_local_tool(
         "chrome_console_messages" => handle_chrome_console_messages(&args, policy).await,
         "chrome_network_requests" => handle_chrome_network_requests(&args, policy).await,
         "chrome_screenshot" => handle_chrome_screenshot(&args, policy).await,
-        "fs_replace_text" => {
+        "fs_edit_file" | "fs_replace_text" => {
             handle_direct_replace_text(adapter_state, session_id, &args, policy).await
         }
         "fs_create_text_file" => {
@@ -3343,7 +3343,7 @@ async fn handle_tool_request_event(
     .await?;
     let args = event.get("args").cloned().unwrap_or_else(|| json!({}));
     let policy = policy_from_event(event);
-    let replace_plan = if tool_name == "fs_replace_text" {
+    let replace_plan = if tool_name == "fs_edit_file" || tool_name == "fs_replace_text" {
         let context = session_context(adapter_state, session_id)?;
         Some(ReplaceTextPlan::preflight(
             context,
@@ -4371,7 +4371,7 @@ fn tool_display(tool_name: &str) -> ToolDisplay {
             verb: "Capturing Chrome screenshot",
             permission_operation: "capture Chrome screenshot",
         },
-        "fs_replace_text" => ToolDisplay {
+        "fs_edit_file" | "fs_replace_text" => ToolDisplay {
             title: "Edit file",
             kind: ToolKind::Edit,
             verb: "Editing",
@@ -4731,7 +4731,7 @@ mod tests {
         assert_eq!(tool_display("fs_read_text_file").title, "Read file");
         assert_eq!(tool_display("fs_list_directory").title, "List directory");
         assert_eq!(tool_display("fs_search_files").title, "Search files");
-        assert_eq!(tool_display("fs_replace_text").title, "Edit file");
+        assert_eq!(tool_display("fs_edit_file").title, "Edit file");
     }
 
     #[test]

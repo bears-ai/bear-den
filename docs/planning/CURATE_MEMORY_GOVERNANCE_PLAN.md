@@ -107,7 +107,7 @@ Promotion should be a new commit with provenance, not a raw file copy.
 
 | Canonical | Provider-safe | Purpose |
 |---|---|---|
-| `den.memory.tree` | `memory_tree` | Browse all role branches and `core/`. |
+| `den.memory.browse` | `memory_browse` | Browse all role branches and `core/`. |
 | `den.memory.read` | `memory_read` | Read memory files from any branch. |
 | `den.memory.search` | `memory_search` | Search path and content across all branches. |
 | `den.memory.status` | `memory_status` | Inspect memory health/status across roles. |

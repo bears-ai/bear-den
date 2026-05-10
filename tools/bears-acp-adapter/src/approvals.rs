@@ -252,8 +252,8 @@ impl ApprovalCache {
         let candidate_keys = candidate_scopes
             .into_iter()
             .filter_map(|scope| {
-                approval_scope_fingerprint(context, scope, target_path, target_url, target_command).map(
-                    |fingerprint| {
+                approval_scope_fingerprint(context, scope, target_path, target_url, target_command)
+                    .map(|fingerprint| {
                         Self::key(
                             &persistence.api_url,
                             &persistence.bear,
@@ -262,8 +262,7 @@ impl ApprovalCache {
                             scope.as_str(),
                             &fingerprint,
                         )
-                    },
-                )
+                    })
             })
             .collect::<Vec<_>>();
         let now = now_secs();
@@ -345,7 +344,8 @@ pub(crate) fn permission_class_for_tool(tool_name: &str) -> &'static str {
     match tool_name {
         "fs_read_text_file" | "fs_list_directory" | "fs_search_files" | "fs_find_paths"
         | "fs_stat" | "fs.read_text_file" | "read_text_file" => "read_files",
-        "fs_replace_text"
+        "fs_edit_file"
+        | "fs_replace_text"
         | "fs_create_text_file"
         | "fs_create_directory"
         | "fs_move_path"
@@ -396,7 +396,11 @@ pub(crate) fn candidate_approval_scopes(
         return vec![ApprovalScope::Host, ApprovalScope::Global];
     }
     if target_command.map(str::trim).is_some_and(|s| !s.is_empty()) {
-        return vec![ApprovalScope::Command, ApprovalScope::Workspace, ApprovalScope::Global];
+        return vec![
+            ApprovalScope::Command,
+            ApprovalScope::Workspace,
+            ApprovalScope::Global,
+        ];
     }
     if target_path.is_some() {
         return vec![
@@ -471,7 +475,10 @@ pub(crate) fn permission_options_for_context(
         if let Some(context) = context {
             options.push(PermissionOption::new(
                 "allow_workspace",
-                format!("Always allow this tool family in {}", approval_workspace_scope_label(context)),
+                format!(
+                    "Always allow this tool family in {}",
+                    approval_workspace_scope_label(context)
+                ),
                 PermissionOptionKind::AllowAlways,
             ));
         }
@@ -485,7 +492,10 @@ pub(crate) fn permission_options_for_context(
         }
         options.push(PermissionOption::new(
             "allow_workspace",
-            format!("Always allow this tool family in {}", approval_workspace_scope_label(context)),
+            format!(
+                "Always allow this tool family in {}",
+                approval_workspace_scope_label(context)
+            ),
             PermissionOptionKind::AllowAlways,
         ));
     }
@@ -681,7 +691,7 @@ mod tests {
             assert_eq!(permission_class_for_tool(tool), "read_files", "{tool}");
         }
         for tool in [
-            "fs_replace_text",
+            "fs_edit_file",
             "fs_create_text_file",
             "fs_create_directory",
             "fs_move_path",
@@ -964,7 +974,11 @@ mod tests {
         );
         assert_eq!(
             candidate_approval_scopes(None, None, Some("cargo")),
-            vec![ApprovalScope::Command, ApprovalScope::Workspace, ApprovalScope::Global]
+            vec![
+                ApprovalScope::Command,
+                ApprovalScope::Workspace,
+                ApprovalScope::Global
+            ]
         );
     }
 
@@ -1064,8 +1078,12 @@ mod tests {
     #[test]
     fn permission_options_omit_directory_scope_for_workspace_root_target() {
         let context = workspace_context("/workspace");
-        let options =
-            permission_options_for_context(Some(&context), Some(Path::new("/workspace")), None, None);
+        let options = permission_options_for_context(
+            Some(&context),
+            Some(Path::new("/workspace")),
+            None,
+            None,
+        );
         let serialized = serde_json::to_value(&options).unwrap();
         let option_ids = serialized
             .as_array()
@@ -1138,7 +1156,9 @@ mod tests {
                 "reject_always",
             ]
         );
-        assert!(serialized.to_string().contains("Always allow `cargo` in this workspace"));
+        assert!(serialized
+            .to_string()
+            .contains("Always allow `cargo` in this workspace"));
     }
 
     #[test]

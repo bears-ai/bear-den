@@ -23,7 +23,7 @@ pub enum AcpToolName {
     FindPaths,
     SearchFiles,
     Stat,
-    ReplaceText,
+    EditFile,
     CreateTextFile,
     CreateDirectory,
     MovePath,
@@ -55,7 +55,7 @@ impl AcpToolName {
             Self::FindPaths => &ACP_FIND_PATHS_TOOL,
             Self::SearchFiles => &ACP_SEARCH_FILES_TOOL,
             Self::Stat => &ACP_STAT_TOOL,
-            Self::ReplaceText => &ACP_REPLACE_TEXT_TOOL,
+            Self::EditFile => &ACP_EDIT_FILE_TOOL,
             Self::CreateTextFile => &ACP_CREATE_TEXT_FILE_TOOL,
             Self::CreateDirectory => &ACP_CREATE_DIRECTORY_TOOL,
             Self::MovePath => &ACP_MOVE_PATH_TOOL,
@@ -87,7 +87,7 @@ impl AcpToolName {
             Self::FindPaths,
             Self::SearchFiles,
             Self::Stat,
-            Self::ReplaceText,
+            Self::EditFile,
             Self::CreateTextFile,
             Self::CreateDirectory,
             Self::MovePath,
@@ -140,7 +140,7 @@ impl AcpToolName {
             Self::ReadTextFile | Self::ListDirectory | Self::Stat => &["path"],
             Self::FindPaths => &["glob"],
             Self::SearchFiles => &["path", "query"],
-            Self::ReplaceText => &["path", "old_text", "new_text"],
+            Self::EditFile => &["path", "old_text", "new_text"],
             Self::CreateTextFile => &["path", "content"],
             Self::CreateDirectory | Self::DeletePath => &["path"],
             Self::MovePath | Self::CopyPath => &["source_path", "destination_path"],
@@ -160,7 +160,7 @@ impl AcpToolName {
     }
 
     fn allow_empty_required_string(self, arg: &str) -> bool {
-        matches!(self, Self::ReplaceText | Self::CreateTextFile)
+        matches!(self, Self::EditFile | Self::CreateTextFile)
             && matches!(arg, "old_text" | "new_text" | "content")
     }
 
@@ -180,8 +180,9 @@ impl AcpToolName {
             "bears/search_files" | "fs/search_files" | "fs.search_files" | "fs_search_files"
             | "search_files" => Some(Self::SearchFiles),
             "bears/stat" | "fs/stat" | "fs.stat" | "fs_stat" | "stat" => Some(Self::Stat),
-            "bears/replace_text" | "fs/replace_text" | "fs.replace_text" | "fs_replace_text"
-            | "replace_text" => Some(Self::ReplaceText),
+            "bears/edit_file" | "fs/edit_file" | "fs.edit_file" | "fs_edit_file" | "edit_file"
+            | "bears/replace_text" | "fs/replace_text" | "fs.replace_text" | "fs_replace_text"
+            | "replace_text" => Some(Self::EditFile),
             "bears/create_text_file"
             | "fs/create_text_file"
             | "fs.create_text_file"
@@ -416,12 +417,12 @@ pub const ACP_STAT_TOOL: AcpToolDescriptor = AcpToolDescriptor {
     risk: "read_only",
 };
 
-pub const ACP_REPLACE_TEXT_TOOL: AcpToolDescriptor = AcpToolDescriptor {
-    provider_name: "fs_replace_text",
-    canonical_name: "acp.fs.replace_text",
-    adapter_method: "bears/replace_text",
-    client_method: "fs/replace_text",
-    title: "Replace text",
+pub const ACP_EDIT_FILE_TOOL: AcpToolDescriptor = AcpToolDescriptor {
+    provider_name: "fs_edit_file",
+    canonical_name: "acp.fs.edit_file",
+    adapter_method: "bears/edit_file",
+    client_method: "fs/edit_file",
+    title: "Edit file",
     kind: "edit",
     risk: "writes_workspace",
 };
@@ -744,7 +745,7 @@ const ACP_STAT_POLICY: AcpToolPolicy = AcpToolPolicy {
     permission_timeout_ms: 120_000,
 };
 
-const ACP_REPLACE_TEXT_POLICY: AcpToolPolicy = AcpToolPolicy {
+const ACP_EDIT_FILE_POLICY: AcpToolPolicy = AcpToolPolicy {
     scope_basis: "acp:tools",
     role_basis: "pair_agent",
     allowed_roots_basis: "acp_session.workspace_roots",
@@ -1045,7 +1046,7 @@ pub fn acp_tool_policy(tool: AcpToolName) -> AcpToolPolicy {
         AcpToolName::FindPaths => ACP_FIND_PATHS_POLICY,
         AcpToolName::SearchFiles => ACP_SEARCH_FILES_POLICY,
         AcpToolName::Stat => ACP_STAT_POLICY,
-        AcpToolName::ReplaceText => ACP_REPLACE_TEXT_POLICY,
+        AcpToolName::EditFile => ACP_EDIT_FILE_POLICY,
         AcpToolName::CreateTextFile => ACP_CREATE_TEXT_FILE_POLICY,
         AcpToolName::CreateDirectory => ACP_CREATE_DIRECTORY_POLICY,
         AcpToolName::MovePath => ACP_MOVE_PATH_POLICY,
@@ -1311,10 +1312,10 @@ pub fn acp_client_tool_descriptor(tool: &AcpToolDescriptor) -> serde_json::Value
                 "required": ["path"]
             }
         }),
-        "fs_replace_text" => json!({
+        "fs_edit_file" => json!({
             "name": tool.provider_name,
             "description": format!(
-                "ACP local workspace tool ({}, target={}, adapter={}, client={}, kind={}, risk={}). Replaces exact UTF-8 text in an existing workspace file through the local adapter. Approval is required and sensitive paths are denied.",
+                "ACP local workspace tool ({}, target={}, adapter={}, client={}, kind={}, risk={}). Edits an existing workspace text file by replacing one exact UTF-8 text span through the local adapter. Approval is required and sensitive paths are denied.",
                 tool.canonical_name,
                 "acp_client",
                 tool.adapter_method,
@@ -1678,7 +1679,7 @@ mod tests {
         assert!(names.contains(&"git_status"));
         assert!(names.contains(&"git_diff"));
         assert!(names.contains(&"fs_delete_path"));
-        assert!(!names.contains(&"fs_replace_text"));
+        assert!(!names.contains(&"fs_edit_file"));
     }
 
     #[test]
@@ -1695,7 +1696,7 @@ mod tests {
                     "git_diff": { "supported": true, "version": 1 },
                     "git_log": { "supported": true, "version": 1 },
                     "git_show": { "supported": true, "version": 1 },
-                    "fs_replace_text": { "supported": true, "version": 1 },
+                    "fs_edit_file": { "supported": true, "version": 1 },
                     "fs_create_text_file": { "supported": true, "version": 1 },
                     "fs_create_directory": { "supported": true, "version": 1 },
                     "fs_move_path": { "supported": true, "version": 1 },
@@ -1715,7 +1716,7 @@ mod tests {
                 "fs_read_text_file",
                 "fs_find_paths",
                 "fs_stat",
-                "fs_replace_text",
+                "fs_edit_file",
                 "fs_create_text_file",
                 "fs_create_directory",
                 "fs_move_path",
@@ -1789,7 +1790,7 @@ mod tests {
         assert_eq!(git_show_policy["risk"], "read_only");
         assert_eq!(git_show_policy["max_bytes"], 262_144);
 
-        let replace_policy = acp_tool_policy_json_for_provider("fs_replace_text");
+        let replace_policy = acp_tool_policy_json_for_provider("fs_edit_file");
         assert_eq!(replace_policy["risk"], "writes_workspace");
         assert_eq!(
             replace_policy["sensitive_path_policy"],
@@ -1869,7 +1870,7 @@ mod tests {
     #[test]
     fn mutating_tools_deny_sensitive_and_hidden_paths_by_policy() {
         for name in [
-            "fs_replace_text",
+            "fs_edit_file",
             "fs_create_text_file",
             "fs_create_directory",
             "fs_move_path",

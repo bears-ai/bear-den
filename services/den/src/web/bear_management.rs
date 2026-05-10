@@ -18,8 +18,9 @@ use validator::{Validate, ValidationError, ValidationErrors};
 use crate::{
     auth_backend::{AuthSession, SessionUser},
     core::{
-        acp_sessions, acp_tokens, archived_conversations,
+        acp_sessions, acp_tokens,
         acp_tools::{acp_tool_policy_json_for_provider, AcpToolName},
+        archived_conversations,
         bears::{
             compute_letta_drift_with_expected_tool_ids, db as bears_db,
             db::{role_is_bear_admin, BearMemberRow, BEAR_ROLE_ADMIN, BEAR_ROLE_MEMBER},
@@ -341,12 +342,28 @@ fn role_capabilities(role: BearAgentRole) -> Vec<&'static str> {
 fn acp_tool_detail_rows() -> Vec<AcpToolDetailRow> {
     AcpToolName::all()
         .iter()
-        .filter(|tool| matches!(tool, AcpToolName::TerminalRunCommand | AcpToolName::ProcessRun | AcpToolName::ReadTextFile | AcpToolName::ListDirectory | AcpToolName::SearchFiles | AcpToolName::ReplaceText | AcpToolName::CreateTextFile | AcpToolName::DeletePath))
+        .filter(|tool| {
+            matches!(
+                tool,
+                AcpToolName::TerminalRunCommand
+                    | AcpToolName::ProcessRun
+                    | AcpToolName::ReadTextFile
+                    | AcpToolName::ListDirectory
+                    | AcpToolName::SearchFiles
+                    | AcpToolName::EditFile
+                    | AcpToolName::CreateTextFile
+                    | AcpToolName::DeletePath
+            )
+        })
         .map(|tool| {
             let descriptor = tool.descriptor();
             let policy = acp_tool_policy_json_for_provider(descriptor.provider_name);
             let mut policy_summary = Vec::new();
-            if policy.get("approval_required").and_then(|v| v.as_bool()).unwrap_or(false) {
+            if policy
+                .get("approval_required")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false)
+            {
                 policy_summary.push("User approval required before execution".to_string());
             }
             if let Some(timeout) = policy.get("total_timeout_ms").and_then(|v| v.as_u64()) {
@@ -378,8 +395,12 @@ fn acp_tool_approval_label(provider_name: &str) -> &'static str {
     match provider_name {
         "terminal_run_command" => "Only once, by command in workspace, by workspace, or globally",
         "process_run" => "Only once, by command in workspace, by workspace, or globally",
-        "fs_read_text_file" | "fs_list_directory" | "fs_search_files" => "Only once, by directory, by workspace, or globally",
-        "fs_replace_text" | "fs_create_text_file" => "Only once, by directory, by workspace, or globally",
+        "fs_read_text_file" | "fs_list_directory" | "fs_search_files" => {
+            "Only once, by directory, by workspace, or globally"
+        }
+        "fs_edit_file" | "fs_create_text_file" => {
+            "Only once, by directory, by workspace, or globally"
+        }
         "fs_delete_path" => "Only once, by directory, by workspace, or globally",
         _ => "Tool-family approval through ACP client",
     }
@@ -389,19 +410,30 @@ fn acp_tool_scope_label(provider_name: &str) -> &'static str {
     match provider_name {
         "terminal_run_command" => "Workspace cwd + allowlisted build/test commands",
         "process_run" => "Workspace cwd + adapter process policy",
-        "fs_read_text_file" | "fs_list_directory" | "fs_search_files" => "Absolute paths under ACP workspace roots",
-        "fs_replace_text" | "fs_create_text_file" | "fs_delete_path" => "Absolute paths under ACP workspace roots; hidden/sensitive paths restricted",
+        "fs_read_text_file" | "fs_list_directory" | "fs_search_files" => {
+            "Absolute paths under ACP workspace roots"
+        }
+        "fs_edit_file" | "fs_create_text_file" | "fs_delete_path" => {
+            "Absolute paths under ACP workspace roots; hidden/sensitive paths restricted"
+        }
         _ => "ACP session workspace/policy scope",
     }
 }
 
 fn acp_tool_parameter_summary(provider_name: &str) -> Vec<&'static str> {
     match provider_name {
-        "terminal_run_command" | "process_run" => vec!["command", "args[]", "cwd", "timeout_ms", "max_output_bytes", "env"],
+        "terminal_run_command" | "process_run" => vec![
+            "command",
+            "args[]",
+            "cwd",
+            "timeout_ms",
+            "max_output_bytes",
+            "env",
+        ],
         "fs_read_text_file" => vec!["path", "line", "limit"],
         "fs_list_directory" => vec!["path", "recursive", "limit", "include_hidden"],
         "fs_search_files" => vec!["path", "query", "pattern", "extensions", "case_sensitive"],
-        "fs_replace_text" => vec!["path", "old_text", "new_text", "expected_replacements"],
+        "fs_edit_file" => vec!["path", "old_text", "new_text", "expected_replacements"],
         "fs_create_text_file" => vec!["path", "content", "create_parent_dirs"],
         "fs_delete_path" => vec!["path", "recursive", "expected_kind"],
         _ => Vec::new(),
@@ -415,7 +447,7 @@ fn acp_tool_usage_hint(provider_name: &str) -> &'static str {
         "fs_read_text_file" => "Read bounded text from a workspace file.",
         "fs_list_directory" => "Discover workspace files and directories without reading file contents.",
         "fs_search_files" => "Search text or path patterns under a workspace directory.",
-        "fs_replace_text" => "Safely replace exact text in an existing file with preview and stale-file revalidation.",
+        "fs_edit_file" => "Safely edit an existing file by replacing exact text with preview and stale-file revalidation.",
         "fs_create_text_file" => "Create a new UTF-8 text file without overwriting existing content.",
         "fs_delete_path" => "Delete files or empty directories; recursive deletion requires explicit opt-in.",
         _ => "ACP local tool.",

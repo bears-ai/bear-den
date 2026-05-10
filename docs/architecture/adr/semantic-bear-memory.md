@@ -179,7 +179,7 @@ The planned tool name is:
 
 | Canonical | Provider-safe |
 |---|---|
-| `den.situation.get` | `situation_get` |
+| `den.session.info` | `session_info` |
 
 A situation briefing may include:
 
@@ -193,7 +193,7 @@ A situation briefing may include:
 - MemFS health summary,
 - available memory and Cabinet tools.
 
-`den.situation.get` is not a memory read tool. It is a trusted Den briefing for safe operation.
+`den.session.info` is not a memory read tool. It is a trusted Den briefing for safe operation.
 
 ---
 
@@ -259,7 +259,7 @@ Candidate tool/API names:
 | Canonical | Provider-safe | Purpose |
 |---|---|---|
 | `den.memory.request_review` | `memory_request_review` | Request Reflection curation of role-local memory without writing shared memory directly. |
-| `den.memory.tree` | `memory_tree` | Browse allowed memory paths. |
+| `den.memory.browse` | `memory_browse` | Browse allowed memory paths. |
 | `den.memory.read` | `memory_read` | Read an allowed memory file or entry. |
 | `den.memory.search` | `memory_search` | Search memory with role/kind/reference filters. |
 | `den.memory.semantic_search` | `memory_semantic_search` | Search Letta Archives attached to or governed for this Bear/role. |
@@ -343,7 +343,7 @@ Recommended follow-up review capability:
 
 ## Follow-up Work
 
-1. Add a Den `den.situation.get` design and eventually tool/API implementation.
+1. Add a Den `den.session.info` design and eventually tool/API implementation.
 2. Replace `den.write_note` with `den.memory.write_entry` for ACP `pair`.
 3. Add `den.memory.request_review` for producer-side curation requests.
 4. Add memory browse/search/read/status APIs that can support both agents and the future human operator UI.

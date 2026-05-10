@@ -9,9 +9,7 @@ use uuid::Uuid;
 use crate::{
     config::Config,
     core::{
-        acp_plan_mode::{
-            self, AcpPlanModeRequestedBy, EnterPlanModeParams, SubmitPlanModeParams,
-        },
+        acp_plan_mode::{self, AcpPlanModeRequestedBy, EnterPlanModeParams, SubmitPlanModeParams},
         bears::{db as bears_db, db::role_is_bear_admin, BearAgentRole},
         memory_manager_head::{
             fetch_memfs_role_memory_file, fetch_memfs_role_memory_status,
@@ -38,14 +36,16 @@ pub const DEN_WEB_FETCH_PROVIDER: &str = "web_fetch";
 pub const DEN_WEB_FETCH_LEGACY_PROVIDER: &str = "den_web_fetch";
 pub const DEN_WEB_SEARCH: &str = "den.web.search";
 pub const DEN_WEB_SEARCH_PROVIDER: &str = "web_search";
-pub const DEN_SITUATION_GET: &str = "den.situation.get";
-pub const DEN_SITUATION_GET_PROVIDER: &str = "situation_get";
+pub const DEN_SITUATION_GET: &str = "den.session.info";
+pub const DEN_SITUATION_GET_PROVIDER: &str = "session_info";
+pub const DEN_SITUATION_GET_LEGACY_PROVIDER: &str = "situation_get";
 pub const DEN_MEMORY_WRITE_ENTRY: &str = "den.memory.write_entry";
 pub const DEN_MEMORY_WRITE_ENTRY_PROVIDER: &str = "memory_write_entry";
 pub const DEN_MEMORY_STATUS: &str = "den.memory.status";
 pub const DEN_MEMORY_STATUS_PROVIDER: &str = "memory_status";
-pub const DEN_MEMORY_TREE: &str = "den.memory.tree";
-pub const DEN_MEMORY_TREE_PROVIDER: &str = "memory_tree";
+pub const DEN_MEMORY_TREE: &str = "den.memory.browse";
+pub const DEN_MEMORY_TREE_PROVIDER: &str = "memory_browse";
+pub const DEN_MEMORY_TREE_LEGACY_PROVIDER: &str = "memory_tree";
 pub const DEN_MEMORY_READ: &str = "den.memory.read";
 pub const DEN_MEMORY_READ_PROVIDER: &str = "memory_read";
 pub const DEN_MEMORY_SEARCH: &str = "den.memory.search";
@@ -217,8 +217,8 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
         ),
         descriptor(
             DEN_SITUATION_GET,
-            "Current situation",
-            "Return Den's trusted briefing for this interaction: bear, role, user/session identity, memory scopes, policy notes, and memory health hints.",
+            "Session info",
+            "Return trusted session information for this interaction: authenticated human, bear, role, session identity, memory scopes, policy notes, and memory health hints.",
             "session",
             &["situation.read"],
             PAIR_ROLES,
@@ -244,7 +244,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
         ),
         descriptor(
             DEN_MEMORY_TREE,
-            "Browse memory tree",
+            "Browse memory",
             "Browse allowed Bear memory paths for the current role.",
             "bear.memory",
             &["memory.tree.read"],
@@ -909,10 +909,10 @@ pub async fn invoke_den_tool(
         DEN_POLICY_GET_SELF => policy_self(pool, &context).await,
         DEN_WEB_FETCH => web_fetch(pool, &context, arguments).await,
         DEN_WEB_SEARCH => web_search(pool, config, &context, arguments).await,
-        DEN_SITUATION_GET => situation_get(pool, config, &context, role).await,
+        DEN_SITUATION_GET => session_info(pool, config, &context, role).await,
         DEN_MEMORY_WRITE_ENTRY => write_memory_entry(pool, config, &context, role, arguments).await,
         DEN_MEMORY_STATUS => memory_status(config, &context, role).await,
-        DEN_MEMORY_TREE => memory_tree(config, &context, role).await,
+        DEN_MEMORY_TREE => memory_browse(config, &context, role).await,
         DEN_MEMORY_READ => memory_read(config, &context, role, arguments).await,
         DEN_MEMORY_SEARCH => memory_search(config, &context, role, arguments).await,
         DEN_WORK_PLAN_LIST => list_work_plans(pool, &context, role, arguments).await,
@@ -1383,7 +1383,7 @@ async fn brave_web_search(
     }))
 }
 
-async fn situation_get(
+async fn session_info(
     pool: &PgPool,
     config: &Config,
     context: &DenToolInvocationContext,
@@ -1446,8 +1446,8 @@ async fn situation_get(
             "status": memory_status
         },
         "policy_notes": [
-            "Situation is a Den-trusted briefing, not the model context window.",
-            "Use memory_write_entry only for role-local notes, logs, decisions, reflections, scratch, and summaries; entries are attributed to the authenticated human in this situation.",
+            "Session info is a Den-trusted briefing, not the model context window.",
+            "Use memory_write_entry only for role-local notes, logs, decisions, reflections, scratch, and summaries; entries are attributed to the authenticated human in this session.",
             "Do not use memory entry tools for tasks, observations, run results, Cabinet writes, or direct core updates."
         ]
     }))
@@ -1465,8 +1465,9 @@ async fn enter_plan_mode(
             user_id: context.user_id,
             bear_id: context.bear_id,
             bear_slug: context.bear_slug.clone(),
-            acp_session_id: source_acp_session_id(context)
-                .ok_or_else(|| CustomError::ValidationError("ACP session id is required for plan mode".to_string()))?,
+            acp_session_id: source_acp_session_id(context).ok_or_else(|| {
+                CustomError::ValidationError("ACP session id is required for plan mode".to_string())
+            })?,
             reason: args.reason,
             requested_by: AcpPlanModeRequestedBy::Pair,
             previous_permission_mode: args.previous_permission_mode,
@@ -1490,15 +1491,12 @@ async fn plan_mode_status(
     pool: &PgPool,
     context: &DenToolInvocationContext,
 ) -> Result<Value, CustomError> {
-    let acp_session_id = source_acp_session_id(context)
-        .ok_or_else(|| CustomError::ValidationError("ACP session id is required for plan mode".to_string()))?;
-    let row = acp_plan_mode::active_for_session(
-        pool,
-        context.user_id,
-        context.bear_id,
-        &acp_session_id,
-    )
-    .await?;
+    let acp_session_id = source_acp_session_id(context).ok_or_else(|| {
+        CustomError::ValidationError("ACP session id is required for plan mode".to_string())
+    })?;
+    let row =
+        acp_plan_mode::active_for_session(pool, context.user_id, context.bear_id, &acp_session_id)
+            .await?;
     Ok(json!({
         "bear_id": context.bear_id,
         "acp_session_id": acp_session_id,
@@ -1514,8 +1512,9 @@ async fn exit_plan_mode(
     arguments: Value,
 ) -> Result<Value, CustomError> {
     let args: PlanModeExitArguments = serde_json::from_value(arguments)?;
-    let acp_session_id = source_acp_session_id(context)
-        .ok_or_else(|| CustomError::ValidationError("ACP session id is required for plan mode".to_string()))?;
+    let acp_session_id = source_acp_session_id(context).ok_or_else(|| {
+        CustomError::ValidationError("ACP session id is required for plan mode".to_string())
+    })?;
     let title = validate_bounded_text("title", &args.title, 1, 200)?;
     let body = validate_bounded_text("body", &args.body, 1, 50_000)?;
     let markdown = acp_plan_mode::render_plan_artifact_markdown(&title, &body);
@@ -1596,8 +1595,9 @@ async fn cancel_plan_mode(
     arguments: Value,
 ) -> Result<Value, CustomError> {
     let args: PlanModeCancelArguments = serde_json::from_value(arguments)?;
-    let acp_session_id = source_acp_session_id(context)
-        .ok_or_else(|| CustomError::ValidationError("ACP session id is required for plan mode".to_string()))?;
+    let acp_session_id = source_acp_session_id(context).ok_or_else(|| {
+        CustomError::ValidationError("ACP session id is required for plan mode".to_string())
+    })?;
     let row = acp_plan_mode::cancel_plan_mode(
         pool,
         context.user_id,
@@ -1719,12 +1719,12 @@ async fn memory_status_value(
     }))
 }
 
-async fn memory_tree(
+async fn memory_browse(
     config: &Config,
     context: &DenToolInvocationContext,
     role: BearAgentRole,
 ) -> Result<Value, CustomError> {
-    let http = memfs_http_client("MemFS memory tree client build failed")?;
+    let http = memfs_http_client("MemFS memory browse client build failed")?;
     let response = fetch_memfs_role_memory_tree(
         &http,
         &config.letta_memfs_service_url,
@@ -1735,7 +1735,7 @@ async fn memory_tree(
     response
         .map(|value| {
             serde_json::to_value(value)
-                .map_err(|e| CustomError::Parsing(format!("memory tree JSON: {e}")))
+                .map_err(|e| CustomError::Parsing(format!("memory browse JSON: {e}")))
         })
         .unwrap_or_else(|| {
             Ok(json!({
@@ -1957,7 +1957,8 @@ fn validate_memory_kind(value: &str) -> Result<String, CustomError> {
     match kind.as_str() {
         "note" | "log" | "decision" | "reflection" | "scratch" | "summary" | "plan" => Ok(kind),
         _ => Err(CustomError::ValidationError(
-            "kind must be one of note, log, decision, reflection, scratch, summary, plan".to_string(),
+            "kind must be one of note, log, decision, reflection, scratch, summary, plan"
+                .to_string(),
         )),
     }
 }
@@ -2228,8 +2229,17 @@ mod tests {
             .find(|descriptor| descriptor.name == DEN_SITUATION_GET)
             .expect("situation descriptor exists");
         assert_eq!(situation.provider_name, DEN_SITUATION_GET_PROVIDER);
-        assert_eq!(situation.provider_name, "situation_get");
+        assert_eq!(situation.provider_name, "session_info");
+        assert_ne!(situation.provider_name, "situation_get");
         assert_ne!(situation.provider_name, "den_situation_get");
+
+        let memory_browse = descriptors
+            .iter()
+            .find(|descriptor| descriptor.name == DEN_MEMORY_TREE)
+            .expect("memory browse descriptor exists");
+        assert_eq!(memory_browse.provider_name, DEN_MEMORY_TREE_PROVIDER);
+        assert_eq!(memory_browse.provider_name, "memory_browse");
+        assert_ne!(memory_browse.provider_name, "memory_tree");
 
         let memory = descriptors
             .iter()
@@ -2244,9 +2254,12 @@ mod tests {
             .into_iter()
             .map(|descriptor| descriptor.provider_name)
             .collect::<HashSet<_>>();
-        assert!(provider_names.contains("situation_get"));
+        assert!(provider_names.contains("session_info"));
         assert!(provider_names.contains("web_search"));
+        assert!(provider_names.contains("memory_browse"));
         assert!(provider_names.contains("memory_read"));
+        assert!(!provider_names.contains("situation_get"));
+        assert!(!provider_names.contains("memory_tree"));
         assert!(!provider_names.contains("den_situation_get"));
         assert!(!provider_names.contains("den_web_search"));
         assert!(!provider_names.contains("den_memory_read"));

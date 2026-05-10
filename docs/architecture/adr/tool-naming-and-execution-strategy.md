@@ -99,7 +99,7 @@ acp.chrome.open
 den.web.fetch
 den.web.search
 den.memory.write_entry
-den.situation.get
+den.session.info
 den.service.restart
 ```
 
@@ -129,7 +129,7 @@ Execution classes:
 | Execution | Meaning | Examples |
 | --- | --- | --- |
 | `adapter` | Local ACP adapter executes the tool | `fs_read_text_file`, `git_status`, `process_run`, `chrome_open` |
-| `den` | Den executes the tool | `web_fetch`, `web_search`, `memory_read`, `situation_get` |
+| `den` | Den executes the tool | `web_fetch`, `web_search`, `memory_read`, `session_info` |
 | `external` | Future external service/runtime executes the tool | hosted search, MCP gateway, etc. |
 
 Protocol rule:
@@ -150,7 +150,7 @@ fs_list_directory
 fs_find_paths
 fs_search_files
 fs_stat
-fs_replace_text
+fs_edit_file
 fs_create_text_file
 fs_create_directory
 fs_move_path
@@ -289,10 +289,10 @@ Chrome tools assume a Chrome-family DevTools Protocol endpoint configured by `BE
 Advertised provider names should eventually drop implementation prefixes:
 
 ```text
-situation_get
+session_info
 memory_write_entry
 memory_status
-memory_tree
+memory_browse
 memory_read
 memory_search
 ```
@@ -300,10 +300,10 @@ memory_search
 Canonical names remain Den-owned:
 
 ```text
-den.situation.get
+den.session.info
 den.memory.write_entry
 den.memory.status
-den.memory.tree
+den.memory.browse
 den.memory.read
 den.memory.search
 ```
@@ -447,7 +447,7 @@ Examples:
 | Provider | Permission class |
 | --- | --- |
 | `fs_read_text_file` | `read_files` |
-| `fs_replace_text` | `edit_files` |
+| `fs_edit_file` | `edit_files` |
 | `fs_delete_path` | `delete_files` |
 | `git_status` | `git_read` |
 | `git_commit` | `git_write` |
@@ -491,7 +491,7 @@ Examples:
 4. Stop adapter advertising canonical `web_fetch`.
 5. Add Den-side URL/host approval flow for unapproved fetches.
 6. Update prompt guidance to prefer `web_fetch`, not `den_web_fetch`.
-7. Migrate memory/situation provider names away from `den_*` prefixes: `situation_get`, `memory_write_entry`, `memory_status`, `memory_tree`, `memory_read`, and `memory_search`.
+7. Migrate memory/situation provider names away from `den_*` prefixes: `session_info`, `memory_write_entry`, `memory_status`, `memory_browse`, `memory_read`, and `memory_search`.
 
 ---
 
