@@ -25,6 +25,10 @@ use crate::{
     errors::CustomError,
 };
 
+// Den-executed server tools. Adding a new Den tool here and to
+// `builtin_den_tool_descriptors` should not require an ACP adapter update when
+// it uses existing stream/result shapes. Keep provider names semantic and
+// provider-safe; accept legacy aliases only at routing boundaries.
 pub const DEN_BEAR_GET_SELF: &str = "den.bear.get_self";
 pub const DEN_USER_GET_CURRENT: &str = "den.user.get_current";
 pub const DEN_BEAR_LIST_MEMBERS: &str = "den.bear.list_members";
@@ -86,6 +90,9 @@ const WATCH_ROLES: &[&str] = &["watch"];
 const WORK_ROLES: &[&str] = &["work"];
 
 pub fn provider_safe_tool_name(name: &str) -> String {
+    // Prefer concise semantic aliases (`web_search`, `session_info`) for Den
+    // server tools. Do not expose `den_*` just to communicate execution
+    // location; execution belongs in descriptor metadata and docs.
     match name {
         DEN_WEB_FETCH => return DEN_WEB_FETCH_PROVIDER.to_string(),
         DEN_WEB_SEARCH => return DEN_WEB_SEARCH_PROVIDER.to_string(),
@@ -144,6 +151,10 @@ pub struct DenToolDescriptor {
 }
 
 pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
+    // Den-executed tools are safe to add without adapter updates as long as
+    // they do not introduce new required adapter-facing event/result shapes.
+    // If a tool needs adapter-local execution, it belongs in acp_tools.rs and
+    // must be direct-tool capability gated instead.
     vec![
         descriptor(
             DEN_BEAR_GET_SELF,

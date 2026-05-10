@@ -173,6 +173,15 @@ Examples:
 | `den.session.info` | `session_info` | `den_session_info` |
 | `den.memory.read` | `memory_read` | `den_memory_read` |
 
+## Additive tool compatibility rule
+
+Adding a new tool is not, by itself, an ACP adapter protocol break.
+
+- Den-executed tools can be added and advertised by Den without requiring users to update their ACP adapter, as long as they use existing adapter-facing stream/result shapes.
+- Adapter-executed tools must be advertised only when the current adapter reports support for that provider name in its direct-tool capabilities.
+- Do not add `den_`, `adapter_`, or version suffixes to provider names just to manage rollout. Use descriptor metadata and capability gates instead.
+- Do not bump the Den ↔ adapter contract for additive tools; reserve contract bumps for incompatible transport/schema changes.
+
 ## Scope preservation rule
 
 Provider-safe names may be short, but scope must be preserved elsewhere.

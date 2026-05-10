@@ -435,9 +435,107 @@ Adapter direct tool advertisement must include only tools it can execute locally
 
 Therefore:
 
-- advertise `fs_*`, `git_*`, `process_run`, `chrome_*`;
+- advertise `fs_*`, `git_*`, `process_run`, `terminal_run_command`, `chrome_*`;
 - do not advertise canonical `web_fetch`;
 - if local fetch is added later, advertise `local_web_fetch` instead.
+
+Den must treat adapter direct capabilities as the source of truth for adapter-executed tools. If an adapter does not advertise a local tool, Den must not expose that local tool to the model for that turn.
+
+---
+
+## Tool addition and adapter compatibility policy
+
+Adding a tool must not automatically require users to update their ACP adapter. Compatibility depends on the execution class.
+
+### Den-executed tools
+
+Adding a Den-executed tool is normally backward-compatible with existing adapters.
+
+Examples:
+
+```text
+web_fetch
+web_search
+session_info
+memory_read
+memory_search
+update_plan
+```
+
+Rules:
+
+1. Den executes the tool entirely server-side.
+2. The adapter does not need implementation code for the tool.
+3. Den may advertise the new tool to the model immediately, subject to role/policy.
+4. Do not bump the Den ↔ adapter contract just because a Den-executed tool was added.
+5. Do not introduce new required adapter-facing SSE event shapes as part of “just adding a Den tool.” If a new event shape is required, that is a protocol change, not merely a new tool.
+6. Tool-specific validation failures should settle the tool result with `status="error"`; they should not bubble out as generic stream-processing failures.
+
+### Adapter-executed tools
+
+Adding an adapter-executed tool must be capability-gated so old adapters continue to work without seeing the new tool.
+
+Examples:
+
+```text
+fs_*
+git_*
+process_run
+terminal_run_command
+chrome_*
+```
+
+Rules:
+
+1. The adapter must advertise support in `client_context.adapter.direct_tools.<provider_name>.supported = true`.
+2. For legacy compatibility, the adapter may also advertise `client_context.direct_tools.<provider_name> = true`.
+3. Den must advertise an adapter-executed tool only when the current adapter context declares support for that provider name.
+4. If the adapter does not advertise the tool, Den must omit it from model-facing `client_tools` for that turn.
+5. Do not bump the Den ↔ adapter contract for an additive local tool when the existing `tool_request`, permission, and tool-result shapes are sufficient.
+6. Use per-tool capability versions for behavior changes to a local tool; reserve the global adapter contract for incompatible transport/schema changes.
+
+### Den ↔ adapter contract versioning
+
+The adapter contract version describes the private Den ↔ adapter transport/schema contract. It is not a tool catalog version.
+
+Do not bump the adapter contract for:
+
+- adding a Den-executed tool;
+- adding an adapter-executed tool that is capability-gated;
+- adding optional fields;
+- adding diagnostics/log fields;
+- changing tool descriptions, labels, or prompt guidance;
+- accepting a new provider alias while keeping old aliases accepted.
+
+Bump the adapter contract only for incompatible changes, such as:
+
+- changing required fields in Den ↔ adapter requests or responses;
+- changing existing SSE event shapes in a way old adapters cannot parse;
+- changing tool-result settlement semantics incompatibly;
+- removing accepted fields or aliases that old adapters rely on;
+- requiring previously optional compatibility metadata.
+
+Missing `adapter_contract` metadata should remain accepted unless Den intentionally ships a breaking adapter protocol change. This prevents one-sided Den-only deployments from breaking already-running compatible adapter processes.
+
+### New tool checklist
+
+When adding a Den-executed tool:
+
+1. Add a canonical `den.*` name and provider-safe alias in Den descriptors.
+2. Add accepted legacy aliases only at routing boundaries if needed.
+3. Add an invocation handler in Den.
+4. Add prompt guidance only if the model needs usage hints.
+5. Ensure the tool does not require adapter direct support.
+6. Do not bump the adapter contract.
+
+When adding an adapter-executed tool:
+
+1. Add an ACP descriptor and policy in Den.
+2. Add adapter implementation.
+3. Add adapter direct capability advertisement.
+4. Ensure Den filters the descriptor through `adapter_supports_tool` / direct-tool capability checks.
+5. Add approval metadata and result UX.
+6. Do not bump the adapter contract unless the Den ↔ adapter message shape changed incompatibly.
 
 ---
 

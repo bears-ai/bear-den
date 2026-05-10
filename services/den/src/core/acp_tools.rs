@@ -16,6 +16,11 @@ pub mod acp_diag_phase {
     pub const RECENTLY_SETTLED_RESULT: &str = "recently_settled_result";
 }
 
+// Adapter-executed ACP local tools. Adding to this enum is not enough:
+// the adapter must implement and advertise the same provider_name in
+// `adapter.direct_tools`, and Den must keep descriptor advertisement gated by
+// `adapter_supports_tool`. Do not bump the Den↔adapter contract for additive
+// local tools unless the tool requires an incompatible message-shape change.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AcpToolName {
     ReadTextFile,
@@ -81,6 +86,10 @@ impl AcpToolName {
     }
 
     pub fn all() -> &'static [Self] {
+        // Keep this list in sync with `descriptor`, `from_provider_alias`, policy,
+        // descriptors, and the adapter's direct tool advertisement. Old adapters
+        // remain compatible because `acp_provider_tool_names_for_client_context`
+        // filters this list by adapter support.
         &[
             Self::ReadTextFile,
             Self::ListDirectory,
@@ -1248,6 +1257,9 @@ pub fn acp_client_tool_descriptors() -> serde_json::Value {
 pub fn acp_client_tool_descriptors_for_client_context(
     client_context: &serde_json::Value,
 ) -> serde_json::Value {
+    // Compatibility rule: adapter-executed tools are advertised only when the
+    // current adapter explicitly reports support. Adding a new local tool should
+    // not force old adapters to update; they simply won't see the descriptor.
     let names = acp_provider_tool_names_for_client_context(client_context);
     let descriptors = names
         .iter()
@@ -1288,6 +1300,9 @@ pub fn acp_provider_tool_names_for_client_context(
 }
 
 fn adapter_supports_tool(client_context: &serde_json::Value, provider_name: &str) -> bool {
+    // Structured `adapter.direct_tools` is preferred. Legacy `direct_tools` is
+    // accepted so older adapters keep working. New local tools must not bypass
+    // this check.
     client_context
         .pointer(&format!("/adapter/direct_tools/{provider_name}/supported"))
         .and_then(|v| v.as_bool())
