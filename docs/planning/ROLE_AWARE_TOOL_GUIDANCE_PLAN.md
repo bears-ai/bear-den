@@ -19,13 +19,7 @@ This creates drift risk. For example, a tool name or behavior can change in Den 
 
 1. Put model-facing and operator-facing tool guidance in one Den-owned module.
 2. Make guidance explicitly role-aware.
-3. Support different guidance triggers:
-   - tool is available,
-   - prompt/session setup,
-   - tool result,
-   - plan completed,
-   - plan blocked,
-   - plan-mode entered/submitted/approved/rejected.
+3. Support a small generic lifecycle trigger taxonomy plus domain/context metadata. Planning, Docket, Cabinet, workspace lifecycle, memory, skills, observations, and web tools should reuse the same generic triggers rather than adding domain-specific trigger variants.
 4. Expose guidance in Bear detail UI so users/operators can see what each role is expected to do with available tools.
 5. Preserve clean provider-visible tool names such as `update_plan`, `enter_plan_mode`, `session_info`, and `memory_write_entry`.
 6. Design so future per-bear customization can be layered in without changing the core shape.
@@ -44,7 +38,7 @@ Add a new Den module:
 
 - `services/den/src/core/tool_guidance.rs`
 
-This module owns structured guidance records keyed by role, canonical tool name, and trigger.
+This module owns structured guidance records keyed by role, canonical tool name, generic trigger, and optional domain/context fields.
 
 ### Core types
 
@@ -54,14 +48,27 @@ Suggested shape:
 pub enum ToolGuidanceTrigger {
     ToolAvailable,
     PromptContext,
-    ToolResult,
-    PlanCompleted,
-    PlanBlocked,
-    PlanHandoffRequested,
-    PlanModeEntered,
-    PlanModeSubmitted,
-    PlanModeApproved,
-    PlanModeRejected,
+    BeforeCall,
+    AfterSuccess,
+    AfterFailure,
+    StateChanged,
+    NeedsUserApproval,
+    HandoffCreated,
+    Completion,
+    Blocked,
+}
+
+pub enum ToolGuidanceDomain {
+    General,
+    Planning,
+    Memory,
+    Docket,
+    Cabinet,
+    Workspace,
+    Skills,
+    Observations,
+    Web,
+    Policy,
 }
 
 pub enum ToolGuidanceAudience {
@@ -75,6 +82,10 @@ pub struct ToolGuidance {
     pub canonical_tool_name: &'static str,
     pub provider_name: &'static str,
     pub trigger: ToolGuidanceTrigger,
+    pub domain: ToolGuidanceDomain,
+    pub subject_kind: &'static str,
+    pub action: Option<&'static str>,
+    pub outcome: Option<&'static str>,
     pub audience: ToolGuidanceAudience,
     pub summary: &'static str,
     pub guidance: &'static str,
@@ -97,11 +108,18 @@ pub fn guidance_for_tool(
     canonical_tool_name: &str,
 ) -> Vec<ToolGuidance>;
 
-pub fn guidance_for_trigger(
-    role: BearAgentRole,
-    canonical_tool_name: &str,
-    trigger: ToolGuidanceTrigger,
-) -> Vec<ToolGuidance>;
+pub struct GuidanceQuery<'a> {
+    pub bear_id: Option<Uuid>,
+    pub role: BearAgentRole,
+    pub canonical_tool_name: &'a str,
+    pub trigger: ToolGuidanceTrigger,
+    pub domain: ToolGuidanceDomain,
+    pub subject_kind: Option<&'a str>,
+    pub action: Option<&'a str>,
+    pub outcome: Option<&'a str>,
+}
+
+pub fn guidance_for_event(query: GuidanceQuery<'_>) -> Vec<ToolGuidance>;
 
 pub fn prompt_guidance_for_role(role: BearAgentRole) -> String;
 
@@ -163,7 +181,7 @@ Guidance must be role-aware from the start.
 
 ## Situational guidance design
 
-Tool handlers should not hand-code guidance strings directly. Instead, they should ask the guidance layer.
+Tool handlers should not hand-code guidance strings directly. Instead, they should ask the guidance layer with a generic trigger plus domain/context metadata.
 
 Example: `update_plan` completion result for `pair`:
 
@@ -172,7 +190,11 @@ Example: `update_plan` completion result for `pair`:
   "plan": { "status": "completed" },
   "guidance": [
     {
-      "trigger": "plan_completed",
+      "trigger": "completion",
+      "domain": "planning",
+      "subject_kind": "work_plan",
+      "action": "update",
+      "outcome": "completed",
       "summary": "Consider durable memory only for non-trivial completed plans.",
       "message": "If this completed plan produced durable knowledge useful to future pair sessions, write one concise pair-local memory entry with memory_write_entry. Skip routine or trivial completion. Use lifecycle.scope=core-candidate only when it may matter across roles.",
       "recommended_followups": ["memory_write_entry"],
@@ -221,6 +243,10 @@ CREATE TABLE bear_tool_guidance_overrides (
     role TEXT NOT NULL,
     canonical_tool_name TEXT NOT NULL,
     trigger TEXT NOT NULL,
+    domain TEXT NOT NULL DEFAULT 'general',
+    subject_kind TEXT NOT NULL DEFAULT '',
+    action TEXT NULL,
+    outcome TEXT NULL,
     audience TEXT NOT NULL DEFAULT 'both',
     guidance TEXT NOT NULL,
     enabled BOOLEAN NOT NULL DEFAULT TRUE,
@@ -262,8 +288,8 @@ Acceptance:
 
 Acceptance:
 
-- `update_plan` uses the guidance layer for `PlanCompleted`, `PlanBlocked`, and `PlanHandoffRequested` result guidance.
-- `enter_plan_mode`, `exit_plan_mode`, and `cancel_plan_mode` use guidance records for plan-mode transitions.
+- `update_plan` uses the guidance layer with generic triggers for completion, blocked, and handoff-created result guidance, with `domain=planning` and `subject_kind=work_plan`.
+- `enter_plan_mode`, `exit_plan_mode`, and `cancel_plan_mode` use guidance records with generic state/approval triggers and `domain=planning`, `subject_kind=plan_mode`.
 - Tool result guidance is structured JSON, not free-floating strings.
 
 ### Phase 4 — Bear detail UI
@@ -292,7 +318,7 @@ Acceptance:
 
 ## Testing plan
 
-- Unit tests for guidance lookup by role/tool/trigger.
+- Unit tests for guidance lookup by role/tool/trigger/domain/subject/action/outcome.
 - Unit tests ensuring every built-in guidance row references a known Den tool and a valid role.
 - ACP prompt test confirming provider-visible tool names are current and no stale `den_work_plan_*` or `den_plan_mode_*` strings appear.
 - Bear detail rendering test confirming guidance rows are present.
@@ -304,6 +330,7 @@ Acceptance:
 |------|------------|
 | Guidance becomes too verbose in prompts | Keep prompt guidance compact; expose detailed guidance in UI and tool result only when triggered. |
 | Guidance drifts from policy | Keep canonical tool names in guidance records and validate against Den descriptors in tests. |
+| Domain-specific trigger lists proliferate | Keep triggers generic and put product-specific meaning in `domain`, `subject_kind`, `action`, and `outcome`. |
 | Role-specific copy proliferates | Centralize all role/tool guidance records and add tests for duplicate/conflicting records. |
 | Future per-bear customization complicates lookup | Start with a layered lookup interface even if only built-ins are returned today. |
 
