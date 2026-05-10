@@ -1624,10 +1624,7 @@ async fn validate_den_code_token(http: &reqwest::Client, config: &Config) -> Res
     }
     let status = response.status();
     let body = response.text().await.unwrap_or_default();
-    Err(anyhow!(
-        "BEARS Code token validation failed with HTTP {status}: {}",
-        body.trim()
-    ))
+    Err(anyhow!(DenHttpError { status, body }))
 }
 
 fn client_supports_read_text_file(adapter_state: &AdapterState) -> bool {
@@ -4686,14 +4683,21 @@ fn auth_check_json_rpc_error(err: &anyhow::Error, token_hint: Option<&str>) -> V
 
 fn looks_like_den_connectivity_error(err: &anyhow::Error) -> bool {
     err.chain().any(|cause| {
-        cause
-            .downcast_ref::<reqwest::Error>()
-            .is_some_and(|reqwest_err| {
-                reqwest_err.is_connect()
-                    || reqwest_err.is_timeout()
-                    || reqwest_err.is_request()
-                    || reqwest_err.is_body()
-            })
+        if let Some(reqwest_err) = cause.downcast_ref::<reqwest::Error>() {
+            return reqwest_err.is_connect()
+                || reqwest_err.is_timeout()
+                || reqwest_err.is_request()
+                || reqwest_err.is_body();
+        }
+        if let Some(http_err) = cause.downcast_ref::<DenHttpError>() {
+            return matches!(
+                http_err.status,
+                reqwest::StatusCode::BAD_GATEWAY
+                    | reqwest::StatusCode::SERVICE_UNAVAILABLE
+                    | reqwest::StatusCode::GATEWAY_TIMEOUT
+            ) || http_err.status.is_server_error();
+        }
+        false
     })
 }
 
