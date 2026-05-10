@@ -6,17 +6,17 @@ mod tools;
 
 use agent_client_protocol::schema::{
     AgentCapabilities, AuthEnvVar, AuthMethod, AuthMethodEnvVar, AuthenticateResponse,
-    CloseSessionResponse, ContentBlock, ContentChunk, CreateTerminalRequest,
-    CreateTerminalResponse, Diff, EnvVariable, Implementation, InitializeResponse,
-    ConfigOptionUpdate, CurrentModeUpdate, ListSessionsResponse, LoadSessionResponse,
-    McpCapabilities, NewSessionResponse, Plan, PlanEntry, PlanEntryPriority, PlanEntryStatus,
-    PromptCapabilities, PromptResponse, ProtocolVersion, ReadTextFileRequest, ReadTextFileResponse,
+    CloseSessionResponse, ConfigOptionUpdate, ContentBlock, ContentChunk, CreateTerminalRequest,
+    CreateTerminalResponse, CurrentModeUpdate, Diff, EnvVariable, Implementation,
+    InitializeResponse, ListSessionsResponse, LoadSessionResponse, McpCapabilities,
+    NewSessionResponse, Plan, PlanEntry, PlanEntryPriority, PlanEntryStatus, PromptCapabilities,
+    PromptResponse, ProtocolVersion, ReadTextFileRequest, ReadTextFileResponse,
     ReleaseTerminalRequest, RequestPermissionRequest, ResumeSessionResponse, SessionCapabilities,
     SessionCloseCapabilities, SessionConfigOption, SessionConfigOptionCategory,
-    SessionConfigSelectOption, SessionInfo, SessionListCapabilities, SessionMode,
-    SessionModeState, SessionResumeCapabilities, SessionUpdate, StopReason,
-    TerminalOutputRequest, TerminalOutputResponse, ToolCall, ToolCallContent, ToolCallLocation,
-    ToolCallStatus, ToolCallUpdate, ToolCallUpdateFields, ToolKind, WaitForTerminalExitRequest,
+    SessionConfigSelectOption, SessionInfo, SessionListCapabilities, SessionMode, SessionModeState,
+    SessionResumeCapabilities, SessionUpdate, StopReason, TerminalOutputRequest,
+    TerminalOutputResponse, ToolCall, ToolCallContent, ToolCallLocation, ToolCallStatus,
+    ToolCallUpdate, ToolCallUpdateFields, ToolKind, WaitForTerminalExitRequest,
     WaitForTerminalExitResponse,
 };
 use anyhow::{anyhow, Context, Result};
@@ -255,7 +255,10 @@ fn plan_entry_from_work_plan_item(item: &Value) -> Option<PlanEntry> {
     if title.is_empty() {
         return None;
     }
-    let raw_status = item.get("status").and_then(Value::as_str).unwrap_or("pending");
+    let raw_status = item
+        .get("status")
+        .and_then(Value::as_str)
+        .unwrap_or("pending");
     let blocked_reason = item
         .get("blocked_reason")
         .and_then(Value::as_str)
@@ -884,7 +887,8 @@ async fn handle_request(
                     .cloned()
                     .unwrap_or(Value::Null),
             );
-            *shared_state.client_capabilities.lock().await = adapter_state.client_capabilities.clone();
+            *shared_state.client_capabilities.lock().await =
+                adapter_state.client_capabilities.clone();
             if let Some(id) = request.id {
                 write_response(id, Ok(initialize_result()?)).await?;
             }
@@ -921,13 +925,7 @@ async fn handle_request(
                             .await?
                     }
                     Err(err) => {
-                        write_response(
-                            id,
-                            Err(auth_challenge_error(Some(json!({
-                                "message": format!("{err:#}")
-                            })))),
-                        )
-                        .await?;
+                        write_response(id, Err(auth_check_json_rpc_error(&err, None))).await?;
                     }
                 }
             }
@@ -1011,7 +1009,9 @@ async fn handle_request(
                     }
                 };
                 let mode = match mode_value_from_config_params(&request.params) {
-                    Ok(MODE_ASK | MODE_PLAN | MODE_WRITE) => mode_value_from_config_params(&request.params)?,
+                    Ok(MODE_ASK | MODE_PLAN | MODE_WRITE) => {
+                        mode_value_from_config_params(&request.params)?
+                    }
                     Ok(other) => {
                         write_response(
                             id,
@@ -1089,10 +1089,10 @@ async fn handle_request(
                 if let Err(err) = validate_den_code_token(http, config).await {
                     write_response(
                         id,
-                        Err(token_validation_error(Some(json!({
-                            "message": format!("BEARS Code token authentication failed: {err:#}"),
-                            "hint": "Generate a fresh Den Code token for this bear."
-                        })))),
+                        Err(auth_check_json_rpc_error(
+                            &err,
+                            Some("Generate a fresh Den Code token for this bear."),
+                        )),
                     )
                     .await?;
                     return Ok(());
@@ -1142,13 +1142,7 @@ async fn handle_request(
                     return Ok(());
                 };
                 if let Err(err) = validate_den_code_token(http, config).await {
-                    write_response(
-                        id,
-                        Err(token_validation_error(Some(json!({
-                            "message": format!("BEARS Code token authentication failed: {err:#}"),
-                        })))),
-                    )
-                    .await?;
+                    write_response(id, Err(auth_check_json_rpc_error(&err, None))).await?;
                     return Ok(());
                 }
                 match restore_session_from_den(
@@ -1194,13 +1188,7 @@ async fn handle_request(
                     return Ok(());
                 };
                 if let Err(err) = validate_den_code_token(http, config).await {
-                    write_response(
-                        id,
-                        Err(token_validation_error(Some(json!({
-                            "message": format!("BEARS Code token authentication failed: {err:#}"),
-                        })))),
-                    )
-                    .await?;
+                    write_response(id, Err(auth_check_json_rpc_error(&err, None))).await?;
                     return Ok(());
                 }
                 match handle_session_load(
@@ -1245,10 +1233,10 @@ async fn handle_request(
                 if let Err(err) = validate_den_code_token(http, config).await {
                     write_response(
                         id,
-                        Err(token_validation_error(Some(json!({
-                            "message": format!("BEARS Code token authentication failed: {err:#}"),
-                            "hint": "Generate a fresh Den Code token for this bear. Code tokens must include acp:chat."
-                        })))),
+                        Err(auth_check_json_rpc_error(
+                            &err,
+                            Some("Generate a fresh Den Code token for this bear. Code tokens must include acp:chat."),
+                        )),
                     )
                     .await?;
                     return Ok(());
@@ -3869,7 +3857,11 @@ async fn send_permission_request(
 ) -> Result<PermissionDecision> {
     let response = adapter_state
         .transport
-        .request("session/request_permission", serde_json::to_value(request)?, timeout)
+        .request(
+            "session/request_permission",
+            serde_json::to_value(request)?,
+            timeout,
+        )
         .await?;
     if let Some(error) = response.get("error") {
         return Err(anyhow!("permission request failed: {error}"));
@@ -4097,38 +4089,81 @@ async fn handle_permission_request_event(
         let mut meta = serde_json::Map::new();
         meta.insert("toolName".to_string(), json!(tool_name));
         meta.insert("permissionId".to_string(), json!(permission_id));
-        if let Some(url) = url { meta.insert("targetUrl".to_string(), json!(url)); }
-        if let Some(host) = host { meta.insert("targetHost".to_string(), json!(host)); }
-        if let Some(plan_mode_id) = plan_mode_id { meta.insert("planModeId".to_string(), json!(plan_mode_id)); }
+        if let Some(url) = url {
+            meta.insert("targetUrl".to_string(), json!(url));
+        }
+        if let Some(host) = host {
+            meta.insert("targetHost".to_string(), json!(host));
+        }
+        if let Some(plan_mode_id) = plan_mode_id {
+            meta.insert("planModeId".to_string(), json!(plan_mode_id));
+        }
         meta
     }));
     let options = if is_plan_mode {
         vec![
-            agent_client_protocol::schema::PermissionOption::new("approve", "Approve this plan and allow implementation", agent_client_protocol::schema::PermissionOptionKind::AllowOnce),
-            agent_client_protocol::schema::PermissionOption::new("reject", "Reject this plan and keep implementation blocked", agent_client_protocol::schema::PermissionOptionKind::RejectOnce),
+            agent_client_protocol::schema::PermissionOption::new(
+                "approve",
+                "Approve this plan and allow implementation",
+                agent_client_protocol::schema::PermissionOptionKind::AllowOnce,
+            ),
+            agent_client_protocol::schema::PermissionOption::new(
+                "reject",
+                "Reject this plan and keep implementation blocked",
+                agent_client_protocol::schema::PermissionOptionKind::RejectOnce,
+            ),
         ]
     } else {
-        let mut options = vec![
-            agent_client_protocol::schema::PermissionOption::new("allow_once", "Allow this fetch once", agent_client_protocol::schema::PermissionOptionKind::AllowOnce),
-        ];
+        let mut options = vec![agent_client_protocol::schema::PermissionOption::new(
+            "allow_once",
+            "Allow this fetch once",
+            agent_client_protocol::schema::PermissionOptionKind::AllowOnce,
+        )];
         if url.is_some() {
-            options.push(agent_client_protocol::schema::PermissionOption::new("allow_url", "Always allow this exact URL", agent_client_protocol::schema::PermissionOptionKind::AllowAlways));
+            options.push(agent_client_protocol::schema::PermissionOption::new(
+                "allow_url",
+                "Always allow this exact URL",
+                agent_client_protocol::schema::PermissionOptionKind::AllowAlways,
+            ));
         }
         if let Some(host) = host {
-            options.push(agent_client_protocol::schema::PermissionOption::new("allow_host", format!("Always allow this host: {host}"), agent_client_protocol::schema::PermissionOptionKind::AllowAlways));
+            options.push(agent_client_protocol::schema::PermissionOption::new(
+                "allow_host",
+                format!("Always allow this host: {host}"),
+                agent_client_protocol::schema::PermissionOptionKind::AllowAlways,
+            ));
         }
-        options.push(agent_client_protocol::schema::PermissionOption::new("reject_once", "Deny this fetch", agent_client_protocol::schema::PermissionOptionKind::RejectOnce));
+        options.push(agent_client_protocol::schema::PermissionOption::new(
+            "reject_once",
+            "Deny this fetch",
+            agent_client_protocol::schema::PermissionOptionKind::RejectOnce,
+        ));
         options
     };
     let request = RequestPermissionRequest::new(session_id.to_string(), tool_call, options);
-    let decision = send_permission_request(adapter_state, request, std::time::Duration::from_secs(120)).await?;
+    let decision =
+        send_permission_request(adapter_state, request, std::time::Duration::from_secs(120))
+            .await?;
     let decision_str = if is_plan_mode {
-        if decision.approved { "approve" } else { "reject" }
+        if decision.approved {
+            "approve"
+        } else {
+            "reject"
+        }
     } else {
         match decision.scope {
             ApprovalScope::Host if decision.approved => "allow_host",
-            ApprovalScope::Workspace | ApprovalScope::Directory | ApprovalScope::Command | ApprovalScope::Global if decision.approved => {
-                if decision.remember && url.is_some() { "allow_url" } else { "allow_once" }
+            ApprovalScope::Workspace
+            | ApprovalScope::Directory
+            | ApprovalScope::Command
+            | ApprovalScope::Global
+                if decision.approved =>
+            {
+                if decision.remember && url.is_some() {
+                    "allow_url"
+                } else {
+                    "allow_once"
+                }
             }
             _ => "reject_once",
         }
@@ -4141,7 +4176,11 @@ async fn handle_permission_request_event(
     )
     .await?;
     if is_plan_mode {
-        let mode = if decision_str == "approve" { MODE_WRITE } else { MODE_PLAN };
+        let mode = if decision_str == "approve" {
+            MODE_WRITE
+        } else {
+            MODE_PLAN
+        };
         notify_mode_state(session_id, mode).await?;
     }
     if let Some(local_tool) = response.get("local_tool_request") {
@@ -4302,11 +4341,36 @@ fn tool_display(tool_name: &str) -> ToolDisplay {
             verb: "Running terminal command in",
             permission_operation: "run this terminal command",
         },
-        "chrome_open" => ToolDisplay { title: "Chrome open", kind: ToolKind::Fetch, verb: "Opening Chrome URL", permission_operation: "open this Chrome URL" },
-        "chrome_snapshot" => ToolDisplay { title: "Chrome snapshot", kind: ToolKind::Read, verb: "Reading Chrome snapshot", permission_operation: "read Chrome snapshot" },
-        "chrome_console_messages" => ToolDisplay { title: "Chrome console", kind: ToolKind::Read, verb: "Reading Chrome console", permission_operation: "read Chrome console messages" },
-        "chrome_network_requests" => ToolDisplay { title: "Chrome network", kind: ToolKind::Read, verb: "Reading Chrome network", permission_operation: "read Chrome network requests" },
-        "chrome_screenshot" => ToolDisplay { title: "Chrome screenshot", kind: ToolKind::Read, verb: "Capturing Chrome screenshot", permission_operation: "capture Chrome screenshot" },
+        "chrome_open" => ToolDisplay {
+            title: "Chrome open",
+            kind: ToolKind::Fetch,
+            verb: "Opening Chrome URL",
+            permission_operation: "open this Chrome URL",
+        },
+        "chrome_snapshot" => ToolDisplay {
+            title: "Chrome snapshot",
+            kind: ToolKind::Read,
+            verb: "Reading Chrome snapshot",
+            permission_operation: "read Chrome snapshot",
+        },
+        "chrome_console_messages" => ToolDisplay {
+            title: "Chrome console",
+            kind: ToolKind::Read,
+            verb: "Reading Chrome console",
+            permission_operation: "read Chrome console messages",
+        },
+        "chrome_network_requests" => ToolDisplay {
+            title: "Chrome network",
+            kind: ToolKind::Read,
+            verb: "Reading Chrome network",
+            permission_operation: "read Chrome network requests",
+        },
+        "chrome_screenshot" => ToolDisplay {
+            title: "Chrome screenshot",
+            kind: ToolKind::Read,
+            verb: "Capturing Chrome screenshot",
+            permission_operation: "capture Chrome screenshot",
+        },
         "fs_replace_text" => ToolDisplay {
             title: "Edit file",
             kind: ToolKind::Edit,
@@ -4383,11 +4447,15 @@ fn tool_target_kind(tool_name: &str) -> &'static str {
         "fs_create_directory" => "directory",
         "fs_move_path" | "fs_copy_path" => "path",
         "fs_apply_patch" => "patch",
-        "git_status" | "git_diff" | "git_log" | "git_show" | "git_add" | "git_restore" | "git_commit" | "git_stash" => "repository",
+        "git_status" | "git_diff" | "git_log" | "git_show" | "git_add" | "git_restore"
+        | "git_commit" | "git_stash" => "repository",
         "web_fetch" | "local_web_fetch" => "url",
         "process_run" | "terminal_run_command" => "command",
         "chrome_open" => "url",
-        "chrome_snapshot" | "chrome_console_messages" | "chrome_network_requests" | "chrome_screenshot" => "chrome",
+        "chrome_snapshot"
+        | "chrome_console_messages"
+        | "chrome_network_requests"
+        | "chrome_screenshot" => "chrome",
         "fs_delete_path" => "path",
         _ => "file",
     }
@@ -4562,8 +4630,34 @@ async fn write_response(id: impl Into<Option<Value>>, result: Result<Value, Valu
     write_json(message).await
 }
 
-fn auth_challenge_error(data: Option<Value>) -> Value {
-    json_rpc_error(-32000, "Authentication required", data)
+fn auth_check_json_rpc_error(err: &anyhow::Error, token_hint: Option<&str>) -> Value {
+    let message = format!("{err:#}");
+    if looks_like_den_connectivity_error(err) {
+        return den_connectivity_error(Some(json!({
+            "message": format!("Could not reach the BEARS Den server while checking the Code token: {message}"),
+            "hint": "Check that BEARS_DEN_API_URL is correct and that the Den API server is online/reachable. This does not necessarily mean your token is invalid.",
+        })));
+    }
+    let mut data = json!({
+        "message": format!("BEARS Code token authentication failed: {message}"),
+    });
+    if let Some(hint) = token_hint {
+        data["hint"] = json!(hint);
+    }
+    token_validation_error(Some(data))
+}
+
+fn looks_like_den_connectivity_error(err: &anyhow::Error) -> bool {
+    err.chain().any(|cause| {
+        cause
+            .downcast_ref::<reqwest::Error>()
+            .is_some_and(|reqwest_err| {
+                reqwest_err.is_connect()
+                    || reqwest_err.is_timeout()
+                    || reqwest_err.is_request()
+                    || reqwest_err.is_body()
+            })
+    })
 }
 
 fn configuration_error(data: Option<Value>) -> Value {
@@ -4572,6 +4666,10 @@ fn configuration_error(data: Option<Value>) -> Value {
 
 fn token_validation_error(data: Option<Value>) -> Value {
     json_rpc_error(-32011, "BEARS Code token validation failed", data)
+}
+
+fn den_connectivity_error(data: Option<Value>) -> Value {
+    json_rpc_error(-32012, "BEARS Den server unreachable", data)
 }
 
 fn json_rpc_error(code: i64, message: &str, data: Option<Value>) -> Value {
@@ -5765,21 +5863,53 @@ mod tests {
     #[tokio::test]
     async fn git_log_and_show_report_commits_and_files() {
         let root = unique_test_dir("git-log-show");
-        Command::new("git").args(["init"]).current_dir(&root).output().unwrap();
-        Command::new("git").args(["config", "user.email", "test@example.test"]).current_dir(&root).output().unwrap();
-        Command::new("git").args(["config", "user.name", "Test User"]).current_dir(&root).output().unwrap();
+        Command::new("git")
+            .args(["init"])
+            .current_dir(&root)
+            .output()
+            .unwrap();
+        Command::new("git")
+            .args(["config", "user.email", "test@example.test"])
+            .current_dir(&root)
+            .output()
+            .unwrap();
+        Command::new("git")
+            .args(["config", "user.name", "Test User"])
+            .current_dir(&root)
+            .output()
+            .unwrap();
         fs::write(root.join("one.txt"), "one\n").unwrap();
-        Command::new("git").args(["add", "one.txt"]).current_dir(&root).output().unwrap();
-        Command::new("git").args(["commit", "-m", "first"]).current_dir(&root).output().unwrap();
+        Command::new("git")
+            .args(["add", "one.txt"])
+            .current_dir(&root)
+            .output()
+            .unwrap();
+        Command::new("git")
+            .args(["commit", "-m", "first"])
+            .current_dir(&root)
+            .output()
+            .unwrap();
         fs::write(root.join("two.txt"), "two\n").unwrap();
-        Command::new("git").args(["add", "two.txt"]).current_dir(&root).output().unwrap();
-        Command::new("git").args(["commit", "-m", "second"]).current_dir(&root).output().unwrap();
+        Command::new("git")
+            .args(["add", "two.txt"])
+            .current_dir(&root)
+            .output()
+            .unwrap();
+        Command::new("git")
+            .args(["commit", "-m", "second"])
+            .current_dir(&root)
+            .output()
+            .unwrap();
         let state = test_adapter_state("session-1", &root);
         let context = session_context(&state, "session-1").unwrap();
         let log = handle_git_log(
             context,
             &json!({ "repo_path": root.to_string_lossy(), "max_count": 1 }),
-            &ToolPolicy { max_results: Some(100), max_bytes: Some(4096), ..Default::default() },
+            &ToolPolicy {
+                max_results: Some(100),
+                max_bytes: Some(4096),
+                ..Default::default()
+            },
         )
         .await
         .unwrap();
@@ -5788,7 +5918,10 @@ mod tests {
         let show_file = handle_git_show(
             context,
             &json!({ "repo_path": root.to_string_lossy(), "revision": "HEAD", "path": "two.txt" }),
-            &ToolPolicy { max_bytes: Some(4096), ..Default::default() },
+            &ToolPolicy {
+                max_bytes: Some(4096),
+                ..Default::default()
+            },
         )
         .await
         .unwrap();
@@ -5796,7 +5929,10 @@ mod tests {
         let show_commit = handle_git_show(
             context,
             &json!({ "repo_path": root.to_string_lossy(), "revision": "HEAD", "max_bytes": 32 }),
-            &ToolPolicy { max_bytes: Some(32), ..Default::default() },
+            &ToolPolicy {
+                max_bytes: Some(32),
+                ..Default::default()
+            },
         )
         .await
         .unwrap();
@@ -5809,12 +5945,32 @@ mod tests {
     async fn git_log_and_show_enforce_path_and_revision_safety() {
         let root = unique_test_dir("git-log-show-safety");
         let outside = unique_test_dir("git-log-show-outside");
-        Command::new("git").args(["init"]).current_dir(&root).output().unwrap();
-        Command::new("git").args(["config", "user.email", "test@example.test"]).current_dir(&root).output().unwrap();
-        Command::new("git").args(["config", "user.name", "Test User"]).current_dir(&root).output().unwrap();
+        Command::new("git")
+            .args(["init"])
+            .current_dir(&root)
+            .output()
+            .unwrap();
+        Command::new("git")
+            .args(["config", "user.email", "test@example.test"])
+            .current_dir(&root)
+            .output()
+            .unwrap();
+        Command::new("git")
+            .args(["config", "user.name", "Test User"])
+            .current_dir(&root)
+            .output()
+            .unwrap();
         fs::write(root.join("one.txt"), "one\n").unwrap();
-        Command::new("git").args(["add", "one.txt"]).current_dir(&root).output().unwrap();
-        Command::new("git").args(["commit", "-m", "first"]).current_dir(&root).output().unwrap();
+        Command::new("git")
+            .args(["add", "one.txt"])
+            .current_dir(&root)
+            .output()
+            .unwrap();
+        Command::new("git")
+            .args(["commit", "-m", "first"])
+            .current_dir(&root)
+            .output()
+            .unwrap();
         let state = test_adapter_state("session-1", &root);
         let context = session_context(&state, "session-1").unwrap();
         let outside_log = handle_git_log(
@@ -5823,14 +5979,16 @@ mod tests {
             &ToolPolicy::default(),
         )
         .await;
-        assert!(format!("{:#}", outside_log.unwrap_err()).contains("outside the ACP session workspace roots"));
+        assert!(format!("{:#}", outside_log.unwrap_err())
+            .contains("outside the ACP session workspace roots"));
         let outside_show = handle_git_show(
             context,
             &json!({ "repo_path": root.to_string_lossy(), "revision": "HEAD", "path": outside.join("x.txt").to_string_lossy() }),
             &ToolPolicy::default(),
         )
         .await;
-        assert!(format!("{:#}", outside_show.unwrap_err()).contains("outside the ACP session workspace roots"));
+        assert!(format!("{:#}", outside_show.unwrap_err())
+            .contains("outside the ACP session workspace roots"));
         let bad_revision = handle_git_show(
             context,
             &json!({ "repo_path": root.to_string_lossy(), "revision": "--help" }),
@@ -6038,9 +6196,21 @@ mod tests {
     #[tokio::test]
     async fn git_add_commit_restore_and_stash_workflows() {
         let root = unique_test_dir("git-write");
-        Command::new("git").args(["init"]).current_dir(&root).output().unwrap();
-        Command::new("git").args(["config", "user.email", "test@example.test"]).current_dir(&root).output().unwrap();
-        Command::new("git").args(["config", "user.name", "Test User"]).current_dir(&root).output().unwrap();
+        Command::new("git")
+            .args(["init"])
+            .current_dir(&root)
+            .output()
+            .unwrap();
+        Command::new("git")
+            .args(["config", "user.email", "test@example.test"])
+            .current_dir(&root)
+            .output()
+            .unwrap();
+        Command::new("git")
+            .args(["config", "user.name", "Test User"])
+            .current_dir(&root)
+            .output()
+            .unwrap();
         let state = test_adapter_state("session-1", &root);
         let context = session_context(&state, "session-1").unwrap();
         fs::write(root.join("file.txt"), "one\n").unwrap();
@@ -6048,20 +6218,26 @@ mod tests {
             context,
             &json!({ "repo_path": root.to_string_lossy(), "paths": ["file.txt"] }),
             &ToolPolicy::default(),
-        ).await.unwrap();
+        )
+        .await
+        .unwrap();
         assert_eq!(added["ok"], true);
         let committed = handle_git_commit(
             context,
             &json!({ "repo_path": root.to_string_lossy(), "message": "initial" }),
             &ToolPolicy::default(),
-        ).await.unwrap();
+        )
+        .await
+        .unwrap();
         assert_eq!(committed["ok"], true);
         fs::write(root.join("file.txt"), "two\n").unwrap();
         handle_git_restore(
             context,
             &json!({ "repo_path": root.to_string_lossy(), "paths": ["file.txt"] }),
             &ToolPolicy::default(),
-        ).await.unwrap();
+        )
+        .await
+        .unwrap();
         assert_eq!(fs::read_to_string(root.join("file.txt")).unwrap(), "one\n");
         fs::write(root.join("scratch.txt"), "scratch\n").unwrap();
         let stashed = handle_git_stash(
@@ -6078,31 +6254,54 @@ mod tests {
     async fn git_write_tools_reject_empty_or_outside_paths_and_bad_messages() {
         let root = unique_test_dir("git-write-policy");
         let outside = unique_test_dir("git-write-outside");
-        Command::new("git").args(["init"]).current_dir(&root).output().unwrap();
-        Command::new("git").args(["config", "user.email", "test@example.test"]).current_dir(&root).output().unwrap();
-        Command::new("git").args(["config", "user.name", "Test User"]).current_dir(&root).output().unwrap();
+        Command::new("git")
+            .args(["init"])
+            .current_dir(&root)
+            .output()
+            .unwrap();
+        Command::new("git")
+            .args(["config", "user.email", "test@example.test"])
+            .current_dir(&root)
+            .output()
+            .unwrap();
+        Command::new("git")
+            .args(["config", "user.name", "Test User"])
+            .current_dir(&root)
+            .output()
+            .unwrap();
         fs::write(root.join("file.txt"), "one\n").unwrap();
         let state = test_adapter_state("session-1", &root);
         let context = session_context(&state, "session-1").unwrap();
-        let empty = handle_git_add(context, &json!({ "repo_path": root.to_string_lossy(), "paths": [] }), &ToolPolicy::default()).await;
+        let empty = handle_git_add(
+            context,
+            &json!({ "repo_path": root.to_string_lossy(), "paths": [] }),
+            &ToolPolicy::default(),
+        )
+        .await;
         assert!(format!("{:#}", empty.unwrap_err()).contains("at least one path"));
         let outside_path = handle_git_add(
             context,
             &json!({ "repo_path": root.to_string_lossy(), "paths": [outside.join("x.txt").to_string_lossy()] }),
             &ToolPolicy::default(),
         ).await;
-        assert!(format!("{:#}", outside_path.unwrap_err()).contains("outside the ACP session workspace roots"));
+        assert!(format!("{:#}", outside_path.unwrap_err())
+            .contains("outside the ACP session workspace roots"));
         let bad_commit = handle_git_commit(
             context,
             &json!({ "repo_path": root.to_string_lossy(), "message": "" }),
             &ToolPolicy::default(),
-        ).await;
+        )
+        .await;
         assert!(format!("{:#}", bad_commit.unwrap_err()).contains("missing message"));
         let too_many = handle_git_add(
             context,
             &json!({ "repo_path": root.to_string_lossy(), "paths": ["file.txt"] }),
-            &ToolPolicy { max_entries: Some(0), ..Default::default() },
-        ).await;
+            &ToolPolicy {
+                max_entries: Some(0),
+                ..Default::default()
+            },
+        )
+        .await;
         assert!(too_many.is_ok(), "max_entries clamps to at least 1");
         let _ = fs::remove_dir_all(root);
         let _ = fs::remove_dir_all(outside);
@@ -6122,7 +6321,11 @@ mod tests {
                 "cwd": root.to_string_lossy(),
                 "max_output_bytes": 10
             }),
-            &ToolPolicy { max_bytes: Some(64), total_timeout_ms: Some(10_000), ..Default::default() },
+            &ToolPolicy {
+                max_bytes: Some(64),
+                total_timeout_ms: Some(10_000),
+                ..Default::default()
+            },
         )
         .await
         .unwrap();
@@ -6139,7 +6342,11 @@ mod tests {
                 "cwd": root.to_string_lossy(),
                 "max_output_bytes": 5
             }),
-            &ToolPolicy { max_bytes: Some(5), total_timeout_ms: Some(10_000), ..Default::default() },
+            &ToolPolicy {
+                max_bytes: Some(5),
+                total_timeout_ms: Some(10_000),
+                ..Default::default()
+            },
         )
         .await
         .unwrap();
@@ -6158,7 +6365,11 @@ mod tests {
             context,
             "session-1",
             &json!({ "command": "sh", "args": ["-c", "exit 7"], "cwd": root.to_string_lossy() }),
-            &ToolPolicy { max_bytes: Some(1024), total_timeout_ms: Some(10_000), ..Default::default() },
+            &ToolPolicy {
+                max_bytes: Some(1024),
+                total_timeout_ms: Some(10_000),
+                ..Default::default()
+            },
         )
         .await
         .unwrap();
@@ -6182,7 +6393,8 @@ mod tests {
             &ToolPolicy::default(),
         )
         .await;
-        assert!(format!("{:#}", outside_cwd.unwrap_err()).contains("outside the ACP session workspace roots"));
+        assert!(format!("{:#}", outside_cwd.unwrap_err())
+            .contains("outside the ACP session workspace roots"));
 
         let shell_string = handle_process_run(
             context,
@@ -6227,7 +6439,11 @@ mod tests {
         let result = crate::tools::web::handle_local_web_fetch(
             "session-1",
             &json!({ "url": format!("http://{}", addr), "max_bytes": 5 }),
-            &ToolPolicy { max_bytes: Some(5), total_timeout_ms: Some(10_000), ..Default::default() },
+            &ToolPolicy {
+                max_bytes: Some(5),
+                total_timeout_ms: Some(10_000),
+                ..Default::default()
+            },
         )
         .await
         .unwrap();
