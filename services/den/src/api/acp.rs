@@ -412,13 +412,19 @@ fn check_adapter_contract(contract: Option<&AdapterContract>) -> Result<(), AcpC
         return Err(AcpCompatibilityError::AdapterOutOfDate { version: 0 });
     };
     if contract.name != BEARS_ACP_ADAPTER_CONTRACT_NAME {
-        return Err(AcpCompatibilityError::AdapterOutOfDate { version: contract.version });
+        return Err(AcpCompatibilityError::AdapterOutOfDate {
+            version: contract.version,
+        });
     }
     if contract.version < BEARS_ACP_ADAPTER_CONTRACT_MIN_SUPPORTED {
-        return Err(AcpCompatibilityError::AdapterOutOfDate { version: contract.version });
+        return Err(AcpCompatibilityError::AdapterOutOfDate {
+            version: contract.version,
+        });
     }
     if contract.version > BEARS_ACP_ADAPTER_CONTRACT_MAX_SUPPORTED {
-        return Err(AcpCompatibilityError::DenOutOfDate { version: contract.version });
+        return Err(AcpCompatibilityError::DenOutOfDate {
+            version: contract.version,
+        });
     }
     Ok(())
 }
@@ -472,6 +478,37 @@ fn acp_compatibility_error_response(err: AcpCompatibilityError, request_id: Uuid
         .header(HeaderName::from_static("x-request-id"), request_id_header)
         .body(Body::from(body))
         .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())
+}
+
+fn compatibility_tool_result_body(
+    err: &AcpCompatibilityError,
+    tool_call_id: &str,
+    mut original: AcpToolResultRequest,
+) -> AcpToolResultRequest {
+    let (status, message, phase) = match err {
+        AcpCompatibilityError::AdapterOutOfDate { .. } => (
+            "error",
+            "Your BEARS ACP adapter is out of date for this Den server. Update bears-acp-adapter and restart your ACP client.",
+            "adapter_contract_out_of_date",
+        ),
+        AcpCompatibilityError::DenOutOfDate { .. } => (
+            "error",
+            "Your BEARS Den server is out of date for this ACP adapter. Deploy the matching Den server or use an older adapter.",
+            "den_contract_out_of_date",
+        ),
+    };
+    original.tool_call_id = Some(tool_call_id.to_string());
+    original.status = status.to_string();
+    original.content = Some(message.to_string());
+    original.structured_content = serde_json::json!({});
+    original.diagnostic = serde_json::json!({
+        "component": "den.acp",
+        "phase": phase,
+        "tool_call_id": tool_call_id,
+        "minimum_adapter_contract_version": BEARS_ACP_ADAPTER_CONTRACT_MIN_SUPPORTED,
+        "current_adapter_contract_version": BEARS_ACP_ADAPTER_CONTRACT_CURRENT,
+    });
+    original
 }
 
 fn acp_error_status_message(err: &CustomError) -> (StatusCode, &'static str, String) {
@@ -1589,8 +1626,25 @@ async fn tool_result(
     Json(body): Json<AcpToolResultRequest>,
 ) -> Response {
     let request_id = Uuid::new_v4();
-    let contract = body.adapter_contract.as_ref().and_then(adapter_contract_from_value);
+    let contract = body
+        .adapter_contract
+        .as_ref()
+        .and_then(adapter_contract_from_value);
     if let Err(err) = check_adapter_contract(contract.as_ref()) {
+        let token = match auth::extract_bearer_token(&headers) {
+            Ok(token) => token,
+            Err(auth_err) => return api_auth_error_response(auth_err, request_id),
+        };
+        if let Ok(auth) = authenticate_acp_code_token_with_auth(&state, &token, &slug).await {
+            let synthetic = compatibility_tool_result_body(&err, &tool_call_id, body);
+            let _ = state.acp_tool_turns.deliver_result(
+                auth.user_id,
+                &slug,
+                &session_id,
+                &tool_call_id,
+                synthetic,
+            );
+        }
         return acp_compatibility_error_response(err, request_id);
     }
     match tool_result_inner(state, slug, session_id, tool_call_id, headers, body).await {

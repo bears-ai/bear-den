@@ -3689,6 +3689,22 @@ async fn handle_tool_request_event(
             tool_name,
             ToolTaskPhase::ResultPostFailed,
         );
+        let message = format!("Could not deliver local tool result to Den.\n\n{err:#}");
+        let _ = send_tool_call_update(
+            session_id,
+            tool_call_id,
+            tool_name,
+            "failed",
+            &message,
+            Some(event),
+            Some(json!({
+                "component": "bears-acp-adapter",
+                "phase": "result_post_failed",
+                "error": format!("{err:#}"),
+            })),
+            Vec::new(),
+        )
+        .await;
         return Err(err);
     }
     task_registry
@@ -3915,10 +3931,7 @@ async fn post_permission_result(
     let status = response.status();
     let body = response.text().await.unwrap_or_default();
     if !status.is_success() {
-        return Err(anyhow!(
-            "Den permission endpoint returned HTTP {status}: {}",
-            body.trim()
-        ));
+        return Err(anyhow!(den_status_error_message(status, body.trim())));
     }
     Ok(serde_json::from_str(&body).unwrap_or_else(|_| json!({ "raw": body })))
 }
@@ -3951,10 +3964,7 @@ async fn post_tool_result(
     let status = response.status();
     let body = response.text().await.unwrap_or_default();
     if !status.is_success() {
-        return Err(anyhow!(
-            "Den tool result endpoint returned HTTP {status}: {}",
-            body.trim()
-        ));
+        return Err(anyhow!(den_status_error_message(status, body.trim())));
     }
     eprintln!(
         "bears-acp-adapter: posted tool result session_id={} tool_call_id={} response={}",
