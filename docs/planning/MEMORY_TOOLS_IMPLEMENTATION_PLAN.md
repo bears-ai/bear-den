@@ -37,7 +37,9 @@ Give agents, especially `pair`, safe Den-hosted access to Bear memory:
 - Do not let agents choose schema-owned durable artifact paths.
 - Do not replace Letta Code-native MemFS tools for harness-backed roles where native tools are the better low-latency path.
 - Do not implement destructive rollback or MemFS operator overrides as agent tools.
-- Do not call the situation briefing “context.”
+- Do not call the session briefing “context.”
+- Do not prefix model-facing provider names with implementation ownership such as `den_`; keep ownership in canonical names and descriptor metadata.
+- Do not add new tool-name aliases outside the descriptor registry/resolver.
 
 ---
 

@@ -165,6 +165,12 @@ impl AcpToolName {
     }
 
     pub fn from_provider_alias(raw: &str) -> Option<Self> {
+        for tool in Self::all() {
+            let descriptor = tool.descriptor();
+            if descriptor.provider_name == raw || descriptor.provider_aliases.contains(&raw) {
+                return Some(*tool);
+            }
+        }
         match raw {
             "bears/read_text_file"
             | "fs.read_text_file"
@@ -285,12 +291,16 @@ impl AcpToolStatus {
 #[derive(Debug, Clone, Copy)]
 pub struct AcpToolDescriptor {
     pub provider_name: &'static str,
+    pub provider_aliases: &'static [&'static str],
     pub canonical_name: &'static str,
     pub adapter_method: &'static str,
+    pub adapter_aliases: &'static [&'static str],
     pub client_method: &'static str,
+    pub client_aliases: &'static [&'static str],
     pub title: &'static str,
     pub kind: &'static str,
     pub risk: &'static str,
+    pub permission_class: &'static str,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -369,268 +379,382 @@ impl AcpToolPolicy {
 
 pub const ACP_READ_TEXT_FILE_TOOL: AcpToolDescriptor = AcpToolDescriptor {
     provider_name: "fs_read_text_file",
+    provider_aliases: &[],
     canonical_name: "acp.fs.read_text_file",
     adapter_method: "bears/read_text_file",
+    adapter_aliases: &[],
     client_method: "fs/read_text_file",
+    client_aliases: &[],
     title: "Read file",
     kind: "read",
     risk: "read_only",
+    permission_class: "read_files",
 };
 
 pub const ACP_LIST_DIRECTORY_TOOL: AcpToolDescriptor = AcpToolDescriptor {
     provider_name: "fs_list_directory",
+    provider_aliases: &[],
     canonical_name: "acp.fs.list_directory",
     adapter_method: "bears/list_directory",
+    adapter_aliases: &[],
     client_method: "fs/list_directory",
+    client_aliases: &[],
     title: "List directory",
     kind: "read",
     risk: "read_only",
+    permission_class: "read_files",
 };
 
 pub const ACP_FIND_PATHS_TOOL: AcpToolDescriptor = AcpToolDescriptor {
     provider_name: "fs_find_paths",
+    provider_aliases: &[],
     canonical_name: "acp.fs.find_paths",
     adapter_method: "bears/find_paths",
+    adapter_aliases: &[],
     client_method: "fs/find_paths",
+    client_aliases: &[],
     title: "Find paths",
     kind: "search",
     risk: "read_only",
+    permission_class: "read_files",
 };
 
 pub const ACP_SEARCH_FILES_TOOL: AcpToolDescriptor = AcpToolDescriptor {
     provider_name: "fs_search_files",
+    provider_aliases: &[],
     canonical_name: "acp.fs.search_files",
     adapter_method: "bears/search_files",
+    adapter_aliases: &[],
     client_method: "fs/search_files",
+    client_aliases: &[],
     title: "Search files",
     kind: "search",
     risk: "read_only",
+    permission_class: "read_files",
 };
 
 pub const ACP_STAT_TOOL: AcpToolDescriptor = AcpToolDescriptor {
     provider_name: "fs_stat",
+    provider_aliases: &[],
     canonical_name: "acp.fs.stat",
     adapter_method: "bears/stat",
+    adapter_aliases: &[],
     client_method: "fs/stat",
+    client_aliases: &[],
     title: "Stat path",
     kind: "read",
     risk: "read_only",
+    permission_class: "read_files",
 };
 
 pub const ACP_EDIT_FILE_TOOL: AcpToolDescriptor = AcpToolDescriptor {
     provider_name: "fs_edit_file",
+    provider_aliases: &[
+        "fs_replace_text",
+        "replace_text",
+        "fs/replace_text",
+        "fs.replace_text",
+        "bears/replace_text",
+    ],
     canonical_name: "acp.fs.edit_file",
     adapter_method: "bears/edit_file",
+    adapter_aliases: &["bears/replace_text"],
     client_method: "fs/edit_file",
+    client_aliases: &["fs/replace_text"],
     title: "Edit file",
     kind: "edit",
     risk: "writes_workspace",
+    permission_class: "edit_files",
 };
 
 pub const ACP_CREATE_TEXT_FILE_TOOL: AcpToolDescriptor = AcpToolDescriptor {
     provider_name: "fs_create_text_file",
+    provider_aliases: &[],
     canonical_name: "acp.fs.create_text_file",
     adapter_method: "bears/create_text_file",
+    adapter_aliases: &[],
     client_method: "fs/create_text_file",
+    client_aliases: &[],
     title: "Create text file",
     kind: "edit",
     risk: "writes_workspace",
+    permission_class: "edit_files",
 };
 
 pub const ACP_CREATE_DIRECTORY_TOOL: AcpToolDescriptor = AcpToolDescriptor {
     provider_name: "fs_create_directory",
+    provider_aliases: &[],
     canonical_name: "acp.fs.create_directory",
     adapter_method: "bears/create_directory",
+    adapter_aliases: &[],
     client_method: "fs/create_directory",
+    client_aliases: &[],
     title: "Create directory",
     kind: "edit",
     risk: "writes_workspace",
+    permission_class: "edit_files",
 };
 
 pub const ACP_MOVE_PATH_TOOL: AcpToolDescriptor = AcpToolDescriptor {
     provider_name: "fs_move_path",
+    provider_aliases: &[],
     canonical_name: "acp.fs.move_path",
     adapter_method: "bears/move_path",
+    adapter_aliases: &[],
     client_method: "fs/move_path",
+    client_aliases: &[],
     title: "Move path",
     kind: "move",
     risk: "writes_workspace",
+    permission_class: "edit_files",
 };
 
 pub const ACP_COPY_PATH_TOOL: AcpToolDescriptor = AcpToolDescriptor {
     provider_name: "fs_copy_path",
+    provider_aliases: &[],
     canonical_name: "acp.fs.copy_path",
     adapter_method: "bears/copy_path",
+    adapter_aliases: &[],
     client_method: "fs/copy_path",
+    client_aliases: &[],
     title: "Copy path",
     kind: "edit",
     risk: "writes_workspace",
+    permission_class: "edit_files",
 };
 
 pub const ACP_APPLY_PATCH_TOOL: AcpToolDescriptor = AcpToolDescriptor {
     provider_name: "fs_apply_patch",
+    provider_aliases: &[],
     canonical_name: "acp.fs.apply_patch",
     adapter_method: "bears/apply_patch",
+    adapter_aliases: &[],
     client_method: "fs/apply_patch",
+    client_aliases: &[],
     title: "Apply patch",
     kind: "edit",
     risk: "writes_workspace",
+    permission_class: "edit_files",
 };
 
 pub const ACP_DELETE_PATH_TOOL: AcpToolDescriptor = AcpToolDescriptor {
     provider_name: "fs_delete_path",
+    provider_aliases: &[],
     canonical_name: "acp.fs.delete_path",
     adapter_method: "bears/delete_path",
+    adapter_aliases: &[],
     client_method: "fs/delete_path",
+    client_aliases: &[],
     title: "Delete path",
     kind: "delete",
     risk: "deletes_workspace",
+    permission_class: "delete_files",
 };
 
 pub const ACP_GIT_STATUS_TOOL: AcpToolDescriptor = AcpToolDescriptor {
     provider_name: "git_status",
+    provider_aliases: &[],
     canonical_name: "acp.git.status",
     adapter_method: "bears/git_status",
+    adapter_aliases: &[],
     client_method: "git/status",
+    client_aliases: &[],
     title: "Git status",
     kind: "read",
     risk: "read_only",
+    permission_class: "git_read",
 };
 
 pub const ACP_GIT_DIFF_TOOL: AcpToolDescriptor = AcpToolDescriptor {
     provider_name: "git_diff",
+    provider_aliases: &[],
     canonical_name: "acp.git.diff",
     adapter_method: "bears/git_diff",
+    adapter_aliases: &[],
     client_method: "git/diff",
+    client_aliases: &[],
     title: "Git diff",
     kind: "read",
     risk: "read_only",
+    permission_class: "git_read",
 };
 
 pub const ACP_GIT_LOG_TOOL: AcpToolDescriptor = AcpToolDescriptor {
     provider_name: "git_log",
+    provider_aliases: &[],
     canonical_name: "acp.git.log",
     adapter_method: "bears/git_log",
+    adapter_aliases: &[],
     client_method: "git/log",
+    client_aliases: &[],
     title: "Git log",
     kind: "read",
     risk: "read_only",
+    permission_class: "git_read",
 };
 
 pub const ACP_GIT_SHOW_TOOL: AcpToolDescriptor = AcpToolDescriptor {
     provider_name: "git_show",
+    provider_aliases: &[],
     canonical_name: "acp.git.show",
     adapter_method: "bears/git_show",
+    adapter_aliases: &[],
     client_method: "git/show",
+    client_aliases: &[],
     title: "Git show",
     kind: "read",
     risk: "read_only",
+    permission_class: "git_read",
 };
 
 pub const ACP_GIT_ADD_TOOL: AcpToolDescriptor = AcpToolDescriptor {
     provider_name: "git_add",
+    provider_aliases: &[],
     canonical_name: "acp.git.add",
     adapter_method: "bears/git_add",
+    adapter_aliases: &[],
     client_method: "git/add",
+    client_aliases: &[],
     title: "Git add",
     kind: "edit",
     risk: "writes_workspace",
+    permission_class: "git_write",
 };
 
 pub const ACP_GIT_RESTORE_TOOL: AcpToolDescriptor = AcpToolDescriptor {
     provider_name: "git_restore",
+    provider_aliases: &[],
     canonical_name: "acp.git.restore",
     adapter_method: "bears/git_restore",
+    adapter_aliases: &[],
     client_method: "git/restore",
+    client_aliases: &[],
     title: "Git restore",
     kind: "edit",
     risk: "writes_workspace",
+    permission_class: "git_write",
 };
 
 pub const ACP_GIT_COMMIT_TOOL: AcpToolDescriptor = AcpToolDescriptor {
     provider_name: "git_commit",
+    provider_aliases: &[],
     canonical_name: "acp.git.commit",
     adapter_method: "bears/git_commit",
+    adapter_aliases: &[],
     client_method: "git/commit",
+    client_aliases: &[],
     title: "Git commit",
     kind: "edit",
     risk: "writes_workspace",
+    permission_class: "git_write",
 };
 
 pub const ACP_GIT_STASH_TOOL: AcpToolDescriptor = AcpToolDescriptor {
     provider_name: "git_stash",
+    provider_aliases: &[],
     canonical_name: "acp.git.stash",
     adapter_method: "bears/git_stash",
+    adapter_aliases: &[],
     client_method: "git/stash",
+    client_aliases: &[],
     title: "Git stash",
     kind: "edit",
     risk: "writes_workspace",
+    permission_class: "git_write",
 };
 
 pub const ACP_PROCESS_RUN_TOOL: AcpToolDescriptor = AcpToolDescriptor {
     provider_name: "process_run",
+    provider_aliases: &[],
     canonical_name: "acp.process.run",
     adapter_method: "bears/process_run",
+    adapter_aliases: &[],
     client_method: "process/run",
+    client_aliases: &[],
     title: "Run process",
     kind: "execute",
     risk: "executes_process",
+    permission_class: "command_run",
 };
 
 pub const ACP_TERMINAL_RUN_COMMAND_TOOL: AcpToolDescriptor = AcpToolDescriptor {
     provider_name: "terminal_run_command",
+    provider_aliases: &[],
     canonical_name: "acp.terminal.run_command",
     adapter_method: "bears/terminal_run_command",
+    adapter_aliases: &[],
     client_method: "terminal/run_command",
+    client_aliases: &[],
     title: "Run terminal command",
     kind: "execute",
     risk: "executes_process",
+    permission_class: "command_run",
 };
 
 pub const ACP_CHROME_OPEN_TOOL: AcpToolDescriptor = AcpToolDescriptor {
     provider_name: "chrome_open",
+    provider_aliases: &[],
     canonical_name: "acp.chrome.open",
     adapter_method: "bears/chrome_open",
+    adapter_aliases: &[],
     client_method: "chrome/open",
+    client_aliases: &[],
     title: "Chrome open",
     kind: "fetch",
     risk: "browser_access",
+    permission_class: "browser",
 };
 pub const ACP_CHROME_SNAPSHOT_TOOL: AcpToolDescriptor = AcpToolDescriptor {
     provider_name: "chrome_snapshot",
+    provider_aliases: &[],
     canonical_name: "acp.chrome.snapshot",
     adapter_method: "bears/chrome_snapshot",
+    adapter_aliases: &[],
     client_method: "chrome/snapshot",
+    client_aliases: &[],
     title: "Chrome snapshot",
     kind: "read",
     risk: "browser_access",
+    permission_class: "browser",
 };
 pub const ACP_CHROME_CONSOLE_MESSAGES_TOOL: AcpToolDescriptor = AcpToolDescriptor {
     provider_name: "chrome_console_messages",
+    provider_aliases: &[],
     canonical_name: "acp.chrome.console_messages",
     adapter_method: "bears/chrome_console_messages",
+    adapter_aliases: &[],
     client_method: "chrome/console_messages",
+    client_aliases: &[],
     title: "Chrome console messages",
     kind: "read",
     risk: "browser_access",
+    permission_class: "browser",
 };
 pub const ACP_CHROME_NETWORK_REQUESTS_TOOL: AcpToolDescriptor = AcpToolDescriptor {
     provider_name: "chrome_network_requests",
+    provider_aliases: &[],
     canonical_name: "acp.chrome.network_requests",
     adapter_method: "bears/chrome_network_requests",
+    adapter_aliases: &[],
     client_method: "chrome/network_requests",
+    client_aliases: &[],
     title: "Chrome network requests",
     kind: "read",
     risk: "browser_access",
+    permission_class: "browser",
 };
 pub const ACP_CHROME_SCREENSHOT_TOOL: AcpToolDescriptor = AcpToolDescriptor {
     provider_name: "chrome_screenshot",
+    provider_aliases: &[],
     canonical_name: "acp.chrome.screenshot",
     adapter_method: "bears/chrome_screenshot",
+    adapter_aliases: &[],
     client_method: "chrome/screenshot",
+    client_aliases: &[],
     title: "Chrome screenshot",
     kind: "read",
     risk: "browser_access",
+    permission_class: "browser",
 };
 
 pub fn provider_tool_name_is_safe(name: &str) -> bool {

@@ -676,27 +676,8 @@ fn acp_pair_den_tool_descriptors() -> serde_json::Value {
 }
 
 fn acp_den_provider_to_canonical_tool_name(provider_name: &str) -> Option<&'static str> {
-    match provider_name {
-        "web_fetch" | "den_web_fetch" => Some(den_tools::DEN_WEB_FETCH),
-        "web_search" | "den_web_search" => Some(den_tools::DEN_WEB_SEARCH),
-        "session_info" | "situation_get" | "den_situation_get" => {
-            Some(den_tools::DEN_SITUATION_GET)
-        }
-        "memory_write_entry" | "den_memory_write_entry" => Some(den_tools::DEN_MEMORY_WRITE_ENTRY),
-        "memory_status" | "den_memory_status" => Some(den_tools::DEN_MEMORY_STATUS),
-        "memory_browse" | "memory_tree" | "den_memory_tree" => Some(den_tools::DEN_MEMORY_TREE),
-        "memory_read" | "den_memory_read" => Some(den_tools::DEN_MEMORY_READ),
-        "memory_search" | "den_memory_search" => Some(den_tools::DEN_MEMORY_SEARCH),
-        "den_work_plan_list" => Some(den_tools::DEN_WORK_PLAN_LIST),
-        "den_work_plan_get_status" => Some(den_tools::DEN_WORK_PLAN_GET_STATUS),
-        "den_work_plan_update" => Some(den_tools::DEN_WORK_PLAN_UPDATE),
-        "den_work_plan_request_handoff" => Some(den_tools::DEN_WORK_PLAN_REQUEST_HANDOFF),
-        "den_plan_mode_enter" => Some(den_tools::DEN_PLAN_MODE_ENTER),
-        "den_plan_mode_status" => Some(den_tools::DEN_PLAN_MODE_STATUS),
-        "den_plan_mode_exit" => Some(den_tools::DEN_PLAN_MODE_EXIT),
-        "den_plan_mode_cancel" => Some(den_tools::DEN_PLAN_MODE_CANCEL),
-        _ => None,
-    }
+    den_tools::builtin_den_tool_descriptor_for_provider_name(provider_name)
+        .map(|descriptor| descriptor.name)
 }
 
 fn merge_acp_pair_tool_descriptors(client_tools: serde_json::Value) -> serde_json::Value {

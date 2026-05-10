@@ -112,6 +112,8 @@ pub struct DenToolDescriptor {
     pub name: &'static str,
     /// Provider/API-safe alias exposed to LLM tool registries.
     pub provider_name: String,
+    /// Legacy or alternate provider aliases accepted at routing boundaries.
+    pub provider_aliases: &'static [&'static str],
     pub label: &'static str,
     pub description: &'static str,
     pub kind: &'static str,
@@ -649,6 +651,7 @@ fn descriptor(
     DenToolDescriptor {
         name,
         provider_name: provider_safe_tool_name(name),
+        provider_aliases: provider_aliases_for_tool(name),
         label,
         description,
         kind: "server_tool",
@@ -719,6 +722,32 @@ impl DenToolDescriptor {
     pub fn allows_role(&self, role: BearAgentRole) -> bool {
         self.allowed_roles.contains(&role.as_str())
     }
+
+    pub fn matches_provider_name(&self, provider_name: &str) -> bool {
+        self.provider_name == provider_name || self.provider_aliases.contains(&provider_name)
+    }
+}
+
+pub fn provider_aliases_for_tool(name: &str) -> &'static [&'static str] {
+    match name {
+        DEN_WEB_FETCH => &[DEN_WEB_FETCH_LEGACY_PROVIDER],
+        DEN_WEB_SEARCH => &["den_web_search"],
+        DEN_SITUATION_GET => &[DEN_SITUATION_GET_LEGACY_PROVIDER, "den_situation_get"],
+        DEN_MEMORY_WRITE_ENTRY => &["den_memory_write_entry"],
+        DEN_MEMORY_STATUS => &["den_memory_status"],
+        DEN_MEMORY_TREE => &[DEN_MEMORY_TREE_LEGACY_PROVIDER, "den_memory_tree"],
+        DEN_MEMORY_READ => &["den_memory_read"],
+        DEN_MEMORY_SEARCH => &["den_memory_search"],
+        _ => &[],
+    }
+}
+
+pub fn builtin_den_tool_descriptor_for_provider_name(
+    provider_name: &str,
+) -> Option<DenToolDescriptor> {
+    builtin_den_tool_descriptors()
+        .into_iter()
+        .find(|descriptor| descriptor.matches_provider_name(provider_name))
 }
 
 pub fn is_builtin_den_tool(name: &str) -> bool {

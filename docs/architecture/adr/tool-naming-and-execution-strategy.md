@@ -44,6 +44,23 @@ The model should see one concise provider name per capability, regardless of exe
 
 ---
 
+## Descriptor ownership rule
+
+Tool names and aliases must be descriptor-owned. Do not scatter provider aliases, legacy aliases, permission classes, UI labels, and execution methods across unrelated match statements.
+
+Each tool descriptor should own:
+
+- canonical name;
+- current provider name;
+- accepted provider aliases;
+- execution class/method;
+- adapter/client methods and aliases where applicable;
+- permission class;
+- display label/kind/risk;
+- input schema/policy.
+
+Routing, prompt descriptor generation, supported-tool diagnostics, UI labels, and approval policy should consult descriptors or descriptor resolvers. Future renames should normally be descriptor edits plus docs/tests, not broad string hunts.
+
 ## Provider names
 
 Provider names are short, model-friendly, provider-safe identifiers.

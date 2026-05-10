@@ -10,29 +10,9 @@ use crate::core::{
         acp_diag_phase, acp_tool_policy_json_for_provider, supported_provider_tool_names,
         AcpToolName,
     },
+    den_tools,
     work_plans::{WorkPlanItemStatus, WorkPlanProjection},
 };
-
-const ACP_DEN_SERVER_TOOL_PROVIDER_NAMES: &[&str] = &[
-    "web_fetch",
-    "den_web_fetch",
-    "web_search",
-    "den_web_search",
-    "session_info",
-    "situation_get",
-    "den_situation_get",
-    "memory_write_entry",
-    "den_memory_write_entry",
-    "memory_status",
-    "den_memory_status",
-    "memory_browse",
-    "memory_tree",
-    "den_memory_tree",
-    "memory_read",
-    "den_memory_read",
-    "memory_search",
-    "den_memory_search",
-];
 
 #[derive(Debug)]
 pub enum AcpGatewayEvent {
@@ -243,17 +223,22 @@ fn native_letta_tool_request_event_with_args(
     let tool_call = tool_call_value(inner, event);
     let tool_name = tool_name_override.or_else(|| tool_call_name(tool_call, inner, event))?;
     let acp_tool = AcpToolName::from_provider_alias(tool_name);
-    let den_server_tool = ACP_DEN_SERVER_TOOL_PROVIDER_NAMES.contains(&tool_name);
+    let den_server_tool =
+        den_tools::builtin_den_tool_descriptor_for_provider_name(tool_name).is_some();
     let unsupported_tool_detail = if acp_tool.is_none() && !den_server_tool {
         let mut supported = supported_provider_tool_names()
             .into_iter()
             .map(str::to_string)
             .collect::<Vec<_>>();
-        supported.extend(
-            ACP_DEN_SERVER_TOOL_PROVIDER_NAMES
-                .iter()
-                .map(|name| name.to_string()),
-        );
+        for descriptor in den_tools::builtin_den_tool_descriptors() {
+            supported.push(descriptor.provider_name);
+            supported.extend(
+                descriptor
+                    .provider_aliases
+                    .iter()
+                    .map(|name| name.to_string()),
+            );
+        }
         Some(format!(
             "Unsupported ACP/Den tool: {tool_name}. Supported ACP/Den tools: {}.",
             supported.join(", ")
