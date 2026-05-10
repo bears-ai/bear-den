@@ -366,6 +366,7 @@ mod tests {
             content: Some("file contents".to_string()),
             structured_content: serde_json::json!({}),
             diagnostic: serde_json::json!({}),
+            ..Default::default()
         }
     }
 
