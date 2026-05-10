@@ -2322,157 +2322,8 @@ async fn persist_stream_event_side_effects(
                 );
             } else if let Some(canonical_name) = acp_den_provider_to_canonical_tool_name(tool_name)
             {
-                let result_tx = result_tx.take().ok_or_else(|| {
-                    CustomError::System("ACP Den tool request missing result channel".to_string())
-                })?;
-                if plan_mode_active && !den_tool_allowed_in_plan_mode(canonical_name) {
-                    *approval_required = false;
-                    *approval_reason = None;
-                    let result = plan_mode_denial_result(
-                        context,
-                        tool_call_id,
-                        tool_name,
-                        approval_request_id.as_deref(),
-                        canonical_name,
-                    );
-                    let _ = result_tx.send(result);
-                    return Ok(());
-                }
-                *approval_required = false;
-                *approval_reason = None;
-                if canonical_name == den_tools::DEN_WEB_FETCH {
-                    let url = args.get("url").and_then(|v| v.as_str()).ok_or_else(|| {
-                        CustomError::ValidationError("web_fetch missing url".to_string())
-                    })?;
-                    let (normalized, decision) =
-                        web_policy::decide_web_fetch_approval(&context.pool, context.bear_id, url)
-                            .await?;
-                    if decision.is_approved() && web_policy::is_local_web_url(&normalized) {
-                        *tool_name = "local_web_fetch".to_string();
-                        args["url"] = serde_json::json!(normalized.url);
-                        *approval_required = false;
-                        *approval_reason = None;
-                        context.tool_turns.register(AcpToolTurnRegistration {
-                            user_id: context.user_id,
-                            bear_id: context.bear_id,
-                            bear_slug: context.bear_slug.clone(),
-                            acp_session_id: context.acp_session_id.clone(),
-                            request_id: context.request_id,
-                            tool_call_id: tool_call_id.clone(),
-                            tool_name: tool_name.clone(),
-                            approval_request_id: approval_request_id.clone(),
-                            result_tx,
-                        })?;
-                        return Ok(());
-                    }
-                    if matches!(decision, web_policy::WebApprovalDecision::RequiresApproval) {
-                        let permission_id = format!("perm-{}", Uuid::new_v4());
-                        pending_web_fetch_approvals().lock().await.insert(
-                            permission_id.clone(),
-                            PendingWebFetchApproval {
-                                user_id: context.user_id,
-                                bear_id: context.bear_id,
-                                result_tx,
-                                context: context.clone(),
-                                provider_name: tool_name.clone(),
-                                tool_call_id: tool_call_id.clone(),
-                                approval_request_id: approval_request_id.clone(),
-                                args: args.clone(),
-                                normalized_url: normalized.clone(),
-                            },
-                        );
-                        *event = AcpGatewayEvent::PermissionRequest {
-                            request_id: request_id.clone(),
-                            permission_id,
-                            tool_call_id: tool_call_id.clone(),
-                            tool_name: tool_name.clone(),
-                            title: "Fetch URL".to_string(),
-                            reason: format!(
-                                "BEARS wants to fetch {}. Approve this URL or host?",
-                                normalized.url
-                            ),
-                            target: serde_json::json!({ "kind": "url", "url": normalized.url, "host": normalized.host }),
-                            options: vec![
-                                "allow_once".to_string(),
-                                "allow_url".to_string(),
-                                "allow_host".to_string(),
-                                "reject_once".to_string(),
-                            ],
-                        };
-                        return Ok(());
-                    }
-                }
-                if web_policy::is_local_web_url(&web_policy::normalize_web_url(
-                    args.get("url").and_then(|v| v.as_str()).unwrap_or(""),
-                )?) {
-                    let result = AcpToolResultRequest {
-                        turn_id: None,
-                        request_id: Some(context.request_id.to_string()),
-                        tool_call_id: Some(tool_call_id.clone()),
-                        tool_name: Some(tool_name.clone()),
-                        approval_request_id: approval_request_id.clone(),
-                        status: "error".to_string(),
-                        content: Some(
-                            "local web_fetch requires approval before adapter delegation"
-                                .to_string(),
-                        ),
-                        structured_content: serde_json::json!({}),
-                        diagnostic: serde_json::json!({ "component": "den.acp", "phase": "local_web_fetch_requires_approval" }),
-                        ..Default::default()
-                    };
-                    let _ = result_tx.send(result);
-                    return Ok(());
-                }
-                let result = invoke_acp_den_tool(
-                    context,
-                    canonical_name,
-                    tool_name,
-                    tool_call_id,
-                    approval_request_id.as_deref(),
-                    args.clone(),
-                )
-                .await;
-                let submitted_plan_mode =
-                    if canonical_name == den_tools::DEN_PLAN_MODE_EXIT && result.status == "ok" {
-                        result.structured_content.get("plan_mode").cloned()
-                    } else {
-                        None
-                    };
-                let submitted_plan = result.structured_content.get("submitted_plan").cloned();
-                let _ = result_tx.send(result);
-                if let Some(submitted_plan_mode) = submitted_plan_mode {
-                    let Some(plan_mode_id) = submitted_plan_mode
-                        .get("id")
-                        .and_then(|id| id.as_str())
-                        .map(str::to_string)
-                    else {
-                        return Ok(());
-                    };
-                    *event = AcpGatewayEvent::PermissionRequest {
-                        request_id: request_id.clone(),
-                        permission_id: format!("plan-mode-{plan_mode_id}"),
-                        tool_call_id: tool_call_id.clone(),
-                        tool_name: tool_name.clone(),
-                        title: "Approve implementation plan".to_string(),
-                        reason: "Pair submitted a markdown implementation plan. Approve to leave plan mode and allow implementation, or reject to keep mutation blocked.".to_string(),
-                        target: serde_json::json!({
-                            "kind": "acp_plan_mode",
-                            "plan_mode_id": plan_mode_id,
-                            "plan": submitted_plan,
-                        }),
-                        options: vec!["approve".to_string(), "reject".to_string()],
-                    };
-                    return Ok(());
-                }
-                tracing::info!(
-                    request_id = %context.request_id,
-                    acp_session_id = %context.acp_session_id,
-                    tool_request_id = %request_id,
-                    tool_call_id = %tool_call_id,
-                    tool_name = %tool_name,
-                    canonical_tool_name = %canonical_name,
-                    "ACP Den server tool executed"
-                );
+                handle_den_server_tool_request(context, event, canonical_name, plan_mode_active)
+                    .await?;
             } else {
                 let result_tx = result_tx.take().ok_or_else(|| {
                     CustomError::System("ACP tool request missing result channel".to_string())
@@ -2538,6 +2389,271 @@ fn den_tool_allowed_in_plan_mode(canonical_name: &str) -> bool {
             | den_tools::DEN_PLAN_MODE_EXIT
             | den_tools::DEN_PLAN_MODE_CANCEL
     )
+}
+
+async fn handle_den_server_tool_request(
+    context: &AcpStreamContext,
+    event: &mut AcpGatewayEvent,
+    canonical_name: &str,
+    plan_mode_active: bool,
+) -> Result<(), CustomError> {
+    match canonical_name {
+        den_tools::DEN_WEB_FETCH => {
+            handle_web_fetch_tool_request(context, event, plan_mode_active).await
+        }
+        _ => handle_direct_den_tool_request(context, event, canonical_name, plan_mode_active).await,
+    }
+}
+
+async fn handle_web_fetch_tool_request(
+    context: &AcpStreamContext,
+    event: &mut AcpGatewayEvent,
+    plan_mode_active: bool,
+) -> Result<(), CustomError> {
+    let AcpGatewayEvent::ToolRequest {
+        tool_call_id,
+        approval_request_id,
+        tool_name,
+        request_id,
+        args,
+        result_tx,
+        approval_required,
+        approval_reason,
+        ..
+    } = event
+    else {
+        return Ok(());
+    };
+    let result_tx = result_tx.take().ok_or_else(|| {
+        CustomError::System("ACP Den web_fetch request missing result channel".to_string())
+    })?;
+    *approval_required = false;
+    *approval_reason = None;
+    if plan_mode_active && !den_tool_allowed_in_plan_mode(den_tools::DEN_WEB_FETCH) {
+        let result = plan_mode_denial_result(
+            context,
+            tool_call_id,
+            tool_name,
+            approval_request_id.as_deref(),
+            den_tools::DEN_WEB_FETCH,
+        );
+        let _ = result_tx.send(result);
+        return Ok(());
+    }
+    let web_args = match serde_json::from_value::<WebFetchToolArgs>(args.clone()) {
+        Ok(args) => args,
+        Err(err) => {
+            settle_den_tool_error(
+                result_tx,
+                context,
+                tool_call_id,
+                tool_name,
+                approval_request_id.as_deref(),
+                "den_server_tool_validation_failed",
+                format!("web_fetch arguments are invalid: {err}"),
+            );
+            return Ok(());
+        }
+    };
+    let (normalized, decision) = match web_policy::decide_web_fetch_approval(
+        &context.pool,
+        context.bear_id,
+        web_args.url.trim(),
+    )
+    .await
+    {
+        Ok(value) => value,
+        Err(err) => {
+            settle_den_tool_error(
+                result_tx,
+                context,
+                tool_call_id,
+                tool_name,
+                approval_request_id.as_deref(),
+                "web_fetch_approval_policy_failed",
+                err.to_string(),
+            );
+            return Ok(());
+        }
+    };
+    if decision.is_approved() && web_policy::is_local_web_url(&normalized) {
+        *tool_name = "local_web_fetch".to_string();
+        args["url"] = serde_json::json!(normalized.url);
+        context.tool_turns.register(AcpToolTurnRegistration {
+            user_id: context.user_id,
+            bear_id: context.bear_id,
+            bear_slug: context.bear_slug.clone(),
+            acp_session_id: context.acp_session_id.clone(),
+            request_id: context.request_id,
+            tool_call_id: tool_call_id.clone(),
+            tool_name: tool_name.clone(),
+            approval_request_id: approval_request_id.clone(),
+            result_tx,
+        })?;
+        return Ok(());
+    }
+    if matches!(decision, web_policy::WebApprovalDecision::RequiresApproval) {
+        let permission_id = format!("perm-{}", Uuid::new_v4());
+        pending_web_fetch_approvals().lock().await.insert(
+            permission_id.clone(),
+            PendingWebFetchApproval {
+                user_id: context.user_id,
+                bear_id: context.bear_id,
+                result_tx,
+                context: context.clone(),
+                provider_name: tool_name.clone(),
+                tool_call_id: tool_call_id.clone(),
+                approval_request_id: approval_request_id.clone(),
+                args: args.clone(),
+                normalized_url: normalized.clone(),
+            },
+        );
+        *event = AcpGatewayEvent::PermissionRequest {
+            request_id: request_id.clone(),
+            permission_id,
+            tool_call_id: tool_call_id.clone(),
+            tool_name: tool_name.clone(),
+            title: "Fetch URL".to_string(),
+            reason: format!(
+                "BEARS wants to fetch {}. Approve this URL or host?",
+                normalized.url
+            ),
+            target: serde_json::json!({ "kind": "url", "url": normalized.url, "host": normalized.host }),
+            options: vec![
+                "allow_once".to_string(),
+                "allow_url".to_string(),
+                "allow_host".to_string(),
+                "reject_once".to_string(),
+            ],
+        };
+        return Ok(());
+    }
+    handle_direct_den_tool_request(context, event, den_tools::DEN_WEB_FETCH, false).await
+}
+
+async fn handle_direct_den_tool_request(
+    context: &AcpStreamContext,
+    event: &mut AcpGatewayEvent,
+    canonical_name: &str,
+    plan_mode_active: bool,
+) -> Result<(), CustomError> {
+    let AcpGatewayEvent::ToolRequest {
+        tool_call_id,
+        approval_request_id,
+        tool_name,
+        request_id,
+        args,
+        result_tx,
+        approval_required,
+        approval_reason,
+        ..
+    } = event
+    else {
+        return Ok(());
+    };
+    let result_tx = result_tx.take().ok_or_else(|| {
+        CustomError::System("ACP Den tool request missing result channel".to_string())
+    })?;
+    *approval_required = false;
+    *approval_reason = None;
+    if plan_mode_active && !den_tool_allowed_in_plan_mode(canonical_name) {
+        let result = plan_mode_denial_result(
+            context,
+            tool_call_id,
+            tool_name,
+            approval_request_id.as_deref(),
+            canonical_name,
+        );
+        let _ = result_tx.send(result);
+        return Ok(());
+    }
+    let result = invoke_acp_den_tool(
+        context,
+        canonical_name,
+        tool_name,
+        tool_call_id,
+        approval_request_id.as_deref(),
+        args.clone(),
+    )
+    .await;
+    let submitted_plan_mode =
+        if canonical_name == den_tools::DEN_PLAN_MODE_EXIT && result.status == "ok" {
+            result.structured_content.get("plan_mode").cloned()
+        } else {
+            None
+        };
+    let submitted_plan = result.structured_content.get("submitted_plan").cloned();
+    let _ = result_tx.send(result);
+    if let Some(submitted_plan_mode) = submitted_plan_mode {
+        let Some(plan_mode_id) = submitted_plan_mode
+            .get("id")
+            .and_then(|id| id.as_str())
+            .map(str::to_string)
+        else {
+            return Ok(());
+        };
+        *event = AcpGatewayEvent::PermissionRequest {
+            request_id: request_id.clone(),
+            permission_id: format!("plan-mode-{plan_mode_id}"),
+            tool_call_id: tool_call_id.clone(),
+            tool_name: tool_name.clone(),
+            title: "Approve implementation plan".to_string(),
+            reason: "Pair submitted a markdown implementation plan. Approve to leave plan mode and allow implementation, or reject to keep mutation blocked.".to_string(),
+            target: serde_json::json!({
+                "kind": "acp_plan_mode",
+                "plan_mode_id": plan_mode_id,
+                "plan": submitted_plan,
+            }),
+            options: vec!["approve".to_string(), "reject".to_string()],
+        };
+        return Ok(());
+    }
+    tracing::info!(
+        request_id = %context.request_id,
+        acp_session_id = %context.acp_session_id,
+        tool_request_id = %request_id,
+        tool_call_id = %tool_call_id,
+        tool_name = %tool_name,
+        canonical_tool_name = %canonical_name,
+        "ACP Den server tool executed"
+    );
+    Ok(())
+}
+
+#[derive(Debug, Deserialize)]
+struct WebFetchToolArgs {
+    url: String,
+}
+
+fn settle_den_tool_error(
+    result_tx: oneshot::Sender<AcpToolResultRequest>,
+    context: &AcpStreamContext,
+    tool_call_id: &str,
+    tool_name: &str,
+    approval_request_id: Option<&str>,
+    phase: &str,
+    message: impl Into<String>,
+) {
+    let message = message.into();
+    let result = AcpToolResultRequest {
+        turn_id: None,
+        request_id: Some(context.request_id.to_string()),
+        tool_call_id: Some(tool_call_id.to_string()),
+        tool_name: Some(tool_name.to_string()),
+        approval_request_id: approval_request_id.map(str::to_string),
+        status: "error".to_string(),
+        content: Some(message.clone()),
+        structured_content: serde_json::json!({}),
+        diagnostic: serde_json::json!({
+            "component": "den.acp",
+            "phase": phase,
+            "tool_name": tool_name,
+            "tool_call_id": tool_call_id,
+            "error": message,
+        }),
+        ..Default::default()
+    };
+    let _ = result_tx.send(result);
 }
 
 fn plan_mode_denial_result(
