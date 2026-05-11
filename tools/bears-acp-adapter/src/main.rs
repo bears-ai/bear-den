@@ -3880,7 +3880,7 @@ async fn request_tool_permission(
         .status(Some(ToolCallStatus::Pending))
         .title(Some(title.to_string()))
         .content(Some(content));
-    if let Some(locations) = tool_locations_from_event(event) {
+    if let Some(locations) = tool_locations_from_event(tool_name, event) {
         fields = fields.locations(Some(locations));
     }
     if let Some(args) = event.get("args") {
@@ -4623,9 +4623,16 @@ fn tool_command(event: &Value) -> Option<&str> {
         .and_then(Value::as_str)
 }
 
-fn tool_locations_from_event(event: &Value) -> Option<Vec<ToolCallLocation>> {
+fn tool_locations_from_event(tool_name: &str, event: &Value) -> Option<Vec<ToolCallLocation>> {
+    if !tool_supports_input_location(tool_name, event) {
+        return None;
+    }
     let path = tool_path(event)?;
-    let mut location = ToolCallLocation::new(PathBuf::from(path));
+    let path_buf = PathBuf::from(path);
+    if path_buf.is_dir() {
+        return None;
+    }
+    let mut location = ToolCallLocation::new(path_buf);
     if let Some(line) = event
         .get("args")
         .and_then(|v| v.get("line"))
@@ -4635,6 +4642,23 @@ fn tool_locations_from_event(event: &Value) -> Option<Vec<ToolCallLocation>> {
         location = location.line(Some(line.min(u32::MAX as u64) as u32));
     }
     Some(vec![location])
+}
+
+fn tool_supports_input_location(tool_name: &str, event: &Value) -> bool {
+    match tool_name {
+        "fs_read_text_file"
+        | "fs.read_text_file"
+        | "fs_edit_file"
+        | "fs_replace_text"
+        | "fs_create_text_file" => true,
+        "fs_delete_path" => event
+            .get("args")
+            .and_then(|v| v.get("expected_kind"))
+            .and_then(Value::as_str)
+            .map(|kind| kind == "file")
+            .unwrap_or(false),
+        _ => false,
+    }
 }
 
 fn friendly_tool_status(tool_name: &str, event: &Value, phase: &str) -> String {
@@ -4679,7 +4703,7 @@ async fn send_tool_call_update(
         .status(tool_status_from_str(status))
         .content(content);
     if let Some(event) = event {
-        if let Some(locations) = tool_locations_from_event(event) {
+        if let Some(locations) = tool_locations_from_event(tool_name, event) {
             tool_call = tool_call.locations(locations);
         }
         if let Some(args) = event.get("args") {
@@ -4932,6 +4956,26 @@ mod tests {
         assert_eq!(tool_display("fs_list_directory").title, "List directory");
         assert_eq!(tool_display("fs_search_files").title, "Search files");
         assert_eq!(tool_display("fs_edit_file").title, "Edit file");
+    }
+
+    #[test]
+    fn tool_locations_are_only_emitted_for_file_targets() {
+        let search_event = json!({ "args": { "path": "/workspace", "query": "needle" } });
+        assert!(tool_locations_from_event("fs_search_files", &search_event).is_none());
+        assert!(tool_locations_from_event("fs_find_paths", &search_event).is_none());
+        assert!(tool_locations_from_event("fs_list_directory", &search_event).is_none());
+
+        let read_event = json!({ "args": { "path": "/workspace/README.md", "line": 3 } });
+        let locations = tool_locations_from_event("fs_read_text_file", &read_event)
+            .expect("read file has a file location");
+        assert_eq!(locations.len(), 1);
+
+        let delete_dir_event =
+            json!({ "args": { "path": "/workspace/docs", "expected_kind": "directory" } });
+        assert!(tool_locations_from_event("fs_delete_path", &delete_dir_event).is_none());
+        let delete_file_event =
+            json!({ "args": { "path": "/workspace/README.md", "expected_kind": "file" } });
+        assert!(tool_locations_from_event("fs_delete_path", &delete_file_event).is_some());
     }
 
     #[test]
