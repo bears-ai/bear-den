@@ -302,6 +302,8 @@ struct AcpSessionHttp {
     created_at: String,
     updated_at: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    modes: Option<Vec<serde_json::Value>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     plan_mode: Option<serde_json::Value>,
 }
 
@@ -309,14 +311,29 @@ fn format_acp_session_timestamp(t: time::OffsetDateTime) -> String {
     t.format(&Rfc3339).unwrap_or_else(|_| t.to_string())
 }
 
-fn acp_session_row_to_http(row: acp_sessions::AcpSessionRow) -> AcpSessionHttp {
-    acp_session_row_to_http_with_plan_mode(row, None)
+fn acp_plan_mode_to_session_mode(plan_mode: &serde_json::Value) -> serde_json::Value {
+    serde_json::json!({
+        "slug": "plan",
+        "title": "Plan mode",
+        "kind": "planning",
+        "state": plan_mode.get("state").and_then(|value| value.as_str()).unwrap_or("active"),
+        "source": "den.acp_plan_mode",
+        "metadata": {
+            "plan_mode_id": plan_mode.get("id").cloned().unwrap_or(serde_json::Value::Null),
+            "artifact_path": plan_mode.get("plan_artifact_path").cloned().unwrap_or(serde_json::Value::Null),
+            "reason": plan_mode.get("reason").cloned().unwrap_or(serde_json::Value::Null),
+            "requested_by": plan_mode.get("requested_by").cloned().unwrap_or(serde_json::Value::Null)
+        }
+    })
 }
 
-fn acp_session_row_to_http_with_plan_mode(
+fn acp_session_row_to_http_with_modes(
     row: acp_sessions::AcpSessionRow,
     plan_mode: Option<serde_json::Value>,
 ) -> AcpSessionHttp {
+    let modes = plan_mode
+        .as_ref()
+        .map(|plan_mode| vec![acp_plan_mode_to_session_mode(plan_mode)]);
     AcpSessionHttp {
         acp_session_id: row.acp_session_id,
         runtime_session_id: row.runtime_session_id,
@@ -335,6 +352,7 @@ fn acp_session_row_to_http_with_plan_mode(
         archived_at: row.archived_at.map(format_acp_session_timestamp),
         created_at: format_acp_session_timestamp(row.created_at),
         updated_at: format_acp_session_timestamp(row.updated_at),
+        modes,
         plan_mode,
     }
 }
@@ -1332,7 +1350,12 @@ async fn list_acp_sessions_inner(
             );
             continue;
         }
-        sessions.push(acp_session_row_to_http(row));
+        let plan_mode =
+            acp_plan_mode::active_for_session(&state.sqlx_pool, user_id, bear.id, &row.acp_session_id)
+                .await?
+                .map(serde_json::to_value)
+                .transpose()?;
+        sessions.push(acp_session_row_to_http_with_modes(row, plan_mode));
     }
     Ok(Json(AcpSessionsListHttpResponse {
         sessions,
@@ -1380,7 +1403,7 @@ async fn get_acp_session_inner(
             .await?
             .map(serde_json::to_value)
             .transpose()?;
-    Ok(Json(acp_session_row_to_http_with_plan_mode(row, plan_mode)).into_response())
+    Ok(Json(acp_session_row_to_http_with_modes(row, plan_mode)).into_response())
 }
 
 async fn conversations(

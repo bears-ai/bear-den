@@ -1851,6 +1851,81 @@ async fn acp_sessions_list_returns_row_after_prompt() {
 }
 
 #[tokio::test]
+async fn acp_session_responses_expose_plan_mode_as_session_mode() {
+    let fixture = test_app().await;
+    let user_bear = create_test_user_bear(&fixture.pool, true).await;
+    let session_id = "session-plan-mode-visible";
+
+    let prompt = post_prompt(
+        fixture.app.clone(),
+        &user_bear.bear_slug,
+        session_id,
+        Some(&user_bear.raw_token),
+        json!({ "message": "yo", "client": "zed" }),
+    )
+    .await;
+    assert_eq!(prompt.status(), StatusCode::OK);
+    let _ = prompt.into_body().collect().await.unwrap();
+
+    let entered = den::core::acp_plan_mode::enter_plan_mode(
+        &fixture.pool,
+        den::core::acp_plan_mode::EnterPlanModeParams {
+            user_id: user_bear.user_id,
+            bear_id: user_bear.bear_id,
+            bear_slug: user_bear.bear_slug.clone(),
+            acp_session_id: session_id.to_string(),
+            reason: "Need a reviewed implementation plan".to_string(),
+            requested_by: den::core::acp_plan_mode::AcpPlanModeRequestedBy::Pair,
+            previous_permission_mode: Some("default".to_string()),
+        },
+    )
+    .await
+    .expect("enter ACP plan mode");
+
+    let list = get_acp_sessions(
+        fixture.app.clone(),
+        &user_bear.bear_slug,
+        Some(&user_bear.raw_token),
+        None,
+    )
+    .await;
+    assert_eq!(list.status(), StatusCode::OK);
+    let body = list.into_body().collect().await.unwrap().to_bytes();
+    let value: Value = serde_json::from_slice(&body).expect("sessions JSON");
+    let list_row = value["sessions"]
+        .as_array()
+        .expect("sessions array")
+        .iter()
+        .find(|row| row["acp_session_id"] == session_id)
+        .cloned()
+        .expect("session row present");
+    assert_eq!(list_row["plan_mode"]["id"], entered.id.to_string());
+    assert_eq!(list_row["modes"][0]["slug"], "plan");
+    assert_eq!(list_row["modes"][0]["kind"], "planning");
+    assert_eq!(list_row["modes"][0]["state"], "active");
+    assert_eq!(
+        list_row["modes"][0]["metadata"]["plan_mode_id"],
+        entered.id.to_string()
+    );
+
+    let one = get_acp_session(
+        fixture.app,
+        &user_bear.bear_slug,
+        session_id,
+        Some(&user_bear.raw_token),
+    )
+    .await;
+    assert_eq!(one.status(), StatusCode::OK);
+    let one_body = one.into_body().collect().await.unwrap().to_bytes();
+    let row: Value = serde_json::from_slice(&one_body).expect("session JSON");
+    assert_eq!(row["plan_mode"]["id"], entered.id.to_string());
+    assert_eq!(row["modes"][0]["slug"], "plan");
+    assert_eq!(row["modes"][0]["kind"], "planning");
+    assert_eq!(row["modes"][0]["state"], "active");
+    assert_eq!(row["modes"][0]["source"], "den.acp_plan_mode");
+}
+
+#[tokio::test]
 async fn acp_session_get_unknown_returns_404() {
     let fixture = test_app().await;
     let user_bear = create_test_user_bear(&fixture.pool, true).await;
