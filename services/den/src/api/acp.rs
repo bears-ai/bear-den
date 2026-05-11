@@ -1146,6 +1146,24 @@ fn letta_user_message_role_is_human(inner: &serde_json::Value, msg: &serde_json:
     true
 }
 
+fn strip_acp_resource_blocks(raw: &str) -> String {
+    let mut out = String::new();
+    let mut rest = raw;
+    loop {
+        let Some(start) = rest.find("<bears-acp-resource") else {
+            out.push_str(rest);
+            break;
+        };
+        out.push_str(&rest[..start]);
+        let after_start = &rest[start..];
+        let Some(end) = after_start.find("</bears-acp-resource>") else {
+            break;
+        };
+        rest = &after_start[end + "</bears-acp-resource>".len()..];
+    }
+    out.trim().to_string()
+}
+
 fn map_acp_history_page(
     body: &serde_json::Value,
     page_limit: u32,
@@ -1172,7 +1190,7 @@ fn map_acp_history_page(
         let Some(text) = letta_message_text(inner).or_else(|| letta_message_text(msg)) else {
             continue;
         };
-        let text = strip_letta_harness_for_user(&text);
+        let text = strip_acp_resource_blocks(&strip_letta_harness_for_user(&text));
         if text.trim().is_empty() {
             continue;
         }

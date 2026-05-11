@@ -2658,7 +2658,9 @@ async fn handle_prompt(
         client_context.raw.get("direct_tools").cloned().unwrap_or(Value::Null)
     );
 
-    send_user_message_chunk(session_id, &display_prompt).await?;
+    if !prompt_contains_resources(&params) {
+        send_user_message_chunk(session_id, &display_prompt).await?;
+    }
 
     let url = format!(
         "{}/acp/bears/{}/sessions/{}/prompt",
@@ -3150,6 +3152,20 @@ fn prompt_display_text_from_params(params: &Value) -> Option<String> {
     prompt_text_blocks_from_params(params).ok()
 }
 
+fn prompt_contains_resources(params: &Value) -> bool {
+    params
+        .get("prompt")
+        .and_then(Value::as_array)
+        .is_some_and(|items| {
+            items.iter().any(|block| {
+                matches!(
+                    block.get("type").and_then(Value::as_str),
+                    Some("resource") | Some("resource_link")
+                )
+            })
+        })
+}
+
 fn prompt_text_blocks_from_params(params: &Value) -> Result<String> {
     let prompt = params
         .get("prompt")
@@ -3206,7 +3222,9 @@ fn prompt_text_from_params_with_resource_mode(
                         .unwrap_or(uri);
                     if include_resource_contents {
                         if let Some(text) = resource.get("text").and_then(Value::as_str) {
-                            parts.push(format!("Resource {uri}:\n{text}"));
+                            parts.push(format!(
+                                "Referenced resource: {name} ({uri})\n<bears-acp-resource uri={uri:?} name={name:?}>\n{text}\n</bears-acp-resource>"
+                            ));
                         }
                     } else if !uri.is_empty() || !name.is_empty() {
                         parts.push(format!("Referenced resource: {name} ({uri})"));
