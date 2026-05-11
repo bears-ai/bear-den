@@ -564,7 +564,10 @@ async fn run() -> Result<()> {
 
     let http = reqwest::Client::builder()
         .connect_timeout(std::time::Duration::from_secs(15))
-        .timeout(std::time::Duration::from_secs(300))
+        // Prompt responses are long-lived SSE streams. Do not set a global
+        // per-request timeout here; it would abort healthy turns that spend
+        // several minutes in local tool execution or model continuation.
+        // Specific non-streaming operations use their own timeouts where needed.
         .build()
         .context("build HTTP client")?;
 
