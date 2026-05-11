@@ -1,8 +1,10 @@
 # Bear Agent Roles: Talk, Pair, Curate, Work, and Watch
 
-This document is the long-term conceptual description of the five internal agent roles inside a Bear. It exists to align product, design, engineering, documentation, support, and marketing around one shared model.
+This document describes the five internal agent roles that currently back a Bear's Spaces. It exists to align product, design, engineering, documentation, support, and marketing around one shared implementation and trust-boundary model.
 
-A Bear should feel like one coherent assistant to a user. Internally, that Bear is a small team of five specialized agents. Each role has a distinct job, trust profile, memory branch, and relationship to external systems.
+A Bear should feel like one coherent assistant to a user. The Bear-facing abstraction is **Spaces**: Conversation Space, Collaboration Space, Curation Space, Execution Space, and Observation Space. Internally, those Spaces are backed by five specialized agent roles. Each role has a distinct job, trust profile, memory branch, and relationship to external systems.
+
+Agent roles are implementation vocabulary. They are useful for code, schemas, routing, provisioning, diagnostics, and architecture discussion. Prompts visible to the Bear and ordinary user-facing surfaces should generally prefer Space language and avoid encouraging the Bear to identify as a role, role agent, sub-agent, backend component, or separate assistant.
 
 ## Status and relationship to other docs
 
@@ -20,17 +22,17 @@ When these docs disagree, treat this document as the source for cross-functional
 
 ## The core idea
 
-A Bear is one assistant with five coordinated internal agent roles:
+A Bear is one assistant with five coordinated Bear Spaces, each currently backed by an internal agent role:
 
-| Role | Plain-English name | Primary job | User-visible surface |
-|------|--------------------|-------------|----------------------|
-| `talk` | Conversational agent | Talk with people in chat channels and capture task intent. | Slack, web chat, Discord, future chat surfaces. |
-| `pair` | Collaborative agent | Work alongside a person inside tools such as IDEs. | ACP clients, IDEs, Cowork, Figma plugins, future client tools. |
-| `curate` | Internal integrator | Decide what becomes shared memory, shared capability, approved work, or reviewed observation. | Not directly user-facing. |
-| `work` | Outbound executor | Carry out approved scheduled or event-triggered work against external systems. | Not conversational; invoked by Den task dispatch. |
-| `watch` | Inbound observer | Receive external events and turn them into structured observations for review. | Webhooks, polling, queues, subscriptions, streams. |
+| Internal role | Bear-facing Space | Plain-English implementation name | Primary job | User-visible surface |
+|---------------|-------------------|-----------------------------------|-------------|----------------------|
+| `talk` | Conversation Space | Conversational agent | Talk with people in chat channels and capture task intent. | Slack, web chat, Discord, future chat surfaces. |
+| `pair` | Collaboration Space | Collaborative agent | Work alongside a person inside tools such as IDEs. | ACP clients, IDEs, Cowork, Figma plugins, future client tools. |
+| `curate` | Curation Space | Internal integrator | Decide what becomes shared memory, shared capability, approved work, or reviewed observation. | Not directly user-facing. |
+| `work` | Execution Space | Outbound executor | Carry out approved scheduled or event-triggered work against external systems. | Not conversational; invoked by Den task dispatch. |
+| `watch` | Observation Space | Inbound observer | Receive external events and turn them into structured observations for review. | Webhooks, polling, queues, subscriptions, streams. |
 
-The split lets a Bear be conversational, collaborative, reflective, autonomous, and observant without giving every capability to one all-powerful agent.
+The split lets a Bear be conversational, collaborative, reflective, autonomous, and observant without giving every capability to one all-powerful runtime. The Space is what the Bear experiences as its current operating environment; the agent role is the implementation slot that backs that Space.
 
 ## Why five roles?
 
@@ -208,48 +210,58 @@ This lets us say, accurately, that Bears can support autonomy while keeping raw 
 
 ### Preferred language
 
-Use these phrases when describing the model:
+Use Space language for Bear-facing and ordinary user-facing explanations:
 
-- “A Bear feels like one assistant, but internally it has five specialized roles.”
-- “Each role has a clear job and a clear trust boundary.”
-- “`curate` decides what becomes shared memory.”
-- “`work` performs approved external tasks.”
-- “`watch` listens for external events but does not act on them directly.”
-- “`talk` and `pair` are the two synchronous user-facing roles.”
+- “A Bear feels like one assistant, and Den projects it into different Spaces for different kinds of work.”
+- “Each Space has a clear job and a clear trust boundary.”
+- “Conversation Space is where the Bear talks with people in chat-like surfaces.”
+- “Collaboration Space is where the Bear works alongside a person in a client or workspace.”
+- “Curation Space is where the Bear reviews what becomes shared memory.”
+- “Execution Space is where the Bear performs approved external tasks.”
+- “Observation Space is where the Bear receives external events and records observations.”
+
+Use agent-role language when discussing implementation internals:
+
+- “The `curate` role backs Curation Space.”
+- “The `work` role backs Execution Space.”
+- “The `watch` role backs Observation Space.”
+- “The `talk` and `pair` roles back the two synchronous user-facing Spaces.”
 
 ### Avoid
 
 Avoid language that implies:
 
 - A Bear is five unrelated bots.
-- Every role can do every task.
-- Chat agents directly execute arbitrary autonomous work.
+- A Bear should introduce itself as a role agent.
+- The Bear's current Space is a separate assistant identity.
+- Every Space or role can do every task.
+- Chat surfaces directly execute arbitrary autonomous work.
 - The event listener can take outbound action on its own.
 - Shared memory is a dumping ground for every raw interaction.
-- `curate` is merely a summarizer; it is the semantic integration and review authority.
+- Curation Space / `curate` is merely a summarizer; it is the semantic integration and review authority.
 
 ### User-facing naming
 
-The role names `talk`, `pair`, `curate`, `work`, and `watch` are stable internal vocabulary. Product surfaces may choose friendlier phrasing depending on context, but should preserve the underlying meanings.
+The role names `talk`, `pair`, `curate`, `work`, and `watch` are stable internal vocabulary. The corresponding Bear-facing names are Conversation Space, Collaboration Space, Curation Space, Execution Space, and Observation Space.
 
 In normal user-facing behavior, a Bear should identify itself as the Bear rather than volunteering its internal role label. The internal role split is primarily an implementation and trust-boundary model, not the default self-description users should hear.
 
 This means:
 
-- `talk` and `pair` should normally speak in the voice of the Bear, not as “the talk role” or “the pair role.”
+- Conversation Space and Collaboration Space should normally speak in the voice of the Bear, not as “the talk role,” “the pair role,” or a separate agent.
 - Internal role names should be exposed mainly in BEARS-building, operator, debugging, or other explicitly architectural contexts.
-- Product surfaces may use friendly activity labels such as “chat,” “pairing,” or “background work,” but should avoid making the user feel like they are talking to five separate assistants.
+- Product surfaces may use Space names or friendlier activity labels such as “chat,” “pairing,” or “background work,” but should avoid making the user feel like they are talking to five separate assistants.
 - When a boundary explanation is necessary for honesty or safety, the system may briefly describe the relevant internal distinction without centering it as the assistant's identity.
 
 For example:
 
-| Internal role | Possible user-facing language |
-|---------------|-------------------------------|
-| `talk` | Chat, conversation, ask your Bear |
-| `pair` | Collaborate in your IDE, work together, pairing |
-| `curate` | Memory review, learning, integration |
-| `work` | Background work, approved tasks, automations |
-| `watch` | Monitoring, subscriptions, event listening |
+| Internal role | Bear-facing Space | Possible user-facing language |
+|---------------|-------------------|-------------------------------|
+| `talk` | Conversation Space | Chat, conversation, ask your Bear |
+| `pair` | Collaboration Space | Collaborate in your IDE, work together, pairing |
+| `curate` | Curation Space | Memory review, learning, integration |
+| `work` | Execution Space | Background work, approved tasks, automations |
+| `watch` | Observation Space | Monitoring, subscriptions, event listening |
 
 ## Design and data-model implications
 
