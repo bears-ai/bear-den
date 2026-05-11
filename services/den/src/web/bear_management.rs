@@ -33,6 +33,7 @@ use crate::{
             fetch_memfs_role_view_health, fetch_memory_manager_repository_files,
             fetch_memory_manager_repository_status, search_memfs_role_memory,
         },
+        memory_proposals::{self, CreateMemoryProposal},
         pair_reflection, user,
         user::db as user_db,
     },
@@ -157,6 +158,7 @@ struct BearMemoryQuery {
     q: Option<String>,
     path: Option<String>,
     deleted: Option<usize>,
+    review_requested: Option<usize>,
     error: Option<String>,
 }
 
@@ -165,7 +167,22 @@ struct BearMemoryDeleteForm {
     role: String,
     #[serde(default)]
     paths: Vec<String>,
+    #[serde(default)]
+    action: Option<String>,
+    #[serde(default)]
     confirm: String,
+    #[serde(default)]
+    review_title: Option<String>,
+    #[serde(default)]
+    review_summary: Option<String>,
+    #[serde(default)]
+    review_rationale: Option<String>,
+    #[serde(default)]
+    suggested_action: Option<String>,
+    #[serde(default)]
+    sensitivity: Option<String>,
+    #[serde(default)]
+    requires_human: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -1958,6 +1975,7 @@ async fn bear_memory_get(
     let search_query = q.q.as_deref().map(str::trim).filter(|s| !s.is_empty());
     let selected_path = q.path.as_deref().map(str::trim).filter(|s| !s.is_empty());
     let delete_notice = q.deleted;
+    let review_notice = q.review_requested;
     let delete_error = q.error.as_deref().map(str::trim).filter(|s| !s.is_empty());
 
     bears_db::ensure_bear_agent_rows(state.sqlx_pool(), bear.id).await?;
@@ -2096,6 +2114,9 @@ async fn bear_memory_get(
         pair_reflection::list_recent_for_bear(state.sqlx_pool(), bear.id, 10)
             .await
             .unwrap_or_default();
+    let memory_proposals = memory_proposals::list_for_bear(state.sqlx_pool(), bear.id, None, 25)
+        .await
+        .unwrap_or_default();
 
     let runtime_block_count = if letta_configured {
         let mut count = 0usize;
@@ -2127,8 +2148,10 @@ async fn bear_memory_get(
             selected_file,
             runtime_block_count,
             pair_reflection_runs,
+            memory_proposals,
             memfs_configured => !memfs_url.is_empty(),
             delete_notice,
+            review_notice,
             delete_error,
         },
     )
@@ -2158,16 +2181,8 @@ async fn bear_memory_delete_post(
         .role
         .parse::<BearAgentRole>()
         .map_err(CustomError::ValidationError)?;
+    let action = form.action.as_deref().unwrap_or("delete").trim();
     let confirm = form.confirm.trim();
-    if confirm != role.as_str() && confirm != bear.slug {
-        let target = format!(
-            "/bear/{}/details/memory?role={}&error={}",
-            bear.slug,
-            role.as_str(),
-            urlencoding::encode("Type the role name or Bear slug to confirm deletion.")
-        );
-        return Ok(Redirect::to(&target).into_response());
-    }
     let mut paths = form
         .paths
         .into_iter()
@@ -2181,7 +2196,78 @@ async fn bear_memory_delete_post(
             "/bear/{}/details/memory?role={}&error={}",
             bear.slug,
             role.as_str(),
-            urlencoding::encode("Select at least one memory file to delete.")
+            urlencoding::encode("Select at least one memory file.")
+        );
+        return Ok(Redirect::to(&target).into_response());
+    }
+    if action == "request_review" {
+        let title = form
+            .review_title
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .unwrap_or("Review selected memory");
+        let summary = form
+            .review_summary
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .unwrap_or("Selected memory files were marked for Reflection/curate review from the Bear memory UI.");
+        let proposal = memory_proposals::create(
+            state.sqlx_pool(),
+            CreateMemoryProposal {
+                bear_id: bear.id,
+                source_role: role,
+                source_agent_id: bears_db::role_agent_id(state.sqlx_pool(), bear.id, role).await?,
+                source_paths: paths,
+                source_refs: serde_json::json!([]),
+                suggested_action: form
+                    .suggested_action
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .unwrap_or("unspecified"),
+                target_ref: None,
+                title,
+                summary,
+                rationale: form
+                    .review_rationale
+                    .as_deref()
+                    .map(str::trim)
+                    .unwrap_or(""),
+                proposed_content: None,
+                proposed_patch: None,
+                refs: serde_json::json!({}),
+                sensitivity: form
+                    .sensitivity
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .unwrap_or("normal"),
+                requires_human: form.requires_human.as_deref() == Some("on"),
+            },
+        )
+        .await?;
+        let target = format!(
+            "/bear/{}/details/memory?role={}&review_requested=1&path={}",
+            bear.slug,
+            role.as_str(),
+            urlencoding::encode(
+                proposal
+                    .source_paths
+                    .first()
+                    .map(String::as_str)
+                    .unwrap_or("")
+            )
+        );
+        return Ok(Redirect::to(&target).into_response());
+    }
+    if confirm != role.as_str() && confirm != bear.slug {
+        let target = format!(
+            "/bear/{}/details/memory?role={}&error={}",
+            bear.slug,
+            role.as_str(),
+            urlencoding::encode("Type the role name or Bear slug to confirm deletion.")
         );
         return Ok(Redirect::to(&target).into_response());
     }

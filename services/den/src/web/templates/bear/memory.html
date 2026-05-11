@@ -13,6 +13,9 @@
     {% if delete_notice %}
     <p class="form-hint"><span class="success">Deleted {{ delete_notice }} selected memory file{% if delete_notice != 1 %}s{% endif %}.</span></p>
     {% endif %}
+    {% if review_notice %}
+    <p class="form-hint"><span class="success">Requested Reflection/curate review for selected memory.</span></p>
+    {% endif %}
     {% if delete_error %}
     <p class="form-errors">{{ delete_error | e }}</p>
     {% endif %}
@@ -116,11 +119,30 @@
                     {% endfor %}
                 </ul>
                 <div class="box full-width">
+                    <h4>Request review of selected files</h4>
+                    <p class="form-hint">Ask Reflection/curate to review selected role-local memory. This creates a review request; it does not write shared <code>core/</code> memory directly.</p>
+                    <label for="memory-review-title">Review title</label>
+                    <input id="memory-review-title" name="review_title" value="Review selected {{ selected_role | e }} memory">
+                    <label for="memory-review-summary">Summary</label>
+                    <textarea id="memory-review-summary" name="review_summary" rows="3">Selected memory files were marked for Reflection/curate review from the Bear memory UI.</textarea>
+                    <label for="memory-review-action">Suggested action</label>
+                    <select id="memory-review-action" name="suggested_action">
+                        <option value="unspecified">Unspecified</option>
+                        <option value="summarize_into_core">Summarize into core</option>
+                        <option value="promote_to_core">Promote to core</option>
+                        <option value="archive_index">Index into archive</option>
+                        <option value="task_context">Attach to work task context</option>
+                        <option value="skill_review">Review as skill/procedure</option>
+                        <option value="human_review">Needs human review</option>
+                    </select>
+                    <p><button type="submit" name="action" value="request_review">Request review</button></p>
+                </div>
+                <div class="box full-width">
                     <h4>Delete selected memory files</h4>
                     <p class="form-hint">This removes selected Markdown files from the canonical <code>{{ selected_role | e }}</code> memory branch and then resets registered role views to canonical. It is intended for cleanup of test or unwanted role-local memory.</p>
                     <label for="memory-delete-confirm">Type <code>{{ selected_role | e }}</code> or <code>{{ bear.slug | e }}</code> to confirm</label>
                     <input id="memory-delete-confirm" name="confirm" autocomplete="off">
-                    <p><button type="submit">Delete selected memory files</button></p>
+                    <p><button type="submit" name="action" value="delete">Delete selected memory files</button></p>
                 </div>
                 {% elif selected_tree %}
                 <p class="form-hint">No memory files found for this role.</p>
@@ -143,6 +165,30 @@
                 {% endif %}
             </div>
         </div>
+    </section>
+
+    <section class="box full-width">
+        <h3>Memory review queue</h3>
+        <p class="form-hint">Review requests are pending work for Reflection/curate. They are proposal records only; they do not directly change shared memory.</p>
+        {% if memory_proposals and memory_proposals | length > 0 %}
+        <table>
+            <thead><tr><th>Created</th><th>Status</th><th>Source</th><th>Suggested action</th><th>Title</th><th>Paths</th></tr></thead>
+            <tbody>
+                {% for proposal in memory_proposals %}
+                <tr>
+                    <td>{{ proposal.created_at }}</td>
+                    <td>{{ proposal.status | e }}</td>
+                    <td>{{ proposal.source_role | e }}</td>
+                    <td>{{ proposal.suggested_action | e }}</td>
+                    <td>{{ proposal.title | e }}</td>
+                    <td>{% for p in proposal.source_paths %}{% if not loop.first %}<br>{% endif %}<a href="/bear/{{ bear.slug | e }}/details/memory?role={{ proposal.source_role | e }}&path={{ p | urlencode }}"><code>{{ p | e }}</code></a>{% endfor %}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% else %}
+        <p class="form-hint">No memory review requests yet.</p>
+        {% endif %}
     </section>
 
     <section class="box full-width">
