@@ -3869,7 +3869,8 @@ async fn request_tool_permission(
     let title = event
         .get("title")
         .and_then(Value::as_str)
-        .unwrap_or_else(|| tool_display(tool_name).title);
+        .map(str::to_string)
+        .unwrap_or_else(|| tool_call_title(tool_name, event));
     let reason = event
         .get("approval")
         .and_then(|v| v.get("reason"))
@@ -3890,7 +3891,7 @@ async fn request_tool_permission(
     let mut fields = ToolCallUpdateFields::new()
         .kind(Some(display.kind))
         .status(Some(ToolCallStatus::Pending))
-        .title(Some(title.to_string()))
+        .title(Some(title))
         .content(Some(content));
     if let Some(locations) = tool_locations_from_event(tool_name, event) {
         fields = fields.locations(Some(locations));
@@ -4578,6 +4579,48 @@ fn permission_family_label(tool_name: &str) -> &'static str {
     }
 }
 
+fn tool_call_title(tool_name: &str, event: &Value) -> String {
+    if matches!(tool_name, "process_run" | "terminal_run_command") {
+        let command = event
+            .get("args")
+            .and_then(|args| args.get("command"))
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim();
+        let args = event
+            .get("args")
+            .and_then(|args| args.get("args"))
+            .and_then(Value::as_array)
+            .map(|items| {
+                items
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .take(4)
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        if !command.is_empty() {
+            let suffix = if args.is_empty() {
+                String::new()
+            } else {
+                format!(" {}", args.join(" "))
+            };
+            let rendered = format!("{command}{suffix}");
+            let rendered = if rendered.chars().count() > 80 {
+                format!("{}…", rendered.chars().take(79).collect::<String>())
+            } else {
+                rendered
+            };
+            return if tool_name == "terminal_run_command" {
+                format!("Run terminal command: {rendered}")
+            } else {
+                format!("Run process: {rendered}")
+            };
+        }
+    }
+    tool_display(tool_name).title.to_string()
+}
+
 fn tool_kind_str(kind: ToolKind) -> &'static str {
     match kind {
         ToolKind::Read => "read",
@@ -4720,7 +4763,10 @@ async fn send_tool_call_update(
     let display = tool_display(tool_name);
     let mut content = vec![ToolCallContent::from(text.to_string())];
     content.extend(extra_content);
-    let mut tool_call = ToolCall::new(tool_call_id.to_string(), display.title)
+    let title = event
+        .map(|event| tool_call_title(tool_name, event))
+        .unwrap_or_else(|| display.title.to_string());
+    let mut tool_call = ToolCall::new(tool_call_id.to_string(), title)
         .kind(display.kind)
         .status(tool_status_from_str(status))
         .content(content);
@@ -4970,6 +5016,19 @@ mod tests {
         assert!(!stream_has_successful_terminal_condition(
             false, false, false, true
         ));
+    }
+
+    #[test]
+    fn command_tool_titles_include_command_details() {
+        let event = json!({ "args": { "command": "cargo", "args": ["test", "--manifest-path", "tools/bears-acp-adapter/Cargo.toml"] } });
+        assert_eq!(
+            tool_call_title("terminal_run_command", &event),
+            "Run terminal command: cargo test --manifest-path tools/bears-acp-adapter/Cargo.toml"
+        );
+        assert_eq!(
+            tool_call_title("process_run", &event),
+            "Run process: cargo test --manifest-path tools/bears-acp-adapter/Cargo.toml"
+        );
     }
 
     #[test]

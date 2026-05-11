@@ -74,6 +74,17 @@ const BEARS_ACP_ADAPTER_CONTRACT_MAX_SUPPORTED: u32 = 1;
 // incompatible with adapters that do not send `adapter_contract`.
 const BEARS_ACP_ADAPTER_CONTRACT_REQUIRED: bool = false;
 
+fn acp_debug_ui_enabled() -> bool {
+    std::env::var("BEARS_ACP_DEBUG_UI")
+        .ok()
+        .is_some_and(|value| {
+            matches!(
+                value.trim().to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes" | "on"
+            )
+        })
+}
+
 fn acp_debug_event_sample_chars() -> usize {
     std::env::var("ACP_DEBUG_EVENT_SAMPLE_CHARS")
         .ok()
@@ -3355,20 +3366,22 @@ impl Stream for AcpLettaSseStream {
                                     .tool_turns
                                     .remove(&this.context.acp_session_id, done_id);
                             }
-                            let tool_name = tool_result
-                                .tool_name
-                                .as_deref()
-                                .unwrap_or("tool")
-                                .to_string();
-                            this.pending.push_back(acp_event_to_adapter_sse(
-                                AcpGatewayEvent::StatusText {
-                                    text: format!(
-                                    "Local tool {tool_name} completed with status {} ({} bytes)",
-                                    tool_result.status,
-                                    tool_result.content.as_deref().map(str::len).unwrap_or(0),
-                                ),
-                                },
-                            ));
+                            if acp_debug_ui_enabled() {
+                                let tool_name = tool_result
+                                    .tool_name
+                                    .as_deref()
+                                    .unwrap_or("tool")
+                                    .to_string();
+                                this.pending.push_back(acp_event_to_adapter_sse(
+                                    AcpGatewayEvent::StatusText {
+                                        text: format!(
+                                            "BEARS debug: local tool {tool_name} completed with status {} ({} bytes)",
+                                            tool_result.status,
+                                            tool_result.content.as_deref().map(str::len).unwrap_or(0),
+                                        ),
+                                    },
+                                ));
+                            }
                             // Letta keeps the original run active until its SSE stream finishes
                             // with `requires_approval`/stop metadata. If we POST the tool return
                             // before draining that stream, Letta rejects the continuation with
