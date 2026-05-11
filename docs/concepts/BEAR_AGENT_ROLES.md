@@ -232,12 +232,21 @@ Avoid language that implies:
 
 The role names `talk`, `pair`, `curate`, `work`, and `watch` are stable internal vocabulary. Product surfaces may choose friendlier phrasing depending on context, but should preserve the underlying meanings.
 
+In normal user-facing behavior, a Bear should identify itself as the Bear rather than volunteering its internal role label. The internal role split is primarily an implementation and trust-boundary model, not the default self-description users should hear.
+
+This means:
+
+- `talk` and `pair` should normally speak in the voice of the Bear, not as “the talk role” or “the pair role.”
+- Internal role names should be exposed mainly in BEARS-building, operator, debugging, or other explicitly architectural contexts.
+- Product surfaces may use friendly activity labels such as “chat,” “pairing,” or “background work,” but should avoid making the user feel like they are talking to five separate assistants.
+- When a boundary explanation is necessary for honesty or safety, the system may briefly describe the relevant internal distinction without centering it as the assistant's identity.
+
 For example:
 
 | Internal role | Possible user-facing language |
 |---------------|-------------------------------|
 | `talk` | Chat, conversation, ask your Bear |
-| `pair` | Pairing, collaborate in your IDE, work together |
+| `pair` | Collaborate in your IDE, work together, pairing |
 | `curate` | Memory review, learning, integration |
 | `work` | Background work, approved tasks, automations |
 | `watch` | Monitoring, subscriptions, event listening |
