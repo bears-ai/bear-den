@@ -3274,7 +3274,28 @@ async fn handle_sse_frame(
         } else if ty == "error" {
             outcome.saw_error = true;
             diagnostics.saw_error = true;
-            outcome.upstream_errors.push(format_den_event_error(&event));
+            let formatted = format_den_event_error(&event);
+            if looks_like_waiting_for_approval_error(&formatted) {
+                if let Err(err) = post_session_lifecycle_action(
+                    &reqwest::Client::new(),
+                    config,
+                    session_id,
+                    "unwedge",
+                )
+                .await
+                {
+                    outcome.upstream_errors.push(format!(
+                        "Letta is waiting for stale approval and automatic unwedge failed: {err:#}"
+                    ));
+                } else {
+                    outcome.upstream_errors.push(
+                        "Letta was waiting for stale approval; BEARS requested an automatic unwedge. Please retry your message."
+                            .to_string(),
+                    );
+                }
+            } else {
+                outcome.upstream_errors.push(formatted);
+            }
         }
         let handled =
             handle_den_event(config, adapter_state, shared_state, session_id, &event).await?;
@@ -3299,6 +3320,10 @@ async fn handle_sse_frame(
         }
     }
     Ok(outcome)
+}
+
+fn looks_like_waiting_for_approval_error(message: &str) -> bool {
+    message.contains("waiting for approval") || message.contains("Please approve or deny")
 }
 
 fn format_den_event_error(event: &Value) -> String {
