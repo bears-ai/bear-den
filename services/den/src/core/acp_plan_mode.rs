@@ -168,6 +168,32 @@ const SELECT_COLUMNS: &str = r#"
     created_at, updated_at
 "#;
 
+pub async fn list_for_bear(
+    pool: &PgPool,
+    bear_id: Uuid,
+    include_closed: bool,
+    limit: i64,
+) -> Result<Vec<AcpPlanModeSessionRow>, CustomError> {
+    let limit = limit.clamp(1, 100);
+    let query = format!(
+        r#"
+        SELECT {SELECT_COLUMNS}
+        FROM acp_plan_mode_sessions
+        WHERE bear_id = $1
+          AND ($2 OR state IN ('active', 'submitted'))
+        ORDER BY updated_at DESC
+        LIMIT $3
+        "#
+    );
+    let rows = sqlx::query(&query)
+        .bind(bear_id)
+        .bind(include_closed)
+        .bind(limit)
+        .fetch_all(pool)
+        .await?;
+    Ok(rows.iter().map(row_from_sql).collect())
+}
+
 pub async fn active_for_session(
     pool: &PgPool,
     user_id: i32,

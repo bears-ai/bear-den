@@ -15,7 +15,8 @@ use crate::{
         bears::{db as bears_db, db::role_is_bear_admin, BearAgentRole},
         memory_manager_head::{
             fetch_memfs_role_memory_file, fetch_memfs_role_memory_status,
-            fetch_memfs_role_memory_tree, search_memfs_role_memory, write_memfs_role_memory_entry,
+            fetch_memfs_role_memory_tree, fetch_memfs_role_plan_artifacts,
+            search_memfs_role_memory, write_memfs_role_memory_entry,
             MemfsWriteRoleMemoryEntryRequest,
         },
         user, web_policy,
@@ -395,8 +396,8 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
         ),
         descriptor(
             DEN_WORK_PLAN_LIST,
-            "List work plans",
-            "List visible Den workboard plans for the current bear with role-safe projection.",
+            "List plans",
+            "List visible Bear-level planning state, including live workboard plans, submitted plan-mode gates, and saved plan artifacts where available.",
             "bear.work_plans",
             &["work_plan.read"],
             WORK_PLAN_READ_ROLES,
@@ -408,7 +409,10 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
                         "items": { "enum": ["active", "blocked", "completed", "cancelled", "archived"] }
                     },
                     "owner_role": { "enum": ALL_ROLES },
-                    "include_archived": { "type": "boolean" }
+                    "include_archived": { "type": "boolean" },
+                    "include_completed": { "type": "boolean" },
+                    "include_plan_mode": { "type": "boolean" },
+                    "include_artifacts": { "type": "boolean" }
                 },
                 "additionalProperties": false
             }),
@@ -888,6 +892,12 @@ struct WorkPlanListArguments {
     owner_role: Option<BearAgentRole>,
     #[serde(default)]
     include_archived: bool,
+    #[serde(default)]
+    include_completed: bool,
+    #[serde(default)]
+    include_plan_mode: Option<bool>,
+    #[serde(default)]
+    include_artifacts: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1016,7 +1026,7 @@ pub async fn invoke_den_tool(
         DEN_MEMORY_TREE => memory_browse(config, &context, role).await,
         DEN_MEMORY_READ => memory_read(config, &context, role, arguments).await,
         DEN_MEMORY_SEARCH => memory_search(config, &context, role, arguments).await,
-        DEN_WORK_PLAN_LIST => list_work_plans(pool, &context, role, arguments).await,
+        DEN_WORK_PLAN_LIST => list_work_plans(pool, config, &context, role, arguments).await,
         DEN_WORK_PLAN_GET_STATUS => get_work_plan_status(pool, &context, role, arguments).await,
         DEN_WORK_PLAN_UPDATE => update_work_plan(pool, &context, role, arguments).await,
         DEN_PLAN_MODE_ENTER => enter_plan_mode(pool, &context, arguments).await,
@@ -1998,26 +2008,81 @@ async fn memory_search(
 
 async fn list_work_plans(
     pool: &PgPool,
+    config: &Config,
     context: &DenToolInvocationContext,
     role: BearAgentRole,
     arguments: Value,
 ) -> Result<Value, CustomError> {
     let args: WorkPlanListArguments = serde_json::from_value(arguments)?;
-    let plans = work_plans::list_visible_work_plans(
+    let include_plan_mode = args.include_plan_mode.unwrap_or(true);
+    let include_artifacts = args.include_artifacts.unwrap_or(true);
+    let statuses = args.statuses.or_else(|| {
+        (!args.include_completed).then(|| vec![WorkPlanStatus::Active, WorkPlanStatus::Blocked])
+    });
+    let workboard_plans = work_plans::list_visible_work_plans(
         pool,
         context.bear_id,
         role,
         context.user_id,
         WorkPlanListFilter {
-            statuses: args.statuses,
+            statuses,
             owner_role: args.owner_role,
             include_archived: args.include_archived,
         },
     )
     .await?;
+    let plan_mode_gates = if include_plan_mode {
+        acp_plan_mode::list_for_bear(pool, context.bear_id, args.include_completed, 50).await?
+    } else {
+        Vec::new()
+    };
+    let plan_artifacts = if include_artifacts {
+        let http = memfs_http_client("MemFS plan artifact list client build failed")?;
+        match fetch_memfs_role_plan_artifacts(
+            &http,
+            &config.letta_memfs_service_url,
+            context.bear_id,
+            BearAgentRole::Pair.as_str(),
+        )
+        .await
+        {
+            Ok(Some(response)) => response.results,
+            Ok(None) => json!([]),
+            Err(err) => json!({ "error": err.to_string() }),
+        }
+    } else {
+        json!([])
+    };
+    let linked_artifact_paths = plan_mode_gates
+        .iter()
+        .filter_map(|gate| gate.plan_artifact_path.as_deref())
+        .collect::<Vec<_>>();
     Ok(json!({
         "bear_id": context.bear_id,
-        "plans": plans,
+        "viewer_role": role.as_str(),
+        "planning_scope": "bear",
+        "workplace": {
+            "status": "unresolved",
+            "note": "Workplace inference is not implemented yet; workspace/session metadata is returned as workplace reference candidates.",
+            "reference_candidates": {
+                "acp_session_id": context.acp_session_id,
+                "session_id": context.session_id,
+                "conversation_id": clean_optional(&context.conversation_id),
+                "conversation_selection": context.conversation_selection,
+                "runtime_target": context.runtime_target,
+                "channel": context.channel,
+            }
+        },
+        "plans": workboard_plans,
+        "workboard_plans": workboard_plans,
+        "plan_mode_gates": plan_mode_gates,
+        "plan_artifacts": plan_artifacts,
+        "linked_plan_artifact_paths": linked_artifact_paths,
+        "notes": [
+            "list_plans is a Bear-level planning view. It includes live workboard plans, submitted/active plan-mode gates, and saved pair plan artifacts when available.",
+            "A plan artifact in pair/plans/ may exist even when there is no active live workboard plan.",
+            "Role fields are provenance and policy hints, not product ownership. Cross-role visibility is not cross-role execution authority."
+        ],
     }))
 }
 

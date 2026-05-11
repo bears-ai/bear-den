@@ -497,6 +497,17 @@ pub async fn register_memfs_role_view(
     Ok(payload.view)
 }
 
+pub async fn fetch_memfs_role_plan_artifacts(
+    http: &reqwest::Client,
+    base_url: &str,
+    bear_id: uuid::Uuid,
+    role: &str,
+) -> Result<Option<MemfsRoleMemorySearchResponse>, CustomError> {
+    let response =
+        search_memfs_role_memory(http, base_url, bear_id, role, "kind: plan", Some(50)).await?;
+    Ok(response)
+}
+
 pub async fn write_memfs_role_memory_entry(
     http: &reqwest::Client,
     base_url: &str,
