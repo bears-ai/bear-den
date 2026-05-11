@@ -13,6 +13,7 @@ Use ADRs for cross-cutting product and architecture decisions that are expected 
 | [acp-session-bindings.md](acp-session-bindings.md) | Accepted | ACP sessions as protocol bindings, cwd/list/load/cancel/MCP/auth semantics |
 | [artifacts-garage.md](artifacts-garage.md) | Proposed | Artifacts bucket, Garage/S3 storage, Cabinet attachment separation, GC policy |
 | [bear-memory-tool-boundary.md](bear-memory-tool-boundary.md) | Accepted | Boundary between Letta Code-native MemFS tools and Den-hosted bear tools |
+| [bear-workplaces.md](bear-workplaces.md) | Accepted | Workplace as the Bear-level setting for plans, tasks, artifacts, memory, and work activity |
 | [cabinet-reading-pipeline.md](cabinet-reading-pipeline.md) | Proposed | Cabinet document ingestion and reading pipeline |
 | [dynamic-skills-subagents.md](dynamic-skills-subagents.md) | Proposed | Dynamic skills, reflection subagents, bear-authored capability growth |
 | [memfs-sidecar-repo-views.md](memfs-sidecar-repo-views.md) | Accepted | Canonical Bear MemFS repo plus per-agent sidecar repo views |
