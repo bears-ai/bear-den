@@ -14,7 +14,7 @@ use agent_client_protocol::schema::{
     ReleaseTerminalRequest, RequestPermissionRequest, ResumeSessionResponse, SessionCapabilities,
     SessionCloseCapabilities, SessionConfigOption, SessionConfigOptionCategory,
     SessionConfigSelectOption, SessionInfo, SessionInfoUpdate, SessionListCapabilities,
-    SessionMode, SessionModeState, SessionResumeCapabilities, SessionUpdate, StopReason,
+    SessionMode, SessionModeState, SessionResumeCapabilities, SessionUpdate, StopReason, Terminal,
     TerminalOutputRequest, TerminalOutputResponse, ToolCall, ToolCallContent, ToolCallLocation,
     ToolCallStatus, ToolCallUpdate, ToolCallUpdateFields, ToolKind, WaitForTerminalExitRequest,
     WaitForTerminalExitResponse,
@@ -1862,7 +1862,16 @@ async fn execute_local_tool(
         }
         "terminal_run_command" => {
             let context = session_context(adapter_state, session_id)?.clone();
-            handle_terminal_run_command(adapter_state, &context, session_id, &args, policy).await
+            handle_terminal_run_command(
+                adapter_state,
+                &context,
+                session_id,
+                None,
+                None,
+                &args,
+                policy,
+            )
+            .await
         }
         "local_web_fetch" => handle_local_web_fetch(session_id, &args, policy).await,
         "chrome_open" => handle_chrome_open(&args, policy).await,
@@ -3619,6 +3628,18 @@ async fn handle_tool_request_event(
     let result = if let Some(ref plan) = replace_plan {
         let context = session_context(adapter_state, session_id)?;
         plan.apply(context, &policy)
+    } else if tool_name == "terminal_run_command" {
+        let context = session_context(adapter_state, session_id)?.clone();
+        handle_terminal_run_command(
+            adapter_state,
+            &context,
+            session_id,
+            Some(tool_call_id),
+            Some(tool_call_title(tool_name, event)),
+            &args,
+            &policy,
+        )
+        .await
     } else {
         execute_local_tool(adapter_state, session_id, tool_name, args, &policy).await
     };
@@ -4748,6 +4769,32 @@ fn tool_status_from_str(status: &str) -> ToolCallStatus {
         "failed" | "error" => ToolCallStatus::Failed,
         _ => ToolCallStatus::Pending,
     }
+}
+
+pub(crate) async fn send_terminal_tool_call_update(
+    session_id: &str,
+    tool_call_id: &str,
+    tool_name: &str,
+    title: String,
+    summary: String,
+    terminal_id: String,
+) -> Result<()> {
+    let display = tool_display(tool_name);
+    let tool_call = ToolCall::new(tool_call_id.to_string(), title)
+        .kind(display.kind)
+        .status(ToolCallStatus::InProgress)
+        .content(vec![
+            ToolCallContent::from(summary),
+            ToolCallContent::Terminal(Terminal::new(terminal_id)),
+        ]);
+    write_notification(
+        "session/update",
+        json!({
+            "sessionId": session_id,
+            "update": serde_json::to_value(SessionUpdate::ToolCall(tool_call))?,
+        }),
+    )
+    .await
 }
 
 async fn send_tool_call_update(

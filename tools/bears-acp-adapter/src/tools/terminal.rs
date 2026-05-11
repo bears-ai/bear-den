@@ -1,17 +1,70 @@
 use crate::{
-    client_supports_terminal, paths::ensure_path_allowed_for_session, AdapterState,
-    CreateTerminalRequest, CreateTerminalResponse, EnvVariable, ReleaseTerminalRequest,
-    Result, SessionContext, TerminalOutputRequest, TerminalOutputResponse, ToolPolicy,
-    WaitForTerminalExitRequest, WaitForTerminalExitResponse,
+    client_supports_terminal, paths::ensure_path_allowed_for_session,
+    send_terminal_tool_call_update, AdapterState, CreateTerminalRequest, CreateTerminalResponse,
+    EnvVariable, ReleaseTerminalRequest, Result, SessionContext, TerminalOutputRequest,
+    TerminalOutputResponse, ToolPolicy, WaitForTerminalExitRequest, WaitForTerminalExitResponse,
 };
 use anyhow::{anyhow, Context};
 use serde_json::{json, Value};
 use std::time::Duration;
 
+pub(crate) fn command_line(command: &str, args: &[String]) -> String {
+    if args.is_empty() {
+        command.to_string()
+    } else {
+        format!("{} {}", command, args.join(" "))
+    }
+}
+
+fn output_excerpt(raw: &str, max_chars: usize) -> String {
+    if raw.chars().count() <= max_chars {
+        raw.to_string()
+    } else {
+        let omitted = raw.chars().count().saturating_sub(max_chars);
+        format!(
+            "{}\n... truncated, omitted {omitted} characters",
+            raw.chars().take(max_chars).collect::<String>()
+        )
+    }
+}
+
+fn terminal_result_content(
+    command: &str,
+    args: &[String],
+    cwd: &str,
+    exit_code: Option<i64>,
+    signal: Option<&str>,
+    timed_out: bool,
+    elapsed_ms: u128,
+    output: &str,
+    truncated: bool,
+    timeout_ms: Option<u64>,
+) -> String {
+    let status = if timed_out {
+        "timed out".to_string()
+    } else if let Some(code) = exit_code {
+        format!("exit_code={code}")
+    } else if let Some(signal) = signal {
+        format!("signal={signal}")
+    } else {
+        "unknown status".to_string()
+    };
+    let timeout_line = timeout_ms
+        .map(|timeout| format!("timeout_ms: {timeout}\n"))
+        .unwrap_or_default();
+    let output = output_excerpt(output, 32 * 1024);
+    format!(
+        "Terminal command: {}\ncwd: {cwd}\nstatus: {status}\n{timeout_line}elapsed_ms: {elapsed_ms}\ntruncated: {truncated}\n\nOutput:\n{output}",
+        command_line(command, args)
+    )
+}
+
 pub(crate) async fn handle_terminal_run_command(
     adapter_state: &mut AdapterState,
     context: &SessionContext,
     session_id: &str,
+    tool_call_id: Option<&str>,
+    tool_title: Option<String>,
     args: &Value,
     policy: &ToolPolicy,
 ) -> Result<Value> {
@@ -36,7 +89,9 @@ pub(crate) async fn handle_terminal_run_command(
     let cwd = crate::normalize_requested_tool_path(cwd_raw)?;
     ensure_path_allowed_for_session(context, &cwd)?;
     if !cwd.is_dir() {
-        return Err(anyhow!("terminal_run_command cwd must be an existing directory"));
+        return Err(anyhow!(
+            "terminal_run_command cwd must be an existing directory"
+        ));
     }
 
     let command_args = command_args(args)?;
@@ -62,10 +117,34 @@ pub(crate) async fn handle_terminal_run_command(
     if let Some(error) = create_response.get("error") {
         return Err(anyhow!("terminal/create failed: {error}"));
     }
-    let create_result = create_response.get("result").cloned().unwrap_or(Value::Null);
+    let create_result = create_response
+        .get("result")
+        .cloned()
+        .unwrap_or(Value::Null);
     let create_result = serde_json::from_value::<CreateTerminalResponse>(create_result)
         .with_context(|| "parse terminal/create response")?;
     let terminal_id = create_result.terminal_id.to_string();
+    if let Some(tool_call_id) = tool_call_id {
+        let title = tool_title.unwrap_or_else(|| {
+            format!(
+                "Run terminal command: {}",
+                command_line(command, &command_args)
+            )
+        });
+        let _ = send_terminal_tool_call_update(
+            session_id,
+            tool_call_id,
+            "terminal_run_command",
+            title,
+            format!(
+                "Running `{}` in `{}`. Live terminal output is attached below.",
+                command_line(command, &command_args),
+                cwd.display()
+            ),
+            terminal_id.clone(),
+        )
+        .await;
+    }
 
     let wait = WaitForTerminalExitRequest::new(session_id.to_string(), terminal_id.clone());
     let wait_response = adapter_state
@@ -92,11 +171,28 @@ pub(crate) async fn handle_terminal_run_command(
                 false,
             )
         }
-        Err(err) => {
+        Err(_err) => {
             let _ = release_terminal(adapter_state, session_id, &terminal_id).await;
             let output = terminal_output(adapter_state, session_id, &terminal_id)
                 .await
                 .unwrap_or_else(|_| json!({ "output": "", "truncated": false }));
+            let output_text = output.get("output").and_then(Value::as_str).unwrap_or("");
+            let truncated = output
+                .get("truncated")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
+            let content = terminal_result_content(
+                command,
+                &command_args,
+                &cwd.to_string_lossy(),
+                None,
+                None,
+                true,
+                started.elapsed().as_millis(),
+                output_text,
+                truncated,
+                Some(timeout_ms),
+            );
             return Ok(json!({
                 "ok": false,
                 "command": command,
@@ -109,8 +205,8 @@ pub(crate) async fn handle_terminal_run_command(
                 "elapsed_ms": started.elapsed().as_millis(),
                 "source": "acp_terminal",
                 "output": output.get("output").cloned().unwrap_or_else(|| json!("")),
-                "truncated": output.get("truncated").cloned().unwrap_or_else(|| json!(false)),
-                "content": format!("Terminal command {command:?} timed out after {timeout_ms} ms: {err:#}"),
+                "truncated": truncated,
+                "content": content,
                 "policy": { "timeout_ms": timeout_ms, "max_output_bytes": output_byte_limit }
             }));
         }
@@ -123,13 +219,18 @@ pub(crate) async fn handle_terminal_run_command(
         .get("truncated")
         .and_then(Value::as_bool)
         .unwrap_or(false);
-    let content = format!(
-        "Terminal command {:?} exited with {}{}",
+    let output_text = output.get("output").and_then(Value::as_str).unwrap_or("");
+    let content = terminal_result_content(
         command,
-        exit_code
-            .map(|code| code.to_string())
-            .unwrap_or_else(|| signal.clone().unwrap_or_else(|| "unknown status".to_string())),
-        if truncated { " (output truncated)" } else { "" }
+        &command_args,
+        &cwd.to_string_lossy(),
+        exit_code,
+        signal.as_deref(),
+        false,
+        started.elapsed().as_millis(),
+        output_text,
+        truncated,
+        None,
     );
     Ok(json!({
         "ok": ok,
@@ -218,14 +319,18 @@ fn terminal_env(args: &Value) -> Result<Vec<EnvVariable>> {
     let mut env = Vec::new();
     for (key, value) in obj {
         if key.is_empty() || !key.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
-            return Err(anyhow!("terminal_run_command env keys must be non-empty ASCII alphanumeric/underscore"));
+            return Err(anyhow!(
+                "terminal_run_command env keys must be non-empty ASCII alphanumeric/underscore"
+            ));
         }
         if key.to_ascii_uppercase().contains("SECRET")
             || key.to_ascii_uppercase().contains("TOKEN")
             || key.to_ascii_uppercase().contains("PASSWORD")
             || key.to_ascii_uppercase().contains("KEY")
         {
-            return Err(anyhow!("terminal_run_command env key {key:?} looks secret-like"));
+            return Err(anyhow!(
+                "terminal_run_command env key {key:?} looks secret-like"
+            ));
         }
         env.push(EnvVariable::new(
             key.clone(),
@@ -255,12 +360,23 @@ fn terminal_output_byte_limit(args: &Value, policy: &ToolPolicy) -> u64 {
 }
 
 fn validate_build_command(command: &str) -> Result<()> {
-    if command.contains('\0') || command.contains('/') || command.contains(' ') || command.contains('\t') || command.contains('\n') {
-        return Err(anyhow!("terminal_run_command command must be an executable name, not a shell string or path"));
+    if command.contains('\0')
+        || command.contains('/')
+        || command.contains(' ')
+        || command.contains('\t')
+        || command.contains('\n')
+    {
+        return Err(anyhow!(
+            "terminal_run_command command must be an executable name, not a shell string or path"
+        ));
     }
-    let allowed = ["cargo", "npm", "pnpm", "yarn", "pytest", "python", "python3"];
+    let allowed = [
+        "cargo", "npm", "pnpm", "yarn", "pytest", "python", "python3",
+    ];
     if !allowed.iter().any(|allowed| *allowed == command) {
-        return Err(anyhow!("terminal_run_command command {command:?} is not in the build/test allowlist"));
+        return Err(anyhow!(
+            "terminal_run_command command {command:?} is not in the build/test allowlist"
+        ));
     }
     Ok(())
 }
@@ -268,7 +384,9 @@ fn validate_build_command(command: &str) -> Result<()> {
 fn validate_build_command_args(command: &str, args: &[String]) -> Result<()> {
     for arg in args {
         if arg.contains('\0') {
-            return Err(anyhow!("terminal_run_command args must not contain NUL bytes"));
+            return Err(anyhow!(
+                "terminal_run_command args must not contain NUL bytes"
+            ));
         }
     }
     match command {
@@ -280,23 +398,33 @@ fn validate_build_command_args(command: &str, args: &[String]) -> Result<()> {
             if args.first().is_some_and(|arg| arg == "-m") {
                 match args.get(1).map(String::as_str) {
                     Some("pytest") => Ok(()),
-                    _ => Err(anyhow!("terminal_run_command python -m is limited to pytest")),
+                    _ => Err(anyhow!(
+                        "terminal_run_command python -m is limited to pytest"
+                    )),
                 }
             } else {
-                Err(anyhow!("terminal_run_command python is limited to `python -m pytest`"))
+                Err(anyhow!(
+                    "terminal_run_command python is limited to `python -m pytest`"
+                ))
             }
         }
-        _ => Err(anyhow!("terminal_run_command command {command:?} is not allowed")),
+        _ => Err(anyhow!(
+            "terminal_run_command command {command:?} is not allowed"
+        )),
     }
 }
 
 fn validate_first_arg(args: &[String], allowed: &[&str]) -> Result<()> {
     let Some(first) = args.first().map(String::as_str) else {
-        return Err(anyhow!("terminal_run_command requires a subcommand argument"));
+        return Err(anyhow!(
+            "terminal_run_command requires a subcommand argument"
+        ));
     };
     if allowed.iter().any(|allowed| *allowed == first) {
         Ok(())
     } else {
-        Err(anyhow!("terminal_run_command subcommand {first:?} is not in the allowlist"))
+        Err(anyhow!(
+            "terminal_run_command subcommand {first:?} is not in the allowlist"
+        ))
     }
 }

@@ -1,4 +1,9 @@
-use crate::{paths::{ensure_path_allowed_for_session, is_absolute_local_path, normalize_requested_tool_path}, SessionContext, ToolPolicy};
+use crate::{
+    paths::{
+        ensure_path_allowed_for_session, is_absolute_local_path, normalize_requested_tool_path,
+    },
+    SessionContext, ToolPolicy,
+};
 use anyhow::{anyhow, Context, Result};
 use serde_json::{json, Value};
 use std::{collections::HashMap, process::Stdio, time::Duration};
@@ -32,7 +37,11 @@ pub(crate) async fn handle_process_run(
         .map(|items| {
             items
                 .iter()
-                .map(|item| item.as_str().map(str::to_string).ok_or_else(|| anyhow!("process_run args entries must be strings")))
+                .map(|item| {
+                    item.as_str()
+                        .map(str::to_string)
+                        .ok_or_else(|| anyhow!("process_run args entries must be strings"))
+                })
                 .collect::<Result<Vec<_>>>()
         })
         .transpose()?
@@ -68,19 +77,43 @@ pub(crate) async fn handle_process_run(
         .spawn()
         .with_context(|| format!("spawn process_run command {command:?}"))?;
 
-    let stdout = child.stdout.take().ok_or_else(|| anyhow!("process_run missing stdout pipe"))?;
-    let stderr = child.stderr.take().ok_or_else(|| anyhow!("process_run missing stderr pipe"))?;
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| anyhow!("process_run missing stdout pipe"))?;
+    let stderr = child
+        .stderr
+        .take()
+        .ok_or_else(|| anyhow!("process_run missing stderr pipe"))?;
     let stdout_task = tokio::spawn(read_limited(stdout, max_output_bytes));
     let stderr_task = tokio::spawn(read_limited(stderr, max_output_bytes));
     let status = match tokio::time::timeout(Duration::from_millis(timeout_ms), child.wait()).await {
-        Ok(status) => status.with_context(|| format!("wait for process_run command {command:?}"))?,
+        Ok(status) => {
+            status.with_context(|| format!("wait for process_run command {command:?}"))?
+        }
         Err(_) => {
             let _ = child.kill().await;
             let _ = child.wait().await;
-            let stdout_result = stdout_task.await.unwrap_or_else(|err| Err(anyhow!("stdout task failed: {err}")))?;
-            let stderr_result = stderr_task.await.unwrap_or_else(|err| Err(anyhow!("stderr task failed: {err}")))?;
+            let stdout_result = stdout_task
+                .await
+                .unwrap_or_else(|err| Err(anyhow!("stdout task failed: {err}")))?;
+            let stderr_result = stderr_task
+                .await
+                .unwrap_or_else(|err| Err(anyhow!("stderr task failed: {err}")))?;
             let stdout_text = String::from_utf8_lossy(&stdout_result.bytes).to_string();
             let stderr_text = String::from_utf8_lossy(&stderr_result.bytes).to_string();
+            let content = process_result_content(
+                command,
+                &command_args,
+                &cwd.to_string_lossy(),
+                None,
+                true,
+                started.elapsed().as_millis(),
+                &stdout_text,
+                &stderr_text,
+                stdout_result.truncated || stderr_result.truncated,
+                Some(timeout_ms),
+            );
             return Ok(json!({
                 "ok": false,
                 "command": command,
@@ -95,22 +128,32 @@ pub(crate) async fn handle_process_run(
                 "timed_out": true,
                 "elapsed_ms": started.elapsed().as_millis(),
                 "source": "adapter_local",
-                "content": format!("Command {command:?} timed out after {timeout_ms} ms"),
+                "content": content,
                 "policy": { "timeout_ms": timeout_ms, "max_output_bytes": max_output_bytes }
             }));
         }
     };
-    let stdout_result = stdout_task.await.unwrap_or_else(|err| Err(anyhow!("stdout task failed: {err}")))?;
-    let stderr_result = stderr_task.await.unwrap_or_else(|err| Err(anyhow!("stderr task failed: {err}")))?;
+    let stdout_result = stdout_task
+        .await
+        .unwrap_or_else(|err| Err(anyhow!("stdout task failed: {err}")))?;
+    let stderr_result = stderr_task
+        .await
+        .unwrap_or_else(|err| Err(anyhow!("stderr task failed: {err}")))?;
     let stdout_text = String::from_utf8_lossy(&stdout_result.bytes).to_string();
     let stderr_text = String::from_utf8_lossy(&stderr_result.bytes).to_string();
     let exit_code = status.code();
     let ok = status.success();
-    let content = format!(
-        "Command {:?} exited with {}{}",
+    let content = process_result_content(
         command,
-        exit_code.map(|c| c.to_string()).unwrap_or_else(|| "signal".to_string()),
-        if stdout_result.truncated || stderr_result.truncated { " (output truncated)" } else { "" }
+        &command_args,
+        &cwd.to_string_lossy(),
+        exit_code.map(|code| code as i64),
+        false,
+        started.elapsed().as_millis(),
+        &stdout_text,
+        &stderr_text,
+        stdout_result.truncated || stderr_result.truncated,
+        None,
     );
     eprintln!(
         "bears-acp-adapter: process_run session_id={} command={} args={} cwd={} exit_code={:?} timed_out={} duration_ms={}",
@@ -141,12 +184,58 @@ pub(crate) async fn handle_process_run(
     }))
 }
 
+fn output_excerpt(raw: &str, max_chars: usize) -> String {
+    if raw.chars().count() <= max_chars {
+        raw.to_string()
+    } else {
+        let omitted = raw.chars().count().saturating_sub(max_chars);
+        format!(
+            "{}\n... truncated, omitted {omitted} characters",
+            raw.chars().take(max_chars).collect::<String>()
+        )
+    }
+}
+
+fn process_result_content(
+    command: &str,
+    args: &[String],
+    cwd: &str,
+    exit_code: Option<i64>,
+    timed_out: bool,
+    elapsed_ms: u128,
+    stdout: &str,
+    stderr: &str,
+    truncated: bool,
+    timeout_ms: Option<u64>,
+) -> String {
+    let status = if timed_out {
+        "timed out".to_string()
+    } else if let Some(code) = exit_code {
+        format!("exit_code={code}")
+    } else {
+        "unknown status".to_string()
+    };
+    let timeout_line = timeout_ms
+        .map(|timeout| format!("timeout_ms: {timeout}\n"))
+        .unwrap_or_default();
+    format!(
+        "Process command: {}{}\ncwd: {cwd}\nstatus: {status}\n{timeout_line}elapsed_ms: {elapsed_ms}\ntruncated: {truncated}\n\nSTDOUT:\n{}\n\nSTDERR:\n{}",
+        command,
+        if args.is_empty() { String::new() } else { format!(" {}", args.join(" ")) },
+        output_excerpt(stdout, 16 * 1024),
+        output_excerpt(stderr, 16 * 1024),
+    )
+}
+
 struct LimitedOutput {
     bytes: Vec<u8>,
     truncated: bool,
 }
 
-async fn read_limited<R: tokio::io::AsyncRead + Unpin>(mut reader: R, limit: usize) -> Result<LimitedOutput> {
+async fn read_limited<R: tokio::io::AsyncRead + Unpin>(
+    mut reader: R,
+    limit: usize,
+) -> Result<LimitedOutput> {
     let mut bytes = Vec::new();
     let mut buf = [0u8; 4096];
     let mut truncated = false;
@@ -193,21 +282,29 @@ fn parse_env(args: &Value) -> Result<HashMap<String, String>> {
 
 fn validate_env_key(key: &str) -> Result<()> {
     if key.is_empty() || !key.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
-        return Err(anyhow!("process_run env keys must be non-empty ASCII alphanumeric/underscore"));
+        return Err(anyhow!(
+            "process_run env keys must be non-empty ASCII alphanumeric/underscore"
+        ));
     }
     Ok(())
 }
 
 fn validate_command(command: &str) -> Result<()> {
     if command.contains('\0') || command.contains('/') && !is_absolute_local_path(command) {
-        return Err(anyhow!("process_run command must be an executable name or absolute path"));
+        return Err(anyhow!(
+            "process_run command must be an executable name or absolute path"
+        ));
     }
     if command.contains(' ') || command.contains('\t') || command.contains('\n') {
-        return Err(anyhow!("process_run command must not be a shell command string"));
+        return Err(anyhow!(
+            "process_run command must not be a shell command string"
+        ));
     }
     let denied = ["sudo", "su", "rm", "shutdown", "reboot"];
     if denied.iter().any(|denied| *denied == command) {
-        return Err(anyhow!("process_run command {command:?} is denied by adapter policy"));
+        return Err(anyhow!(
+            "process_run command {command:?} is denied by adapter policy"
+        ));
     }
     Ok(())
 }
