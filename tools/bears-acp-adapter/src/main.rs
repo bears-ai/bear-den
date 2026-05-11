@@ -326,6 +326,7 @@ async fn send_session_info_update(
 }
 
 async fn send_plan_update(session_id: &str, entries: Vec<PlanEntry>) -> Result<()> {
+    let entry_count = entries.len();
     write_notification(
         "session/update",
         json!({
@@ -333,7 +334,18 @@ async fn send_plan_update(session_id: &str, entries: Vec<PlanEntry>) -> Result<(
             "update": serde_json::to_value(SessionUpdate::Plan(Plan::new(entries)))?,
         }),
     )
-    .await
+    .await?;
+    if env_bool("BEARS_ACP_DEBUG_UI") {
+        send_agent_thought_chunk(
+            session_id,
+            &format!(
+                "BEARS debug: sent ACP plan update with {entry_count} entr{}; if your client supports ACP Agent Plan UI, you should now see a planning/task list.",
+                if entry_count == 1 { "y" } else { "ies" }
+            ),
+        )
+        .await?;
+    }
+    Ok(())
 }
 
 async fn notify_mode_state(session_id: &str, mode: &str) -> Result<()> {
@@ -4084,7 +4096,17 @@ async fn handle_den_event(
                         .collect::<Vec<_>>()
                 })
                 .unwrap_or_default();
-            send_plan_update(session_id, entries).await?;
+            if entries.is_empty() {
+                if env_bool("BEARS_ACP_DEBUG_UI") {
+                    send_agent_thought_chunk(
+                        session_id,
+                        "BEARS debug: received an empty plan update; not sending an ACP plan UI update.",
+                    )
+                    .await?;
+                }
+            } else {
+                send_plan_update(session_id, entries).await?;
+            }
             Ok(false)
         }
         "conversation_resolved" => {
