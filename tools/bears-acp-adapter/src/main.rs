@@ -6,18 +6,18 @@ mod tools;
 
 use agent_client_protocol::schema::{
     AgentCapabilities, AuthEnvVar, AuthMethod, AuthMethodEnvVar, AuthenticateResponse,
-    CloseSessionResponse, ConfigOptionUpdate, ContentBlock, ContentChunk, CreateTerminalRequest,
-    CreateTerminalResponse, CurrentModeUpdate, Diff, EnvVariable, Implementation,
-    InitializeResponse, ListSessionsResponse, LoadSessionResponse, McpCapabilities,
-    NewSessionResponse, Plan, PlanEntry, PlanEntryPriority, PlanEntryStatus, PromptCapabilities,
-    PromptResponse, ProtocolVersion, ReadTextFileRequest, ReadTextFileResponse,
-    ReleaseTerminalRequest, RequestPermissionRequest, ResumeSessionResponse, SessionCapabilities,
-    SessionCloseCapabilities, SessionConfigOption, SessionConfigOptionCategory,
-    SessionConfigSelectOption, SessionInfo, SessionInfoUpdate, SessionListCapabilities,
-    SessionMode, SessionModeState, SessionResumeCapabilities, SessionUpdate, StopReason, Terminal,
-    TerminalOutputRequest, TerminalOutputResponse, ToolCall, ToolCallContent, ToolCallLocation,
-    ToolCallStatus, ToolCallUpdate, ToolCallUpdateFields, ToolKind, WaitForTerminalExitRequest,
-    WaitForTerminalExitResponse,
+    AvailableCommand, AvailableCommandsUpdate, CloseSessionResponse, ConfigOptionUpdate,
+    ContentBlock, ContentChunk, CreateTerminalRequest, CreateTerminalResponse, CurrentModeUpdate,
+    Diff, EnvVariable, Implementation, InitializeResponse, ListSessionsResponse,
+    LoadSessionResponse, McpCapabilities, NewSessionResponse, Plan, PlanEntry, PlanEntryPriority,
+    PlanEntryStatus, PromptCapabilities, PromptResponse, ProtocolVersion, ReadTextFileRequest,
+    ReadTextFileResponse, ReleaseTerminalRequest, RequestPermissionRequest, ResumeSessionResponse,
+    SessionCapabilities, SessionCloseCapabilities, SessionConfigOption,
+    SessionConfigOptionCategory, SessionConfigSelectOption, SessionInfo, SessionInfoUpdate,
+    SessionListCapabilities, SessionMode, SessionModeState, SessionResumeCapabilities,
+    SessionUpdate, StopReason, Terminal, TerminalOutputRequest, TerminalOutputResponse, ToolCall,
+    ToolCallContent, ToolCallLocation, ToolCallStatus, ToolCallUpdate, ToolCallUpdateFields,
+    ToolKind, WaitForTerminalExitRequest, WaitForTerminalExitResponse,
 };
 use anyhow::{anyhow, Context, Result};
 
@@ -301,6 +301,23 @@ fn plan_entries_from_work_plan_args(args: &Value) -> Vec<PlanEntry> {
                 .collect::<Vec<_>>()
         })
         .unwrap_or_default()
+}
+
+async fn send_available_commands_update(session_id: &str) -> Result<()> {
+    let commands = vec![AvailableCommand::new(
+        "doctor",
+        "Show BEARS ACP adapter, session, client, and Den configuration diagnostics.",
+    )];
+    write_notification(
+        "session/update",
+        json!({
+            "sessionId": session_id,
+            "update": serde_json::to_value(SessionUpdate::AvailableCommandsUpdate(
+                AvailableCommandsUpdate::new(commands)
+            ))?,
+        }),
+    )
+    .await
 }
 
 async fn send_session_info_update(
@@ -1016,6 +1033,7 @@ async fn handle_request(
                 adapter_state
                     .session_contexts
                     .insert(session_id.clone(), context);
+                send_available_commands_update(&session_id).await?;
                 let mode = MODE_ASK;
                 let response = NewSessionResponse::new(session_id)
                     .config_options(session_config_options_for_mode(mode))
@@ -2474,6 +2492,7 @@ async fn restore_session_from_den(
     adapter_state
         .session_contexts
         .insert(session_id.to_string(), context);
+    send_available_commands_update(session_id).await?;
     if let Some(den) = den.as_ref() {
         replay_history_for_den_session(http, config, session_id, den, "session/resume").await?;
     }
@@ -2534,6 +2553,7 @@ async fn handle_session_load(
         .session_contexts
         .insert(session_id.to_string(), context);
 
+    send_available_commands_update(session_id).await?;
     if let Some(den) = den.as_ref() {
         replay_history_for_den_session(http, config, session_id, den, "session/load").await?;
     }
@@ -2624,6 +2644,18 @@ async fn handle_prompt(
         .ok_or_else(|| anyhow!("session/prompt params missing sessionId"))?;
     let prompt = prompt_text_from_params(&params)?;
     let display_prompt = prompt_display_text_from_params(&params).unwrap_or_else(|| prompt.clone());
+    if prompt.trim() == "/doctor" {
+        send_user_message_chunk(session_id, &display_prompt).await?;
+        let report = acp_doctor_report(
+            http,
+            config,
+            adapter_state,
+            &client_context_for_doctor(adapter_state, session_id),
+        )
+        .await;
+        send_agent_message_chunk(session_id, &report).await?;
+        return Ok(());
+    }
     let mut client_context = adapter_state
         .session_contexts
         .get(session_id)
@@ -2807,6 +2839,46 @@ async fn handle_prompt(
     )
     .await?;
     Ok(())
+}
+
+fn client_context_for_doctor(adapter_state: &AdapterState, session_id: &str) -> SessionContext {
+    adapter_state
+        .session_contexts
+        .get(session_id)
+        .cloned()
+        .unwrap_or_default()
+}
+
+async fn acp_doctor_report(
+    http: &reqwest::Client,
+    config: &Config,
+    adapter_state: &AdapterState,
+    context: &SessionContext,
+) -> String {
+    let den_status = match fetch_server_version(http, config).await {
+        Ok(version) => version.summary(),
+        Err(err) => format!("Den server unreachable: {err:#}"),
+    };
+    let token_status = match validate_den_code_token(http, config).await {
+        Ok(()) => "valid for this Bear".to_string(),
+        Err(err) => format!("not validated: {err:#}"),
+    };
+    format!(
+        "BEARS ACP doctor\n\nAdapter:\n- version: {}\n- git_sha: {}\n- contract: {} v{}\n\nDen:\n- api_url: {}\n- bear: {}\n- server: {}\n- token: {}\n\nClient capabilities:\n{}\n\nSession:\n- cwd: {}\n- roots: {}\n- resolved_conversation_id: {}\n\nDirect tools: {}",
+        env!("CARGO_PKG_VERSION"),
+        env!("BEARS_ACP_ADAPTER_GIT_SHA"),
+        BEARS_ACP_ADAPTER_CONTRACT_NAME,
+        BEARS_ACP_ADAPTER_CONTRACT_VERSION,
+        config.api_url,
+        config.bear,
+        den_status,
+        token_status,
+        serde_json::to_string_pretty(&adapter_state.client_capabilities).unwrap_or_else(|_| adapter_state.client_capabilities.to_string()),
+        context.cwd,
+        if context.roots.is_empty() { "<none>".to_string() } else { context.roots.join(", ") },
+        context.resolved_conversation_id.as_deref().unwrap_or("<none>"),
+        direct_tools_context(),
+    )
 }
 
 async fn check_server_version(http: &reqwest::Client, config: &Config) -> Result<()> {
