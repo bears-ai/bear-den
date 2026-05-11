@@ -4639,7 +4639,73 @@ fn tool_call_title(tool_name: &str, event: &Value) -> String {
             };
         }
     }
+    if matches!(tool_name, "fs_search_files") {
+        let query = event
+            .get("args")
+            .and_then(|args| args.get("query"))
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .unwrap_or("paths");
+        return format!("Search files: {}", truncate_title(query));
+    }
+    if matches!(tool_name, "fs_find_paths") {
+        let glob = event
+            .get("args")
+            .and_then(|args| args.get("glob"))
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .unwrap_or("paths");
+        return format!("Find paths: {}", truncate_title(glob));
+    }
+    if matches!(
+        tool_name,
+        "git_status" | "git_diff" | "git_log" | "git_show"
+    ) {
+        let repo = tool_path(event).unwrap_or("repository");
+        return format!(
+            "{}: {}",
+            tool_display(tool_name).title,
+            truncate_title(repo)
+        );
+    }
+    if matches!(tool_name, "fs_move_path" | "fs_copy_path") {
+        let source = event
+            .get("args")
+            .and_then(|a| a.get("source_path"))
+            .and_then(Value::as_str)
+            .unwrap_or("source");
+        let destination = event
+            .get("args")
+            .and_then(|a| a.get("destination_path"))
+            .and_then(Value::as_str)
+            .unwrap_or("destination");
+        return format!(
+            "{}: {} → {}",
+            tool_display(tool_name).title,
+            truncate_title(source),
+            truncate_title(destination)
+        );
+    }
+    if matches!(tool_name, "fs_delete_path") {
+        let path = tool_path(event).unwrap_or("path");
+        return format!("Delete path: {}", truncate_title(path));
+    }
+    if matches!(tool_name, "chrome_open") {
+        if let Some(url) = tool_url(event) {
+            return format!("Chrome open: {}", truncate_title(url));
+        }
+    }
     tool_display(tool_name).title.to_string()
+}
+
+fn truncate_title(value: &str) -> String {
+    if value.chars().count() > 60 {
+        format!("{}…", value.chars().take(59).collect::<String>())
+    } else {
+        value.to_string()
+    }
 }
 
 fn tool_kind_str(kind: ToolKind) -> &'static str {
