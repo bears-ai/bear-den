@@ -506,7 +506,7 @@ pub fn compile_managed_config_for_bear(
     Ok(CompiledBearConfig {
         bear_id: bear.id,
         compiled_version: 1,
-        resolved_blocks,
+        resolved_blocks: resolved,
         rendered_prompts: rendered_prompts_value,
         rendered_prompt_hashes: rendered_prompt_hashes_value,
         tool_guidance_hashes: tool_guidance_hashes_value,

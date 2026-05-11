@@ -123,9 +123,9 @@ pub fn render_managed_role_prompt(
                 .blocks
                 .iter()
                 .find(|block| block.key == "den_baseline")
-                .map(|block| block.effective_content.as_str())
+                .map(|block| block.effective_content.clone())
         })
-        .unwrap_or_else(den_baseline);
+        .unwrap_or_else(|| den_baseline().to_string());
     let role_contract = resolved
         .and_then(|resolved| {
             let key = managed_space_block_key(role);
@@ -141,7 +141,7 @@ pub fn render_managed_role_prompt(
     let bear_context = profile.bear_context.trim();
 
     let mut composed = String::new();
-    push_section(&mut composed, "Den baseline", den_baseline_text);
+    push_section(&mut composed, "Den baseline", &den_baseline_text);
     let instructions_heading = match role {
         BearAgentRole::Talk => "Space instructions: Conversation Space".to_string(),
         BearAgentRole::Pair => "Space instructions: Collaboration Space".to_string(),

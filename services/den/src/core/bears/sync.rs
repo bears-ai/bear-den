@@ -200,7 +200,20 @@ async fn sync_one_role(
         };
     }
 
-    let config_hash = role_config_hash(pool, bear, role).await?;
+    let config_hash = match role_config_hash(pool, bear, role).await {
+        Ok(config_hash) => config_hash,
+        Err(err) => {
+            let msg = format!("failed to compute role config hash after sync: {err}");
+            let _ = bears_db::mark_bear_agent_drifted(pool, bear.id, role, &msg).await;
+            tracing::warn!(bear_id = %bear.id, role = %role, letta_agent_id = %agent_id, error = %err, "role sync config hash computation failed");
+            return BearRoleSyncOutcome {
+                role: role.as_str().to_string(),
+                letta_agent_id: Some(agent_id),
+                status: "failed".to_string(),
+                message: Some(msg),
+            };
+        }
+    };
     if let Err(err) = bears_db::mark_bear_agent_synced(
         pool,
         bear.id,
