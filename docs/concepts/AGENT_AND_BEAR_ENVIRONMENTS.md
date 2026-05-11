@@ -79,6 +79,16 @@ It may include:
 
 Turn Context is narrower than Agent Runtime Environment, which is narrower than Bear Operating Environment.
 
+In current BEARS implementation, the stable role prompt is composed by Den from these high-level parts, in order:
+
+1. **Den baseline** — shared Bear-role safety and control-plane guidance. It establishes that the agent is operating as a Bear role in Den, must preserve role boundaries, must not claim unavailable tools or authority, should ask before destructive or externally visible actions, and should not intentionally remember secrets or credentials.
+2. **Role contract** — role-specific instructions for `talk`, `pair`, `curate`, `work`, or `watch`.
+3. **User steering** — operator/user-provided steering for how this Bear should behave.
+4. **Bear context** — durable Bear-specific context such as identity, purpose, preferences, and scope.
+5. **Runtime/thread context** — optional situational context for a particular chat, ACP session, task run, event, or thread.
+
+Additional runtime-specific context may be added per turn. For example, an ACP `pair` turn may include a Den-injected system reminder describing available local client tools, Den server tools, workspace roots, authenticated human identity, memory boundaries, plan-mode state, visible workboard state, and tool-loop behavior.
+
 ## Relationship between the concepts
 
 ```text
@@ -96,6 +106,14 @@ Bear environment = durable world/state
 Role agent environment = situated projection
 Turn context = concrete model input/tool slice
 ```
+
+A practical way to read this in BEARS is:
+
+- The **Bear Operating Environment** contains the full durable configuration and state Den knows about the Bear.
+- Den projects that into a role-specific **Agent Runtime Environment** by selecting a role, runtime family, memory view, tool surface, policy boundary, and session/task/channel metadata.
+- The runtime serializes the immediately relevant slice as **Turn Context** through prompt sections, conversation messages, tool descriptors, reminders, and policy hints.
+
+Not every component appears as natural-language prompt text. Some parts are carried as API fields, tool descriptors, runtime configuration, database state, memory branch selection, or policy checks enforced by Den, Codepool, Letta, the ACP adapter, or the MemFS sidecar.
 
 ## Design discipline
 
@@ -123,13 +141,15 @@ In engineering terms, prefer:
 - Turn Context;
 - Agent Environment Design.
 
-## Example
+## Examples
 
 A Bear's Operating Environment may include long-term memory, approved documentation hosts, a skill manifest, routines, users, and policy.
 
-When the Bear is invoked through ACP as `pair`, Den projects that environment into a Pair Agent Runtime Environment containing workspace-local tools, relevant memory, ACP session state, and user approval affordances.
+When the Bear is invoked through ACP as `pair`, Den projects that environment into a Pair Agent Runtime Environment containing workspace-local tools, relevant memory, ACP session state, authenticated-human context, and user approval affordances. The turn context includes the pair role prompt plus per-turn reminders about callable client tools, Den server tools, workspace roots, plan-mode constraints, and memory/tool boundaries.
 
-When the same Bear runs scheduled work as `work`, Den projects a different runtime environment containing task instructions, approved web sources, non-interactive validation tools, and stricter egress policy.
+When the Bear is invoked through web chat as `talk`, Den resolves the Bear's `talk` role agent and sends trusted Bear, user, channel, tool, and runtime-plan metadata to Codepool. Codepool runs the Letta Code harness for that role agent. The model still sees the stable talk role prompt, while runtime details such as tool registration, session handling, and memory setup are partly carried outside the natural-language prompt.
+
+When the same Bear runs scheduled work as `work`, Den projects a different runtime environment containing task instructions, approved web sources, non-interactive validation tools, approved tool scope, curated context, and stricter egress policy.
 
 The Bear is durable. The role agent runtime is situated. The turn context is the immediate model input.
 
