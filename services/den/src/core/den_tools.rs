@@ -19,6 +19,7 @@ use crate::{
             search_memfs_role_memory, write_memfs_role_memory_entry,
             MemfsWriteRoleMemoryEntryRequest,
         },
+        memory_proposals::{self, CreateMemoryProposal},
         user, web_policy,
         work_plans::{
             self, WorkPlanListFilter, WorkPlanLookup, WorkPlanStatus, WorkPlanUpdate,
@@ -59,6 +60,8 @@ pub const DEN_MEMORY_READ: &str = "den.memory.read";
 pub const DEN_MEMORY_READ_PROVIDER: &str = "memory_read";
 pub const DEN_MEMORY_SEARCH: &str = "den.memory.search";
 pub const DEN_MEMORY_SEARCH_PROVIDER: &str = "memory_search";
+pub const DEN_MEMORY_REQUEST_REVIEW: &str = "den.memory.request_review";
+pub const DEN_MEMORY_REQUEST_REVIEW_PROVIDER: &str = "memory_request_review";
 pub const DEN_SKILL_PROPOSE: &str = "den.skill.propose";
 pub const DEN_SKILL_APPROVE_PROPOSAL: &str = "den.skill.approve_proposal";
 pub const DEN_SKILL_REJECT_PROPOSAL: &str = "den.skill.reject_proposal";
@@ -327,6 +330,15 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
                 "required": ["query"],
                 "additionalProperties": false
             }),
+        ),
+        descriptor(
+            DEN_MEMORY_REQUEST_REVIEW,
+            "Request memory review",
+            "Request Reflection/curate review of role-local memory without writing shared memory directly.",
+            "bear.memory",
+            &["memory.review.request"],
+            PAIR_ROLES,
+            memory_request_review_schema(),
         ),
         descriptor(
             DEN_SKILL_PROPOSE,
@@ -711,6 +723,27 @@ fn descriptor(
     }
 }
 
+fn memory_request_review_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "source_paths": { "type": "array", "items": { "type": "string" }, "minItems": 1, "maxItems": 20 },
+            "title": { "type": "string", "minLength": 1, "maxLength": 200 },
+            "summary": { "type": "string", "minLength": 1, "maxLength": 4000 },
+            "rationale": { "type": "string", "maxLength": 4000 },
+            "suggested_action": { "type": "string", "enum": ["unspecified", "summarize_into_core", "promote_to_core", "cabinet_update", "skill_review", "retain_role_local", "delete_after_review", "human_review", "archive_index", "task_context"] },
+            "target_ref": { "type": "string", "maxLength": 500 },
+            "refs": { "type": "object" },
+            "sensitivity": { "type": "string", "enum": ["normal", "person", "secret_risk", "external_untrusted", "unknown"] },
+            "requires_human": { "type": "boolean" },
+            "proposed_content": { "type": "string", "maxLength": 20000 },
+            "proposed_patch": { "type": "string", "maxLength": 20000 }
+        },
+        "required": ["source_paths", "title", "summary"],
+        "additionalProperties": false
+    })
+}
+
 fn empty_schema() -> Value {
     json!({
         "type": "object",
@@ -805,6 +838,7 @@ pub fn provider_aliases_for_tool(name: &str) -> &'static [&'static str] {
         DEN_MEMORY_TREE => &[DEN_MEMORY_TREE_LEGACY_PROVIDER, "den_memory_tree"],
         DEN_MEMORY_READ => &["den_memory_read"],
         DEN_MEMORY_SEARCH => &["den_memory_search"],
+        DEN_MEMORY_REQUEST_REVIEW => &["den_memory_request_review"],
         _ => &[],
     }
 }
@@ -835,6 +869,7 @@ pub fn is_builtin_den_tool(name: &str) -> bool {
             | DEN_MEMORY_TREE
             | DEN_MEMORY_READ
             | DEN_MEMORY_SEARCH
+            | DEN_MEMORY_REQUEST_REVIEW
             | DEN_SKILL_PROPOSE
             | DEN_SKILL_APPROVE_PROPOSAL
             | DEN_SKILL_REJECT_PROPOSAL
@@ -995,6 +1030,29 @@ struct MemorySearchArguments {
     limit: Option<usize>,
 }
 
+#[derive(Debug, Deserialize)]
+struct MemoryRequestReviewArguments {
+    source_paths: Vec<String>,
+    title: String,
+    summary: String,
+    #[serde(default)]
+    rationale: String,
+    #[serde(default)]
+    suggested_action: Option<String>,
+    #[serde(default)]
+    target_ref: Option<String>,
+    #[serde(default)]
+    refs: Option<Value>,
+    #[serde(default)]
+    sensitivity: Option<String>,
+    #[serde(default)]
+    requires_human: bool,
+    #[serde(default)]
+    proposed_content: Option<String>,
+    #[serde(default)]
+    proposed_patch: Option<String>,
+}
+
 fn empty_json_object() -> Value {
     json!({})
 }
@@ -1026,6 +1084,7 @@ pub async fn invoke_den_tool(
         DEN_MEMORY_TREE => memory_browse(config, &context, role).await,
         DEN_MEMORY_READ => memory_read(config, &context, role, arguments).await,
         DEN_MEMORY_SEARCH => memory_search(config, &context, role, arguments).await,
+        DEN_MEMORY_REQUEST_REVIEW => request_memory_review(pool, &context, role, arguments).await,
         DEN_WORK_PLAN_LIST => list_work_plans(pool, config, &context, role, arguments).await,
         DEN_WORK_PLAN_GET_STATUS => get_work_plan_status(pool, &context, role, arguments).await,
         DEN_WORK_PLAN_UPDATE => update_work_plan(pool, &context, role, arguments).await,
@@ -2004,6 +2063,90 @@ async fn memory_search(
                 "message": "MemFS sidecar is not configured (set LETTA_MEMFS_SERVICE_URL)"
             }))
         })
+}
+
+async fn request_memory_review(
+    pool: &PgPool,
+    context: &DenToolInvocationContext,
+    role: BearAgentRole,
+    arguments: Value,
+) -> Result<Value, CustomError> {
+    if !matches!(role, BearAgentRole::Pair) {
+        return Err(CustomError::Authorization(
+            "den.memory.request_review is currently available only to pair".to_string(),
+        ));
+    }
+    let args: MemoryRequestReviewArguments = serde_json::from_value(arguments)?;
+    let source_paths = args
+        .source_paths
+        .into_iter()
+        .map(|path| path.trim().to_string())
+        .filter(|path| !path.is_empty())
+        .collect::<Vec<_>>();
+    if source_paths.is_empty() {
+        return Err(CustomError::ValidationError(
+            "source_paths must include at least one path".to_string(),
+        ));
+    }
+    if source_paths.len() > 20 {
+        return Err(CustomError::ValidationError(
+            "source_paths must include at most 20 paths".to_string(),
+        ));
+    }
+    for path in &source_paths {
+        if !path.starts_with(role.as_str()) || !path.ends_with(".md") {
+            return Err(CustomError::ValidationError(format!(
+                "source path must be a role-local Markdown path under {}/: {path}",
+                role.as_str()
+            )));
+        }
+    }
+    let title = validate_bounded_text("title", &args.title, 1, 200)?;
+    let summary = validate_bounded_text("summary", &args.summary, 1, 4_000)?;
+    let rationale = validate_bounded_text("rationale", &args.rationale, 0, 4_000)?;
+    validate_optional_object("refs", &args.refs)?;
+    let suggested_action = args
+        .suggested_action
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .unwrap_or("unspecified");
+    let sensitivity = args
+        .sensitivity
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .unwrap_or("normal");
+    let proposal = memory_proposals::create(
+        pool,
+        CreateMemoryProposal {
+            bear_id: context.bear_id,
+            source_role: role,
+            source_agent_id: clean_optional(&context.role_agent_id),
+            source_paths,
+            source_refs: serde_json::json!([]),
+            suggested_action,
+            target_ref: args
+                .target_ref
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty()),
+            title: &title,
+            summary: &summary,
+            rationale: &rationale,
+            proposed_content: args.proposed_content.as_deref(),
+            proposed_patch: args.proposed_patch.as_deref(),
+            refs: args.refs.unwrap_or_else(|| serde_json::json!({})),
+            sensitivity,
+            requires_human: args.requires_human,
+        },
+    )
+    .await?;
+    Ok(json!({
+        "bear_id": context.bear_id,
+        "proposal": proposal,
+        "note": "Review requested. Reflection/curate decides the final outcome; this did not write core, Cabinet, skills, tasks, observations, or run results."
+    }))
 }
 
 async fn list_work_plans(

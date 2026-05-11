@@ -1,0 +1,3 @@
+DROP INDEX IF EXISTS idx_bear_memory_proposals_bear_source_role_created;
+DROP INDEX IF EXISTS idx_bear_memory_proposals_bear_status_created;
+DROP TABLE IF EXISTS bear_memory_proposals;
