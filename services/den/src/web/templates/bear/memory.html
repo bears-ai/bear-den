@@ -146,6 +146,30 @@
     </section>
 
     <section class="box full-width">
+        <h3>Pair reflection runs</h3>
+        <p class="form-hint">Pair reflection summarizes substantial ACP pair sessions into role-local memory and creates a trail for future curation.</p>
+        {% if pair_reflection_runs and pair_reflection_runs | length > 0 %}
+        <table>
+            <thead><tr><th>Created</th><th>Status</th><th>Trigger</th><th>Session</th><th>Messages</th><th>Summary</th></tr></thead>
+            <tbody>
+                {% for run in pair_reflection_runs %}
+                <tr>
+                    <td>{{ run.created_at }}</td>
+                    <td>{{ run.status | e }}</td>
+                    <td>{{ run.trigger | e }}</td>
+                    <td><code>{{ run.acp_session_id | e }}</code></td>
+                    <td>{{ run.considered_message_count }}</td>
+                    <td>{% if run.summary_path %}<a href="/bear/{{ bear.slug | e }}/details/memory?role=pair&path={{ run.summary_path | urlencode }}"><code>{{ run.summary_path | e }}</code></a>{% else %}<span class="caption">—</span>{% endif %}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% else %}
+        <p class="form-hint">No pair reflection runs recorded yet.</p>
+        {% endif %}
+    </section>
+
+    <section class="box full-width">
         <h3>Search results</h3>
         {% if search_query %}
             {% if search_results and search_results.results and search_results.results | length > 0 %}

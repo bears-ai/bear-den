@@ -13,6 +13,7 @@ pub mod den_tools;
 pub mod email;
 pub mod letta;
 pub mod memory_manager_head;
+pub mod pair_reflection;
 pub mod s3;
 pub mod user;
 pub mod web_policy;

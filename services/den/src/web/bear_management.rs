@@ -33,7 +33,7 @@ use crate::{
             fetch_memfs_role_view_health, fetch_memory_manager_repository_files,
             fetch_memory_manager_repository_status, search_memfs_role_memory,
         },
-        user,
+        pair_reflection, user,
         user::db as user_db,
     },
     errors::CustomError,
@@ -2092,6 +2092,11 @@ async fn bear_memory_get(
         None
     };
 
+    let pair_reflection_runs =
+        pair_reflection::list_recent_for_bear(state.sqlx_pool(), bear.id, 10)
+            .await
+            .unwrap_or_default();
+
     let runtime_block_count = if letta_configured {
         let mut count = 0usize;
         for row in &role_rows {
@@ -2121,6 +2126,7 @@ async fn bear_memory_get(
             search_results,
             selected_file,
             runtime_block_count,
+            pair_reflection_runs,
             memfs_configured => !memfs_url.is_empty(),
             delete_notice,
             delete_error,
