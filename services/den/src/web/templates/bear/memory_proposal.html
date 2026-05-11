@@ -1,0 +1,73 @@
+{% extends "base.html" %}
+
+{% block title %}Memory proposal · {{ bear.name | e }}{% endblock %}
+
+{% block content %}
+<section>
+    <h2>Memory proposal</h2>
+    <p><a href="/bear/{{ bear.slug | e }}/details/memory">Back to Bear memory</a></p>
+
+    <section class="box full-width">
+        <h3>{{ proposal.title | e }}</h3>
+        <dl class="fields-grid">
+            <dt>Status</dt><dd><code>{{ proposal.status | e }}</code></dd>
+            <dt>Suggested action</dt><dd><code>{{ proposal.suggested_action | e }}</code></dd>
+            <dt>Source role</dt><dd><code>{{ proposal.source_role | e }}</code></dd>
+            <dt>Sensitivity</dt><dd><code>{{ proposal.sensitivity | e }}</code>{% if proposal.requires_human %} · requires human review{% endif %}</dd>
+            <dt>Created</dt><dd>{{ proposal.created_at }}</dd>
+            {% if proposal.reviewed_at %}<dt>Reviewed</dt><dd>{{ proposal.reviewed_at }}</dd>{% endif %}
+            {% if proposal.target_ref %}<dt>Target hint</dt><dd><code>{{ proposal.target_ref | e }}</code></dd>{% endif %}
+        </dl>
+        <h4>Summary</h4>
+        <p>{{ proposal.summary | e }}</p>
+        {% if proposal.rationale %}
+        <h4>Rationale</h4>
+        <p>{{ proposal.rationale | e }}</p>
+        {% endif %}
+        {% if proposal.decision_summary %}
+        <h4>Decision summary</h4>
+        <p>{{ proposal.decision_summary | e }}</p>
+        {% endif %}
+        {% if proposal.review_notes %}
+        <h4>Review notes</h4>
+        <p>{{ proposal.review_notes | e }}</p>
+        {% endif %}
+    </section>
+
+    <section class="box full-width">
+        <h3>Source memory</h3>
+        {% if proposal.source_paths and proposal.source_paths | length > 0 %}
+        <ul>
+            {% for path in proposal.source_paths %}
+            <li><a href="/bear/{{ bear.slug | e }}/details/memory?role={{ proposal.source_role | e }}&path={{ path | urlencode }}"><code>{{ path | e }}</code></a></li>
+            {% endfor %}
+        </ul>
+        {% else %}
+        <p class="form-hint">No source paths recorded.</p>
+        {% endif %}
+    </section>
+
+    {% if can_manage_bear %}
+    <section class="box full-width">
+        <h3>Resolve proposal</h3>
+        <p class="form-hint">These actions only triage the proposal. They do not write <code>core/</code>, Cabinet, skills, tasks, observations, or run results.</p>
+        <form method="post" action="/bear/{{ bear.slug | e }}/details/memory/proposals/{{ proposal.id }}" class="fields-grid">
+            <label for="proposal-status">Resolution</label>
+            <select id="proposal-status" name="status">
+                <option value="deferred">Deferred</option>
+                <option value="retained_local">Retained local</option>
+                <option value="rejected">Rejected</option>
+                <option value="superseded">Superseded</option>
+                <option value="needs_human_review">Needs human review</option>
+            </select>
+            <label for="decision-summary">Decision summary</label>
+            <textarea id="decision-summary" name="decision_summary" rows="3"></textarea>
+            <label for="review-notes">Review notes</label>
+            <textarea id="review-notes" name="review_notes" rows="4"></textarea>
+            <div></div>
+            <button type="submit">Resolve proposal</button>
+        </form>
+    </section>
+    {% endif %}
+</section>
+{% endblock %}

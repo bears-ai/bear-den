@@ -180,7 +180,7 @@
                     <td>{{ proposal.status | e }}</td>
                     <td>{{ proposal.source_role | e }}</td>
                     <td>{{ proposal.suggested_action | e }}</td>
-                    <td>{{ proposal.title | e }}</td>
+                    <td><a href="/bear/{{ bear.slug | e }}/details/memory/proposals/{{ proposal.id }}">{{ proposal.title | e }}</a></td>
                     <td>{% for p in proposal.source_paths %}{% if not loop.first %}<br>{% endif %}<a href="/bear/{{ bear.slug | e }}/details/memory?role={{ proposal.source_role | e }}&path={{ p | urlencode }}"><code>{{ p | e }}</code></a>{% endfor %}</td>
                 </tr>
                 {% endfor %}

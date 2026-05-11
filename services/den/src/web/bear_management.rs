@@ -88,6 +88,10 @@ pub fn router() -> Router<AppState> {
             "/bear/{slug}/details/memory/runtime-blocks",
             get(bear_runtime_blocks_get),
         )
+        .route_with_tsr(
+            "/bear/{slug}/details/memory/proposals/{proposal_id}",
+            get(bear_memory_proposal_get).post(bear_memory_proposal_post),
+        )
         .route_with_tsr("/bear/{slug}/details/delete", post(bear_delete_post))
         .route_with_tsr("/bear/{slug}/details/members/add", post(member_add_post))
         .route_with_tsr(
@@ -160,6 +164,15 @@ struct BearMemoryQuery {
     deleted: Option<usize>,
     review_requested: Option<usize>,
     error: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct BearMemoryProposalResolutionForm {
+    status: String,
+    #[serde(default)]
+    review_notes: Option<String>,
+    #[serde(default)]
+    decision_summary: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -2308,6 +2321,83 @@ async fn bear_memory_delete_post(
         deleted
     );
     Ok(Redirect::to(&target).into_response())
+}
+
+async fn bear_memory_proposal_get(
+    Path((slug, proposal_id)): Path<(String, Uuid)>,
+    State(state): State<AppState>,
+    auth_session: AuthSession,
+) -> Result<Response, CustomError> {
+    let user = auth_session
+        .user
+        .as_ref()
+        .ok_or_else(|| CustomError::Authentication("login required".to_string()))?;
+    if let Some(r) = email_verify_redirect(state.sqlx_pool(), user.id).await? {
+        return Ok(r.into_response());
+    }
+    let bear = load_bear_member(state.sqlx_pool(), user.id, &slug).await?;
+    let can_manage_bear = viewer_can_manage_bear(state.sqlx_pool(), user, bear.id).await?;
+    let proposal = memory_proposals::get_for_bear(state.sqlx_pool(), bear.id, proposal_id)
+        .await?
+        .ok_or_else(|| CustomError::NotFound("memory proposal not found".to_string()))?;
+    render_template(
+        &state,
+        "bear/memory_proposal.html",
+        auth_session,
+        context! {
+            bear,
+            proposal,
+            can_manage_bear,
+            errors => None::<String>,
+        },
+    )
+    .await
+}
+
+async fn bear_memory_proposal_post(
+    Path((slug, proposal_id)): Path<(String, Uuid)>,
+    State(state): State<AppState>,
+    auth_session: AuthSession,
+    Form(form): Form<BearMemoryProposalResolutionForm>,
+) -> Result<Response, CustomError> {
+    let user = auth_session
+        .user
+        .as_ref()
+        .ok_or_else(|| CustomError::Authentication("login required".to_string()))?;
+    if let Some(r) = email_verify_redirect(state.sqlx_pool(), user.id).await? {
+        return Ok(r.into_response());
+    }
+    let bear = load_bear_member(state.sqlx_pool(), user.id, &slug).await?;
+    if !viewer_can_manage_bear(state.sqlx_pool(), user, bear.id).await? {
+        return Err(CustomError::Authorization(
+            "bear admin or site admin role required".to_string(),
+        ));
+    }
+    let status = form.status.trim();
+    if !matches!(
+        status,
+        "rejected" | "retained_local" | "deferred" | "superseded" | "needs_human_review"
+    ) {
+        return Err(CustomError::ValidationError(
+            "invalid memory proposal status".to_string(),
+        ));
+    }
+    memory_proposals::resolve_for_bear(
+        state.sqlx_pool(),
+        bear.id,
+        proposal_id,
+        BearAgentRole::Curate,
+        None,
+        status,
+        form.review_notes.as_deref(),
+        form.decision_summary.as_deref(),
+    )
+    .await?;
+    Ok(Redirect::to(&format!(
+        "/bear/{}/details/memory/proposals/{}",
+        bear.slug, proposal_id
+    ))
+    .into_response())
 }
 
 async fn bear_runtime_blocks_get(
