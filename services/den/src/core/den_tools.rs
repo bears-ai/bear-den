@@ -62,6 +62,12 @@ pub const DEN_MEMORY_SEARCH: &str = "den.memory.search";
 pub const DEN_MEMORY_SEARCH_PROVIDER: &str = "memory_search";
 pub const DEN_MEMORY_REQUEST_REVIEW: &str = "den.memory.request_review";
 pub const DEN_MEMORY_REQUEST_REVIEW_PROVIDER: &str = "memory_request_review";
+pub const DEN_MEMORY_LIST_PROPOSALS: &str = "den.memory.list_proposals";
+pub const DEN_MEMORY_LIST_PROPOSALS_PROVIDER: &str = "memory_list_proposals";
+pub const DEN_MEMORY_READ_PROPOSAL: &str = "den.memory.read_proposal";
+pub const DEN_MEMORY_READ_PROPOSAL_PROVIDER: &str = "memory_read_proposal";
+pub const DEN_MEMORY_RESOLVE_PROPOSAL: &str = "den.memory.resolve_proposal";
+pub const DEN_MEMORY_RESOLVE_PROPOSAL_PROVIDER: &str = "memory_resolve_proposal";
 pub const DEN_SKILL_PROPOSE: &str = "den.skill.propose";
 pub const DEN_SKILL_APPROVE_PROPOSAL: &str = "den.skill.approve_proposal";
 pub const DEN_SKILL_REJECT_PROPOSAL: &str = "den.skill.reject_proposal";
@@ -93,6 +99,7 @@ const WORK_PLAN_READ_ROLES: &[&str] = &["talk", "pair", "curate", "work"];
 const WORK_PLAN_UPDATE_ROLES: &[&str] = &["talk", "pair", "work"];
 const TALK_AND_PAIR_ROLES: &[&str] = &["talk", "pair"];
 const PAIR_ROLES: &[&str] = &["pair"];
+const PAIR_AND_CURATE_ROLES: &[&str] = &["pair", "curate"];
 const CURATE_ROLES: &[&str] = &["curate"];
 const WATCH_ROLES: &[&str] = &["watch"];
 const WORK_ROLES: &[&str] = &["work"];
@@ -111,6 +118,10 @@ pub fn provider_safe_tool_name(name: &str) -> String {
         DEN_MEMORY_TREE => return DEN_MEMORY_TREE_PROVIDER.to_string(),
         DEN_MEMORY_READ => return DEN_MEMORY_READ_PROVIDER.to_string(),
         DEN_MEMORY_SEARCH => return DEN_MEMORY_SEARCH_PROVIDER.to_string(),
+        DEN_MEMORY_REQUEST_REVIEW => return DEN_MEMORY_REQUEST_REVIEW_PROVIDER.to_string(),
+        DEN_MEMORY_LIST_PROPOSALS => return DEN_MEMORY_LIST_PROPOSALS_PROVIDER.to_string(),
+        DEN_MEMORY_READ_PROPOSAL => return DEN_MEMORY_READ_PROPOSAL_PROVIDER.to_string(),
+        DEN_MEMORY_RESOLVE_PROPOSAL => return DEN_MEMORY_RESOLVE_PROPOSAL_PROVIDER.to_string(),
         DEN_WORK_PLAN_LIST => return DEN_WORK_PLAN_LIST_PROVIDER.to_string(),
         DEN_WORK_PLAN_GET_STATUS => return DEN_WORK_PLAN_GET_STATUS_PROVIDER.to_string(),
         DEN_WORK_PLAN_UPDATE => return DEN_WORK_PLAN_UPDATE_PROVIDER.to_string(),
@@ -286,7 +297,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
             "Return MemFS memory health and entry counts for the current bear role.",
             "bear.memory",
             &["memory.status.read"],
-            PAIR_ROLES,
+            PAIR_AND_CURATE_ROLES,
             empty_schema(),
         ),
         descriptor(
@@ -295,7 +306,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
             "Browse allowed Bear memory paths for the current role.",
             "bear.memory",
             &["memory.tree.read"],
-            PAIR_ROLES,
+            PAIR_AND_CURATE_ROLES,
             empty_schema(),
         ),
         descriptor(
@@ -304,7 +315,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
             "Read an allowed Bear memory file for the current role.",
             "bear.memory",
             &["memory.file.read"],
-            PAIR_ROLES,
+            PAIR_AND_CURATE_ROLES,
             json!({
                 "type": "object",
                 "properties": {
@@ -320,7 +331,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
             "Search allowed Bear memory files for the current role.",
             "bear.memory",
             &["memory.search"],
-            PAIR_ROLES,
+            PAIR_AND_CURATE_ROLES,
             json!({
                 "type": "object",
                 "properties": {
@@ -339,6 +350,57 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
             &["memory.review.request"],
             PAIR_ROLES,
             memory_request_review_schema(),
+        ),
+        descriptor(
+            DEN_MEMORY_LIST_PROPOSALS,
+            "List memory proposals",
+            "List memory review proposals for this Bear.",
+            "bear.memory",
+            &["memory.proposal.read"],
+            CURATE_ROLES,
+            json!({
+                "type": "object",
+                "properties": {
+                    "status": { "type": "string" },
+                    "limit": { "type": "integer", "minimum": 1, "maximum": 100 }
+                },
+                "additionalProperties": false
+            }),
+        ),
+        descriptor(
+            DEN_MEMORY_READ_PROPOSAL,
+            "Read memory proposal",
+            "Read one memory review proposal with source pointers and status.",
+            "bear.memory",
+            &["memory.proposal.read"],
+            CURATE_ROLES,
+            json!({
+                "type": "object",
+                "properties": {
+                    "proposal_id": { "type": "string", "format": "uuid" }
+                },
+                "required": ["proposal_id"],
+                "additionalProperties": false
+            }),
+        ),
+        descriptor(
+            DEN_MEMORY_RESOLVE_PROPOSAL,
+            "Resolve memory proposal",
+            "Resolve a memory review proposal without applying shared-memory writes.",
+            "bear.memory",
+            &["memory.proposal.resolve"],
+            CURATE_ROLES,
+            json!({
+                "type": "object",
+                "properties": {
+                    "proposal_id": { "type": "string", "format": "uuid" },
+                    "status": { "enum": ["rejected", "retained_local", "deferred", "superseded", "needs_human_review"] },
+                    "review_notes": { "type": "string" },
+                    "decision_summary": { "type": "string" }
+                },
+                "required": ["proposal_id", "status"],
+                "additionalProperties": false
+            }),
         ),
         descriptor(
             DEN_SKILL_PROPOSE,
@@ -839,6 +901,9 @@ pub fn provider_aliases_for_tool(name: &str) -> &'static [&'static str] {
         DEN_MEMORY_READ => &["den_memory_read"],
         DEN_MEMORY_SEARCH => &["den_memory_search"],
         DEN_MEMORY_REQUEST_REVIEW => &["den_memory_request_review"],
+        DEN_MEMORY_LIST_PROPOSALS => &["den_memory_list_proposals"],
+        DEN_MEMORY_READ_PROPOSAL => &["den_memory_read_proposal"],
+        DEN_MEMORY_RESOLVE_PROPOSAL => &["den_memory_resolve_proposal"],
         _ => &[],
     }
 }
@@ -870,6 +935,9 @@ pub fn is_builtin_den_tool(name: &str) -> bool {
             | DEN_MEMORY_READ
             | DEN_MEMORY_SEARCH
             | DEN_MEMORY_REQUEST_REVIEW
+            | DEN_MEMORY_LIST_PROPOSALS
+            | DEN_MEMORY_READ_PROPOSAL
+            | DEN_MEMORY_RESOLVE_PROPOSAL
             | DEN_SKILL_PROPOSE
             | DEN_SKILL_APPROVE_PROPOSAL
             | DEN_SKILL_REJECT_PROPOSAL
@@ -1031,6 +1099,29 @@ struct MemorySearchArguments {
 }
 
 #[derive(Debug, Deserialize)]
+struct MemoryListProposalsArguments {
+    #[serde(default)]
+    status: Option<String>,
+    #[serde(default)]
+    limit: Option<i64>,
+}
+
+#[derive(Debug, Deserialize)]
+struct MemoryReadProposalArguments {
+    proposal_id: Uuid,
+}
+
+#[derive(Debug, Deserialize)]
+struct MemoryResolveProposalArguments {
+    proposal_id: Uuid,
+    status: String,
+    #[serde(default)]
+    review_notes: Option<String>,
+    #[serde(default)]
+    decision_summary: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
 struct MemoryRequestReviewArguments {
     source_paths: Vec<String>,
     title: String,
@@ -1085,6 +1176,11 @@ pub async fn invoke_den_tool(
         DEN_MEMORY_READ => memory_read(config, &context, role, arguments).await,
         DEN_MEMORY_SEARCH => memory_search(config, &context, role, arguments).await,
         DEN_MEMORY_REQUEST_REVIEW => request_memory_review(pool, &context, role, arguments).await,
+        DEN_MEMORY_LIST_PROPOSALS => list_memory_proposals(pool, &context, role, arguments).await,
+        DEN_MEMORY_READ_PROPOSAL => read_memory_proposal(pool, &context, role, arguments).await,
+        DEN_MEMORY_RESOLVE_PROPOSAL => {
+            resolve_memory_proposal(pool, &context, role, arguments).await
+        }
         DEN_WORK_PLAN_LIST => list_work_plans(pool, config, &context, role, arguments).await,
         DEN_WORK_PLAN_GET_STATUS => get_work_plan_status(pool, &context, role, arguments).await,
         DEN_WORK_PLAN_UPDATE => update_work_plan(pool, &context, role, arguments).await,
@@ -2063,6 +2159,83 @@ async fn memory_search(
                 "message": "MemFS sidecar is not configured (set LETTA_MEMFS_SERVICE_URL)"
             }))
         })
+}
+
+async fn list_memory_proposals(
+    pool: &PgPool,
+    context: &DenToolInvocationContext,
+    role: BearAgentRole,
+    arguments: Value,
+) -> Result<Value, CustomError> {
+    if role != BearAgentRole::Curate {
+        return Err(CustomError::Authorization(
+            "den.memory.list_proposals is available only to curate".to_string(),
+        ));
+    }
+    let args: MemoryListProposalsArguments = serde_json::from_value(arguments)?;
+    let status = args
+        .status
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
+    let proposals =
+        memory_proposals::list_for_bear(pool, context.bear_id, status, args.limit.unwrap_or(50))
+            .await?;
+    Ok(json!({ "bear_id": context.bear_id, "proposals": proposals }))
+}
+
+async fn read_memory_proposal(
+    pool: &PgPool,
+    context: &DenToolInvocationContext,
+    role: BearAgentRole,
+    arguments: Value,
+) -> Result<Value, CustomError> {
+    if role != BearAgentRole::Curate {
+        return Err(CustomError::Authorization(
+            "den.memory.read_proposal is available only to curate".to_string(),
+        ));
+    }
+    let args: MemoryReadProposalArguments = serde_json::from_value(arguments)?;
+    let proposal = memory_proposals::get_for_bear(pool, context.bear_id, args.proposal_id)
+        .await?
+        .ok_or_else(|| CustomError::NotFound("memory proposal not found".to_string()))?;
+    Ok(json!({ "bear_id": context.bear_id, "proposal": proposal }))
+}
+
+async fn resolve_memory_proposal(
+    pool: &PgPool,
+    context: &DenToolInvocationContext,
+    role: BearAgentRole,
+    arguments: Value,
+) -> Result<Value, CustomError> {
+    if role != BearAgentRole::Curate {
+        return Err(CustomError::Authorization(
+            "den.memory.resolve_proposal is available only to curate".to_string(),
+        ));
+    }
+    let args: MemoryResolveProposalArguments = serde_json::from_value(arguments)?;
+    let status = args.status.trim();
+    if !matches!(
+        status,
+        "rejected" | "retained_local" | "deferred" | "superseded" | "needs_human_review"
+    ) {
+        return Err(CustomError::ValidationError(
+            "status must be rejected, retained_local, deferred, superseded, or needs_human_review"
+                .to_string(),
+        ));
+    }
+    let proposal = memory_proposals::resolve_for_bear(
+        pool,
+        context.bear_id,
+        args.proposal_id,
+        role,
+        Some(context.role_agent_id.as_str()),
+        status,
+        args.review_notes.as_deref(),
+        args.decision_summary.as_deref(),
+    )
+    .await?;
+    Ok(json!({ "bear_id": context.bear_id, "proposal": proposal }))
 }
 
 async fn request_memory_review(

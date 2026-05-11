@@ -2778,6 +2778,8 @@ fn den_tool_allowed_in_plan_mode(canonical_name: &str) -> bool {
             | den_tools::DEN_MEMORY_TREE
             | den_tools::DEN_MEMORY_READ
             | den_tools::DEN_MEMORY_SEARCH
+            | den_tools::DEN_MEMORY_LIST_PROPOSALS
+            | den_tools::DEN_MEMORY_READ_PROPOSAL
             | den_tools::DEN_WORK_PLAN_LIST
             | den_tools::DEN_WORK_PLAN_GET_STATUS
             | den_tools::DEN_PLAN_MODE_STATUS
