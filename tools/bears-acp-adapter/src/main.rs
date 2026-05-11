@@ -4229,8 +4229,41 @@ async fn handle_permission_request_event(
     };
     let request = RequestPermissionRequest::new(session_id.to_string(), tool_call, options);
     let decision =
-        send_permission_request(adapter_state, request, std::time::Duration::from_secs(120))
-            .await?;
+        match send_permission_request(adapter_state, request, std::time::Duration::from_secs(120))
+            .await
+        {
+            Ok(decision) => decision,
+            Err(err) => {
+                let message = format!("Permission request timed out or failed: {err:#}");
+                let _ = post_permission_result(
+                    config,
+                    session_id,
+                    permission_id,
+                    json!({ "decision": "timeout", "plan_mode_id": plan_mode_id }),
+                )
+                .await;
+                if is_plan_mode {
+                    let _ = notify_mode_state(session_id, MODE_PLAN).await;
+                }
+                let _ = send_tool_call_update(
+                    session_id,
+                    tool_call_id,
+                    tool_name,
+                    "failed",
+                    &message,
+                    Some(event),
+                    Some(json!({
+                        "component": "bears-acp-adapter",
+                        "phase": "permission_request_failed",
+                        "permission_id": permission_id,
+                        "error": format!("{err:#}"),
+                    })),
+                    Vec::new(),
+                )
+                .await;
+                return Ok(());
+            }
+        };
     let decision_str = if is_plan_mode {
         if decision.approved {
             "approve"

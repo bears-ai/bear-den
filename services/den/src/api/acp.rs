@@ -1583,7 +1583,11 @@ async fn permission_result_inner(
         };
         return Ok(Json(AcpPermissionDecisionResponse {
             accepted: true,
-            reason: format!("plan_mode_{}", row.state),
+            reason: if decision == "timeout" {
+                "plan_mode_rejected_after_timeout".to_string()
+            } else {
+                format!("plan_mode_{}", row.state)
+            },
             local_tool_request: None,
         })
         .into_response());
@@ -1672,7 +1676,11 @@ async fn permission_result_inner(
             tool_name: Some(pending.provider_name.clone()),
             approval_request_id: pending.approval_request_id.clone(),
             status: "permission_denied".to_string(),
-            content: Some("web_fetch permission denied".to_string()),
+            content: Some(if decision == "timeout" {
+                "web_fetch permission timed out".to_string()
+            } else {
+                "web_fetch permission denied".to_string()
+            }),
             structured_content: serde_json::json!({}),
             diagnostic: serde_json::json!({ "component": "den.acp", "phase": "web_fetch_permission_denied" }),
             ..Default::default()
