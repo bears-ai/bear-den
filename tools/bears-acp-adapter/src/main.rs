@@ -304,10 +304,30 @@ fn plan_entries_from_work_plan_args(args: &Value) -> Vec<PlanEntry> {
 }
 
 async fn send_available_commands_update(session_id: &str) -> Result<()> {
-    let commands = vec![AvailableCommand::new(
-        "doctor",
-        "Show BEARS ACP adapter, session, client, and Den configuration diagnostics.",
-    )];
+    let commands = vec![
+        AvailableCommand::new(
+            "doctor",
+            "Show BEARS ACP adapter, session, client, and Den configuration diagnostics.",
+        ),
+        AvailableCommand::new(
+            "unwedge",
+            "Clear stale Letta approval/run state for this ACP session.",
+        ),
+        AvailableCommand::new(
+            "conversation",
+            "Show the current ACP session and Letta conversation binding.",
+        ),
+        AvailableCommand::new(
+            "capabilities",
+            "Show ACP client capabilities and adapter-local direct tools.",
+        ),
+        AvailableCommand::new(
+            "tool-state",
+            "Show active adapter-local tool tasks for this session.",
+        ),
+        AvailableCommand::new("version", "Show BEARS adapter and Den version information."),
+        AvailableCommand::new("debug-ui", "Show BEARS ACP debug UI environment status."),
+    ];
     write_notification(
         "session/update",
         json!({
@@ -2655,13 +2675,15 @@ async fn handle_prompt(
         .ok_or_else(|| anyhow!("session/prompt params missing sessionId"))?;
     let prompt = prompt_text_from_params(&params)?;
     let display_prompt = prompt_display_text_from_params(&params).unwrap_or_else(|| prompt.clone());
-    if prompt.trim() == "/doctor" {
+    if let Some(command) = parse_local_slash_command(&prompt) {
         send_user_message_chunk(session_id, &display_prompt).await?;
-        let report = acp_doctor_report(
+        let report = handle_local_slash_command(
             http,
             config,
             adapter_state,
-            &client_context_for_doctor(adapter_state, session_id),
+            shared_state,
+            session_id,
+            command,
         )
         .await;
         send_agent_message_chunk(session_id, &report).await?;
@@ -2852,12 +2874,138 @@ async fn handle_prompt(
     Ok(())
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LocalSlashCommand {
+    Doctor,
+    Unwedge,
+    Conversation,
+    Capabilities,
+    ToolState,
+    Version,
+    DebugUi,
+}
+
+fn parse_local_slash_command(prompt: &str) -> Option<LocalSlashCommand> {
+    match prompt.trim().split_whitespace().next()? {
+        "/doctor" => Some(LocalSlashCommand::Doctor),
+        "/unwedge" => Some(LocalSlashCommand::Unwedge),
+        "/conversation" => Some(LocalSlashCommand::Conversation),
+        "/capabilities" => Some(LocalSlashCommand::Capabilities),
+        "/tool-state" => Some(LocalSlashCommand::ToolState),
+        "/version" => Some(LocalSlashCommand::Version),
+        "/debug-ui" => Some(LocalSlashCommand::DebugUi),
+        _ => None,
+    }
+}
+
+async fn handle_local_slash_command(
+    http: &reqwest::Client,
+    config: &Config,
+    adapter_state: &AdapterState,
+    shared_state: &AdapterSharedState,
+    session_id: &str,
+    command: LocalSlashCommand,
+) -> String {
+    match command {
+        LocalSlashCommand::Doctor => {
+            acp_doctor_report(
+                http,
+                config,
+                adapter_state,
+                &client_context_for_doctor(adapter_state, session_id),
+            )
+            .await
+        }
+        LocalSlashCommand::Unwedge => {
+            match post_session_lifecycle_action(http, config, session_id, "unwedge").await {
+                Ok(()) => "BEARS ACP unwedge requested for this session. Retry your last prompt."
+                    .to_string(),
+                Err(err) => format!("BEARS ACP unwedge failed: {err:#}"),
+            }
+        }
+        LocalSlashCommand::Conversation => conversation_report(adapter_state, session_id),
+        LocalSlashCommand::Capabilities => capabilities_report(adapter_state),
+        LocalSlashCommand::ToolState => tool_state_report(shared_state, session_id).await,
+        LocalSlashCommand::Version => version_report(http, config).await,
+        LocalSlashCommand::DebugUi => debug_ui_report(),
+    }
+}
+
 fn client_context_for_doctor(adapter_state: &AdapterState, session_id: &str) -> SessionContext {
     adapter_state
         .session_contexts
         .get(session_id)
         .cloned()
         .unwrap_or_default()
+}
+
+fn conversation_report(adapter_state: &AdapterState, session_id: &str) -> String {
+    let context = client_context_for_doctor(adapter_state, session_id);
+    format!(
+        "BEARS ACP conversation\n\n- ACP session: {session_id}\n- cwd: {}\n- roots: {}\n- conversation_id: {}\n- resolved_conversation_id: {}",
+        context.cwd,
+        if context.roots.is_empty() { "<none>".to_string() } else { context.roots.join(", ") },
+        context.conversation_id.as_deref().unwrap_or("<none>"),
+        context.resolved_conversation_id.as_deref().unwrap_or("<none>"),
+    )
+}
+
+fn capabilities_report(adapter_state: &AdapterState) -> String {
+    format!(
+        "BEARS ACP capabilities\n\nClient capabilities:\n{}\n\nAdapter direct tools:\n{}",
+        serde_json::to_string_pretty(&adapter_state.client_capabilities)
+            .unwrap_or_else(|_| adapter_state.client_capabilities.to_string()),
+        serde_json::to_string_pretty(&direct_tools_context())
+            .unwrap_or_else(|_| direct_tools_context().to_string()),
+    )
+}
+
+async fn tool_state_report(shared_state: &AdapterSharedState, session_id: &str) -> String {
+    let tasks = shared_state.tool_tasks.list_for_session(session_id).await;
+    if tasks.is_empty() {
+        return "BEARS ACP tool state\n\nNo active local tool tasks for this session.".to_string();
+    }
+    let mut lines = vec!["BEARS ACP tool state".to_string(), String::new()];
+    for task in tasks {
+        lines.push(format!(
+            "- {} {} phase={} elapsed_ms={}",
+            task.tool_name,
+            task.tool_call_id,
+            task.phase.as_str(),
+            task.started_at.elapsed().as_millis(),
+        ));
+    }
+    lines.join("\n")
+}
+
+async fn version_report(http: &reqwest::Client, config: &Config) -> String {
+    let den = match fetch_server_version(http, config).await {
+        Ok(version) => version.summary(),
+        Err(err) => format!("Den server unreachable: {err:#}"),
+    };
+    format!(
+        "BEARS ACP version\n\nAdapter: version={} git_sha={} built_at_utc={} contract={} v{}\nDen: {}",
+        env!("CARGO_PKG_VERSION"),
+        env!("BEARS_ACP_ADAPTER_GIT_SHA"),
+        env!("BEARS_ACP_ADAPTER_BUILT_AT_UTC"),
+        BEARS_ACP_ADAPTER_CONTRACT_NAME,
+        BEARS_ACP_ADAPTER_CONTRACT_VERSION,
+        den,
+    )
+}
+
+fn debug_ui_report() -> String {
+    let enabled = env_bool("BEARS_ACP_DEBUG_UI");
+    let stream_tokens =
+        env::var("BEARS_ACP_STREAM_TOKENS").unwrap_or_else(|_| "<unset>".to_string());
+    let chunk_chars =
+        env::var("BEARS_ACP_TEXT_CHUNK_CHARS").unwrap_or_else(|_| "<unset>".to_string());
+    format!(
+        "BEARS ACP debug UI\n\n- BEARS_ACP_DEBUG_UI: {}\n- BEARS_ACP_STREAM_TOKENS: {}\n- BEARS_ACP_TEXT_CHUNK_CHARS: {}",
+        if enabled { "enabled" } else { "disabled" },
+        stream_tokens,
+        chunk_chars,
+    )
 }
 
 async fn acp_doctor_report(
