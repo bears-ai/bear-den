@@ -1309,7 +1309,7 @@ async fn handle_request(
                     return Ok(());
                 }
 
-                if let Err(err) = handle_prompt(
+                match handle_prompt(
                     http,
                     config,
                     adapter_state,
@@ -1319,24 +1319,35 @@ async fn handle_request(
                 )
                 .await
                 {
-                    let server_version = fetch_server_version(http, config).await.ok();
-                    let mut message = format!("{err:#}");
-                    if let Some(server_version) = &server_version {
-                        message.push_str("\n\n");
-                        message.push_str(&server_version.summary());
+                    Ok(()) => {
+                        write_response(
+                            id,
+                            Ok(serde_json::to_value(PromptResponse::new(
+                                StopReason::EndTurn,
+                            ))?),
+                        )
+                        .await?;
                     }
-                    write_response(
-                        id,
-                        Err(json_rpc_error(
-                            -32003,
-                            "BEARS prompt failed",
-                            Some(json!({
-                                "message": message,
-                                "server_version": server_version.map(server_version_json),
-                            })),
-                        )),
-                    )
-                    .await?;
+                    Err(err) => {
+                        let server_version = fetch_server_version(http, config).await.ok();
+                        let mut message = format!("{err:#}");
+                        if let Some(server_version) = &server_version {
+                            message.push_str("\n\n");
+                            message.push_str(&server_version.summary());
+                        }
+                        write_response(
+                            id,
+                            Err(json_rpc_error(
+                                -32003,
+                                "BEARS prompt failed",
+                                Some(json!({
+                                    "message": message,
+                                    "server_version": server_version.map(server_version_json),
+                                })),
+                            )),
+                        )
+                        .await?;
+                    }
                 }
             }
         }
