@@ -60,16 +60,18 @@ impl ToolTaskRegistry {
         let total_elapsed_ms = now.duration_since(entry.started_at).as_millis();
         entry.phase = phase;
         entry.updated_at = now;
-        eprintln!(
-            "bears-acp-adapter: tool_task transition session_id={} tool_call_id={} tool_name={} from_phase={} to_phase={} phase_duration_ms={} total_duration_ms={}",
-            session_id,
-            tool_call_id,
-            tool_name,
-            previous_phase.as_str(),
-            phase.as_str(),
-            previous_elapsed_ms,
-            total_elapsed_ms,
-        );
+        if phase.should_log_to_stderr() || previous_phase.should_log_to_stderr() {
+            eprintln!(
+                "bears-acp-adapter: tool_task transition session_id={} tool_call_id={} tool_name={} from_phase={} to_phase={} phase_duration_ms={} total_duration_ms={}",
+                session_id,
+                tool_call_id,
+                tool_name,
+                previous_phase.as_str(),
+                phase.as_str(),
+                previous_elapsed_ms,
+                total_elapsed_ms,
+            );
+        }
     }
 
     pub(crate) async fn remove(
@@ -83,14 +85,16 @@ impl ToolTaskRegistry {
             .await
             .remove(&Self::key(session_id, tool_call_id));
         if let Some(record) = removed.as_ref() {
-            eprintln!(
-                "bears-acp-adapter: tool_task finished session_id={} tool_call_id={} tool_name={} final_phase={} total_duration_ms={}",
-                record.session_id,
-                record.tool_call_id,
-                record.tool_name,
-                record.phase.as_str(),
-                record.started_at.elapsed().as_millis(),
-            );
+            if record.phase != ToolTaskPhase::ResultPosted {
+                eprintln!(
+                    "bears-acp-adapter: tool_task finished session_id={} tool_call_id={} tool_name={} final_phase={} total_duration_ms={}",
+                    record.session_id,
+                    record.tool_call_id,
+                    record.tool_name,
+                    record.phase.as_str(),
+                    record.started_at.elapsed().as_millis(),
+                );
+            }
         }
         removed
     }
@@ -123,6 +127,17 @@ pub(crate) enum ToolTaskPhase {
 }
 
 impl ToolTaskPhase {
+    pub(crate) fn should_log_to_stderr(self) -> bool {
+        matches!(
+            self,
+            Self::PermissionDenied
+                | Self::PermissionTimeout
+                | Self::ExecutionFailed
+                | Self::ResultPostFailed
+                | Self::Cancelled
+        )
+    }
+
     pub(crate) fn as_str(self) -> &'static str {
         match self {
             Self::Received => "received",
@@ -146,6 +161,9 @@ pub(crate) fn log_tool_task_phase(
     tool_name: &str,
     phase: ToolTaskPhase,
 ) {
+    if !phase.should_log_to_stderr() {
+        return;
+    }
     eprintln!(
         "bears-acp-adapter: tool_task phase={} session_id={} tool_call_id={} tool_name={}",
         phase.as_str(),
