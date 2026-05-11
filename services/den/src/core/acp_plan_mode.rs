@@ -2,7 +2,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sqlx::{postgres::PgRow, PgPool, Row as SqlxRow};
 use std::fmt;
-use time::OffsetDateTime;
+use time::{Duration, OffsetDateTime};
+
+pub const SUBMITTED_APPROVAL_TIMEOUT: Duration = Duration::seconds(180);
 use uuid::Uuid;
 
 use crate::errors::CustomError;
@@ -172,6 +174,7 @@ pub async fn active_for_session(
     bear_id: Uuid,
     acp_session_id: &str,
 ) -> Result<Option<AcpPlanModeSessionRow>, CustomError> {
+    expire_stale_submitted_for_session(pool, user_id, bear_id, acp_session_id).await?;
     let query = format!(
         r#"
         SELECT {SELECT_COLUMNS}
@@ -200,6 +203,7 @@ pub async fn get_for_session(
     acp_session_id: &str,
     plan_mode_id: Option<Uuid>,
 ) -> Result<Option<AcpPlanModeSessionRow>, CustomError> {
+    expire_stale_submitted_for_session(pool, user_id, bear_id, acp_session_id).await?;
     let query = if plan_mode_id.is_some() {
         format!(
             r#"
@@ -240,12 +244,14 @@ pub async fn enter_plan_mode(
         ));
     }
     if params.bear_slug.trim().is_empty() {
-        return Err(CustomError::ValidationError("bear_slug is required".to_string()));
+        return Err(CustomError::ValidationError(
+            "bear_slug is required".to_string(),
+        ));
     }
 
     let mut tx = pool.begin().await?;
-    let existing = active_for_session(pool, params.user_id, params.bear_id, &params.acp_session_id)
-        .await?;
+    let existing =
+        active_for_session(pool, params.user_id, params.bear_id, &params.acp_session_id).await?;
     let row = if let Some(existing) = existing {
         existing
     } else {
@@ -290,12 +296,19 @@ pub async fn submit_plan_artifact(
     let body = params.body.trim();
     let artifact_path = params.artifact_path.trim();
     if title.is_empty() {
-        return Err(CustomError::ValidationError("plan title is required".to_string()));
+        return Err(CustomError::ValidationError(
+            "plan title is required".to_string(),
+        ));
     }
     if body.is_empty() {
-        return Err(CustomError::ValidationError("plan body is required".to_string()));
+        return Err(CustomError::ValidationError(
+            "plan body is required".to_string(),
+        ));
     }
-    if artifact_path.is_empty() || !artifact_path.starts_with("pair/plans/") || !artifact_path.ends_with(".md") {
+    if artifact_path.is_empty()
+        || !artifact_path.starts_with("pair/plans/")
+        || !artifact_path.ends_with(".md")
+    {
         return Err(CustomError::ValidationError(
             "plan artifact path must be under pair/plans/ and end with .md".to_string(),
         ));
@@ -367,6 +380,7 @@ pub async fn approve_plan_mode(
     acp_session_id: &str,
     plan_mode_id: Uuid,
 ) -> Result<AcpPlanModeSessionRow, CustomError> {
+    expire_stale_submitted_for_session(pool, user_id, bear_id, acp_session_id).await?;
     close_with_state(
         pool,
         user_id,
@@ -420,6 +434,55 @@ pub async fn cancel_plan_mode(
     .await
 }
 
+pub async fn expire_stale_submitted_for_session(
+    pool: &PgPool,
+    user_id: i32,
+    bear_id: Uuid,
+    acp_session_id: &str,
+) -> Result<Option<AcpPlanModeSessionRow>, CustomError> {
+    let cutoff = OffsetDateTime::now_utc() - SUBMITTED_APPROVAL_TIMEOUT;
+    let mut tx = pool.begin().await?;
+    let query = format!(
+        r#"
+        UPDATE acp_plan_mode_sessions
+        SET state = 'rejected',
+            rejected_at = NOW(),
+            closed_at = NOW(),
+            updated_at = NOW()
+        WHERE user_id = $1
+          AND bear_id = $2
+          AND acp_session_id = $3
+          AND state = 'submitted'
+          AND updated_at < $4
+        RETURNING {SELECT_COLUMNS}
+        "#
+    );
+    let row = sqlx::query(&query)
+        .bind(user_id)
+        .bind(bear_id)
+        .bind(acp_session_id.trim())
+        .bind(cutoff)
+        .fetch_optional(&mut *tx)
+        .await?;
+    let Some(row) = row else {
+        tx.commit().await?;
+        return Ok(None);
+    };
+    let updated = row_from_sql(&row);
+    append_event(
+        &mut tx,
+        &updated,
+        "approval_timeout",
+        json!({
+            "state": "rejected",
+            "timeout_seconds": SUBMITTED_APPROVAL_TIMEOUT.whole_seconds(),
+        }),
+    )
+    .await?;
+    tx.commit().await?;
+    Ok(Some(updated))
+}
+
 async fn close_with_state(
     pool: &PgPool,
     user_id: i32,
@@ -429,7 +492,10 @@ async fn close_with_state(
     state: AcpPlanModeState,
     event_type: &str,
 ) -> Result<AcpPlanModeSessionRow, CustomError> {
-    if matches!(state, AcpPlanModeState::Active | AcpPlanModeState::Submitted) {
+    if matches!(
+        state,
+        AcpPlanModeState::Active | AcpPlanModeState::Submitted
+    ) {
         return Err(CustomError::System(
             "close_with_state requires a closed state".to_string(),
         ));
@@ -462,7 +528,13 @@ async fn close_with_state(
         .await?
         .ok_or_else(|| CustomError::NotFound("open ACP plan mode session not found".to_string()))?;
     let updated = row_from_sql(&row);
-    append_event(&mut tx, &updated, event_type, json!({ "state": state.as_str() })).await?;
+    append_event(
+        &mut tx,
+        &updated,
+        event_type,
+        json!({ "state": state.as_str() }),
+    )
+    .await?;
     tx.commit().await?;
     Ok(updated)
 }
