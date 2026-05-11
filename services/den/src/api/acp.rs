@@ -74,15 +74,29 @@ const BEARS_ACP_ADAPTER_CONTRACT_MAX_SUPPORTED: u32 = 1;
 // incompatible with adapters that do not send `adapter_contract`.
 const BEARS_ACP_ADAPTER_CONTRACT_REQUIRED: bool = false;
 
-fn acp_debug_ui_enabled() -> bool {
-    std::env::var("BEARS_ACP_DEBUG_UI")
+fn env_flag(name: &str) -> bool {
+    std::env::var(name).ok().is_some_and(|value| {
+        matches!(
+            value.trim().to_ascii_lowercase().as_str(),
+            "1" | "true" | "yes" | "on"
+        )
+    })
+}
+
+fn acp_stream_tokens_enabled() -> bool {
+    env_flag("BEARS_ACP_STREAM_TOKENS")
+}
+
+fn acp_text_chunk_chars() -> usize {
+    std::env::var("BEARS_ACP_TEXT_CHUNK_CHARS")
         .ok()
-        .is_some_and(|value| {
-            matches!(
-                value.trim().to_ascii_lowercase().as_str(),
-                "1" | "true" | "yes" | "on"
-            )
-        })
+        .and_then(|value| value.trim().parse::<usize>().ok())
+        .map(|value| value.clamp(64, 2048))
+        .unwrap_or(384)
+}
+
+fn acp_debug_ui_enabled() -> bool {
+    env_flag("BEARS_ACP_DEBUG_UI")
 }
 
 fn acp_debug_event_sample_chars() -> usize {
@@ -1350,11 +1364,15 @@ async fn list_acp_sessions_inner(
             );
             continue;
         }
-        let plan_mode =
-            acp_plan_mode::active_for_session(&state.sqlx_pool, user_id, bear.id, &row.acp_session_id)
-                .await?
-                .map(serde_json::to_value)
-                .transpose()?;
+        let plan_mode = acp_plan_mode::active_for_session(
+            &state.sqlx_pool,
+            user_id,
+            bear.id,
+            &row.acp_session_id,
+        )
+        .await?
+        .map(serde_json::to_value)
+        .transpose()?;
         sessions.push(acp_session_row_to_http_with_modes(row, plan_mode));
     }
     Ok(Json(AcpSessionsListHttpResponse {
@@ -2290,6 +2308,7 @@ async fn prompt_inner(
             &body.client_context,
         ))
     });
+    let stream_tokens = acp_stream_tokens_enabled();
     let upstream = match state
         .letta
         .post_conversation_messages_streaming(
@@ -2297,6 +2316,7 @@ async fn prompt_inner(
             Some(&pair_agent_id),
             &prompt_with_tool_context,
             client_tool_descriptors.clone(),
+            stream_tokens,
         )
         .await
     {
@@ -2327,7 +2347,7 @@ async fn prompt_inner(
             conversation_id: conversation_resolution.upstream_target.clone(),
             agent_id: Some(pair_agent_id.clone()),
             client_tools: client_tool_descriptors,
-            stream_tokens: false,
+            stream_tokens,
             max_steps: 2,
         },
     );
@@ -3141,7 +3161,7 @@ async fn map_letta_stream_frame_to_acp_adapter_events_with_persistence(
     diagnostics: &mut AcpStreamDiagnostics,
 ) -> Result<
     (
-        Vec<Bytes>,
+        Vec<AcpGatewayEvent>,
         Option<(String, String, oneshot::Receiver<AcpToolResultRequest>)>,
     ),
     std::io::Error,
@@ -3200,18 +3220,17 @@ async fn map_letta_stream_frame_to_acp_adapter_events_with_persistence(
             return Ok((Vec::new(), None));
         }
     }
-    diagnostics.observe_mapped_event(&event);
     persist_stream_event_side_effects(&context, &mut event)
         .await
         .map_err(|err| std::io::Error::other(err.to_string()))?;
-    let bytes = match &event {
+    let events = match &event {
         AcpGatewayEvent::ToolRequest {
             approval_required: false,
             ..
         } if result_rx.is_some() => Vec::new(),
-        _ => vec![acp_event_to_adapter_sse(event)],
+        _ => vec![event],
     };
-    Ok((bytes, result_rx))
+    Ok((events, result_rx))
 }
 
 enum AcpPendingFuture {
@@ -3222,7 +3241,7 @@ enum AcpPendingFuture {
                         Output = (
                             Result<
                                 (
-                                    Vec<Bytes>,
+                                    Vec<AcpGatewayEvent>,
                                     Option<(
                                         String,
                                         String,
@@ -3241,6 +3260,84 @@ enum AcpPendingFuture {
     ContinueTool(Pin<Box<dyn Future<Output = Result<reqwest::Response, CustomError>> + Send>>),
 }
 
+#[derive(Default)]
+struct AcpTextChunker {
+    assistant: String,
+    reasoning: String,
+    max_chars: usize,
+}
+
+impl AcpTextChunker {
+    fn new(max_chars: usize) -> Self {
+        Self {
+            assistant: String::new(),
+            reasoning: String::new(),
+            max_chars,
+        }
+    }
+
+    fn push(&mut self, event: AcpGatewayEvent) -> Vec<AcpGatewayEvent> {
+        match event {
+            AcpGatewayEvent::AssistantTextDelta { text } => {
+                self.assistant.push_str(&text);
+                if should_flush_text(&self.assistant, self.max_chars) {
+                    self.flush_assistant().into_iter().collect()
+                } else {
+                    Vec::new()
+                }
+            }
+            AcpGatewayEvent::StatusText { text } => {
+                self.reasoning.push_str(&text);
+                if should_flush_text(&self.reasoning, self.max_chars) {
+                    self.flush_reasoning().into_iter().collect()
+                } else {
+                    Vec::new()
+                }
+            }
+            other => {
+                let mut events = self.flush_all();
+                events.push(other);
+                events
+            }
+        }
+    }
+
+    fn flush_assistant(&mut self) -> Option<AcpGatewayEvent> {
+        if self.assistant.is_empty() {
+            None
+        } else {
+            Some(AcpGatewayEvent::AssistantTextDelta {
+                text: std::mem::take(&mut self.assistant),
+            })
+        }
+    }
+
+    fn flush_reasoning(&mut self) -> Option<AcpGatewayEvent> {
+        if self.reasoning.is_empty() {
+            None
+        } else {
+            Some(AcpGatewayEvent::StatusText {
+                text: std::mem::take(&mut self.reasoning),
+            })
+        }
+    }
+
+    fn flush_all(&mut self) -> Vec<AcpGatewayEvent> {
+        self.flush_assistant()
+            .into_iter()
+            .chain(self.flush_reasoning())
+            .collect()
+    }
+}
+
+fn should_flush_text(buffer: &str, max_chars: usize) -> bool {
+    buffer.chars().count() >= max_chars
+        || buffer.ends_with('\n')
+        || buffer.ends_with(". ")
+        || buffer.ends_with("! ")
+        || buffer.ends_with("? ")
+}
+
 struct AcpLettaSseStream {
     inner: Pin<Box<dyn Stream<Item = Result<Bytes, reqwest::Error>> + Send>>,
     buffer: Vec<u8>,
@@ -3255,6 +3352,7 @@ struct AcpLettaSseStream {
     logged_summary: bool,
     active_tool_call_ids: Vec<String>,
     persist_future: Option<AcpPendingFuture>,
+    text_chunker: AcpTextChunker,
 }
 
 impl AcpLettaSseStream {
@@ -3282,6 +3380,7 @@ impl AcpLettaSseStream {
             logged_summary: false,
             active_tool_call_ids: Vec::new(),
             persist_future: None,
+            text_chunker: AcpTextChunker::new(acp_text_chunk_chars()),
         }
     }
 
@@ -3324,9 +3423,12 @@ impl Stream for AcpLettaSseStream {
                     this.persist_future = None;
                     this.diagnostics = diagnostics;
                     match result {
-                        Ok((bytes, result_rx)) => {
-                            for item in bytes {
-                                this.pending.push_back(item);
+                        Ok((events, result_rx)) => {
+                            for event in events {
+                                for event in this.text_chunker.push(event) {
+                                    this.diagnostics.observe_mapped_event(&event);
+                                    this.pending.push_back(acp_event_to_adapter_sse(event));
+                                }
                             }
                             if let Some((tool_call_id, tool_name, result_rx)) = result_rx {
                                 this.active_tool_call_ids.push(tool_call_id.clone());
@@ -3553,10 +3655,19 @@ impl Stream for AcpLettaSseStream {
                         })));
                     self.poll_next(cx)
                 } else if let Some(event) = this.diagnostics.empty_turn_error_event(&this.context) {
-                    this.diagnostics.observe_mapped_event(&event);
-                    this.pending.push_back(acp_event_to_adapter_sse(event));
+                    for event in this.text_chunker.push(event) {
+                        this.diagnostics.observe_mapped_event(&event);
+                        this.pending.push_back(acp_event_to_adapter_sse(event));
+                    }
                     self.poll_next(cx)
                 } else {
+                    for event in this.text_chunker.flush_all() {
+                        this.diagnostics.observe_mapped_event(&event);
+                        this.pending.push_back(acp_event_to_adapter_sse(event));
+                    }
+                    if !this.pending.is_empty() {
+                        return self.poll_next(cx);
+                    }
                     this.log_summary_once();
                     Poll::Ready(None)
                 }

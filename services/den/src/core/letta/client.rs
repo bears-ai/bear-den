@@ -652,6 +652,7 @@ impl LettaClient {
         agent_id: Option<&str>,
         user_input: &str,
         client_tools: Option<serde_json::Value>,
+        stream_tokens: bool,
     ) -> Result<reqwest::Response, CustomError> {
         if !self.is_enabled() {
             return Err(CustomError::System(
@@ -668,7 +669,10 @@ impl LettaClient {
             }]),
         );
         body.insert("streaming".to_string(), json!(true));
-        body.insert("stream_tokens".to_string(), json!(false));
+        body.insert("stream_tokens".to_string(), json!(stream_tokens));
+        if stream_tokens {
+            body.insert("include_pings".to_string(), json!(true));
+        }
         if let Some(a) = agent_id.map(str::trim).filter(|s| !s.is_empty()) {
             body.insert("agent_id".to_string(), json!(a));
         }
@@ -808,6 +812,9 @@ impl LettaClient {
         body.insert("messages".to_string(), json!([message]));
         body.insert("streaming".to_string(), json!(true));
         body.insert("stream_tokens".to_string(), json!(context.stream_tokens));
+        if context.stream_tokens {
+            body.insert("include_pings".to_string(), json!(true));
+        }
         body.insert("max_steps".to_string(), json!(context.max_steps));
         if let Some(tools) = context.client_tools.clone() {
             body.insert("client_tools".to_string(), tools);

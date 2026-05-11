@@ -105,6 +105,7 @@ pub fn map_native_letta_stream_event_to_acp_event(
         .or_else(|| event.get("message_type").and_then(|v| v.as_str()))
         .unwrap_or("");
     match message_type {
+        "ping" => None,
         "assistant_message" => {
             let text = letta_stream_text_preserving_whitespace(inner)
                 .or_else(|| letta_stream_text_preserving_whitespace(event))
