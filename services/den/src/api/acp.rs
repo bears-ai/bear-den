@@ -896,6 +896,11 @@ fn merge_acp_pair_tool_descriptors(client_tools: serde_json::Value) -> serde_jso
     serde_json::json!(merged)
 }
 
+fn looks_like_letta_waiting_for_approval_error(err: &CustomError) -> bool {
+    err.to_string().contains("waiting for approval")
+        || format!("{err:#}").contains("waiting for approval")
+}
+
 fn acp_direct_tool_prompt_context(
     session_id: &str,
     cwd: &str,
@@ -2339,6 +2344,34 @@ async fn prompt_inner(
         .await
     {
         Ok(upstream) => upstream,
+        Err(err) if looks_like_letta_waiting_for_approval_error(&err) => {
+            tracing::warn!(
+                %request_id,
+                acp_session_id = %session_id,
+                pair_agent_id = %pair_agent_id,
+                error = %err,
+                "Letta conversation is waiting for a stale approval; cancelling agent runs and retrying ACP prompt once"
+            );
+            state.acp_tool_turns.cleanup_session(session_id);
+            if let Err(cancel_err) = state.letta.cancel_agent_runs(&pair_agent_id, &[]).await {
+                tracing::warn!(%request_id, error = %cancel_err, "failed to cancel Letta runs before ACP retry");
+                return Ok(Err(err));
+            }
+            match state
+                .letta
+                .post_conversation_messages_streaming(
+                    &conversation_resolution.upstream_target,
+                    Some(&pair_agent_id),
+                    &prompt_with_tool_context,
+                    client_tool_descriptors.clone(),
+                    stream_tokens,
+                )
+                .await
+            {
+                Ok(upstream) => upstream,
+                Err(retry_err) => return Ok(Err(retry_err)),
+            }
+        }
         Err(err) => return Ok(Err(err)),
     };
 
