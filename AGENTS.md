@@ -48,6 +48,28 @@ Build local Den/Codepool/Bifrost images, start/recreate the dev stack, seed, and
 ./scripts/smoke-stack.sh
 ```
 
+## Project Concepts
+
+- A Bear's **charter** is a descriptive property of the Bear: its durable purpose/responsibility boundary. Do not model `charter_id`, `charters[]`, or a separate Charter entity unless explicitly requested.
+- Bear-scoped records should use `bear_id`. Bear-specific knowledge areas are **Domains** under the Bear, not Cabinet Missions.
+- Cabinet **Missions** are shared work/knowledge containers with an n:n relationship to Bears. Use `mission_ref` only for Cabinet Missions.
+- `core/` is canonical shared Bear memory. Role branches (`talk/`, `pair/`, `curate/`, `work/`, `watch/`) are role-local memory.
+- Letta Archives are derived semantic retrieval indexes over canonical sources, not the source of truth. Do not introduce a BEARS vector store while Letta Archives satisfy retrieval needs.
+
+## Tool Naming
+
+- Model-facing provider names should be concise action names, not implementation-branded names. Prefer `session_info`, `memory_browse`, `memory_read`, `memory_search`, `memory_write_entry`, `web_fetch`, `web_search`, and `fs_edit_file`.
+- Keep canonical internal names scoped and dotted, for example `den.session.info`, `den.memory.browse`, and `acp.fs.edit_file`.
+- Tool names, provider aliases, permission classes, adapter/client methods, and UI labels should be descriptor-owned. Do not add scattered alias `match` arms or hardcoded allowlists when a descriptor resolver can be used.
+- Legacy aliases may be accepted at routing boundaries, but do not advertise legacy names such as `situation_get`, `memory_tree`, `fs_replace_text`, or `den_*` provider names to models.
+
+## Memory and Reflection
+
+- `pair` is API-direct and uses Den-hosted memory tools. `memory_write_entry` writes pair-local entries; `memory_request_review` asks Reflection/`curate` to review role-local memory.
+- `pair` can learn things useful to `work`, but `work` must not read raw `pair/`. The intended path is `pair/` → pair reflection/review request → `curate` → `core`/archive/Cabinet/task context → `work`.
+- Human identity for ACP `pair` comes from the ACP token. Use `session_info.human` as trusted identity; do not infer the human from chat text when it conflicts with Den identity.
+- `curate` owns cross-role memory governance and `core/` cleanliness. Human UI should make its activity visible and overrideable, not require approval for routine inner-loop memory work.
+
 ## Notes
 
 - Do not run `docker compose down`; restart individual services instead.

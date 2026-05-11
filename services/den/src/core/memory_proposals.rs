@@ -124,6 +124,45 @@ pub async fn list_for_bear(
     Ok(rows.into_iter().map(row_from_sql).collect())
 }
 
+pub async fn resolve_for_bear(
+    pool: &PgPool,
+    bear_id: Uuid,
+    proposal_id: Uuid,
+    reviewer_role: BearAgentRole,
+    reviewer_agent_id: Option<&str>,
+    status: &str,
+    review_notes: Option<&str>,
+    decision_summary: Option<&str>,
+) -> Result<MemoryProposalRow, CustomError> {
+    let row = sqlx::query(
+        r#"
+        UPDATE bear_memory_proposals
+        SET status = $3,
+            reviewer_role = $4,
+            reviewer_agent_id = $5,
+            review_notes = $6,
+            decision_summary = $7,
+            reviewed_at = NOW()
+        WHERE bear_id = $1 AND id = $2
+        RETURNING id, bear_id, source_role, source_agent_id, source_paths, source_refs,
+                  proposal_type, suggested_action, target_ref, title, summary, rationale,
+                  proposed_content, proposed_patch, refs, sensitivity, requires_human, status,
+                  reviewer_role, reviewer_agent_id, review_notes, decision_summary,
+                  result_path, result_commit, created_at, reviewed_at
+        "#,
+    )
+    .bind(bear_id)
+    .bind(proposal_id)
+    .bind(status)
+    .bind(reviewer_role.as_str())
+    .bind(reviewer_agent_id)
+    .bind(review_notes)
+    .bind(decision_summary)
+    .fetch_one(pool)
+    .await?;
+    Ok(row_from_sql(row))
+}
+
 pub async fn get_for_bear(
     pool: &PgPool,
     bear_id: Uuid,
