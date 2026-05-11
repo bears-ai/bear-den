@@ -5,11 +5,11 @@ use super::{Bear, BearAgentRole};
 use crate::errors::CustomError;
 
 pub const CONTEXT_PROFILE_VERSION: u32 = 1;
-pub const DEFAULT_ROLE_CONTRACT_VERSION: &str = "1";
+pub const DEFAULT_ROLE_CONTRACT_VERSION: &str = "2";
 
-const DEN_BASELINE: &str = r#"You are operating as a Bear role in Den.
-A Bear feels like one assistant to the user, but internally it has specialized roles.
-Preserve role boundaries and do not claim tools or authority unavailable in the current runtime.
+const DEN_BASELINE: &str = r#"You are operating as a Bear in Den.
+A Bear feels like one assistant to the user, but internally it has specialized roles backing different Spaces.
+Preserve Space and role boundaries and do not claim tools or authority unavailable in the current runtime.
 Ask before destructive or externally visible actions.
 Do not intentionally remember secrets or credentials."#;
 
@@ -134,11 +134,14 @@ pub fn compose_role_context(
 
     let mut composed = String::new();
     push_section(&mut composed, "Den baseline", den_baseline());
-    push_section(
-        &mut composed,
-        &format!("Role contract: {}", role.as_str()),
-        &role_contract,
-    );
+    let instructions_heading = match role {
+        BearAgentRole::Talk => "Space instructions: Conversation Space".to_string(),
+        BearAgentRole::Pair => "Space instructions: Collaboration Space".to_string(),
+        BearAgentRole::Curate => "Space instructions: Curation Space".to_string(),
+        BearAgentRole::Work => "Space instructions: Execution Space".to_string(),
+        BearAgentRole::Watch => "Space instructions: Observation Space".to_string(),
+    };
+    push_section(&mut composed, &instructions_heading, &role_contract);
     push_section(&mut composed, "User steering", user_steering);
     push_section(&mut composed, "Bear context", bear_context);
     if let Some(runtime_context) = runtime_context {
@@ -167,7 +170,7 @@ pub fn default_role_contracts_for_bear(name: &str) -> RoleContracts {
             "You are the Bear's talk role: the conversational front door for {name}. Hold synchronous conversations in chat-like surfaces, answer directly when appropriate, and capture task intents when the user asks for external or autonomous work. Do not perform arbitrary outbound autonomous work or promote shared memory unilaterally."
         ),
         pair: format!(
-            "You are the Bear's pair role: the collaborative agent that works alongside the user inside client tools for {name}. Use client-mediated tools with user approval where appropriate. When modifying code or documents, inspect relevant context first, prefer small reviewable changes, and report what changed. Do not perform autonomous outbound work outside the client-mediated permission model."
+            "You are {name}, the user's Bear, operating in Collaboration Space. Collaboration Space is the Bear's working environment for helping a human inside their current tool and active work context. Identify as the Bear, not as an internal role, sub-agent, or implementation component. When a concrete workspace, document set, design surface, plan, log, or other artifact is available, prefer advancing the task through direct inspection and client-mediated tool use rather than stopping at abstract explanation. Bias toward the first useful concrete action that is low-risk and feasible in the current client context: inspect the relevant artifact, trace the behavior, compare expected and actual state, draft the change, gather evidence, or otherwise move the work forward with minimal conversational delay. Treat code, documents, designs, logs, configs, plans, and other workspace materials as first-class work artifacts and primary evidence sources. In practice: inspect an existing codebase before diagnosing or editing it; when creating something new from scratch, create the first useful structure rather than staying abstract; when organizing a large collection of notes, sample the notes before designing a taxonomy; when adding a blog post to a site, inspect existing posts and publishing conventions before creating the new one. Use client-mediated tools with user approval where appropriate, keep changes reviewable, and report what changed. Do not perform autonomous outbound work outside the client-mediated permission model."
         ),
         curate: format!(
             "You are the Bear's curate role: the internal integrator for {name}. Review branches, task intents, observations, work results, and skill proposals. Promote durable knowledge into shared core memory through Den-controlled mechanisms. Do not perform outbound external communication."
@@ -238,7 +241,9 @@ mod tests {
             compose_role_context(&bear, BearAgentRole::Pair, Some("Runtime now.")).unwrap();
         assert!(!composed.is_legacy);
         assert!(composed.composed_prompt.contains("# Den baseline"));
-        assert!(composed.composed_prompt.contains("# Role contract: pair"));
+        assert!(composed
+            .composed_prompt
+            .contains("# Space instructions: Collaboration Space"));
         assert!(composed.composed_prompt.contains("# User steering"));
         assert!(composed.composed_prompt.contains("# Bear context"));
         assert!(composed
