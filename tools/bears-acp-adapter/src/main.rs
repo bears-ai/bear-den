@@ -3879,7 +3879,13 @@ async fn request_tool_permission(
     meta.insert("risk".to_string(), json!(policy.risk()));
     meta.insert("operation".to_string(), json!(display.permission_operation));
     let tool_call = ToolCallUpdate::new(tool_call_id.to_string(), fields).meta(Some(meta.clone()));
-    let options = permission_options_for_context(context, target_path, target_url, target_command);
+    let options = permission_options_for_context(
+        context,
+        target_path,
+        target_url,
+        target_command,
+        permission_family_label(tool_name),
+    );
     let request =
         RequestPermissionRequest::new(session_id.to_string(), tool_call, options).meta(Some(meta));
     let decision = send_permission_request(
@@ -4460,6 +4466,20 @@ fn tool_display(tool_name: &str) -> ToolDisplay {
             verb: "Running",
             permission_operation: "run this local tool",
         },
+    }
+}
+
+fn permission_family_label(tool_name: &str) -> &'static str {
+    match permission_class_for_tool(tool_name) {
+        "read_files" => "reading files",
+        "edit_files" => "editing files",
+        "delete_files" => "deleting files",
+        "git_read" => "reading git status",
+        "git_write" => "modifying git status",
+        "command_run" => "running commands",
+        "network" => "network access",
+        "browser" => "browser use",
+        _ => "similar local actions",
     }
 }
 

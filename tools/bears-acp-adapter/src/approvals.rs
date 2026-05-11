@@ -454,6 +454,7 @@ pub(crate) fn permission_options_for_context(
     target_path: Option<&Path>,
     target_url: Option<&str>,
     target_command: Option<&str>,
+    permission_family_label: &str,
 ) -> Vec<PermissionOption> {
     let mut options = vec![PermissionOption::new(
         "allow_once",
@@ -476,7 +477,7 @@ pub(crate) fn permission_options_for_context(
             options.push(PermissionOption::new(
                 "allow_workspace",
                 format!(
-                    "Always allow this tool family in {}",
+                    "Always allow {permission_family_label} in {}",
                     approval_workspace_scope_label(context)
                 ),
                 PermissionOptionKind::AllowAlways,
@@ -493,7 +494,7 @@ pub(crate) fn permission_options_for_context(
         options.push(PermissionOption::new(
             "allow_workspace",
             format!(
-                "Always allow this tool family in {}",
+                "Always allow {permission_family_label} in {}",
                 approval_workspace_scope_label(context)
             ),
             PermissionOptionKind::AllowAlways,
@@ -501,7 +502,7 @@ pub(crate) fn permission_options_for_context(
     }
     options.push(PermissionOption::new(
         "allow_global",
-        "Always allow this tool family globally",
+        format!("Always allow {permission_family_label} globally"),
         PermissionOptionKind::AllowAlways,
     ));
     options.push(PermissionOption::new(
@@ -1044,6 +1045,7 @@ mod tests {
             Some(Path::new("/workspace/src/main.rs")),
             None,
             None,
+            "file-reading tools",
         );
         let serialized = serde_json::to_value(&options).unwrap();
         let option_ids = serialized
@@ -1083,6 +1085,7 @@ mod tests {
             Some(Path::new("/workspace")),
             None,
             None,
+            "file-reading tools",
         );
         let serialized = serde_json::to_value(&options).unwrap();
         let option_ids = serialized
@@ -1111,6 +1114,7 @@ mod tests {
             None,
             Some("https://docs.example.test:8443/reference"),
             None,
+            "network tools",
         );
         let serialized = serde_json::to_value(&options).unwrap();
         let option_ids = serialized
@@ -1137,7 +1141,13 @@ mod tests {
     #[test]
     fn permission_options_use_command_scope_for_process_targets() {
         let context = workspace_context("/workspace");
-        let options = permission_options_for_context(Some(&context), None, None, Some("cargo"));
+        let options = permission_options_for_context(
+            Some(&context),
+            None,
+            None,
+            Some("cargo"),
+            "command execution tools",
+        );
         let serialized = serde_json::to_value(&options).unwrap();
         let option_ids = serialized
             .as_array()
