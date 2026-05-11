@@ -9,7 +9,7 @@ use crate::core::{
     bears::{
         db as bears_db,
         model::{Bear, BearAgent, BearAgentRole},
-        provision::{desired_role_tool_ids, render_role_prompt, role_agent_name, role_config_hash},
+        provision::{desired_role_tool_ids, role_agent_name, role_config_hash, role_prompt_text},
         runtime_plan::default_runtime_plan,
     },
     bifrost::BifrostClient,
@@ -148,7 +148,7 @@ async fn sync_one_role(
         None
     };
 
-    let prompt = match render_role_prompt(bear, role) {
+    let prompt = match role_prompt_text(pool, bear, role).await {
         Ok(prompt) => prompt,
         Err(err) => {
             let msg = format!("role prompt rendering failed: {err}");
@@ -200,7 +200,7 @@ async fn sync_one_role(
         };
     }
 
-    let config_hash = role_config_hash(bear, role);
+    let config_hash = role_config_hash(pool, bear, role).await?;
     if let Err(err) = bears_db::mark_bear_agent_synced(
         pool,
         bear.id,

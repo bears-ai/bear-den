@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use sqlx::types::Json;
 
-use super::{Bear, BearAgentRole};
+use super::{managed_blocks::{managed_space_block_key, ResolvedManagedBlockSet}, Bear, BearAgentRole};
 use crate::errors::CustomError;
 
 pub const CONTEXT_PROFILE_VERSION: u32 = 1;
@@ -108,6 +108,54 @@ fn push_section(out: &mut String, heading: &str, body: &str) {
     out.push_str(body);
 }
 
+pub fn render_managed_role_prompt(
+    bear: &Bear,
+    role: BearAgentRole,
+    resolved: Option<&ResolvedManagedBlockSet>,
+) -> Result<String, CustomError> {
+    let Some(profile) = context_profile_from_json(&bear.context_profile)? else {
+        return Ok(bear.system_prompt.trim().to_string());
+    };
+
+    let den_baseline_text = resolved
+        .and_then(|resolved| {
+            resolved
+                .blocks
+                .iter()
+                .find(|block| block.key == "den_baseline")
+                .map(|block| block.effective_content.as_str())
+        })
+        .unwrap_or_else(den_baseline);
+    let role_contract = resolved
+        .and_then(|resolved| {
+            let key = managed_space_block_key(role);
+            resolved
+                .blocks
+                .iter()
+                .find(|block| block.key == key)
+                .map(|block| block.effective_content.trim().to_string())
+        })
+        .unwrap_or_else(|| profile.role_contracts.get(role).trim().to_string());
+
+    let user_steering = profile.user_steering.trim();
+    let bear_context = profile.bear_context.trim();
+
+    let mut composed = String::new();
+    push_section(&mut composed, "Den baseline", den_baseline_text);
+    let instructions_heading = match role {
+        BearAgentRole::Talk => "Space instructions: Conversation Space".to_string(),
+        BearAgentRole::Pair => "Space instructions: Collaboration Space".to_string(),
+        BearAgentRole::Curate => "Space instructions: Curation Space".to_string(),
+        BearAgentRole::Work => "Space instructions: Execution Space".to_string(),
+        BearAgentRole::Watch => "Space instructions: Observation Space".to_string(),
+    };
+    push_section(&mut composed, &instructions_heading, &role_contract);
+    push_section(&mut composed, "User steering", user_steering);
+    push_section(&mut composed, "Bear context", bear_context);
+
+    Ok(composed)
+}
+
 pub fn compose_role_context(
     bear: &Bear,
     role: BearAgentRole,
@@ -132,18 +180,7 @@ pub fn compose_role_context(
     let bear_context = profile.bear_context.trim();
     let runtime_context = runtime_context.map(str::trim).filter(|s| !s.is_empty());
 
-    let mut composed = String::new();
-    push_section(&mut composed, "Den baseline", den_baseline());
-    let instructions_heading = match role {
-        BearAgentRole::Talk => "Space instructions: Conversation Space".to_string(),
-        BearAgentRole::Pair => "Space instructions: Collaboration Space".to_string(),
-        BearAgentRole::Curate => "Space instructions: Curation Space".to_string(),
-        BearAgentRole::Work => "Space instructions: Execution Space".to_string(),
-        BearAgentRole::Watch => "Space instructions: Observation Space".to_string(),
-    };
-    push_section(&mut composed, &instructions_heading, &role_contract);
-    push_section(&mut composed, "User steering", user_steering);
-    push_section(&mut composed, "Bear context", bear_context);
+    let mut composed = render_managed_role_prompt(bear, role, None)?;
     if let Some(runtime_context) = runtime_context {
         push_section(&mut composed, "Runtime/thread context", runtime_context);
     }

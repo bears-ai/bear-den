@@ -11,8 +11,9 @@ use crate::core::{
     bifrost::BifrostClient, letta::LettaClient, memory_manager_head::register_memfs_role_view,
 };
 
-use super::context_composition;
+use super::context_composition::render_role_prompt;
 use super::db as bears_db;
+use super::managed_blocks::{compile_and_store_managed_config_for_bear, get_compiled_bear_config};
 use super::model::{Bear, BearAgentRole};
 use super::runtime_plan::default_runtime_plan;
 use crate::errors::CustomError;
@@ -75,6 +76,9 @@ pub async fn provision_bear_if_configured(
     provision_bear_roles(pool, letta, bifrost, &bear).await?;
     bears_db::backfill_default_letta_agent_type(pool, bear_id, "letta_v1_agent").await?;
     bears_db::ensure_default_runtime_plan(pool, bear_id, &default_runtime_plan()).await?;
+    if bear.context_profile.is_some() {
+        compile_and_store_managed_config_for_bear(pool, &bear).await?;
+    }
     Ok(())
 }
 
@@ -164,6 +168,14 @@ pub async fn reconcile_bear_if_configured(
     bifrost: &BifrostClient,
     bear_id: Uuid,
 ) -> Result<crate::core::bears::sync::BearSyncSummary, CustomError> {
+    let bear = bears_db::get_bear(pool, bear_id)
+        .await?
+        .ok_or_else(|| CustomError::NotFound("bear not found".to_string()))?;
+
+    if bear.context_profile.is_some() {
+        compile_and_store_managed_config_for_bear(pool, &bear).await?;
+    }
+
     if !letta.is_enabled() {
         return Ok(crate::core::bears::sync::BearSyncSummary {
             bear_id,
@@ -195,7 +207,7 @@ async fn provision_bear_role(
             .as_deref()
             .is_some_and(|id| !id.trim().is_empty())
         {
-            let current_hash = role_config_hash(bear, role);
+            let current_hash = role_config_hash(pool, bear, role).await?;
             let stored_hash = existing.config_hash.as_ref().map(|j| j.as_ref());
             if existing.last_provisioned_version >= bear.provisioning_version
                 && stored_hash == Some(&current_hash)
@@ -217,10 +229,10 @@ async fn provision_bear_role(
 
     bears_db::mark_bear_agent_provisioning(pool, bear.id, role).await?;
 
-    let result = create_role_agent(letta, bifrost, bear, role).await;
+    let result = create_role_agent(pool, letta, bifrost, bear, role).await;
     match result {
         Ok(agent_id) => {
-            let config_hash = role_config_hash(bear, role);
+            let config_hash = role_config_hash(pool, bear, role).await?;
             bears_db::mark_bear_agent_ready(
                 pool,
                 bear.id,
@@ -243,6 +255,7 @@ async fn provision_bear_role(
 }
 
 async fn create_role_agent(
+    pool: &PgPool,
     letta: &LettaClient,
     bifrost: &BifrostClient,
     bear: &Bear,
@@ -276,7 +289,7 @@ async fn create_role_agent(
     };
 
     let name = role_agent_name(bear, role);
-    let prompt = render_role_prompt(bear, role)?;
+    let prompt = role_prompt_text(pool, bear, role).await?;
     let tags = role.tags_for_bear(bear.id);
 
     letta
@@ -338,22 +351,84 @@ pub(crate) fn desired_role_tool_ids(bear: &Bear, role: BearAgentRole) -> Vec<Str
     }
 }
 
-pub(crate) fn render_role_prompt(bear: &Bear, role: BearAgentRole) -> Result<String, CustomError> {
-    context_composition::render_role_prompt(bear, role)
+pub(crate) async fn role_prompt_text(
+    pool: &PgPool,
+    bear: &Bear,
+    role: BearAgentRole,
+) -> Result<String, CustomError> {
+    if bear.context_profile.is_none() {
+        return render_role_prompt(bear, role);
+    }
+
+    if let Some(compiled) = get_compiled_bear_config(pool, bear.id).await? {
+        if let Some(prompt) = compiled
+            .rendered_prompts_json
+            .0
+            .get(role.as_str())
+            .and_then(|v| v.as_str())
+        {
+            return Ok(prompt.to_string());
+        }
+    }
+
+    let compiled = compile_and_store_managed_config_for_bear(pool, bear).await?;
+    compiled
+        .rendered_prompts
+        .get(role.as_str())
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
+        .ok_or_else(|| {
+            CustomError::System(format!(
+                "compiled managed prompt missing rendered prompt for role {}",
+                role.as_str()
+            ))
+        })
 }
 
-pub(crate) fn role_config_hash(bear: &Bear, role: BearAgentRole) -> serde_json::Value {
-    json!({
+pub(crate) async fn role_config_hash(
+    pool: &PgPool,
+    bear: &Bear,
+    role: BearAgentRole,
+) -> Result<serde_json::Value, CustomError> {
+    let mut payload = json!({
         "schema_version": 1,
         "role": role.as_str(),
         "runtime_family": role.runtime_family(),
         "bear_provisioning_version": bear.provisioning_version,
         "tool_ids": desired_role_tool_ids(bear, role),
-        "prompt_strategy": if bear.context_profile.is_some() { "role_aware_context_profile_v1" } else { "legacy_system_prompt_v1" },
+        "prompt_strategy": if bear.context_profile.is_some() { "managed_compiled_context_v1" } else { "legacy_system_prompt_v1" },
         "skills": {
             "manifest_projection": "pending"
         }
-    })
+    });
+
+    if bear.context_profile.is_some() {
+        let compiled = match get_compiled_bear_config(pool, bear.id).await? {
+            Some(compiled) => compiled,
+            None => {
+                compile_and_store_managed_config_for_bear(pool, bear).await?;
+                get_compiled_bear_config(pool, bear.id)
+                    .await?
+                    .ok_or_else(|| {
+                        CustomError::System(
+                            "compiled managed config missing after successful compile".to_string(),
+                        )
+                    })?
+            }
+        };
+
+        let prompt_hash = compiled
+            .rendered_prompt_hashes_json
+            .0
+            .get(role.as_str())
+            .cloned()
+            .unwrap_or(serde_json::Value::Null);
+        payload["compiled_config_hash"] = json!(compiled.config_hash);
+        payload["compiled_version"] = json!(compiled.compiled_version);
+        payload["role_prompt_hash"] = prompt_hash;
+    }
+
+    Ok(payload)
 }
 
 #[cfg(test)]
