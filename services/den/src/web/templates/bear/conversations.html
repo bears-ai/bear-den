@@ -1,8 +1,8 @@
-{% extends "base.html" %} {% block title %}All threads · {{ bear.name | e }}{%
-endblock %} {% block content %}
+{% extends "base.html" %} {% block title %}All conversations · {{ bear.name | e
+}}{% endblock %} {% block content %}
 <section class="den-all-threads-page" data-bear-id="{{ bear.id }}">
     <div class="den-design-chat-toolbar den-chat-toolbar">
-        <h2>All threads</h2>
+        <h2>All conversations</h2>
         <a class="button-link" href="/bear/{{ bear.slug | e }}/details"
             >Back to bear</a
         >
@@ -11,9 +11,15 @@ endblock %} {% block content %}
     {% if list_error %}
     <p class="form-errors">{{ list_error | e }}</p>
     {% endif %} {% if conversation_rows and conversation_rows | length > 0 %}
-    <div class="den-all-threads-section" data-thread-section="active">
-        <h3>Active threads</h3>
-        <ul class="den-all-threads-list" aria-label="Active threads">
+    <div
+        class="den-all-threads-section"
+        data-thread-section="active"
+    >
+        <h3>Active conversations</h3>
+        <ul
+            class="den-all-threads-list"
+            aria-label="Active conversations"
+        >
             {% for c in conversation_rows %} {% if not c.archived %}
             <li class="den-conv-menu-row" data-thread-archived="false">
                 <a class="den-conv-menu-main" href="{{ c.web_href | e }}">
@@ -24,34 +30,40 @@ endblock %} {% block content %}
                     </span>
                 </a>
                 <div class="den-all-threads-actions">
-                    <a class="den-conv-menu-action" href="{{ c.web_href | e }}">Open</a>
+                    <a class="den-conv-menu-action" href="{{ c.web_href | e }}"
+                        >Open</a
+                    >
                     {% if c.id != "default" %}
                     <button
                         type="button"
                         class="den-conv-menu-action den-all-threads-rename-action"
                         data-conversation-id="{{ c.id | e }}"
-                        aria-label="Rename thread {{ c.title | e }}"
-                    >Rename</button>
+                        aria-label="Rename conversation {{ c.title | e }}"
+                    >
+                        Rename
+                    </button>
                     <button
                         type="button"
                         class="den-conv-menu-action den-all-threads-archive-action"
                         data-conversation-id="{{ c.id | e }}"
                         data-archived="false"
-                        aria-label="Archive thread {{ c.title | e }}"
-                    >Archive</button>
+                        aria-label="Archive conversation {{ c.title | e }}"
+                    >
+                        Archive
+                    </button>
                     {% endif %}
                 </div>
             </li>
             {% endif %} {% endfor %}
         </ul>
         <p class="form-hint den-all-threads-empty" data-empty-for="active">
-            No active threads.
+            No active conversations.
         </p>
     </div>
 
     <div class="den-all-threads-section" data-thread-section="archived">
-        <h3>Archived threads</h3>
-        <ul class="den-all-threads-list" aria-label="Archived threads">
+        <h3>Archived conversations</h3>
+        <ul class="den-all-threads-list" aria-label="Archived conversations">
             {% for c in conversation_rows %} {% if c.archived %}
             <li
                 class="den-conv-menu-row den-all-threads-row-archived"
@@ -65,28 +77,34 @@ endblock %} {% block content %}
                     </span>
                 </a>
                 <div class="den-all-threads-actions">
-                    <a class="den-conv-menu-action" href="{{ c.web_href | e }}">Open</a>
+                    <a class="den-conv-menu-action" href="{{ c.web_href | e }}"
+                        >Open</a
+                    >
                     {% if c.id != "default" %}
                     <button
                         type="button"
                         class="den-conv-menu-action den-all-threads-rename-action"
                         data-conversation-id="{{ c.id | e }}"
-                        aria-label="Rename thread {{ c.title | e }}"
-                    >Rename</button>
+                        aria-label="Rename conversation {{ c.title | e }}"
+                    >
+                        Rename
+                    </button>
                     <button
                         type="button"
                         class="den-conv-menu-action den-all-threads-archive-action"
                         data-conversation-id="{{ c.id | e }}"
                         data-archived="true"
-                        aria-label="Unarchive thread {{ c.title | e }}"
-                    >Unarchive</button>
+                        aria-label="Unarchive conversation {{ c.title | e }}"
+                    >
+                        Unarchive
+                    </button>
                     {% endif %}
                 </div>
             </li>
             {% endif %} {% endfor %}
         </ul>
         <p class="form-hint den-all-threads-empty" data-empty-for="archived">
-            No archived threads.
+            No archived conversations.
         </p>
     </div>
     {% elif not list_error %}
@@ -186,7 +204,7 @@ endblock %} {% block content %}
             button.setAttribute(
                 "aria-label",
                 (archived ? "Unarchive" : "Archive") +
-                    " thread " +
+                    " conversation " +
                     (title ? title.textContent : ""),
             );
 
@@ -223,7 +241,10 @@ endblock %} {% block content %}
                     ? rowForRename.querySelector(".den-all-threads-title")
                     : null;
                 var currentTitle = titleEl ? titleEl.textContent : renameId;
-                var nextTitle = window.prompt("Rename thread", currentTitle);
+                var nextTitle = window.prompt(
+                    "Rename conversation",
+                    currentTitle,
+                );
                 if (nextTitle == null) return;
                 nextTitle = nextTitle.trim();
                 if (!nextTitle) return;
@@ -234,7 +255,7 @@ endblock %} {% block content %}
                         if (titleEl) titleEl.textContent = nextTitle;
                         renameButton.setAttribute(
                             "aria-label",
-                            "Rename thread " + nextTitle,
+                            "Rename conversation " + nextTitle,
                         );
                         var archiveButton = rowForRename
                             ? rowForRename.querySelector(
@@ -248,7 +269,7 @@ endblock %} {% block content %}
                                 "true"
                                     ? "Unarchive"
                                     : "Archive") +
-                                    " thread " +
+                                    " conversation " +
                                     nextTitle,
                             );
                         }

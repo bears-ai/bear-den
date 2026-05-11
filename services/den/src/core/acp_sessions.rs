@@ -32,6 +32,12 @@ pub struct AcpSessionRow {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cwd: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub conversation_title: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub conversation_title_updated_at: Option<OffsetDateTime>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub conversation_title_synced_at: Option<OffsetDateTime>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub closed_at: Option<OffsetDateTime>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub archived_at: Option<OffsetDateTime>,
@@ -106,6 +112,9 @@ fn acp_session_row_from_sql(row: &PgRow) -> AcpSessionRow {
         resolved_conversation_id: row.get("resolved_conversation_id"),
         client: row.get("client"),
         cwd: row.get("cwd"),
+        conversation_title: row.get("conversation_title"),
+        conversation_title_updated_at: row.get("conversation_title_updated_at"),
+        conversation_title_synced_at: row.get("conversation_title_synced_at"),
         closed_at: row.get("closed_at"),
         archived_at: row.get("archived_at"),
         created_at: row.get("created_at"),
@@ -123,6 +132,7 @@ pub async fn find_for_user_bear_session(
         r#"
         SELECT id, user_id, bear_id, bear_slug, acp_session_id, runtime_session_id,
                conversation_id, resolved_conversation_id, client, cwd,
+               conversation_title, conversation_title_updated_at, conversation_title_synced_at,
                closed_at, archived_at, created_at, updated_at
         FROM acp_sessions
         WHERE user_id = $1 AND bear_slug = $2 AND acp_session_id = $3
@@ -154,6 +164,7 @@ pub async fn list_for_user_bear(
         r#"
         SELECT id, user_id, bear_id, bear_slug, acp_session_id, runtime_session_id,
                conversation_id, resolved_conversation_id, client, cwd,
+               conversation_title, conversation_title_updated_at, conversation_title_synced_at,
                closed_at, archived_at, created_at, updated_at
         FROM acp_sessions
         WHERE user_id = $1 AND bear_slug = $2
@@ -190,6 +201,52 @@ pub async fn mark_closed(pool: &PgPool, id: Uuid) -> Result<(), CustomError> {
         "#,
     )
     .bind(id)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+pub async fn set_title_for_bear_conversation(
+    pool: &PgPool,
+    bear_id: Uuid,
+    conversation_id: &str,
+    title: &str,
+) -> Result<u64, CustomError> {
+    let result = sqlx::query(
+        r#"
+        UPDATE acp_sessions
+        SET conversation_title = $3,
+            conversation_title_updated_at = NOW(),
+            conversation_title_synced_at = NULL,
+            updated_at = NOW()
+        WHERE bear_id = $1
+          AND (conversation_id = $2 OR resolved_conversation_id = $2)
+        "#,
+    )
+    .bind(bear_id)
+    .bind(conversation_id)
+    .bind(title)
+    .execute(pool)
+    .await?;
+    Ok(result.rows_affected())
+}
+
+pub async fn mark_title_synced(
+    pool: &PgPool,
+    user_id: i32,
+    bear_id: Uuid,
+    acp_session_id: &str,
+) -> Result<(), CustomError> {
+    sqlx::query(
+        r#"
+        UPDATE acp_sessions
+        SET conversation_title_synced_at = NOW()
+        WHERE user_id = $1 AND bear_id = $2 AND acp_session_id = $3
+        "#,
+    )
+    .bind(user_id)
+    .bind(bear_id)
+    .bind(acp_session_id)
     .execute(pool)
     .await?;
     Ok(())

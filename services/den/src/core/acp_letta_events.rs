@@ -60,6 +60,10 @@ pub enum AcpGatewayEvent {
     ConversationResolved {
         conversation_id: String,
     },
+    SessionInfoUpdate {
+        title: Option<String>,
+        updated_at: Option<String>,
+    },
 }
 
 pub fn letta_inner(msg: &serde_json::Value) -> &serde_json::Value {
@@ -568,6 +572,7 @@ pub fn acp_event_adapter_type(event: &AcpGatewayEvent) -> &'static str {
         AcpGatewayEvent::ToolRequest { .. } => "tool_request",
         AcpGatewayEvent::PermissionRequest { .. } => "permission_request",
         AcpGatewayEvent::PlanUpdate { .. } => "plan_update",
+        AcpGatewayEvent::SessionInfoUpdate { .. } => "session_info_update",
         AcpGatewayEvent::ConversationResolved { .. } => "conversation_resolved",
     }
 }
@@ -582,6 +587,7 @@ pub fn acp_event_has_visible_output(event: &AcpGatewayEvent) -> bool {
         | AcpGatewayEvent::ToolRequest { .. }
         | AcpGatewayEvent::PermissionRequest { .. }
         | AcpGatewayEvent::PlanUpdate { .. }
+        | AcpGatewayEvent::SessionInfoUpdate { .. }
         | AcpGatewayEvent::ConversationResolved { .. } => false,
     }
 }
@@ -678,6 +684,15 @@ pub fn acp_event_to_adapter_sse(event: AcpGatewayEvent) -> Bytes {
                 "component": "den.acp",
                 "phase": "permission_request_mapped",
                 "transport_version": 3,
+            }
+        }),
+        AcpGatewayEvent::SessionInfoUpdate { title, updated_at } => serde_json::json!({
+            "type": "session_info_update",
+            "title": title,
+            "updated_at": updated_at,
+            "diagnostic": {
+                "component": "den.acp",
+                "phase": "session_info_update"
             }
         }),
         AcpGatewayEvent::PlanUpdate(plan) => serde_json::json!({

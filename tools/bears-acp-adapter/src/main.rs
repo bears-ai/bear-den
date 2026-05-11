@@ -13,10 +13,10 @@ use agent_client_protocol::schema::{
     PromptResponse, ProtocolVersion, ReadTextFileRequest, ReadTextFileResponse,
     ReleaseTerminalRequest, RequestPermissionRequest, ResumeSessionResponse, SessionCapabilities,
     SessionCloseCapabilities, SessionConfigOption, SessionConfigOptionCategory,
-    SessionConfigSelectOption, SessionInfo, SessionListCapabilities, SessionMode, SessionModeState,
-    SessionResumeCapabilities, SessionUpdate, StopReason, TerminalOutputRequest,
-    TerminalOutputResponse, ToolCall, ToolCallContent, ToolCallLocation, ToolCallStatus,
-    ToolCallUpdate, ToolCallUpdateFields, ToolKind, WaitForTerminalExitRequest,
+    SessionConfigSelectOption, SessionInfo, SessionInfoUpdate, SessionListCapabilities,
+    SessionMode, SessionModeState, SessionResumeCapabilities, SessionUpdate, StopReason,
+    TerminalOutputRequest, TerminalOutputResponse, ToolCall, ToolCallContent, ToolCallLocation,
+    ToolCallStatus, ToolCallUpdate, ToolCallUpdateFields, ToolKind, WaitForTerminalExitRequest,
     WaitForTerminalExitResponse,
 };
 use anyhow::{anyhow, Context, Result};
@@ -301,6 +301,28 @@ fn plan_entries_from_work_plan_args(args: &Value) -> Vec<PlanEntry> {
                 .collect::<Vec<_>>()
         })
         .unwrap_or_default()
+}
+
+async fn send_session_info_update(
+    session_id: &str,
+    title: Option<String>,
+    updated_at: Option<String>,
+) -> Result<()> {
+    let mut update = SessionInfoUpdate::new();
+    if let Some(title) = title {
+        update = update.title(title);
+    }
+    if let Some(updated_at) = updated_at {
+        update = update.updated_at(updated_at);
+    }
+    write_notification(
+        "session/update",
+        json!({
+            "sessionId": session_id,
+            "update": serde_json::to_value(SessionUpdate::SessionInfoUpdate(update))?,
+        }),
+    )
+    .await
 }
 
 async fn send_plan_update(session_id: &str, entries: Vec<PlanEntry>) -> Result<()> {
@@ -2072,10 +2094,16 @@ fn map_den_sessions_list_to_acp(den: &Value) -> Result<Value> {
             continue;
         }
         let title = s
-            .get("resolved_conversation_id")
+            .get("title")
             .and_then(Value::as_str)
             .filter(|t| !t.is_empty())
             .map(str::to_string)
+            .or_else(|| {
+                s.get("resolved_conversation_id")
+                    .and_then(Value::as_str)
+                    .filter(|t| !t.is_empty())
+                    .map(str::to_string)
+            })
             .or_else(|| {
                 s.get("conversation_id")
                     .and_then(Value::as_str)
@@ -4031,6 +4059,18 @@ async fn handle_den_event(
         }
         "permission_request" => {
             handle_permission_request_event(config, adapter_state, session_id, event).await?;
+            Ok(false)
+        }
+        "session_info_update" => {
+            let title = event
+                .get("title")
+                .and_then(Value::as_str)
+                .map(str::to_string);
+            let updated_at = event
+                .get("updated_at")
+                .and_then(Value::as_str)
+                .map(str::to_string);
+            send_session_info_update(session_id, title, updated_at).await?;
             Ok(false)
         }
         "plan_update" => {

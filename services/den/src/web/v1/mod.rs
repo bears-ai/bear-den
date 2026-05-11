@@ -18,11 +18,12 @@ use uuid::Uuid;
 use crate::{
     auth_backend::{AuthSession, Backend},
     core::{
-        archived_conversations,
+        acp_sessions, archived_conversations,
         bears::{
             db::{self as bears_db, role_is_bear_admin},
             BearAgentRole,
         },
+        den_tools::{self, DenToolChannelContext, DenToolInvocationContext},
         letta::{load_agent_conversations, strip_letta_harness_for_user},
         work_plans::{self, WorkPlanListFilter, WorkPlanStatus},
     },
@@ -82,7 +83,7 @@ async fn list_my_bears(
 #[derive(Debug, Deserialize)]
 pub struct ChatHistoryQuery {
     pub bear_id: Uuid,
-    /// Letta conversation: `default` (agent main thread) or `conv-…`.
+    /// Letta conversation: `default` (agent main conversation) or `conv-…`.
     #[serde(default)]
     pub conversation_id: Option<String>,
     /// Letta cursor: messages older than this id (see `GET /v1/agents/{id}/messages?before=`).
@@ -142,7 +143,7 @@ pub struct ChatHistoryResponse {
     pub next_before: Option<String>,
 }
 
-/// `None` / empty / `default` → agent main thread. Existing Letta threads are `conv-...`.
+/// `None` / empty / `default` → agent main conversation. Existing Letta conversations are `conv-...`.
 /// The web UI may also send a temporary `new-...` placeholder before Letta allocates the real
 /// conversation id; Codepool turns that into an SDK `createSession(agent_id)` call.
 fn normalize_client_conversation_id(raw: Option<&str>) -> Result<String, CustomError> {
@@ -314,6 +315,13 @@ async fn chat_conversation_patch(
             .letta
             .patch_conversation_summary(&conv_id, &title)
             .await?;
+        let _ = acp_sessions::set_title_for_bear_conversation(
+            state.sqlx_pool(),
+            bear.id,
+            &conv_id,
+            &title,
+        )
+        .await?;
     }
 
     if let Some(archived) = body.archived {
@@ -630,7 +638,7 @@ fn map_letta_history_page(
 pub struct ChatSendRequest {
     pub bear_id: Uuid,
     pub message: String,
-    /// Reserved for Letta threading / OTID pass-through (optional).
+    /// Reserved for Letta conversation / OTID pass-through (optional).
     #[serde(default)]
     pub conversation_id: Option<String>,
 }
@@ -711,6 +719,93 @@ async fn chat_send(
     }
 }
 
+fn parse_set_conversation_title_request(message: &str) -> Option<String> {
+    let trimmed = message.trim();
+    let lower = trimmed.to_ascii_lowercase();
+    for prefix in [
+        "set conversation title to ",
+        "rename conversation to ",
+        "rename this conversation to ",
+        "set this conversation title to ",
+    ] {
+        if lower.starts_with(prefix) {
+            return Some(
+                trimmed[prefix.len()..]
+                    .trim()
+                    .trim_matches(['\"', '\''])
+                    .to_string(),
+            )
+            .filter(|title| !title.is_empty());
+        }
+    }
+    None
+}
+
+async fn maybe_handle_direct_set_conversation_title(
+    state: &AppState,
+    bear: &crate::core::bears::Bear,
+    talk_agent_id: &str,
+    user_id: i32,
+    username: Option<&str>,
+    membership_role: Option<&str>,
+    conv_id: &str,
+    session_id: &str,
+    message: &str,
+    request_id: Uuid,
+) -> Result<Option<Response>, CustomError> {
+    let Some(title) = parse_set_conversation_title_request(message) else {
+        return Ok(None);
+    };
+    let context = DenToolInvocationContext {
+        bear_id: bear.id,
+        bear_slug: bear.slug.clone(),
+        role_agent_id: talk_agent_id.to_string(),
+        agent_role: Some(BearAgentRole::Talk),
+        user_id,
+        username: username.map(str::to_string),
+        membership_role: membership_role.map(str::to_string),
+        conversation_id: conv_id.to_string(),
+        session_id: session_id.to_string(),
+        acp_session_id: None,
+        conversation_selection: Some(conv_id.to_string()),
+        runtime_target: Some(conv_id.to_string()),
+        request_id: Some(request_id.to_string()),
+        channel: DenToolChannelContext {
+            family: Some("browser_chat".to_string()),
+            client: Some("den_web".to_string()),
+            protocol: Some("den_chat".to_string()),
+        },
+    };
+    let value = den_tools::invoke_den_tool(
+        state.sqlx_pool(),
+        state.config.as_ref(),
+        den_tools::DEN_CONVERSATION_SET_TITLE,
+        serde_json::json!({ "title": title }),
+        context,
+    )
+    .await?;
+    let text = value
+        .get("content")
+        .and_then(|v| v.as_str())
+        .unwrap_or("Conversation title updated.");
+    let body = format!(
+        "data: {}\n\ndata: {}\n\n",
+        serde_json::json!({ "type": "assistant_delta", "text": text }),
+        serde_json::json!({ "type": "done", "stop_reason": "end_turn" })
+    );
+    let request_id_header = HeaderValue::from_str(&request_id.to_string())
+        .map_err(|_| CustomError::System("invalid request id for response header".to_string()))?;
+    let response = Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, "text/event-stream; charset=utf-8")
+        .header(header::CACHE_CONTROL, "no-cache")
+        .header(header::CONNECTION, "keep-alive")
+        .header(HeaderName::from_static("x-request-id"), request_id_header)
+        .body(Body::from(body))
+        .map_err(|err| CustomError::System(format!("response build: {err}")))?;
+    Ok(Some(response))
+}
+
 async fn chat_send_inner(
     state: AppState,
     auth_session: AuthSession,
@@ -772,6 +867,23 @@ async fn chat_send_inner(
             .await?
             .flatten();
     let session_id = format!("den-web:{}:{}", body.bear_id, conv_id);
+    if let Some(response) = maybe_handle_direct_set_conversation_title(
+        &state,
+        &bear,
+        &talk_agent_id,
+        user_id,
+        Some(username.as_str()),
+        membership_role.as_deref(),
+        &conv_id,
+        &session_id,
+        body.message.trim(),
+        request_id,
+    )
+    .await?
+    {
+        return Ok(response);
+    }
+
     let workboard_context =
         web_chat_workboard_prompt_context(state.sqlx_pool(), bear.id, user_id).await?;
     let upstream_message = format!("{}{}", body.message.trim(), workboard_context);

@@ -1,5 +1,6 @@
 use std::net::{IpAddr, ToSocketAddrs};
 
+use reqwest::header::{AUTHORIZATION, CONTENT_TYPE};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sqlx::PgPool;
@@ -10,6 +11,7 @@ use crate::{
     config::Config,
     core::{
         acp_plan_mode::{self, AcpPlanModeRequestedBy, EnterPlanModeParams, SubmitPlanModeParams},
+        acp_sessions,
         bears::{db as bears_db, db::role_is_bear_admin, BearAgentRole},
         memory_manager_head::{
             fetch_memfs_role_memory_file, fetch_memfs_role_memory_status,
@@ -35,6 +37,8 @@ pub const DEN_BEAR_LIST_MEMBERS: &str = "den.bear.list_members";
 pub const DEN_CAPABILITIES_LIST_SELF: &str = "den.capabilities.list_self";
 pub const DEN_CHANNEL_GET_CONTEXT: &str = "den.channel.get_context";
 pub const DEN_POLICY_GET_SELF: &str = "den.policy.get_self";
+pub const DEN_CONVERSATION_SET_TITLE: &str = "den.conversation.set_title";
+pub const DEN_CONVERSATION_SET_TITLE_PROVIDER: &str = "set_conversation_title";
 pub const DEN_WEB_FETCH: &str = "den.web.fetch";
 pub const DEN_WEB_FETCH_PROVIDER: &str = "web_fetch";
 pub const DEN_WEB_FETCH_LEGACY_PROVIDER: &str = "den_web_fetch";
@@ -94,6 +98,7 @@ pub fn provider_safe_tool_name(name: &str) -> String {
     // server tools. Do not expose `den_*` just to communicate execution
     // location; execution belongs in descriptor metadata and docs.
     match name {
+        DEN_CONVERSATION_SET_TITLE => return DEN_CONVERSATION_SET_TITLE_PROVIDER.to_string(),
         DEN_WEB_FETCH => return DEN_WEB_FETCH_PROVIDER.to_string(),
         DEN_WEB_SEARCH => return DEN_WEB_SEARCH_PROVIDER.to_string(),
         DEN_SITUATION_GET => return DEN_SITUATION_GET_PROVIDER.to_string(),
@@ -209,6 +214,15 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
             &["policy.read"],
             ALL_ROLES,
             empty_schema(),
+        ),
+        descriptor(
+            DEN_CONVERSATION_SET_TITLE,
+            "Set conversation title",
+            "Set the title of the current conversation. In some clients this may appear as the current chat or thread title. Does not change the conversation id, switch conversations, or write Bear memory.",
+            "conversation",
+            &["conversation.title.write"],
+            TALK_AND_PAIR_ROLES,
+            set_conversation_title_schema(),
         ),
         descriptor(
             DEN_WEB_FETCH,
@@ -701,6 +715,22 @@ fn empty_schema() -> Value {
     })
 }
 
+fn set_conversation_title_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "title": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 120,
+                "description": "New title for the current conversation."
+            }
+        },
+        "required": ["title"],
+        "additionalProperties": false
+    })
+}
+
 fn memory_write_entry_schema() -> Value {
     json!({
         "type": "object",
@@ -759,6 +789,12 @@ pub fn provider_aliases_for_tool(name: &str) -> &'static [&'static str] {
     match name {
         DEN_WEB_FETCH => &[DEN_WEB_FETCH_LEGACY_PROVIDER],
         DEN_WEB_SEARCH => &["den_web_search"],
+        DEN_CONVERSATION_SET_TITLE => &[
+            "set_thread_title",
+            "rename_conversation",
+            "rename_thread",
+            "conversation_rename",
+        ],
         DEN_SITUATION_GET => &[DEN_SITUATION_GET_LEGACY_PROVIDER, "den_situation_get"],
         DEN_MEMORY_WRITE_ENTRY => &["den_memory_write_entry"],
         DEN_MEMORY_STATUS => &["den_memory_status"],
@@ -786,6 +822,7 @@ pub fn is_builtin_den_tool(name: &str) -> bool {
             | DEN_CAPABILITIES_LIST_SELF
             | DEN_CHANNEL_GET_CONTEXT
             | DEN_POLICY_GET_SELF
+            | DEN_CONVERSATION_SET_TITLE
             | DEN_WEB_FETCH
             | DEN_WEB_SEARCH
             | DEN_SITUATION_GET
@@ -903,6 +940,11 @@ struct PlanModeCancelArguments {
 }
 
 #[derive(Debug, Deserialize)]
+struct SetConversationTitleArguments {
+    title: String,
+}
+
+#[derive(Debug, Deserialize)]
 struct WebFetchArguments {
     url: String,
     #[serde(default)]
@@ -963,6 +1005,9 @@ pub async fn invoke_den_tool(
         DEN_CAPABILITIES_LIST_SELF => list_capabilities_self(pool, &context).await,
         DEN_CHANNEL_GET_CONTEXT => Ok(channel_context(&context)),
         DEN_POLICY_GET_SELF => policy_self(pool, &context).await,
+        DEN_CONVERSATION_SET_TITLE => {
+            set_conversation_title(pool, config, &context, arguments).await
+        }
         DEN_WEB_FETCH => web_fetch(pool, &context, arguments).await,
         DEN_WEB_SEARCH => web_search(pool, config, &context, arguments).await,
         DEN_SITUATION_GET => session_info(pool, config, &context, role).await,
@@ -1189,6 +1234,82 @@ async fn policy_self(
             "Emails and authentication internals are not exposed through these tools."
         ]
     }))
+}
+
+async fn set_conversation_title(
+    pool: &PgPool,
+    config: &Config,
+    context: &DenToolInvocationContext,
+    arguments: Value,
+) -> Result<Value, CustomError> {
+    let args: SetConversationTitleArguments = serde_json::from_value(arguments)?;
+    let title = args.title.trim().chars().take(120).collect::<String>();
+    if title.is_empty() {
+        return Err(CustomError::ValidationError(
+            "conversation title cannot be empty".to_string(),
+        ));
+    }
+    let conversation_id = clean_optional(&context.conversation_id).ok_or_else(|| {
+        CustomError::ValidationError(
+            "current conversation is not saved yet; send a message before setting its title"
+                .to_string(),
+        )
+    })?;
+    if conversation_id == "default" || conversation_id.starts_with("new-") {
+        return Err(CustomError::ValidationError(
+            "current conversation is not saved yet; send a message before setting its title"
+                .to_string(),
+        ));
+    }
+    patch_letta_conversation_summary(config, &conversation_id, &title).await?;
+    let synced_acp_sessions = acp_sessions::set_title_for_bear_conversation(
+        pool,
+        context.bear_id,
+        &conversation_id,
+        &title,
+    )
+    .await?;
+    Ok(json!({
+        "ok": true,
+        "conversation_id": conversation_id,
+        "title": title,
+        "synced_acp_sessions": synced_acp_sessions,
+        "content": format!("Conversation title set to {title:?}."),
+    }))
+}
+
+async fn patch_letta_conversation_summary(
+    config: &Config,
+    conversation_id: &str,
+    summary: &str,
+) -> Result<(), CustomError> {
+    let base_url = config.letta_base_url.trim().trim_end_matches('/');
+    if base_url.is_empty() {
+        return Err(CustomError::System(
+            "Letta is not configured (set LETTA_BASE_URL)".to_string(),
+        ));
+    }
+    let url = format!("{base_url}/v1/conversations/{conversation_id}");
+    let mut request = reqwest::Client::new()
+        .patch(url)
+        .header(CONTENT_TYPE, "application/json")
+        .json(&json!({ "summary": summary }));
+    let key = config.letta_api_key.trim();
+    if !key.is_empty() {
+        request = request.header(AUTHORIZATION, format!("Bearer {key}"));
+    }
+    let response = request
+        .send()
+        .await
+        .map_err(|err| CustomError::System(format!("Letta patch conversation failed: {err}")))?;
+    let status = response.status();
+    let text = response.text().await.unwrap_or_default();
+    if !status.is_success() {
+        return Err(CustomError::System(format!(
+            "Letta patch conversation HTTP {status}: {text}"
+        )));
+    }
+    Ok(())
 }
 
 async fn web_fetch(
@@ -2268,6 +2389,15 @@ mod tests {
             .expect("skill proposal descriptor exists");
         assert_eq!(skill.provider_name, "den_skill_propose");
 
+        let conversation_title = descriptors
+            .iter()
+            .find(|descriptor| descriptor.name == DEN_CONVERSATION_SET_TITLE)
+            .expect("conversation title descriptor exists");
+        assert_eq!(
+            conversation_title.provider_name,
+            DEN_CONVERSATION_SET_TITLE_PROVIDER
+        );
+
         let web_fetch = descriptors
             .iter()
             .find(|descriptor| descriptor.name == DEN_WEB_FETCH)
@@ -2325,6 +2455,7 @@ mod tests {
             .map(|descriptor| descriptor.provider_name)
             .collect::<HashSet<_>>();
         assert!(provider_names.contains("session_info"));
+        assert!(provider_names.contains("set_conversation_title"));
         assert!(provider_names.contains("web_search"));
         assert!(provider_names.contains("memory_browse"));
         assert!(provider_names.contains("memory_read"));
@@ -2396,6 +2527,7 @@ mod tests {
     #[test]
     fn pair_has_web_memory_and_workboard_tools() {
         let pair = names_for_role(BearAgentRole::Pair);
+        assert!(pair.contains(DEN_CONVERSATION_SET_TITLE));
         assert!(pair.contains(DEN_WEB_FETCH));
         assert!(pair.contains(DEN_WEB_SEARCH));
         assert!(pair.contains(DEN_SITUATION_GET));
@@ -2414,6 +2546,7 @@ mod tests {
         assert!(pair.contains(DEN_PLAN_MODE_CANCEL));
 
         let talk = names_for_role(BearAgentRole::Talk);
+        assert!(talk.contains(DEN_CONVERSATION_SET_TITLE));
         assert!(!talk.contains(DEN_WEB_FETCH));
         assert!(!talk.contains(DEN_WEB_SEARCH));
         assert!(!talk.contains(DEN_MEMORY_WRITE_ENTRY));

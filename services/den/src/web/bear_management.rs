@@ -640,7 +640,7 @@ async fn build_role_detail_view(
     let composed = crate::core::bears::compose_role_context(
         bear,
         role,
-        Some("Runtime/thread context is injected when this role handles a specific task."),
+        Some("Runtime/conversation context is injected when this role handles a specific task."),
     )?;
     let role_contract = if composed.role_contract.trim().is_empty() {
         "Legacy/manual Bear prompt; no role-aware contract is stored yet.".to_string()
@@ -656,7 +656,7 @@ async fn build_role_detail_view(
                 href: format!("/bear/{}", bear.slug),
             });
             actions.push(RoleActionLink {
-                label: "All threads",
+                label: "All conversations",
                 href: format!("/bear/{}/details/conversations", bear.slug),
             });
         }
@@ -1143,13 +1143,13 @@ async fn render_bear_details_page(
     let talk_composed_prompt = crate::core::bears::compose_role_context(
         &bear,
         BearAgentRole::Talk,
-        Some("Runtime/thread context is injected when this role handles a specific chat."),
+        Some("Runtime/conversation context is injected when this role handles a specific chat."),
     )?
     .composed_prompt;
     let pair_composed_prompt = crate::core::bears::compose_role_context(
         &bear,
         BearAgentRole::Pair,
-        Some("Runtime/thread context is injected when this role handles a specific ACP/client session."),
+        Some("Runtime/conversation context is injected when this role handles a specific ACP/client session."),
     )?
     .composed_prompt;
 

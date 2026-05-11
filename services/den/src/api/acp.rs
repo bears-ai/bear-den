@@ -279,6 +279,12 @@ struct AcpSessionHttp {
     #[serde(skip_serializing_if = "Option::is_none")]
     cwd: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    title: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    conversation_title_updated_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    conversation_title_synced_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     closed_at: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     archived_at: Option<String>,
@@ -307,6 +313,13 @@ fn acp_session_row_to_http_with_plan_mode(
         resolved_conversation_id: row.resolved_conversation_id,
         client: row.client,
         cwd: row.cwd,
+        title: row.conversation_title,
+        conversation_title_updated_at: row
+            .conversation_title_updated_at
+            .map(format_acp_session_timestamp),
+        conversation_title_synced_at: row
+            .conversation_title_synced_at
+            .map(format_acp_session_timestamp),
         closed_at: row.closed_at.map(format_acp_session_timestamp),
         archived_at: row.archived_at.map(format_acp_session_timestamp),
         created_at: format_acp_session_timestamp(row.created_at),
@@ -794,7 +807,8 @@ fn acp_pair_den_tool_descriptors() -> serde_json::Value {
         .filter(|descriptor| {
             matches!(
                 descriptor.name,
-                den_tools::DEN_WEB_FETCH
+                den_tools::DEN_CONVERSATION_SET_TITLE
+                    | den_tools::DEN_WEB_FETCH
                     | den_tools::DEN_WEB_SEARCH
                     | den_tools::DEN_SITUATION_GET
                     | den_tools::DEN_MEMORY_WRITE_ENTRY
@@ -1126,6 +1140,47 @@ fn map_acp_history_page(
         });
     }
     (rows, has_more, next_before)
+}
+
+async fn pending_session_title_update_event(
+    pool: &PgPool,
+    user_id: i32,
+    bear_id: Uuid,
+    bear_slug: &str,
+    acp_session_id: &str,
+) -> Result<Option<AcpGatewayEvent>, CustomError> {
+    let Some(session) =
+        acp_sessions::find_for_user_bear_session(pool, user_id, bear_slug, acp_session_id).await?
+    else {
+        return Ok(None);
+    };
+    let Some(title) = session
+        .conversation_title
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+    else {
+        return Ok(None);
+    };
+    let needs_sync = match (
+        session.conversation_title_updated_at,
+        session.conversation_title_synced_at,
+    ) {
+        (Some(updated), Some(synced)) => synced < updated,
+        (Some(_), None) => true,
+        _ => false,
+    };
+    if !needs_sync {
+        return Ok(None);
+    }
+    acp_sessions::mark_title_synced(pool, user_id, bear_id, acp_session_id).await?;
+    Ok(Some(AcpGatewayEvent::SessionInfoUpdate {
+        title: Some(title),
+        updated_at: session
+            .conversation_title_updated_at
+            .map(format_acp_session_timestamp),
+    }))
 }
 
 async fn prompt(
@@ -2168,7 +2223,24 @@ async fn prompt_inner(
         .into_iter()
         .collect::<Vec<_>>();
     let workboard_context = work_plans::render_workboard_prompt_context(&plans);
-    let initial_plan_event = current_workboard_plan.map(AcpGatewayEvent::PlanUpdate);
+    let mut initial_events = Vec::new();
+    if let Some(title_event) = pending_session_title_update_event(
+        &state.sqlx_pool,
+        user_id,
+        bear.id,
+        &bear.slug,
+        session_id,
+    )
+    .await
+    .map_err(|err| {
+        let (status, code, message) = acp_error_status_message(&err);
+        ApiError::new(status, code, message)
+    })? {
+        initial_events.push(title_event);
+    }
+    if let Some(plan_event) = current_workboard_plan.map(AcpGatewayEvent::PlanUpdate) {
+        initial_events.push(plan_event);
+    }
     let prompt_with_tool_context =
         format!("{prompt}{plan_mode_context}{workboard_context}{tool_prompt_context}");
     let client_tool_descriptors = tools_enabled.then(|| {
@@ -2207,7 +2279,7 @@ async fn prompt_inner(
             pair_agent_id: pair_agent_id.clone(),
             config: state.config.clone(),
         },
-        initial_plan_event,
+        initial_events,
         state.letta.clone(),
         LettaContinuationContext {
             conversation_id: conversation_resolution.upstream_target.clone(),
@@ -2389,6 +2461,7 @@ fn den_tool_allowed_in_plan_mode(canonical_name: &str) -> bool {
             | den_tools::DEN_CAPABILITIES_LIST_SELF
             | den_tools::DEN_CHANNEL_GET_CONTEXT
             | den_tools::DEN_POLICY_GET_SELF
+            | den_tools::DEN_CONVERSATION_SET_TITLE
             | den_tools::DEN_WEB_FETCH
             | den_tools::DEN_WEB_SEARCH
             | den_tools::DEN_SITUATION_GET
@@ -3089,7 +3162,14 @@ async fn map_letta_stream_frame_to_acp_adapter_events_with_persistence(
     persist_stream_event_side_effects(&context, &mut event)
         .await
         .map_err(|err| std::io::Error::other(err.to_string()))?;
-    Ok((vec![acp_event_to_adapter_sse(event)], result_rx))
+    let bytes = match &event {
+        AcpGatewayEvent::ToolRequest {
+            approval_required: false,
+            ..
+        } if result_rx.is_some() => Vec::new(),
+        _ => vec![acp_event_to_adapter_sse(event)],
+    };
+    Ok((bytes, result_rx))
 }
 
 enum AcpPendingFuture {
@@ -3139,12 +3219,12 @@ impl AcpLettaSseStream {
     fn new(
         inner: impl Stream<Item = Result<Bytes, reqwest::Error>> + Send + 'static,
         context: AcpStreamContext,
-        initial_plan_event: Option<AcpGatewayEvent>,
+        initial_events: Vec<AcpGatewayEvent>,
         letta: Arc<crate::core::letta::LettaClient>,
         continuation: LettaContinuationContext,
     ) -> Self {
         let mut pending = VecDeque::new();
-        if let Some(event) = initial_plan_event {
+        for event in initial_events {
             pending.push_back(acp_event_to_adapter_sse(event));
         }
         Self {
@@ -3529,7 +3609,7 @@ mod tests {
         let mut stream = AcpLettaSseStream::new(
             upstream,
             context,
-            None,
+            Vec::new(),
             letta,
             LettaContinuationContext {
                 conversation_id: "conv-test-continuation".to_string(),

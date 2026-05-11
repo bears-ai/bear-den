@@ -1,64 +1,129 @@
-{% extends "base.html" %}
-
-{% block title %}{{ bear.name | e }}{% endblock %}
-
-{% block subnav %}
+{% extends "base.html" %} {% block title %}{{ bear.name | e }}{% endblock %} {%
+block subnav %}
 <li><a class="button-link" href="/bear/{{ bear.slug | e }}">Chat</a></li>
-{% endblock %}
-
-{% block content %}
+{% endblock %} {% block content %}
 <section class="den-bear-home">
     {% if letta_resync_notice == 'ok' %}
-    <p class="form-hint"><span class="success">Letta was updated from Den.</span></p>
+    <p class="form-hint">
+        <span class="success">Letta was updated from Den.</span>
+    </p>
     {% elif letta_resync_notice == 'drift' %}
-    <p class="form-errors">Den sent the update to Letta, but Letta still reports drift. Review Advanced operations below.</p>
+    <p class="form-errors">
+        Den sent the update to Letta, but Letta still reports drift. Review
+        Advanced operations below.
+    </p>
     {% elif letta_resync_notice == 'error' %}
-    <p class="form-errors">Could not resync Letta. Check Advanced operations and service logs.</p>
+    <p class="form-errors">
+        Could not resync Letta. Check Advanced operations and service logs.
+    </p>
     {% endif %}
 
     <section id="command-center" class="box full-width den-command-center">
         <div class="den-command-center-main">
             <h3 class="bear-overview-name">
                 {{ bear.name | e }}
-                <code id="bear-slug" title="{{ bear.id }}">{{ bear.slug | e }}</code>
+                <code id="bear-slug" title="{{ bear.id }}"
+                    >{{ bear.slug | e }}</code
+                >
             </h3>
-            <p>{% if bear.description %}{{ bear.description | e }}{% else %}<em>No description.</em>{% endif %}</p>
-            {% if template_label %}<p class="caption">Started from template: {{ template_label | e }}</p>{% endif %}
+            <p>
+                {% if bear.description %}{{ bear.description | e }}{% else %}<em
+                    >No description.</em
+                >{% endif %}
+            </p>
+            {% if template_label %}
+            <p class="caption">
+                Started from template: {{ template_label | e }}
+            </p>
+            {% endif %}
         </div>
         <div class="den-command-center-status">
             <p class="caption">Readiness</p>
             <ul class="den-status-list">
-                <li>Chat: {% if talk_agent_id %}<span class="success">ready</span>{% else %}<span class="form-errors">needs talk role</span>{% endif %}</li>
-                <li>Memory: {% if mem_health %}<span class="success">{{ mem_health.label | e }}</span>{% elif mem_health_error %}<span class="form-errors">error</span>{% else %}<span class="caption">not checked</span>{% endif %}</li>
-                <li>Roles: {% if role_rows and role_rows | length > 0 %}{{ role_rows | length }} registered{% else %}<span class="form-errors">none</span>{% endif %}</li>
+                <li>
+                    Chat: {% if talk_agent_id %}<span class="success"
+                        >ready</span
+                    >{% else %}<span class="form-errors">needs talk role</span
+                    >{% endif %}
+                </li>
+                <li>
+                    Memory: {% if mem_health %}<span class="success"
+                        >{{ mem_health.label | e }}</span
+                    >{% elif mem_health_error %}<span class="form-errors"
+                        >error</span
+                    >{% else %}<span class="caption">not checked</span>{% endif
+                    %}
+                </li>
+                <li>
+                    Roles: {% if role_rows and role_rows | length > 0 %}{{
+                    role_rows | length }} registered{% else %}<span
+                        class="form-errors"
+                        >none</span
+                    >{% endif %}
+                </li>
             </ul>
         </div>
         <ul class="button-row den-command-center-actions">
-            <li><a class="button-link" href="/bear/{{ bear.slug | e }}">Chat</a></li>
-            <li><a class="button-link" href="/bear/{{ bear.slug | e }}/details/conversations">All threads</a></li>
-            <li><a class="button-link" href="/bear/{{ bear.slug | e }}/details/code-token">Code with this Bear</a></li>
-            {% if can_manage_bear %}<li><a class="button-link" href="/bear/{{ bear.slug | e }}/details/edit/overview">Edit overview</a></li>{% endif %}
+            <li>
+                <a class="button-link" href="/bear/{{ bear.slug | e }}">Chat</a>
+            </li>
+            <li>
+                <a
+                    class="button-link"
+                    href="/bear/{{ bear.slug | e }}/details/conversations"
+                    >All conversations</a
+                >
+            </li>
+            <li>
+                <a
+                    class="button-link"
+                    href="/bear/{{ bear.slug | e }}/details/code-token"
+                    >Code with this Bear</a
+                >
+            </li>
+            {% if can_manage_bear %}
+            <li>
+                <a
+                    class="button-link"
+                    href="/bear/{{ bear.slug | e }}/details/edit/overview"
+                    >Edit overview</a
+                >
+            </li>
+            {% endif %}
         </ul>
     </section>
 
     <section id="current-work" class="box full-width">
         <h3>Current work</h3>
-        <p class="form-hint">Active threads and recent collaboration surfaces for this Bear.</p>
+        <p class="form-hint">
+            Active conversations and recent collaboration surfaces for this
+            Bear.
+        </p>
         {% if not letta_configured or not talk_agent_id %}
-        <p class="form-hint">Provision the talk role agent to list threads.</p>
+        <p class="form-hint">
+            Provision the talk role agent to list conversations.
+        </p>
         {% else %}
         <ul class="den-bear-conv-list">
             {% for c in conversation_rows %}
             <li>
-                {{ c.title | e }} — <span class="caption">{{ c.channel_label }}</span>{% if c.last_message_at %} — <span class="caption">{{ c.last_message_at }}</span>{% endif %} — <a href="{{ c.web_href | e }}">Open</a>
+                {{ c.title | e }} —
+                <span class="caption">{{ c.channel_label }}</span>{% if
+                c.last_message_at %} —
+                <span class="caption">{{ c.last_message_at }}</span>{% endif %}
+                — <a href="{{ c.web_href | e }}">Open</a>
             </li>
             {% else %}
-            <li class="caption">No active threads yet.</li>
+            <li class="caption">No active conversations yet.</li>
             {% endfor %}
         </ul>
         <p class="form-hint">
-            {% if archived_conversation_count and archived_conversation_count > 0 %}{{ archived_conversation_count }} archived thread{% if archived_conversation_count != 1 %}s{% endif %}. {% endif %}
-            <a href="/bear/{{ bear.slug | e }}/details/conversations">All threads</a>
+            {% if archived_conversation_count and archived_conversation_count >
+            0 %}{{ archived_conversation_count }} archived conversation{% if
+            archived_conversation_count != 1 %}s{% endif %}. {% endif %}
+            <a href="/bear/{{ bear.slug | e }}/details/conversations"
+                >All conversations</a
+            >
         </p>
         {% endif %}
     </section>
@@ -67,98 +132,192 @@
         <div>
             <div id="user-steering" class="box full-width">
                 <h3>Steering</h3>
-                <p class="form-hint">These instructions steer how this Bear works with you without changing internal role boundaries.</p>
-                {% if user_steering %}<pre class="den-bear-prompt-pre">{{ user_steering | e }}</pre>
-                {% elif context_profile_enabled %}<p class="caption">No user steering saved.</p>
-                {% else %}<p class="caption">No role-aware steering profile is stored yet.</p>{% endif %}
-                {% if can_manage_bear %}<p class="form-hint">Editing UI is planned; for now, this is generated at setup.</p>{% endif %}
+                <p class="form-hint">
+                    These instructions steer how this Bear works with you
+                    without changing internal role boundaries.
+                </p>
+                {% if user_steering %}
+                <pre class="den-bear-prompt-pre">{{ user_steering | e }}</pre>
+                {% elif context_profile_enabled %}
+                <p class="caption">No user steering saved.</p>
+                {% else %}
+                <p class="caption">
+                    No role-aware steering profile is stored yet.
+                </p>
+                {% endif %} {% if can_manage_bear %}
+                <p class="form-hint">
+                    Editing UI is planned; for now, this is generated at setup.
+                </p>
+                {% endif %}
             </div>
         </div>
         <div>
             <div id="bear-context" class="box full-width">
                 <h3>Context</h3>
-                <p class="form-hint">Stable context this Bear should know. This is distinct from memory learned over time.</p>
-                {% if bear_context %}<pre class="den-bear-prompt-pre">{{ bear_context | e }}</pre>
-                {% elif context_profile_enabled %}<p class="caption">No Bear context saved.</p>
-                {% else %}<p class="caption">No role-aware context profile is stored yet.</p>{% endif %}
+                <p class="form-hint">
+                    Stable context this Bear should know. This is distinct from
+                    memory learned over time.
+                </p>
+                {% if bear_context %}
+                <pre class="den-bear-prompt-pre">{{ bear_context | e }}</pre>
+                {% elif context_profile_enabled %}
+                <p class="caption">No Bear context saved.</p>
+                {% else %}
+                <p class="caption">
+                    No role-aware context profile is stored yet.
+                </p>
+                {% endif %}
             </div>
         </div>
     </section>
 
     <section id="roles" class="box full-width">
         <h3>Roles</h3>
-        <p class="form-hint">A Bear feels like one assistant, but internally it has five specialized roles. Role-specific capabilities, memory branches, contracts, prompts, and runtime details live with each role.</p>
+        <p class="form-hint">
+            A Bear feels like one assistant, but internally it has five
+            specialized roles. Role-specific capabilities, memory branches,
+            contracts, prompts, and runtime details live with each role.
+        </p>
         <div class="den-role-card-grid" data-role-pane-root>
             {% for r in role_details %}
-            <article class="den-role-card{% if r.provisioning_status != 'ready' %} den-role-card-warn{% endif %}">
+            <article
+                class="den-role-card{% if r.provisioning_status != 'ready' %} den-role-card-warn{% endif %}"
+            >
                 <h4><code>{{ r.role | e }}</code> — {{ r.plain_name | e }}</h4>
                 <p>{{ r.description | e }}</p>
                 <dl class="fields-grid">
-                    <dt>Status</dt><dd><code>{{ r.provisioning_status | e }}</code></dd>
-                    <dt>Runtime</dt><dd><code>{{ r.runtime_family | e }}</code></dd>
-                    <dt>Memory</dt><dd>{{ r.memory_status_label | e }}{% if r.memory_file_count %} · {{ r.memory_file_count }} file{% if r.memory_file_count != 1 %}s{% endif %}{% endif %}</dd>
+                    <dt>Status</dt>
+                    <dd><code>{{ r.provisioning_status | e }}</code></dd>
+                    <dt>Runtime</dt>
+                    <dd><code>{{ r.runtime_family | e }}</code></dd>
+                    <dt>Memory</dt>
+                    <dd>
+                        {{ r.memory_status_label | e }}{% if r.memory_file_count
+                        %} · {{ r.memory_file_count }} file{% if
+                        r.memory_file_count != 1 %}s{% endif %}{% endif %}
+                    </dd>
                 </dl>
-                <p><a class="button-link den-role-detail-link" href="/bear/{{ bear.slug | e }}/details/roles/{{ r.role | e }}">Role details</a></p>
+                <p>
+                    <a
+                        class="button-link den-role-detail-link"
+                        href="/bear/{{ bear.slug | e }}/details/roles/{{ r.role | e }}"
+                        >Role details</a
+                    >
+                </p>
             </article>
             {% endfor %}
         </div>
-        <div id="den-role-detail-pane" class="den-role-detail-pane" hidden></div>
+        <div
+            id="den-role-detail-pane"
+            class="den-role-detail-pane"
+            hidden
+        ></div>
     </section>
 
     <section id="shared-memory" class="box full-width">
         <h3>Shared memory</h3>
-        <p class="form-hint">Shared <code>core/</code> memory is durable Bear-wide knowledge. Role-local memory branches are shown with each role.</p>
-        <p><a href="/bear/{{ bear.slug | e }}/details/memory">Memory details</a></p>
+        <p class="form-hint">
+            Shared <code>core/</code> memory is durable Bear-wide knowledge.
+            Role-local memory branches are shown with each role.
+        </p>
+        <p>
+            <a href="/bear/{{ bear.slug | e }}/details/memory"
+                >Memory details</a
+            >
+        </p>
         {% if mem_health %}
-        <div class="den-memory-health{% if mem_health.is_ok %} den-memory-health-ok{% else %} den-memory-health-warn{% endif %}">
-            <div><strong>Memory health:</strong> <span>{{ mem_health.label | e }}</span> <code>{{ mem_health.state | e }}</code></div>
-            {% if mem_health.warning %}<p>{{ mem_health.warning | e }}</p>{% endif %}
+        <div
+            class="den-memory-health{% if mem_health.is_ok %} den-memory-health-ok{% else %} den-memory-health-warn{% endif %}"
+        >
+            <div>
+                <strong>Memory health:</strong>
+                <span>{{ mem_health.label | e }}</span>
+                <code>{{ mem_health.state | e }}</code>
+            </div>
+            {% if mem_health.warning %}
+            <p>{{ mem_health.warning | e }}</p>
+            {% endif %}
             <dl class="den-memory-health-metrics">
-                <dt>Commits</dt><dd>{{ mem_health.commit_count_display | e }}</dd>
-                <dt>Memory files</dt><dd>{{ mem_health.memory_file_count_display | e }}</dd>
-                <dt>Total files</dt><dd>{{ mem_health.file_count_display | e }}</dd>
-                <dt>Recent mem-manager events</dt><dd>{{ mem_health.recent_activity_count }}</dd>
+                <dt>Commits</dt>
+                <dd>{{ mem_health.commit_count_display | e }}</dd>
+                <dt>Memory files</dt>
+                <dd>{{ mem_health.memory_file_count_display | e }}</dd>
+                <dt>Total files</dt>
+                <dd>{{ mem_health.file_count_display | e }}</dd>
+                <dt>Recent mem-manager events</dt>
+                <dd>{{ mem_health.recent_activity_count }}</dd>
             </dl>
         </div>
-        {% elif mem_health_error %}<p class="form-errors">Could not load memory health: {{ mem_health_error | e }}</p>
-        {% else %}<p class="form-hint">Shared memory health is unavailable.</p>{% endif %}
+        {% elif mem_health_error %}
+        <p class="form-errors">
+            Could not load memory health: {{ mem_health_error | e }}
+        </p>
+        {% else %}
+        <p class="form-hint">Shared memory health is unavailable.</p>
+        {% endif %}
     </section>
 
     <section id="people-access" class="box full-width">
         <h3>People & access</h3>
         <p class="den-bear-inline-list">
-            {% if members and members | length > 0 %}{% for m in members %}{% if not loop.first %}, {% endif %}{% if m.role == 'admin' %}<strong>{{ m.username | e }}</strong>{% else %}{{ m.username | e }}{% endif %}{% endfor %}{% else %}<em>No members.</em>{% endif %}
-            {% if can_manage_bear %} · <a href="/bear/{{ bear.slug | e }}/details/access">Manage access</a>{% endif %}
+            {% if members and members | length > 0 %}{% for m in members %}{% if
+            not loop.first %}, {% endif %}{% if m.role == 'admin' %}<strong
+                >{{ m.username | e }}</strong
+            >{% else %}{{ m.username | e }}{% endif %}{% endfor %}{% else %}<em
+                >No members.</em
+            >{% endif %} {% if can_manage_bear %} ·
+            <a href="/bear/{{ bear.slug | e }}/details/access">Manage access</a
+            >{% endif %}
         </p>
     </section>
 
     <section id="acp-tool-details" class="box full-width">
         <h3>ACP tool approvals</h3>
-        <p class="form-hint">These local tools are exposed to the <strong>pair</strong> role through ACP clients such as Zed. The adapter asks for approval before running user-gated tools, and persistent approval choices are stored locally by the adapter.</p>
+        <p class="form-hint">
+            These local tools are exposed to the <strong>pair</strong> role
+            through ACP clients such as Zed. The adapter asks for approval
+            before running user-gated tools, and persistent approval choices are
+            stored locally by the adapter.
+        </p>
         {% if acp_tool_details %}
         <div class="den-role-card-grid">
             {% for tool in acp_tool_details %}
-            <article class="den-role-card{% if tool.highlighted %} den-role-card-warn{% endif %}">
+            <article
+                class="den-role-card{% if tool.highlighted %} den-role-card-warn{% endif %}"
+            >
                 <h4>{{ tool.title | e }} <code>{{ tool.name | e }}</code></h4>
                 <p>{{ tool.usage_hint | e }}</p>
                 <dl class="fields-grid">
-                    <dt>Kind</dt><dd><code>{{ tool.kind | e }}</code></dd>
-                    <dt>Risk</dt><dd><code>{{ tool.risk | e }}</code></dd>
-                    <dt>Approval choices</dt><dd>{{ tool.approval_label | e }}</dd>
-                    <dt>Scope</dt><dd>{{ tool.scope_label | e }}</dd>
+                    <dt>Kind</dt>
+                    <dd><code>{{ tool.kind | e }}</code></dd>
+                    <dt>Risk</dt>
+                    <dd><code>{{ tool.risk | e }}</code></dd>
+                    <dt>Approval choices</dt>
+                    <dd>{{ tool.approval_label | e }}</dd>
+                    <dt>Scope</dt>
+                    <dd>{{ tool.scope_label | e }}</dd>
                 </dl>
                 {% if tool.parameter_summary %}
-                <p class="caption">Parameters: {% for param in tool.parameter_summary %}{% if not loop.first %}, {% endif %}<code>{{ param | e }}</code>{% endfor %}</p>
-                {% endif %}
-                {% if tool.policy_summary %}
+                <p class="caption">
+                    Parameters: {% for param in tool.parameter_summary %}{% if
+                    not loop.first %}, {% endif %}<code>{{ param | e }}</code>{%
+                    endfor %}
+                </p>
+                {% endif %} {% if tool.policy_summary %}
                 <ul class="caption">
-                    {% for item in tool.policy_summary %}<li>{{ item | e }}</li>{% endfor %}
+                    {% for item in tool.policy_summary %}
+                    <li>{{ item | e }}</li>
+                    {% endfor %}
                 </ul>
                 {% endif %}
             </article>
             {% endfor %}
         </div>
-        <p class="form-hint"><strong>Note:</strong> <code>terminal_run_command</code> uses the ACP client terminal and waits for process exit, which avoids brute-force polling when tools such as Cargo wait on file locks.</p>
+        <p class="form-hint">
+            <strong>Note:</strong> <code>terminal_run_command</code> uses the
+            ACP client terminal and waits for process exit, which avoids
+            brute-force polling when tools such as Cargo wait on file locks.
+        </p>
         {% else %}
         <p class="caption">No ACP tool details are available.</p>
         {% endif %}
@@ -169,32 +328,93 @@
         <details>
             <summary>Model and tool configuration</summary>
             <dl class="fields-grid">
-                <dt>Model</dt><dd>{% if bear.default_model %}{{ bear.default_model | e }}{% else %}<em>none</em>{% endif %}</dd>
-                <dt>Agent type</dt><dd>{% if bear.letta_agent_type %}{{ bear.letta_agent_type | e }}{% else %}<em>Letta default</em>{% endif %}</dd>
-                <dt>Tools</dt><dd>{% if letta_tool_ids_display %}<code>{{ letta_tool_ids_display | e }}</code>{% else %}<em>none</em>{% endif %}</dd>
+                <dt>Model</dt>
+                <dd>
+                    {% if bear.default_model %}{{ bear.default_model | e }}{%
+                    else %}<em>none</em>{% endif %}
+                </dd>
+                <dt>Agent type</dt>
+                <dd>
+                    {% if bear.letta_agent_type %}{{ bear.letta_agent_type | e
+                    }}{% else %}<em>Letta default</em>{% endif %}
+                </dd>
+                <dt>Tools</dt>
+                <dd>
+                    {% if letta_tool_ids_display %}<code
+                        >{{ letta_tool_ids_display | e }}</code
+                    >{% else %}<em>none</em>{% endif %}
+                </dd>
             </dl>
-            {% if can_manage_bear %}<p><a class="button-link" href="/bear/{{ bear.slug | e }}/details/edit/configuration">Edit configuration</a></p>{% endif %}
+            {% if can_manage_bear %}
+            <p>
+                <a
+                    class="button-link"
+                    href="/bear/{{ bear.slug | e }}/details/edit/configuration"
+                    >Edit configuration</a
+                >
+            </p>
+            {% endif %}
         </details>
         <details>
             <summary>Letta sync and diagnostics</summary>
-            {% if letta_agent_fetch_error %}<p class="form-errors">Could not load talk role from Letta: {{ letta_agent_fetch_error | e }}</p>{% endif %}
-            {% if letta_drift and letta_drift.drift_any %}<p class="form-errors"><strong>Letta is out of sync.</strong></p>{% endif %}
-            {% if can_manage_bear %}
-            <form method="post" action="/bear/{{ bear.slug | e }}/details/resync-letta" class="den-bear-resync-form">
+            {% if letta_agent_fetch_error %}
+            <p class="form-errors">
+                Could not load talk role from Letta: {{ letta_agent_fetch_error
+                | e }}
+            </p>
+            {% endif %} {% if letta_drift and letta_drift.drift_any %}
+            <p class="form-errors"><strong>Letta is out of sync.</strong></p>
+            {% endif %} {% if can_manage_bear %}
+            <form
+                method="post"
+                action="/bear/{{ bear.slug | e }}/details/resync-letta"
+                class="den-bear-resync-form"
+            >
                 <p><button type="submit">Force Sync</button></p>
             </form>
             {% endif %}
             <table>
-                <thead><tr><th>Role</th><th>Runtime</th><th>Letta id</th><th>Provisioning</th><th>MemFS view</th><th>Last sync</th></tr></thead>
+                <thead>
+                    <tr>
+                        <th>Role</th>
+                        <th>Runtime</th>
+                        <th>Letta id</th>
+                        <th>Provisioning</th>
+                        <th>MemFS view</th>
+                        <th>Last sync</th>
+                    </tr>
+                </thead>
                 <tbody>
                     {% for r in role_rows %}
                     <tr>
-                        <td><a href="/bear/{{ bear.slug | e }}/details/roles/{{ r.role | e }}"><strong>{{ r.role | e }}</strong></a></td>
+                        <td>
+                            <a
+                                href="/bear/{{ bear.slug | e }}/details/roles/{{ r.role | e }}"
+                                ><strong>{{ r.role | e }}</strong></a
+                            >
+                        </td>
                         <td><code>{{ r.runtime_family | e }}</code></td>
-                        <td>{% if r.letta_agent_id %}<code>{{ r.letta_agent_id | e }}</code>{% else %}<em>none</em>{% endif %}</td>
+                        <td>
+                            {% if r.letta_agent_id %}<code
+                                >{{ r.letta_agent_id | e }}</code
+                            >{% else %}<em>none</em>{% endif %}
+                        </td>
                         <td><code>{{ r.provisioning_status | e }}</code></td>
-                        <td>{% if r.memfs_view_state %}{% if r.memfs_view_quarantined %}<span class="form-errors">quarantined</span>{% else %}<code>{{ r.memfs_view_state | e }}</code>{% endif %}{% if r.memfs_view_diagnostic %}<br><span class="caption">{{ r.memfs_view_diagnostic | e }}</span>{% endif %}{% else %}<em>not registered</em>{% endif %}</td>
-                        <td>{% if r.last_synced_at %}{{ r.last_synced_at | e }}{% else %}<em>never</em>{% endif %}</td>
+                        <td>
+                            {% if r.memfs_view_state %}{% if
+                            r.memfs_view_quarantined %}<span class="form-errors"
+                                >quarantined</span
+                            >{% else %}<code>{{ r.memfs_view_state | e }}</code
+                            >{% endif %}{% if r.memfs_view_diagnostic %}<br /><span
+                                class="caption"
+                                >{{ r.memfs_view_diagnostic | e }}</span
+                            >{% endif %}{% else %}<em>not registered</em>{%
+                            endif %}
+                        </td>
+                        <td>
+                            {% if r.last_synced_at %}{{ r.last_synced_at | e
+                            }}{% else %}<em>never</em>{% endif %}
+                        </td>
                     </tr>
                     {% endfor %}
                 </tbody>
@@ -202,34 +422,54 @@
         </details>
         <details>
             <summary>Prompt compatibility output</summary>
-            <p class="form-hint">This compatibility snapshot exists for current provisioning paths. Role-specific prompts are shown on role detail pages.</p>
+            <p class="form-hint">
+                This compatibility snapshot exists for current provisioning
+                paths. Role-specific prompts are shown on role detail pages.
+            </p>
             <pre class="den-bear-prompt-pre">{{ bear.system_prompt | e }}</pre>
-            {% if can_manage_bear and not context_profile_enabled %}<p><a class="button-link" href="/bear/{{ bear.slug | e }}/details/edit/prompt">Edit legacy prompt</a></p>{% endif %}
+            {% if can_manage_bear and not context_profile_enabled %}
+            <p>
+                <a
+                    class="button-link"
+                    href="/bear/{{ bear.slug | e }}/details/edit/prompt"
+                    >Edit legacy prompt</a
+                >
+            </p>
+            {% endif %}
         </details>
     </section>
 </section>
 
 <script>
-(function () {
-    var root = document.querySelector('[data-role-pane-root]');
-    var pane = document.getElementById('den-role-detail-pane');
-    if (!root || !pane || !window.fetch) return;
-    root.addEventListener('click', function (event) {
-        var link = event.target.closest('.den-role-detail-link');
-        if (!link) return;
-        event.preventDefault();
-        fetch(link.href, { credentials: 'same-origin' })
-            .then(function (response) { return response.text(); })
-            .then(function (html) {
-                var doc = new DOMParser().parseFromString(html, 'text/html');
-                var detail = doc.querySelector('[data-role-detail-content]');
-                pane.innerHTML = detail ? detail.innerHTML : html;
-                pane.hidden = false;
-                pane.focus && pane.focus();
-                history.replaceState(null, '', link.href);
-            })
-            .catch(function () { window.location.href = link.href; });
-    });
-})();
+    (function () {
+        var root = document.querySelector("[data-role-pane-root]");
+        var pane = document.getElementById("den-role-detail-pane");
+        if (!root || !pane || !window.fetch) return;
+        root.addEventListener("click", function (event) {
+            var link = event.target.closest(".den-role-detail-link");
+            if (!link) return;
+            event.preventDefault();
+            fetch(link.href, { credentials: "same-origin" })
+                .then(function (response) {
+                    return response.text();
+                })
+                .then(function (html) {
+                    var doc = new DOMParser().parseFromString(
+                        html,
+                        "text/html",
+                    );
+                    var detail = doc.querySelector(
+                        "[data-role-detail-content]",
+                    );
+                    pane.innerHTML = detail ? detail.innerHTML : html;
+                    pane.hidden = false;
+                    pane.focus && pane.focus();
+                    history.replaceState(null, "", link.href);
+                })
+                .catch(function () {
+                    window.location.href = link.href;
+                });
+        });
+    })();
 </script>
 {% endblock %}
