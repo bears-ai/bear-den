@@ -10,6 +10,8 @@ pub mod bears;
 pub mod bifrost;
 pub mod codepool;
 pub mod den_tools;
+#[cfg(test)]
+mod den_tools_workflow_state_tests;
 pub mod email;
 pub mod letta;
 pub mod memory_manager_head;

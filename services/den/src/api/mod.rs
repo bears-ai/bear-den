@@ -47,6 +47,8 @@
 //! - `SERVER_MODE=both` - Run both services simultaneously
 
 pub mod acp;
+#[cfg(test)]
+mod acp_workflow_state_tests;
 pub mod auth;
 pub mod docs;
 pub mod internal;

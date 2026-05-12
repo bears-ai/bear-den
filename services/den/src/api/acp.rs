@@ -930,6 +930,8 @@ fn acp_pair_den_tool_descriptors() -> serde_json::Value {
                     descriptor.name, descriptor.description
                 ),
                 "parameters": descriptor.input_schema,
+                "x-bears-domain": descriptor.domain,
+                "x-bears-content-class": descriptor.content_class,
             })
         })
         .collect::<Vec<_>>();
@@ -954,7 +956,41 @@ fn looks_like_letta_waiting_for_approval_error(err: &CustomError) -> bool {
         || format!("{err:#}").contains("waiting for approval")
 }
 
-fn acp_direct_tool_prompt_context(
+pub(crate) fn workflow_state_label(
+    policy: &crate::core::acp_tools::AcpResolvedSessionPolicy,
+) -> &'static str {
+    match policy.plan_mode_state.as_deref() {
+        Some("submitted") => "submitted_waiting_approval",
+        Some("approved") => "approved",
+        Some("active") => "drafting",
+        Some("rejected") => "cancelled",
+        _ if policy.mode_label == "Write" => "approved",
+        _ => "inactive",
+    }
+}
+
+fn render_workflow_state_summary(
+    session_id: &str,
+    roots: &[String],
+    local_tool_names: &[&str],
+    den_tool_names: &[&str],
+    policy: &crate::core::acp_tools::AcpResolvedSessionPolicy,
+) -> String {
+    let execution_unlocked = policy.tool_enablement.enables_non_read_tools();
+    format!(
+        "<system-reminder>AUTHORITATIVE WORKFLOW STATE for this turn: permission_mode=`{}`; tool_classes={}; workflow_state=`{}`; execution_unlocked={}; memory_for_active_plan_allowed=false; state_authority=current turn capabilities override prior-turn assumptions. BEARS ACP direct local workspace tools available this turn: {}. Server tools available to pair: {}. Current ACP session id is `{}`. Use absolute paths under these workspace roots: {}.</system-reminder>",
+        policy.mode_label,
+        policy.allowed_tool_classes().join(", "),
+        workflow_state_label(policy),
+        execution_unlocked,
+        local_tool_names.join(", "),
+        den_tool_names.join(", "),
+        session_id,
+        roots.join(", "),
+    )
+}
+
+pub(crate) fn acp_direct_tool_prompt_context(
     session_id: &str,
     cwd: &str,
     client_context: &serde_json::Value,
@@ -988,11 +1024,12 @@ fn acp_direct_tool_prompt_context(
                 .collect::<Vec<_>>()
         })
         .unwrap_or_default();
-    let mut guidance = vec![format!(
-        "BEARS ACP direct local workspace tools available this turn: {}. Server tools available to pair: {}. Current ACP session id is `{session_id}`. Use absolute paths under these workspace roots: {}.",
-        tool_names.join(", "),
-        den_tool_names.join(", "),
-        roots.join(", ")
+    let mut guidance = vec![render_workflow_state_summary(
+        session_id,
+        &roots,
+        &tool_names,
+        &den_tool_names,
+        policy,
     )];
     guidance.push(format!(
         "Trusted ACP session mode this turn: mode_label=`{}`. Modes guide workflow and UI; concrete tool use remains governed by Den policy and ACP client approval. Available tool classes: {}.",
@@ -1040,10 +1077,22 @@ async fn acp_plan_mode_prompt_context(
     let Some(plan_mode) = plan_mode else {
         return Ok(String::new());
     };
+    let submitted_plan_present = plan_mode.plan_artifact_path.is_some();
+    let approval_status = if plan_mode.state == "approved" {
+        "approved_execution_unlocked"
+    } else if plan_mode.state == "submitted" {
+        "awaiting_human_approval"
+    } else {
+        plan_mode.state.as_str()
+    };
+    let execution_unlocked = plan_mode.state == "approved";
     Ok(format!(
-        "\n\n<system-reminder>ACP plan mode is active for this session. plan_mode_id={} state={} artifact={}. Plan mode is a workflow aid, not a mutation lock; concrete tool use is still governed by Den policy and ACP client approval. Use `exit_plan_mode` to submit or update a markdown implementation plan. If the authenticated human clearly approves the submitted plan in chat, use `record_plan_approval` and proceed.</system-reminder>",
+        "\n\n<system-reminder>ACP workflow state for this session: workflow_id={} workflow_state={} submitted_plan_present={} approval_status={} execution_unlocked={}. Workflow state is authoritative; artifact path is audit context only. Plan mode is a workflow aid, not a mutation lock; concrete tool use is still governed by Den policy and ACP client approval. Use `exit_plan_mode` to submit or update a markdown implementation plan. If the authenticated human clearly approves the submitted plan in chat, use `record_plan_approval`; once approved, implementation may proceed immediately when this turn's callable tools permit it. Artifact path remains available for audit when needed: {}.</system-reminder>",
         plan_mode.id,
         plan_mode.state,
+        submitted_plan_present,
+        approval_status,
+        execution_unlocked,
         plan_mode
             .plan_artifact_path
             .as_deref()
