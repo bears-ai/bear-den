@@ -262,6 +262,151 @@ async fn m1d_bears_runtime_plan_column_exists() {
 }
 
 #[tokio::test]
+async fn reflection_conductor_tables_columns_and_constraints_exist() {
+    dotenvy::dotenv().ok();
+    let url = std::env::var("DATABASE_URL").expect("DATABASE_URL for integration test");
+    let pool = PgPoolOptions::new()
+        .max_connections(2)
+        .connect(&url)
+        .await
+        .expect("connect postgres");
+
+    apply_migrations(&pool).await;
+
+    for table in [
+        "bear_reflection_runs",
+        "bear_reflection_run_items",
+        "reflection_conversations",
+    ] {
+        let n: i64 = sqlx::query_scalar(
+            r#"
+            SELECT COUNT(*)::bigint
+            FROM information_schema.tables
+            WHERE table_schema = 'public'
+              AND table_name = $1
+            "#,
+        )
+        .bind(table)
+        .fetch_one(&pool)
+        .await
+        .expect("information_schema query");
+        assert_eq!(n, 1, "missing table {table}");
+    }
+
+    let run_cols: i64 = sqlx::query_scalar(
+        r#"
+        SELECT COUNT(*)::bigint
+        FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND table_name = 'bear_reflection_runs'
+          AND column_name IN (
+            'id',
+            'bear_id',
+            'lane',
+            'trigger',
+            'status',
+            'role_agent_id',
+            'conversation_id',
+            'conversation_key',
+            'conversation_date',
+            'input_summary',
+            'output_summary',
+            'error',
+            'started_at',
+            'completed_at',
+            'created_at'
+          )
+        "#,
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("information_schema query");
+    assert_eq!(
+        run_cols, 15,
+        "bear_reflection_runs missing expected columns"
+    );
+
+    let item_cols: i64 = sqlx::query_scalar(
+        r#"
+        SELECT COUNT(*)::bigint
+        FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND table_name = 'bear_reflection_run_items'
+          AND column_name IN ('id', 'run_id', 'item_kind', 'item_id', 'status', 'created_at')
+        "#,
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("information_schema query");
+    assert_eq!(
+        item_cols, 6,
+        "bear_reflection_run_items missing expected columns"
+    );
+
+    let conversation_cols: i64 = sqlx::query_scalar(
+        r#"
+        SELECT COUNT(*)::bigint
+        FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND table_name = 'reflection_conversations'
+          AND column_name IN (
+            'id',
+            'bear_id',
+            'role_agent_id',
+            'lane',
+            'conversation_date',
+            'conversation_key',
+            'conversation_id',
+            'created_at',
+            'last_used_at'
+          )
+        "#,
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("information_schema query");
+    assert_eq!(
+        conversation_cols, 9,
+        "reflection_conversations missing expected columns"
+    );
+
+    let status_check: String = sqlx::query_scalar(
+        r#"
+        SELECT pg_get_constraintdef(c.oid)
+        FROM pg_constraint c
+        INNER JOIN pg_class t ON t.oid = c.conrelid
+        WHERE t.relname = 'bear_reflection_runs'
+          AND c.contype = 'c'
+          AND pg_get_constraintdef(c.oid) LIKE '%needs_human_review%'
+        LIMIT 1
+        "#,
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("bear_reflection_runs status check");
+    assert!(status_check.contains("queued"));
+    assert!(status_check.contains("needs_human_review"));
+
+    let unique_constraint_count: i64 = sqlx::query_scalar(
+        r#"
+        SELECT COUNT(*)::bigint
+        FROM pg_constraint c
+        INNER JOIN pg_class t ON t.oid = c.conrelid
+        WHERE t.relname = 'reflection_conversations'
+          AND c.contype = 'u'
+          AND c.conname = 'uq_reflection_conversations_bear_lane_date'
+        "#,
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("reflection_conversations unique constraint check");
+    assert_eq!(
+        unique_constraint_count, 1,
+        "reflection_conversations missing daily lane uniqueness"
+    );
+}
+
+#[tokio::test]
 async fn work_plan_tables_columns_and_constraints_exist() {
     dotenvy::dotenv().ok();
     let url = std::env::var("DATABASE_URL").expect("DATABASE_URL for integration test");

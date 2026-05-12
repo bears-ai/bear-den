@@ -59,8 +59,9 @@ use crate::{
         den_tools::{self, DenToolChannelContext, DenToolInvocationContext},
         letta::{load_agent_conversations, strip_letta_harness_for_user, LettaContinuationContext},
         memory_manager_head::{write_memfs_role_memory_entry, MemfsWriteRoleMemoryEntryRequest},
+        memory_proposals::{self, CreateMemoryProposal},
         pair_reflection::{self, CompletePairReflectionRun, CreatePairReflectionRun},
-        user, web_policy,
+        reflection_conductor, user, web_policy,
         work_plans::{self, WorkPlanLookup},
     },
     errors::CustomError,
@@ -2261,7 +2262,7 @@ async fn run_pair_reflection_summary(
         .await?;
         return Ok(());
     };
-    pair_reflection::complete_run(
+    let completed_run = pair_reflection::complete_run(
         &state.sqlx_pool,
         CompletePairReflectionRun {
             id: run.id,
@@ -2274,6 +2275,55 @@ async fn run_pair_reflection_summary(
                 "commit": write_response.canonical_tip,
             }),
         },
+    )
+    .await?;
+
+    let pair_agent_id =
+        bears_db::role_agent_id(&state.sqlx_pool, session.bear_id, BearAgentRole::Pair)
+            .await?
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty());
+    let proposal = memory_proposals::create(
+        &state.sqlx_pool,
+        CreateMemoryProposal {
+            bear_id: session.bear_id,
+            source_role: BearAgentRole::Pair,
+            source_agent_id: pair_agent_id.clone(),
+            source_paths: vec![write_response.path.clone()],
+            source_refs: serde_json::json!({
+                "acp_session_id": session.acp_session_id,
+                "conversation_id": conversation_id,
+                "reflection_run_id": completed_run.id,
+            }),
+            suggested_action: "unspecified",
+            target_ref: None,
+            title: &format!("Review pair reflection summary: {}", session.acp_session_id),
+            summary: "Pair reflection created a durable session summary; review for useful shared/work-visible knowledge.",
+            rationale: "Pair reflection summaries may contain durable decisions, lessons, or work-visible knowledge that should be curated beyond pair-local memory.",
+            proposed_content: None,
+            proposed_patch: None,
+            refs: serde_json::json!({
+                "summary_path": write_response.path,
+                "summary_commit": write_response.canonical_tip,
+                "reflection_run_id": completed_run.id,
+            }),
+            sensitivity: "normal",
+            requires_human: false,
+        },
+    )
+    .await?;
+
+    let reflection_date = time::OffsetDateTime::now_utc().date();
+    let conversation_key = format!("memory_curate:{reflection_date}");
+    reflection_conductor::enqueue_memory_curate_for_proposals(
+        &state.sqlx_pool,
+        session.bear_id,
+        pair_agent_id.as_deref(),
+        conversation_id,
+        Some(&conversation_key),
+        Some(reflection_date),
+        "pair_reflection",
+        vec![proposal.id],
     )
     .await?;
     Ok(())
