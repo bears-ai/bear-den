@@ -4,24 +4,40 @@ High-level implementation roadmap for BEARS. This file is the planning hub: it s
 
 ## Planning hub status
 
-This file is the canonical index for planning documents under `docs/planning/`.
+This file is the canonical planning dashboard for `docs/planning/`. It should let a reader answer four questions quickly:
+
+1. What is already working?
+2. What are the next near-term priorities?
+3. Which detailed plans are canonical for those priorities?
+4. Which older plans are reference material only or safely retired from active use?
+
+### Current status at a glance
+
+| Area | Current status | Canonical docs |
+|---|---|---|
+| Phase 1 Den bootstrap / operator stack | Active broad delivery track for deployability, auth, operator UX, web chat, provisioning, routines, and artifacts | [`PHASE1_BOOTSTRAP.md`](PHASE1_BOOTSTRAP.md), [`PHASE1_DECISIONS.md`](PHASE1_DECISIONS.md) |
+| Multi-agent role model | Implemented baseline exists: additive schema landed, role-scoped routing is active, legacy bear-level Letta id routing is retired; runtime completion queue remains active | [`MULTI_AGENT_IMPLEMENTATION_PLAN.md`](MULTI_AGENT_IMPLEMENTATION_PLAN.md) |
+| ACP `pair` direct local-tool runtime | Baseline runtime exists and has confirmed end-to-end local tool operation; current work is reliability and continuation hardening | [`ACP_DIRECT_LOCAL_TOOL_RUNTIME_PLAN.md`](ACP_DIRECT_LOCAL_TOOL_RUNTIME_PLAN.md), [`ACP_ADAPTER_IMPROVEMENT_PLAN.md`](ACP_ADAPTER_IMPROVEMENT_PLAN.md) |
+| Workboard and ACP plan mode | Implemented baseline; this is the current planning/status model for active work | [`TASK_SYSTEM_IMPLEMENTATION_PLAN.md`](TASK_SYSTEM_IMPLEMENTATION_PLAN.md) |
+| Memory tools | Partial implementation / active follow-up, especially for `pair`; broader read/search/governance flow still in progress | [`MEMORY_TOOLS_IMPLEMENTATION_PLAN.md`](MEMORY_TOOLS_IMPLEMENTATION_PLAN.md) |
+| Reflection and memory governance | MVP schema/storage foundation exists; full curate review and promotion runtime remains active follow-up work | [`CURATE_MEMORY_GOVERNANCE_PLAN.md`](CURATE_MEMORY_GOVERNANCE_PLAN.md), [`REFLECTION_SYSTEM_PLAN.md`](REFLECTION_SYSTEM_PLAN.md) |
 
 ### Current implementation picture
 
 - **Phase 1 Den bootstrap remains the broad platform track.** [`PHASE1_BOOTSTRAP.md`](PHASE1_BOOTSTRAP.md) and [`PHASE1_DECISIONS.md`](PHASE1_DECISIONS.md) are still the top-level source for the first deployable Den stack, operator console, web chat path, Letta Code harnessing, routines, and Garage/artifacts decisions.
 - **Multi-agent BEARS is no longer just conceptual.** [`MULTI_AGENT_IMPLEMENTATION_PLAN.md`](MULTI_AGENT_IMPLEMENTATION_PLAN.md) documents a meaningful implemented baseline: additive multi-agent schema exists, role-scoped routing is active, the legacy single-agent `bears.letta_agent_id` model is retired, and the current runtime queue is focused on task intent capture, curate review, work dispatch, watch ingestion, and trust-boundary hardening.
-- **ACP for `pair` has changed direction.** The active path is the **direct Den ⇄ adapter ⇄ Letta conversation API runtime** in [`ACP_DIRECT_LOCAL_TOOL_RUNTIME_PLAN.md`](ACP_DIRECT_LOCAL_TOOL_RUNTIME_PLAN.md), with current hardening work captured in [`ACP_ADAPTER_IMPROVEMENT_PLAN.md`](ACP_ADAPTER_IMPROVEMENT_PLAN.md). Older Codepool relay documents are historical only.
-- **Work planning now has two layers.** [`TASK_SYSTEM_IMPLEMENTATION_PLAN.md`](TASK_SYSTEM_IMPLEMENTATION_PLAN.md) distinguishes a Den live workboard from the ACP `pair` plan-mode approval gate. This is the current planning/status model for active work rather than older ad hoc plan ideas.
+- **ACP for `pair` has changed direction and is now real.** The canonical path is the **direct Den ⇄ adapter ⇄ Letta conversation API runtime** in [`ACP_DIRECT_LOCAL_TOOL_RUNTIME_PLAN.md`](ACP_DIRECT_LOCAL_TOOL_RUNTIME_PLAN.md), with current hardening work captured in [`ACP_ADAPTER_IMPROVEMENT_PLAN.md`](ACP_ADAPTER_IMPROVEMENT_PLAN.md). Older Codepool relay documents are historical only.
+- **Work planning now has two layers.** [`TASK_SYSTEM_IMPLEMENTATION_PLAN.md`](TASK_SYSTEM_IMPLEMENTATION_PLAN.md) distinguishes a Den live workboard from the ACP `pair` plan-mode approval gate. This is the active planning/status model rather than older ad hoc plan ideas.
 - **Memory governance is split intentionally.** [`MEMORY_TOOLS_IMPLEMENTATION_PLAN.md`](MEMORY_TOOLS_IMPLEMENTATION_PLAN.md) covers role-facing Den memory tools, while [`CURATE_MEMORY_GOVERNANCE_PLAN.md`](CURATE_MEMORY_GOVERNANCE_PLAN.md) covers proposal, review, and promotion into shared `core/` memory.
 
 ### Important contradictions resolved here
 
-- **ACP direct mode supersedes ACP Codepool relay for `pair`.** Do not treat [`ACP_CLIENT_TOOL_RELAY_PLAN.md`](ACP_CLIENT_TOOL_RELAY_PLAN.md) or [`ACP_TOOL_RELIABILITY_PLAN.md`](ACP_TOOL_RELIABILITY_PLAN.md) as active implementation plans for ACP local tools.
+- **ACP direct mode supersedes ACP Codepool relay for `pair`.** Do not treat [`archives/ACP_CLIENT_TOOL_RELAY_PLAN.md`](archives/ACP_CLIENT_TOOL_RELAY_PLAN.md) or [`archives/ACP_TOOL_RELIABILITY_PLAN.md`](archives/ACP_TOOL_RELIABILITY_PLAN.md) as active implementation plans for ACP local tools.
 - **The broad `bear_channel` roadmap still matters, but not as the active `pair` local-tool architecture.** [`BEAR_CHANNEL_PLANS.md`](BEAR_CHANNEL_PLANS.md) remains relevant for web/chat/runtime capability work and historical ACP gateway progress, but its client-tool relay section is no longer the canonical path for direct ACP local tooling.
-- **Den-hosted read-only tool ideas have evolved into role-scoped planning and memory tools.** [`DEN_SPECIFIC_TOOLS_PLAN.md`](DEN_SPECIFIC_TOOLS_PLAN.md) and capability-model documents remain useful design background, but current implementation priority is captured in the multi-agent, task, memory, and ACP plans listed below.
-- **UI and onboarding plans depend on role-aware composition and the workboard/memory model.** Treat [`CONTEXT_COMPOSITION_PLAN.md`](CONTEXT_COMPOSITION_PLAN.md), [`FIRST_BEAR_ONBOARDING_PLAN.md`](FIRST_BEAR_ONBOARDING_PLAN.md), and [`BEAR_DETAILS_UI_IMPROVEMENT_PLAN.md`](BEAR_DETAILS_UI_IMPROVEMENT_PLAN.md) as downstream product/design plans, not the current backend critical path.
+- **Den-hosted read-only tool ideas have evolved into role-scoped planning and memory tools.** Capability-model and Den-tool background plans are now reference material; current implementation priority is captured in the multi-agent, task, memory, and ACP plans listed below.
+- **UI and onboarding plans depend on role-aware composition and the workboard/memory model.** Treat UI/onboarding/context-composition plans as downstream product/design plans, not the current backend critical path.
 
-## Path forward
+## Near-term priorities
 
 ### 1. Finish the active runtime spine
 
@@ -39,22 +55,22 @@ This file is the canonical index for planning documents under `docs/planning/`.
 
 1. Treat [`ACP_DIRECT_LOCAL_TOOL_RUNTIME_PLAN.md`](ACP_DIRECT_LOCAL_TOOL_RUNTIME_PLAN.md) as the canonical ACP local-tool architecture.
 2. Use [`ACP_ADAPTER_IMPROVEMENT_PLAN.md`](ACP_ADAPTER_IMPROVEMENT_PLAN.md) for current reliability and continuation follow-up after the initial rollout.
-3. Keep historical ACP relay docs only for background lessons and references.
+3. Keep historical ACP relay docs in `archives/` only for background lessons and references.
 
 ### 3. Complete Den memory and review flows
 
-1. Land role-facing memory tools from [`MEMORY_TOOLS_IMPLEMENTATION_PLAN.md`](MEMORY_TOOLS_IMPLEMENTATION_PLAN.md), especially for `pair`.
+1. Land and normalize role-facing memory tools from [`MEMORY_TOOLS_IMPLEMENTATION_PLAN.md`](MEMORY_TOOLS_IMPLEMENTATION_PLAN.md), especially for `pair`.
 2. Land governed review/promotion flows from [`CURATE_MEMORY_GOVERNANCE_PLAN.md`](CURATE_MEMORY_GOVERNANCE_PLAN.md).
 3. Keep reflection behavior aligned with [`REFLECTION_SYSTEM_PLAN.md`](REFLECTION_SYSTEM_PLAN.md).
 
-### 4. Use supporting design plans at the right time
+### 4. Continue Phase 1 operator/product integration
 
-- Capability and brokering plans should guide normalization and future product surfaces, but should not override the active ACP direct-mode architecture.
-- UI/onboarding/context-composition plans should consume the role/workboard/memory model after the runtime spine is stable.
+- Continue operator console, provisioning, web chat, routines, and artifact integration work from the Phase 1 docs.
+- Use supporting product/design plans when the runtime spine is stable enough to consume them.
 
 ## Planning document index
 
-### Core roadmap and currently active implementation plans
+### Near-term active priorities
 
 - [Phase 1 bootstrap](PHASE1_BOOTSTRAP.md) — broad Den delivery plan.
 - [Phase 1 locked decisions](PHASE1_DECISIONS.md) — currently active product decisions for the Phase 1 stack.
@@ -65,27 +81,34 @@ This file is the canonical index for planning documents under `docs/planning/`.
 - [Reflection system](REFLECTION_SYSTEM_PLAN.md) — reflection lanes and review architecture.
 - [ACP direct local tool runtime](ACP_DIRECT_LOCAL_TOOL_RUNTIME_PLAN.md) — canonical ACP `pair` local-tool architecture.
 - [ACP adapter improvement plan](ACP_ADAPTER_IMPROVEMENT_PLAN.md) — active ACP hardening follow-up.
+
+### Active supporting plans
+
 - [`bear_channel` Phase 7+](BEAR_CHANNEL_PLANS.md) — active for broader runtime/channel work, but not the canonical `pair` local-tool path.
+- [ACP discovery prompt](ACP_DISCOVERY_PROMPT.md) — prompt/discovery support for ACP distribution and UX.
+- [Live dev stack](LIVE_DEV_STACK_PLAN.md) — development-environment support work, not the primary delivery spine.
 
-### Supporting design and product plans
+### Reference design and downstream product plans
 
-- [Bear capability management](BEAR_CAPABILITY_MANAGEMENT_PLAN.md)
-- [Capabilities, skills, and Den brokering](CAPABILITIES_SKILLS_BROKERING_PLAN.md)
-- [Den-specific bear tools](DEN_SPECIFIC_TOOLS_PLAN.md)
-- [Role-aware tool guidance](ROLE_AWARE_TOOL_GUIDANCE_PLAN.md)
-- [Context composition](CONTEXT_COMPOSITION_PLAN.md)
-- [First bear onboarding](FIRST_BEAR_ONBOARDING_PLAN.md)
-- [Bear details UI improvement](BEAR_DETAILS_UI_IMPROVEMENT_PLAN.md)
-- [ACP discovery prompt](ACP_DISCOVERY_PROMPT.md)
-- [Live dev stack](LIVE_DEV_STACK_PLAN.md)
-- [Bear channel / UI follow-up and related planning docs in this directory]
+These documents remain useful, but they should not drive current implementation without an explicit revisit.
+
+- [Bear capability management](archives/BEAR_CAPABILITY_MANAGEMENT_PLAN.md)
+- [Capabilities, skills, and Den brokering](archives/CAPABILITIES_SKILLS_BROKERING_PLAN.md)
+- [Den-specific bear tools](archives/DEN_SPECIFIC_TOOLS_PLAN.md)
+- [Role-aware tool guidance](archives/ROLE_AWARE_TOOL_GUIDANCE_PLAN.md)
+- [Context composition](archives/CONTEXT_COMPOSITION_PLAN.md)
+- [First bear onboarding](archives/FIRST_BEAR_ONBOARDING_PLAN.md)
+- [Bear details UI improvement](archives/BEAR_DETAILS_UI_IMPROVEMENT_PLAN.md)
+- [Memory automation roadmap](archives/MEMORY_AUTOMATION_ROADMAP.md)
+- [Pair reflection and work memory](archives/PAIR_REFLECTION_AND_WORK_MEMORY_PLAN.md)
+- [Bear channel / UI follow-up and related archived planning docs in this directory]
 
 ### Historical or superseded plans
 
 These remain useful as background, but should not drive new implementation without an explicit revisit:
 
-- [ACP client tool relay plan](ACP_CLIENT_TOOL_RELAY_PLAN.md) — historical Codepool relay design, superseded for ACP direct mode.
-- [ACP tool reliability plan](ACP_TOOL_RELIABILITY_PLAN.md) — historical Codepool waiter plan, superseded for ACP direct mode.
+- [ACP client tool relay plan](archives/ACP_CLIENT_TOOL_RELAY_PLAN.md) — historical Codepool relay design, superseded for ACP direct mode.
+- [ACP tool reliability plan](archives/ACP_TOOL_RELIABILITY_PLAN.md) — historical Codepool waiter plan, superseded for ACP direct mode.
 
 **Architecture sources of truth:**
 

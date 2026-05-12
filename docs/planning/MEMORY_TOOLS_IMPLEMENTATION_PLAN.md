@@ -13,7 +13,7 @@ Related docs:
 - [Semantic memory context](../context/SEMANTIC_MEMORY.md)
 - [Memory model](../concepts/MEMORY_MODEL.md)
 - [ACP direct local tool runtime](ACP_DIRECT_LOCAL_TOOL_RUNTIME_PLAN.md)
-- [Den-specific bear tools implementation plan](DEN_SPECIFIC_TOOLS_PLAN.md)
+- [Den-specific bear tools implementation plan](archives/DEN_SPECIFIC_TOOLS_PLAN.md)
 
 ---
 
