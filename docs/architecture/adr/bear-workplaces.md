@@ -9,7 +9,7 @@
 BEARS now has several planning-related objects:
 
 - live workboard plans in Den,
-- ACP `pair` plan-mode gates,
+- ACP `pair` plan-mode artifacts and mode state,
 - durable plan artifacts under role-local MemFS paths such as `pair/plans/`,
 - task intents and future Docket work,
 - work results and future Cabinet references.
@@ -179,7 +179,7 @@ Planning is Bear-level and Workplace-aware.
 `list_plans` should become a unified Bear planning view that can include:
 
 - live workboard plans,
-- active/submitted plan-mode gates,
+- active/submitted plan-mode artifacts,
 - saved plan artifacts,
 - handoff/task-intent state,
 - future Docket tasks/projects,
@@ -258,7 +258,7 @@ Use “context” only where protocol/model terminology already requires it, suc
 
 For near-term planning work:
 
-1. Enrich `list_plans` to include live workboard plans, plan-mode gates, and saved plan artifacts.
+1. Enrich `list_plans` to include live workboard plans, plan-mode artifacts, and saved plan artifacts.
 2. Include available Workplace reference metadata in returned plans, even if unnormalized.
 3. Change user-facing language from “no plans” to more precise phrases like “no active plans for this Workplace” or “no Bear-level pending plans”.
 4. Treat role fields as provenance and policy hints, not product ownership.

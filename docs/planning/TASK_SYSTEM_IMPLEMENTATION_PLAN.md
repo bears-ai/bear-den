@@ -5,7 +5,7 @@ This plan turns the multi-agent task architecture into implementable Den work. I
 ## Decision Summary
 
 - Den owns a per-bear live workboard for current plans and status, aligned with Letta Code's lightweight `TodoWrite` / `UpdatePlan` progress layer.
-- BEARS should add a separate ACP `pair` plan-mode gate aligned with Letta Code's `EnterPlanMode` / `ExitPlanMode`: read/search/inspect only, durable markdown plan artifact, then user approval before mutation.
+- BEARS should support ACP `pair` Ask/Plan/Write modes aligned with common coding-agent clients: Ask and Plan expose read/search/inspect tools; Write enables mutation/execution/browser tools, with concrete effects still requiring Den policy, adapter safety checks, and ACP client approval.
 - MemFS owns durable task artifacts: channel intent files, curate-approved task files, work result files, and likely `pair` plan-mode markdown artifacts.
 - ACP session rows remain protocol bindings only. They may reference a work plan, but they do not own planning state.
 - Channel agents never hand work directly to the work agent. They write or request task intents; curate approval is the promotion boundary.
@@ -59,20 +59,20 @@ Use these visibility values initially:
 
 The read API should return projections, not raw rows. For example, `talk` asking about `pair` work should receive title, status, current item, blockers, and timestamps, but not raw ACP workspace paths or unredacted local context unless policy explicitly allows it.
 
-## Pair Plan-Mode Gate
+## Pair Plan Mode
 
-Add a separate gate for ACP `pair`, modeled after Letta Code's `EnterPlanMode` / `ExitPlanMode`.
+ACP `pair` has `Ask`, `Plan`, and `Write` modes, aligned with common coding-agent clients. Modes are workflow/UI state, not a separate durable mutation gate.
 
-Implementation status: schema, core model, Den tools, ACP prompt reminders, MemFS `pair/plans/` artifacts, server-side policy denial for mutating tools, ACP permission request emission, Den approve/reject handling, ACP adapter approve/reject rendering, native ACP `plan` updates, and native ACP `Ask` / `Plan` / `Write` mode/config updates are implemented.
+Implementation status: schema, core model, Den tools, ACP prompt reminders, MemFS `pair/plans/` artifacts, native ACP `plan` updates, and native ACP `Ask` / `Plan` / `Write` mode/config updates are implemented. `record_plan_approval` records explicit authenticated-human approval when useful for workflow/audit.
 
 Acceptance:
 
-- Pair can request entering plan mode and Den records an active plan-mode gate for the ACP session.
-- While plan mode is active, ACP permits read/search/inspect tools and Den read-only tools, but denies mutating workspace tools and non-read-only shell operations.
+- Pair can request entering plan mode and Den records active plan-mode state for the ACP session.
+- Ask and Plan expose read/search/inspect tools; Write enables mutation/execution/browser tools. Concrete effects remain subject to Den policy, adapter safety checks, and ACP client approval.
 - Pair can write a markdown plan artifact only under `pair/plans/`.
-- Exiting plan mode stores the markdown plan artifact and marks the gate `submitted`.
-- Approval restores the previous permission mode, switches ACP UI to `Write`, and records an audit event linking the plan artifact, ACP session, Bear, role, and user.
-- Rejection keeps mutation blocked or exits without implementation, according to the user's decision.
+- Exiting plan mode stores or updates the markdown plan artifact and marks it `submitted`.
+- The authenticated human can approve a submitted plan in chat through `record_plan_approval`, which switches ACP UI to `Write` and records an audit event linking the plan artifact, ACP session, Bear, role, and user.
+- Rejection keeps the session in Plan mode for revision unless the user cancels plan mode.
 
 This is intentionally separate from `den.work_plan.update`. The workboard is the visible current status list; the plan-mode artifact is the reviewable proposal before mutation.
 

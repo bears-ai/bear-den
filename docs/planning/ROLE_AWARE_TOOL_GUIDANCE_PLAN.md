@@ -244,9 +244,10 @@ Guidance must be role-aware from the start.
   - when `update_plan` completes a non-trivial plan, consider one concise role-local memory entry only if durable knowledge was produced.
   - do not write memory for routine/trivial task completion.
 - Plan mode guidance:
-  - `enter_plan_mode` before substantial implementation planning,
-  - `exit_plan_mode` submits approval artifact,
-  - mutation remains blocked until approval.
+  - `enter_plan_mode` when substantial implementation planning would help,
+  - `exit_plan_mode` submits or updates a markdown plan artifact,
+  - `record_plan_approval` records explicit authenticated-human approval when useful,
+  - ask/plan modes expose read/search/inspect tools; write mode enables mutation/execution/browser tools, still subject to concrete ACP client approval and Den/adapter policy.
 
 ### Work
 

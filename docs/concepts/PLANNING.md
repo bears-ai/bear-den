@@ -24,23 +24,19 @@ BEARS' Den equivalent is the **workboard**:
 
 A workboard plan is intentionally small and operational. It records what the Bear is trying to do now, the current item, blockers, the role that created or last updated it, and whether the plan should be private to that role, visible to the same user, visible to the Bear, or ready for handoff.
 
-### 2. Pre-implementation planning gate
+### 2. ACP pair planning mode
 
-Letta Code also has a separate gate: `EnterPlanMode` and `ExitPlanMode`.
+Letta Code has `EnterPlanMode` and `ExitPlanMode`. BEARS keeps the familiar **Ask**, **Plan**, and **Write** mode names for ACP `pair`, but treats them as workflow/UI modes rather than a separate durable mutation gate.
 
-In Letta Code, entering plan mode requires user approval, switches permissions to a `plan` mode, allows read/search/inspection, denies code edits and non-read-only shell commands, allows writing only to `~/.letta/plans/*.md`, and then exits by presenting the generated markdown plan for user approval. Approval restores the prior permission mode and allows implementation.
+In BEARS ACP:
 
-BEARS' ACP `pair` plan-mode gate is implemented as a Den-managed session gate. It is conceptually aligned with Letta Code-backed `work` sessions while remaining explicit about ACP client-tool boundaries. In ACP UI, BEARS uses the mode names **Ask**, **Plan**, and **Write**; `Write` means implementation is allowed after approval, while normal client permissions still apply.
-
-The BEARS version is:
-
-1. User or agent requests plan mode.
-2. ACP/Den records a planning gate for the current session.
-3. Pair may inspect/read/search and use Den read-only tools.
-4. Mutating client tools, broad side effects, and non-read-only shell operations are denied by ACP tool policy while the gate is active.
-5. Pair may write a durable markdown plan artifact in an approved plan location.
-6. Pair exits plan mode by presenting that artifact to the user.
-7. User approval closes the gate and restores normal ACP tool permissions for implementation.
+1. User or agent requests Plan mode when substantial implementation planning would help.
+2. ACP/Den records planning state for the current session.
+3. Ask and Plan modes expose read/search/inspect tools.
+4. Write mode enables mutation/execution/browser tools; concrete effects still require Den policy, adapter safety checks, and ACP client approval.
+5. Pair may write a durable markdown plan artifact under `pair/plans/`.
+6. `exit_plan_mode` submits or updates that artifact; it does not create a global mutation gate or require an ACP approval modal.
+7. `record_plan_approval` records explicit authenticated-human approval when useful for workflow/audit and switches the ACP UI to Write.
 
 ## Workplace vs workboard vs plan artifact vs tasks
 
@@ -103,11 +99,10 @@ Implemented:
 - ACP pair plan-mode DB schema and audit events.
 - Den plan-mode tools: `den.plan_mode.enter`, `den.plan_mode.status`, `den.plan_mode.exit`, and `den.plan_mode.cancel`.
 - ACP plan-mode prompt reminders.
-- ACP plan-mode tool policy that blocks mutating client tools and mutating Den tools while the gate is active.
 - Pair-local `plan` memory entries under `pair/plans/` for markdown plan artifacts.
-- ACP permission request emission when `den.plan_mode.exit` submits a plan artifact.
-- ACP permission decision handling for plan-mode approve/reject.
-- ACP adapter rendering of plan-mode approval options as approve/reject instead of URL-style allow/reject labels.
+- ACP `ask` and `plan` modes expose read/search/inspect tools; `write` mode enables mutation/execution/browser tools, which still require concrete ACP client approval and Den/adapter policy checks.
+- `den.plan_mode.exit` submits or updates a markdown plan artifact; it no longer creates a durable mutation gate or requires an ACP permission request.
+- `record_plan_approval` records explicit approval from the authenticated human when useful for workflow/audit, but planning approval is not a global prerequisite for all mutation.
 - ACP native `plan` updates projected from Den workboard items.
 - ACP native mode/config updates using `Ask`, `Plan`, and `Write` modes.
 - ACP `session/new` / `session/resume` mode state with both modern `configOptions` and legacy `modes` compatibility.
@@ -115,7 +110,7 @@ Implemented:
 Planned:
 
 - Operator and chat UI for active/completed plans.
-- A unified Bear-level `list_plans` view that includes live workboard plans, active/submitted plan-mode gates, saved plan artifacts, handoffs/task intents, and available Workplace references.
+- A unified Bear-level `list_plans` view that includes live workboard plans, active/submitted planning artifacts, saved plan artifacts, handoffs/task intents, and available Workplace references.
 - Normalized Workplace records and conservative Workplace inference from ACP workspace roots, Git remotes, Cabinet Mission references, Docket project references, service names, deployments, and artifact paths.
 - Handoff implementation from workboard items to durable task intents.
 - Reflection/curate review of completed plan summaries and durable lessons.
