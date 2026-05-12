@@ -6,6 +6,7 @@ This plan implements Den-hosted memory tools for BEARS agents, prioritizing the 
 
 Related docs:
 
+- [Workflow State Ontology ADR](../architecture/adr/workflow-state-ontology.md)
 - [Semantic Bear Memory ADR](../architecture/adr/semantic-bear-memory.md)
 - [Schema-first Den-generated path strategy ADR](../architecture/adr/schema-first-path-strategy.md)
 - [Bear Memory Tool Boundary ADR](../architecture/adr/bear-memory-tool-boundary.md)
@@ -35,6 +36,7 @@ Give agents, especially `pair`, safe Den-hosted access to Bear memory:
 - Do not require role-local memories to map to Cabinet or `core/`.
 - Do not let agents write arbitrary `core/` paths.
 - Do not let agents choose schema-owned durable artifact paths.
+- Do not let semantic-memory tools masquerade as planning, workboard, task-intent, run-result, or workflow-artifact tools.
 - Do not replace Letta Code-native MemFS tools for harness-backed roles where native tools are the better low-latency path.
 - Do not implement destructive rollback or MemFS operator overrides as agent tools.
 - Do not call the session briefing “context.”
@@ -64,6 +66,8 @@ Give agents, especially `pair`, safe Den-hosted access to Bear memory:
 | `den.session.info` | `session_info` | `pair` first, then all roles | Return trusted briefing for the current interaction. |
 | `den.memory.write_entry` | `memory_write_entry` | `pair` first | Write role-local semantic entries under `pair/`. |
 | `den.memory.status` | `memory_status` | `pair` first | Return MemFS health for the current bear/role. |
+
+All three tools should participate in the workflow-state ontology. At minimum, descriptor metadata and tool responses should make it clear that these belong to the `memory` or `execution` domains, not `workflow` or `workboard`, even though provider-safe names must stay concise and dot-free.
 
 P0 should retire the existing `den.write_note` / `den_write_note` pair tool and replace it with `den.memory.write_entry` / `memory_write_entry`. Backward compatibility is not required.
 
@@ -195,6 +199,22 @@ Defaults:
 - `lifecycle.retention`: `durable` for `note`, `decision`, `summary`, `reflection`; `short` for `scratch`; `archive` or `durable` for `log` depending on role policy
 - `lifecycle.promotion`: `none`
 - `lifecycle.status`: `active`
+
+### Ontology-aware validation
+
+To support the workflow-state model, `den.memory.write_entry` should also reject content that is structurally in the wrong domain, even when the title/body are superficially valid text.
+
+Examples to reject or redirect:
+
+- active implementation plans;
+- live task lists intended for current work tracking;
+- task intents;
+- run results;
+- observations;
+- direct `core/` updates;
+- Cabinet writes.
+
+A lightweight structured content/domain class is preferred over verbose human-facing names. This is more natural for model/tooling boundaries and avoids overburdening users with long labels while still preserving provider-safe naming constraints.
 
 ---
 

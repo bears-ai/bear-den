@@ -18,8 +18,8 @@ This file is the canonical planning dashboard for `docs/planning/`. It should le
 | Phase 1 Den bootstrap / operator stack | Active broad delivery track for deployability, auth, operator UX, web chat, provisioning, routines, and artifacts | [`PHASE1_BOOTSTRAP.md`](PHASE1_BOOTSTRAP.md), [`PHASE1_DECISIONS.md`](PHASE1_DECISIONS.md) |
 | Multi-agent role model | Implemented baseline exists: additive schema landed, role-scoped routing is active, legacy bear-level Letta id routing is retired; runtime completion queue remains active | [`MULTI_AGENT_IMPLEMENTATION_PLAN.md`](MULTI_AGENT_IMPLEMENTATION_PLAN.md) |
 | ACP `pair` direct local-tool runtime | Baseline runtime exists and has confirmed end-to-end local tool operation; current work is reliability and continuation hardening | [`ACP_DIRECT_LOCAL_TOOL_RUNTIME_PLAN.md`](ACP_DIRECT_LOCAL_TOOL_RUNTIME_PLAN.md), [`ACP_ADAPTER_IMPROVEMENT_PLAN.md`](ACP_ADAPTER_IMPROVEMENT_PLAN.md) |
-| Workboard and ACP plan mode | Implemented baseline; this is the current planning/status model for active work | [`TASK_SYSTEM_IMPLEMENTATION_PLAN.md`](TASK_SYSTEM_IMPLEMENTATION_PLAN.md) |
-| Memory tools | Partial implementation / active follow-up, especially for `pair`; broader read/search/governance flow still in progress | [`MEMORY_TOOLS_IMPLEMENTATION_PLAN.md`](MEMORY_TOOLS_IMPLEMENTATION_PLAN.md) |
+| Workboard and ACP plan mode | Implemented baseline; now needs ontology-aware workflow-state unification so planning, workboard, memory, and execution are clearly separated | [`TASK_SYSTEM_IMPLEMENTATION_PLAN.md`](TASK_SYSTEM_IMPLEMENTATION_PLAN.md), [`../architecture/adr/workflow-state-ontology.md`](../architecture/adr/workflow-state-ontology.md) |
+| Memory tools | Partial implementation / active follow-up, especially for `pair`; must align with the workflow-state ontology so semantic memory is structurally distinct from planning and execution state | [`MEMORY_TOOLS_IMPLEMENTATION_PLAN.md`](MEMORY_TOOLS_IMPLEMENTATION_PLAN.md), [`../architecture/adr/workflow-state-ontology.md`](../architecture/adr/workflow-state-ontology.md) |
 | Reflection and memory governance | MVP schema/storage foundation exists; full curate review and promotion runtime remains active follow-up work | [`CURATE_MEMORY_GOVERNANCE_PLAN.md`](CURATE_MEMORY_GOVERNANCE_PLAN.md), [`REFLECTION_SYSTEM_PLAN.md`](REFLECTION_SYSTEM_PLAN.md) |
 
 ### Current implementation picture
@@ -49,7 +49,8 @@ This file is the canonical planning dashboard for `docs/planning/`. It should le
    - work dispatcher and result lifecycle
    - watch ingestion and observation lifecycle
    - trust-boundary hardening and end-to-end proof
-3. Keep the task/workboard model aligned with [`TASK_SYSTEM_IMPLEMENTATION_PLAN.md`](TASK_SYSTEM_IMPLEMENTATION_PLAN.md).
+3. Unify planning, workboard, memory, and execution surfaces under the single ontology-aware workflow-state model in [`../architecture/adr/workflow-state-ontology.md`](../architecture/adr/workflow-state-ontology.md).
+4. Keep the task/workboard model aligned with [`TASK_SYSTEM_IMPLEMENTATION_PLAN.md`](TASK_SYSTEM_IMPLEMENTATION_PLAN.md).
 
 ### 2. Harden ACP `pair`
 
@@ -75,6 +76,7 @@ This file is the canonical planning dashboard for `docs/planning/`. It should le
 - [Phase 1 bootstrap](PHASE1_BOOTSTRAP.md) — broad Den delivery plan.
 - [Phase 1 locked decisions](PHASE1_DECISIONS.md) — currently active product decisions for the Phase 1 stack.
 - [Multi-agent bear implementation](MULTI_AGENT_IMPLEMENTATION_PLAN.md) — active runtime completion queue and broader rollout phases.
+- [Workflow state ontology ADR](../architecture/adr/workflow-state-ontology.md) — unify workflow, workboard, memory, and execution state now rather than as a later cleanup.
 - [Task system implementation](TASK_SYSTEM_IMPLEMENTATION_PLAN.md) — live workboard, plan mode, handoff, and task runtime.
 - [Memory tools implementation](MEMORY_TOOLS_IMPLEMENTATION_PLAN.md) — role-facing Den memory tools.
 - [Curate memory governance](CURATE_MEMORY_GOVERNANCE_PLAN.md) — review and promotion of memory into `core/`.

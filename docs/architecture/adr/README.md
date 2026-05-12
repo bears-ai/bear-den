@@ -23,6 +23,7 @@ Use ADRs for cross-cutting product and architecture decisions that are expected 
 | [routines-automation.md](routines-automation.md) | Proposed | Den-managed routines, scheduling, output handling, learning constraints |
 | [schema-first-path-strategy.md](schema-first-path-strategy.md) | Accepted | Conservative schema-first path ownership and Den-generated durable artifact paths |
 | [semantic-bear-memory.md](semantic-bear-memory.md) | Accepted | Semantic memory model: locality, kind, references, lifecycle, Cabinet spaces, and situation briefings |
+| [workflow-state-ontology.md](workflow-state-ontology.md) | Proposed | Single ontology-aware workflow state model spanning workflow, workboard, memory, and execution |
 
 ## Naming
 

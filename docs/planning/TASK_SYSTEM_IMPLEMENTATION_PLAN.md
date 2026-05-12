@@ -2,11 +2,13 @@
 
 This plan turns the multi-agent task architecture into implementable Den work. It complements [`tasks-schema.md`](../architecture/tasks-schema.md), which remains the canonical file format for MemFS task intents, approved tasks, and work results.
 
+This document now also tracks the task/workboard portion of the single ontology-aware workflow-state model defined in [`../architecture/adr/workflow-state-ontology.md`](../architecture/adr/workflow-state-ontology.md). Plan mode, live workboard state, semantic memory, and execution capabilities must be represented as distinct domains rather than left as prompt-only conventions.
+
 ## Decision Summary
 
 - Den owns a per-bear live workboard for current plans and status, aligned with Letta Code's lightweight `TodoWrite` / `UpdatePlan` progress layer.
 - BEARS should support ACP `pair` Ask/Plan/Write modes aligned with common coding-agent clients: Ask and Plan expose read/search/inspect tools; Write enables mutation/execution/browser tools, with concrete effects still requiring Den policy, adapter safety checks, and ACP client approval.
-- MemFS owns durable task artifacts: channel intent files, curate-approved task files, work result files, and likely `pair` plan-mode markdown artifacts.
+- MemFS owns durable task artifacts: channel intent files, curate-approved task files, and work result files. Workflow/plan-mode artifacts should move toward a workflow-native namespace and response shape rather than looking like ordinary role-local memory entries.
 - ACP session rows remain protocol bindings only. They may reference a work plan, but they do not own planning state.
 - Channel agents never hand work directly to the work agent. They write or request task intents; curate approval is the promotion boundary.
 - Letta Code-based agents interact with the workboard through Den meta tools and short injected context, not by reading Den database rows directly.
@@ -134,6 +136,23 @@ Acceptance:
 - Pair can resume an ACP session and recover its live plan.
 - High-risk task runs surface in a human approval queue before work executes.
 
+## Workflow-state unification requirements
+
+Treat this work as part of the near-term workflow-state ontology effort, not as a later cleanup.
+
+Required additions:
+
+- Add an authoritative per-turn workflow-state summary to ACP/Den surfaces that explicitly names:
+  - permission mode;
+  - available tool classes;
+  - workflow state (`inactive`, `drafting`, `submitted_waiting_approval`, `approved`, `cancelled`);
+  - whether execution is unlocked;
+  - active workboard plan id/summary when present.
+- Ensure current-turn capability state is explicitly marked as authoritative over prior-turn assumptions.
+- Make plan-mode tool outputs look workflow-native rather than like ordinary memory/file-write results.
+- Keep workflow artifacts distinct from semantic memory in namespaces, labels, and response payloads.
+- Expose a machine-readable ontology/domain field in relevant descriptors and UI surfaces so workflow, workboard, memory, and execution remain separable even when provider-safe names stay concise.
+
 ## Implementation Notes
 
 - Keep the first DB implementation JSONB-backed. Normalize plan items only if querying individual items becomes painful.
@@ -141,7 +160,7 @@ Acceptance:
 - Use optimistic concurrency with `version` on updates to prevent silent status clobbering.
 - Keep work plans short. Durable details belong in MemFS task files, result files, or conversation history.
 - If a plan item implies external effects, prefer `request_handoff` over continuing as live plan state.
-- Planning state is not shared Bear memory by default. Use the workboard for tactical progress, a plan-mode artifact for approval, role-local memory for durable lessons, and curate review for anything that should enter `core/`.
+- Planning state is not shared Bear memory by default. Use the workboard for tactical progress, a workflow artifact for approval, role-local memory for durable lessons, and curate review for anything that should enter `core/`.
 
 ## Open Questions
 
@@ -149,4 +168,4 @@ Acceptance:
 - Whether ACP local workspace paths should be redacted by default even for the same user in non-ACP surfaces.
 - Whether completed work plans should archive automatically after a fixed age.
 - Whether operator edits to work plans should be allowed or recorded only as administrative events.
-- Whether plan-mode markdown artifacts should live under role-local MemFS paths such as `pair/plans/` or a separate Den-controlled artifact namespace.
+- Exact workflow-artifact namespace and representation: separate Den-controlled artifact namespace, workflow-native ids without file-like surfacing, or a hybrid model.
