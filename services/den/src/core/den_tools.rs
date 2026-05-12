@@ -2047,7 +2047,7 @@ async fn exit_plan_mode(
             "entry_id": memfs_response.entry_id,
             "commit": memfs_response.commit,
         },
-        "approval_required": true,
+        "approval_required": false,
         "mode_update": "plan",
         "submitted_plan": {
             "title": row.plan_title,
@@ -2055,8 +2055,8 @@ async fn exit_plan_mode(
             "artifact_path": row.plan_artifact_path,
         },
         "instructions": [
-            "Present this plan artifact to the user for approval.",
-            "Do not begin implementation until the approval request is approved by the ACP client."
+            "Present this plan artifact to the user if useful.",
+            "If the authenticated human clearly approves the plan in chat, call record_plan_approval. Tool use remains governed by Den policy and ACP client approval."
         ]
     }))
 }

@@ -20,80 +20,74 @@ impl AcpToolClass {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum AcpMutationGateState {
-    Closed,
-    ReviewRequired,
-    Open,
+pub enum AcpToolEnablementState {
+    ReadOnly,
+    AllTools,
 }
 
-impl AcpMutationGateState {
+impl AcpToolEnablementState {
     pub fn as_str(self) -> &'static str {
         match self {
-            Self::Closed => "closed",
-            Self::ReviewRequired => "review_required",
-            Self::Open => "open",
+            Self::ReadOnly => "read_only",
+            Self::AllTools => "all_tools",
         }
     }
 
-    pub fn allows_workspace_mutation(self) -> bool {
-        matches!(self, Self::Open)
+    pub fn enables_non_read_tools(self) -> bool {
+        matches!(self, Self::AllTools)
     }
 }
 
 #[derive(Debug, Clone)]
 pub struct AcpResolvedSessionPolicy {
     pub mode_label: &'static str,
-    pub mutation_gate: AcpMutationGateState,
+    pub tool_enablement: AcpToolEnablementState,
     pub plan_mode_state: Option<String>,
 }
 
 impl AcpResolvedSessionPolicy {
     pub fn allows_tool(&self, tool: AcpToolName) -> bool {
-        match self.mutation_gate {
-            AcpMutationGateState::Closed | AcpMutationGateState::ReviewRequired => {
-                matches!(tool_class(tool), AcpToolClass::ReadOnly)
-            }
-            AcpMutationGateState::Open => true,
-        }
+        self.tool_enablement.enables_non_read_tools()
+            || matches!(tool_class(tool), AcpToolClass::ReadOnly)
     }
 
     pub fn allowed_tool_classes(&self) -> Vec<&'static str> {
-        match self.mutation_gate {
-            AcpMutationGateState::Closed | AcpMutationGateState::ReviewRequired => {
-                vec![AcpToolClass::ReadOnly.as_str()]
-            }
-            AcpMutationGateState::Open => vec![
+        if self.tool_enablement.enables_non_read_tools() {
+            vec![
                 AcpToolClass::ReadOnly.as_str(),
                 AcpToolClass::WorkspaceMutation.as_str(),
                 AcpToolClass::Execution.as_str(),
                 AcpToolClass::Browser.as_str(),
-            ],
+            ]
+        } else {
+            vec![AcpToolClass::ReadOnly.as_str()]
         }
     }
 
     pub fn denied_tool_classes(&self) -> Vec<&'static str> {
-        match self.mutation_gate {
-            AcpMutationGateState::Closed | AcpMutationGateState::ReviewRequired => vec![
+        if self.tool_enablement.enables_non_read_tools() {
+            Vec::new()
+        } else {
+            vec![
                 AcpToolClass::WorkspaceMutation.as_str(),
                 AcpToolClass::Execution.as_str(),
                 AcpToolClass::Browser.as_str(),
-            ],
-            AcpMutationGateState::Open => Vec::new(),
+            ]
         }
     }
 
     pub fn to_json(&self) -> serde_json::Value {
         json!({
             "mode_label": self.mode_label,
-            "mutation_gate": {
-                "state": self.mutation_gate.as_str(),
+            "tool_enablement": {
+                "state": self.tool_enablement.as_str(),
                 "source": "den",
-                "allows_workspace_mutation": self.mutation_gate.allows_workspace_mutation(),
+                "enables_non_read_tools": self.tool_enablement.enables_non_read_tools(),
             },
             "plan_mode_state": self.plan_mode_state,
             "allowed_tool_classes": self.allowed_tool_classes(),
             "denied_tool_classes": self.denied_tool_classes(),
-            "policy_conflict_rule": "If visible tool availability or UI labels conflict with mutation_gate, trust Den mutation_gate enforcement.",
+            "policy_note": "Ask and Plan expose read-only tools. Write enables mutation/execution/browser tools, which still require Den policy and ACP client approval."
         })
     }
 }
@@ -114,27 +108,17 @@ pub fn resolve_session_policy_for_mode(
     match current_mode.trim().to_ascii_lowercase().as_str() {
         "plan" => AcpResolvedSessionPolicy {
             mode_label: "Plan",
-            mutation_gate: AcpMutationGateState::ReviewRequired,
+            tool_enablement: AcpToolEnablementState::ReadOnly,
             plan_mode_state: plan_mode_state.map(str::to_string),
         },
-        "write" => {
-            if matches!(plan_mode_state, Some("active" | "submitted")) {
-                AcpResolvedSessionPolicy {
-                    mode_label: "Plan",
-                    mutation_gate: AcpMutationGateState::ReviewRequired,
-                    plan_mode_state: plan_mode_state.map(str::to_string),
-                }
-            } else {
-                AcpResolvedSessionPolicy {
-                    mode_label: "Write",
-                    mutation_gate: AcpMutationGateState::Open,
-                    plan_mode_state: plan_mode_state.map(str::to_string),
-                }
-            }
-        }
+        "write" => AcpResolvedSessionPolicy {
+            mode_label: "Write",
+            tool_enablement: AcpToolEnablementState::AllTools,
+            plan_mode_state: plan_mode_state.map(str::to_string),
+        },
         _ => AcpResolvedSessionPolicy {
             mode_label: "Ask",
-            mutation_gate: AcpMutationGateState::Closed,
+            tool_enablement: AcpToolEnablementState::ReadOnly,
             plan_mode_state: plan_mode_state.map(str::to_string),
         },
     }
@@ -2045,10 +2029,10 @@ mod tests {
     }
 
     #[test]
-    fn resolve_session_policy_defaults_to_ask_with_closed_mutation_gate() {
+    fn resolve_session_policy_defaults_to_ask_with_read_only_enablement() {
         let policy = resolve_session_policy(None);
         assert_eq!(policy.mode_label, "Ask");
-        assert_eq!(policy.mutation_gate.as_str(), "closed");
+        assert_eq!(policy.tool_enablement.as_str(), "read_only");
         assert_eq!(policy.allowed_tool_classes(), vec!["read_only"]);
         assert_eq!(
             policy.denied_tool_classes(),
@@ -2061,10 +2045,10 @@ mod tests {
     }
 
     #[test]
-    fn resolve_session_policy_marks_active_plan_as_review_required() {
+    fn resolve_session_policy_marks_plan_as_read_only_mode() {
         let policy = resolve_session_policy_for_mode("plan", Some("active"));
         assert_eq!(policy.mode_label, "Plan");
-        assert_eq!(policy.mutation_gate.as_str(), "review_required");
+        assert_eq!(policy.tool_enablement.as_str(), "read_only");
         assert_eq!(policy.plan_mode_state.as_deref(), Some("active"));
         assert!(policy.allows_tool(AcpToolName::GitStatus));
         assert!(!policy.allows_tool(AcpToolName::EditFile));
@@ -2073,10 +2057,10 @@ mod tests {
     }
 
     #[test]
-    fn resolve_session_policy_marks_approved_plan_as_write_with_open_gate() {
+    fn resolve_session_policy_marks_write_with_all_tools_enabled() {
         let policy = resolve_session_policy_for_mode("write", Some("approved"));
         assert_eq!(policy.mode_label, "Write");
-        assert_eq!(policy.mutation_gate.as_str(), "open");
+        assert_eq!(policy.tool_enablement.as_str(), "all_tools");
         assert_eq!(policy.plan_mode_state.as_deref(), Some("approved"));
         assert_eq!(
             policy.allowed_tool_classes(),
@@ -2089,7 +2073,7 @@ mod tests {
     }
 
     #[test]
-    fn descriptor_filtering_respects_closed_mutation_gate() {
+    fn descriptor_filtering_keeps_only_read_tools_available_in_ask_mode() {
         let policy = resolve_session_policy(None);
         let descriptors = acp_client_tool_descriptors_for_client_context(
             &json!({
@@ -2114,7 +2098,7 @@ mod tests {
     }
 
     #[test]
-    fn provider_name_filtering_respects_open_mutation_gate() {
+    fn provider_name_filtering_respects_write_tool_enablement() {
         let policy = resolve_session_policy_for_mode("write", Some("approved"));
         let names = acp_provider_tool_names_for_client_context(
             &json!({
