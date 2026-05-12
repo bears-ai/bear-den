@@ -34,8 +34,9 @@ use serde_json::{json, Value};
 #[cfg(test)]
 use std::fs;
 use std::{
-    collections::HashMap,
+    collections::{hash_map::DefaultHasher, HashMap},
     env,
+    hash::{Hash, Hasher},
     path::{Path, PathBuf},
     process::Command,
     sync::Arc,
@@ -98,6 +99,7 @@ struct AdapterSharedState {
     transport: JsonRpcTransport,
     client_capabilities: Arc<TokioMutex<Value>>,
     session_contexts: Arc<TokioMutex<HashMap<String, SessionContext>>>,
+    last_plan_update_hashes: Arc<TokioMutex<HashMap<String, u64>>>,
     tool_tasks: ToolTaskRegistry,
     approval_cache: ApprovalCache,
     cancellation_tx: broadcast::Sender<String>,
@@ -347,6 +349,27 @@ fn plan_entries_from_work_plan_args(args: &Value) -> Vec<PlanEntry> {
                 .collect::<Vec<_>>()
         })
         .unwrap_or_default()
+}
+
+fn plan_entries_hash(entries: &[PlanEntry]) -> Result<u64> {
+    let value = serde_json::to_string(entries)?;
+    let mut hasher = DefaultHasher::new();
+    value.hash(&mut hasher);
+    Ok(hasher.finish())
+}
+
+async fn should_send_plan_update(
+    shared_state: &AdapterSharedState,
+    session_id: &str,
+    entries: &[PlanEntry],
+) -> Result<bool> {
+    let hash = plan_entries_hash(entries)?;
+    let mut hashes = shared_state.last_plan_update_hashes.lock().await;
+    if hashes.get(session_id).copied() == Some(hash) {
+        return Ok(false);
+    }
+    hashes.insert(session_id.to_string(), hash);
+    Ok(true)
 }
 
 async fn send_available_commands_update(session_id: &str) -> Result<()> {
@@ -685,6 +708,7 @@ async fn run() -> Result<()> {
         transport: adapter_state.transport.clone(),
         client_capabilities: Arc::new(TokioMutex::new(Value::Null)),
         session_contexts: Arc::new(TokioMutex::new(HashMap::new())),
+        last_plan_update_hashes: Arc::new(TokioMutex::new(HashMap::new())),
         tool_tasks: ToolTaskRegistry::default(),
         approval_cache,
         cancellation_tx,
@@ -2783,6 +2807,11 @@ async fn handle_session_close(
         .and_then(Value::as_str)
         .ok_or_else(|| anyhow!("session/close params missing sessionId"))?;
     shared_state.approval_cache.clear_session(session_id).await;
+    shared_state
+        .last_plan_update_hashes
+        .lock()
+        .await
+        .remove(session_id);
     post_session_lifecycle_action(http, config, session_id, "close").await
 }
 
@@ -2797,6 +2826,11 @@ async fn handle_session_cancel(
         .and_then(Value::as_str)
         .ok_or_else(|| anyhow!("session/cancel params missing sessionId"))?;
     shared_state.approval_cache.clear_session(session_id).await;
+    shared_state
+        .last_plan_update_hashes
+        .lock()
+        .await
+        .remove(session_id);
     let _ = shared_state.cancellation_tx.send(session_id.to_string());
     post_session_lifecycle_action(http, config, session_id, "cancel").await
 }
@@ -4572,8 +4606,13 @@ async fn handle_den_event(
                         session_id
                     );
                 }
-            } else {
+            } else if should_send_plan_update(shared_state, session_id, &entries).await? {
                 send_plan_update(session_id, entries).await?;
+            } else if env_bool("BEARS_ACP_DEBUG_UI") {
+                eprintln!(
+                    "bears-acp-adapter: skipped unchanged plan update for session_id={}",
+                    session_id
+                );
             }
             Ok(false)
         }
@@ -5579,6 +5618,19 @@ mod tests {
         state
     }
 
+    fn test_shared_state() -> AdapterSharedState {
+        let (cancellation_tx, _) = broadcast::channel(8);
+        AdapterSharedState {
+            transport: JsonRpcTransport::default(),
+            client_capabilities: Arc::new(TokioMutex::new(Value::Null)),
+            session_contexts: Arc::new(TokioMutex::new(HashMap::new())),
+            last_plan_update_hashes: Arc::new(TokioMutex::new(HashMap::new())),
+            tool_tasks: ToolTaskRegistry::default(),
+            approval_cache: ApprovalCache::default(),
+            cancellation_tx,
+        }
+    }
+
     #[test]
     fn infer_mode_prefers_den_session_policy_over_plan_mode_state() {
         let den = json!({
@@ -5643,6 +5695,25 @@ mod tests {
         assert_eq!(payload["update"]["entries"][0]["priority"], "high");
         assert_eq!(payload["update"]["entries"][0]["status"], "completed");
         assert_eq!(payload["update"]["entries"][1]["status"], "in_progress");
+    }
+
+    #[tokio::test]
+    async fn suppresses_duplicate_plan_updates_per_session() {
+        let shared = test_shared_state();
+        let entries = vec![PlanEntry::new(
+            "Tell the user an otter",
+            PlanEntryPriority::Medium,
+            PlanEntryStatus::Completed,
+        )];
+        assert!(should_send_plan_update(&shared, "session-a", &entries)
+            .await
+            .expect("first update check"));
+        assert!(!should_send_plan_update(&shared, "session-a", &entries)
+            .await
+            .expect("duplicate update check"));
+        assert!(should_send_plan_update(&shared, "session-b", &entries)
+            .await
+            .expect("different session update check"));
     }
 
     #[test]
