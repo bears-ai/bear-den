@@ -34,7 +34,7 @@ Den is responsible for:
 - tracking Bear membership and access,
 - routing each surface to the correct internal agent role,
 - enforcing policy around tasks, tools, skills, and memory,
-- scheduling curate cycles and background work,
+- scheduling curate runs and background work,
 - receiving inbound events,
 - maintaining canonical configuration,
 - and reconciling runtime state against that configuration.

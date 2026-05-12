@@ -20,7 +20,7 @@ pair learns useful workplace knowledge
 → pair writes role-local memory
 → pair reflection summarizes/consolidates pair memory
 → pair reflection creates memory review requests
-→ curate cycle processes review requests
+→ curate run processes review requests
 → curate updates core / indexes archives / prepares task context / creates Cabinet proposals
 → work receives approved task context and can search permitted archives
 ```
@@ -41,7 +41,7 @@ Pair reflection should immediately feed curation without waiting for manual huma
 2. Pair reflection creates a memory review request referencing that summary.
 3. Pair reflection enqueues a curate memory-review cycle with trigger `pair_reflection`.
 4. ACP close remains responsive; curation should not block ACP close.
-5. UI shows the generated review request and queued curate cycle.
+5. UI shows the generated review request and queued curate run.
 
 ### Notes
 
@@ -51,7 +51,7 @@ Pair reflection should immediately feed curation without waiting for manual huma
 
 ---
 
-## P1 — Automated curate cycle runner
+## P1 — Automated curate conductor
 
 ### Goal
 
@@ -365,7 +365,7 @@ The UI should surface:
 
 - pair reflection runs;
 - memory review requests;
-- curate cycles;
+- curate runs;
 - proposal decisions;
 - `core/` updates;
 - archive indexing changes;
@@ -378,9 +378,9 @@ Humans should see what the system is doing and override when necessary, without 
 
 ## Immediate next implementation sequence
 
-1. Pair reflection creates review request and enqueues curate cycle.
+1. Pair reflection creates review request and enqueues curate run.
 2. Add `curate_cycles` and daily curate conversation mapping.
-3. Add manual/queued cycle runner for `memory_review` lane.
+3. Add manual/queued conductor for `memory_review` lane.
 4. Add model-assisted pair reflection.
 5. Add Bear curated archive provisioning and index table.
 6. Add `memory_semantic_search` for curate/pair/work by policy.

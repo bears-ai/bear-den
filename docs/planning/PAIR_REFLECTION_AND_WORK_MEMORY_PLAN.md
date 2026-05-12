@@ -70,7 +70,7 @@ pair/reflections, pair/summaries, pair/decisions
   ↓ creates
 memory review requests
   ↓
-curate cycle
+curate run
   ↓ outcomes
 core/ updates
 Bear curated archive index entries

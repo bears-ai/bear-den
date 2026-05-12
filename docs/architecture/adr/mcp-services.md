@@ -63,7 +63,7 @@ Cabinet and `core/` are both knowledge layers. They serve different purposes and
 
 Curate's reflection cycles consider both sources. When integrating new content from channel branches, curate decides whether a learning belongs in `core/` (small, identity-shaping, useful in every conversation) or in Cabinet (larger, referential, useful when the topic comes up). Curate has tools for both: `core/` writes through privileged Den tools; Cabinet writes via `cabinet`'s contribution tools.
 
-This split means agents looking for information try `core/` first (it's already in context) and search Cabinet when they need more depth. When users contribute via Cabinet's UI directly, that knowledge is available to the Bear without any agent action; when users teach the Bear via talk or pair, the curate cycle decides which layer is appropriate.
+This split means agents looking for information try `core/` first (it's already in context) and search Cabinet when they need more depth. When users contribute via Cabinet's UI directly, that knowledge is available to the Bear without any agent action; when users teach the Bear via talk or pair, the curate run decides which layer is appropriate.
 
 When Cabinet is not deployed, there is no second layer — `core/` is all the Bear has. This is acceptable for simple deployments and removes a category of decision-making from curate.
 

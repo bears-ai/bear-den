@@ -397,7 +397,7 @@ Do not require this for MVP if editing source frontmatter is too expensive. A DB
 
 ---
 
-## Curate cycle design
+## Curate run design
 
 Curate is expected to be autonomous. Human intervention is a last resort for sensitive, ambiguous, or policy-blocked cases.
 
@@ -409,7 +409,7 @@ Curate can run as:
 
 Initial implementation should support autonomous review first, with human review as an escalation path rather than the default path.
 
-A curate cycle prompt should include:
+A curate run prompt should include:
 
 - Bear identity and purpose;
 - role, policy, and relevant Domains;
@@ -526,11 +526,11 @@ Deliverables:
 6. Proposal records result path/commit.
 7. Tests for path policy and provenance.
 
-### Slice 5 — Curate cycle runner and activity surfacing
+### Slice 5 — Curate conductor and activity surfacing
 
 Deliverables:
 
-1. Curate cycle runner invokes Letta API-direct curate agent with pending proposals and recent memory activity.
+1. Curate conductor invokes Letta API-direct curate agent with pending proposals and recent memory activity.
 2. Guardrails: no external tools, no arbitrary paths, no Cabinet writes unless explicitly granted.
 3. Den records curation cycle activity: inputs considered, decisions made, proposals approved/rejected, core files changed, compactions performed, and escalations.
 4. UI surfaces the extent of curate activity so humans can understand what the god-agent has been doing without approving every action.

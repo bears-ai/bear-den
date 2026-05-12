@@ -80,7 +80,7 @@ Goal: `curate` becomes the semantic integration and review authority described i
 
 Tasks:
 
-1. Add a Den-controlled curate cycle runner, initially admin-triggered or worker-triggered.
+1. Add a Den-controlled curate conductor, initially admin-triggered or worker-triggered.
 2. Gather pending task intents, skill proposals, watch observations, and work results into a bounded review context.
 3. Invoke the `curate` role agent via the Letta API with only curate-appropriate Den tools.
 4. Implement durable review outcomes through Den tools rather than raw cross-branch writes.
@@ -431,7 +431,7 @@ Before full Phase 2/3 MemFS and skill projection are complete, web chat can be t
    /work/work-readonly/      (read-only, branch: work)
    /work/watch-readonly/     (read-only, branch: watch)
    ```
-3. Implement curate cycle triggering in Den:
+3. Implement curate run triggering in Den:
    - Idle trigger: after N minutes of no activity on talk or pair agents.
    - Volume trigger: after M new messages across talk and pair since last cycle.
    - Pending intent trigger: when one or more files in `talk/tasks/` or `pair/tasks/` have status `pending_review`.
@@ -439,19 +439,19 @@ Before full Phase 2/3 MemFS and skill projection are complete, web chat can be t
    - Pending observation trigger: when new files have appeared in `watch/observations/` since last cycle.
    - Pending skill proposal trigger: when one or more rows in `bear_skill_proposals` have status `pending_review`.
    - Manual trigger: an `admin/trigger_curate/<bear_id>` endpoint for testing.
-4. Implement curate cycle execution. The cycle has these responsibilities, executed in this order:
+4. Implement curate run execution. The cycle has these responsibilities, executed in this order:
    - **Memory integration:** review new content in `talk/` and `pair/` since last cycle. Promote durable learnings to `core/` through allowed curate writes or privileged Den tools.
    - **Task intent review:** for each pending intent file, decide approve or reject. If approved, call privileged Den tooling to validate and write a corresponding file to `core/tasks/<task-id>.md` per the schema and update the source intent audit metadata. If rejected, call privileged Den tooling to update the source intent with rejection metadata. The curate agent must not receive raw write access to `talk/` or `pair/`.
    - **Observation review:** for each new file in `watch/observations/`, decide whether the observation is salient. If yes, decide whether it warrants promotion to `core/` (a noteworthy fact for the Bear to know) or generation of a derived task intent (an observation that should trigger work â€” e.g., "deploy failure detected, post a summary"). Derived task intents are written by curate to `core/tasks/` directly, with `parent_intent` pointing to the observation file rather than to a channel intent.
    - **Result promotion:** for each new file in `work/results/`, decide whether to surface a summary to channel agents. If yes, write a summary to `core/results/<task-id>.md` through allowed curate writes or privileged Den tools.
    - **Skill proposal review:** for each pending skill proposal in `bear_skill_proposals`, decide approve or reject. On approval, call the privileged Den tool that adds the skill to `bear_skills_manifest` (with curate's chosen `applies_to_roles`) and triggers re-provisioning across affected agents. On rejection, update the proposal row with `status: rejected` and a reason. Curate should consult the proposing agent's role when deciding default applicability â€” e.g., a skill proposed by the work agent typically applies to work only unless curate sees broader value.
 5. Den records the cycle (start time, end time, branches' commit SHAs at start, what was integrated, what intents were approved/rejected, what observations were promoted, what results were promoted, what skill proposals were approved/rejected).
-6. Ensure curate cycles don't run concurrently for the same Bear (Den-level lock).
+6. Ensure curate runs don't run concurrently for the same Bear (Den-level lock).
 
 ### Acceptance
 
-- Triggering a curate cycle on a test Bear produces commits to the `curate` branch touching `curate/` and `core/`, with a clear commit message.
-- After a curate cycle, the next system prompt construction on the talk agent reflects content from `core/` (verify by inspecting the agent's loaded context).
+- Triggering a curate run on a test Bear produces commits to the `curate` branch touching `curate/` and `core/`, with a clear commit message.
+- After a curate run, the next system prompt construction on the talk agent reflects content from `core/` (verify by inspecting the agent's loaded context).
 - A pending intent file in `talk/tasks/` is reviewed during the next cycle; either an approval lands in `core/tasks/` and the source intent audit metadata is updated by Den, or a rejection audit update is written by Den to the source intent. The curate agent never raw-writes the channel branch.
 - A new observation in `watch/observations/` produces either a promotion to `core/` or a derived task intent in `core/tasks/`, or is dismissed (no action), within the next cycle.
 - A new result file in `work/results/` produces a summary in `core/results/` after the next cycle.
@@ -643,7 +643,7 @@ Watch holds private data (whatever it observes) and inbound external comms (read
 - A polling subscription configured in Den delivers events to the watch agent at the configured interval.
 - An attempt by the watch agent to make an outbound HTTP call fails (no such tool attached; network egress also blocked).
 - An attempt by the watch agent to read `talk/`, `pair/`, `curate/`, or `work/` paths fails.
-- An observation written by watch triggers a curate cycle within the configured trigger window, and curate's decision (promote / generate task intent / dismiss) is recorded against the observation.
+- An observation written by watch triggers a curate run within the configured trigger window, and curate's decision (promote / generate task intent / dismiss) is recorded against the observation.
 - Subscriptions survive a watch agent restart.
 
 ### Notes on placement in the rollout
@@ -658,13 +658,13 @@ The watch agent is not blocking for any user-visible functionality in phases 4â€
 
 ### Tasks
 
-1. Bear-level view: lists the five agents with status, last activity, last curate cycle, last reconcile.
+1. Bear-level view: lists the five agents with status, last activity, last curate run, last reconcile.
 2. Conversations view: scoped per agent. A Bear's conversations across all five agents can be aggregated into a unified timeline, but each conversation entry must clearly show which agent it belongs to.
 3. Tasks view: shows pending intents, approved tasks, paused/failed tasks, and recent run history. Allows manual approval / rejection of intents (override of curate decisions if needed) and manual triggering of `oneshot` tasks.
 4. HITL approval queue: dedicated view for high-risk task runs awaiting approval. Each entry shows the task definition, the run-specific inputs, and approve/reject buttons. Approval should be cryptographically signed (so the audit log records who approved what).
 5. MemFS browser: read-only view of each branch's content. Useful for debugging.
 6. Drift indicator: surface `reconcile_bear` results with an actionable button to fix.
-7. Curate cycle log: history of cycles per Bear with timing and what was integrated/approved/promoted.
+7. Curate run log: history of cycles per Bear with timing and what was integrated/approved/promoted.
 8. Work agent activity: outbound request log, rate-limit status, alerting summary.
 9. Skills view: shows the manifest per Bear (skill name, version, applies-to-roles, source). Pending skill proposals are visible with their proposing agent and review status. Operators can override or delete manifest entries with appropriate audit logging.
 10. Watch view: lists active subscriptions per Bear with health (last fire, error count). Shows recent observations and curate's decisions on each (promoted, generated task intent, dismissed).
@@ -723,7 +723,7 @@ The watch agent is not blocking for any user-visible functionality in phases 4â€
    - **Drift detection:** scheduled `reconcile_bear` run every hour per Bear; alert if drift detected.
    - **Sidecar health:** alert on healthcheck failures.
    - **Pre-receive rejections:** alert on any rejected push (indicates an agent or harness misbehaving).
-   - **Curate cycle success rate:** alert if cycles fail repeatedly for the same Bear.
+   - **Curate run success rate:** alert if cycles fail repeatedly for the same Bear.
    - **ACP error rate:** alert if `den-acp` returns errors above a threshold.
    - **Concurrent-request anomalies:** log every Letta API call with conversation ID; alert on overlapping calls to the same agent (would indicate a regression of the original concurrency bug).
    - **Task queue health:** backlog size, dispatch latency, rate-limit rejection rate.
@@ -732,7 +732,7 @@ The watch agent is not blocking for any user-visible functionality in phases 4â€
    - **Skill manifest drift:** alert on per-Bear skill drift detected by `reconcile_bear`.
    - **Skill proposal backlog:** alert on proposals pending for longer than threshold.
    - **Watch agent (if active):** subscription health (last fire timestamps), observation rate per subscription, parse failure rate.
-3. Document operational runbooks: how to manually fix drift, how to recover from a failed curate cycle, how to roll back a Bear, how to inspect MemFS state for debugging, how to handle a stuck or failing task, how to revoke a misbehaving work-agent capability.
+3. Document operational runbooks: how to manually fix drift, how to recover from a failed curate run, how to roll back a Bear, how to inspect MemFS state for debugging, how to handle a stuck or failing task, how to revoke a misbehaving work-agent capability.
 
 ### Acceptance
 
@@ -749,7 +749,7 @@ The watch agent is not blocking for any user-visible functionality in phases 4â€
 | Drift between agents in a Bear | Hourly `reconcile_bear`, alerting, fix-up tooling. |
 | Agent self-modifies tools/skills out-of-band | Agents do not have tools to attach/detach tools. Skill installation is mediated by the manifest; agent-driven `/skill` learning is captured as a proposal for curate review, not a direct install. The talk agent's skill directory is owned by Den; raw filesystem writes by the harness outside the manifest are detected and reverted by `reconcile_bear`. |
 | Concurrent commits across worktrees | Branch-per-agent + path-per-agent enforced by `pre-receive`. |
-| Curate cycle conflicts with user load | Idle-triggered by default; volume-triggered with backoff during active hours. |
+| Curate run conflicts with user load | Idle-triggered by default; volume-triggered with backoff during active hours. |
 | Conversation history fragmentation confuses users | UI work in phase 9 + explicit release notes. |
 | Letta upstream changes break our assumptions | Pin Letta and Letta Code versions; subscribe to changelog; integration tests in CI against pinned versions. |
 | Work agent exfiltration via prompt injection | Trifecta split (work has no read access to channel branches); network egress allowlist; HITL on high-risk tasks; rate limiting. |
@@ -762,5 +762,5 @@ The watch agent is not blocking for any user-visible functionality in phases 4â€
 
 - Real-time cross-channel coherence ("user says X in Slack, IDE agent immediately knows"). Cross-channel transfer is curate-mediated and eventually consistent.
 - Sharing conversation history across the agents within a Bear. Distillation only.
-- Synchronous external work execution. Tasks are inherently async; users requesting work are told to expect a delay until the next curate cycle approves.
+- Synchronous external work execution. Tasks are inherently async; users requesting work are told to expect a delay until the next curate run approves.
 - Migration to a future Letta-native multi-tenant tool execution model. Will be its own ADR if/when that lands upstream.

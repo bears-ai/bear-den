@@ -7,7 +7,7 @@ Reflection is BEARS' auditable background review and learning system. It lets a 
 - **Reflection** is the umbrella system for background review, learning, maintenance, and improvement.
 - A **Reflection run** is one bounded execution for a Bear, lane, role, or scope.
 - A **Reflection lane** is a specific kind of work such as memory curation, archive indexing, introspection, or skill review.
-- A **cycle runner** is Den's bounded orchestration loop for invoking a role such as `curate` on one Reflection lane.
+- A **conductor** is Den's active orchestration system for advancing bounded Reflection runs.
 - `curate` is a Bear role; Reflection is the broader process.
 - Memory curation and skill adaptation are related but separate.
 - Heartbeats are throttled: active Bears can reflect more frequently than dormant Bears.
@@ -44,8 +44,8 @@ Use narrower terms underneath Reflection:
 | Reflection run | One bounded execution of Reflection. |
 | Reflection lane | A specific kind of background work. |
 | Reflection event | Auditable event emitted during a run. |
-| Cycle runner | Den-side orchestrator that selects work, opens/reuses the right role conversation, invokes the role, enforces budgets/locks, and records activity. |
-| Curate cycle | A Reflection run in which the cycle runner invokes `curate` for a bounded lane such as memory review. |
+| Conductor | Den-side infrastructure that selects work, opens/reuses the right role conversation, invokes the role, enforces budgets/locks, and records activity. |
+| Curate run | A Reflection run in which the conductor invokes `curate` for a bounded lane such as memory review. |
 | Reflection proposal | A proposed durable change discovered through Reflection. |
 | Memory proposal | Proposal to change Bear memory, `core/`, Cabinet links, or memory lifecycle. |
 | Skill proposal | Proposal to change behavior, skills, workflows, prompts, or role instructions. |
@@ -67,11 +67,11 @@ Reflection should use a shared orchestration structure, but separate lanes. Lane
 | `cleanup` | Remove or mark stale/superseded artifacts within policy. | Den + `curate` | Medium |
 | `human_review_escalation` | Surface risky or unresolved items. | Den | Low |
 
-## Cycle runner
+## Conductor
 
-The cycle runner is Den's orchestration loop for Reflection. It turns pending background work into bounded role runs.
+The conductor is Den's active orchestration system for Reflection. It turns pending background work into bounded role runs. It is infrastructure, not a Bear role and not a semantic decision-maker.
 
-For a `memory_curate` cycle, the runner should:
+For a `memory_curate` run, the conductor should:
 
 1. select pending memory proposals or recent memory activity;
 2. acquire a Bear/lane lock so cycles do not collide;
@@ -82,7 +82,7 @@ For a `memory_curate` cycle, the runner should:
 7. record cycle status, tool activity, decisions, errors, and outputs;
 8. surface the run in UI.
 
-The runner is infrastructure. Semantic decisions belong to the role agent, usually `curate`, not to ad hoc Den heuristics.
+Semantic decisions belong to the role agent, usually `curate`, not to ad hoc Den heuristics in the conductor.
 
 ### Conversation rollover
 
@@ -140,7 +140,7 @@ Reflection can also be triggered by events:
 - human feedback;
 - explicit schedule.
 
-Heartbeat is therefore a trigger type, not the whole system. The cycle runner is the mechanism that turns heartbeat or event triggers into actual Reflection runs.
+Heartbeat is therefore a trigger type, not the whole system. The conductor turns heartbeat or event triggers into actual Reflection runs.
 
 ## Budgets and bounds
 
@@ -260,7 +260,7 @@ The UI should show:
 - human-review queue;
 - run budgets and failure summaries;
 - per-Bear heartbeat/cadence policy;
-- cycle runner queue/status;
+- conductor queue/status;
 - daily curate conversation used for each lane;
 - manual "run reflection now" controls.
 

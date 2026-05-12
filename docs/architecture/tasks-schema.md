@@ -11,7 +11,7 @@ There are three distinct file types, each living on a different branch of the Be
   user request via talk   │  talk/tasks/     │  intent files
   user request via pair → │  pair/tasks/     │  written by channel agents
                           └────────┬─────────┘
-                                   │  curate cycle reviews,
+                                   │  curate run reviews,
                                    │  approves or rejects
                                    ▼
                           ┌──────────────────┐
@@ -26,7 +26,7 @@ There are three distinct file types, each living on a different branch of the Be
                           │  <task-id>/      │  written by work agent
                           │    <run-id>.md   │
                           └────────┬─────────┘
-                                   │  curate cycle promotes
+                                   │  curate run promotes
                                    │  summaries to core/
                                    ▼
                           ┌──────────────────┐
