@@ -196,14 +196,14 @@ fn session_config_options_for_mode(mode: &str) -> Vec<SessionConfigOption> {
         mode.to_string(),
         vec![
             SessionConfigSelectOption::new(MODE_ASK, "Ask")
-                .description("Normal pair mode; mutating workspace actions request client approval."),
+                .description("Mutation gate closed; read, search, and inspect only."),
             SessionConfigSelectOption::new(MODE_PLAN, "Plan")
-                .description("Read, search, and inspect only; write actions are blocked until the plan is approved."),
+                .description("Mutation gate review_required; read-only until the plan is approved."),
             SessionConfigSelectOption::new(MODE_WRITE, "Write")
-                .description("Implementation mode after plan approval; workspace changes still follow client approval policy."),
+                .description("Mutation gate open; workspace changes are allowed subject to approval policy."),
         ],
     )
-    .description("Controls whether pair is planning or ready to write changes.")
+    .description("Reflects trusted Den session policy for mutation-gate state.")
     .category(SessionConfigOptionCategory::Mode)]
 }
 
@@ -212,11 +212,11 @@ fn session_modes_for_mode(mode: &str) -> SessionModeState {
         mode.to_string(),
         vec![
             SessionMode::new(MODE_ASK, "Ask")
-                .description("Normal pair mode; mutating workspace actions request client approval."),
+                .description("Mutation gate closed; read, search, and inspect only."),
             SessionMode::new(MODE_PLAN, "Plan")
-                .description("Read, search, and inspect only; write actions are blocked until the plan is approved."),
+                .description("Mutation gate review_required; read-only until the plan is approved."),
             SessionMode::new(MODE_WRITE, "Write")
-                .description("Implementation mode after plan approval; workspace changes still follow client approval policy."),
+                .description("Mutation gate open; workspace changes are allowed subject to approval policy."),
         ],
     )
 }

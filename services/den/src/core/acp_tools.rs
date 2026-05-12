@@ -1,5 +1,123 @@
 use serde_json::json;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AcpToolClass {
+    ReadOnly,
+    WorkspaceMutation,
+    Execution,
+    Browser,
+}
+
+impl AcpToolClass {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::ReadOnly => "read_only",
+            Self::WorkspaceMutation => "workspace_mutation",
+            Self::Execution => "execution",
+            Self::Browser => "browser",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AcpMutationGateState {
+    Closed,
+    ReviewRequired,
+    Open,
+}
+
+impl AcpMutationGateState {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Closed => "closed",
+            Self::ReviewRequired => "review_required",
+            Self::Open => "open",
+        }
+    }
+
+    pub fn allows_workspace_mutation(self) -> bool {
+        matches!(self, Self::Open)
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct AcpResolvedSessionPolicy {
+    pub mode_label: &'static str,
+    pub mutation_gate: AcpMutationGateState,
+    pub plan_mode_state: Option<String>,
+}
+
+impl AcpResolvedSessionPolicy {
+    pub fn allows_tool(&self, tool: AcpToolName) -> bool {
+        match self.mutation_gate {
+            AcpMutationGateState::Closed | AcpMutationGateState::ReviewRequired => {
+                matches!(tool_class(tool), AcpToolClass::ReadOnly)
+            }
+            AcpMutationGateState::Open => true,
+        }
+    }
+
+    pub fn allowed_tool_classes(&self) -> Vec<&'static str> {
+        match self.mutation_gate {
+            AcpMutationGateState::Closed | AcpMutationGateState::ReviewRequired => {
+                vec![AcpToolClass::ReadOnly.as_str()]
+            }
+            AcpMutationGateState::Open => vec![
+                AcpToolClass::ReadOnly.as_str(),
+                AcpToolClass::WorkspaceMutation.as_str(),
+                AcpToolClass::Execution.as_str(),
+                AcpToolClass::Browser.as_str(),
+            ],
+        }
+    }
+
+    pub fn denied_tool_classes(&self) -> Vec<&'static str> {
+        match self.mutation_gate {
+            AcpMutationGateState::Closed | AcpMutationGateState::ReviewRequired => vec![
+                AcpToolClass::WorkspaceMutation.as_str(),
+                AcpToolClass::Execution.as_str(),
+                AcpToolClass::Browser.as_str(),
+            ],
+            AcpMutationGateState::Open => Vec::new(),
+        }
+    }
+
+    pub fn to_json(&self) -> serde_json::Value {
+        json!({
+            "mode_label": self.mode_label,
+            "mutation_gate": {
+                "state": self.mutation_gate.as_str(),
+                "source": "den",
+                "allows_workspace_mutation": self.mutation_gate.allows_workspace_mutation(),
+            },
+            "plan_mode_state": self.plan_mode_state,
+            "allowed_tool_classes": self.allowed_tool_classes(),
+            "denied_tool_classes": self.denied_tool_classes(),
+            "policy_conflict_rule": "If visible tool availability or UI labels conflict with mutation_gate, trust Den mutation_gate enforcement.",
+        })
+    }
+}
+
+pub fn resolve_session_policy(plan_mode_state: Option<&str>) -> AcpResolvedSessionPolicy {
+    match plan_mode_state {
+        Some("active" | "submitted") => AcpResolvedSessionPolicy {
+            mode_label: "Plan",
+            mutation_gate: AcpMutationGateState::ReviewRequired,
+            plan_mode_state: plan_mode_state.map(str::to_string),
+        },
+        Some("approved") => AcpResolvedSessionPolicy {
+            mode_label: "Write",
+            mutation_gate: AcpMutationGateState::Open,
+            plan_mode_state: plan_mode_state.map(str::to_string),
+        },
+        _ => AcpResolvedSessionPolicy {
+            mode_label: "Ask",
+            mutation_gate: AcpMutationGateState::Closed,
+            plan_mode_state: plan_mode_state.map(str::to_string),
+        },
+    }
+}
+
 pub mod acp_diag_phase {
     pub const DESCRIPTOR_ADVERTISED: &str = "descriptor_advertised";
     pub const LETTA_TOOL_CALL_MAPPED: &str = "letta_tool_call_mapped";
@@ -1203,28 +1321,43 @@ pub fn acp_tool_policy(tool: AcpToolName) -> AcpToolPolicy {
     }
 }
 
-pub fn acp_tool_is_plan_mode_read_only(tool: AcpToolName) -> bool {
-    matches!(
-        tool,
+pub fn tool_class(tool: AcpToolName) -> AcpToolClass {
+    match tool {
         AcpToolName::ReadTextFile
-            | AcpToolName::ListDirectory
-            | AcpToolName::FindPaths
-            | AcpToolName::SearchFiles
-            | AcpToolName::Stat
-            | AcpToolName::GitStatus
-            | AcpToolName::GitDiff
-            | AcpToolName::GitLog
-            | AcpToolName::GitShow
-            | AcpToolName::ChromeSnapshot
-            | AcpToolName::ChromeConsoleMessages
-            | AcpToolName::ChromeNetworkRequests
-            | AcpToolName::ChromeScreenshot
-    )
+        | AcpToolName::ListDirectory
+        | AcpToolName::FindPaths
+        | AcpToolName::SearchFiles
+        | AcpToolName::Stat
+        | AcpToolName::GitStatus
+        | AcpToolName::GitDiff
+        | AcpToolName::GitLog
+        | AcpToolName::GitShow => AcpToolClass::ReadOnly,
+        AcpToolName::EditFile
+        | AcpToolName::CreateTextFile
+        | AcpToolName::CreateDirectory
+        | AcpToolName::MovePath
+        | AcpToolName::CopyPath
+        | AcpToolName::ApplyPatch
+        | AcpToolName::DeletePath
+        | AcpToolName::GitAdd
+        | AcpToolName::GitRestore
+        | AcpToolName::GitCommit
+        | AcpToolName::GitStash => AcpToolClass::WorkspaceMutation,
+        AcpToolName::ProcessRun | AcpToolName::TerminalRunCommand => AcpToolClass::Execution,
+        AcpToolName::ChromeOpen
+        | AcpToolName::ChromeSnapshot
+        | AcpToolName::ChromeConsoleMessages
+        | AcpToolName::ChromeNetworkRequests
+        | AcpToolName::ChromeScreenshot => AcpToolClass::Browser,
+    }
 }
 
-pub fn acp_provider_tool_allowed_in_plan_mode(tool_name: &str) -> bool {
+pub fn acp_provider_tool_allowed_in_policy(
+    tool_name: &str,
+    policy: &AcpResolvedSessionPolicy,
+) -> bool {
     AcpToolName::from_provider_alias(tool_name)
-        .map(acp_tool_is_plan_mode_read_only)
+        .map(|tool| policy.allows_tool(tool))
         .unwrap_or(false)
 }
 
@@ -1256,11 +1389,12 @@ pub fn acp_client_tool_descriptors() -> serde_json::Value {
 
 pub fn acp_client_tool_descriptors_for_client_context(
     client_context: &serde_json::Value,
+    policy: Option<&AcpResolvedSessionPolicy>,
 ) -> serde_json::Value {
     // Compatibility rule: adapter-executed tools are advertised only when the
     // current adapter explicitly reports support. Adding a new local tool should
     // not force old adapters to update; they simply won't see the descriptor.
-    let names = acp_provider_tool_names_for_client_context(client_context);
+    let names = acp_provider_tool_names_for_client_context(client_context, policy);
     let descriptors = names
         .iter()
         .filter_map(|name| AcpToolName::from_provider_alias(name))
@@ -1286,10 +1420,12 @@ pub fn acp_client_tool_descriptors_for_client_context(
 
 pub fn acp_provider_tool_names_for_client_context(
     client_context: &serde_json::Value,
+    policy: Option<&AcpResolvedSessionPolicy>,
 ) -> Vec<&'static str> {
     let names = AcpToolName::all()
         .iter()
         .filter(|tool| adapter_supports_tool(client_context, tool.descriptor().provider_name))
+        .filter(|tool| policy.is_none_or(|p| p.allows_tool(**tool)))
         .map(|tool| tool.descriptor().provider_name)
         .collect::<Vec<_>>();
     if names.is_empty() {
@@ -1803,7 +1939,7 @@ mod tests {
                 "git_diff": true,
                 "fs_delete_path": true
             }
-        }));
+        }), None);
         let names = descriptors
             .as_array()
             .expect("descriptor array")
@@ -1842,7 +1978,7 @@ mod tests {
                     "fs_delete_path": { "supported": true, "version": 1 }
                 }
             }
-        }));
+        }), None);
         let names = descriptors
             .as_array()
             .expect("descriptor array")
@@ -1870,7 +2006,7 @@ mod tests {
 
     #[test]
     fn missing_direct_tools_defaults_to_read_text_only() {
-        let descriptors = acp_client_tool_descriptors_for_client_context(&json!({}));
+        let descriptors = acp_client_tool_descriptors_for_client_context(&json!({}), None);
         let names = descriptors
             .as_array()
             .expect("descriptor array")

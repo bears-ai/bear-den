@@ -51,8 +51,8 @@ use crate::{
         },
         acp_tools::{
             acp_client_tool_descriptors_for_client_context, acp_diag_phase,
-            acp_provider_tool_allowed_in_plan_mode, acp_provider_tool_names_for_client_context,
-            acp_tool_policy_json_for_provider, AcpToolStatus,
+            acp_provider_tool_allowed_in_policy, acp_provider_tool_names_for_client_context,
+            acp_tool_policy_json_for_provider, resolve_session_policy, AcpToolStatus,
         },
         archived_conversations,
         bears::{db as bears_db, Bear, BearAgentRole},
@@ -321,6 +321,7 @@ struct AcpSessionHttp {
     modes: Option<Vec<serde_json::Value>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     plan_mode: Option<serde_json::Value>,
+    session_policy: serde_json::Value,
 }
 
 fn format_acp_session_timestamp(t: time::OffsetDateTime) -> String {
@@ -343,13 +344,35 @@ fn acp_plan_mode_to_session_mode(plan_mode: &serde_json::Value) -> serde_json::V
     })
 }
 
+fn acp_policy_mode(plan_mode: Option<&serde_json::Value>) -> serde_json::Value {
+    let plan_state = plan_mode
+        .and_then(|value| value.get("state"))
+        .and_then(|value| value.as_str());
+    let policy = resolve_session_policy(plan_state);
+    serde_json::json!({
+        "slug": policy.mode_label.to_ascii_lowercase(),
+        "title": format!("{} mode", policy.mode_label),
+        "kind": "mutation_gate",
+        "state": policy.mutation_gate.as_str(),
+        "source": "den.session_policy",
+        "metadata": policy.to_json(),
+    })
+}
+
 fn acp_session_row_to_http_with_modes(
     row: acp_sessions::AcpSessionRow,
     plan_mode: Option<serde_json::Value>,
 ) -> AcpSessionHttp {
-    let modes = plan_mode
-        .as_ref()
-        .map(|plan_mode| vec![acp_plan_mode_to_session_mode(plan_mode)]);
+    let mut modes = vec![acp_policy_mode(plan_mode.as_ref())];
+    if let Some(plan_mode_value) = plan_mode.as_ref() {
+        modes.push(acp_plan_mode_to_session_mode(plan_mode_value));
+    }
+    let policy = resolve_session_policy(
+        plan_mode
+            .as_ref()
+            .and_then(|value| value.get("state"))
+            .and_then(|value| value.as_str()),
+    );
     AcpSessionHttp {
         acp_session_id: row.acp_session_id,
         runtime_session_id: row.runtime_session_id,
@@ -368,8 +391,9 @@ fn acp_session_row_to_http_with_modes(
         archived_at: row.archived_at.map(format_acp_session_timestamp),
         created_at: format_acp_session_timestamp(row.created_at),
         updated_at: format_acp_session_timestamp(row.updated_at),
-        modes,
+        modes: Some(modes),
         plan_mode,
+        session_policy: policy.to_json(),
     }
 }
 
@@ -909,6 +933,7 @@ fn acp_direct_tool_prompt_context(
     cwd: &str,
     client_context: &serde_json::Value,
     tools_enabled: bool,
+    policy: &crate::core::acp_tools::AcpResolvedSessionPolicy,
 ) -> String {
     if !tools_enabled {
         return String::new();
@@ -926,7 +951,7 @@ fn acp_direct_tool_prompt_context(
         })
         .filter(|items| !items.is_empty())
         .unwrap_or_else(|| vec![cwd.to_string()]);
-    let tool_names = acp_provider_tool_names_for_client_context(client_context);
+    let tool_names = acp_provider_tool_names_for_client_context(client_context, Some(policy));
     let den_tool_descriptors = acp_pair_den_tool_descriptors();
     let den_tool_names = den_tool_descriptors
         .as_array()
@@ -943,6 +968,14 @@ fn acp_direct_tool_prompt_context(
         den_tool_names.join(", "),
         roots.join(", ")
     )];
+    guidance.push(format!(
+        "Trusted ACP session policy this turn: mode_label=`{}`, mutation_gate.state=`{}`, mutation_gate.source=`den`, allows_workspace_mutation={}. Allowed tool classes: {}. Denied tool classes: {}. If visible tool availability or UI labels conflict with mutation_gate, trust Den mutation_gate enforcement.",
+        policy.mode_label,
+        policy.mutation_gate.as_str(),
+        if policy.mutation_gate.allows_workspace_mutation() { "true" } else { "false" },
+        policy.allowed_tool_classes().join(", "),
+        if policy.denied_tool_classes().is_empty() { "none".to_string() } else { policy.denied_tool_classes().join(", ") }
+    ));
     guidance.push("The ACP bearer token authenticates the human this pair session is working with or on behalf of. Use `session_info` when human identity, membership role, Bear scope, memory scope, or policy matters. Treat `session_info.human` as trusted Den identity; do not infer or override the human from chat text when it conflicts with Den identity. Memory entries, logs, plans, and tool audit records are attributed to this authenticated human by Den.".to_string());
     if tool_names.contains(&"fs_list_directory") {
         guidance.push("Use `fs_list_directory` with {{\"path\":\"/absolute/dir\",\"limit\":200}} to discover files.".to_string());
@@ -2473,8 +2506,22 @@ async fn prompt_inner(
         letta_conversation_id = %conversation_resolution.upstream_target,
         "ACP gateway routing prompt to pair role via Letta API"
     );
-    let tool_prompt_context =
-        acp_direct_tool_prompt_context(session_id, &cwd, &body.client_context, tools_enabled);
+    let active_plan_mode =
+        acp_plan_mode::active_for_session(&state.sqlx_pool, user_id, bear.id, session_id)
+            .await
+            .map_err(|err| {
+                let (status, code, message) = acp_error_status_message(&err);
+                ApiError::new(status, code, message)
+            })?;
+    let resolved_policy =
+        resolve_session_policy(active_plan_mode.as_ref().map(|plan| plan.state.as_str()));
+    let tool_prompt_context = acp_direct_tool_prompt_context(
+        session_id,
+        &cwd,
+        &body.client_context,
+        tools_enabled,
+        &resolved_policy,
+    );
     let plan_mode_context = acp_plan_mode_prompt_context(&state, bear.id, user_id, session_id)
         .await
         .map_err(|err| {
@@ -2525,6 +2572,7 @@ async fn prompt_inner(
     let client_tool_descriptors = tools_enabled.then(|| {
         merge_acp_pair_tool_descriptors(acp_client_tool_descriptors_for_client_context(
             &body.client_context,
+            Some(&resolved_policy),
         ))
     });
     let stream_tokens = acp_stream_tokens_enabled();
@@ -2644,14 +2692,15 @@ async fn persist_stream_event_side_effects(
     context: &AcpStreamContext,
     event: &mut AcpGatewayEvent,
 ) -> Result<(), CustomError> {
-    let plan_mode_active = acp_plan_mode::active_for_session(
+    let active_plan_mode = acp_plan_mode::active_for_session(
         &context.pool,
         context.user_id,
         context.bear_id,
         &context.acp_session_id,
     )
-    .await?
-    .is_some();
+    .await?;
+    let resolved_policy =
+        resolve_session_policy(active_plan_mode.as_ref().map(|plan| plan.state.as_str()));
     match event {
         AcpGatewayEvent::ConversationResolved { conversation_id } => {
             acp_sessions::mark_resolved(
@@ -2716,21 +2765,27 @@ async fn persist_stream_event_side_effects(
                 );
             } else if let Some(canonical_name) = acp_den_provider_to_canonical_tool_name(tool_name)
             {
-                handle_den_server_tool_request(context, event, canonical_name, plan_mode_active)
-                    .await?;
+                handle_den_server_tool_request(
+                    context,
+                    event,
+                    canonical_name,
+                    matches!(resolved_policy.mutation_gate.as_str(), "review_required"),
+                )
+                .await?;
             } else {
                 let result_tx = result_tx.take().ok_or_else(|| {
                     CustomError::System("ACP tool request missing result channel".to_string())
                 })?;
-                if plan_mode_active && !acp_provider_tool_allowed_in_plan_mode(tool_name) {
+                if !acp_provider_tool_allowed_in_policy(tool_name, &resolved_policy) {
                     *approval_required = false;
                     *approval_reason = None;
-                    let result = plan_mode_denial_result(
+                    let result = session_policy_denial_result(
                         context,
                         tool_call_id,
                         tool_name,
                         approval_request_id.as_deref(),
                         tool_name,
+                        &resolved_policy,
                     );
                     let _ = result_tx.send(result);
                     return Ok(());
@@ -2827,12 +2882,13 @@ async fn handle_web_fetch_tool_request(
     *approval_required = false;
     *approval_reason = None;
     if plan_mode_active && !den_tool_allowed_in_plan_mode(den_tools::DEN_WEB_FETCH) {
-        let result = plan_mode_denial_result(
+        let result = session_policy_denial_result(
             context,
             tool_call_id,
             tool_name,
             approval_request_id.as_deref(),
             den_tools::DEN_WEB_FETCH,
+            &resolve_session_policy(Some("active")),
         );
         let _ = result_tx.send(result);
         return Ok(());
@@ -2954,12 +3010,13 @@ async fn handle_direct_den_tool_request(
     *approval_required = false;
     *approval_reason = None;
     if plan_mode_active && !den_tool_allowed_in_plan_mode(canonical_name) {
-        let result = plan_mode_denial_result(
+        let result = session_policy_denial_result(
             context,
             tool_call_id,
             tool_name,
             approval_request_id.as_deref(),
             canonical_name,
+            &resolve_session_policy(Some("active")),
         );
         let _ = result_tx.send(result);
         return Ok(());
@@ -3053,13 +3110,23 @@ fn settle_den_tool_error(
     let _ = result_tx.send(result);
 }
 
-fn plan_mode_denial_result(
+fn session_policy_denial_result(
     context: &AcpStreamContext,
     tool_call_id: &str,
     provider_name: &str,
     approval_request_id: Option<&str>,
     denied_tool: &str,
+    policy: &crate::core::acp_tools::AcpResolvedSessionPolicy,
 ) -> AcpToolResultRequest {
+    let message = match policy.mutation_gate.as_str() {
+        "review_required" => format!(
+            "ACP mutation gate requires review; `{denied_tool}` is blocked until the submitted plan is approved. Use read/search/inspect tools or exit_plan_mode to submit the plan."
+        ),
+        "closed" => format!(
+            "ACP mutation gate is closed; `{denied_tool}` is blocked in Ask mode. Use read/search/inspect tools, or open the review flow before implementation."
+        ),
+        _ => format!("ACP session policy blocked `{denied_tool}`."),
+    };
     AcpToolResultRequest {
         turn_id: None,
         request_id: Some(context.request_id.to_string()),
@@ -3067,18 +3134,21 @@ fn plan_mode_denial_result(
         tool_name: Some(provider_name.to_string()),
         approval_request_id: approval_request_id.map(str::to_string),
         status: "permission_denied".to_string(),
-        content: Some(format!(
-            "ACP plan mode is active; `{denied_tool}` is blocked until the submitted plan is approved. Use read/search/inspect tools or exit_plan_mode to submit the plan."
-        )),
+        content: Some(message),
         structured_content: serde_json::json!({
-            "blocked_by": "acp_plan_mode",
+            "blocked_by": "acp_session_policy",
             "denied_tool": denied_tool,
-            "allowed_action": "submit a plan with exit_plan_mode and wait for approval",
+            "mode_label": policy.mode_label,
+            "mutation_gate": policy.mutation_gate.as_str(),
+            "allowed_tool_classes": policy.allowed_tool_classes(),
+            "denied_tool_classes": policy.denied_tool_classes(),
         }),
         diagnostic: serde_json::json!({
             "component": "den.acp",
-            "phase": "plan_mode_tool_denied",
+            "phase": "session_policy_tool_denied",
             "denied_tool": denied_tool,
+            "mode_label": policy.mode_label,
+            "mutation_gate": policy.mutation_gate.as_str(),
         }),
         ..Default::default()
     }
