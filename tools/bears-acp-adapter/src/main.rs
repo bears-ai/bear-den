@@ -1446,15 +1446,7 @@ async fn handle_request(
                 )
                 .await
                 {
-                    Ok(()) => {
-                        write_response(
-                            id,
-                            Ok(serde_json::to_value(PromptResponse::new(
-                                StopReason::EndTurn,
-                            ))?),
-                        )
-                        .await?;
-                    }
+                    Ok(()) => {}
                     Err(err) => {
                         let server_version = fetch_server_version(http, config).await.ok();
                         let mut message = format!("{err:#}");
