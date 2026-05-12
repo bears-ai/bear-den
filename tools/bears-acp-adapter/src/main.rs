@@ -9,7 +9,7 @@ use agent_client_protocol::schema::{
     AvailableCommand, AvailableCommandsUpdate, CloseSessionResponse, ConfigOptionUpdate,
     ContentBlock, ContentChunk, CreateTerminalRequest, CreateTerminalResponse, CurrentModeUpdate,
     Diff, EnvVariable, Implementation, InitializeResponse, ListSessionsResponse,
-    LoadSessionResponse, McpCapabilities, NewSessionResponse, Plan, PlanEntry, PlanEntryPriority,
+    LoadSessionResponse, McpCapabilities, NewSessionResponse, PlanEntry, PlanEntryPriority,
     PlanEntryStatus, PromptCapabilities, PromptResponse, ProtocolVersion, ReadTextFileRequest,
     ReadTextFileResponse, ReleaseTerminalRequest, RequestPermissionRequest, ResumeSessionResponse,
     SessionCapabilities, SessionCloseCapabilities, SessionConfigOption,
@@ -366,14 +366,24 @@ async fn send_session_info_update(
     .await
 }
 
+fn acp_plan_update_payload(session_id: &str, entries: Vec<PlanEntry>) -> Result<Value> {
+    Ok(json!({
+        "sessionId": session_id,
+        "update": {
+            "sessionUpdate": "plan",
+            "entries": entries
+                .into_iter()
+                .map(serde_json::to_value)
+                .collect::<Result<Vec<_>, _>>()?,
+        },
+    }))
+}
+
 async fn send_plan_update(session_id: &str, entries: Vec<PlanEntry>) -> Result<()> {
     let entry_count = entries.len();
     write_notification(
         "session/update",
-        json!({
-            "sessionId": session_id,
-            "update": serde_json::to_value(SessionUpdate::Plan(Plan::new(entries)))?,
-        }),
+        acp_plan_update_payload(session_id, entries)?,
     )
     .await?;
     if env_bool("BEARS_ACP_DEBUG_UI") {
@@ -5577,6 +5587,36 @@ mod tests {
             .filter_map(|option| option.get("value").and_then(Value::as_str))
             .collect::<Vec<_>>();
         assert_eq!(option_values, vec![MODE_ASK, MODE_PLAN, MODE_WRITE]);
+    }
+
+    #[test]
+    fn acp_plan_update_payload_matches_agent_plan_spec() {
+        let payload = acp_plan_update_payload(
+            "sess_abc123def456",
+            vec![
+                PlanEntry::new(
+                    "Analyze the existing codebase structure",
+                    PlanEntryPriority::High,
+                    PlanEntryStatus::Pending,
+                ),
+                PlanEntry::new(
+                    "Create unit tests for critical functions",
+                    PlanEntryPriority::Medium,
+                    PlanEntryStatus::InProgress,
+                ),
+            ],
+        )
+        .expect("plan payload");
+        assert_eq!(payload["sessionId"], "sess_abc123def456");
+        assert_eq!(payload["update"]["sessionUpdate"], "plan");
+        assert_eq!(
+            payload["update"]["entries"][0]["content"],
+            "Analyze the existing codebase structure"
+        );
+        assert_eq!(payload["update"]["entries"][0]["priority"], "high");
+        assert_eq!(payload["update"]["entries"][0]["status"], "pending");
+        assert_eq!(payload["update"]["entries"][1]["priority"], "medium");
+        assert_eq!(payload["update"]["entries"][1]["status"], "in_progress");
     }
 
     #[test]
