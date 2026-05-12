@@ -197,10 +197,12 @@ fn session_config_options_for_mode(mode: &str) -> Vec<SessionConfigOption> {
         vec![
             SessionConfigSelectOption::new(MODE_ASK, "Ask")
                 .description("Mutation gate closed; read, search, and inspect only."),
-            SessionConfigSelectOption::new(MODE_PLAN, "Plan")
-                .description("Mutation gate review_required; read-only until the plan is approved."),
-            SessionConfigSelectOption::new(MODE_WRITE, "Write")
-                .description("Mutation gate open; workspace changes are allowed subject to approval policy."),
+            SessionConfigSelectOption::new(MODE_PLAN, "Plan").description(
+                "Mutation gate review_required; read-only until the plan is approved.",
+            ),
+            SessionConfigSelectOption::new(MODE_WRITE, "Write").description(
+                "Mutation gate open; workspace changes are allowed subject to approval policy.",
+            ),
         ],
     )
     .description("Reflects trusted Den session policy for mutation-gate state.")
@@ -213,10 +215,12 @@ fn session_modes_for_mode(mode: &str) -> SessionModeState {
         vec![
             SessionMode::new(MODE_ASK, "Ask")
                 .description("Mutation gate closed; read, search, and inspect only."),
-            SessionMode::new(MODE_PLAN, "Plan")
-                .description("Mutation gate review_required; read-only until the plan is approved."),
-            SessionMode::new(MODE_WRITE, "Write")
-                .description("Mutation gate open; workspace changes are allowed subject to approval policy."),
+            SessionMode::new(MODE_PLAN, "Plan").description(
+                "Mutation gate review_required; read-only until the plan is approved.",
+            ),
+            SessionMode::new(MODE_WRITE, "Write").description(
+                "Mutation gate open; workspace changes are allowed subject to approval policy.",
+            ),
         ],
     )
 }
@@ -2589,12 +2593,18 @@ async fn handle_session_load(
         replay_history_for_den_session(http, config, session_id, den, "session/load").await?;
     }
 
-    write_response(response_id, Ok(session_lifecycle_result()?)).await?;
+    let mode =
+        infer_mode_from_plan_mode_state(den.as_ref().and_then(|value| value.get("plan_mode")));
+    write_response(response_id, Ok(session_lifecycle_result(mode)?)).await?;
     Ok(())
 }
 
-fn session_lifecycle_result() -> Result<Value> {
-    Ok(serde_json::to_value(LoadSessionResponse::new())?)
+fn session_lifecycle_result(mode: &str) -> Result<Value> {
+    Ok(serde_json::to_value(
+        LoadSessionResponse::new()
+            .config_options(session_config_options_for_mode(mode))
+            .modes(session_modes_for_mode(mode)),
+    )?)
 }
 
 async fn handle_session_close(
@@ -5387,6 +5397,24 @@ mod tests {
             },
         );
         state
+    }
+
+    #[test]
+    fn session_lifecycle_result_includes_mode_metadata() {
+        let value = session_lifecycle_result(MODE_PLAN).expect("load response");
+        assert_eq!(value["configOptions"][0]["id"].as_str(), Some("mode"));
+        assert_eq!(
+            value["configOptions"][0]["currentValue"].as_str(),
+            Some(MODE_PLAN)
+        );
+        assert_eq!(value["modes"]["currentModeId"].as_str(), Some(MODE_PLAN));
+        let option_values = value["configOptions"][0]["options"]
+            .as_array()
+            .expect("mode options")
+            .iter()
+            .filter_map(|option| option.get("value").and_then(Value::as_str))
+            .collect::<Vec<_>>();
+        assert_eq!(option_values, vec![MODE_ASK, MODE_PLAN, MODE_WRITE]);
     }
 
     #[test]
