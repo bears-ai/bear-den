@@ -4539,6 +4539,14 @@ async fn handle_den_event(
             }
             Ok(false)
         }
+        "mode_update" => {
+            if let Some(mode) = event.get("mode").and_then(Value::as_str) {
+                if matches!(mode, MODE_ASK | MODE_PLAN | MODE_WRITE) {
+                    notify_mode_state(session_id, mode).await?;
+                }
+            }
+            Ok(false)
+        }
         "conversation_resolved" => {
             if let Some(conversation_id) = event
                 .get("conversation_id")

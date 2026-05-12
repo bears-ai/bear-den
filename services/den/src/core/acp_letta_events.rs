@@ -57,6 +57,12 @@ pub enum AcpGatewayEvent {
         options: Vec<String>,
     },
     PlanUpdate(WorkPlanProjection),
+    PlanUpdateJson {
+        entries: Vec<serde_json::Value>,
+    },
+    ModeUpdate {
+        mode: String,
+    },
     ConversationResolved {
         conversation_id: String,
     },
@@ -640,7 +646,10 @@ pub fn acp_event_adapter_type(event: &AcpGatewayEvent) -> &'static str {
         AcpGatewayEvent::Error { .. } => "error",
         AcpGatewayEvent::ToolRequest { .. } => "tool_request",
         AcpGatewayEvent::PermissionRequest { .. } => "permission_request",
-        AcpGatewayEvent::PlanUpdate { .. } => "plan_update",
+        AcpGatewayEvent::PlanUpdate { .. } | AcpGatewayEvent::PlanUpdateJson { .. } => {
+            "plan_update"
+        }
+        AcpGatewayEvent::ModeUpdate { .. } => "mode_update",
         AcpGatewayEvent::SessionInfoUpdate { .. } => "session_info_update",
         AcpGatewayEvent::ConversationResolved { .. } => "conversation_resolved",
     }
@@ -656,6 +665,8 @@ pub fn acp_event_has_visible_output(event: &AcpGatewayEvent) -> bool {
         | AcpGatewayEvent::ToolRequest { .. }
         | AcpGatewayEvent::PermissionRequest { .. }
         | AcpGatewayEvent::PlanUpdate { .. }
+        | AcpGatewayEvent::PlanUpdateJson { .. }
+        | AcpGatewayEvent::ModeUpdate { .. }
         | AcpGatewayEvent::SessionInfoUpdate { .. }
         | AcpGatewayEvent::ConversationResolved { .. } => false,
     }
@@ -802,6 +813,24 @@ pub fn acp_event_to_adapter_sse(event: AcpGatewayEvent) -> Bytes {
             "diagnostic": {
                 "component": "den.acp",
                 "phase": "plan_update_mapped",
+                "transport_version": 3,
+            }
+        }),
+        AcpGatewayEvent::PlanUpdateJson { entries } => serde_json::json!({
+            "type": "plan_update",
+            "entries": entries,
+            "diagnostic": {
+                "component": "den.acp",
+                "phase": "plan_update_mapped",
+                "transport_version": 3,
+            }
+        }),
+        AcpGatewayEvent::ModeUpdate { mode } => serde_json::json!({
+            "type": "mode_update",
+            "mode": mode,
+            "diagnostic": {
+                "component": "den.acp",
+                "phase": "mode_update_mapped",
                 "transport_version": 3,
             }
         }),

@@ -1009,7 +1009,7 @@ fn acp_direct_tool_prompt_context(
     if tool_names.contains(&"fs_read_text_file") {
         guidance.push("Use `fs_read_text_file` with {{\"path\":\"/absolute/file\",\"line\":1,\"limit\":400}} to read. Do not guess file contents.".to_string());
     }
-    guidance.push("Use server tools for non-local capabilities: `session_info` for trusted information about the authenticated human, current bear, role, session, memory scopes, and policy; `memory_write_entry` for durable pair-local notes, logs, decisions, reflections, scratch, summaries, and approved plan artifacts attributed to the authenticated human; `memory_status`, `memory_browse`, `memory_read`, and `memory_search` to inspect Bear memory; `memory_request_review` to ask Reflection/curate to review pair-local memory without writing shared memory directly; `update_plan` to keep a short visible todo/progress plan for the current mini-project with at most one `in_progress` item; `get_plan_status` and `list_plans` to recover visible plan state; `request_work_handoff` when channel work should become a durable reviewed task intent; `enter_plan_mode` when a substantial implementation plan would help; `exit_plan_mode` to submit a markdown implementation plan; `record_plan_approval` when the authenticated human clearly approves the submitted plan in chat (for example, 'go ahead' or 'approved'); `get_plan_mode_status` and `cancel_plan_mode` to inspect or cancel planning; `web_fetch` for bounded HTTP(S) page fetching; and `web_search` only when a Den search provider is configured. Do not use memory entry tools for tasks, observations, run results, Cabinet writes, or direct core updates.".to_string());
+    guidance.push("Use server tools for non-local capabilities: `session_info` for trusted information about the authenticated human, current bear, role, session, memory scopes, and policy; `memory_write_entry` only for durable pair-local notes, logs, decisions, reflections, scratch, and summaries attributed to the authenticated human; `memory_status`, `memory_browse`, `memory_read`, and `memory_search` to inspect Bear memory; `memory_request_review` to ask Reflection/curate to review role-local memory without writing shared memory directly; `update_plan` to create and maintain the visible ACP task plan for the current mini-project with at most one `in_progress` item; `get_plan_status` and `list_plans` to recover visible plan state; `request_work_handoff` when channel work should become a durable reviewed task intent; `enter_plan_mode` when the user asks to plan or when a substantial implementation plan would help; `exit_plan_mode` to submit a markdown implementation plan artifact; `record_plan_approval` when the authenticated human clearly approves the submitted plan in chat (for example, 'go ahead' or 'approved'); `get_plan_mode_status` and `cancel_plan_mode` to inspect or cancel planning; `web_fetch` for bounded HTTP(S) page fetching; and `web_search` only when a Den search provider is configured. If the user asks to enter planning mode or create/execute a plan, use `enter_plan_mode` and `update_plan` rather than `memory_write_entry`; do not use memory entry tools for active plans, task lists, observations, run results, Cabinet writes, or direct core updates.".to_string());
     if tool_names.contains(&"fs_edit_file") {
         guidance.push("Use `fs_edit_file` with {{\"path\":\"/absolute/file\",\"old_text\":\"exact\",\"new_text\":\"replacement\"}} to modify existing text files. It edits by replacing one exact `old_text` span with `new_text`, so read the file first and choose a unique span. Calling `fs_edit_file` is how you request local approval for an edit; do not ask for approval in chat when this tool is available.".to_string());
         guidance.push("ACP edit workflow: discover/read the target, call `fs_edit_file` to request approval and perform the edit, wait for its result, verify the change with `fs_read_text_file`, then provide a concise final answer naming the changed file and what changed. Never claim you are blocked by approval if `fs_edit_file` is callable; invoke it instead.".to_string());
@@ -2839,7 +2839,7 @@ async fn prompt_inner(
     let client_tool_descriptors = tools_enabled.then(|| {
         merge_acp_pair_tool_descriptors(acp_client_tool_descriptors_for_client_context(
             &body.client_context,
-            None,
+            Some(&resolved_policy),
         ))
     });
     let stream_tokens = acp_stream_tokens_enabled();
@@ -3230,6 +3230,81 @@ async fn handle_direct_den_tool_request(
 #[derive(Debug, Deserialize)]
 struct WebFetchToolArgs {
     url: String,
+}
+
+fn status_from_den_tool_result(result: &AcpToolResultRequest) -> Option<&str> {
+    result
+        .structured_content
+        .get("mode_update")
+        .and_then(serde_json::Value::as_str)
+        .filter(|mode| matches!(*mode, "ask" | "plan" | "write"))
+}
+
+fn work_plan_item_to_acp_plan_entry(item: &serde_json::Value) -> Option<serde_json::Value> {
+    let title = item
+        .get("title")
+        .and_then(serde_json::Value::as_str)?
+        .trim();
+    if title.is_empty() {
+        return None;
+    }
+    let raw_status = item
+        .get("status")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("pending");
+    let blocked_reason = item
+        .get("blocked_reason")
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
+    let summary = item
+        .get("summary")
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
+    let content = match (raw_status, blocked_reason, summary) {
+        ("blocked", Some(reason), _) => format!("Blocked: {title} — {reason}"),
+        ("blocked", None, _) => format!("Blocked: {title}"),
+        ("cancelled", _, _) => format!("Cancelled: {title}"),
+        (_, _, Some(summary)) => format!("{title} — {summary}"),
+        _ => title.to_string(),
+    };
+    let status = match raw_status {
+        "in_progress" => "in_progress",
+        "completed" | "cancelled" => "completed",
+        _ => "pending",
+    };
+    let priority = if raw_status == "in_progress" {
+        "high"
+    } else {
+        "medium"
+    };
+    Some(serde_json::json!({
+        "content": content,
+        "priority": priority,
+        "status": status,
+        "_meta": {
+            "bears": {
+                "item_id": item.get("id").cloned().unwrap_or(serde_json::Value::Null),
+                "status": raw_status,
+                "blocked_reason": item.get("blocked_reason").cloned().unwrap_or(serde_json::Value::Null),
+                "source_refs": item.get("source_refs").cloned().unwrap_or_else(|| serde_json::json!([])),
+            }
+        }
+    }))
+}
+
+fn plan_update_from_den_tool_result(result: &AcpToolResultRequest) -> Option<AcpGatewayEvent> {
+    let plan = result.structured_content.get("plan")?;
+    let items = plan.get("items").and_then(serde_json::Value::as_array)?;
+    let entries = items
+        .iter()
+        .filter_map(work_plan_item_to_acp_plan_entry)
+        .collect::<Vec<_>>();
+    if entries.is_empty() {
+        return None;
+    }
+    Some(AcpGatewayEvent::PlanUpdateJson { entries })
 }
 
 fn settle_den_tool_error(
@@ -3918,6 +3993,18 @@ impl Stream for AcpLettaSseStream {
                                 this.context
                                     .tool_turns
                                     .remove(&this.context.acp_session_id, done_id);
+                            }
+                            if let Some(plan_event) = plan_update_from_den_tool_result(&tool_result)
+                            {
+                                this.diagnostics.observe_mapped_event(&plan_event);
+                                this.pending.push_back(acp_event_to_adapter_sse(plan_event));
+                            }
+                            if let Some(mode) = status_from_den_tool_result(&tool_result) {
+                                let mode_event = AcpGatewayEvent::ModeUpdate {
+                                    mode: mode.to_string(),
+                                };
+                                this.diagnostics.observe_mapped_event(&mode_event);
+                                this.pending.push_back(acp_event_to_adapter_sse(mode_event));
                             }
                             if acp_debug_ui_enabled() {
                                 let tool_name = tool_result

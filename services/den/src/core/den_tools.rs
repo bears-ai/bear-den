@@ -291,7 +291,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
         descriptor(
             DEN_MEMORY_WRITE_ENTRY,
             "Write memory entry",
-            "Write a role-local semantic memory entry such as a note, log, decision, reflection, scratch item, or summary. Does not write core, Cabinet, tasks, observations, or run results.",
+            "Write a role-local semantic memory entry such as a note, log, decision, reflection, scratch item, or summary. Do not use for active plans or task lists; use update_plan and plan-mode tools instead. Does not write core, Cabinet, tasks, observations, or run results.",
             "bear.memory",
             &["memory.entry.write"],
             PAIR_ROLES,
@@ -539,8 +539,8 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
         ),
         descriptor(
             DEN_WORK_PLAN_UPDATE,
-            "Update work plan",
-            "Create or update the current role's live Den workboard plan for user-visible task planning.",
+            "Update visible plan",
+            "Create or update the current role's live visible ACP task plan. Use this when the user asks to create, show, update, or execute a plan/task list.",
             "bear.work_plans",
             &["work_plan.write"],
             WORK_PLAN_UPDATE_ROLES,
@@ -599,8 +599,8 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
         ),
         descriptor(
             DEN_PLAN_MODE_ENTER,
-            "Enter plan mode",
-            "Enter ACP pair plan mode for read-only investigation and a user-approved markdown implementation plan before mutation.",
+            "Enter planning mode",
+            "Enter ACP pair planning mode and reflect that mode in the ACP session UI. Use this when the user asks to enter planning mode.",
             "bear.planning",
             &["plan_mode.enter"],
             PAIR_ROLES,
@@ -641,8 +641,8 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
         ),
         descriptor(
             DEN_PLAN_MODE_EXIT,
-            "Exit plan mode",
-            "Submit a markdown implementation plan artifact for user approval before leaving ACP pair plan mode.",
+            "Submit implementation plan",
+            "Submit a markdown implementation plan artifact for user approval. This is for durable implementation plans, not for the live visible task list; use update_plan for visible task planning.",
             "bear.planning",
             &["plan_mode.exit"],
             PAIR_ROLES,
@@ -1879,19 +1879,28 @@ async fn enter_plan_mode(
     arguments: Value,
 ) -> Result<Value, CustomError> {
     let args: PlanModeEnterArguments = serde_json::from_value(arguments)?;
+    let acp_session_id = source_acp_session_id(context).ok_or_else(|| {
+        CustomError::ValidationError("ACP session id is required for plan mode".to_string())
+    })?;
     let row = acp_plan_mode::enter_plan_mode(
         pool,
         EnterPlanModeParams {
             user_id: context.user_id,
             bear_id: context.bear_id,
             bear_slug: context.bear_slug.clone(),
-            acp_session_id: source_acp_session_id(context).ok_or_else(|| {
-                CustomError::ValidationError("ACP session id is required for plan mode".to_string())
-            })?,
+            acp_session_id: acp_session_id.clone(),
             reason: args.reason,
             requested_by: AcpPlanModeRequestedBy::Pair,
             previous_permission_mode: args.previous_permission_mode,
         },
+    )
+    .await?;
+    acp_sessions::set_current_mode(
+        pool,
+        context.user_id,
+        context.bear_id,
+        &acp_session_id,
+        "plan",
     )
     .await?;
     Ok(json!({
@@ -2031,13 +2040,21 @@ async fn exit_plan_mode(
         SubmitPlanModeParams {
             user_id: context.user_id,
             bear_id: context.bear_id,
-            acp_session_id,
+            acp_session_id: acp_session_id.clone(),
             plan_mode_id: args.plan_mode_id,
             title,
             body,
             artifact_path: memfs_response.path.clone(),
             approval_request_id: None,
         },
+    )
+    .await?;
+    acp_sessions::set_current_mode(
+        pool,
+        context.user_id,
+        context.bear_id,
+        &acp_session_id,
+        "plan",
     )
     .await?;
     Ok(json!({
@@ -2078,6 +2095,14 @@ async fn cancel_plan_mode(
         args.plan_mode_id,
     )
     .await?;
+    acp_sessions::set_current_mode(
+        pool,
+        context.user_id,
+        context.bear_id,
+        &acp_session_id,
+        "ask",
+    )
+    .await?;
     Ok(json!({ "plan_mode": row, "mode": "ask", "mode_update": "ask" }))
 }
 
@@ -2095,6 +2120,11 @@ async fn write_memory_entry(
     }
     let args: MemoryWriteEntryArguments = serde_json::from_value(arguments)?;
     let kind = validate_memory_kind(&args.kind)?;
+    if kind == "plan" {
+        return Err(CustomError::ValidationError(
+            "memory_write_entry kind=plan is not for active planning in ACP sessions; use update_plan for visible task plans and exit_plan_mode for submitted implementation plan artifacts".to_string(),
+        ));
+    }
     let title = validate_bounded_text("title", &args.title, 1, 200)?;
     let body = validate_bounded_text("body", &args.body, 1, 50_000)?;
     let tags = clean_limited_strings(args.tags, 20, 80);
