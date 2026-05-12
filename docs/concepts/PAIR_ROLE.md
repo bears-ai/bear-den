@@ -73,7 +73,8 @@ Expected behavior:
 
 ```text
 user asks for narrow docs lookup
-  -> pair calls Den-mediated search/fetch tool
+  -> pair calls web_search or web_fetch
+  -> Den executes the request under Bear policy and approval rules
   -> Den returns bounded, quoted, cached snippets with source metadata
   -> pair uses snippets in the current response
 ```
@@ -128,7 +129,7 @@ Examples:
 Expected behavior:
 
 ```text
-pair writes a task intent
+pair writes or requests a task intent / handoff
   -> curate reviews and approves/rejects
   -> Den dispatches approved work to work
   -> work writes a result/report
@@ -184,17 +185,20 @@ Den should preserve ACP-native approval semantics rather than pretending these a
 
 These support inline docs lookup.
 
-Candidate tools:
+Provider tools:
 
 - `web_search`
 - `web_fetch`
-- `docs_search`
-- `docs_fetch`
+
+Canonical Den names:
+
+- `den.web.search`
+- `den.web.fetch`
 
 Current implementation:
 
-- `den.web.fetch` is implemented with SSRF guards, timeouts, redirect limits, and bounded content extraction.
-- `den.web.search` supports Brave Search when configured:
+- `web_fetch` / `den.web.fetch` is implemented with SSRF guards, timeouts, redirect limits, Bear-level source policy, approval flow, audit logging, and bounded content extraction.
+- `web_search` / `den.web.search` supports Brave Search when configured:
 
 ```bash
 DEN_SEARCH_PROVIDER=brave
@@ -248,13 +252,14 @@ Pair should not request review for every local note. Most tactical notes can rem
 
 ### Structured delegation tools
 
-Future tool once Docket exists:
+Current / near-term tools:
 
-- `write_task_intent`
+- `den.work_plan.request_handoff`
+- future provider-facing `write_task_intent` or equivalent Docket-backed task-intent tool
 
-Pair uses this for external-effect requests and broad research tasks.
+Pair uses structured delegation for external-effect requests and broad research tasks. The near-term implementation path is for `den.work_plan.request_handoff` to materialize a Den-generated task-intent artifact from selected workboard items. Docket may later own the richer task/project lifecycle.
 
-Until Docket exists, pair should explain that background task creation is not yet available or should use a temporary Den-managed intent implementation if we choose to bridge it.
+Pair should not directly choose durable task artifact paths; it provides semantic handoff or intent fields and Den chooses the path.
 
 ### Skill proposal tools
 
@@ -320,10 +325,11 @@ Pair's memory decision ladder:
 
 1. Implement Den-mediated `web_search` / `web_fetch` or docs-oriented equivalents for pair.
 2. Implement role-aware `memory_write_entry` for pair-local memory.
-3. Expose web, situation, and memory tools to the pair prompt/tool profile.
+3. Expose `web_search`, `web_fetch`, `session_info`, and memory tools to the pair prompt/tool profile.
 4. Add diagnostics and tests showing pair can write to `pair/notes/` but cannot write `core/`.
 5. Implement `memory_request_review` so pair can request Reflection curation without writing shared memory.
-6. Implement Docket-backed `write_task_intent` later for broad research delegation.
+6. Implement Den-generated handoff/task-intent materialization through `den.work_plan.request_handoff`.
+7. Implement Docket-backed task/project lifecycle later for richer background-work delegation.
 
 ## Good pair behavior examples
 
@@ -357,4 +363,4 @@ User:
 
 Pair:
 
-> This is broader than a quick docs lookup. I should create a background research request for the work role once Docket task intents are available. For now, I can either do a quick inline scan or draft the task intent for review.
+> This is broader than a quick docs lookup. I should create a reviewed background research request for the work role. For now, I can either do a quick inline scan or draft the handoff/task intent for review.

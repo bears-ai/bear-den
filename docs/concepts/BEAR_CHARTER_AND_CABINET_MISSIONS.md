@@ -8,8 +8,9 @@ A Cabinet **Mission** is different. It is a shared work and knowledge container 
 
 - A **Bear** is a persistent assistant identity with membership, policy, tools, role agents, and memory boundaries.
 - A Bear has one **charter** as a characteristic of the Bear, not as a separate entity.
-- Bear-specific knowledge is organized under the Bear through **Domains**, Projects, Routines, Tasks, Runs, and memory.
+- Bear-specific knowledge is organized under the Bear through **Domains**, Workplaces, Projects, Routines, Tasks, Runs, and memory.
 - **Domains** are durable areas of knowledge and responsibility within the Bear's scope.
+- **Workplaces** are durable Bear-level work settings that can group plans, tasks, artifacts, memory, and activity around a repo, service, deployment, Cabinet Mission, Docket project, or long-running responsibility.
 - Cabinet **Missions** are shared work/knowledge containers and can involve zero, one, or many Bears.
 - If a responsibility needs a different identity, memory boundary, policy, membership, or tool profile, create another Bear.
 
@@ -38,6 +39,7 @@ Bear
 │
 ├── Bear-scoped organization
 │   ├── Domains
+│   ├── Workplaces
 │   ├── Projects
 │   ├── Routines
 │   ├── Tasks
@@ -78,12 +80,13 @@ Use these concepts for bear-specific work and knowledge:
 | Concept | Meaning | Example |
 |---------|---------|---------|
 | Domain | Durable knowledge/responsibility area within the Bear's scope. | smart home, renovations, billing, infrastructure |
+| Workplace | Durable work setting that groups plans, tasks, artifacts, memory, and activity. | BEARS monorepo, production Den deployment, renovation budget |
 | Project | Bounded initiative with a desired outcome. | kitchen renovation, Stripe billing v1 |
 | Routine | Recurring responsibility. | monthly maintenance review, weekly project digest |
 | Task | Executable unit of work. | compare electrician quotes, add webhook tests |
 | Run | One execution attempt. | work run 2026-05-09T10:32Z |
 
-Distinct domains or skills do not imply distinct Bears or Cabinet Missions. For example, smart home, renovations, maintenance, appliances, and contractors can all be Domains for a House Bear whose charter is “Care for the house.”
+Distinct domains, Workplaces, or skills do not imply distinct Bears or Cabinet Missions. For example, smart home, renovations, maintenance, appliances, and contractors can all be Domains or Workplaces for a House Bear whose charter is “Care for the house.”
 
 ## Bear memory overview
 
@@ -131,6 +134,7 @@ A Cabinet Mission may map to:
 - one Bear,
 - multiple Bears,
 - no Bear yet,
+- one or more Workplaces,
 - multiple projects,
 - multiple domains of work.
 
@@ -211,6 +215,7 @@ Prefer:
 - “This Bear's charter is to care for the house.”
 - “Smart home and maintenance are Domains for the House Bear.”
 - “This Cabinet Mission involves the House Bear and the Finance Bear.”
+- “Workplaces group a Bear's plans, tasks, artifacts, memory, and activity for a work setting.”
 - “Projects can live under a Bear or a Cabinet Mission.”
 - “Bears can collaborate on a Mission.”
 
@@ -219,5 +224,6 @@ Avoid:
 - “A Bear has many missions” as the default model.
 - “A Cabinet Mission is the Bear's purpose.”
 - “Different skills always mean different missions.”
+- “Every Workplace must be a Cabinet Mission.”
 - “Bear-specific work is under a Mission by default.”
 - “Technical work needs its own archive by default.”

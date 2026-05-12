@@ -1,8 +1,8 @@
 # Planning in BEARS
 
-Planning in BEARS means a small, user-visible mini-project plan for an active body of work. It is distinct from continuation, which keeps an agent going in an existing task loop, and from a Cabinet Mission, which is a larger shared knowledge/work container.
+Planning in BEARS means a user-visible mini-project plan for an active body of work. Plans are Bear-level records with role provenance, and they may be associated with a **Workplace**: a durable Bear-level work setting such as a repo, service, deployment, Cabinet Mission, Docket project, or long-running responsibility.
 
-BEARS aligns with Letta Code's two planning layers while adapting them to Den's multi-role Bear architecture.
+Planning is distinct from continuation, which keeps an agent going in an existing task loop, and from a Cabinet Mission, which is a larger shared knowledge/work container. BEARS aligns with Letta Code's two planning layers while adapting them to Den's multi-role Bear architecture.
 
 ## Two layers
 
@@ -22,7 +22,7 @@ BEARS' Den equivalent is the **workboard**:
   - `den.work_plan.list`
   - `den.work_plan.request_handoff`
 
-A workboard plan is intentionally small and operational. It records what the role is trying to do now, the current item, blockers, and whether the plan should be private to the role, visible to the same user, visible to the Bear, or ready for handoff.
+A workboard plan is intentionally small and operational. It records what the Bear is trying to do now, the current item, blockers, the role that created or last updated it, and whether the plan should be private to that role, visible to the same user, visible to the Bear, or ready for handoff.
 
 ### 2. Pre-implementation planning gate
 
@@ -42,19 +42,22 @@ The BEARS version is:
 6. Pair exits plan mode by presenting that artifact to the user.
 7. User approval closes the gate and restores normal ACP tool permissions for implementation.
 
-## Workboard vs plan artifact vs tasks
+## Workplace vs workboard vs plan artifact vs tasks
 
 These are related but different objects:
 
 | Object | Owner | Purpose | Durability |
 |--------|-------|---------|------------|
+| Workplace | Den DB, future normalized model | Durable Bear-level work setting that groups plans, tasks, artifacts, memory, and activity | Durable product grouping, not an authorization boundary |
 | Workboard plan | Den DB | Current visible todo/progress state | Durable enough for resume/status, but not a project archive |
-| Plan artifact | MemFS or approved local plan file | Proposed implementation plan for user approval before mutation | Durable markdown artifact |
+| Plan artifact | MemFS or approved local plan file | Proposed implementation plan for user approval before mutation or future reference | Durable markdown artifact |
 | Task intent | MemFS | Request for reviewed background/autonomous work | Durable input to `curate` review |
 | Approved task | MemFS | Curate-approved executable work for `work` | Durable task definition |
 | Work result | MemFS/Garage | Result/log/report from `work` | Durable output, curatable into `core/` |
 
-A workboard plan can link to a task intent when `den.work_plan.request_handoff` is used. A pre-implementation plan artifact may later be summarized into a workboard plan, task intent, or role-local memory, but it is not itself a Cabinet Mission.
+A workboard plan can be scoped to a Workplace when Den can infer or record one. A workboard plan can link to a task intent when `den.work_plan.request_handoff` is used. A pre-implementation plan artifact may later be summarized into a workboard plan, task intent, or role-local memory, but it is not itself a Cabinet Mission.
+
+Role is provenance and policy metadata for a plan, not the primary product owner. Cross-role visibility is not cross-role authority: a `pair` plan intended for `work` still needs handoff, review, and Den dispatch before `work` may execute it.
 
 ## Pair role behavior
 
@@ -64,6 +67,7 @@ A workboard plan can link to a task intent when `den.work_plan.request_handoff` 
 - Keep at most one item `in_progress`.
 - Mark items `completed`, `blocked`, or `cancelled` as reality changes.
 - Use `den.work_plan.get_status` to recover the current ACP session's plan after interruption.
+- Include available Workplace signals such as repo, workspace root, service, deployment, Cabinet Mission, Docket project, or artifact path when relevant.
 - Use `den.work_plan.request_handoff` when the plan becomes broader background work that needs `curate` review and `work` execution.
 - Do not treat every response as requiring a plan; very small single-step answers can proceed without one.
 
@@ -85,7 +89,7 @@ Use this ladder:
 4. Request curation when lessons, decisions, or results should become shared `core/` memory.
 5. Use task intents and approved tasks for autonomous/background work.
 
-A simple Den memory log of plans underway/completed can be derived from `bear_work_plan_events` and selected summaries rather than copying every plan into `core/`.
+A simple Den memory log of plans underway/completed can be derived from `bear_work_plan_events` and selected summaries rather than copying every plan into `core`.
 
 ## Current implementation state
 
@@ -111,5 +115,15 @@ Implemented:
 Planned:
 
 - Operator and chat UI for active/completed plans.
+- A unified Bear-level `list_plans` view that includes live workboard plans, active/submitted plan-mode gates, saved plan artifacts, handoffs/task intents, and available Workplace references.
+- Normalized Workplace records and conservative Workplace inference from ACP workspace roots, Git remotes, Cabinet Mission references, Docket project references, service names, deployments, and artifact paths.
 - Handoff implementation from workboard items to durable task intents.
 - Reflection/curate review of completed plan summaries and durable lessons.
+
+## Related docs
+
+- [Bears and Den](BEARS_AND_DEN.md)
+- [Bear agent roles](BEAR_AGENT_ROLES.md)
+- [Memory model](MEMORY_MODEL.md)
+- [Tasks and autonomy](TASKS_AND_AUTONOMY.md)
+- [Bear Workplaces ADR](../architecture/adr/bear-workplaces.md)

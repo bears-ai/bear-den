@@ -94,6 +94,8 @@ Typical archives:
 
 A Bear has a **charter**: the Bear's durable purpose and responsibility boundary. Bear-specific knowledge lives under the Bear. **Domains** are durable areas of knowledge and responsibility within the Bear's scope, such as smart home, renovations, billing, or infrastructure.
 
+A **Workplace** is a durable Bear-level work setting that can group plans, tasks, artifacts, memory, and activity around a repo, service, deployment, Cabinet Mission, Docket project, or long-running responsibility. Workplace references can help memories stay connected to where work happened without making role branches or Cabinet the source of truth.
+
 Cabinet **Missions** are different: they are shared knowledge/work containers that may contain multiple projects and may involve multiple Bears. The Bear↔Mission relationship is many-to-many.
 
 For one Bear working on one long-lived responsibility, the Bear's curated archive over its Domains may be enough. Create Cabinet Mission archives only when a Cabinet Mission needs semantic recall shared across Bears or role agents.
@@ -154,7 +156,7 @@ A Cabinet **Mission** is not the same as a Bear's charter. A Mission can contain
 
 Use **Domains** for Bear-specific knowledge areas. Do not describe bear-specific work as being under a Cabinet Mission unless it is actually part of a shared Cabinet Mission.
 
-Bear memory may reference Cabinet objects or semantic spaces, but it does not mirror Cabinet one-to-one. A role-local memory can relate to a Cabinet Mission, project, or person without having a Cabinet page.
+Bear memory may reference Cabinet objects, Workplaces, or semantic spaces, but it does not mirror Cabinet one-to-one. A role-local memory can relate to a Cabinet Mission, Workplace, project, or person without having a Cabinet page.
 
 Use **situation** for trusted interaction briefings, not “current context.” This avoids confusion with model context windows and compiled prompt context.
 
@@ -169,6 +171,7 @@ Prefer:
 - “Some memories are intentionally role-local.”
 - “Cabinet is shared knowledge; Bear memory can reference Cabinet without mirroring it.”
 - “A Bear has a charter; Domains organize bear-specific knowledge.”
+- “Workplaces group Bear activity around durable work settings.”
 - “Cabinet Missions are shared work/knowledge containers that can involve many Bears.”
 - “Situation briefings tell the Bear where it is operating and what boundaries apply.”
 - “`curate` decides what the Bear should carry forward.”
@@ -185,6 +188,7 @@ Avoid:
 - “Every memory must become Cabinet knowledge.”
 - “Every role memory is waiting for promotion.”
 - “A Cabinet Mission is the same thing as a Bear's purpose.”
+- “Every Workplace must be a Cabinet Mission.”
 - “Current context” when referring to Den’s situation briefing.
 
 ## Related docs
@@ -196,6 +200,7 @@ Avoid:
 - [Observations and subscriptions](OBSERVATIONS_AND_SUBSCRIPTIONS.md)
 - [Semantic memory context](../context/SEMANTIC_MEMORY.md)
 - [Semantic Bear Memory ADR](../architecture/adr/semantic-bear-memory.md)
+- [Bear Workplaces ADR](../architecture/adr/bear-workplaces.md)
 - [Reflection System ADR](../architecture/adr/reflection-system.md)
 - [Multi-agent architecture ADR](../architecture/adr/multi-agent-architecture.md)
 - [Den Bear spec](../../services/den/docs/bear-spec.md)

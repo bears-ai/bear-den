@@ -4,10 +4,11 @@ Tasks are how a Bear turns a user's request or an external observation into revi
 
 ## Summary
 
-- `talk` and `pair` capture requests for external or background work as task intents.
+- `talk` and `pair` capture requests for external or background work as task intents or handoff requests.
 - `curate` reviews task intents before they become approved tasks.
-- Den enforces policy, stores task state, schedules runs, and dispatches work.
+- Den enforces policy, generates durable artifact paths, stores task state, schedules runs, and dispatches work.
 - `work` executes approved tasks within a scoped run context.
+- Future Docket functionality may own the richer task/project lifecycle, while Den remains the Bear control plane.
 - Results are reviewed before durable learnings return to shared memory.
 
 ## Why tasks exist
@@ -27,7 +28,7 @@ These requests imply background work, external effects, recurrence, or delayed e
 
 A task intent is a proposed task.
 
-It captures what the user or system wants, but it is not yet approved for execution. `talk` and `pair` write task intents when a synchronous interaction produces a request for background or external work.
+It captures what the user or system wants, but it is not yet approved for execution. `talk` and `pair` write task intents, or request handoff from a workboard plan into a task intent, when a synchronous interaction produces a request for background or external work.
 
 A task intent should describe:
 
@@ -36,7 +37,10 @@ A task intent should describe:
 - relevant scope,
 - schedule or trigger,
 - likely tools or integrations,
+- Workplace or artifact references when relevant,
 - and any risk or approval context.
+
+For schema-owned durable artifacts such as task intents, agents provide semantic fields; Den chooses the path.
 
 ## Approved task
 
@@ -68,7 +72,7 @@ High-risk runs may require additional human approval before execution.
 | `talk` | Capture chat-originated task intents. |
 | `pair` | Capture client/tool-originated task intents. |
 | `curate` | Review intents, approve or reject work, and later review results. |
-| Den | Enforce policy, schedule tasks, dispatch runs, audit transitions. |
+| Den | Enforce policy, generate durable artifact paths, schedule tasks, dispatch runs, audit transitions. |
 | `work` | Execute approved runs within the Den-issued scope. |
 | `watch` | Produce observations that may lead to derived task intents. |
 
@@ -96,7 +100,7 @@ This lets users later ask what happened without giving conversational roles raw 
 Prefer:
 
 - “The Bear can perform approved background work.”
-- “Requests for external action become task intents.”
+- “Requests for external action become task intents or reviewed handoffs.”
 - “`curate` reviews work before Den dispatches it.”
 - “`work` executes within an approved scope.”
 
@@ -114,5 +118,8 @@ Avoid:
 - [Memory model](MEMORY_MODEL.md)
 - [Observations and subscriptions](OBSERVATIONS_AND_SUBSCRIPTIONS.md)
 - [Capabilities and skills](CAPABILITIES_AND_SKILLS.md)
+- [Planning in BEARS](PLANNING.md)
+- [Schema-first path strategy ADR](../architecture/adr/schema-first-path-strategy.md)
+- [Bear Workplaces ADR](../architecture/adr/bear-workplaces.md)
 - [Multi-agent architecture ADR](../architecture/adr/multi-agent-architecture.md)
 - [Den Bear spec](../../services/den/docs/bear-spec.md)
