@@ -1,10 +1,14 @@
 # ACP Discovery Prompt
 
-Use this checklist before implementing Den's Agent Client Protocol (ACP) gateway.
+Status: historical discovery checklist kept for reference.
+
+Use this checklist as historical background from the period before the direct ACP runtime was implemented.
 
 ## Goal
 
-Confirm the concrete ACP transport, session, streaming, and tool schemas required by Zed/OpenCode so Den can act as an authenticated ACP gateway and map ACP traffic to `bear_channel`.
+Originally, this document was used to confirm the concrete ACP transport, session, streaming, and tool schemas required by Zed/OpenCode so Den could act as an authenticated ACP gateway.
+
+For current implementation work, use [`ACP_DIRECT_LOCAL_TOOL_RUNTIME_PLAN.md`](ACP_DIRECT_LOCAL_TOOL_RUNTIME_PLAN.md) and [`ACP_ADAPTER_IMPROVEMENT_PLAN.md`](ACP_ADAPTER_IMPROVEMENT_PLAN.md). ACP for `pair` is now in place on the direct Den ⇄ adapter ⇄ Letta path rather than a `bear_channel` mapping path.
 
 ## Questions to answer
 

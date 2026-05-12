@@ -6,16 +6,21 @@ See also: [`../architecture/BEAR_CHANNEL_AND_ACP.md`](../architecture/BEAR_CHANN
 
 ## Current status
 
-Phase 7 slice 1, **ACP gateway basic chat mapped to `bear_channel`**, is implemented and has been manually validated with Zed: Zed can talk to bears through the local `bears-acp-adapter` and Den's API ACP gateway.
+This document remains active for broader `bear_channel` follow-up work, but its ACP sections are now historical context rather than the canonical `pair` runtime plan.
 
-Implementation shape: Den exposes ACP as an **API-only gateway** (`RUN_API=true`, `ACP_GATEWAY_ENABLED=true`). Stable ACP clients such as Zed launch a local stdio adapter (`bears-acp-adapter`) that speaks ACP JSON-RPC over stdin/stdout and bridges to Den's API over HTTPS/SSE.
+ACP is in place and effectively finished as a product/runtime path, with ongoing refinement captured elsewhere. The correct ACP architecture for `pair` is the direct Den ⇄ adapter ⇄ Letta conversation API route described in [`ACP_DIRECT_LOCAL_TOOL_RUNTIME_PLAN.md`](ACP_DIRECT_LOCAL_TOOL_RUNTIME_PLAN.md), with follow-up hardening in [`ACP_ADAPTER_IMPROVEMENT_PLAN.md`](ACP_ADAPTER_IMPROVEMENT_PLAN.md).
 
-Rationale:
+What remains relevant here:
 
-- The internal Den -> Codepool `bear_channel` path already exists for web chat and is the right boundary to reuse.
-- ACP introduces a new external protocol and authentication surface; proving session setup, bear authorization, request mapping, and streaming response handling should happen before local tool relay.
-- Client tools require additional state and failure semantics: pending-call persistence, timeouts, cancellation, result forwarding, audit, and disconnect handling.
-- A basic-chat slice gives us an end-to-end vertical path for Zed/OpenCode-style clients while keeping the blast radius small.
+- `bear_channel` follow-up for Den web chat and other Codepool-backed runtime surfaces;
+- capability context and server-tool management over `bear_channel` for those surfaces;
+- richer runtime events and UI surfacing on the `bear_channel` path;
+- legacy endpoint deprecation and compatibility planning for Codepool-backed clients.
+
+What is no longer canonical here:
+
+- ACP basic chat via `bear_channel` as the target architecture for `pair`;
+- ACP client-tool relay via Codepool as the next implementation slice.
 
 ### Phase 7 entry checklist
 
@@ -28,50 +33,30 @@ Before deep implementation:
 
 ### Recommended vertical slices
 
-1. **ACP basic chat gateway — done / validating**
-   - Den exposes an authenticated API-only ACP gateway route: `POST /acp/bears/{slug}/sessions/{session_id}/prompt`.
-   - `bears-acp-adapter` runs locally beside Zed/OpenCode as the actual ACP stdio agent and calls Den's API gateway.
-   - Den maps ACP session/user message fields to `bear_channel.session_id`, `conversation_id`, trusted `bear`, trusted `user`, and `channel` context.
-   - Codepool remains the private runtime owner.
-   - Assistant text and status/reasoning stream back through Den to the ACP adapter, which emits ACP `session/update` notifications.
-   - No client tool calls are advertised or accepted yet.
-   - Manual validation: Zed can chat with bears through the adapter.
-   - Test coverage now tracks: authentication failures, invalid/expired/revoked ACP tokens, membership enforcement, empty prompt rejection, `bear_channel` request construction, and SSE event mapping.
-
-2. **Tool descriptor and capability registry**
+1. **Tool descriptor and capability registry**
    - Define Den-owned descriptors for all BEARS capabilities.
    - Include execution location: `server`, `client`, `remote_mcp`, or `subagent`.
    - Keep BEARS server tools such as Cabinet and memory behind Den policy; do not expose them as ACP client tools by default.
    - Pass only allowed client tool descriptors into `bear_channel.capabilities.client_tools`.
 
-3. **Client tool relay — designed, next implementation slice**
-   - Detailed plan: [`ACP_CLIENT_TOOL_RELAY_PLAN.md`](ACP_CLIENT_TOOL_RELAY_PLAN.md).
-   - First tool: `acp_fs_read_text_file` mapped to ACP `fs/read_text_file`.
-   - Update Den token generation/listing UI so `acp:tools` is explicitly granted, visible, and revocable separately from chat-only tokens.
-   - Codepool emits `client_tool_request` events only for declared client capabilities.
-   - Den persists pending calls keyed by user, bear, session, request id, and call id.
-   - Den translates requests to ACP tool calls, waits for results, and forwards tool results back to Codepool through explicit tool-result endpoints.
-   - Add timeout, cancellation, disconnect, and error propagation semantics.
-   - Audit every request and result.
-
-4. **ACP session bindings — implemented baseline**
+2. **ACP session bindings — implemented baseline**
    - Durable ACP session behavior is captured in the [ACP Session Bindings ADR](../architecture/adr/acp-session-bindings.md).
    - ACP-created sessions route later prompts through Den's stored `resolved_conversation_id` when available.
    - Den exposes ACP Code-token session/conversation list and history endpoints for adapters.
    - The adapter supports `session/list`, `session/resume`, `session/load`, `session/cancel`, and `session/close`.
 
-5. **Server tool management over `bear_channel`**
+3. **Server tool management over `bear_channel`**
    - Add Den-provided runtime capability context for Codepool.
    - Enable Cabinet/memory tools as Den-controlled server capabilities.
    - Route server tool execution through Den APIs so authorization, audit, and policy remain centralized.
 
-6. **Richer runtime events and UI surfacing**
+4. **Richer runtime events and UI surfacing**
    - Surface server tool, client tool, subagent, memory, and artifact events to clients that advertise support.
    - Keep the Den web chat readable with an activity strip or collapsible timeline.
 
 ### ACP adapter distribution path — backlog
 
-`bears-acp-adapter` should be distributed as a standalone CLI, not a full desktop app. Packaging/distribution is intentionally backlogged while we harden gateway tests and then proceed toward capability/tool relay.
+`bears-acp-adapter` should be distributed as a standalone CLI, not a full desktop app. Packaging/distribution remains relevant even though ACP itself is already in place; this is packaging/onboarding follow-up, not a blocker for the direct ACP runtime.
 
 Backlog notes:
 
@@ -103,37 +88,9 @@ Backlog notes:
    - Optional Zed/other editor extension can manage install, token setup, and adapter updates.
    - This should remain a packaging/onboarding layer over the same CLI adapter.
 
-## 1. ACP client tool relay
+## 1. BEARS skills and Cabinet over `bear_channel`
 
-Goal: Zed/OpenCode connect to Den using Agent Client Protocol (ACP), while the bear runtime can request client-side local tools. This is the next implementation slice after ACP basic chat validation. See [`ACP_CLIENT_TOOL_RELAY_PLAN.md`](ACP_CLIENT_TOOL_RELAY_PLAN.md) for the detailed contract, persistence model, error semantics, test plan, and recommended MVP decisions.
-
-### Scope
-
-- Den ACP gateway authenticates client tokens or sessions.
-- Den authorizes access to the selected bear.
-- ACP client capabilities are mapped to `bear_channel.capabilities.client_tools`.
-- Codepool/bear runtime emits `client_tool_request` events.
-- Den translates `client_tool_request` to ACP tool requests.
-- ACP client executes local tools and returns results.
-- Den forwards client tool results back to Codepool.
-
-### Design tasks
-
-1. Confirm ACP transport and schema details for Zed/OpenCode.
-2. Define Den ACP route shape, likely `/acp/bears/{slug}`.
-3. Add scoped channel tokens in Den.
-4. Add pending client-tool-call persistence keyed by session/call id.
-5. Add timeout, cancellation, and error propagation semantics.
-6. Audit every client tool request/result with user, bear, session, and request ids.
-
-### Non-goals for first implementation
-
-- Arbitrary async background use of local tools after the client disconnects.
-- Exposing BEARS server tools as ACP client tools; server tools should remain internal unless explicitly needed.
-
-## 2. BEARS skills and Cabinet over `bear_channel`
-
-Goal: BEARS catalog skills and Cabinet tools are active for every channel that uses a bear, including Den web chat and ACP coding clients.
+Goal: BEARS catalog skills and Cabinet tools are active for Codepool-backed channels that use a bear, especially Den web chat and any future non-ACP Codepool-backed clients.
 
 ### Scope
 
@@ -157,7 +114,7 @@ Goal: BEARS catalog skills and Cabinet tools are active for every channel that u
 4. Decide whether Codepool executes Den tools directly through Den APIs or whether Den remains in the tool execution path.
 5. Add audit records for Cabinet and memory tool usage.
 
-## 3. Reflection and sub-agent event model
+## 2. Reflection and sub-agent event model
 
 Goal: coding and product sessions can spawn reflection sub-agents that learn from the session and update relevant memory or Cabinet entries under policy.
 
@@ -184,7 +141,7 @@ Goal: coding and product sessions can spawn reflection sub-agents that learn fro
 4. Add a background job model for reflection sub-agents.
 5. Add memory-write approval policy: automatic, proposal, explicit-only, or disabled.
 
-## 4. Legacy endpoint deprecation
+## 3. Legacy endpoint deprecation
 
 Goal: move Den and first-party clients to `bear_channel` while keeping compatibility for OpenWebUI and other generic clients.
 
@@ -204,11 +161,11 @@ Goal: move Den and first-party clients to `bear_channel` while keeping compatibi
 ### Removal criteria
 
 - Den web chat uses `bear_channel` in production for at least one release cycle.
-- ACP gateway uses `bear_channel` for coding clients.
+- No first-party coding client path still depends on ACP-over-`bear_channel`.
 - No first-party service depends on `/v1/conversations/:conversationId/messages`.
 - Runbook exists for third-party compatibility users.
 
-## 5. Rich web UI event surfacing
+## 4. Rich web UI event surfacing
 
 Goal: Den web chat surfaces BEARS runtime activity without breaking normal chat readability.
 
