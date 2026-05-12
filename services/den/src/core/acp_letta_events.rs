@@ -194,8 +194,76 @@ pub fn map_native_letta_stream_event_to_acp_event(
             )
         }
         "tool_return_message" => None,
-        _ => native_letta_conversation_resolved_event(event),
+        _ => native_letta_conversation_resolved_event(event)
+            .or_else(|| extract_stream_text_delta(event)),
     }
+}
+
+fn extract_stream_text_delta(event: &serde_json::Value) -> Option<AcpGatewayEvent> {
+    let kind = stream_text_delta_kind(event)?;
+    let text = stream_text_delta_text(event)?;
+    if text.is_empty() {
+        return None;
+    }
+    match kind {
+        StreamTextDeltaKind::Assistant => Some(AcpGatewayEvent::AssistantTextDelta { text }),
+        StreamTextDeltaKind::Reasoning => Some(AcpGatewayEvent::StatusText { text }),
+    }
+}
+
+#[derive(Clone, Copy)]
+enum StreamTextDeltaKind {
+    Assistant,
+    Reasoning,
+}
+
+fn stream_text_delta_kind(event: &serde_json::Value) -> Option<StreamTextDeltaKind> {
+    let candidates = [
+        event.get("kind").and_then(|v| v.as_str()),
+        event.get("role").and_then(|v| v.as_str()),
+        event.get("type").and_then(|v| v.as_str()),
+        event.get("message_type").and_then(|v| v.as_str()),
+        event.pointer("/delta/kind").and_then(|v| v.as_str()),
+        event.pointer("/delta/role").and_then(|v| v.as_str()),
+        event
+            .pointer("/choices/0/delta/role")
+            .and_then(|v| v.as_str()),
+    ];
+    for candidate in candidates.into_iter().flatten() {
+        let candidate = candidate.to_ascii_lowercase();
+        if candidate.contains("reasoning") || candidate.contains("thought") {
+            return Some(StreamTextDeltaKind::Reasoning);
+        }
+        if candidate.contains("assistant")
+            || candidate.contains("text_delta")
+            || candidate.contains("message_delta")
+        {
+            return Some(StreamTextDeltaKind::Assistant);
+        }
+    }
+    None
+}
+
+fn stream_text_delta_text(event: &serde_json::Value) -> Option<String> {
+    for pointer in [
+        "/text",
+        "/delta/text",
+        "/delta/content",
+        "/content_delta",
+        "/content/text",
+        "/choices/0/delta/content",
+        "/message/delta/content",
+    ] {
+        if let Some(text) = event.pointer(pointer).and_then(|v| v.as_str()) {
+            return Some(text.to_string());
+        }
+    }
+    if let Some(delta) = event.get("delta") {
+        if let Some(text) = letta_stream_text_preserving_whitespace(delta) {
+            return Some(text);
+        }
+    }
+    None
 }
 
 fn pseudo_tool_call_name(text: &str) -> Option<String> {
@@ -908,6 +976,30 @@ mod tests {
                 assert!(message.contains("fs_edit_file"));
                 assert_eq!(context.unwrap()["missing"], "new_text");
             }
+            other => panic!("unexpected event: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn maps_openai_style_assistant_delta() {
+        let event = serde_json::json!({
+            "type": "message_delta",
+            "choices": [{ "delta": { "role": "assistant", "content": "hello" } }]
+        });
+        match map_native_letta_stream_event_to_acp_event(&event) {
+            Some(AcpGatewayEvent::AssistantTextDelta { text }) => assert_eq!(text, "hello"),
+            other => panic!("unexpected event: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn maps_reasoning_delta_fallback() {
+        let event = serde_json::json!({
+            "type": "reasoning_delta",
+            "delta": { "text": "thinking" }
+        });
+        match map_native_letta_stream_event_to_acp_event(&event) {
+            Some(AcpGatewayEvent::StatusText { text }) => assert_eq!(text, "thinking"),
             other => panic!("unexpected event: {other:?}"),
         }
     }
