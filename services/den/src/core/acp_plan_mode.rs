@@ -222,6 +222,28 @@ pub async fn active_for_session(
     Ok(row.as_ref().map(row_from_sql))
 }
 
+pub async fn get_by_id_for_bear(
+    pool: &PgPool,
+    user_id: i32,
+    bear_id: Uuid,
+    plan_mode_id: Uuid,
+) -> Result<Option<AcpPlanModeSessionRow>, CustomError> {
+    let query = format!(
+        r#"
+        SELECT {SELECT_COLUMNS}
+        FROM acp_plan_mode_sessions
+        WHERE id = $1 AND user_id = $2 AND bear_id = $3
+        "#
+    );
+    let row = sqlx::query(&query)
+        .bind(plan_mode_id)
+        .bind(user_id)
+        .bind(bear_id)
+        .fetch_optional(pool)
+        .await?;
+    Ok(row.as_ref().map(row_from_sql))
+}
+
 pub async fn get_for_session(
     pool: &PgPool,
     user_id: i32,
@@ -406,12 +428,19 @@ pub async fn approve_plan_mode(
     acp_session_id: &str,
     plan_mode_id: Uuid,
 ) -> Result<AcpPlanModeSessionRow, CustomError> {
-    expire_stale_submitted_for_session(pool, user_id, bear_id, acp_session_id).await?;
+    let current = get_by_id_for_bear(pool, user_id, bear_id, plan_mode_id)
+        .await?
+        .ok_or_else(|| CustomError::NotFound("ACP plan mode session not found".to_string()))?;
+    expire_stale_submitted_for_session(pool, user_id, bear_id, &current.acp_session_id).await?;
     close_with_state(
         pool,
         user_id,
         bear_id,
-        acp_session_id,
+        if acp_session_id.trim().is_empty() {
+            &current.acp_session_id
+        } else {
+            acp_session_id
+        },
         plan_mode_id,
         AcpPlanModeState::Approved,
         "approved",
@@ -426,11 +455,18 @@ pub async fn reject_plan_mode(
     acp_session_id: &str,
     plan_mode_id: Uuid,
 ) -> Result<AcpPlanModeSessionRow, CustomError> {
+    let current = get_by_id_for_bear(pool, user_id, bear_id, plan_mode_id)
+        .await?
+        .ok_or_else(|| CustomError::NotFound("ACP plan mode session not found".to_string()))?;
     close_with_state(
         pool,
         user_id,
         bear_id,
-        acp_session_id,
+        if acp_session_id.trim().is_empty() {
+            &current.acp_session_id
+        } else {
+            acp_session_id
+        },
         plan_mode_id,
         AcpPlanModeState::Rejected,
         "rejected",
@@ -445,14 +481,17 @@ pub async fn cancel_plan_mode(
     acp_session_id: &str,
     plan_mode_id: Option<Uuid>,
 ) -> Result<AcpPlanModeSessionRow, CustomError> {
-    let current = get_for_session(pool, user_id, bear_id, acp_session_id, plan_mode_id)
-        .await?
-        .ok_or_else(|| CustomError::NotFound("ACP plan mode session not found".to_string()))?;
+    let current = if let Some(plan_mode_id) = plan_mode_id {
+        get_by_id_for_bear(pool, user_id, bear_id, plan_mode_id).await?
+    } else {
+        get_for_session(pool, user_id, bear_id, acp_session_id, None).await?
+    }
+    .ok_or_else(|| CustomError::NotFound("ACP plan mode session not found".to_string()))?;
     close_with_state(
         pool,
         user_id,
         bear_id,
-        acp_session_id,
+        &current.acp_session_id,
         current.id,
         AcpPlanModeState::Cancelled,
         "cancelled",
@@ -539,7 +578,7 @@ async fn close_with_state(
         WHERE id = $1
           AND user_id = $2
           AND bear_id = $3
-          AND acp_session_id = $4
+          AND ($4 = '' OR acp_session_id = $4)
           AND state IN ('active', 'submitted')
         RETURNING {SELECT_COLUMNS}
         "#
