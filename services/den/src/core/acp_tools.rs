@@ -2017,6 +2017,97 @@ mod tests {
     }
 
     #[test]
+    fn resolve_session_policy_defaults_to_ask_with_closed_mutation_gate() {
+        let policy = resolve_session_policy(None);
+        assert_eq!(policy.mode_label, "Ask");
+        assert_eq!(policy.mutation_gate.as_str(), "closed");
+        assert_eq!(policy.allowed_tool_classes(), vec!["read_only"]);
+        assert_eq!(
+            policy.denied_tool_classes(),
+            vec!["workspace_mutation", "execution", "browser"]
+        );
+        assert!(policy.allows_tool(AcpToolName::ReadTextFile));
+        assert!(!policy.allows_tool(AcpToolName::EditFile));
+        assert!(!policy.allows_tool(AcpToolName::ProcessRun));
+        assert!(!policy.allows_tool(AcpToolName::ChromeOpen));
+    }
+
+    #[test]
+    fn resolve_session_policy_marks_active_plan_as_review_required() {
+        let policy = resolve_session_policy(Some("active"));
+        assert_eq!(policy.mode_label, "Plan");
+        assert_eq!(policy.mutation_gate.as_str(), "review_required");
+        assert_eq!(policy.plan_mode_state.as_deref(), Some("active"));
+        assert!(policy.allows_tool(AcpToolName::GitStatus));
+        assert!(!policy.allows_tool(AcpToolName::EditFile));
+        assert!(!policy.allows_tool(AcpToolName::ProcessRun));
+        assert!(!policy.allows_tool(AcpToolName::ChromeOpen));
+    }
+
+    #[test]
+    fn resolve_session_policy_marks_approved_plan_as_write_with_open_gate() {
+        let policy = resolve_session_policy(Some("approved"));
+        assert_eq!(policy.mode_label, "Write");
+        assert_eq!(policy.mutation_gate.as_str(), "open");
+        assert_eq!(policy.plan_mode_state.as_deref(), Some("approved"));
+        assert_eq!(
+            policy.allowed_tool_classes(),
+            vec!["read_only", "workspace_mutation", "execution", "browser"]
+        );
+        assert!(policy.denied_tool_classes().is_empty());
+        assert!(policy.allows_tool(AcpToolName::EditFile));
+        assert!(policy.allows_tool(AcpToolName::ProcessRun));
+        assert!(policy.allows_tool(AcpToolName::ChromeOpen));
+    }
+
+    #[test]
+    fn descriptor_filtering_respects_closed_mutation_gate() {
+        let policy = resolve_session_policy(None);
+        let descriptors = acp_client_tool_descriptors_for_client_context(
+            &json!({
+                "adapter": {
+                    "direct_tools": {
+                        "fs_read_text_file": { "supported": true },
+                        "fs_edit_file": { "supported": true },
+                        "process_run": { "supported": true },
+                        "chrome_open": { "supported": true }
+                    }
+                }
+            }),
+            Some(&policy),
+        );
+        let names = descriptors
+            .as_array()
+            .expect("descriptor array")
+            .iter()
+            .map(|descriptor| descriptor["name"].as_str().unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(names, vec!["fs_read_text_file"]);
+    }
+
+    #[test]
+    fn provider_name_filtering_respects_open_mutation_gate() {
+        let policy = resolve_session_policy(Some("approved"));
+        let names = acp_provider_tool_names_for_client_context(
+            &json!({
+                "adapter": {
+                    "direct_tools": {
+                        "fs_read_text_file": { "supported": true },
+                        "fs_edit_file": { "supported": true },
+                        "process_run": { "supported": true },
+                        "chrome_open": { "supported": true }
+                    }
+                }
+            }),
+            Some(&policy),
+        );
+        assert_eq!(
+            names,
+            vec!["fs_read_text_file", "fs_edit_file", "process_run", "chrome_open"]
+        );
+    }
+
+    #[test]
     fn read_text_file_descriptor_wrapper_still_works() {
         let descriptor = acp_read_text_file_client_tool_descriptor();
         assert_eq!(descriptor["name"], ACP_READ_TEXT_FILE_TOOL.provider_name);

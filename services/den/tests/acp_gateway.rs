@@ -1930,6 +1930,46 @@ async fn acp_session_responses_expose_plan_mode_as_session_mode() {
 }
 
 #[tokio::test]
+async fn acp_session_responses_default_to_ask_policy_without_plan_mode() {
+    let fixture = test_app().await;
+    let user_bear = create_test_user_bear(&fixture.pool, true).await;
+    let session_id = "session-ask-mode-visible";
+
+    let prompt = post_prompt(
+        fixture.app.clone(),
+        &user_bear.bear_slug,
+        session_id,
+        Some(&user_bear.raw_token),
+        json!({ "message": "yo", "client": "zed" }),
+    )
+    .await;
+    assert_eq!(prompt.status(), StatusCode::OK);
+    let _ = prompt.into_body().collect().await.unwrap();
+
+    let one = get_acp_session(
+        fixture.app,
+        &user_bear.bear_slug,
+        session_id,
+        Some(&user_bear.raw_token),
+    )
+    .await;
+    assert_eq!(one.status(), StatusCode::OK);
+    let one_body = one.into_body().collect().await.unwrap().to_bytes();
+    let row: Value = serde_json::from_slice(&one_body).expect("session JSON");
+    assert!(row["plan_mode"].is_null() || row.get("plan_mode").is_none());
+    assert_eq!(row["modes"][0]["slug"], "ask");
+    assert_eq!(row["modes"][0]["kind"], "mutation_gate");
+    assert_eq!(row["modes"][0]["state"], "closed");
+    assert_eq!(row["modes"][0]["source"], "den.session_policy");
+    assert_eq!(row["session_policy"]["mode_label"], "Ask");
+    assert_eq!(row["session_policy"]["mutation_gate"]["state"], "closed");
+    assert_eq!(
+        row["session_policy"]["allowed_tool_classes"],
+        json!(["read_only"])
+    );
+}
+
+#[tokio::test]
 async fn acp_session_get_unknown_returns_404() {
     let fixture = test_app().await;
     let user_bear = create_test_user_bear(&fixture.pool, true).await;
