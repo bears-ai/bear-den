@@ -295,6 +295,48 @@ fn plan_entry_from_work_plan_item(item: &Value) -> Option<PlanEntry> {
     Some(PlanEntry::new(content, priority, status))
 }
 
+fn plan_entry_from_acp_plan_item(item: &Value) -> Option<PlanEntry> {
+    let content = item.get("content").and_then(Value::as_str)?.trim();
+    if content.is_empty() {
+        return None;
+    }
+    let priority = match item
+        .get("priority")
+        .and_then(Value::as_str)
+        .unwrap_or("medium")
+    {
+        "high" => PlanEntryPriority::High,
+        "low" => PlanEntryPriority::Low,
+        _ => PlanEntryPriority::Medium,
+    };
+    let status = match item
+        .get("status")
+        .and_then(Value::as_str)
+        .unwrap_or("pending")
+    {
+        "in_progress" => PlanEntryStatus::InProgress,
+        "completed" => PlanEntryStatus::Completed,
+        _ => PlanEntryStatus::Pending,
+    };
+    Some(PlanEntry::new(content, priority, status))
+}
+
+fn plan_entries_from_plan_update_event(event: &Value) -> Vec<PlanEntry> {
+    event
+        .get("entries")
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| {
+                    plan_entry_from_acp_plan_item(item)
+                        .or_else(|| plan_entry_from_work_plan_item(item))
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default()
+}
+
 fn plan_entries_from_work_plan_args(args: &Value) -> Vec<PlanEntry> {
     args.get("items")
         .and_then(Value::as_array)
@@ -3680,6 +3722,10 @@ async fn handle_sse_frame(
                 | "status_text"
                 | "error"
                 | "tool_request"
+                | "permission_request"
+                | "session_info_update"
+                | "plan_update"
+                | "mode_update"
                 | "conversation_resolved"
                 | "turn_complete"
         ) {
@@ -4526,23 +4572,13 @@ async fn handle_den_event(
             Ok(false)
         }
         "plan_update" => {
-            let entries = event
-                .get("entries")
-                .and_then(Value::as_array)
-                .map(|items| {
-                    items
-                        .iter()
-                        .filter_map(plan_entry_from_work_plan_item)
-                        .collect::<Vec<_>>()
-                })
-                .unwrap_or_default();
+            let entries = plan_entries_from_plan_update_event(event);
             if entries.is_empty() {
                 if env_bool("BEARS_ACP_DEBUG_UI") {
-                    send_agent_thought_chunk(
-                        session_id,
-                        "BEARS debug: received an empty plan update; not sending an ACP plan UI update.",
-                    )
-                    .await?;
+                    eprintln!(
+                        "bears-acp-adapter: received empty plan update for session_id={}; not sending ACP plan UI update",
+                        session_id
+                    );
                 }
             } else {
                 send_plan_update(session_id, entries).await?;
@@ -5587,6 +5623,34 @@ mod tests {
             .filter_map(|option| option.get("value").and_then(Value::as_str))
             .collect::<Vec<_>>();
         assert_eq!(option_values, vec![MODE_ASK, MODE_PLAN, MODE_WRITE]);
+    }
+
+    #[test]
+    fn plan_update_event_parser_accepts_acp_plan_entries() {
+        let entries = plan_entries_from_plan_update_event(&json!({
+            "type": "plan_update",
+            "entries": [
+                {
+                    "content": "Tell the user the first animal",
+                    "priority": "high",
+                    "status": "completed"
+                },
+                {
+                    "content": "Tell the user the second animal",
+                    "priority": "medium",
+                    "status": "in_progress"
+                }
+            ]
+        }));
+        assert_eq!(entries.len(), 2);
+        let payload = acp_plan_update_payload("sess", entries).expect("payload");
+        assert_eq!(
+            payload["update"]["entries"][0]["content"],
+            "Tell the user the first animal"
+        );
+        assert_eq!(payload["update"]["entries"][0]["priority"], "high");
+        assert_eq!(payload["update"]["entries"][0]["status"], "completed");
+        assert_eq!(payload["update"]["entries"][1]["status"], "in_progress");
     }
 
     #[test]
