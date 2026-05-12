@@ -16,8 +16,8 @@ use crate::{
         memory_manager_head::{
             fetch_memfs_role_memory_file, fetch_memfs_role_memory_status,
             fetch_memfs_role_memory_tree, fetch_memfs_role_plan_artifacts,
-            search_memfs_role_memory, write_memfs_role_memory_entry,
-            MemfsWriteRoleMemoryEntryRequest,
+            search_memfs_role_memory, write_memfs_core_update, write_memfs_role_memory_entry,
+            MemfsCoreUpdateRequest, MemfsWriteRoleMemoryEntryRequest,
         },
         memory_proposals::{self, CreateMemoryProposal},
         user, web_policy,
@@ -68,6 +68,8 @@ pub const DEN_MEMORY_READ_PROPOSAL: &str = "den.memory.read_proposal";
 pub const DEN_MEMORY_READ_PROPOSAL_PROVIDER: &str = "memory_read_proposal";
 pub const DEN_MEMORY_RESOLVE_PROPOSAL: &str = "den.memory.resolve_proposal";
 pub const DEN_MEMORY_RESOLVE_PROPOSAL_PROVIDER: &str = "memory_resolve_proposal";
+pub const DEN_MEMORY_APPLY_CORE_UPDATE: &str = "den.memory.apply_core_update";
+pub const DEN_MEMORY_APPLY_CORE_UPDATE_PROVIDER: &str = "memory_apply_core_update";
 pub const DEN_SKILL_PROPOSE: &str = "den.skill.propose";
 pub const DEN_SKILL_APPROVE_PROPOSAL: &str = "den.skill.approve_proposal";
 pub const DEN_SKILL_REJECT_PROPOSAL: &str = "den.skill.reject_proposal";
@@ -122,6 +124,7 @@ pub fn provider_safe_tool_name(name: &str) -> String {
         DEN_MEMORY_LIST_PROPOSALS => return DEN_MEMORY_LIST_PROPOSALS_PROVIDER.to_string(),
         DEN_MEMORY_READ_PROPOSAL => return DEN_MEMORY_READ_PROPOSAL_PROVIDER.to_string(),
         DEN_MEMORY_RESOLVE_PROPOSAL => return DEN_MEMORY_RESOLVE_PROPOSAL_PROVIDER.to_string(),
+        DEN_MEMORY_APPLY_CORE_UPDATE => return DEN_MEMORY_APPLY_CORE_UPDATE_PROVIDER.to_string(),
         DEN_WORK_PLAN_LIST => return DEN_WORK_PLAN_LIST_PROVIDER.to_string(),
         DEN_WORK_PLAN_GET_STATUS => return DEN_WORK_PLAN_GET_STATUS_PROVIDER.to_string(),
         DEN_WORK_PLAN_UPDATE => return DEN_WORK_PLAN_UPDATE_PROVIDER.to_string(),
@@ -399,6 +402,29 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
                     "decision_summary": { "type": "string" }
                 },
                 "required": ["proposal_id", "status"],
+                "additionalProperties": false
+            }),
+        ),
+        descriptor(
+            DEN_MEMORY_APPLY_CORE_UPDATE,
+            "Apply core memory update",
+            "Apply a reviewed update to allowed core memory paths with provenance.",
+            "bear.memory",
+            &["memory.core.write"],
+            CURATE_ROLES,
+            json!({
+                "type": "object",
+                "properties": {
+                    "proposal_id": { "type": "string", "format": "uuid" },
+                    "target_path": { "type": "string" },
+                    "mode": { "enum": ["append_section", "create_file", "replace_text"] },
+                    "title": { "type": "string" },
+                    "body": { "type": "string" },
+                    "old_text": { "type": "string" },
+                    "new_text": { "type": "string" },
+                    "review_notes": { "type": "string" }
+                },
+                "required": ["proposal_id", "target_path", "mode"],
                 "additionalProperties": false
             }),
         ),
@@ -904,6 +930,7 @@ pub fn provider_aliases_for_tool(name: &str) -> &'static [&'static str] {
         DEN_MEMORY_LIST_PROPOSALS => &["den_memory_list_proposals"],
         DEN_MEMORY_READ_PROPOSAL => &["den_memory_read_proposal"],
         DEN_MEMORY_RESOLVE_PROPOSAL => &["den_memory_resolve_proposal"],
+        DEN_MEMORY_APPLY_CORE_UPDATE => &["den_memory_apply_core_update"],
         _ => &[],
     }
 }
@@ -938,6 +965,7 @@ pub fn is_builtin_den_tool(name: &str) -> bool {
             | DEN_MEMORY_LIST_PROPOSALS
             | DEN_MEMORY_READ_PROPOSAL
             | DEN_MEMORY_RESOLVE_PROPOSAL
+            | DEN_MEMORY_APPLY_CORE_UPDATE
             | DEN_SKILL_PROPOSE
             | DEN_SKILL_APPROVE_PROPOSAL
             | DEN_SKILL_REJECT_PROPOSAL
@@ -1112,6 +1140,23 @@ struct MemoryReadProposalArguments {
 }
 
 #[derive(Debug, Deserialize)]
+struct MemoryApplyCoreUpdateArguments {
+    proposal_id: Uuid,
+    target_path: String,
+    mode: String,
+    #[serde(default)]
+    title: Option<String>,
+    #[serde(default)]
+    body: Option<String>,
+    #[serde(default)]
+    old_text: Option<String>,
+    #[serde(default)]
+    new_text: Option<String>,
+    #[serde(default)]
+    review_notes: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
 struct MemoryResolveProposalArguments {
     proposal_id: Uuid,
     status: String,
@@ -1180,6 +1225,9 @@ pub async fn invoke_den_tool(
         DEN_MEMORY_READ_PROPOSAL => read_memory_proposal(pool, &context, role, arguments).await,
         DEN_MEMORY_RESOLVE_PROPOSAL => {
             resolve_memory_proposal(pool, &context, role, arguments).await
+        }
+        DEN_MEMORY_APPLY_CORE_UPDATE => {
+            apply_core_update(pool, config, &context, role, arguments).await
         }
         DEN_WORK_PLAN_LIST => list_work_plans(pool, config, &context, role, arguments).await,
         DEN_WORK_PLAN_GET_STATUS => get_work_plan_status(pool, &context, role, arguments).await,
@@ -2159,6 +2207,72 @@ async fn memory_search(
                 "message": "MemFS sidecar is not configured (set LETTA_MEMFS_SERVICE_URL)"
             }))
         })
+}
+
+async fn apply_core_update(
+    pool: &PgPool,
+    config: &Config,
+    context: &DenToolInvocationContext,
+    role: BearAgentRole,
+    arguments: Value,
+) -> Result<Value, CustomError> {
+    if role != BearAgentRole::Curate {
+        return Err(CustomError::Authorization(
+            "den.memory.apply_core_update is available only to curate".to_string(),
+        ));
+    }
+    let args: MemoryApplyCoreUpdateArguments = serde_json::from_value(arguments)?;
+    let proposal = memory_proposals::get_for_bear(pool, context.bear_id, args.proposal_id)
+        .await?
+        .ok_or_else(|| CustomError::NotFound("memory proposal not found".to_string()))?;
+    let http = memfs_http_client("MemFS core update client build failed")?;
+    let body = args.body.map(|body| {
+        format!(
+            "{}\n\n---\nSource proposal: `{}`\nSource role: `{}`\nSource paths: {}\n",
+            body.trim(),
+            proposal.id,
+            proposal.source_role,
+            proposal.source_paths.join(", ")
+        )
+    });
+    let request = MemfsCoreUpdateRequest {
+        target_path: args.target_path,
+        mode: args.mode,
+        title: args.title.or(Some(proposal.title.clone())),
+        body,
+        old_text: args.old_text,
+        new_text: args.new_text,
+        proposal_id: Some(proposal.id),
+        source_paths: proposal.source_paths.clone(),
+    };
+    let response = write_memfs_core_update(
+        &http,
+        &config.letta_memfs_service_url,
+        context.bear_id,
+        &request,
+    )
+    .await?;
+    let Some(response) = response else {
+        return Err(CustomError::System(
+            "MemFS sidecar is not configured (set LETTA_MEMFS_SERVICE_URL)".to_string(),
+        ));
+    };
+    let resolved = memory_proposals::resolve_for_bear(
+        pool,
+        context.bear_id,
+        proposal.id,
+        role,
+        Some(context.role_agent_id.as_str()),
+        "approved",
+        args.review_notes.as_deref(),
+        Some("Applied reviewed memory proposal to core."),
+    )
+    .await?;
+    Ok(json!({
+        "bear_id": context.bear_id,
+        "proposal": resolved,
+        "core_update": response,
+    }))
 }
 
 async fn list_memory_proposals(

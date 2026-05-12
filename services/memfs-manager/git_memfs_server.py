@@ -1384,6 +1384,111 @@ def _delete_role_memory_entries(
     }
 
 
+CORE_UPDATE_ALLOWED_PATHS = {
+    "core/charter.md",
+    "core/domains.md",
+    "core/projects.md",
+    "core/people.md",
+    "core/knowledge.md",
+    "core/decisions.md",
+    "core/policies.md",
+    "core/current-focus.md",
+}
+CORE_UPDATE_ALLOWED_PREFIXES = {"core/results/"}
+
+
+def _core_update_path_allowed(path: str) -> bool:
+    return path in CORE_UPDATE_ALLOWED_PATHS or any(
+        path.startswith(prefix) for prefix in CORE_UPDATE_ALLOWED_PREFIXES
+    )
+
+
+def _apply_core_update_to_worktree(target: Path, mode: str, body: JSONDict) -> None:
+    title = str(body.get("title") or "").strip()
+    content = str(body.get("body") or body.get("content") or "").strip()
+    if mode in {"append_section", "create_file"} and not content:
+        raise ValueError("body/content is required")
+    if mode == "append_section":
+        existing = target.read_text(encoding="utf-8") if target.exists() else ""
+        section_title = title or "Curated update"
+        addition = f"\n\n## {section_title}\n\n{content.rstrip()}\n"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(existing.rstrip() + addition, encoding="utf-8")
+        return
+    if mode == "create_file":
+        if target.exists() and not bool(body.get("overwrite")):
+            raise ValueError("target file already exists; overwrite is false")
+        target.parent.mkdir(parents=True, exist_ok=True)
+        heading = f"# {title}\n\n" if title else ""
+        target.write_text(heading + content.rstrip() + "\n", encoding="utf-8")
+        return
+    if mode == "replace_text":
+        old_text = str(body.get("old_text") or "")
+        new_text = str(body.get("new_text") or "")
+        if not target.exists():
+            raise ValueError("target file does not exist for replace_text")
+        if old_text == "":
+            raise ValueError("old_text is required")
+        existing = target.read_text(encoding="utf-8")
+        count = existing.count(old_text)
+        if count != 1:
+            raise ValueError(f"old_text must occur exactly once; found {count}")
+        target.write_text(existing.replace(old_text, new_text, 1), encoding="utf-8")
+        return
+    raise ValueError("mode must be append_section, create_file, or replace_text")
+
+
+def _write_core_update(bear_id: str, body: JSONDict, org_id: str) -> ResponseDict:
+    raw_path = str(body.get("target_path") or "").strip()
+    target_path = _normalize_memory_path(raw_path)
+    if not _core_update_path_allowed(target_path):
+        raise PermissionError(f"core update path is not allowed: {target_path}")
+    mode = str(body.get("mode") or "append_section").strip() or "append_section"
+    canonical = ensure_canonical_repo(bear_id)
+    updated_roles: list[str] = []
+    commits: dict[str, str | None] = {}
+    for role in sorted(ROLE_BRANCHES):
+        with tempfile.TemporaryDirectory() as tmp:
+            work = Path(tmp) / "w"
+            _git("clone", "--branch", role, str(canonical), str(work))
+            _git("-C", str(work), "config", "user.name", "BEARS Den")
+            _git("-C", str(work), "config", "user.email", "den@bears.local")
+            target = work / target_path
+            _apply_core_update_to_worktree(target, mode, body)
+            _git("add", "-A", cwd=work)
+            diff = subprocess.run(
+                ["git", "-C", str(work), "diff", "--cached", "--quiet"],
+                capture_output=True,
+            )
+            if diff.returncode == 0:
+                commits[role] = _branch_tip(canonical, role)
+                continue
+            message_title = str(body.get("title") or target_path).strip()[:80]
+            _git("commit", "-m", f"core update: {message_title}", cwd=work)
+            _git("push", "origin", f"HEAD:refs/heads/{role}", cwd=work)
+            updated_roles.append(role)
+            commits[role] = _branch_tip(canonical, role)
+        _sync_role_views_after_canonical_write(
+            bear_id, role, org_id, canonical, "core_update_view_reset"
+        )
+    log_activity(
+        "core_memory_updated",
+        bear_id=bear_id,
+        path=target_path,
+        mode=mode,
+        updated_roles=updated_roles,
+    )
+    return {
+        "ok": True,
+        "bear_id": bear_id,
+        "path": target_path,
+        "mode": mode,
+        "updated_roles": updated_roles,
+        "commits": commits,
+        "canonical_tip": commits.get("curate") or next(iter(commits.values()), None),
+    }
+
+
 def _write_role_note(
     bear_id: str, role: str, body: JSONDict, org_id: str
 ) -> ResponseDict:
@@ -1878,6 +1983,21 @@ class GitHTTPHandler(BaseHTTPRequestHandler):
             except Exception as e:
                 self._send_json(400, {"ok": False, "error": str(e)})
                 return True
+        if (
+            len(parts) == 5
+            and parts[:3] == ["v1", "management", "bears"]
+            and parts[4] == "core-updates"
+        ):
+            bear_id = parts[3]
+            try:
+                body = self._read_json_body()
+                org_id = resolve_org_id(self.headers.get("X-Organization-Id"))
+                self._send_json(200, _write_core_update(bear_id, body, org_id))
+                return True
+            except Exception as e:
+                self._send_json(400, {"ok": False, "error": str(e)})
+                return True
+
         if (
             len(parts) == 7
             and parts[:3] == ["v1", "management", "bears"]

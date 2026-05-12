@@ -293,6 +293,44 @@ pub struct MemfsRoleMemorySearchResponse {
 }
 
 #[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
+pub struct MemfsCoreUpdateRequest {
+    pub target_path: String,
+    pub mode: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub body: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub old_text: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub new_text: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub proposal_id: Option<uuid::Uuid>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub source_paths: Vec<String>,
+}
+
+#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
+pub struct MemfsCoreUpdateResponse {
+    #[serde(default)]
+    pub ok: bool,
+    #[serde(default)]
+    pub bear_id: String,
+    #[serde(default)]
+    pub path: String,
+    #[serde(default)]
+    pub mode: String,
+    #[serde(default)]
+    pub updated_roles: Vec<String>,
+    #[serde(default)]
+    pub commits: serde_json::Value,
+    #[serde(default)]
+    pub canonical_tip: Option<String>,
+    #[serde(default)]
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
 pub struct MemfsRoleMemoryDeleteResponse {
     #[serde(default)]
     pub ok: bool,
@@ -550,6 +588,46 @@ pub async fn write_memfs_role_memory_entry(
     if !payload.ok {
         return Err(CustomError::System(format!(
             "MemFS role memory entry write failed: {}",
+            payload
+                .error
+                .clone()
+                .unwrap_or_else(|| "unknown error".to_string())
+        )));
+    }
+    Ok(Some(payload))
+}
+
+pub async fn write_memfs_core_update(
+    http: &reqwest::Client,
+    base_url: &str,
+    bear_id: uuid::Uuid,
+    request: &MemfsCoreUpdateRequest,
+) -> Result<Option<MemfsCoreUpdateResponse>, CustomError> {
+    let base = base_url.trim().trim_end_matches('/');
+    if base.is_empty() {
+        return Ok(None);
+    }
+    let url = format!("{}/v1/management/bears/{}/core-updates", base, bear_id);
+    let resp = http
+        .post(&url)
+        .header("X-Organization-Id", DEFAULT_ORG)
+        .json(request)
+        .timeout(Duration::from_secs(30))
+        .send()
+        .await
+        .map_err(|e| CustomError::System(format!("MemFS core update request failed: {e}")))?;
+    let status = resp.status();
+    let text = resp.text().await.unwrap_or_default();
+    if !status.is_success() {
+        return Err(CustomError::System(format!(
+            "MemFS core update HTTP {status}: {text}"
+        )));
+    }
+    let payload: MemfsCoreUpdateResponse = serde_json::from_str(&text)
+        .map_err(|e| CustomError::Parsing(format!("MemFS core update JSON: {e}; body: {text}")))?;
+    if !payload.ok {
+        return Err(CustomError::System(format!(
+            "MemFS core update failed: {}",
             payload
                 .error
                 .clone()
