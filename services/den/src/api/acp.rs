@@ -52,7 +52,8 @@ use crate::{
         acp_tools::{
             acp_client_tool_descriptors_for_client_context, acp_diag_phase,
             acp_provider_tool_allowed_in_policy, acp_provider_tool_names_for_client_context,
-            acp_tool_policy_json_for_provider, resolve_session_policy, AcpToolStatus,
+            acp_tool_policy_json_for_provider, resolve_session_policy,
+            resolve_session_policy_for_mode, AcpToolStatus,
         },
         archived_conversations,
         bears::{db as bears_db, Bear, BearAgentRole},
@@ -136,6 +137,10 @@ pub fn router() -> Router<ApiState> {
     Router::new()
         .route("/bears/{slug}/sessions", get(list_acp_sessions))
         .route("/bears/{slug}/sessions/{session_id}", get(get_acp_session))
+        .route(
+            "/bears/{slug}/sessions/{session_id}/mode",
+            post(set_session_mode),
+        )
         .route("/bears/{slug}/sessions/{session_id}/prompt", post(prompt))
         .route(
             "/bears/{slug}/sessions/{session_id}/tool-results/{tool_call_id}",
@@ -163,6 +168,25 @@ pub fn router() -> Router<ApiState> {
             get(conversation_history),
         )
         .route("/bears/{slug}/auth-check", get(auth_check))
+}
+
+#[derive(Debug, Deserialize)]
+struct AcpSetModeRequest {
+    mode: String,
+    #[serde(default)]
+    reason: Option<String>,
+    #[serde(default)]
+    adapter_contract: Option<AdapterContract>,
+}
+
+#[derive(Debug, Serialize)]
+struct AcpSetModeResponse {
+    requested_mode: String,
+    effective_mode: String,
+    session_policy: serde_json::Value,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    plan_mode: Option<serde_json::Value>,
+    message: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -345,11 +369,11 @@ fn acp_plan_mode_to_session_mode(plan_mode: &serde_json::Value) -> serde_json::V
     })
 }
 
-fn acp_policy_mode(plan_mode: Option<&serde_json::Value>) -> serde_json::Value {
+fn acp_policy_mode(current_mode: &str, plan_mode: Option<&serde_json::Value>) -> serde_json::Value {
     let plan_state = plan_mode
         .and_then(|value| value.get("state"))
         .and_then(|value| value.as_str());
-    let policy = resolve_session_policy(plan_state);
+    let policy = resolve_session_policy_for_mode(current_mode, plan_state);
     serde_json::json!({
         "slug": policy.mode_label.to_ascii_lowercase(),
         "title": format!("{} mode", policy.mode_label),
@@ -364,11 +388,12 @@ fn acp_session_row_to_http_with_modes(
     row: acp_sessions::AcpSessionRow,
     plan_mode: Option<serde_json::Value>,
 ) -> AcpSessionHttp {
-    let mut modes = vec![acp_policy_mode(plan_mode.as_ref())];
+    let mut modes = vec![acp_policy_mode(&row.current_mode, plan_mode.as_ref())];
     if let Some(plan_mode_value) = plan_mode.as_ref() {
         modes.push(acp_plan_mode_to_session_mode(plan_mode_value));
     }
-    let policy = resolve_session_policy(
+    let policy = resolve_session_policy_for_mode(
+        &row.current_mode,
         plan_mode
             .as_ref()
             .and_then(|value| value.get("state"))
@@ -1454,6 +1479,158 @@ async fn get_acp_session(
     }
 }
 
+async fn set_session_mode(
+    State(state): State<ApiState>,
+    Path((slug, session_id)): Path<(String, String)>,
+    headers: HeaderMap,
+    Json(body): Json<AcpSetModeRequest>,
+) -> Response {
+    let request_id = Uuid::new_v4();
+    match set_session_mode_inner(state, slug, session_id, headers, body).await {
+        Ok(response) => response,
+        Err(err) => acp_error_response(err, request_id),
+    }
+}
+
+async fn set_session_mode_inner(
+    state: ApiState,
+    slug: String,
+    session_id: String,
+    headers: HeaderMap,
+    body: AcpSetModeRequest,
+) -> Result<Response, CustomError> {
+    if let Err(err) = check_adapter_contract(body.adapter_contract.as_ref()) {
+        return Ok(acp_compatibility_error_response(err, Uuid::new_v4()));
+    }
+    let user_id = authenticate_acp_code_token(&state, &headers, &slug).await?;
+    let bear = bears_db::bear_for_user_by_slug(&state.sqlx_pool, user_id, slug.trim())
+        .await?
+        .ok_or_else(|| {
+            CustomError::NotFound("bear not found or you do not have access".to_string())
+        })?;
+    let session_id = session_id.trim();
+    if session_id.is_empty() {
+        return Err(CustomError::ValidationError(
+            "session_id must not be empty".to_string(),
+        ));
+    }
+    let requested_mode = body.mode.trim().to_ascii_lowercase();
+    if !matches!(requested_mode.as_str(), "ask" | "plan" | "write") {
+        return Err(CustomError::ValidationError(
+            "mode must be one of ask, plan, write".to_string(),
+        ));
+    }
+    let existing =
+        acp_sessions::find_for_user_bear_session(&state.sqlx_pool, user_id, &bear.slug, session_id)
+            .await?;
+    let Some(_existing) = existing else {
+        return Err(CustomError::NotFound("ACP session not found".to_string()));
+    };
+
+    let reason = body
+        .reason
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .unwrap_or("User selected ACP session mode");
+
+    let effective_mode;
+    let message;
+    match requested_mode.as_str() {
+        "plan" => {
+            acp_plan_mode::enter_plan_mode(
+                &state.sqlx_pool,
+                acp_plan_mode::EnterPlanModeParams {
+                    user_id,
+                    bear_id: bear.id,
+                    bear_slug: bear.slug.clone(),
+                    acp_session_id: session_id.to_string(),
+                    reason: reason.to_string(),
+                    requested_by: acp_plan_mode::AcpPlanModeRequestedBy::User,
+                    previous_permission_mode: Some("ask".to_string()),
+                },
+            )
+            .await?;
+            acp_sessions::set_current_mode(&state.sqlx_pool, user_id, bear.id, session_id, "plan")
+                .await?;
+            effective_mode = "plan".to_string();
+            message = "Plan mode entered. Mutation is blocked until an implementation plan is submitted and approved.".to_string();
+        }
+        "ask" => {
+            if let Some(active) =
+                acp_plan_mode::active_for_session(&state.sqlx_pool, user_id, bear.id, session_id)
+                    .await?
+            {
+                acp_plan_mode::cancel_plan_mode(
+                    &state.sqlx_pool,
+                    user_id,
+                    bear.id,
+                    session_id,
+                    Some(active.id),
+                )
+                .await?;
+                message = "Plan mode cancelled; returned to Ask.".to_string();
+            } else {
+                message = "Returned to Ask according to Den session policy.".to_string();
+            }
+            acp_sessions::set_current_mode(&state.sqlx_pool, user_id, bear.id, session_id, "ask")
+                .await?;
+            effective_mode = "ask".to_string();
+        }
+        "write" => {
+            let active =
+                acp_plan_mode::active_for_session(&state.sqlx_pool, user_id, bear.id, session_id)
+                    .await?;
+            if active.as_ref().map(|row| row.state.as_str()) == Some("approved") || active.is_none()
+            {
+                acp_sessions::set_current_mode(
+                    &state.sqlx_pool,
+                    user_id,
+                    bear.id,
+                    session_id,
+                    "write",
+                )
+                .await?;
+                effective_mode = "write".to_string();
+                message = "Write mode enabled by user request. Workspace mutations remain subject to ACP client approval policy.".to_string();
+            } else {
+                effective_mode = "plan".to_string();
+                acp_sessions::set_current_mode(
+                    &state.sqlx_pool,
+                    user_id,
+                    bear.id,
+                    session_id,
+                    "plan",
+                )
+                .await?;
+                message = "Write requires resolving the active plan gate first. Submit and approve the plan, or cancel plan mode.".to_string();
+            }
+        }
+        _ => unreachable!(),
+    }
+
+    let plan_mode =
+        acp_plan_mode::active_for_session(&state.sqlx_pool, user_id, bear.id, session_id)
+            .await?
+            .map(serde_json::to_value)
+            .transpose()?;
+    let policy = resolve_session_policy_for_mode(
+        &effective_mode,
+        plan_mode
+            .as_ref()
+            .and_then(|value| value.get("state"))
+            .and_then(|value| value.as_str()),
+    );
+    Ok(Json(AcpSetModeResponse {
+        requested_mode,
+        effective_mode: policy.mode_label.to_ascii_lowercase(),
+        session_policy: policy.to_json(),
+        plan_mode,
+        message,
+    })
+    .into_response())
+}
+
 async fn get_acp_session_inner(
     state: ApiState,
     slug: String,
@@ -1693,15 +1870,39 @@ async fn permission_result_inner(
             )
             .await?
         };
-        return Ok(Json(AcpPermissionDecisionResponse {
-            accepted: true,
-            reason: if decision == "timeout" {
+        let effective_mode = if row.state == "approved" {
+            acp_sessions::set_current_mode(
+                &state.sqlx_pool,
+                auth.user_id,
+                session.bear_id,
+                &session_id,
+                "write",
+            )
+            .await?;
+            "write"
+        } else {
+            acp_sessions::set_current_mode(
+                &state.sqlx_pool,
+                auth.user_id,
+                session.bear_id,
+                &session_id,
+                "plan",
+            )
+            .await?;
+            "plan"
+        };
+        return Ok(Json(serde_json::json!({
+            "accepted": true,
+            "reason": if decision == "timeout" {
                 "plan_mode_rejected_after_timeout".to_string()
             } else {
                 format!("plan_mode_{}", row.state)
             },
-            local_tool_request: None,
-        })
+            "local_tool_request": serde_json::Value::Null,
+            "effective_mode": effective_mode,
+            "session_policy": resolve_session_policy_for_mode(effective_mode, Some(row.state.as_str())).to_json(),
+            "plan_mode": row,
+        }))
         .into_response());
     }
 
@@ -2528,6 +2729,7 @@ async fn prompt_inner(
             resolved_conversation_id: conversation_resolution.resolved_conversation_id.clone(),
             client: client.clone(),
             cwd: Some(cwd.clone()),
+            current_mode: None,
         },
     )
     .await
@@ -2563,8 +2765,22 @@ async fn prompt_inner(
                 let (status, code, message) = acp_error_status_message(&err);
                 ApiError::new(status, code, message)
             })?;
-    let resolved_policy =
-        resolve_session_policy(active_plan_mode.as_ref().map(|plan| plan.state.as_str()));
+    let session_mode =
+        acp_sessions::find_for_user_bear_session(&state.sqlx_pool, user_id, &bear.slug, session_id)
+            .await
+            .map_err(|err| {
+                ApiError::new(
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                    "database",
+                    err.to_string(),
+                )
+            })?
+            .map(|session| session.current_mode)
+            .unwrap_or_else(|| "ask".to_string());
+    let resolved_policy = resolve_session_policy_for_mode(
+        &session_mode,
+        active_plan_mode.as_ref().map(|plan| plan.state.as_str()),
+    );
     let tool_prompt_context = acp_direct_tool_prompt_context(
         session_id,
         &cwd,
@@ -2749,8 +2965,19 @@ async fn persist_stream_event_side_effects(
         &context.acp_session_id,
     )
     .await?;
-    let resolved_policy =
-        resolve_session_policy(active_plan_mode.as_ref().map(|plan| plan.state.as_str()));
+    let session_mode = acp_sessions::find_for_user_bear_session(
+        &context.pool,
+        context.user_id,
+        &context.bear_slug,
+        &context.acp_session_id,
+    )
+    .await?
+    .map(|session| session.current_mode)
+    .unwrap_or_else(|| "ask".to_string());
+    let resolved_policy = resolve_session_policy_for_mode(
+        &session_mode,
+        active_plan_mode.as_ref().map(|plan| plan.state.as_str()),
+    );
     match event {
         AcpGatewayEvent::ConversationResolved { conversation_id } => {
             acp_sessions::mark_resolved(

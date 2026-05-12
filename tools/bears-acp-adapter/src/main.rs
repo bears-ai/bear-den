@@ -1128,11 +1128,16 @@ async fn handle_request(
                         return Ok(());
                     }
                 };
-                let mode =
-                    current_den_mode_for_session(http, runtime.config.as_ref(), session_id).await?;
+                let (mode, den_response) = request_den_session_mode(
+                    http,
+                    runtime.config.as_ref(),
+                    session_id,
+                    requested_mode,
+                )
+                .await?;
                 if requested_mode != mode {
                     eprintln!(
-                        "bears-acp-adapter: ignoring client-requested mode={} for session_id={}; Den policy reports mode={}",
+                        "bears-acp-adapter: Den adjusted client-requested mode={} for session_id={} to effective mode={}",
                         requested_mode, session_id, mode
                     );
                 }
@@ -1145,7 +1150,8 @@ async fn handle_request(
                             "bears": {
                                 "requestedMode": requested_mode,
                                 "effectiveMode": mode,
-                                "source": "den.session_policy"
+                                "source": "den.session_policy",
+                                "denResponse": den_response
                             }
                         }
                     })),
@@ -1178,11 +1184,16 @@ async fn handle_request(
                     return Ok(());
                 }
                 let requested_mode = mode;
-                let mode =
-                    current_den_mode_for_session(http, runtime.config.as_ref(), session_id).await?;
+                let (mode, den_response) = request_den_session_mode(
+                    http,
+                    runtime.config.as_ref(),
+                    session_id,
+                    requested_mode,
+                )
+                .await?;
                 if requested_mode != mode {
                     eprintln!(
-                        "bears-acp-adapter: ignoring client-requested legacy mode={} for session_id={}; Den policy reports mode={}",
+                        "bears-acp-adapter: Den adjusted client-requested legacy mode={} for session_id={} to effective mode={}",
                         requested_mode, session_id, mode
                     );
                 }
@@ -1195,7 +1206,8 @@ async fn handle_request(
                             "bears": {
                                 "requestedMode": requested_mode,
                                 "effectiveMode": mode,
-                                "source": "den.session_policy"
+                                "source": "den.session_policy",
+                                "denResponse": den_response
                             }
                         }
                     })),
@@ -2386,25 +2398,56 @@ impl std::fmt::Display for DenHttpError {
 
 impl std::error::Error for DenHttpError {}
 
-async fn current_den_mode_for_session(
+async fn request_den_session_mode(
     http: &reqwest::Client,
     config: Option<&Config>,
     session_id: &str,
-) -> Result<&'static str> {
+    requested_mode: &str,
+) -> Result<(&'static str, Value)> {
     let Some(config) = config else {
-        return Ok(MODE_ASK);
+        return Ok((MODE_ASK, json!({ "message": "adapter is not configured" })));
     };
-    match den_get_acp_session(http, config, session_id).await {
-        Ok(den) => Ok(infer_mode_from_den_session(&den)),
-        Err(err)
-            if err
-                .downcast_ref::<DenHttpError>()
-                .is_some_and(|http| http.status == reqwest::StatusCode::NOT_FOUND) =>
-        {
-            Ok(MODE_ASK)
-        }
-        Err(err) => Err(err),
+    let url = format!(
+        "{}/acp/bears/{}/sessions/{}/mode",
+        config.api_url,
+        urlencoding::encode(&config.bear),
+        urlencoding::encode(session_id),
+    );
+    let payload = with_adapter_contract(json!({
+        "mode": requested_mode,
+        "reason": "User selected ACP session mode"
+    }));
+    let response = http
+        .post(&url)
+        .header(
+            AUTHORIZATION,
+            HeaderValue::from_str(&format!("Bearer {}", config.token))?,
+        )
+        .header(CONTENT_TYPE, HeaderValue::from_static("application/json"))
+        .json(&payload)
+        .send()
+        .await
+        .with_context(|| format!("post ACP session mode to Den at {url}"))?;
+    let status = response.status();
+    let body = response.text().await.unwrap_or_default();
+    if !status.is_success() {
+        return Err(anyhow!(
+            "Den session mode endpoint returned HTTP {status}: {}",
+            body.trim()
+        ));
     }
+    let value = serde_json::from_str::<Value>(&body).unwrap_or_else(|_| json!({ "raw": body }));
+    let effective = value
+        .get("effective_mode")
+        .and_then(Value::as_str)
+        .and_then(|mode| match mode {
+            MODE_ASK => Some(MODE_ASK),
+            MODE_PLAN => Some(MODE_PLAN),
+            MODE_WRITE => Some(MODE_WRITE),
+            _ => None,
+        })
+        .unwrap_or(MODE_ASK);
+    Ok((effective, value))
 }
 
 fn infer_mode_from_den_session(den: &Value) -> &'static str {
@@ -4705,10 +4748,17 @@ async fn handle_permission_request_event(
     )
     .await?;
     if is_plan_mode {
-        let mode = current_den_mode_for_session(&reqwest::Client::new(), Some(config), session_id)
-            .await
+        let mode = response
+            .get("effective_mode")
+            .and_then(Value::as_str)
+            .and_then(|mode| match mode {
+                MODE_ASK => Some(MODE_ASK),
+                MODE_PLAN => Some(MODE_PLAN),
+                MODE_WRITE => Some(MODE_WRITE),
+                _ => None,
+            })
             .unwrap_or(if decision_str == "approve" {
-                MODE_ASK
+                MODE_WRITE
             } else {
                 MODE_PLAN
             });

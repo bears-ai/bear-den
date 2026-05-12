@@ -99,17 +99,39 @@ impl AcpResolvedSessionPolicy {
 }
 
 pub fn resolve_session_policy(plan_mode_state: Option<&str>) -> AcpResolvedSessionPolicy {
-    match plan_mode_state {
-        Some("active" | "submitted") => AcpResolvedSessionPolicy {
+    let inferred_mode = match plan_mode_state {
+        Some("active" | "submitted") => "plan",
+        Some("approved") => "write",
+        _ => "ask",
+    };
+    resolve_session_policy_for_mode(inferred_mode, plan_mode_state)
+}
+
+pub fn resolve_session_policy_for_mode(
+    current_mode: &str,
+    plan_mode_state: Option<&str>,
+) -> AcpResolvedSessionPolicy {
+    match current_mode.trim().to_ascii_lowercase().as_str() {
+        "plan" => AcpResolvedSessionPolicy {
             mode_label: "Plan",
             mutation_gate: AcpMutationGateState::ReviewRequired,
             plan_mode_state: plan_mode_state.map(str::to_string),
         },
-        Some("approved") => AcpResolvedSessionPolicy {
-            mode_label: "Write",
-            mutation_gate: AcpMutationGateState::Open,
-            plan_mode_state: plan_mode_state.map(str::to_string),
-        },
+        "write" => {
+            if matches!(plan_mode_state, Some("active" | "submitted")) {
+                AcpResolvedSessionPolicy {
+                    mode_label: "Plan",
+                    mutation_gate: AcpMutationGateState::ReviewRequired,
+                    plan_mode_state: plan_mode_state.map(str::to_string),
+                }
+            } else {
+                AcpResolvedSessionPolicy {
+                    mode_label: "Write",
+                    mutation_gate: AcpMutationGateState::Open,
+                    plan_mode_state: plan_mode_state.map(str::to_string),
+                }
+            }
+        }
         _ => AcpResolvedSessionPolicy {
             mode_label: "Ask",
             mutation_gate: AcpMutationGateState::Closed,
@@ -1928,18 +1950,21 @@ mod tests {
 
     #[test]
     fn descriptors_filter_by_adapter_direct_tools() {
-        let descriptors = acp_client_tool_descriptors_for_client_context(&json!({
-            "direct_tools": {
-                "fs_read_text_file": true,
-                "fs_list_directory": true,
-                "fs_find_paths": true,
-                "fs_search_files": true,
-                "fs_stat": true,
-                "git_status": true,
-                "git_diff": true,
-                "fs_delete_path": true
-            }
-        }), None);
+        let descriptors = acp_client_tool_descriptors_for_client_context(
+            &json!({
+                "direct_tools": {
+                    "fs_read_text_file": true,
+                    "fs_list_directory": true,
+                    "fs_find_paths": true,
+                    "fs_search_files": true,
+                    "fs_stat": true,
+                    "git_status": true,
+                    "git_diff": true,
+                    "fs_delete_path": true
+                }
+            }),
+            None,
+        );
         let names = descriptors
             .as_array()
             .expect("descriptor array")
@@ -1959,26 +1984,29 @@ mod tests {
 
     #[test]
     fn descriptors_filter_by_structured_adapter_capabilities() {
-        let descriptors = acp_client_tool_descriptors_for_client_context(&json!({
-            "adapter": {
-                "name": "bears-acp-adapter",
-                "version": "0.1.0",
-                "direct_tools": {
-                    "fs_read_text_file": { "supported": true, "version": 1 },
-                    "fs_find_paths": { "supported": true, "version": 1 },
-                    "fs_stat": { "supported": true, "version": 1 },
-                    "git_status": { "supported": true, "version": 1 },
-                    "git_diff": { "supported": true, "version": 1 },
-                    "git_log": { "supported": true, "version": 1 },
-                    "git_show": { "supported": true, "version": 1 },
-                    "fs_edit_file": { "supported": true, "version": 1 },
-                    "fs_create_text_file": { "supported": true, "version": 1 },
-                    "fs_create_directory": { "supported": true, "version": 1 },
-                    "fs_move_path": { "supported": true, "version": 1 },
-                    "fs_delete_path": { "supported": true, "version": 1 }
+        let descriptors = acp_client_tool_descriptors_for_client_context(
+            &json!({
+                "adapter": {
+                    "name": "bears-acp-adapter",
+                    "version": "0.1.0",
+                    "direct_tools": {
+                        "fs_read_text_file": { "supported": true, "version": 1 },
+                        "fs_find_paths": { "supported": true, "version": 1 },
+                        "fs_stat": { "supported": true, "version": 1 },
+                        "git_status": { "supported": true, "version": 1 },
+                        "git_diff": { "supported": true, "version": 1 },
+                        "git_log": { "supported": true, "version": 1 },
+                        "git_show": { "supported": true, "version": 1 },
+                        "fs_edit_file": { "supported": true, "version": 1 },
+                        "fs_create_text_file": { "supported": true, "version": 1 },
+                        "fs_create_directory": { "supported": true, "version": 1 },
+                        "fs_move_path": { "supported": true, "version": 1 },
+                        "fs_delete_path": { "supported": true, "version": 1 }
+                    }
                 }
-            }
-        }), None);
+            }),
+            None,
+        );
         let names = descriptors
             .as_array()
             .expect("descriptor array")
@@ -2034,7 +2062,7 @@ mod tests {
 
     #[test]
     fn resolve_session_policy_marks_active_plan_as_review_required() {
-        let policy = resolve_session_policy(Some("active"));
+        let policy = resolve_session_policy_for_mode("plan", Some("active"));
         assert_eq!(policy.mode_label, "Plan");
         assert_eq!(policy.mutation_gate.as_str(), "review_required");
         assert_eq!(policy.plan_mode_state.as_deref(), Some("active"));
@@ -2046,7 +2074,7 @@ mod tests {
 
     #[test]
     fn resolve_session_policy_marks_approved_plan_as_write_with_open_gate() {
-        let policy = resolve_session_policy(Some("approved"));
+        let policy = resolve_session_policy_for_mode("write", Some("approved"));
         assert_eq!(policy.mode_label, "Write");
         assert_eq!(policy.mutation_gate.as_str(), "open");
         assert_eq!(policy.plan_mode_state.as_deref(), Some("approved"));
@@ -2087,7 +2115,7 @@ mod tests {
 
     #[test]
     fn provider_name_filtering_respects_open_mutation_gate() {
-        let policy = resolve_session_policy(Some("approved"));
+        let policy = resolve_session_policy_for_mode("write", Some("approved"));
         let names = acp_provider_tool_names_for_client_context(
             &json!({
                 "adapter": {
@@ -2103,7 +2131,12 @@ mod tests {
         );
         assert_eq!(
             names,
-            vec!["fs_read_text_file", "fs_edit_file", "process_run", "chrome_open"]
+            vec![
+                "fs_read_text_file",
+                "fs_edit_file",
+                "process_run",
+                "chrome_open"
+            ]
         );
     }
 

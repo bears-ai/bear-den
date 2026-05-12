@@ -16,6 +16,8 @@ pub struct UpsertAcpSession {
     pub resolved_conversation_id: Option<String>,
     pub client: String,
     pub cwd: Option<String>,
+    #[serde(default)]
+    pub current_mode: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -31,6 +33,7 @@ pub struct AcpSessionRow {
     pub client: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cwd: Option<String>,
+    pub current_mode: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub conversation_title: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -50,9 +53,9 @@ pub async fn upsert_session(pool: &PgPool, session: UpsertAcpSession) -> Result<
         r#"
         INSERT INTO acp_sessions (
             user_id, bear_id, bear_slug, acp_session_id, runtime_session_id,
-            conversation_id, resolved_conversation_id, client, cwd
+            conversation_id, resolved_conversation_id, client, cwd, current_mode
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, COALESCE($10, 'ask'))
         ON CONFLICT (user_id, bear_id, acp_session_id) DO UPDATE
         SET bear_slug = EXCLUDED.bear_slug,
             runtime_session_id = EXCLUDED.runtime_session_id,
@@ -60,6 +63,7 @@ pub async fn upsert_session(pool: &PgPool, session: UpsertAcpSession) -> Result<
             resolved_conversation_id = EXCLUDED.resolved_conversation_id,
             client = EXCLUDED.client,
             cwd = EXCLUDED.cwd,
+            current_mode = COALESCE(acp_sessions.current_mode, EXCLUDED.current_mode),
             updated_at = NOW()
         "#,
     )
@@ -72,6 +76,35 @@ pub async fn upsert_session(pool: &PgPool, session: UpsertAcpSession) -> Result<
     .bind(session.resolved_conversation_id)
     .bind(session.client)
     .bind(session.cwd)
+    .bind(session.current_mode)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+pub async fn set_current_mode(
+    pool: &PgPool,
+    user_id: i32,
+    bear_id: Uuid,
+    acp_session_id: &str,
+    mode: &str,
+) -> Result<(), CustomError> {
+    if !matches!(mode, "ask" | "plan" | "write") {
+        return Err(CustomError::ValidationError(
+            "ACP session mode must be one of ask, plan, write".to_string(),
+        ));
+    }
+    sqlx::query(
+        r#"
+        UPDATE acp_sessions
+        SET current_mode = $4, updated_at = NOW()
+        WHERE user_id = $1 AND bear_id = $2 AND acp_session_id = $3
+        "#,
+    )
+    .bind(user_id)
+    .bind(bear_id)
+    .bind(acp_session_id)
+    .bind(mode)
     .execute(pool)
     .await?;
     Ok(())
@@ -112,6 +145,7 @@ fn acp_session_row_from_sql(row: &PgRow) -> AcpSessionRow {
         resolved_conversation_id: row.get("resolved_conversation_id"),
         client: row.get("client"),
         cwd: row.get("cwd"),
+        current_mode: row.get("current_mode"),
         conversation_title: row.get("conversation_title"),
         conversation_title_updated_at: row.get("conversation_title_updated_at"),
         conversation_title_synced_at: row.get("conversation_title_synced_at"),
@@ -131,7 +165,7 @@ pub async fn find_for_user_bear_session(
     let row = sqlx::query(
         r#"
         SELECT id, user_id, bear_id, bear_slug, acp_session_id, runtime_session_id,
-               conversation_id, resolved_conversation_id, client, cwd,
+               conversation_id, resolved_conversation_id, client, cwd, current_mode,
                conversation_title, conversation_title_updated_at, conversation_title_synced_at,
                closed_at, archived_at, created_at, updated_at
         FROM acp_sessions
@@ -163,7 +197,7 @@ pub async fn list_for_user_bear(
     let rows = sqlx::query(
         r#"
         SELECT id, user_id, bear_id, bear_slug, acp_session_id, runtime_session_id,
-               conversation_id, resolved_conversation_id, client, cwd,
+               conversation_id, resolved_conversation_id, client, cwd, current_mode,
                conversation_title, conversation_title_updated_at, conversation_title_synced_at,
                closed_at, archived_at, created_at, updated_at
         FROM acp_sessions
