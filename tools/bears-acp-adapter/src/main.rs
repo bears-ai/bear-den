@@ -4773,6 +4773,10 @@ async fn handle_permission_request_event(
             .get("tool_name")
             .and_then(Value::as_str)
             .unwrap_or("local_web_fetch");
+        let result_tool_name = local_tool
+            .get("result_tool_name")
+            .and_then(Value::as_str)
+            .unwrap_or(tool_name);
         let args = local_tool.get("args").cloned().unwrap_or_else(|| json!({}));
         let policy = policy_from_event(local_tool);
         let result = execute_local_tool(adapter_state, session_id, tool_name, args, &policy).await;
@@ -4793,7 +4797,7 @@ async fn handle_permission_request_event(
                 }
                 let payload = json!({
                     "tool_call_id": tool_call_id,
-                    "tool_name": tool_name,
+                    "tool_name": result_tool_name,
                     "status": "ok",
                     "content": value.get("content").cloned().unwrap_or_else(|| json!("")),
                     "structured_content": value,
@@ -4804,7 +4808,7 @@ async fn handle_permission_request_event(
             Err(err) => {
                 let payload = json!({
                     "tool_call_id": tool_call_id,
-                    "tool_name": tool_name,
+                    "tool_name": result_tool_name,
                     "status": "error",
                     "content": format!("{err:#}"),
                     "structured_content": {},

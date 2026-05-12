@@ -1955,7 +1955,10 @@ async fn permission_result_inner(
                 acp_session_id: pending.context.acp_session_id.clone(),
                 request_id: pending.context.request_id,
                 tool_call_id: pending.tool_call_id.clone(),
-                tool_name: "local_web_fetch".to_string(),
+                // Register the original Den/model-facing provider name. The adapter
+                // executes `local_web_fetch`, but the result must settle the original
+                // Letta `web_fetch` tool call and pass coordinator name validation.
+                tool_name: pending.provider_name.clone(),
                 approval_request_id: pending.approval_request_id.clone(),
                 result_tx: pending.result_tx,
             })?;
@@ -1965,6 +1968,7 @@ async fn permission_result_inner(
             local_tool_request: Some(serde_json::json!({
                 "tool_call_id": pending.tool_call_id,
                 "tool_name": "local_web_fetch",
+                "result_tool_name": pending.provider_name,
                 "args": { "url": pending.normalized_url.url },
                 "policy": { "max_bytes": 262144, "total_timeout_ms": 120000 }
             })),
