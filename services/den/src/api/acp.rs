@@ -918,6 +918,7 @@ fn acp_pair_den_tool_descriptors() -> serde_json::Value {
                     | den_tools::DEN_WORK_PLAN_REQUEST_HANDOFF
                     | den_tools::DEN_PLAN_MODE_ENTER
                     | den_tools::DEN_PLAN_MODE_STATUS
+                    | den_tools::DEN_PLAN_MODE_RECORD_APPROVAL
                     | den_tools::DEN_PLAN_MODE_EXIT
                     | den_tools::DEN_PLAN_MODE_CANCEL
             )
@@ -1848,6 +1849,33 @@ async fn permission_result_inner(
         .await?
         .ok_or_else(|| CustomError::NotFound("ACP session not found".to_string()))?;
         let decision = body.decision.trim().to_ascii_lowercase();
+        if decision == "timeout" {
+            acp_sessions::set_current_mode(
+                &state.sqlx_pool,
+                auth.user_id,
+                session.bear_id,
+                &session_id,
+                "plan",
+            )
+            .await?;
+            let row = acp_plan_mode::get_by_id_for_bear(
+                &state.sqlx_pool,
+                auth.user_id,
+                session.bear_id,
+                plan_mode_id,
+            )
+            .await?;
+            return Ok(Json(serde_json::json!({
+                "accepted": true,
+                "reason": "plan_mode_approval_request_timed_out",
+                "local_tool_request": serde_json::Value::Null,
+                "effective_mode": "plan",
+                "session_policy": resolve_session_policy_for_mode("plan", Some("submitted")).to_json(),
+                "plan_mode": row,
+                "message": "The transient ACP approval request timed out, but the submitted plan remains pending. The user may approve it through chat with record_plan_approval, Den UI, or a new ACP approval request."
+            }))
+            .into_response());
+        }
         let row = if matches!(
             decision.as_str(),
             "approve" | "approved" | "allow" | "allow_once"
@@ -1893,11 +1921,7 @@ async fn permission_result_inner(
         };
         return Ok(Json(serde_json::json!({
             "accepted": true,
-            "reason": if decision == "timeout" {
-                "plan_mode_rejected_after_timeout".to_string()
-            } else {
-                format!("plan_mode_{}", row.state)
-            },
+            "reason": format!("plan_mode_{}", row.state),
             "local_tool_request": serde_json::Value::Null,
             "effective_mode": effective_mode,
             "session_policy": resolve_session_policy_for_mode(effective_mode, Some(row.state.as_str())).to_json(),
@@ -3119,6 +3143,7 @@ fn den_tool_allowed_in_plan_mode(canonical_name: &str) -> bool {
             | den_tools::DEN_WORK_PLAN_LIST
             | den_tools::DEN_WORK_PLAN_GET_STATUS
             | den_tools::DEN_PLAN_MODE_STATUS
+            | den_tools::DEN_PLAN_MODE_RECORD_APPROVAL
             | den_tools::DEN_PLAN_MODE_EXIT
             | den_tools::DEN_PLAN_MODE_CANCEL
     )

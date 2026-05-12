@@ -85,6 +85,8 @@ pub const DEN_PLAN_MODE_ENTER: &str = "den.plan_mode.enter";
 pub const DEN_PLAN_MODE_ENTER_PROVIDER: &str = "enter_plan_mode";
 pub const DEN_PLAN_MODE_STATUS: &str = "den.plan_mode.status";
 pub const DEN_PLAN_MODE_STATUS_PROVIDER: &str = "get_plan_mode_status";
+pub const DEN_PLAN_MODE_RECORD_APPROVAL: &str = "den.plan_mode.record_approval";
+pub const DEN_PLAN_MODE_RECORD_APPROVAL_PROVIDER: &str = "record_plan_approval";
 pub const DEN_PLAN_MODE_EXIT: &str = "den.plan_mode.exit";
 pub const DEN_PLAN_MODE_EXIT_PROVIDER: &str = "exit_plan_mode";
 pub const DEN_PLAN_MODE_CANCEL: &str = "den.plan_mode.cancel";
@@ -131,6 +133,7 @@ pub fn provider_safe_tool_name(name: &str) -> String {
         DEN_WORK_PLAN_REQUEST_HANDOFF => return DEN_WORK_PLAN_REQUEST_HANDOFF_PROVIDER.to_string(),
         DEN_PLAN_MODE_ENTER => return DEN_PLAN_MODE_ENTER_PROVIDER.to_string(),
         DEN_PLAN_MODE_STATUS => return DEN_PLAN_MODE_STATUS_PROVIDER.to_string(),
+        DEN_PLAN_MODE_RECORD_APPROVAL => return DEN_PLAN_MODE_RECORD_APPROVAL_PROVIDER.to_string(),
         DEN_PLAN_MODE_EXIT => return DEN_PLAN_MODE_EXIT_PROVIDER.to_string(),
         DEN_PLAN_MODE_CANCEL => return DEN_PLAN_MODE_CANCEL_PROVIDER.to_string(),
         _ => {}
@@ -620,6 +623,23 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
             empty_schema(),
         ),
         descriptor(
+            DEN_PLAN_MODE_RECORD_APPROVAL,
+            "Record plan approval",
+            "Record explicit approval from the authenticated human for the currently submitted implementation plan. Use only when the user clearly approves the current plan in this conversation, for example 'go ahead', 'approved', or 'proceed'.",
+            "bear.planning",
+            &["plan_mode.approve"],
+            PAIR_ROLES,
+            json!({
+                "type": "object",
+                "properties": {
+                    "plan_mode_id": { "type": "string", "format": "uuid" },
+                    "approval_text": { "type": "string", "description": "The user's approval text that prompted this tool call." }
+                },
+                "required": ["approval_text"],
+                "additionalProperties": false
+            }),
+        ),
+        descriptor(
             DEN_PLAN_MODE_EXIT,
             "Exit plan mode",
             "Submit a markdown implementation plan artifact for user approval before leaving ACP pair plan mode.",
@@ -920,6 +940,7 @@ pub fn provider_aliases_for_tool(name: &str) -> &'static [&'static str] {
             "rename_thread",
             "conversation_rename",
         ],
+        DEN_PLAN_MODE_RECORD_APPROVAL => &["approve_plan", "approve_current_plan"],
         DEN_SITUATION_GET => &[DEN_SITUATION_GET_LEGACY_PROVIDER, "den_situation_get"],
         DEN_MEMORY_WRITE_ENTRY => &["den_memory_write_entry"],
         DEN_MEMORY_STATUS => &["den_memory_status"],
@@ -975,6 +996,7 @@ pub fn is_builtin_den_tool(name: &str) -> bool {
             | DEN_WORK_PLAN_REQUEST_HANDOFF
             | DEN_PLAN_MODE_ENTER
             | DEN_PLAN_MODE_STATUS
+            | DEN_PLAN_MODE_RECORD_APPROVAL
             | DEN_PLAN_MODE_EXIT
             | DEN_PLAN_MODE_CANCEL
             | DEN_TASK_WRITE_INTENT
@@ -1064,6 +1086,13 @@ struct PlanModeEnterArguments {
     reason: String,
     #[serde(default)]
     previous_permission_mode: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct PlanModeRecordApprovalArguments {
+    #[serde(default)]
+    plan_mode_id: Option<Uuid>,
+    approval_text: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1234,6 +1263,7 @@ pub async fn invoke_den_tool(
         DEN_WORK_PLAN_UPDATE => update_work_plan(pool, &context, role, arguments).await,
         DEN_PLAN_MODE_ENTER => enter_plan_mode(pool, &context, arguments).await,
         DEN_PLAN_MODE_STATUS => plan_mode_status(pool, &context).await,
+        DEN_PLAN_MODE_RECORD_APPROVAL => record_plan_approval(pool, &context, arguments).await,
         DEN_PLAN_MODE_EXIT => exit_plan_mode(pool, config, &context, arguments).await,
         DEN_PLAN_MODE_CANCEL => cancel_plan_mode(pool, &context, arguments).await,
         DEN_SKILL_PROPOSE
@@ -1892,6 +1922,58 @@ async fn plan_mode_status(
         "acp_session_id": acp_session_id,
         "plan_mode": row,
         "active": row.is_some(),
+    }))
+}
+
+async fn record_plan_approval(
+    pool: &PgPool,
+    context: &DenToolInvocationContext,
+    arguments: Value,
+) -> Result<Value, CustomError> {
+    let args: PlanModeRecordApprovalArguments = serde_json::from_value(arguments)?;
+    let approval_text = validate_bounded_text("approval_text", &args.approval_text, 1, 1000)?;
+    let acp_session_id = source_acp_session_id(context).ok_or_else(|| {
+        CustomError::ValidationError("ACP session id is required for plan approval".to_string())
+    })?;
+    let current = acp_plan_mode::get_for_session(
+        pool,
+        context.user_id,
+        context.bear_id,
+        &acp_session_id,
+        args.plan_mode_id,
+    )
+    .await?
+    .ok_or_else(|| {
+        CustomError::NotFound("submitted ACP plan mode session not found".to_string())
+    })?;
+    if current.state != "submitted" {
+        return Err(CustomError::ValidationError(format!(
+            "plan approval requires a submitted plan; current state is {}",
+            current.state
+        )));
+    }
+    let row = acp_plan_mode::approve_plan_mode(
+        pool,
+        context.user_id,
+        context.bear_id,
+        &acp_session_id,
+        current.id,
+    )
+    .await?;
+    acp_sessions::set_current_mode(
+        pool,
+        context.user_id,
+        context.bear_id,
+        &acp_session_id,
+        "write",
+    )
+    .await?;
+    Ok(json!({
+        "ok": true,
+        "plan_mode": row,
+        "mode_update": "write",
+        "approval_text": approval_text,
+        "content": "Plan approved by the authenticated human. Write mode is now enabled; implementation may proceed subject to normal ACP tool approvals.",
     }))
 }
 
@@ -2956,6 +3038,7 @@ mod tests {
         assert!(provider_names.contains("memory_read"));
         assert!(provider_names.contains("update_plan"));
         assert!(provider_names.contains("enter_plan_mode"));
+        assert!(provider_names.contains("record_plan_approval"));
         assert!(provider_names.contains("exit_plan_mode"));
         assert!(provider_names.contains("cancel_plan_mode"));
         assert!(!provider_names.contains("situation_get"));
@@ -3037,6 +3120,7 @@ mod tests {
         assert!(pair.contains(DEN_WORK_PLAN_REQUEST_HANDOFF));
         assert!(pair.contains(DEN_PLAN_MODE_ENTER));
         assert!(pair.contains(DEN_PLAN_MODE_STATUS));
+        assert!(pair.contains(DEN_PLAN_MODE_RECORD_APPROVAL));
         assert!(pair.contains(DEN_PLAN_MODE_EXIT));
         assert!(pair.contains(DEN_PLAN_MODE_CANCEL));
 
