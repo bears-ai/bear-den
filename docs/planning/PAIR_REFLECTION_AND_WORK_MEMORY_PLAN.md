@@ -1,6 +1,6 @@
 # Pair Reflection and Work Memory Sharing Plan
 
-Status: proposed architecture plan.
+Status: architecture plan; ACP-close pair summaries now create memory proposals and queued `memory_curate` runs.
 
 This plan assumes BEARS will go all the way to a dedicated **pair reflection loop** for improving `pair` role-local memory, and then use `curate` to share useful knowledge across spaces such as `core/`, Bear curated archives, Cabinet, and approved `work` task context.
 
@@ -68,9 +68,9 @@ pair reflection loop
   ↓ writes
 pair/reflections, pair/summaries, pair/decisions
   ↓ creates
-memory review requests
-  ↓
-curate run
+`bear_memory_proposals`
+  ↓ enqueues
+queued `memory_curate` reflection run
   ↓ outcomes
 core/ updates
 Bear curated archive index entries
@@ -151,7 +151,7 @@ pair/decisions/
 pair/notes/
 ```
 
-It can also create Den DB review requests for `curate`.
+It creates Den DB review proposals for `curate` when it writes ACP-close summaries. The implemented automatic proposal points at the written `pair/summaries/...` entry and enqueues a queued `memory_curate` reflection run rather than running curation inline.
 
 It should prefer concise summaries over raw transcript copies.
 
@@ -159,7 +159,7 @@ It should prefer concise summaries over raw transcript copies.
 
 ## Pair memory review requests
 
-Pair reflection and the pair agent use the same review request mechanism.
+Pair reflection and the pair agent use the same underlying proposal queue: `bear_memory_proposals`.
 
 Canonical future tool:
 
@@ -173,7 +173,17 @@ Model-visible provider:
 memory_request_review
 ```
 
-Request fields should include:
+Implemented automatic ACP-close pair reflection proposal fields:
+
+- `source_role = pair`
+- `source_paths = [pair/summaries/...]`
+- `suggested_action = unspecified`
+- `title = Review pair reflection summary: <session>`
+- `summary = Pair reflection created a durable session summary; review for useful shared/work-visible knowledge.`
+- `sensitivity = normal`
+- `requires_human = false`
+
+Future manually/model-created request fields should include:
 
 - source role: `pair`;
 - source memory paths;
@@ -187,7 +197,7 @@ Request fields should include:
   - `cabinet_update`,
   - `task_context`,
   - `skill_review`,
-  - `unsure`;
+  - `unspecified`;
 - sensitivity;
 - refs:
   - domains,
@@ -321,21 +331,27 @@ Deliverables:
 
 ### Phase 2 — Pair session summary loop
 
+Status: implemented for ACP session close with deterministic summaries.
+
 Deliverables:
 
-1. Trigger on ACP session close or manual UI action.
-2. Summarize session into `pair/summaries/`.
-3. Preserve authenticated human attribution.
-4. Log reflection activity.
+1. ✅ Trigger on ACP session close.
+2. ✅ Summarize session into `pair/summaries/`.
+3. ✅ Preserve authenticated human attribution in write metadata.
+4. ✅ Log pair reflection run activity.
+5. Pending: manual UI action.
 
 ### Phase 3 — Pair review request creation
 
+Status: partially implemented.
+
 Deliverables:
 
-1. Add `memory_request_review` for pair and pair reflection.
-2. Create Den DB review requests from selected pair source paths.
-3. Show requests in curation UI.
-4. Tests for role authorization and source refs.
+1. ✅ Add `memory_request_review` for pair and pair reflection.
+2. ✅ Create Den DB proposals from ACP-close pair summary paths.
+3. ✅ Enqueue `memory_curate` conductor runs with `input_summary = { proposal_ids: [...] }`.
+4. Pending: show requests and queued runs in curation UI.
+5. Pending: broader tests for role authorization and source refs.
 
 ### Phase 4 — Curate proposal review tools
 

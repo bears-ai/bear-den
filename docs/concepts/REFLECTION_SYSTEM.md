@@ -89,7 +89,7 @@ Semantic decisions belong to the role agent, usually `curate`, not to ad hoc Den
 For `curate`, use one conversation per Bear + lane + UTC day in the first implementation:
 
 ```text
-conversation_key = memory_review:YYYY-MM-DD
+conversation_key = memory_curate:YYYY-MM-DD
 ```
 
 This preserves same-day continuity while preventing one unbounded lifelong curation conversation. Later rollover can also occur when the context window is near full or operator policy requests a reset.
@@ -100,8 +100,8 @@ The P0 trigger is:
 
 ```text
 pair reflection summary created
-→ memory review request created
-→ curate memory-review cycle queued or run
+→ `bear_memory_proposals` row created
+→ `memory_curate` Reflection run queued
 ```
 
 This is higher priority than a generic heartbeat because it directly connects pair learning to the cross-role sharing path.

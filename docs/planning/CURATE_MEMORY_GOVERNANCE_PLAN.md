@@ -488,22 +488,28 @@ Human admins should be able to inspect, override, and manually review, but manua
 
 ### Slice 1 — DB-backed proposal/review queue
 
+Status: partially implemented.
+
 Deliverables:
 
-1. `bear_memory_proposals` migration.
-2. Den DB functions for create/list/get/update status.
-3. UI action to create proposal from selected memory files.
-4. Curation queue page.
-5. Curate-visible proposal listing so autonomous curation can operate on the queue.
+1. ✅ `bear_memory_proposals` migration.
+2. ✅ Den DB functions for create/list/get/update status.
+3. Pending: UI action to create proposal from selected memory files.
+4. Pending: curation queue page.
+5. ✅ Curate-visible proposal listing so autonomous curation can operate on the queue.
 
 ### Slice 2 — Pair requests memory review
 
+Status: partially implemented.
+
 Deliverables:
 
-1. `den.memory.request_review` descriptor for `pair`.
-2. Tool implementation writes proposal rows, not `core` or Cabinet.
-3. ACP pair prompt guidance: request curation for cross-role or durable shared candidates; do not write core.
-4. Tests for proposal creation and role authorization.
+1. ✅ `den.memory.request_review` descriptor for `pair`.
+2. ✅ Tool implementation writes proposal rows, not `core` or Cabinet.
+3. ✅ ACP-close pair reflection writes an automatic proposal for each created `pair/summaries/...` summary.
+4. ✅ ACP-close pair reflection enqueues a queued `bear_reflection_runs` row with `lane = memory_curate`, `trigger = pair_reflection`, and `input_summary = { proposal_ids: [...] }`.
+5. Pending: ACP pair prompt guidance: request curation for cross-role or durable shared candidates; do not write core.
+6. Pending: broader tests for proposal creation and role authorization.
 
 ### Slice 3 — Curate read/review tools
 
@@ -528,12 +534,16 @@ Deliverables:
 
 ### Slice 5 — Curate conductor and activity surfacing
 
+Status: storage/enqueue foundation implemented; runner and UI pending.
+
 Deliverables:
 
-1. Curate conductor invokes Letta API-direct curate agent with pending proposals and recent memory activity.
-2. Guardrails: no external tools, no arbitrary paths, no Cabinet writes unless explicitly granted.
-3. Den records curation cycle activity: inputs considered, decisions made, proposals approved/rejected, core files changed, compactions performed, and escalations.
-4. UI surfaces the extent of curate activity so humans can understand what the god-agent has been doing without approving every action.
+1. ✅ Queue storage exists in lane-neutral `bear_reflection_runs`.
+2. ✅ Daily conversation mapping storage exists in `reflection_conversations` with unique `bear_id + lane + conversation_date`.
+3. Pending: Curate conductor invokes Letta API-direct curate agent with pending proposals and recent memory activity.
+4. Pending: guardrails: no external tools, no arbitrary paths, no Cabinet writes unless explicitly granted.
+5. Pending: Den records curation cycle activity: inputs considered, decisions made, proposals approved/rejected, core files changed, compactions performed, and escalations.
+6. Pending: UI surfaces the extent of curate activity so humans can understand what the god-agent has been doing without approving every action.
 
 ### Slice 6 — Letta Archives indexing
 

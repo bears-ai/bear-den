@@ -1,6 +1,6 @@
 # Reflection system implementation plan
 
-Status: proposed implementation plan.
+Status: implementation plan; initial proposal queue and queued `memory_curate` run storage are implemented.
 
 This plan introduces BEARS' broader **Reflection** system before starting the next memory-governance build-out. Reflection is the auditable background review and learning system that includes memory curation, archive indexing, introspection, skill review, health checks, cleanup, and human-review escalation.
 
@@ -91,61 +91,65 @@ Initial lanes:
 
 ### Shared Reflection tables
 
-Suggested table: `bear_reflection_runs`.
+Implemented MVP table: `bear_reflection_runs`.
 
 Fields:
 
 - `id uuid primary key`
 - `bear_id uuid not null`
 - `lane text not null`
-- `trigger_kind text not null`
-  - `heartbeat`
-  - `manual`
-  - `memory_write`
-  - `task_completed`
-  - `proposal_created`
-  - `schedule`
-  - `service_restart`
-  - `archive_drift`
-  - `tool_failure`
-  - `human_feedback`
+- `trigger text not null`
 - `status text not null`
   - `queued`
   - `running`
-  - `succeeded`
-  - `partial`
+  - `completed`
   - `failed`
   - `cancelled`
   - `skipped`
-- `scope jsonb not null default '{}'`
-- `budget jsonb not null default '{}'`
-- `budget_used jsonb not null default '{}'`
-- `owner_kind text not null`
-  - `den`
-  - `role_agent`
-  - `human`
-- `owner_ref text null`
+  - `needs_human_review`
+- `role_agent_id text null`
+- `conversation_id text null`
+- `conversation_key text null`
+- `conversation_date date null`
+- `input_summary jsonb not null default '{}'`
+- `output_summary jsonb not null default '{}'`
+- `error text null`
 - `started_at timestamptz null`
 - `completed_at timestamptz null`
-- `error_summary text null`
-- `needs_human_review boolean not null default false`
 - `created_at timestamptz not null default now()`
 
-Suggested table: `bear_reflection_events`.
+Implemented MVP table: `bear_reflection_run_items`.
 
 Fields:
 
 - `id uuid primary key`
-- `run_id uuid null references bear_reflection_runs(id)`
-- `bear_id uuid not null`
-- `lane text not null`
-- `event_kind text not null`
-- `severity text not null default 'info'`
-- `message text not null`
-- `refs jsonb not null default '{}'`
+- `run_id uuid not null references bear_reflection_runs(id)`
+- `item_kind text not null`
+- `item_id text not null`
+- `status text not null default 'queued'`
 - `created_at timestamptz not null default now()`
 
-Suggested table: `bear_reflection_locks` or equivalent advisory-lock usage.
+For the first `memory_curate` queue path, proposal IDs are stored in `bear_reflection_runs.input_summary` as `{ "proposal_ids": [...] }`; `bear_reflection_run_items` is available for later normalized item tracking.
+
+Implemented MVP table: `reflection_conversations`.
+
+Fields:
+
+- `id uuid primary key`
+- `bear_id uuid not null`
+- `role_agent_id text null`
+- `lane text not null`
+- `conversation_date date not null`
+- `conversation_key text not null`
+- `conversation_id text null`
+- `created_at timestamptz not null default now()`
+- `last_used_at timestamptz not null default now()`
+
+Unique key:
+
+- `bear_id + lane + conversation_date`
+
+Future shared tables: `bear_reflection_events` and `bear_reflection_locks`, or equivalent advisory-lock usage.
 
 Lock dimensions:
 
@@ -236,20 +240,29 @@ Status: documentation slice.
 
 ## Phase 1: shared run/event foundation
 
-Implement Den DB and service support for:
+Status: partially implemented.
 
-- `bear_reflection_runs`;
+Implemented:
+
+- `bear_reflection_runs` migration;
+- `bear_reflection_run_items` migration;
+- `reflection_conversations` migration;
+- run creation helper;
+- `memory_curate` enqueue helper;
+- queued run creation from pair reflection proposal creation.
+
+Still pending:
+
 - `bear_reflection_events`;
-- run creation/update helpers;
 - event logging helpers;
-- basic lane enum/string validation;
-- status transitions;
-- failure recording;
-- admin/internal list API.
+- full status transition helpers;
+- failure recording helpers beyond row fields;
+- admin/internal list API;
+- UI display of bounded Reflection runs.
 
 Deliverable:
 
-- Den can record and display bounded Reflection runs even before autonomous scheduling is enabled.
+- Den can record queued `memory_curate` Reflection runs before autonomous scheduling is enabled.
 
 ---
 
@@ -292,9 +305,9 @@ Deliverable:
 
 ## Phase 4: memory proposal queue
 
-Add DB-backed memory proposals.
+Status: implemented for the base queue and pair-reflection summary proposals.
 
-Suggested table: `bear_memory_proposals`.
+DB-backed memory proposals use `bear_memory_proposals`.
 
 Important fields:
 
@@ -317,16 +330,20 @@ Important fields:
 Deliverable:
 
 - humans, roles, and future Reflection lanes have a durable memory governance queue.
+- Pair reflection automatically creates a proposal for each ACP-close pair summary with `source_role = pair`, `suggested_action = unspecified`, `sensitivity = normal`, and `requires_human = false`.
 
 ---
 
 ## Phase 5: proposal creation from roles and UI
 
+Status: partially implemented.
+
 Add ways to create memory proposals.
 
 Role/tool path:
 
-- add a broad review-request tool such as `den.memory.request_review` / `memory_request_review`;
+- implemented: `den.memory.request_review` / `memory_request_review` creates proposal rows;
+- implemented: ACP-close pair reflection creates an automatic proposal for the written `pair/summaries/...` entry;
 - allow `pair`, `talk`, `work`, and maybe `watch` to request review of their own memory outputs;
 - require source refs where possible instead of embedding all content.
 

@@ -200,13 +200,20 @@ Recommended skill flow:
 
 Use shared run/event tables plus lane-specific proposal tables.
 
-Suggested shared tables:
+Implemented MVP shared tables:
 
 | Table | Purpose |
 |---|---|
-| `bear_reflection_runs` | One row per bounded Reflection run. |
+| `bear_reflection_runs` | One row per bounded queued/running/completed Reflection run. |
+| `bear_reflection_run_items` | Optional normalized item links for a run; first queue path stores proposal IDs in `input_summary`. |
+| `reflection_conversations` | Daily Bear + lane conversation mapping for role-backed Reflection runs. |
+
+Future shared tables:
+
+| Table | Purpose |
+|---|---|
 | `bear_reflection_events` | Audit log events emitted by Reflection runs. |
-| `bear_reflection_locks` | Optional coordination locks by Bear/lane/scope. |
+| `bear_reflection_locks` | Optional coordination locks by Bear/lane/scope, or equivalent advisory locks. |
 
 Suggested lane-specific tables:
 
@@ -218,19 +225,27 @@ Suggested lane-specific tables:
 
 Avoid forcing every lane into one generic proposal table too early. Memory proposals and skill proposals have different targets, statuses, tools, risks, and approval rules.
 
-Reflection run records should include at least:
+The implemented MVP `bear_reflection_runs` records include:
 
 - Bear ID;
 - lane;
-- trigger kind;
+- trigger;
 - status;
-- budgets requested and consumed;
+- role agent ID;
+- conversation ID/key/date;
+- input summary;
+- output summary;
+- error;
 - started/completed timestamps;
-- agent or service owner;
-- affected source references;
+- created timestamp.
+
+Later richer run records or event tables should add:
+
+- budgets requested and consumed;
+- affected source references beyond `input_summary`;
 - emitted events;
-- error summary;
-- whether human review is needed.
+- richer error summaries;
+- explicit human-review flags where status alone is insufficient.
 
 ---
 
