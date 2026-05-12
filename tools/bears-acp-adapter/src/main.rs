@@ -1099,7 +1099,7 @@ async fn handle_request(
                         return Ok(());
                     }
                 };
-                let mode = match mode_value_from_config_params(&request.params) {
+                let requested_mode = match mode_value_from_config_params(&request.params) {
                     Ok(MODE_ASK | MODE_PLAN | MODE_WRITE) => {
                         mode_value_from_config_params(&request.params)?
                     }
@@ -1128,10 +1128,27 @@ async fn handle_request(
                         return Ok(());
                     }
                 };
+                let mode =
+                    current_den_mode_for_session(http, runtime.config.as_ref(), session_id).await?;
+                if requested_mode != mode {
+                    eprintln!(
+                        "bears-acp-adapter: ignoring client-requested mode={} for session_id={}; Den policy reports mode={}",
+                        requested_mode, session_id, mode
+                    );
+                }
                 notify_mode_state(session_id, mode).await?;
                 write_response(
                     id,
-                    Ok(json!({ "configOptions": session_config_options_for_mode(mode) })),
+                    Ok(json!({
+                        "configOptions": session_config_options_for_mode(mode),
+                        "_meta": {
+                            "bears": {
+                                "requestedMode": requested_mode,
+                                "effectiveMode": mode,
+                                "source": "den.session_policy"
+                            }
+                        }
+                    })),
                 )
                 .await?;
             }
@@ -1160,8 +1177,30 @@ async fn handle_request(
                     .await?;
                     return Ok(());
                 }
+                let requested_mode = mode;
+                let mode =
+                    current_den_mode_for_session(http, runtime.config.as_ref(), session_id).await?;
+                if requested_mode != mode {
+                    eprintln!(
+                        "bears-acp-adapter: ignoring client-requested legacy mode={} for session_id={}; Den policy reports mode={}",
+                        requested_mode, session_id, mode
+                    );
+                }
                 notify_mode_state(session_id, mode).await?;
-                write_response(id, Ok(json!({ "modes": session_modes_for_mode(mode) }))).await?;
+                write_response(
+                    id,
+                    Ok(json!({
+                        "modes": session_modes_for_mode(mode),
+                        "_meta": {
+                            "bears": {
+                                "requestedMode": requested_mode,
+                                "effectiveMode": mode,
+                                "source": "den.session_policy"
+                            }
+                        }
+                    })),
+                )
+                .await?;
             }
         }
         "session/list" => {
@@ -2347,6 +2386,42 @@ impl std::fmt::Display for DenHttpError {
 
 impl std::error::Error for DenHttpError {}
 
+async fn current_den_mode_for_session(
+    http: &reqwest::Client,
+    config: Option<&Config>,
+    session_id: &str,
+) -> Result<&'static str> {
+    let Some(config) = config else {
+        return Ok(MODE_ASK);
+    };
+    match den_get_acp_session(http, config, session_id).await {
+        Ok(den) => Ok(infer_mode_from_den_session(&den)),
+        Err(err)
+            if err
+                .downcast_ref::<DenHttpError>()
+                .is_some_and(|http| http.status == reqwest::StatusCode::NOT_FOUND) =>
+        {
+            Ok(MODE_ASK)
+        }
+        Err(err) => Err(err),
+    }
+}
+
+fn infer_mode_from_den_session(den: &Value) -> &'static str {
+    if let Some(policy_label) = den
+        .get("session_policy")
+        .and_then(|policy| policy.get("mode_label"))
+        .and_then(Value::as_str)
+    {
+        return match policy_label {
+            "Plan" => MODE_PLAN,
+            "Write" => MODE_WRITE,
+            _ => MODE_ASK,
+        };
+    }
+    infer_mode_from_plan_mode_state(den.get("plan_mode"))
+}
+
 async fn den_get_acp_session(
     http: &reqwest::Client,
     config: &Config,
@@ -2531,9 +2606,10 @@ async fn restore_session_from_den(
     if let Some(den) = den.as_ref() {
         replay_history_for_den_session(http, config, session_id, den, "session/resume").await?;
     }
-    Ok(infer_mode_from_plan_mode_state(
-        den.as_ref().and_then(|value| value.get("plan_mode")),
-    ))
+    Ok(den
+        .as_ref()
+        .map(infer_mode_from_den_session)
+        .unwrap_or(MODE_ASK))
 }
 
 async fn handle_session_load(
@@ -2593,8 +2669,10 @@ async fn handle_session_load(
         replay_history_for_den_session(http, config, session_id, den, "session/load").await?;
     }
 
-    let mode =
-        infer_mode_from_plan_mode_state(den.as_ref().and_then(|value| value.get("plan_mode")));
+    let mode = den
+        .as_ref()
+        .map(infer_mode_from_den_session)
+        .unwrap_or(MODE_ASK);
     write_response(response_id, Ok(session_lifecycle_result(mode)?)).await?;
     Ok(())
 }
@@ -4627,11 +4705,13 @@ async fn handle_permission_request_event(
     )
     .await?;
     if is_plan_mode {
-        let mode = if decision_str == "approve" {
-            MODE_WRITE
-        } else {
-            MODE_PLAN
-        };
+        let mode = current_den_mode_for_session(&reqwest::Client::new(), Some(config), session_id)
+            .await
+            .unwrap_or(if decision_str == "approve" {
+                MODE_ASK
+            } else {
+                MODE_PLAN
+            });
         notify_mode_state(session_id, mode).await?;
     }
     if let Some(local_tool) = response.get("local_tool_request") {
@@ -5397,6 +5477,26 @@ mod tests {
             },
         );
         state
+    }
+
+    #[test]
+    fn infer_mode_prefers_den_session_policy_over_plan_mode_state() {
+        let den = json!({
+            "session_policy": {
+                "mode_label": "Ask",
+                "mutation_gate": { "state": "closed", "allows_workspace_mutation": false }
+            },
+            "plan_mode": { "state": "approved" }
+        });
+        assert_eq!(infer_mode_from_den_session(&den), MODE_ASK);
+
+        let write = json!({
+            "session_policy": {
+                "mode_label": "Write",
+                "mutation_gate": { "state": "open", "allows_workspace_mutation": true }
+            }
+        });
+        assert_eq!(infer_mode_from_den_session(&write), MODE_WRITE);
     }
 
     #[test]
