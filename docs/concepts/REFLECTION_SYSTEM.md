@@ -7,6 +7,7 @@ Reflection is BEARS' auditable background review and learning system. It lets a 
 - **Reflection** is the umbrella system for background review, learning, maintenance, and improvement.
 - A **Reflection run** is one bounded execution for a Bear, lane, role, or scope.
 - A **Reflection lane** is a specific kind of work such as memory curation, archive indexing, introspection, or skill review.
+- A **cycle runner** is Den's bounded orchestration loop for invoking a role such as `curate` on one Reflection lane.
 - `curate` is a Bear role; Reflection is the broader process.
 - Memory curation and skill adaptation are related but separate.
 - Heartbeats are throttled: active Bears can reflect more frequently than dormant Bears.
@@ -43,10 +44,13 @@ Use narrower terms underneath Reflection:
 | Reflection run | One bounded execution of Reflection. |
 | Reflection lane | A specific kind of background work. |
 | Reflection event | Auditable event emitted during a run. |
+| Cycle runner | Den-side orchestrator that selects work, opens/reuses the right role conversation, invokes the role, enforces budgets/locks, and records activity. |
+| Curate cycle | A Reflection run in which the cycle runner invokes `curate` for a bounded lane such as memory review. |
 | Reflection proposal | A proposed durable change discovered through Reflection. |
 | Memory proposal | Proposal to change Bear memory, `core/`, Cabinet links, or memory lifecycle. |
 | Skill proposal | Proposal to change behavior, skills, workflows, prompts, or role instructions. |
 | Heartbeat | Periodic trigger source for Reflection runs. |
+| Dynamic heartbeat | Future trigger evaluator that runs Reflection based on activity pressure rather than a fixed cron alone. |
 
 ## Reflection lanes
 
@@ -62,6 +66,45 @@ Reflection should use a shared orchestration structure, but separate lanes. Lane
 | `health_check` | Check agents, tools, queues, services, and drift. | Den | Low |
 | `cleanup` | Remove or mark stale/superseded artifacts within policy. | Den + `curate` | Medium |
 | `human_review_escalation` | Surface risky or unresolved items. | Den | Low |
+
+## Cycle runner
+
+The cycle runner is Den's orchestration loop for Reflection. It turns pending background work into bounded role runs.
+
+For a `memory_curate` cycle, the runner should:
+
+1. select pending memory proposals or recent memory activity;
+2. acquire a Bear/lane lock so cycles do not collide;
+3. resolve the role agent, usually `curate`;
+4. open or reuse the correct Letta conversation;
+5. build a bounded prompt with proposal IDs, source summaries, policy, and tool instructions;
+6. invoke the role with only lane-appropriate tools;
+7. record cycle status, tool activity, decisions, errors, and outputs;
+8. surface the run in UI.
+
+The runner is infrastructure. Semantic decisions belong to the role agent, usually `curate`, not to ad hoc Den heuristics.
+
+### Conversation rollover
+
+For `curate`, use one conversation per Bear + lane + UTC day in the first implementation:
+
+```text
+conversation_key = memory_review:YYYY-MM-DD
+```
+
+This preserves same-day continuity while preventing one unbounded lifelong curation conversation. Later rollover can also occur when the context window is near full or operator policy requests a reset.
+
+### Pair reflection trigger
+
+The P0 trigger is:
+
+```text
+pair reflection summary created
+→ memory review request created
+→ curate memory-review cycle queued or run
+```
+
+This is higher priority than a generic heartbeat because it directly connects pair learning to the cross-role sharing path.
 
 ## Heartbeats and activity throttling
 
@@ -97,7 +140,7 @@ Reflection can also be triggered by events:
 - human feedback;
 - explicit schedule.
 
-Heartbeat is therefore a trigger type, not the whole system.
+Heartbeat is therefore a trigger type, not the whole system. The cycle runner is the mechanism that turns heartbeat or event triggers into actual Reflection runs.
 
 ## Budgets and bounds
 
@@ -217,6 +260,8 @@ The UI should show:
 - human-review queue;
 - run budgets and failure summaries;
 - per-Bear heartbeat/cadence policy;
+- cycle runner queue/status;
+- daily curate conversation used for each lane;
 - manual "run reflection now" controls.
 
 Product language examples:
@@ -242,3 +287,4 @@ Avoid:
 - [Semantic Bear Memory ADR](../architecture/adr/semantic-bear-memory.md)
 - [Reflection system implementation plan](../planning/REFLECTION_SYSTEM_PLAN.md)
 - [Curate memory governance plan](../planning/CURATE_MEMORY_GOVERNANCE_PLAN.md)
+- [Memory automation roadmap](../planning/MEMORY_AUTOMATION_ROADMAP.md)
