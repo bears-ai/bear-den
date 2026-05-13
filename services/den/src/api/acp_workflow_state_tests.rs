@@ -1,4 +1,5 @@
 use crate::core::{
+    acp_plan_mode::AcpPlanModeSessionRow,
     acp_tools::{AcpResolvedSessionPolicy, AcpToolEnablementState},
     den_tools::{validate_memory_write_entry_semantics, MemoryWriteEntryArguments},
     turn_state::{approval_status_label, workflow_state_label},
@@ -202,4 +203,39 @@ fn workflow_state_json_preserves_approved_state_for_unwedge_reconciliation() {
         "approved_execution_unlocked"
     );
     assert_eq!(workflow_state["execution"]["execution_unlocked"], true);
+}
+
+#[test]
+fn workflow_state_json_from_sources_carries_workplan_identity_and_artifact_fields() {
+    let policy = AcpResolvedSessionPolicy {
+        mode_label: "Write",
+        tool_enablement: AcpToolEnablementState::AllTools,
+        plan_mode_state: Some("approved".to_string()),
+    };
+    let row = AcpPlanModeSessionRow {
+        id: uuid::Uuid::nil(),
+        user_id: 1,
+        bear_id: uuid::Uuid::nil(),
+        bear_slug: "test-bear".to_string(),
+        acp_session_id: "acp-test".to_string(),
+        state: "approved".to_string(),
+        reason: "test".to_string(),
+        requested_by: "pair".to_string(),
+        previous_permission_mode: Some("plan".to_string()),
+        plan_title: Some("Example plan".to_string()),
+        plan_body: Some("Do the thing carefully".to_string()),
+        plan_artifact_path: Some("pair/plans/example.md".to_string()),
+        approval_request_id: None,
+        approved_by_user_id: Some(1),
+        approved_at: Some(time::OffsetDateTime::UNIX_EPOCH),
+        rejected_at: None,
+        closed_at: None,
+        created_at: time::OffsetDateTime::UNIX_EPOCH,
+        updated_at: time::OffsetDateTime::UNIX_EPOCH,
+    };
+    let workflow_state = super::acp::workflow_state_json_from_sources(&policy, Some(&row), None);
+    assert_eq!(workflow_state["workplan"]["plan_id"], uuid::Uuid::nil().to_string());
+    assert_eq!(workflow_state["workplan"]["artifact_path"], "pair/plans/example.md");
+    assert_eq!(workflow_state["workplan"]["title"], "Example plan");
+    assert_eq!(workflow_state["workplan"]["submitted_plan_present"], true);
 }

@@ -398,7 +398,14 @@ pub(crate) fn acp_session_row_to_http_with_modes(
             .and_then(|value| value.get("state"))
             .and_then(|value| value.as_str()),
     );
-    let workflow_state = workflow_state_json(&policy);
+    let workflow_state = workflow_state_json_from_sources(
+        &policy,
+        plan_mode
+            .as_ref()
+            .and_then(|value| serde_json::from_value(value.clone()).ok())
+            .as_ref(),
+        None,
+    );
     let legacy_states = acp_session_legacy_states(&row, plan_mode.as_ref());
     AcpSessionHttp {
         acp_session_id: row.acp_session_id,
@@ -962,14 +969,22 @@ fn looks_like_letta_waiting_for_approval_error(err: &CustomError) -> bool {
 pub(crate) fn workflow_state_json(
     policy: &crate::core::acp_tools::AcpResolvedSessionPolicy,
 ) -> serde_json::Value {
-    workflow_state_json_with_activity(policy, None)
+    workflow_state_json_from_sources(policy, None, None)
 }
 
 pub(crate) fn workflow_state_json_with_activity(
     policy: &crate::core::acp_tools::AcpResolvedSessionPolicy,
     activity_plan: Option<&WorkPlanProjection>,
 ) -> serde_json::Value {
-    turn_state::turn_state_json(policy, activity_plan)
+    workflow_state_json_from_sources(policy, None, activity_plan)
+}
+
+pub(crate) fn workflow_state_json_from_sources(
+    policy: &crate::core::acp_tools::AcpResolvedSessionPolicy,
+    workplan_row: Option<&crate::core::acp_plan_mode::AcpPlanModeSessionRow>,
+    activity_plan: Option<&WorkPlanProjection>,
+) -> serde_json::Value {
+    turn_state::turn_state_from_sources(policy, workplan_row, activity_plan)
 }
 
 fn render_turn_state_summary_with_activity(
@@ -1934,7 +1949,7 @@ async fn permission_result_inner(
                 "effective_mode": "plan",
                 "session_policy": policy.to_json(),
                 "plan_mode": row,
-                "workflow_state": workflow_state_json(&policy),
+                "workflow_state": row.as_ref().map(|plan| workflow_state_json_from_sources(&policy, Some(plan), None)).unwrap_or_else(|| workflow_state_json(&policy)),
                 "message": "The transient ACP approval request timed out, but the submitted plan remains pending. The user may approve it through chat with record_plan_approval, Den UI, or a new ACP approval request."
             }))
             .into_response());
@@ -1990,7 +2005,7 @@ async fn permission_result_inner(
             "effective_mode": effective_mode,
             "session_policy": policy.to_json(),
             "plan_mode": row,
-            "workflow_state": workflow_state_json(&policy),
+            "workflow_state": workflow_state_json_from_sources(&policy, Some(&row), None),
         }))
         .into_response());
     }

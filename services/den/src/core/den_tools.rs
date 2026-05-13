@@ -30,27 +30,20 @@ use crate::{
 };
 
 pub(crate) fn plan_mode_workplan_payload(row: &acp_plan_mode::AcpPlanModeSessionRow) -> Value {
-    let approval_status = turn_state::approval_status_label(Some(row.state.as_str()), "Plan");
-    json!({
-        "domain": "workplan",
-        "plan_id": row.id,
-        "id": row.id,
-        "state": turn_state::workflow_state_label(&crate::core::acp_tools::AcpResolvedSessionPolicy {
-            mode_label: "Plan",
-            tool_enablement: crate::core::acp_tools::AcpToolEnablementState::ReadOnly,
+    turn_state::turn_state_from_sources(
+        &crate::core::acp_tools::AcpResolvedSessionPolicy {
+            mode_label: if row.state == "approved" { "Write" } else { "Plan" },
+            tool_enablement: if row.state == "approved" {
+                crate::core::acp_tools::AcpToolEnablementState::AllTools
+            } else {
+                crate::core::acp_tools::AcpToolEnablementState::ReadOnly
+            },
             plan_mode_state: Some(row.state.clone()),
-        }),
-        "approval_status": approval_status,
-        "raw_state": row.state.clone(),
-        "submitted_plan_present": row.plan_artifact_path.is_some(),
-        "artifact_path": row.plan_artifact_path.clone(),
-        "title": row.plan_title.clone(),
-        "summary": row.plan_body.as_ref().map(|body| summarize_text(body, 240)),
-        "execution_unlocked": row.state == "approved",
-        "approved_at": row.approved_at,
-        "closed_at": row.closed_at,
-        "updated_at": row.updated_at,
-    })
+        },
+        Some(row),
+        None,
+    )["workplan"]
+        .clone()
 }
 
 pub(crate) fn no_active_workplan_payload() -> Value {
@@ -100,14 +93,6 @@ pub(crate) fn activity_payload(plan: Option<&work_plans::WorkPlanProjection>) ->
             "handoff_requested": false,
         }),
     }
-}
-
-fn summarize_text(text: &str, max_chars: usize) -> String {
-    let trimmed = text.trim();
-    if trimmed.chars().count() <= max_chars {
-        return trimmed.to_string();
-    }
-    trimmed.chars().take(max_chars).collect::<String>() + "…"
 }
 
 // Den-executed server tools. Adding a new Den tool here and to

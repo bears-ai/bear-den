@@ -1,6 +1,8 @@
 use serde_json::{json, Value};
 
-use crate::core::{acp_tools::AcpResolvedSessionPolicy, work_plans::WorkPlanProjection};
+use crate::core::{
+    acp_plan_mode, acp_tools::AcpResolvedSessionPolicy, work_plans::WorkPlanProjection,
+};
 
 pub const TURN_STATE_SCHEMA: &str = "bears.turn_state/v1";
 pub const TURN_STATE_VERSION: u32 = 1;
@@ -32,7 +34,15 @@ pub fn turn_state_json(
     policy: &AcpResolvedSessionPolicy,
     activity_plan: Option<&WorkPlanProjection>,
 ) -> Value {
-    let workplan = workplan_domain_json(policy);
+    turn_state_from_sources(policy, None, activity_plan)
+}
+
+pub fn turn_state_from_sources(
+    policy: &AcpResolvedSessionPolicy,
+    workplan_row: Option<&acp_plan_mode::AcpPlanModeSessionRow>,
+    activity_plan: Option<&WorkPlanProjection>,
+) -> Value {
+    let workplan = workplan_domain_json(policy, workplan_row);
     let activity = activity_domain_json(activity_plan);
     json!({
         "schema": TURN_STATE_SCHEMA,
@@ -51,7 +61,10 @@ pub fn turn_state_json(
     })
 }
 
-fn workplan_domain_json(policy: &AcpResolvedSessionPolicy) -> Value {
+fn workplan_domain_json(
+    policy: &AcpResolvedSessionPolicy,
+    workplan_row: Option<&acp_plan_mode::AcpPlanModeSessionRow>,
+) -> Value {
     let state = workflow_state_label(policy);
     let approval_status =
         approval_status_label(policy.plan_mode_state.as_deref(), policy.mode_label);
@@ -59,15 +72,36 @@ fn workplan_domain_json(policy: &AcpResolvedSessionPolicy) -> Value {
         "domain": "workplan",
         "state": state,
         "approval_status": approval_status,
-        "plan_id": Value::Null,
-        "id": Value::Null,
-        "root_id": Value::Null,
+        "plan_id": workplan_row.map(|row| Value::from(row.id.to_string())).unwrap_or(Value::Null),
+        "id": workplan_row.map(|row| Value::from(row.id.to_string())).unwrap_or(Value::Null),
+        "root_id": workplan_row.map(|row| Value::from(row.id.to_string())).unwrap_or(Value::Null),
         "parent_id": Value::Null,
         "relation": if state == "inactive" { "none" } else { "root" },
         "mode_label": policy.mode_label,
-        "title": Value::Null,
-        "summary": Value::Null,
+        "raw_state": workplan_row.map(|row| Value::from(row.state.clone())).unwrap_or(Value::Null),
+        "title": workplan_row.and_then(|row| row.plan_title.clone()).map(Value::from).unwrap_or(Value::Null),
+        "summary": workplan_row
+            .and_then(|row| row.plan_body.as_ref().map(|body| summarize_text(body, 240)))
+            .map(Value::from)
+            .unwrap_or(Value::Null),
+        "artifact_path": workplan_row
+            .and_then(|row| row.plan_artifact_path.clone())
+            .map(Value::from)
+            .unwrap_or(Value::Null),
+        "submitted_plan_present": workplan_row
+            .map(|row| row.plan_artifact_path.is_some())
+            .unwrap_or(false),
+        "execution_unlocked": approval_status == "approved_execution_unlocked",
         "execution_unlocked_when_approved": policy.tool_enablement.enables_non_read_tools(),
+        "approved_at": workplan_row
+            .and_then(|row| row.approved_at.map(|t| Value::from(t.to_string())))
+            .unwrap_or(Value::Null),
+        "closed_at": workplan_row
+            .and_then(|row| row.closed_at.map(|t| Value::from(t.to_string())))
+            .unwrap_or(Value::Null),
+        "updated_at": workplan_row
+            .map(|row| Value::from(row.updated_at.to_string()))
+            .unwrap_or(Value::Null),
     })
 }
 
@@ -172,4 +206,15 @@ fn execution_domain_json(policy: &AcpResolvedSessionPolicy) -> Value {
         "local_tools_available": true,
         "approval_required_for_mutation": execution_unlocked
     })
+}
+
+fn summarize_text(body: &str, max_chars: usize) -> String {
+    let trimmed = body.trim();
+    if trimmed.chars().count() <= max_chars {
+        trimmed.to_string()
+    } else {
+        let mut summary = trimmed.chars().take(max_chars).collect::<String>();
+        summary.push('…');
+        summary
+    }
 }
