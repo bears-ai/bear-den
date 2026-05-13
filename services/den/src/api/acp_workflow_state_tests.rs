@@ -29,10 +29,11 @@ fn acp_prompt_includes_authoritative_workflow_state_summary() {
     );
     assert!(prompt.contains("AUTHORITATIVE WORKFLOW STATE for this turn"));
     assert!(prompt.contains("state_authority=current turn capabilities override prior-turn assumptions"));
-    assert!(prompt.contains("workflow_state=`approved`"));
+    assert!(prompt.contains("workplan_state=`approved`"));
     assert!(prompt.contains("approval_status=approved_execution_unlocked"));
+    assert!(prompt.contains("activity_status=`inactive`"));
     assert!(prompt.contains("execution_unlocked=true"));
-    assert!(prompt.contains("memory_for_active_plan_allowed=false"));
+    assert!(prompt.contains("write_for_active_workplan_allowed=false"));
 }
 
 #[test]
@@ -54,24 +55,37 @@ fn acp_prompt_mentions_current_turn_tool_gating_when_write_unlocked() {
 }
 
 #[test]
-fn plan_mode_decision_payload_should_surface_full_workflow_state_shape() {
+fn plan_mode_decision_payload_should_surface_turn_state_shape() {
     let payload = serde_json::json!({
         "accepted": true,
         "reason": "plan_mode_approved",
         "effective_mode": "write",
         "workflow_state": {
-            "workflow_state": "approved",
-            "approval_status": "approved_execution_unlocked",
-            "execution_unlocked": true,
-            "memory_for_active_plan_allowed": false,
-            "state_authority": "session_policy_and_current_turn_tools"
+            "schema": "bears.turn_state/v1",
+            "state_version": 1,
+            "state_authority": "current_turn_capabilities",
+            "workplan": {
+                "domain": "workplan",
+                "state": "approved",
+                "approval_status": "approved_execution_unlocked"
+            },
+            "memory": {
+                "domain": "memory",
+                "write_for_active_workplan_allowed": false
+            },
+            "execution": {
+                "domain": "execution",
+                "execution_unlocked": true
+            }
         }
     });
-    assert_eq!(payload["workflow_state"]["workflow_state"], "approved");
-    assert_eq!(payload["workflow_state"]["approval_status"], "approved_execution_unlocked");
-    assert_eq!(payload["workflow_state"]["execution_unlocked"], true);
-    assert_eq!(payload["workflow_state"]["memory_for_active_plan_allowed"], false);
-    assert_eq!(payload["workflow_state"]["state_authority"], "session_policy_and_current_turn_tools");
+    assert_eq!(payload["workflow_state"]["schema"], "bears.turn_state/v1");
+    assert_eq!(payload["workflow_state"]["workplan"]["domain"], "workplan");
+    assert_eq!(payload["workflow_state"]["workplan"]["state"], "approved");
+    assert_eq!(payload["workflow_state"]["workplan"]["approval_status"], "approved_execution_unlocked");
+    assert_eq!(payload["workflow_state"]["memory"]["write_for_active_workplan_allowed"], false);
+    assert_eq!(payload["workflow_state"]["execution"]["execution_unlocked"], true);
+    assert_eq!(payload["workflow_state"]["state_authority"], "current_turn_capabilities");
 }
 
 #[test]
@@ -82,11 +96,13 @@ fn workflow_state_json_surfaces_authoritative_session_state() {
         plan_mode_state: Some("approved".to_string()),
     };
     let workflow_state = workflow_state_json(&policy);
-    assert_eq!(workflow_state["workflow_state"], "approved");
-    assert_eq!(workflow_state["approval_status"], "approved_execution_unlocked");
-    assert_eq!(workflow_state["execution_unlocked"], true);
-    assert_eq!(workflow_state["memory_for_active_plan_allowed"], false);
-    assert_eq!(workflow_state["state_authority"], "session_policy_and_current_turn_tools");
+    assert_eq!(workflow_state["schema"], "bears.turn_state/v1");
+    assert_eq!(workflow_state["workplan"]["domain"], "workplan");
+    assert_eq!(workflow_state["workplan"]["state"], "approved");
+    assert_eq!(workflow_state["workplan"]["approval_status"], "approved_execution_unlocked");
+    assert_eq!(workflow_state["execution"]["execution_unlocked"], true);
+    assert_eq!(workflow_state["memory"]["write_for_active_workplan_allowed"], false);
+    assert_eq!(workflow_state["state_authority"], "current_turn_capabilities");
 }
 
 #[test]
@@ -97,7 +113,7 @@ fn workflow_state_json_preserves_approved_state_for_unwedge_reconciliation() {
         plan_mode_state: Some("approved".to_string()),
     };
     let workflow_state = workflow_state_json(&policy);
-    assert_eq!(workflow_state["workflow_state"], "approved");
-    assert_eq!(workflow_state["approval_status"], "approved_execution_unlocked");
-    assert_eq!(workflow_state["execution_unlocked"], true);
+    assert_eq!(workflow_state["workplan"]["state"], "approved");
+    assert_eq!(workflow_state["workplan"]["approval_status"], "approved_execution_unlocked");
+    assert_eq!(workflow_state["execution"]["execution_unlocked"], true);
 }

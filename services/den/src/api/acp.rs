@@ -991,12 +991,66 @@ pub(crate) fn approval_status_label(plan_mode_state: Option<&str>, mode_label: &
 pub(crate) fn workflow_state_json(
     policy: &crate::core::acp_tools::AcpResolvedSessionPolicy,
 ) -> serde_json::Value {
+    let workplan_state = workflow_state_label(policy);
+    let approval_status = approval_status_label(policy.plan_mode_state.as_deref(), policy.mode_label);
+    let execution_unlocked = policy.tool_enablement.enables_non_read_tools();
     serde_json::json!({
-        "workflow_state": workflow_state_label(policy),
-        "approval_status": approval_status_label(policy.plan_mode_state.as_deref(), policy.mode_label),
-        "execution_unlocked": policy.tool_enablement.enables_non_read_tools(),
-        "memory_for_active_plan_allowed": false,
-        "state_authority": "session_policy_and_current_turn_tools"
+        "schema": "bears.turn_state/v1",
+        "state_version": 1,
+        "state_authority": "current_turn_capabilities",
+        "focus": {
+            "current_domain": "activity",
+            "current_activity_id": serde_json::Value::Null,
+            "current_workplan_id": serde_json::Value::Null,
+            "root_workplan_id": serde_json::Value::Null,
+        },
+        "workplan": {
+            "domain": "workplan",
+            "id": serde_json::Value::Null,
+            "root_id": serde_json::Value::Null,
+            "parent_id": serde_json::Value::Null,
+            "relation": if workplan_state == "inactive" { "none" } else { "root" },
+            "state": workplan_state,
+            "approval_status": approval_status,
+            "mode_label": policy.mode_label,
+            "title": serde_json::Value::Null,
+            "summary": serde_json::Value::Null,
+        },
+        "activity": {
+            "domain": "activity",
+            "id": serde_json::Value::Null,
+            "root_id": serde_json::Value::Null,
+            "parent_id": serde_json::Value::Null,
+            "relation": "none",
+            "status": "inactive",
+            "title": serde_json::Value::Null,
+            "summary": serde_json::Value::Null,
+            "current_item": serde_json::Value::Null,
+            "counts": {
+                "pending": 0,
+                "in_progress": 0,
+                "blocked": 0,
+                "completed": 0,
+                "cancelled": 0
+            },
+            "toward_workplan_id": serde_json::Value::Null,
+            "handoff_requested": false
+        },
+        "memory": {
+            "domain": "memory",
+            "write_allowed": true,
+            "write_for_active_workplan_allowed": false,
+            "review_requested": false,
+            "active_scope": "role-local"
+        },
+        "execution": {
+            "domain": "execution",
+            "permission_mode": policy.mode_label,
+            "tool_classes": policy.allowed_tool_classes(),
+            "execution_unlocked": execution_unlocked,
+            "local_tools_available": true,
+            "approval_required_for_mutation": execution_unlocked
+        }
     })
 }
 
@@ -1008,12 +1062,19 @@ fn render_workflow_state_summary(
     policy: &crate::core::acp_tools::AcpResolvedSessionPolicy,
 ) -> String {
     let execution_unlocked = policy.tool_enablement.enables_non_read_tools();
+    let workflow_state = workflow_state_json(policy);
+    let activity_status = workflow_state["activity"]["status"]
+        .as_str()
+        .unwrap_or("inactive");
     format!(
-        "<system-reminder>AUTHORITATIVE WORKFLOW STATE for this turn: permission_mode=`{}`; tool_classes={}; workflow_state=`{}`; approval_status={}; execution_unlocked={}; memory_for_active_plan_allowed=false; state_authority=current turn capabilities override prior-turn assumptions. BEARS ACP direct local workspace tools available this turn: {}. Server tools available to pair: {}. Current ACP session id is `{}`. Use absolute paths under these workspace roots: {}.</system-reminder>",
+        "<system-reminder>AUTHORITATIVE WORKFLOW STATE for this turn: permission_mode=`{}`; tool_classes={}; workplan_state=`{}`; approval_status={}; activity_status=`{}`; execution_unlocked={}; write_for_active_workplan_allowed=false; state_authority=current turn capabilities override prior-turn assumptions. BEARS ACP direct local workspace tools available this turn: {}. Server tools available to pair: {}. Current ACP session id is `{}`. Use absolute paths under these workspace roots: {}.</system-reminder>",
         policy.mode_label,
         policy.allowed_tool_classes().join(", "),
-        workflow_state_label(policy),
-        approval_status_label(policy.plan_mode_state.as_deref(), policy.mode_label),
+        workflow_state["workplan"]["state"].as_str().unwrap_or("inactive"),
+        workflow_state["workplan"]["approval_status"]
+            .as_str()
+            .unwrap_or("inactive"),
+        activity_status,
         execution_unlocked,
         local_tool_names.join(", "),
         den_tool_names.join(", "),

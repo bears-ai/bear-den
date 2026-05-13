@@ -841,11 +841,11 @@ fn tool_domain(name: &str) -> &'static str {
         | DEN_PLAN_MODE_STATUS
         | DEN_PLAN_MODE_RECORD_APPROVAL
         | DEN_PLAN_MODE_EXIT
-        | DEN_PLAN_MODE_CANCEL => "workflow",
+        | DEN_PLAN_MODE_CANCEL => "workplan",
         DEN_WORK_PLAN_LIST
         | DEN_WORK_PLAN_GET_STATUS
         | DEN_WORK_PLAN_UPDATE
-        | DEN_WORK_PLAN_REQUEST_HANDOFF => "workboard",
+        | DEN_WORK_PLAN_REQUEST_HANDOFF => "activity",
         DEN_MEMORY_WRITE_ENTRY
         | DEN_MEMORY_STATUS
         | DEN_MEMORY_TREE
@@ -864,8 +864,8 @@ fn tool_domain(name: &str) -> &'static str {
 fn tool_content_class(name: &str) -> Option<&'static str> {
     match name {
         DEN_MEMORY_WRITE_ENTRY => Some("semantic_memory"),
-        DEN_PLAN_MODE_EXIT => Some("workflow_plan"),
-        DEN_WORK_PLAN_UPDATE => Some("workboard_status"),
+        DEN_PLAN_MODE_EXIT => Some("workplan_artifact"),
+        DEN_WORK_PLAN_UPDATE => Some("activity_status"),
         DEN_WORK_PLAN_REQUEST_HANDOFF => Some("task_intent"),
         DEN_MEMORY_APPLY_CORE_UPDATE => Some("core_update"),
         DEN_OBSERVATION_WRITE => Some("observation"),
@@ -959,11 +959,11 @@ fn memory_write_entry_schema() -> Value {
             "source": { "type": "object" },
             "content_class": {
                 "type": "string",
-                "enum": ["semantic_memory", "workflow_plan", "workboard_status", "task_intent", "run_result", "observation", "core_update", "cabinet_write"]
+                "enum": ["semantic_memory", "workplan_artifact", "activity_status", "task_intent", "run_result", "observation", "core_update", "cabinet_write"]
             },
             "domain": {
                 "type": "string",
-                "enum": ["memory", "workflow", "workboard", "execution"]
+                "enum": ["memory", "workplan", "activity", "execution"]
             }
         },
         "required": ["kind", "title", "body"],
@@ -2821,14 +2821,14 @@ pub(crate) fn validate_memory_write_entry_semantics(
     if let Some(domain) = args.domain.as_deref() {
         match domain {
             "memory" => {}
-            "workflow" => {
+            "workplan" | "workflow" => {
                 return Err(CustomError::ValidationError(
-                    "This content appears to be a workflow plan; use plan-mode or workboard tools instead of memory_write_entry.".to_string(),
+                    "This content appears to be a workplan artifact; use plan-mode or activity tools instead of memory_write_entry.".to_string(),
                 ));
             }
-            "workboard" => {
+            "activity" | "workboard" => {
                 return Err(CustomError::ValidationError(
-                    "This content appears to be live workboard state; use update_plan or related workboard tools instead of memory_write_entry.".to_string(),
+                    "This content appears to be live activity state; use update_plan or related activity tools instead of memory_write_entry.".to_string(),
                 ));
             }
             "execution" => {
@@ -2842,14 +2842,14 @@ pub(crate) fn validate_memory_write_entry_semantics(
     if let Some(content_class) = args.content_class.as_deref() {
         match content_class {
             "semantic_memory" => {}
-            "workflow_plan" => {
+            "workplan_artifact" | "workflow_plan" => {
                 return Err(CustomError::ValidationError(
-                    "This content appears to be a workflow plan; use plan-mode tools instead of memory_write_entry.".to_string(),
+                    "This content appears to be a workplan artifact; use plan-mode tools instead of memory_write_entry.".to_string(),
                 ));
             }
-            "workboard_status" => {
+            "activity_status" | "workboard_status" => {
                 return Err(CustomError::ValidationError(
-                    "This content appears to be live workboard state; use update_plan instead of memory_write_entry.".to_string(),
+                    "This content appears to be live activity state; use update_plan instead of memory_write_entry.".to_string(),
                 ));
             }
             "task_intent" => {

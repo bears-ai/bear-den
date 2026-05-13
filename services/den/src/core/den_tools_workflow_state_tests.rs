@@ -5,14 +5,14 @@ use crate::core::den_tools::{
 };
 
 #[test]
-fn descriptor_exposes_workflow_state_metadata() {
+fn descriptor_exposes_turn_state_domain_metadata() {
     let descriptor = builtin_den_tool_descriptor_for_provider_name("exit_plan_mode").unwrap();
-    assert_eq!(descriptor.domain, "workflow");
-    assert_eq!(descriptor.content_class, Some("workflow_plan"));
+    assert_eq!(descriptor.domain, "workplan");
+    assert_eq!(descriptor.content_class, Some("workplan_artifact"));
 
     let descriptor = builtin_den_tool_descriptor_for_provider_name("update_plan").unwrap();
-    assert_eq!(descriptor.domain, "workboard");
-    assert_eq!(descriptor.content_class, Some("workboard_status"));
+    assert_eq!(descriptor.domain, "activity");
+    assert_eq!(descriptor.content_class, Some("activity_status"));
 
     let descriptor = builtin_den_tool_descriptor_for_provider_name("memory_write_entry").unwrap();
     assert_eq!(descriptor.domain, "memory");
@@ -25,7 +25,7 @@ fn memory_write_entry_semantics_reject_non_memory_domain_before_db_access() {
         "kind": "note",
         "title": "workflow-ish",
         "body": "do thing",
-        "domain": "workflow"
+        "domain": "workplan"
     }))
     .unwrap();
 
@@ -64,7 +64,7 @@ async fn memory_write_entry_rejects_non_memory_domain_without_db_access() {
             "kind": "note",
             "title": "workflow-ish",
             "body": "do thing",
-            "domain": "workflow"
+            "domain": "workplan"
         }),
         context,
     )
@@ -75,23 +75,23 @@ async fn memory_write_entry_rejects_non_memory_domain_without_db_access() {
 }
 
 #[test]
-fn memory_write_entry_semantics_reject_workboard_content_class_before_db_access() {
+fn memory_write_entry_semantics_reject_activity_content_class_before_db_access() {
     let args: crate::core::den_tools::MemoryWriteEntryArguments = serde_json::from_value(json!({
         "kind": "summary",
-        "title": "workboard-ish",
+        "title": "activity-ish",
         "body": "status changed",
-        "content_class": "workboard_status"
+        "content_class": "activity_status"
     }))
     .unwrap();
 
     let err = validate_memory_write_entry_semantics(&args)
         .unwrap_err()
         .to_string();
-    assert!(err.contains("workboard") || err.contains("update_plan"));
+    assert!(err.contains("activity") || err.contains("update_plan"));
 }
 
 #[tokio::test]
-async fn memory_write_entry_rejects_workboard_content_class_without_db_access() {
+async fn memory_write_entry_rejects_activity_content_class_without_db_access() {
     let context = DenToolInvocationContext {
         bear_id: uuid::Uuid::nil(),
         bear_slug: "test".to_string(),
@@ -117,14 +117,14 @@ async fn memory_write_entry_rejects_workboard_content_class_without_db_access() 
         "den.memory.write_entry",
         json!({
             "kind": "summary",
-            "title": "workboard-ish",
+            "title": "activity-ish",
             "body": "status changed",
-            "content_class": "workboard_status"
+            "content_class": "activity_status"
         }),
         context,
     )
     .await;
 
     let err = result.unwrap_err().to_string();
-    assert!(err.contains("workboard") || err.contains("update_plan"));
+    assert!(err.contains("activity") || err.contains("update_plan"));
 }
