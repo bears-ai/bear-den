@@ -93,19 +93,21 @@ impl AcpResolvedSessionPolicy {
 }
 
 pub fn resolve_session_policy(plan_mode_state: Option<&str>) -> AcpResolvedSessionPolicy {
-    let inferred_mode = match plan_mode_state {
-        Some("active" | "submitted") => "plan",
-        Some("approved") => "write",
-        _ => "ask",
-    };
-    resolve_session_policy_for_mode(inferred_mode, plan_mode_state)
+    resolve_session_policy_for_mode("ask", plan_mode_state)
 }
 
 pub fn resolve_session_policy_for_mode(
     current_mode: &str,
     plan_mode_state: Option<&str>,
 ) -> AcpResolvedSessionPolicy {
-    match current_mode.trim().to_ascii_lowercase().as_str() {
+    let normalized_current_mode = current_mode.trim().to_ascii_lowercase();
+    let resolved_mode = match plan_mode_state {
+        Some("approved") => "write",
+        Some("active" | "submitted") => "plan",
+        Some("rejected") => "ask",
+        _ => normalized_current_mode.as_str(),
+    };
+    match resolved_mode {
         "plan" => AcpResolvedSessionPolicy {
             mode_label: "Plan",
             tool_enablement: AcpToolEnablementState::ReadOnly,
@@ -2065,7 +2067,7 @@ mod tests {
 
     #[test]
     fn resolve_session_policy_marks_plan_as_read_only_mode() {
-        let policy = resolve_session_policy_for_mode("plan", Some("active"));
+        let policy = resolve_session_policy_for_mode("ask", Some("active"));
         assert_eq!(policy.mode_label, "Plan");
         assert_eq!(policy.tool_enablement.as_str(), "read_only");
         assert_eq!(policy.plan_mode_state.as_deref(), Some("active"));
@@ -2077,7 +2079,7 @@ mod tests {
 
     #[test]
     fn resolve_session_policy_marks_write_with_all_tools_enabled() {
-        let policy = resolve_session_policy_for_mode("write", Some("approved"));
+        let policy = resolve_session_policy_for_mode("ask", Some("approved"));
         assert_eq!(policy.mode_label, "Write");
         assert_eq!(policy.tool_enablement.as_str(), "all_tools");
         assert_eq!(policy.plan_mode_state.as_deref(), Some("approved"));
@@ -2118,7 +2120,7 @@ mod tests {
 
     #[test]
     fn provider_name_filtering_respects_write_tool_enablement() {
-        let policy = resolve_session_policy_for_mode("write", Some("approved"));
+        let policy = resolve_session_policy_for_mode("ask", Some("approved"));
         let names = acp_provider_tool_names_for_client_context(
             &json!({
                 "adapter": {

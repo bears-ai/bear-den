@@ -325,7 +325,7 @@ struct AcpSessionsListHttpResponse {
 }
 
 #[derive(Debug, Serialize)]
-struct AcpSessionHttp {
+pub(crate) struct AcpSessionHttp {
     acp_session_id: String,
     runtime_session_id: String,
     conversation_id: String,
@@ -2298,24 +2298,18 @@ async fn unwedge_session_inner(
         acp_plan_mode::active_for_session(&state.sqlx_pool, user_id, session.bear_id, &session_id)
             .await?;
     let plan_state = active_plan_mode.as_ref().map(|plan| plan.state.as_str());
-    let effective_mode = if matches!(plan_state, Some("approved")) {
-        "write"
-    } else if plan_state.is_some() {
-        "plan"
-    } else {
-        session.current_mode.as_str()
-    };
+    let policy = resolve_session_policy_for_mode(session.current_mode.as_str(), plan_state);
+    let effective_mode = policy.mode_label.to_ascii_lowercase();
     if effective_mode != session.current_mode {
         acp_sessions::set_current_mode(
             &state.sqlx_pool,
             user_id,
             session.bear_id,
             &session_id,
-            effective_mode,
+            &effective_mode,
         )
         .await?;
     }
-    let policy = resolve_session_policy_for_mode(effective_mode, plan_state);
     tracing::warn!(
         acp_session_id = %session_id,
         bear_id = %session.bear_id,
@@ -2469,14 +2463,7 @@ async fn close_session_inner(
     )
     .await?;
     let plan_state = active_plan_mode.as_ref().map(|plan| plan.state.as_str());
-    let effective_mode = if matches!(plan_state, Some("approved")) {
-        "write"
-    } else if plan_state.is_some() {
-        "plan"
-    } else {
-        session.current_mode.as_str()
-    };
-    let policy = resolve_session_policy_for_mode(effective_mode, plan_state);
+    let policy = resolve_session_policy_for_mode(session.current_mode.as_str(), plan_state);
     Ok(Json(AcpCloseSessionResponse {
         ok: true,
         archived,

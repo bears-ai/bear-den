@@ -166,6 +166,16 @@ Required additions:
 - If a plan item implies external effects, prefer `request_handoff` over continuing as live plan state.
 - Planning state is not shared Bear memory by default. Use the activity board for tactical progress, a workplan artifact for approval, role-local memory for durable lessons, and curate review for anything that should enter `core/`.
 
+## Next implementation steps
+
+1. Inventory all Den and ACP surfaces that still derive visible behavior from overlapping legacy state machines such as `current_mode`, plan-mode gate state, and tool-enablement state.
+2. Introduce one canonical turn-state resolution path that produces the authoritative `bears.turn_state/v1` payload from legacy/internal records.
+3. Refactor ACP API session/status surfaces so turn-state is primary and legacy mode/gate fields are compatibility metadata only.
+4. Refactor Den plan-mode and related tool responses to emit canonical turn-state consistently, not ad hoc mode/gate combinations.
+5. Reduce direct behavioral dependence on `acp_sessions.current_mode` by treating it as compatibility/audit state rather than primary policy state.
+6. Extend tests so incompatible combinations of legacy mode/gate/tool-enablement records cannot leak as visible ambiguity.
+7. Sweep operator and audit surfaces so they consume canonical turn-state instead of reconstructing policy from multiple records.
+
 ## Open Questions
 
 - Whether `same_user` should be based only on Den user id or also channel external identity mappings.
