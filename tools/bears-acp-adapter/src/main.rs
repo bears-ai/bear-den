@@ -2842,6 +2842,23 @@ async fn post_session_lifecycle_action(
     session_id: &str,
     action: &str,
 ) -> Result<()> {
+    post_session_lifecycle_action_with_payload(
+        http,
+        config,
+        session_id,
+        action,
+        json!({ "adapter_contract": adapter_contract_context() }),
+    )
+    .await
+}
+
+async fn post_session_lifecycle_action_with_payload(
+    http: &reqwest::Client,
+    config: &Config,
+    session_id: &str,
+    action: &str,
+    payload: Value,
+) -> Result<()> {
     let url = format!(
         "{}/acp/bears/{}/sessions/{}/{}",
         config.api_url,
@@ -2856,7 +2873,7 @@ async fn post_session_lifecycle_action(
             HeaderValue::from_str(&format!("Bearer {}", config.token))?,
         )
         .header(CONTENT_TYPE, HeaderValue::from_static("application/json"))
-        .json(&json!({ "adapter_contract": adapter_contract_context() }))
+        .json(&payload)
         .send()
         .await
         .with_context(|| format!("post ACP session {action} to Den at {url}"))?;
@@ -2879,8 +2896,16 @@ async fn handle_prompt(
     response_id: Value,
     params: Value,
 ) -> Result<()> {
-    handle_prompt_with_retry(http, config, adapter_state, shared_state, response_id, params, true)
-        .await
+    handle_prompt_with_retry(
+        http,
+        config,
+        adapter_state,
+        shared_state,
+        response_id,
+        params,
+        true,
+    )
+    .await
 }
 
 async fn handle_prompt_with_retry(
@@ -3056,7 +3081,8 @@ async fn handle_prompt_with_retry(
         upstream_errors.extend(outcome.upstream_errors);
     }
 
-    if retry_after_unwedge && allow_retry_after_unwedge && !saw_visible_output && !saw_tool_activity {
+    if retry_after_unwedge && allow_retry_after_unwedge && !saw_visible_output && !saw_tool_activity
+    {
         eprintln!(
             "bears-acp-adapter: retrying prompt after automatic stale approval unwedge session_id={} errors={}",
             session_id,
@@ -3077,6 +3103,20 @@ async fn handle_prompt_with_retry(
             false,
         ))
         .await;
+    }
+
+    if retry_after_unwedge
+        && !allow_retry_after_unwedge
+        && !saw_visible_output
+        && !saw_tool_activity
+    {
+        send_agent_message_chunk(
+            session_id,
+            "BEARS could not clear stale Letta approval state for this ACP session. This session's conversation appears wedged; please start a new ACP session so BEARS can use a fresh conversation history.",
+        )
+        .await?;
+        saw_visible_output = true;
+        upstream_errors.clear();
     }
 
     if !upstream_errors.is_empty() {
@@ -3167,8 +3207,7 @@ async fn handle_local_slash_command(
         }
         LocalSlashCommand::Unwedge => {
             match post_session_lifecycle_action(http, config, session_id, "unwedge").await {
-                Ok(()) => "BEARS ACP unwedge requested for this session. Retry your last prompt."
-                    .to_string(),
+                Ok(()) => "BEARS ACP unwedge requested for this session. Retry your last prompt; if stale approval persists, start a new ACP session.".to_string(),
                 Err(err) => format!("BEARS ACP unwedge failed: {err:#}"),
             }
         }
