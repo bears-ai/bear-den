@@ -1,13 +1,17 @@
 use serde_json::json;
 
-use crate::core::den_tools::{
-    builtin_den_tool_descriptor_for_provider_name, invoke_den_tool, validate_memory_write_entry_semantics, DenToolInvocationContext,
+use crate::core::{
+    acp_tools::{acp_client_tool_descriptor, ACP_READ_TEXT_FILE_TOOL},
+    den_tools::{
+        builtin_den_tool_descriptor_for_provider_name, invoke_den_tool,
+        validate_memory_write_entry_semantics, DenToolInvocationContext,
+    },
 };
 
 #[test]
 fn descriptor_exposes_turn_state_domain_metadata() {
     let descriptor = builtin_den_tool_descriptor_for_provider_name("exit_plan_mode").unwrap();
-    assert_eq!(descriptor.domain, "workplan");
+    assert_eq!(descriptor.domain, "workflow");
     assert_eq!(descriptor.content_class, Some("workplan_artifact"));
 
     let descriptor = builtin_den_tool_descriptor_for_provider_name("update_plan").unwrap();
@@ -17,6 +21,13 @@ fn descriptor_exposes_turn_state_domain_metadata() {
     let descriptor = builtin_den_tool_descriptor_for_provider_name("memory_write_entry").unwrap();
     assert_eq!(descriptor.domain, "memory");
     assert_eq!(descriptor.content_class, Some("semantic_memory"));
+}
+
+#[test]
+fn acp_client_descriptors_expose_execution_domain_metadata() {
+    let descriptor = acp_client_tool_descriptor(&ACP_READ_TEXT_FILE_TOOL);
+    assert_eq!(descriptor["x-bears-domain"], "execution");
+    assert_eq!(descriptor["x-bears-content-class"], "read_files");
 }
 
 #[test]
@@ -33,6 +44,22 @@ fn memory_write_entry_semantics_reject_non_memory_domain_before_db_access() {
         .unwrap_err()
         .to_string();
     assert!(err.contains("workflow plan") || err.contains("plan-mode"));
+}
+
+#[test]
+fn memory_write_entry_semantics_reject_workboard_domain_before_db_access() {
+    let args: crate::core::den_tools::MemoryWriteEntryArguments = serde_json::from_value(json!({
+        "kind": "summary",
+        "title": "workboard status",
+        "body": "item one is in progress",
+        "domain": "workboard"
+    }))
+    .unwrap();
+
+    let err = validate_memory_write_entry_semantics(&args)
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("activity") || err.contains("update_plan"));
 }
 
 #[tokio::test]

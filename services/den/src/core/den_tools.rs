@@ -841,7 +841,7 @@ fn tool_domain(name: &str) -> &'static str {
         | DEN_PLAN_MODE_STATUS
         | DEN_PLAN_MODE_RECORD_APPROVAL
         | DEN_PLAN_MODE_EXIT
-        | DEN_PLAN_MODE_CANCEL => "workplan",
+        | DEN_PLAN_MODE_CANCEL => "workflow",
         DEN_WORK_PLAN_LIST
         | DEN_WORK_PLAN_GET_STATUS
         | DEN_WORK_PLAN_UPDATE
@@ -856,7 +856,9 @@ fn tool_domain(name: &str) -> &'static str {
         | DEN_MEMORY_READ_PROPOSAL
         | DEN_MEMORY_RESOLVE_PROPOSAL
         | DEN_MEMORY_APPLY_CORE_UPDATE => "memory",
-        DEN_CONVERSATION_SET_TITLE | DEN_WEB_FETCH | DEN_WEB_SEARCH | DEN_SITUATION_GET => "execution",
+        DEN_CONVERSATION_SET_TITLE | DEN_WEB_FETCH | DEN_WEB_SEARCH | DEN_SITUATION_GET => {
+            "execution"
+        }
         _ => "execution",
     }
 }
@@ -963,7 +965,7 @@ fn memory_write_entry_schema() -> Value {
             },
             "domain": {
                 "type": "string",
-                "enum": ["memory", "workplan", "activity", "execution"]
+                "enum": ["workflow", "workboard", "memory", "execution", "workplan", "activity"]
             }
         },
         "required": ["kind", "title", "body"],
@@ -2823,7 +2825,7 @@ pub(crate) fn validate_memory_write_entry_semantics(
             "memory" => {}
             "workplan" | "workflow" => {
                 return Err(CustomError::ValidationError(
-                    "This content appears to be a workplan artifact; use plan-mode or activity tools instead of memory_write_entry.".to_string(),
+                    "This content appears to be a workflow plan artifact; use plan-mode tools instead of memory_write_entry.".to_string(),
                 ));
             }
             "activity" | "workboard" => {

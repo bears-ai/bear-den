@@ -61,8 +61,8 @@ use crate::{
         memory_manager_head::{write_memfs_role_memory_entry, MemfsWriteRoleMemoryEntryRequest},
         memory_proposals::{self, CreateMemoryProposal},
         pair_reflection::{self, CompletePairReflectionRun, CreatePairReflectionRun},
-        reflection_conductor, user, web_policy,
-        work_plans::{self, WorkPlanLookup},
+        reflection_conductor, turn_state, user, web_policy,
+        work_plans::{self, WorkPlanLookup, WorkPlanProjection},
     },
     errors::CustomError,
 };
@@ -964,117 +964,49 @@ fn looks_like_letta_waiting_for_approval_error(err: &CustomError) -> bool {
         || format!("{err:#}").contains("waiting for approval")
 }
 
-pub(crate) fn workflow_state_label(
-    policy: &crate::core::acp_tools::AcpResolvedSessionPolicy,
-) -> &'static str {
-    match policy.plan_mode_state.as_deref() {
-        Some("submitted") => "submitted_waiting_approval",
-        Some("approved") => "approved",
-        Some("active") => "drafting",
-        Some("rejected") => "cancelled",
-        _ if policy.mode_label == "Write" => "approved",
-        _ => "inactive",
-    }
-}
-
-pub(crate) fn approval_status_label(plan_mode_state: Option<&str>, mode_label: &str) -> &'static str {
-    match plan_mode_state {
-        Some("approved") => "approved_execution_unlocked",
-        Some("submitted") => "awaiting_human_approval",
-        Some("active") => "drafting",
-        Some("rejected") => "cancelled",
-        _ if mode_label == "Write" => "approved_execution_unlocked",
-        _ => "inactive",
-    }
-}
-
 pub(crate) fn workflow_state_json(
     policy: &crate::core::acp_tools::AcpResolvedSessionPolicy,
 ) -> serde_json::Value {
-    let workplan_state = workflow_state_label(policy);
-    let approval_status = approval_status_label(policy.plan_mode_state.as_deref(), policy.mode_label);
-    let execution_unlocked = policy.tool_enablement.enables_non_read_tools();
-    serde_json::json!({
-        "schema": "bears.turn_state/v1",
-        "state_version": 1,
-        "state_authority": "current_turn_capabilities",
-        "focus": {
-            "current_domain": "activity",
-            "current_activity_id": serde_json::Value::Null,
-            "current_workplan_id": serde_json::Value::Null,
-            "root_workplan_id": serde_json::Value::Null,
-        },
-        "workplan": {
-            "domain": "workplan",
-            "id": serde_json::Value::Null,
-            "root_id": serde_json::Value::Null,
-            "parent_id": serde_json::Value::Null,
-            "relation": if workplan_state == "inactive" { "none" } else { "root" },
-            "state": workplan_state,
-            "approval_status": approval_status,
-            "mode_label": policy.mode_label,
-            "title": serde_json::Value::Null,
-            "summary": serde_json::Value::Null,
-        },
-        "activity": {
-            "domain": "activity",
-            "id": serde_json::Value::Null,
-            "root_id": serde_json::Value::Null,
-            "parent_id": serde_json::Value::Null,
-            "relation": "none",
-            "status": "inactive",
-            "title": serde_json::Value::Null,
-            "summary": serde_json::Value::Null,
-            "current_item": serde_json::Value::Null,
-            "counts": {
-                "pending": 0,
-                "in_progress": 0,
-                "blocked": 0,
-                "completed": 0,
-                "cancelled": 0
-            },
-            "toward_workplan_id": serde_json::Value::Null,
-            "handoff_requested": false
-        },
-        "memory": {
-            "domain": "memory",
-            "write_allowed": true,
-            "write_for_active_workplan_allowed": false,
-            "review_requested": false,
-            "active_scope": "role-local"
-        },
-        "execution": {
-            "domain": "execution",
-            "permission_mode": policy.mode_label,
-            "tool_classes": policy.allowed_tool_classes(),
-            "execution_unlocked": execution_unlocked,
-            "local_tools_available": true,
-            "approval_required_for_mutation": execution_unlocked
-        }
-    })
+    workflow_state_json_with_workboard(policy, None)
 }
 
-fn render_workflow_state_summary(
+pub(crate) fn workflow_state_json_with_workboard(
+    policy: &crate::core::acp_tools::AcpResolvedSessionPolicy,
+    workboard_plan: Option<&WorkPlanProjection>,
+) -> serde_json::Value {
+    turn_state::turn_state_json(policy, workboard_plan)
+}
+
+fn render_workflow_state_summary_with_workboard(
     session_id: &str,
     roots: &[String],
     local_tool_names: &[&str],
     den_tool_names: &[&str],
     policy: &crate::core::acp_tools::AcpResolvedSessionPolicy,
+    workboard_plan: Option<&WorkPlanProjection>,
 ) -> String {
     let execution_unlocked = policy.tool_enablement.enables_non_read_tools();
-    let workflow_state = workflow_state_json(policy);
-    let activity_status = workflow_state["activity"]["status"]
+    let workflow_state = workflow_state_json_with_workboard(policy, workboard_plan);
+    let workboard_status = workflow_state["workboard"]["status"]
         .as_str()
         .unwrap_or("inactive");
+    let workboard_plan_id = workflow_state["workboard"]["plan_id"]
+        .as_str()
+        .unwrap_or("none");
+    let current_item = workflow_state["workboard"]["current_item"]["title"]
+        .as_str()
+        .unwrap_or("none");
     format!(
-        "<system-reminder>AUTHORITATIVE WORKFLOW STATE for this turn: permission_mode=`{}`; tool_classes={}; workplan_state=`{}`; approval_status={}; activity_status=`{}`; execution_unlocked={}; write_for_active_workplan_allowed=false; state_authority=current turn capabilities override prior-turn assumptions. BEARS ACP direct local workspace tools available this turn: {}. Server tools available to pair: {}. Current ACP session id is `{}`. Use absolute paths under these workspace roots: {}.</system-reminder>",
+        "<system-reminder>AUTHORITATIVE WORKFLOW STATE for this turn: permission_mode=`{}`; tool_classes={}; workflow.state=`{}`; workflow.approval_status={}; workboard.status=`{}`; workboard.plan_id=`{}`; workboard.current_item=`{}`; memory.active_plan_write_allowed=false; execution.execution_unlocked={}; state_authority=current turn capabilities override prior-turn assumptions. BEARS ACP direct local workspace tools available this turn: {}. Server tools available to pair: {}. Current ACP session id is `{}`. Use absolute paths under these workspace roots: {}.</system-reminder>",
         policy.mode_label,
         policy.allowed_tool_classes().join(", "),
-        workflow_state["workplan"]["state"].as_str().unwrap_or("inactive"),
-        workflow_state["workplan"]["approval_status"]
+        workflow_state["workflow"]["state"].as_str().unwrap_or("inactive"),
+        workflow_state["workflow"]["approval_status"]
             .as_str()
             .unwrap_or("inactive"),
-        activity_status,
+        workboard_status,
+        workboard_plan_id,
+        current_item,
         execution_unlocked,
         local_tool_names.join(", "),
         den_tool_names.join(", "),
@@ -1083,12 +1015,31 @@ fn render_workflow_state_summary(
     )
 }
 
+#[cfg(test)]
 pub(crate) fn acp_direct_tool_prompt_context(
     session_id: &str,
     cwd: &str,
     client_context: &serde_json::Value,
     tools_enabled: bool,
     policy: &crate::core::acp_tools::AcpResolvedSessionPolicy,
+) -> String {
+    acp_direct_tool_prompt_context_with_workboard(
+        session_id,
+        cwd,
+        client_context,
+        tools_enabled,
+        policy,
+        None,
+    )
+}
+
+fn acp_direct_tool_prompt_context_with_workboard(
+    session_id: &str,
+    cwd: &str,
+    client_context: &serde_json::Value,
+    tools_enabled: bool,
+    policy: &crate::core::acp_tools::AcpResolvedSessionPolicy,
+    workboard_plan: Option<&WorkPlanProjection>,
 ) -> String {
     if !tools_enabled {
         return String::new();
@@ -1117,12 +1068,13 @@ pub(crate) fn acp_direct_tool_prompt_context(
                 .collect::<Vec<_>>()
         })
         .unwrap_or_default();
-    let mut guidance = vec![render_workflow_state_summary(
+    let mut guidance = vec![render_workflow_state_summary_with_workboard(
         session_id,
         &roots,
         &tool_names,
         &den_tool_names,
         policy,
+        workboard_plan,
     )];
     guidance.push(format!(
         "Trusted ACP session mode this turn: mode_label=`{}`. Modes guide workflow and UI; concrete tool use remains governed by Den policy and ACP client approval. Available tool classes: {}.",
@@ -2516,9 +2468,13 @@ async fn close_session_inner(
         archived = true;
     }
 
-    let active_plan_mode =
-        acp_plan_mode::active_for_session(&state.sqlx_pool, user_id, session.bear_id, &session.acp_session_id)
-            .await?;
+    let active_plan_mode = acp_plan_mode::active_for_session(
+        &state.sqlx_pool,
+        user_id,
+        session.bear_id,
+        &session.acp_session_id,
+    )
+    .await?;
     let plan_state = active_plan_mode.as_ref().map(|plan| plan.state.as_str());
     let effective_mode = if matches!(plan_state, Some("approved")) {
         "write"
@@ -2973,13 +2929,6 @@ async fn prompt_inner(
         &session_mode,
         active_plan_mode.as_ref().map(|plan| plan.state.as_str()),
     );
-    let tool_prompt_context = acp_direct_tool_prompt_context(
-        session_id,
-        &cwd,
-        &body.client_context,
-        tools_enabled,
-        &resolved_policy,
-    );
     let plan_mode_context = acp_plan_mode_prompt_context(&state, bear.id, user_id, session_id)
         .await
         .map_err(|err| {
@@ -3002,6 +2951,14 @@ async fn prompt_inner(
         let (status, code, message) = acp_error_status_message(&err);
         ApiError::new(status, code, message)
     })?;
+    let tool_prompt_context = acp_direct_tool_prompt_context_with_workboard(
+        session_id,
+        &cwd,
+        &body.client_context,
+        tools_enabled,
+        &resolved_policy,
+        current_workboard_plan.as_ref(),
+    );
     let plans = current_workboard_plan
         .clone()
         .into_iter()
@@ -3022,7 +2979,10 @@ async fn prompt_inner(
     })? {
         initial_events.push(title_event);
     }
-    if let Some(plan_event) = current_workboard_plan.map(AcpGatewayEvent::PlanUpdate) {
+    if let Some(plan_event) = current_workboard_plan
+        .clone()
+        .map(AcpGatewayEvent::PlanUpdate)
+    {
         initial_events.push(plan_event);
     }
     let prompt_with_tool_context =

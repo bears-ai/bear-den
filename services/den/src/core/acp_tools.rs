@@ -1479,9 +1479,17 @@ fn chrome_descriptor(
     })
 }
 
+fn acp_client_tool_domain(tool: &AcpToolDescriptor) -> &'static str {
+    match tool.permission_class {
+        "read_files" | "git_read" => "execution",
+        "edit_files" | "delete_files" | "git_write" | "run_process" | "browser" => "execution",
+        _ => "execution",
+    }
+}
+
 pub fn acp_client_tool_descriptor(tool: &AcpToolDescriptor) -> serde_json::Value {
     debug_assert!(provider_tool_name_is_safe(tool.provider_name));
-    match tool.provider_name {
+    let mut descriptor = match tool.provider_name {
         "fs_read_text_file" => json!({
             "name": tool.provider_name,
             "description": format!(
@@ -1898,7 +1906,18 @@ pub fn acp_client_tool_descriptor(tool: &AcpToolDescriptor) -> serde_json::Value
             Vec::<&str>::new(),
         ),
         _ => unreachable!("unknown ACP tool descriptor: {}", tool.provider_name),
+    };
+    if let Some(object) = descriptor.as_object_mut() {
+        object.insert(
+            "x-bears-domain".to_string(),
+            json!(acp_client_tool_domain(tool)),
+        );
+        object.insert(
+            "x-bears-content-class".to_string(),
+            json!(tool.permission_class),
+        );
     }
+    descriptor
 }
 
 #[cfg(test)]
