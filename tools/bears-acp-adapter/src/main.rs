@@ -640,6 +640,7 @@ struct SseFrameOutcome {
     saw_visible_output: bool,
     saw_tool_activity: bool,
     saw_error: bool,
+    retry_after_unwedge: bool,
     upstream_errors: Vec<String>,
 }
 
@@ -2878,6 +2879,19 @@ async fn handle_prompt(
     response_id: Value,
     params: Value,
 ) -> Result<()> {
+    handle_prompt_with_retry(http, config, adapter_state, shared_state, response_id, params, true)
+        .await
+}
+
+async fn handle_prompt_with_retry(
+    http: &reqwest::Client,
+    config: &Config,
+    adapter_state: &mut AdapterState,
+    shared_state: &AdapterSharedState,
+    response_id: Value,
+    params: Value,
+    allow_retry_after_unwedge: bool,
+) -> Result<()> {
     let session_id = params
         .get("sessionId")
         .and_then(Value::as_str)
@@ -2980,6 +2994,7 @@ async fn handle_prompt(
     let mut saw_visible_output = false;
     let mut saw_tool_activity = false;
     let mut saw_error = false;
+    let mut retry_after_unwedge = false;
     let mut upstream_errors = Vec::new();
     let mut buffer = Vec::<u8>::new();
     let mut stream = response.bytes_stream();
@@ -3018,6 +3033,7 @@ async fn handle_prompt(
             saw_visible_output |= outcome.saw_visible_output;
             saw_tool_activity |= outcome.saw_tool_activity;
             saw_error |= outcome.saw_error;
+            retry_after_unwedge |= outcome.retry_after_unwedge;
             upstream_errors.extend(outcome.upstream_errors);
         }
     }
@@ -3036,7 +3052,31 @@ async fn handle_prompt(
         saw_visible_output |= outcome.saw_visible_output;
         saw_tool_activity |= outcome.saw_tool_activity;
         saw_error |= outcome.saw_error;
+        retry_after_unwedge |= outcome.retry_after_unwedge;
         upstream_errors.extend(outcome.upstream_errors);
+    }
+
+    if retry_after_unwedge && allow_retry_after_unwedge && !saw_visible_output && !saw_tool_activity {
+        eprintln!(
+            "bears-acp-adapter: retrying prompt after automatic stale approval unwedge session_id={} errors={}",
+            session_id,
+            upstream_errors.join("; ")
+        );
+        send_agent_thought_chunk(
+            session_id,
+            "BEARS cleared stale approval state and is retrying your prompt automatically.",
+        )
+        .await?;
+        return Box::pin(handle_prompt_with_retry(
+            http,
+            config,
+            adapter_state,
+            shared_state,
+            response_id,
+            params,
+            false,
+        ))
+        .await;
     }
 
     if !upstream_errors.is_empty() {
@@ -3728,15 +3768,18 @@ async fn handle_sse_frame(
                         "Letta is waiting for stale approval and automatic unwedge failed: {err:#}"
                     ));
                 } else {
-                    outcome.saw_visible_output = true;
+                    outcome.retry_after_unwedge = true;
                     outcome.upstream_errors.push(
-                        "Letta was waiting for stale approval; BEARS requested an automatic unwedge. I have cleared the stale approval state. Please retry your message."
+                        "Letta was waiting for stale approval; BEARS requested an automatic unwedge and will retry the prompt."
                             .to_string(),
                     );
                 }
             } else {
                 outcome.upstream_errors.push(formatted);
             }
+        }
+        if outcome.retry_after_unwedge {
+            continue;
         }
         let handled =
             handle_den_event(config, adapter_state, shared_state, session_id, &event).await?;
@@ -5694,9 +5737,10 @@ mod tests {
         .unwrap();
 
         assert!(outcome.saw_error);
-        assert!(outcome.saw_visible_output);
+        assert!(!outcome.saw_visible_output);
+        assert!(outcome.retry_after_unwedge);
         assert_eq!(outcome.upstream_errors.len(), 1);
-        assert!(outcome.upstream_errors[0].contains("cleared the stale approval state"));
+        assert!(outcome.upstream_errors[0].contains("will retry the prompt"));
     }
 
     #[test]
