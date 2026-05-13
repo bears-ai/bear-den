@@ -358,6 +358,35 @@ fn format_acp_session_timestamp(t: time::OffsetDateTime) -> String {
     t.format(&Rfc3339).unwrap_or_else(|_| t.to_string())
 }
 
+#[derive(Debug, Clone)]
+pub(crate) struct AcpResolvedTurnContext {
+    pub(crate) policy: crate::core::acp_tools::AcpResolvedSessionPolicy,
+    pub(crate) workflow_state: serde_json::Value,
+    pub(crate) legacy_states: Vec<serde_json::Value>,
+    pub(crate) effective_mode: String,
+}
+
+pub(crate) fn resolve_acp_turn_context(
+    row: &acp_sessions::AcpSessionRow,
+    plan_mode_row: Option<&crate::core::acp_plan_mode::AcpPlanModeSessionRow>,
+    activity_plan: Option<&WorkPlanProjection>,
+) -> AcpResolvedTurnContext {
+    let policy = resolve_session_policy_for_mode(
+        &row.current_mode,
+        plan_mode_row.map(|value| value.state.as_str()),
+    );
+    let workflow_state = workflow_state_json_from_sources(&policy, plan_mode_row, activity_plan);
+    let plan_mode_value = plan_mode_row.and_then(|row| serde_json::to_value(row).ok());
+    let legacy_states = acp_session_legacy_states(row, plan_mode_value.as_ref());
+    let effective_mode = policy.mode_label.to_ascii_lowercase();
+    AcpResolvedTurnContext {
+        policy,
+        workflow_state,
+        legacy_states,
+        effective_mode,
+    }
+}
+
 fn acp_session_legacy_states(
     row: &acp_sessions::AcpSessionRow,
     plan_mode: Option<&serde_json::Value>,
@@ -391,22 +420,10 @@ pub(crate) fn acp_session_row_to_http_with_modes(
     row: acp_sessions::AcpSessionRow,
     plan_mode: Option<serde_json::Value>,
 ) -> AcpSessionHttp {
-    let policy = resolve_session_policy_for_mode(
-        &row.current_mode,
-        plan_mode
-            .as_ref()
-            .and_then(|value| value.get("state"))
-            .and_then(|value| value.as_str()),
-    );
-    let workflow_state = workflow_state_json_from_sources(
-        &policy,
-        plan_mode
-            .as_ref()
-            .and_then(|value| serde_json::from_value(value.clone()).ok())
-            .as_ref(),
-        None,
-    );
-    let legacy_states = acp_session_legacy_states(&row, plan_mode.as_ref());
+    let plan_mode_row = plan_mode
+        .as_ref()
+        .and_then(|value| serde_json::from_value(value.clone()).ok());
+    let turn_context = resolve_acp_turn_context(&row, plan_mode_row.as_ref(), None);
     AcpSessionHttp {
         acp_session_id: row.acp_session_id,
         runtime_session_id: row.runtime_session_id,
@@ -425,10 +442,10 @@ pub(crate) fn acp_session_row_to_http_with_modes(
         archived_at: row.archived_at.map(format_acp_session_timestamp),
         created_at: format_acp_session_timestamp(row.created_at),
         updated_at: format_acp_session_timestamp(row.updated_at),
-        legacy_states: Some(legacy_states),
+        legacy_states: Some(turn_context.legacy_states),
         plan_mode,
-        session_policy: policy.to_json(),
-        workflow_state,
+        session_policy: turn_context.policy.to_json(),
+        workflow_state: turn_context.workflow_state,
     }
 }
 
@@ -1685,23 +1702,21 @@ async fn set_session_mode_inner(
         _ => unreachable!(),
     }
 
-    let plan_mode =
-        acp_plan_mode::active_for_session(&state.sqlx_pool, user_id, bear.id, session_id)
+    let plan_mode_row = acp_plan_mode::active_for_session(&state.sqlx_pool, user_id, bear.id, session_id)
+        .await?;
+    let plan_mode = plan_mode_row.clone().map(serde_json::to_value).transpose()?;
+    let synthetic_row = acp_sessions::AcpSessionRow {
+        current_mode: effective_mode.clone(),
+        ..acp_sessions::find_for_user_bear_session(&state.sqlx_pool, user_id, &bear.slug, session_id)
             .await?
-            .map(serde_json::to_value)
-            .transpose()?;
-    let policy = resolve_session_policy_for_mode(
-        &effective_mode,
-        plan_mode
-            .as_ref()
-            .and_then(|value| value.get("state"))
-            .and_then(|value| value.as_str()),
-    );
+            .ok_or_else(|| CustomError::NotFound("ACP session not found".to_string()))?
+    };
+    let turn_context = resolve_acp_turn_context(&synthetic_row, plan_mode_row.as_ref(), None);
     Ok(Json(AcpSetModeResponse {
         requested_mode,
-        effective_mode: policy.mode_label.to_ascii_lowercase(),
-        session_policy: policy.to_json(),
-        workflow_state: workflow_state_json(&policy),
+        effective_mode: turn_context.effective_mode,
+        session_policy: turn_context.policy.to_json(),
+        workflow_state: turn_context.workflow_state,
         plan_mode,
         message,
     })
@@ -2312,9 +2327,8 @@ async fn unwedge_session_inner(
     let active_plan_mode =
         acp_plan_mode::active_for_session(&state.sqlx_pool, user_id, session.bear_id, &session_id)
             .await?;
-    let plan_state = active_plan_mode.as_ref().map(|plan| plan.state.as_str());
-    let policy = resolve_session_policy_for_mode(session.current_mode.as_str(), plan_state);
-    let effective_mode = policy.mode_label.to_ascii_lowercase();
+    let turn_context = resolve_acp_turn_context(&session, active_plan_mode.as_ref(), None);
+    let effective_mode = turn_context.effective_mode.clone();
     if effective_mode != session.current_mode {
         acp_sessions::set_current_mode(
             &state.sqlx_pool,
@@ -2331,7 +2345,7 @@ async fn unwedge_session_inner(
         pair_agent_id = %pair_agent_id,
         run_ids = ?run_ids,
         effective_mode,
-        plan_state = ?plan_state,
+        plan_state = ?active_plan_mode.as_ref().map(|plan| plan.state.as_str()),
         "ACP session unwedge requested; cancelled Letta runs, cleaned local tool turns, and reconciled session mode"
     );
     Ok(Json(serde_json::json!({
@@ -2342,8 +2356,8 @@ async fn unwedge_session_inner(
         "run_ids": run_ids,
         "letta_cancel_result": cancel_result,
         "effective_mode": effective_mode,
-        "session_policy": policy.to_json(),
-        "workflow_state": workflow_state_json(&policy),
+        "session_policy": turn_context.policy.to_json(),
+        "workflow_state": turn_context.workflow_state,
     }))
     .into_response())
 }
@@ -2477,14 +2491,13 @@ async fn close_session_inner(
         &session.acp_session_id,
     )
     .await?;
-    let plan_state = active_plan_mode.as_ref().map(|plan| plan.state.as_str());
-    let policy = resolve_session_policy_for_mode(session.current_mode.as_str(), plan_state);
+    let turn_context = resolve_acp_turn_context(&session, active_plan_mode.as_ref(), None);
     Ok(Json(AcpCloseSessionResponse {
         ok: true,
         archived,
         conversation_id: archive_target.map(str::to_string),
         unwedged: None,
-        workflow_state: Some(workflow_state_json(&policy)),
+        workflow_state: Some(turn_context.workflow_state),
     })
     .into_response())
 }
@@ -2920,8 +2933,32 @@ async fn prompt_inner(
             })?
             .map(|session| session.current_mode)
             .unwrap_or_else(|| "ask".to_string());
-    let plan_state = active_plan_mode.as_ref().map(|plan| plan.state.as_str());
-    let resolved_policy = resolve_session_policy_for_mode(&session_mode, plan_state);
+    let synthetic_session_row = acp_sessions::AcpSessionRow {
+        id: Uuid::nil(),
+        user_id,
+        bear_id: bear.id,
+        bear_slug: bear.slug.clone(),
+        acp_session_id: session_id.to_string(),
+        runtime_session_id: "runtime-test".to_string(),
+        conversation_id: "default".to_string(),
+        resolved_conversation_id: None,
+        client: "acp".to_string(),
+        cwd: Some(cwd.clone()),
+        current_mode: session_mode,
+        conversation_title: None,
+        conversation_title_updated_at: None,
+        conversation_title_synced_at: None,
+        closed_at: None,
+        archived_at: None,
+        created_at: time::OffsetDateTime::UNIX_EPOCH,
+        updated_at: time::OffsetDateTime::UNIX_EPOCH,
+    };
+    let resolved_policy = resolve_acp_turn_context(
+        &synthetic_session_row,
+        active_plan_mode.as_ref(),
+        None,
+    )
+    .policy;
     let plan_mode_context = acp_plan_mode_prompt_context(&state, bear.id, user_id, session_id)
         .await
         .map_err(|err| {

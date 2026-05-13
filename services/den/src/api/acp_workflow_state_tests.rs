@@ -6,7 +6,8 @@ use crate::core::{
 };
 
 use super::acp::{
-    acp_direct_tool_prompt_context, acp_pair_den_tool_descriptors, workflow_state_json,
+    acp_direct_tool_prompt_context, acp_pair_den_tool_descriptors, resolve_acp_turn_context,
+    workflow_state_json,
 };
 
 #[test]
@@ -238,4 +239,58 @@ fn workflow_state_json_from_sources_carries_workplan_identity_and_artifact_field
     assert_eq!(workflow_state["workplan"]["artifact_path"], "pair/plans/example.md");
     assert_eq!(workflow_state["workplan"]["title"], "Example plan");
     assert_eq!(workflow_state["workplan"]["submitted_plan_present"], true);
+}
+
+#[test]
+fn resolve_turn_context_returns_matching_policy_and_turn_state() {
+    let session = crate::core::acp_sessions::AcpSessionRow {
+        id: uuid::Uuid::nil(),
+        user_id: 1,
+        bear_id: uuid::Uuid::nil(),
+        bear_slug: "test-bear".to_string(),
+        acp_session_id: "acp-test".to_string(),
+        runtime_session_id: "runtime-test".to_string(),
+        conversation_id: "default".to_string(),
+        resolved_conversation_id: None,
+        client: "acp".to_string(),
+        cwd: None,
+        current_mode: "ask".to_string(),
+        conversation_title: None,
+        conversation_title_updated_at: None,
+        conversation_title_synced_at: None,
+        closed_at: None,
+        archived_at: None,
+        created_at: time::OffsetDateTime::UNIX_EPOCH,
+        updated_at: time::OffsetDateTime::UNIX_EPOCH,
+    };
+    let plan_mode = AcpPlanModeSessionRow {
+        id: uuid::Uuid::nil(),
+        user_id: 1,
+        bear_id: uuid::Uuid::nil(),
+        bear_slug: "test-bear".to_string(),
+        acp_session_id: "acp-test".to_string(),
+        state: "approved".to_string(),
+        reason: "test".to_string(),
+        requested_by: "pair".to_string(),
+        previous_permission_mode: Some("plan".to_string()),
+        plan_title: Some("Example plan".to_string()),
+        plan_body: Some("Do the thing carefully".to_string()),
+        plan_artifact_path: Some("pair/plans/example.md".to_string()),
+        approval_request_id: None,
+        approved_by_user_id: Some(1),
+        approved_at: Some(time::OffsetDateTime::UNIX_EPOCH),
+        rejected_at: None,
+        closed_at: None,
+        created_at: time::OffsetDateTime::UNIX_EPOCH,
+        updated_at: time::OffsetDateTime::UNIX_EPOCH,
+    };
+    let resolved = resolve_acp_turn_context(&session, Some(&plan_mode), None);
+    assert_eq!(resolved.effective_mode, "write");
+    assert_eq!(resolved.policy.mode_label, "Write");
+    assert_eq!(resolved.workflow_state["workplan"]["state"], "approved");
+    assert_eq!(
+        resolved.workflow_state["workplan"]["approval_status"],
+        "approved_execution_unlocked"
+    );
+    assert_eq!(resolved.workflow_state["execution"]["execution_unlocked"], true);
 }
