@@ -1,8 +1,9 @@
 # Workflow State Ontology — Architecture Decision Record
 
-## Status: Proposed
+## Status: Approved
 
 ## Date: 2026-05-12
+## Updated: 2026-05-13
 
 ---
 
@@ -46,10 +47,12 @@ BEARS will adopt a **single ontology-aware workflow state model** and expose it 
 
 The model has four top-level domains:
 
-1. **workflow** — planning and approval-gate state for a proposed course of action;
-2. **workboard** — live tactical status for active work items and current progress;
+1. **workplan** — planning and approval-gate state for a proposed course of action;
+2. **activity** — live tactical status for active work items and current progress;
 3. **memory** — durable semantic role-local or curated knowledge capture;
 4. **execution** — current-turn capability state and side-effect-bearing tool availability.
+
+These names are normative for current Den and ACP implementation surfaces. Earlier discussion and draft text may refer to `workflow` and `workboard`; those terms are superseded by `workplan` and `activity` respectively.
 
 These domains must be treated as distinct categories in system design, not just explained as conventions in prompts.
 
@@ -57,9 +60,9 @@ These domains must be treated as distinct categories in system design, not just 
 
 ## Domain model
 
-### 1. Workflow
+### 1. Workplan
 
-Workflow is the proposal/approval lane.
+Workplan is the proposal/approval lane.
 
 Examples:
 
@@ -76,9 +79,9 @@ Properties:
 - not the live status list;
 - may unlock execution when approved.
 
-### 2. Workboard
+### 2. Activity
 
-Workboard is the live tactical progress lane.
+Activity is the live tactical progress lane.
 
 Examples:
 
@@ -139,16 +142,18 @@ Properties:
 
 ### A. One authoritative turn-state summary
 
-Each turn should expose a concise authoritative state block that names the active state in workflow, workboard, memory, and execution terms.
+Each turn should expose a concise authoritative state block that names the active state in workplan, activity, memory, and execution terms.
 
 Minimum desired fields:
 
 - `permission_mode`
 - `tool_classes`
-- `workflow_state` (`inactive`, `drafting`, `submitted_waiting_approval`, `approved`, `cancelled`)
-- `execution_unlocked`
-- `workboard_plan_id` / summary when present
-- `memory_write_for_active_plan_allowed` (expected `false`)
+- `workplan.state` (`inactive`, `drafting`, `submitted_waiting_approval`, `approved`, `cancelled`)
+- `workplan.approval_status`
+- `activity.plan_id` / summary when present
+- `activity.status`
+- `execution.execution_unlocked`
+- `memory.active_plan_write_allowed` (expected `false`)
 - `state_version` or equivalent current-turn freshness indicator
 
 This state block should be treated as the canonical per-turn truth. Prior-turn assumptions must not override it.
@@ -157,18 +162,18 @@ This state block should be treated as the canonical per-turn truth. Prior-turn a
 
 Tool outputs must reinforce category separation.
 
-#### Workflow outputs
+#### Workplan outputs
 
-Should look like workflow state, for example:
+Should look like workplan state, for example:
 
-- workflow id
+- workplan id
 - approval state
 - submitted/approved/rejected timestamps
 - execution unlocked or not
 
 They should not primarily present as memory-like file results.
 
-#### Workboard outputs
+#### Activity outputs
 
 Should look like plan/status projections:
 
@@ -212,13 +217,14 @@ Planning tools should reject clearly non-workflow semantic-memory content where 
 
 ### D. Plan artifacts should not present as memory
 
-Workflow artifacts should be represented in a workflow-native namespace and response shape.
+Workplan artifacts should be represented in a workplan-native namespace and response shape.
 
 Preferred direction:
 
-- use workflow-native ids and state as the primary surfaced representation;
+- use workplan-native ids and state as the primary surfaced representation;
 - if a durable path is needed, avoid role-memory-looking locations and labels;
-- do not make plan artifacts look like ordinary semantic memory entries.
+- do not make plan artifacts look like ordinary semantic memory entries;
+- do not describe or surface workplan artifacts as MemFS semantic-memory documents, even if implementation details temporarily reuse MemFS-backed storage.
 
 ### E. Provider-safe names remain required, but purpose should be surfaced separately
 
@@ -227,7 +233,7 @@ Because dotted provider-facing names are not allowed, BEARS must continue using 
 To preserve ontology clarity without belabored user-facing names:
 
 - keep provider-safe names compact;
-- expose a stronger ontology field in descriptors and UI, such as `domain: workflow | workboard | memory | execution`;
+- expose a stronger ontology field in descriptors and UI, such as `domain: workplan | activity | memory | execution`;
 - use human-facing titles that emphasize purpose rather than implementation ownership.
 
 This means Option C from the earlier discussion is preferred in a lightweight form: the environment should carry a structured content/domain class even if the human-facing tool name stays concise.
@@ -266,14 +272,16 @@ Rejected. The ontology problem is already affecting planning, memory, and execut
 2. Update planning docs so the unified workflow-state model becomes an immediate priority.
 3. Add a canonical turn-state summary shape for ACP reminders and related Den surfaces.
 4. Add ontology/domain fields to relevant tool descriptors.
-5. Adjust plan-mode and workboard responses to look workflow-native rather than memory-like.
-6. Add misuse rejection for memory tools receiving workflow/task-like content.
+5. Adjust plan-mode and activity responses to look workplan-native rather than memory-like.
+6. Add misuse rejection for memory tools receiving workplan/activity/task-like content.
+7. Align all remaining Den surfaces, operator views, reminders, and audit outputs to the same `workplan` / `activity` / `memory` / `execution` ontology.
 
 ### Follow-on requirements
 
 1. Align UI chrome and reminder text with the same four-domain ontology.
-2. Align operator views and audit logs around workflow/workboard/memory/execution categories.
+2. Align operator views and audit logs around workplan/activity/memory/execution categories.
 3. Extend tests to assert ontology separation in tool availability, outputs, and rejection behavior.
+4. Remove or rename any remaining implementation surfaces that make workplan artifacts look like role-memory documents.
 
 ---
 
@@ -282,11 +290,12 @@ Rejected. The ontology problem is already affecting planning, memory, and execut
 This decision is successfully implemented when:
 
 - ACP and related Den surfaces expose one authoritative per-turn workflow-state summary.
-- Planning, workboard, memory, and execution are explicitly represented as separate domains in reminders and/or descriptor metadata.
-- Plan artifacts no longer present as ordinary semantic memory entries.
+- Planning, activity, memory, and execution are explicitly represented as separate domains in reminders and/or descriptor metadata.
+- Workplan artifacts no longer present as ordinary semantic memory entries or as MemFS semantic-memory documents.
 - `memory_write_entry` rejects active-plan/task-intent/run-result-like content.
 - Current-turn tool availability is clearly marked as authoritative over prior-turn state.
 - Planning documents treat the unified workflow-state model as an active near-term priority.
+- Den-wide operator, audit, and API surfaces use the same ontology consistently.
 
 ---
 

@@ -18,8 +18,8 @@ This file is the canonical planning dashboard for `docs/planning/`. It should le
 | Phase 1 Den bootstrap / operator stack | Active broad delivery track for deployability, auth, operator UX, web chat, provisioning, routines, and artifacts | [`PHASE1_BOOTSTRAP.md`](PHASE1_BOOTSTRAP.md), [`PHASE1_DECISIONS.md`](PHASE1_DECISIONS.md) |
 | Multi-agent role model | Implemented baseline exists: additive schema landed, role-scoped routing is active, legacy bear-level Letta id routing is retired; runtime completion queue remains active | [`MULTI_AGENT_IMPLEMENTATION_PLAN.md`](MULTI_AGENT_IMPLEMENTATION_PLAN.md) |
 | ACP `pair` direct local-tool runtime | Baseline runtime exists and has confirmed end-to-end local tool operation; current work is reliability and continuation hardening | [`ACP_DIRECT_LOCAL_TOOL_RUNTIME_PLAN.md`](ACP_DIRECT_LOCAL_TOOL_RUNTIME_PLAN.md), [`ACP_ADAPTER_IMPROVEMENT_PLAN.md`](ACP_ADAPTER_IMPROVEMENT_PLAN.md) |
-| Workboard and ACP plan mode | Implemented baseline; now needs ontology-aware workflow-state unification so planning, workboard, memory, and execution are clearly separated | [`TASK_SYSTEM_IMPLEMENTATION_PLAN.md`](TASK_SYSTEM_IMPLEMENTATION_PLAN.md), [`../architecture/adr/workflow-state-ontology.md`](../architecture/adr/workflow-state-ontology.md) |
-| Memory tools | Partial implementation / active follow-up, especially for `pair`; must align with the workflow-state ontology so semantic memory is structurally distinct from planning and execution state | [`MEMORY_TOOLS_IMPLEMENTATION_PLAN.md`](MEMORY_TOOLS_IMPLEMENTATION_PLAN.md), [`../architecture/adr/workflow-state-ontology.md`](../architecture/adr/workflow-state-ontology.md) |
+| Activity plans and ACP plan mode | Implemented baseline; current priority is Den-wide ontology alignment so workplan, activity, memory, and execution remain clearly separated across reminders, APIs, operators, and UI | [`TASK_SYSTEM_IMPLEMENTATION_PLAN.md`](TASK_SYSTEM_IMPLEMENTATION_PLAN.md), [`../architecture/adr/workflow-state-ontology.md`](../architecture/adr/workflow-state-ontology.md) |
+| Memory tools | Partial implementation / active follow-up, especially for `pair`; must align with the workflow-state ontology so semantic memory is structurally distinct from workplan artifacts, activity state, and execution state | [`MEMORY_TOOLS_IMPLEMENTATION_PLAN.md`](MEMORY_TOOLS_IMPLEMENTATION_PLAN.md), [`../architecture/adr/workflow-state-ontology.md`](../architecture/adr/workflow-state-ontology.md) |
 | Reflection and memory governance | MVP schema/storage foundation exists; full curate review and promotion runtime remains active follow-up work | [`CURATE_MEMORY_GOVERNANCE_PLAN.md`](CURATE_MEMORY_GOVERNANCE_PLAN.md), [`REFLECTION_SYSTEM_PLAN.md`](REFLECTION_SYSTEM_PLAN.md) |
 
 ### Current implementation picture
@@ -27,7 +27,8 @@ This file is the canonical planning dashboard for `docs/planning/`. It should le
 - **Phase 1 Den bootstrap remains the broad platform track.** [`PHASE1_BOOTSTRAP.md`](PHASE1_BOOTSTRAP.md) and [`PHASE1_DECISIONS.md`](PHASE1_DECISIONS.md) are still the top-level source for the first deployable Den stack, operator console, web chat path, Letta Code harnessing, routines, and Garage/artifacts decisions.
 - **Multi-agent BEARS is no longer just conceptual.** [`MULTI_AGENT_IMPLEMENTATION_PLAN.md`](MULTI_AGENT_IMPLEMENTATION_PLAN.md) documents a meaningful implemented baseline: additive multi-agent schema exists, role-scoped routing is active, the legacy single-agent `bears.letta_agent_id` model is retired, and the current runtime queue is focused on task intent capture, curate review, work dispatch, watch ingestion, and trust-boundary hardening.
 - **ACP for `pair` has changed direction and is now real.** The canonical path is the **direct Den ⇄ adapter ⇄ Letta conversation API runtime** in [`ACP_DIRECT_LOCAL_TOOL_RUNTIME_PLAN.md`](ACP_DIRECT_LOCAL_TOOL_RUNTIME_PLAN.md), with current hardening work captured in [`ACP_ADAPTER_IMPROVEMENT_PLAN.md`](ACP_ADAPTER_IMPROVEMENT_PLAN.md). Older Codepool relay documents are historical only.
-- **Work planning now has two layers.** [`TASK_SYSTEM_IMPLEMENTATION_PLAN.md`](TASK_SYSTEM_IMPLEMENTATION_PLAN.md) distinguishes a Den live workboard from the ACP `pair` plan-mode approval gate. This is the active planning/status model rather than older ad hoc plan ideas.
+- **Work planning now has two layers.** [`TASK_SYSTEM_IMPLEMENTATION_PLAN.md`](TASK_SYSTEM_IMPLEMENTATION_PLAN.md) distinguishes Den live **activity** plans from the ACP `pair` **workplan** approval gate. This is the active planning/status model rather than older ad hoc plan ideas.
+- **Workplan artifacts are not semantic memory.** Even where current implementation still stores a durable markdown artifact under `pair/plans/`, that artifact is part of the workplan domain, not a MemFS semantic-memory document and not part of the `den.memory.*` tool family.
 - **Memory governance is split intentionally.** [`MEMORY_TOOLS_IMPLEMENTATION_PLAN.md`](MEMORY_TOOLS_IMPLEMENTATION_PLAN.md) covers role-facing Den memory tools, while [`CURATE_MEMORY_GOVERNANCE_PLAN.md`](CURATE_MEMORY_GOVERNANCE_PLAN.md) covers proposal, review, and promotion into shared `core/` memory.
 
 ### Important contradictions resolved here
@@ -35,7 +36,7 @@ This file is the canonical planning dashboard for `docs/planning/`. It should le
 - **ACP direct mode supersedes ACP Codepool relay for `pair`.** Do not treat [`archives/ACP_CLIENT_TOOL_RELAY_PLAN.md`](archives/ACP_CLIENT_TOOL_RELAY_PLAN.md) or [`archives/ACP_TOOL_RELIABILITY_PLAN.md`](archives/ACP_TOOL_RELIABILITY_PLAN.md) as active implementation plans for ACP local tools.
 - **The broad `bear_channel` roadmap still matters, but not as the active `pair` local-tool architecture.** [`BEAR_CHANNEL_PLANS.md`](BEAR_CHANNEL_PLANS.md) remains relevant for web/chat/runtime capability work and historical ACP gateway progress, but its client-tool relay section is no longer the canonical path for direct ACP local tooling.
 - **Den-hosted read-only tool ideas have evolved into role-scoped planning and memory tools.** Capability-model and Den-tool background plans are now reference material; current implementation priority is captured in the multi-agent, task, memory, and ACP plans listed below.
-- **UI and onboarding plans depend on role-aware composition and the workboard/memory model.** Treat UI/onboarding/context-composition plans as downstream product/design plans, not the current backend critical path.
+- **UI and onboarding plans depend on role-aware composition and the activity/memory model.** Treat UI/onboarding/context-composition plans as downstream product/design plans, not the current backend critical path, but ontology alignment across Den surfaces is now active backend work rather than deferred cleanup.
 
 ## Near-term priorities
 
@@ -49,8 +50,8 @@ This file is the canonical planning dashboard for `docs/planning/`. It should le
    - work dispatcher and result lifecycle
    - watch ingestion and observation lifecycle
    - trust-boundary hardening and end-to-end proof
-3. Unify planning, workboard, memory, and execution surfaces under the single ontology-aware workflow-state model in [`../architecture/adr/workflow-state-ontology.md`](../architecture/adr/workflow-state-ontology.md).
-4. Keep the task/workboard model aligned with [`TASK_SYSTEM_IMPLEMENTATION_PLAN.md`](TASK_SYSTEM_IMPLEMENTATION_PLAN.md).
+3. Unify workplan, activity, memory, and execution surfaces under the single ontology-aware workflow-state model in [`../architecture/adr/workflow-state-ontology.md`](../architecture/adr/workflow-state-ontology.md).
+4. Keep the task/activity model aligned with [`TASK_SYSTEM_IMPLEMENTATION_PLAN.md`](TASK_SYSTEM_IMPLEMENTATION_PLAN.md) and remove any remaining presentation that makes workplan artifacts look like semantic-memory documents.
 
 ### 2. Harden ACP `pair`
 
@@ -76,8 +77,8 @@ This file is the canonical planning dashboard for `docs/planning/`. It should le
 - [Phase 1 bootstrap](PHASE1_BOOTSTRAP.md) — broad Den delivery plan.
 - [Phase 1 locked decisions](PHASE1_DECISIONS.md) — currently active product decisions for the Phase 1 stack.
 - [Multi-agent bear implementation](MULTI_AGENT_IMPLEMENTATION_PLAN.md) — active runtime completion queue and broader rollout phases.
-- [Workflow state ontology ADR](../architecture/adr/workflow-state-ontology.md) — unify workflow, workboard, memory, and execution state now rather than as a later cleanup.
-- [Task system implementation](TASK_SYSTEM_IMPLEMENTATION_PLAN.md) — live workboard, plan mode, handoff, and task runtime.
+- [Workflow state ontology ADR](../architecture/adr/workflow-state-ontology.md) — unify workplan, activity, memory, and execution state now rather than as a later cleanup, and align all remaining Den surfaces to that ontology.
+- [Task system implementation](TASK_SYSTEM_IMPLEMENTATION_PLAN.md) — live activity plans, workplan approval gates, handoff, and task runtime.
 - [Memory tools implementation](MEMORY_TOOLS_IMPLEMENTATION_PLAN.md) — role-facing Den memory tools.
 - [Curate memory governance](CURATE_MEMORY_GOVERNANCE_PLAN.md) — review and promotion of memory into `core/`.
 - [Reflection system](REFLECTION_SYSTEM_PLAN.md) — reflection lanes and review architecture.

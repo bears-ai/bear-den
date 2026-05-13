@@ -36,7 +36,7 @@ Give agents, especially `pair`, safe Den-hosted access to Bear memory:
 - Do not require role-local memories to map to Cabinet or `core/`.
 - Do not let agents write arbitrary `core/` paths.
 - Do not let agents choose schema-owned durable artifact paths.
-- Do not let semantic-memory tools masquerade as planning, workboard, task-intent, run-result, or workflow-artifact tools.
+- Do not let semantic-memory tools masquerade as workplan, activity, task-intent, run-result, or workplan-artifact tools.
 - Do not replace Letta Code-native MemFS tools for harness-backed roles where native tools are the better low-latency path.
 - Do not implement destructive rollback or MemFS operator overrides as agent tools.
 - Do not call the session briefing “context.”
@@ -67,7 +67,7 @@ Give agents, especially `pair`, safe Den-hosted access to Bear memory:
 | `den.memory.write_entry` | `memory_write_entry` | `pair` first | Write role-local semantic entries under `pair/`. |
 | `den.memory.status` | `memory_status` | `pair` first | Return MemFS health for the current bear/role. |
 
-All three tools should participate in the workflow-state ontology. At minimum, descriptor metadata and tool responses should make it clear that these belong to the `memory` or `execution` domains, not `workflow` or `workboard`, even though provider-safe names must stay concise and dot-free.
+All three tools should participate in the workflow-state ontology. At minimum, descriptor metadata and tool responses should make it clear that these belong to the `memory` or `execution` domains, not `workplan` or `activity`, even though provider-safe names must stay concise and dot-free.
 
 P0 should retire the existing `den.write_note` / `den_write_note` pair tool and replace it with `den.memory.write_entry` / `memory_write_entry`. Backward compatibility is not required.
 
@@ -202,7 +202,7 @@ Defaults:
 
 ### Ontology-aware validation
 
-To support the workflow-state model, `den.memory.write_entry` should also reject content that is structurally in the wrong domain, even when the title/body are superficially valid text.
+To support the workflow-state model, `den.memory.write_entry` should also reject content that is structurally in the wrong domain, even when the title/body are superficially valid text. In particular, persisted workplan artifacts such as `pair/plans/...` are not semantic-memory entries and must not be described as MemFS semantic-memory documents.
 
 Examples to reject or redirect:
 
