@@ -1323,7 +1323,7 @@ fn map_acp_history_page(
     let has_more = raw.len() >= page_limit as usize;
     let next_before = raw.iter().filter_map(letta_message_id_string).next_back();
     let mut rows = Vec::new();
-    for msg in raw.iter().rev() {
+    for msg in raw.iter() {
         let inner = letta_inner_for_acp_history(msg);
         let message_type = inner
             .get("message_type")
@@ -2905,10 +2905,8 @@ async fn prompt_inner(
             })?
             .map(|session| session.current_mode)
             .unwrap_or_else(|| "ask".to_string());
-    let resolved_policy = resolve_session_policy_for_mode(
-        &session_mode,
-        active_plan_mode.as_ref().map(|plan| plan.state.as_str()),
-    );
+    let plan_state = active_plan_mode.as_ref().map(|plan| plan.state.as_str());
+    let resolved_policy = resolve_session_policy_for_mode(&session_mode, plan_state);
     let plan_mode_context = acp_plan_mode_prompt_context(&state, bear.id, user_id, session_id)
         .await
         .map_err(|err| {
@@ -4137,22 +4135,25 @@ impl Stream for AcpLettaSseStream {
                                 this.diagnostics.observe_mapped_event(&mode_event);
                                 this.pending.push_back(acp_event_to_adapter_sse(mode_event));
                             }
-                            if acp_debug_ui_enabled() {
-                                let tool_name = tool_result
-                                    .tool_name
-                                    .as_deref()
-                                    .unwrap_or("tool")
-                                    .to_string();
-                                this.pending.push_back(acp_event_to_adapter_sse(
-                                    AcpGatewayEvent::StatusText {
-                                        text: format!(
-                                            "BEARS debug: local tool {tool_name} completed with status {} ({} bytes)",
-                                            tool_result.status,
-                                            tool_result.content.as_deref().map(str::len).unwrap_or(0),
-                                        ),
-                                    },
-                                ));
-                            }
+                            let tool_name = tool_result
+                                .tool_name
+                                .as_deref()
+                                .unwrap_or("tool")
+                                .to_string();
+                            let completion_text = if acp_debug_ui_enabled() {
+                                format!(
+                                    "BEARS debug: local tool {tool_name} completed with status {} ({} bytes)",
+                                    tool_result.status,
+                                    tool_result.content.as_deref().map(str::len).unwrap_or(0),
+                                )
+                            } else {
+                                format!("Local tool {tool_name} completed")
+                            };
+                            this.pending.push_back(acp_event_to_adapter_sse(
+                                AcpGatewayEvent::StatusText {
+                                    text: completion_text,
+                                },
+                            ));
                             // Letta keeps the original run active until its SSE stream finishes
                             // with `requires_approval`/stop metadata. If we POST the tool return
                             // before draining that stream, Letta rejects the continuation with
