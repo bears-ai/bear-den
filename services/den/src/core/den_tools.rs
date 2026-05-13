@@ -1180,7 +1180,7 @@ struct WebSearchArguments {
 }
 
 #[derive(Debug, Deserialize)]
-struct MemoryWriteEntryArguments {
+pub(crate) struct MemoryWriteEntryArguments {
     kind: String,
     title: String,
     body: String,
@@ -1284,6 +1284,7 @@ pub async fn invoke_den_tool(
     arguments: Value,
     context: DenToolInvocationContext,
 ) -> Result<Value, CustomError> {
+    prevalidate_tool_arguments(tool_name, &arguments)?;
     let role = authorize_context(pool, &context).await?;
     authorize_tool_for_role(tool_name, role)?;
     match tool_name {
@@ -1336,6 +1337,17 @@ pub async fn invoke_den_tool(
         _ => Err(CustomError::NotFound(format!(
             "unknown Den tool: {tool_name}"
         ))),
+    }
+}
+
+fn prevalidate_tool_arguments(tool_name: &str, arguments: &Value) -> Result<(), CustomError> {
+    match tool_name {
+        DEN_MEMORY_WRITE_ENTRY => {
+            let args: MemoryWriteEntryArguments = serde_json::from_value(arguments.clone())?;
+            validate_memory_write_entry_semantics(&args)?;
+            Ok(())
+        }
+        _ => Ok(()),
     }
 }
 
@@ -2174,74 +2186,7 @@ async fn write_memory_entry(
         ));
     }
     let args: MemoryWriteEntryArguments = serde_json::from_value(arguments)?;
-    let kind = validate_memory_kind(&args.kind)?;
-    if kind == "plan" {
-        return Err(CustomError::ValidationError(
-            "This content appears to be a workflow plan; use update_plan for visible task plans and exit_plan_mode for submitted implementation plans instead of memory_write_entry.".to_string(),
-        ));
-    }
-    if let Some(domain) = args.domain.as_deref() {
-        match domain {
-            "memory" => {}
-            "workflow" => {
-                return Err(CustomError::ValidationError(
-                    "This content appears to be a workflow plan; use plan-mode or workboard tools instead of memory_write_entry.".to_string(),
-                ));
-            }
-            "workboard" => {
-                return Err(CustomError::ValidationError(
-                    "This content appears to be live workboard state; use update_plan or related workboard tools instead of memory_write_entry.".to_string(),
-                ));
-            }
-            "execution" => {
-                return Err(CustomError::ValidationError(
-                    "This content appears to describe execution or run output rather than semantic memory; use the appropriate execution/result tool instead of memory_write_entry.".to_string(),
-                ));
-            }
-            _ => {}
-        }
-    }
-    if let Some(content_class) = args.content_class.as_deref() {
-        match content_class {
-            "semantic_memory" => {}
-            "workflow_plan" => {
-                return Err(CustomError::ValidationError(
-                    "This content appears to be a workflow plan; use plan-mode tools instead of memory_write_entry.".to_string(),
-                ));
-            }
-            "workboard_status" => {
-                return Err(CustomError::ValidationError(
-                    "This content appears to be live workboard state; use update_plan instead of memory_write_entry.".to_string(),
-                ));
-            }
-            "task_intent" => {
-                return Err(CustomError::ValidationError(
-                    "This content appears to be a task intent; use request_work_handoff or task-intent tools instead of memory_write_entry.".to_string(),
-                ));
-            }
-            "run_result" => {
-                return Err(CustomError::ValidationError(
-                    "This content appears to be a run result; use the run-result tool instead of memory_write_entry.".to_string(),
-                ));
-            }
-            "observation" => {
-                return Err(CustomError::ValidationError(
-                    "This content appears to be an observation; use the observation tool instead of memory_write_entry.".to_string(),
-                ));
-            }
-            "core_update" => {
-                return Err(CustomError::ValidationError(
-                    "This content appears to be a core update; use memory review or core-update tools instead of memory_write_entry.".to_string(),
-                ));
-            }
-            "cabinet_write" => {
-                return Err(CustomError::ValidationError(
-                    "This content appears to be a Cabinet write; use the appropriate Cabinet or reviewed update path instead of memory_write_entry.".to_string(),
-                ));
-            }
-            _ => {}
-        }
-    }
+    let kind = validate_memory_write_entry_semantics(&args)?;
     let title = validate_bounded_text("title", &args.title, 1, 200)?;
     let body = validate_bounded_text("body", &args.body, 1, 50_000)?;
     let tags = clean_limited_strings(args.tags, 20, 80);
@@ -2862,6 +2807,80 @@ fn validate_memory_kind(value: &str) -> Result<String, CustomError> {
                 .to_string(),
         )),
     }
+}
+
+pub(crate) fn validate_memory_write_entry_semantics(
+    args: &MemoryWriteEntryArguments,
+) -> Result<String, CustomError> {
+    let kind = validate_memory_kind(&args.kind)?;
+    if kind == "plan" {
+        return Err(CustomError::ValidationError(
+            "This content appears to be a workflow plan; use update_plan for visible task plans and exit_plan_mode for submitted implementation plans instead of memory_write_entry.".to_string(),
+        ));
+    }
+    if let Some(domain) = args.domain.as_deref() {
+        match domain {
+            "memory" => {}
+            "workflow" => {
+                return Err(CustomError::ValidationError(
+                    "This content appears to be a workflow plan; use plan-mode or workboard tools instead of memory_write_entry.".to_string(),
+                ));
+            }
+            "workboard" => {
+                return Err(CustomError::ValidationError(
+                    "This content appears to be live workboard state; use update_plan or related workboard tools instead of memory_write_entry.".to_string(),
+                ));
+            }
+            "execution" => {
+                return Err(CustomError::ValidationError(
+                    "This content appears to describe execution or run output rather than semantic memory; use the appropriate execution/result tool instead of memory_write_entry.".to_string(),
+                ));
+            }
+            _ => {}
+        }
+    }
+    if let Some(content_class) = args.content_class.as_deref() {
+        match content_class {
+            "semantic_memory" => {}
+            "workflow_plan" => {
+                return Err(CustomError::ValidationError(
+                    "This content appears to be a workflow plan; use plan-mode tools instead of memory_write_entry.".to_string(),
+                ));
+            }
+            "workboard_status" => {
+                return Err(CustomError::ValidationError(
+                    "This content appears to be live workboard state; use update_plan instead of memory_write_entry.".to_string(),
+                ));
+            }
+            "task_intent" => {
+                return Err(CustomError::ValidationError(
+                    "This content appears to be a task intent; use request_work_handoff or task-intent tools instead of memory_write_entry.".to_string(),
+                ));
+            }
+            "run_result" => {
+                return Err(CustomError::ValidationError(
+                    "This content appears to be a run result; use the run-result tool instead of memory_write_entry.".to_string(),
+                ));
+            }
+            "observation" => {
+                return Err(CustomError::ValidationError(
+                    "This content appears to be an observation; use the observation tool instead of memory_write_entry.".to_string(),
+                ));
+            }
+            "core_update" => {
+                return Err(CustomError::ValidationError(
+                    "This content appears to be a core update; use memory review or core-update tools instead of memory_write_entry.".to_string(),
+                ));
+            }
+            "cabinet_write" => {
+                return Err(CustomError::ValidationError(
+                    "This content appears to be a Cabinet write; use the appropriate Cabinet or reviewed update path instead of memory_write_entry.".to_string(),
+                ));
+            }
+            _ => {}
+        }
+    }
+    Ok(kind)
 }
 
 fn validate_bounded_text(

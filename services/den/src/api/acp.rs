@@ -183,6 +183,7 @@ struct AcpSetModeResponse {
     requested_mode: String,
     effective_mode: String,
     session_policy: serde_json::Value,
+    workflow_state: serde_json::Value,
     #[serde(skip_serializing_if = "Option::is_none")]
     plan_mode: Option<serde_json::Value>,
     message: String,
@@ -346,6 +347,7 @@ struct AcpSessionHttp {
     #[serde(skip_serializing_if = "Option::is_none")]
     plan_mode: Option<serde_json::Value>,
     session_policy: serde_json::Value,
+    workflow_state: serde_json::Value,
 }
 
 fn format_acp_session_timestamp(t: time::OffsetDateTime) -> String {
@@ -398,6 +400,7 @@ fn acp_session_row_to_http_with_modes(
             .and_then(|value| value.get("state"))
             .and_then(|value| value.as_str()),
     );
+    let workflow_state = workflow_state_json(&policy);
     AcpSessionHttp {
         acp_session_id: row.acp_session_id,
         runtime_session_id: row.runtime_session_id,
@@ -419,6 +422,7 @@ fn acp_session_row_to_http_with_modes(
         modes: Some(modes),
         plan_mode,
         session_policy: policy.to_json(),
+        workflow_state,
     }
 }
 
@@ -969,6 +973,29 @@ pub(crate) fn workflow_state_label(
     }
 }
 
+pub(crate) fn approval_status_label(plan_mode_state: Option<&str>, mode_label: &str) -> &'static str {
+    match plan_mode_state {
+        Some("approved") => "approved_execution_unlocked",
+        Some("submitted") => "awaiting_human_approval",
+        Some("active") => "drafting",
+        Some("rejected") => "cancelled",
+        _ if mode_label == "Write" => "approved_execution_unlocked",
+        _ => "inactive",
+    }
+}
+
+pub(crate) fn workflow_state_json(
+    policy: &crate::core::acp_tools::AcpResolvedSessionPolicy,
+) -> serde_json::Value {
+    serde_json::json!({
+        "workflow_state": workflow_state_label(policy),
+        "approval_status": approval_status_label(policy.plan_mode_state.as_deref(), policy.mode_label),
+        "execution_unlocked": policy.tool_enablement.enables_non_read_tools(),
+        "memory_for_active_plan_allowed": false,
+        "state_authority": "session_policy_and_current_turn_tools"
+    })
+}
+
 fn render_workflow_state_summary(
     session_id: &str,
     roots: &[String],
@@ -978,10 +1005,11 @@ fn render_workflow_state_summary(
 ) -> String {
     let execution_unlocked = policy.tool_enablement.enables_non_read_tools();
     format!(
-        "<system-reminder>AUTHORITATIVE WORKFLOW STATE for this turn: permission_mode=`{}`; tool_classes={}; workflow_state=`{}`; execution_unlocked={}; memory_for_active_plan_allowed=false; state_authority=current turn capabilities override prior-turn assumptions. BEARS ACP direct local workspace tools available this turn: {}. Server tools available to pair: {}. Current ACP session id is `{}`. Use absolute paths under these workspace roots: {}.</system-reminder>",
+        "<system-reminder>AUTHORITATIVE WORKFLOW STATE for this turn: permission_mode=`{}`; tool_classes={}; workflow_state=`{}`; approval_status={}; execution_unlocked={}; memory_for_active_plan_allowed=false; state_authority=current turn capabilities override prior-turn assumptions. BEARS ACP direct local workspace tools available this turn: {}. Server tools available to pair: {}. Current ACP session id is `{}`. Use absolute paths under these workspace roots: {}.</system-reminder>",
         policy.mode_label,
         policy.allowed_tool_classes().join(", "),
         workflow_state_label(policy),
+        approval_status_label(policy.plan_mode_state.as_deref(), policy.mode_label),
         execution_unlocked,
         local_tool_names.join(", "),
         den_tool_names.join(", "),
@@ -1648,6 +1676,7 @@ async fn set_session_mode_inner(
         requested_mode,
         effective_mode: policy.mode_label.to_ascii_lowercase(),
         session_policy: policy.to_json(),
+        workflow_state: workflow_state_json(&policy),
         plan_mode,
         message,
     })
@@ -1894,6 +1923,11 @@ async fn permission_result_inner(
                 "effective_mode": "plan",
                 "session_policy": resolve_session_policy_for_mode("plan", Some("submitted")).to_json(),
                 "plan_mode": row,
+                "workflow_state": {
+                    "approval_status": "awaiting_human_approval",
+                    "execution_unlocked": false,
+                    "state_authority": "session_policy_and_current_turn_tools"
+                },
                 "message": "The transient ACP approval request timed out, but the submitted plan remains pending. The user may approve it through chat with record_plan_approval, Den UI, or a new ACP approval request."
             }))
             .into_response());
@@ -1941,6 +1975,13 @@ async fn permission_result_inner(
             .await?;
             "plan"
         };
+        let approval_status = if row.state == "approved" {
+            "approved_execution_unlocked"
+        } else if row.state == "submitted" {
+            "awaiting_human_approval"
+        } else {
+            row.state.as_str()
+        };
         return Ok(Json(serde_json::json!({
             "accepted": true,
             "reason": format!("plan_mode_{}", row.state),
@@ -1948,6 +1989,11 @@ async fn permission_result_inner(
             "effective_mode": effective_mode,
             "session_policy": resolve_session_policy_for_mode(effective_mode, Some(row.state.as_str())).to_json(),
             "plan_mode": row,
+            "workflow_state": {
+                "approval_status": approval_status,
+                "execution_unlocked": effective_mode == "write",
+                "state_authority": "session_policy_and_current_turn_tools"
+            },
         }))
         .into_response());
     }

@@ -1,7 +1,7 @@
 use serde_json::json;
 
 use crate::core::den_tools::{
-    builtin_den_tool_descriptor_for_provider_name, invoke_den_tool, DenToolInvocationContext,
+    builtin_den_tool_descriptor_for_provider_name, invoke_den_tool, validate_memory_write_entry_semantics, DenToolInvocationContext,
 };
 
 #[test]
@@ -17,6 +17,22 @@ fn descriptor_exposes_workflow_state_metadata() {
     let descriptor = builtin_den_tool_descriptor_for_provider_name("memory_write_entry").unwrap();
     assert_eq!(descriptor.domain, "memory");
     assert_eq!(descriptor.content_class, Some("semantic_memory"));
+}
+
+#[test]
+fn memory_write_entry_semantics_reject_non_memory_domain_before_db_access() {
+    let args: crate::core::den_tools::MemoryWriteEntryArguments = serde_json::from_value(json!({
+        "kind": "note",
+        "title": "workflow-ish",
+        "body": "do thing",
+        "domain": "workflow"
+    }))
+    .unwrap();
+
+    let err = validate_memory_write_entry_semantics(&args)
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("workflow plan") || err.contains("plan-mode"));
 }
 
 #[tokio::test]
@@ -55,7 +71,23 @@ async fn memory_write_entry_rejects_non_memory_domain_without_db_access() {
     .await;
 
     let err = result.unwrap_err().to_string();
-    assert!(err.contains("pool exhausted") || err.contains("workflow plan") || err.contains("plan-mode"));
+    assert!(err.contains("workflow plan") || err.contains("plan-mode"));
+}
+
+#[test]
+fn memory_write_entry_semantics_reject_workboard_content_class_before_db_access() {
+    let args: crate::core::den_tools::MemoryWriteEntryArguments = serde_json::from_value(json!({
+        "kind": "summary",
+        "title": "workboard-ish",
+        "body": "status changed",
+        "content_class": "workboard_status"
+    }))
+    .unwrap();
+
+    let err = validate_memory_write_entry_semantics(&args)
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("workboard") || err.contains("update_plan"));
 }
 
 #[tokio::test]
@@ -94,5 +126,5 @@ async fn memory_write_entry_rejects_workboard_content_class_without_db_access() 
     .await;
 
     let err = result.unwrap_err().to_string();
-    assert!(err.contains("pool exhausted") || err.contains("workboard") || err.contains("update_plan"));
+    assert!(err.contains("workboard") || err.contains("update_plan"));
 }
