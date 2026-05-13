@@ -903,7 +903,7 @@ fn letta_conversation_id_from_create_response(value: &serde_json::Value) -> Opti
         .map(str::to_string)
 }
 
-fn acp_pair_den_tool_descriptors() -> serde_json::Value {
+pub(crate) fn acp_pair_den_tool_descriptors() -> serde_json::Value {
     let descriptors = den_tools::builtin_den_tool_descriptors_for_role(BearAgentRole::Pair)
         .into_iter()
         .filter(|descriptor| {

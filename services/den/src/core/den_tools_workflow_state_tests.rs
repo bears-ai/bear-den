@@ -137,6 +137,73 @@ fn memory_write_entry_semantics_reject_activity_domain_before_db_access() {
     assert!(err.contains("activity") || err.contains("update_plan"));
 }
 
+#[test]
+fn memory_write_entry_semantics_reject_unlabeled_plan_task_result_and_observation_content() {
+    let cases = [
+        (
+            "plan-like",
+            json!({
+                "kind": "note",
+                "title": "Implementation plan",
+                "body": "Phase 1: inspect\nPhase 2: edit\nPhase 3: test"
+            }),
+            "workplan",
+        ),
+        (
+            "task-like",
+            json!({
+                "kind": "summary",
+                "title": "Current tasks",
+                "body": "- [ ] inspect files\n- [ ] edit implementation\n- [ ] run tests"
+            }),
+            "task",
+        ),
+        (
+            "run-result-like",
+            json!({
+                "kind": "log",
+                "title": "cargo test result",
+                "body": "cargo test exited with exit code 101; stderr contained failed tests"
+            }),
+            "run result",
+        ),
+        (
+            "observation-like",
+            json!({
+                "kind": "note",
+                "title": "Observation",
+                "body": "Observed: API latency alert detected during telemetry review"
+            }),
+            "observation",
+        ),
+    ];
+
+    for (label, value, expected) in cases {
+        let args: crate::core::den_tools::MemoryWriteEntryArguments =
+            serde_json::from_value(value).unwrap();
+        let err = validate_memory_write_entry_semantics(&args)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.to_ascii_lowercase().contains(expected),
+            "{label} should mention {expected}, got {err}"
+        );
+    }
+}
+
+#[test]
+fn memory_write_entry_semantics_allows_plain_semantic_memory() {
+    let args: crate::core::den_tools::MemoryWriteEntryArguments = serde_json::from_value(json!({
+        "kind": "decision",
+        "title": "Prefer descriptor-owned naming",
+        "body": "Provider-facing tool names should stay concise, while descriptor metadata carries ontology and permission information."
+    }))
+    .unwrap();
+
+    let kind = validate_memory_write_entry_semantics(&args).unwrap();
+    assert_eq!(kind, "decision");
+}
+
 #[tokio::test]
 async fn memory_write_entry_rejects_non_memory_domain_without_db_access() {
     let context = DenToolInvocationContext {

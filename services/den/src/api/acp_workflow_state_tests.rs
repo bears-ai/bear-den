@@ -1,9 +1,12 @@
 use crate::core::{
     acp_tools::{AcpResolvedSessionPolicy, AcpToolEnablementState},
+    den_tools::{validate_memory_write_entry_semantics, MemoryWriteEntryArguments},
     turn_state::{approval_status_label, workflow_state_label},
 };
 
-use super::acp::{acp_direct_tool_prompt_context, workflow_state_json};
+use super::acp::{
+    acp_direct_tool_prompt_context, acp_pair_den_tool_descriptors, workflow_state_json,
+};
 
 #[test]
 fn workflow_state_label_prefers_plan_mode_state() {
@@ -41,6 +44,55 @@ fn acp_prompt_includes_authoritative_workflow_state_summary() {
     assert!(prompt.contains("activity.status=`inactive`"));
     assert!(prompt.contains("execution.execution_unlocked=true"));
     assert!(prompt.contains("memory.active_plan_write_allowed=false"));
+}
+
+#[test]
+fn pair_tool_surface_reminder_and_descriptors_agree_on_domains() {
+    let policy = AcpResolvedSessionPolicy {
+        mode_label: "Write",
+        tool_enablement: AcpToolEnablementState::AllTools,
+        plan_mode_state: Some("approved".to_string()),
+    };
+    let prompt = acp_direct_tool_prompt_context(
+        "acp-test",
+        "/workspace",
+        &serde_json::json!({"workspace_roots": ["/workspace"]}),
+        true,
+        &policy,
+    );
+    let descriptors = acp_pair_den_tool_descriptors();
+    let descriptors = descriptors.as_array().expect("descriptor array");
+    let domain_for = |name: &str| {
+        descriptors
+            .iter()
+            .find(|item| item["name"] == name)
+            .and_then(|item| item["x-bears-domain"].as_str())
+            .expect("descriptor domain")
+            .to_string()
+    };
+
+    assert!(prompt.contains("workplan.state=`approved`"));
+    assert!(prompt.contains("activity.status=`inactive`"));
+    assert!(prompt.contains("memory.active_plan_write_allowed=false"));
+    assert!(prompt.contains("execution.execution_unlocked=true"));
+    assert_eq!(domain_for("enter_plan_mode"), "workplan");
+    assert_eq!(domain_for("exit_plan_mode"), "workplan");
+    assert_eq!(domain_for("record_plan_approval"), "workplan");
+    assert_eq!(domain_for("update_plan"), "activity");
+    assert_eq!(domain_for("get_plan_status"), "activity");
+    assert_eq!(domain_for("memory_write_entry"), "memory");
+    assert_eq!(domain_for("web_fetch"), "execution");
+
+    let invalid_memory: MemoryWriteEntryArguments = serde_json::from_value(serde_json::json!({
+        "kind": "summary",
+        "title": "Current tasks",
+        "body": "- [ ] inspect files\n- [ ] edit files\n- [ ] run tests"
+    }))
+    .unwrap();
+    let err = validate_memory_write_entry_semantics(&invalid_memory)
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("update_plan") || err.contains("task"));
 }
 
 #[test]

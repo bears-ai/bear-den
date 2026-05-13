@@ -2932,6 +2932,7 @@ pub(crate) fn validate_memory_write_entry_semantics(
     args: &MemoryWriteEntryArguments,
 ) -> Result<String, CustomError> {
     let kind = validate_memory_kind(&args.kind)?;
+    reject_unlabeled_memory_misuse(args)?;
     if kind == "plan" {
         return Err(CustomError::ValidationError(
             "This content appears to be a workplan; use update_plan for visible activity plans and exit_plan_mode for submitted implementation plans instead of memory_write_entry.".to_string(),
@@ -3000,6 +3001,136 @@ pub(crate) fn validate_memory_write_entry_semantics(
         }
     }
     Ok(kind)
+}
+
+fn reject_unlabeled_memory_misuse(args: &MemoryWriteEntryArguments) -> Result<(), CustomError> {
+    let title = args.title.trim();
+    let body = args.body.trim();
+    let haystack = format!("{}\n{}", title, body).to_ascii_lowercase();
+    let lines = body.lines().map(str::trim).collect::<Vec<_>>();
+
+    if looks_like_workplan_content(&haystack, &lines) {
+        return Err(CustomError::ValidationError(
+            "This content appears to be an active workplan or implementation plan; use enter_plan_mode/exit_plan_mode for approval plans or update_plan for visible activity tracking instead of memory_write_entry.".to_string(),
+        ));
+    }
+    if looks_like_activity_or_task_content(&haystack, &lines) {
+        return Err(CustomError::ValidationError(
+            "This content appears to be task tracking or a task intent; use update_plan or request_work_handoff instead of memory_write_entry.".to_string(),
+        ));
+    }
+    if looks_like_run_result_content(&haystack) {
+        return Err(CustomError::ValidationError(
+            "This content appears to be a run result or command output; use the appropriate execution/result tool instead of memory_write_entry.".to_string(),
+        ));
+    }
+    if looks_like_observation_content(&haystack) {
+        return Err(CustomError::ValidationError(
+            "This content appears to be an operational observation; use the observation tool instead of memory_write_entry.".to_string(),
+        ));
+    }
+    Ok(())
+}
+
+fn looks_like_workplan_content(haystack: &str, lines: &[&str]) -> bool {
+    contains_any(
+        haystack,
+        &[
+            "implementation plan",
+            "execution plan",
+            "workplan",
+            "work plan",
+            "plan of record",
+            "approval plan",
+            "proposed plan",
+            "submit this plan",
+            "once approved",
+            "awaiting approval",
+        ],
+    ) || (contains_any(haystack, &["plan", "steps", "phase"])
+        && checkbox_or_numbered_item_count(lines) >= 3)
+}
+
+fn looks_like_activity_or_task_content(haystack: &str, lines: &[&str]) -> bool {
+    contains_any(
+        haystack,
+        &[
+            "todo:",
+            "to-do:",
+            "task list",
+            "tasks:",
+            "current task",
+            "current item",
+            "in progress",
+            "blocked:",
+            "next steps:",
+            "handoff request",
+            "task intent",
+            "request work handoff",
+        ],
+    ) || checkbox_or_numbered_item_count(lines) >= 3
+}
+
+fn looks_like_run_result_content(haystack: &str) -> bool {
+    contains_any(
+        haystack,
+        &[
+            "command output",
+            "run result",
+            "test result",
+            "test results",
+            "cargo test",
+            "cargo check",
+            "npm test",
+            "pytest",
+            "exit code",
+            "exit status",
+            "stdout",
+            "stderr",
+            "stack trace",
+            "failed tests",
+            "test failed",
+            "tests passed",
+        ],
+    )
+}
+
+fn looks_like_observation_content(haystack: &str) -> bool {
+    contains_any(
+        haystack,
+        &[
+            "observation:",
+            "observed:",
+            "i observed",
+            "watch observed",
+            "monitoring observed",
+            "detected:",
+            "incident:",
+            "alert:",
+            "telemetry",
+            "metric spike",
+        ],
+    )
+}
+
+fn checkbox_or_numbered_item_count(lines: &[&str]) -> usize {
+    lines
+        .iter()
+        .filter(|line| {
+            let line = line.trim_start();
+            line.starts_with("- [ ]")
+                || line.starts_with("- [x]")
+                || line.starts_with("* [ ]")
+                || line.starts_with("* [x]")
+                || line.starts_with("- todo")
+                || line.starts_with("- task")
+                || line.chars().next().is_some_and(|ch| ch.is_ascii_digit()) && line.contains(". ")
+        })
+        .count()
+}
+
+fn contains_any(haystack: &str, needles: &[&str]) -> bool {
+    needles.iter().any(|needle| haystack.contains(needle))
 }
 
 fn validate_bounded_text(
