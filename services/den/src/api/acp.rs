@@ -979,8 +979,102 @@ fn merge_acp_pair_tool_descriptors(client_tools: serde_json::Value) -> serde_jso
 }
 
 fn looks_like_letta_waiting_for_approval_error(err: &CustomError) -> bool {
-    err.to_string().contains("waiting for approval")
-        || format!("{err:#}").contains("waiting for approval")
+    let message = format!("{err:#}").to_ascii_lowercase();
+    message.contains("waiting for approval")
+        || message.contains("please approve or deny")
+        || message.contains("requires_approval")
+        || message.contains("another run is still processing")
+}
+
+async fn acp_preflight_runtime_hygiene(
+    state: &ApiState,
+    session_id: &str,
+    bear_id: Uuid,
+    pair_agent_id: &str,
+    reason: &str,
+) -> serde_json::Value {
+    state.acp_tool_turns.cleanup_session(session_id);
+    match state.letta.cancel_agent_runs(pair_agent_id, &[]).await {
+        Ok(value) => {
+            tracing::info!(
+                acp_session_id = %session_id,
+                bear_id = %bear_id,
+                pair_agent_id = %pair_agent_id,
+                reason,
+                "ACP runtime hygiene completed before prompt"
+            );
+            serde_json::json!({
+                "ok": true,
+                "reason": reason,
+                "cancel_result": value,
+            })
+        }
+        Err(err) => {
+            tracing::warn!(
+                acp_session_id = %session_id,
+                bear_id = %bear_id,
+                pair_agent_id = %pair_agent_id,
+                reason,
+                error = %err,
+                "ACP runtime hygiene failed before prompt; continuing prompt attempt"
+            );
+            serde_json::json!({
+                "ok": false,
+                "reason": reason,
+                "error": err.to_string(),
+            })
+        }
+    }
+}
+
+async fn acp_cleanup_stale_runtime_state(
+    letta: Arc<crate::core::letta::LettaClient>,
+    tool_turns: AcpToolTurnCoordinator,
+    acp_session_id: String,
+    bear_id: Uuid,
+    pair_agent_id: String,
+    run_ids: Vec<String>,
+    reason: &'static str,
+    request_id: Uuid,
+) -> serde_json::Value {
+    tool_turns.cleanup_session(&acp_session_id);
+    match letta.cancel_agent_runs(&pair_agent_id, &run_ids).await {
+        Ok(value) => {
+            tracing::warn!(
+                request_id = %request_id,
+                acp_session_id = %acp_session_id,
+                bear_id = %bear_id,
+                pair_agent_id = %pair_agent_id,
+                run_ids = ?run_ids,
+                reason,
+                "ACP stale Letta runtime state cleaned"
+            );
+            serde_json::json!({
+                "ok": true,
+                "reason": reason,
+                "run_ids": run_ids,
+                "cancel_result": value,
+            })
+        }
+        Err(err) => {
+            tracing::warn!(
+                request_id = %request_id,
+                acp_session_id = %acp_session_id,
+                bear_id = %bear_id,
+                pair_agent_id = %pair_agent_id,
+                run_ids = ?run_ids,
+                reason,
+                error = %err,
+                "ACP stale Letta runtime cleanup failed"
+            );
+            serde_json::json!({
+                "ok": false,
+                "reason": reason,
+                "run_ids": run_ids,
+                "error": err.to_string(),
+            })
+        }
+    }
 }
 
 pub(crate) fn workflow_state_json(
@@ -1702,14 +1796,22 @@ async fn set_session_mode_inner(
         _ => unreachable!(),
     }
 
-    let plan_mode_row = acp_plan_mode::active_for_session(&state.sqlx_pool, user_id, bear.id, session_id)
-        .await?;
-    let plan_mode = plan_mode_row.clone().map(serde_json::to_value).transpose()?;
+    let plan_mode_row =
+        acp_plan_mode::active_for_session(&state.sqlx_pool, user_id, bear.id, session_id).await?;
+    let plan_mode = plan_mode_row
+        .clone()
+        .map(serde_json::to_value)
+        .transpose()?;
     let synthetic_row = acp_sessions::AcpSessionRow {
         current_mode: effective_mode.clone(),
-        ..acp_sessions::find_for_user_bear_session(&state.sqlx_pool, user_id, &bear.slug, session_id)
-            .await?
-            .ok_or_else(|| CustomError::NotFound("ACP session not found".to_string()))?
+        ..acp_sessions::find_for_user_bear_session(
+            &state.sqlx_pool,
+            user_id,
+            &bear.slug,
+            session_id,
+        )
+        .await?
+        .ok_or_else(|| CustomError::NotFound("ACP session not found".to_string()))?
     };
     let turn_context = resolve_acp_turn_context(&synthetic_row, plan_mode_row.as_ref(), None);
     Ok(Json(AcpSetModeResponse {
@@ -2953,12 +3055,8 @@ async fn prompt_inner(
         created_at: time::OffsetDateTime::UNIX_EPOCH,
         updated_at: time::OffsetDateTime::UNIX_EPOCH,
     };
-    let resolved_policy = resolve_acp_turn_context(
-        &synthetic_session_row,
-        active_plan_mode.as_ref(),
-        None,
-    )
-    .policy;
+    let resolved_policy =
+        resolve_acp_turn_context(&synthetic_session_row, active_plan_mode.as_ref(), None).policy;
     let plan_mode_context = acp_plan_mode_prompt_context(&state, bear.id, user_id, session_id)
         .await
         .map_err(|err| {
@@ -3023,6 +3121,16 @@ async fn prompt_inner(
             Some(&resolved_policy),
         ))
     });
+    if conversation_resolution.upstream_target != pair_agent_id {
+        let _preflight_hygiene = acp_preflight_runtime_hygiene(
+            &state,
+            session_id,
+            bear.id,
+            &pair_agent_id,
+            "before_new_acp_prompt",
+        )
+        .await;
+    }
     let stream_tokens = acp_stream_tokens_enabled();
     let upstream = match state
         .letta
@@ -3623,7 +3731,9 @@ struct AcpStreamDiagnostics {
     saw_error: bool,
     saw_turn_complete: bool,
     saw_tool_return_ack: bool,
+    saw_requires_approval_stop: bool,
     emitted_empty_turn_error: bool,
+    emitted_runtime_cleanup: bool,
 }
 
 impl AcpStreamDiagnostics {
@@ -3654,6 +3764,18 @@ impl AcpStreamDiagnostics {
         Self::increment(&mut self.native_message_types, message_type);
         if message_type == "tool_return_message" {
             self.saw_tool_return_ack = true;
+        }
+        let stop_reason = value
+            .get("stop_reason")
+            .and_then(|v| v.as_str())
+            .or_else(|| {
+                value
+                    .pointer("/message/stop_reason")
+                    .and_then(|v| v.as_str())
+            })
+            .or_else(|| value.pointer("/data/stop_reason").and_then(|v| v.as_str()));
+        if stop_reason == Some("requires_approval") {
+            self.saw_requires_approval_stop = true;
         }
         Self::increment(&mut self.native_event_types, event_type);
     }
@@ -3687,6 +3809,7 @@ impl AcpStreamDiagnostics {
             || self.saw_visible_output
             || self.saw_error
             || self.saw_tool_return_ack
+            || self.emitted_runtime_cleanup
         {
             return None;
         }
@@ -3712,6 +3835,36 @@ impl AcpStreamDiagnostics {
                 "run_ids": self.run_ids,
             })),
         })
+    }
+
+    fn orphaned_requires_approval_event(
+        &mut self,
+        _context: &AcpStreamContext,
+        cleanup: serde_json::Value,
+    ) -> Option<AcpGatewayEvent> {
+        if self.emitted_runtime_cleanup
+            || !self.saw_requires_approval_stop
+            || self.saw_tool_return_ack
+        {
+            return None;
+        }
+        self.emitted_runtime_cleanup = true;
+        Some(AcpGatewayEvent::StatusText {
+            text: format!(
+                "BEARS detected a stale Letta approval state, cleared it, and stopped this turn safely. Please retry your message. cleanup={}",
+                cleanup
+            ),
+        })
+    }
+
+    fn continuation_cleanup_event(&mut self, cleanup: serde_json::Value) -> AcpGatewayEvent {
+        self.emitted_runtime_cleanup = true;
+        AcpGatewayEvent::StatusText {
+            text: format!(
+                "BEARS could not continue Letta after a tool result because the runtime looked wedged. I cleared stale approval/run state. Please retry your message. cleanup={}",
+                cleanup
+            ),
+        }
     }
 
     fn log_summary(&self, context: &AcpStreamContext) {
@@ -3942,6 +4095,7 @@ enum AcpPendingFuture {
     ),
     Tool(Pin<Box<dyn Future<Output = Result<AcpToolResultRequest, String>> + Send>>),
     ContinueTool(Pin<Box<dyn Future<Output = Result<reqwest::Response, CustomError>> + Send>>),
+    Cleanup(Pin<Box<dyn Future<Output = serde_json::Value> + Send>>),
 }
 
 #[derive(Default)]
@@ -4238,6 +4392,30 @@ impl Stream for AcpLettaSseStream {
                             return self.poll_next(cx);
                         }
                         Err(err) => {
+                            if looks_like_letta_waiting_for_approval_error(&err) {
+                                let letta = this.letta.clone();
+                                let tool_turns = this.context.tool_turns.clone();
+                                let acp_session_id = this.context.acp_session_id.clone();
+                                let bear_id = this.context.bear_id;
+                                let pair_agent_id = this.context.pair_agent_id.clone();
+                                let run_ids = this.diagnostics.run_ids.clone();
+                                let request_id = this.context.request_id;
+                                this.persist_future =
+                                    Some(AcpPendingFuture::Cleanup(Box::pin(async move {
+                                        acp_cleanup_stale_runtime_state(
+                                            letta,
+                                            tool_turns,
+                                            acp_session_id,
+                                            bear_id,
+                                            pair_agent_id,
+                                            run_ids,
+                                            "tool_return_continuation_failed",
+                                            request_id,
+                                        )
+                                        .await
+                                    })));
+                                return self.poll_next(cx);
+                            }
                             this.pending.push_back(acp_event_to_adapter_sse(
                                 AcpGatewayEvent::Error {
                                     message:
@@ -4252,6 +4430,28 @@ impl Stream for AcpLettaSseStream {
                             return self.poll_next(cx);
                         }
                     }
+                }
+                AcpPendingFuture::Cleanup(fut) => {
+                    let cleanup = ready!(fut.as_mut().poll(cx));
+                    this.persist_future = None;
+                    let event = if this.diagnostics.saw_requires_approval_stop
+                        && !this.diagnostics.saw_tool_return_ack
+                    {
+                        this.diagnostics
+                            .orphaned_requires_approval_event(&this.context, cleanup)
+                            .unwrap_or_else(|| {
+                                this.diagnostics
+                                    .continuation_cleanup_event(serde_json::json!({
+                                        "ok": true,
+                                        "reason": "cleanup_completed"
+                                    }))
+                            })
+                    } else {
+                        this.diagnostics.continuation_cleanup_event(cleanup)
+                    };
+                    this.diagnostics.observe_mapped_event(&event);
+                    this.pending.push_back(acp_event_to_adapter_sse(event));
+                    return self.poll_next(cx);
                 }
             }
         }
@@ -4337,6 +4537,7 @@ impl Stream for AcpLettaSseStream {
                         ));
                         return self.poll_next(cx);
                     };
+                    this.diagnostics.saw_tool_return_ack = true;
                     let tool_return = tool_result.content.clone().unwrap_or_default();
                     let status = tool_result.status.clone();
                     let approval_request_id = tool_result.approval_request_id.clone();
@@ -4352,6 +4553,31 @@ impl Stream for AcpLettaSseStream {
                                 )
                                 .await
                         })));
+                    self.poll_next(cx)
+                } else if this.diagnostics.saw_requires_approval_stop
+                    && !this.diagnostics.saw_tool_return_ack
+                    && !this.diagnostics.emitted_runtime_cleanup
+                {
+                    let letta = this.letta.clone();
+                    let tool_turns = this.context.tool_turns.clone();
+                    let acp_session_id = this.context.acp_session_id.clone();
+                    let bear_id = this.context.bear_id;
+                    let pair_agent_id = this.context.pair_agent_id.clone();
+                    let run_ids = this.diagnostics.run_ids.clone();
+                    let request_id = this.context.request_id;
+                    this.persist_future = Some(AcpPendingFuture::Cleanup(Box::pin(async move {
+                        acp_cleanup_stale_runtime_state(
+                            letta,
+                            tool_turns,
+                            acp_session_id,
+                            bear_id,
+                            pair_agent_id,
+                            run_ids,
+                            "orphaned_requires_approval_stop",
+                            request_id,
+                        )
+                        .await
+                    })));
                     self.poll_next(cx)
                 } else if let Some(event) = this.diagnostics.empty_turn_error_event(&this.context) {
                     for event in this.text_chunker.push(event) {
@@ -4396,6 +4622,9 @@ mod tests {
         #[derive(Clone)]
         struct FakeState {
             captured: Arc<TokioMutex<Option<serde_json::Value>>>,
+            tool_return_status: StatusCode,
+            tool_return_body: &'static str,
+            cancel_calls: Arc<TokioMutex<usize>>,
         }
 
         async fn fake_tool_return(
@@ -4404,23 +4633,38 @@ mod tests {
         ) -> Response {
             *state.captured.lock().await = Some(body);
             (
+                state.tool_return_status,
                 [(header::CONTENT_TYPE, "text/event-stream; charset=utf-8")],
-                concat!(
-                    "data: {\"message_type\":\"assistant_message\",\"content\":\"file says hello\"}\n\n",
-                    "data: {\"message_type\":\"stop_reason\",\"stop_reason\":\"end_turn\"}\n\n"
-                ),
+                state.tool_return_body,
+            )
+                .into_response()
+        }
+
+        async fn fake_cancel(State(state): State<FakeState>) -> Response {
+            *state.cancel_calls.lock().await += 1;
+            (
+                [(header::CONTENT_TYPE, "application/json")],
+                "{\"cancelled\":true}",
             )
                 .into_response()
         }
 
         let captured = Arc::new(TokioMutex::new(None));
+        let cancel_calls = Arc::new(TokioMutex::new(0));
         let app = Router::new()
             .route(
                 "/v1/conversations/{conversation_id}/messages",
                 post(fake_tool_return),
             )
+            .route("/v1/agents/{agent_id}/messages/cancel", post(fake_cancel))
             .with_state(FakeState {
                 captured: captured.clone(),
+                tool_return_status: StatusCode::OK,
+                tool_return_body: concat!(
+                    "data: {\"message_type\":\"assistant_message\",\"content\":\"file says hello\"}\n\n",
+                    "data: {\"message_type\":\"stop_reason\",\"stop_reason\":\"end_turn\"}\n\n"
+                ),
+                cancel_calls: cancel_calls.clone(),
             });
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
@@ -4521,6 +4765,226 @@ mod tests {
             body["messages"][0]["approvals"][0]["tool_call_id"],
             "call_test"
         );
+    }
+
+    #[tokio::test]
+    async fn acp_stream_cleans_orphaned_requires_approval_stop() {
+        use axum::{extract::State, http::header, response::IntoResponse, routing::post, Router};
+        use futures::StreamExt;
+        use sqlx::postgres::PgPoolOptions;
+        use std::sync::Arc;
+        use tokio::sync::Mutex as TokioMutex;
+
+        #[derive(Clone)]
+        struct FakeState {
+            cancel_calls: Arc<TokioMutex<usize>>,
+        }
+
+        async fn fake_cancel(State(state): State<FakeState>) -> impl IntoResponse {
+            *state.cancel_calls.lock().await += 1;
+            (
+                [(header::CONTENT_TYPE, "application/json")],
+                "{\"cancelled\":true}",
+            )
+        }
+
+        let cancel_calls = Arc::new(TokioMutex::new(0));
+        let app = Router::new()
+            .route("/v1/agents/{agent_id}/messages/cancel", post(fake_cancel))
+            .with_state(FakeState {
+                cancel_calls: cancel_calls.clone(),
+            });
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+
+        let mut config = crate::config::Config::test_stub();
+        config.letta_base_url = format!("http://{addr}");
+        let letta = Arc::new(crate::core::letta::LettaClient::new(&config));
+        let pool = PgPoolOptions::new()
+            .connect_lazy("postgres://postgres:postgres@127.0.0.1/postgres")
+            .unwrap();
+        let context = AcpStreamContext {
+            pool,
+            tool_turns: AcpToolTurnCoordinator::new(),
+            user_id: 1,
+            user_profile: None,
+            bear_id: Uuid::new_v4(),
+            bear_slug: "test-bear".to_string(),
+            acp_session_id: "acp-orphaned-approval".to_string(),
+            conversation_selection: "conv-test".to_string(),
+            resolved_conversation_id: Some("conv-test".to_string()),
+            upstream_target: "conv-test".to_string(),
+            request_id: Uuid::new_v4(),
+            pair_agent_id: "agent-12345678-1234-4567-89ab-123456789abc".to_string(),
+            config: Arc::new(crate::config::Config::test_stub()),
+        };
+        let upstream = futures::stream::iter(vec![Ok::<Bytes, reqwest::Error>(Bytes::from(
+            "data: {\"message_type\":\"stop_reason\",\"stop_reason\":\"requires_approval\"}\n\n",
+        ))]);
+        let mut stream = AcpLettaSseStream::new(
+            upstream,
+            context,
+            Vec::new(),
+            letta,
+            LettaContinuationContext {
+                conversation_id: "conv-test".to_string(),
+                agent_id: Some("agent-12345678-1234-4567-89ab-123456789abc".to_string()),
+                client_tools: None,
+                stream_tokens: false,
+                max_steps: 2,
+            },
+        );
+
+        let mut output = String::new();
+        while let Some(item) = stream.next().await {
+            output.push_str(&String::from_utf8(item.unwrap().to_vec()).unwrap());
+            if output.contains("stale Letta approval state") {
+                break;
+            }
+        }
+        assert!(output.contains("stale Letta approval state"), "{output}");
+        assert_eq!(*cancel_calls.lock().await, 1);
+    }
+
+    #[tokio::test]
+    async fn acp_stream_cleans_runtime_when_tool_return_continuation_conflicts() {
+        use axum::{
+            extract::State, http::header, response::IntoResponse, routing::post, Json, Router,
+        };
+        use futures::StreamExt;
+        use sqlx::postgres::PgPoolOptions;
+        use std::sync::Arc;
+        use tokio::sync::Mutex as TokioMutex;
+
+        #[derive(Clone)]
+        struct FakeState {
+            captured: Arc<TokioMutex<Option<serde_json::Value>>>,
+            cancel_calls: Arc<TokioMutex<usize>>,
+        }
+
+        async fn fake_tool_return(
+            State(state): State<FakeState>,
+            Json(body): Json<serde_json::Value>,
+        ) -> impl IntoResponse {
+            *state.captured.lock().await = Some(body);
+            (
+                StatusCode::CONFLICT,
+                [(header::CONTENT_TYPE, "application/json")],
+                "{\"error\":\"conversation waiting for approval\"}",
+            )
+        }
+
+        async fn fake_cancel(State(state): State<FakeState>) -> impl IntoResponse {
+            *state.cancel_calls.lock().await += 1;
+            (
+                [(header::CONTENT_TYPE, "application/json")],
+                "{\"cancelled\":true}",
+            )
+        }
+
+        let captured = Arc::new(TokioMutex::new(None));
+        let cancel_calls = Arc::new(TokioMutex::new(0));
+        let app = Router::new()
+            .route(
+                "/v1/conversations/{conversation_id}/messages",
+                post(fake_tool_return),
+            )
+            .route("/v1/agents/{agent_id}/messages/cancel", post(fake_cancel))
+            .with_state(FakeState {
+                captured: captured.clone(),
+                cancel_calls: cancel_calls.clone(),
+            });
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+
+        let mut config = crate::config::Config::test_stub();
+        config.letta_base_url = format!("http://{addr}");
+        let letta = Arc::new(crate::core::letta::LettaClient::new(&config));
+        let pool = PgPoolOptions::new()
+            .connect_lazy("postgres://postgres:postgres@127.0.0.1/postgres")
+            .unwrap();
+        let registry = AcpToolTurnCoordinator::new();
+        let context = AcpStreamContext {
+            pool,
+            tool_turns: registry.clone(),
+            user_id: 1,
+            user_profile: None,
+            bear_id: Uuid::new_v4(),
+            bear_slug: "test-bear".to_string(),
+            acp_session_id: "acp-continuation-conflict".to_string(),
+            conversation_selection: "conv-test".to_string(),
+            resolved_conversation_id: Some("conv-test".to_string()),
+            upstream_target: "conv-test".to_string(),
+            request_id: Uuid::new_v4(),
+            pair_agent_id: "agent-12345678-1234-4567-89ab-123456789abc".to_string(),
+            config: Arc::new(crate::config::Config::test_stub()),
+        };
+        let upstream = futures::stream::iter(vec![
+            Ok::<Bytes, reqwest::Error>(Bytes::from(concat!(
+                "data: {\"id\":\"approval-1\",\"message_type\":\"approval_request_message\",",
+                "\"tool_call\":{\"name\":\"fs_read_text_file\",\"tool_call_id\":\"call_conflict\",",
+                "\"arguments\":\"{\\\"path\\\":\\\"/tmp/acp-test.txt\\\"}\"}}\n\n"
+            ))),
+            Ok::<Bytes, reqwest::Error>(Bytes::from(
+                "data: {\"message_type\":\"stop_reason\",\"stop_reason\":\"requires_approval\"}\n\n",
+            )),
+        ]);
+        let mut stream = AcpLettaSseStream::new(
+            upstream,
+            context,
+            Vec::new(),
+            letta,
+            LettaContinuationContext {
+                conversation_id: "conv-test".to_string(),
+                agent_id: Some("agent-12345678-1234-4567-89ab-123456789abc".to_string()),
+                client_tools: Some(serde_json::json!([{ "name": "fs_read_text_file" }])),
+                stream_tokens: false,
+                max_steps: 2,
+            },
+        );
+
+        let first = stream.next().await.unwrap().unwrap();
+        assert!(String::from_utf8(first.to_vec())
+            .unwrap()
+            .contains("tool_request"));
+        registry
+            .deliver_result(
+                1,
+                "test-bear",
+                "acp-continuation-conflict",
+                "call_conflict",
+                AcpToolResultRequest {
+                    tool_call_id: Some("call_conflict".to_string()),
+                    tool_name: Some("fs_read_text_file".to_string()),
+                    approval_request_id: Some("approval-1".to_string()),
+                    status: "ok".to_string(),
+                    content: Some("hello".to_string()),
+                    structured_content: serde_json::json!({}),
+                    diagnostic: serde_json::json!({}),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+
+        let mut output = String::new();
+        while let Some(item) = stream.next().await {
+            output.push_str(&String::from_utf8(item.unwrap().to_vec()).unwrap());
+            if output.contains("cleared stale approval/run state") {
+                break;
+            }
+        }
+        assert!(
+            output.contains("cleared stale approval/run state"),
+            "{output}"
+        );
+        assert_eq!(*cancel_calls.lock().await, 1);
+        assert!(captured.lock().await.is_some());
     }
 
     #[test]
