@@ -236,6 +236,10 @@ struct AcpCloseSessionResponse {
     ok: bool,
     archived: bool,
     conversation_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    unwedged: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    workflow_state: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Serialize)]
@@ -1916,18 +1920,15 @@ async fn permission_result_inner(
                 plan_mode_id,
             )
             .await?;
+            let policy = resolve_session_policy_for_mode("plan", Some("submitted"));
             return Ok(Json(serde_json::json!({
                 "accepted": true,
                 "reason": "plan_mode_approval_request_timed_out",
                 "local_tool_request": serde_json::Value::Null,
                 "effective_mode": "plan",
-                "session_policy": resolve_session_policy_for_mode("plan", Some("submitted")).to_json(),
+                "session_policy": policy.to_json(),
                 "plan_mode": row,
-                "workflow_state": {
-                    "approval_status": "awaiting_human_approval",
-                    "execution_unlocked": false,
-                    "state_authority": "session_policy_and_current_turn_tools"
-                },
+                "workflow_state": workflow_state_json(&policy),
                 "message": "The transient ACP approval request timed out, but the submitted plan remains pending. The user may approve it through chat with record_plan_approval, Den UI, or a new ACP approval request."
             }))
             .into_response());
@@ -1975,25 +1976,15 @@ async fn permission_result_inner(
             .await?;
             "plan"
         };
-        let approval_status = if row.state == "approved" {
-            "approved_execution_unlocked"
-        } else if row.state == "submitted" {
-            "awaiting_human_approval"
-        } else {
-            row.state.as_str()
-        };
+        let policy = resolve_session_policy_for_mode(effective_mode, Some(row.state.as_str()));
         return Ok(Json(serde_json::json!({
             "accepted": true,
             "reason": format!("plan_mode_{}", row.state),
             "local_tool_request": serde_json::Value::Null,
             "effective_mode": effective_mode,
-            "session_policy": resolve_session_policy_for_mode(effective_mode, Some(row.state.as_str())).to_json(),
+            "session_policy": policy.to_json(),
             "plan_mode": row,
-            "workflow_state": {
-                "approval_status": approval_status,
-                "execution_unlocked": effective_mode == "write",
-                "state_authority": "session_policy_and_current_turn_tools"
-            },
+            "workflow_state": workflow_state_json(&policy),
         }))
         .into_response());
     }
@@ -2297,19 +2288,47 @@ async fn unwedge_session_inner(
         .cancel_agent_runs(&pair_agent_id, &run_ids)
         .await?;
     state.acp_tool_turns.cleanup_session(&session_id);
+    let active_plan_mode =
+        acp_plan_mode::active_for_session(&state.sqlx_pool, user_id, session.bear_id, &session_id)
+            .await?;
+    let plan_state = active_plan_mode.as_ref().map(|plan| plan.state.as_str());
+    let effective_mode = if matches!(plan_state, Some("approved")) {
+        "write"
+    } else if plan_state.is_some() {
+        "plan"
+    } else {
+        session.current_mode.as_str()
+    };
+    if effective_mode != session.current_mode {
+        acp_sessions::set_current_mode(
+            &state.sqlx_pool,
+            user_id,
+            session.bear_id,
+            &session_id,
+            effective_mode,
+        )
+        .await?;
+    }
+    let policy = resolve_session_policy_for_mode(effective_mode, plan_state);
     tracing::warn!(
         acp_session_id = %session_id,
         bear_id = %session.bear_id,
         pair_agent_id = %pair_agent_id,
         run_ids = ?run_ids,
-        "ACP session unwedge requested; cancelled Letta runs and cleaned local tool turns"
+        effective_mode,
+        plan_state = ?plan_state,
+        "ACP session unwedge requested; cancelled Letta runs, cleaned local tool turns, and reconciled session mode"
     );
     Ok(Json(serde_json::json!({
         "ok": true,
+        "unwedged": true,
         "acp_session_id": session_id,
         "pair_agent_id": pair_agent_id,
         "run_ids": run_ids,
         "letta_cancel_result": cancel_result,
+        "effective_mode": effective_mode,
+        "session_policy": policy.to_json(),
+        "workflow_state": workflow_state_json(&policy),
     }))
     .into_response())
 }
@@ -2395,6 +2414,8 @@ async fn close_session_inner(
             ok: true,
             archived: false,
             conversation_id: None,
+            unwedged: None,
+            workflow_state: None,
         })
         .into_response());
     };
@@ -2434,10 +2455,24 @@ async fn close_session_inner(
         archived = true;
     }
 
+    let active_plan_mode =
+        acp_plan_mode::active_for_session(&state.sqlx_pool, user_id, session.bear_id, &session.acp_session_id)
+            .await?;
+    let plan_state = active_plan_mode.as_ref().map(|plan| plan.state.as_str());
+    let effective_mode = if matches!(plan_state, Some("approved")) {
+        "write"
+    } else if plan_state.is_some() {
+        "plan"
+    } else {
+        session.current_mode.as_str()
+    };
+    let policy = resolve_session_policy_for_mode(effective_mode, plan_state);
     Ok(Json(AcpCloseSessionResponse {
         ok: true,
         archived,
         conversation_id: archive_target.map(str::to_string),
+        unwedged: None,
+        workflow_state: Some(workflow_state_json(&policy)),
     })
     .into_response())
 }

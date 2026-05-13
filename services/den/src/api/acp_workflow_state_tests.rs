@@ -54,19 +54,23 @@ fn acp_prompt_mentions_current_turn_tool_gating_when_write_unlocked() {
 }
 
 #[test]
-fn plan_mode_decision_payload_should_surface_workflow_state_shape() {
+fn plan_mode_decision_payload_should_surface_full_workflow_state_shape() {
     let payload = serde_json::json!({
         "accepted": true,
         "reason": "plan_mode_approved",
         "effective_mode": "write",
         "workflow_state": {
+            "workflow_state": "approved",
             "approval_status": "approved_execution_unlocked",
             "execution_unlocked": true,
+            "memory_for_active_plan_allowed": false,
             "state_authority": "session_policy_and_current_turn_tools"
         }
     });
+    assert_eq!(payload["workflow_state"]["workflow_state"], "approved");
     assert_eq!(payload["workflow_state"]["approval_status"], "approved_execution_unlocked");
     assert_eq!(payload["workflow_state"]["execution_unlocked"], true);
+    assert_eq!(payload["workflow_state"]["memory_for_active_plan_allowed"], false);
     assert_eq!(payload["workflow_state"]["state_authority"], "session_policy_and_current_turn_tools");
 }
 
@@ -83,4 +87,17 @@ fn workflow_state_json_surfaces_authoritative_session_state() {
     assert_eq!(workflow_state["execution_unlocked"], true);
     assert_eq!(workflow_state["memory_for_active_plan_allowed"], false);
     assert_eq!(workflow_state["state_authority"], "session_policy_and_current_turn_tools");
+}
+
+#[test]
+fn workflow_state_json_preserves_approved_state_for_unwedge_reconciliation() {
+    let policy = AcpResolvedSessionPolicy {
+        mode_label: "Write",
+        tool_enablement: AcpToolEnablementState::AllTools,
+        plan_mode_state: Some("approved".to_string()),
+    };
+    let workflow_state = workflow_state_json(&policy);
+    assert_eq!(workflow_state["workflow_state"], "approved");
+    assert_eq!(workflow_state["approval_status"], "approved_execution_unlocked");
+    assert_eq!(workflow_state["execution_unlocked"], true);
 }
