@@ -3728,8 +3728,9 @@ async fn handle_sse_frame(
                         "Letta is waiting for stale approval and automatic unwedge failed: {err:#}"
                     ));
                 } else {
+                    outcome.saw_visible_output = true;
                     outcome.upstream_errors.push(
-                        "Letta was waiting for stale approval; BEARS requested an automatic unwedge. Please retry your message."
+                        "Letta was waiting for stale approval; BEARS requested an automatic unwedge. I have cleared the stale approval state. Please retry your message."
                             .to_string(),
                     );
                 }
@@ -3767,7 +3768,8 @@ async fn handle_sse_frame(
 }
 
 fn looks_like_waiting_for_approval_error(message: &str) -> bool {
-    message.contains("waiting for approval") || message.contains("Please approve or deny")
+    let message = message.to_ascii_lowercase();
+    message.contains("waiting for approval") || message.contains("please approve or deny")
 }
 
 fn format_den_event_error(event: &Value) -> String {
@@ -5629,6 +5631,72 @@ mod tests {
             approval_cache: ApprovalCache::default(),
             cancellation_tx,
         }
+    }
+
+    #[test]
+    fn waiting_for_approval_detection_is_case_insensitive() {
+        assert!(looks_like_waiting_for_approval_error(
+            "Letta stopped before producing assistant output: error; upstream is Waiting For Approval"
+        ));
+        assert!(looks_like_waiting_for_approval_error(
+            "Please Approve Or Deny this stale request"
+        ));
+    }
+
+    #[tokio::test]
+    async fn stale_approval_unwedge_event_is_reported_as_visible_output() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut reader = BufReader::new(stream);
+            let mut line = String::new();
+            loop {
+                line.clear();
+                let n = reader.read_line(&mut line).await.unwrap();
+                if n == 0 || line == "\r\n" || line == "\n" {
+                    break;
+                }
+            }
+            stream = reader.into_inner();
+            use tokio::io::AsyncWriteExt;
+            stream
+                .write_all(
+                    b"HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: 11\r\n\r\n{\"ok\":true}",
+                )
+                .await
+                .unwrap();
+        });
+
+        let config = Config {
+            api_url: format!("http://{addr}"),
+            bear: "test-bear".to_string(),
+            token: "token".to_string(),
+            client: "test".to_string(),
+        };
+        let root = unique_test_dir("stale-approval");
+        let mut adapter_state = test_adapter_state("session-1", &root);
+        let shared_state = test_shared_state();
+        let mut diagnostics = SseStreamDiagnostics::default();
+        let frame = br#"data: {"type":"error","message":"Letta stopped before producing assistant output: error","detail":"conversation is waiting for approval"}
+
+"#;
+
+        let outcome = handle_sse_frame(
+            &config,
+            &mut adapter_state,
+            &shared_state,
+            "session-1",
+            frame,
+            &mut diagnostics,
+        )
+        .await
+        .unwrap();
+
+        assert!(outcome.saw_error);
+        assert!(outcome.saw_visible_output);
+        assert_eq!(outcome.upstream_errors.len(), 1);
+        assert!(outcome.upstream_errors[0].contains("cleared the stale approval state"));
     }
 
     #[test]
