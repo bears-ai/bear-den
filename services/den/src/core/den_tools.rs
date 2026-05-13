@@ -20,7 +20,7 @@ use crate::{
             MemfsCoreUpdateRequest, MemfsWriteRoleMemoryEntryRequest,
         },
         memory_proposals::{self, CreateMemoryProposal},
-        user, web_policy,
+        turn_state, user, web_policy,
         work_plans::{
             self, WorkPlanListFilter, WorkPlanLookup, WorkPlanStatus, WorkPlanUpdate,
             WorkPlanUpsert, WorkPlanVisibility,
@@ -28,6 +28,87 @@ use crate::{
     },
     errors::CustomError,
 };
+
+pub(crate) fn plan_mode_workplan_payload(row: &acp_plan_mode::AcpPlanModeSessionRow) -> Value {
+    let approval_status = turn_state::approval_status_label(Some(row.state.as_str()), "Plan");
+    json!({
+        "domain": "workplan",
+        "plan_id": row.id,
+        "id": row.id,
+        "state": turn_state::workflow_state_label(&crate::core::acp_tools::AcpResolvedSessionPolicy {
+            mode_label: "Plan",
+            tool_enablement: crate::core::acp_tools::AcpToolEnablementState::ReadOnly,
+            plan_mode_state: Some(row.state.clone()),
+        }),
+        "approval_status": approval_status,
+        "raw_state": row.state.clone(),
+        "submitted_plan_present": row.plan_artifact_path.is_some(),
+        "artifact_path": row.plan_artifact_path.clone(),
+        "title": row.plan_title.clone(),
+        "summary": row.plan_body.as_ref().map(|body| summarize_text(body, 240)),
+        "execution_unlocked": row.state == "approved",
+        "approved_at": row.approved_at,
+        "closed_at": row.closed_at,
+        "updated_at": row.updated_at,
+    })
+}
+
+pub(crate) fn no_active_workplan_payload() -> Value {
+    json!({
+        "domain": "workplan",
+        "plan_id": Value::Null,
+        "id": Value::Null,
+        "state": "inactive",
+        "approval_status": "inactive",
+        "raw_state": Value::Null,
+        "submitted_plan_present": false,
+        "artifact_path": Value::Null,
+        "title": Value::Null,
+        "summary": Value::Null,
+        "execution_unlocked": false,
+    })
+}
+
+pub(crate) fn activity_payload(plan: Option<&work_plans::WorkPlanProjection>) -> Value {
+    match plan {
+        Some(plan) => json!({
+            "domain": "activity",
+            "plan_id": plan.id,
+            "id": plan.id,
+            "status": plan.status.clone(),
+            "title": plan.title.clone(),
+            "summary": plan.summary.clone(),
+            "current_item": plan.current_item.clone(),
+            "items": plan.items.clone(),
+            "visibility": plan.visibility.clone(),
+            "owner_role": plan.owner_role.clone(),
+            "version": plan.version,
+            "handoff_requested": plan.handoff_intent_path.is_some() || plan.handoff_task_id.is_some(),
+            "handoff_intent_path": plan.handoff_intent_path.clone(),
+            "handoff_task_id": plan.handoff_task_id.clone(),
+            "updated_at": plan.updated_at,
+        }),
+        None => json!({
+            "domain": "activity",
+            "plan_id": Value::Null,
+            "id": Value::Null,
+            "status": "inactive",
+            "title": Value::Null,
+            "summary": Value::Null,
+            "current_item": Value::Null,
+            "items": [],
+            "handoff_requested": false,
+        }),
+    }
+}
+
+fn summarize_text(text: &str, max_chars: usize) -> String {
+    let trimmed = text.trim();
+    if trimmed.chars().count() <= max_chars {
+        return trimmed.to_string();
+    }
+    trimmed.chars().take(max_chars).collect::<String>() + "…"
+}
 
 // Den-executed server tools. Adding a new Den tool here and to
 // `builtin_den_tool_descriptors` should not require an ACP adapter update when
@@ -502,7 +583,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
         descriptor(
             DEN_WORK_PLAN_LIST,
             "List plans",
-            "List visible Bear-level planning state, including live workboard plans, submitted plan-mode gates, and saved plan artifacts where available.",
+            "List visible Bear-level planning state, including live activity plans, submitted plan-mode gates, and saved plan artifacts where available.",
             "bear.work_plans",
             &["work_plan.read"],
             WORK_PLAN_READ_ROLES,
@@ -525,7 +606,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
         descriptor(
             DEN_WORK_PLAN_GET_STATUS,
             "Get work plan status",
-            "Return current status for one visible Den workboard plan or this session's active plan.",
+            "Return current status for one visible Den activity plan or this session's active plan.",
             "bear.work_plans",
             &["work_plan.read"],
             WORK_PLAN_READ_ROLES,
@@ -841,7 +922,7 @@ fn tool_domain(name: &str) -> &'static str {
         | DEN_PLAN_MODE_STATUS
         | DEN_PLAN_MODE_RECORD_APPROVAL
         | DEN_PLAN_MODE_EXIT
-        | DEN_PLAN_MODE_CANCEL => "workflow",
+        | DEN_PLAN_MODE_CANCEL => "workplan",
         DEN_WORK_PLAN_LIST
         | DEN_WORK_PLAN_GET_STATUS
         | DEN_WORK_PLAN_UPDATE
@@ -965,7 +1046,7 @@ fn memory_write_entry_schema() -> Value {
             },
             "domain": {
                 "type": "string",
-                "enum": ["workflow", "workboard", "memory", "execution", "workplan", "activity"]
+                "enum": ["workplan", "activity", "memory", "execution"]
             }
         },
         "required": ["kind", "title", "body"],
@@ -1973,6 +2054,8 @@ async fn enter_plan_mode(
     )
     .await?;
     Ok(json!({
+        "domain": "workplan",
+        "workplan": plan_mode_workplan_payload(&row),
         "plan_mode": row,
         "mode": "plan",
         "mode_update": "plan",
@@ -1995,9 +2078,15 @@ async fn plan_mode_status(
     let row =
         acp_plan_mode::active_for_session(pool, context.user_id, context.bear_id, &acp_session_id)
             .await?;
+    let workplan = row
+        .as_ref()
+        .map(plan_mode_workplan_payload)
+        .unwrap_or_else(no_active_workplan_payload);
     Ok(json!({
+        "domain": "workplan",
         "bear_id": context.bear_id,
         "acp_session_id": acp_session_id,
+        "workplan": workplan,
         "plan_mode": row,
         "active": row.is_some(),
     }))
@@ -2047,7 +2136,9 @@ async fn record_plan_approval(
     )
     .await?;
     Ok(json!({
+        "domain": "workplan",
         "ok": true,
+        "workplan": plan_mode_workplan_payload(&row),
         "plan_mode": row,
         "mode_update": "write",
         "approval_text": approval_text,
@@ -2127,8 +2218,12 @@ async fn exit_plan_mode(
     )
     .await?;
     Ok(json!({
+        "domain": "workplan",
+        "workplan": plan_mode_workplan_payload(&row),
         "plan_mode": row,
         "artifact": {
+            "domain": "workplan",
+            "content_class": "workplan_artifact",
             "path": memfs_response.path,
             "entry_id": memfs_response.entry_id,
             "commit": memfs_response.commit,
@@ -2172,7 +2267,13 @@ async fn cancel_plan_mode(
         "ask",
     )
     .await?;
-    Ok(json!({ "plan_mode": row, "mode": "ask", "mode_update": "ask" }))
+    Ok(json!({
+        "domain": "workplan",
+        "workplan": plan_mode_workplan_payload(&row),
+        "plan_mode": row,
+        "mode": "ask",
+        "mode_update": "ask"
+    }))
 }
 
 async fn write_memory_entry(
@@ -2625,7 +2726,7 @@ async fn list_work_plans(
     let statuses = args.statuses.or_else(|| {
         (!args.include_completed).then(|| vec![WorkPlanStatus::Active, WorkPlanStatus::Blocked])
     });
-    let workboard_plans = work_plans::list_visible_work_plans(
+    let activity_rows = work_plans::list_visible_work_plans(
         pool,
         context.bear_id,
         role,
@@ -2663,7 +2764,16 @@ async fn list_work_plans(
         .iter()
         .filter_map(|gate| gate.plan_artifact_path.as_deref())
         .collect::<Vec<_>>();
+    let activity_plans = activity_rows
+        .iter()
+        .map(|plan| activity_payload(Some(plan)))
+        .collect::<Vec<_>>();
+    let workplans = plan_mode_gates
+        .iter()
+        .map(plan_mode_workplan_payload)
+        .collect::<Vec<_>>();
     Ok(json!({
+        "domain": "activity",
         "bear_id": context.bear_id,
         "viewer_role": role.as_str(),
         "planning_scope": "bear",
@@ -2679,14 +2789,17 @@ async fn list_work_plans(
                 "channel": context.channel,
             }
         },
-        "plans": workboard_plans,
-        "workboard_plans": workboard_plans,
+        "activities": activity_plans,
+        "activity_plans": activity_plans,
+        "plans": activity_rows,
+        "activity_rows": activity_rows,
+        "workplans": workplans,
         "plan_mode_gates": plan_mode_gates,
         "plan_artifacts": plan_artifacts,
         "linked_plan_artifact_paths": linked_artifact_paths,
         "notes": [
-            "list_plans is a Bear-level planning view. It includes live workboard plans, submitted/active plan-mode gates, and saved pair plan artifacts when available.",
-            "A plan artifact in pair/plans/ may exist even when there is no active live workboard plan.",
+            "list_plans is a Bear-level planning view. It includes live activity plans, submitted/active plan-mode gates, and saved pair plan artifacts when available.",
+            "A plan artifact in pair/plans/ may exist even when there is no active live activity plan.",
             "Role fields are provenance and policy hints, not product ownership. Cross-role visibility is not cross-role execution authority."
         ],
     }))
@@ -2712,7 +2825,9 @@ async fn get_work_plan_status(
         work_plans::get_visible_work_plan(pool, context.bear_id, role, context.user_id, lookup)
             .await?;
     Ok(json!({
+        "domain": "activity",
         "bear_id": context.bear_id,
+        "activity": activity_payload(plan.as_ref()),
         "plan": plan,
     }))
 }
@@ -2753,7 +2868,9 @@ async fn update_work_plan(
             CustomError::System("updated work plan was not visible to its owner".to_string())
         })?;
     Ok(json!({
+        "domain": "activity",
         "bear_id": context.bear_id,
+        "activity": activity_payload(Some(&plan)),
         "plan": plan,
     }))
 }
@@ -2817,18 +2934,18 @@ pub(crate) fn validate_memory_write_entry_semantics(
     let kind = validate_memory_kind(&args.kind)?;
     if kind == "plan" {
         return Err(CustomError::ValidationError(
-            "This content appears to be a workflow plan; use update_plan for visible task plans and exit_plan_mode for submitted implementation plans instead of memory_write_entry.".to_string(),
+            "This content appears to be a workplan; use update_plan for visible activity plans and exit_plan_mode for submitted implementation plans instead of memory_write_entry.".to_string(),
         ));
     }
     if let Some(domain) = args.domain.as_deref() {
         match domain {
             "memory" => {}
-            "workplan" | "workflow" => {
+            "workplan" => {
                 return Err(CustomError::ValidationError(
-                    "This content appears to be a workflow plan artifact; use plan-mode tools instead of memory_write_entry.".to_string(),
+                    "This content appears to be a workplan artifact; use plan-mode tools instead of memory_write_entry.".to_string(),
                 ));
             }
-            "activity" | "workboard" => {
+            "activity" => {
                 return Err(CustomError::ValidationError(
                     "This content appears to be live activity state; use update_plan or related activity tools instead of memory_write_entry.".to_string(),
                 ));
@@ -2844,12 +2961,12 @@ pub(crate) fn validate_memory_write_entry_semantics(
     if let Some(content_class) = args.content_class.as_deref() {
         match content_class {
             "semantic_memory" => {}
-            "workplan_artifact" | "workflow_plan" => {
+            "workplan_artifact" => {
                 return Err(CustomError::ValidationError(
                     "This content appears to be a workplan artifact; use plan-mode tools instead of memory_write_entry.".to_string(),
                 ));
             }
-            "activity_status" | "workboard_status" => {
+            "activity_status" => {
                 return Err(CustomError::ValidationError(
                     "This content appears to be live activity state; use update_plan instead of memory_write_entry.".to_string(),
                 ));
@@ -3271,7 +3388,7 @@ mod tests {
     }
 
     #[test]
-    fn pair_has_web_memory_and_workboard_tools() {
+    fn pair_has_web_memory_and_activity_tools() {
         let pair = names_for_role(BearAgentRole::Pair);
         assert!(pair.contains(DEN_CONVERSATION_SET_TITLE));
         assert!(pair.contains(DEN_WEB_FETCH));

@@ -1,17 +1,20 @@
 use serde_json::json;
 
 use crate::core::{
+    acp_plan_mode::AcpPlanModeSessionRow,
     acp_tools::{acp_client_tool_descriptor, ACP_READ_TEXT_FILE_TOOL},
     den_tools::{
-        builtin_den_tool_descriptor_for_provider_name, invoke_den_tool,
+        activity_payload, builtin_den_tool_descriptor_for_provider_name, invoke_den_tool,
+        no_active_workplan_payload, plan_mode_workplan_payload,
         validate_memory_write_entry_semantics, DenToolInvocationContext,
     },
+    work_plans::{WorkPlanItem, WorkPlanItemStatus, WorkPlanProjection},
 };
 
 #[test]
 fn descriptor_exposes_turn_state_domain_metadata() {
     let descriptor = builtin_den_tool_descriptor_for_provider_name("exit_plan_mode").unwrap();
-    assert_eq!(descriptor.domain, "workflow");
+    assert_eq!(descriptor.domain, "workplan");
     assert_eq!(descriptor.content_class, Some("workplan_artifact"));
 
     let descriptor = builtin_den_tool_descriptor_for_provider_name("update_plan").unwrap();
@@ -31,6 +34,78 @@ fn acp_client_descriptors_expose_execution_domain_metadata() {
 }
 
 #[test]
+fn plan_mode_payload_is_workplan_native() {
+    let now = time::OffsetDateTime::UNIX_EPOCH;
+    let row = AcpPlanModeSessionRow {
+        id: uuid::Uuid::nil(),
+        user_id: 1,
+        bear_id: uuid::Uuid::nil(),
+        bear_slug: "test".to_string(),
+        acp_session_id: "acp-test".to_string(),
+        state: "submitted".to_string(),
+        reason: "test".to_string(),
+        requested_by: "pair".to_string(),
+        previous_permission_mode: Some("ask".to_string()),
+        plan_artifact_path: Some("pair/plans/plan.md".to_string()),
+        plan_title: Some("Test plan".to_string()),
+        plan_body: Some("Do the implementation.".to_string()),
+        approval_request_id: None,
+        approved_by_user_id: None,
+        approved_at: None,
+        rejected_at: None,
+        closed_at: None,
+        created_at: now,
+        updated_at: now,
+    };
+
+    let payload = plan_mode_workplan_payload(&row);
+    assert_eq!(payload["domain"], "workplan");
+    assert_eq!(payload["state"], "submitted_waiting_approval");
+    assert_eq!(payload["approval_status"], "awaiting_human_approval");
+    assert_eq!(payload["submitted_plan_present"], true);
+
+    let inactive = no_active_workplan_payload();
+    assert_eq!(inactive["domain"], "workplan");
+    assert_eq!(inactive["state"], "inactive");
+}
+
+#[test]
+fn work_plan_payload_is_activity_native() {
+    let now = time::OffsetDateTime::UNIX_EPOCH;
+    let item = WorkPlanItem {
+        id: "item-1".to_string(),
+        title: "Implement".to_string(),
+        summary: None,
+        status: WorkPlanItemStatus::InProgress,
+        blocked_reason: None,
+        source_refs: Vec::new(),
+    };
+    let plan = WorkPlanProjection {
+        id: uuid::Uuid::nil(),
+        bear_id: uuid::Uuid::nil(),
+        title: "Activity".to_string(),
+        summary: "Current work".to_string(),
+        owner_role: "pair".to_string(),
+        visibility: "same_user".to_string(),
+        status: "active".to_string(),
+        version: 1,
+        items: vec![item.clone()],
+        current_item: Some(item),
+        source_conversation_id: Some("conv".to_string()),
+        source_acp_session_id: Some("acp".to_string()),
+        handoff_intent_path: None,
+        handoff_task_id: None,
+        created_at: now,
+        updated_at: now,
+    };
+
+    let payload = activity_payload(Some(&plan));
+    assert_eq!(payload["domain"], "activity");
+    assert_eq!(payload["status"], "active");
+    assert_eq!(payload["current_item"]["title"], "Implement");
+}
+
+#[test]
 fn memory_write_entry_semantics_reject_non_memory_domain_before_db_access() {
     let args: crate::core::den_tools::MemoryWriteEntryArguments = serde_json::from_value(json!({
         "kind": "note",
@@ -43,16 +118,16 @@ fn memory_write_entry_semantics_reject_non_memory_domain_before_db_access() {
     let err = validate_memory_write_entry_semantics(&args)
         .unwrap_err()
         .to_string();
-    assert!(err.contains("workflow plan") || err.contains("plan-mode"));
+    assert!(err.contains("workplan") || err.contains("plan-mode"));
 }
 
 #[test]
-fn memory_write_entry_semantics_reject_workboard_domain_before_db_access() {
+fn memory_write_entry_semantics_reject_activity_domain_before_db_access() {
     let args: crate::core::den_tools::MemoryWriteEntryArguments = serde_json::from_value(json!({
         "kind": "summary",
-        "title": "workboard status",
+        "title": "activity status",
         "body": "item one is in progress",
-        "domain": "workboard"
+        "domain": "activity"
     }))
     .unwrap();
 
@@ -98,7 +173,7 @@ async fn memory_write_entry_rejects_non_memory_domain_without_db_access() {
     .await;
 
     let err = result.unwrap_err().to_string();
-    assert!(err.contains("workflow plan") || err.contains("plan-mode"));
+    assert!(err.contains("workplan") || err.contains("plan-mode"));
 }
 
 #[test]

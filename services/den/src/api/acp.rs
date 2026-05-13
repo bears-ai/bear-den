@@ -967,45 +967,43 @@ fn looks_like_letta_waiting_for_approval_error(err: &CustomError) -> bool {
 pub(crate) fn workflow_state_json(
     policy: &crate::core::acp_tools::AcpResolvedSessionPolicy,
 ) -> serde_json::Value {
-    workflow_state_json_with_workboard(policy, None)
+    workflow_state_json_with_activity(policy, None)
 }
 
-pub(crate) fn workflow_state_json_with_workboard(
+pub(crate) fn workflow_state_json_with_activity(
     policy: &crate::core::acp_tools::AcpResolvedSessionPolicy,
-    workboard_plan: Option<&WorkPlanProjection>,
+    activity_plan: Option<&WorkPlanProjection>,
 ) -> serde_json::Value {
-    turn_state::turn_state_json(policy, workboard_plan)
+    turn_state::turn_state_json(policy, activity_plan)
 }
 
-fn render_workflow_state_summary_with_workboard(
+fn render_turn_state_summary_with_activity(
     session_id: &str,
     roots: &[String],
     local_tool_names: &[&str],
     den_tool_names: &[&str],
     policy: &crate::core::acp_tools::AcpResolvedSessionPolicy,
-    workboard_plan: Option<&WorkPlanProjection>,
+    activity_plan: Option<&WorkPlanProjection>,
 ) -> String {
     let execution_unlocked = policy.tool_enablement.enables_non_read_tools();
-    let workflow_state = workflow_state_json_with_workboard(policy, workboard_plan);
-    let workboard_status = workflow_state["workboard"]["status"]
+    let turn_state = workflow_state_json_with_activity(policy, activity_plan);
+    let activity_status = turn_state["activity"]["status"]
         .as_str()
         .unwrap_or("inactive");
-    let workboard_plan_id = workflow_state["workboard"]["plan_id"]
-        .as_str()
-        .unwrap_or("none");
-    let current_item = workflow_state["workboard"]["current_item"]["title"]
+    let activity_plan_id = turn_state["activity"]["plan_id"].as_str().unwrap_or("none");
+    let current_item = turn_state["activity"]["current_item"]["title"]
         .as_str()
         .unwrap_or("none");
     format!(
-        "<system-reminder>AUTHORITATIVE WORKFLOW STATE for this turn: permission_mode=`{}`; tool_classes={}; workflow.state=`{}`; workflow.approval_status={}; workboard.status=`{}`; workboard.plan_id=`{}`; workboard.current_item=`{}`; memory.active_plan_write_allowed=false; execution.execution_unlocked={}; state_authority=current turn capabilities override prior-turn assumptions. BEARS ACP direct local workspace tools available this turn: {}. Server tools available to pair: {}. Current ACP session id is `{}`. Use absolute paths under these workspace roots: {}.</system-reminder>",
+        "<system-reminder>AUTHORITATIVE WORKFLOW STATE for this turn: permission_mode=`{}`; tool_classes={}; workplan.state=`{}`; workplan.approval_status={}; activity.status=`{}`; activity.plan_id=`{}`; activity.current_item=`{}`; memory.active_plan_write_allowed=false; execution.execution_unlocked={}; state_authority=current turn capabilities override prior-turn assumptions. BEARS ACP direct local workspace tools available this turn: {}. Server tools available to pair: {}. Current ACP session id is `{}`. Use absolute paths under these workspace roots: {}.</system-reminder>",
         policy.mode_label,
         policy.allowed_tool_classes().join(", "),
-        workflow_state["workflow"]["state"].as_str().unwrap_or("inactive"),
-        workflow_state["workflow"]["approval_status"]
+        turn_state["workplan"]["state"].as_str().unwrap_or("inactive"),
+        turn_state["workplan"]["approval_status"]
             .as_str()
             .unwrap_or("inactive"),
-        workboard_status,
-        workboard_plan_id,
+        activity_status,
+        activity_plan_id,
         current_item,
         execution_unlocked,
         local_tool_names.join(", "),
@@ -1023,7 +1021,7 @@ pub(crate) fn acp_direct_tool_prompt_context(
     tools_enabled: bool,
     policy: &crate::core::acp_tools::AcpResolvedSessionPolicy,
 ) -> String {
-    acp_direct_tool_prompt_context_with_workboard(
+    acp_direct_tool_prompt_context_with_activity(
         session_id,
         cwd,
         client_context,
@@ -1033,13 +1031,13 @@ pub(crate) fn acp_direct_tool_prompt_context(
     )
 }
 
-fn acp_direct_tool_prompt_context_with_workboard(
+fn acp_direct_tool_prompt_context_with_activity(
     session_id: &str,
     cwd: &str,
     client_context: &serde_json::Value,
     tools_enabled: bool,
     policy: &crate::core::acp_tools::AcpResolvedSessionPolicy,
-    workboard_plan: Option<&WorkPlanProjection>,
+    activity_plan: Option<&WorkPlanProjection>,
 ) -> String {
     if !tools_enabled {
         return String::new();
@@ -1068,13 +1066,13 @@ fn acp_direct_tool_prompt_context_with_workboard(
                 .collect::<Vec<_>>()
         })
         .unwrap_or_default();
-    let mut guidance = vec![render_workflow_state_summary_with_workboard(
+    let mut guidance = vec![render_turn_state_summary_with_activity(
         session_id,
         &roots,
         &tool_names,
         &den_tool_names,
         policy,
-        workboard_plan,
+        activity_plan,
     )];
     guidance.push(format!(
         "Trusted ACP session mode this turn: mode_label=`{}`. Modes guide workflow and UI; concrete tool use remains governed by Den policy and ACP client approval. Available tool classes: {}.",
@@ -2935,7 +2933,7 @@ async fn prompt_inner(
             let (status, code, message) = acp_error_status_message(&err);
             ApiError::new(status, code, message)
         })?;
-    let current_workboard_plan = work_plans::get_visible_work_plan(
+    let current_activity_plan = work_plans::get_visible_work_plan(
         &state.sqlx_pool,
         bear.id,
         BearAgentRole::Pair,
@@ -2951,19 +2949,19 @@ async fn prompt_inner(
         let (status, code, message) = acp_error_status_message(&err);
         ApiError::new(status, code, message)
     })?;
-    let tool_prompt_context = acp_direct_tool_prompt_context_with_workboard(
+    let tool_prompt_context = acp_direct_tool_prompt_context_with_activity(
         session_id,
         &cwd,
         &body.client_context,
         tools_enabled,
         &resolved_policy,
-        current_workboard_plan.as_ref(),
+        current_activity_plan.as_ref(),
     );
-    let plans = current_workboard_plan
+    let plans = current_activity_plan
         .clone()
         .into_iter()
         .collect::<Vec<_>>();
-    let workboard_context = work_plans::render_workboard_prompt_context(&plans);
+    let activity_context = work_plans::render_workboard_prompt_context(&plans);
     let mut initial_events = Vec::new();
     if let Some(title_event) = pending_session_title_update_event(
         &state.sqlx_pool,
@@ -2979,14 +2977,14 @@ async fn prompt_inner(
     })? {
         initial_events.push(title_event);
     }
-    if let Some(plan_event) = current_workboard_plan
+    if let Some(plan_event) = current_activity_plan
         .clone()
         .map(AcpGatewayEvent::PlanUpdate)
     {
         initial_events.push(plan_event);
     }
     let prompt_with_tool_context =
-        format!("{prompt}{plan_mode_context}{workboard_context}{tool_prompt_context}");
+        format!("{prompt}{plan_mode_context}{activity_context}{tool_prompt_context}");
     let client_tool_descriptors = tools_enabled.then(|| {
         merge_acp_pair_tool_descriptors(acp_client_tool_descriptors_for_client_context(
             &body.client_context,

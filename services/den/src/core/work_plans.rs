@@ -622,7 +622,7 @@ pub fn render_workboard_prompt_context(plans: &[WorkPlanProjection]) -> String {
     }
 
     let mut out = String::from(
-        "\n\n<system-reminder>\nDen workboard context for this Bear. Use `den.work_plan.update` to keep live plan/status current. Use `den.work_plan.request_handoff` when channel work should become a durable task intent.\n",
+        "\n\n<system-reminder>\nDen activity context for this Bear. Use `den.work_plan.update` to keep live activity/status current. Use `den.work_plan.request_handoff` when channel work should become a durable task intent.\n",
     );
     for plan in plans.iter().take(5) {
         out.push_str(&format!(
@@ -848,7 +848,7 @@ mod tests {
         };
 
         let rendered = render_workboard_prompt_context(&[plan]);
-        assert!(rendered.contains("Den workboard context"));
+        assert!(rendered.contains("Den activity context"));
         assert!(rendered.contains("den.work_plan.update"));
         assert!(rendered.contains("Build task system"));
         assert!(rendered.contains("Item one"));
