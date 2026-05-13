@@ -51,7 +51,8 @@ This file is the canonical planning dashboard for `docs/planning/`. It should le
    - watch ingestion and observation lifecycle
    - trust-boundary hardening and end-to-end proof
 3. Unify workplan, activity, memory, and execution surfaces under the single ontology-aware workflow-state model in [`../architecture/adr/workflow-state-ontology.md`](../architecture/adr/workflow-state-ontology.md).
-4. Keep the task/activity model aligned with [`TASK_SYSTEM_IMPLEMENTATION_PLAN.md`](TASK_SYSTEM_IMPLEMENTATION_PLAN.md) and remove any remaining presentation that makes workplan artifacts look like semantic-memory documents.
+4. Replace older overlapping ACP/Den mode, gate, and tool-enablement reasoning with the canonical turn-state model, keeping legacy fields only as compatibility or audit details where needed.
+5. Keep the task/activity model aligned with [`TASK_SYSTEM_IMPLEMENTATION_PLAN.md`](TASK_SYSTEM_IMPLEMENTATION_PLAN.md) and remove any remaining presentation that makes workplan artifacts look like semantic-memory documents.
 
 ### 2. Harden ACP `pair`
 

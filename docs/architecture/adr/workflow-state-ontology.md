@@ -56,6 +56,8 @@ These names are normative for current Den and ACP implementation surfaces. Earli
 
 These domains must be treated as distinct categories in system design, not just explained as conventions in prompts.
 
+The turn-state model is also the intended replacement for older overlapping state-machine patterns in ACP and Den. Session `mode`, plan-mode gate state, and tool-enablement state may continue to exist as implementation details or compatibility fields, but they must resolve into one canonical per-turn state shape. No Den surface should require agents or operators to mentally merge multiple partially overlapping state machines in order to know what is allowed right now.
+
 ---
 
 ## Domain model
@@ -158,6 +160,8 @@ Minimum desired fields:
 
 This state block should be treated as the canonical per-turn truth. Prior-turn assumptions must not override it.
 
+Derived or legacy state representations must be downstream of this summary, not peers to it. If session mode, approval gate, or tool-enablement records disagree, the system must resolve that disagreement into the authoritative turn-state output rather than exposing the conflict as agent work.
+
 ### B. Distinct schemas and return payloads by ontology domain
 
 Tool outputs must reinforce category separation.
@@ -246,6 +250,24 @@ Suggested reminder language:
 
 > Current-turn capabilities are authoritative. Ignore prior-turn permission assumptions when they conflict with the tool list and state summary shown for this turn.
 
+### G. Replace overlapping mode/gate state machines with turn-state authority
+
+The environment should not rely on agents or clients to reconcile multiple overlapping state machines such as:
+
+- ACP session `current_mode`;
+- plan-mode gate state;
+- tool-enablement state;
+- approval-unlocked execution state.
+
+These may persist internally for compatibility, storage, audit, or migration reasons, but they must feed a single canonical turn-state model rather than remaining co-equal sources of truth.
+
+Requirements:
+
+- one canonical resolution path should derive authoritative turn-state from any legacy/internal records;
+- API responses should surface `workflow_state` / turn-state as primary and treat older mode/gate fields as compatibility metadata only;
+- new product and operator surfaces should consume the canonical turn-state shape rather than reconstructing policy from `current_mode` plus plan-mode state;
+- tests should assert that incompatible combinations cannot leak as visible ambiguity.
+
 ---
 
 ## Rejected alternatives
@@ -275,6 +297,7 @@ Rejected. The ontology problem is already affecting planning, memory, and execut
 5. Adjust plan-mode and activity responses to look workplan-native rather than memory-like.
 6. Add misuse rejection for memory tools receiving workplan/activity/task-like content.
 7. Align all remaining Den surfaces, operator views, reminders, and audit outputs to the same `workplan` / `activity` / `memory` / `execution` ontology.
+8. Replace legacy overlapping mode/gate reasoning with one canonical turn-state resolution path, keeping old fields only as derived or compatibility data where necessary.
 
 ### Follow-on requirements
 
@@ -282,6 +305,7 @@ Rejected. The ontology problem is already affecting planning, memory, and execut
 2. Align operator views and audit logs around workplan/activity/memory/execution categories.
 3. Extend tests to assert ontology separation in tool availability, outputs, and rejection behavior.
 4. Remove or rename any remaining implementation surfaces that make workplan artifacts look like role-memory documents.
+5. Demote legacy overlapping mode/gate fields so they are no longer treated as co-equal visible state machines next to canonical turn-state.
 
 ---
 
@@ -296,6 +320,7 @@ This decision is successfully implemented when:
 - Current-turn tool availability is clearly marked as authoritative over prior-turn state.
 - Planning documents treat the unified workflow-state model as an active near-term priority.
 - Den-wide operator, audit, and API surfaces use the same ontology consistently.
+- No Den surface requires clients, agents, or operators to reconcile overlapping `current_mode`, plan-mode, and tool-enablement state machines to determine what is allowed in the current turn.
 
 ---
 

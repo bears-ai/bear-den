@@ -347,7 +347,7 @@ struct AcpSessionHttp {
     created_at: String,
     updated_at: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    modes: Option<Vec<serde_json::Value>>,
+    legacy_states: Option<Vec<serde_json::Value>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     plan_mode: Option<serde_json::Value>,
     session_policy: serde_json::Value,
@@ -358,45 +358,39 @@ fn format_acp_session_timestamp(t: time::OffsetDateTime) -> String {
     t.format(&Rfc3339).unwrap_or_else(|_| t.to_string())
 }
 
-fn acp_plan_mode_to_session_mode(plan_mode: &serde_json::Value) -> serde_json::Value {
-    serde_json::json!({
-        "slug": "plan",
-        "title": "Plan mode",
-        "kind": "planning",
-        "state": plan_mode.get("state").and_then(|value| value.as_str()).unwrap_or("active"),
-        "source": "den.acp_plan_mode",
-        "metadata": {
-            "plan_mode_id": plan_mode.get("id").cloned().unwrap_or(serde_json::Value::Null),
-            "artifact_path": plan_mode.get("plan_artifact_path").cloned().unwrap_or(serde_json::Value::Null),
-            "reason": plan_mode.get("reason").cloned().unwrap_or(serde_json::Value::Null),
-            "requested_by": plan_mode.get("requested_by").cloned().unwrap_or(serde_json::Value::Null)
-        }
-    })
+fn acp_session_legacy_states(
+    row: &acp_sessions::AcpSessionRow,
+    plan_mode: Option<&serde_json::Value>,
+) -> Vec<serde_json::Value> {
+    let mut states = vec![serde_json::json!({
+        "domain": "execution",
+        "kind": "legacy_session_mode",
+        "slug": row.current_mode,
+        "source": "acp_sessions.current_mode",
+        "compatibility_only": true,
+    })];
+    if let Some(plan_mode_value) = plan_mode {
+        states.push(serde_json::json!({
+            "domain": "workplan",
+            "kind": "legacy_plan_mode_gate",
+            "state": plan_mode_value.get("state").and_then(|value| value.as_str()).unwrap_or("active"),
+            "source": "den.acp_plan_mode",
+            "compatibility_only": true,
+            "metadata": {
+                "plan_mode_id": plan_mode_value.get("id").cloned().unwrap_or(serde_json::Value::Null),
+                "artifact_path": plan_mode_value.get("plan_artifact_path").cloned().unwrap_or(serde_json::Value::Null),
+                "reason": plan_mode_value.get("reason").cloned().unwrap_or(serde_json::Value::Null),
+                "requested_by": plan_mode_value.get("requested_by").cloned().unwrap_or(serde_json::Value::Null)
+            }
+        }));
+    }
+    states
 }
 
-fn acp_policy_mode(current_mode: &str, plan_mode: Option<&serde_json::Value>) -> serde_json::Value {
-    let plan_state = plan_mode
-        .and_then(|value| value.get("state"))
-        .and_then(|value| value.as_str());
-    let policy = resolve_session_policy_for_mode(current_mode, plan_state);
-    serde_json::json!({
-        "slug": policy.mode_label.to_ascii_lowercase(),
-        "title": format!("{} mode", policy.mode_label),
-        "kind": "tool_enablement",
-        "state": policy.tool_enablement.as_str(),
-        "source": "den.session_policy",
-        "metadata": policy.to_json(),
-    })
-}
-
-fn acp_session_row_to_http_with_modes(
+pub(crate) fn acp_session_row_to_http_with_modes(
     row: acp_sessions::AcpSessionRow,
     plan_mode: Option<serde_json::Value>,
 ) -> AcpSessionHttp {
-    let mut modes = vec![acp_policy_mode(&row.current_mode, plan_mode.as_ref())];
-    if let Some(plan_mode_value) = plan_mode.as_ref() {
-        modes.push(acp_plan_mode_to_session_mode(plan_mode_value));
-    }
     let policy = resolve_session_policy_for_mode(
         &row.current_mode,
         plan_mode
@@ -405,6 +399,7 @@ fn acp_session_row_to_http_with_modes(
             .and_then(|value| value.as_str()),
     );
     let workflow_state = workflow_state_json(&policy);
+    let legacy_states = acp_session_legacy_states(&row, plan_mode.as_ref());
     AcpSessionHttp {
         acp_session_id: row.acp_session_id,
         runtime_session_id: row.runtime_session_id,
@@ -423,7 +418,7 @@ fn acp_session_row_to_http_with_modes(
         archived_at: row.archived_at.map(format_acp_session_timestamp),
         created_at: format_acp_session_timestamp(row.created_at),
         updated_at: format_acp_session_timestamp(row.updated_at),
-        modes: Some(modes),
+        legacy_states: Some(legacy_states),
         plan_mode,
         session_policy: policy.to_json(),
         workflow_state,

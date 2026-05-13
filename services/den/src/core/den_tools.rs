@@ -583,8 +583,8 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
         descriptor(
             DEN_WORK_PLAN_LIST,
             "List plans",
-            "List visible Bear-level planning state, including live activity plans, submitted plan-mode gates, and saved plan artifacts where available.",
-            "bear.work_plans",
+            "List visible Bear-level planning state, including live activity plans, submitted workplan gates, and saved workplan artifacts where available.",
+            "bear.activity",
             &["work_plan.read"],
             WORK_PLAN_READ_ROLES,
             json!({
@@ -607,7 +607,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
             DEN_WORK_PLAN_GET_STATUS,
             "Get work plan status",
             "Return current status for one visible Den activity plan or this session's active plan.",
-            "bear.work_plans",
+            "bear.activity",
             &["work_plan.read"],
             WORK_PLAN_READ_ROLES,
             json!({
@@ -623,8 +623,8 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
         descriptor(
             DEN_WORK_PLAN_UPDATE,
             "Update visible plan",
-            "Create or update the current role's live visible ACP task plan. Use this when the user asks to create, show, update, or execute a plan/task list.",
-            "bear.work_plans",
+            "Create or update the current role's live visible ACP activity plan. Use this when the user asks to create, show, update, or execute a plan/task list.",
+            "bear.activity",
             &["work_plan.write"],
             WORK_PLAN_UPDATE_ROLES,
             json!({
@@ -661,8 +661,8 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
         descriptor(
             DEN_WORK_PLAN_REQUEST_HANDOFF,
             "Request task handoff",
-            "Request conversion of selected live plan items into a schema-validated task intent for curate review.",
-            "bear.work_plans",
+            "Request conversion of selected live activity plan items into a schema-validated task intent for curate review.",
+            "bear.activity",
             &["work_plan.handoff.request"],
             TALK_AND_PAIR_ROLES,
             json!({
@@ -683,8 +683,8 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
         descriptor(
             DEN_PLAN_MODE_ENTER,
             "Enter planning mode",
-            "Enter ACP pair planning mode and reflect that mode in the ACP session UI. Use this when the user asks to enter planning mode.",
-            "bear.planning",
+            "Enter ACP pair workplan mode and reflect that mode in the ACP session UI. Use this when the user asks to enter planning mode.",
+            "bear.workplan",
             &["plan_mode.enter"],
             PAIR_ROLES,
             json!({
@@ -699,8 +699,8 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
         descriptor(
             DEN_PLAN_MODE_STATUS,
             "Get plan mode status",
-            "Return the current ACP pair plan-mode gate for this session, if any.",
-            "bear.planning",
+            "Return the current ACP pair workplan gate for this session, if any.",
+            "bear.workplan",
             &["plan_mode.read"],
             PAIR_ROLES,
             empty_schema(),
@@ -708,8 +708,8 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
         descriptor(
             DEN_PLAN_MODE_RECORD_APPROVAL,
             "Record plan approval",
-            "Record explicit approval from the authenticated human for the currently submitted implementation plan. Use only when the user clearly approves the current plan in this conversation, for example 'go ahead', 'approved', or 'proceed'.",
-            "bear.planning",
+            "Record explicit approval from the authenticated human for the currently submitted implementation workplan. Use only when the user clearly approves the current plan in this conversation, for example 'go ahead', 'approved', or 'proceed'.",
+            "bear.workplan",
             &["plan_mode.approve"],
             PAIR_ROLES,
             json!({
@@ -725,8 +725,8 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
         descriptor(
             DEN_PLAN_MODE_EXIT,
             "Submit implementation plan",
-            "Submit a markdown implementation plan artifact for user approval. This is for durable implementation plans, not for the live visible task list; use update_plan for visible task planning.",
-            "bear.planning",
+            "Submit a markdown implementation workplan artifact for user approval. This is for durable implementation workplans, not for the live visible task list; use update_plan for visible activity planning.",
+            "bear.workplan",
             &["plan_mode.exit"],
             PAIR_ROLES,
             json!({
@@ -743,8 +743,8 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
         descriptor(
             DEN_PLAN_MODE_CANCEL,
             "Cancel plan mode",
-            "Cancel the current ACP pair plan-mode gate without approving implementation.",
-            "bear.planning",
+            "Cancel the current ACP pair workplan gate without approving implementation.",
+            "bear.workplan",
             &["plan_mode.cancel"],
             PAIR_ROLES,
             json!({
@@ -2057,7 +2057,11 @@ async fn enter_plan_mode(
         "domain": "workplan",
         "workplan": plan_mode_workplan_payload(&row),
         "plan_mode": row,
-        "mode": "plan",
+        "workflow_state": turn_state::turn_state_json(&crate::core::acp_tools::AcpResolvedSessionPolicy {
+            mode_label: "Plan",
+            tool_enablement: crate::core::acp_tools::AcpToolEnablementState::ReadOnly,
+            plan_mode_state: Some(row.state.clone()),
+        }, None),
         "mode_update": "plan",
         "instructions": [
             "Plan mode is active for this ACP session.",
@@ -2140,6 +2144,11 @@ async fn record_plan_approval(
         "ok": true,
         "workplan": plan_mode_workplan_payload(&row),
         "plan_mode": row,
+        "workflow_state": turn_state::turn_state_json(&crate::core::acp_tools::AcpResolvedSessionPolicy {
+            mode_label: "Write",
+            tool_enablement: crate::core::acp_tools::AcpToolEnablementState::AllTools,
+            plan_mode_state: Some(row.state.clone()),
+        }, None),
         "mode_update": "write",
         "approval_text": approval_text,
         "content": "Plan approved by the authenticated human. Write mode is now enabled; implementation may proceed subject to normal ACP tool approvals.",
@@ -2221,6 +2230,11 @@ async fn exit_plan_mode(
         "domain": "workplan",
         "workplan": plan_mode_workplan_payload(&row),
         "plan_mode": row,
+        "workflow_state": turn_state::turn_state_json(&crate::core::acp_tools::AcpResolvedSessionPolicy {
+            mode_label: "Plan",
+            tool_enablement: crate::core::acp_tools::AcpToolEnablementState::ReadOnly,
+            plan_mode_state: Some(row.state.clone()),
+        }, None),
         "artifact": {
             "domain": "workplan",
             "content_class": "workplan_artifact",
@@ -2271,7 +2285,11 @@ async fn cancel_plan_mode(
         "domain": "workplan",
         "workplan": plan_mode_workplan_payload(&row),
         "plan_mode": row,
-        "mode": "ask",
+        "workflow_state": turn_state::turn_state_json(&crate::core::acp_tools::AcpResolvedSessionPolicy {
+            mode_label: "Ask",
+            tool_enablement: crate::core::acp_tools::AcpToolEnablementState::ReadOnly,
+            plan_mode_state: Some(row.state.clone()),
+        }, None),
         "mode_update": "ask"
     }))
 }
@@ -2798,8 +2816,8 @@ async fn list_work_plans(
         "plan_artifacts": plan_artifacts,
         "linked_plan_artifact_paths": linked_artifact_paths,
         "notes": [
-            "list_plans is a Bear-level planning view. It includes live activity plans, submitted/active plan-mode gates, and saved pair plan artifacts when available.",
-            "A plan artifact in pair/plans/ may exist even when there is no active live activity plan.",
+            "list_plans is a Bear-level planning view. It includes live activity plans, submitted/active workplan gates, and saved pair workplan artifacts when available.",
+            "A workplan artifact in pair/plans/ may exist even when there is no active live activity plan; this is workplan-domain state, not semantic memory.",
             "Role fields are provenance and policy hints, not product ownership. Cross-role visibility is not cross-role execution authority."
         ],
     }))

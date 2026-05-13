@@ -9,7 +9,7 @@ This document now also tracks the task/activity portion of the single ontology-a
 - Den owns a per-bear live activity board for current plans and status, aligned with Letta Code's lightweight `TodoWrite` / `UpdatePlan` progress layer.
 - BEARS should support ACP `pair` Ask/Plan/Write modes aligned with common coding-agent clients: Ask and Plan expose read/search/inspect tools; Write enables mutation/execution/browser tools, with concrete effects still requiring Den policy, adapter safety checks, and ACP client approval.
 - MemFS owns durable task artifacts: channel intent files, curate-approved task files, and work result files. Workplan/plan-mode artifacts are a separate ontology domain and must not be treated, described, or surfaced as MemFS semantic-memory documents, even if some current implementation details still use `pair/plans/` storage.
-- ACP session rows remain protocol bindings only. They may reference an activity plan, but they do not own planning state.
+- ACP session rows remain protocol bindings only. They may reference an activity plan, but they do not own planning state. Legacy fields such as ACP `current_mode` may remain for compatibility, but must resolve into the canonical turn-state model rather than acting as an independent source of truth.
 - Channel agents never hand work directly to the work agent. They write or request task intents; curate approval is the promotion boundary.
 - Letta Code-based agents interact with activity state through Den meta tools and short injected context, not by reading Den database rows directly.
 
@@ -155,6 +155,7 @@ Required additions:
 - Do not describe `pair/plans/` persistence as MemFS semantic memory; it is a workplan-domain storage detail until a more workflow-native namespace lands.
 - Expose a machine-readable ontology/domain field in relevant descriptors and UI surfaces so workplan, activity, memory, and execution remain separable even when provider-safe names stay concise.
 - Align remaining Den API, operator, and audit surfaces to the same ontology rather than limiting the model to ACP reminders.
+- Replace overlapping visible state machines (`current_mode`, plan-mode state, tool-enablement state) with one canonical turn-state resolution path; preserve older fields only as compatibility metadata where still necessary.
 
 ## Implementation Notes
 
