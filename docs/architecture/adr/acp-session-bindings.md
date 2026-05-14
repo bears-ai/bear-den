@@ -3,6 +3,7 @@
 ## Status: Accepted
 
 ## Date: 2026-05-02
+## Updated: 2026-05-13
 
 ---
 
@@ -55,9 +56,15 @@ Pagination uses opaque keyset cursors over `(updated_at, id)` in descending orde
 
 `session/load` replays all historical events BEARS can faithfully reconstruct. The current implementation replays user/assistant text messages only. Tool calls/results, reasoning/status chunks, errors, resource/image/audio content, and richer session configuration events are not claimed as reconstructable until Den/Letta expose faithful historical event data.
 
-### Cancellation and close
+### Cancellation, close, and stuck Letta approvals
 
 ACP `session/cancel` is plumbed through adapter -> Den where possible. `session/close` should cancel active direct ACP tool turns before marking a session closed or archived. Pending ACP client tool calls for a cancelled/closed session are marked cancelled so late duplicate results are not treated as active work.
+
+A stuck Letta approval on a bound `conv-*` is not safely fixed by silently rebinding the ACP session to a fresh conversation. The main value of retaining the ACP session is conversation continuity/history; replacing the bound conversation inside the same ACP session violates that expectation.
+
+When Letta reports stale approval state for a bound ACP session, BEARS should first attempt Letta conversation compaction on the same `conv-*` via `/v1/conversations/{conversation_id}/compact`. If compaction succeeds, the adapter may retry the prompt once against the same ACP session and conversation binding. If compaction fails or the retry still reports stale approval, BEARS should stop and ask the user to start a new ACP session rather than pretending the old session was repaired.
+
+This amends the earlier “unwedge” idea: cancellation of runs and cleanup of local in-memory tool turns may still be useful internal hygiene, but it is not a reliable user-facing recovery for malformed conversation approval state and should not be advertised as such.
 
 ### MCP server handling
 
@@ -84,3 +91,4 @@ Generic bearer principals should use separate internal/admin API surfaces rather
 - Never-prompted local ACP sessions do not survive adapter restart and are not listed as resumable sessions.
 - MCP behavior is predictable and conservative until real stdio MCP lifecycle management exists.
 - ACP adapter traffic has a consistent token model across backing endpoints.
+- Stuck approval recovery preserves conversation binding when possible through compaction, and otherwise fails explicitly so users can start a new ACP session with a fresh conversation.
