@@ -24,7 +24,7 @@ use crate::{
             BearAgentRole,
         },
         den_tools::{self, DenToolChannelContext, DenToolInvocationContext},
-        letta::{load_agent_conversations, strip_letta_harness_for_user},
+        letta::{load_agent_conversations, sanitize_visible_transcript_text},
         work_plans::{self, WorkPlanListFilter, WorkPlanStatus},
     },
     errors::CustomError,
@@ -518,12 +518,8 @@ fn letta_user_message_role_is_human(inner: &serde_json::Value, msg: &serde_json:
 }
 
 fn text_contains_letta_harness(text: &str) -> bool {
-    let t = text.to_ascii_lowercase();
-    t.contains("<system-reminder")
-        || t.contains("<system_reminder")
-        || t.contains(
-            "you have been forked from the primary conversational thread to run as an independent subagent",
-        )
+    let sanitized = sanitize_visible_transcript_text(text);
+    sanitized.trim().is_empty() && !text.trim().is_empty()
 }
 
 /// Cursor for `before=` on the next page: chronologically oldest id in this Letta batch (any type).
@@ -581,9 +577,7 @@ fn map_letta_history_page(
                     }
                 }
                 "assistant_message" => {
-                    if text_contains_letta_harness(&text)
-                        && strip_letta_harness_for_user(&text).trim().is_empty()
-                    {
+                    if text_contains_letta_harness(&text) {
                         "system"
                     } else {
                         "ai"
@@ -600,7 +594,7 @@ fn map_letta_history_page(
             if mt == "user_message" && !letta_user_message_role_is_human(inner, msg) {
                 continue;
             }
-            text = strip_letta_harness_for_user(&text);
+            text = sanitize_visible_transcript_text(&text);
             if text.trim().is_empty() {
                 continue;
             }
@@ -1122,6 +1116,34 @@ mod chat_history_map_tests {
         assert_eq!(msgs.len(), 1);
         assert_eq!(msgs[0].role, "user");
         assert_eq!(msgs[0].text, "Real user question");
+    }
+
+    #[test]
+    fn user_scaffolding_prefix_is_stripped_from_history() {
+        let body = serde_json::json!([{
+            "id": "u1",
+            "date": "2025-01-01T00:00:00Z",
+            "message_type": "user_message",
+            "content": "ACP workflow state for this session: workflow_id=123 approval_status=awaiting_human_approval.\n\nSummarize this doc"
+        }]);
+
+        let (msgs, _, _) = map_letta_history_page(&body, 10, false);
+        assert_eq!(msgs.len(), 1);
+        assert_eq!(msgs[0].text, "Summarize this doc");
+    }
+
+    #[test]
+    fn hidden_resource_blocks_are_stripped_from_history() {
+        let body = serde_json::json!([{
+            "id": "u1",
+            "date": "2025-01-01T00:00:00Z",
+            "message_type": "user_message",
+            "content": "Summarize this doc\n<bears-acp-resource uri=\"file:///tmp/secret\">hidden context</bears-acp-resource>"
+        }]);
+
+        let (msgs, _, _) = map_letta_history_page(&body, 10, false);
+        assert_eq!(msgs.len(), 1);
+        assert_eq!(msgs[0].text, "Summarize this doc");
     }
 
     #[test]

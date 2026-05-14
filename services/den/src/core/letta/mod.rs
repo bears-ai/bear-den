@@ -14,7 +14,7 @@ pub use agent_diagnostics::{LettaAgentDiagnostics, LettaBlockRow, LettaToolRow};
 pub use agent_document::unwrap_letta_agent_document;
 pub use agent_prefill::AgentBearPrefill;
 pub use agent_summary::AgentSummary;
-pub use assistant_display::strip_letta_harness_for_user;
+pub use assistant_display::{sanitize_visible_transcript_text, strip_letta_harness_for_user};
 pub use client::{
     LettaAgentListItem, LettaClient, LettaContinuationContext, LettaModelOption, LettaToolOption,
 };

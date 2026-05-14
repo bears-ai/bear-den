@@ -3924,7 +3924,42 @@ fn push_path_value(roots: &mut Vec<String>, value: Option<&Value>) {
 }
 
 fn prompt_display_text_from_params(params: &Value) -> Option<String> {
-    prompt_text_blocks_from_params(params).ok()
+    prompt_text_blocks_from_params(params)
+        .ok()
+        .map(|text| strip_prompt_scaffolding_for_display(&text))
+        .filter(|text| !text.trim().is_empty())
+}
+
+fn strip_prompt_scaffolding_for_display(text: &str) -> String {
+    let mut out = String::new();
+    let mut rest = text;
+    loop {
+        let Some(start) = find_ascii_case_insensitive(rest, "<system-reminder") else {
+            out.push_str(rest);
+            break;
+        };
+        out.push_str(&rest[..start]);
+        let after_start = &rest[start..];
+        let Some(close_start) = find_ascii_case_insensitive(after_start, "</system-reminder>")
+        else {
+            break;
+        };
+        let close_len = "</system-reminder>".len();
+        rest = &after_start[close_start + close_len..];
+    }
+    out.trim().to_string()
+}
+
+fn find_ascii_case_insensitive(haystack: &str, needle: &str) -> Option<usize> {
+    let hn = needle.len();
+    if hn == 0 || haystack.len() < hn {
+        return None;
+    }
+    let nb = needle.as_bytes();
+    haystack
+        .as_bytes()
+        .windows(hn)
+        .position(|w| w.eq_ignore_ascii_case(nb))
 }
 
 fn prompt_contains_resources(params: &Value) -> bool {
@@ -6092,6 +6127,18 @@ mod tests {
             .filter_map(|option| option.get("value").and_then(Value::as_str))
             .collect::<Vec<_>>();
         assert_eq!(option_values, vec![MODE_ASK, MODE_PLAN, MODE_WRITE]);
+    }
+
+    #[test]
+    fn prompt_display_text_strips_system_reminder_blocks() {
+        let params = json!({
+            "prompt": [{
+                "type": "text",
+                "text": "Please fix this.\n\n<system-reminder>hidden workflow state</system-reminder>"
+            }]
+        });
+        let display = prompt_display_text_from_params(&params).expect("display text");
+        assert_eq!(display, "Please fix this.");
     }
 
     #[test]

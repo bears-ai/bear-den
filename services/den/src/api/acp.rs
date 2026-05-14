@@ -57,7 +57,9 @@ use crate::{
         archived_conversations,
         bears::{db as bears_db, Bear, BearAgentRole},
         den_tools::{self, DenToolChannelContext, DenToolInvocationContext},
-        letta::{load_agent_conversations, strip_letta_harness_for_user, LettaContinuationContext},
+        letta::{
+            load_agent_conversations, sanitize_visible_transcript_text, LettaContinuationContext,
+        },
         memory_manager_head::{write_memfs_role_memory_entry, MemfsWriteRoleMemoryEntryRequest},
         memory_proposals::{self, CreateMemoryProposal},
         pair_reflection::{self, CompletePairReflectionRun, CreatePairReflectionRun},
@@ -1394,24 +1396,6 @@ fn letta_user_message_role_is_human(inner: &serde_json::Value, msg: &serde_json:
     true
 }
 
-fn strip_acp_resource_blocks(raw: &str) -> String {
-    let mut out = String::new();
-    let mut rest = raw;
-    loop {
-        let Some(start) = rest.find("<bears-acp-resource") else {
-            out.push_str(rest);
-            break;
-        };
-        out.push_str(&rest[..start]);
-        let after_start = &rest[start..];
-        let Some(end) = after_start.find("</bears-acp-resource>") else {
-            break;
-        };
-        rest = &after_start[end + "</bears-acp-resource>".len()..];
-    }
-    out.trim().to_string()
-}
-
 fn map_acp_history_page(
     body: &serde_json::Value,
     page_limit: u32,
@@ -1438,7 +1422,7 @@ fn map_acp_history_page(
         let Some(text) = letta_message_text(inner).or_else(|| letta_message_text(msg)) else {
             continue;
         };
-        let text = strip_acp_resource_blocks(&strip_letta_harness_for_user(&text));
+        let text = sanitize_visible_transcript_text(&text);
         if text.trim().is_empty() {
             continue;
         }
@@ -5368,17 +5352,25 @@ mod tests {
                     "date": "2026-05-10T00:00:02Z",
                     "message_type": "user_message",
                     "content": "Please check this thread.\n<system-reminder>adapter-only instructions</system-reminder>"
+                },
+                {
+                    "id": "msg-human-scaffold",
+                    "date": "2026-05-10T00:00:03Z",
+                    "message_type": "user_message",
+                    "content": "ACP workflow state for this session: workflow_id=123 workflow_state=submitted submitted_plan_present=true approval_status=awaiting_human_approval execution_unlocked=false. Workflow state is authoritative.\n\nPlease only show the real user text."
                 }
             ]
         });
         let (messages, has_more, next_before) = map_acp_history_page(&body, 50);
         assert!(!has_more);
-        assert_eq!(next_before.as_deref(), Some("msg-human"));
-        assert_eq!(messages.len(), 2);
+        assert_eq!(next_before.as_deref(), Some("msg-human-scaffold"));
+        assert_eq!(messages.len(), 3);
         assert_eq!(messages[0].role, "assistant");
         assert_eq!(messages[0].text, "Done.");
         assert_eq!(messages[1].role, "user");
         assert_eq!(messages[1].text, "Please check this thread.");
+        assert_eq!(messages[2].role, "user");
+        assert_eq!(messages[2].text, "Please only show the real user text.");
     }
 
     #[test]
