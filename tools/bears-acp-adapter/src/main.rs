@@ -87,7 +87,7 @@ struct RuntimeConfig {
     client: String,
 }
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 struct AdapterState {
     client_capabilities: Value,
     session_contexts: HashMap<String, SessionContext>,
@@ -1576,38 +1576,48 @@ async fn handle_request(
                     return Ok(());
                 }
 
-                match handle_prompt(
-                    http,
-                    config,
-                    adapter_state,
-                    &shared_state,
-                    id.clone(),
-                    request.params,
-                )
-                .await
-                {
-                    Ok(()) => {}
-                    Err(err) => {
-                        let server_version = fetch_server_version(http, config).await.ok();
-                        let mut message = format!("{err:#}");
-                        if let Some(server_version) = &server_version {
-                            message.push_str("\n\n");
-                            message.push_str(&server_version.summary());
+                let http = http.clone();
+                let config = config.clone();
+                let shared_state = shared_state.clone();
+                let mut prompt_state = AdapterState {
+                    client_capabilities: shared_state.client_capabilities.lock().await.clone(),
+                    session_contexts: shared_state.session_contexts.lock().await.clone(),
+                    transport: shared_state.transport.clone(),
+                };
+                tokio::spawn(async move {
+                    match handle_prompt(
+                        &http,
+                        &config,
+                        &mut prompt_state,
+                        &shared_state,
+                        id.clone(),
+                        request.params,
+                    )
+                    .await
+                    {
+                        Ok(()) => {}
+                        Err(err) => {
+                            let server_version = fetch_server_version(&http, &config).await.ok();
+                            let mut message = format!("{err:#}");
+                            if let Some(server_version) = &server_version {
+                                message.push_str("\n\n");
+                                message.push_str(&server_version.summary());
+                            }
+                            let _ = write_response(
+                                id,
+                                Err(json_rpc_error(
+                                    -32003,
+                                    "BEARS prompt failed",
+                                    Some(json!({
+                                        "message": message,
+                                        "server_version": server_version.map(server_version_json),
+                                    })),
+                                )),
+                            )
+                            .await;
                         }
-                        write_response(
-                            id,
-                            Err(json_rpc_error(
-                                -32003,
-                                "BEARS prompt failed",
-                                Some(json!({
-                                    "message": message,
-                                    "server_version": server_version.map(server_version_json),
-                                })),
-                            )),
-                        )
-                        .await?;
                     }
-                }
+                });
             }
         }
         "session/close" => {
@@ -3103,10 +3113,13 @@ async fn handle_prompt_with_retry(
         send_agent_message_chunk(session_id, &report).await?;
         return Ok(());
     }
-    let mut client_context = adapter_state
+    let mut client_context = shared_state
         .session_contexts
+        .lock()
+        .await
         .get(session_id)
         .cloned()
+        .or_else(|| adapter_state.session_contexts.get(session_id).cloned())
         .unwrap_or_else(|| {
             eprintln!(
                 "bears-acp-adapter: session/prompt session_id={} had no cached session context; using fallback direct tool context",
@@ -3158,7 +3171,7 @@ async fn handle_prompt_with_retry(
     let mut den_payload = json!({
         "message": prompt,
         "client": config.client,
-        "client_capabilities": adapter_state.client_capabilities,
+        "client_capabilities": shared_state.client_capabilities.lock().await.clone(),
         "client_context": client_context.raw,
         "adapter_contract": adapter_contract_context(),
     });
