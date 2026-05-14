@@ -12,9 +12,13 @@ pub mod codepool;
 pub mod den_tools;
 #[cfg(test)]
 mod den_tools_workflow_state_tests;
+#[cfg(test)]
+mod den_tools_work_surface_scaffold_tests;
 pub mod email;
 pub mod letta;
 pub mod memory_manager_head;
+#[cfg(test)]
+mod memory_manager_head_append_markdown_tests;
 pub mod memory_proposals;
 pub mod pair_reflection;
 pub mod reflection_conductor;

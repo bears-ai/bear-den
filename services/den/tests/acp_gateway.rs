@@ -753,6 +753,9 @@ async fn acp_prompt_streams_to_pair_agent_and_maps_sse() {
     assert!(content.contains("ACP context plan"));
     assert!(content.contains("den.work_plan.update"));
     assert!(!content.contains("private_path"));
+    assert!(content.contains("multiple work surfaces"));
+    assert!(content.contains("A Workplace is the role-scoped memory surface"));
+    assert!(content.contains("Prefer work-surface-first retrieval for local-understanding questions"));
     assert_ne!(captured["agent_id"], "agent-acp-talk-test");
 }
 

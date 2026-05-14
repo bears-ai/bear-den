@@ -16,7 +16,7 @@ use crate::{
         acp_sessions,
         bears::{db as bears_db, db::role_is_bear_admin, BearAgentRole},
         memory_manager_head::{
-            fetch_memfs_role_memory_file, fetch_memfs_role_memory_status,
+            append_markdown_section, fetch_memfs_role_memory_file, fetch_memfs_role_memory_status,
             fetch_memfs_role_memory_tree, fetch_memfs_role_plan_artifacts,
             search_memfs_role_memory, write_memfs_core_update, write_memfs_role_memory_entry,
             MemfsCoreUpdateRequest, MemfsWriteRoleMemoryEntryRequest,
@@ -132,6 +132,8 @@ pub const DEN_MEMORY_READ: &str = "den.memory.read";
 pub const DEN_MEMORY_READ_PROVIDER: &str = "memory_read";
 pub const DEN_MEMORY_SEARCH: &str = "den.memory.search";
 pub const DEN_MEMORY_SEARCH_PROVIDER: &str = "memory_search";
+pub const DEN_MEMORY_CREATE_WORK_SURFACE_SCAFFOLD: &str = "den.memory.create_work_surface_scaffold";
+pub const DEN_MEMORY_CREATE_WORK_SURFACE_SCAFFOLD_PROVIDER: &str = "memory_create_work_surface_scaffold";
 pub const DEN_MEMORY_REQUEST_REVIEW: &str = "den.memory.request_review";
 pub const DEN_MEMORY_REQUEST_REVIEW_PROVIDER: &str = "memory_request_review";
 pub const DEN_MEMORY_LIST_PROPOSALS: &str = "den.memory.list_proposals";
@@ -194,6 +196,9 @@ pub fn provider_safe_tool_name(name: &str) -> String {
         DEN_MEMORY_TREE => return DEN_MEMORY_TREE_PROVIDER.to_string(),
         DEN_MEMORY_READ => return DEN_MEMORY_READ_PROVIDER.to_string(),
         DEN_MEMORY_SEARCH => return DEN_MEMORY_SEARCH_PROVIDER.to_string(),
+        DEN_MEMORY_CREATE_WORK_SURFACE_SCAFFOLD => {
+            return DEN_MEMORY_CREATE_WORK_SURFACE_SCAFFOLD_PROVIDER.to_string()
+        }
         DEN_MEMORY_REQUEST_REVIEW => return DEN_MEMORY_REQUEST_REVIEW_PROVIDER.to_string(),
         DEN_MEMORY_LIST_PROPOSALS => return DEN_MEMORY_LIST_PROPOSALS_PROVIDER.to_string(),
         DEN_MEMORY_READ_PROPOSAL => return DEN_MEMORY_READ_PROPOSAL_PROVIDER.to_string(),
@@ -419,6 +424,26 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
                     "limit": { "type": "integer", "minimum": 1, "maximum": 50 }
                 },
                 "required": ["query"],
+                "additionalProperties": false
+            }),
+        ),
+        descriptor(
+            DEN_MEMORY_CREATE_WORK_SURFACE_SCAFFOLD,
+            "Create work-surface scaffold",
+            "Create a minimal work-surface scaffold in Bear memory and register it in the work-surface index.",
+            "bear.memory",
+            &["memory.write", "memory.core.write"],
+            PAIR_ROLES,
+            json!({
+                "type": "object",
+                "properties": {
+                    "work_surface_slug": { "type": "string", "minLength": 1, "maxLength": 80 },
+                    "work_surface_name": { "type": "string", "minLength": 1, "maxLength": 200 },
+                    "overview": { "type": "string", "minLength": 1, "maxLength": 20000 },
+                    "glossary": { "type": "string", "maxLength": 20000 },
+                    "current_understanding": { "type": "string", "maxLength": 20000 }
+                },
+                "required": ["work_surface_slug", "work_surface_name", "overview"],
                 "additionalProperties": false
             }),
         ),
@@ -923,6 +948,7 @@ fn tool_domain(name: &str) -> &'static str {
         | DEN_MEMORY_TREE
         | DEN_MEMORY_READ
         | DEN_MEMORY_SEARCH
+        | DEN_MEMORY_CREATE_WORK_SURFACE_SCAFFOLD
         | DEN_MEMORY_REQUEST_REVIEW
         | DEN_MEMORY_LIST_PROPOSALS
         | DEN_MEMORY_READ_PROPOSAL
@@ -938,6 +964,7 @@ fn tool_domain(name: &str) -> &'static str {
 fn tool_content_class(name: &str) -> Option<&'static str> {
     match name {
         DEN_MEMORY_WRITE_ENTRY => Some("semantic_memory"),
+        DEN_MEMORY_CREATE_WORK_SURFACE_SCAFFOLD => Some("semantic_memory"),
         DEN_PLAN_MODE_EXIT => Some("workplan_artifact"),
         DEN_WORK_PLAN_UPDATE => Some("activity_status"),
         DEN_WORK_PLAN_REQUEST_HANDOFF => Some("task_intent"),
@@ -1288,6 +1315,17 @@ struct MemorySearchArguments {
 }
 
 #[derive(Debug, Deserialize)]
+struct MemoryCreateWorkSurfaceScaffoldArguments {
+    work_surface_slug: String,
+    work_surface_name: String,
+    overview: String,
+    #[serde(default)]
+    glossary: Option<String>,
+    #[serde(default)]
+    current_understanding: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
 struct MemoryListProposalsArguments {
     #[serde(default)]
     status: Option<String>,
@@ -1387,6 +1425,9 @@ pub async fn invoke_den_tool(
         DEN_MEMORY_TREE => memory_browse(config, &context, role).await,
         DEN_MEMORY_READ => memory_read(config, &context, role, arguments).await,
         DEN_MEMORY_SEARCH => memory_search(config, &context, role, arguments).await,
+        DEN_MEMORY_CREATE_WORK_SURFACE_SCAFFOLD => {
+            create_work_surface_scaffold(config, &context, role, arguments).await
+        }
         DEN_MEMORY_REQUEST_REVIEW => request_memory_review(pool, &context, role, arguments).await,
         DEN_MEMORY_LIST_PROPOSALS => list_memory_proposals(pool, &context, role, arguments).await,
         DEN_MEMORY_READ_PROPOSAL => read_memory_proposal(pool, &context, role, arguments).await,
@@ -2541,6 +2582,245 @@ async fn memory_search(
                 "message": "MemFS sidecar is not configured (set LETTA_MEMFS_SERVICE_URL)"
             }))
         })
+}
+
+pub(crate) fn normalize_work_surface_slug(value: &str) -> Result<String, CustomError> {
+    let trimmed = value.trim().to_ascii_lowercase();
+    if trimmed.is_empty() {
+        return Err(CustomError::ValidationError(
+            "work_surface_slug must not be empty".to_string(),
+        ));
+    }
+    let normalized: String = trimmed
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() {
+                ch
+            } else {
+                '-'
+            }
+        })
+        .collect();
+    let collapsed = normalized
+        .split('-')
+        .filter(|segment| !segment.is_empty())
+        .collect::<Vec<_>>()
+        .join("-");
+    if collapsed.is_empty() {
+        return Err(CustomError::ValidationError(
+            "work_surface_slug must include at least one letter or digit".to_string(),
+        ));
+    }
+    if collapsed.len() > 80 {
+        return Err(CustomError::ValidationError(
+            "work_surface_slug must be 80 characters or fewer after normalization".to_string(),
+        ));
+    }
+    Ok(collapsed)
+}
+
+fn work_surface_scaffold_paths(slug: &str) -> (String, String, String, String, String) {
+    (
+        format!("core/work_surfaces/{slug}/index.md"),
+        format!("core/work_surfaces/{slug}/overview.md"),
+        format!("core/work_surfaces/{slug}/glossary.md"),
+        format!("pair/work_surfaces/{slug}/current-understanding.md"),
+        "core/work_surfaces/index.md".to_string(),
+    )
+}
+
+pub(crate) fn work_surface_index_file_body() -> &'static str {
+    "# Work Surfaces\n\nThis index lists the Bear's registered Work Surfaces.\n"
+}
+
+pub(crate) fn work_surface_entry_body(slug: &str, name: &str) -> String {
+    format!("- [{name}](./{slug}/index.md)")
+}
+
+pub(crate) fn work_surface_scaffold_requests(
+    slug: &str,
+    name: &str,
+    overview: &str,
+    glossary: Option<&str>,
+    current_understanding: Option<&str>,
+) -> Vec<MemfsCoreUpdateRequest> {
+    let (index_path, overview_path, glossary_path, current_understanding_path, registry_path) =
+        work_surface_scaffold_paths(slug);
+    let glossary_body = glossary.unwrap_or("Glossary terms for this work surface will be added here.");
+    let understanding_body = current_understanding
+        .unwrap_or("Current pair understanding for this work surface will be maintained here.");
+    vec![
+        MemfsCoreUpdateRequest {
+            target_path: registry_path,
+            mode: "create_file".to_string(),
+            title: Some("Work Surfaces".to_string()),
+            body: Some(work_surface_index_file_body().to_string()),
+            old_text: None,
+            new_text: None,
+            proposal_id: None,
+            source_paths: vec![],
+        },
+        MemfsCoreUpdateRequest {
+            target_path: "core/work_surfaces/index.md".to_string(),
+            mode: "append_section".to_string(),
+            title: Some(name.to_string()),
+            body: Some(work_surface_entry_body(slug, name)),
+            old_text: None,
+            new_text: None,
+            proposal_id: None,
+            source_paths: vec![],
+        },
+        MemfsCoreUpdateRequest {
+            target_path: index_path,
+            mode: "create_file".to_string(),
+            title: Some(name.to_string()),
+            body: Some(format!(
+                "# {name}\n\n- Slug: `{slug}`\n- Overview: [overview](./overview.md)\n- Glossary: [glossary](./glossary.md)\n"
+            )),
+            old_text: None,
+            new_text: None,
+            proposal_id: None,
+            source_paths: vec![],
+        },
+        MemfsCoreUpdateRequest {
+            target_path: overview_path,
+            mode: "create_file".to_string(),
+            title: Some(format!("{name} overview")),
+            body: Some(overview.trim().to_string()),
+            old_text: None,
+            new_text: None,
+            proposal_id: None,
+            source_paths: vec![],
+        },
+        MemfsCoreUpdateRequest {
+            target_path: glossary_path,
+            mode: "create_file".to_string(),
+            title: Some(format!("{name} glossary")),
+            body: Some(glossary_body.trim().to_string()),
+            old_text: None,
+            new_text: None,
+            proposal_id: None,
+            source_paths: vec![],
+        },
+        MemfsCoreUpdateRequest {
+            target_path: current_understanding_path,
+            mode: "create_file".to_string(),
+            title: Some(format!("{name} current understanding")),
+            body: Some(understanding_body.trim().to_string()),
+            old_text: None,
+            new_text: None,
+            proposal_id: None,
+            source_paths: vec![],
+        },
+    ]
+}
+
+async fn create_work_surface_scaffold(
+    config: &Config,
+    context: &DenToolInvocationContext,
+    role: BearAgentRole,
+    arguments: Value,
+) -> Result<Value, CustomError> {
+    if role != BearAgentRole::Pair {
+        return Err(CustomError::Authorization(
+            "den.memory.create_work_surface_scaffold is currently available only to the pair role"
+                .to_string(),
+        ));
+    }
+    let args: MemoryCreateWorkSurfaceScaffoldArguments = serde_json::from_value(arguments)?;
+    let work_surface_slug = normalize_work_surface_slug(&args.work_surface_slug)?;
+    let work_surface_name = validate_bounded_text("work_surface_name", &args.work_surface_name, 1, 200)?;
+    let overview = validate_bounded_text("overview", &args.overview, 1, 20_000)?;
+    let glossary = args
+        .glossary
+        .as_deref()
+        .map(|value| validate_bounded_text("glossary", value, 1, 20_000))
+        .transpose()?;
+    let current_understanding = args
+        .current_understanding
+        .as_deref()
+        .map(|value| validate_bounded_text("current_understanding", value, 1, 20_000))
+        .transpose()?;
+    let http = memfs_http_client("MemFS work-surface scaffold client build failed")?;
+    let mut responses = Vec::new();
+    for request in work_surface_scaffold_requests(
+        &work_surface_slug,
+        &work_surface_name,
+        &overview,
+        glossary.as_deref(),
+        current_understanding.as_deref(),
+    ) {
+        if request.target_path == "core/work_surfaces/index.md" && request.mode == "append_section" {
+            let registry = fetch_memfs_role_memory_file(
+                &http,
+                &config.letta_memfs_service_url,
+                context.bear_id,
+                role.as_str(),
+                "core/work_surfaces/index.md",
+            )
+            .await?;
+            let existing = registry.map(|file| file.content).unwrap_or_default();
+            let updated = append_markdown_section(&existing, &format!("## {work_surface_name}"), &work_surface_entry_body(&work_surface_slug, &work_surface_name));
+            let existing_is_empty = existing.trim().is_empty();
+            let replace_request = MemfsCoreUpdateRequest {
+                target_path: "core/work_surfaces/index.md".to_string(),
+                mode: if existing_is_empty {
+                    "create_file".to_string()
+                } else {
+                    "replace_text".to_string()
+                },
+                title: Some("Work Surfaces".to_string()),
+                body: if existing_is_empty {
+                    Some(updated.clone())
+                } else {
+                    None
+                },
+                old_text: if existing_is_empty { None } else { Some(existing) },
+                new_text: if existing_is_empty { None } else { Some(updated) },
+                proposal_id: None,
+                source_paths: vec![],
+            };
+            let response = write_memfs_core_update(
+                &http,
+                &config.letta_memfs_service_url,
+                context.bear_id,
+                &replace_request,
+            )
+            .await?;
+            if let Some(response) = response {
+                responses.push(response);
+            }
+            continue;
+        }
+        let response = write_memfs_core_update(
+            &http,
+            &config.letta_memfs_service_url,
+            context.bear_id,
+            &request,
+        )
+        .await?;
+        if let Some(response) = response {
+            responses.push(response);
+        }
+    }
+    let (index_path, overview_path, glossary_path, current_understanding_path, registry_path) =
+        work_surface_scaffold_paths(&work_surface_slug);
+    Ok(json!({
+        "ok": true,
+        "bear_id": context.bear_id,
+        "work_surface": {
+            "slug": work_surface_slug,
+            "name": work_surface_name,
+            "paths": {
+                "registry": registry_path,
+                "index": index_path,
+                "overview": overview_path,
+                "glossary": glossary_path,
+                "current_understanding": current_understanding_path,
+            }
+        },
+        "updates": responses,
+    }))
 }
 
 async fn apply_core_update(

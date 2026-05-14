@@ -165,6 +165,28 @@ fn acp_prompt_mentions_current_turn_tool_gating_when_write_unlocked() {
 }
 
 #[test]
+fn acp_prompt_teaches_workplace_first_memory_retrieval() {
+    let policy = AcpResolvedSessionPolicy {
+        mode_label: "Write",
+        tool_enablement: AcpToolEnablementState::AllTools,
+        plan_mode_state: Some("approved".to_string()),
+    };
+    let prompt = acp_direct_tool_prompt_context(
+        "acp-test",
+        "/workspace",
+        &serde_json::json!({"workspace_roots": ["/workspace"]}),
+        true,
+        &policy,
+    );
+    assert!(prompt.contains("Memory is Bear-scoped across Workplaces and may contain multiple work surfaces."));
+    assert!(prompt.contains("A Workplace is the role-scoped memory surface; for pair, that is the `pair` workplace."));
+    assert!(prompt.contains("Prefer work-surface-first retrieval for local-understanding questions"));
+    assert!(prompt.contains("current work-surface canonical anchors"));
+    assert!(prompt.contains("current work-surface role-local working memory"));
+    assert!(prompt.contains("Use `memory_browse`, `memory_read`, and `memory_search` not only to recall prior notes, but to learn the current work surface within the current Workplace."));
+}
+
+#[test]
 fn plan_mode_decision_payload_should_surface_turn_state_shape() {
     let payload = serde_json::json!({
         "accepted": true,

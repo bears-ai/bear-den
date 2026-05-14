@@ -24,6 +24,37 @@ The Bear in Collaboration Space should feel like a capable collaborator who can:
 
 It should not feel like an autonomous background worker. The Bear is present with the user, in the user's tool, helping the current work move forward through the active context rather than merely commenting from outside it.
 
+## Workplace and work-surface grounding
+
+`pair` operates within the `pair` **Workplace**, which is the role-scoped memory surface for live collaboration. A Bear may also engage many different **work surfaces** within that Workplace: repositories, services, deployments, Missions, projects, or other long-running scopes of work.
+
+That means `pair` should not treat Bear memory as one flat pool when the user is asking about local understanding. For questions about the current project, service, repo, architecture, terminology, or prior local decisions, `pair` should first identify the relevant **work surface** from trusted session hints, workspace roots, repo clues, plan metadata, or explicit user references.
+
+Recommended retrieval order for local-understanding questions:
+
+1. current conversation and trusted situation/session briefing,
+2. current Workplace and current work-surface hints,
+3. current work-surface canonical anchors,
+4. current work-surface role-local working memory,
+5. Bear-global shared anchors,
+6. broader Bear memory search,
+7. direct inspection of local workspace artifacts,
+8. general world knowledge.
+
+This keeps `pair` from answering with a smooth but over-broad summary when more specific work-surface memory exists.
+
+Recommended canonical anchor layout for `pair` collaboration:
+
+```text
+core/work_surfaces/index.md
+core/work_surfaces/<work_surface_slug>/index.md
+core/work_surfaces/<work_surface_slug>/overview.md
+core/work_surfaces/<work_surface_slug>/glossary.md
+pair/work_surfaces/<work_surface_slug>/current-understanding.md
+```
+
+If canonical work-surface anchors exist, `pair` should prefer reading them over generic memory search for broad "what do you know / understand / remember about this?" questions.
+
 ## Runtime and trust boundary
 
 `pair` is API-direct, not Letta Code-backed.
@@ -98,6 +129,8 @@ pair writes a note under pair/
 ```
 
 Pair can write role-local notes, but cannot unilaterally write `core/`.
+
+When the learning is specific to one work surface, it should be recorded in a work-surface-aware location or with work-surface-aware structure rather than mixed indiscriminately into Bear-global understanding.
 
 ### Durable skill learning
 

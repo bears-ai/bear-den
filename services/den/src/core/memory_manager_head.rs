@@ -637,6 +637,17 @@ pub async fn write_memfs_core_update(
     Ok(Some(payload))
 }
 
+pub fn append_markdown_section(existing: &str, heading: &str, body: &str) -> String {
+    let existing_trimmed = existing.trim_end();
+    let heading_trimmed = heading.trim();
+    let body_trimmed = body.trim();
+    if existing_trimmed.is_empty() {
+        format!("{heading_trimmed}\n\n{body_trimmed}\n")
+    } else {
+        format!("{existing_trimmed}\n\n{heading_trimmed}\n\n{body_trimmed}\n")
+    }
+}
+
 pub async fn delete_memfs_role_memory_entries(
     http: &reqwest::Client,
     base_url: &str,

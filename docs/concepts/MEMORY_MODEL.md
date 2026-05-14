@@ -2,6 +2,8 @@
 
 Bear memory is the durable knowledge a Bear can use across surfaces and time. Raw interactions may enter role-specific memory first; durable shared knowledge can be promoted into `core/` by `curate` when it is useful across roles. Role-local memory can also be a final destination.
 
+Because memory is Bear-scoped, a single Bear may accumulate knowledge across multiple role surfaces and multiple active **work surfaces**. A **Workplace** is the role-scoped memory surface itself, such as `pair/`, `talk/`, `curate/`, `work/`, or `watch/`. A **work surface** is the currently engaged repo, service, deployment, Mission, project, or other coherent scope of work inside that Workplace. That means local understanding should not default to all Bear memory at once. Agents should first ground themselves in the current work surface when one is known.
+
 ## Summary
 
 - A Bear has shared memory and role-specific memory.
@@ -13,6 +15,103 @@ Bear memory is the durable knowledge a Bear can use across surfaces and time. Ra
 - Memory curation is a lane within the broader **Reflection** system.
 - Letta Archives provide semantic retrieval indexes over selected canonical memory; they are not the source of truth.
 - BEARS should not introduce its own embedding strategy or vector store while Letta Archives satisfy retrieval needs.
+- Local grounding should be **work-surface-first within the current Workplace**: use the current work surface's canonical anchors before falling back to broader Bear-global memory.
+
+## Workplace and work surface grounding
+
+Memory is Bear-scoped, but many user questions are really about one **work surface** being handled inside the current **Workplace**.
+
+Definitions:
+
+- **Workplace** = the role-scoped memory surface, such as `pair/`, `talk/`, `curate/`, `work/`, or `watch/`.
+- **Work surface** = the currently engaged repo, deployment, service, Mission, project, or other coherent scope of work inside that Workplace.
+
+Examples of work surfaces:
+
+- one repository among many the Bear works in,
+- one deployment environment,
+- one service in the BEARS stack,
+- one Mission or project,
+- one long-running operational responsibility.
+
+When a user asks questions like:
+
+- "what do you know about this project?"
+- "how does this work here?"
+- "what have we decided about this architecture?"
+- "do you understand this codebase / service / mission?"
+
+the right grounding unit is usually the **current work surface within the current Workplace**, not Bear memory in the abstract.
+
+Recommended retrieval precedence:
+
+1. current conversation and trusted situation/session briefing,
+2. current Workplace and current work-surface hints,
+3. current work-surface canonical anchors,
+4. current work-surface role-local working memory,
+5. Bear-global shared anchors,
+6. broader Bear memory search,
+7. local workspace artifacts or external docs as needed,
+8. general world knowledge.
+
+This keeps agents from answering with plausible but irrelevant Bear-wide knowledge when the user is really asking about one specific engaged work setting.
+
+## Bear-global vs work-surface-local memory
+
+The practical model should distinguish:
+
+### Bear-global memory
+
+Memory that is useful across multiple Workplaces and work surfaces, such as:
+
+- the Bear's charter or overall purpose,
+- cross-cutting glossary terms,
+- persistent conventions,
+- stable knowledge that should apply broadly.
+
+### Work-surface-local memory
+
+Memory that is specific to one engaged work surface, such as:
+
+- repository architecture,
+- service-specific terminology,
+- local decisions,
+- project conventions,
+- current understanding and open questions for that work surface.
+
+Work-surface-local memory may exist both as:
+
+- curated shared `core/` memory for that work surface, and
+- role-local working memory such as `pair/` notes for that work surface.
+
+## Canonical work-surface anchors
+
+To make work-surface-first retrieval easy and consistent across agents, each Bear should have a predictable work-surface registry and anchor layout.
+
+Recommended shared canonical structure:
+
+```text
+core/bear-overview.md
+core/bear-glossary.md
+core/shared-conventions.md
+core/work_surfaces/index.md
+core/work_surfaces/<work_surface_slug>/index.md
+core/work_surfaces/<work_surface_slug>/overview.md
+core/work_surfaces/<work_surface_slug>/glossary.md
+core/work_surfaces/<work_surface_slug>/architecture.md
+core/work_surfaces/<work_surface_slug>/decisions.md
+core/work_surfaces/<work_surface_slug>/conventions.md
+```
+
+Recommended role-local working structure:
+
+```text
+pair/work_surfaces/<work_surface_slug>/current-understanding.md
+pair/work_surfaces/<work_surface_slug>/recent-findings.md
+pair/work_surfaces/<work_surface_slug>/open-questions.md
+```
+
+The minimal first slice can be smaller, but the key idea is stable anchor paths. A model should not have to guess where the authoritative overview or glossary for a work surface lives.
 
 ## What is Bear memory?
 
@@ -94,7 +193,7 @@ Typical archives:
 
 A Bear has a **charter**: the Bear's durable purpose and responsibility boundary. Bear-specific knowledge lives under the Bear. **Domains** are durable areas of knowledge and responsibility within the Bear's scope, such as smart home, renovations, billing, or infrastructure.
 
-A **Workplace** is a durable Bear-level work setting that can group plans, tasks, artifacts, memory, and activity around a repo, service, deployment, Cabinet Mission, Docket project, or long-running responsibility. Workplace references can help memories stay connected to where work happened without making role branches or Cabinet the source of truth.
+A **Workplace** is the Bear's role-scoped memory surface, such as `pair/`, `talk/`, `curate/`, `work/`, or `watch/`. A **work surface** is a durable Bear-level work setting that can group plans, tasks, artifacts, memory, and activity around a repo, service, deployment, Cabinet Mission, Docket project, or long-running responsibility. Work-surface references can help memories stay connected to where work happened without making role branches or Cabinet the source of truth.
 
 Cabinet **Missions** are different: they are shared knowledge/work containers that may contain multiple projects and may involve multiple Bears. The Bear↔Mission relationship is many-to-many.
 
@@ -156,7 +255,7 @@ A Cabinet **Mission** is not the same as a Bear's charter. A Mission can contain
 
 Use **Domains** for Bear-specific knowledge areas. Do not describe bear-specific work as being under a Cabinet Mission unless it is actually part of a shared Cabinet Mission.
 
-Bear memory may reference Cabinet objects, Workplaces, or semantic spaces, but it does not mirror Cabinet one-to-one. A role-local memory can relate to a Cabinet Mission, Workplace, project, or person without having a Cabinet page.
+Bear memory may reference Cabinet objects, Workplaces, work surfaces, or semantic spaces, but it does not mirror Cabinet one-to-one. A role-local memory can relate to a Cabinet Mission, work surface, project, or person without having a Cabinet page.
 
 Use **situation** for trusted interaction briefings, not “current context.” This avoids confusion with model context windows and compiled prompt context.
 
