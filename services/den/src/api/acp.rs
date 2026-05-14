@@ -1694,13 +1694,8 @@ async fn get_acp_session_runtime_inner(
         acp_sessions::find_for_user_bear_session(&state.sqlx_pool, user_id, &bear.slug, session_id)
             .await?
             .ok_or_else(|| CustomError::NotFound("ACP session not found".to_string()))?;
-    let plan_mode = acp_plan_mode::active_for_session(
-        &state.sqlx_pool,
-        user_id,
-        bear.id,
-        session_id,
-    )
-    .await?;
+    let plan_mode =
+        acp_plan_mode::active_for_session(&state.sqlx_pool, user_id, bear.id, session_id).await?;
     let activity_plan = work_plans::get_visible_work_plan(
         &state.sqlx_pool,
         bear.id,
@@ -1710,7 +1705,9 @@ async fn get_acp_session_runtime_inner(
             plan_id: None,
             source_conversation_id: row.resolved_conversation_id.clone().or_else(|| {
                 let conversation_id = row.conversation_id.trim();
-                conversation_id.starts_with("conv-").then(|| conversation_id.to_string())
+                conversation_id
+                    .starts_with("conv-")
+                    .then(|| conversation_id.to_string())
             }),
             source_acp_session_id: Some(session_id.to_string()),
         },
@@ -1867,10 +1864,52 @@ async fn set_session_mode_inner(
             effective_mode = "ask".to_string();
         }
         "write" => {
+            let active_plan =
+                acp_plan_mode::active_for_session(&state.sqlx_pool, user_id, bear.id, session_id)
+                    .await?;
+            if let Some(active) = active_plan.as_ref() {
+                match active.state.as_str() {
+                    "submitted" => {
+                        acp_plan_mode::approve_plan_mode(
+                            &state.sqlx_pool,
+                            user_id,
+                            bear.id,
+                            session_id,
+                            active.id,
+                        )
+                        .await?;
+                        message = "Write mode enabled by user request; the submitted plan was approved by the authenticated ACP human.".to_string();
+                    }
+                    "active" => {
+                        acp_plan_mode::cancel_plan_mode(
+                            &state.sqlx_pool,
+                            user_id,
+                            bear.id,
+                            session_id,
+                            Some(active.id),
+                        )
+                        .await?;
+                        message = "Write mode enabled by user request; the unsubmitted plan draft was closed so the mode change could take effect.".to_string();
+                    }
+                    _ => {
+                        message = "Write mode enabled by user request. Concrete tool use remains subject to Den policy and ACP client approval.".to_string();
+                    }
+                }
+            } else {
+                message = "Write mode enabled by user request. Concrete tool use remains subject to Den policy and ACP client approval.".to_string();
+            }
             acp_sessions::set_current_mode(&state.sqlx_pool, user_id, bear.id, session_id, "write")
                 .await?;
             effective_mode = "write".to_string();
-            message = "Write mode enabled by user request. Concrete tool use remains subject to Den policy and ACP client approval.".to_string();
+            tracing::info!(
+                bear_id = %bear.id,
+                acp_session_id = %session_id,
+                requested_mode = %requested_mode,
+                effective_mode = %effective_mode,
+                active_plan_id = ?active_plan.as_ref().map(|plan| plan.id),
+                active_plan_state = ?active_plan.as_ref().map(|plan| plan.state.as_str()),
+                "ACP session mode changed to write by authenticated user request"
+            );
         }
         _ => unreachable!(),
     }
@@ -1927,8 +1966,7 @@ async fn get_acp_session_inner(
             .await?
             .ok_or_else(|| CustomError::NotFound("ACP session not found".to_string()))?;
     let plan_mode =
-        acp_plan_mode::active_for_session(&state.sqlx_pool, user_id, bear.id, session_id)
-            .await?;
+        acp_plan_mode::active_for_session(&state.sqlx_pool, user_id, bear.id, session_id).await?;
     let approval_fallback = plan_mode
         .as_ref()
         .filter(|plan| plan.state == "submitted")
@@ -3746,7 +3784,11 @@ fn plan_approval_fallback_from_tool_result(
                 .and_then(|submitted| submitted.get("artifact_path"))
                 .and_then(serde_json::Value::as_str)
         })
-        .or_else(|| workplan.get("artifact_path").and_then(serde_json::Value::as_str))
+        .or_else(|| {
+            workplan
+                .get("artifact_path")
+                .and_then(serde_json::Value::as_str)
+        })
         .unwrap_or("not_submitted")
         .trim()
         .to_string();

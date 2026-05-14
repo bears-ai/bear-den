@@ -1285,11 +1285,32 @@ async fn handle_request(
                     requested_mode,
                 )
                 .await?;
+                eprintln!(
+                    "bears-acp-adapter: session/set_config_option mode request session_id={} requested_mode={} effective_mode={} den_message={}",
+                    session_id,
+                    requested_mode,
+                    mode,
+                    den_response
+                        .get("message")
+                        .and_then(Value::as_str)
+                        .unwrap_or("<none>")
+                );
                 if requested_mode != mode {
                     eprintln!(
                         "bears-acp-adapter: Den adjusted client-requested mode={} for session_id={} to effective mode={}",
                         requested_mode, session_id, mode
                     );
+                    send_agent_thought_chunk(
+                        session_id,
+                        &format!(
+                            "BEARS mode request `{requested_mode}` resolved to `{mode}`. {}",
+                            den_response
+                                .get("message")
+                                .and_then(Value::as_str)
+                                .unwrap_or("Den session policy adjusted the requested mode.")
+                        ),
+                    )
+                    .await?;
                 }
                 notify_mode_state(session_id, mode).await?;
                 write_response(
@@ -1341,11 +1362,32 @@ async fn handle_request(
                     requested_mode,
                 )
                 .await?;
+                eprintln!(
+                    "bears-acp-adapter: session/set_mode request session_id={} requested_mode={} effective_mode={} den_message={}",
+                    session_id,
+                    requested_mode,
+                    mode,
+                    den_response
+                        .get("message")
+                        .and_then(Value::as_str)
+                        .unwrap_or("<none>")
+                );
                 if requested_mode != mode {
                     eprintln!(
                         "bears-acp-adapter: Den adjusted client-requested legacy mode={} for session_id={} to effective mode={}",
                         requested_mode, session_id, mode
                     );
+                    send_agent_thought_chunk(
+                        session_id,
+                        &format!(
+                            "BEARS mode request `{requested_mode}` resolved to `{mode}`. {}",
+                            den_response
+                                .get("message")
+                                .and_then(Value::as_str)
+                                .unwrap_or("Den session policy adjusted the requested mode.")
+                        ),
+                    )
+                    .await?;
                 }
                 notify_mode_state(session_id, mode).await?;
                 write_response(
@@ -2579,6 +2621,12 @@ async fn request_den_session_mode(
         ));
     }
     let value = serde_json::from_str::<Value>(&body).unwrap_or_else(|_| json!({ "raw": body }));
+    eprintln!(
+        "bears-acp-adapter: Den mode response session_id={} requested_mode={} response={}",
+        session_id,
+        requested_mode,
+        serde_json::to_string(&value).unwrap_or_else(|_| "<unserializable>".to_string())
+    );
     let effective = value
         .get("effective_mode")
         .and_then(Value::as_str)
@@ -3143,7 +3191,9 @@ async fn handle_prompt_with_retry(
         .await?;
         write_response(
             response_id,
-            Ok(serde_json::to_value(PromptResponse::new(StopReason::EndTurn))?),
+            Ok(serde_json::to_value(PromptResponse::new(
+                StopReason::EndTurn,
+            ))?),
         )
         .await?;
         return Ok(());
@@ -3419,9 +3469,7 @@ async fn runtime_report(
     match fetch_den_runtime_state(http, config, session_id).await {
         Ok(value) => {
             lines.push("Den runtime state:".to_string());
-            lines.push(
-                serde_json::to_string_pretty(&value).unwrap_or_else(|_| value.to_string()),
-            );
+            lines.push(serde_json::to_string_pretty(&value).unwrap_or_else(|_| value.to_string()));
         }
         Err(err) => {
             lines.push(format!("Den runtime state unavailable: {err:#}"));
@@ -4994,7 +5042,8 @@ async fn handle_permission_request_event(
         format!(
             "{reason}\n\nTool: {tool_name}\nTarget: {target_label}\nPlan ID: {}\n\n{}",
             plan_mode_id.unwrap_or("unknown"),
-            plan_body.unwrap_or("Plan body is unavailable; use the artifact path for audit context.")
+            plan_body
+                .unwrap_or("Plan body is unavailable; use the artifact path for audit context.")
         )
     } else {
         format!("{reason}\n\nTool: {tool_name}\nTarget: {target_label}")
@@ -6067,8 +6116,8 @@ mod tests {
         );
         assert_eq!(payload["update"]["entries"][0]["priority"], "high");
         assert_eq!(payload["update"]["entries"][0]["status"], "in_progress");
-        let message = plan_approval_fallback_message(&den["approval_fallback"])
-            .expect("fallback message");
+        let message =
+            plan_approval_fallback_message(&den["approval_fallback"]).expect("fallback message");
         assert!(message.contains("pair/plans/example.md"));
         assert!(message.contains("Do the thing carefully"));
     }
