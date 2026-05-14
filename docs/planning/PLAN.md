@@ -91,6 +91,10 @@ This file is the canonical planning dashboard for `docs/planning/`. It should le
 - [`bear_channel` Phase 7+](BEAR_CHANNEL_PLANS.md) — active for broader runtime/channel work, but not the canonical `pair` local-tool path.
 - [ACP discovery prompt](ACP_DISCOVERY_PROMPT.md) — prompt/discovery support for ACP distribution and UX.
 - [Live dev stack](LIVE_DEV_STACK_PLAN.md) — development-environment support work, not the primary delivery spine.
+- [Memory automation roadmap](MEMORY_AUTOMATION_ROADMAP.md) — canonical implementation tracker for pair reflection, memory proposals, `memory_curate`, archives, and work-context bridge.
+- [Reflection system shared infrastructure](REFLECTION_SYSTEM_PLAN.md) — focused queue/runner/scheduler design.
+- [Curate memory governance](CURATE_MEMORY_GOVERNANCE_PLAN.md) — focused memory proposal and core-write governance design.
+- [Pair reflection and work memory](PAIR_REFLECTION_AND_WORK_MEMORY_PLAN.md) — focused pair→curate→work boundary design.
 
 ### Reference design and downstream product plans
 
@@ -103,8 +107,8 @@ These documents remain useful, but they should not drive current implementation 
 - [Context composition](archives/CONTEXT_COMPOSITION_PLAN.md)
 - [First bear onboarding](archives/FIRST_BEAR_ONBOARDING_PLAN.md)
 - [Bear details UI improvement](archives/BEAR_DETAILS_UI_IMPROVEMENT_PLAN.md)
-- [Memory automation roadmap](archives/MEMORY_AUTOMATION_ROADMAP.md)
-- [Pair reflection and work memory](archives/PAIR_REFLECTION_AND_WORK_MEMORY_PLAN.md)
+- [Archived memory automation roadmap snapshot](archives/MEMORY_AUTOMATION_ROADMAP.md) — historical snapshot; current tracker is `../planning/MEMORY_AUTOMATION_ROADMAP.md`.
+- [Archived pair reflection and work memory snapshot](archives/PAIR_REFLECTION_AND_WORK_MEMORY_PLAN.md) — historical snapshot; current design is `../planning/PAIR_REFLECTION_AND_WORK_MEMORY_PLAN.md`.
 - [Bear channel / UI follow-up and related archived planning docs in this directory]
 
 ### Historical or superseded plans

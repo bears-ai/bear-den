@@ -1,12 +1,13 @@
 # Curate memory governance plan
 
-Status: proposed design plan.
+Status: focused design plan. Implementation status and sequencing live in [Memory Automation Roadmap](MEMORY_AUTOMATION_ROADMAP.md).
 
 This plan designs how memories move between role-local branches and shared Bear memory. It focuses on the `memory_curate` lane of BEARS **Reflection** system and the `curate` role as the only role allowed to integrate role-local memory into shared `core/` memory or propose/promote Cabinet updates.
 
 Related docs:
 
-- [Reflection system implementation plan](REFLECTION_SYSTEM_PLAN.md)
+- [Memory Automation Roadmap](MEMORY_AUTOMATION_ROADMAP.md) — canonical implementation status and sequencing.
+- [Reflection system shared infrastructure plan](REFLECTION_SYSTEM_PLAN.md)
 - [Memory tools implementation plan](MEMORY_TOOLS_IMPLEMENTATION_PLAN.md)
 - [Reflection System ADR](../architecture/adr/reflection-system.md)
 - [Semantic Bear Memory ADR](../architecture/adr/semantic-bear-memory.md)
@@ -484,85 +485,9 @@ Human admins should be able to inspect, override, and manually review, but manua
 
 ---
 
-## First implementation slices
+## Implementation tracker
 
-### Slice 1 — DB-backed proposal/review queue
-
-Status: partially implemented.
-
-Deliverables:
-
-1. ✅ `bear_memory_proposals` migration.
-2. ✅ Den DB functions for create/list/get/update status.
-3. Pending: UI action to create proposal from selected memory files.
-4. Pending: curation queue page.
-5. ✅ Curate-visible proposal listing so autonomous curation can operate on the queue.
-
-### Slice 2 — Pair requests memory review
-
-Status: partially implemented.
-
-Deliverables:
-
-1. ✅ `den.memory.request_review` descriptor for `pair`.
-2. ✅ Tool implementation writes proposal rows, not `core` or Cabinet.
-3. ✅ ACP-close pair reflection writes an automatic proposal for each created `pair/summaries/...` summary.
-4. ✅ ACP-close pair reflection enqueues a queued `bear_reflection_runs` row with `lane = memory_curate`, `trigger = pair_reflection`, and `input_summary = { proposal_ids: [...] }`.
-5. Pending: ACP pair prompt guidance: request curation for cross-role or durable shared candidates; do not write core.
-6. Pending: broader tests for proposal creation and role authorization.
-
-### Slice 3 — Curate read/review tools
-
-Deliverables:
-
-1. Expose read/tree/search/status across all branches to `curate`.
-2. `den.memory.list_proposals` for `curate`.
-3. `den.memory.read_proposal` for `curate`.
-4. Tests for curate visibility and non-curate denial.
-
-### Slice 4 — Curate proposal resolution and core write tools
-
-Deliverables:
-
-1. `den.memory.resolve_proposal` for `curate`.
-2. `den.memory.apply_core_update` or equivalent constrained core-write tools for `curate`.
-3. `den.memory.compact_core` or equivalent bounded core-cleanup tool.
-4. Den writes normal Git commits to policy-approved `core/` paths.
-5. Registered views are reconciled/reset as needed.
-6. Proposal records result path/commit.
-7. Tests for path policy and provenance.
-
-### Slice 5 — Curate conductor and activity surfacing
-
-Status: storage/enqueue foundation implemented; runner and UI pending.
-
-Deliverables:
-
-1. ✅ Queue storage exists in lane-neutral `bear_reflection_runs`.
-2. ✅ Daily conversation mapping storage exists in `reflection_conversations` with unique `bear_id + lane + conversation_date`.
-3. Pending: Curate conductor invokes Letta API-direct curate agent with pending proposals and recent memory activity.
-4. Pending: guardrails: no external tools, no arbitrary paths, no Cabinet writes unless explicitly granted.
-5. Pending: Den records curation cycle activity: inputs considered, decisions made, proposals approved/rejected, core files changed, compactions performed, and escalations.
-6. Pending: UI surfaces the extent of curate activity so humans can understand what the god-agent has been doing without approving every action.
-
-### Slice 6 — Letta Archives indexing
-
-Deliverables:
-
-1. Create/provision Bear curated archives in Letta.
-2. Attach Bear curated archives to selected role agents by policy.
-3. Add `bear_archive_index_entries` or equivalent source-to-passage mapping.
-4. Add Den indexer operations for selected `core/` summaries and approved proposal outcomes.
-5. Add `den.memory.semantic_search` backed by Letta passage search / attached archives.
-6. Add Cabinet Mission archive design hooks once Cabinet Missions and Bear↔Mission assignments are defined.
-
-### Slice 7 — Cabinet proposal integration
-
-Deliverables:
-
-1. `den.memory.request_review` supports `suggested_action: cabinet_update` and Cabinet target hints.
-2. Cabinet UI/tooling can accept, edit, or reject proposed updates.
-3. Link approved Cabinet entries back to source memory proposals and derived archive passages where applicable.
+Detailed phase status, completed work, and next implementation steps are tracked in [Memory Automation Roadmap](MEMORY_AUTOMATION_ROADMAP.md). This document should stay focused on memory governance rules, tool boundaries, proposal lifecycle, core-write policy, archive integration design, and curation UI behavior.
 
 ---
 
@@ -597,6 +522,6 @@ Deliverables:
 
 ## Recommended next step
 
-Build **Slice 1: DB-backed proposal/review queue** and add both UI and agent-tool ways to mark selected memories for curation.
+Use [Memory Automation Roadmap](MEMORY_AUTOMATION_ROADMAP.md) for the current next step.
 
-Then prioritize the autonomous curate loop and core-cleaning tools before broad manual approval UX. Human UI should make curate's activity visible and overrideable, not make human approval the normal path.
+The product priority remains: make curate activity visible and overrideable, while keeping routine memory governance autonomous rather than making human approval the normal path.
