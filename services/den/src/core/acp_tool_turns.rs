@@ -11,6 +11,8 @@ use uuid::Uuid;
 
 use crate::errors::CustomError;
 
+const ACTIVE_TURN_TTL: Duration = Duration::from_secs(10 * 60);
+
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct AcpToolResultRequest {
     pub turn_id: Option<String>,
@@ -171,9 +173,61 @@ pub enum AcpToolResultDelivery {
 }
 
 #[derive(Debug, Clone)]
+pub struct AcpActiveTurn {
+    pub acp_session_id: String,
+    pub request_id: Uuid,
+    pub conversation_id: Option<String>,
+    pub started_at: Instant,
+    pub deadline_at: Instant,
+}
+
+impl AcpActiveTurn {
+    pub fn diagnostic(&self) -> serde_json::Value {
+        serde_json::json!({
+            "session_id": self.acp_session_id,
+            "request_id": self.request_id,
+            "conversation_id": self.conversation_id,
+            "age_ms": self.started_at.elapsed().as_millis(),
+            "time_to_deadline_ms": self.deadline_at.saturating_duration_since(Instant::now()).as_millis(),
+            "component": "den.acp",
+            "phase": "active_turn",
+        })
+    }
+}
+
+#[derive(Debug, Clone)]
 pub struct AcpToolTurnCoordinator {
     turns: Arc<Mutex<HashMap<String, AcpToolTurn>>>,
     settled_results: Arc<Mutex<HashMap<String, AcpSettledToolResult>>>,
+    active_turns: Arc<Mutex<HashMap<String, AcpActiveTurn>>>,
+}
+
+#[derive(Debug)]
+pub struct AcpActiveTurnGuard {
+    coordinator: AcpToolTurnCoordinator,
+    session_id: String,
+    request_id: Uuid,
+    released: bool,
+}
+
+impl AcpActiveTurnGuard {
+    pub fn release(mut self) {
+        if !self.released {
+            self.coordinator
+                .release_active_turn(&self.session_id, self.request_id);
+            self.released = true;
+        }
+    }
+}
+
+impl Drop for AcpActiveTurnGuard {
+    fn drop(&mut self) {
+        if !self.released {
+            self.coordinator
+                .release_active_turn(&self.session_id, self.request_id);
+            self.released = true;
+        }
+    }
 }
 
 impl Default for AcpToolTurnCoordinator {
@@ -187,7 +241,59 @@ impl AcpToolTurnCoordinator {
         Self {
             turns: Arc::new(Mutex::new(HashMap::new())),
             settled_results: Arc::new(Mutex::new(HashMap::new())),
+            active_turns: Arc::new(Mutex::new(HashMap::new())),
         }
+    }
+
+    pub fn acquire_active_turn(
+        &self,
+        session_id: &str,
+        request_id: Uuid,
+        conversation_id: Option<String>,
+    ) -> Result<AcpActiveTurnGuard, CustomError> {
+        let mut active_turns = self.active_turns.lock().map_err(|_| {
+            CustomError::System("ACP active turn registry lock poisoned".to_string())
+        })?;
+        let now = Instant::now();
+        active_turns.retain(|_, turn| turn.deadline_at > now);
+        if let Some(existing) = active_turns.get(session_id) {
+            return Err(CustomError::ValidationError(format!(
+                "ACP turn already active for this session: {}",
+                existing.diagnostic()
+            )));
+        }
+        let turn = AcpActiveTurn {
+            acp_session_id: session_id.to_string(),
+            request_id,
+            conversation_id,
+            started_at: now,
+            deadline_at: now + ACTIVE_TURN_TTL,
+        };
+        active_turns.insert(session_id.to_string(), turn.clone());
+        Ok(AcpActiveTurnGuard {
+            coordinator: self.clone(),
+            session_id: session_id.to_string(),
+            request_id,
+            released: false,
+        })
+    }
+
+    pub fn release_active_turn(&self, session_id: &str, request_id: Uuid) {
+        if let Ok(mut active_turns) = self.active_turns.lock() {
+            if active_turns
+                .get(session_id)
+                .is_some_and(|turn| turn.request_id == request_id)
+            {
+                active_turns.remove(session_id);
+            }
+        }
+    }
+
+    pub fn active_turn_for_session(&self, session_id: &str) -> Option<AcpActiveTurn> {
+        let mut active_turns = self.active_turns.lock().ok()?;
+        let now = Instant::now();
+        active_turns.retain(|_, turn| turn.deadline_at > now);
+        active_turns.get(session_id).cloned()
     }
 
     fn key(session_id: &str, tool_call_id: &str) -> String {
@@ -431,6 +537,9 @@ impl AcpToolTurnCoordinator {
         if let Ok(mut settled) = self.settled_results.lock() {
             let prefix = format!("{session_id}\n");
             settled.retain(|key, _| !key.starts_with(&prefix));
+        }
+        if let Ok(mut active_turns) = self.active_turns.lock() {
+            active_turns.remove(session_id);
         }
     }
 

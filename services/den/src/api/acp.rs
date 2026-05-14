@@ -3110,6 +3110,15 @@ async fn prompt_inner(
         Err(err) => return Ok(Err(err)),
     };
 
+    let active_turn_guard = match state.acp_tool_turns.acquire_active_turn(
+        session_id,
+        request_id,
+        conversation_resolution.resolved_conversation_id.clone(),
+    ) {
+        Ok(guard) => guard,
+        Err(err) => return Ok(Err(err)),
+    };
+
     let stream = AcpLettaSseStream::new(
         upstream.bytes_stream(),
         AcpStreamContext {
@@ -3136,6 +3145,7 @@ async fn prompt_inner(
             stream_tokens,
             max_steps: 2,
         },
+        active_turn_guard,
     );
     let request_id_header = HeaderValue::from_str(&request_id.to_string()).map_err(|_| {
         ApiError::new(
@@ -3810,6 +3820,27 @@ impl AcpStreamDiagnostics {
         }
     }
 
+    fn diagnostic_json(&self, context: &AcpStreamContext) -> serde_json::Value {
+        serde_json::json!({
+            "request_id": context.request_id,
+            "acp_session_id": context.acp_session_id,
+            "upstream_frames": self.upstream_frames,
+            "parsed_events": self.parsed_events,
+            "mapped_events": self.mapped_events,
+            "unmapped_events": self.unmapped_events,
+            "native_message_types": self.native_message_types,
+            "native_event_types": self.native_event_types,
+            "adapter_event_types": self.adapter_event_types,
+            "tool_request_counts": self.tool_request_counts,
+            "run_ids": self.run_ids,
+            "saw_visible_output": self.saw_visible_output,
+            "saw_error": self.saw_error,
+            "saw_turn_complete": self.saw_turn_complete,
+            "saw_tool_return_ack": self.saw_tool_return_ack,
+            "saw_requires_approval_stop": self.saw_requires_approval_stop,
+        })
+    }
+
     fn log_summary(&self, context: &AcpStreamContext) {
         tracing::info!(
             request_id = %context.request_id,
@@ -4134,6 +4165,7 @@ struct AcpLettaSseStream {
     active_tool_call_ids: Vec<String>,
     persist_future: Option<AcpPendingFuture>,
     text_chunker: AcpTextChunker,
+    active_turn_guard: Option<crate::core::acp_tool_turns::AcpActiveTurnGuard>,
 }
 
 impl AcpLettaSseStream {
@@ -4143,6 +4175,7 @@ impl AcpLettaSseStream {
         initial_events: Vec<AcpGatewayEvent>,
         letta: Arc<crate::core::letta::LettaClient>,
         continuation: LettaContinuationContext,
+        active_turn_guard: crate::core::acp_tool_turns::AcpActiveTurnGuard,
     ) -> Self {
         let mut pending = VecDeque::new();
         for event in initial_events {
@@ -4162,6 +4195,7 @@ impl AcpLettaSseStream {
             active_tool_call_ids: Vec::new(),
             persist_future: None,
             text_chunker: AcpTextChunker::new(acp_text_chunk_chars()),
+            active_turn_guard: Some(active_turn_guard),
         }
     }
 
@@ -4179,8 +4213,20 @@ impl AcpLettaSseStream {
     fn log_summary_once(&mut self) {
         if !self.logged_summary {
             self.cleanup_active_tool_turns();
+            if let Some(guard) = self.active_turn_guard.take() {
+                guard.release();
+            }
             self.diagnostics.log_summary(&self.context);
             self.logged_summary = true;
+        }
+    }
+}
+
+impl Drop for AcpLettaSseStream {
+    fn drop(&mut self) {
+        self.cleanup_active_tool_turns();
+        if let Some(guard) = self.active_turn_guard.take() {
+            guard.release();
         }
     }
 }
@@ -4393,6 +4439,24 @@ impl Stream for AcpLettaSseStream {
                 AcpPendingFuture::Cleanup(fut) => {
                     let cleanup = ready!(fut.as_mut().poll(cx));
                     this.persist_future = None;
+                    let turn_result = AcpGatewayEvent::TurnResult {
+                        status: "recovered".to_string(),
+                        reason: cleanup
+                            .get("reason")
+                            .and_then(serde_json::Value::as_str)
+                            .unwrap_or("runtime_cleanup")
+                            .to_string(),
+                        request_id: Some(this.context.request_id.to_string()),
+                        session_id: Some(this.context.acp_session_id.clone()),
+                        retryable: true,
+                        diagnostics: serde_json::json!({
+                            "cleanup": cleanup.clone(),
+                            "stream": this.diagnostics.diagnostic_json(&this.context),
+                        }),
+                    };
+                    this.diagnostics.observe_mapped_event(&turn_result);
+                    this.pending
+                        .push_back(acp_event_to_adapter_sse(turn_result));
                     let event = if this.diagnostics.saw_requires_approval_stop
                         && !this.diagnostics.saw_tool_return_ack
                     {
@@ -4549,6 +4613,18 @@ impl Stream for AcpLettaSseStream {
                         this.diagnostics.observe_mapped_event(&event);
                         this.pending.push_back(acp_event_to_adapter_sse(event));
                     }
+                    if !this.diagnostics.saw_turn_complete {
+                        let event = AcpGatewayEvent::TurnResult {
+                            status: "ok".to_string(),
+                            reason: "stream_complete".to_string(),
+                            request_id: Some(this.context.request_id.to_string()),
+                            session_id: Some(this.context.acp_session_id.clone()),
+                            retryable: false,
+                            diagnostics: this.diagnostics.diagnostic_json(&this.context),
+                        };
+                        this.diagnostics.observe_mapped_event(&event);
+                        this.pending.push_back(acp_event_to_adapter_sse(event));
+                    }
                     if !this.pending.is_empty() {
                         return self.poll_next(cx);
                     }
@@ -4638,6 +4714,14 @@ mod tests {
             .connect_lazy("postgres://postgres:postgres@127.0.0.1/postgres")
             .unwrap();
         let registry = AcpToolTurnCoordinator::new();
+        let request_id = Uuid::new_v4();
+        let active_turn_guard = registry
+            .acquire_active_turn(
+                "acp-test-session",
+                request_id,
+                Some("conv-test-resolved".to_string()),
+            )
+            .unwrap();
         let context = AcpStreamContext {
             pool,
             tool_turns: registry.clone(),
@@ -4649,7 +4733,7 @@ mod tests {
             conversation_selection: "new-acp-test".to_string(),
             resolved_conversation_id: Some("conv-test-resolved".to_string()),
             upstream_target: "conv-test-resolved".to_string(),
-            request_id: Uuid::new_v4(),
+            request_id,
             pair_agent_id: "agent-12345678-1234-4567-89ab-123456789abc".to_string(),
             config: Arc::new(crate::config::Config::test_stub()),
         };
@@ -4675,6 +4759,7 @@ mod tests {
                 stream_tokens: false,
                 max_steps: 2,
             },
+            active_turn_guard,
         );
 
         let first = stream.next().await.unwrap().unwrap();
@@ -4765,9 +4850,18 @@ mod tests {
         let pool = PgPoolOptions::new()
             .connect_lazy("postgres://postgres:postgres@127.0.0.1/postgres")
             .unwrap();
+        let registry = AcpToolTurnCoordinator::new();
+        let request_id = Uuid::new_v4();
+        let active_turn_guard = registry
+            .acquire_active_turn(
+                "acp-orphaned-approval",
+                request_id,
+                Some("conv-test".to_string()),
+            )
+            .unwrap();
         let context = AcpStreamContext {
             pool,
-            tool_turns: AcpToolTurnCoordinator::new(),
+            tool_turns: registry,
             user_id: 1,
             user_profile: None,
             bear_id: Uuid::new_v4(),
@@ -4776,7 +4870,7 @@ mod tests {
             conversation_selection: "conv-test".to_string(),
             resolved_conversation_id: Some("conv-test".to_string()),
             upstream_target: "conv-test".to_string(),
-            request_id: Uuid::new_v4(),
+            request_id,
             pair_agent_id: "agent-12345678-1234-4567-89ab-123456789abc".to_string(),
             config: Arc::new(crate::config::Config::test_stub()),
         };
@@ -4795,6 +4889,7 @@ mod tests {
                 stream_tokens: false,
                 max_steps: 2,
             },
+            active_turn_guard,
         );
 
         let mut output = String::new();
@@ -4869,6 +4964,14 @@ mod tests {
             .connect_lazy("postgres://postgres:postgres@127.0.0.1/postgres")
             .unwrap();
         let registry = AcpToolTurnCoordinator::new();
+        let request_id = Uuid::new_v4();
+        let active_turn_guard = registry
+            .acquire_active_turn(
+                "acp-continuation-conflict",
+                request_id,
+                Some("conv-test".to_string()),
+            )
+            .unwrap();
         let context = AcpStreamContext {
             pool,
             tool_turns: registry.clone(),
@@ -4880,7 +4983,7 @@ mod tests {
             conversation_selection: "conv-test".to_string(),
             resolved_conversation_id: Some("conv-test".to_string()),
             upstream_target: "conv-test".to_string(),
-            request_id: Uuid::new_v4(),
+            request_id,
             pair_agent_id: "agent-12345678-1234-4567-89ab-123456789abc".to_string(),
             config: Arc::new(crate::config::Config::test_stub()),
         };
@@ -4906,6 +5009,7 @@ mod tests {
                 stream_tokens: false,
                 max_steps: 2,
             },
+            active_turn_guard,
         );
 
         let first = stream.next().await.unwrap().unwrap();

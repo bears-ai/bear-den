@@ -3880,6 +3880,7 @@ async fn handle_sse_frame(
                 | "mode_update"
                 | "conversation_resolved"
                 | "turn_complete"
+                | "turn_result"
         ) {
             diagnostics.observe_unknown(&event);
             eprintln!(
@@ -4778,6 +4779,7 @@ async fn handle_den_event(
             Ok(false)
         }
 
+        "turn_result" => Ok(true),
         "turn_complete" => Ok(true),
         _ => Ok(false),
     }

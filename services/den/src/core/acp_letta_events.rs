@@ -25,6 +25,14 @@ pub enum AcpGatewayEvent {
     TurnComplete {
         outcome: String,
     },
+    TurnResult {
+        status: String,
+        reason: String,
+        request_id: Option<String>,
+        session_id: Option<String>,
+        retryable: bool,
+        diagnostics: serde_json::Value,
+    },
     Error {
         message: String,
         detail: Option<String>,
@@ -643,6 +651,7 @@ pub fn acp_event_adapter_type(event: &AcpGatewayEvent) -> &'static str {
         AcpGatewayEvent::AssistantTextDelta { .. } => "assistant_text_delta",
         AcpGatewayEvent::StatusText { .. } => "status_text",
         AcpGatewayEvent::TurnComplete { .. } => "turn_complete",
+        AcpGatewayEvent::TurnResult { .. } => "turn_result",
         AcpGatewayEvent::Error { .. } => "error",
         AcpGatewayEvent::ToolRequest { .. } => "tool_request",
         AcpGatewayEvent::PermissionRequest { .. } => "permission_request",
@@ -662,6 +671,7 @@ pub fn acp_event_has_visible_output(event: &AcpGatewayEvent) -> bool {
         }
         AcpGatewayEvent::Error { .. } => true,
         AcpGatewayEvent::TurnComplete { .. }
+        | AcpGatewayEvent::TurnResult { .. }
         | AcpGatewayEvent::ToolRequest { .. }
         | AcpGatewayEvent::PermissionRequest { .. }
         | AcpGatewayEvent::PlanUpdate { .. }
@@ -685,6 +695,22 @@ pub fn acp_event_to_adapter_sse(event: AcpGatewayEvent) -> Bytes {
         AcpGatewayEvent::TurnComplete { outcome } => serde_json::json!({
             "type": "turn_complete",
             "outcome": outcome,
+        }),
+        AcpGatewayEvent::TurnResult {
+            status,
+            reason,
+            request_id,
+            session_id,
+            retryable,
+            diagnostics,
+        } => serde_json::json!({
+            "type": "turn_result",
+            "status": status,
+            "reason": reason,
+            "request_id": request_id,
+            "session_id": session_id,
+            "retryable": retryable,
+            "diagnostics": diagnostics,
         }),
         AcpGatewayEvent::Error {
             message,
