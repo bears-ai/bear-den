@@ -348,8 +348,6 @@ pub(crate) struct AcpSessionHttp {
     created_at: String,
     updated_at: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    legacy_states: Option<Vec<serde_json::Value>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     plan_mode: Option<serde_json::Value>,
     session_policy: serde_json::Value,
     workflow_state: serde_json::Value,
@@ -363,7 +361,6 @@ fn format_acp_session_timestamp(t: time::OffsetDateTime) -> String {
 pub(crate) struct AcpResolvedTurnContext {
     pub(crate) policy: crate::core::acp_tools::AcpResolvedSessionPolicy,
     pub(crate) workflow_state: serde_json::Value,
-    pub(crate) legacy_states: Vec<serde_json::Value>,
     pub(crate) effective_mode: String,
 }
 
@@ -377,44 +374,12 @@ pub(crate) fn resolve_acp_turn_context(
         plan_mode_row.map(|value| value.state.as_str()),
     );
     let workflow_state = workflow_state_json_from_sources(&policy, plan_mode_row, activity_plan);
-    let plan_mode_value = plan_mode_row.and_then(|row| serde_json::to_value(row).ok());
-    let legacy_states = acp_session_legacy_states(row, plan_mode_value.as_ref());
     let effective_mode = policy.mode_label.to_ascii_lowercase();
     AcpResolvedTurnContext {
         policy,
         workflow_state,
-        legacy_states,
         effective_mode,
     }
-}
-
-fn acp_session_legacy_states(
-    row: &acp_sessions::AcpSessionRow,
-    plan_mode: Option<&serde_json::Value>,
-) -> Vec<serde_json::Value> {
-    let mut states = vec![serde_json::json!({
-        "domain": "execution",
-        "kind": "legacy_session_mode",
-        "slug": row.current_mode,
-        "source": "acp_sessions.current_mode",
-        "compatibility_only": true,
-    })];
-    if let Some(plan_mode_value) = plan_mode {
-        states.push(serde_json::json!({
-            "domain": "workplan",
-            "kind": "legacy_plan_mode_gate",
-            "state": plan_mode_value.get("state").and_then(|value| value.as_str()).unwrap_or("active"),
-            "source": "den.acp_plan_mode",
-            "compatibility_only": true,
-            "metadata": {
-                "plan_mode_id": plan_mode_value.get("id").cloned().unwrap_or(serde_json::Value::Null),
-                "artifact_path": plan_mode_value.get("plan_artifact_path").cloned().unwrap_or(serde_json::Value::Null),
-                "reason": plan_mode_value.get("reason").cloned().unwrap_or(serde_json::Value::Null),
-                "requested_by": plan_mode_value.get("requested_by").cloned().unwrap_or(serde_json::Value::Null)
-            }
-        }));
-    }
-    states
 }
 
 pub(crate) fn acp_session_row_to_http_with_modes(
@@ -443,7 +408,6 @@ pub(crate) fn acp_session_row_to_http_with_modes(
         archived_at: row.archived_at.map(format_acp_session_timestamp),
         created_at: format_acp_session_timestamp(row.created_at),
         updated_at: format_acp_session_timestamp(row.updated_at),
-        legacy_states: Some(turn_context.legacy_states),
         plan_mode,
         session_policy: turn_context.policy.to_json(),
         workflow_state: turn_context.workflow_state,

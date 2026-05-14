@@ -6,7 +6,7 @@ use crate::{
 };
 
 #[test]
-fn acp_session_http_surfaces_turn_state_as_primary_and_legacy_states_as_compatibility_only() {
+fn acp_session_http_surfaces_turn_state_without_legacy_state_compat_fields() {
     let row = AcpSessionRow {
         id: uuid::Uuid::nil(),
         user_id: 1,
@@ -38,7 +38,5 @@ fn acp_session_http_surfaces_turn_state_as_primary_and_legacy_states_as_compatib
     let payload = serde_json::to_value(acp_session_row_to_http_with_modes(row, plan_mode)).unwrap();
     assert_eq!(payload["workflow_state"]["schema"], "bears.turn_state/v1");
     assert_eq!(payload["workflow_state"]["workplan"]["state"], "approved");
-    let legacy_states = payload["legacy_states"].as_array().expect("legacy_states array");
-    assert!(!legacy_states.is_empty());
-    assert!(legacy_states.iter().all(|entry| entry["compatibility_only"] == true));
+    assert!(payload.get("legacy_states").is_none());
 }
