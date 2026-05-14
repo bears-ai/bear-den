@@ -191,7 +191,7 @@ fn workflow_state_json_surfaces_authoritative_session_state() {
 }
 
 #[test]
-fn workflow_state_json_preserves_approved_state_for_unwedge_reconciliation() {
+fn workflow_state_json_preserves_approved_state_for_session_reconciliation() {
     let policy = AcpResolvedSessionPolicy {
         mode_label: "Write",
         tool_enablement: AcpToolEnablementState::AllTools,
@@ -235,8 +235,14 @@ fn workflow_state_json_from_sources_carries_workplan_identity_and_artifact_field
         updated_at: time::OffsetDateTime::UNIX_EPOCH,
     };
     let workflow_state = super::acp::workflow_state_json_from_sources(&policy, Some(&row), None);
-    assert_eq!(workflow_state["workplan"]["plan_id"], uuid::Uuid::nil().to_string());
-    assert_eq!(workflow_state["workplan"]["artifact_path"], "pair/plans/example.md");
+    assert_eq!(
+        workflow_state["workplan"]["plan_id"],
+        uuid::Uuid::nil().to_string()
+    );
+    assert_eq!(
+        workflow_state["workplan"]["artifact_path"],
+        "pair/plans/example.md"
+    );
     assert_eq!(workflow_state["workplan"]["title"], "Example plan");
     assert_eq!(workflow_state["workplan"]["submitted_plan_present"], true);
 }
@@ -292,5 +298,8 @@ fn resolve_turn_context_returns_matching_policy_and_turn_state() {
         resolved.workflow_state["workplan"]["approval_status"],
         "approved_execution_unlocked"
     );
-    assert_eq!(resolved.workflow_state["execution"]["execution_unlocked"], true);
+    assert_eq!(
+        resolved.workflow_state["execution"]["execution_unlocked"],
+        true
+    );
 }

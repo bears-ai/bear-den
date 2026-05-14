@@ -158,8 +158,8 @@ pub fn router() -> Router<ApiState> {
             post(cancel_session),
         )
         .route(
-            "/bears/{slug}/sessions/{session_id}/unwedge",
-            post(unwedge_session),
+            "/bears/{slug}/sessions/{session_id}/compact",
+            post(compact_session),
         )
         .route("/bears/{slug}/conversations", get(conversations))
         .route(
@@ -237,6 +237,7 @@ struct AcpCloseSessionResponse {
     archived: bool,
     conversation_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[allow(dead_code)]
     unwedged: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     workflow_state: Option<serde_json::Value>,
@@ -2371,7 +2372,7 @@ async fn tool_result_inner(
     }
 }
 
-async fn unwedge_session(
+async fn compact_session(
     State(state): State<ApiState>,
     Path((slug, session_id)): Path<(String, String)>,
     headers: HeaderMap,
@@ -2382,18 +2383,17 @@ async fn unwedge_session(
     if let Err(err) = check_adapter_contract(contract.as_ref()) {
         return acp_compatibility_error_response(err, response_request_id);
     }
-    match unwedge_session_inner(state, slug, session_id, headers, body).await {
+    match compact_session_inner(state, slug, session_id, headers).await {
         Ok(response) => response,
         Err(err) => acp_error_response(err, response_request_id),
     }
 }
 
-async fn unwedge_session_inner(
+async fn compact_session_inner(
     state: ApiState,
     slug: String,
     session_id: String,
     headers: HeaderMap,
-    body: serde_json::Value,
 ) -> Result<Response, CustomError> {
     let user_id = authenticate_acp_code_token(&state, &headers, &slug).await?;
     let Some(session) =
@@ -2402,64 +2402,31 @@ async fn unwedge_session_inner(
     else {
         return Err(CustomError::NotFound("ACP session not found".to_string()));
     };
-    let pair_agent_id =
-        bears_db::role_agent_id(&state.sqlx_pool, session.bear_id, BearAgentRole::Pair)
-            .await?
-            .ok_or_else(|| {
-                CustomError::ValidationError("bear has no ready pair role agent".to_string())
-            })?;
-    let run_ids = body
-        .get("run_ids")
-        .and_then(|v| v.as_array())
-        .map(|items| {
-            items
-                .iter()
-                .filter_map(|item| item.as_str())
-                .map(str::trim)
-                .filter(|s| s.starts_with("run-"))
-                .map(str::to_string)
-                .collect::<Vec<_>>()
+    let conversation_id = session
+        .resolved_conversation_id
+        .as_deref()
+        .or_else(|| {
+            let selection = session.conversation_id.trim();
+            selection.starts_with("conv-").then_some(selection)
         })
-        .unwrap_or_default();
-    let cancel_result = state
-        .letta
-        .cancel_agent_runs(&pair_agent_id, &run_ids)
-        .await?;
-    state.acp_tool_turns.cleanup_session(&session_id);
-    let active_plan_mode =
-        acp_plan_mode::active_for_session(&state.sqlx_pool, user_id, session.bear_id, &session_id)
-            .await?;
-    let turn_context = resolve_acp_turn_context(&session, active_plan_mode.as_ref(), None);
-    let effective_mode = turn_context.effective_mode.clone();
-    if effective_mode != session.current_mode {
-        acp_sessions::set_current_mode(
-            &state.sqlx_pool,
-            user_id,
-            session.bear_id,
-            &session_id,
-            &effective_mode,
-        )
-        .await?;
-    }
+        .ok_or_else(|| {
+            CustomError::ValidationError(
+                "ACP session has no resolved Letta conversation to compact".to_string(),
+            )
+        })?;
+    let compact_result = state.letta.compact_conversation(conversation_id).await?;
     tracing::warn!(
         acp_session_id = %session_id,
         bear_id = %session.bear_id,
-        pair_agent_id = %pair_agent_id,
-        run_ids = ?run_ids,
-        effective_mode,
-        plan_state = ?active_plan_mode.as_ref().map(|plan| plan.state.as_str()),
-        "ACP session unwedge requested; cancelled Letta runs, cleaned local tool turns, and reconciled session mode"
+        conversation_id,
+        "ACP session Letta conversation compaction requested"
     );
     Ok(Json(serde_json::json!({
         "ok": true,
-        "unwedged": true,
+        "compacted": true,
         "acp_session_id": session_id,
-        "pair_agent_id": pair_agent_id,
-        "run_ids": run_ids,
-        "letta_cancel_result": cancel_result,
-        "effective_mode": effective_mode,
-        "session_policy": turn_context.policy.to_json(),
-        "workflow_state": turn_context.workflow_state,
+        "conversation_id": conversation_id,
+        "compact_result": compact_result,
     }))
     .into_response())
 }

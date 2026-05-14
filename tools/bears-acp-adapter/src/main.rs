@@ -379,8 +379,8 @@ async fn send_available_commands_update(session_id: &str) -> Result<()> {
             "Show BEARS ACP adapter, session, client, and Den configuration diagnostics.",
         ),
         AvailableCommand::new(
-            "unwedge",
-            "Clear stale Letta approval/run state for this ACP session.",
+            "compact",
+            "Compact this ACP session's Letta conversation to recover from stale approval state.",
         ),
         AvailableCommand::new(
             "conversation",
@@ -640,7 +640,7 @@ struct SseFrameOutcome {
     saw_visible_output: bool,
     saw_tool_activity: bool,
     saw_error: bool,
-    retry_after_unwedge: bool,
+    compact_and_retry: bool,
     upstream_errors: Vec<String>,
 }
 
@@ -2888,6 +2888,49 @@ async fn post_session_lifecycle_action_with_payload(
     Ok(())
 }
 
+async fn post_session_lifecycle_action_json(
+    http: &reqwest::Client,
+    config: &Config,
+    session_id: &str,
+    action: &str,
+) -> Result<Value> {
+    let url = format!(
+        "{}/acp/bears/{}/sessions/{}/{}",
+        config.api_url,
+        urlencoding::encode(&config.bear),
+        urlencoding::encode(session_id),
+        action,
+    );
+    let response = http
+        .post(&url)
+        .header(
+            AUTHORIZATION,
+            HeaderValue::from_str(&format!("Bearer {}", config.token))?,
+        )
+        .header(CONTENT_TYPE, HeaderValue::from_static("application/json"))
+        .json(&json!({ "adapter_contract": adapter_contract_context() }))
+        .send()
+        .await
+        .with_context(|| format!("post ACP session {action} to Den at {url}"))?;
+    let status = response.status();
+    let body = response.text().await.unwrap_or_default();
+    if !status.is_success() {
+        return Err(anyhow!(
+            "Den session {action} endpoint returned HTTP {status}: {}",
+            body.trim()
+        ));
+    }
+    Ok(serde_json::from_str(&body).unwrap_or_else(|_| json!({ "raw": body })))
+}
+
+async fn compact_session_conversation(
+    http: &reqwest::Client,
+    config: &Config,
+    session_id: &str,
+) -> Result<Value> {
+    post_session_lifecycle_action_json(http, config, session_id, "compact").await
+}
+
 async fn handle_prompt(
     http: &reqwest::Client,
     config: &Config,
@@ -2915,7 +2958,7 @@ async fn handle_prompt_with_retry(
     shared_state: &AdapterSharedState,
     response_id: Value,
     params: Value,
-    allow_retry_after_unwedge: bool,
+    allow_compact_retry: bool,
 ) -> Result<()> {
     let session_id = params
         .get("sessionId")
@@ -3019,7 +3062,7 @@ async fn handle_prompt_with_retry(
     let mut saw_visible_output = false;
     let mut saw_tool_activity = false;
     let mut saw_error = false;
-    let mut retry_after_unwedge = false;
+    let mut compact_and_retry = false;
     let mut upstream_errors = Vec::new();
     let mut buffer = Vec::<u8>::new();
     let mut stream = response.bytes_stream();
@@ -3058,7 +3101,7 @@ async fn handle_prompt_with_retry(
             saw_visible_output |= outcome.saw_visible_output;
             saw_tool_activity |= outcome.saw_tool_activity;
             saw_error |= outcome.saw_error;
-            retry_after_unwedge |= outcome.retry_after_unwedge;
+            compact_and_retry |= outcome.compact_and_retry;
             upstream_errors.extend(outcome.upstream_errors);
         }
     }
@@ -3077,42 +3120,55 @@ async fn handle_prompt_with_retry(
         saw_visible_output |= outcome.saw_visible_output;
         saw_tool_activity |= outcome.saw_tool_activity;
         saw_error |= outcome.saw_error;
-        retry_after_unwedge |= outcome.retry_after_unwedge;
+        compact_and_retry |= outcome.compact_and_retry;
         upstream_errors.extend(outcome.upstream_errors);
     }
 
-    if retry_after_unwedge && allow_retry_after_unwedge && !saw_visible_output && !saw_tool_activity
-    {
+    if compact_and_retry && allow_compact_retry && !saw_visible_output && !saw_tool_activity {
         eprintln!(
-            "bears-acp-adapter: retrying prompt after automatic stale approval unwedge session_id={} errors={}",
+            "bears-acp-adapter: compacting stuck conversation before retry session_id={} errors={}",
             session_id,
             upstream_errors.join("; ")
         );
-        send_agent_thought_chunk(
-            session_id,
-            "BEARS cleared stale approval state and is retrying your prompt automatically.",
-        )
-        .await?;
-        return Box::pin(handle_prompt_with_retry(
-            http,
-            config,
-            adapter_state,
-            shared_state,
-            response_id,
-            params,
-            false,
-        ))
-        .await;
+        match compact_session_conversation(http, config, session_id).await {
+            Ok(result) => {
+                send_agent_thought_chunk(
+                    session_id,
+                    &format!(
+                        "BEARS detected stale approval state, compacted the Letta conversation, and is retrying your prompt automatically. compact_result={}",
+                        result
+                    ),
+                )
+                .await?;
+                return Box::pin(handle_prompt_with_retry(
+                    http,
+                    config,
+                    adapter_state,
+                    shared_state,
+                    response_id,
+                    params,
+                    false,
+                ))
+                .await;
+            }
+            Err(err) => {
+                send_agent_message_chunk(
+                    session_id,
+                    &format!(
+                        "BEARS detected stale Letta approval state, but Letta conversation compaction failed. This ACP session's conversation is still wedged; please start a new ACP session. Compaction error: {err:#}"
+                    ),
+                )
+                .await?;
+                saw_visible_output = true;
+                upstream_errors.clear();
+            }
+        }
     }
 
-    if retry_after_unwedge
-        && !allow_retry_after_unwedge
-        && !saw_visible_output
-        && !saw_tool_activity
-    {
+    if compact_and_retry && !allow_compact_retry && !saw_visible_output && !saw_tool_activity {
         send_agent_message_chunk(
             session_id,
-            "BEARS could not clear stale Letta approval state for this ACP session. This session's conversation appears wedged; please start a new ACP session so BEARS can use a fresh conversation history.",
+            "BEARS retried after Letta conversation compaction, but stale approval state persisted. Please start a new ACP session.",
         )
         .await?;
         saw_visible_output = true;
@@ -3166,7 +3222,7 @@ async fn handle_prompt_with_retry(
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum LocalSlashCommand {
     Doctor,
-    Unwedge,
+    Compact,
     Conversation,
     Capabilities,
     ToolState,
@@ -3177,7 +3233,7 @@ enum LocalSlashCommand {
 fn parse_local_slash_command(prompt: &str) -> Option<LocalSlashCommand> {
     match prompt.trim().split_whitespace().next()? {
         "/doctor" => Some(LocalSlashCommand::Doctor),
-        "/unwedge" => Some(LocalSlashCommand::Unwedge),
+        "/compact" => Some(LocalSlashCommand::Compact),
         "/conversation" => Some(LocalSlashCommand::Conversation),
         "/capabilities" => Some(LocalSlashCommand::Capabilities),
         "/tool-state" => Some(LocalSlashCommand::ToolState),
@@ -3205,10 +3261,10 @@ async fn handle_local_slash_command(
             )
             .await
         }
-        LocalSlashCommand::Unwedge => {
-            match post_session_lifecycle_action(http, config, session_id, "unwedge").await {
-                Ok(()) => "BEARS ACP unwedge requested for this session. Retry your last prompt; if stale approval persists, start a new ACP session.".to_string(),
-                Err(err) => format!("BEARS ACP unwedge failed: {err:#}"),
+        LocalSlashCommand::Compact => {
+            match compact_session_conversation(http, config, session_id).await {
+                Ok(result) => format!("BEARS ACP compaction requested for this session. Retry your last prompt. Result: {result}"),
+                Err(err) => format!("BEARS ACP compaction failed: {err:#}"),
             }
         }
         LocalSlashCommand::Conversation => conversation_report(adapter_state, session_id),
@@ -3795,29 +3851,16 @@ async fn handle_sse_frame(
             diagnostics.saw_error = true;
             let formatted = format_den_event_error(&event);
             if looks_like_waiting_for_approval_error(&formatted) {
-                if let Err(err) = post_session_lifecycle_action(
-                    &reqwest::Client::new(),
-                    config,
-                    session_id,
-                    "unwedge",
-                )
-                .await
-                {
-                    outcome.upstream_errors.push(format!(
-                        "Letta is waiting for stale approval and automatic unwedge failed: {err:#}"
-                    ));
-                } else {
-                    outcome.retry_after_unwedge = true;
-                    outcome.upstream_errors.push(
-                        "Letta was waiting for stale approval; BEARS requested an automatic unwedge and will retry the prompt."
-                            .to_string(),
-                    );
-                }
+                outcome.compact_and_retry = true;
+                outcome.upstream_errors.push(
+                    "Letta was waiting for stale approval; BEARS will try Letta conversation compaction before retrying the prompt."
+                        .to_string(),
+                );
             } else {
                 outcome.upstream_errors.push(formatted);
             }
         }
-        if outcome.retry_after_unwedge {
+        if outcome.compact_and_retry {
             continue;
         }
         let handled =
@@ -5726,7 +5769,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn stale_approval_unwedge_event_is_reported_as_visible_output() {
+    async fn stale_approval_event_requests_compaction_retry() {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
         tokio::spawn(async move {
@@ -5777,9 +5820,9 @@ mod tests {
 
         assert!(outcome.saw_error);
         assert!(!outcome.saw_visible_output);
-        assert!(outcome.retry_after_unwedge);
+        assert!(outcome.compact_and_retry);
         assert_eq!(outcome.upstream_errors.len(), 1);
-        assert!(outcome.upstream_errors[0].contains("will retry the prompt"));
+        assert!(outcome.upstream_errors[0].contains("compaction"));
     }
 
     #[test]

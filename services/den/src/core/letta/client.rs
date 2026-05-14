@@ -713,6 +713,42 @@ impl LettaClient {
         Ok(resp)
     }
 
+    pub async fn compact_conversation(
+        &self,
+        conversation_id: &str,
+    ) -> Result<serde_json::Value, CustomError> {
+        if !self.is_enabled() {
+            return Err(CustomError::System(
+                "Letta is not configured (set LETTA_BASE_URL)".to_string(),
+            ));
+        }
+        let url = format!(
+            "{}/v1/conversations/{}/compact",
+            self.base_url, conversation_id
+        );
+        let resp = self
+            .http
+            .post(url)
+            .headers(self.auth_headers())
+            .header(CONTENT_TYPE, "application/json")
+            .json(&json!({}))
+            .send()
+            .await
+            .map_err(|e| {
+                CustomError::System(format!("Letta compact conversation request failed: {e}"))
+            })?;
+        let status = resp.status();
+        let text = resp.text().await.unwrap_or_default();
+        if !status.is_success() {
+            return Err(CustomError::System(letta_http_error_message(
+                "compact conversation",
+                status,
+                &text,
+            )));
+        }
+        serde_json::from_str(&text).or_else(|_| Ok(json!({ "raw": text })))
+    }
+
     pub async fn cancel_agent_runs(
         &self,
         agent_id: &str,
