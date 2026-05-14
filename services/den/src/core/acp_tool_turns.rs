@@ -5,6 +5,7 @@ use std::{
 };
 
 use serde::Deserialize;
+use time::OffsetDateTime;
 use tokio::sync::oneshot;
 use uuid::Uuid;
 
@@ -30,6 +31,39 @@ pub struct AcpToolResultRequest {
 
 const SETTLED_RESULT_TTL: Duration = Duration::from_secs(5 * 60);
 const SETTLED_RESULT_MAX_ENTRIES: usize = 256;
+
+#[derive(Debug, Clone)]
+pub struct AcpPendingToolTurn {
+    pub user_id: i32,
+    pub bear_id: Uuid,
+    pub bear_slug: String,
+    pub acp_session_id: String,
+    pub request_id: Uuid,
+    pub tool_call_id: String,
+    pub tool_name: String,
+    pub approval_request_id: Option<String>,
+    pub status: String,
+    pub registered_at: Instant,
+    pub deadline_at: Instant,
+}
+
+impl AcpPendingToolTurn {
+    pub fn diagnostic(&self) -> serde_json::Value {
+        serde_json::json!({
+            "request_id": self.request_id,
+            "bear_id": self.bear_id,
+            "session_id": self.acp_session_id,
+            "tool_call_id": self.tool_call_id,
+            "tool_name": self.tool_name,
+            "approval_request_id": self.approval_request_id,
+            "status": self.status,
+            "age_ms": self.registered_at.elapsed().as_millis(),
+            "time_to_deadline_ms": self.deadline_at.saturating_duration_since(Instant::now()).as_millis(),
+            "component": "den.acp",
+            "phase": "pending_tool_turn",
+        })
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct AcpSettledToolResult {
@@ -94,6 +128,8 @@ struct AcpToolTurn {
     tool_name: String,
     approval_request_id: Option<String>,
     settled: bool,
+    registered_at: Instant,
+    deadline_at: Instant,
     result_tx: Option<oneshot::Sender<AcpToolResultRequest>>,
 }
 
@@ -107,6 +143,7 @@ pub struct AcpToolTurnRegistration {
     pub tool_call_id: String,
     pub tool_name: String,
     pub approval_request_id: Option<String>,
+    pub timeout_ms: u64,
     pub result_tx: oneshot::Sender<AcpToolResultRequest>,
 }
 
@@ -163,6 +200,7 @@ impl AcpToolTurnCoordinator {
             .turns
             .lock()
             .map_err(|_| CustomError::System("ACP tool turn registry lock poisoned".to_string()))?;
+        let now = Instant::now();
         turns.insert(
             key,
             AcpToolTurn {
@@ -175,6 +213,8 @@ impl AcpToolTurnCoordinator {
                 tool_name: registration.tool_name,
                 approval_request_id: registration.approval_request_id,
                 settled: false,
+                registered_at: now,
+                deadline_at: now + Duration::from_millis(registration.timeout_ms.max(1)),
                 result_tx: Some(registration.result_tx),
             },
         );
@@ -294,6 +334,95 @@ impl AcpToolTurnCoordinator {
         })
     }
 
+    pub fn pending_for_session(&self, session_id: &str) -> Vec<AcpPendingToolTurn> {
+        let Ok(turns) = self.turns.lock() else {
+            return Vec::new();
+        };
+        let prefix = format!("{session_id}\n");
+        turns
+            .iter()
+            .filter(|(key, turn)| key.starts_with(&prefix) && !turn.settled)
+            .map(|(_, turn)| AcpPendingToolTurn {
+                user_id: turn.user_id,
+                bear_id: turn.bear_id,
+                bear_slug: turn.bear_slug.clone(),
+                acp_session_id: turn.acp_session_id.clone(),
+                request_id: turn.request_id,
+                tool_call_id: turn.tool_call_id.clone(),
+                tool_name: turn.tool_name.clone(),
+                approval_request_id: turn.approval_request_id.clone(),
+                status: "pending".to_string(),
+                registered_at: turn.registered_at,
+                deadline_at: turn.deadline_at,
+            })
+            .collect()
+    }
+
+    pub fn expired_pending_for_session(&self, session_id: &str) -> Vec<AcpPendingToolTurn> {
+        let now = Instant::now();
+        self.pending_for_session(session_id)
+            .into_iter()
+            .filter(|turn| turn.deadline_at <= now)
+            .collect()
+    }
+
+    pub fn auto_timeout_result(
+        &self,
+        session_id: &str,
+        tool_call_id: &str,
+        reason: impl Into<String>,
+    ) -> Option<AcpToolResultRequest> {
+        let mut turns = self.turns.lock().ok()?;
+        let turn = turns.get_mut(&Self::key(session_id, tool_call_id))?;
+        if turn.settled {
+            return None;
+        }
+        turn.settled = true;
+        let reason = reason.into();
+        let body = AcpToolResultRequest {
+            turn_id: None,
+            request_id: Some(turn.request_id.to_string()),
+            tool_call_id: Some(turn.tool_call_id.clone()),
+            tool_name: Some(turn.tool_name.clone()),
+            approval_request_id: turn.approval_request_id.clone(),
+            status: "timeout".to_string(),
+            content: Some(reason),
+            structured_content: serde_json::json!({}),
+            diagnostic: serde_json::json!({
+                "component": "den.acp",
+                "phase": "auto_timeout_denial",
+                "tool_call_id": turn.tool_call_id,
+                "tool_name": turn.tool_name,
+                "approval_request_id": turn.approval_request_id,
+            }),
+            ..Default::default()
+        };
+        let cached = AcpSettledToolResult::from_turn(turn, &body);
+        if let Some(result_tx) = turn.result_tx.take() {
+            let _ = result_tx.send(body.clone());
+        }
+        drop(turns);
+        let _ = self.cache_settled_result(cached);
+        Some(body)
+    }
+
+    pub fn diagnostic_snapshot(&self, session_id: &str) -> serde_json::Value {
+        serde_json::json!({
+            "session_id": session_id,
+            "pending": self
+                .pending_for_session(session_id)
+                .into_iter()
+                .map(|turn| turn.diagnostic())
+                .collect::<Vec<_>>(),
+            "expired": self
+                .expired_pending_for_session(session_id)
+                .into_iter()
+                .map(|turn| turn.diagnostic())
+                .collect::<Vec<_>>(),
+            "observed_at": OffsetDateTime::now_utc(),
+        })
+    }
+
     pub fn cleanup_session(&self, session_id: &str) {
         if let Ok(mut turns) = self.turns.lock() {
             let prefix = format!("{session_id}\n");
@@ -384,6 +513,7 @@ mod tests {
                 tool_call_id: "call-1".to_string(),
                 tool_name: "fs_read_text_file".to_string(),
                 approval_request_id: Some("approval-1".to_string()),
+                timeout_ms: 30_000,
                 result_tx: tx,
             })
             .unwrap();
@@ -411,6 +541,7 @@ mod tests {
                 tool_call_id: "call-1".to_string(),
                 tool_name: "fs_read_text_file".to_string(),
                 approval_request_id: Some("approval-1".to_string()),
+                timeout_ms: 30_000,
                 result_tx: tx,
             })
             .unwrap();
@@ -461,6 +592,7 @@ mod tests {
                 tool_call_id: "call-1".to_string(),
                 tool_name: "fs_read_text_file".to_string(),
                 approval_request_id: Some("approval-1".to_string()),
+                timeout_ms: 30_000,
                 result_tx: tx,
             })
             .unwrap();

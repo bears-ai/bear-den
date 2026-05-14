@@ -2182,6 +2182,10 @@ async fn permission_result_inner(
                 // Letta `web_fetch` tool call and pass coordinator name validation.
                 tool_name: pending.provider_name.clone(),
                 approval_request_id: pending.approval_request_id.clone(),
+                timeout_ms: acp_tool_policy_json_for_provider(&pending.provider_name)
+                    .get("tool_timeout_ms")
+                    .and_then(serde_json::Value::as_u64)
+                    .unwrap_or(30_000),
                 result_tx: pending.result_tx,
             })?;
         return Ok(Json(AcpPermissionDecisionResponse {
@@ -3293,6 +3297,10 @@ async fn persist_stream_event_side_effects(
                     tool_call_id: tool_call_id.clone(),
                     tool_name: tool_name.clone(),
                     approval_request_id: approval_request_id.clone(),
+                    timeout_ms: acp_tool_policy_json_for_provider(tool_name)
+                        .get("tool_timeout_ms")
+                        .and_then(serde_json::Value::as_u64)
+                        .unwrap_or(30_000),
                     result_tx,
                 })?;
                 tracing::info!(
@@ -3394,6 +3402,10 @@ async fn handle_web_fetch_tool_request(
             tool_call_id: tool_call_id.clone(),
             tool_name: tool_name.clone(),
             approval_request_id: approval_request_id.clone(),
+            timeout_ms: acp_tool_policy_json_for_provider(tool_name)
+                .get("tool_timeout_ms")
+                .and_then(serde_json::Value::as_u64)
+                .unwrap_or(30_000),
             result_tx,
         })?;
         return Ok(());
@@ -4060,7 +4072,7 @@ enum AcpPendingFuture {
             >,
         >,
     ),
-    Tool(Pin<Box<dyn Future<Output = Result<AcpToolResultRequest, String>> + Send>>),
+    Tool(Pin<Box<dyn Future<Output = AcpToolResultRequest> + Send>>),
     ContinueTool(Pin<Box<dyn Future<Output = Result<reqwest::Response, CustomError>> + Send>>),
     Cleanup(Pin<Box<dyn Future<Output = serde_json::Value> + Send>>),
 }
@@ -4244,17 +4256,47 @@ impl Stream for AcpLettaSseStream {
                                                 .get("tool_timeout_ms")
                                                 .and_then(serde_json::Value::as_u64)
                                                 .unwrap_or(30_000);
-                                        tokio::time::timeout(
+                                        match tokio::time::timeout(
                                             std::time::Duration::from_millis(timeout_ms),
                                             result_rx,
                                         )
                                         .await
-                                        .map_err(|_| {
-                                            format!(
-                                                "timed out waiting for ACP local tool result after {timeout_ms}ms"
-                                            )
-                                        })?
-                                        .map_err(|err| err.to_string())
+                                        {
+                                            Err(_) => AcpToolResultRequest {
+                                                tool_call_id: Some(tool_call_id.clone()),
+                                                tool_name: Some(tool_name.clone()),
+                                                status: "timeout".to_string(),
+                                                content: Some(format!(
+                                                    "BEARS denied this approval automatically because the ACP local tool result timed out after {timeout_ms}ms."
+                                                )),
+                                                structured_content: serde_json::json!({}),
+                                                diagnostic: serde_json::json!({
+                                                    "component": "den.acp",
+                                                    "phase": "local_tool_result_timeout_auto_denied",
+                                                    "tool_call_id": tool_call_id,
+                                                    "tool_name": tool_name,
+                                                    "timeout_ms": timeout_ms,
+                                                }),
+                                                ..Default::default()
+                                            },
+                                            Ok(Err(err)) => AcpToolResultRequest {
+                                                tool_call_id: Some(tool_call_id.clone()),
+                                                tool_name: Some(tool_name.clone()),
+                                                status: "error".to_string(),
+                                                content: Some(format!(
+                                                    "BEARS denied this approval automatically because the ACP local tool result channel closed: {err}"
+                                                )),
+                                                structured_content: serde_json::json!({}),
+                                                diagnostic: serde_json::json!({
+                                                    "component": "den.acp",
+                                                    "phase": "local_tool_result_channel_closed_auto_denied",
+                                                    "tool_call_id": tool_call_id,
+                                                    "tool_name": tool_name,
+                                                }),
+                                                ..Default::default()
+                                            },
+                                            Ok(Ok(value)) => value,
+                                        }
                                     },
                                 )));
                             }
@@ -4288,66 +4330,52 @@ impl Stream for AcpLettaSseStream {
                 AcpPendingFuture::Tool(fut) => {
                     let result = ready!(fut.as_mut().poll(cx));
                     this.persist_future = None;
-                    match result {
-                        Ok(tool_result) => {
-                            if let Some(done_id) = tool_result.tool_call_id.as_deref() {
-                                this.active_tool_call_ids.retain(|id| id != done_id);
-                                this.context
-                                    .tool_turns
-                                    .remove(&this.context.acp_session_id, done_id);
-                            }
-                            if let Some(plan_event) = plan_update_from_den_tool_result(&tool_result)
-                            {
-                                this.diagnostics.observe_mapped_event(&plan_event);
-                                this.pending.push_back(acp_event_to_adapter_sse(plan_event));
-                            }
-                            if let Some(mode) = status_from_den_tool_result(&tool_result) {
-                                let mode_event = AcpGatewayEvent::ModeUpdate {
-                                    mode: mode.to_string(),
-                                };
-                                this.diagnostics.observe_mapped_event(&mode_event);
-                                this.pending.push_back(acp_event_to_adapter_sse(mode_event));
-                            }
-                            let tool_name = tool_result
-                                .tool_name
-                                .as_deref()
-                                .unwrap_or("tool")
-                                .to_string();
-                            let completion_text = if acp_debug_ui_enabled() {
-                                format!(
+                    let tool_result = result;
+                    {
+                        if let Some(done_id) = tool_result.tool_call_id.as_deref() {
+                            this.active_tool_call_ids.retain(|id| id != done_id);
+                            this.context
+                                .tool_turns
+                                .remove(&this.context.acp_session_id, done_id);
+                        }
+                        if let Some(plan_event) = plan_update_from_den_tool_result(&tool_result) {
+                            this.diagnostics.observe_mapped_event(&plan_event);
+                            this.pending.push_back(acp_event_to_adapter_sse(plan_event));
+                        }
+                        if let Some(mode) = status_from_den_tool_result(&tool_result) {
+                            let mode_event = AcpGatewayEvent::ModeUpdate {
+                                mode: mode.to_string(),
+                            };
+                            this.diagnostics.observe_mapped_event(&mode_event);
+                            this.pending.push_back(acp_event_to_adapter_sse(mode_event));
+                        }
+                        let tool_name = tool_result
+                            .tool_name
+                            .as_deref()
+                            .unwrap_or("tool")
+                            .to_string();
+                        let completion_text = if acp_debug_ui_enabled() {
+                            format!(
                                     "BEARS debug: local tool {tool_name} completed with status {} ({} bytes)",
                                     tool_result.status,
                                     tool_result.content.as_deref().map(str::len).unwrap_or(0),
                                 )
-                            } else {
-                                format!("Local tool {tool_name} completed")
-                            };
-                            this.pending.push_back(acp_event_to_adapter_sse(
-                                AcpGatewayEvent::StatusText {
-                                    text: completion_text,
-                                },
-                            ));
-                            // Letta keeps the original run active until its SSE stream finishes
-                            // with `requires_approval`/stop metadata. If we POST the tool return
-                            // before draining that stream, Letta rejects the continuation with
-                            // HTTP 409 (another run is still processing this conversation). Store
-                            // the result and continue reading the current stream; once it ends,
-                            // start the tool-return continuation.
-                            this.pending_tool_result = Some(tool_result);
-                            return self.poll_next(cx);
-                        }
-                        Err(err) => {
-                            this.pending.push_back(acp_event_to_adapter_sse(
-                                AcpGatewayEvent::Error {
-                                    message: "ACP local tool result was not delivered before the turn could continue.".to_string(),
-                                    detail: Some(err),
-                                    error_type: Some("tool_result_channel_closed".to_string()),
-                                    request_id: Some(this.context.request_id.to_string()),
-                                    context: None,
-                                },
-                            ));
-                            return self.poll_next(cx);
-                        }
+                        } else {
+                            format!("Local tool {tool_name} completed")
+                        };
+                        this.pending.push_back(acp_event_to_adapter_sse(
+                            AcpGatewayEvent::StatusText {
+                                text: completion_text,
+                            },
+                        ));
+                        // Letta keeps the original run active until its SSE stream finishes
+                        // with `requires_approval`/stop metadata. If we POST the tool return
+                        // before draining that stream, Letta rejects the continuation with
+                        // HTTP 409 (another run is still processing this conversation). Store
+                        // the result and continue reading the current stream; once it ends,
+                        // start the tool-return continuation.
+                        this.pending_tool_result = Some(tool_result);
+                        return self.poll_next(cx);
                     }
                 }
                 AcpPendingFuture::ContinueTool(fut) => {
