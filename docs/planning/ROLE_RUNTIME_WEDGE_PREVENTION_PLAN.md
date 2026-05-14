@@ -29,22 +29,124 @@ Every role executor must satisfy this invariant:
 
 > If a Letta tool/approval request is surfaced to Den or an adapter, it must eventually be settled with success/error/denial/timeout, or the owning Letta run must be explicitly cancelled before the next turn starts.
 
-## Near-term ACP safety patches
+## Current recovery stance
 
-ACP `pair` gets immediate safety patches first because it is the live path where stale approval failures are visible.
+BEARS should not claim that `/unwedge` is a reliable user-facing recovery for malformed Letta approval state. The preferred recovery ladder for a stale approval on a bound ACP conversation is:
 
-1. **Pre-turn runtime hygiene**
-   - Before Den sends a new ACP prompt to Letta, clear stale local ACP tool-turn state and cancel stale Letta runs for the pair agent.
-   - Reconcile the ACP mode from plan-mode state before prompting.
-   - Log the preflight action so operators can distinguish normal hygiene from recovery.
+1. settle the approval/tool request normally;
+2. if a local tool or approval wait times out, send an explicit denial/error result to Letta;
+3. if the conversation still reports stale approval, try Letta conversation compaction on the same bound `conv-*`;
+4. if compaction succeeds, retry the prompt once;
+5. if compaction fails or retry still wedges, stop and tell the user to start a new ACP session.
 
-2. **`requires_approval` without a pending result is stale**
-   - `requires_approval` is normal only while Den has a matching pending tool result/continuation path.
-   - If a Letta stream ends at `requires_approval` with no pending tool result, Den should treat it as an orphaned approval, perform stale-state cleanup, and surface a visible retryable status instead of silently completing an empty turn.
+Compaction preserves the ACP session's conversation binding when it works. BEARS should not silently rebind an existing ACP session to a blank new conversation as recovery, because conversation history is the main reason to retain the session.
 
-3. **Continuation failure cleanup**
-   - When Den fails to continue Letta after posting a local tool result, and the failure looks like stale approval/run conflict, Den should cancel stale runs and clean local tool-turn state immediately.
-   - The stream should surface a visible recovery message rather than leaving the next prompt to discover the wedge.
+## Prioritized implementation sequence
+
+### 1. Active-turn lock for ACP `pair`
+
+Add a structural active-turn guard for ACP `pair` prompts.
+
+- Key initially by `acp_session_id`; include `resolved_conversation_id` in diagnostics when available.
+- Acquire at prompt start and release when the stream completes or is dropped.
+- Reject overlapping prompts with a clear machine-readable error such as `turn_already_active`.
+- Later, support an explicit cancel-and-replace flow, but reject-first is safer.
+
+This prevents a common wedge source: a second prompt entering the same Letta conversation while a prior run/tool approval is still active.
+
+### 2. Terminal `turn_result` event
+
+Den should emit a terminal stream event with a stable shape instead of requiring the adapter to infer terminal status from visible output, tool activity, errors, and stream EOF.
+
+Conceptual event:
+
+```text
+{
+  "type": "turn_result",
+  "status": "ok | failed | recovered | needs_new_session | cancelled",
+  "reason": "end_turn | compacted_retry | stale_approval | timeout | turn_already_active",
+  "request_id": "...",
+  "session_id": "...",
+  "retryable": false,
+  "diagnostics": {}
+}
+```
+
+This event should be useful to both ACP adapters and future role/channel runtimes.
+
+### 3. Minimal shared role/turn runtime helper
+
+Before adding more ACP-specific code, introduce a small shared runtime helper used first by ACP `pair`.
+
+Initial responsibilities:
+
+- acquire/release active-turn locks;
+- expose current pending tool/approval diagnostics;
+- centralize timeout-as-deny policy;
+- centralize compaction fallback decision;
+- shape terminal `turn_result` diagnostics.
+
+This should be intentionally small. It is a stepping stone toward shared `pair`/`work` orchestration, not a full role runtime framework yet.
+
+### 4. Runtime health endpoint for ACP session state
+
+Add an operator/adapter-visible health endpoint for ACP session runtime state.
+
+It should return:
+
+- active turn lock status;
+- pending tool/approval turns;
+- expired pending turns;
+- current conversation id / resolved conversation id;
+- last compaction attempt if tracked;
+- last terminal turn result if tracked;
+- current canonical turn state (`workplan`, `activity`, `memory`, `execution`).
+
+This is a debugging accelerator and should be cheaper than a full transcript system.
+
+### 5. Durable pending approval/tool ledger
+
+Move beyond process-local pending turn state once the runtime shapes stabilize.
+
+A Postgres-backed ledger should track:
+
+- `bear_id`
+- `role`
+- `channel_kind`
+- `channel_id`
+- `conversation_id`
+- `run_id`
+- `request_id`
+- `tool_call_id`
+- `approval_request_id`
+- `tool_name`
+- `status`
+- `created_at`
+- `deadline_at`
+- `settled_at`
+- `settlement_kind`
+- `continuation_status`
+- `diagnostic`
+
+This allows Den to detect orphaned approvals after restarts and produce reliable diagnostics.
+
+### 6. `work` approval policy and handoff outcome
+
+Implement the Work Handoff ADR for `work` runtime policy.
+
+- `work` must not wait indefinitely for interactive ACP-style approval.
+- Approval timeout should deny or block.
+- Approval needs become durable Workplace/activity handoff records.
+- `talk` is the default human notification route.
+- `pair` is optional when an active technical channel exists.
+
+### 7. Den-owned visible transcript
+
+Add a Den-owned visible transcript after the runtime/event model is stable.
+
+This should preserve user-visible prompts, assistant-visible output, status/recovery notices, tool summaries, and terminal turn results independently from Letta conversation internals.
+
+It is intentionally later because it has broader product semantics around history, replay, and audit.
 
 ## Cross-role follow-on design
 
