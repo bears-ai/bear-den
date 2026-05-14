@@ -18,6 +18,7 @@ pub mod memory_manager_head;
 pub mod memory_proposals;
 pub mod pair_reflection;
 pub mod reflection_conductor;
+pub mod role_runtime;
 pub mod s3;
 pub mod turn_state;
 pub mod user;

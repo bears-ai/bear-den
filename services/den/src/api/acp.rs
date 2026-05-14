@@ -61,7 +61,9 @@ use crate::{
         memory_manager_head::{write_memfs_role_memory_entry, MemfsWriteRoleMemoryEntryRequest},
         memory_proposals::{self, CreateMemoryProposal},
         pair_reflection::{self, CompletePairReflectionRun, CreatePairReflectionRun},
-        reflection_conductor, turn_state, user, web_policy,
+        reflection_conductor,
+        role_runtime::{RoleRuntime, RoleTurnScope, TurnResultReason, TurnResultStatus},
+        turn_state, user, web_policy,
         work_plans::{self, WorkPlanLookup, WorkPlanProjection},
     },
     errors::CustomError,
@@ -3110,11 +3112,13 @@ async fn prompt_inner(
         Err(err) => return Ok(Err(err)),
     };
 
-    let active_turn_guard = match state.acp_tool_turns.acquire_active_turn(
-        session_id,
-        request_id,
+    let role_runtime = RoleRuntime::new(state.acp_tool_turns.clone());
+    let turn_scope = RoleTurnScope::acp_pair(
+        bear.id,
+        session_id.to_string(),
         conversation_resolution.resolved_conversation_id.clone(),
-    ) {
+    );
+    let active_turn_guard = match role_runtime.acquire_turn(turn_scope.clone(), request_id) {
         Ok(guard) => guard,
         Err(err) => return Ok(Err(err)),
     };
@@ -3135,6 +3139,8 @@ async fn prompt_inner(
             request_id,
             pair_agent_id: pair_agent_id.clone(),
             config: state.config.clone(),
+            role_runtime,
+            turn_scope,
         },
         initial_events,
         state.letta.clone(),
@@ -3187,6 +3193,8 @@ struct AcpStreamContext {
     request_id: Uuid,
     pair_agent_id: String,
     config: Arc<crate::config::Config>,
+    role_runtime: RoleRuntime,
+    turn_scope: RoleTurnScope,
 }
 
 async fn persist_stream_event_side_effects(
@@ -4165,7 +4173,7 @@ struct AcpLettaSseStream {
     active_tool_call_ids: Vec<String>,
     persist_future: Option<AcpPendingFuture>,
     text_chunker: AcpTextChunker,
-    active_turn_guard: Option<crate::core::acp_tool_turns::AcpActiveTurnGuard>,
+    active_turn_guard: Option<crate::core::role_runtime::RoleTurnGuard>,
 }
 
 impl AcpLettaSseStream {
@@ -4175,7 +4183,7 @@ impl AcpLettaSseStream {
         initial_events: Vec<AcpGatewayEvent>,
         letta: Arc<crate::core::letta::LettaClient>,
         continuation: LettaContinuationContext,
-        active_turn_guard: crate::core::acp_tool_turns::AcpActiveTurnGuard,
+        active_turn_guard: crate::core::role_runtime::RoleTurnGuard,
     ) -> Self {
         let mut pending = VecDeque::new();
         for event in initial_events {
@@ -4277,7 +4285,7 @@ impl Stream for AcpLettaSseStream {
                                                 tool_name: Some(tool_name.clone()),
                                                 status: "timeout".to_string(),
                                                 content: Some(format!(
-                                                    "BEARS denied this approval automatically because the ACP local tool result timed out after {timeout_ms}ms."
+                                                    "BEARS denied this approval automatically because `{tool_name}` timed out after {timeout_ms}ms."
                                                 )),
                                                 structured_content: serde_json::json!({}),
                                                 diagnostic: serde_json::json!({
@@ -4439,24 +4447,40 @@ impl Stream for AcpLettaSseStream {
                 AcpPendingFuture::Cleanup(fut) => {
                     let cleanup = ready!(fut.as_mut().poll(cx));
                     this.persist_future = None;
-                    let turn_result = AcpGatewayEvent::TurnResult {
-                        status: "recovered".to_string(),
-                        reason: cleanup
-                            .get("reason")
-                            .and_then(serde_json::Value::as_str)
-                            .unwrap_or("runtime_cleanup")
-                            .to_string(),
-                        request_id: Some(this.context.request_id.to_string()),
-                        session_id: Some(this.context.acp_session_id.clone()),
-                        retryable: true,
-                        diagnostics: serde_json::json!({
+                    let reason = cleanup
+                        .get("reason")
+                        .and_then(serde_json::Value::as_str)
+                        .map(|reason| {
+                            if reason == "orphaned_requires_approval_stop" {
+                                TurnResultReason::StaleApproval
+                            } else {
+                                TurnResultReason::RuntimeCleanup
+                            }
+                        })
+                        .unwrap_or(TurnResultReason::RuntimeCleanup);
+                    let role_result = this.context.role_runtime.turn_result(
+                        TurnResultStatus::Recovered,
+                        reason,
+                        this.context.request_id,
+                        this.context.turn_scope.clone(),
+                        true,
+                        serde_json::json!({
                             "cleanup": cleanup.clone(),
                             "stream": this.diagnostics.diagnostic_json(&this.context),
                         }),
+                    );
+                    let (status, reason, request_id, session_id, retryable, diagnostics) =
+                        role_result.to_event_fields();
+                    let event = AcpGatewayEvent::TurnResult {
+                        status,
+                        reason,
+                        request_id,
+                        session_id,
+                        retryable,
+                        diagnostics,
                     };
-                    this.diagnostics.observe_mapped_event(&turn_result);
-                    this.pending
-                        .push_back(acp_event_to_adapter_sse(turn_result));
+                    this.diagnostics.observe_mapped_event(&event);
+                    this.pending.push_back(acp_event_to_adapter_sse(event));
                     let event = if this.diagnostics.saw_requires_approval_stop
                         && !this.diagnostics.saw_tool_return_ack
                     {
@@ -4614,13 +4638,23 @@ impl Stream for AcpLettaSseStream {
                         this.pending.push_back(acp_event_to_adapter_sse(event));
                     }
                     if !this.diagnostics.saw_turn_complete {
+                        let role_result = this.context.role_runtime.turn_result(
+                            TurnResultStatus::Ok,
+                            TurnResultReason::StreamComplete,
+                            this.context.request_id,
+                            this.context.turn_scope.clone(),
+                            false,
+                            this.diagnostics.diagnostic_json(&this.context),
+                        );
+                        let (status, reason, request_id, session_id, retryable, diagnostics) =
+                            role_result.to_event_fields();
                         let event = AcpGatewayEvent::TurnResult {
-                            status: "ok".to_string(),
-                            reason: "stream_complete".to_string(),
-                            request_id: Some(this.context.request_id.to_string()),
-                            session_id: Some(this.context.acp_session_id.clone()),
-                            retryable: false,
-                            diagnostics: this.diagnostics.diagnostic_json(&this.context),
+                            status,
+                            reason,
+                            request_id,
+                            session_id,
+                            retryable,
+                            diagnostics,
                         };
                         this.diagnostics.observe_mapped_event(&event);
                         this.pending.push_back(acp_event_to_adapter_sse(event));
@@ -4715,12 +4749,14 @@ mod tests {
             .unwrap();
         let registry = AcpToolTurnCoordinator::new();
         let request_id = Uuid::new_v4();
-        let active_turn_guard = registry
-            .acquire_active_turn(
-                "acp-test-session",
-                request_id,
-                Some("conv-test-resolved".to_string()),
-            )
+        let role_runtime = RoleRuntime::new(registry.clone());
+        let turn_scope = RoleTurnScope::acp_pair(
+            Uuid::new_v4(),
+            "acp-test-session",
+            Some("conv-test-resolved".to_string()),
+        );
+        let active_turn_guard = role_runtime
+            .acquire_turn(turn_scope.clone(), request_id)
             .unwrap();
         let context = AcpStreamContext {
             pool,
@@ -4736,6 +4772,8 @@ mod tests {
             request_id,
             pair_agent_id: "agent-12345678-1234-4567-89ab-123456789abc".to_string(),
             config: Arc::new(crate::config::Config::test_stub()),
+            role_runtime: role_runtime.clone(),
+            turn_scope,
         };
         let upstream = futures::stream::iter(vec![
             Ok::<Bytes, reqwest::Error>(Bytes::from(concat!(
@@ -4852,16 +4890,18 @@ mod tests {
             .unwrap();
         let registry = AcpToolTurnCoordinator::new();
         let request_id = Uuid::new_v4();
-        let active_turn_guard = registry
-            .acquire_active_turn(
-                "acp-orphaned-approval",
-                request_id,
-                Some("conv-test".to_string()),
-            )
+        let role_runtime = RoleRuntime::new(registry.clone());
+        let turn_scope = RoleTurnScope::acp_pair(
+            Uuid::new_v4(),
+            "acp-orphaned-approval",
+            Some("conv-test".to_string()),
+        );
+        let active_turn_guard = role_runtime
+            .acquire_turn(turn_scope.clone(), request_id)
             .unwrap();
         let context = AcpStreamContext {
             pool,
-            tool_turns: registry,
+            tool_turns: registry.clone(),
             user_id: 1,
             user_profile: None,
             bear_id: Uuid::new_v4(),
@@ -4873,6 +4913,8 @@ mod tests {
             request_id,
             pair_agent_id: "agent-12345678-1234-4567-89ab-123456789abc".to_string(),
             config: Arc::new(crate::config::Config::test_stub()),
+            role_runtime: role_runtime.clone(),
+            turn_scope,
         };
         let upstream = futures::stream::iter(vec![Ok::<Bytes, reqwest::Error>(Bytes::from(
             "data: {\"message_type\":\"stop_reason\",\"stop_reason\":\"requires_approval\"}\n\n",
@@ -4965,12 +5007,14 @@ mod tests {
             .unwrap();
         let registry = AcpToolTurnCoordinator::new();
         let request_id = Uuid::new_v4();
-        let active_turn_guard = registry
-            .acquire_active_turn(
-                "acp-continuation-conflict",
-                request_id,
-                Some("conv-test".to_string()),
-            )
+        let role_runtime = RoleRuntime::new(registry.clone());
+        let turn_scope = RoleTurnScope::acp_pair(
+            Uuid::new_v4(),
+            "acp-continuation-conflict",
+            Some("conv-test".to_string()),
+        );
+        let active_turn_guard = role_runtime
+            .acquire_turn(turn_scope.clone(), request_id)
             .unwrap();
         let context = AcpStreamContext {
             pool,
@@ -4986,6 +5030,8 @@ mod tests {
             request_id,
             pair_agent_id: "agent-12345678-1234-4567-89ab-123456789abc".to_string(),
             config: Arc::new(crate::config::Config::test_stub()),
+            role_runtime: role_runtime.clone(),
+            turn_scope,
         };
         let upstream = futures::stream::iter(vec![
             Ok::<Bytes, reqwest::Error>(Bytes::from(concat!(
