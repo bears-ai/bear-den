@@ -383,6 +383,10 @@ async fn send_available_commands_update(session_id: &str) -> Result<()> {
             "Compact this ACP session's Letta conversation to recover from stale approval state.",
         ),
         AvailableCommand::new(
+            "collapse",
+            "Alias for /compact: compact this ACP session's Letta conversation for recovery.",
+        ),
+        AvailableCommand::new(
             "conversation",
             "Show the current ACP session and Letta conversation binding.",
         ),
@@ -3054,7 +3058,24 @@ async fn handle_prompt_with_retry(
     let status = response.status();
     if !status.is_success() {
         let text = response.text().await.unwrap_or_else(|_| "".to_string());
-        return Err(anyhow!("{}", den_status_error_message(status, text.trim())));
+        let message = den_status_error_message(status, text.trim());
+        eprintln!(
+            "bears-acp-adapter: Den prompt returned non-success status session_id={} status={} message={}",
+            session_id, status, message
+        );
+        send_agent_message_chunk(
+            session_id,
+            &format!(
+                "BEARS could not complete this turn because Den/Letta returned an error. The ACP session is still alive, so you can use `/compact` or `/collapse` to try recovery.\n\n{message}"
+            ),
+        )
+        .await?;
+        write_response(
+            response_id,
+            Ok(serde_json::to_value(PromptResponse::new(StopReason::EndTurn))?),
+        )
+        .await?;
+        return Ok(());
     }
 
     let mut stream_diagnostics = SseStreamDiagnostics::default();
@@ -3182,10 +3203,23 @@ async fn handle_prompt_with_retry(
                 upstream_errors.join("; ")
             );
         } else {
-            return Err(anyhow!(
+            let message = format!(
                 "BEARS upstream stream reported error: {}",
                 upstream_errors.join("; ")
-            ));
+            );
+            eprintln!(
+                "bears-acp-adapter: converting upstream stream error into terminal ACP turn session_id={} message={}",
+                session_id, message
+            );
+            send_agent_message_chunk(
+                session_id,
+                &format!(
+                    "{message}\n\nThe ACP session is still alive, so you can use `/compact` or `/collapse` to try recovery."
+                ),
+            )
+            .await?;
+            saw_visible_output = true;
+            upstream_errors.clear();
         }
     }
 
@@ -3233,7 +3267,7 @@ enum LocalSlashCommand {
 fn parse_local_slash_command(prompt: &str) -> Option<LocalSlashCommand> {
     match prompt.trim().split_whitespace().next()? {
         "/doctor" => Some(LocalSlashCommand::Doctor),
-        "/compact" => Some(LocalSlashCommand::Compact),
+        "/compact" | "/collapse" => Some(LocalSlashCommand::Compact),
         "/conversation" => Some(LocalSlashCommand::Conversation),
         "/capabilities" => Some(LocalSlashCommand::Capabilities),
         "/runtime" => Some(LocalSlashCommand::Runtime),
