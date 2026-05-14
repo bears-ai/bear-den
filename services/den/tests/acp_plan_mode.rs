@@ -95,7 +95,13 @@ async fn plan_mode_lifecycle_records_artifact_and_approval() {
     bears_db::grant_membership(&pool, user_id, bear_id, Some(bears_db::BEAR_ROLE_ADMIN))
         .await
         .expect("grant bear membership");
-    insert_role_agent(&pool, bear_id, BearAgentRole::Pair, "agent-pair-plan-mode-test").await;
+    insert_role_agent(
+        &pool,
+        bear_id,
+        BearAgentRole::Pair,
+        "agent-pair-plan-mode-test",
+    )
+    .await;
 
     let entered = acp_plan_mode::enter_plan_mode(
         &pool,
@@ -129,7 +135,10 @@ async fn plan_mode_lifecycle_records_artifact_and_approval() {
     .await
     .expect("submit plan artifact");
     assert_eq!(submitted.state, "submitted");
-    assert_eq!(submitted.plan_artifact_path.as_deref(), Some("pair/plans/mem_test.md"));
+    assert_eq!(
+        submitted.plan_artifact_path.as_deref(),
+        Some("pair/plans/mem_test.md")
+    );
 
     let approved = acp_plan_mode::approve_plan_mode(
         &pool,
@@ -143,14 +152,10 @@ async fn plan_mode_lifecycle_records_artifact_and_approval() {
     assert_eq!(approved.state, "approved");
     assert!(approved.closed_at.is_some());
 
-    let active = acp_plan_mode::active_for_session(
-        &pool,
-        user_id,
-        bear_id,
-        "acp-plan-mode-session",
-    )
-    .await
-    .expect("query active plan mode");
+    let active =
+        acp_plan_mode::active_for_session(&pool, user_id, bear_id, "acp-plan-mode-session")
+            .await
+            .expect("query active plan mode");
     assert!(active.is_none());
 
     let event_count: i64 = sqlx::query_scalar(

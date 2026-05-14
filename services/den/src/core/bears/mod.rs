@@ -26,9 +26,9 @@ pub use managed_blocks::{
     get_compiled_bear_config, list_bear_block_bindings, list_system_block_versions,
     list_system_blocks, managed_space_block_key, resolve_managed_blocks_for_bear,
     resolved_blocks_json, seed_system_blocks, upsert_bear_block_binding,
-    upsert_compiled_bear_config, BearBlockBindingMode, BearBlockBindingRow,
-    BearCompiledConfigRow, CompiledBearConfig, ResolvedManagedBlock, ResolvedManagedBlockSet,
-    SeedSystemBlock, SystemBlockKind, SystemBlockRow, SystemBlockScope, SystemBlockVersionRow,
+    upsert_compiled_bear_config, BearBlockBindingMode, BearBlockBindingRow, BearCompiledConfigRow,
+    CompiledBearConfig, ResolvedManagedBlock, ResolvedManagedBlockSet, SeedSystemBlock,
+    SystemBlockKind, SystemBlockRow, SystemBlockScope, SystemBlockVersionRow,
 };
 pub use model::{
     Bear, BearAgent, BearAgentRole, BearSkillManifestEntry, BearSkillProposal, BearWithMembership,

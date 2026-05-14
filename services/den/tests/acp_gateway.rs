@@ -1903,8 +1903,14 @@ async fn acp_session_responses_expose_plan_mode_as_session_mode() {
     assert_eq!(list_row["modes"][0]["slug"], "plan");
     assert_eq!(list_row["modes"][0]["kind"], "mutation_gate");
     assert_eq!(list_row["modes"][0]["state"], "review_required");
-    assert_eq!(list_row["modes"][0]["metadata"]["mutation_gate"]["state"], "review_required");
-    assert_eq!(list_row["session_policy"]["mutation_gate"]["state"], "review_required");
+    assert_eq!(
+        list_row["modes"][0]["metadata"]["mutation_gate"]["state"],
+        "review_required"
+    );
+    assert_eq!(
+        list_row["session_policy"]["mutation_gate"]["state"],
+        "review_required"
+    );
     assert_eq!(
         list_row["modes"][1]["metadata"]["plan_mode_id"],
         entered.id.to_string()
@@ -1926,7 +1932,10 @@ async fn acp_session_responses_expose_plan_mode_as_session_mode() {
     assert_eq!(row["modes"][0]["state"], "review_required");
     assert_eq!(row["modes"][0]["source"], "den.session_policy");
     assert_eq!(row["modes"][1]["source"], "den.acp_plan_mode");
-    assert_eq!(row["session_policy"]["mutation_gate"]["state"], "review_required");
+    assert_eq!(
+        row["session_policy"]["mutation_gate"]["state"],
+        "review_required"
+    );
 }
 
 #[tokio::test]

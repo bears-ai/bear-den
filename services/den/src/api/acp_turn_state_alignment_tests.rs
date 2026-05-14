@@ -1,9 +1,6 @@
 use serde_json::json;
 
-use crate::{
-    core::acp_sessions::AcpSessionRow,
-    api::acp::acp_session_row_to_http_with_modes,
-};
+use crate::{api::acp::acp_session_row_to_http_with_modes, core::acp_sessions::AcpSessionRow};
 
 #[test]
 fn acp_session_http_surfaces_turn_state_without_legacy_state_compat_fields() {

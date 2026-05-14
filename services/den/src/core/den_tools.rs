@@ -32,7 +32,11 @@ use crate::{
 pub(crate) fn plan_mode_workplan_payload(row: &acp_plan_mode::AcpPlanModeSessionRow) -> Value {
     turn_state::turn_state_from_sources(
         &crate::core::acp_tools::AcpResolvedSessionPolicy {
-            mode_label: if row.state == "approved" { "Write" } else { "Plan" },
+            mode_label: if row.state == "approved" {
+                "Write"
+            } else {
+                "Plan"
+            },
             tool_enablement: if row.state == "approved" {
                 crate::core::acp_tools::AcpToolEnablementState::AllTools
             } else {

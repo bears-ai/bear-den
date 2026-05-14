@@ -404,18 +404,21 @@ async fn bear_plan_mode_rows(
     pool: &sqlx::PgPool,
     bear_id: Uuid,
 ) -> Result<Vec<BearPlanModeRow>, CustomError> {
-    let rows = sqlx::query_as::<_, (
-        Uuid,
-        i32,
-        Option<String>,
-        String,
-        String,
-        String,
-        Option<String>,
-        Option<String>,
-        time::OffsetDateTime,
-        time::OffsetDateTime,
-    )>(
+    let rows = sqlx::query_as::<
+        _,
+        (
+            Uuid,
+            i32,
+            Option<String>,
+            String,
+            String,
+            String,
+            Option<String>,
+            Option<String>,
+            time::OffsetDateTime,
+            time::OffsetDateTime,
+        ),
+    >(
         r#"
         SELECT p.id, p.user_id, u.username, p.acp_session_id, p.state, p.reason,
                p.plan_artifact_path, p.plan_title, p.created_at, p.updated_at

@@ -1,7 +1,16 @@
-use crate::{paths::{ensure_path_allowed_for_session, is_absolute_local_path, normalize_requested_tool_path, session_workspace_roots}, SessionContext, ToolPolicy};
+use crate::{
+    paths::{
+        ensure_path_allowed_for_session, is_absolute_local_path, normalize_requested_tool_path,
+        session_workspace_roots,
+    },
+    SessionContext, ToolPolicy,
+};
 use anyhow::{anyhow, Context, Result};
 use serde_json::{json, Value};
-use std::{path::{Path, PathBuf}, process::Command};
+use std::{
+    path::{Path, PathBuf},
+    process::Command,
+};
 
 pub(crate) async fn handle_git_status(
     context: &SessionContext,
@@ -154,7 +163,9 @@ pub(crate) async fn handle_git_show(
     let path = if let Some(raw_path) = args.get("path").and_then(Value::as_str) {
         let paths_arg = json!({ "paths": [raw_path] });
         let mut paths = git_paths_from_args(context, &repo, &paths_arg)?;
-        let path = paths.pop().ok_or_else(|| anyhow!("git_show path did not resolve"))?;
+        let path = paths
+            .pop()
+            .ok_or_else(|| anyhow!("git_show path did not resolve"))?;
         command_args.push(format!("{revision}:{}", path.to_string_lossy()));
         Some(path)
     } else {
@@ -162,7 +173,11 @@ pub(crate) async fn handle_git_show(
         None
     };
     let output = run_git_command(&repo, &command_args, max_bytes)?;
-    let content = if output.truncated { format!("{}\n... truncated", output.stdout) } else { output.stdout.clone() };
+    let content = if output.truncated {
+        format!("{}\n... truncated", output.stdout)
+    } else {
+        output.stdout.clone()
+    };
     Ok(json!({
         "ok": true,
         "repo_path": repo.to_string_lossy(),
@@ -191,7 +206,11 @@ pub(crate) async fn handle_git_add(
     enforce_git_path_limit(&paths, policy)?;
     let mut command_args = vec!["add".to_string(), "--".to_string()];
     command_args.extend(paths.iter().map(|path| path.to_string_lossy().to_string()));
-    let output = run_git_command(&repo, &command_args, policy.max_bytes.unwrap_or(262_144) as usize)?;
+    let output = run_git_command(
+        &repo,
+        &command_args,
+        policy.max_bytes.unwrap_or(262_144) as usize,
+    )?;
     Ok(json!({
         "ok": true,
         "repo_path": repo.to_string_lossy(),
@@ -214,7 +233,10 @@ pub(crate) async fn handle_git_restore(
     }
     enforce_git_path_limit(&paths, policy)?;
     let staged = args.get("staged").and_then(Value::as_bool).unwrap_or(false);
-    let worktree = args.get("worktree").and_then(Value::as_bool).unwrap_or(true);
+    let worktree = args
+        .get("worktree")
+        .and_then(Value::as_bool)
+        .unwrap_or(true);
     if !staged && !worktree {
         return Err(anyhow!("git_restore requires staged=true or worktree=true"));
     }
@@ -225,14 +247,23 @@ pub(crate) async fn handle_git_restore(
     if !worktree {
         command_args.push("--worktree=false".to_string());
     }
-    if let Some(source) = args.get("source").and_then(Value::as_str).map(str::trim).filter(|s| !s.is_empty()) {
+    if let Some(source) = args
+        .get("source")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
         validate_revision_arg(source)?;
         command_args.push("--source".to_string());
         command_args.push(source.to_string());
     }
     command_args.push("--".to_string());
     command_args.extend(paths.iter().map(|path| path.to_string_lossy().to_string()));
-    let output = run_git_command(&repo, &command_args, policy.max_bytes.unwrap_or(262_144) as usize)?;
+    let output = run_git_command(
+        &repo,
+        &command_args,
+        policy.max_bytes.unwrap_or(262_144) as usize,
+    )?;
     Ok(json!({
         "ok": true,
         "repo_path": repo.to_string_lossy(),
@@ -251,16 +282,28 @@ pub(crate) async fn handle_git_commit(
     policy: &ToolPolicy,
 ) -> Result<Value> {
     let repo = git_repo_path_from_args(context, args)?;
-    let message = args.get("message").and_then(Value::as_str).map(str::trim).filter(|s| !s.is_empty()).ok_or_else(|| anyhow!("git_commit args missing message"))?;
+    let message = args
+        .get("message")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| anyhow!("git_commit args missing message"))?;
     if message.contains('\0') {
         return Err(anyhow!("git_commit message must not contain NUL bytes"));
     }
-    let allow_empty = args.get("allow_empty").and_then(Value::as_bool).unwrap_or(false);
+    let allow_empty = args
+        .get("allow_empty")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
     let mut command_args = vec!["commit".to_string(), "-m".to_string(), message.to_string()];
     if allow_empty {
         command_args.push("--allow-empty".to_string());
     }
-    let output = run_git_command(&repo, &command_args, policy.max_bytes.unwrap_or(262_144) as usize)?;
+    let output = run_git_command(
+        &repo,
+        &command_args,
+        policy.max_bytes.unwrap_or(262_144) as usize,
+    )?;
     Ok(json!({
         "ok": true,
         "repo_path": repo.to_string_lossy(),
@@ -279,8 +322,15 @@ pub(crate) async fn handle_git_stash(
     policy: &ToolPolicy,
 ) -> Result<Value> {
     let repo = git_repo_path_from_args(context, args)?;
-    let include_untracked = args.get("include_untracked").and_then(Value::as_bool).unwrap_or(false);
-    let message = args.get("message").and_then(Value::as_str).map(str::trim).filter(|s| !s.is_empty());
+    let include_untracked = args
+        .get("include_untracked")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let message = args
+        .get("message")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
     let mut command_args = vec!["stash".to_string(), "push".to_string()];
     if include_untracked {
         command_args.push("--include-untracked".to_string());
@@ -292,7 +342,11 @@ pub(crate) async fn handle_git_stash(
         command_args.push("-m".to_string());
         command_args.push(message.to_string());
     }
-    let output = run_git_command(&repo, &command_args, policy.max_bytes.unwrap_or(262_144) as usize)?;
+    let output = run_git_command(
+        &repo,
+        &command_args,
+        policy.max_bytes.unwrap_or(262_144) as usize,
+    )?;
     Ok(json!({
         "ok": true,
         "repo_path": repo.to_string_lossy(),
@@ -346,7 +400,11 @@ fn git_repo_path_from_args(context: &SessionContext, args: &Value) -> Result<Pat
     Ok(repo)
 }
 
-fn git_paths_from_args(context: &SessionContext, repo: &Path, args: &Value) -> Result<Vec<PathBuf>> {
+fn git_paths_from_args(
+    context: &SessionContext,
+    repo: &Path,
+    args: &Value,
+) -> Result<Vec<PathBuf>> {
     let Some(paths) = args.get("paths").and_then(Value::as_array) else {
         return Ok(Vec::new());
     };
@@ -361,13 +419,16 @@ fn git_paths_from_args(context: &SessionContext, repo: &Path, args: &Value) -> R
             repo.join(raw)
         };
         ensure_path_allowed_for_session(context, &path)?;
-        let relative = path.strip_prefix(repo).map(Path::to_path_buf).map_err(|_| {
-            anyhow!(
-                "git_diff path {} is outside repo {}",
-                path.display(),
-                repo.display()
-            )
-        })?;
+        let relative = path
+            .strip_prefix(repo)
+            .map(Path::to_path_buf)
+            .map_err(|_| {
+                anyhow!(
+                    "git_diff path {} is outside repo {}",
+                    path.display(),
+                    repo.display()
+                )
+            })?;
         out.push(relative);
     }
     Ok(out)
@@ -376,12 +437,18 @@ fn git_paths_from_args(context: &SessionContext, repo: &Path, args: &Value) -> R
 fn enforce_git_path_limit(paths: &[PathBuf], policy: &ToolPolicy) -> Result<()> {
     let max_entries = policy.max_entries.unwrap_or(100).clamp(1, 1_000);
     if paths.len() > max_entries {
-        return Err(anyhow!("git operation has more than policy max_entries={max_entries}"));
+        return Err(anyhow!(
+            "git operation has more than policy max_entries={max_entries}"
+        ));
     }
     Ok(())
 }
 
-fn run_git_command(repo: &Path, args: &[String], max_stdout_bytes: usize) -> Result<GitCommandOutput> {
+fn run_git_command(
+    repo: &Path,
+    args: &[String],
+    max_stdout_bytes: usize,
+) -> Result<GitCommandOutput> {
     let output = Command::new("git")
         .args(args)
         .current_dir(repo)
@@ -508,7 +575,10 @@ fn format_git_log_content(commits: &[Value], truncated: bool) -> String {
         for commit in commits {
             lines.push(format!(
                 "{} {}",
-                commit.get("short_hash").and_then(Value::as_str).unwrap_or(""),
+                commit
+                    .get("short_hash")
+                    .and_then(Value::as_str)
+                    .unwrap_or(""),
                 commit.get("subject").and_then(Value::as_str).unwrap_or("")
             ));
         }
@@ -520,7 +590,11 @@ fn format_git_log_content(commits: &[Value], truncated: bool) -> String {
 }
 
 fn validate_revision_arg(revision: &str) -> Result<()> {
-    if revision.starts_with('-') || revision.contains("..") || revision.contains(':') || revision.contains('\0') {
+    if revision.starts_with('-')
+        || revision.contains("..")
+        || revision.contains(':')
+        || revision.contains('\0')
+    {
         return Err(anyhow!("git_show revision contains unsupported characters"));
     }
     Ok(())

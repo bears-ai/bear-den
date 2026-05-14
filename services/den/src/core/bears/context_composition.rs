@@ -1,7 +1,10 @@
 use serde::{Deserialize, Serialize};
 use sqlx::types::Json;
 
-use super::{managed_blocks::{managed_space_block_key, ResolvedManagedBlockSet}, Bear, BearAgentRole};
+use super::{
+    managed_blocks::{managed_space_block_key, ResolvedManagedBlockSet},
+    Bear, BearAgentRole,
+};
 use crate::errors::CustomError;
 
 pub const CONTEXT_PROFILE_VERSION: u32 = 1;

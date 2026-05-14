@@ -58,7 +58,8 @@ use crate::{
         bears::{db as bears_db, Bear, BearAgentRole},
         den_tools::{self, DenToolChannelContext, DenToolInvocationContext},
         letta::{
-            load_agent_conversations, sanitize_visible_transcript_text, LettaContinuationContext,
+            load_agent_conversations, normalize_display_status_text,
+            sanitize_visible_transcript_text, LettaContinuationContext,
         },
         memory_manager_head::{write_memfs_role_memory_entry, MemfsWriteRoleMemoryEntryRequest},
         memory_proposals::{self, CreateMemoryProposal},
@@ -4606,15 +4607,17 @@ impl Stream for AcpLettaSseStream {
                             .as_deref()
                             .unwrap_or("tool")
                             .to_string();
-                        let completion_text = if acp_debug_ui_enabled() {
-                            format!(
-                                "BEARS debug: local tool {tool_name} completed with status {} ({} bytes).\n",
+                        let completion_text = normalize_display_status_text(
+                            &if acp_debug_ui_enabled() {
+                                format!(
+                                "BEARS debug: local tool {tool_name} completed with status {} ({} bytes)",
                                 tool_result.status,
                                 tool_result.content.as_deref().map(str::len).unwrap_or(0),
                             )
-                        } else {
-                            format!("Local tool {tool_name} completed.\n")
-                        };
+                            } else {
+                                format!("Local tool {tool_name} completed")
+                            },
+                        );
                         this.pending.push_back(acp_event_to_adapter_sse(
                             AcpGatewayEvent::StatusText {
                                 text: completion_text,

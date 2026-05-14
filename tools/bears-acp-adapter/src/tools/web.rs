@@ -2,7 +2,10 @@ use crate::ToolPolicy;
 use anyhow::{anyhow, Result};
 use reqwest::Url;
 use serde_json::{json, Value};
-use std::{net::{IpAddr, Ipv4Addr, Ipv6Addr}, time::Duration};
+use std::{
+    net::{IpAddr, Ipv4Addr, Ipv6Addr},
+    time::Duration,
+};
 
 pub(crate) async fn handle_local_web_fetch(
     session_id: &str,
@@ -31,7 +34,10 @@ pub(crate) async fn handle_local_web_fetch(
     let started = std::time::Instant::now();
     let response = client
         .get(url.clone())
-        .header(reqwest::header::ACCEPT, "text/*, application/json, application/xml, application/xhtml+xml, */*;q=0.5")
+        .header(
+            reqwest::header::ACCEPT,
+            "text/*, application/json, application/xml, application/xhtml+xml, */*;q=0.5",
+        )
         .send()
         .await?;
     let status = response.status().as_u16();
@@ -43,7 +49,11 @@ pub(crate) async fn handle_local_web_fetch(
         .map(str::to_string);
     let bytes = response.bytes().await?;
     let truncated = bytes.len() > max_bytes;
-    let body_bytes = if truncated { &bytes[..max_bytes] } else { &bytes[..] };
+    let body_bytes = if truncated {
+        &bytes[..max_bytes]
+    } else {
+        &bytes[..]
+    };
     let body = String::from_utf8_lossy(body_bytes).to_string();
     eprintln!(
         "bears-acp-adapter: web_fetch session_id={} url={} status={} bytes={} truncated={} duration_ms={}",
@@ -74,22 +84,39 @@ pub(crate) async fn handle_local_web_fetch(
 fn validate_local_fetch_url(url: &Url) -> Result<()> {
     match url.scheme() {
         "http" | "https" => {}
-        other => return Err(anyhow!("local_web_fetch only supports http and https URLs, got {other:?}")),
+        other => {
+            return Err(anyhow!(
+                "local_web_fetch only supports http and https URLs, got {other:?}"
+            ))
+        }
     }
-    let host = url.host_str().ok_or_else(|| anyhow!("local_web_fetch URL must include a host"))?;
+    let host = url
+        .host_str()
+        .ok_or_else(|| anyhow!("local_web_fetch URL must include a host"))?;
     let normalized = normalize_host(host, url.port());
-    if local_web_hosts().iter().any(|allowed| allowed == &normalized || allowed == host) {
+    if local_web_hosts()
+        .iter()
+        .any(|allowed| allowed == &normalized || allowed == host)
+    {
         return Ok(());
     }
-    Err(anyhow!("local_web_fetch host {normalized:?} is not in BEARS_LOCAL_WEB_HOSTS"))
+    Err(anyhow!(
+        "local_web_fetch host {normalized:?} is not in BEARS_LOCAL_WEB_HOSTS"
+    ))
 }
 
 fn validate_fetch_url(url: &Url) -> Result<()> {
     match url.scheme() {
         "http" | "https" => {}
-        other => return Err(anyhow!("web_fetch only supports http and https URLs, got {other:?}")),
+        other => {
+            return Err(anyhow!(
+                "web_fetch only supports http and https URLs, got {other:?}"
+            ))
+        }
     }
-    let host = url.host_str().ok_or_else(|| anyhow!("web_fetch URL must include a host"))?;
+    let host = url
+        .host_str()
+        .ok_or_else(|| anyhow!("web_fetch URL must include a host"))?;
     let lower = host.to_ascii_lowercase();
     if !allow_local_web_fetch_for_tests()
         && (matches!(lower.as_str(), "localhost" | "localhost.localdomain")
@@ -100,7 +127,9 @@ fn validate_fetch_url(url: &Url) -> Result<()> {
     if !allow_local_web_fetch_for_tests() {
         if let Ok(ip) = host.parse::<IpAddr>() {
             if is_denied_ip(ip) {
-                return Err(anyhow!("web_fetch denies private, loopback, link-local, and metadata IP URLs"));
+                return Err(anyhow!(
+                    "web_fetch denies private, loopback, link-local, and metadata IP URLs"
+                ));
             }
         }
     }
@@ -108,20 +137,32 @@ fn validate_fetch_url(url: &Url) -> Result<()> {
 }
 
 fn allow_local_web_fetch_for_tests() -> bool {
-    cfg!(test) && std::env::var("BEARS_ACP_ALLOW_LOCAL_WEB_FETCH_FOR_TESTS").ok().as_deref() == Some("1")
+    cfg!(test)
+        && std::env::var("BEARS_ACP_ALLOW_LOCAL_WEB_FETCH_FOR_TESTS")
+            .ok()
+            .as_deref()
+            == Some("1")
 }
 
 fn local_web_hosts() -> Vec<String> {
     std::env::var("BEARS_LOCAL_WEB_HOSTS")
         .unwrap_or_else(|_| "localhost,127.0.0.1,::1".to_string())
         .split(',')
-        .map(|s| s.trim().trim_matches('[').trim_matches(']').to_ascii_lowercase())
+        .map(|s| {
+            s.trim()
+                .trim_matches('[')
+                .trim_matches(']')
+                .to_ascii_lowercase()
+        })
         .filter(|s| !s.is_empty())
         .collect()
 }
 
 fn normalize_host(host: &str, port: Option<u16>) -> String {
-    let host = host.trim_matches('[').trim_matches(']').to_ascii_lowercase();
+    let host = host
+        .trim_matches('[')
+        .trim_matches(']')
+        .to_ascii_lowercase();
     match port {
         Some(port) => format!("{host}:{port}"),
         None => host,

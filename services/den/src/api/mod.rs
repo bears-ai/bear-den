@@ -48,9 +48,9 @@
 
 pub mod acp;
 #[cfg(test)]
-mod acp_workflow_state_tests;
-#[cfg(test)]
 mod acp_turn_state_alignment_tests;
+#[cfg(test)]
+mod acp_workflow_state_tests;
 pub mod auth;
 pub mod docs;
 pub mod internal;

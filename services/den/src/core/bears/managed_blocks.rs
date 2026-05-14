@@ -484,7 +484,8 @@ pub fn compile_managed_config_for_bear(
     let mut rendered_prompt_hashes = serde_json::Map::new();
 
     for role in BearAgentRole::ALL {
-        let role_prompt = context_composition::render_managed_role_prompt(bear, role, Some(&resolved))?;
+        let role_prompt =
+            context_composition::render_managed_role_prompt(bear, role, Some(&resolved))?;
         let role_key = role.as_str().to_string();
         rendered_prompt_hashes.insert(role_key.clone(), json!(content_hash(&role_prompt)));
         rendered_prompts.insert(role_key, json!(role_prompt));
@@ -626,11 +627,26 @@ mod tests {
 
     #[test]
     fn managed_space_block_key_matches_roles() {
-        assert_eq!(managed_space_block_key(BearAgentRole::Talk), "space_instruction.talk");
-        assert_eq!(managed_space_block_key(BearAgentRole::Pair), "space_instruction.pair");
-        assert_eq!(managed_space_block_key(BearAgentRole::Curate), "space_instruction.curate");
-        assert_eq!(managed_space_block_key(BearAgentRole::Work), "space_instruction.work");
-        assert_eq!(managed_space_block_key(BearAgentRole::Watch), "space_instruction.watch");
+        assert_eq!(
+            managed_space_block_key(BearAgentRole::Talk),
+            "space_instruction.talk"
+        );
+        assert_eq!(
+            managed_space_block_key(BearAgentRole::Pair),
+            "space_instruction.pair"
+        );
+        assert_eq!(
+            managed_space_block_key(BearAgentRole::Curate),
+            "space_instruction.curate"
+        );
+        assert_eq!(
+            managed_space_block_key(BearAgentRole::Work),
+            "space_instruction.work"
+        );
+        assert_eq!(
+            managed_space_block_key(BearAgentRole::Watch),
+            "space_instruction.watch"
+        );
     }
 
     #[test]

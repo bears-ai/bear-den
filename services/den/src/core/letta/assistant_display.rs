@@ -51,6 +51,22 @@ pub fn sanitize_visible_transcript_text(s: &str) -> String {
     strip_hidden_resource_blocks(&t)
 }
 
+/// Shared display normalizer for Den-owned operational/status messages.
+///
+/// Use this for complete status units such as tool lifecycle messages, recovery notices,
+/// approval notices, and memory-update notices before sending them to chat/ACP display
+/// surfaces. Do not use this for model-authored token deltas, assistant text deltas, or raw
+/// reasoning deltas; those must preserve exact model text.
+pub fn normalize_display_status_text(s: &str) -> String {
+    if s.ends_with(char::is_whitespace) {
+        return s.to_string();
+    }
+    if s.ends_with('.') || s.ends_with('!') || s.ends_with('?') || s.ends_with(':') {
+        return format!("{s}\n");
+    }
+    format!("{s}.\n")
+}
+
 fn strip_prompt_scaffolding_prefix(s: &str) -> String {
     let trimmed = s.trim_start();
     let is_scaffold = find_ascii_case_insensitive(trimmed, "ACP workflow state for this session:")
@@ -142,6 +158,26 @@ mod tests {
         let s = "Please read this.\n<bears-acp-resource uri=\"file:///secret\">hidden context</bears-acp-resource>";
         let out = sanitize_visible_transcript_text(s);
         assert_eq!(out, "Please read this.");
+    }
+
+    #[test]
+    fn normalizes_display_status_text_as_complete_line() {
+        assert_eq!(
+            normalize_display_status_text("Local tool fs_read_text_file completed"),
+            "Local tool fs_read_text_file completed.\n"
+        );
+        assert_eq!(
+            normalize_display_status_text("Finished web_fetch: ok"),
+            "Finished web_fetch: ok.\n"
+        );
+        assert_eq!(
+            normalize_display_status_text("Already done."),
+            "Already done.\n"
+        );
+        assert_eq!(
+            normalize_display_status_text("Already separated\n"),
+            "Already separated\n"
+        );
     }
 
     #[test]

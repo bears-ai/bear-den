@@ -5848,6 +5848,11 @@ async fn send_agent_thought_chunk(session_id: &str, text: &str) -> Result<()> {
     .await
 }
 
+/// Adapter-local mirror of Den's `core::letta::normalize_display_status_text`.
+///
+/// Keep this aligned with Den's shared chat display helper. It is intentionally limited to
+/// adapter-/Den-owned operational status units before they become ACP thought chunks; never apply
+/// it to assistant text deltas or raw model reasoning deltas.
 fn normalize_thought_chunk_text(text: &str) -> std::borrow::Cow<'_, str> {
     if text.ends_with(char::is_whitespace) {
         return std::borrow::Cow::Borrowed(text);

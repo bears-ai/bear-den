@@ -33,10 +33,7 @@ pub(crate) fn normalize_requested_tool_path(path: &str) -> Result<PathBuf> {
     Ok(PathBuf::from(path))
 }
 
-pub(crate) fn ensure_path_allowed_for_session(
-    context: &SessionContext,
-    path: &Path,
-) -> Result<()> {
+pub(crate) fn ensure_path_allowed_for_session(context: &SessionContext, path: &Path) -> Result<()> {
     let roots = if context.roots.is_empty() {
         vec![context.cwd.as_str()]
     } else {
