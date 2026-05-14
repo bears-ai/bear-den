@@ -139,6 +139,10 @@ pub fn router() -> Router<ApiState> {
         .route("/bears/{slug}/sessions", get(list_acp_sessions))
         .route("/bears/{slug}/sessions/{session_id}", get(get_acp_session))
         .route(
+            "/bears/{slug}/sessions/{session_id}/runtime",
+            get(get_acp_session_runtime),
+        )
+        .route(
             "/bears/{slug}/sessions/{session_id}/mode",
             post(set_session_mode),
         )
@@ -1654,6 +1658,114 @@ async fn get_acp_session(
         Ok(response) => response,
         Err(err) => acp_error_response(err, request_id),
     }
+}
+
+async fn get_acp_session_runtime(
+    State(state): State<ApiState>,
+    Path((slug, session_id)): Path<(String, String)>,
+    headers: HeaderMap,
+) -> Response {
+    let request_id = Uuid::new_v4();
+    match get_acp_session_runtime_inner(state, slug, session_id, headers).await {
+        Ok(response) => response,
+        Err(err) => acp_error_response(err, request_id),
+    }
+}
+
+async fn get_acp_session_runtime_inner(
+    state: ApiState,
+    slug: String,
+    session_id: String,
+    headers: HeaderMap,
+) -> Result<Response, CustomError> {
+    let user_id = authenticate_acp_code_token(&state, &headers, &slug).await?;
+    let bear = bears_db::bear_for_user_by_slug(&state.sqlx_pool, user_id, slug.trim())
+        .await?
+        .ok_or_else(|| {
+            CustomError::NotFound("bear not found or you do not have access".to_string())
+        })?;
+    let session_id = session_id.trim();
+    if session_id.is_empty() {
+        return Err(CustomError::ValidationError(
+            "session_id must not be empty".to_string(),
+        ));
+    }
+    let row =
+        acp_sessions::find_for_user_bear_session(&state.sqlx_pool, user_id, &bear.slug, session_id)
+            .await?
+            .ok_or_else(|| CustomError::NotFound("ACP session not found".to_string()))?;
+    let plan_mode = acp_plan_mode::active_for_session(
+        &state.sqlx_pool,
+        user_id,
+        bear.id,
+        session_id,
+    )
+    .await?;
+    let activity_plan = work_plans::get_visible_work_plan(
+        &state.sqlx_pool,
+        bear.id,
+        BearAgentRole::Pair,
+        user_id,
+        WorkPlanLookup {
+            plan_id: None,
+            source_conversation_id: row.resolved_conversation_id.clone().or_else(|| {
+                let conversation_id = row.conversation_id.trim();
+                conversation_id.starts_with("conv-").then(|| conversation_id.to_string())
+            }),
+            source_acp_session_id: Some(session_id.to_string()),
+        },
+    )
+    .await?;
+    let turn_context = resolve_acp_turn_context(&row, plan_mode.as_ref(), activity_plan.as_ref());
+    let role_scope = RoleTurnScope::acp_pair(
+        bear.id,
+        session_id.to_string(),
+        row.resolved_conversation_id.clone(),
+    );
+    let role_runtime = RoleRuntime::new(state.acp_tool_turns.clone());
+    let active_turn = state
+        .acp_tool_turns
+        .active_turn_for_session(session_id)
+        .map(|turn| turn.diagnostic());
+    let pending = state
+        .acp_tool_turns
+        .pending_for_session(session_id)
+        .into_iter()
+        .map(|turn| turn.diagnostic())
+        .collect::<Vec<_>>();
+    let expired = state
+        .acp_tool_turns
+        .expired_pending_for_session(session_id)
+        .into_iter()
+        .map(|turn| turn.diagnostic())
+        .collect::<Vec<_>>();
+    Ok(Json(serde_json::json!({
+        "ok": true,
+        "bear_id": bear.id,
+        "role": "pair",
+        "channel_kind": "acp_session",
+        "acp_session_id": session_id,
+        "conversation": {
+            "session_selection": row.conversation_id,
+            "resolved_conversation_id": row.resolved_conversation_id,
+            "upstream_target": row.resolved_conversation_id
+                .as_deref()
+                .or_else(|| row.conversation_id.starts_with("conv-").then_some(row.conversation_id.as_str()))
+                .unwrap_or("unresolved"),
+        },
+        "active_turn": {
+            "active": active_turn.is_some(),
+            "turn": active_turn,
+        },
+        "pending_tools": pending,
+        "expired_tools": expired,
+        "runtime": role_runtime.pending_diagnostics(&role_scope),
+        "turn_state": turn_context.workflow_state,
+        "session_policy": turn_context.policy.to_json(),
+        "activity": activity_plan,
+        "plan_mode": plan_mode,
+    }))
+    .into_response())
 }
 
 async fn set_session_mode(

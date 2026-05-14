@@ -391,8 +391,8 @@ async fn send_available_commands_update(session_id: &str) -> Result<()> {
             "Show ACP client capabilities and adapter-local direct tools.",
         ),
         AvailableCommand::new(
-            "tool-state",
-            "Show active adapter-local tool tasks for this session.",
+            "runtime",
+            "Show Den ACP runtime state and active adapter-local tool tasks for this session.",
         ),
         AvailableCommand::new("version", "Show BEARS adapter and Den version information."),
         AvailableCommand::new("debug-ui", "Show BEARS ACP debug UI environment status."),
@@ -3225,7 +3225,7 @@ enum LocalSlashCommand {
     Compact,
     Conversation,
     Capabilities,
-    ToolState,
+    Runtime,
     Version,
     DebugUi,
 }
@@ -3236,7 +3236,7 @@ fn parse_local_slash_command(prompt: &str) -> Option<LocalSlashCommand> {
         "/compact" => Some(LocalSlashCommand::Compact),
         "/conversation" => Some(LocalSlashCommand::Conversation),
         "/capabilities" => Some(LocalSlashCommand::Capabilities),
-        "/tool-state" => Some(LocalSlashCommand::ToolState),
+        "/runtime" => Some(LocalSlashCommand::Runtime),
         "/version" => Some(LocalSlashCommand::Version),
         "/debug-ui" => Some(LocalSlashCommand::DebugUi),
         _ => None,
@@ -3269,7 +3269,7 @@ async fn handle_local_slash_command(
         }
         LocalSlashCommand::Conversation => conversation_report(adapter_state, session_id),
         LocalSlashCommand::Capabilities => capabilities_report(adapter_state),
-        LocalSlashCommand::ToolState => tool_state_report(shared_state, session_id).await,
+        LocalSlashCommand::Runtime => runtime_report(http, config, shared_state, session_id).await,
         LocalSlashCommand::Version => version_report(http, config).await,
         LocalSlashCommand::DebugUi => debug_ui_report(),
     }
@@ -3304,22 +3304,69 @@ fn capabilities_report(adapter_state: &AdapterState) -> String {
     )
 }
 
-async fn tool_state_report(shared_state: &AdapterSharedState, session_id: &str) -> String {
+async fn runtime_report(
+    http: &reqwest::Client,
+    config: &Config,
+    shared_state: &AdapterSharedState,
+    session_id: &str,
+) -> String {
+    let mut lines = vec!["BEARS ACP runtime".to_string(), String::new()];
+    match fetch_den_runtime_state(http, config, session_id).await {
+        Ok(value) => {
+            lines.push("Den runtime state:".to_string());
+            lines.push(
+                serde_json::to_string_pretty(&value).unwrap_or_else(|_| value.to_string()),
+            );
+        }
+        Err(err) => {
+            lines.push(format!("Den runtime state unavailable: {err:#}"));
+        }
+    }
+    lines.push(String::new());
     let tasks = shared_state.tool_tasks.list_for_session(session_id).await;
     if tasks.is_empty() {
-        return "BEARS ACP tool state\n\nNo active local tool tasks for this session.".to_string();
-    }
-    let mut lines = vec!["BEARS ACP tool state".to_string(), String::new()];
-    for task in tasks {
-        lines.push(format!(
-            "- {} {} phase={} elapsed_ms={}",
-            task.tool_name,
-            task.tool_call_id,
-            task.phase.as_str(),
-            task.started_at.elapsed().as_millis(),
-        ));
+        lines.push("No active adapter-local tool tasks for this session.".to_string());
+    } else {
+        lines.push("Adapter-local tool tasks:".to_string());
+        for task in tasks {
+            lines.push(format!(
+                "- {} {} phase={} elapsed_ms={}",
+                task.tool_name,
+                task.tool_call_id,
+                task.phase.as_str(),
+                task.started_at.elapsed().as_millis(),
+            ));
+        }
     }
     lines.join("\n")
+}
+
+async fn fetch_den_runtime_state(
+    http: &reqwest::Client,
+    config: &Config,
+    session_id: &str,
+) -> Result<Value> {
+    let url = format!(
+        "{}/acp/bears/{}/sessions/{}/runtime",
+        config.api_url,
+        urlencoding::encode(&config.bear),
+        urlencoding::encode(session_id),
+    );
+    let response = http
+        .get(&url)
+        .header(
+            AUTHORIZATION,
+            HeaderValue::from_str(&format!("Bearer {}", config.token))?,
+        )
+        .send()
+        .await
+        .with_context(|| format!("get ACP runtime state from Den at {url}"))?;
+    let status = response.status();
+    let body = response.text().await.unwrap_or_default();
+    if !status.is_success() {
+        return Err(anyhow!(den_status_error_message(status, body.trim())));
+    }
+    Ok(serde_json::from_str(&body).unwrap_or_else(|_| json!({ "raw": body })))
 }
 
 async fn version_report(http: &reqwest::Client, config: &Config) -> String {
