@@ -1,0 +1,551 @@
+# Prompt-Construction Spec for Pair Environment Improvements
+
+## Objective
+Refactor environment construction from prose-first concatenation into schema-first prompt assembly with explicit layer separation, compact operational summaries, structured policies, initiative configuration, context accounting, memory policy, and environment feedback support.
+
+This spec targets the `pair` role first, but is designed to generalize across Bear roles.
+
+---
+
+## 1. Design Goals
+
+1. Distinguish clearly between:
+   - stable invariants
+   - role-specific behavior
+   - operational policy
+   - turn-local state
+   - available context
+   - style/initiative preferences
+2. Reduce repeated prose reminders.
+3. Surface a compact authoritative operational summary at the top of each turn.
+4. Prevent the agent from ignoring context already available via instructions, memory, open files, or discoverable workspace guidance.
+5. Make durable-memory expectations explicit.
+6. Provide a structured path for reporting environment friction.
+7. Keep rendering deterministic and low-redundancy.
+8. Make planning representation explicit so live activity/progress tracking defaults to planning tools rather than artifact submission.
+
+---
+
+## 2. Prompt Assembly Model
+
+Prompt construction should shift from freeform concatenated templates to:
+
+1. **Build structured environment objects** from runtime state and configuration.
+2. **Normalize and derive fields** so the model does not need to infer obvious consequences.
+3. **Render stable prompt sections** in a fixed order.
+4. **Deduplicate semantically overlapping rules** before final emission.
+
+### Rendering order
+1. Core invariants
+2. Role definition
+3. Operational summary
+4. Permissions and tools
+5. Workflow and stopping rules
+6. Initiative profile
+7. Context inventory
+8. Memory policy
+9. Environment feedback policy
+10. Optional explanatory prose / human-readable elaboration
+
+This order should be stable across turns unless a deliberate schema version change occurs.
+
+---
+
+## 3. Internal Data Model
+
+The prompt-construction system should assemble the following internal objects before rendering:
+
+### 3.1 CoreInvariantContext
+Fields:
+- `safety_rules`
+- `global_behavior_contract`
+- `hard_boundaries`
+- `instruction_precedence_notes`
+
+Purpose:
+- Holds stable system-level constraints that do not vary by Bear role or session state.
+
+### 3.2 RoleContext
+Fields:
+- `bear_name`
+- `agent_role`
+- `role_mission`
+- `memory_scope`
+- `allowed_memory_paths`
+- `role_style_defaults`
+
+Purpose:
+- Encodes stable role identity and collaboration expectations.
+
+### 3.3 OperationalState
+Fields:
+- `permission_mode`
+- `tool_classes`
+- `execution_unlocked`
+- `workspace_roots`
+- `session_id`
+- `workflow_state`
+- `plan_state`
+- `plan_approval_status`
+- `activity_status`
+- `activity_plan_id`
+- `activity_current_item`
+- `state_authority`
+
+Derived fields:
+- `can_read_workspace`
+- `can_edit_workspace`
+- `can_use_web`
+- `can_write_memory`
+- `can_submit_plan`
+- `must_stop_for_editing`
+- `must_stop_for_user_judgment`
+- `should_continue_after_tool_result`
+- `plan_mode_active`
+
+Purpose:
+- Provides authoritative current-turn operational facts.
+
+### 3.4 CapabilityPolicy
+Fields:
+- `allowed_local_tools`
+- `allowed_server_tools`
+- `disallowed_actions`
+- `tool_usage_rules`
+- `identity_trust_rules`
+
+Purpose:
+- Canonical source for what tools/actions are allowed this turn and how to interpret trusted identity.
+
+### 3.5 WorkflowPolicy
+Fields:
+- `planning_rules`
+- `memory_vs_plan_rules`
+- `plan_representation_rules`
+- `stop_conditions`
+- `continuation_rules`
+- `approval_rules`
+
+Purpose:
+- Encodes when to keep going, when to ask, when to use plan tools, when to submit plan-mode artifacts, and when memory writes are inappropriate.
+
+### 3.6 InitiativeProfile
+Fields:
+- `initiative_level`
+- `default_scope`
+- `planning_bias`
+- `exploration_budget`
+- `response_style`
+- `risk_posture`
+- `ask_vs_infer`
+
+Purpose:
+- Makes agent initiative and answer style explicitly configurable.
+
+### 3.7 ContextInventory
+Fields:
+- `instructions_present`
+- `memory_available`
+- `workspace_access`
+- `open_files_count`
+- `open_file_paths` (optional, bounded)
+- `guidance_files_known` (e.g. AGENTS.md / README.md presence if host already knows)
+- `discovery_policy`
+- `preloaded_summaries_present`
+
+Purpose:
+- Helps the model account for context already available before asking for more.
+
+### 3.8 MemoryPolicy
+Fields:
+- `durable_memory_good_candidates`
+- `durable_memory_bad_candidates`
+- `promotion_guidance`
+- `confidence_expectations`
+- `review_recommendations`
+
+Purpose:
+- Clarifies what should and should not become durable memory.
+
+### 3.9 EnvironmentFeedbackPolicy
+Fields:
+- `may_report_environment_friction`
+- `reportable_categories`
+- `preferred_feedback_format`
+- `requires_structured_feedback`
+- `capture_destination` (if applicable in host runtime)
+
+Purpose:
+- Enables the agent to surface instruction conflicts, tooling gaps, and workflow friction.
+
+---
+
+## 4. Required Rendering Sections
+
+### 4.1 [ROLE]
+A short stable identity block.
+
+Example shape:
+```text
+[ROLE]
+bear=Builder Bear
+agent_role=pair
+memory_scope=pair_local
+```
+
+Requirements:
+- Must remain short.
+- Must not duplicate operational state.
+
+### 4.2 [OPERATIONAL SUMMARY]
+A compact top-of-turn summary block rendered from `OperationalState`.
+
+Example shape:
+```text
+[OPERATIONAL SUMMARY]
+permission_mode=Plan
+tool_classes=read_only
+can_read_workspace=true
+can_edit_workspace=false
+execution_unlocked=false
+workspace_roots=/workspace
+workflow_state=active
+plan_state=drafting
+plan_approval_status=drafting
+activity_status=inactive
+activity_representation_default=update_plan
+formal_workplan_artifact_requires_explicit_need=true
+state_authority=current_turn
+```
+
+Requirements:
+- Must contain authoritative current-turn state.
+- Must include derived booleans where helpful.
+- Must avoid long explanatory prose.
+
+### 4.3 [PERMISSIONS AND TOOLS]
+Canonical structured section.
+
+Content:
+- allowed tool families
+- disallowed action classes
+- trust semantics for identity/session
+- special tool-routing rules
+
+Requirements:
+- One canonical statement per rule.
+- No repeated prose examples unless necessary.
+
+### 4.4 [WORKFLOW RULES]
+Canonical section for:
+- when to plan
+- when to use `update_plan`
+- when to use `enter_plan_mode` / `exit_plan_mode`
+- when not to use memory tools
+- stop conditions
+- continuation rules after tool calls
+- approval semantics
+
+Requirements:
+- Should replace repeated freeform warnings elsewhere.
+- Must distinguish active plan state from formal artifact submission.
+
+#### Planning Representation Policy
+- Use `update_plan` for active task planning, decomposition, and progress tracking.
+- Prefer `update_plan` for live activity/progress tracking when the user asks for a plan unless they explicitly ask for a formal workplan document or approval artifact.
+- Use `enter_plan_mode` / `exit_plan_mode` when a durable markdown implementation plan artifact is specifically needed for approval, review, or audit.
+- Do not substitute memory entries or stored artifacts for active plan state.
+
+### 4.5 [INITIATIVE PROFILE]
+Rendered only if configured.
+
+Example shape:
+```text
+[INITIATIVE PROFILE]
+initiative_level=high
+default_scope=moderate
+planning_bias=balanced
+exploration_budget=small
+response_style=balanced
+risk_posture=conservative
+ask_vs_infer=infer_when_safe
+```
+
+Requirements:
+- Values must come from configuration, not prose heuristics.
+
+### 4.6 [CONTEXT INVENTORY]
+Structured accounting of already-available context.
+
+Example shape:
+```text
+[CONTEXT INVENTORY]
+instructions_present=true
+memory_available=true
+workspace_access=true
+open_files_count=0
+guidance_files_known=unknown
+discovery_policy=account_for_existing_context_before_requesting_more
+```
+
+Requirements:
+- Should bias the model away from redundant orientation requests.
+
+### 4.7 [MEMORY POLICY]
+Explicit durable-memory guidance.
+
+Content:
+- examples of stable facts worth storing
+- examples of transient facts not worth storing
+- reminder that active plans belong in planning systems, not durable memory
+
+Requirements:
+- Structured bullets or key-value lines preferred over prose paragraphs.
+
+### 4.8 [ENVIRONMENT FEEDBACK POLICY]
+Defines how the agent may surface environment problems.
+
+Example shape:
+```text
+[ENVIRONMENT FEEDBACK POLICY]
+may_report_environment_friction=true
+reportable_categories=instruction_conflict,prompt_redundancy,tool_gap,workflow_confusion,memory_policy_gap,plan_representation_confusion
+preferred_feedback_format=structured_then_brief_explanation
+```
+
+Requirements:
+- Must make environment-improvement reporting explicitly allowed.
+
+---
+
+## 5. Deduplication Rules
+
+Before rendering final prompt text, run a deduplication pass over policy statements.
+
+### Deduplicate these categories:
+- stop conditions
+- tool-loop continuation rules
+- editing disallowance
+- current-turn authority statements
+- plan-vs-memory usage rules
+- plan representation rules
+- identity trust rules
+
+### Strategy:
+1. Normalize rules to canonical categories.
+2. Keep one authoritative wording per category.
+3. Optionally allow one brief “critical reminder” restatement only for highest-risk rules.
+
+### Do not deduplicate away:
+- stable role identity
+- turn summary block
+- explicit hard safety boundaries
+
+---
+
+## 6. Derived-State Requirements
+
+Prompt assembly must compute and inject derived fields rather than forcing the model to infer them from raw state.
+
+Minimum required derived fields:
+- `can_read_workspace`
+- `can_edit_workspace`
+- `can_write_memory`
+- `can_submit_plan`
+- `must_stop_for_missing_approval`
+- `should_continue_after_tool_result`
+- `plan_mode_active`
+- `activity_representation_default`
+- `formal_workplan_artifact_requires_explicit_need`
+- `environment_focus_supported` (e.g. tools/workflow/instructions are fair game)
+
+Rationale:
+- Reduces inference burden.
+- Makes behavior more consistent.
+
+---
+
+## 7. Context Accounting Rules
+
+The environment should explicitly teach the model to account for already-present context before asking for more.
+
+### Required rule
+Include a concise rule equivalent to:
+- Before asking for orientation or documentation, first account for context already available through instructions, memory, open files, and trusted workspace discovery.
+
+### Preferred host-side enhancement
+If the runtime already knows any of the following, inject them directly:
+- open file list
+- presence of AGENTS.md
+- presence of README.md
+- prior summarized session context
+- loaded memory summaries
+
+This reduces unnecessary workspace scans and redundant requests.
+
+---
+
+## 8. Memory Policy Requirements
+
+The environment must distinguish durable memory from active work state.
+
+### Required durable-memory guidance
+Good candidates:
+- stable user preferences
+- recurring workflow expectations
+- long-lived project conventions
+- frequently reused commands
+- durable collaboration norms
+
+Poor candidates:
+- temporary debugging trails
+- active task progress
+- speculative observations
+- one-off review findings unless promoted deliberately
+
+### Required plan/memory rule
+Active plans, task lists, and implementation progress belong in planning/workflow systems, not durable memory entries.
+
+---
+
+## 9. Environment Feedback Support
+
+The environment should explicitly allow the agent to report friction in the environment itself.
+
+### Reportable categories
+- instruction conflict
+- prompt redundancy
+- tool gap
+- workflow confusion
+- context-visibility gap
+- memory-policy ambiguity
+- plan representation confusion
+
+### Preferred feedback schema
+If a structured channel exists, shape feedback around:
+- `category`
+- `severity`
+- `symptom`
+- `likely_cause`
+- `proposed_fix`
+- `requires_code_change`
+
+If no structured sink exists yet, at minimum make such reporting permissible in conversational output.
+
+---
+
+## 10. Rendering Guidelines
+
+1. Prefer stable headings and short structured lines.
+2. Keep summaries compact; move explanations below canonical facts.
+3. Minimize synonymous restatements.
+4. Keep examples short and policy-relevant.
+5. Avoid mixing stable rules with turn-specific facts in the same section.
+6. Ensure turn-state sections explicitly override earlier assumptions where needed.
+7. Separate active plan state, plan artifacts, and durable memory in both prompt structure and wording.
+
+---
+
+## 11. Backward-Compatibility Strategy
+
+To avoid abrupt behavior changes:
+
+### Phase A
+- Introduce `[OPERATIONAL SUMMARY]` and `[CONTEXT INVENTORY]` alongside existing reminders.
+- Keep existing prose, but mark new structured blocks as authoritative.
+- Add canonical planning-representation guidance while preserving older plan-mode phrasing.
+
+### Phase B
+- Convert repeated reminder prose into canonical structured sections.
+- Deduplicate overlapping language.
+- Make `update_plan` the explicit default for active work planning.
+
+### Phase C
+- Move fully to schema-first prompt construction.
+- Retain only minimal explanatory prose where evidence shows it helps.
+- Reserve artifact submission guidance for explicit approval/review use cases.
+
+---
+
+## 12. Acceptance Criteria
+
+A compliant implementation should make it more likely that the agent:
+1. distinguishes stable rules from turn-local state;
+2. does not ask for context already present;
+3. behaves consistently under read-only vs editable turns;
+4. uses memory more selectively and durably;
+5. reports environment/tooling friction clearly;
+6. answers “environment” questions as environment questions rather than repo questions;
+7. uses `update_plan` by default for active work planning rather than prematurely submitting plan artifacts.
+
+---
+
+## 13. Minimal Example Render
+
+```text
+[ROLE]
+bear=Builder Bear
+agent_role=pair
+memory_scope=pair_local
+
+[OPERATIONAL SUMMARY]
+permission_mode=Plan
+tool_classes=read_only
+can_read_workspace=true
+can_edit_workspace=false
+execution_unlocked=false
+workspace_roots=/workspace
+workflow_state=active
+plan_state=drafting
+plan_approval_status=drafting
+activity_representation_default=update_plan
+formal_workplan_artifact_requires_explicit_need=true
+state_authority=current_turn
+
+[PERMISSIONS AND TOOLS]
+allowed_local_tools=workspace_read_only
+allowed_server_tools=session_info,memory_tools,plan_tools,web_fetch,web_search
+identity_source=session_info_is_trusted
+editing_disallowed=true
+
+[WORKFLOW RULES]
+continue_after_tool_results=true
+stop_only_for=user_judgment,required_approval,missing_information,unrecoverable_error
+active_work_planning_tool=update_plan
+formal_plan_artifact_tools=enter_plan_mode,exit_plan_mode
+do_not_use_durable_memory_for=active_plans_or_ephemeral_progress
+
+[INITIATIVE PROFILE]
+initiative_level=high
+default_scope=moderate
+planning_bias=balanced
+response_style=balanced
+ask_vs_infer=infer_when_safe
+
+[CONTEXT INVENTORY]
+instructions_present=true
+memory_available=true
+workspace_access=true
+open_files_count=0
+discovery_policy=account_for_existing_context_before_requesting_more
+
+[MEMORY POLICY]
+durable_memory_good_candidates=stable_preferences,recurring_commands,long_lived_conventions
+durable_memory_bad_candidates=active_task_state,transient_debugging,speculative_notes
+
+[ENVIRONMENT FEEDBACK POLICY]
+may_report_environment_friction=true
+reportable_categories=instruction_conflict,prompt_redundancy,tool_gap,workflow_confusion,plan_representation_confusion
+```
+
+---
+
+## 14. Non-Goals
+
+This spec does not yet define:
+- the concrete host-language types
+- the exact rendering library/template mechanism
+- telemetry collection details
+- UI presentation changes outside prompt construction
+
+Those belong in the implementation plan.
