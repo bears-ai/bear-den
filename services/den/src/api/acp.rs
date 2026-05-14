@@ -1928,10 +1928,19 @@ async fn get_acp_session_inner(
             .ok_or_else(|| CustomError::NotFound("ACP session not found".to_string()))?;
     let plan_mode =
         acp_plan_mode::active_for_session(&state.sqlx_pool, user_id, bear.id, session_id)
-            .await?
-            .map(serde_json::to_value)
-            .transpose()?;
-    Ok(Json(acp_session_row_to_http_with_modes(row, plan_mode)).into_response())
+            .await?;
+    let approval_fallback = plan_mode
+        .as_ref()
+        .filter(|plan| plan.state == "submitted")
+        .map(plan_approval_fallback_payload);
+    let mut response = serde_json::to_value(acp_session_row_to_http_with_modes(
+        row,
+        plan_mode.map(serde_json::to_value).transpose()?,
+    ))?;
+    if let Some(approval_fallback) = approval_fallback {
+        response["approval_fallback"] = approval_fallback;
+    }
+    Ok(Json(response).into_response())
 }
 
 async fn conversations(
@@ -2146,6 +2155,7 @@ async fn permission_result_inner(
                 "session_policy": policy.to_json(),
                 "plan_mode": row,
                 "workflow_state": row.as_ref().map(|plan| workflow_state_json_from_sources(&policy, Some(plan), None)).unwrap_or_else(|| workflow_state_json(&policy)),
+                "approval_fallback": row.as_ref().filter(|plan| plan.state == "submitted").map(plan_approval_fallback_payload),
                 "message": "The transient ACP approval request timed out, but the submitted plan remains pending. The user may approve it through chat with record_plan_approval, Den UI, or a new ACP approval request."
             }))
             .into_response());
@@ -2202,6 +2212,7 @@ async fn permission_result_inner(
             "session_policy": policy.to_json(),
             "plan_mode": row,
             "workflow_state": workflow_state_json_from_sources(&policy, Some(&row), None),
+            "approval_fallback": if row.state == "submitted" { Some(plan_approval_fallback_payload(&row)) } else { None },
         }))
         .into_response());
     }
@@ -3657,16 +3668,101 @@ fn work_plan_item_to_acp_plan_entry(item: &serde_json::Value) -> Option<serde_js
 }
 
 fn plan_update_from_den_tool_result(result: &AcpToolResultRequest) -> Option<AcpGatewayEvent> {
-    let plan = result.structured_content.get("plan")?;
-    let items = plan.get("items").and_then(serde_json::Value::as_array)?;
-    let entries = items
-        .iter()
-        .filter_map(work_plan_item_to_acp_plan_entry)
-        .collect::<Vec<_>>();
-    if entries.is_empty() {
+    if let Some(plan) = result.structured_content.get("plan") {
+        let items = plan.get("items").and_then(serde_json::Value::as_array)?;
+        let entries = items
+            .iter()
+            .filter_map(work_plan_item_to_acp_plan_entry)
+            .collect::<Vec<_>>();
+        if entries.is_empty() {
+            return None;
+        }
+        return Some(AcpGatewayEvent::PlanUpdateJson { entries });
+    }
+
+    plan_approval_fallback_from_tool_result(result)
+}
+
+fn plan_approval_fallback_payload(row: &acp_plan_mode::AcpPlanModeSessionRow) -> serde_json::Value {
+    serde_json::json!({
+        "kind": "submitted_plan_approval",
+        "plan_id": row.id,
+        "title": row.plan_title.as_deref().unwrap_or("Submitted implementation plan"),
+        "body": row.plan_body.as_deref().unwrap_or(""),
+        "artifact_path": row.plan_artifact_path.as_deref().unwrap_or("not_submitted"),
+        "state": row.state,
+        "approval_status": turn_state::approval_status_label(Some(row.state.as_str()), "Plan"),
+    })
+}
+
+fn plan_approval_fallback_from_tool_result(
+    result: &AcpToolResultRequest,
+) -> Option<AcpGatewayEvent> {
+    let workplan = result.structured_content.get("workplan")?;
+    let raw_state = workplan
+        .get("raw_state")
+        .and_then(serde_json::Value::as_str)
+        .or_else(|| workplan.get("state").and_then(serde_json::Value::as_str))?
+        .trim();
+    if raw_state != "submitted" {
         return None;
     }
-    Some(AcpGatewayEvent::PlanUpdateJson { entries })
+    let plan_id = workplan
+        .get("plan_id")
+        .or_else(|| workplan.get("id"))
+        .and_then(serde_json::Value::as_str)
+        .and_then(|raw| Uuid::parse_str(raw).ok())?;
+    let title = workplan
+        .get("title")
+        .and_then(serde_json::Value::as_str)
+        .or_else(|| {
+            result
+                .structured_content
+                .get("submitted_plan")
+                .and_then(|submitted| submitted.get("title"))
+                .and_then(serde_json::Value::as_str)
+        })
+        .unwrap_or("Submitted implementation plan")
+        .trim()
+        .to_string();
+    let body = result
+        .structured_content
+        .get("submitted_plan")
+        .and_then(|submitted| submitted.get("body"))
+        .and_then(serde_json::Value::as_str)
+        .or_else(|| workplan.get("body").and_then(serde_json::Value::as_str))
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    let artifact_path = result
+        .structured_content
+        .get("artifact")
+        .and_then(|artifact| artifact.get("path"))
+        .and_then(serde_json::Value::as_str)
+        .or_else(|| {
+            result
+                .structured_content
+                .get("submitted_plan")
+                .and_then(|submitted| submitted.get("artifact_path"))
+                .and_then(serde_json::Value::as_str)
+        })
+        .or_else(|| workplan.get("artifact_path").and_then(serde_json::Value::as_str))
+        .unwrap_or("not_submitted")
+        .trim()
+        .to_string();
+
+    Some(AcpGatewayEvent::PlanApprovalFallback {
+        plan_id,
+        title,
+        body,
+        artifact_path,
+        state: raw_state.to_string(),
+        approval_status: workplan
+            .get("approval_status")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("awaiting_human_approval")
+            .to_string(),
+    })
 }
 
 fn settle_den_tool_error(

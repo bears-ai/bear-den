@@ -2189,17 +2189,26 @@ async fn exit_plan_mode(
             "MemFS sidecar is not configured (set LETTA_MEMFS_SERVICE_URL)".to_string(),
         ));
     };
+    let current_plan = acp_plan_mode::get_for_session(
+        pool,
+        context.user_id,
+        context.bear_id,
+        &acp_session_id,
+        args.plan_mode_id,
+    )
+    .await?
+    .ok_or_else(|| CustomError::NotFound("active ACP plan mode session not found".to_string()))?;
     let row = acp_plan_mode::submit_plan_artifact(
         pool,
         SubmitPlanModeParams {
             user_id: context.user_id,
             bear_id: context.bear_id,
             acp_session_id: acp_session_id.clone(),
-            plan_mode_id: args.plan_mode_id,
+            plan_mode_id: Some(current_plan.id),
             title,
             body,
             artifact_path: memfs_response.path.clone(),
-            approval_request_id: None,
+            approval_request_id: Some(format!("plan-mode-{}", current_plan.id)),
         },
     )
     .await?;

@@ -11,6 +11,36 @@ use super::acp::{
 };
 
 #[test]
+fn submitted_plan_fallback_is_visible_output_and_adapter_plan_update() {
+    let event = crate::core::acp_letta_events::AcpGatewayEvent::PlanApprovalFallback {
+        plan_id: uuid::Uuid::nil(),
+        title: "Example plan".to_string(),
+        body: "Do the thing carefully".to_string(),
+        artifact_path: "pair/plans/example.md".to_string(),
+        state: "submitted".to_string(),
+        approval_status: "awaiting_human_approval".to_string(),
+    };
+    assert!(crate::core::acp_letta_events::acp_event_has_visible_output(
+        &event
+    ));
+    let frame = crate::core::acp_letta_events::acp_event_to_adapter_sse(event);
+    let raw = std::str::from_utf8(&frame).expect("utf8 sse frame");
+    let payload: serde_json::Value =
+        serde_json::from_str(raw.trim().strip_prefix("data: ").expect("sse data prefix"))
+            .expect("json payload");
+    assert_eq!(payload["type"], "plan_update");
+    assert_eq!(payload["entries"][0]["status"], "in_progress");
+    assert_eq!(
+        payload["approval_fallback"]["plan_id"],
+        uuid::Uuid::nil().to_string()
+    );
+    assert_eq!(
+        payload["approval_fallback"]["artifact_path"],
+        "pair/plans/example.md"
+    );
+}
+
+#[test]
 fn workflow_state_label_prefers_plan_mode_state() {
     let policy = AcpResolvedSessionPolicy {
         mode_label: "Plan",

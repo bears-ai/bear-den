@@ -339,6 +339,75 @@ fn plan_entries_from_plan_update_event(event: &Value) -> Vec<PlanEntry> {
         .unwrap_or_default()
 }
 
+fn submitted_plan_fallback_entry(value: &Value) -> Option<PlanEntry> {
+    let title = value
+        .get("title")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .unwrap_or("Submitted implementation plan");
+    Some(PlanEntry::new(
+        format!("Review submitted implementation plan: {title}"),
+        PlanEntryPriority::High,
+        PlanEntryStatus::InProgress,
+    ))
+}
+
+fn plan_entries_from_den_session(den: &Value) -> Vec<PlanEntry> {
+    if let Some(fallback) = den.get("approval_fallback") {
+        if let Some(entry) = submitted_plan_fallback_entry(fallback) {
+            return vec![entry];
+        }
+    }
+    den.get("plan_mode")
+        .filter(|plan| plan.get("state").and_then(Value::as_str) == Some("submitted"))
+        .and_then(|plan| {
+            submitted_plan_fallback_entry(&json!({
+                "title": plan.get("plan_title").cloned().unwrap_or(Value::Null),
+            }))
+        })
+        .map(|entry| vec![entry])
+        .unwrap_or_default()
+}
+
+fn plan_approval_fallback_message(value: &Value) -> Option<String> {
+    let plan_id = value.get("plan_id").and_then(Value::as_str)?;
+    let title = value
+        .get("title")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .unwrap_or("Submitted implementation plan");
+    let artifact_path = value
+        .get("artifact_path")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .unwrap_or("not_submitted");
+    let body = value
+        .get("body")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .unwrap_or("Plan body is unavailable; use the artifact path for audit context.");
+    Some(format!(
+        "\n\n## Submitted implementation plan awaiting approval\n\n**{title}**\n\nArtifact: `{artifact_path}`\nPlan ID: `{plan_id}`\n\n{body}\n\nUse the approval target if your ACP client shows one, or reply `approved` / `go ahead` to approve this submitted plan."
+    ))
+}
+
+async fn surface_submitted_plan_fallback(session_id: &str, den: &Value) -> Result<()> {
+    let entries = plan_entries_from_den_session(den);
+    if !entries.is_empty() {
+        send_plan_update(session_id, entries).await?;
+    }
+    if let Some(fallback) = den.get("approval_fallback") {
+        if let Some(message) = plan_approval_fallback_message(fallback) {
+            send_agent_message_chunk(session_id, &message).await?;
+        }
+    }
+    Ok(())
+}
+
 fn plan_entries_from_work_plan_args(args: &Value) -> Vec<PlanEntry> {
     args.get("items")
         .and_then(Value::as_array)
@@ -2721,6 +2790,7 @@ async fn restore_session_from_den(
     send_available_commands_update(session_id).await?;
     if let Some(den) = den.as_ref() {
         replay_history_for_den_session(http, config, session_id, den, "session/resume").await?;
+        surface_submitted_plan_fallback(session_id, den).await?;
     }
     Ok(den
         .as_ref()
@@ -2783,6 +2853,7 @@ async fn handle_session_load(
     send_available_commands_update(session_id).await?;
     if let Some(den) = den.as_ref() {
         replay_history_for_den_session(http, config, session_id, den, "session/load").await?;
+        surface_submitted_plan_fallback(session_id, den).await?;
     }
 
     let mode = den
@@ -4807,6 +4878,11 @@ async fn handle_den_event(
             Ok(false)
         }
         "plan_update" => {
+            if let Some(fallback) = event.get("approval_fallback") {
+                if let Some(message) = plan_approval_fallback_message(fallback) {
+                    send_agent_message_chunk(session_id, &message).await?;
+                }
+            }
             let entries = plan_entries_from_plan_update_event(event);
             if entries.is_empty() {
                 if env_bool("BEARS_ACP_DEBUG_UI") {
@@ -4905,14 +4981,25 @@ async fn handle_permission_request_event(
         display.verb = "Reviewing plan";
         display.permission_operation = "approve this implementation plan";
     }
+    let plan_body = target.get("body").and_then(Value::as_str);
+    let artifact_path = target.get("artifact_path").and_then(Value::as_str);
     let target_label = if is_plan_mode {
-        plan_mode_id.unwrap_or("submitted plan artifact")
+        artifact_path
+            .or(plan_mode_id)
+            .unwrap_or("submitted plan artifact")
     } else {
         url.or(host).unwrap_or("the requested target")
     };
-    let mut content = vec![ToolCallContent::from(format!(
-        "{reason}\n\nTool: {tool_name}\nTarget: {target_label}"
-    ))];
+    let permission_body = if is_plan_mode {
+        format!(
+            "{reason}\n\nTool: {tool_name}\nTarget: {target_label}\nPlan ID: {}\n\n{}",
+            plan_mode_id.unwrap_or("unknown"),
+            plan_body.unwrap_or("Plan body is unavailable; use the artifact path for audit context.")
+        )
+    } else {
+        format!("{reason}\n\nTool: {tool_name}\nTarget: {target_label}")
+    };
+    let mut content = vec![ToolCallContent::from(permission_body)];
     let fields = ToolCallUpdateFields::new()
         .kind(Some(display.kind))
         .status(Some(ToolCallStatus::Pending))
@@ -4931,6 +5018,9 @@ async fn handle_permission_request_event(
         }
         if let Some(plan_mode_id) = plan_mode_id {
             meta.insert("planModeId".to_string(), json!(plan_mode_id));
+        }
+        if let Some(artifact_path) = artifact_path {
+            meta.insert("artifactPath".to_string(), json!(artifact_path));
         }
         meta
     }));
@@ -5058,6 +5148,15 @@ async fn handle_permission_request_event(
                 MODE_PLAN
             });
         notify_mode_state(session_id, mode).await?;
+        if let Some(fallback) = response.get("approval_fallback") {
+            if let Some(message) = plan_approval_fallback_message(fallback) {
+                send_agent_message_chunk(session_id, &message).await?;
+            }
+            let entries = plan_entries_from_den_session(&json!({ "approval_fallback": fallback }));
+            if !entries.is_empty() {
+                send_plan_update(session_id, entries).await?;
+            }
+        }
     }
     if let Some(local_tool) = response.get("local_tool_request") {
         let tool_call_id = local_tool
@@ -5944,6 +6043,34 @@ mod tests {
             .filter_map(|option| option.get("value").and_then(Value::as_str))
             .collect::<Vec<_>>();
         assert_eq!(option_values, vec![MODE_ASK, MODE_PLAN, MODE_WRITE]);
+    }
+
+    #[test]
+    fn submitted_plan_fallback_creates_visible_plan_entry() {
+        let den = json!({
+            "approval_fallback": {
+                "kind": "submitted_plan_approval",
+                "plan_id": "00000000-0000-0000-0000-000000000000",
+                "title": "Example plan",
+                "body": "Do the thing carefully",
+                "artifact_path": "pair/plans/example.md",
+                "state": "submitted",
+                "approval_status": "awaiting_human_approval"
+            }
+        });
+        let entries = plan_entries_from_den_session(&den);
+        assert_eq!(entries.len(), 1);
+        let payload = acp_plan_update_payload("sess", entries).expect("payload");
+        assert_eq!(
+            payload["update"]["entries"][0]["content"],
+            "Review submitted implementation plan: Example plan"
+        );
+        assert_eq!(payload["update"]["entries"][0]["priority"], "high");
+        assert_eq!(payload["update"]["entries"][0]["status"], "in_progress");
+        let message = plan_approval_fallback_message(&den["approval_fallback"])
+            .expect("fallback message");
+        assert!(message.contains("pair/plans/example.md"));
+        assert!(message.contains("Do the thing carefully"));
     }
 
     #[test]

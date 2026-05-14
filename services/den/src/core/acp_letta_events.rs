@@ -68,6 +68,14 @@ pub enum AcpGatewayEvent {
     PlanUpdateJson {
         entries: Vec<serde_json::Value>,
     },
+    PlanApprovalFallback {
+        plan_id: Uuid,
+        title: String,
+        body: String,
+        artifact_path: String,
+        state: String,
+        approval_status: String,
+    },
     ModeUpdate {
         mode: String,
     },
@@ -655,9 +663,9 @@ pub fn acp_event_adapter_type(event: &AcpGatewayEvent) -> &'static str {
         AcpGatewayEvent::Error { .. } => "error",
         AcpGatewayEvent::ToolRequest { .. } => "tool_request",
         AcpGatewayEvent::PermissionRequest { .. } => "permission_request",
-        AcpGatewayEvent::PlanUpdate { .. } | AcpGatewayEvent::PlanUpdateJson { .. } => {
-            "plan_update"
-        }
+        AcpGatewayEvent::PlanUpdate { .. }
+        | AcpGatewayEvent::PlanUpdateJson { .. }
+        | AcpGatewayEvent::PlanApprovalFallback { .. } => "plan_update",
         AcpGatewayEvent::ModeUpdate { .. } => "mode_update",
         AcpGatewayEvent::SessionInfoUpdate { .. } => "session_info_update",
         AcpGatewayEvent::ConversationResolved { .. } => "conversation_resolved",
@@ -674,11 +682,12 @@ pub fn acp_event_has_visible_output(event: &AcpGatewayEvent) -> bool {
         | AcpGatewayEvent::TurnResult { .. }
         | AcpGatewayEvent::ToolRequest { .. }
         | AcpGatewayEvent::PermissionRequest { .. }
-        | AcpGatewayEvent::PlanUpdate { .. }
+        | AcpGatewayEvent::PlanApprovalFallback { .. } => true,
+        AcpGatewayEvent::PlanUpdate { .. }
         | AcpGatewayEvent::PlanUpdateJson { .. }
         | AcpGatewayEvent::ModeUpdate { .. }
-        | AcpGatewayEvent::SessionInfoUpdate { .. }
-        | AcpGatewayEvent::ConversationResolved { .. } => false,
+        | AcpGatewayEvent::ConversationResolved { .. }
+        | AcpGatewayEvent::SessionInfoUpdate { .. } => false,
     }
 }
 
@@ -848,6 +857,45 @@ pub fn acp_event_to_adapter_sse(event: AcpGatewayEvent) -> Bytes {
             "diagnostic": {
                 "component": "den.acp",
                 "phase": "plan_update_mapped",
+                "transport_version": 3,
+            }
+        }),
+        AcpGatewayEvent::PlanApprovalFallback {
+            plan_id,
+            title,
+            body,
+            artifact_path,
+            state,
+            approval_status,
+        } => serde_json::json!({
+            "type": "plan_update",
+            "entries": [{
+                "content": format!("Review submitted implementation plan: {title}"),
+                "priority": "high",
+                "status": "in_progress",
+                "_meta": {
+                    "bears": {
+                        "kind": "submitted_plan_approval",
+                        "plan_id": plan_id,
+                        "state": state,
+                        "approval_status": approval_status,
+                        "artifact_path": artifact_path,
+                        "title": title,
+                    }
+                }
+            }],
+            "approval_fallback": {
+                "kind": "submitted_plan_approval",
+                "plan_id": plan_id,
+                "title": title,
+                "body": body,
+                "artifact_path": artifact_path,
+                "state": state,
+                "approval_status": approval_status,
+            },
+            "diagnostic": {
+                "component": "den.acp",
+                "phase": "plan_approval_fallback_mapped",
                 "transport_version": 3,
             }
         }),
