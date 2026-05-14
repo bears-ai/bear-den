@@ -4926,7 +4926,8 @@ async fn handle_den_event(
         "status_text" => {
             let text = event.get("text").and_then(Value::as_str).unwrap_or("");
             if !text.is_empty() {
-                send_agent_thought_chunk(session_id, text).await?;
+                send_agent_thought_chunk(session_id, normalize_thought_chunk_text(text).as_ref())
+                    .await?;
             }
             Ok(false)
         }
@@ -5845,6 +5846,16 @@ async fn send_agent_thought_chunk(session_id: &str, text: &str) -> Result<()> {
         }),
     )
     .await
+}
+
+fn normalize_thought_chunk_text(text: &str) -> std::borrow::Cow<'_, str> {
+    if text.ends_with(char::is_whitespace) {
+        return std::borrow::Cow::Borrowed(text);
+    }
+    if text.ends_with('.') || text.ends_with('!') || text.ends_with('?') || text.ends_with(':') {
+        return std::borrow::Cow::Owned(format!("{text}\n"));
+    }
+    std::borrow::Cow::Owned(format!("{text}.\n"))
 }
 
 async fn write_notification(method: &str, params: Value) -> Result<()> {

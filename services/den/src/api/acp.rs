@@ -4608,12 +4608,12 @@ impl Stream for AcpLettaSseStream {
                             .to_string();
                         let completion_text = if acp_debug_ui_enabled() {
                             format!(
-                                    "BEARS debug: local tool {tool_name} completed with status {} ({} bytes)",
-                                    tool_result.status,
-                                    tool_result.content.as_deref().map(str::len).unwrap_or(0),
-                                )
+                                "BEARS debug: local tool {tool_name} completed with status {} ({} bytes).\n",
+                                tool_result.status,
+                                tool_result.content.as_deref().map(str::len).unwrap_or(0),
+                            )
                         } else {
-                            format!("Local tool {tool_name} completed")
+                            format!("Local tool {tool_name} completed.\n")
                         };
                         this.pending.push_back(acp_event_to_adapter_sse(
                             AcpGatewayEvent::StatusText {
