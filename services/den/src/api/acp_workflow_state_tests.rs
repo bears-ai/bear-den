@@ -121,9 +121,27 @@ fn pair_tool_surface_reminder_and_descriptors_agree_on_domains() {
         "body": "- [ ] inspect files\n- [ ] edit files\n- [ ] run tests"
     }))
     .unwrap();
-    let err = validate_memory_write_entry_semantics(&invalid_memory)
-        .unwrap_err()
-        .to_string();
+    let err = validate_memory_write_entry_semantics(
+        &invalid_memory,
+        &crate::core::den_tools::DenToolInvocationContext {
+            bear_id: uuid::Uuid::nil(),
+            bear_slug: "test".to_string(),
+            role_agent_id: "agent".to_string(),
+            agent_role: Some(crate::core::bears::BearAgentRole::Pair),
+            user_id: 1,
+            username: Some("tester".to_string()),
+            membership_role: None,
+            conversation_id: "conv-test".to_string(),
+            session_id: "sess-test".to_string(),
+            acp_session_id: Some("acp-test".to_string()),
+            conversation_selection: None,
+            runtime_target: None,
+            request_id: None,
+            channel: Default::default(),
+        },
+    )
+    .unwrap_err()
+    .to_string();
     assert!(err.contains("update_plan") || err.contains("task"));
 }
 

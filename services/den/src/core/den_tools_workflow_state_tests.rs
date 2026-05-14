@@ -1,12 +1,31 @@
 use serde_json::json;
 
+fn pair_context() -> DenToolInvocationContext {
+    DenToolInvocationContext {
+        bear_id: uuid::Uuid::nil(),
+        bear_slug: "test".to_string(),
+        role_agent_id: "agent".to_string(),
+        agent_role: Some(crate::core::bears::BearAgentRole::Pair),
+        user_id: 1,
+        username: Some("tester".to_string()),
+        membership_role: None,
+        conversation_id: "conv-test".to_string(),
+        session_id: "sess-test".to_string(),
+        acp_session_id: Some("acp-test".to_string()),
+        conversation_selection: None,
+        runtime_target: None,
+        request_id: None,
+        channel: Default::default(),
+    }
+}
+
 use crate::core::{
     acp_plan_mode::AcpPlanModeSessionRow,
     acp_tools::{acp_client_tool_descriptor, ACP_READ_TEXT_FILE_TOOL},
     den_tools::{
         activity_payload, builtin_den_tool_descriptor_for_provider_name, invoke_den_tool,
-        no_active_workplan_payload, plan_mode_workplan_payload,
-        validate_memory_write_entry_semantics, DenToolInvocationContext,
+        no_active_workplan_payload, plan_mode_workplan_payload, tool_warning_payload,
+        validate_memory_write_entry_semantics, DenToolInvocationContext, ToolSemanticWarning,
     },
     work_plans::{WorkPlanItem, WorkPlanItemStatus, WorkPlanProjection},
 };
@@ -115,7 +134,7 @@ fn memory_write_entry_semantics_reject_non_memory_domain_before_db_access() {
     }))
     .unwrap();
 
-    let err = validate_memory_write_entry_semantics(&args)
+    let err = validate_memory_write_entry_semantics(&args, &pair_context())
         .unwrap_err()
         .to_string();
     assert!(err.contains("workplan") || err.contains("plan-mode"));
@@ -131,7 +150,7 @@ fn memory_write_entry_semantics_reject_activity_domain_before_db_access() {
     }))
     .unwrap();
 
-    let err = validate_memory_write_entry_semantics(&args)
+    let err = validate_memory_write_entry_semantics(&args, &pair_context())
         .unwrap_err()
         .to_string();
     assert!(err.contains("activity") || err.contains("update_plan"));
@@ -181,7 +200,7 @@ fn memory_write_entry_semantics_reject_unlabeled_plan_task_result_and_observatio
     for (label, value, expected) in cases {
         let args: crate::core::den_tools::MemoryWriteEntryArguments =
             serde_json::from_value(value).unwrap();
-        let err = validate_memory_write_entry_semantics(&args)
+        let err = validate_memory_write_entry_semantics(&args, &pair_context())
             .unwrap_err()
             .to_string();
         assert!(
@@ -200,8 +219,48 @@ fn memory_write_entry_semantics_allows_plain_semantic_memory() {
     }))
     .unwrap();
 
-    let kind = validate_memory_write_entry_semantics(&args).unwrap();
+    let kind = validate_memory_write_entry_semantics(&args, &pair_context()).unwrap();
     assert_eq!(kind, "decision");
+}
+
+#[tokio::test]
+async fn memory_write_entry_returns_warning_payload_for_ambiguous_plan_like_memory() {
+    let pool = sqlx::PgPool::connect_lazy("postgres://unused:unused@localhost/unused").unwrap();
+    let config = crate::config::Config::test_stub();
+    let result = invoke_den_tool(
+        &pool,
+        &config,
+        "den.memory.write_entry",
+        json!({
+            "kind": "note",
+            "title": "Plan concepts",
+            "body": "High-level understanding of the architecture: how plan artifacts differ from live progress tracking and why the distinction matters for durable memory."
+        }),
+        pair_context(),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(result["status"], "warning");
+    assert_eq!(result["warning"]["code"], "semantic_confirmation_required");
+    assert_eq!(result["warning"]["category"], "plan_like_memory");
+    assert!(result["warning"]["confirmation_token"].as_str().unwrap().len() > 10);
+}
+
+#[test]
+fn tool_warning_payload_has_expected_shape() {
+    let payload = tool_warning_payload(
+        "den.memory.write_entry",
+        ToolSemanticWarning {
+            code: "semantic_confirmation_required",
+            category: "plan_like_memory",
+            message: "warning".to_string(),
+            confirmation_token: "token".to_string(),
+        },
+    );
+    assert_eq!(payload["status"], "warning");
+    assert_eq!(payload["tool_name"], "den.memory.write_entry");
+    assert_eq!(payload["warning"]["confirmation_token"], "token");
 }
 
 #[tokio::test]
@@ -253,7 +312,7 @@ fn memory_write_entry_semantics_reject_activity_content_class_before_db_access()
     }))
     .unwrap();
 
-    let err = validate_memory_write_entry_semantics(&args)
+    let err = validate_memory_write_entry_semantics(&args, &pair_context())
         .unwrap_err()
         .to_string();
     assert!(err.contains("activity") || err.contains("update_plan"));

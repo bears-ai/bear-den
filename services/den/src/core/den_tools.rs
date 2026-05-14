@@ -1,8 +1,10 @@
-use std::net::{IpAddr, ToSocketAddrs};
+use std::{net::{IpAddr, ToSocketAddrs}, time::{SystemTime, UNIX_EPOCH}};
 
+use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use reqwest::header::{AUTHORIZATION, CONTENT_TYPE};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
 use sqlx::PgPool;
 use time::format_description::well_known::Rfc3339;
 use uuid::Uuid;
@@ -1036,7 +1038,8 @@ fn memory_write_entry_schema() -> Value {
             "domain": {
                 "type": "string",
                 "enum": ["workplan", "activity", "memory", "execution"]
-            }
+            },
+            "semantic_confirmation_token": { "type": "string", "minLength": 1, "maxLength": 2000 }
         },
         "required": ["kind", "title", "body"],
         "additionalProperties": false
@@ -1268,6 +1271,8 @@ pub(crate) struct MemoryWriteEntryArguments {
     content_class: Option<String>,
     #[serde(default)]
     domain: Option<String>,
+    #[serde(default)]
+    semantic_confirmation_token: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1356,7 +1361,12 @@ pub async fn invoke_den_tool(
     arguments: Value,
     context: DenToolInvocationContext,
 ) -> Result<Value, CustomError> {
-    prevalidate_tool_arguments(tool_name, &arguments)?;
+    match prevalidate_tool_arguments(tool_name, &arguments, &context)? {
+        ToolPreflight::Proceed => {}
+        ToolPreflight::Warning(warning) => {
+            return Ok(tool_warning_payload(tool_name, warning));
+        }
+    }
     let role = authorize_context(pool, &context).await?;
     authorize_tool_for_role(tool_name, role)?;
     match tool_name {
@@ -1412,14 +1422,45 @@ pub async fn invoke_den_tool(
     }
 }
 
-fn prevalidate_tool_arguments(tool_name: &str, arguments: &Value) -> Result<(), CustomError> {
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ToolSemanticWarning {
+    pub code: &'static str,
+    pub category: &'static str,
+    pub message: String,
+    pub confirmation_token: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum ToolPreflight {
+    Proceed,
+    Warning(ToolSemanticWarning),
+}
+
+pub(crate) fn tool_warning_payload(tool_name: &str, warning: ToolSemanticWarning) -> Value {
+    json!({
+        "status": "warning",
+        "tool_name": tool_name,
+        "warning": {
+            "code": warning.code,
+            "category": warning.category,
+            "message": warning.message,
+            "confirmation_token": warning.confirmation_token,
+        }
+    })
+}
+
+fn prevalidate_tool_arguments(
+    tool_name: &str,
+    arguments: &Value,
+    context: &DenToolInvocationContext,
+) -> Result<ToolPreflight, CustomError> {
     match tool_name {
         DEN_MEMORY_WRITE_ENTRY => {
             let args: MemoryWriteEntryArguments = serde_json::from_value(arguments.clone())?;
-            validate_memory_write_entry_semantics(&args)?;
-            Ok(())
+            validate_memory_write_entry_semantics(&args, context)?;
+            assess_unlabeled_memory_misuse(&args, context)
         }
-        _ => Ok(()),
+        _ => Ok(ToolPreflight::Proceed),
     }
 }
 
@@ -2305,7 +2346,7 @@ async fn write_memory_entry(
         ));
     }
     let args: MemoryWriteEntryArguments = serde_json::from_value(arguments)?;
-    let kind = validate_memory_write_entry_semantics(&args)?;
+    let kind = validate_memory_write_entry_semantics(&args, context)?;
     let title = validate_bounded_text("title", &args.title, 1, 200)?;
     let body = validate_bounded_text("body", &args.body, 1, 50_000)?;
     let tags = clean_limited_strings(args.tags, 20, 80);
@@ -2946,9 +2987,9 @@ fn validate_memory_kind(value: &str) -> Result<String, CustomError> {
 
 pub(crate) fn validate_memory_write_entry_semantics(
     args: &MemoryWriteEntryArguments,
+    _context: &DenToolInvocationContext,
 ) -> Result<String, CustomError> {
     let kind = validate_memory_kind(&args.kind)?;
-    reject_unlabeled_memory_misuse(args)?;
     if kind == "plan" {
         return Err(CustomError::ValidationError(
             "This content appears to be a workplan; use update_plan for visible activity plans and exit_plan_mode for submitted implementation plans instead of memory_write_entry.".to_string(),
@@ -3019,18 +3060,34 @@ pub(crate) fn validate_memory_write_entry_semantics(
     Ok(kind)
 }
 
-fn reject_unlabeled_memory_misuse(args: &MemoryWriteEntryArguments) -> Result<(), CustomError> {
+fn assess_unlabeled_memory_misuse(
+    args: &MemoryWriteEntryArguments,
+    context: &DenToolInvocationContext,
+) -> Result<ToolPreflight, CustomError> {
     let title = args.title.trim();
     let body = args.body.trim();
     let haystack = format!("{}\n{}", title, body).to_ascii_lowercase();
+    let title_lower = title.to_ascii_lowercase();
     let lines = body.lines().map(str::trim).collect::<Vec<_>>();
 
-    if looks_like_workplan_content(&haystack, &lines) {
-        return Err(CustomError::ValidationError(
-            "This content appears to be an active workplan or implementation plan; use enter_plan_mode/exit_plan_mode for approval plans or update_plan for visible activity tracking instead of memory_write_entry.".to_string(),
-        ));
+    let explicit_plan_title = contains_any(&title_lower, &["implementation plan", "execution plan"]);
+    if looks_like_workplan_content(&haystack, &title_lower, &lines) {
+        return if explicit_plan_title {
+            Err(CustomError::ValidationError(
+                "This content appears to be an active workplan or implementation plan; use enter_plan_mode/exit_plan_mode for approval plans or update_plan for visible activity tracking instead of memory_write_entry.".to_string(),
+            ))
+        } else if confirm_suspicious_memory_write(args, context, "plan_like_memory")? {
+            Ok(ToolPreflight::Proceed)
+        } else {
+            Ok(ToolPreflight::Warning(memory_semantic_warning(
+                args,
+                context,
+                "plan_like_memory",
+                "This entry resembles a planning artifact. If you intend durable role-local memory rather than a live plan, retry with the provided semantic_confirmation_token.",
+            )))
+        };
     }
-    if looks_like_activity_or_task_content(&haystack, &lines) {
+    if looks_like_activity_or_task_content(&haystack, &title_lower, &lines) {
         return Err(CustomError::ValidationError(
             "This content appears to be task tracking or a task intent; use update_plan or request_work_handoff instead of memory_write_entry.".to_string(),
         ));
@@ -3045,11 +3102,19 @@ fn reject_unlabeled_memory_misuse(args: &MemoryWriteEntryArguments) -> Result<()
             "This content appears to be an operational observation; use the observation tool instead of memory_write_entry.".to_string(),
         ));
     }
-    Ok(())
+    Ok(ToolPreflight::Proceed)
 }
 
-fn looks_like_workplan_content(haystack: &str, lines: &[&str]) -> bool {
-    contains_any(
+fn looks_like_workplan_content(haystack: &str, title: &str, lines: &[&str]) -> bool {
+    let explicit_plan_title = contains_any(title, &["implementation plan", "execution plan"]);
+    if explicit_plan_title {
+        return true;
+    }
+    let suspicious_title = contains_any(
+        title,
+        &["approval plan", "proposed plan", "next steps", "plan concepts"],
+    );
+    let plan_terms = contains_any(
         haystack,
         &[
             "implementation plan",
@@ -3059,16 +3124,56 @@ fn looks_like_workplan_content(haystack: &str, lines: &[&str]) -> bool {
             "plan of record",
             "approval plan",
             "proposed plan",
+        ],
+    );
+    let approval_or_execution_cues = contains_any(
+        haystack,
+        &[
             "submit this plan",
             "once approved",
             "awaiting approval",
+            "we will",
+            "i will",
+            "next i will",
+            "first i will",
+            "then i will",
         ],
-    ) || (contains_any(haystack, &["plan", "steps", "phase"])
-        && checkbox_or_numbered_item_count(lines) >= 3)
+    );
+    let structured_action_list = checkbox_or_numbered_item_count(lines) >= 3
+        && contains_any(
+            haystack,
+            &[
+                "inspect",
+                "edit",
+                "implement",
+                "fix",
+                "run",
+                "validate",
+                "update",
+                "create",
+            ],
+        );
+    let expository = contains_any(
+        haystack,
+        &[
+            "summary",
+            "concept",
+            "architecture",
+            "orientation",
+            "difference between",
+            "distinguishes",
+            "the docs describe",
+            "means",
+            "refers to",
+        ],
+    );
+
+    suspicious_title || (!expository && plan_terms && (approval_or_execution_cues || structured_action_list))
 }
 
-fn looks_like_activity_or_task_content(haystack: &str, lines: &[&str]) -> bool {
-    contains_any(
+fn looks_like_activity_or_task_content(haystack: &str, title: &str, lines: &[&str]) -> bool {
+    let suspicious_title = contains_any(title, &["current tasks", "task list", "next steps"]);
+    let explicit_task_language = contains_any(
         haystack,
         &[
             "todo:",
@@ -3084,7 +3189,25 @@ fn looks_like_activity_or_task_content(haystack: &str, lines: &[&str]) -> bool {
             "task intent",
             "request work handoff",
         ],
-    ) || checkbox_or_numbered_item_count(lines) >= 3
+    );
+    let structured_action_list = checkbox_or_numbered_item_count(lines) >= 3
+        && contains_any(
+            haystack,
+            &[
+                "inspect",
+                "edit",
+                "implement",
+                "fix",
+                "run",
+                "update",
+                "create",
+                "validate",
+                "complete",
+                "blocked",
+                "pending",
+            ],
+        );
+    suspicious_title || explicit_task_language || structured_action_list
 }
 
 fn looks_like_run_result_content(haystack: &str) -> bool {
@@ -3147,6 +3270,107 @@ fn checkbox_or_numbered_item_count(lines: &[&str]) -> usize {
 
 fn contains_any(haystack: &str, needles: &[&str]) -> bool {
     needles.iter().any(|needle| haystack.contains(needle))
+}
+
+fn memory_semantic_warning(
+    args: &MemoryWriteEntryArguments,
+    context: &DenToolInvocationContext,
+    category: &'static str,
+    message: &str,
+) -> ToolSemanticWarning {
+    ToolSemanticWarning {
+        code: "semantic_confirmation_required",
+        category,
+        message: message.to_string(),
+        confirmation_token: issue_memory_confirmation_token(args, context, category),
+    }
+}
+
+fn issue_memory_confirmation_token(
+    args: &MemoryWriteEntryArguments,
+    context: &DenToolInvocationContext,
+    category: &str,
+) -> String {
+    let exp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_secs() + 15 * 60)
+        .unwrap_or(15 * 60);
+    let payload_hash = memory_confirmation_payload_hash(args, context, category, exp);
+    let token_payload = format!("{category}:{exp}:{payload_hash}");
+    URL_SAFE_NO_PAD.encode(token_payload)
+}
+
+fn confirm_suspicious_memory_write(
+    args: &MemoryWriteEntryArguments,
+    context: &DenToolInvocationContext,
+    category: &str,
+) -> Result<bool, CustomError> {
+    let Some(token) = args.semantic_confirmation_token.as_deref() else {
+        return Ok(false);
+    };
+    let decoded = URL_SAFE_NO_PAD
+        .decode(token.trim())
+        .map_err(|_| CustomError::ValidationError(
+            "semantic_confirmation_token is invalid; retry the warning flow to get a fresh token"
+                .to_string(),
+        ))?;
+    let decoded = String::from_utf8(decoded).map_err(|_| {
+        CustomError::ValidationError(
+            "semantic_confirmation_token is invalid; retry the warning flow to get a fresh token"
+                .to_string(),
+        )
+    })?;
+    let mut parts = decoded.splitn(3, ':');
+    let token_category = parts.next().unwrap_or_default();
+    let exp_raw = parts.next().unwrap_or_default();
+    let token_hash = parts.next().unwrap_or_default();
+    if token_category != category {
+        return Ok(false);
+    }
+    let exp = exp_raw.parse::<u64>().map_err(|_| {
+        CustomError::ValidationError(
+            "semantic_confirmation_token is invalid; retry the warning flow to get a fresh token"
+                .to_string(),
+        )
+    })?;
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_secs())
+        .unwrap_or(0);
+    if exp < now {
+        return Ok(false);
+    }
+    Ok(token_hash == memory_confirmation_payload_hash(args, context, category, exp))
+}
+
+fn memory_confirmation_payload_hash(
+    args: &MemoryWriteEntryArguments,
+    context: &DenToolInvocationContext,
+    category: &str,
+    exp: u64,
+) -> String {
+    let confirmation_context = json!({
+        "tool": DEN_MEMORY_WRITE_ENTRY,
+        "category": category,
+        "bear_id": context.bear_id,
+        "role_agent_id": context.role_agent_id,
+        "agent_role": context.agent_role.map(|role| role.as_str()),
+        "conversation_id": context.conversation_id,
+        "session_id": context.session_id,
+        "acp_session_id": context.acp_session_id,
+        "request_id": context.request_id,
+        "kind": args.kind,
+        "title": args.title,
+        "body": args.body,
+        "tags": args.tags,
+        "refs": args.refs,
+        "lifecycle": args.lifecycle,
+        "content_class": args.content_class,
+        "domain": args.domain,
+        "exp": exp,
+    });
+    let digest = Sha256::digest(confirmation_context.to_string().as_bytes());
+    URL_SAFE_NO_PAD.encode(digest)
 }
 
 fn validate_bounded_text(
