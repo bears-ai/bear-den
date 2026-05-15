@@ -961,6 +961,11 @@ fn looks_like_letta_waiting_for_approval_error(err: &CustomError) -> bool {
         || message.contains("another run is still processing")
 }
 
+fn looks_like_letta_no_active_runs_error(err: &CustomError) -> bool {
+    let message = format!("{err:#}").to_ascii_lowercase();
+    message.contains("no active runs to cancel")
+}
+
 async fn acp_preflight_runtime_hygiene(
     state: &ApiState,
     session_id: &str,
@@ -982,6 +987,20 @@ async fn acp_preflight_runtime_hygiene(
                 "ok": true,
                 "reason": reason,
                 "cancel_result": value,
+            })
+        }
+        Err(err) if looks_like_letta_no_active_runs_error(&err) => {
+            tracing::info!(
+                acp_session_id = %session_id,
+                bear_id = %bear_id,
+                pair_agent_id = %pair_agent_id,
+                reason,
+                "ACP runtime hygiene found no active Letta runs before prompt"
+            );
+            serde_json::json!({
+                "ok": true,
+                "reason": reason,
+                "cancel_result": "no_active_runs",
             })
         }
         Err(err) => {
@@ -1029,6 +1048,23 @@ async fn acp_cleanup_stale_runtime_state(
                 "reason": reason,
                 "run_ids": run_ids,
                 "cancel_result": value,
+            })
+        }
+        Err(err) if looks_like_letta_no_active_runs_error(&err) => {
+            tracing::warn!(
+                request_id = %request_id,
+                acp_session_id = %acp_session_id,
+                bear_id = %bear_id,
+                pair_agent_id = %pair_agent_id,
+                run_ids = ?run_ids,
+                reason,
+                "ACP stale Letta runtime cleanup found no active runs"
+            );
+            serde_json::json!({
+                "ok": true,
+                "reason": reason,
+                "run_ids": run_ids,
+                "cancel_result": "no_active_runs",
             })
         }
         Err(err) => {
@@ -3277,9 +3313,20 @@ async fn prompt_inner(
                 "Letta conversation is waiting for a stale approval; cancelling agent runs and retrying ACP prompt once"
             );
             state.acp_tool_turns.cleanup_session(session_id);
-            if let Err(cancel_err) = state.letta.cancel_agent_runs(&pair_agent_id, &[]).await {
-                tracing::warn!(%request_id, error = %cancel_err, "failed to cancel Letta runs before ACP retry");
-                return Ok(Err(err));
+            match state.letta.cancel_agent_runs(&pair_agent_id, &[]).await {
+                Ok(_) => {}
+                Err(cancel_err) if looks_like_letta_no_active_runs_error(&cancel_err) => {
+                    tracing::info!(
+                        %request_id,
+                        acp_session_id = %session_id,
+                        pair_agent_id = %pair_agent_id,
+                        "No active Letta runs to cancel before stale-approval retry; trying conversation compaction"
+                    );
+                }
+                Err(cancel_err) => {
+                    tracing::warn!(%request_id, error = %cancel_err, "failed to cancel Letta runs before ACP retry");
+                    return Ok(Err(err));
+                }
             }
             match state
                 .letta
@@ -3293,6 +3340,50 @@ async fn prompt_inner(
                 .await
             {
                 Ok(upstream) => upstream,
+                Err(retry_err)
+                    if looks_like_letta_waiting_for_approval_error(&retry_err)
+                        && conversation_resolution.resolved_conversation_id.is_some() =>
+                {
+                    let conversation_id = conversation_resolution
+                        .resolved_conversation_id
+                        .as_deref()
+                        .expect("checked above");
+                    tracing::warn!(
+                        %request_id,
+                        acp_session_id = %session_id,
+                        pair_agent_id = %pair_agent_id,
+                        conversation_id,
+                        error = %retry_err,
+                        "Stale approval persisted after run cleanup; compacting Letta conversation before final ACP prompt retry"
+                    );
+                    let compact_result =
+                        match state.letta.compact_conversation(conversation_id).await {
+                            Ok(result) => result,
+                            Err(compact_err) => return Ok(Err(compact_err)),
+                        };
+                    tracing::warn!(
+                        %request_id,
+                        acp_session_id = %session_id,
+                        pair_agent_id = %pair_agent_id,
+                        conversation_id,
+                        compact_result = %compact_result,
+                        "Compacted Letta conversation after stale approval retry failure"
+                    );
+                    match state
+                        .letta
+                        .post_conversation_messages_streaming(
+                            &conversation_resolution.upstream_target,
+                            Some(&pair_agent_id),
+                            &prompt_with_tool_context,
+                            client_tool_descriptors.clone(),
+                            stream_tokens,
+                        )
+                        .await
+                    {
+                        Ok(upstream) => upstream,
+                        Err(compacted_retry_err) => return Ok(Err(compacted_retry_err)),
+                    }
+                }
                 Err(retry_err) => return Ok(Err(retry_err)),
             }
         }

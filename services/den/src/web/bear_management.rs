@@ -757,7 +757,11 @@ async fn bear_work_surface_rows(
             .unwrap_or_default();
         let child_paths = child_nodes
             .iter()
-            .filter_map(|node| node.get("path").and_then(|v| v.as_str()).map(ToString::to_string))
+            .filter_map(|node| {
+                node.get("path")
+                    .and_then(|v| v.as_str())
+                    .map(ToString::to_string)
+            })
             .collect::<Vec<_>>();
         let canonical_path_count = child_paths.len();
         let index_path = format!("{slug_path_prefix}index.md");
