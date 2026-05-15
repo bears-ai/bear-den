@@ -3176,6 +3176,11 @@ async fn prompt_inner(
         &resolved_policy,
         current_activity_plan.as_ref(),
     );
+    let plans = current_activity_plan
+        .clone()
+        .into_iter()
+        .collect::<Vec<_>>();
+    let activity_context = work_plans::render_workboard_prompt_context(&plans);
     tracing::info!(
         %request_id,
         acp_session_id = %session_id,
@@ -3187,11 +3192,6 @@ async fn prompt_inner(
         prompt_has_system_reminder = prompt.contains("<system-reminder>"),
         "ACP prompt context assembly lengths"
     );
-    let plans = current_activity_plan
-        .clone()
-        .into_iter()
-        .collect::<Vec<_>>();
-    let activity_context = work_plans::render_workboard_prompt_context(&plans);
     let mut initial_events = Vec::new();
     if let Some(title_event) = pending_session_title_update_event(
         &state.sqlx_pool,
