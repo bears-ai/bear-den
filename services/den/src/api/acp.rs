@@ -4448,7 +4448,6 @@ enum AcpPendingFuture {
     Tool(Pin<Box<dyn Future<Output = AcpToolResultRequest> + Send>>),
     ContinueTool(Pin<Box<dyn Future<Output = Result<reqwest::Response, CustomError>> + Send>>),
     Cleanup(Pin<Box<dyn Future<Output = serde_json::Value> + Send>>),
-    CleanupAfterReadError(Pin<Box<dyn Future<Output = serde_json::Value> + Send>>),
 }
 
 #[derive(Default)]
@@ -4873,42 +4872,6 @@ impl Stream for AcpLettaSseStream {
                     this.pending.push_back(acp_event_to_adapter_sse(event));
                     return self.poll_next(cx);
                 }
-                AcpPendingFuture::CleanupAfterReadError(fut) => {
-                    let cleanup = ready!(fut.as_mut().poll(cx));
-                    this.persist_future = None;
-                    let role_result = this.context.role_runtime.turn_result(
-                        TurnResultStatus::Recovered,
-                        TurnResultReason::RuntimeCleanup,
-                        this.context.request_id,
-                        this.context.turn_scope.clone(),
-                        true,
-                        serde_json::json!({
-                            "cleanup": cleanup.clone(),
-                            "stream": this.diagnostics.diagnostic_json(&this.context),
-                        }),
-                    );
-                    let (status, reason, request_id, session_id, retryable, diagnostics) =
-                        role_result.to_event_fields();
-                    let turn_result = AcpGatewayEvent::TurnResult {
-                        status,
-                        reason,
-                        request_id,
-                        session_id,
-                        retryable,
-                        diagnostics,
-                    };
-                    this.diagnostics.observe_mapped_event(&turn_result);
-                    this.pending
-                        .push_back(acp_event_to_adapter_sse(turn_result));
-                    let event = AcpGatewayEvent::StatusText {
-                        text: normalize_display_status_text(&format!(
-                            "BEARS detected a Letta stream read error, cleared stale approval/run state, and stopped this turn safely. Please retry your message. cleanup={cleanup}"
-                        )),
-                    };
-                    this.diagnostics.observe_mapped_event(&event);
-                    this.pending.push_back(acp_event_to_adapter_sse(event));
-                    return self.poll_next(cx);
-                }
             }
         }
 
@@ -4938,34 +4901,49 @@ impl Stream for AcpLettaSseStream {
                 self.poll_next(cx)
             }
             Some(Err(err)) => {
+                let message = format!("Letta stream read failed: {err}");
                 tracing::warn!(
                     request_id = %this.context.request_id,
                     acp_session_id = %this.context.acp_session_id,
                     error = %err,
                     "ACP upstream Letta SSE stream read error"
                 );
-                let letta = this.letta.clone();
-                let tool_turns = this.context.tool_turns.clone();
-                let acp_session_id = this.context.acp_session_id.clone();
-                let bear_id = this.context.bear_id;
-                let pair_agent_id = this.context.pair_agent_id.clone();
-                let run_ids = this.diagnostics.run_ids.clone();
-                let request_id = this.context.request_id;
-                this.persist_future = Some(AcpPendingFuture::CleanupAfterReadError(Box::pin(
-                    async move {
-                        acp_cleanup_stale_runtime_state(
-                            letta,
-                            tool_turns,
-                            acp_session_id,
-                            bear_id,
-                            pair_agent_id,
-                            run_ids,
-                            "letta_stream_read_error",
-                            request_id,
-                        )
-                        .await
-                    },
-                )));
+                let role_result = this.context.role_runtime.turn_result(
+                    TurnResultStatus::Failed,
+                    TurnResultReason::RuntimeCleanup,
+                    this.context.request_id,
+                    this.context.turn_scope.clone(),
+                    false,
+                    serde_json::json!({
+                        "error": message,
+                        "stream": this.diagnostics.diagnostic_json(&this.context),
+                    }),
+                );
+                let (status, reason, request_id, session_id, retryable, diagnostics) =
+                    role_result.to_event_fields();
+                let turn_result = AcpGatewayEvent::TurnResult {
+                    status,
+                    reason,
+                    request_id,
+                    session_id,
+                    retryable,
+                    diagnostics,
+                };
+                this.diagnostics.observe_mapped_event(&turn_result);
+                this.pending
+                    .push_back(acp_event_to_adapter_sse(turn_result));
+                let event = serde_json::json!({
+                    "type": "error",
+                    "message": "Letta stream ended unexpectedly while BEARS was waiting for events.",
+                    "detail": message,
+                    "request_id": this.context.request_id.to_string(),
+                    "diagnostic": {
+                        "code": "letta_stream_read_error",
+                        "component": "den.acp"
+                    }
+                });
+                this.pending
+                    .push_back(Bytes::from(format!("data: {}\n\n", event)));
                 self.poll_next(cx)
             }
             None => {
