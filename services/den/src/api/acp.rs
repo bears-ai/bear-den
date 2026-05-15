@@ -304,6 +304,7 @@ struct AcpConversationHistoryQuery {
 
 #[derive(Debug, Serialize)]
 struct AcpConversationHistoryMessage {
+    id: Option<String>,
     role: String,
     text: String,
     created_at: Option<String>,
@@ -1432,6 +1433,7 @@ fn map_acp_history_page(
             continue;
         }
         rows.push(AcpConversationHistoryMessage {
+            id: letta_message_id_string(msg),
             role: role.to_string(),
             text,
             created_at: letta_message_created_at(msg),

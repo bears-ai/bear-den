@@ -2693,12 +2693,19 @@ async fn den_get_acp_session(
     serde_json::from_str(&body).with_context(|| "parse Den get session JSON")
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ReloadHistoryMessage {
+    id: Option<String>,
+    role: String,
+    text: String,
+}
+
 async fn fetch_conversation_history_chronological(
     http: &reqwest::Client,
     config: &Config,
     conversation_id: &str,
-) -> Result<Vec<(String, String)>> {
-    let mut chunks: Vec<Vec<(String, String)>> = Vec::new();
+) -> Result<Vec<ReloadHistoryMessage>> {
+    let mut chunks: Vec<Vec<ReloadHistoryMessage>> = Vec::new();
     let mut before: Option<String> = None;
     loop {
         let mut url = format!(
@@ -2741,7 +2748,11 @@ async fn fetch_conversation_history_chronological(
             if text.trim().is_empty() {
                 continue;
             }
-            page.push((role.to_string(), text.to_string()));
+            page.push(ReloadHistoryMessage {
+                id: m.get("id").and_then(Value::as_str).map(str::to_string),
+                role: role.to_string(),
+                text: text.to_string(),
+            });
         }
         chunks.push(page);
         let has_more = body
@@ -2778,10 +2789,19 @@ async fn replay_history_for_den_session(
             messages.len(),
             conv
         );
-        for (role, text) in messages {
-            match role.as_str() {
-                "user" => send_user_message_chunk(session_id, &text).await?,
-                "assistant" => send_agent_message_chunk(session_id, &text).await?,
+        eprintln!(
+            "bears-acp-adapter: {} session_id={} history_ids={:?}",
+            lifecycle_method,
+            session_id,
+            messages
+                .iter()
+                .map(|m| m.id.as_deref().unwrap_or("<none>").to_string())
+                .collect::<Vec<_>>()
+        );
+        for message in messages {
+            match message.role.as_str() {
+                "user" => send_user_message_chunk(session_id, &message.text).await?,
+                "assistant" => send_agent_message_chunk(session_id, &message.text).await?,
                 _ => {}
             }
         }
@@ -6156,6 +6176,36 @@ mod tests {
             .filter_map(|option| option.get("value").and_then(Value::as_str))
             .collect::<Vec<_>>();
         assert_eq!(option_values, vec![MODE_ASK, MODE_PLAN, MODE_WRITE]);
+    }
+
+    #[test]
+    fn fetch_history_chronological_shape_supports_ids_for_reload_debugging() {
+        let body = json!({
+            "messages": [
+                {
+                    "id": "msg-1",
+                    "role": "user",
+                    "text": "hello"
+                },
+                {
+                    "id": "msg-2",
+                    "role": "assistant",
+                    "text": "world"
+                }
+            ],
+            "has_more": false
+        });
+        let messages = body["messages"].as_array().unwrap();
+        let page = messages
+            .iter()
+            .map(|m| ReloadHistoryMessage {
+                id: m.get("id").and_then(Value::as_str).map(str::to_string),
+                role: m.get("role").and_then(Value::as_str).unwrap_or("").to_string(),
+                text: m.get("text").and_then(Value::as_str).unwrap_or("").to_string(),
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(page[0].id.as_deref(), Some("msg-1"));
+        assert_eq!(page[1].id.as_deref(), Some("msg-2"));
     }
 
     #[test]
