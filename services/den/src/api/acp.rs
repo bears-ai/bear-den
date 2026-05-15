@@ -3176,6 +3176,17 @@ async fn prompt_inner(
         &resolved_policy,
         current_activity_plan.as_ref(),
     );
+    tracing::info!(
+        %request_id,
+        acp_session_id = %session_id,
+        prompt_message_len = prompt.len(),
+        plan_mode_context_len = plan_mode_context.len(),
+        activity_context_len = activity_context.len(),
+        tool_prompt_context_len = tool_prompt_context.len(),
+        prompt_has_trusted_mode_suffix = prompt.contains("Trusted ACP session mode this turn:"),
+        prompt_has_system_reminder = prompt.contains("<system-reminder>"),
+        "ACP prompt context assembly lengths"
+    );
     let plans = current_activity_plan
         .clone()
         .into_iter()
@@ -3204,6 +3215,16 @@ async fn prompt_inner(
     }
     let prompt_with_tool_context =
         format!("{prompt}{plan_mode_context}{activity_context}{tool_prompt_context}");
+    tracing::info!(
+        %request_id,
+        acp_session_id = %session_id,
+        prompt_with_tool_context_len = prompt_with_tool_context.len(),
+        prompt_with_tool_context_has_trusted_mode_suffix =
+            prompt_with_tool_context.contains("Trusted ACP session mode this turn:"),
+        prompt_with_tool_context_has_system_reminder =
+            prompt_with_tool_context.contains("<system-reminder>"),
+        "ACP final upstream prompt assembly"
+    );
     let workspace_roots = body
         .client_context
         .get("workspace_roots")

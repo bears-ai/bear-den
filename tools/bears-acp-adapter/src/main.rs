@@ -3119,6 +3119,16 @@ async fn handle_prompt_with_retry(
         .ok_or_else(|| anyhow!("session/prompt params missing sessionId"))?;
     let prompt = prompt_text_from_params(&params)?;
     let display_prompt = prompt_display_text_from_params(&params).unwrap_or_else(|| prompt.clone());
+    eprintln!(
+        "bears-acp-adapter: session/prompt session_id={} prompt_len={} display_prompt_len={} prompt_has_trusted_mode_suffix={} display_has_trusted_mode_suffix={} prompt_has_system_reminder={} display_has_system_reminder={}",
+        session_id,
+        prompt.len(),
+        display_prompt.len(),
+        prompt.contains("Trusted ACP session mode this turn:"),
+        display_prompt.contains("Trusted ACP session mode this turn:"),
+        prompt.contains("<system-reminder>"),
+        display_prompt.contains("<system-reminder>"),
+    );
     if let Some(command) = parse_local_slash_command(&prompt) {
         send_user_message_chunk(session_id, &display_prompt).await?;
         let report = handle_local_slash_command(
