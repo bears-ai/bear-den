@@ -17,6 +17,7 @@ use validator::{Validate, ValidationError, ValidationErrors};
 
 use crate::{
     auth_backend::{AuthSession, SessionUser},
+    config::Config,
     core::{
         acp_sessions, acp_tokens,
         acp_tools::{acp_tool_policy_json_for_provider, AcpToolName},
@@ -589,6 +590,71 @@ struct BearRoleViewRow {
     memfs_view_diagnostic: Option<String>,
 }
 
+#[derive(Debug, Serialize)]
+struct BearWebSourceRow {
+    id: Uuid,
+    scope_kind: String,
+    scope_value: String,
+    label: Option<String>,
+    policy: String,
+    priority: i32,
+    created_at: String,
+}
+
+#[derive(Debug, Serialize)]
+struct BearWebApprovalRow {
+    id: Uuid,
+    scope_kind: String,
+    scope_value: String,
+    source: String,
+    approved_by_user_label: Option<String>,
+    created_at: String,
+    expires_at: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct BearWebFetchRow {
+    url: String,
+    final_url: Option<String>,
+    host: String,
+    execution_location: String,
+    approval_kind: String,
+    http_status: Option<i32>,
+    content_type: Option<String>,
+    bytes: Option<i64>,
+    fetched_at: String,
+}
+
+#[derive(Debug, Serialize)]
+struct BearPlanModeRow {
+    id: Uuid,
+    user_id: i32,
+    username: Option<String>,
+    acp_session_id: String,
+    state: String,
+    reason: String,
+    plan_artifact_path: Option<String>,
+    plan_title: Option<String>,
+    created_at: String,
+    updated_at: String,
+}
+
+#[derive(Debug, Serialize)]
+struct BearWorkSurfaceRow {
+    slug: String,
+    display_name: String,
+    summary: Option<String>,
+    glossary_present: bool,
+    pair_current_understanding_present: bool,
+    work_current_understanding_present: bool,
+    role_local_presence_count: usize,
+    active_workplace_count: usize,
+    known_in_workplace_count: usize,
+    workplace_labels: Vec<String>,
+    canonical_path_count: usize,
+    anchor_status: String,
+}
+
 impl BearRoleViewRow {
     fn from_agent(agent: BearAgent, role: BearAgentRole) -> Self {
         Self {
@@ -602,6 +668,400 @@ impl BearRoleViewRow {
             memfs_view_diagnostic: None,
         }
     }
+}
+
+fn memfs_http_client(context: &str) -> Result<reqwest::Client, CustomError> {
+    reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(15))
+        .build()
+        .map_err(|e| CustomError::System(format!("{context}: {e}")))
+}
+
+fn parse_work_surface_display_name(index_content: &str, slug: &str) -> String {
+    for line in index_content.lines() {
+        let trimmed = line.trim();
+        if let Some(rest) = trimmed.strip_prefix("# ") {
+            let title = rest.trim();
+            if !title.is_empty() {
+                return title.to_string();
+            }
+        }
+    }
+    slug.to_string()
+}
+
+fn first_nonempty_markdown_paragraph(content: &str) -> Option<String> {
+    let mut lines = Vec::new();
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            if !lines.is_empty() {
+                break;
+            }
+            continue;
+        }
+        if trimmed.starts_with('#') || trimmed.starts_with("- ") {
+            if !lines.is_empty() {
+                break;
+            }
+            continue;
+        }
+        lines.push(trimmed);
+    }
+    if lines.is_empty() {
+        None
+    } else {
+        Some(lines.join(" "))
+    }
+}
+
+async fn bear_work_surface_rows(
+    config: &Config,
+    bear_id: Uuid,
+) -> Result<Vec<BearWorkSurfaceRow>, CustomError> {
+    let http = memfs_http_client("MemFS work-surface detail client build failed")?;
+    let mut rows = Vec::new();
+    let core_tree = fetch_memfs_role_memory_tree(
+        &http,
+        &config.letta_memfs_service_url,
+        bear_id,
+        BearAgentRole::Pair.as_str(),
+    )
+    .await?;
+    let Some(core_tree) = core_tree else {
+        return Ok(rows);
+    };
+    let root = core_tree.files.as_array().cloned().unwrap_or_default();
+    let work_surfaces_dir = root.iter().find(|node| {
+        node.get("path") == Some(&serde_json::Value::String("core/work_surfaces".to_string()))
+    });
+    let Some(work_surfaces_dir) = work_surfaces_dir else {
+        return Ok(rows);
+    };
+    let children = work_surfaces_dir
+        .get("children")
+        .and_then(|value| value.as_array())
+        .cloned()
+        .unwrap_or_default();
+    for child in children {
+        let slug = match child.get("name").and_then(|v| v.as_str()) {
+            Some("index.md") | None => continue,
+            Some(value) if !value.trim().is_empty() => value.trim().to_string(),
+            _ => continue,
+        };
+        let slug_path_prefix = format!("core/work_surfaces/{slug}/");
+        let child_nodes = child
+            .get("children")
+            .and_then(|value| value.as_array())
+            .cloned()
+            .unwrap_or_default();
+        let child_paths = child_nodes
+            .iter()
+            .filter_map(|node| node.get("path").and_then(|v| v.as_str()).map(ToString::to_string))
+            .collect::<Vec<_>>();
+        let canonical_path_count = child_paths.len();
+        let index_path = format!("{slug_path_prefix}index.md");
+        let overview_path = format!("{slug_path_prefix}overview.md");
+        let glossary_path = format!("{slug_path_prefix}glossary.md");
+        let index_file = fetch_memfs_role_memory_file(
+            &http,
+            &config.letta_memfs_service_url,
+            bear_id,
+            BearAgentRole::Pair.as_str(),
+            &index_path,
+        )
+        .await?;
+        let overview_file = fetch_memfs_role_memory_file(
+            &http,
+            &config.letta_memfs_service_url,
+            bear_id,
+            BearAgentRole::Pair.as_str(),
+            &overview_path,
+        )
+        .await?;
+        let display_name = index_file
+            .as_ref()
+            .map(|file| parse_work_surface_display_name(&file.content, &slug))
+            .unwrap_or_else(|| slug.clone());
+        let summary = overview_file
+            .as_ref()
+            .and_then(|file| first_nonempty_markdown_paragraph(&file.content));
+        let glossary_present = child_paths.iter().any(|path| path == &glossary_path);
+        let pair_current_understanding_present = fetch_memfs_role_memory_file(
+            &http,
+            &config.letta_memfs_service_url,
+            bear_id,
+            BearAgentRole::Pair.as_str(),
+            &format!("pair/work_surfaces/{slug}/current-understanding.md"),
+        )
+        .await?
+        .is_some();
+        let work_current_understanding_present = fetch_memfs_role_memory_file(
+            &http,
+            &config.letta_memfs_service_url,
+            bear_id,
+            BearAgentRole::Work.as_str(),
+            &format!("work/work_surfaces/{slug}/current-understanding.md"),
+        )
+        .await?
+        .is_some();
+        let workplace_labels = [
+            (BearAgentRole::Pair, pair_current_understanding_present),
+            (BearAgentRole::Work, work_current_understanding_present),
+        ]
+        .into_iter()
+        .filter_map(|(role, present)| present.then(|| role.as_str().to_string()))
+        .collect::<Vec<_>>();
+        let role_local_presence_count = workplace_labels.len();
+        let active_workplace_count = workplace_labels.len();
+        let known_in_workplace_count = canonical_path_count + role_local_presence_count;
+        let anchor_status = if canonical_path_count == 0 {
+            "missing_canonical".to_string()
+        } else if role_local_presence_count == 0 {
+            "canonical_only".to_string()
+        } else {
+            "active".to_string()
+        };
+        rows.push(BearWorkSurfaceRow {
+            slug,
+            display_name,
+            summary,
+            glossary_present,
+            pair_current_understanding_present,
+            work_current_understanding_present,
+            role_local_presence_count,
+            active_workplace_count,
+            known_in_workplace_count,
+            workplace_labels,
+            canonical_path_count,
+            anchor_status,
+        });
+    }
+    rows.sort_by(|a, b| a.display_name.cmp(&b.display_name));
+    Ok(rows)
+}
+
+async fn bear_web_sources(
+    pool: &sqlx::PgPool,
+    bear_id: Uuid,
+) -> Result<Vec<BearWebSourceRow>, CustomError> {
+    let rows = sqlx::query_as::<
+        _,
+        (
+            Uuid,
+            String,
+            String,
+            Option<String>,
+            String,
+            i32,
+            time::OffsetDateTime,
+        ),
+    >(
+        r#"
+        SELECT id, scope_kind, scope_value, label, policy, priority, created_at
+        FROM bear_web_sources
+        WHERE bear_id = $1
+        ORDER BY policy ASC, priority DESC, scope_kind ASC, scope_value ASC
+        "#,
+    )
+    .bind(bear_id)
+    .fetch_all(pool)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .map(
+            |(id, scope_kind, scope_value, label, policy, priority, created_at)| BearWebSourceRow {
+                id,
+                scope_kind,
+                scope_value,
+                label,
+                policy,
+                priority,
+                created_at: created_at.to_string(),
+            },
+        )
+        .collect())
+}
+
+async fn bear_web_approvals(
+    pool: &sqlx::PgPool,
+    bear_id: Uuid,
+) -> Result<Vec<BearWebApprovalRow>, CustomError> {
+    let rows = sqlx::query_as::<
+        _,
+        (
+            Uuid,
+            String,
+            String,
+            String,
+            Option<String>,
+            Option<String>,
+            time::OffsetDateTime,
+            Option<time::OffsetDateTime>,
+        ),
+    >(
+        r#"
+        SELECT a.id,
+               a.scope_kind,
+               a.scope_value,
+               a.source,
+               u.username,
+               NULLIF(u.display_name, '') AS display_name,
+               a.created_at,
+               a.expires_at
+        FROM bear_web_approvals a
+        LEFT JOIN users u ON u.id = a.approved_by_user_id
+        WHERE a.bear_id = $1 AND a.revoked_at IS NULL
+        ORDER BY a.created_at DESC
+        "#,
+    )
+    .bind(bear_id)
+    .fetch_all(pool)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .map(
+            |(
+                id,
+                scope_kind,
+                scope_value,
+                source,
+                username,
+                display_name,
+                created_at,
+                expires_at,
+            )| BearWebApprovalRow {
+                id,
+                scope_kind,
+                scope_value,
+                source,
+                approved_by_user_label: match (display_name, username) {
+                    (Some(display_name), Some(username)) => {
+                        Some(format!("{display_name} (@{username})"))
+                    }
+                    (Some(display_name), None) => Some(display_name),
+                    (None, Some(username)) => Some(format!("@{username}")),
+                    (None, None) => None,
+                },
+                created_at: created_at.to_string(),
+                expires_at: expires_at.map(|t| t.to_string()),
+            },
+        )
+        .collect())
+}
+
+async fn bear_web_fetches(
+    pool: &sqlx::PgPool,
+    bear_id: Uuid,
+) -> Result<Vec<BearWebFetchRow>, CustomError> {
+    let rows = sqlx::query_as::<_, (String, Option<String>, String, String, String, Option<i32>, Option<String>, Option<i64>, time::OffsetDateTime)>(
+        r#"
+        SELECT url, final_url, host, execution_location, approval_kind, http_status, content_type, bytes, fetched_at
+        FROM bear_web_fetches
+        WHERE bear_id = $1
+        ORDER BY fetched_at DESC
+        LIMIT 25
+        "#,
+    )
+    .bind(bear_id)
+    .fetch_all(pool)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .map(
+            |(
+                url,
+                final_url,
+                host,
+                execution_location,
+                approval_kind,
+                http_status,
+                content_type,
+                bytes,
+                fetched_at,
+            )| BearWebFetchRow {
+                url,
+                final_url,
+                host,
+                execution_location,
+                approval_kind,
+                http_status,
+                content_type,
+                bytes,
+                fetched_at: fetched_at.to_string(),
+            },
+        )
+        .collect())
+}
+
+async fn bear_plan_mode_rows(
+    pool: &sqlx::PgPool,
+    bear_id: Uuid,
+) -> Result<Vec<BearPlanModeRow>, CustomError> {
+    let rows = sqlx::query_as::<
+        _,
+        (
+            Uuid,
+            i32,
+            Option<String>,
+            String,
+            String,
+            String,
+            Option<String>,
+            Option<String>,
+            time::OffsetDateTime,
+            time::OffsetDateTime,
+        ),
+    >(
+        r#"
+        SELECT s.id,
+               s.user_id,
+               u.username,
+               s.acp_session_id,
+               s.state,
+               s.reason,
+               s.plan_artifact_path,
+               s.plan_title,
+               s.created_at,
+               s.updated_at
+        FROM acp_plan_mode_sessions s
+        LEFT JOIN users u ON u.id = s.user_id
+        WHERE s.bear_id = $1
+        ORDER BY s.updated_at DESC
+        LIMIT 10
+        "#,
+    )
+    .bind(bear_id)
+    .fetch_all(pool)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .map(
+            |(
+                id,
+                user_id,
+                username,
+                acp_session_id,
+                state,
+                reason,
+                plan_artifact_path,
+                plan_title,
+                created_at,
+                updated_at,
+            )| BearPlanModeRow {
+                id,
+                user_id,
+                username,
+                acp_session_id,
+                state,
+                reason,
+                plan_artifact_path,
+                plan_title,
+                created_at: created_at.to_string(),
+                updated_at: updated_at.to_string(),
+            },
+        )
+        .collect())
 }
 
 async fn build_role_detail_view(
@@ -1196,6 +1656,11 @@ async fn render_bear_details_page(
         _ => None,
     };
     let acp_tool_details = acp_tool_detail_rows();
+    let work_surface_rows = bear_work_surface_rows(&state.config, bear.id).await?;
+    let web_sources = bear_web_sources(state.sqlx_pool(), bear.id).await?;
+    let web_approvals = bear_web_approvals(state.sqlx_pool(), bear.id).await?;
+    let web_fetches = bear_web_fetches(state.sqlx_pool(), bear.id).await?;
+    let plan_mode_rows = bear_plan_mode_rows(state.sqlx_pool(), bear.id).await?;
 
     let memfs_url = state.config.letta_memfs_service_url.as_str();
     let (
@@ -1275,6 +1740,11 @@ async fn render_bear_details_page(
             mem_private_no_repo,
             mem_health,
             mem_health_error,
+            work_surface_rows,
+            web_sources,
+            web_approvals,
+            web_fetches,
+            plan_mode_rows,
         },
     )
     .await

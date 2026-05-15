@@ -34,7 +34,7 @@ Axum routes for the web server (`RUN_WEB=true`). Update this file when you add o
 ## Member bear management (`src/web/bear_management.rs`)
 
 - `GET|POST /bears/new` — create a bear; creator is granted `user_bear.role = admin` and Letta is provisioned like operator create (`src/web/bear_create_support.rs` shared form context)
-- `GET /bear/{slug}/details` — bear home: boxed overview (name, slug, description), usage (members + active conversations, all **Web** for now), system prompt (Den copy + optional resync), configuration (model, agent type, tools), memory summary, **private memory (git)** (latest commit from MemFS Manager when `LETTA_MEMFS_SERVICE_URL` is set on Den); optional query `letta_resync=ok|error` after resync attempts
+- `GET /bear/{slug}/details` — canonical bear details and bear-scoped administration surface for members; includes overview, conversations, role summaries, work surfaces, memory summary, advanced Letta/MemFS diagnostics, and bear-admin-gated management sections such as configuration, access, web policy/audit visibility, and resync actions; optional query `letta_resync=ok|error` after resync attempts
 - `POST /bear/{slug}/details/resync-letta` — push Den registry to Letta (`PATCH` agent + recompile); bear admins only; redirects back to details
 - `GET /bear/{slug}/details/edit` — redirect to `/bear/{slug}/details/edit/overview`
 - `GET|POST /bear/{slug}/details/edit/overview` — edit slug, name, description; delete bear form (POST still targets `/bear/{slug}/details/delete`)
@@ -69,7 +69,7 @@ Axum routes for the web server (`RUN_WEB=true`). Update this file when you add o
 - `GET /admin/bears/unlinked-letta-agents` — Letta agents with no Den role registry reference (`bear_agents.letta_agent_id`); link to new-bear-from-agent flow
 - `GET /admin/bears/new?from_letta_agent={id}` — new bear form prefilled from Letta `GET /v1/agents/{id}` (hidden `attach_letta_agent_id` skips provisioning)
 - `POST /admin/bears/register-memfs-views` — register/refresh MemFS sidecar per-agent repo views for existing `bear_agents` rows with Letta ids; redirects to the bear list with counts
-- `GET /admin/bears/{id}` — read-only bear detail (Den fields, membership count, associated role agents with per-agent Letta health checks when configured)
+- `GET /admin/bears/{id}` — operator bear registry detail; no longer the primary bear administration surface, which lives at member-facing `/bear/{slug}/details`
 - `POST /admin/bears/{id}/provision-missing-roles` — create Letta agents only for roles under this Bear that have no recorded role agent id; renders detail with a status line
 - `GET|POST /admin/bears/{id}/edit` — edit bear row (slug, prompt, model, role-agent provisioning defaults, tools JSON)
 - `POST /admin/bears/{id}/retry-letta` — create role agents when no role agent ids are recorded (responds with detail HTML including a status line)

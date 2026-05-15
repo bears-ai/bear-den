@@ -214,6 +214,93 @@ block subnav %}
         ></div>
     </section>
 
+    <section id="work-surfaces" class="box full-width">
+        <h3>Work surfaces</h3>
+        <p class="form-hint">
+            A <strong>workplace</strong> is where a Bear operates by role. A
+            <strong>work surface</strong> is the repo, service, project, or
+            artifact the Bear is currently acting on.
+        </p>
+        <p class="form-hint">
+            Canonical anchors come from
+            <code>core/work_surfaces/&lt;slug&gt;/</code>. Role-local current
+            understanding currently appears from <code>pair</code> and
+            <code>work</code> when present.
+        </p>
+        {% if work_surface_rows %}
+        <table>
+            <thead>
+                <tr>
+                    <th>Work surface</th>
+                    <th>Summary</th>
+                    <th>Anchor status</th>
+                    <th>Known in workplaces</th>
+                    <th>Current understanding</th>
+                    <th>Canonical anchors</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for surface in work_surface_rows %}
+                <tr>
+                    <td>
+                        <strong>{{ surface.display_name | e }}</strong><br />
+                        <code>{{ surface.slug | e }}</code>
+                    </td>
+                    <td>
+                        {% if surface.summary %}{{ surface.summary | e }}{% else
+                        %}<em>no overview summary</em>{% endif %}
+                    </td>
+                    <td>
+                        <code>{{ surface.anchor_status | e }}</code><br />
+                        <span class="form-hint"
+                            >{{ surface.known_in_workplace_count }} known path(s),
+                            {{ surface.active_workplace_count }} active
+                            workplace(s)</span
+                        >
+                    </td>
+                    <td>
+                        {% if surface.workplace_labels %} {% for workplace in
+                        surface.workplace_labels %}
+                        <code>{{ workplace | e }}</code>{% if not loop.last %} {% endif %}
+                        {% endfor %} {% else %}<em>canonical only</em>{% endif %}
+                    </td>
+                    <td>
+                        <div>
+                            pair: {% if
+                            surface.pair_current_understanding_present %}<strong
+                                >yes</strong
+                            >{% else %}<em>no</em>{% endif %}
+                        </div>
+                        <div>
+                            work: {% if
+                            surface.work_current_understanding_present %}<strong
+                                >yes</strong
+                            >{% else %}<em>no</em>{% endif %}
+                        </div>
+                    </td>
+                    <td>
+                        <div>{{ surface.canonical_path_count }} file(s)</div>
+                        <div>
+                            glossary: {% if surface.glossary_present %}<strong
+                                >yes</strong
+                            >{% else %}<em>no</em>{% endif %}
+                        </div>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        <p class="form-hint">
+            For deeper inspection, see
+            <a href="/bear/{{ bear.slug | e }}/details/memory"
+                >Memory details</a
+            >.
+        </p>
+        {% else %}
+        <p><em>No work surfaces discovered yet.</em></p>
+        {% endif %}
+    </section>
+
     <section id="shared-memory" class="box full-width">
         <h3>Shared memory</h3>
         <p class="form-hint">
@@ -420,6 +507,198 @@ block subnav %}
                 </tbody>
             </table>
         </details>
+        {% if can_manage_bear %}
+        <details>
+            <summary>Web sources and approvals</summary>
+            <p class="form-hint">
+                Preferred sources are pre-approved and prioritized in web search
+                results. Approvals are explicit grants for specific hosts or
+                URLs.
+            </p>
+            {% if web_sources %}
+            <h4>Configured web sources</h4>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Policy</th>
+                        <th>Scope</th>
+                        <th>Value</th>
+                        <th>Label</th>
+                        <th>Priority</th>
+                        <th>Created</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for source in web_sources %}
+                    <tr>
+                        <td><code>{{ source.policy | e }}</code></td>
+                        <td><code>{{ source.scope_kind | e }}</code></td>
+                        <td><code>{{ source.scope_value | e }}</code></td>
+                        <td>
+                            {% if source.label %}{{ source.label | e }}{% else
+                            %}<em>none</em>{% endif %}
+                        </td>
+                        <td>{{ source.priority }}</td>
+                        <td>{{ source.created_at | e }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+            {% else %}
+            <p><em>No web sources configured.</em></p>
+            {% endif %} {% if web_approvals %}
+            <h4>Active web approvals</h4>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Scope</th>
+                        <th>Value</th>
+                        <th>Source</th>
+                        <th>User</th>
+                        <th>Created</th>
+                        <th>Expires</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for approval in web_approvals %}
+                    <tr>
+                        <td><code>{{ approval.scope_kind | e }}</code></td>
+                        <td><code>{{ approval.scope_value | e }}</code></td>
+                        <td><code>{{ approval.source | e }}</code></td>
+                        <td>
+                            {% if approval.approved_by_user_label %}{{
+                            approval.approved_by_user_label | e }}{% else %}<em
+                                >admin/system</em
+                            >{% endif %}
+                        </td>
+                        <td>{{ approval.created_at | e }}</td>
+                        <td>
+                            {% if approval.expires_at %}{{ approval.expires_at |
+                            e }}{% else %}<em>never</em>{% endif %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+            {% else %}
+            <p><em>No active web approvals.</em></p>
+            {% endif %}
+        </details>
+        <details>
+            <summary>Recent web fetch audit</summary>
+            {% if web_fetches %}
+            <table>
+                <thead>
+                    <tr>
+                        <th>Fetched</th>
+                        <th>Host</th>
+                        <th>URL</th>
+                        <th>Location</th>
+                        <th>Approval</th>
+                        <th>Status</th>
+                        <th>Content</th>
+                        <th>Bytes</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for fetch in web_fetches %}
+                    <tr>
+                        <td>{{ fetch.fetched_at | e }}</td>
+                        <td><code>{{ fetch.host | e }}</code></td>
+                        <td>
+                            <a
+                                href="{{ (fetch.final_url if fetch.final_url else fetch.url) | e }}"
+                                rel="noreferrer"
+                                >{{ fetch.url | e }}</a
+                            >{% if fetch.final_url and fetch.final_url != fetch.url
+                            %}<br /><span class="form-hint"
+                                >Final: {{ fetch.final_url | e }}</span
+                            >{% endif %}
+                        </td>
+                        <td><code>{{ fetch.execution_location | e }}</code></td>
+                        <td><code>{{ fetch.approval_kind | e }}</code></td>
+                        <td>
+                            {% if fetch.http_status is not none %}{{
+                            fetch.http_status }}{% else %}<em>n/a</em>{% endif %}
+                        </td>
+                        <td>
+                            {% if fetch.content_type %}<code
+                                >{{ fetch.content_type | e }}</code
+                            >{% else %}<em>unknown</em>{% endif %}
+                        </td>
+                        <td>
+                            {% if fetch.bytes is not none %}{{ fetch.bytes }}{% else
+                            %}<em>unknown</em>{% endif %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+            {% else %}
+            <p><em>No web fetches recorded yet.</em></p>
+            {% endif %}
+        </details>
+        <details>
+            <summary>Planning gates</summary>
+            <p class="form-hint">
+                Recent ACP <code>pair</code> pre-implementation plan-mode gates.
+                Active or submitted gates block mutation until approved or
+                cancelled.
+            </p>
+            {% if plan_mode_rows %}
+            <table>
+                <thead>
+                    <tr>
+                        <th>State</th>
+                        <th>Session</th>
+                        <th>User</th>
+                        <th>Plan</th>
+                        <th>Reason</th>
+                        <th>Updated</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for plan in plan_mode_rows %}
+                    <tr>
+                        <td><code>{{ plan.state | e }}</code></td>
+                        <td>
+                            <code>{{ plan.acp_session_id | e }}</code><br /><span
+                                class="form-hint"
+                                >{{ plan.id }}</span
+                            >
+                        </td>
+                        <td>
+                            {% if plan.username %}{{ plan.username | e }}{% else
+                            %}<code>{{ plan.user_id }}</code>{% endif %}
+                        </td>
+                        <td>
+                            {% if plan.plan_title %}<strong
+                                >{{ plan.plan_title | e }}</strong
+                            >{% else %}<em>not submitted</em>{% endif %} {% if
+                            plan.plan_artifact_path %}<br /><code
+                                >{{ plan.plan_artifact_path | e }}</code
+                            >{% endif %}
+                        </td>
+                        <td>
+                            {% if plan.reason %}{{ plan.reason | e }}{% else %}<em
+                                >none</em
+                            >{% endif %}
+                        </td>
+                        <td>
+                            {{ plan.updated_at | e }}<br /><span
+                                class="form-hint"
+                                >created {{ plan.created_at | e }}</span
+                            >
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+            {% else %}
+            <p><em>No ACP plan-mode gates recorded yet.</em></p>
+            {% endif %}
+        </details>
+        {% endif %}
         <details>
             <summary>Prompt compatibility output</summary>
             <p class="form-hint">
