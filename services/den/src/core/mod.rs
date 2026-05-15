@@ -15,6 +15,8 @@ mod den_tools_workflow_state_tests;
 #[cfg(test)]
 mod den_tools_session_info_tests;
 #[cfg(test)]
+mod den_tools_session_role_semantics_tests;
+#[cfg(test)]
 mod den_tools_work_surface_orientation_tests;
 #[cfg(test)]
 mod den_tools_work_surface_scaffold_tests;

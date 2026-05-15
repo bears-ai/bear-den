@@ -2063,17 +2063,25 @@ pub(crate) fn infer_work_surface_hint(context: &DenToolInvocationContext, role: 
             "confidence": "medium"
         }));
     }
+    let active_work_surface_roles = matches!(role, BearAgentRole::Pair | BearAgentRole::Work);
     json!({
         "workplace": {
             "role": role.as_str(),
             "memory_surface": format!("{}/", role.as_str()),
         },
         "work_surface": {
+            "mode": if active_work_surface_roles { "active" } else { "reference_only" },
             "status": if candidates.is_empty() { "unresolved" } else { "candidate" },
             "note": if candidates.is_empty() {
-                "No trusted work-surface hint is available yet from this session. Use workspace roots, runtime target, user references, and memory anchors to resolve it."
+                if active_work_surface_roles {
+                    "No trusted work-surface hint is available yet from this session. Use workspace roots, runtime target, user references, and memory anchors to resolve what the agent may be acting on."
+                } else {
+                    "No trusted work-surface references are available yet from this session. Use Bear memory anchors and explicit user references to identify relevant work surfaces."
+                }
+            } else if active_work_surface_roles {
+                "Trusted session metadata provides work-surface reference candidates for what the agent may be acting on. Treat these as hints, not canonical identity, until confirmed by anchors or explicit user intent."
             } else {
-                "Trusted session metadata provides work-surface reference candidates. Treat these as hints, not canonical identity, until confirmed by anchors or explicit user intent."
+                "Trusted session metadata provides work-surface reference candidates that may help the agent answer about relevant Bear work surfaces. Treat these as hints, not canonical identity, until confirmed by anchors or explicit user intent."
             },
             "reference_candidates": candidates,
         }
@@ -2129,11 +2137,14 @@ pub(crate) fn work_surface_anchor_paths(role: BearAgentRole, slug: &str) -> (Vec
         format!("core/work_surfaces/{slug}/decisions.md"),
         format!("core/work_surfaces/{slug}/conventions.md"),
     ];
-    let role_local = vec![
-        format!("{}/work_surfaces/{slug}/current-understanding.md", role.as_str()),
-        format!("{}/work_surfaces/{slug}/recent-findings.md", role.as_str()),
-        format!("{}/work_surfaces/{slug}/open-questions.md", role.as_str()),
-    ];
+    let role_local = match role {
+        BearAgentRole::Pair | BearAgentRole::Work => vec![
+            format!("{}/work_surfaces/{slug}/current-understanding.md", role.as_str()),
+            format!("{}/work_surfaces/{slug}/recent-findings.md", role.as_str()),
+            format!("{}/work_surfaces/{slug}/open-questions.md", role.as_str()),
+        ],
+        _ => Vec::new(),
+    };
     (canonical, role_local)
 }
 
@@ -2187,6 +2198,7 @@ pub(crate) fn build_work_surface_orientation_payload(
         .filter(|path| !sorted_files.contains(path))
         .cloned()
         .collect::<Vec<_>>();
+    let active_work_surface_roles = matches!(role, BearAgentRole::Pair | BearAgentRole::Work);
     let status = if slug.is_none() {
         "unresolved"
     } else if existing_canonical.is_empty() && existing_role_local.is_empty() {
@@ -2200,24 +2212,37 @@ pub(crate) fn build_work_surface_orientation_payload(
     json!({
         "workplace": hint_payload["workplace"].clone(),
         "work_surface": {
+            "mode": if active_work_surface_roles { "active" } else { "reference_only" },
             "status": status,
             "slug": slug,
             "confidence": if status == "oriented" { "medium" } else if status == "candidate_without_anchors" { "low" } else { "unknown" },
             "basis": hint_payload["work_surface"]["reference_candidates"].clone(),
             "note": match status {
-                "oriented" => "Trusted hints and existing memory anchors provide a usable work-surface orientation.",
-                "candidate_without_anchors" => "Trusted hints suggest a work surface, but no canonical or role-local anchors were found yet.",
-                _ => "A current work surface could not be resolved from trusted hints alone.",
+                "oriented" if active_work_surface_roles => "Trusted hints and existing memory anchors provide a usable work-surface orientation for what the agent may be acting on.",
+                "oriented" => "Trusted hints and existing canonical memory anchors provide a usable orientation for answering about this Bear work surface.",
+                "candidate_without_anchors" if active_work_surface_roles => "Trusted hints suggest a work surface the agent may be acting on, but no canonical or role-local anchors were found yet.",
+                "candidate_without_anchors" => "Trusted hints suggest a relevant Bear work surface, but no canonical anchors were found yet.",
+                _ if active_work_surface_roles => "A current work surface the agent may be acting on could not be resolved from trusted hints alone.",
+                _ => "A relevant Bear work surface could not be resolved from trusted hints alone.",
             }
         },
         "canonical_paths": existing_canonical,
         "role_local_paths": existing_role_local,
         "recommended_read_order": recommended_read_order,
         "missing_expected_paths": missing_expected_paths,
-        "notes": [
-            "Use canonical work-surface anchors before broader Bear memory search when available.",
-            "Treat the resolved slug as a working orientation hint unless explicit user intent or stronger anchors disagree."
-        ]
+        "notes": if active_work_surface_roles {
+            json!([
+                "Use canonical work-surface anchors before broader Bear memory search when available.",
+                "Use role-local work-surface memory as supporting working memory for what the agent is acting on.",
+                "Treat the resolved slug as a working orientation hint unless explicit user intent or stronger anchors disagree."
+            ])
+        } else {
+            json!([
+                "Use canonical work-surface anchors before broader Bear memory search when available.",
+                "This role is orienting about Bear work surfaces rather than claiming role-local ownership of one.",
+                "Treat the resolved slug as a working orientation hint unless explicit user intent or stronger anchors disagree."
+            ])
+        }
     })
 }
 
@@ -2855,12 +2880,17 @@ pub(crate) fn normalize_work_surface_slug(value: &str) -> Result<String, CustomE
     Ok(collapsed)
 }
 
-fn work_surface_scaffold_paths(slug: &str) -> (String, String, String, String, String) {
+fn work_surface_scaffold_paths(role: BearAgentRole, slug: &str) -> (String, String, String, Option<String>, String) {
     (
         format!("core/work_surfaces/{slug}/index.md"),
         format!("core/work_surfaces/{slug}/overview.md"),
         format!("core/work_surfaces/{slug}/glossary.md"),
-        format!("pair/work_surfaces/{slug}/current-understanding.md"),
+        match role {
+            BearAgentRole::Pair | BearAgentRole::Work => {
+                Some(format!("{}/work_surfaces/{slug}/current-understanding.md", role.as_str()))
+            }
+            _ => None,
+        },
         "core/work_surfaces/index.md".to_string(),
     )
 }
@@ -2874,6 +2904,7 @@ pub(crate) fn work_surface_entry_body(slug: &str, name: &str) -> String {
 }
 
 pub(crate) fn work_surface_scaffold_requests(
+    role: BearAgentRole,
     slug: &str,
     name: &str,
     overview: &str,
@@ -2881,11 +2912,13 @@ pub(crate) fn work_surface_scaffold_requests(
     current_understanding: Option<&str>,
 ) -> Vec<MemfsCoreUpdateRequest> {
     let (index_path, overview_path, glossary_path, current_understanding_path, registry_path) =
-        work_surface_scaffold_paths(slug);
+        work_surface_scaffold_paths(role, slug);
     let glossary_body = glossary.unwrap_or("Glossary terms for this work surface will be added here.");
-    let understanding_body = current_understanding
-        .unwrap_or("Current pair understanding for this work surface will be maintained here.");
-    vec![
+    let understanding_body = current_understanding.unwrap_or(match role {
+        BearAgentRole::Work => "Current work understanding for this work surface will be maintained here.",
+        _ => "Current pair understanding for this work surface will be maintained here.",
+    });
+    let mut requests = vec![
         MemfsCoreUpdateRequest {
             target_path: registry_path,
             mode: "create_file".to_string(),
@@ -2938,7 +2971,9 @@ pub(crate) fn work_surface_scaffold_requests(
             proposal_id: None,
             source_paths: vec![],
         },
-        MemfsCoreUpdateRequest {
+    ];
+    if let Some(current_understanding_path) = current_understanding_path {
+        requests.push(MemfsCoreUpdateRequest {
             target_path: current_understanding_path,
             mode: "create_file".to_string(),
             title: Some(format!("{name} current understanding")),
@@ -2947,8 +2982,9 @@ pub(crate) fn work_surface_scaffold_requests(
             new_text: None,
             proposal_id: None,
             source_paths: vec![],
-        },
-    ]
+        });
+    }
+    requests
 }
 
 async fn create_work_surface_scaffold(
@@ -2980,6 +3016,7 @@ async fn create_work_surface_scaffold(
     let http = memfs_http_client("MemFS work-surface scaffold client build failed")?;
     let mut responses = Vec::new();
     for request in work_surface_scaffold_requests(
+        role,
         &work_surface_slug,
         &work_surface_name,
         &overview,
@@ -3040,7 +3077,7 @@ async fn create_work_surface_scaffold(
         }
     }
     let (index_path, overview_path, glossary_path, current_understanding_path, registry_path) =
-        work_surface_scaffold_paths(&work_surface_slug);
+        work_surface_scaffold_paths(role, &work_surface_slug);
     Ok(json!({
         "ok": true,
         "bear_id": context.bear_id,

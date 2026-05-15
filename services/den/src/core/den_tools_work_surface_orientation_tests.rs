@@ -9,12 +9,12 @@ use crate::core::{
     },
 };
 
-fn pair_context() -> DenToolInvocationContext {
+fn context_for(role: BearAgentRole) -> DenToolInvocationContext {
     DenToolInvocationContext {
         bear_id: uuid::Uuid::nil(),
         bear_slug: "test".to_string(),
         role_agent_id: "agent".to_string(),
-        agent_role: Some(BearAgentRole::Pair),
+        agent_role: Some(role),
         user_id: 1,
         username: Some("tester".to_string()),
         membership_role: None,
@@ -31,7 +31,7 @@ fn pair_context() -> DenToolInvocationContext {
 
 #[test]
 fn work_surface_candidate_slug_prefers_trusted_repo_like_hint() {
-    assert_eq!(work_surface_candidate_slug(&pair_context()).as_deref(), Some("builder-bear"));
+    assert_eq!(work_surface_candidate_slug(&context_for(BearAgentRole::Pair)).as_deref(), Some("builder-bear"));
 }
 
 #[test]
@@ -60,7 +60,7 @@ fn collect_memory_tree_paths_walks_nested_values() {
 
 #[test]
 fn build_work_surface_orientation_payload_reports_existing_anchors() {
-    let context = pair_context();
+    let context = context_for(BearAgentRole::Pair);
     let hint_payload = infer_work_surface_hint(&context, BearAgentRole::Pair);
     let files = vec![
         "core/work_surfaces/builder-bear/index.md".to_string(),
@@ -82,9 +82,39 @@ fn build_work_surface_orientation_payload_reports_existing_anchors() {
 
 #[test]
 fn build_work_surface_orientation_payload_reports_unresolved_without_slug() {
-    let context = pair_context();
+    let context = context_for(BearAgentRole::Pair);
     let hint_payload = infer_work_surface_hint(&context, BearAgentRole::Pair);
     let payload = build_work_surface_orientation_payload(BearAgentRole::Pair, &hint_payload, &[], None);
     assert_eq!(payload["work_surface"]["status"], json!("unresolved"));
     assert_eq!(payload["canonical_paths"], json!([]));
+}
+
+#[test]
+fn work_surface_anchor_paths_skip_role_local_paths_for_talk() {
+    let (canonical, role_local) = work_surface_anchor_paths(BearAgentRole::Talk, "builder-bear");
+    assert_eq!(canonical[0], "core/work_surfaces/builder-bear/index.md");
+    assert!(role_local.is_empty());
+}
+
+#[test]
+fn build_work_surface_orientation_payload_for_talk_is_reference_only() {
+    let context = context_for(BearAgentRole::Talk);
+    let hint_payload = infer_work_surface_hint(&context, BearAgentRole::Talk);
+    let files = vec![
+        "core/work_surfaces/builder-bear/index.md".to_string(),
+        "core/work_surfaces/builder-bear/overview.md".to_string(),
+        "talk/work_surfaces/builder-bear/current-understanding.md".to_string(),
+    ];
+    let payload = build_work_surface_orientation_payload(
+        BearAgentRole::Talk,
+        &hint_payload,
+        &files,
+        Some("builder-bear".to_string()),
+    );
+    assert_eq!(payload["work_surface"]["mode"], json!("reference_only"));
+    assert_eq!(payload["role_local_paths"], json!([]));
+    assert!(payload["notes"][1]
+        .as_str()
+        .unwrap()
+        .contains("rather than claiming role-local ownership"));
 }
