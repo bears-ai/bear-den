@@ -1,4 +1,7 @@
-use std::{net::{IpAddr, ToSocketAddrs}, time::{SystemTime, UNIX_EPOCH}};
+use std::{
+    net::{IpAddr, ToSocketAddrs},
+    time::{SystemTime, UNIX_EPOCH},
+};
 
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use reqwest::header::{AUTHORIZATION, CONTENT_TYPE};
@@ -135,7 +138,8 @@ pub const DEN_MEMORY_SEARCH_PROVIDER: &str = "memory_search";
 pub const DEN_MEMORY_ORIENT_WORK_SURFACE: &str = "den.memory.orient_work_surface";
 pub const DEN_MEMORY_ORIENT_WORK_SURFACE_PROVIDER: &str = "memory_orient_work_surface";
 pub const DEN_MEMORY_CREATE_WORK_SURFACE_SCAFFOLD: &str = "den.memory.create_work_surface_scaffold";
-pub const DEN_MEMORY_CREATE_WORK_SURFACE_SCAFFOLD_PROVIDER: &str = "memory_create_work_surface_scaffold";
+pub const DEN_MEMORY_CREATE_WORK_SURFACE_SCAFFOLD_PROVIDER: &str =
+    "memory_create_work_surface_scaffold";
 pub const DEN_MEMORY_REQUEST_REVIEW: &str = "den.memory.request_review";
 pub const DEN_MEMORY_REQUEST_REVIEW_PROVIDER: &str = "memory_request_review";
 pub const DEN_MEMORY_LIST_PROPOSALS: &str = "den.memory.list_proposals";
@@ -198,7 +202,9 @@ pub fn provider_safe_tool_name(name: &str) -> String {
         DEN_MEMORY_TREE => return DEN_MEMORY_TREE_PROVIDER.to_string(),
         DEN_MEMORY_READ => return DEN_MEMORY_READ_PROVIDER.to_string(),
         DEN_MEMORY_SEARCH => return DEN_MEMORY_SEARCH_PROVIDER.to_string(),
-        DEN_MEMORY_ORIENT_WORK_SURFACE => return DEN_MEMORY_ORIENT_WORK_SURFACE_PROVIDER.to_string(),
+        DEN_MEMORY_ORIENT_WORK_SURFACE => {
+            return DEN_MEMORY_ORIENT_WORK_SURFACE_PROVIDER.to_string()
+        }
         DEN_MEMORY_CREATE_WORK_SURFACE_SCAFFOLD => {
             return DEN_MEMORY_CREATE_WORK_SURFACE_SCAFFOLD_PROVIDER.to_string()
         }
@@ -2040,7 +2046,10 @@ async fn brave_web_search(
     }))
 }
 
-pub(crate) fn infer_work_surface_hint(context: &DenToolInvocationContext, role: BearAgentRole) -> Value {
+pub(crate) fn infer_work_surface_hint(
+    context: &DenToolInvocationContext,
+    role: BearAgentRole,
+) -> Value {
     let mut candidates = Vec::new();
     if let Some(runtime_target) = context.runtime_target.as_deref().and_then(clean_optional) {
         candidates.push(json!({
@@ -2049,14 +2058,22 @@ pub(crate) fn infer_work_surface_hint(context: &DenToolInvocationContext, role: 
             "confidence": "medium"
         }));
     }
-    if let Some(selection) = context.conversation_selection.as_deref().and_then(clean_optional) {
+    if let Some(selection) = context
+        .conversation_selection
+        .as_deref()
+        .and_then(clean_optional)
+    {
         candidates.push(json!({
             "kind": "conversation_selection",
             "value": selection,
             "confidence": "low"
         }));
     }
-    for root in context.workspace_roots.iter().filter(|root| !root.trim().is_empty()) {
+    for root in context
+        .workspace_roots
+        .iter()
+        .filter(|root| !root.trim().is_empty())
+    {
         candidates.push(json!({
             "kind": "workspace_root",
             "value": root,
@@ -2093,7 +2110,11 @@ pub(crate) fn work_surface_candidate_slug(context: &DenToolInvocationContext) ->
     if let Some(value) = context.runtime_target.as_deref().and_then(clean_optional) {
         raw_candidates.push(value);
     }
-    if let Some(value) = context.conversation_selection.as_deref().and_then(clean_optional) {
+    if let Some(value) = context
+        .conversation_selection
+        .as_deref()
+        .and_then(clean_optional)
+    {
         raw_candidates.push(value);
     }
     raw_candidates.extend(
@@ -2106,14 +2127,18 @@ pub(crate) fn work_surface_candidate_slug(context: &DenToolInvocationContext) ->
     for raw in raw_candidates {
         let lowered = raw.to_ascii_lowercase();
         for segment in raw.split(|c: char| !c.is_ascii_alphanumeric() && c != '-' && c != '_') {
-            let trimmed = segment.trim_matches(|c: char| !c.is_ascii_alphanumeric() && c != '-' && c != '_');
+            let trimmed =
+                segment.trim_matches(|c: char| !c.is_ascii_alphanumeric() && c != '-' && c != '_');
             if trimmed.is_empty() {
                 continue;
             }
             let candidate = normalize_work_surface_slug(trimmed).ok();
             if let Some(candidate) = candidate {
                 if candidate.len() >= 3
-                    && !matches!(candidate.as_str(), "workspace" | "pair" | "core" | "main" | "src" | "repo")
+                    && !matches!(
+                        candidate.as_str(),
+                        "workspace" | "pair" | "core" | "main" | "src" | "repo"
+                    )
                 {
                     return Some(candidate);
                 }
@@ -2128,7 +2153,10 @@ pub(crate) fn work_surface_candidate_slug(context: &DenToolInvocationContext) ->
     None
 }
 
-pub(crate) fn work_surface_anchor_paths(role: BearAgentRole, slug: &str) -> (Vec<String>, Vec<String>) {
+pub(crate) fn work_surface_anchor_paths(
+    role: BearAgentRole,
+    slug: &str,
+) -> (Vec<String>, Vec<String>) {
     let canonical = vec![
         format!("core/work_surfaces/{slug}/index.md"),
         format!("core/work_surfaces/{slug}/overview.md"),
@@ -2139,7 +2167,10 @@ pub(crate) fn work_surface_anchor_paths(role: BearAgentRole, slug: &str) -> (Vec
     ];
     let role_local = match role {
         BearAgentRole::Pair | BearAgentRole::Work => vec![
-            format!("{}/work_surfaces/{slug}/current-understanding.md", role.as_str()),
+            format!(
+                "{}/work_surfaces/{slug}/current-understanding.md",
+                role.as_str()
+            ),
             format!("{}/work_surfaces/{slug}/recent-findings.md", role.as_str()),
             format!("{}/work_surfaces/{slug}/open-questions.md", role.as_str()),
         ],
@@ -2834,7 +2865,8 @@ async fn memory_orient_work_surface(
     };
     let mut files = Vec::new();
     collect_memory_tree_paths(&tree.files, &mut files);
-    let orientation = build_work_surface_orientation_payload(role, &hint_payload, &files, candidate_slug);
+    let orientation =
+        build_work_surface_orientation_payload(role, &hint_payload, &files, candidate_slug);
     Ok(json!({
         "ok": tree.ok,
         "configured": true,
@@ -2854,13 +2886,7 @@ pub(crate) fn normalize_work_surface_slug(value: &str) -> Result<String, CustomE
     }
     let normalized: String = trimmed
         .chars()
-        .map(|ch| {
-            if ch.is_ascii_alphanumeric() {
-                ch
-            } else {
-                '-'
-            }
-        })
+        .map(|ch| if ch.is_ascii_alphanumeric() { ch } else { '-' })
         .collect();
     let collapsed = normalized
         .split('-')
@@ -2880,15 +2906,19 @@ pub(crate) fn normalize_work_surface_slug(value: &str) -> Result<String, CustomE
     Ok(collapsed)
 }
 
-fn work_surface_scaffold_paths(role: BearAgentRole, slug: &str) -> (String, String, String, Option<String>, String) {
+fn work_surface_scaffold_paths(
+    role: BearAgentRole,
+    slug: &str,
+) -> (String, String, String, Option<String>, String) {
     (
         format!("core/work_surfaces/{slug}/index.md"),
         format!("core/work_surfaces/{slug}/overview.md"),
         format!("core/work_surfaces/{slug}/glossary.md"),
         match role {
-            BearAgentRole::Pair | BearAgentRole::Work => {
-                Some(format!("{}/work_surfaces/{slug}/current-understanding.md", role.as_str()))
-            }
+            BearAgentRole::Pair | BearAgentRole::Work => Some(format!(
+                "{}/work_surfaces/{slug}/current-understanding.md",
+                role.as_str()
+            )),
             _ => None,
         },
         "core/work_surfaces/index.md".to_string(),
@@ -2913,9 +2943,12 @@ pub(crate) fn work_surface_scaffold_requests(
 ) -> Vec<MemfsCoreUpdateRequest> {
     let (index_path, overview_path, glossary_path, current_understanding_path, registry_path) =
         work_surface_scaffold_paths(role, slug);
-    let glossary_body = glossary.unwrap_or("Glossary terms for this work surface will be added here.");
+    let glossary_body =
+        glossary.unwrap_or("Glossary terms for this work surface will be added here.");
     let understanding_body = current_understanding.unwrap_or(match role {
-        BearAgentRole::Work => "Current work understanding for this work surface will be maintained here.",
+        BearAgentRole::Work => {
+            "Current work understanding for this work surface will be maintained here."
+        }
         _ => "Current pair understanding for this work surface will be maintained here.",
     });
     let mut requests = vec![
@@ -3001,7 +3034,8 @@ async fn create_work_surface_scaffold(
     }
     let args: MemoryCreateWorkSurfaceScaffoldArguments = serde_json::from_value(arguments)?;
     let work_surface_slug = normalize_work_surface_slug(&args.work_surface_slug)?;
-    let work_surface_name = validate_bounded_text("work_surface_name", &args.work_surface_name, 1, 200)?;
+    let work_surface_name =
+        validate_bounded_text("work_surface_name", &args.work_surface_name, 1, 200)?;
     let overview = validate_bounded_text("overview", &args.overview, 1, 20_000)?;
     let glossary = args
         .glossary
@@ -3023,7 +3057,8 @@ async fn create_work_surface_scaffold(
         glossary.as_deref(),
         current_understanding.as_deref(),
     ) {
-        if request.target_path == "core/work_surfaces/index.md" && request.mode == "append_section" {
+        if request.target_path == "core/work_surfaces/index.md" && request.mode == "append_section"
+        {
             let registry = fetch_memfs_role_memory_file(
                 &http,
                 &config.letta_memfs_service_url,
@@ -3033,7 +3068,11 @@ async fn create_work_surface_scaffold(
             )
             .await?;
             let existing = registry.map(|file| file.content).unwrap_or_default();
-            let updated = append_markdown_section(&existing, &format!("## {work_surface_name}"), &work_surface_entry_body(&work_surface_slug, &work_surface_name));
+            let updated = append_markdown_section(
+                &existing,
+                &format!("## {work_surface_name}"),
+                &work_surface_entry_body(&work_surface_slug, &work_surface_name),
+            );
             let existing_is_empty = existing.trim().is_empty();
             let replace_request = MemfsCoreUpdateRequest {
                 target_path: "core/work_surfaces/index.md".to_string(),
@@ -3048,8 +3087,16 @@ async fn create_work_surface_scaffold(
                 } else {
                     None
                 },
-                old_text: if existing_is_empty { None } else { Some(existing) },
-                new_text: if existing_is_empty { None } else { Some(updated) },
+                old_text: if existing_is_empty {
+                    None
+                } else {
+                    Some(existing)
+                },
+                new_text: if existing_is_empty {
+                    None
+                } else {
+                    Some(updated)
+                },
                 proposal_id: None,
                 source_paths: vec![],
             };
@@ -3623,7 +3670,8 @@ fn assess_unlabeled_memory_misuse(
     let title_lower = title.to_ascii_lowercase();
     let lines = body.lines().map(str::trim).collect::<Vec<_>>();
 
-    let explicit_plan_title = contains_any(&title_lower, &["implementation plan", "execution plan"]);
+    let explicit_plan_title =
+        contains_any(&title_lower, &["implementation plan", "execution plan"]);
     if looks_like_workplan_content(&haystack, &title_lower, &lines) {
         return if explicit_plan_title {
             Err(CustomError::ValidationError(
@@ -3665,7 +3713,12 @@ fn looks_like_workplan_content(haystack: &str, title: &str, lines: &[&str]) -> b
     }
     let suspicious_title = contains_any(
         title,
-        &["approval plan", "proposed plan", "next steps", "plan concepts"],
+        &[
+            "approval plan",
+            "proposed plan",
+            "next steps",
+            "plan concepts",
+        ],
     );
     let plan_terms = contains_any(
         haystack,
@@ -3721,7 +3774,8 @@ fn looks_like_workplan_content(haystack: &str, title: &str, lines: &[&str]) -> b
         ],
     );
 
-    suspicious_title || (!expository && plan_terms && (approval_or_execution_cues || structured_action_list))
+    suspicious_title
+        || (!expository && plan_terms && (approval_or_execution_cues || structured_action_list))
 }
 
 fn looks_like_activity_or_task_content(haystack: &str, title: &str, lines: &[&str]) -> bool {
@@ -3861,12 +3915,12 @@ fn confirm_suspicious_memory_write(
     let Some(token) = args.semantic_confirmation_token.as_deref() else {
         return Ok(false);
     };
-    let decoded = URL_SAFE_NO_PAD
-        .decode(token.trim())
-        .map_err(|_| CustomError::ValidationError(
+    let decoded = URL_SAFE_NO_PAD.decode(token.trim()).map_err(|_| {
+        CustomError::ValidationError(
             "semantic_confirmation_token is invalid; retry the warning flow to get a fresh token"
                 .to_string(),
-        ))?;
+        )
+    })?;
     let decoded = String::from_utf8(decoded).map_err(|_| {
         CustomError::ValidationError(
             "semantic_confirmation_token is invalid; retry the warning flow to get a fresh token"

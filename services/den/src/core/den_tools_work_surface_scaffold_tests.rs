@@ -6,7 +6,10 @@ use crate::core::bears::BearAgentRole;
 
 #[test]
 fn normalize_work_surface_slug_collapses_non_alphanumeric_runs() {
-    assert_eq!(normalize_work_surface_slug(" Core/API Surface ").unwrap(), "core-api-surface");
+    assert_eq!(
+        normalize_work_surface_slug(" Core/API Surface ").unwrap(),
+        "core-api-surface"
+    );
 }
 
 #[test]
@@ -41,8 +44,14 @@ fn work_surface_scaffold_requests_cover_registry_and_anchor_files() {
     assert_eq!(requests[1].target_path, "core/work_surfaces/index.md");
     assert_eq!(requests[1].mode, "append_section");
     assert_eq!(requests[2].target_path, "core/work_surfaces/meta/index.md");
-    assert_eq!(requests[3].target_path, "core/work_surfaces/meta/overview.md");
-    assert_eq!(requests[4].target_path, "core/work_surfaces/meta/glossary.md");
+    assert_eq!(
+        requests[3].target_path,
+        "core/work_surfaces/meta/overview.md"
+    );
+    assert_eq!(
+        requests[4].target_path,
+        "core/work_surfaces/meta/glossary.md"
+    );
     assert_eq!(
         requests[5].target_path,
         "pair/work_surfaces/meta/current-understanding.md"

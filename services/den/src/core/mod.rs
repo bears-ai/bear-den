@@ -11,8 +11,6 @@ pub mod bifrost;
 pub mod codepool;
 pub mod den_tools;
 #[cfg(test)]
-mod den_tools_workflow_state_tests;
-#[cfg(test)]
 mod den_tools_session_info_tests;
 #[cfg(test)]
 mod den_tools_session_role_semantics_tests;
@@ -20,6 +18,8 @@ mod den_tools_session_role_semantics_tests;
 mod den_tools_work_surface_orientation_tests;
 #[cfg(test)]
 mod den_tools_work_surface_scaffold_tests;
+#[cfg(test)]
+mod den_tools_workflow_state_tests;
 pub mod email;
 pub mod letta;
 pub mod memory_manager_head;

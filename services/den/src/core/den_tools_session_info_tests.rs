@@ -34,9 +34,15 @@ fn infer_work_surface_hint_surfaces_trusted_candidates() {
     let candidates = payload["work_surface"]["reference_candidates"]
         .as_array()
         .expect("reference candidates array");
-    assert!(candidates.iter().any(|item| item["kind"] == json!("runtime_target")));
-    assert!(candidates.iter().any(|item| item["kind"] == json!("conversation_selection")));
-    assert!(candidates.iter().any(|item| item["kind"] == json!("workspace_root")));
+    assert!(candidates
+        .iter()
+        .any(|item| item["kind"] == json!("runtime_target")));
+    assert!(candidates
+        .iter()
+        .any(|item| item["kind"] == json!("conversation_selection")));
+    assert!(candidates
+        .iter()
+        .any(|item| item["kind"] == json!("workspace_root")));
 }
 
 #[test]
@@ -48,8 +54,5 @@ fn infer_work_surface_hint_reports_unresolved_without_trusted_candidates() {
 
     let payload = infer_work_surface_hint(&context, BearAgentRole::Pair);
     assert_eq!(payload["work_surface"]["status"], json!("unresolved"));
-    assert_eq!(
-        payload["work_surface"]["reference_candidates"],
-        json!([])
-    );
+    assert_eq!(payload["work_surface"]["reference_candidates"], json!([]));
 }

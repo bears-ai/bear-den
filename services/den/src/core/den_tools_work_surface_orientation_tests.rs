@@ -3,9 +3,8 @@ use serde_json::json;
 use crate::core::{
     bears::BearAgentRole,
     den_tools::{
-        build_work_surface_orientation_payload, collect_memory_tree_paths,
-        infer_work_surface_hint, work_surface_anchor_paths, work_surface_candidate_slug,
-        DenToolInvocationContext,
+        build_work_surface_orientation_payload, collect_memory_tree_paths, infer_work_surface_hint,
+        work_surface_anchor_paths, work_surface_candidate_slug, DenToolInvocationContext,
     },
 };
 
@@ -31,7 +30,10 @@ fn context_for(role: BearAgentRole) -> DenToolInvocationContext {
 
 #[test]
 fn work_surface_candidate_slug_prefers_trusted_repo_like_hint() {
-    assert_eq!(work_surface_candidate_slug(&context_for(BearAgentRole::Pair)).as_deref(), Some("builder-bear"));
+    assert_eq!(
+        work_surface_candidate_slug(&context_for(BearAgentRole::Pair)).as_deref(),
+        Some("builder-bear")
+    );
 }
 
 #[test]
@@ -39,7 +41,10 @@ fn work_surface_anchor_paths_are_stable() {
     let (canonical, role_local) = work_surface_anchor_paths(BearAgentRole::Pair, "builder-bear");
     assert_eq!(canonical[0], "core/work_surfaces/builder-bear/index.md");
     assert_eq!(canonical[1], "core/work_surfaces/builder-bear/overview.md");
-    assert_eq!(role_local[0], "pair/work_surfaces/builder-bear/current-understanding.md");
+    assert_eq!(
+        role_local[0],
+        "pair/work_surfaces/builder-bear/current-understanding.md"
+    );
 }
 
 #[test]
@@ -84,7 +89,8 @@ fn build_work_surface_orientation_payload_reports_existing_anchors() {
 fn build_work_surface_orientation_payload_reports_unresolved_without_slug() {
     let context = context_for(BearAgentRole::Pair);
     let hint_payload = infer_work_surface_hint(&context, BearAgentRole::Pair);
-    let payload = build_work_surface_orientation_payload(BearAgentRole::Pair, &hint_payload, &[], None);
+    let payload =
+        build_work_surface_orientation_payload(BearAgentRole::Pair, &hint_payload, &[], None);
     assert_eq!(payload["work_surface"]["status"], json!("unresolved"));
     assert_eq!(payload["canonical_paths"], json!([]));
 }

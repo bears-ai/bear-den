@@ -245,7 +245,13 @@ async fn memory_write_entry_returns_warning_payload_for_ambiguous_plan_like_memo
     assert_eq!(result["status"], "warning");
     assert_eq!(result["warning"]["code"], "semantic_confirmation_required");
     assert_eq!(result["warning"]["category"], "plan_like_memory");
-    assert!(result["warning"]["confirmation_token"].as_str().unwrap().len() > 10);
+    assert!(
+        result["warning"]["confirmation_token"]
+            .as_str()
+            .unwrap()
+            .len()
+            > 10
+    );
 }
 
 #[test]
