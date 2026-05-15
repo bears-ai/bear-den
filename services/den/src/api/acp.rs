@@ -1188,6 +1188,7 @@ fn acp_direct_tool_prompt_context_with_activity(
     guidance.push("Memory is Bear-scoped across Workplaces and may contain multiple work surfaces. A Workplace is the role-scoped memory surface; for pair, that is the `pair` workplace. For questions about the current project, repo, service, architecture, terminology, or prior local decisions, first identify the relevant current work surface from trusted session hints, workspace roots, repo clues, or explicit user references rather than treating all Bear memory as one flat pool.".to_string());
     guidance.push("Prefer work-surface-first retrieval for local-understanding questions: current conversation and trusted session info -> current Workplace and current work-surface hints -> current work-surface canonical anchors -> current work-surface role-local working memory -> Bear-global shared anchors -> broader Bear memory search -> local workspace artifacts -> general world knowledge.".to_string());
     guidance.push("Use `memory_browse`, `memory_read`, and `memory_search` not only to recall prior notes, but to learn the current work surface within the current Workplace. If canonical work-surface anchors exist, prefer them over broad memory search for questions like 'what do you know about this?' or 'how does this work here?'.".to_string());
+    guidance.push("Use `session_info.work_surface` as the trusted Den briefing for current Workplace/work-surface hints when available. Treat its reference candidates as guidance to resolve the active work surface, then confirm against canonical anchors and explicit user intent.".to_string());
     if tool_names.contains(&"fs_edit_file") {
         guidance.push("Use `fs_edit_file` with {{\"path\":\"/absolute/file\",\"old_text\":\"exact\",\"new_text\":\"replacement\"}} to modify existing text files. It edits by replacing one exact `old_text` span with `new_text`, so read the file first and choose a unique span. Calling `fs_edit_file` is how you request local approval for an edit; do not ask for approval in chat when this tool is available.".to_string());
         guidance.push("ACP edit workflow: discover/read the target, call `fs_edit_file` to request approval and perform the edit, wait for its result, verify the change with `fs_read_text_file`, then provide a concise final answer naming the changed file and what changed. Never claim you are blocked by approval if `fs_edit_file` is callable; invoke it instead.".to_string());
@@ -3201,6 +3202,20 @@ async fn prompt_inner(
     }
     let prompt_with_tool_context =
         format!("{prompt}{plan_mode_context}{activity_context}{tool_prompt_context}");
+    let workspace_roots = body
+        .client_context
+        .get("workspace_roots")
+        .or_else(|| body.client_context.get("workspaceRoots"))
+        .and_then(|v| v.as_array())
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|v| v.as_str())
+                .map(str::to_string)
+                .collect::<Vec<_>>()
+        })
+        .filter(|items| !items.is_empty())
+        .unwrap_or_else(|| vec![cwd.to_string()]);
     let client_tool_descriptors = tools_enabled.then(|| {
         merge_acp_pair_tool_descriptors(acp_client_tool_descriptors_for_client_context(
             &body.client_context,
@@ -3285,6 +3300,7 @@ async fn prompt_inner(
             conversation_selection: conversation_resolution.session_selection.clone(),
             resolved_conversation_id: conversation_resolution.resolved_conversation_id.clone(),
             upstream_target: conversation_resolution.upstream_target.clone(),
+            workspace_roots: workspace_roots.clone(),
             request_id,
             pair_agent_id: pair_agent_id.clone(),
             config: state.config.clone(),
@@ -3339,6 +3355,7 @@ struct AcpStreamContext {
     conversation_selection: String,
     resolved_conversation_id: Option<String>,
     upstream_target: String,
+    workspace_roots: Vec<String>,
     request_id: Uuid,
     pair_agent_id: String,
     config: Arc<crate::config::Config>,
@@ -3859,6 +3876,7 @@ async fn invoke_acp_den_tool(
         acp_session_id: Some(context.acp_session_id.clone()),
         conversation_selection: Some(context.conversation_selection.clone()),
         runtime_target: Some(context.upstream_target.clone()),
+        workspace_roots: context.workspace_roots.clone(),
         request_id: Some(context.request_id.to_string()),
         channel: DenToolChannelContext {
             family: Some("acp".to_string()),
@@ -5009,6 +5027,7 @@ mod tests {
             conversation_selection: "new-acp-test".to_string(),
             resolved_conversation_id: Some("conv-test-resolved".to_string()),
             upstream_target: "conv-test-resolved".to_string(),
+            workspace_roots: vec!["/workspace".to_string()],
             request_id,
             pair_agent_id: "agent-12345678-1234-4567-89ab-123456789abc".to_string(),
             config: Arc::new(crate::config::Config::test_stub()),
@@ -5150,6 +5169,7 @@ mod tests {
             conversation_selection: "conv-test".to_string(),
             resolved_conversation_id: Some("conv-test".to_string()),
             upstream_target: "conv-test".to_string(),
+            workspace_roots: vec!["/workspace".to_string()],
             request_id,
             pair_agent_id: "agent-12345678-1234-4567-89ab-123456789abc".to_string(),
             config: Arc::new(crate::config::Config::test_stub()),
@@ -5267,6 +5287,7 @@ mod tests {
             conversation_selection: "conv-test".to_string(),
             resolved_conversation_id: Some("conv-test".to_string()),
             upstream_target: "conv-test".to_string(),
+            workspace_roots: vec!["/workspace".to_string()],
             request_id,
             pair_agent_id: "agent-12345678-1234-4567-89ab-123456789abc".to_string(),
             config: Arc::new(crate::config::Config::test_stub()),

@@ -763,6 +763,7 @@ async fn maybe_handle_direct_set_conversation_title(
         acp_session_id: None,
         conversation_selection: Some(conv_id.to_string()),
         runtime_target: Some(conv_id.to_string()),
+        workspace_roots: Vec::new(),
         request_id: Some(request_id.to_string()),
         channel: DenToolChannelContext {
             family: Some("browser_chat".to_string()),

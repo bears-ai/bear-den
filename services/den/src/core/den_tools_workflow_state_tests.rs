@@ -14,6 +14,7 @@ fn pair_context() -> DenToolInvocationContext {
         acp_session_id: Some("acp-test".to_string()),
         conversation_selection: None,
         runtime_target: None,
+        workspace_roots: vec!["/workspace".to_string()],
         request_id: None,
         channel: Default::default(),
     }
@@ -278,6 +279,7 @@ async fn memory_write_entry_rejects_non_memory_domain_without_db_access() {
         acp_session_id: Some("acp-test".to_string()),
         conversation_selection: None,
         runtime_target: None,
+        workspace_roots: Vec::new(),
         request_id: None,
         channel: Default::default(),
     };
@@ -333,6 +335,7 @@ async fn memory_write_entry_rejects_activity_content_class_without_db_access() {
         acp_session_id: Some("acp-test".to_string()),
         conversation_selection: None,
         runtime_target: None,
+        workspace_roots: Vec::new(),
         request_id: None,
         channel: Default::default(),
     };

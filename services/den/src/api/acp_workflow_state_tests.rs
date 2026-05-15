@@ -136,6 +136,7 @@ fn pair_tool_surface_reminder_and_descriptors_agree_on_domains() {
             acp_session_id: Some("acp-test".to_string()),
             conversation_selection: None,
             runtime_target: None,
+            workspace_roots: Vec::new(),
             request_id: None,
             channel: Default::default(),
         },
@@ -184,6 +185,7 @@ fn acp_prompt_teaches_workplace_first_memory_retrieval() {
     assert!(prompt.contains("current work-surface canonical anchors"));
     assert!(prompt.contains("current work-surface role-local working memory"));
     assert!(prompt.contains("Use `memory_browse`, `memory_read`, and `memory_search` not only to recall prior notes, but to learn the current work surface within the current Workplace."));
+    assert!(prompt.contains("Use `session_info.work_surface` as the trusted Den briefing for current Workplace/work-surface hints when available."));
 }
 
 #[test]

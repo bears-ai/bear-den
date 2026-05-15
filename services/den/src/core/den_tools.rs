@@ -132,6 +132,8 @@ pub const DEN_MEMORY_READ: &str = "den.memory.read";
 pub const DEN_MEMORY_READ_PROVIDER: &str = "memory_read";
 pub const DEN_MEMORY_SEARCH: &str = "den.memory.search";
 pub const DEN_MEMORY_SEARCH_PROVIDER: &str = "memory_search";
+pub const DEN_MEMORY_ORIENT_WORK_SURFACE: &str = "den.memory.orient_work_surface";
+pub const DEN_MEMORY_ORIENT_WORK_SURFACE_PROVIDER: &str = "memory_orient_work_surface";
 pub const DEN_MEMORY_CREATE_WORK_SURFACE_SCAFFOLD: &str = "den.memory.create_work_surface_scaffold";
 pub const DEN_MEMORY_CREATE_WORK_SURFACE_SCAFFOLD_PROVIDER: &str = "memory_create_work_surface_scaffold";
 pub const DEN_MEMORY_REQUEST_REVIEW: &str = "den.memory.request_review";
@@ -196,6 +198,7 @@ pub fn provider_safe_tool_name(name: &str) -> String {
         DEN_MEMORY_TREE => return DEN_MEMORY_TREE_PROVIDER.to_string(),
         DEN_MEMORY_READ => return DEN_MEMORY_READ_PROVIDER.to_string(),
         DEN_MEMORY_SEARCH => return DEN_MEMORY_SEARCH_PROVIDER.to_string(),
+        DEN_MEMORY_ORIENT_WORK_SURFACE => return DEN_MEMORY_ORIENT_WORK_SURFACE_PROVIDER.to_string(),
         DEN_MEMORY_CREATE_WORK_SURFACE_SCAFFOLD => {
             return DEN_MEMORY_CREATE_WORK_SURFACE_SCAFFOLD_PROVIDER.to_string()
         }
@@ -426,6 +429,15 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
                 "required": ["query"],
                 "additionalProperties": false
             }),
+        ),
+        descriptor(
+            DEN_MEMORY_ORIENT_WORK_SURFACE,
+            "Orient work surface",
+            "Return a read-only orientation briefing for the likely current work surface using trusted session hints and canonical memory anchor paths when available.",
+            "bear.memory",
+            &["memory.tree.read", "memory.file.read"],
+            PAIR_AND_CURATE_ROLES,
+            empty_schema(),
         ),
         descriptor(
             DEN_MEMORY_CREATE_WORK_SURFACE_SCAFFOLD,
@@ -1100,6 +1112,7 @@ pub fn provider_aliases_for_tool(name: &str) -> &'static [&'static str] {
         DEN_MEMORY_TREE => &[DEN_MEMORY_TREE_LEGACY_PROVIDER, "den_memory_tree"],
         DEN_MEMORY_READ => &["den_memory_read"],
         DEN_MEMORY_SEARCH => &["den_memory_search"],
+        DEN_MEMORY_ORIENT_WORK_SURFACE => &["den_memory_orient_work_surface"],
         DEN_MEMORY_REQUEST_REVIEW => &["den_memory_request_review"],
         DEN_MEMORY_LIST_PROPOSALS => &["den_memory_list_proposals"],
         DEN_MEMORY_READ_PROPOSAL => &["den_memory_read_proposal"],
@@ -1178,6 +1191,8 @@ pub struct DenToolInvocationContext {
     pub conversation_selection: Option<String>,
     #[serde(default)]
     pub runtime_target: Option<String>,
+    #[serde(default)]
+    pub workspace_roots: Vec<String>,
     pub request_id: Option<String>,
     #[serde(default)]
     pub channel: DenToolChannelContext,
@@ -1425,6 +1440,7 @@ pub async fn invoke_den_tool(
         DEN_MEMORY_TREE => memory_browse(config, &context, role).await,
         DEN_MEMORY_READ => memory_read(config, &context, role, arguments).await,
         DEN_MEMORY_SEARCH => memory_search(config, &context, role, arguments).await,
+        DEN_MEMORY_ORIENT_WORK_SURFACE => memory_orient_work_surface(config, &context, role).await,
         DEN_MEMORY_CREATE_WORK_SURFACE_SCAFFOLD => {
             create_work_surface_scaffold(config, &context, role, arguments).await
         }
@@ -2024,6 +2040,187 @@ async fn brave_web_search(
     }))
 }
 
+pub(crate) fn infer_work_surface_hint(context: &DenToolInvocationContext, role: BearAgentRole) -> Value {
+    let mut candidates = Vec::new();
+    if let Some(runtime_target) = context.runtime_target.as_deref().and_then(clean_optional) {
+        candidates.push(json!({
+            "kind": "runtime_target",
+            "value": runtime_target,
+            "confidence": "medium"
+        }));
+    }
+    if let Some(selection) = context.conversation_selection.as_deref().and_then(clean_optional) {
+        candidates.push(json!({
+            "kind": "conversation_selection",
+            "value": selection,
+            "confidence": "low"
+        }));
+    }
+    for root in context.workspace_roots.iter().filter(|root| !root.trim().is_empty()) {
+        candidates.push(json!({
+            "kind": "workspace_root",
+            "value": root,
+            "confidence": "medium"
+        }));
+    }
+    json!({
+        "workplace": {
+            "role": role.as_str(),
+            "memory_surface": format!("{}/", role.as_str()),
+        },
+        "work_surface": {
+            "status": if candidates.is_empty() { "unresolved" } else { "candidate" },
+            "note": if candidates.is_empty() {
+                "No trusted work-surface hint is available yet from this session. Use workspace roots, runtime target, user references, and memory anchors to resolve it."
+            } else {
+                "Trusted session metadata provides work-surface reference candidates. Treat these as hints, not canonical identity, until confirmed by anchors or explicit user intent."
+            },
+            "reference_candidates": candidates,
+        }
+    })
+}
+
+pub(crate) fn work_surface_candidate_slug(context: &DenToolInvocationContext) -> Option<String> {
+    let mut raw_candidates = Vec::new();
+    if let Some(value) = context.runtime_target.as_deref().and_then(clean_optional) {
+        raw_candidates.push(value);
+    }
+    if let Some(value) = context.conversation_selection.as_deref().and_then(clean_optional) {
+        raw_candidates.push(value);
+    }
+    raw_candidates.extend(
+        context
+            .workspace_roots
+            .iter()
+            .filter_map(|value| clean_optional(value)),
+    );
+
+    for raw in raw_candidates {
+        let lowered = raw.to_ascii_lowercase();
+        for segment in raw.split(|c: char| !c.is_ascii_alphanumeric() && c != '-' && c != '_') {
+            let trimmed = segment.trim_matches(|c: char| !c.is_ascii_alphanumeric() && c != '-' && c != '_');
+            if trimmed.is_empty() {
+                continue;
+            }
+            let candidate = normalize_work_surface_slug(trimmed).ok();
+            if let Some(candidate) = candidate {
+                if candidate.len() >= 3
+                    && !matches!(candidate.as_str(), "workspace" | "pair" | "core" | "main" | "src" | "repo")
+                {
+                    return Some(candidate);
+                }
+            }
+        }
+        if let Some(rest) = lowered.strip_prefix("repo:") {
+            if let Ok(candidate) = normalize_work_surface_slug(rest) {
+                return Some(candidate);
+            }
+        }
+    }
+    None
+}
+
+pub(crate) fn work_surface_anchor_paths(role: BearAgentRole, slug: &str) -> (Vec<String>, Vec<String>) {
+    let canonical = vec![
+        format!("core/work_surfaces/{slug}/index.md"),
+        format!("core/work_surfaces/{slug}/overview.md"),
+        format!("core/work_surfaces/{slug}/glossary.md"),
+        format!("core/work_surfaces/{slug}/architecture.md"),
+        format!("core/work_surfaces/{slug}/decisions.md"),
+        format!("core/work_surfaces/{slug}/conventions.md"),
+    ];
+    let role_local = vec![
+        format!("{}/work_surfaces/{slug}/current-understanding.md", role.as_str()),
+        format!("{}/work_surfaces/{slug}/recent-findings.md", role.as_str()),
+        format!("{}/work_surfaces/{slug}/open-questions.md", role.as_str()),
+    ];
+    (canonical, role_local)
+}
+
+pub(crate) fn collect_memory_tree_paths(files: &Value, out: &mut Vec<String>) {
+    match files {
+        Value::String(path) => out.push(path.clone()),
+        Value::Array(items) => {
+            for item in items {
+                collect_memory_tree_paths(item, out);
+            }
+        }
+        Value::Object(map) => {
+            if let Some(path) = map.get("path").and_then(|v| v.as_str()) {
+                out.push(path.to_string());
+            }
+            for value in map.values() {
+                collect_memory_tree_paths(value, out);
+            }
+        }
+        _ => {}
+    }
+}
+
+pub(crate) fn build_work_surface_orientation_payload(
+    role: BearAgentRole,
+    hint_payload: &Value,
+    files: &[String],
+    candidate_slug: Option<String>,
+) -> Value {
+    let mut sorted_files = files.to_vec();
+    sorted_files.sort();
+    sorted_files.dedup();
+    let slug = candidate_slug;
+    let (canonical_paths, role_local_paths) = slug
+        .as_deref()
+        .map(|slug| work_surface_anchor_paths(role, slug))
+        .unwrap_or_else(|| (Vec::new(), Vec::new()));
+    let existing_canonical = canonical_paths
+        .iter()
+        .filter(|path| sorted_files.contains(path))
+        .cloned()
+        .collect::<Vec<_>>();
+    let existing_role_local = role_local_paths
+        .iter()
+        .filter(|path| sorted_files.contains(path))
+        .cloned()
+        .collect::<Vec<_>>();
+    let missing_expected_paths = canonical_paths
+        .iter()
+        .chain(role_local_paths.iter())
+        .filter(|path| !sorted_files.contains(path))
+        .cloned()
+        .collect::<Vec<_>>();
+    let status = if slug.is_none() {
+        "unresolved"
+    } else if existing_canonical.is_empty() && existing_role_local.is_empty() {
+        "candidate_without_anchors"
+    } else {
+        "oriented"
+    };
+    let mut recommended_read_order = Vec::new();
+    recommended_read_order.extend(existing_canonical.iter().cloned());
+    recommended_read_order.extend(existing_role_local.iter().cloned());
+    json!({
+        "workplace": hint_payload["workplace"].clone(),
+        "work_surface": {
+            "status": status,
+            "slug": slug,
+            "confidence": if status == "oriented" { "medium" } else if status == "candidate_without_anchors" { "low" } else { "unknown" },
+            "basis": hint_payload["work_surface"]["reference_candidates"].clone(),
+            "note": match status {
+                "oriented" => "Trusted hints and existing memory anchors provide a usable work-surface orientation.",
+                "candidate_without_anchors" => "Trusted hints suggest a work surface, but no canonical or role-local anchors were found yet.",
+                _ => "A current work surface could not be resolved from trusted hints alone.",
+            }
+        },
+        "canonical_paths": existing_canonical,
+        "role_local_paths": existing_role_local,
+        "recommended_read_order": recommended_read_order,
+        "missing_expected_paths": missing_expected_paths,
+        "notes": [
+            "Use canonical work-surface anchors before broader Bear memory search when available.",
+            "Treat the resolved slug as a working orientation hint unless explicit user intent or stronger anchors disagree."
+        ]
+    })
+}
+
 async fn session_info(
     pool: &PgPool,
     config: &Config,
@@ -2041,6 +2238,7 @@ async fn session_info(
                 "error": err.to_string()
             })
         });
+    let work_surface = infer_work_surface_hint(context, role);
     Ok(json!({
         "bear": {
             "bear_id": context.bear_id,
@@ -2071,9 +2269,11 @@ async fn session_info(
             "acp_session_id": context.acp_session_id,
             "conversation_selection": context.conversation_selection,
             "runtime_target": context.runtime_target,
+            "workspace_roots": context.workspace_roots,
             "request_id": context.request_id,
             "channel": context.channel
         },
+        "work_surface": work_surface,
         "memory": {
             "read_scopes": memory_read_scopes(role),
             "write_scopes": memory_write_scopes(role),
@@ -2582,6 +2782,42 @@ async fn memory_search(
                 "message": "MemFS sidecar is not configured (set LETTA_MEMFS_SERVICE_URL)"
             }))
         })
+}
+
+async fn memory_orient_work_surface(
+    config: &Config,
+    context: &DenToolInvocationContext,
+    role: BearAgentRole,
+) -> Result<Value, CustomError> {
+    let hint_payload = infer_work_surface_hint(context, role);
+    let candidate_slug = work_surface_candidate_slug(context);
+    let http = memfs_http_client("MemFS work-surface orientation client build failed")?;
+    let tree = fetch_memfs_role_memory_tree(
+        &http,
+        &config.letta_memfs_service_url,
+        context.bear_id,
+        role.as_str(),
+    )
+    .await?;
+    let Some(tree) = tree else {
+        return Ok(json!({
+            "ok": false,
+            "configured": false,
+            "message": "MemFS sidecar is not configured (set LETTA_MEMFS_SERVICE_URL)",
+            "orientation": build_work_surface_orientation_payload(role, &hint_payload, &[], candidate_slug),
+        }));
+    };
+    let mut files = Vec::new();
+    collect_memory_tree_paths(&tree.files, &mut files);
+    let orientation = build_work_surface_orientation_payload(role, &hint_payload, &files, candidate_slug);
+    Ok(json!({
+        "ok": tree.ok,
+        "configured": true,
+        "bear_id": context.bear_id,
+        "role": role.as_str(),
+        "canonical_tip": tree.canonical_tip,
+        "orientation": orientation,
+    }))
 }
 
 pub(crate) fn normalize_work_surface_slug(value: &str) -> Result<String, CustomError> {
