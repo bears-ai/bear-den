@@ -103,6 +103,14 @@ fn acp_text_chunk_chars() -> usize {
         .unwrap_or(384)
 }
 
+fn acp_max_thought_bytes_per_turn() -> usize {
+    std::env::var("BEARS_ACP_MAX_THOUGHT_BYTES")
+        .ok()
+        .and_then(|value| value.trim().parse::<usize>().ok())
+        .map(|value| value.clamp(1024, 1024 * 1024))
+        .unwrap_or(128 * 1024)
+}
+
 fn acp_debug_ui_enabled() -> bool {
     env_flag("BEARS_ACP_DEBUG_UI")
 }
@@ -4455,14 +4463,24 @@ struct AcpTextChunker {
     assistant: String,
     reasoning: String,
     max_chars: usize,
+    max_reasoning_bytes: usize,
+    emitted_reasoning_bytes: usize,
+    reasoning_limit_reached: bool,
 }
 
 impl AcpTextChunker {
     fn new(max_chars: usize) -> Self {
+        Self::new_with_reasoning_limit(max_chars, acp_max_thought_bytes_per_turn())
+    }
+
+    fn new_with_reasoning_limit(max_chars: usize, max_reasoning_bytes: usize) -> Self {
         Self {
             assistant: String::new(),
             reasoning: String::new(),
             max_chars,
+            max_reasoning_bytes,
+            emitted_reasoning_bytes: 0,
+            reasoning_limit_reached: false,
         }
     }
 
@@ -4477,6 +4495,9 @@ impl AcpTextChunker {
                 }
             }
             AcpGatewayEvent::StatusText { text } => {
+                if self.reasoning_limit_reached {
+                    return Vec::new();
+                }
                 self.reasoning.push_str(&text);
                 if should_flush_text(&self.reasoning, self.max_chars) {
                     self.flush_reasoning().into_iter().collect()
@@ -4503,13 +4524,34 @@ impl AcpTextChunker {
     }
 
     fn flush_reasoning(&mut self) -> Option<AcpGatewayEvent> {
-        if self.reasoning.is_empty() {
-            None
-        } else {
-            Some(AcpGatewayEvent::StatusText {
-                text: std::mem::take(&mut self.reasoning),
-            })
+        if self.reasoning.is_empty() || self.reasoning_limit_reached {
+            self.reasoning.clear();
+            return None;
         }
+        let remaining = self
+            .max_reasoning_bytes
+            .saturating_sub(self.emitted_reasoning_bytes);
+        if remaining == 0 {
+            self.reasoning.clear();
+            self.reasoning_limit_reached = true;
+            return Some(AcpGatewayEvent::StatusText {
+                text: normalize_display_status_text(
+                    "BEARS suppressed additional thinking/status output for this turn because it exceeded the safety limit",
+                ),
+            });
+        }
+
+        let mut text = std::mem::take(&mut self.reasoning);
+        if text.len() > remaining {
+            text = truncate_utf8_boundary(&text, remaining).to_string();
+            self.reasoning_limit_reached = true;
+            text.push_str("\n");
+            text.push_str(&normalize_display_status_text(
+                "BEARS suppressed additional thinking/status output for this turn because it exceeded the safety limit",
+            ));
+        }
+        self.emitted_reasoning_bytes = self.emitted_reasoning_bytes.saturating_add(text.len());
+        Some(AcpGatewayEvent::StatusText { text })
     }
 
     fn flush_all(&mut self) -> Vec<AcpGatewayEvent> {
@@ -4526,6 +4568,17 @@ fn should_flush_text(buffer: &str, max_chars: usize) -> bool {
         || buffer.ends_with(". ")
         || buffer.ends_with("! ")
         || buffer.ends_with("? ")
+}
+
+fn truncate_utf8_boundary(s: &str, max_bytes: usize) -> &str {
+    if s.len() <= max_bytes {
+        return s;
+    }
+    let mut end = max_bytes;
+    while end > 0 && !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    &s[..end]
 }
 
 struct AcpLettaSseStream {
@@ -5071,6 +5124,27 @@ impl Stream for AcpLettaSseStream {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn acp_text_chunker_caps_reasoning_output_per_turn() {
+        let mut chunker = AcpTextChunker::new_with_reasoning_limit(1024, 10);
+        let events = chunker.push(AcpGatewayEvent::StatusText {
+            text: "abcdefghijklmnopqrstuvwxyz".to_string(),
+        });
+        assert!(events.is_empty());
+        let events = chunker.flush_all();
+        assert_eq!(events.len(), 1);
+        let AcpGatewayEvent::StatusText { text } = &events[0] else {
+            panic!("expected status text");
+        };
+        assert!(text.starts_with("abcdefghij\n"));
+        assert!(text.contains("BEARS suppressed additional thinking/status output"));
+
+        let events = chunker.push(AcpGatewayEvent::StatusText {
+            text: "more".to_string(),
+        });
+        assert!(events.is_empty());
+    }
 
     #[tokio::test]
     async fn acp_stream_waits_for_tool_result_and_continues_letta() {
