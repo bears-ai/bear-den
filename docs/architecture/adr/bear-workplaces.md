@@ -263,6 +263,17 @@ For near-term planning work:
 3. Change user-facing language from “no plans” to more precise phrases like “no active plans for this Workplace” or “no Bear-level pending plans”.
 4. Treat role fields as provenance and policy hints, not product ownership.
 
+## Relationship to work surfaces
+
+A Bear manifests through agents performing roles. An agent acts in a **Workplace** and may act on a **work surface**.
+
+- **Workplace** remains the durable Bear-level work setting and operating scope described by this ADR.
+- A **work surface** is the concrete repo, service, deployment, Mission, project, or other coherent scope of work an agent may currently be acting on.
+- Canonical work-surface memory may live under shared paths such as `core/work_surfaces/...`.
+- Some roles may also keep role-local working memory about a work surface while acting in their Workplace.
+
+This phrasing is meant to avoid muddling where an agent is operating (`in` a Workplace) with what it is currently engaging (`on` a work surface).
+
 ## Related documents
 
 - [Planning in BEARS](../../concepts/PLANNING.md)

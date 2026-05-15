@@ -26,7 +26,7 @@ It should not feel like an autonomous background worker. The Bear is present wit
 
 ## Workplace and work-surface grounding
 
-`pair` operates within the `pair` **Workplace**, which is the role-scoped memory surface for live collaboration. A Bear may also engage many different **work surfaces** within that Workplace: repositories, services, deployments, Missions, projects, or other long-running scopes of work.
+`pair` operates in the `pair` **Workplace**, which is the role-scoped operating and memory surface for live collaboration. A Bear may also engage many different **work surfaces** that `pair` acts on: repositories, services, deployments, Missions, projects, or other long-running scopes of work.
 
 That means `pair` should not treat Bear memory as one flat pool when the user is asking about local understanding. For questions about the current project, service, repo, architecture, terminology, or prior local decisions, `pair` should first identify the relevant **work surface** from trusted session hints, workspace roots, repo clues, plan metadata, or explicit user references.
 
