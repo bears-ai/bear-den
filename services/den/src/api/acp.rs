@@ -3302,6 +3302,28 @@ async fn prompt_inner(
         .await;
     }
     let stream_tokens = acp_stream_tokens_enabled();
+    let client_tools_count = client_tool_descriptors
+        .as_ref()
+        .and_then(|tools| tools.as_array())
+        .map(Vec::len)
+        .unwrap_or(0);
+    tracing::info!(
+        %request_id,
+        acp_session_id = %session_id,
+        letta_conversation_id = %conversation_resolution.upstream_target,
+        user_content_len = prompt.len(),
+        user_content_has_system_reminder = prompt.contains("<system-reminder>") || prompt.contains("<system_reminder>"),
+        user_content_has_workflow_scaffolding = prompt.contains("ACP workflow state")
+            || prompt.contains("AUTHORITATIVE WORKFLOW STATE")
+            || prompt.contains("Den workboard context")
+            || prompt.contains("Trusted ACP session mode this turn"),
+        runtime_context_len = turn_runtime_context.len(),
+        runtime_context_sent_as_user_content = false,
+        client_tools_count,
+        override_system_present = false,
+        "letta_outbound_message_boundary"
+    );
+
     let upstream = match state
         .letta
         .post_conversation_messages_streaming(

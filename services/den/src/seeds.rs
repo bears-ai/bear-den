@@ -9,6 +9,7 @@ use sqlx::{postgres::PgPoolOptions, types::Json, PgPool};
 
 use crate::{
     core::{
+        acp_tokens,
         bears::{db as bears_db, db::BEAR_ROLE_MEMBER, runtime_plan::default_runtime_plan},
         user::{self, db as user_db, email_settings},
     },
@@ -18,6 +19,7 @@ use crate::{
 pub const SMOKE_USERNAME: &str = "alice";
 pub const SMOKE_PASSWORD: &str = "Never deploy seed passwords.";
 pub const SMOKE_BEAR_SLUG: &str = "test-bear";
+pub const SMOKE_ACP_TOKEN: &str = "bears_acp_smoke_known_token_for_dev_and_ci_only_000000000000";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SeedProfile {
@@ -92,6 +94,9 @@ async fn seed_smoke(pool: &PgPool, profile: SeedProfile) -> Result<SeedReport> {
     bears_db::grant_membership(pool, user_id, bear_id, Some(BEAR_ROLE_MEMBER))
         .await
         .context("ensure smoke membership")?;
+    ensure_smoke_acp_token(pool, user_id, bear_id)
+        .await
+        .context("ensure smoke ACP token")?;
 
     Ok(SeedReport {
         profile,
@@ -134,6 +139,47 @@ async fn ensure_bear(pool: &PgPool, slug: &str) -> Result<uuid::Uuid> {
     )
     .await
     .map_err(Into::into)
+}
+
+async fn ensure_smoke_acp_token(pool: &PgPool, user_id: i32, bear_id: uuid::Uuid) -> Result<()> {
+    let token_hash = acp_tokens::hash_raw_token_for_seed(SMOKE_ACP_TOKEN);
+    let mut tx = pool.begin().await?;
+    let row: (uuid::Uuid,) = sqlx::query_as(
+        r#"
+        INSERT INTO acp_tokens (user_id, name, token_hash, scopes, revoked_at, expires_at)
+        VALUES ($1, 'Smoke ACP token', $2, $3, NULL, NULL)
+        ON CONFLICT (token_hash) DO UPDATE
+        SET user_id = EXCLUDED.user_id,
+            name = EXCLUDED.name,
+            scopes = EXCLUDED.scopes,
+            revoked_at = NULL,
+            expires_at = NULL
+        RETURNING id
+        "#,
+    )
+    .bind(user_id)
+    .bind(token_hash)
+    .bind(serde_json::json!([
+        acp_tokens::acp_chat_scope(),
+        acp_tokens::acp_tools_scope()
+    ]))
+    .fetch_one(&mut *tx)
+    .await?;
+
+    sqlx::query(
+        r#"
+        INSERT INTO acp_token_bears (token_id, bear_id)
+        VALUES ($1, $2)
+        ON CONFLICT DO NOTHING
+        "#,
+    )
+    .bind(row.0)
+    .bind(bear_id)
+    .execute(&mut *tx)
+    .await?;
+
+    tx.commit().await?;
+    Ok(())
 }
 
 async fn bear_id_by_slug(pool: &PgPool, slug: &str) -> Result<Option<uuid::Uuid>> {

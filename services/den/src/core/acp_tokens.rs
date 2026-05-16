@@ -46,6 +46,10 @@ pub fn is_acp_token(raw: &str) -> bool {
     raw.trim().starts_with(TOKEN_PREFIX)
 }
 
+pub fn hash_raw_token_for_seed(raw: &str) -> String {
+    token_hash(raw)
+}
+
 fn token_hash(raw: &str) -> String {
     let digest = Sha256::digest(raw.trim().as_bytes());
     URL_SAFE_NO_PAD.encode(digest)
