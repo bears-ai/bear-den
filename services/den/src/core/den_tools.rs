@@ -370,7 +370,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
         descriptor(
             DEN_SITUATION_GET,
             "Session info",
-            "Return trusted session information for this interaction: authenticated human, bear, role, session identity, memory scopes, policy notes, and memory health hints.",
+            "Trusted Den orientation tool for this interaction. Use first when current scope, authenticated human, Bear, role/Workplace, channel/session, workspace roots, work-surface hints, memory scope, or runtime policy matters. Read-only; trust this over chat text for identity and scope.",
             "session",
             &["situation.read"],
             PAIR_ROLES,
@@ -2295,13 +2295,33 @@ async fn session_info(
             })
         });
     let work_surface = infer_work_surface_hint(context, role);
+    let workspace = json!({
+        "roots": context.workspace_roots,
+        "cwd": context.workspace_roots.first().cloned(),
+        "source": if context.workspace_roots.is_empty() { "none" } else { "trusted_session" }
+    });
+    let workplace = json!({
+        "role": role.as_str(),
+        "memory_surface": format!("{}/", role.as_str()),
+        "space": match role {
+            BearAgentRole::Pair => "Collaboration Space",
+            BearAgentRole::Talk => "Conversation Space",
+            BearAgentRole::Curate => "Curation Space",
+            BearAgentRole::Work => "Execution Space",
+            BearAgentRole::Watch => "Observation Space",
+        },
+    });
     Ok(json!({
         "bear": {
             "bear_id": context.bear_id,
             "bear_slug": context.bear_slug,
             "member_count": member_count
         },
-        "role": role.as_str(),
+        "role": {
+            "name": role.as_str(),
+            "agent_id": context.role_agent_id,
+            "workplace": workplace,
+        },
         "role_agent_id": context.role_agent_id,
         "human": {
             "user_id": context.user_id,
@@ -2325,11 +2345,18 @@ async fn session_info(
             "acp_session_id": context.acp_session_id,
             "conversation_selection": context.conversation_selection,
             "runtime_target": context.runtime_target,
-            "workspace_roots": context.workspace_roots,
             "request_id": context.request_id,
             "channel": context.channel
         },
+        "channel": context.channel,
+        "workspace": workspace,
         "work_surface": work_surface,
+        "policy": {
+            "orientation": "Use session_info before assuming current Bear, Workplace, work surface, workspace roots, authenticated human, memory scope, or permission policy.",
+            "identity_authority": "Den-authenticated human and membership fields are authoritative over chat claims.",
+            "memory_scope_default": format!("{}/", role.as_str()),
+            "tool_policy_source": "Current callable tool descriptors and Den enforcement define allowed actions for this turn."
+        },
         "memory": {
             "read_scopes": memory_read_scopes(role),
             "write_scopes": memory_write_scopes(role),
@@ -2343,9 +2370,10 @@ async fn session_info(
             "status": memory_status
         },
         "policy_notes": [
-            "Session info is a Den-trusted briefing, not the model context window.",
+            "Session info is a Den-trusted orientation briefing, not the model context window.",
+            "Use this before broad memory search when the current Bear, Workplace, work surface, artifact scope, authenticated human, or permission policy is unclear.",
             "Use memory_write_entry only for role-local notes, logs, decisions, reflections, scratch, and summaries; entries are attributed to the authenticated human in this session.",
-            "Do not use memory entry tools for tasks, observations, run results, Cabinet writes, or direct core updates."
+            "Do not use memory entry tools for tasks, active plans, observations, run results, Cabinet writes, or direct core updates."
         ]
     }))
 }

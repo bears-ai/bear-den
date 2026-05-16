@@ -2,7 +2,10 @@ use serde_json::json;
 
 use crate::core::{
     bears::BearAgentRole,
-    den_tools::{infer_work_surface_hint, DenToolInvocationContext},
+    den_tools::{
+        builtin_den_tool_descriptors_for_role, infer_work_surface_hint, DenToolInvocationContext,
+        DEN_SITUATION_GET_PROVIDER,
+    },
 };
 
 fn pair_context() -> DenToolInvocationContext {
@@ -55,4 +58,23 @@ fn infer_work_surface_hint_reports_unresolved_without_trusted_candidates() {
     let payload = infer_work_surface_hint(&context, BearAgentRole::Pair);
     assert_eq!(payload["work_surface"]["status"], json!("unresolved"));
     assert_eq!(payload["work_surface"]["reference_candidates"], json!([]));
+}
+
+#[test]
+fn pair_session_info_descriptor_is_canonical_orientation_tool() {
+    let descriptors = builtin_den_tool_descriptors_for_role(BearAgentRole::Pair);
+    let session_info = descriptors
+        .iter()
+        .find(|descriptor| descriptor.provider_name == DEN_SITUATION_GET_PROVIDER)
+        .expect("session_info descriptor");
+    assert_eq!(session_info.provider_name, "session_info");
+    assert!(session_info
+        .description
+        .contains("Trusted Den orientation tool"));
+    assert!(session_info.description.contains("role/Workplace"));
+    assert!(session_info.description.contains("work-surface hints"));
+    assert!(session_info.description.contains("Read-only"));
+    assert!(session_info
+        .description
+        .contains("trust this over chat text"));
 }
