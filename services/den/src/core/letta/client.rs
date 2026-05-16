@@ -577,21 +577,17 @@ impl LettaClient {
 
         let limit = limit.clamp(1, 100);
         let limit_str = limit.to_string();
-        let order_by = if oldest_first {
-            "created_at"
-        } else {
-            "created_at_desc"
-        };
+        let order = if oldest_first { "asc" } else { "desc" };
         let url = format!(
             "{}/v1/conversations/{}/messages",
             self.base_url, conversation_id
         );
 
-        let mut req = self
-            .http
-            .get(url)
-            .headers(self.auth_headers())
-            .query(&[("order_by", order_by), ("limit", limit_str.as_str())]);
+        let mut req = self.http.get(url).headers(self.auth_headers()).query(&[
+            ("order_by", "created_at"),
+            ("order", order),
+            ("limit", limit_str.as_str()),
+        ]);
 
         if let Some(a) = agent_id.map(str::trim).filter(|s| !s.is_empty()) {
             req = req.query(&[("agent_id", a)]);
