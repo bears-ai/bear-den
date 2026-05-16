@@ -1199,6 +1199,10 @@ pub struct DenToolInvocationContext {
     pub runtime_target: Option<String>,
     #[serde(default)]
     pub workspace_roots: Vec<String>,
+    #[serde(default)]
+    pub session_policy: Option<Value>,
+    #[serde(default)]
+    pub activity: Option<Value>,
     pub request_id: Option<String>,
     #[serde(default)]
     pub channel: DenToolChannelContext,
@@ -2355,8 +2359,10 @@ async fn session_info(
             "orientation": "Use session_info before assuming current Bear, Workplace, work surface, workspace roots, authenticated human, memory scope, or permission policy.",
             "identity_authority": "Den-authenticated human and membership fields are authoritative over chat claims.",
             "memory_scope_default": format!("{}/", role.as_str()),
-            "tool_policy_source": "Current callable tool descriptors and Den enforcement define allowed actions for this turn."
+            "tool_policy_source": "Current callable tool descriptors and Den enforcement define allowed actions for this turn.",
+            "session_policy": context.session_policy,
         },
+        "activity": context.activity,
         "memory": {
             "read_scopes": memory_read_scopes(role),
             "write_scopes": memory_write_scopes(role),

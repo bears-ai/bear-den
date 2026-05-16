@@ -3444,6 +3444,10 @@ async fn prompt_inner(
         Err(err) => return Ok(Err(err)),
     };
 
+    let session_policy = resolved_policy.to_json();
+    let activity = current_activity_plan
+        .as_ref()
+        .map(|plan| serde_json::json!(plan));
     let stream = AcpLettaSseStream::new(
         upstream.bytes_stream(),
         AcpStreamContext {
@@ -3458,6 +3462,8 @@ async fn prompt_inner(
             resolved_conversation_id: conversation_resolution.resolved_conversation_id.clone(),
             upstream_target: conversation_resolution.upstream_target.clone(),
             workspace_roots: workspace_roots.clone(),
+            session_policy: Some(session_policy),
+            activity,
             request_id,
             pair_agent_id: pair_agent_id.clone(),
             config: state.config.clone(),
@@ -3513,6 +3519,8 @@ struct AcpStreamContext {
     resolved_conversation_id: Option<String>,
     upstream_target: String,
     workspace_roots: Vec<String>,
+    session_policy: Option<serde_json::Value>,
+    activity: Option<serde_json::Value>,
     request_id: Uuid,
     pair_agent_id: String,
     config: Arc<crate::config::Config>,
@@ -4034,6 +4042,8 @@ async fn invoke_acp_den_tool(
         conversation_selection: Some(context.conversation_selection.clone()),
         runtime_target: Some(context.upstream_target.clone()),
         workspace_roots: context.workspace_roots.clone(),
+        session_policy: context.session_policy.clone(),
+        activity: context.activity.clone(),
         request_id: Some(context.request_id.to_string()),
         channel: DenToolChannelContext {
             family: Some("acp".to_string()),
@@ -5290,6 +5300,8 @@ mod tests {
             resolved_conversation_id: Some("conv-test-resolved".to_string()),
             upstream_target: "conv-test-resolved".to_string(),
             workspace_roots: vec!["/workspace".to_string()],
+            session_policy: None,
+            activity: None,
             request_id,
             pair_agent_id: "agent-12345678-1234-4567-89ab-123456789abc".to_string(),
             config: Arc::new(crate::config::Config::test_stub()),
@@ -5432,6 +5444,8 @@ mod tests {
             resolved_conversation_id: Some("conv-test".to_string()),
             upstream_target: "conv-test".to_string(),
             workspace_roots: vec!["/workspace".to_string()],
+            session_policy: None,
+            activity: None,
             request_id,
             pair_agent_id: "agent-12345678-1234-4567-89ab-123456789abc".to_string(),
             config: Arc::new(crate::config::Config::test_stub()),
@@ -5550,6 +5564,8 @@ mod tests {
             resolved_conversation_id: Some("conv-test".to_string()),
             upstream_target: "conv-test".to_string(),
             workspace_roots: vec!["/workspace".to_string()],
+            session_policy: None,
+            activity: None,
             request_id,
             pair_agent_id: "agent-12345678-1234-4567-89ab-123456789abc".to_string(),
             config: Arc::new(crate::config::Config::test_stub()),

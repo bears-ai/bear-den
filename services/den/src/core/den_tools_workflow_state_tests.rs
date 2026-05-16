@@ -15,6 +15,8 @@ fn pair_context() -> DenToolInvocationContext {
         conversation_selection: None,
         runtime_target: None,
         workspace_roots: vec!["/workspace".to_string()],
+        session_policy: None,
+        activity: None,
         request_id: None,
         channel: Default::default(),
     }
@@ -286,6 +288,8 @@ async fn memory_write_entry_rejects_non_memory_domain_without_db_access() {
         conversation_selection: None,
         runtime_target: None,
         workspace_roots: Vec::new(),
+        session_policy: None,
+        activity: None,
         request_id: None,
         channel: Default::default(),
     };
@@ -342,6 +346,8 @@ async fn memory_write_entry_rejects_activity_content_class_without_db_access() {
         conversation_selection: None,
         runtime_target: None,
         workspace_roots: Vec::new(),
+        session_policy: None,
+        activity: None,
         request_id: None,
         channel: Default::default(),
     };

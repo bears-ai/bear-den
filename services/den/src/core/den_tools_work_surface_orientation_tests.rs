@@ -23,6 +23,8 @@ fn context_for(role: BearAgentRole) -> DenToolInvocationContext {
         conversation_selection: Some("builder-bear/src/lib.rs".to_string()),
         runtime_target: Some("repo:builder-bear".to_string()),
         workspace_roots: vec!["/workspace/builder-bear".to_string()],
+        session_policy: None,
+        activity: None,
         request_id: None,
         channel: Default::default(),
     }
