@@ -2,6 +2,7 @@ import os
 import socket
 import subprocess
 import time
+import uuid
 
 import requests
 
@@ -115,35 +116,79 @@ def parse_sse_data(response):
     return events
 
 
+def post_acp_prompt_until_conversation_resolved(session_id, payload, timeout=30):
+    with requests.post(
+        f"{API}/acp/bears/{SEEDED_BEAR_SLUG}/sessions/{session_id}/prompt",
+        json=payload,
+        headers={"Authorization": f"Bearer {SEEDED_ACP_TOKEN}"},
+        timeout=timeout,
+        stream=True,
+    ) as response:
+        assert response.status_code == 200, response.text
+        for line in response.iter_lines(decode_unicode=True):
+            if line is None:
+                continue
+            if line == "":
+                continue
+            if not line.startswith("data:"):
+                continue
+            raw = line[len("data:") :].strip()
+            if not raw or raw == "[DONE]":
+                continue
+            event = __import__("json").loads(raw)
+            if event.get("type") == "conversation_resolved" and event.get(
+                "conversation_id"
+            ):
+                response.close()
+                return event["conversation_id"]
+        raise AssertionError("conversation_resolved not received")
+
+
 def letta_headers():
     return {"Authorization": f"Bearer {LETTA_API_KEY}"}
+
+
+def create_smoke_letta_agent():
+    agent_id = f"agent-smoke-boundary-{uuid.uuid4()}"
+    agent = request_with_retries(
+        "POST",
+        f"{LETTA}/v1/agents/",
+        headers=letta_headers(),
+        json={
+            "name": f"Smoke Boundary {agent_id}",
+            "memory_blocks": [
+                {"label": "human", "value": "Smoke test human."},
+                {"label": "persona", "value": "Smoke test pair agent."},
+            ],
+            "model": "letta/letta-free",
+            "embedding": "letta/letta-free",
+            "agent_type": "letta_v1_agent",
+        },
+        timeout=30,
+    )
+    assert agent.status_code in (200, 201), agent.text
+    agent_body = agent.json()
+    agent_id = agent_body.get("id") or agent_body.get("agent", {}).get("id")
+    assert agent_id, agent.text
+
+    return agent_id
 
 
 def test_acp_pair_does_not_persist_runtime_context_in_letta_user_message():
     if not API:
         return
+    create_smoke_letta_agent()
     marker = f"smoke-boundary-check-{int(time.time())}"
     session_id = f"smoke-boundary-{int(time.time())}"
-    response = request_with_retries(
-        "POST",
-        f"{API}/acp/bears/{SEEDED_BEAR_SLUG}/sessions/{session_id}/prompt",
-        json={
+    conversation_id = post_acp_prompt_until_conversation_resolved(
+        session_id,
+        {
             "message": marker,
+            "conversation_id": f"new-smoke-boundary-{uuid.uuid4()}",
             "client": "zed",
             "client_context": {"cwd": "/workspace"},
         },
-        headers={"Authorization": f"Bearer {SEEDED_ACP_TOKEN}"},
-        timeout=60,
     )
-    assert response.status_code == 200, response.text
-    events = parse_sse_data(response)
-    conversation_ids = [
-        event.get("conversation_id")
-        for event in events
-        if event.get("type") == "conversation_resolved" and event.get("conversation_id")
-    ]
-    assert conversation_ids, response.text
-    conversation_id = conversation_ids[-1]
 
     history = request_with_retries(
         "GET",

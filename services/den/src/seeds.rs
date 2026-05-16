@@ -8,9 +8,15 @@ use password_auth::generate_hash;
 use sqlx::{postgres::PgPoolOptions, types::Json, PgPool};
 
 use crate::{
+    config::Config,
     core::{
         acp_tokens,
-        bears::{db as bears_db, db::BEAR_ROLE_MEMBER, runtime_plan::default_runtime_plan},
+        bears::{
+            db as bears_db, db::BEAR_ROLE_ADMIN, provision::provision_missing_bear_roles,
+            runtime_plan::default_runtime_plan,
+        },
+        bifrost::BifrostClient,
+        letta::LettaClient,
         user::{self, db as user_db, email_settings},
     },
     startup::run_sqlx_migrations,
@@ -88,15 +94,21 @@ async fn seed_smoke(pool: &PgPool, profile: SeedProfile) -> Result<SeedReport> {
     let bear_id = ensure_bear(pool, SMOKE_BEAR_SLUG)
         .await
         .context("ensure smoke bear")?;
+    ensure_smoke_bear_model(pool, bear_id)
+        .await
+        .context("ensure smoke bear model")?;
     bears_db::ensure_default_runtime_plan(pool, bear_id, &default_runtime_plan())
         .await
         .context("ensure smoke bear runtime_plan")?;
-    bears_db::grant_membership(pool, user_id, bear_id, Some(BEAR_ROLE_MEMBER))
+    bears_db::grant_membership(pool, user_id, bear_id, Some(BEAR_ROLE_ADMIN))
         .await
         .context("ensure smoke membership")?;
     ensure_smoke_acp_token(pool, user_id, bear_id)
         .await
         .context("ensure smoke ACP token")?;
+    if let Err(err) = ensure_smoke_role_agents(pool, bear_id).await {
+        tracing::warn!(error = %err, "smoke seed could not provision role agents; continuing with database fixtures only");
+    }
 
     Ok(SeedReport {
         profile,
@@ -139,6 +151,33 @@ async fn ensure_bear(pool: &PgPool, slug: &str) -> Result<uuid::Uuid> {
     )
     .await
     .map_err(Into::into)
+}
+
+async fn ensure_smoke_bear_model(pool: &PgPool, bear_id: uuid::Uuid) -> Result<()> {
+    sqlx::query(
+        r#"
+        UPDATE bears
+        SET default_model = COALESCE(NULLIF(default_model, ''), 'letta/letta-free')
+        WHERE id = $1
+        "#,
+    )
+    .bind(bear_id)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+async fn ensure_smoke_role_agents(pool: &PgPool, bear_id: uuid::Uuid) -> Result<()> {
+    let config = Config::load();
+    let letta = LettaClient::new(&config);
+    if !letta.is_enabled() {
+        return Ok(());
+    }
+    let bifrost = BifrostClient::new(&config);
+    provision_missing_bear_roles(pool, &letta, &bifrost, bear_id)
+        .await
+        .context("provision missing smoke bear role agents")?;
+    Ok(())
 }
 
 async fn ensure_smoke_acp_token(pool: &PgPool, user_id: i32, bear_id: uuid::Uuid) -> Result<()> {

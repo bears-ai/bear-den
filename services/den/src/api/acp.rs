@@ -2146,7 +2146,7 @@ async fn conversation_history_inner(
     };
     let body = state
         .letta
-        .list_conversation_messages(&conv_id, agent_for_conv, limit, before, false)
+        .list_conversation_messages(&conv_id, agent_for_conv, limit, before, true)
         .await?;
     let (messages, has_more, next_before) = map_acp_history_page(&body, limit);
     Ok(Json(AcpConversationHistoryResponse {
@@ -4631,6 +4631,7 @@ struct AcpLettaSseStream {
     active_tool_call_ids: Vec<String>,
     persist_future: Option<AcpPendingFuture>,
     text_chunker: AcpTextChunker,
+    stream_terminated: bool,
     active_turn_guard: Option<crate::core::role_runtime::RoleTurnGuard>,
 }
 
@@ -4661,6 +4662,7 @@ impl AcpLettaSseStream {
             active_tool_call_ids: Vec::new(),
             persist_future: None,
             text_chunker: AcpTextChunker::new(acp_text_chunk_chars()),
+            stream_terminated: false,
             active_turn_guard: Some(active_turn_guard),
         }
     }
@@ -4978,6 +4980,11 @@ impl Stream for AcpLettaSseStream {
             return self.poll_next(cx);
         }
 
+        if this.stream_terminated {
+            this.log_summary_once();
+            return Poll::Ready(None);
+        }
+
         match ready!(this.inner.as_mut().poll_next(cx)) {
             Some(Ok(chunk)) => {
                 this.buffer.extend_from_slice(&chunk);
@@ -4989,6 +4996,7 @@ impl Stream for AcpLettaSseStream {
                 self.poll_next(cx)
             }
             Some(Err(err)) => {
+                this.stream_terminated = true;
                 let message = format!("Letta stream read failed: {err}");
                 tracing::warn!(
                     request_id = %this.context.request_id,
@@ -5032,7 +5040,12 @@ impl Stream for AcpLettaSseStream {
                 });
                 this.pending
                     .push_back(Bytes::from(format!("data: {}\n\n", event)));
-                self.poll_next(cx)
+                if let Some(bytes) = this.pending.pop_front() {
+                    Poll::Ready(Some(Ok(bytes)))
+                } else {
+                    this.log_summary_once();
+                    Poll::Ready(None)
+                }
             }
             None => {
                 if !this.buffer.is_empty() {

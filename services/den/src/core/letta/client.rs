@@ -560,7 +560,7 @@ impl LettaClient {
     ///
     /// For the agent default thread, pass `conversation_id == "default"` and `Some(agent_id)`.
     ///
-    /// `oldest_first`: when `true`, uses `order=asc` (first page = oldest messages) per Letta API.
+    /// `oldest_first`: when `true`, requests oldest-to-newest messages with `order_by=created_at`.
     pub async fn list_conversation_messages(
         &self,
         conversation_id: &str,
@@ -577,7 +577,11 @@ impl LettaClient {
 
         let limit = limit.clamp(1, 100);
         let limit_str = limit.to_string();
-        let order = if oldest_first { "asc" } else { "desc" };
+        let order_by = if oldest_first {
+            "created_at"
+        } else {
+            "created_at_desc"
+        };
         let url = format!(
             "{}/v1/conversations/{}/messages",
             self.base_url, conversation_id
@@ -587,7 +591,7 @@ impl LettaClient {
             .http
             .get(url)
             .headers(self.auth_headers())
-            .query(&[("order", order), ("limit", limit_str.as_str())]);
+            .query(&[("order_by", order_by), ("limit", limit_str.as_str())]);
 
         if let Some(a) = agent_id.map(str::trim).filter(|s| !s.is_empty()) {
             req = req.query(&[("agent_id", a)]);
@@ -768,6 +772,12 @@ impl LettaClient {
             body.insert("client_tools".to_string(), tools);
         }
         if let Some(system) = override_system.map(str::trim).filter(|s| !s.is_empty()) {
+            tracing::warn!(
+                conversation_id,
+                agent_id = agent_id.unwrap_or_default(),
+                override_system_len = system.len(),
+                "Letta override_system is being used; this should remain exceptional because it replaces the persisted/compiled system prompt for this request"
+            );
             body.insert("override_system".to_string(), json!(system));
         }
 
