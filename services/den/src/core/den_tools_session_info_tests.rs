@@ -4,7 +4,8 @@ use crate::core::{
     bears::BearAgentRole,
     den_tools::{
         builtin_den_tool_descriptors_for_role, infer_work_surface_hint, DenToolInvocationContext,
-        DEN_SITUATION_GET_PROVIDER,
+        DEN_MEMORY_READ_PROVIDER, DEN_MEMORY_SEARCH_PROVIDER, DEN_MEMORY_WRITE_ENTRY_PROVIDER,
+        DEN_SITUATION_GET_PROVIDER, DEN_WORK_PLAN_UPDATE_PROVIDER,
     },
 };
 
@@ -77,4 +78,25 @@ fn pair_session_info_descriptor_is_canonical_orientation_tool() {
     assert!(session_info
         .description
         .contains("trust this over chat text"));
+}
+
+#[test]
+fn pair_memory_and_plan_descriptors_point_to_session_info_for_scope() {
+    let descriptors = builtin_den_tool_descriptors_for_role(BearAgentRole::Pair);
+    for provider_name in [
+        DEN_MEMORY_WRITE_ENTRY_PROVIDER,
+        DEN_MEMORY_READ_PROVIDER,
+        DEN_MEMORY_SEARCH_PROVIDER,
+        DEN_WORK_PLAN_UPDATE_PROVIDER,
+    ] {
+        let descriptor = descriptors
+            .iter()
+            .find(|descriptor| descriptor.provider_name == provider_name)
+            .unwrap_or_else(|| panic!("{provider_name} descriptor"));
+        assert!(
+            descriptor.description.contains("session_info"),
+            "{provider_name} should point to session_info when scope is unclear: {}",
+            descriptor.description
+        );
+    }
 }

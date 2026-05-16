@@ -379,7 +379,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
         descriptor(
             DEN_MEMORY_WRITE_ENTRY,
             "Write memory entry",
-            "Write a role-local semantic memory entry such as a note, log, decision, reflection, scratch item, or summary. Do not use for active plans or task lists; use update_plan and plan-mode tools instead. Does not write core, Cabinet, tasks, observations, or run results.",
+            "Write a role-local semantic memory entry such as a note, log, decision, reflection, scratch item, or summary. Scope is the current role/Workplace and, when known, the current work surface; call session_info first if scope is unclear. Do not use for active plans or task lists; use update_plan and plan-mode tools instead. Does not write core, Cabinet, tasks, observations, or run results.",
             "bear.memory",
             &["memory.entry.write"],
             PAIR_ROLES,
@@ -388,7 +388,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
         descriptor(
             DEN_MEMORY_STATUS,
             "Memory status",
-            "Return MemFS memory health and entry counts for the current bear role.",
+            "Return MemFS memory health and entry counts for the current Bear role/Workplace. Use session_info first when current role, work surface, or memory scope is unclear.",
             "bear.memory",
             &["memory.status.read"],
             PAIR_AND_CURATE_ROLES,
@@ -397,7 +397,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
         descriptor(
             DEN_MEMORY_TREE,
             "Browse memory",
-            "Browse allowed Bear memory paths for the current role.",
+            "Browse allowed Bear memory paths for the current role/Workplace. Prefer current work-surface anchors before broad Bear memory; call session_info first if current scope is unclear.",
             "bear.memory",
             &["memory.tree.read"],
             PAIR_AND_CURATE_ROLES,
@@ -406,7 +406,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
         descriptor(
             DEN_MEMORY_READ,
             "Read memory file",
-            "Read an allowed Bear memory file for the current role.",
+            "Read an allowed Bear memory file for the current role/Workplace. Prefer current work-surface canonical anchors for local-understanding questions; call session_info first if current scope is unclear.",
             "bear.memory",
             &["memory.file.read"],
             PAIR_AND_CURATE_ROLES,
@@ -422,7 +422,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
         descriptor(
             DEN_MEMORY_SEARCH,
             "Search memory",
-            "Search allowed Bear memory files for the current role.",
+            "Search allowed Bear memory files for the current role/Workplace. For local project/repo/service questions, orient to the current work surface with session_info and memory_orient_work_surface before broad search.",
             "bear.memory",
             &["memory.search"],
             PAIR_AND_CURATE_ROLES,
@@ -439,7 +439,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
         descriptor(
             DEN_MEMORY_ORIENT_WORK_SURFACE,
             "Orient work surface",
-            "Return a read-only orientation briefing for the likely current work surface using trusted session hints and canonical memory anchor paths when available.",
+            "Return a read-only orientation briefing for the likely current work surface using trusted session hints from session_info and canonical memory anchor paths when available. Use before broad memory search for local project/repo/service questions.",
             "bear.memory",
             &["memory.tree.read", "memory.file.read"],
             PAIR_AND_CURATE_ROLES,
@@ -448,7 +448,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
         descriptor(
             DEN_MEMORY_CREATE_WORK_SURFACE_SCAFFOLD,
             "Create work-surface scaffold",
-            "Create a minimal work-surface scaffold in Bear memory and register it in the work-surface index.",
+            "Create a minimal work-surface scaffold in Bear memory and register it in the work-surface index. Mutates memory; call session_info and memory_orient_work_surface first unless the user explicitly names the work surface.",
             "bear.memory",
             &["memory.write", "memory.core.write"],
             PAIR_ROLES,
@@ -468,7 +468,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
         descriptor(
             DEN_MEMORY_REQUEST_REVIEW,
             "Request memory review",
-            "Request Reflection/curate review of role-local memory without writing shared memory directly.",
+            "Request Reflection/curate review of role-local memory without writing shared memory directly. Use for role/Workplace-local material that may deserve broader Bear-global review; call session_info first if scope/provenance is unclear.",
             "bear.memory",
             &["memory.review.request"],
             PAIR_ROLES,
@@ -617,7 +617,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
         descriptor(
             DEN_WORK_PLAN_LIST,
             "List plans",
-            "List visible Bear-level planning state, including live activity plans, submitted workplan gates, and saved workplan artifacts where available.",
+            "List visible Bear-level planning state, including live activity plans, submitted workplan gates, and saved workplan artifacts where available. Call session_info first if current thread/session/work-surface scope is unclear.",
             "bear.activity",
             &["work_plan.read"],
             WORK_PLAN_READ_ROLES,
@@ -640,7 +640,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
         descriptor(
             DEN_WORK_PLAN_GET_STATUS,
             "Get work plan status",
-            "Return current status for one visible Den activity plan or this session's active plan.",
+            "Return current status for one visible Den activity plan or this session's active plan. Use to orient before continuing, updating, or handing off plan work; call session_info first if session scope is unclear.",
             "bear.activity",
             &["work_plan.read"],
             WORK_PLAN_READ_ROLES,
@@ -657,7 +657,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
         descriptor(
             DEN_WORK_PLAN_UPDATE,
             "Update visible plan",
-            "Create or update the current role's live visible ACP activity plan. Use this when the user asks to create, show, update, or execute a plan/task list.",
+            "Create or update the current role's live visible activity plan. Use this when the user asks to create, show, update, or execute a plan/task list. This is active work state, not semantic memory; call session_info first if current session/work-surface scope is unclear.",
             "bear.activity",
             &["work_plan.write"],
             WORK_PLAN_UPDATE_ROLES,
