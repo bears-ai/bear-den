@@ -30,6 +30,7 @@ pub mod pair_reflection;
 pub mod reflection_conductor;
 pub mod role_runtime;
 pub mod s3;
+pub mod tool_descriptor_guidance;
 pub mod turn_state;
 pub mod user;
 pub mod web_policy;

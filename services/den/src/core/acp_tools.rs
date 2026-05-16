@@ -1,5 +1,10 @@
 use serde_json::json;
 
+use crate::core::tool_descriptor_guidance::{
+    render_tool_descriptor_guidance, ToolDescriptorGuidance, ToolOrientationPolicy, ToolScopeKind,
+    ToolSideEffectKind,
+};
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AcpToolClass {
     ReadOnly,
@@ -1489,16 +1494,48 @@ fn acp_client_tool_domain(tool: &AcpToolDescriptor) -> &'static str {
     }
 }
 
-fn acp_tool_scope_note(tool: &AcpToolDescriptor) -> &'static str {
+fn acp_tool_guidance(tool: &AcpToolDescriptor) -> ToolDescriptorGuidance {
     match tool.permission_class {
-        "read_files" => "Scope: local files in the current ACP client workspace roots only. Use session_info first if the current workspace, work surface, or artifact scope is unclear.",
-        "edit_files" => "Scope: local files in the current ACP client workspace roots only. Mutates workspace state and requires ACP client approval; read before editing and use session_info first if scope is unclear.",
-        "delete_files" => "Scope: local files in the current ACP client workspace roots only. Destructive and approval-sensitive; use session_info first if scope is unclear.",
-        "git_read" => "Scope: git repositories under the current ACP client workspace roots. Use session_info first if the current repo/work surface is unclear.",
-        "git_write" => "Scope: git repositories under the current ACP client workspace roots. Mutates git/worktree state and requires approval; inspect status/diff first and use session_info if repo scope is unclear.",
-        "run_process" => "Scope: commands run in an explicit cwd under the current ACP client workspace roots. Execution requires approval; use session_info first if cwd/work surface is unclear.",
-        "browser" => "Scope: configured local browser/DevTools session for this ACP client. Use session_info first if channel or task scope is unclear.",
-        _ => "Scope: current ACP client session. Use session_info first if scope is unclear.",
+        "read_files" => ToolDescriptorGuidance {
+            scope: ToolScopeKind::AcpClientWorkspace,
+            side_effect: ToolSideEffectKind::ReadOnly,
+            orientation: ToolOrientationPolicy::UseSessionInfoIfScopeUnclear,
+        },
+        "edit_files" => ToolDescriptorGuidance {
+            scope: ToolScopeKind::AcpClientWorkspace,
+            side_effect: ToolSideEffectKind::WritesWorkspace,
+            orientation: ToolOrientationPolicy::UseSessionInfoAndReadBeforeMutation,
+        },
+        "delete_files" => ToolDescriptorGuidance {
+            scope: ToolScopeKind::AcpClientWorkspace,
+            side_effect: ToolSideEffectKind::DeletesWorkspace,
+            orientation: ToolOrientationPolicy::UseSessionInfoAndReadBeforeMutation,
+        },
+        "git_read" => ToolDescriptorGuidance {
+            scope: ToolScopeKind::GitRepository,
+            side_effect: ToolSideEffectKind::ReadOnly,
+            orientation: ToolOrientationPolicy::UseSessionInfoIfScopeUnclear,
+        },
+        "git_write" => ToolDescriptorGuidance {
+            scope: ToolScopeKind::GitRepository,
+            side_effect: ToolSideEffectKind::GitMutation,
+            orientation: ToolOrientationPolicy::UseSessionInfoAndInspectGitFirst,
+        },
+        "run_process" => ToolDescriptorGuidance {
+            scope: ToolScopeKind::ProcessWorkspace,
+            side_effect: ToolSideEffectKind::ExecutesCode,
+            orientation: ToolOrientationPolicy::UseSessionInfoIfScopeUnclear,
+        },
+        "browser" => ToolDescriptorGuidance {
+            scope: ToolScopeKind::BrowserSession,
+            side_effect: ToolSideEffectKind::BrowserInteraction,
+            orientation: ToolOrientationPolicy::UseSessionInfoIfScopeUnclear,
+        },
+        _ => ToolDescriptorGuidance {
+            scope: ToolScopeKind::CurrentSession,
+            side_effect: ToolSideEffectKind::ReadOnly,
+            orientation: ToolOrientationPolicy::UseSessionInfoIfScopeUnclear,
+        },
     }
 }
 
@@ -1509,7 +1546,11 @@ fn append_scope_note(descriptor: &mut serde_json::Value, tool: &AcpToolDescripto
         .and_then(|value| value.as_str())
         .map(str::to_string)
     {
-        descriptor["description"] = json!(format!("{} {}", description, acp_tool_scope_note(tool)));
+        descriptor["description"] = json!(format!(
+            "{} {}",
+            description,
+            render_tool_descriptor_guidance(acp_tool_guidance(tool))
+        ));
     }
 }
 

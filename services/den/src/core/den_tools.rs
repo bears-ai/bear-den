@@ -25,6 +25,10 @@ use crate::{
             MemfsCoreUpdateRequest, MemfsWriteRoleMemoryEntryRequest,
         },
         memory_proposals::{self, CreateMemoryProposal},
+        tool_descriptor_guidance::{
+            render_tool_descriptor_guidance, ToolDescriptorGuidance, ToolOrientationPolicy,
+            ToolScopeKind, ToolSideEffectKind,
+        },
         turn_state, user, web_policy,
         work_plans::{
             self, WorkPlanListFilter, WorkPlanLookup, WorkPlanStatus, WorkPlanUpdate,
@@ -921,6 +925,58 @@ pub fn builtin_den_tool_descriptors_for_role(role: BearAgentRole) -> Vec<DenTool
         .collect()
 }
 
+fn den_tool_description(name: &'static str, description: &'static str) -> &'static str {
+    let guidance = match name {
+        DEN_SITUATION_GET => None,
+        DEN_MEMORY_WRITE_ENTRY => Some(ToolDescriptorGuidance {
+            scope: ToolScopeKind::BearRoleMemory,
+            side_effect: ToolSideEffectKind::WritesMemory,
+            orientation: ToolOrientationPolicy::UseSessionInfoIfScopeUnclear,
+        }),
+        DEN_MEMORY_STATUS
+        | DEN_MEMORY_TREE
+        | DEN_MEMORY_READ
+        | DEN_MEMORY_SEARCH
+        | DEN_MEMORY_ORIENT_WORK_SURFACE => Some(ToolDescriptorGuidance {
+            scope: ToolScopeKind::BearRoleMemory,
+            side_effect: ToolSideEffectKind::ReadOnly,
+            orientation: ToolOrientationPolicy::UseSessionInfoIfScopeUnclear,
+        }),
+        DEN_MEMORY_CREATE_WORK_SURFACE_SCAFFOLD => Some(ToolDescriptorGuidance {
+            scope: ToolScopeKind::BearRoleMemory,
+            side_effect: ToolSideEffectKind::WritesMemory,
+            orientation: ToolOrientationPolicy::UseSessionInfoIfScopeUnclear,
+        }),
+        DEN_MEMORY_REQUEST_REVIEW => Some(ToolDescriptorGuidance {
+            scope: ToolScopeKind::BearRoleMemory,
+            side_effect: ToolSideEffectKind::WritesMemory,
+            orientation: ToolOrientationPolicy::UseSessionInfoIfScopeUnclear,
+        }),
+        DEN_WORK_PLAN_LIST | DEN_WORK_PLAN_GET_STATUS => Some(ToolDescriptorGuidance {
+            scope: ToolScopeKind::CurrentSession,
+            side_effect: ToolSideEffectKind::ReadOnly,
+            orientation: ToolOrientationPolicy::UseSessionInfoIfScopeUnclear,
+        }),
+        DEN_WORK_PLAN_UPDATE | DEN_WORK_PLAN_REQUEST_HANDOFF => Some(ToolDescriptorGuidance {
+            scope: ToolScopeKind::CurrentSession,
+            side_effect: ToolSideEffectKind::ActiveWorkState,
+            orientation: ToolOrientationPolicy::UseSessionInfoIfScopeUnclear,
+        }),
+        _ => None,
+    };
+    let Some(guidance) = guidance else {
+        return description;
+    };
+    Box::leak(
+        format!(
+            "{} {}",
+            description,
+            render_tool_descriptor_guidance(guidance)
+        )
+        .into_boxed_str(),
+    )
+}
+
 fn descriptor(
     name: &'static str,
     label: &'static str,
@@ -935,7 +991,7 @@ fn descriptor(
         provider_name: provider_safe_tool_name(name),
         provider_aliases: provider_aliases_for_tool(name),
         label,
-        description,
+        description: den_tool_description(name, description),
         kind: "server_tool",
         provider: "den",
         execution_target: "den",
