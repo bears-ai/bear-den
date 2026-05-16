@@ -249,7 +249,7 @@ Agents should discover skills through structured skill descriptors, not prompt s
 
 ## Follow-up slices
 
-1. Generalize descriptor guidance into a shared taxonomy/helper for Den tools, ACP local tools, future channels, and agentic skills.
+1. [x] Generalize descriptor guidance into a shared taxonomy/helper for Den tools, ACP local tools, future channels, and agentic skills.
 2. Introduce a shared `PairTurnRequest` boundary so future `pair` channels cannot append runtime context to Letta user messages.
 3. Improve work-surface resolution beyond candidate hints using repo metadata, memory anchors, and explicit user references.
 4. Stabilize smoke-stack regression coverage for the clean user-message boundary.

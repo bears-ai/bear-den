@@ -9,6 +9,8 @@ pub enum ToolScopeKind {
     AcpClientWorkspace,
     BearRoleMemory,
     BrowserSession,
+    Conversation,
+    ExternalWeb,
     GitRepository,
     ProcessWorkspace,
     CurrentSession,
@@ -24,6 +26,9 @@ pub enum ToolSideEffectKind {
     ExecutesCode,
     BrowserInteraction,
     ActiveWorkState,
+    ConversationMetadata,
+    ExternalNetwork,
+    SkillGovernance,
 }
 
 impl ToolSideEffectKind {
@@ -57,6 +62,8 @@ pub fn render_tool_descriptor_guidance(guidance: ToolDescriptorGuidance) -> Stri
         ToolScopeKind::BrowserSession => {
             "Scope: configured local browser/DevTools session for this client."
         }
+        ToolScopeKind::Conversation => "Scope: current conversation/thread metadata.",
+        ToolScopeKind::ExternalWeb => "Scope: external HTTP(S)/web information, bounded by Den policy and provider configuration.",
         ToolScopeKind::GitRepository => {
             "Scope: git repositories under the current workspace roots."
         }
@@ -88,6 +95,15 @@ pub fn render_tool_descriptor_guidance(guidance: ToolDescriptorGuidance) -> Stri
         }
         ToolSideEffectKind::ActiveWorkState => {
             "Side effect: updates active work state, not semantic memory."
+        }
+        ToolSideEffectKind::ConversationMetadata => {
+            "Side effect: updates conversation metadata, not Bear memory or conversation content."
+        }
+        ToolSideEffectKind::ExternalNetwork => {
+            "Side effect: may call external network/search providers through Den policy."
+        }
+        ToolSideEffectKind::SkillGovernance => {
+            "Side effect: updates skill proposal/governance state for review, not immediate agent behavior unless explicitly approved and reconciled."
         }
     };
 

@@ -928,6 +928,16 @@ pub fn builtin_den_tool_descriptors_for_role(role: BearAgentRole) -> Vec<DenTool
 fn den_tool_description(name: &'static str, description: &'static str) -> &'static str {
     let guidance = match name {
         DEN_SITUATION_GET => None,
+        DEN_CONVERSATION_SET_TITLE => Some(ToolDescriptorGuidance {
+            scope: ToolScopeKind::Conversation,
+            side_effect: ToolSideEffectKind::ConversationMetadata,
+            orientation: ToolOrientationPolicy::UseSessionInfoIfScopeUnclear,
+        }),
+        DEN_WEB_FETCH | DEN_WEB_SEARCH => Some(ToolDescriptorGuidance {
+            scope: ToolScopeKind::ExternalWeb,
+            side_effect: ToolSideEffectKind::ExternalNetwork,
+            orientation: ToolOrientationPolicy::UseSessionInfoIfScopeUnclear,
+        }),
         DEN_MEMORY_WRITE_ENTRY => Some(ToolDescriptorGuidance {
             scope: ToolScopeKind::BearRoleMemory,
             side_effect: ToolSideEffectKind::WritesMemory,
@@ -962,6 +972,22 @@ fn den_tool_description(name: &'static str, description: &'static str) -> &'stat
             side_effect: ToolSideEffectKind::ActiveWorkState,
             orientation: ToolOrientationPolicy::UseSessionInfoIfScopeUnclear,
         }),
+        DEN_PLAN_MODE_ENTER
+        | DEN_PLAN_MODE_STATUS
+        | DEN_PLAN_MODE_RECORD_APPROVAL
+        | DEN_PLAN_MODE_EXIT
+        | DEN_PLAN_MODE_CANCEL => Some(ToolDescriptorGuidance {
+            scope: ToolScopeKind::CurrentSession,
+            side_effect: ToolSideEffectKind::ActiveWorkState,
+            orientation: ToolOrientationPolicy::UseSessionInfoIfScopeUnclear,
+        }),
+        DEN_SKILL_PROPOSE | DEN_SKILL_APPROVE_PROPOSAL | DEN_SKILL_REJECT_PROPOSAL => {
+            Some(ToolDescriptorGuidance {
+                scope: ToolScopeKind::CurrentSession,
+                side_effect: ToolSideEffectKind::SkillGovernance,
+                orientation: ToolOrientationPolicy::UseSessionInfoIfScopeUnclear,
+            })
+        }
         _ => None,
     };
     let Some(guidance) = guidance else {
