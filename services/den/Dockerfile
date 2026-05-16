@@ -48,6 +48,7 @@ ARG APP_NAME=den
 ARG GIT_SHA=
 ARG DATABASE_URL=postgres://postgres:postgres@127.0.0.1:5432/postgres?sslmode=disable
 ARG SQLX_OFFLINE=false
+ARG CARGO_BUILD_JOBS=2
 ENV GIT_SHA=${GIT_SHA}
 COPY --from=cacher /app/target target
 COPY . .
@@ -58,8 +59,8 @@ COPY . .
 RUN --mount=type=cache,target=/usr/local/cargo/registry/,id=den-cargo-registry,sharing=locked \
     --mount=type=cache,target=/usr/local/cargo/git/db,id=den-cargo-git,sharing=locked \
     export DATABASE_URL="${DATABASE_URL}" SQLX_OFFLINE="${SQLX_OFFLINE}" && \
-    echo "DATABASE_URL=$DATABASE_URL" && echo "SQLX_OFFLINE=$SQLX_OFFLINE" && \
-    cargo build --locked --release --features=production --message-format=short && \
+    echo "DATABASE_URL=$DATABASE_URL" && echo "SQLX_OFFLINE=$SQLX_OFFLINE" && echo "CARGO_BUILD_JOBS=$CARGO_BUILD_JOBS" && \
+    CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS}" cargo build --locked --release --features=production --message-format=short && \
     cp "./target/release/${APP_NAME}" /bin/server
 
 FROM alpine:3.18 AS final

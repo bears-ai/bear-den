@@ -34,18 +34,21 @@ incremental = true
 codegen-units = 256
 
 [profile.release]
-# Optimize for reasonable binary speed while keeping link times practical
-# On slower machines thin/full LTO plus single codegen unit can make the final
-# link step take minutes. Use a more link-friendly default and keep a way to
-# build with LTO when needed (see README / CI).
-lto = false         # disable LTO by default to speed linking
-codegen-units = 64  # increased units for faster link times on slow machines
-panic = "abort"    # smaller binaries
-strip = "symbols"  # remove symbols from release builds
+# Optimize for reasonable binary speed while keeping link times practical.
+# Local Docker smoke builds run on memory-constrained developer machines, so keep
+# the default release profile conservative enough that the final Den crate build
+# does not OOM. CI/deploy can still opt into the smaller/faster runtime profile
+# below with `--profile release-lto`.
+lto = false
+codegen-units = 256
+panic = "abort"
+strip = "symbols"
+debug = 0
 
-# If you want maximal runtime performance / smallest binary you can still
-# build with LTO and fewer codegen units explicitly:
-# cargo build --release -Z unstable-options --profile release-lto
+[profile.release-lto]
+inherits = "release"
+lto = "thin"
+codegen-units = 16
 
 [dependencies]
 utoipa = { version = "4.0", features = ["axum_extras"] }
