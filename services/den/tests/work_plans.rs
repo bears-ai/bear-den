@@ -102,6 +102,9 @@ fn den_context(bear_id: Uuid, user_id: i32, role_agent_id: &str) -> DenToolInvoc
         acp_session_id: Some("session-den-tool-work-plan".to_string()),
         conversation_selection: Some("conv-den-tool-work-plan".to_string()),
         runtime_target: Some("conv-den-tool-work-plan".to_string()),
+        workspace_roots: Vec::new(),
+        session_policy: None,
+        activity: None,
         request_id: Some(Uuid::new_v4().to_string()),
         channel: DenToolChannelContext {
             family: Some("acp".to_string()),
