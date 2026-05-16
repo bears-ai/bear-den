@@ -27,6 +27,7 @@ pub mod memory_manager_head;
 mod memory_manager_head_append_markdown_tests;
 pub mod memory_proposals;
 pub mod pair_reflection;
+pub mod pair_turn;
 pub mod reflection_conductor;
 pub mod role_runtime;
 pub mod s3;

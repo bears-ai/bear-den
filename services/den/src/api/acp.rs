@@ -64,6 +64,7 @@ use crate::{
         memory_manager_head::{write_memfs_role_memory_entry, MemfsWriteRoleMemoryEntryRequest},
         memory_proposals::{self, CreateMemoryProposal},
         pair_reflection::{self, CompletePairReflectionRun, CreatePairReflectionRun},
+        pair_turn::{post_pair_turn_messages_streaming, PairTurnBoundaryLog, PairTurnRequest},
         reflection_conductor,
         role_runtime::{RoleRuntime, RoleTurnScope, TurnResultReason, TurnResultStatus},
         turn_state, user, web_policy,
@@ -3302,39 +3303,24 @@ async fn prompt_inner(
         .await;
     }
     let stream_tokens = acp_stream_tokens_enabled();
-    let client_tools_count = client_tool_descriptors
-        .as_ref()
-        .and_then(|tools| tools.as_array())
-        .map(Vec::len)
-        .unwrap_or(0);
-    tracing::info!(
-        %request_id,
-        acp_session_id = %session_id,
-        letta_conversation_id = %conversation_resolution.upstream_target,
-        user_content_len = prompt.len(),
-        user_content_has_system_reminder = prompt.contains("<system-reminder>") || prompt.contains("<system_reminder>"),
-        user_content_has_workflow_scaffolding = prompt.contains("ACP workflow state")
-            || prompt.contains("AUTHORITATIVE WORKFLOW STATE")
-            || prompt.contains("Den workboard context")
-            || prompt.contains("Trusted ACP session mode this turn"),
-        runtime_context_len = turn_runtime_context.len(),
-        runtime_context_sent_as_user_content = false,
-        client_tools_count,
-        override_system_present = false,
-        "letta_outbound_message_boundary"
-    );
-
-    let upstream = match state
-        .letta
-        .post_conversation_messages_streaming(
-            &conversation_resolution.upstream_target,
-            Some(&pair_agent_id),
-            &prompt,
-            client_tool_descriptors.clone(),
+    let upstream = match post_pair_turn_messages_streaming(
+        state.letta.as_ref(),
+        PairTurnRequest {
+            conversation_id: &conversation_resolution.upstream_target,
+            role_agent_id: &pair_agent_id,
+            human_message: &prompt,
+            client_tools: client_tool_descriptors.clone(),
             stream_tokens,
-            None,
-        )
-        .await
+            override_system: None,
+            boundary: PairTurnBoundaryLog {
+                request_id: &request_id.to_string(),
+                channel_family: "acp",
+                session_id,
+                runtime_context_len: turn_runtime_context.len(),
+            },
+        },
+    )
+    .await
     {
         Ok(upstream) => upstream,
         Err(err) if looks_like_letta_waiting_for_approval_error(&err) => {
@@ -3361,17 +3347,24 @@ async fn prompt_inner(
                     return Ok(Err(err));
                 }
             }
-            match state
-                .letta
-                .post_conversation_messages_streaming(
-                    &conversation_resolution.upstream_target,
-                    Some(&pair_agent_id),
-                    &prompt,
-                    client_tool_descriptors.clone(),
+            match post_pair_turn_messages_streaming(
+                state.letta.as_ref(),
+                PairTurnRequest {
+                    conversation_id: &conversation_resolution.upstream_target,
+                    role_agent_id: &pair_agent_id,
+                    human_message: &prompt,
+                    client_tools: client_tool_descriptors.clone(),
                     stream_tokens,
-                    None,
-                )
-                .await
+                    override_system: None,
+                    boundary: PairTurnBoundaryLog {
+                        request_id: &request_id.to_string(),
+                        channel_family: "acp",
+                        session_id,
+                        runtime_context_len: turn_runtime_context.len(),
+                    },
+                },
+            )
+            .await
             {
                 Ok(upstream) => upstream,
                 Err(retry_err) if looks_like_letta_waiting_for_approval_error(&retry_err) => {
@@ -3411,17 +3404,24 @@ async fn prompt_inner(
                         denied_tool_call_ids = ?denied.iter().map(|p| p.tool_call_id.as_str()).collect::<Vec<_>>(),
                         "Submitted Letta approval denials after stale approval retry failure"
                     );
-                    match state
-                        .letta
-                        .post_conversation_messages_streaming(
-                            &conversation_resolution.upstream_target,
-                            Some(&pair_agent_id),
-                            &prompt,
-                            client_tool_descriptors.clone(),
+                    match post_pair_turn_messages_streaming(
+                        state.letta.as_ref(),
+                        PairTurnRequest {
+                            conversation_id: &conversation_resolution.upstream_target,
+                            role_agent_id: &pair_agent_id,
+                            human_message: &prompt,
+                            client_tools: client_tool_descriptors.clone(),
                             stream_tokens,
-                            None,
-                        )
-                        .await
+                            override_system: None,
+                            boundary: PairTurnBoundaryLog {
+                                request_id: &request_id.to_string(),
+                                channel_family: "acp",
+                                session_id,
+                                runtime_context_len: turn_runtime_context.len(),
+                            },
+                        },
+                    )
+                    .await
                     {
                         Ok(upstream) => upstream,
                         Err(denial_retry_err) => return Ok(Err(denial_retry_err)),
