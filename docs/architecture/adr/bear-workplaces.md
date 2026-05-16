@@ -211,9 +211,9 @@ pair creates Bear-level / Workplace-scoped plan
 
 This permits rich cross-role planning without letting one role directly command another outside an approval/dispatch boundary.
 
-## Workplace discovery
+## Workplace and work-surface discovery
 
-Workplaces may be created explicitly or inferred.
+Workplaces and work surfaces may be created explicitly, inferred from evidence, or confirmed by the user.
 
 Initial inference signals may include:
 
@@ -226,7 +226,20 @@ Initial inference signals may include:
 - Docket project references,
 - artifact paths.
 
-Inference should be conservative. If a Workplace cannot be confidently identified, a plan can remain Bear-level with session/conversation references until a clearer Workplace is assigned.
+Inference should be conservative. If a Workplace or work surface cannot be confidently identified, a plan can remain Bear-level with session/conversation references until a clearer scope is assigned.
+
+The resolution state should be visible to the Bear, not only to Den. Agents should be able to communicate their current assumption, ask the user to verify it, or ask the user to choose between plausible candidates. User confirmation can raise confidence for the current thread and should be preserved as provenance when plans, memory, or artifacts are later associated with that work surface.
+
+Recommended resolution states:
+
+| State | Meaning |
+|---|---|
+| `unresolved` | No useful current work-surface candidate is known. |
+| `candidate` | One likely work surface is suggested by session/workspace/conversation hints. |
+| `ambiguous` | Multiple plausible work surfaces exist. |
+| `resolved` | Evidence such as canonical anchors, workspace metadata, or durable references identifies the surface. |
+| `confirmed` | The user explicitly confirmed the work surface for the thread. |
+| `rejected` | A candidate was explicitly rejected. |
 
 ## Consequences
 

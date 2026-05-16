@@ -43,10 +43,12 @@ When a user asks questions like:
 
 the right grounding unit is usually the **current work surface the agent is acting on while in the current Workplace**, not Bear memory in the abstract.
 
+Work-surface grounding is a resolution process, not a silent guess. A Bear should be aware of whether the current work surface is unresolved, only a candidate, ambiguous among several candidates, resolved from evidence, or explicitly confirmed by the user. When scope affects memory, artifact use, or action, the Bear may communicate its assumption, ask the user to verify it, or ask the user to choose among candidates. Human confirmation can raise confidence for the current thread and should be preserved as provenance when later memory is written.
+
 Recommended retrieval precedence:
 
 1. current conversation and trusted situation/session briefing,
-2. current Workplace and current work-surface hints,
+2. current Workplace and current work-surface resolution state,
 3. current work-surface canonical anchors,
 4. current work-surface role-local working memory,
 5. Bear-global shared anchors,
@@ -55,6 +57,17 @@ Recommended retrieval precedence:
 8. general world knowledge.
 
 This keeps agents from answering with plausible but irrelevant Bear-wide knowledge when the user is really asking about one specific engaged work setting.
+
+Resolution states should be explicit:
+
+| State | Meaning | Expected Bear behavior |
+|---|---|---|
+| `unresolved` | No useful current work-surface candidate is known. | Avoid broad-memory assumptions; ask or inspect when scope matters. |
+| `candidate` | One likely work surface is suggested by session/workspace/conversation hints. | Proceed for low-risk work, but communicate the assumption when it matters. |
+| `ambiguous` | Multiple plausible work surfaces exist. | Ask the user to choose or inspect artifacts/memory to disambiguate. |
+| `resolved` | Evidence such as canonical anchors, workspace metadata, or durable references identifies the surface. | Use work-surface-first grounding. |
+| `confirmed` | The user explicitly confirmed the work surface for the thread. | Treat as authoritative for this thread unless contradicted; preserve as provenance for memory writes. |
+| `rejected` | A candidate was explicitly rejected. | Avoid using that candidate unless new evidence appears. |
 
 ## Bear-global vs work-surface-local memory
 

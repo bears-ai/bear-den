@@ -69,6 +69,8 @@ A tool, memory entry, artifact, plan, or observation should carry enough provena
 - thread-specific state,
 - turn-local execution detail.
 
+Work-surface identification is a resolution process. The Bear should know whether the current work surface is `unresolved`, `candidate`, `ambiguous`, `resolved`, `confirmed`, or `rejected`, and it should be able to communicate that status to the user. When ambiguity affects memory or action, the Bear may ask the user to verify an assumption or choose among candidates. User confirmation can raise confidence for the current thread and should become provenance for later memory writes.
+
 ## Tool advertisement levels
 
 ### Level 0: Hidden Den/runtime mechanisms
@@ -207,11 +209,20 @@ It should return, at minimum:
 - current workspace roots,
 - current permission/mutation policy,
 - available tool classes,
-- current work-surface hints,
+- current work-surface resolution state and candidates,
+- whether user confirmation is needed,
 - current activity/workplan summary,
 - memory write policy and scope.
 
 It should not return secrets or raw tokens.
+
+For work-surface resolution, `session_info` and related orientation tools should expose:
+
+- `status`: `unresolved`, `candidate`, `ambiguous`, `resolved`, `confirmed`, or `rejected`,
+- `confidence`: `none`, `low`, `medium`, `high`, or `confirmed`,
+- `reference_candidates`,
+- `needs_user_confirmation`,
+- guidance for when to state assumptions, inspect further, or ask the user to choose.
 
 ## Memory and artifact scope policy
 
@@ -251,5 +262,5 @@ Agents should discover skills through structured skill descriptors, not prompt s
 
 1. [x] Generalize descriptor guidance into a shared taxonomy/helper for Den tools, ACP local tools, future channels, and agentic skills.
 2. Introduce a shared `PairTurnRequest` boundary so future `pair` channels cannot append runtime context to Letta user messages.
-3. Improve work-surface resolution beyond candidate hints using repo metadata, memory anchors, and explicit user references.
+3. Improve work-surface resolution beyond candidate hints using repo metadata, memory anchors, explicit user references, and user confirmation state.
 4. Stabilize smoke-stack regression coverage for the clean user-message boundary.

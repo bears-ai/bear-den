@@ -42,6 +42,7 @@ We will separate tool discovery and scope orientation from user-message content.
 
 4. **Agents are expected to self-orient when scope matters**
    - For ambiguous local questions, current-project questions, “continue” requests, and memory/plan questions, the agent should use `session_info`, scoped memory tools, and workspace inspection before assuming scope.
+   - Work-surface resolution state should be visible to the agent. The agent may state assumptions, ask the user to verify a candidate, or ask the user to choose between plausible work surfaces when ambiguity affects memory or action.
    - For self-contained/simple user requests, discovery is not mandatory.
 
 5. **Tool descriptors must carry scope and side-effect semantics**
@@ -53,6 +54,7 @@ We will separate tool discovery and scope orientation from user-message content.
 
 7. **Memory and artifact provenance must remain visible**
    - Memory/artifact/tool outputs should carry enough provenance to distinguish Bear-global, Workplace-local, work-surface-local, thread-local, and turn-local information.
+   - User-confirmed work-surface resolution should be preserved as provenance when later memory, plans, or artifacts are associated with that work surface.
 
 ## Consequences
 
@@ -96,7 +98,7 @@ Near-term slices:
 
 1. Audit ACP/Den tool descriptors against the descriptor standards.
 2. Ensure `session_info` is always advertised when tools are enabled and is clearly described as the orientation tool.
-3. Expand `session_info` output with Workplace/work-surface hints and runtime policy.
+3. Expand `session_info` output with Workplace/work-surface resolution state, candidate confidence, user-confirmation needs, and runtime policy.
 4. Improve filesystem, memory, and workplan descriptors with scope and discovery guidance.
 5. Add consistency tests across descriptors, `session_info`, and memory boundary validation.
 6. Keep user-message content clean; do not reintroduce prompt suffix injection.
