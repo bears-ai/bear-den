@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft. Intended to guide the next slices after the Letta message-boundary refactor.
+Initial implementation slice complete. `session_info` is the canonical orientation descriptor, its output includes policy/activity state for ACP pair turns, and memory/workplan/ACP local tool descriptors now include scope and orientation guidance. User testing confirms the agent uses tools naturally without prompt suffix injection.
 
 ## Purpose
 
@@ -240,9 +240,16 @@ Agents should discover skills through structured skill descriptors, not prompt s
 
 ## Immediate implementation slices
 
-1. Audit current ACP/Den tool descriptors against descriptor standards.
-2. Ensure `session_info` descriptor is always advertised when tools are enabled and clearly marked as the orientation tool.
-3. Update `session_info` output to include current Workplace/work-surface hints and policy state.
-4. Improve filesystem/memory/workplan descriptors with scope and discovery guidance.
-5. Add tests that descriptor metadata, `session_info`, and memory tool boundaries agree.
-6. Avoid putting any of this guidance back into `messages[].content`.
+1. [x] Audit current ACP/Den tool descriptors against descriptor standards.
+2. [x] Ensure `session_info` descriptor is always advertised when tools are enabled and clearly marked as the orientation tool.
+3. [x] Update `session_info` output to include current Workplace/work-surface hints and policy state.
+4. [x] Improve filesystem/memory/workplan descriptors with scope and discovery guidance.
+5. [x] Add tests that descriptor metadata, `session_info`, and memory tool boundaries agree.
+6. [x] Avoid putting any of this guidance back into `messages[].content`.
+
+## Follow-up slices
+
+1. Generalize descriptor guidance into a shared taxonomy/helper for Den tools, ACP local tools, future channels, and agentic skills.
+2. Introduce a shared `PairTurnRequest` boundary so future `pair` channels cannot append runtime context to Letta user messages.
+3. Improve work-surface resolution beyond candidate hints using repo metadata, memory anchors, and explicit user references.
+4. Stabilize smoke-stack regression coverage for the clean user-message boundary.

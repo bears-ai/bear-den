@@ -1489,6 +1489,30 @@ fn acp_client_tool_domain(tool: &AcpToolDescriptor) -> &'static str {
     }
 }
 
+fn acp_tool_scope_note(tool: &AcpToolDescriptor) -> &'static str {
+    match tool.permission_class {
+        "read_files" => "Scope: local files in the current ACP client workspace roots only. Use session_info first if the current workspace, work surface, or artifact scope is unclear.",
+        "edit_files" => "Scope: local files in the current ACP client workspace roots only. Mutates workspace state and requires ACP client approval; read before editing and use session_info first if scope is unclear.",
+        "delete_files" => "Scope: local files in the current ACP client workspace roots only. Destructive and approval-sensitive; use session_info first if scope is unclear.",
+        "git_read" => "Scope: git repositories under the current ACP client workspace roots. Use session_info first if the current repo/work surface is unclear.",
+        "git_write" => "Scope: git repositories under the current ACP client workspace roots. Mutates git/worktree state and requires approval; inspect status/diff first and use session_info if repo scope is unclear.",
+        "run_process" => "Scope: commands run in an explicit cwd under the current ACP client workspace roots. Execution requires approval; use session_info first if cwd/work surface is unclear.",
+        "browser" => "Scope: configured local browser/DevTools session for this ACP client. Use session_info first if channel or task scope is unclear.",
+        _ => "Scope: current ACP client session. Use session_info first if scope is unclear.",
+    }
+}
+
+fn append_scope_note(descriptor: &mut serde_json::Value, tool: &AcpToolDescriptor) {
+    if let Some(description) = descriptor
+        .as_object_mut()
+        .and_then(|object| object.get_mut("description"))
+        .and_then(|value| value.as_str())
+        .map(str::to_string)
+    {
+        descriptor["description"] = json!(format!("{} {}", description, acp_tool_scope_note(tool)));
+    }
+}
+
 pub fn acp_client_tool_descriptor(tool: &AcpToolDescriptor) -> serde_json::Value {
     debug_assert!(provider_tool_name_is_safe(tool.provider_name));
     let mut descriptor = match tool.provider_name {
@@ -1909,6 +1933,7 @@ pub fn acp_client_tool_descriptor(tool: &AcpToolDescriptor) -> serde_json::Value
         ),
         _ => unreachable!("unknown ACP tool descriptor: {}", tool.provider_name),
     };
+    append_scope_note(&mut descriptor, tool);
     if let Some(object) = descriptor.as_object_mut() {
         object.insert(
             "x-bears-domain".to_string(),
@@ -1951,6 +1976,26 @@ mod tests {
         let serialized = serde_json::to_string(&descriptors).expect("serialize descriptors");
         assert!(!serialized.contains("\"name\":\"fs.read_text_file\""));
         assert!(!serialized.contains("\"name\":\"fs/read_text_file\""));
+    }
+
+    #[test]
+    fn acp_local_tool_descriptors_include_scope_and_orientation_guidance() {
+        for tool in AcpToolName::all() {
+            let descriptor = acp_client_tool_descriptor(tool.descriptor());
+            let description = descriptor["description"].as_str().unwrap_or("");
+            assert!(
+                description.contains("Scope:"),
+                "{} missing scope note: {}",
+                tool.descriptor().provider_name,
+                description
+            );
+            assert!(
+                description.contains("session_info"),
+                "{} missing session_info orientation note: {}",
+                tool.descriptor().provider_name,
+                description
+            );
+        }
     }
 
     #[test]
