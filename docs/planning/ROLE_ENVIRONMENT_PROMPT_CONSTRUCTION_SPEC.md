@@ -15,6 +15,28 @@ It is especially relevant to direct Letta/API role harnesses such as `pair`, `cu
 
 The architecture should be shared across roles, while role-specific behavior should be expressed through structured role contracts, capability policies, workflow policies, and runtime context rather than ad hoc prompt forks.
 
+## Relationship to context composition
+
+This spec is the runtime/prompt-rendering specialization of the broader BEARS context-composition direction documented in `archives/CONTEXT_COMPOSITION_PLAN.md`.
+
+That broader plan defines the conceptual layered model:
+- Den baseline
+- role contracts
+- user steering
+- Bear context
+- runtime/thread context
+
+This spec narrows the focus to the agent-facing role environment that is constructed at runtime for a specific Bear role.
+
+The intended mapping is:
+- **CoreInvariantContext** corresponds to stable Den/baseline invariants.
+- **RoleContext** corresponds to the role-contract layer.
+- **InitiativeProfile** may be influenced by user steering and role defaults.
+- **ContextInventory** and **OperationalState** correspond to runtime/thread context and already-available contextual inputs.
+- **CapabilityPolicy**, **WorkflowPolicy**, and **MemoryPolicy** make role/runtime policy explicit rather than leaving it diffused across prose.
+
+This means the context-composition model remains the conceptual authoring architecture, while this spec defines how those layers should be rendered into a structured, ontology-aware role environment for model consumption.
+
 Different roles will emphasize different policy areas:
 
 - `talk` emphasizes conversational steering, user interaction, and handoff clarity.
