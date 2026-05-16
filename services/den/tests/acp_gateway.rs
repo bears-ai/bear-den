@@ -748,16 +748,18 @@ async fn acp_prompt_streams_to_pair_agent_and_maps_sse() {
     let content = captured["messages"][0]["content"]
         .as_str()
         .expect("prompt content string");
-    assert!(content.starts_with("hello bear"));
-    assert!(content.contains("Den workboard context"));
-    assert!(content.contains("ACP context plan"));
-    assert!(content.contains("den.work_plan.update"));
+    assert_eq!(content, "hello bear");
+    assert!(!content.contains("<system-reminder>"));
+    assert!(!content.contains("Den workboard context"));
+    assert!(!content.contains("ACP context plan"));
+    assert!(!content.contains("den.work_plan.update"));
     assert!(!content.contains("private_path"));
-    assert!(content.contains("multiple work surfaces"));
-    assert!(content.contains("A Workplace is the role-scoped memory surface"));
+    assert!(!content.contains("multiple work surfaces"));
+    assert!(!content.contains("A Workplace is the role-scoped memory surface"));
     assert!(
-        content.contains("Prefer work-surface-first retrieval for local-understanding questions")
+        !content.contains("Prefer work-surface-first retrieval for local-understanding questions")
     );
+    assert!(captured.get("override_system").is_none());
     assert_ne!(captured["agent_id"], "agent-acp-talk-test");
 }
 

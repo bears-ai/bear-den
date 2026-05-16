@@ -740,6 +740,7 @@ impl LettaClient {
         user_input: &str,
         client_tools: Option<serde_json::Value>,
         stream_tokens: bool,
+        override_system: Option<&str>,
     ) -> Result<reqwest::Response, CustomError> {
         if !self.is_enabled() {
             return Err(CustomError::System(
@@ -765,6 +766,9 @@ impl LettaClient {
         }
         if let Some(tools) = client_tools {
             body.insert("client_tools".to_string(), tools);
+        }
+        if let Some(system) = override_system.map(str::trim).filter(|s| !s.is_empty()) {
+            body.insert("override_system".to_string(), json!(system));
         }
 
         let url = format!(

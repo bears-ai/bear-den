@@ -3257,16 +3257,18 @@ async fn prompt_inner(
     {
         initial_events.push(plan_event);
     }
-    let prompt_with_tool_context =
-        format!("{prompt}{plan_mode_context}{activity_context}{tool_prompt_context}");
+    let turn_runtime_context =
+        format!("{plan_mode_context}{activity_context}{tool_prompt_context}");
     tracing::info!(
         %request_id,
         acp_session_id = %session_id,
-        prompt_with_tool_context_len = prompt_with_tool_context.len(),
-        prompt_with_tool_context_has_trusted_mode_suffix =
-            prompt_with_tool_context.contains("Trusted ACP session mode this turn:"),
-        prompt_with_tool_context_has_system_reminder =
-            prompt_with_tool_context.contains("<system-reminder>"),
+        upstream_user_prompt_len = prompt.len(),
+        turn_runtime_context_len = turn_runtime_context.len(),
+        turn_runtime_context_has_trusted_mode_suffix =
+            turn_runtime_context.contains("Trusted ACP session mode this turn:"),
+        turn_runtime_context_has_system_reminder =
+            turn_runtime_context.contains("<system-reminder>"),
+        runtime_context_sent_as_user_content = false,
         "ACP final upstream prompt assembly"
     );
     let workspace_roots = body
@@ -3305,9 +3307,10 @@ async fn prompt_inner(
         .post_conversation_messages_streaming(
             &conversation_resolution.upstream_target,
             Some(&pair_agent_id),
-            &prompt_with_tool_context,
+            &prompt,
             client_tool_descriptors.clone(),
             stream_tokens,
+            None,
         )
         .await
     {
@@ -3341,9 +3344,10 @@ async fn prompt_inner(
                 .post_conversation_messages_streaming(
                     &conversation_resolution.upstream_target,
                     Some(&pair_agent_id),
-                    &prompt_with_tool_context,
+                    &prompt,
                     client_tool_descriptors.clone(),
                     stream_tokens,
+                    None,
                 )
                 .await
             {
@@ -3390,9 +3394,10 @@ async fn prompt_inner(
                         .post_conversation_messages_streaming(
                             &conversation_resolution.upstream_target,
                             Some(&pair_agent_id),
-                            &prompt_with_tool_context,
+                            &prompt,
                             client_tool_descriptors.clone(),
                             stream_tokens,
+                            None,
                         )
                         .await
                     {
