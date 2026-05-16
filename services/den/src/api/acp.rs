@@ -3328,7 +3328,7 @@ async fn prompt_inner(
                         %request_id,
                         acp_session_id = %session_id,
                         pair_agent_id = %pair_agent_id,
-                        "No active Letta runs to cancel before stale-approval retry; trying conversation compaction"
+                        "No active Letta runs to cancel before stale-approval retry; checking persisted approval state next if retry still fails"
                     );
                 }
                 Err(cancel_err) => {
@@ -3348,34 +3348,42 @@ async fn prompt_inner(
                 .await
             {
                 Ok(upstream) => upstream,
-                Err(retry_err)
-                    if looks_like_letta_waiting_for_approval_error(&retry_err)
-                        && conversation_resolution.resolved_conversation_id.is_some() =>
-                {
-                    let conversation_id = conversation_resolution
-                        .resolved_conversation_id
-                        .as_deref()
-                        .expect("checked above");
+                Err(retry_err) if looks_like_letta_waiting_for_approval_error(&retry_err) => {
+                    // Important: do not replace this with conversation compaction.
+                    // Letta has confirmed that compaction is not expected to recover a
+                    // conversation poisoned by pending/incomplete approvals. The durable
+                    // blocked state is unresolved approval_request_message tool calls, so
+                    // the antidote is to submit explicit approval denials for those tool
+                    // call ids. `/compact` remains useful as a manual transcript/context
+                    // management operation, but it is not stale-approval recovery.
                     tracing::warn!(
                         %request_id,
                         acp_session_id = %session_id,
                         pair_agent_id = %pair_agent_id,
-                        conversation_id,
+                        conversation_id = %conversation_resolution.upstream_target,
                         error = %retry_err,
-                        "Stale approval persisted after run cleanup; compacting Letta conversation before final ACP prompt retry"
+                        "Stale approval persisted after run cleanup; denying pending Letta approvals before final ACP prompt retry"
                     );
-                    let compact_result =
-                        match state.letta.compact_conversation(conversation_id).await {
-                            Ok(result) => result,
-                            Err(compact_err) => return Ok(Err(compact_err)),
-                        };
+                    let denied = match state
+                        .letta
+                        .deny_pending_conversation_approvals(
+                            &conversation_resolution.upstream_target,
+                            Some(&pair_agent_id),
+                            "Denied by BEARS stale ACP approval recovery",
+                        )
+                        .await
+                    {
+                        Ok(denied) => denied,
+                        Err(deny_err) => return Ok(Err(deny_err)),
+                    };
                     tracing::warn!(
                         %request_id,
                         acp_session_id = %session_id,
                         pair_agent_id = %pair_agent_id,
-                        conversation_id,
-                        compact_result = %compact_result,
-                        "Compacted Letta conversation after stale approval retry failure"
+                        conversation_id = %conversation_resolution.upstream_target,
+                        denied_count = denied.len(),
+                        denied_tool_call_ids = ?denied.iter().map(|p| p.tool_call_id.as_str()).collect::<Vec<_>>(),
+                        "Submitted Letta approval denials after stale approval retry failure"
                     );
                     match state
                         .letta
@@ -3389,7 +3397,7 @@ async fn prompt_inner(
                         .await
                     {
                         Ok(upstream) => upstream,
-                        Err(compacted_retry_err) => return Ok(Err(compacted_retry_err)),
+                        Err(denial_retry_err) => return Ok(Err(denial_retry_err)),
                     }
                 }
                 Err(retry_err) => return Ok(Err(retry_err)),

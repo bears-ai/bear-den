@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::time::Duration;
 
 use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, CONTENT_TYPE};
@@ -47,11 +48,97 @@ fn letta_http_error_message(operation: &str, status: StatusCode, text: &str) -> 
     let base = format!("Letta {operation} HTTP {status}: {text}");
     if status == StatusCode::CONFLICT && text.contains("waiting for approval") {
         format!(
-            "{base}. The Letta conversation is waiting on an unresolved tool approval. This usually means a prior tool call was not settled correctly; start a new ACP session or resolve/clear the pending approval in Letta."
+            "{base}. The Letta conversation is waiting on an unresolved tool approval. This usually means a prior tool call was not settled correctly; deny the pending approval in Letta or start a new conversation."
         )
     } else {
         base
     }
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+pub struct LettaPendingApproval {
+    pub tool_call_id: String,
+    pub name: Option<String>,
+}
+
+fn message_type(value: &Value) -> Option<&str> {
+    value
+        .get("message_type")
+        .or_else(|| value.get("type"))
+        .and_then(Value::as_str)
+}
+
+fn collect_tool_calls(value: Option<&Value>) -> Vec<LettaPendingApproval> {
+    let Some(value) = value else {
+        return Vec::new();
+    };
+    let calls: Vec<&Value> = if let Some(items) = value.as_array() {
+        items.iter().collect()
+    } else {
+        vec![value]
+    };
+    calls
+        .into_iter()
+        .filter_map(|tc| {
+            let tool_call_id = tc.get("tool_call_id")?.as_str()?.to_string();
+            let name = tc
+                .get("name")
+                .and_then(Value::as_str)
+                .filter(|s| !s.is_empty())
+                .map(str::to_string);
+            Some(LettaPendingApproval { tool_call_id, name })
+        })
+        .collect()
+}
+
+fn pending_approvals_from_variants(variants: &[Value]) -> Vec<LettaPendingApproval> {
+    let Some(approval_request) = variants
+        .iter()
+        .find(|m| message_type(m) == Some("approval_request_message"))
+    else {
+        return Vec::new();
+    };
+
+    let requested = collect_tool_calls(
+        approval_request
+            .get("tool_calls")
+            .or_else(|| approval_request.get("tool_call")),
+    );
+    let mut completed = HashSet::new();
+
+    for m in variants {
+        match message_type(m) {
+            Some("tool_return_message") => {
+                if let Some(tool_call_id) = m.get("tool_call_id").and_then(Value::as_str) {
+                    completed.insert(tool_call_id.to_string());
+                }
+                if let Some(tool_returns) = m.get("tool_returns").and_then(Value::as_array) {
+                    for tr in tool_returns {
+                        if let Some(tool_call_id) = tr.get("tool_call_id").and_then(Value::as_str) {
+                            completed.insert(tool_call_id.to_string());
+                        }
+                    }
+                }
+            }
+            Some("approval_response_message") => {
+                if let Some(approvals) = m.get("approvals").and_then(Value::as_array) {
+                    for approval in approvals {
+                        if let Some(tool_call_id) =
+                            approval.get("tool_call_id").and_then(Value::as_str)
+                        {
+                            completed.insert(tool_call_id.to_string());
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    requested
+        .into_iter()
+        .filter(|tc| !completed.contains(&tc.tool_call_id))
+        .collect()
 }
 
 impl LettaContinuationContext {
@@ -711,6 +798,165 @@ impl LettaClient {
         }
 
         Ok(resp)
+    }
+
+    /// Find unresolved Letta approval requests on the latest in-context message.
+    ///
+    /// This follows Letta's recommended poisoned-conversation recovery shape:
+    /// read the conversation/default-agent state, take the latest
+    /// `in_context_message_ids` entry, fetch all variants from
+    /// `/v1/messages/{message_id}`, then compare `approval_request_message` tool
+    /// calls against any `approval_response_message` or `tool_return_message`
+    /// variants. Looking at variants is necessary because completion can be
+    /// represented as a sibling variant of the same logical message, not merely
+    /// as fields on the approval request itself.
+    pub async fn pending_conversation_approvals(
+        &self,
+        conversation_id: &str,
+        agent_id: Option<&str>,
+    ) -> Result<Vec<LettaPendingApproval>, CustomError> {
+        if !self.is_enabled() {
+            return Err(CustomError::System(
+                "Letta is not configured (set LETTA_BASE_URL)".to_string(),
+            ));
+        }
+
+        let state_url = if conversation_id == "default" {
+            let agent_id = agent_id.ok_or_else(|| {
+                CustomError::System(
+                    "Letta default conversation recovery requires an agent id".to_string(),
+                )
+            })?;
+            format!("{}/v1/agents/{}", self.base_url, agent_id)
+        } else {
+            format!("{}/v1/conversations/{}", self.base_url, conversation_id)
+        };
+        let state = self
+            .http
+            .get(state_url)
+            .headers(self.auth_headers())
+            .send()
+            .await
+            .map_err(|e| {
+                CustomError::System(format!("Letta get conversation state failed: {e}"))
+            })?;
+        let status = state.status();
+        let text = state.text().await.unwrap_or_default();
+        if !status.is_success() {
+            return Err(CustomError::System(letta_http_error_message(
+                "get conversation state",
+                status,
+                &text,
+            )));
+        }
+        let state: Value = serde_json::from_str(&text).map_err(|e| {
+            CustomError::System(format!(
+                "Letta get conversation state JSON decode failed: {e}"
+            ))
+        })?;
+        let Some(last_message_id) = state
+            .get("in_context_message_ids")
+            .and_then(Value::as_array)
+            .and_then(|ids| ids.last())
+            .and_then(Value::as_str)
+        else {
+            return Ok(Vec::new());
+        };
+
+        let variants_url = format!("{}/v1/messages/{}", self.base_url, last_message_id);
+        let variants = self
+            .http
+            .get(variants_url)
+            .headers(self.auth_headers())
+            .send()
+            .await
+            .map_err(|e| CustomError::System(format!("Letta get message variants failed: {e}")))?;
+        let status = variants.status();
+        let text = variants.text().await.unwrap_or_default();
+        if !status.is_success() {
+            return Err(CustomError::System(letta_http_error_message(
+                "get message variants",
+                status,
+                &text,
+            )));
+        }
+        let variants: Vec<Value> = serde_json::from_str(&text).map_err(|e| {
+            CustomError::System(format!(
+                "Letta get message variants JSON decode failed: {e}"
+            ))
+        })?;
+        Ok(pending_approvals_from_variants(&variants))
+    }
+
+    /// Explicitly deny pending approvals to unblock a poisoned conversation.
+    ///
+    /// Do not substitute `/compact` or `compact_conversation` here. Letta has
+    /// clarified that compaction is not expected to clear pending/incomplete
+    /// approval state. Recovery requires posting an `approval` message with
+    /// `approve: false` for each unresolved `tool_call_id`.
+    pub async fn deny_pending_conversation_approvals(
+        &self,
+        conversation_id: &str,
+        agent_id: Option<&str>,
+        reason: &str,
+    ) -> Result<Vec<LettaPendingApproval>, CustomError> {
+        let pending = self
+            .pending_conversation_approvals(conversation_id, agent_id)
+            .await?;
+        if pending.is_empty() {
+            return Ok(pending);
+        }
+
+        let mut body = serde_json::Map::new();
+        body.insert(
+            "messages".to_string(),
+            json!([{
+                "type": "approval",
+                "approvals": pending.iter().map(|p| json!({
+                    "type": "approval",
+                    "tool_call_id": p.tool_call_id,
+                    "approve": false,
+                    "reason": reason,
+                })).collect::<Vec<_>>(),
+                "otid": uuid::Uuid::new_v4().to_string(),
+            }]),
+        );
+        body.insert("streaming".to_string(), json!(false));
+        body.insert("stream_tokens".to_string(), json!(false));
+        body.insert("include_pings".to_string(), json!(false));
+        body.insert("background".to_string(), json!(false));
+        body.insert("max_steps".to_string(), json!(1));
+        if conversation_id == "default" {
+            if let Some(agent_id) = agent_id.map(str::trim).filter(|s| !s.is_empty()) {
+                body.insert("agent_id".to_string(), json!(agent_id));
+            }
+        }
+
+        let url = format!(
+            "{}/v1/conversations/{}/messages",
+            self.base_url, conversation_id
+        );
+        let resp = self
+            .http
+            .post(url)
+            .headers(self.auth_headers())
+            .header(CONTENT_TYPE, "application/json")
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| {
+                CustomError::System(format!("Letta approval denial request failed: {e}"))
+            })?;
+        let status = resp.status();
+        let text = resp.text().await.unwrap_or_default();
+        if !status.is_success() {
+            return Err(CustomError::System(letta_http_error_message(
+                "approval denial",
+                status,
+                &text,
+            )));
+        }
+        Ok(pending)
     }
 
     pub async fn compact_conversation(
@@ -1629,6 +1875,47 @@ fn parse_letta_tool_list(v: &serde_json::Value) -> Vec<LettaToolOption> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pending_approvals_from_variants_ignores_completed_requests() {
+        let variants = vec![
+            json!({
+                "message_type": "approval_request_message",
+                "tool_calls": [
+                    { "tool_call_id": "call-pending", "name": "fs_edit_file" },
+                    { "tool_call_id": "call-approved", "name": "web_fetch" },
+                    { "tool_call_id": "call-returned", "name": "memory_read" }
+                ]
+            }),
+            json!({
+                "message_type": "approval_response_message",
+                "approvals": [{ "tool_call_id": "call-approved", "approve": false }]
+            }),
+            json!({
+                "message_type": "tool_return_message",
+                "tool_returns": [{ "tool_call_id": "call-returned" }]
+            }),
+        ];
+
+        let pending = pending_approvals_from_variants(&variants);
+
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0].tool_call_id, "call-pending");
+        assert_eq!(pending[0].name.as_deref(), Some("fs_edit_file"));
+    }
+
+    #[test]
+    fn pending_approvals_from_variants_supports_single_tool_call_shape() {
+        let variants = vec![json!({
+            "message_type": "approval_request_message",
+            "tool_call": { "tool_call_id": "call-single" }
+        })];
+
+        let pending = pending_approvals_from_variants(&variants);
+
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0].tool_call_id, "call-single");
+    }
 
     #[test]
     fn build_create_agent_body_merges_custom_tags_with_git_tag() {
