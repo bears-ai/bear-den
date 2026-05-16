@@ -1,9 +1,27 @@
-# Prompt-Construction Spec for Pair Environment Improvements
+# Role Environment Prompt-Construction Spec
 
 ## Objective
-Refactor environment construction from prose-first concatenation into schema-first prompt assembly with explicit layer separation, compact operational summaries, structured policies, initiative configuration, context accounting, memory policy, and environment feedback support.
+Refactor BEARS role-environment construction from prose-first concatenation into schema-first prompt assembly with explicit layer separation, compact operational summaries, structured policies, initiative configuration, context accounting, memory policy, and environment feedback support.
 
-This spec targets the `pair` role first, but is designed to generalize across Bear roles.
+This spec defines a shared prompt-construction architecture for BEARS role environments. Role-specific environments such as `talk`, `pair`, `curate`, `work`, and `watch` should all be composed from the same layered model, with role contracts and runtime capabilities providing specialization. `pair` is the first concrete worked example, not the exclusive target.
+
+---
+
+## Scope across roles
+
+This specification applies to all Bear roles.
+
+It is especially relevant to direct Letta/API role harnesses such as `pair`, `curate`, and `watch`, where prompt assembly, runtime state, tool capability boundaries, memory boundaries, and workflow ontology must remain legible both to the agent and to operators.
+
+The architecture should be shared across roles, while role-specific behavior should be expressed through structured role contracts, capability policies, workflow policies, and runtime context rather than ad hoc prompt forks.
+
+Different roles will emphasize different policy areas:
+
+- `talk` emphasizes conversational steering, user interaction, and handoff clarity.
+- `pair` emphasizes collaborative client-mediated tool use, live activity/progress tracking, and mutation/execution boundaries.
+- `curate` emphasizes semantic integration, review authority, memory governance, and durable knowledge boundaries.
+- `work` emphasizes approved execution, task authorization, and result/reporting flows.
+- `watch` emphasizes observation, event interpretation, and boundaries between observation, activity, memory, and execution.
 
 ---
 
@@ -23,6 +41,7 @@ This spec targets the `pair` role first, but is designed to generalize across Be
 6. Provide a structured path for reporting environment friction.
 7. Keep rendering deterministic and low-redundancy.
 8. Make planning representation explicit so live activity/progress tracking defaults to planning tools rather than artifact submission.
+9. Preserve a shared environment architecture across roles while keeping role-specific contracts and capabilities explicit.
 
 ---
 
@@ -49,6 +68,8 @@ Prompt construction should shift from freeform concatenated templates to:
 
 This order should be stable across turns unless a deliberate schema version change occurs.
 
+This layered composition is consistent with the broader role-aware context composition direction in BEARS: stable baseline and role contracts should remain distinct from steering and runtime context, and runtime/thread context should not be flattened into the same conceptual layer as stable prompt content.
+
 ---
 
 ## 3. Internal Data Model
@@ -73,9 +94,11 @@ Fields:
 - `memory_scope`
 - `allowed_memory_paths`
 - `role_style_defaults`
+- `role_contract_version` (optional)
 
 Purpose:
 - Encodes stable role identity and collaboration expectations.
+- Serves as the structured representation of the role-contract layer in the broader context-composition model.
 
 ### 3.3 OperationalState
 Fields:
@@ -116,6 +139,7 @@ Fields:
 
 Purpose:
 - Canonical source for what tools/actions are allowed this turn and how to interpret trusted identity.
+- Should vary by role and runtime surface without requiring the rest of the prompt architecture to fork.
 
 ### 3.5 WorkflowPolicy
 Fields:
@@ -128,6 +152,7 @@ Fields:
 
 Purpose:
 - Encodes when to keep going, when to ask, when to use plan tools, when to submit plan-mode artifacts, and when memory writes are inappropriate.
+- Role-specific policy emphasis may differ, but the environment should always preserve the ontology distinctions among workplan, activity, memory, and execution.
 
 ### 3.6 InitiativeProfile
 Fields:
@@ -141,6 +166,7 @@ Fields:
 
 Purpose:
 - Makes agent initiative and answer style explicitly configurable.
+- Different roles may reasonably have different defaults.
 
 ### 3.7 ContextInventory
 Fields:
@@ -155,6 +181,7 @@ Fields:
 
 Purpose:
 - Helps the model account for context already available before asking for more.
+- Corresponds to the runtime/thread context layer in the broader role-aware composition model.
 
 ### 3.8 MemoryPolicy
 Fields:
@@ -166,6 +193,7 @@ Fields:
 
 Purpose:
 - Clarifies what should and should not become durable memory.
+- Especially important for roles like `curate`, but should be explicit across all roles.
 
 ### 3.9 EnvironmentFeedbackPolicy
 Fields:
@@ -196,6 +224,7 @@ memory_scope=pair_local
 Requirements:
 - Must remain short.
 - Must not duplicate operational state.
+- Should encode the role-contract layer, not ad hoc runtime state.
 
 ### 4.2 [OPERATIONAL SUMMARY]
 A compact top-of-turn summary block rendered from `OperationalState`.
@@ -222,6 +251,7 @@ Requirements:
 - Must contain authoritative current-turn state.
 - Must include derived booleans where helpful.
 - Must avoid long explanatory prose.
+- Must represent current-turn runtime/thread context rather than stable role contract content.
 
 ### 4.3 [PERMISSIONS AND TOOLS]
 Canonical structured section.
@@ -235,6 +265,7 @@ Content:
 Requirements:
 - One canonical statement per rule.
 - No repeated prose examples unless necessary.
+- Must allow role-specific differences without changing the surrounding prompt architecture.
 
 ### 4.4 [WORKFLOW RULES]
 Canonical section for:
@@ -249,12 +280,15 @@ Canonical section for:
 Requirements:
 - Should replace repeated freeform warnings elsewhere.
 - Must distinguish active plan state from formal artifact submission.
+- Should be adaptable by role while preserving ontology boundaries.
 
 #### Planning Representation Policy
 - Use `update_plan` for active task planning, decomposition, and progress tracking.
 - Prefer `update_plan` for live activity/progress tracking when the user asks for a plan unless they explicitly ask for a formal workplan document or approval artifact.
 - Use `enter_plan_mode` / `exit_plan_mode` when a durable markdown implementation plan artifact is specifically needed for approval, review, or audit.
 - Do not substitute memory entries or stored artifacts for active plan state.
+
+Note: this policy will be most directly relevant to interactive roles such as `pair` and `talk`, but the architecture should preserve the same distinction across other roles so that `curate`, `work`, and `watch` do not collapse activity, workplan, memory, and execution into one undifferentiated layer.
 
 ### 4.5 [INITIATIVE PROFILE]
 Rendered only if configured.
@@ -273,6 +307,7 @@ ask_vs_infer=infer_when_safe
 
 Requirements:
 - Values must come from configuration, not prose heuristics.
+- Should be configurable per role.
 
 ### 4.6 [CONTEXT INVENTORY]
 Structured accounting of already-available context.
@@ -290,6 +325,7 @@ discovery_policy=account_for_existing_context_before_requesting_more
 
 Requirements:
 - Should bias the model away from redundant orientation requests.
+- Should map cleanly to runtime/thread context rather than stable steering or role-contract content.
 
 ### 4.7 [MEMORY POLICY]
 Explicit durable-memory guidance.
@@ -301,6 +337,7 @@ Content:
 
 Requirements:
 - Structured bullets or key-value lines preferred over prose paragraphs.
+- Must remain role-aware while preserving common architecture.
 
 ### 4.8 [ENVIRONMENT FEEDBACK POLICY]
 Defines how the agent may surface environment problems.
@@ -340,6 +377,7 @@ Before rendering final prompt text, run a deduplication pass over policy stateme
 - stable role identity
 - turn summary block
 - explicit hard safety boundaries
+- role-contract distinctions
 
 ---
 
@@ -443,6 +481,7 @@ If no structured sink exists yet, at minimum make such reporting permissible in 
 5. Avoid mixing stable rules with turn-specific facts in the same section.
 6. Ensure turn-state sections explicitly override earlier assumptions where needed.
 7. Separate active plan state, plan artifacts, and durable memory in both prompt structure and wording.
+8. Preserve the layer boundaries implied by the broader role-aware context composition model: baseline and role contracts should remain distinct from steering and runtime/thread context.
 
 ---
 
@@ -458,12 +497,13 @@ To avoid abrupt behavior changes:
 ### Phase B
 - Convert repeated reminder prose into canonical structured sections.
 - Deduplicate overlapping language.
-- Make `update_plan` the explicit default for active work planning.
+- Make `update_plan` the explicit default for live activity/work progress representation.
 
 ### Phase C
 - Move fully to schema-first prompt construction.
 - Retain only minimal explanatory prose where evidence shows it helps.
 - Reserve artifact submission guidance for explicit approval/review use cases.
+- Generalize the architecture consistently across `talk`, `pair`, `curate`, `work`, and `watch`.
 
 ---
 
@@ -475,8 +515,9 @@ A compliant implementation should make it more likely that the agent:
 3. behaves consistently under read-only vs editable turns;
 4. uses memory more selectively and durably;
 5. reports environment/tooling friction clearly;
-6. answers “environment” questions as environment questions rather than repo questions;
-7. uses `update_plan` by default for active work planning rather than prematurely submitting plan artifacts.
+6. answers environment questions as environment questions rather than repo questions;
+7. uses `update_plan` by default for active work planning rather than prematurely submitting plan artifacts;
+8. preserves the same environment architecture across roles while allowing role-specific contracts and runtime policies.
 
 ---
 
