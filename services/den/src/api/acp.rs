@@ -2581,18 +2581,39 @@ async fn compact_session_inner(
                 "ACP session has no resolved Letta conversation to compact".to_string(),
             )
         })?;
+    let pair_agent_id =
+        bears_db::role_agent_id(&state.sqlx_pool, session.bear_id, BearAgentRole::Pair)
+            .await?
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty());
+    let denied = state
+        .letta
+        .deny_pending_conversation_approvals(
+            conversation_id,
+            pair_agent_id.as_deref(),
+            "Denied by BEARS manual ACP recovery command",
+        )
+        .await?;
     let compact_result = state.letta.compact_conversation(conversation_id).await?;
     tracing::warn!(
         acp_session_id = %session_id,
         bear_id = %session.bear_id,
         conversation_id,
-        "ACP session Letta conversation compaction requested"
+        pair_agent_id = ?pair_agent_id,
+        denied_count = denied.len(),
+        denied_tool_call_ids = ?denied.iter().map(|p| p.tool_call_id.as_str()).collect::<Vec<_>>(),
+        "ACP session recovery requested: denied pending Letta approvals and compacted conversation"
     );
     Ok(Json(serde_json::json!({
         "ok": true,
         "compacted": true,
         "acp_session_id": session_id,
         "conversation_id": conversation_id,
+        "approval_recovery": {
+            "attempted": true,
+            "denied_count": denied.len(),
+            "denied_tool_call_ids": denied.iter().map(|p| p.tool_call_id.as_str()).collect::<Vec<_>>(),
+        },
         "compact_result": compact_result,
     }))
     .into_response())

@@ -449,11 +449,11 @@ async fn send_available_commands_update(session_id: &str) -> Result<()> {
         ),
         AvailableCommand::new(
             "compact",
-            "Compact this ACP session's Letta conversation to recover from stale approval state.",
+            "Ask Den to repair stale ACP/Letta approval state, then compact the conversation if needed.",
         ),
         AvailableCommand::new(
             "collapse",
-            "Alias for /compact: compact this ACP session's Letta conversation for recovery.",
+            "Alias for /compact: repair stale approval state and compact if needed.",
         ),
         AvailableCommand::new(
             "conversation",
@@ -3084,6 +3084,22 @@ async fn compact_session_conversation(
     post_session_lifecycle_action_json(http, config, session_id, "compact").await
 }
 
+fn render_compact_recovery_result(result: Value) -> String {
+    let approval_recovery = result
+        .get("approval_recovery")
+        .cloned()
+        .unwrap_or_else(|| json!({ "attempted": false }));
+    let compacted = result
+        .get("compacted")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let compact_result = result.get("compact_result").cloned().unwrap_or(Value::Null);
+
+    format!(
+        "BEARS ACP recovery requested for this session. Retry your last prompt. stale_approval_recovery={approval_recovery}; compacted={compacted}; compact_result={compact_result}"
+    )
+}
+
 async fn handle_prompt(
     http: &reqwest::Client,
     config: &Config,
@@ -3461,8 +3477,8 @@ async fn handle_local_slash_command(
         }
         LocalSlashCommand::Compact => {
             match compact_session_conversation(http, config, session_id).await {
-                Ok(result) => format!("BEARS ACP compaction requested for this session. Retry your last prompt. Result: {result}"),
-                Err(err) => format!("BEARS ACP compaction failed: {err:#}"),
+                Ok(result) => render_compact_recovery_result(result),
+                Err(err) => format!("BEARS ACP recovery failed: {err:#}"),
             }
         }
         LocalSlashCommand::Conversation => conversation_report(adapter_state, session_id),
@@ -6210,8 +6226,16 @@ mod tests {
             .iter()
             .map(|m| ReloadHistoryMessage {
                 id: m.get("id").and_then(Value::as_str).map(str::to_string),
-                role: m.get("role").and_then(Value::as_str).unwrap_or("").to_string(),
-                text: m.get("text").and_then(Value::as_str).unwrap_or("").to_string(),
+                role: m
+                    .get("role")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_string(),
+                text: m
+                    .get("text")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_string(),
             })
             .collect::<Vec<_>>();
         assert_eq!(page[0].id.as_deref(), Some("msg-1"));
