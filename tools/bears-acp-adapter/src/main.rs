@@ -3181,6 +3181,7 @@ async fn handle_prompt(
         shared_state,
         response_id,
         params,
+        turn_token,
         true,
     )
     .await;
@@ -3201,6 +3202,7 @@ async fn handle_prompt_with_retry(
     shared_state: &AdapterSharedState,
     response_id: Value,
     params: Value,
+    turn_token: Uuid,
     allow_recovery_retry: bool,
 ) -> Result<()> {
     let session_id = params
@@ -3230,7 +3232,7 @@ async fn handle_prompt_with_retry(
             command,
         )
         .await;
-        send_agent_message_chunk(session_id, &report).await?;
+        send_agent_message_chunk_for_turn(shared_state, session_id, turn_token, &report).await?;
         return Ok(());
     }
     let mut client_context = shared_state
@@ -3315,8 +3317,10 @@ async fn handle_prompt_with_retry(
             "bears-acp-adapter: Den prompt returned non-success status session_id={} status={} message={}",
             session_id, status, message
         );
-        send_agent_message_chunk(
+        send_agent_message_chunk_for_turn(
+            shared_state,
             session_id,
+            turn_token,
             &format!(
                 "BEARS could not complete this turn because Den/Letta returned an error. The ACP session is still alive, so you can use `/compact` or `/collapse` to try recovery.\n\n{message}"
             ),
@@ -3370,6 +3374,7 @@ async fn handle_prompt_with_retry(
                 session_id,
                 &frame,
                 &mut stream_diagnostics,
+                turn_token,
             )
             .await?;
             saw_done |= outcome.saw_done;
@@ -3389,6 +3394,7 @@ async fn handle_prompt_with_retry(
             session_id,
             &frame,
             &mut stream_diagnostics,
+            turn_token,
         )
         .await?;
         saw_done |= outcome.saw_done;
@@ -3407,8 +3413,10 @@ async fn handle_prompt_with_retry(
         );
         match compact_session_conversation(http, config, session_id).await {
             Ok(result) => {
-                send_agent_thought_chunk(
+                send_agent_thought_chunk_for_turn(
+                    shared_state,
                     session_id,
+                    turn_token,
                     &format!(
                         "BEARS detected stale approval state, asked Den to deny pending approvals and compact if needed, and is retrying your prompt automatically. recovery_result={}",
                         result
@@ -3422,13 +3430,16 @@ async fn handle_prompt_with_retry(
                     shared_state,
                     response_id,
                     params,
+                    turn_token,
                     false,
                 ))
                 .await;
             }
             Err(err) => {
-                send_agent_message_chunk(
+                send_agent_message_chunk_for_turn(
+                    shared_state,
                     session_id,
+                    turn_token,
                     &format!(
                         "BEARS detected stale Letta approval state, but Den recovery failed. This ACP session's conversation may still be wedged; please start a new ACP session. Recovery error: {err:#}"
                     ),
@@ -3441,8 +3452,10 @@ async fn handle_prompt_with_retry(
     }
 
     if recover_and_retry && !allow_recovery_retry && !saw_visible_output && !saw_tool_activity {
-        send_agent_message_chunk(
+        send_agent_message_chunk_for_turn(
+            shared_state,
             session_id,
+            turn_token,
             "BEARS retried after Den stale-approval recovery, but stale approval state persisted. Please start a new ACP session.",
         )
         .await?;
@@ -3465,8 +3478,10 @@ async fn handle_prompt_with_retry(
                 "bears-acp-adapter: converting upstream stream error into terminal ACP turn session_id={} message={}",
                 session_id, message
             );
-            send_agent_message_chunk(
+            send_agent_message_chunk_for_turn(
+                shared_state,
                 session_id,
+                turn_token,
                 &format!(
                     "{message}\n\nThe ACP session is still alive, so you can use `/compact` or `/collapse` to try recovery."
                 ),
@@ -4193,6 +4208,7 @@ async fn handle_sse_frame(
     session_id: &str,
     frame: &[u8],
     diagnostics: &mut SseStreamDiagnostics,
+    turn_token: Uuid,
 ) -> Result<SseFrameOutcome> {
     diagnostics.frames += 1;
     let text = String::from_utf8_lossy(frame);
@@ -4231,8 +4247,15 @@ async fn handle_sse_frame(
         if outcome.recover_and_retry {
             continue;
         }
-        let handled =
-            handle_den_event(config, adapter_state, shared_state, session_id, &event).await?;
+        let handled = handle_den_event(
+            config,
+            adapter_state,
+            shared_state,
+            session_id,
+            &event,
+            turn_token,
+        )
+        .await?;
         outcome.saw_done |= handled;
         diagnostics.saw_turn_complete |= handled;
         diagnostics.saw_visible_output |= outcome.saw_visible_output;
@@ -5077,26 +5100,34 @@ async fn handle_den_event(
     shared_state: &AdapterSharedState,
     session_id: &str,
     event: &Value,
+    turn_token: Uuid,
 ) -> Result<bool> {
     match event.get("type").and_then(Value::as_str).unwrap_or("") {
         "assistant_text_delta" => {
             let text = event.get("text").and_then(Value::as_str).unwrap_or("");
             if !text.is_empty() {
-                send_agent_message_chunk(session_id, text).await?;
+                send_agent_message_chunk_for_turn(shared_state, session_id, turn_token, text)
+                    .await?;
             }
             Ok(false)
         }
         "status_text" => {
             let text = event.get("text").and_then(Value::as_str).unwrap_or("");
             if !text.is_empty() {
-                send_agent_thought_chunk(session_id, normalize_thought_chunk_text(text).as_ref())
-                    .await?;
+                send_agent_thought_chunk_for_turn(
+                    shared_state,
+                    session_id,
+                    turn_token,
+                    normalize_thought_chunk_text(text).as_ref(),
+                )
+                .await?;
             }
             Ok(false)
         }
         "error" => {
             let message = format_den_event_error(event);
-            send_agent_thought_chunk(session_id, &message).await?;
+            send_agent_thought_chunk_for_turn(shared_state, session_id, turn_token, &message)
+                .await?;
             Ok(false)
         }
         "tool_request" => {
@@ -5127,7 +5158,13 @@ async fn handle_den_event(
         "plan_update" => {
             if let Some(fallback) = event.get("approval_fallback") {
                 if let Some(message) = plan_approval_fallback_message(fallback) {
-                    send_agent_message_chunk(session_id, &message).await?;
+                    send_agent_message_chunk_for_turn(
+                        shared_state,
+                        session_id,
+                        turn_token,
+                        &message,
+                    )
+                    .await?;
                 }
             }
             let entries = plan_entries_from_plan_update_event(event);
@@ -5139,7 +5176,10 @@ async fn handle_den_event(
                     );
                 }
             } else if should_send_plan_update(shared_state, session_id, &entries).await? {
-                send_plan_update(session_id, entries).await?;
+                if is_current_prompt_turn(shared_state, session_id, turn_token, "plan_update").await
+                {
+                    send_plan_update(session_id, entries).await?;
+                }
             } else if env_bool("BEARS_ACP_DEBUG_UI") {
                 eprintln!(
                     "bears-acp-adapter: skipped unchanged plan update for session_id={}",
@@ -6037,6 +6077,25 @@ async fn send_tool_call_update(
     .await
 }
 
+async fn is_current_prompt_turn(
+    shared_state: &AdapterSharedState,
+    session_id: &str,
+    turn_token: Uuid,
+    update_kind: &str,
+) -> bool {
+    let active = shared_state.active_prompts.lock().await;
+    let ok = active
+        .get(session_id)
+        .is_some_and(|turn| turn.token == turn_token);
+    if !ok {
+        eprintln!(
+            "bears-acp-adapter: dropped stale turn update session_id={} turn_token={} update_kind={}",
+            session_id, turn_token, update_kind
+        );
+    }
+    ok
+}
+
 fn text_chunk_update(kind: &str, text: &str) -> Result<Value> {
     let chunk = ContentChunk::new(ContentBlock::from(text.to_string()));
     let update = match kind {
@@ -6070,6 +6129,18 @@ async fn send_agent_message_chunk(session_id: &str, text: &str) -> Result<()> {
     .await
 }
 
+async fn send_agent_message_chunk_for_turn(
+    shared_state: &AdapterSharedState,
+    session_id: &str,
+    turn_token: Uuid,
+    text: &str,
+) -> Result<()> {
+    if !is_current_prompt_turn(shared_state, session_id, turn_token, "agent_message_chunk").await {
+        return Ok(());
+    }
+    send_agent_message_chunk(session_id, text).await
+}
+
 async fn send_agent_thought_chunk(session_id: &str, text: &str) -> Result<()> {
     write_notification(
         "session/update",
@@ -6079,6 +6150,18 @@ async fn send_agent_thought_chunk(session_id: &str, text: &str) -> Result<()> {
         }),
     )
     .await
+}
+
+async fn send_agent_thought_chunk_for_turn(
+    shared_state: &AdapterSharedState,
+    session_id: &str,
+    turn_token: Uuid,
+    text: &str,
+) -> Result<()> {
+    if !is_current_prompt_turn(shared_state, session_id, turn_token, "agent_thought_chunk").await {
+        return Ok(());
+    }
+    send_agent_thought_chunk(session_id, text).await
 }
 
 /// Adapter-local mirror of Den's `core::letta::normalize_display_status_text`.
@@ -6270,6 +6353,7 @@ mod tests {
             tool_tasks: ToolTaskRegistry::default(),
             approval_cache: ApprovalCache::default(),
             cancellation_tx,
+            active_prompts: Arc::new(TokioMutex::new(HashMap::new())),
         }
     }
 
@@ -6329,6 +6413,7 @@ mod tests {
             "session-1",
             frame,
             &mut diagnostics,
+            Uuid::new_v4(),
         )
         .await
         .unwrap();
