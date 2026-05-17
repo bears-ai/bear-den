@@ -62,6 +62,38 @@ fn codepool_base_url_from_env() -> String {
     }
 }
 
+/// Explicit fixture profiles for feature-gated web UI smoke testing.
+///
+/// These profiles are only usable when the `web-ui-fixtures` Cargo feature is compiled in.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum UiFixtureProfile {
+    BearDetailsRich,
+    BearDetailsWarning,
+    BearChatBasic,
+    BearChatError,
+}
+
+impl UiFixtureProfile {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::BearDetailsRich => "bear-details-rich",
+            Self::BearDetailsWarning => "bear-details-warning",
+            Self::BearChatBasic => "bear-chat-basic",
+            Self::BearChatError => "bear-chat-error",
+        }
+    }
+
+    pub fn parse(raw: &str) -> Option<Self> {
+        match raw.trim() {
+            "bear-details-rich" => Some(Self::BearDetailsRich),
+            "bear-details-warning" => Some(Self::BearDetailsWarning),
+            "bear-chat-basic" => Some(Self::BearChatBasic),
+            "bear-chat-error" => Some(Self::BearChatError),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct Config {
     pub templates_dir: String,
@@ -166,6 +198,12 @@ pub struct Config {
     pub brave_search_api_key: String,
     /// Max results returned by Den search tools (`DEN_SEARCH_MAX_RESULTS`, default 5, clamped 1..10).
     pub den_search_max_results: usize,
+
+    /// Explicit web UI fixture profile for browser smoke testing.
+    ///
+    /// This is a runtime selector, not a generic development mode switch. The named profile is
+    /// only honored when the binary is compiled with the `web-ui-fixtures` Cargo feature.
+    pub ui_fixture_profile: Option<UiFixtureProfile>,
 }
 
 impl Config {
@@ -249,6 +287,27 @@ impl Config {
         };
 
         let acp_gateway_enabled = parse_bool_env("ACP_GATEWAY_ENABLED", false);
+
+        let ui_fixture_profile = match std::env::var("UI_FIXTURE_PROFILE") {
+            Ok(raw) => {
+                let trimmed = raw.trim();
+                if trimmed.is_empty() {
+                    None
+                } else {
+                    match UiFixtureProfile::parse(trimmed) {
+                        Some(profile) => Some(profile),
+                        None => {
+                            tracing::warn!(
+                                "Invalid UI_FIXTURE_PROFILE value '{}'. Supported values: bear-details-rich, bear-details-warning, bear-chat-basic, bear-chat-error.",
+                                trimmed
+                            );
+                            None
+                        }
+                    }
+                }
+            }
+            Err(_) => None,
+        };
 
         let web_port = std::env::var("PORT")
             .unwrap_or_else(|_| "3000".to_string())
@@ -449,6 +508,7 @@ impl Config {
             den_search_provider,
             brave_search_api_key,
             den_search_max_results,
+            ui_fixture_profile,
         }
     }
 }
@@ -519,6 +579,7 @@ impl Config {
             den_search_provider: String::new(),
             brave_search_api_key: String::new(),
             den_search_max_results: 5,
+            ui_fixture_profile: None,
         }
     }
 }

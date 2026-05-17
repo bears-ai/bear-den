@@ -5,6 +5,7 @@ edition = "2021"
 
 [features]
 production = []
+web-ui-fixtures = []
 
 [profile.dev]
 # Optimize for faster linking in development

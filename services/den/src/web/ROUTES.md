@@ -2,6 +2,9 @@
 
 Axum routes for the web server (`RUN_WEB=true`). Update this file when you add or remove routes.
 
+See also `src/web/WEB_UI_FIXTURES.md` for the feature-gated browser/UI fixture workflow used for
+real-page smoke testing in development.
+
 ## Top-level (`src/web/mod.rs`)
 
 - `GET /health` — liveness (BEARS Phase 1 M0 canonical path)

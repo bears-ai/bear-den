@@ -24,7 +24,7 @@ use crate::{
             BearAgentRole,
         },
         den_tools::{self, DenToolChannelContext, DenToolInvocationContext},
-        letta::{load_agent_conversations, sanitize_visible_transcript_text},
+        letta::{sanitize_visible_transcript_text},
         work_plans::{self, WorkPlanListFilter, WorkPlanStatus},
     },
     errors::CustomError,
@@ -199,7 +199,7 @@ async fn chat_conversations(
         })
     };
 
-    if !state.letta.is_enabled() {
+    if !state.web_letta_data.is_enabled() {
         return Ok(default_only());
     }
 
@@ -212,7 +212,7 @@ async fn chat_conversations(
     };
 
     let archived_ids = archived_conversations::list_for_bear(state.sqlx_pool(), bear.id).await?;
-    let snap = load_agent_conversations(state.letta.as_ref(), &agent_id).await;
+    let snap = state.web_letta_data.list_agent_conversations(&agent_id).await?;
     let conversations: Vec<ChatConversationRow> = snap
         .all
         .into_iter()
@@ -257,7 +257,7 @@ async fn chat_conversation_patch(
         .await?
         .ok_or_else(|| CustomError::NotFound("bear not found".to_string()))?;
 
-    if !state.letta.is_enabled() {
+    if !state.web_letta_data.is_enabled() {
         return Err(CustomError::System(
             "Letta is not configured (set LETTA_BASE_URL)".to_string(),
         ));
@@ -273,7 +273,7 @@ async fn chat_conversation_patch(
         ));
     };
 
-    let snap = load_agent_conversations(state.letta.as_ref(), &agent_id).await;
+    let snap = state.web_letta_data.list_agent_conversations(&agent_id).await?;
     let found = snap.all.iter().any(|r| r.id == conv_id);
     if !found {
         return Err(CustomError::NotFound("conversation not found".to_string()));
@@ -296,7 +296,7 @@ async fn chat_conversation_patch(
     }
 
     if body.deleted == Some(true) {
-        state.letta.delete_conversation(&conv_id).await?;
+        state.web_letta_data.delete_conversation(&conv_id).await?;
         archived_conversations::set_archived(
             state.sqlx_pool(),
             bear.id,
@@ -312,7 +312,7 @@ async fn chat_conversation_patch(
     if let Some(title) = title {
         let title = title.chars().take(120).collect::<String>();
         state
-            .letta
+            .web_letta_data
             .patch_conversation_summary(&conv_id, &title)
             .await?;
         let _ = acp_sessions::set_title_for_bear_conversation(
@@ -326,7 +326,7 @@ async fn chat_conversation_patch(
 
     if let Some(archived) = body.archived {
         state
-            .letta
+            .web_letta_data
             .patch_conversation_archived(&conv_id, archived)
             .await?;
         archived_conversations::set_archived(
@@ -373,7 +373,7 @@ async fn chat_history(
         })
     };
 
-    if !state.letta.is_enabled() {
+    if !state.web_letta_data.is_enabled() {
         return Ok(empty());
     }
 
@@ -396,7 +396,7 @@ async fn chat_history(
     };
 
     let body = state
-        .letta
+        .web_letta_data
         .list_conversation_messages(&conv_id, agent_for_conv, limit, before, false)
         .await?;
 
@@ -822,7 +822,7 @@ async fn chat_send_inner(
         ));
     }
 
-    if !state.letta.is_enabled() {
+    if !state.web_letta_data.is_enabled() {
         return Err(CustomError::System(
             "Chat is unavailable: LETTA_BASE_URL is not set".to_string(),
         ));
@@ -850,7 +850,7 @@ async fn chat_send_inner(
         })?;
     let conv_id = normalize_client_conversation_id(body.conversation_id.as_deref())?;
 
-    if !state.codepool.is_enabled() {
+    if !state.web_chat_transport.is_enabled() {
         return Err(CustomError::System(
             "Chat is unavailable: CODEPOOL_BASE_URL is not set (Codepool is required for \
              streaming when RUN_WEB=true)."
@@ -888,7 +888,7 @@ async fn chat_send_inner(
     crate::observability::metrics::chat_send_runtime_bear_channel();
 
     let upstream = state
-        .codepool
+        .web_chat_transport
         .post_bear_channel_message_streaming(
             &session_id,
             &conv_id,

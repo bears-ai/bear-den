@@ -27,12 +27,11 @@ use crate::{
             db::{role_is_bear_admin, BearMemberRow, BEAR_ROLE_ADMIN, BEAR_ROLE_MEMBER},
             provision, sync, Bear, BearAgent, BearAgentRole,
         },
-        letta::{load_agent_conversations, AgentSummary, LettaAgentDiagnostics},
+        letta::{AgentSummary, LettaAgentDiagnostics},
         memory_manager_head::{
-            delete_memfs_role_memory_entries, fetch_memfs_role_memory_file,
-            fetch_memfs_role_memory_status, fetch_memfs_role_memory_tree,
-            fetch_memfs_role_view_health, fetch_memory_manager_repository_files,
-            fetch_memory_manager_repository_status, search_memfs_role_memory,
+            delete_memfs_role_memory_entries, fetch_memory_manager_repository_files,
+            fetch_memory_manager_repository_status, fetch_memfs_role_memory_file,
+            fetch_memfs_role_memory_tree,
         },
         memory_proposals::{self, CreateMemoryProposal},
         pair_reflection, user,
@@ -1081,7 +1080,7 @@ async fn build_role_detail_view(
     let memfs_url = state.config.letta_memfs_service_url.trim().to_string();
     let mut role_row = BearRoleViewRow::from_agent(agent.clone(), role);
     if !memfs_url.is_empty() {
-        match fetch_memfs_role_view_health(state.letta.http(), &memfs_url, bear.id, role.as_str())
+        match state.web_memory_data.fetch_role_view_health(bear.id, role.as_str())
             .await
         {
             Ok(Some(view)) => {
@@ -1107,7 +1106,7 @@ async fn build_role_detail_view(
     let mut memory_allowed_prefixes = Vec::new();
     let mut memory_recent_activity = Vec::new();
     if !memfs_url.is_empty() {
-        match fetch_memfs_role_memory_status(state.letta.http(), &memfs_url, bear.id, role.as_str())
+        match state.web_memory_data.fetch_role_memory_status(bear.id, role.as_str())
             .await
         {
             Ok(Some(status)) => {
@@ -1207,12 +1206,7 @@ async fn bear_role_rows(
             .map_err(|err| CustomError::System(format!("invalid bear agent role in DB: {err}")))?;
         let mut row = BearRoleViewRow::from_agent(agent, role);
         if !memfs_url.is_empty() {
-            match fetch_memfs_role_view_health(
-                state.letta.http(),
-                &memfs_url,
-                bear_id,
-                role.as_str(),
-            )
+            match state.web_memory_data.fetch_role_view_health(bear_id, role.as_str())
             .await
             {
                 Ok(Some(view)) => {
@@ -1377,7 +1371,7 @@ async fn new_bear_post(
         return Ok(r.into_response());
     }
 
-    let letta_fetch = if state.letta.is_enabled() {
+    let letta_fetch = if state.web_letta_data.is_enabled() {
         Some(state.letta.list_llm_models().await.map(|opts| {
             let model_trim = form.default_model.trim();
             let h = (!model_trim.is_empty()).then_some(model_trim);
@@ -1444,7 +1438,7 @@ async fn new_bear_post(
         )
         .await
         {
-            if state.letta.is_enabled() {
+            if state.web_letta_data.is_enabled() {
                 tracing::warn!(%id, "Letta provision failed: {e}");
                 let page = bear_new_form_context(&state, &form).await;
                 return render_template(
@@ -1461,7 +1455,7 @@ async fn new_bear_post(
             }
         }
 
-        if state.letta.is_enabled() {
+        if state.web_letta_data.is_enabled() {
             let sync_summary = sync::sync_all_bear_roles_to_letta(
                 state.sqlx_pool(),
                 state.letta.as_ref(),
@@ -1517,7 +1511,7 @@ async fn render_bear_details_page(
     can_manage_bear: bool,
     letta_resync_query: Option<String>,
 ) -> Result<Response, CustomError> {
-    let letta_configured = state.letta.is_enabled();
+    let letta_configured = state.web_letta_data.is_enabled();
     let letta_api_base = state.config.letta_base_url.trim().to_string();
     let slug = bear.slug.clone();
     let talk_agent_id = talk_agent_id_for_bear(state.sqlx_pool(), &bear).await?;
@@ -1570,7 +1564,7 @@ async fn render_bear_details_page(
         let mut rows = Vec::new();
         let mut archived_count = 0usize;
         if let Some(agent_id) = talk_agent_id.as_deref() {
-            let snap = load_agent_conversations(state.letta.as_ref(), agent_id).await;
+            let snap = state.web_letta_data.list_agent_conversations(agent_id).await?;
             archived_count += snap
                 .all
                 .iter()
@@ -1591,7 +1585,7 @@ async fn render_bear_details_page(
             );
         }
         if let Some(agent_id) = pair_agent_id.as_deref() {
-            let snap = load_agent_conversations(state.letta.as_ref(), agent_id).await;
+            let snap = state.web_letta_data.list_agent_conversations(agent_id).await?;
             archived_count += snap
                 .all
                 .iter()
@@ -1806,7 +1800,7 @@ async fn bear_resync_letta_post(
     }
 
     let target = format!("/bear/{}/details", bear.slug);
-    if !state.letta.is_enabled() {
+    if !state.web_letta_data.is_enabled() {
         return Ok(Redirect::to(&format!("{target}?letta_resync=error")).into_response());
     }
 
@@ -2181,7 +2175,7 @@ async fn bear_edit_configuration_post(
         ));
     }
 
-    let letta_fetch = if state.letta.is_enabled() {
+    let letta_fetch = if state.web_letta_data.is_enabled() {
         Some(state.letta.list_llm_models().await.map(|opts| {
             let model_trim = form.default_model.trim();
             let h = (!model_trim.is_empty()).then_some(model_trim);
@@ -2366,7 +2360,7 @@ async fn bear_conversations_get(
     }
 
     let bear = load_bear_member(state.sqlx_pool(), user_id, &slug).await?;
-    let letta_configured = state.letta.is_enabled();
+    let letta_configured = state.web_letta_data.is_enabled();
 
     let talk_agent_id = talk_agent_id_for_bear(state.sqlx_pool(), &bear).await?;
     let pair_agent_id = pair_agent_id_for_bear(state.sqlx_pool(), &bear).await?;
@@ -2376,7 +2370,7 @@ async fn bear_conversations_get(
         let acp_ids = acp_conversation_ids_for_bear(state.sqlx_pool(), &bear).await?;
         let mut rows = Vec::new();
         if let Some(agent_id) = talk_agent_id.as_deref() {
-            let snap = load_agent_conversations(state.letta.as_ref(), agent_id).await;
+            let snap = state.web_letta_data.list_agent_conversations(agent_id).await?;
             rows.extend(snap.all.into_iter().map(|mut r| {
                 if archived_ids.contains(&r.id) {
                     r.archived = true;
@@ -2392,7 +2386,7 @@ async fn bear_conversations_get(
             }));
         }
         if let Some(agent_id) = pair_agent_id.as_deref() {
-            let snap = load_agent_conversations(state.letta.as_ref(), agent_id).await;
+            let snap = state.web_letta_data.list_agent_conversations(agent_id).await?;
             rows.extend(
                 snap.all
                     .into_iter()
@@ -2452,7 +2446,7 @@ async fn bear_memory_get(
     }
 
     let bear = load_bear_member(state.sqlx_pool(), user_id, &slug).await?;
-    let letta_configured = state.letta.is_enabled();
+    let letta_configured = state.web_letta_data.is_enabled();
     let memfs_url = state.config.letta_memfs_service_url.as_str();
     let requested_role = q.role.as_deref().unwrap_or("pair");
     let selected_role = requested_role
@@ -2491,12 +2485,7 @@ async fn bear_memory_get(
             error: None,
         };
         if !memfs_url.is_empty() {
-            match fetch_memfs_role_memory_status(
-                state.letta.http(),
-                memfs_url,
-                bear.id,
-                role.as_str(),
-            )
+            match state.web_memory_data.fetch_role_memory_status(bear.id, role.as_str())
             .await
             {
                 Ok(Some(status)) => {
@@ -2529,12 +2518,7 @@ async fn bear_memory_get(
     }
 
     let selected_tree = if !memfs_url.is_empty() {
-        match fetch_memfs_role_memory_tree(
-            state.letta.http(),
-            memfs_url,
-            bear.id,
-            selected_role.as_str(),
-        )
+        match state.web_memory_data.fetch_role_memory_tree(bear.id, selected_role.as_str())
         .await
         {
             Ok(Some(tree)) => Some(tree),
@@ -2550,14 +2534,7 @@ async fn bear_memory_get(
 
     let search_results = if !memfs_url.is_empty() {
         if let Some(query) = search_query {
-            match search_memfs_role_memory(
-                state.letta.http(),
-                memfs_url,
-                bear.id,
-                selected_role.as_str(),
-                query,
-                Some(50),
-            )
+            match state.web_memory_data.search_role_memory(bear.id, selected_role.as_str(), query, Some(50))
             .await
             {
                 Ok(v) => v,
@@ -2575,13 +2552,7 @@ async fn bear_memory_get(
 
     let selected_file = if !memfs_url.is_empty() {
         if let Some(path) = selected_path {
-            match fetch_memfs_role_memory_file(
-                state.letta.http(),
-                memfs_url,
-                bear.id,
-                selected_role.as_str(),
-                path,
-            )
+            match state.web_memory_data.fetch_role_memory_file(bear.id, selected_role.as_str(), path)
             .await
             {
                 Ok(v) => v,
@@ -2889,7 +2860,7 @@ async fn bear_runtime_blocks_get(
     }
 
     let bear = load_bear_member(state.sqlx_pool(), user_id, &slug).await?;
-    let letta_configured = state.letta.is_enabled();
+    let letta_configured = state.web_letta_data.is_enabled();
     bears_db::ensure_bear_agent_rows(state.sqlx_pool(), bear.id).await?;
     let agents = bears_db::list_bear_agents(state.sqlx_pool(), bear.id).await?;
     let mut rows = Vec::new();

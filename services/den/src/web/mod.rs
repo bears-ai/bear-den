@@ -3,6 +3,7 @@ pub mod admin;
 pub mod bear_chat;
 pub mod bear_create_support;
 pub mod bear_management;
+pub mod data;
 pub mod design;
 pub mod filters;
 pub mod home;
@@ -19,6 +20,10 @@ use std::sync::OnceLock;
 use crate::build_info;
 use crate::errors::CustomError;
 use crate::{auth_backend::Backend, config::Config};
+use crate::web::data::{
+    RealWebChatTransportDataSource, RealWebLettaDataSource, RealWebMemoryDataSource,
+    WebChatTransportDataSource, WebLettaDataSource, WebMemoryDataSource,
+};
 
 use axum::{
     body::Body,
@@ -50,6 +55,9 @@ use time::Duration;
 
 use minijinja::Environment;
 use std::sync::Arc;
+
+#[cfg(feature = "web-ui-fixtures")]
+use crate::web::data::fixtures::build_fixture_data_sources;
 
 /// Week start day options (0 = Sunday … 6 = Saturday), for settings UI.
 pub fn day_of_week_names() -> IndexMap<i32, &'static str> {
@@ -86,6 +94,9 @@ pub struct AppState {
     pub letta: std::sync::Arc<crate::core::letta::LettaClient>,
     pub bifrost: std::sync::Arc<crate::core::bifrost::BifrostClient>,
     pub codepool: std::sync::Arc<crate::core::codepool::CodePoolClient>,
+    pub web_letta_data: Arc<dyn WebLettaDataSource>,
+    pub web_memory_data: Arc<dyn WebMemoryDataSource>,
+    pub web_chat_transport: Arc<dyn WebChatTransportDataSource>,
     pub media: Option<crate::core::s3::MediaStore>,
 }
 
@@ -105,6 +116,15 @@ impl AppState {
             std::sync::Arc::new(crate::core::bifrost::BifrostClient::new(config.as_ref()));
         let codepool =
             std::sync::Arc::new(crate::core::codepool::CodePoolClient::new(config.as_ref()));
+        let web_letta_data = Arc::new(RealWebLettaDataSource::new(letta.clone()));
+        let web_memory_data = Arc::new(RealWebMemoryDataSource::new(
+            letta.http().clone(),
+            config.letta_memfs_service_url.clone(),
+        ));
+        let web_chat_transport = Arc::new(RealWebChatTransportDataSource::new(
+            codepool.clone(),
+            codepool.is_enabled(),
+        ));
         Self {
             sqlx_pool,
             template_env,
@@ -113,6 +133,9 @@ impl AppState {
             letta,
             bifrost,
             codepool,
+            web_letta_data,
+            web_memory_data,
+            web_chat_transport,
             media: None,
         }
     }
@@ -185,6 +208,40 @@ pub async fn server_with_state(
     let letta = std::sync::Arc::new(crate::core::letta::LettaClient::new(config.as_ref()));
     let bifrost = std::sync::Arc::new(crate::core::bifrost::BifrostClient::new(config.as_ref()));
     let codepool = std::sync::Arc::new(crate::core::codepool::CodePoolClient::new(config.as_ref()));
+
+    let mut web_letta_data: Arc<dyn WebLettaDataSource> =
+        Arc::new(RealWebLettaDataSource::new(letta.clone()));
+    let mut web_memory_data: Arc<dyn WebMemoryDataSource> = Arc::new(RealWebMemoryDataSource::new(
+        letta.http().clone(),
+        config.letta_memfs_service_url.clone(),
+    ));
+    let mut web_chat_transport: Arc<dyn WebChatTransportDataSource> =
+        Arc::new(RealWebChatTransportDataSource::new(
+            codepool.clone(),
+            codepool.is_enabled(),
+        ));
+
+    #[cfg(feature = "web-ui-fixtures")]
+    if let Some(profile) = config.ui_fixture_profile {
+        tracing::warn!(
+            profile = profile.as_str(),
+            "Web UI fixture profile enabled; browser pages will use fixture-backed integration data"
+        );
+        let (fixture_letta, fixture_memory, fixture_chat_transport) =
+            build_fixture_data_sources(profile);
+        web_letta_data = fixture_letta;
+        web_memory_data = fixture_memory;
+        web_chat_transport = fixture_chat_transport;
+    }
+
+    #[cfg(not(feature = "web-ui-fixtures"))]
+    if let Some(profile) = config.ui_fixture_profile {
+        tracing::warn!(
+            profile = profile.as_str(),
+            "UI_FIXTURE_PROFILE is set, but this binary was not compiled with the web-ui-fixtures feature; using real integrations instead"
+        );
+    }
+
     let media = crate::core::s3::MediaStore::new(config.as_ref());
     server(
         AppState {
@@ -195,6 +252,9 @@ pub async fn server_with_state(
             letta,
             bifrost,
             codepool,
+            web_letta_data,
+            web_memory_data,
+            web_chat_transport,
             media,
         },
         session_store,
@@ -314,6 +374,7 @@ pub async fn render_template(
         app_display_name => state.config.app_display_name.clone(),
         app_slug => state.config.app_slug.clone(),
         public_web_origin => state.config.web_public_origin(),
+        ui_fixture_profile => state.config.ui_fixture_profile.map(|p| p.as_str().to_string()),
         ..ctx
     };
     let template_env = state.template_env.clone();

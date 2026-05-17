@@ -122,6 +122,10 @@
                         {% endif %}
                     </div>
                 </header>
+                {% endif %} {% if ui_fixture_profile %}
+                <p class="form-hint">
+                    UI fixture profile active: <code>{{ ui_fixture_profile | e }}</code>
+                </p>
                 {% endif %} {% block content %}{% endblock %}
             </section>
         </body>
