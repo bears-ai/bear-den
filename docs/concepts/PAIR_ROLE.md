@@ -1,8 +1,8 @@
-# Pair Role: Internal Agent Backing Collaboration Space
+# Pair role
 
-The `pair` role is the internal agent role that currently backs the Bear's Collaboration Space. Collaboration Space is the Bear-facing operating environment for working with a human inside ACP-speaking tools such as IDEs, design tools, product surfaces, and future productivity clients.
+The `pair` role is the Bear's live collaborative operating mode for working with a human inside ACP-speaking tools such as IDEs, design tools, product surfaces, and future productivity clients.
 
-This note preserves product and implementation thinking for the `pair` role: what Collaboration Space should do inline, when it should delegate to other Spaces and roles, what tools its backing role should have, how it should treat memory, and how the Bear should behave inside the user's current work when operating through this Space.
+This note preserves product and implementation thinking for the `pair` role: what it should do inline, when it should delegate to other roles, what tools it should have, how it should treat memory, and how the Bear should behave inside the user's current work when operating through this role.
 
 ## Job description
 

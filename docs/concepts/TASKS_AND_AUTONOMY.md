@@ -37,7 +37,7 @@ A task intent should describe:
 - relevant scope,
 - schedule or trigger,
 - likely tools or integrations,
-- Workplace or artifact references when relevant,
+- work-surface or artifact references when relevant,
 - and any risk or approval context.
 
 For schema-owned durable artifacts such as task intents, agents provide semantic fields; Den chooses the path.
@@ -58,12 +58,16 @@ A recurring task may have many runs. A one-off task may have one run. Each run s
 
 - a task id,
 - a run id,
+- a role and channel context,
+- a work-surface reference,
 - an execution context,
 - allowed tools and scope,
 - logs or notes,
 - and a result.
 
 High-risk runs may require additional human approval before execution.
+
+For checkout-oriented work, the run may materialize a fresh checkout in a new runtime. That new checkout should be recorded as an observed anchor on the same work surface rather than treated as unrelated work.
 
 ## Role responsibilities
 
@@ -94,6 +98,16 @@ A Bear's autonomous work should be:
 `work` writes results for each run. `curate` reviews those results and promotes durable learnings or summaries into `core/` when appropriate.
 
 This lets users later ask what happened without giving conversational roles raw access to every execution detail.
+
+## Work-surface continuity across roles
+
+A common first use case is:
+
+1. a Bear in `pair` works in a local checkout,
+2. creates a long-term plan or task intent,
+3. and later a Bear in `work` checks out the same repo in a different runtime and executes against it.
+
+To support that flow, plans, task intents, approved tasks, and runs should attach to the durable **work surface id**. Local checkouts and runtime checkouts should be stored as observed anchors for that work surface. When a more portable anchor such as a normalized Git remote is available, Den should use it to canonicalize the work surface early so later runs can re-materialize the same ongoing work in a new context.
 
 ## Product language
 
