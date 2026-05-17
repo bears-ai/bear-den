@@ -103,13 +103,21 @@ struct AdapterSharedState {
     last_plan_update_hashes: Arc<TokioMutex<HashMap<String, u64>>>,
     tool_tasks: ToolTaskRegistry,
     approval_cache: ApprovalCache,
-    cancellation_tx: broadcast::Sender<String>,
+    cancellation_tx: broadcast::Sender<CancellationNotice>,
     active_prompts: Arc<TokioMutex<HashMap<String, ActivePromptTurn>>>,
+}
+
+#[derive(Clone, Debug)]
+struct CancellationNotice {
+    session_id: String,
+    turn_token: Option<Uuid>,
+    conversation_id: Option<String>,
 }
 
 #[derive(Clone, Debug)]
 struct ActivePromptTurn {
     token: Uuid,
+    conversation_id: Option<String>,
     response_id: Value,
 }
 
@@ -1609,34 +1617,54 @@ async fn handle_request(
                     }
                 };
                 let turn_token = Uuid::new_v4();
+                let conversation_id_for_turn = prompt_conversation_id_from_params(&request.params);
                 let previous = {
                     let mut active = shared_state.active_prompts.lock().await;
                     let previous = active.insert(
                         session_id.clone(),
                         ActivePromptTurn {
                             token: turn_token,
+                            conversation_id: conversation_id_for_turn.clone(),
                             response_id: id.clone(),
                         },
                     );
                     previous
                 };
                 if let Some(previous) = previous {
-                    eprintln!(
-                        "bears-acp-adapter: overlapping prompt for session_id={} cancelling previous_turn={} before starting new_turn={}",
-                        session_id, previous.token, turn_token
+                    let same_conversation = prompt_conversations_overlap(
+                        previous.conversation_id.as_deref(),
+                        conversation_id_for_turn.as_deref(),
                     );
-                    let _ = shared_state.cancellation_tx.send(session_id.clone());
-                    shared_state.approval_cache.clear_session(&session_id).await;
-                    shared_state.tool_tasks.cancel_session(&session_id).await;
-                    let _ =
-                        post_session_lifecycle_action(http, config, &session_id, "cancel").await;
-                    let _ = write_response(
-                        previous.response_id,
-                        Ok(serde_json::to_value(PromptResponse::new(
-                            StopReason::Cancelled,
-                        ))?),
-                    )
-                    .await;
+                    if same_conversation {
+                        eprintln!(
+                            "bears-acp-adapter: overlapping prompt for same conversation session_id={} previous_turn={} new_turn={} conversation={:?}; cancelling previous turn before restart",
+                            session_id, previous.token, turn_token, conversation_id_for_turn
+                        );
+                        shared_state.approval_cache.clear_session(&session_id).await;
+                        shared_state
+                            .tool_tasks
+                            .cancel_turn(&session_id, previous.token)
+                            .await;
+                        let _ = shared_state.cancellation_tx.send(CancellationNotice {
+                            session_id: session_id.clone(),
+                            turn_token: Some(previous.token),
+                            conversation_id: previous.conversation_id.clone(),
+                        });
+                        let _ = post_session_lifecycle_action(http, config, &session_id, "cancel")
+                            .await;
+                        let _ = write_response(
+                            previous.response_id,
+                            Ok(serde_json::to_value(PromptResponse::new(
+                                StopReason::Cancelled,
+                            ))?),
+                        )
+                        .await;
+                    } else {
+                        eprintln!(
+                            "bears-acp-adapter: overlapping prompt for different conversation session_id={} previous_turn={} new_turn={} previous_conversation={:?} new_conversation={:?}; keeping previous runtime alive and gating stale UI updates",
+                            session_id, previous.token, turn_token, previous.conversation_id, conversation_id_for_turn
+                        );
+                    }
                 }
 
                 let http = http.clone();
@@ -3052,7 +3080,11 @@ async fn handle_session_cancel(
         .remove(session_id);
     shared_state.active_prompts.lock().await.remove(session_id);
     shared_state.tool_tasks.cancel_session(session_id).await;
-    let _ = shared_state.cancellation_tx.send(session_id.to_string());
+    let _ = shared_state.cancellation_tx.send(CancellationNotice {
+        session_id: session_id.to_string(),
+        turn_token: None,
+        conversation_id: None,
+    });
     post_session_lifecycle_action(http, config, session_id, "cancel").await
 }
 
@@ -3971,6 +4003,26 @@ fn prompt_text_from_params(params: &Value) -> Result<String> {
     prompt_text_from_params_with_resource_mode(params, true)
 }
 
+fn prompt_conversation_id_from_params(params: &Value) -> Option<String> {
+    params
+        .get("conversation_id")
+        .or_else(|| params.get("conversationId"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+}
+
+fn prompt_conversations_overlap(previous: Option<&str>, next: Option<&str>) -> bool {
+    match (previous, next) {
+        (Some(previous), Some(next)) => previous == next,
+        (None, None) => true,
+        // If either side lacks a conversation id, be conservative: the Den session binding may
+        // resolve both to the same Letta conversation.
+        _ => true,
+    }
+}
+
 fn normalize_client_capabilities(mut capabilities: Value) -> Value {
     if !capabilities.is_object() {
         return capabilities;
@@ -4345,11 +4397,34 @@ fn format_error_context_for_display(context: &Value) -> String {
     context.to_string()
 }
 
+fn cancellation_matches_turn(
+    notice: &CancellationNotice,
+    session_id: &str,
+    turn_token: Uuid,
+    conversation_id: Option<&str>,
+) -> bool {
+    if notice.session_id != session_id {
+        return false;
+    }
+    if let Some(token) = notice.turn_token {
+        if token != turn_token {
+            return false;
+        }
+    }
+    if let (Some(expected), Some(actual)) = (notice.conversation_id.as_deref(), conversation_id) {
+        if expected != actual {
+            return false;
+        }
+    }
+    true
+}
+
 fn spawn_tool_request_task(
     config: Config,
     shared_state: AdapterSharedState,
     session_id: String,
     event: Value,
+    turn_token: Uuid,
 ) {
     tokio::spawn(async move {
         let tool_call_id = event
@@ -4364,7 +4439,7 @@ fn spawn_tool_request_task(
             .to_string();
         shared_state
             .tool_tasks
-            .register(&session_id, &tool_call_id, &tool_name)
+            .register(&session_id, &tool_call_id, &tool_name, Some(turn_token))
             .await;
         let mut task_state = AdapterState {
             client_capabilities: shared_state.client_capabilities.lock().await.clone(),
@@ -4384,7 +4459,7 @@ fn spawn_tool_request_task(
             result = tool_future => result,
             cancelled = cancellation_rx.recv() => {
                 match cancelled {
-                    Ok(cancelled_session_id) if cancelled_session_id == session_id => {
+                    Ok(cancelled) if cancellation_matches_turn(&cancelled, &session_id, turn_token, None) => {
                         shared_state
                             .tool_tasks
                             .set_phase(&session_id, &tool_call_id, &tool_name, ToolTaskPhase::Cancelled)
@@ -5144,6 +5219,7 @@ async fn handle_den_event(
                 shared_state.clone(),
                 session_id.to_string(),
                 event.clone(),
+                turn_token,
             );
             Ok(false)
         }

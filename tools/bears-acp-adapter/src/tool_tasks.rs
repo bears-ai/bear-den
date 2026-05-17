@@ -1,5 +1,6 @@
 use std::{collections::HashMap, sync::Arc};
 use tokio::sync::Mutex as TokioMutex;
+use uuid::Uuid;
 
 #[derive(Clone, Default)]
 pub(crate) struct ToolTaskRegistry {
@@ -12,6 +13,7 @@ pub(crate) struct ToolTaskRecord {
     pub(crate) session_id: String,
     pub(crate) tool_call_id: String,
     pub(crate) tool_name: String,
+    pub(crate) turn_token: Option<Uuid>,
     pub(crate) phase: ToolTaskPhase,
     pub(crate) started_at: std::time::Instant,
     pub(crate) updated_at: std::time::Instant,
@@ -22,7 +24,13 @@ impl ToolTaskRegistry {
         format!("{session_id}\n{tool_call_id}")
     }
 
-    pub(crate) async fn register(&self, session_id: &str, tool_call_id: &str, tool_name: &str) {
+    pub(crate) async fn register(
+        &self,
+        session_id: &str,
+        tool_call_id: &str,
+        tool_name: &str,
+        turn_token: Option<Uuid>,
+    ) {
         let now = std::time::Instant::now();
         self.tasks.lock().await.insert(
             Self::key(session_id, tool_call_id),
@@ -30,6 +38,7 @@ impl ToolTaskRegistry {
                 session_id: session_id.to_string(),
                 tool_call_id: tool_call_id.to_string(),
                 tool_name: tool_name.to_string(),
+                turn_token,
                 phase: ToolTaskPhase::Received,
                 started_at: now,
                 updated_at: now,
@@ -51,6 +60,7 @@ impl ToolTaskRegistry {
             session_id: session_id.to_string(),
             tool_call_id: tool_call_id.to_string(),
             tool_name: tool_name.to_string(),
+            turn_token: None,
             phase,
             started_at: now,
             updated_at: now,
@@ -100,19 +110,28 @@ impl ToolTaskRegistry {
     }
 
     pub(crate) async fn cancel_session(&self, session_id: &str) {
+        self.cancel_matching(session_id, None).await;
+    }
+
+    pub(crate) async fn cancel_turn(&self, session_id: &str, turn_token: Uuid) {
+        self.cancel_matching(session_id, Some(turn_token)).await;
+    }
+
+    async fn cancel_matching(&self, session_id: &str, turn_token: Option<Uuid>) {
         let mut tasks = self.tasks.lock().await;
         let now = std::time::Instant::now();
-        for task in tasks
-            .values_mut()
-            .filter(|task| task.session_id == session_id)
-        {
+        for task in tasks.values_mut().filter(|task| {
+            task.session_id == session_id
+                && turn_token.is_none_or(|token| task.turn_token == Some(token))
+        }) {
             if task.phase != ToolTaskPhase::ResultPosted {
                 let previous_phase = task.phase;
                 task.phase = ToolTaskPhase::Cancelled;
                 task.updated_at = now;
                 eprintln!(
-                    "bears-acp-adapter: tool_task cancelled session_id={} tool_call_id={} tool_name={} from_phase={} total_duration_ms={}",
+                    "bears-acp-adapter: tool_task cancelled session_id={} turn_token={:?} tool_call_id={} tool_name={} from_phase={} total_duration_ms={}",
                     task.session_id,
+                    task.turn_token,
                     task.tool_call_id,
                     task.tool_name,
                     previous_phase.as_str(),
@@ -204,7 +223,7 @@ mod tests {
     async fn registry_tracks_phase_and_session_entries() {
         let registry = ToolTaskRegistry::default();
         registry
-            .register("session-1", "call-1", "fs_list_directory")
+            .register("session-1", "call-1", "fs_list_directory", None)
             .await;
         registry
             .set_phase(
