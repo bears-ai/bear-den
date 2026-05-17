@@ -3,7 +3,7 @@
 ## Objective
 Implement the shared role-environment prompt-construction architecture described in [`ROLE_ENVIRONMENT_PROMPT_CONSTRUCTION_SPEC.md`](ROLE_ENVIRONMENT_PROMPT_CONSTRUCTION_SPEC.md), moving from prose-first prompt assembly toward schema-first, ontology-aware, role-general environment construction across `talk`, `pair`, `curate`, `work`, and `watch`.
 
-This plan focuses on practical rollout sequencing, integration points, acceptance criteria, and the first concrete runtime slices.
+This plan focuses on practical rollout sequencing, integration points, acceptance criteria, and the first concrete runtime slices. The concrete implementation-facing schema contract lives in [`ROLE_ENVIRONMENT_PROMPT_COMPILER_SCHEMA.md`](ROLE_ENVIRONMENT_PROMPT_COMPILER_SCHEMA.md).
 
 ---
 
@@ -29,7 +29,7 @@ A successful rollout should produce the following outcomes:
 - prompt construction uses explicit typed/structured intermediate state rather than ad hoc prose concatenation;
 - the environment consistently distinguishes `workplan`, `activity`, `memory`, and `execution`;
 - active progress representation defaults to planning tools rather than formal artifact submission;
-- repeated reminders are consolidated into canonical sections;
+- repeated reminders are consolidated into standardized structured sections;
 - runtime/thread context is visibly separate from stable role-contract content;
 - role-specific specialization happens through data/configuration and role contracts, not prompt forks;
 - transcript rendering no longer leaks hidden runtime annotations into the visible user-authored chat surface.
@@ -88,6 +88,8 @@ Tasks:
 Implementation notes:
 - preserve deterministic render ordering;
 - keep the compiler flexible enough for role-specific policy variation without changing the outer schema;
+- represent closed vocabularies as explicit enums in Rust rather than ad hoc strings;
+- use canonical BEARS `ToolId` plus `ToolFamily` rather than provider/runtime-specific tool-name strings as the primary tool identity model;
 - avoid embedding large prose fragments as primary state.
 
 Acceptance criteria:
@@ -106,18 +108,19 @@ Scope:
 - `pair` only for this slice, but using the shared architecture.
 
 Tasks:
-- render a canonical `[OPERATIONAL SUMMARY]` block;
-- render canonical `[WORKFLOW RULES]` and `[PERMISSIONS AND TOOLS]` sections;
-- consolidate repeated reminder text into those canonical sections;
-- inject planning-representation policy using ontology-aligned language;
-- inject context-accounting guidance explicitly;
-- ensure derived fields such as `activity_representation_default` and `formal_workplan_artifact_requires_explicit_need` are present.
+- render an authoritative `[OPERATIONAL SUMMARY]` block from concrete current-turn state;
+- render standardized `[WORKFLOW RULES]` and `[PERMISSIONS AND TOOLS]` sections;
+- consolidate repeated reminder text into those structured sections;
+- inject plan-representation policy using ontology-aligned language;
+- inject context-accounting guidance explicitly, with work-surface-aware context inventory when cheaply available;
+- model tool capability using canonical `ToolFamily` and `ToolId` values rather than transport-specific local/server naming.
 
 Acceptance criteria:
 - `pair` sees a compact authoritative operational summary each turn;
 - plan/activity/memory/execution distinctions are clearer in the prompt;
 - reminder duplication is measurably reduced;
-- active work representation defaults to `update_plan` rather than accidental artifact submission.
+- live activity/progress tracking defaults to `update_plan` rather than accidental formal workplan artifact submission;
+- operational-summary projections of plan-representation behavior are derived from workflow policy rather than stored as separate source-of-truth state fields.
 
 ---
 
@@ -193,11 +196,11 @@ Goal:
 - make the new environment architecture testable and inspectable.
 
 Tasks:
-- add render tests for canonical section ordering;
+- add render tests for standardized section ordering;
 - add tests for derived-field correctness;
 - add tests preventing ontology collapse across `workplan`, `activity`, `memory`, and `execution`;
 - add tests that memory guidance rejects active-plan-style representations;
-- add tests preventing duplicate high-level reminders where canonical sections exist;
+- add tests preventing duplicate high-level reminders where standardized structured sections exist;
 - add diagnostics or operator-visible debug views for the structured environment payload.
 
 Acceptance criteria:
@@ -212,7 +215,7 @@ Acceptance criteria:
 ### Phase A: Planning/doc integration
 
 Deliverables:
-- canonical role-general spec
+- authoritative role-general spec
 - implementation plan
 - stronger statement of relationship to context composition
 
@@ -229,8 +232,8 @@ Deliverables:
 ### Phase C: `pair` runtime slice
 
 Deliverables:
-- canonical structured summary
-- canonical workflow/tool sections
+- authoritative structured summary
+- standardized workflow/tool sections
 - initial deduplication pass
 
 ### Phase D: `curate` and `watch` rollout

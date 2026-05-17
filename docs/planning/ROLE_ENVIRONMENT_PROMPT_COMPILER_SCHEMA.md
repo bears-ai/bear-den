@@ -224,11 +224,11 @@ Strongly preferred:
 - session identity trust semantics
 
 ### Notes
-- Tool identifiers should be canonical BEARS tool ids rather than provider/runtime-specific names.
-- Tool families provide compact capability summaries; tool ids provide concrete capability identity.
+- Tool identifiers should be canonical BEARS `ToolId` values rather than provider/runtime-specific names.
+- Tool families provide compact `ToolFamily` summaries; tool ids provide concrete capability identity.
 - In Rust implementation, `ToolFamily`, `ToolId`, `DisallowedAction`, and `IdentityTrustRule` should be explicit enums.
 - Runtime binding/source details such as local vs server-hosted tools may still matter operationally, but they should not be the primary identity model in this schema.
-- Keep rules canonical and compact.
+- Keep rules normalized and compact.
 - Prefer a few normalized statements over many similar prose fragments.
 - This object should carry operational policy, not generic role identity.
 
@@ -265,7 +265,7 @@ Strongly preferred:
 - The object name is a pragmatic umbrella, but the fields inside it should stay aligned to the more specific ontology terms where possible.
 - Approval-sensitive behavior should primarily come from current-turn state such as `plan_approval_status`, `plan_state`, `execution_unlocked`, and `stop_conditions`, rather than a separate approval-rules bucket.
 - Continuation after tool results should be treated as a compiler/runtime invariant rather than a per-turn schema field unless a real need for variability emerges.
-- This object should encode canonical activity/workplan behavior rules rather than duplicating every legacy reminder.
+- This object should encode normalized activity/workplan behavior rules rather than duplicating every legacy reminder.
 
 ---
 
@@ -639,7 +639,7 @@ Strongly preferred content:
 
 ## Deduplication rules
 
-The compiler should deduplicate canonical rule categories before rendering.
+The compiler should deduplicate standard rule categories before rendering.
 
 ### Categories that should deduplicate
 - current-turn authority
@@ -651,9 +651,9 @@ The compiler should deduplicate canonical rule categories before rendering.
 
 ### Strategy
 1. normalize candidate rules by category;
-2. prefer the canonical structured field over legacy prose wording;
-3. render only one canonical statement per category in the final structured sections;
-4. allow additional explanatory prose only if it adds information that the canonical field does not contain.
+2. prefer the structured source-of-truth field over legacy prose wording;
+3. render only one normalized statement per category in the final structured sections;
+4. allow additional explanatory prose only if it adds information that the source-of-truth field does not contain.
 
 ### Anti-goal
 Do not keep duplicate reminders just because they are historically familiar.
