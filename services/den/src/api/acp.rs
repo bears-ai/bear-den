@@ -4196,7 +4196,10 @@ impl AcpStreamDiagnostics {
         Self::increment(&mut self.adapter_event_types, acp_event_adapter_type(event));
         self.saw_visible_output |= acp_event_has_visible_output(event);
         self.saw_error |= matches!(event, AcpGatewayEvent::Error { .. });
-        self.saw_turn_complete |= matches!(event, AcpGatewayEvent::TurnComplete { .. });
+        self.saw_turn_complete |= matches!(
+            event,
+            AcpGatewayEvent::TurnComplete { .. } | AcpGatewayEvent::TurnResult { .. }
+        );
     }
 
     fn observe_unmapped_event(&mut self, value: &serde_json::Value) {
@@ -4294,6 +4297,19 @@ impl AcpStreamDiagnostics {
     }
 
     fn log_summary(&self, context: &AcpStreamContext) {
+        let turn_result_count = self
+            .adapter_event_types
+            .get("turn_result")
+            .copied()
+            .unwrap_or(0);
+        if turn_result_count > 1 {
+            tracing::warn!(
+                request_id = %context.request_id,
+                acp_session_id = %context.acp_session_id,
+                turn_result_count,
+                "ACP stream emitted more than one terminal turn_result"
+            );
+        }
         tracing::info!(
             request_id = %context.request_id,
             acp_session_id = %context.acp_session_id,
@@ -4663,10 +4679,31 @@ struct AcpLettaSseStream {
     persist_future: Option<AcpPendingFuture>,
     text_chunker: AcpTextChunker,
     stream_terminated: bool,
+    emitted_turn_result: bool,
     active_turn_guard: Option<crate::core::role_runtime::RoleTurnGuard>,
 }
 
 impl AcpLettaSseStream {
+    fn push_turn_result_once(&mut self, event: AcpGatewayEvent) {
+        if !matches!(event, AcpGatewayEvent::TurnResult { .. }) {
+            self.diagnostics.observe_mapped_event(&event);
+            self.pending.push_back(acp_event_to_adapter_sse(event));
+            return;
+        }
+        if self.emitted_turn_result {
+            tracing::warn!(
+                request_id = %self.context.request_id,
+                acp_session_id = %self.context.acp_session_id,
+                "suppressed duplicate ACP turn_result"
+            );
+            return;
+        }
+        self.emitted_turn_result = true;
+        self.stream_terminated = true;
+        self.diagnostics.observe_mapped_event(&event);
+        self.pending.push_back(acp_event_to_adapter_sse(event));
+    }
+
     fn new(
         inner: impl Stream<Item = Result<Bytes, reqwest::Error>> + Send + 'static,
         context: AcpStreamContext,
@@ -4694,6 +4731,7 @@ impl AcpLettaSseStream {
             persist_future: None,
             text_chunker: AcpTextChunker::new(acp_text_chunk_chars()),
             stream_terminated: false,
+            emitted_turn_result: false,
             active_turn_guard: Some(active_turn_guard),
         }
     }
@@ -4972,8 +5010,7 @@ impl Stream for AcpLettaSseStream {
                         retryable,
                         diagnostics,
                     };
-                    this.diagnostics.observe_mapped_event(&event);
-                    this.pending.push_back(acp_event_to_adapter_sse(event));
+                    this.push_turn_result_once(event);
                     let event = if this.diagnostics.saw_requires_approval_stop
                         && !this.diagnostics.saw_tool_return_ack
                     {
@@ -5027,7 +5064,6 @@ impl Stream for AcpLettaSseStream {
                 self.poll_next(cx)
             }
             Some(Err(err)) => {
-                this.stream_terminated = true;
                 let message = format!("Letta stream read failed: {err}");
                 tracing::warn!(
                     request_id = %this.context.request_id,
@@ -5056,9 +5092,7 @@ impl Stream for AcpLettaSseStream {
                     retryable,
                     diagnostics,
                 };
-                this.diagnostics.observe_mapped_event(&turn_result);
-                this.pending
-                    .push_back(acp_event_to_adapter_sse(turn_result));
+                this.push_turn_result_once(turn_result);
                 let event = serde_json::json!({
                     "type": "error",
                     "message": "Letta stream ended unexpectedly while BEARS was waiting for events.",
@@ -5186,8 +5220,7 @@ impl Stream for AcpLettaSseStream {
                             retryable,
                             diagnostics,
                         };
-                        this.diagnostics.observe_mapped_event(&event);
-                        this.pending.push_back(acp_event_to_adapter_sse(event));
+                        this.push_turn_result_once(event);
                     }
                     if !this.pending.is_empty() {
                         return self.poll_next(cx);
