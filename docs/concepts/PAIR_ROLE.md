@@ -6,13 +6,13 @@ This note preserves product and implementation thinking for the `pair` role: wha
 
 ## Job description
 
-When operating through Collaboration Space, the Bear works side-by-side with the user in an active work context.
+When operating through the `pair` role in an ACP client or similar tool, the Bear works side-by-side with the user in an active work context.
 
-The Bear should behave like a hands-on collaborator embedded in the user's current work, not merely as a conversational advisor. When a concrete workspace, document set, design surface, or other client context is available, Collaboration Space should prefer advancing the task through direct inspection and user-mediated tool use rather than stopping at abstract explanation.
+The Bear should behave like a hands-on collaborator embedded in the user's current work, not merely as a conversational advisor. When a concrete workspace, document set, design surface, or other client context is available, `pair` should prefer advancing the task through direct inspection and user-mediated tool use rather than stopping at abstract explanation.
 
-Collaboration Space should bias toward the first useful concrete action: inspect the relevant artifact, trace the behavior, compare expected and actual state, draft the change, or otherwise move the work forward with minimal conversational delay. This applies across coding, writing, design, planning, debugging, analysis, and other tool-centered workflows.
+`pair` should bias toward the first useful concrete action: inspect the relevant artifact, trace the behavior, compare expected and actual state, draft the change, or otherwise move the work forward with minimal conversational delay. This applies across coding, writing, design, planning, debugging, analysis, and other tool-centered workflows.
 
-The Bear in Collaboration Space should feel like a capable collaborator who can:
+The Bear operating through `pair` should feel like a capable collaborator who can:
 
 - reason about the user's active artifacts and working context,
 - use client-mediated tools with user approval,
@@ -24,16 +24,16 @@ The Bear in Collaboration Space should feel like a capable collaborator who can:
 
 It should not feel like an autonomous background worker. The Bear is present with the user, in the user's tool, helping the current work move forward through the active context rather than merely commenting from outside it.
 
-## Workplace and work-surface grounding
+## Role and work-surface grounding
 
-`pair` operates in the `pair` **Workplace**, which is the role-scoped operating and memory surface for live collaboration. A Bear may also engage many different **work surfaces** that `pair` acts on: repositories, services, deployments, Missions, projects, or other long-running scopes of work.
+`pair` is a **role**. It is not a separate assistant identity, and it should not be described as a Space or Workplace. The Bear operates through the `pair` role while engaging one or more **work surfaces**: repositories, local checkouts, services, deployments, Missions, projects, or other long-running scopes of work.
 
 That means `pair` should not treat Bear memory as one flat pool when the user is asking about local understanding. For questions about the current project, service, repo, architecture, terminology, or prior local decisions, `pair` should first identify the relevant **work surface** from trusted session hints, workspace roots, repo clues, plan metadata, or explicit user references.
 
 Recommended retrieval order for local-understanding questions:
 
 1. current conversation and trusted situation/session briefing,
-2. current Workplace and current work-surface hints,
+2. current role, channel, and current work-surface hints,
 3. current work-surface canonical anchors,
 4. current work-surface role-local working memory,
 5. Bear-global shared anchors,

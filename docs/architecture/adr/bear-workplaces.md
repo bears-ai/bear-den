@@ -1,12 +1,13 @@
-# ADR: Bear Workplaces for Planning and Work Activity
+# ADR: Bear work surfaces for planning and work activity
 
 **Status:** Accepted
-**Date:** 2026-05-11
+**Date:** 2026-05-17
+**Supersedes:** Prior `Workplace` terminology previously used at this path; archived in `bear-workplaces.archived-2026-05-17.md`
 **Deciders:** Hans
 
 ## Context
 
-BEARS now has several planning-related objects:
+BEARS has several planning-related objects:
 
 - live workboard plans in Den,
 - ACP `pair` plan-mode artifacts and mode state,
@@ -16,10 +17,10 @@ BEARS now has several planning-related objects:
 
 The first implementation naturally grouped plans by role and session because `pair`, `talk`, and `work` interact through different runtimes. That grouping is useful for provenance and policy, but it is not the right primary product concept.
 
-A Bear can work across many real settings:
+A Bear can work across many durable settings:
 
 - multiple Git repositories,
-- local editor workspace roots,
+- local editor workspaces and checkouts,
 - services in the BEARS stack,
 - deployment environments,
 - Cabinet Missions,
@@ -27,32 +28,32 @@ A Bear can work across many real settings:
 - long-running household or organization responsibilities,
 - research topics or operational areas.
 
-A user asking “do you have plans?” usually means “does this Bear have plans for this work setting or in general?”, not “does this role have a live plan in this ACP session?” The production planning issue where `list_plans` found no live workboard plans while a durable `pair/plans/*.md` artifact existed demonstrates that the system needs a durable grouping concept that is broader than role ownership and less overloaded than “context”.
+A user asking “do you have plans?” usually means “does this Bear have plans for this repo, service, mission, project, or ongoing responsibility — or in general?”, not “does this role have a live plan in this ACP session?” The production planning issue where `list_plans` found no live workboard plans while a durable `pair/plans/*.md` artifact existed demonstrates that the system needs a durable grouping concept that is broader than role ownership and less overloaded than “context”.
 
-The term **context** is dangerous in BEARS because it already refers to model context windows, prompt context, ACP client context, Den situation briefings, memory context, and workspace context. We need a product-level noun for a Bear-level work setting.
+The term **context** is dangerous in BEARS because it already refers to model context windows, prompt context, ACP client context, Den situation briefings, memory context, and workspace context. The term **Space** is also no longer preferred as a primary concept. We need a durable architectural noun for the coherent scope of work that plans, tasks, artifacts, memory, and activity attach to.
 
 ## Decision
 
-BEARS will use **Workplace** as the product and architecture term for a durable Bear-level work setting.
+BEARS will use **work surface** as the primary product and architecture term for a durable work grouping.
 
-A **Workplace** is a durable, Bear-level work setting that groups plans, tasks, artifacts, memory, and activity around a coherent place or scope of work.
+A **work surface** is the durable work context a Bear is acting on: a repo, local checkout, service, deployment, Mission, project, or other coherent scope of work.
 
-A Workplace is:
+A work surface is:
 
 - Bear-level, not role-owned.
 - Durable enough to survive conversations and runtime sessions.
 - Able to map to external systems or local environments.
-- Able to collect multiple plans, tasks, artifacts, and memory references.
-- Discoverable from runtime signals such as Git remotes, workspace roots, Cabinet Mission ids, Docket project ids, service names, and deployment environments.
+- Able to collect multiple plans, tasks, artifacts, memory references, and activity.
+- Discoverable from runtime signals such as Git remotes, workspace roots, checkout paths, Cabinet Mission ids, Docket project ids, service names, deployment environments, and artifact paths.
 - Not an execution authorization boundary by itself.
 
-Role remains important, but role is provenance, participation, or execution metadata — not the primary owner of a plan.
+Role remains important, but role is provenance, participation, and execution metadata — not the primary owner of a plan.
 
 ## Terminology
 
-### Workplace
+### Work surface
 
-The durable Bear-level work setting.
+The durable work context the Bear is acting on.
 
 Examples:
 
@@ -63,46 +64,48 @@ Examples:
 - `Cabinet Mission: Renovation Budget`
 - `Docket Project: Billing Automation`
 
-### Workplace reference
+### Work-surface anchor
 
-A structured reference that identifies or locates a Workplace in an external or runtime system.
+A structured anchor that identifies, locates, or helps resolve a work surface in an external or runtime system.
 
 Examples:
 
-| Reference kind | Example key / URI | Meaning |
+| Anchor kind | Example key / URI | Meaning |
 |---|---|---|
-| `git_repo` | `git@github.com:org/repo.git` | A repository associated with the Workplace. |
-| `workspace_root` | `/Users/alice/dev/repo` | A local editor/workspace root that indicates the Workplace. |
-| `branch` | `repo#feature/acp-plans` | A branch within a repository. |
-| `cabinet_mission` | `mission:abc` | A Cabinet Mission related to the Workplace. |
-| `docket_project` | `project:abc` | A Docket project related to the Workplace. |
-| `service` | `bears-den` | A service or component. |
-| `deployment` | `production` | A deployed environment. |
-| `acp_session` | `acp-...` | A session where work occurred or originated. |
-| `conversation` | `conv-...` | A Letta/Den conversation related to the Workplace. |
+| `git_repo` | `git@github.com:org/repo.git` | Canonical repository identity for the work surface. |
+| `workspace_root` | `/Users/alice/dev/repo` | Local editor/workspace root observed while acting on the work surface. |
+| `checkout_path` | `/tmp/worktrees/repo` | Local checkout materialization of the work surface. |
+| `branch` | `repo#feature/acp-plans` | Branch-specific evidence or binding. |
+| `cabinet_mission` | `mission:abc` | Cabinet Mission related to the work surface. |
+| `docket_project` | `project:abc` | Docket project related to the work surface. |
+| `service` | `bears-den` | Service/component identity. |
+| `deployment` | `production` | Deployed environment identity. |
+| `acp_session` | `acp-...` | Session where work occurred or originated. |
+| `conversation` | `conv-...` | Conversation related to the work surface. |
+| `artifact_path` | `pair/plans/plan_x.md` | Artifact associated with the work surface. |
 
-### Session Workplace
+### Session work surface
 
-The Workplace inferred for an active session, if any. For ACP, this may be inferred from workspace roots, Git remotes, cwd, or explicit client/session metadata.
+The work surface inferred for an active session, if any. For ACP, this may be inferred from workspace roots, checkout paths, Git remotes, cwd, or explicit client/session metadata.
 
-### Plan Workplace
+### Plan work-surface attachment
 
-The Workplace associated with a plan. A plan may be Bear-level without a specific Workplace, or it may be scoped to one or more Workplaces.
+The work surface associated with a plan. A plan may be Bear-level without a specific work surface, or it may be attached to one or more work surfaces.
 
-### Workspace
+### Workspace / checkout
 
-A technical/local environment such as an editor workspace root or filesystem checkout. A workspace root can be evidence for a Workplace, but it is not itself the product concept.
+A technical local environment such as an editor workspace root or filesystem checkout. A workspace root or checkout can be an observed anchor for a work surface, but it is not by itself the durable product concept.
 
 ### Cabinet Mission and Docket Project
 
-A Cabinet Mission or Docket Project can be a Workplace reference or, in some cases, map one-to-one to a Workplace. Not every Workplace is a Cabinet Mission or Docket Project.
+A Cabinet Mission or Docket Project can be an anchor for a work surface or, in some cases, map one-to-one with one. Not every work surface is a Cabinet Mission or Docket Project.
 
 ## Model direction
 
 The future normalized model should look like this conceptually:
 
 ```text
-bear_workplaces
+bear_work_surfaces
 - id
 - bear_id
 - slug
@@ -113,18 +116,19 @@ bear_workplaces
 - created_at
 - updated_at
 
-bear_workplace_refs
-- workplace_id
-- ref_kind
-- ref_key
+bear_work_surface_anchors
+- work_surface_id
+- anchor_kind
+- anchor_key
 - uri
 - label
 - metadata
+- canonical boolean
 
 bear_plans
 - id
 - bear_id
-- workplace_id nullable
+- work_surface_id nullable
 - title
 - status
 - kind
@@ -159,22 +163,22 @@ This ADR does not require adding these tables immediately. It defines the target
 
 Existing planning schema should be interpreted through this lens:
 
-| Current field/object | Workplace-aware interpretation |
+| Current field/object | Work-surface-aware interpretation |
 |---|---|
 | `bear_work_plans.bear_id` | Plan belongs to the Bear. |
 | `bear_work_plans.owner_role` | Current provenance / primary role, not durable product ownership. |
 | `bear_work_plans.owner_agent_id` | Agent provenance. |
-| `bear_work_plans.source_acp_session_id` | Workplace/session reference candidate. |
-| `bear_work_plans.source_conversation_id` | Workplace/conversation reference candidate. |
-| `bear_work_plans.workspace_context` | Early unnormalized Workplace reference metadata. |
-| `acp_plan_mode_sessions.plan_artifact_path` | Plan artifact reference. |
+| `bear_work_plans.source_acp_session_id` | Session anchor candidate for a work surface. |
+| `bear_work_plans.source_conversation_id` | Conversation anchor candidate for a work surface. |
+| `bear_work_plans.workspace_context` | Early unnormalized work-surface anchor metadata. |
+| `acp_plan_mode_sessions.plan_artifact_path` | Plan artifact anchor/reference. |
 | `pair/plans/*.md` | Durable role-local plan artifact that should be discoverable through Bear-level planning tools. |
 
 Future migrations may rename or supplement `owner_role` with clearer provenance fields such as `created_by_role`, `last_updated_by_role`, `participant_roles`, and `intended_executor_role`.
 
 ## Planning implications
 
-Planning is Bear-level and Workplace-aware.
+Planning is Bear-level and work-surface-aware.
 
 `list_plans` should become a unified Bear planning view that can include:
 
@@ -183,14 +187,14 @@ Planning is Bear-level and Workplace-aware.
 - saved plan artifacts,
 - handoff/task-intent state,
 - future Docket tasks/projects,
-- relevant Workplace references.
+- relevant work-surface anchors.
 
 The default `list_plans` behavior should be user-friendly:
 
-- prioritize plans for the current session Workplace when known,
+- prioritize plans for the current session work surface when known,
 - also surface Bear-level pending approvals/handoffs,
-- avoid saying “no plans” unless it checked both current Workplace plans and broader Bear-level pending plans,
-- distinguish “no active plans for this Workplace” from “no plans anywhere”.
+- avoid saying “no plans” unless it checked both current work-surface plans and broader Bear-level pending plans,
+- distinguish “no active plans for this work surface” from “no plans anywhere”.
 
 ## Role, authority, and delegation
 
@@ -201,7 +205,7 @@ A `pair` agent may create a plan that is intended for `work`, but `work` should 
 A safe delegation flow is:
 
 ```text
-pair creates Bear-level / Workplace-scoped plan
+pair creates Bear-level / work-surface-attached plan
   -> pair requests handoff to work
   -> user or curate approval promotes it to an approved task/Docket item
   -> Den dispatches approved work to work
@@ -211,14 +215,15 @@ pair creates Bear-level / Workplace-scoped plan
 
 This permits rich cross-role planning without letting one role directly command another outside an approval/dispatch boundary.
 
-## Workplace and work-surface discovery
+## Work-surface discovery and resolution
 
-Workplaces and work surfaces may be created explicitly, inferred from evidence, or confirmed by the user.
+Work surfaces may be created explicitly, inferred from evidence, canonicalized from stronger anchors, re-materialized in new runtimes, or confirmed by the user.
 
 Initial inference signals may include:
 
 - ACP `cwd`,
 - ACP workspace roots,
+- local checkout paths,
 - Git remotes discovered from a workspace root,
 - repository URLs in user prompts or memory,
 - service names in the BEARS stack,
@@ -226,7 +231,7 @@ Initial inference signals may include:
 - Docket project references,
 - artifact paths.
 
-Inference should be conservative. If a Workplace or work surface cannot be confidently identified, a plan can remain Bear-level with session/conversation references until a clearer scope is assigned.
+Inference should be conservative. If a work surface cannot be confidently identified, a plan can remain Bear-level with session/conversation anchors until a clearer scope is assigned.
 
 The resolution state should be visible to the Bear, not only to Den. Agents should be able to communicate their current assumption, ask the user to verify it, or ask the user to choose between plausible candidates. User confirmation can raise confidence for the current thread and should be preserved as provenance when plans, memory, or artifacts are later associated with that work surface.
 
@@ -241,29 +246,45 @@ Recommended resolution states:
 | `confirmed` | The user explicitly confirmed the work surface for the thread. |
 | `rejected` | A candidate was explicitly rejected. |
 
+## Checkout-originated continuity
+
+For repo-oriented work, a local checkout or workspace root may be the first observed anchor for a work surface, but it should not become the only durable identity.
+
+A common lifecycle is:
+
+1. **Observed** — `pair` encounters a checkout or workspace root.
+2. **Provisional** — Den creates or resolves a provisional work surface from available evidence.
+3. **Canonicalized** — Den links the provisional surface to a stronger canonical anchor such as a normalized Git remote.
+4. **Bound** — The current session, conversation, or run records observed anchors for that work surface.
+5. **Re-materialized** — Another role, such as `work`, attaches a different checkout or runtime binding to the same work surface.
+6. **Merged or refined** — Later evidence reconciles duplicate provisional surfaces while preserving provenance.
+
+Key principle: plans, tasks, memory, and workboard state should attach to the durable **work_surface_id**, not only to a machine-local path.
+
 ## Consequences
 
 ### Positive
 
 - Avoids overloading “context”.
 - Avoids treating role ownership as the primary planning model.
-- Supports Bears that work across multiple Git repositories or projects.
+- Aligns planning, memory, and task continuity around the same work-surface concept.
+- Supports Bears that work across multiple Git repositories, services, deployments, Missions, or projects.
 - Gives `list_plans` a coherent path to become a unified Bear-level planning surface.
 - Gives Docket, Cabinet, memory, artifacts, and work results a shared grouping concept without making any one of them the source of truth.
 - Allows role-aware policy and provenance without making plans role-owned.
 
 ### Tradeoffs
 
-- Adds a new product noun that must be explained carefully.
-- Requires distinguishing `Workspace` from `Workplace` in docs and UI.
+- Adds a durable grouping concept that must be explained carefully.
+- Requires distinguishing workspace/checkout evidence from durable work-surface identity.
 - May require schema evolution from existing `owner_role`/`workspace_context` fields.
-- Workplace inference can be wrong if implemented too aggressively.
+- Work-surface inference can be wrong if implemented too aggressively.
 
 ## Guidance for implementation
 
-Use “Workplace” when referring to the durable Bear-level work setting.
+Use “work surface” for the durable work context plans, tasks, artifacts, memory, and activity attach to.
 
-Use “workspace” only for local/editor/filesystem concepts such as ACP workspace roots and checkouts.
+Use “workspace” and “checkout” only for local/editor/filesystem concepts such as ACP workspace roots and local materializations.
 
 Use “situation” for trusted Den interaction briefings.
 
@@ -272,20 +293,9 @@ Use “context” only where protocol/model terminology already requires it, suc
 For near-term planning work:
 
 1. Enrich `list_plans` to include live workboard plans, plan-mode artifacts, and saved plan artifacts.
-2. Include available Workplace reference metadata in returned plans, even if unnormalized.
-3. Change user-facing language from “no plans” to more precise phrases like “no active plans for this Workplace” or “no Bear-level pending plans”.
+2. Include available work-surface anchors in returned plans, even if unnormalized.
+3. Change user-facing language from “no plans” to more precise phrases like “no active plans for this work surface” or “no Bear-level pending plans”.
 4. Treat role fields as provenance and policy hints, not product ownership.
-
-## Relationship to work surfaces
-
-A Bear manifests through agents performing roles. An agent acts in a **Workplace** and may act on a **work surface**.
-
-- **Workplace** remains the durable Bear-level work setting and operating scope described by this ADR.
-- A **work surface** is the concrete repo, service, deployment, Mission, project, or other coherent scope of work an agent may currently be acting on.
-- Canonical work-surface memory may live under shared paths such as `core/work_surfaces/...`.
-- Some roles may also keep role-local working memory about a work surface while acting in their Workplace.
-
-This phrasing is meant to avoid muddling where an agent is operating (`in` a Workplace) with what it is currently engaging (`on` a work surface).
 
 ## Related documents
 
