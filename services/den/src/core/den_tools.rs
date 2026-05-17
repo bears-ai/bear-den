@@ -2720,8 +2720,8 @@ fn session_info_payload(
             "role": role.as_str(),
             "agent_id": context.role_agent_id,
             "contract_label": role_contract_label,
-            "contract_source": if role_contract_label.is_some() { "system_prompt" } else { Value::Null },
-            "contract_purpose": if role_contract_label.is_some() { "behavioral_style_and_role_guidance" } else { Value::Null },
+            "contract_source": if role_contract_label.is_some() { json!("system_prompt") } else { Value::Null },
+            "contract_purpose": if role_contract_label.is_some() { json!("behavioral_style_and_role_guidance") } else { Value::Null },
         },
         "runtime_context": {
             "active_bear_slug": context.bear_slug,

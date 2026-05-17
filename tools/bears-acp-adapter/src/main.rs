@@ -103,6 +103,13 @@ struct AdapterSharedState {
     tool_tasks: ToolTaskRegistry,
     approval_cache: ApprovalCache,
     cancellation_tx: broadcast::Sender<String>,
+    active_prompts: Arc<TokioMutex<HashMap<String, ActivePromptTurn>>>,
+}
+
+#[derive(Clone, Debug)]
+struct ActivePromptTurn {
+    token: Uuid,
+    response_id: Value,
 }
 
 fn env_bool(name: &str) -> bool {
@@ -786,6 +793,7 @@ async fn run() -> Result<()> {
         tool_tasks: ToolTaskRegistry::default(),
         approval_cache,
         cancellation_tx,
+        active_prompts: Arc::new(TokioMutex::new(HashMap::new())),
     };
     tokio::spawn(read_stdin_messages(
         inbound_tx,
@@ -1577,6 +1585,54 @@ async fn handle_request(
                     return Ok(());
                 }
 
+                let session_id = match request.params.get("sessionId").and_then(Value::as_str) {
+                    Some(value) if !value.trim().is_empty() => value.trim().to_string(),
+                    _ => {
+                        write_response(
+                            id,
+                            Err(json_rpc_error(
+                                -32602,
+                                "Invalid session/prompt params",
+                                Some(
+                                    json!({ "message": "session/prompt params missing sessionId" }),
+                                ),
+                            )),
+                        )
+                        .await?;
+                        return Ok(());
+                    }
+                };
+                let turn_token = Uuid::new_v4();
+                let previous = {
+                    let mut active = shared_state.active_prompts.lock().await;
+                    let previous = active.insert(
+                        session_id.clone(),
+                        ActivePromptTurn {
+                            token: turn_token,
+                            response_id: id.clone(),
+                        },
+                    );
+                    previous
+                };
+                if let Some(previous) = previous {
+                    eprintln!(
+                        "bears-acp-adapter: overlapping prompt for session_id={} cancelling previous_turn={} before starting new_turn={}",
+                        session_id, previous.token, turn_token
+                    );
+                    let _ = shared_state.cancellation_tx.send(session_id.clone());
+                    shared_state.approval_cache.clear_session(&session_id).await;
+                    shared_state.tool_tasks.cancel_session(&session_id).await;
+                    let _ =
+                        post_session_lifecycle_action(http, config, &session_id, "cancel").await;
+                    let _ = write_response(
+                        previous.response_id,
+                        Ok(serde_json::to_value(PromptResponse::new(
+                            StopReason::Cancelled,
+                        ))?),
+                    )
+                    .await;
+                }
+
                 let http = http.clone();
                 let config = config.clone();
                 let shared_state = shared_state.clone();
@@ -1593,6 +1649,7 @@ async fn handle_request(
                         &shared_state,
                         id.clone(),
                         request.params,
+                        turn_token,
                     )
                     .await
                     {
@@ -2986,6 +3043,8 @@ async fn handle_session_cancel(
         .lock()
         .await
         .remove(session_id);
+    shared_state.active_prompts.lock().await.remove(session_id);
+    shared_state.tool_tasks.cancel_session(session_id).await;
     let _ = shared_state.cancellation_tx.send(session_id.to_string());
     post_session_lifecycle_action(http, config, session_id, "cancel").await
 }
@@ -3108,8 +3167,14 @@ async fn handle_prompt(
     shared_state: &AdapterSharedState,
     response_id: Value,
     params: Value,
+    turn_token: Uuid,
 ) -> Result<()> {
-    handle_prompt_with_retry(
+    let session_id = params
+        .get("sessionId")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string();
+    let result = handle_prompt_with_retry(
         http,
         config,
         adapter_state,
@@ -3118,7 +3183,15 @@ async fn handle_prompt(
         params,
         true,
     )
-    .await
+    .await;
+    let mut active = shared_state.active_prompts.lock().await;
+    if active
+        .get(&session_id)
+        .is_some_and(|turn| turn.token == turn_token)
+    {
+        active.remove(&session_id);
+    }
+    result
 }
 
 async fn handle_prompt_with_retry(

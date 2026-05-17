@@ -99,6 +99,29 @@ impl ToolTaskRegistry {
         removed
     }
 
+    pub(crate) async fn cancel_session(&self, session_id: &str) {
+        let mut tasks = self.tasks.lock().await;
+        let now = std::time::Instant::now();
+        for task in tasks
+            .values_mut()
+            .filter(|task| task.session_id == session_id)
+        {
+            if task.phase != ToolTaskPhase::ResultPosted {
+                let previous_phase = task.phase;
+                task.phase = ToolTaskPhase::Cancelled;
+                task.updated_at = now;
+                eprintln!(
+                    "bears-acp-adapter: tool_task cancelled session_id={} tool_call_id={} tool_name={} from_phase={} total_duration_ms={}",
+                    task.session_id,
+                    task.tool_call_id,
+                    task.tool_name,
+                    previous_phase.as_str(),
+                    now.duration_since(task.started_at).as_millis(),
+                );
+            }
+        }
+    }
+
     #[allow(dead_code)]
     pub(crate) async fn list_for_session(&self, session_id: &str) -> Vec<ToolTaskRecord> {
         self.tasks
