@@ -2687,23 +2687,13 @@ pub(crate) fn build_work_surface_orientation_payload(
     })
 }
 
-async fn session_info(
-    pool: &PgPool,
-    config: &Config,
+fn session_info_payload(
     context: &DenToolInvocationContext,
     role: BearAgentRole,
-) -> Result<Value, CustomError> {
-    let member_count = bears_db::count_bear_members(pool, context.bear_id).await?;
-    let current_user = user::user_by_id(pool, context.user_id).await.ok();
-    let memory_status = memory_status_value(config, context, role)
-        .await
-        .unwrap_or_else(|err| {
-            json!({
-                "configured": !config.letta_memfs_service_url.trim().is_empty(),
-                "available": false,
-                "error": err.to_string()
-            })
-        });
+    current_user: Option<&user::User>,
+    member_count: i64,
+    memory_status: Value,
+) -> Value {
     let work_surface = infer_work_surface_hint(context, role);
     let workspace = json!({
         "roots": context.workspace_roots,
@@ -2721,7 +2711,40 @@ async fn session_info(
             BearAgentRole::Watch => "Observation Space",
         },
     });
-    Ok(json!({
+    let role_contract_label = match role {
+        BearAgentRole::Pair => Some("Builder Bear"),
+        _ => None,
+    };
+    json!({
+        "role_contract_context": {
+            "role": role.as_str(),
+            "agent_id": context.role_agent_id,
+            "contract_label": role_contract_label,
+            "contract_source": if role_contract_label.is_some() { "system_prompt" } else { Value::Null },
+            "contract_purpose": if role_contract_label.is_some() { "behavioral_style_and_role_guidance" } else { Value::Null },
+        },
+        "runtime_context": {
+            "active_bear_slug": context.bear_slug,
+            "active_bear_id": context.bear_id,
+            "active_bear_authority": "trusted_session",
+            "memory_surface": format!("{}/", role.as_str()),
+            "workspace_root": context.workspace_roots.first().cloned(),
+        },
+        "context_composition_note": if role_contract_label.is_some() {
+            Value::String("Role-contract context defines role behavior and style. Runtime context defines active Bear attachment, scope, attribution, workspace, and permissions for this session.".to_string())
+        } else {
+            Value::Null
+        },
+        "agent_context_summary": if let Some(role_contract_label) = role_contract_label {
+            json!(format!(
+                "You are the {}-role collaborator operating under the {} role-contract context, currently attached to the {} Bear runtime context.",
+                role.as_str(),
+                role_contract_label,
+                context.bear_slug
+            ))
+        } else {
+            Value::Null
+        },
         "bear": {
             "bear_id": context.bear_id,
             "bear_slug": context.bear_slug,
@@ -2787,7 +2810,33 @@ async fn session_info(
             "Use memory_write_entry only for role-local notes, logs, decisions, reflections, scratch, and summaries; entries are attributed to the authenticated human in this session.",
             "Do not use memory entry tools for tasks, active plans, observations, run results, Cabinet writes, or direct core updates."
         ]
-    }))
+    })
+}
+
+async fn session_info(
+    pool: &PgPool,
+    config: &Config,
+    context: &DenToolInvocationContext,
+    role: BearAgentRole,
+) -> Result<Value, CustomError> {
+    let member_count = bears_db::count_bear_members(pool, context.bear_id).await?;
+    let current_user = user::user_by_id(pool, context.user_id).await.ok();
+    let memory_status = memory_status_value(config, context, role)
+        .await
+        .unwrap_or_else(|err| {
+            json!({
+                "configured": !config.letta_memfs_service_url.trim().is_empty(),
+                "available": false,
+                "error": err.to_string()
+            })
+        });
+    Ok(session_info_payload(
+        context,
+        role,
+        current_user.as_ref(),
+        member_count,
+        memory_status,
+    ))
 }
 
 async fn enter_plan_mode(
