@@ -180,7 +180,7 @@ Examples:
 
 Discovery should not become a ritual.
 
-## Descriptor standards
+## Descriptor and tool-call UX standards
 
 Every model-facing tool descriptor should answer:
 
@@ -193,6 +193,35 @@ Every model-facing tool descriptor should answer:
 7. Does it create durable memory, active work state, transient observations, or external effects?
 
 Descriptors should prefer compact, structured wording. Avoid repeating the whole role prompt in every tool.
+
+Every user-visible tool must also provide descriptor-owned display metadata. Do not add scattered adapter/client `match` arms, hardcoded allowlists, or one-off UI labels when a descriptor resolver can own the messaging. The same logical tool should render consistently whether Den executes it directly or the ACP adapter executes it locally.
+
+Tool-call UX principles:
+
+1. Human-readable first, protocol second. Visible titles should say what is happening, not expose raw transport names such as `tool_call`, `tool_call_update`, or `tool_request`.
+2. Tool activity should be stateful: requested, awaiting approval, running, succeeded, failed, denied, cancelled, or timed out.
+3. Show intent and target, not full raw arguments. Display the operation, safe target, and concise summary.
+4. Keep display metadata descriptor-owned. Labels, verbs, categories, approval language, and redaction policy belong with tool descriptors or shared display resolvers.
+5. Separate model-facing provider names from human-facing labels. Provider names stay concise and stable; UI labels should be polished and descriptive.
+6. Make scope visible. Show workspace-relative paths, memory scope, URL host, git repo, browser page, or plan/task id when useful.
+7. Respect sensitivity and size. Redact secret-like or large arguments/results, and bound stdout/stderr, file content, patches, web content, and memory bodies.
+8. Approval UX should explain risk concretely, e.g. the command, cwd, file path, URL host, or memory scope being approved.
+9. Errors should be actionable and status-specific. Distinguish path-not-found, permission-denied, timeout, unsupported tool, command failure, and result-post failure.
+10. Keep execution-location details diagnostic. Den vs adapter-local vs ACP client is useful metadata, but should not dominate the user-visible title.
+11. Degrade gracefully when a client only supports simple `tool_call` / `tool_call_update` cards.
+
+For ACP/Den tools, descriptors and Den-to-adapter `tool_request` events should include display metadata equivalent to:
+
+- `label`: concise human label.
+- `category`: `filesystem`, `git`, `terminal`, `browser`, `web`, `memory`, `plan`, `skills`, `tasks`, `orientation`, etc.
+- `progress_verb`: running-state verb phrase.
+- `complete_verb`: success-state verb phrase.
+- `target_arg_keys`: safe argument keys that identify the visible target.
+- `sensitive_arg_keys`: argument keys to redact in UI summaries.
+- `approval_summary`: concrete approval/risk copy.
+- event-level `display.title`, `display.subtitle`, `display.arguments_summary`, and `display.target` when arguments are known.
+
+Adapter implementors should prefer `event.display.title` for ACP `ToolCall` titles, use `event.display.subtitle` and `event.display.approval_summary` for content/permission prompts, preserve `event.display.arguments_summary` as metadata or expandable detail, and fall back to legacy `title`/`tool_name` only when `display` is absent.
 
 ## `session_info` expectations
 

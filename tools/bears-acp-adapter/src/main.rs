@@ -4828,11 +4828,8 @@ async fn request_tool_permission(
         .or(target_url)
         .or(target_command)
         .unwrap_or("the requested target");
-    let title = event
-        .get("title")
-        .and_then(Value::as_str)
-        .map(str::to_string)
-        .unwrap_or_else(|| tool_call_title(tool_name, event));
+    let display = ToolDisplay::from_event(tool_name, event);
+    let title = display.title.clone();
     let reason = event
         .get("approval")
         .and_then(|v| v.get("reason"))
@@ -4849,7 +4846,6 @@ async fn request_tool_permission(
     if let Some(plan) = replace_plan {
         content.push(replace_text_diff_content(plan));
     }
-    let display = tool_display(tool_name);
     let mut fields = ToolCallUpdateFields::new()
         .kind(Some(display.kind))
         .status(Some(ToolCallStatus::Pending))
@@ -4881,6 +4877,12 @@ async fn request_tool_permission(
     );
     meta.insert("risk".to_string(), json!(policy.risk()));
     meta.insert("operation".to_string(), json!(display.permission_operation));
+    if let Some(category) = display.category.as_ref() {
+        meta.insert("category".to_string(), json!(category));
+    }
+    if let Some(arguments_summary) = display.arguments_summary.as_ref() {
+        meta.insert("argumentsSummary".to_string(), arguments_summary.clone());
+    }
     let tool_call = ToolCallUpdate::new(tool_call_id.to_string(), fields).meta(Some(meta.clone()));
     let options = permission_options_for_context(
         context,
@@ -5148,10 +5150,10 @@ async fn handle_permission_request_event(
     let is_plan_mode = target_kind == Some("acp_plan_mode") || plan_mode_id.is_some();
     let mut display = tool_display(tool_name);
     if is_plan_mode {
-        display.title = "Approve implementation plan";
+        display.title = "Approve implementation plan".to_string();
         display.kind = ToolKind::SwitchMode;
-        display.verb = "Reviewing plan";
-        display.permission_operation = "approve this implementation plan";
+        display.verb = "Reviewing plan".to_string();
+        display.permission_operation = "approve this implementation plan".to_string();
     }
     let plan_body = target.get("body").and_then(Value::as_str);
     let artifact_path = target.get("artifact_path").and_then(Value::as_str);
@@ -5388,189 +5390,249 @@ async fn handle_permission_request_event(
     Ok(())
 }
 
+#[derive(Debug, Clone)]
 struct ToolDisplay {
-    title: &'static str,
+    title: String,
     kind: ToolKind,
-    verb: &'static str,
-    permission_operation: &'static str,
+    verb: String,
+    permission_operation: String,
+    subtitle: Option<String>,
+    category: Option<String>,
+    arguments_summary: Option<Value>,
+}
+
+impl ToolDisplay {
+    fn builtin(
+        title: &'static str,
+        kind: ToolKind,
+        verb: &'static str,
+        permission_operation: &'static str,
+    ) -> Self {
+        Self {
+            title: title.to_string(),
+            kind,
+            verb: verb.to_string(),
+            permission_operation: permission_operation.to_string(),
+            subtitle: None,
+            category: None,
+            arguments_summary: None,
+        }
+    }
+
+    fn from_event(tool_name: &str, event: &Value) -> Self {
+        let mut display = tool_display(tool_name);
+        let Some(event_display) = event.get("display") else {
+            return display;
+        };
+        if let Some(title) = event_display
+            .get("title")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        {
+            display.title = title.to_string();
+        } else if let Some(label) = event_display
+            .get("label")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        {
+            display.title = label.to_string();
+        }
+        if let Some(progress) = event_display
+            .get("progress")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        {
+            display.verb = progress.to_string();
+        }
+        if let Some(approval) = event_display
+            .get("approval_summary")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        {
+            display.permission_operation = approval.trim_end_matches('.').to_string();
+        }
+        display.subtitle = event_display
+            .get("subtitle")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string);
+        display.category = event_display
+            .get("category")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string);
+        display.arguments_summary = event_display.get("arguments_summary").cloned();
+        display
+    }
 }
 
 fn tool_display(tool_name: &str) -> ToolDisplay {
     match tool_name {
-        "fs_read_text_file" | "fs.read_text_file" => ToolDisplay {
-            title: "Read file",
-            kind: ToolKind::Read,
-            verb: "Reading",
-            permission_operation: "read this file",
-        },
-        "fs_list_directory" => ToolDisplay {
-            title: "List directory",
-            kind: ToolKind::Read,
-            verb: "Listing",
-            permission_operation: "list this directory",
-        },
-        "fs_find_paths" => ToolDisplay {
-            title: "Find paths",
-            kind: ToolKind::Search,
-            verb: "Finding paths under",
-            permission_operation: "find paths",
-        },
-        "fs_search_files" => ToolDisplay {
-            title: "Search files",
-            kind: ToolKind::Search,
-            verb: "Searching",
-            permission_operation: "search files",
-        },
-        "fs_stat" => ToolDisplay {
-            title: "Stat path",
-            kind: ToolKind::Read,
-            verb: "Inspecting",
-            permission_operation: "inspect this path",
-        },
-        "git_status" => ToolDisplay {
-            title: "Git status",
-            kind: ToolKind::Read,
-            verb: "Checking git status for",
-            permission_operation: "read git status",
-        },
-        "git_diff" => ToolDisplay {
-            title: "Git diff",
-            kind: ToolKind::Read,
-            verb: "Reading git diff for",
-            permission_operation: "read git diff",
-        },
-        "git_log" => ToolDisplay {
-            title: "Git log",
-            kind: ToolKind::Read,
-            verb: "Reading git log for",
-            permission_operation: "read git log",
-        },
-        "git_show" => ToolDisplay {
-            title: "Git show",
-            kind: ToolKind::Read,
-            verb: "Reading git revision for",
-            permission_operation: "read git revision",
-        },
-        "git_add" => ToolDisplay {
-            title: "Git add",
-            kind: ToolKind::Edit,
-            verb: "Staging git paths in",
-            permission_operation: "stage git paths",
-        },
-        "git_restore" => ToolDisplay {
-            title: "Git restore",
-            kind: ToolKind::Edit,
-            verb: "Restoring git paths in",
-            permission_operation: "restore git paths",
-        },
-        "git_commit" => ToolDisplay {
-            title: "Git commit",
-            kind: ToolKind::Edit,
-            verb: "Creating git commit in",
-            permission_operation: "create git commit",
-        },
-        "git_stash" => ToolDisplay {
-            title: "Git stash",
-            kind: ToolKind::Edit,
-            verb: "Creating git stash in",
-            permission_operation: "create git stash",
-        },
-        "web_fetch" => ToolDisplay {
-            title: "Fetch URL",
-            kind: ToolKind::Fetch,
-            verb: "Fetching",
-            permission_operation: "fetch this URL",
-        },
-        "process_run" => ToolDisplay {
-            title: "Run process",
-            kind: ToolKind::Execute,
-            verb: "Running process in",
-            permission_operation: "run this command",
-        },
-        "terminal_run_command" => ToolDisplay {
-            title: "Run terminal command",
-            kind: ToolKind::Execute,
-            verb: "Running terminal command in",
-            permission_operation: "run this terminal command",
-        },
-        "chrome_open" => ToolDisplay {
-            title: "Chrome open",
-            kind: ToolKind::Fetch,
-            verb: "Opening Chrome URL",
-            permission_operation: "open this Chrome URL",
-        },
-        "chrome_snapshot" => ToolDisplay {
-            title: "Chrome snapshot",
-            kind: ToolKind::Read,
-            verb: "Reading Chrome snapshot",
-            permission_operation: "read Chrome snapshot",
-        },
-        "chrome_console_messages" => ToolDisplay {
-            title: "Chrome console",
-            kind: ToolKind::Read,
-            verb: "Reading Chrome console",
-            permission_operation: "read Chrome console messages",
-        },
-        "chrome_network_requests" => ToolDisplay {
-            title: "Chrome network",
-            kind: ToolKind::Read,
-            verb: "Reading Chrome network",
-            permission_operation: "read Chrome network requests",
-        },
-        "chrome_screenshot" => ToolDisplay {
-            title: "Chrome screenshot",
-            kind: ToolKind::Read,
-            verb: "Capturing Chrome screenshot",
-            permission_operation: "capture Chrome screenshot",
-        },
-        "fs_edit_file" | "fs_replace_text" => ToolDisplay {
-            title: "Edit file",
-            kind: ToolKind::Edit,
-            verb: "Editing",
-            permission_operation: "modify this file",
-        },
-        "fs_create_text_file" => ToolDisplay {
-            title: "Create file",
-            kind: ToolKind::Edit,
-            verb: "Creating",
-            permission_operation: "create this file",
-        },
-        "fs_create_directory" => ToolDisplay {
-            title: "Create directory",
-            kind: ToolKind::Edit,
-            verb: "Creating directory",
-            permission_operation: "create this directory",
-        },
-        "fs_move_path" => ToolDisplay {
-            title: "Move path",
-            kind: ToolKind::Move,
-            verb: "Moving",
-            permission_operation: "move this path",
-        },
-        "fs_copy_path" => ToolDisplay {
-            title: "Copy path",
-            kind: ToolKind::Edit,
-            verb: "Copying",
-            permission_operation: "copy this path",
-        },
-        "fs_apply_patch" => ToolDisplay {
-            title: "Apply patch",
-            kind: ToolKind::Edit,
-            verb: "Applying patch to",
-            permission_operation: "apply this patch",
-        },
-        "fs_delete_path" => ToolDisplay {
-            title: "Delete path",
-            kind: ToolKind::Delete,
-            verb: "Deleting",
-            permission_operation: "delete this path",
-        },
-        _ => ToolDisplay {
-            title: "Local tool",
-            kind: ToolKind::Read,
-            verb: "Running",
-            permission_operation: "run this local tool",
-        },
+        "fs_read_text_file" | "fs.read_text_file" => {
+            ToolDisplay::builtin("Read file", ToolKind::Read, "Reading", "read this file")
+        }
+        "fs_list_directory" => ToolDisplay::builtin(
+            "List directory",
+            ToolKind::Read,
+            "Listing",
+            "list this directory",
+        ),
+        "fs_find_paths" => ToolDisplay::builtin(
+            "Find paths",
+            ToolKind::Search,
+            "Finding paths under",
+            "find paths",
+        ),
+        "fs_search_files" => ToolDisplay::builtin(
+            "Search files",
+            ToolKind::Search,
+            "Searching",
+            "search files",
+        ),
+        "fs_stat" => ToolDisplay::builtin(
+            "Stat path",
+            ToolKind::Read,
+            "Inspecting",
+            "inspect this path",
+        ),
+        "git_status" => ToolDisplay::builtin(
+            "Git status",
+            ToolKind::Read,
+            "Checking git status for",
+            "read git status",
+        ),
+        "git_diff" => ToolDisplay::builtin(
+            "Git diff",
+            ToolKind::Read,
+            "Reading git diff for",
+            "read git diff",
+        ),
+        "git_log" => ToolDisplay::builtin(
+            "Git log",
+            ToolKind::Read,
+            "Reading git log for",
+            "read git log",
+        ),
+        "git_show" => ToolDisplay::builtin(
+            "Git show",
+            ToolKind::Read,
+            "Reading git revision for",
+            "read git revision",
+        ),
+        "git_add" => ToolDisplay::builtin(
+            "Git add",
+            ToolKind::Edit,
+            "Staging git paths in",
+            "stage git paths",
+        ),
+        "git_restore" => ToolDisplay::builtin(
+            "Git restore",
+            ToolKind::Edit,
+            "Restoring git paths in",
+            "restore git paths",
+        ),
+        "git_commit" => ToolDisplay::builtin(
+            "Git commit",
+            ToolKind::Edit,
+            "Creating git commit in",
+            "create git commit",
+        ),
+        "git_stash" => ToolDisplay::builtin(
+            "Git stash",
+            ToolKind::Edit,
+            "Creating git stash in",
+            "create git stash",
+        ),
+        "web_fetch" => {
+            ToolDisplay::builtin("Fetch URL", ToolKind::Fetch, "Fetching", "fetch this URL")
+        }
+        "process_run" => ToolDisplay::builtin(
+            "Run process",
+            ToolKind::Execute,
+            "Running process in",
+            "run this command",
+        ),
+        "terminal_run_command" => ToolDisplay::builtin(
+            "Run terminal command",
+            ToolKind::Execute,
+            "Running terminal command in",
+            "run this terminal command",
+        ),
+        "chrome_open" => ToolDisplay::builtin(
+            "Chrome open",
+            ToolKind::Fetch,
+            "Opening Chrome URL",
+            "open this Chrome URL",
+        ),
+        "chrome_snapshot" => ToolDisplay::builtin(
+            "Chrome snapshot",
+            ToolKind::Read,
+            "Reading Chrome snapshot",
+            "read Chrome snapshot",
+        ),
+        "chrome_console_messages" => ToolDisplay::builtin(
+            "Chrome console",
+            ToolKind::Read,
+            "Reading Chrome console",
+            "read Chrome console messages",
+        ),
+        "chrome_network_requests" => ToolDisplay::builtin(
+            "Chrome network",
+            ToolKind::Read,
+            "Reading Chrome network",
+            "read Chrome network requests",
+        ),
+        "chrome_screenshot" => ToolDisplay::builtin(
+            "Chrome screenshot",
+            ToolKind::Read,
+            "Capturing Chrome screenshot",
+            "capture Chrome screenshot",
+        ),
+        "fs_edit_file" | "fs_replace_text" => {
+            ToolDisplay::builtin("Edit file", ToolKind::Edit, "Editing", "modify this file")
+        }
+        "fs_create_text_file" => ToolDisplay::builtin(
+            "Create file",
+            ToolKind::Edit,
+            "Creating",
+            "create this file",
+        ),
+        "fs_create_directory" => ToolDisplay::builtin(
+            "Create directory",
+            ToolKind::Edit,
+            "Creating directory",
+            "create this directory",
+        ),
+        "fs_move_path" => {
+            ToolDisplay::builtin("Move path", ToolKind::Move, "Moving", "move this path")
+        }
+        "fs_copy_path" => {
+            ToolDisplay::builtin("Copy path", ToolKind::Edit, "Copying", "copy this path")
+        }
+        "fs_apply_patch" => ToolDisplay::builtin(
+            "Apply patch",
+            ToolKind::Edit,
+            "Applying patch to",
+            "apply this patch",
+        ),
+        "fs_delete_path" => ToolDisplay::builtin(
+            "Delete path",
+            ToolKind::Delete,
+            "Deleting",
+            "delete this path",
+        ),
+        _ => ToolDisplay::builtin(
+            "Local tool",
+            ToolKind::Read,
+            "Running",
+            "run this local tool",
+        ),
     }
 }
 
@@ -5589,6 +5651,10 @@ fn permission_family_label(tool_name: &str) -> &'static str {
 }
 
 fn tool_call_title(tool_name: &str, event: &Value) -> String {
+    let display = ToolDisplay::from_event(tool_name, event);
+    if event.get("display").is_some() {
+        return display.title;
+    }
     if matches!(tool_name, "process_run" | "terminal_run_command") {
         let command = event
             .get("args")
@@ -5685,7 +5751,7 @@ fn tool_call_title(tool_name: &str, event: &Value) -> String {
             return format!("Chrome open: {}", truncate_title(url));
         }
     }
-    tool_display(tool_name).title.to_string()
+    tool_display(tool_name).title
 }
 
 fn truncate_title(value: &str) -> String {
@@ -5802,16 +5868,20 @@ fn tool_supports_input_location(tool_name: &str, event: &Value) -> bool {
 }
 
 fn friendly_tool_status(tool_name: &str, event: &Value, phase: &str) -> String {
-    let display = tool_display(tool_name);
-    let path = tool_path(event).unwrap_or("the selected workspace path");
+    let display = ToolDisplay::from_event(tool_name, event);
+    let target = display
+        .subtitle
+        .as_deref()
+        .or_else(|| tool_path(event))
+        .unwrap_or("the selected workspace target");
     match phase {
-        "preparing" => format!("Preparing to {} `{path}`…", display.verb.to_lowercase()),
+        "preparing" => format!("Preparing: {}.", display.title),
         "permission" => format!(
-            "Waiting for approval to {} `{path}`.",
-            display.verb.to_lowercase()
+            "Waiting for approval: {}. Target: `{target}`.",
+            display.permission_operation
         ),
-        "running" => format!("{} `{path}`…", display.verb),
-        _ => format!("{} `{path}`…", display.verb),
+        "running" => format!("{} `{target}`…", display.verb),
+        _ => format!("{} `{target}`…", display.verb),
     }
 }
 
@@ -5861,12 +5931,14 @@ async fn send_tool_call_update(
     raw_output: Option<Value>,
     extra_content: Vec<ToolCallContent>,
 ) -> Result<()> {
-    let display = tool_display(tool_name);
+    let display = event
+        .map(|event| ToolDisplay::from_event(tool_name, event))
+        .unwrap_or_else(|| tool_display(tool_name));
     let mut content = vec![ToolCallContent::from(text.to_string())];
     content.extend(extra_content);
     let title = event
         .map(|event| tool_call_title(tool_name, event))
-        .unwrap_or_else(|| display.title.to_string());
+        .unwrap_or_else(|| display.title.clone());
     let mut tool_call = ToolCall::new(tool_call_id.to_string(), title)
         .kind(display.kind)
         .status(tool_status_from_str(status))
@@ -6201,7 +6273,7 @@ mod tests {
             "session_policy": {
                 "mode_label": "Ask",
                 "mutation_gate": { "state": "closed", "allows_workspace_mutation": false }
-            },
+                },
             "plan_mode": { "state": "approved" }
         });
         assert_eq!(infer_mode_from_den_session(&den), MODE_ASK);
@@ -6466,7 +6538,7 @@ mod tests {
         let event = json!({ "args": { "path": "/workspace/README.md" } });
         assert_eq!(
             friendly_tool_status("fs_replace_text", &event, "permission"),
-            "Waiting for approval to editing `/workspace/README.md`."
+            "Waiting for approval: modify this file. Target: `/workspace/README.md`."
         );
         assert_eq!(
             friendly_tool_status("fs_list_directory", &event, "running"),

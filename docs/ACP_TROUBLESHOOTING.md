@@ -88,6 +88,13 @@ ACP tool result received ... body_tool_call_id=... body_approval_request_id=...
 ACP Letta stream summary ... native_message_types=... adapter_event_types=...
 ```
 
+Expected user-visible tool UX:
+
+- The ACP client should show a human-readable tool card, such as `Reading /absolute/path/to/small-file.txt`, not a generic `tool_call` title.
+- Permission prompts should include the concrete target and risk, such as the path, URL host, command/cwd, memory scope, or plan id.
+- Raw `args` may be attached as diagnostic/raw input, but visible content should prefer Den `display.title`, `display.subtitle`, `display.approval_summary`, and bounded summaries.
+- If a new tool renders generically, verify that its Den/ACP descriptor includes display metadata and that the adapter is consuming `event.display`.
+
 ---
 
 ## 4. Common failures

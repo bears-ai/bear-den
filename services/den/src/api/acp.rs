@@ -943,6 +943,7 @@ pub(crate) fn acp_pair_den_tool_descriptors() -> serde_json::Value {
                 "parameters": descriptor.input_schema,
                 "x-bears-domain": descriptor.domain,
                 "x-bears-content-class": descriptor.content_class,
+                "x-bears-display": descriptor.display,
             })
         })
         .collect::<Vec<_>>();

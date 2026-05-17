@@ -198,6 +198,48 @@ The ACP gateway does not use `bear_channel` or Letta Code event names. Den parse
 
 The local adapter is the only consumer of this HTTPS/SSE transport; it converts these events to ACP `session/update` JSON-RPC notifications over stdio. Historical `bear_channel`/Letta-Code-shaped events such as `assistant_delta`, `reasoning_delta`, and `done` are not accepted as ACP direct-Letta upstream stream events.
 
+### ACP tool-call display contract
+
+Den-to-adapter `tool_request` events should carry descriptor-owned display metadata. Future tool implementors must update the Den or ACP local tool descriptor/display resolver when adding a tool; do not rely on scattered adapter-specific titles or provider-name formatting.
+
+A `tool_request` may include:
+
+```json
+{
+  "type": "tool_request",
+  "tool_name": "fs_edit_file",
+  "title": "Edit file",
+  "args": { "path": "/workspace/README.md" },
+  "display": {
+    "label": "Edit file",
+    "title": "Editing /workspace/README.md",
+    "subtitle": "/workspace/README.md",
+    "category": "filesystem",
+    "status": "requested",
+    "progress": "Editing",
+    "complete": "Edited",
+    "approval_summary": "Allow changing this workspace file.",
+    "arguments_summary": {
+      "path": "/workspace/README.md",
+      "old_text": { "redacted": true, "kind": "string", "bytes": 123 },
+      "new_text": { "redacted": true, "kind": "string", "bytes": 456 }
+    },
+    "target": { "path": "/workspace/README.md" }
+  }
+}
+```
+
+Adapter behavior:
+
+- Prefer `display.title` for ACP `ToolCall` titles.
+- Use `display.subtitle` and `display.approval_summary` for status content and permission prompts.
+- Preserve `display.arguments_summary` as metadata or expandable detail when the client supports it.
+- Use raw `args` for execution, not as the primary visible UI payload.
+- Fall back to legacy `title`/`tool_name` only when `display` is absent.
+- Result updates should summarize by tool category and bound/redact large outputs.
+
+See also `docs/planning/PAIR_TOOL_DISCOVERY_AND_SCOPE_POLICY.md` for descriptor and tool-call UX principles.
+
 The former Letta Code ACP client-tool relay (`capabilities.client_tools`, `client_tool_request`, and tool-result continuation endpoints) has been removed from the active implementation. Future ACP client tools should be owned by a dedicated ACP runtime rather than tunneled through Letta Code external-tool closures.
 
 Den is the ACP gateway, not a blind proxy. It authenticates the ACP client, authorizes bear access, injects trusted context, and owns ACP conversation resolution. Den-local pending identifiers such as `new-acp-*` are session-selection placeholders only and must not be sent to Letta as conversation path ids; see [ADR: ACP Conversation Resolver](adr/acp-conversation-resolver.md). The original Letta Code client-tool relay plan is retained as historical planning material only; future ACP tool support should use a dedicated runtime architecture.

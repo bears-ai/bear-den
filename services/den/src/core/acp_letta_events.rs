@@ -755,27 +755,35 @@ pub fn acp_event_to_adapter_sse(event: AcpGatewayEvent) -> Bytes {
             approval_reason,
             result_tx: _,
             result_rx: _,
-        } => serde_json::json!({
-            "type": "tool_request",
-            "request_id": request_id,
-            "turn_id": turn_id,
-            "tool_call_id": tool_call_id,
-            "approval_request_id": approval_request_id,
-            "tool_name": tool_name,
-            "title": title,
-            "kind": kind,
-            "args": args,
-            "approval": {
-                "required": approval_required,
-                "reason": approval_reason,
-            },
-            "policy": acp_tool_policy_json_for_provider(&tool_name),
-            "diagnostic": {
-                "component": "den.acp",
-                "phase": acp_diag_phase::LETTA_TOOL_CALL_MAPPED,
-                "transport_version": 3,
-            },
-        }),
+        } => {
+            let display = den_tools::builtin_den_tool_descriptor_for_provider_name(&tool_name)
+                .map(|descriptor| descriptor.display)
+                .unwrap_or_else(|| {
+                    crate::core::acp_tools::acp_tool_display_for_provider(&tool_name, &args)
+                });
+            serde_json::json!({
+                "type": "tool_request",
+                "request_id": request_id,
+                "turn_id": turn_id,
+                "tool_call_id": tool_call_id,
+                "approval_request_id": approval_request_id,
+                "tool_name": tool_name,
+                "title": title,
+                "kind": kind,
+                "args": args,
+                "display": display,
+                "approval": {
+                    "required": approval_required,
+                    "reason": approval_reason,
+                },
+                "policy": acp_tool_policy_json_for_provider(&tool_name),
+                "diagnostic": {
+                    "component": "den.acp",
+                    "phase": acp_diag_phase::LETTA_TOOL_CALL_MAPPED,
+                    "transport_version": 4,
+                },
+            })
+        }
         AcpGatewayEvent::PermissionRequest {
             request_id,
             permission_id,

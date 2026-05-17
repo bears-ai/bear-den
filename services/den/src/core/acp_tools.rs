@@ -444,6 +444,17 @@ pub struct AcpToolDescriptor {
 }
 
 #[derive(Debug, Clone, Copy)]
+pub struct AcpToolDisplayDescriptor {
+    pub label: &'static str,
+    pub category: &'static str,
+    pub progress_verb: &'static str,
+    pub complete_verb: &'static str,
+    pub target_arg_keys: &'static [&'static str],
+    pub sensitive_arg_keys: &'static [&'static str],
+    pub approval_summary: &'static str,
+}
+
+#[derive(Debug, Clone, Copy)]
 pub struct AcpToolPolicy {
     pub scope_basis: &'static str,
     pub role_basis: &'static str,
@@ -463,6 +474,20 @@ pub struct AcpToolPolicy {
     pub deny_hidden_paths: Option<bool>,
     pub total_timeout_ms: u64,
     pub permission_timeout_ms: u64,
+}
+
+impl AcpToolDisplayDescriptor {
+    pub fn to_json(self) -> serde_json::Value {
+        json!({
+            "label": self.label,
+            "category": self.category,
+            "progress_verb": self.progress_verb,
+            "complete_verb": self.complete_verb,
+            "target_arg_keys": self.target_arg_keys,
+            "sensitive_arg_keys": self.sensitive_arg_keys,
+            "approval_summary": self.approval_summary,
+        })
+    }
 }
 
 impl AcpToolPolicy {
@@ -1386,6 +1411,370 @@ pub fn acp_tool_policy_json_for_provider(tool_name: &str) -> serde_json::Value {
     acp_tool_policy(tool).to_json(tool.descriptor())
 }
 
+pub fn acp_tool_display(tool: AcpToolName) -> AcpToolDisplayDescriptor {
+    match tool {
+        AcpToolName::ReadTextFile => AcpToolDisplayDescriptor {
+            label: "Read file",
+            category: "filesystem",
+            progress_verb: "Reading",
+            complete_verb: "Read",
+            target_arg_keys: &["path"],
+            sensitive_arg_keys: &[],
+            approval_summary: "Allow reading this workspace file.",
+        },
+        AcpToolName::ListDirectory => AcpToolDisplayDescriptor {
+            label: "List directory",
+            category: "filesystem",
+            progress_verb: "Listing",
+            complete_verb: "Listed",
+            target_arg_keys: &["path"],
+            sensitive_arg_keys: &[],
+            approval_summary: "Allow listing this workspace directory.",
+        },
+        AcpToolName::FindPaths => AcpToolDisplayDescriptor {
+            label: "Find paths",
+            category: "filesystem",
+            progress_verb: "Finding paths for",
+            complete_verb: "Found paths for",
+            target_arg_keys: &["glob"],
+            sensitive_arg_keys: &[],
+            approval_summary: "Allow finding matching workspace paths.",
+        },
+        AcpToolName::SearchFiles => AcpToolDisplayDescriptor {
+            label: "Search files",
+            category: "filesystem",
+            progress_verb: "Searching",
+            complete_verb: "Searched",
+            target_arg_keys: &["query", "pattern", "path"],
+            sensitive_arg_keys: &[],
+            approval_summary: "Allow searching workspace file contents or paths.",
+        },
+        AcpToolName::Stat => AcpToolDisplayDescriptor {
+            label: "Inspect path",
+            category: "filesystem",
+            progress_verb: "Inspecting",
+            complete_verb: "Inspected",
+            target_arg_keys: &["path"],
+            sensitive_arg_keys: &[],
+            approval_summary: "Allow reading metadata for this workspace path.",
+        },
+        AcpToolName::EditFile => AcpToolDisplayDescriptor {
+            label: "Edit file",
+            category: "filesystem",
+            progress_verb: "Editing",
+            complete_verb: "Edited",
+            target_arg_keys: &["path"],
+            sensitive_arg_keys: &["old_text", "new_text"],
+            approval_summary: "Allow changing this workspace file.",
+        },
+        AcpToolName::CreateTextFile => AcpToolDisplayDescriptor {
+            label: "Create file",
+            category: "filesystem",
+            progress_verb: "Creating",
+            complete_verb: "Created",
+            target_arg_keys: &["path"],
+            sensitive_arg_keys: &["content"],
+            approval_summary: "Allow creating this workspace file.",
+        },
+        AcpToolName::CreateDirectory => AcpToolDisplayDescriptor {
+            label: "Create directory",
+            category: "filesystem",
+            progress_verb: "Creating",
+            complete_verb: "Created",
+            target_arg_keys: &["path"],
+            sensitive_arg_keys: &[],
+            approval_summary: "Allow creating this workspace directory.",
+        },
+        AcpToolName::MovePath => AcpToolDisplayDescriptor {
+            label: "Move path",
+            category: "filesystem",
+            progress_verb: "Moving",
+            complete_verb: "Moved",
+            target_arg_keys: &["source_path", "destination_path"],
+            sensitive_arg_keys: &[],
+            approval_summary: "Allow moving or renaming this workspace path.",
+        },
+        AcpToolName::CopyPath => AcpToolDisplayDescriptor {
+            label: "Copy path",
+            category: "filesystem",
+            progress_verb: "Copying",
+            complete_verb: "Copied",
+            target_arg_keys: &["source_path", "destination_path"],
+            sensitive_arg_keys: &[],
+            approval_summary: "Allow copying this workspace path.",
+        },
+        AcpToolName::ApplyPatch => AcpToolDisplayDescriptor {
+            label: "Apply patch",
+            category: "filesystem",
+            progress_verb: "Applying patch",
+            complete_verb: "Applied patch",
+            target_arg_keys: &["base_path"],
+            sensitive_arg_keys: &["patch"],
+            approval_summary: "Allow applying a patch to workspace files.",
+        },
+        AcpToolName::DeletePath => AcpToolDisplayDescriptor {
+            label: "Delete path",
+            category: "filesystem",
+            progress_verb: "Deleting",
+            complete_verb: "Deleted",
+            target_arg_keys: &["path"],
+            sensitive_arg_keys: &[],
+            approval_summary: "Allow deleting this workspace path.",
+        },
+        AcpToolName::GitStatus => AcpToolDisplayDescriptor {
+            label: "Check git status",
+            category: "git",
+            progress_verb: "Checking git status in",
+            complete_verb: "Checked git status in",
+            target_arg_keys: &["repo_path"],
+            sensitive_arg_keys: &[],
+            approval_summary: "Allow reading git status for this workspace repository.",
+        },
+        AcpToolName::GitDiff => AcpToolDisplayDescriptor {
+            label: "Inspect git diff",
+            category: "git",
+            progress_verb: "Inspecting git diff in",
+            complete_verb: "Inspected git diff in",
+            target_arg_keys: &["repo_path"],
+            sensitive_arg_keys: &[],
+            approval_summary: "Allow reading git diff for this workspace repository.",
+        },
+        AcpToolName::GitLog => AcpToolDisplayDescriptor {
+            label: "Read git log",
+            category: "git",
+            progress_verb: "Reading git log in",
+            complete_verb: "Read git log in",
+            target_arg_keys: &["repo_path"],
+            sensitive_arg_keys: &[],
+            approval_summary: "Allow reading git history for this workspace repository.",
+        },
+        AcpToolName::GitShow => AcpToolDisplayDescriptor {
+            label: "Show git revision",
+            category: "git",
+            progress_verb: "Showing git revision",
+            complete_verb: "Showed git revision",
+            target_arg_keys: &["revision", "path"],
+            sensitive_arg_keys: &[],
+            approval_summary: "Allow reading this git revision or file.",
+        },
+        AcpToolName::GitAdd => AcpToolDisplayDescriptor {
+            label: "Stage git paths",
+            category: "git",
+            progress_verb: "Staging git paths in",
+            complete_verb: "Staged git paths in",
+            target_arg_keys: &["repo_path"],
+            sensitive_arg_keys: &[],
+            approval_summary: "Allow staging explicit git paths.",
+        },
+        AcpToolName::GitRestore => AcpToolDisplayDescriptor {
+            label: "Restore git paths",
+            category: "git",
+            progress_verb: "Restoring git paths in",
+            complete_verb: "Restored git paths in",
+            target_arg_keys: &["repo_path"],
+            sensitive_arg_keys: &[],
+            approval_summary: "Allow restoring git paths; this may discard changes.",
+        },
+        AcpToolName::GitCommit => AcpToolDisplayDescriptor {
+            label: "Create git commit",
+            category: "git",
+            progress_verb: "Committing",
+            complete_verb: "Committed",
+            target_arg_keys: &["message"],
+            sensitive_arg_keys: &[],
+            approval_summary: "Allow creating a git commit from staged changes.",
+        },
+        AcpToolName::GitStash => AcpToolDisplayDescriptor {
+            label: "Stash git changes",
+            category: "git",
+            progress_verb: "Stashing git changes in",
+            complete_verb: "Stashed git changes in",
+            target_arg_keys: &["repo_path"],
+            sensitive_arg_keys: &[],
+            approval_summary: "Allow creating a git stash.",
+        },
+        AcpToolName::ProcessRun => AcpToolDisplayDescriptor {
+            label: "Run process",
+            category: "terminal",
+            progress_verb: "Running",
+            complete_verb: "Ran",
+            target_arg_keys: &["command", "cwd"],
+            sensitive_arg_keys: &["env"],
+            approval_summary: "Allow running this process in the workspace.",
+        },
+        AcpToolName::TerminalRunCommand => AcpToolDisplayDescriptor {
+            label: "Run terminal command",
+            category: "terminal",
+            progress_verb: "Running terminal command",
+            complete_verb: "Ran terminal command",
+            target_arg_keys: &["command", "cwd"],
+            sensitive_arg_keys: &["env"],
+            approval_summary: "Allow running this terminal command in the workspace.",
+        },
+        AcpToolName::ChromeOpen => AcpToolDisplayDescriptor {
+            label: "Open browser",
+            category: "browser",
+            progress_verb: "Opening",
+            complete_verb: "Opened",
+            target_arg_keys: &["url"],
+            sensitive_arg_keys: &[],
+            approval_summary: "Allow opening this URL in the browser session.",
+        },
+        AcpToolName::ChromeSnapshot => AcpToolDisplayDescriptor {
+            label: "Inspect browser page",
+            category: "browser",
+            progress_verb: "Inspecting browser page",
+            complete_verb: "Inspected browser page",
+            target_arg_keys: &[],
+            sensitive_arg_keys: &[],
+            approval_summary: "Allow reading the current browser page snapshot.",
+        },
+        AcpToolName::ChromeConsoleMessages => AcpToolDisplayDescriptor {
+            label: "Read browser console",
+            category: "browser",
+            progress_verb: "Reading browser console",
+            complete_verb: "Read browser console",
+            target_arg_keys: &[],
+            sensitive_arg_keys: &[],
+            approval_summary: "Allow reading browser console messages.",
+        },
+        AcpToolName::ChromeNetworkRequests => AcpToolDisplayDescriptor {
+            label: "Inspect network requests",
+            category: "browser",
+            progress_verb: "Inspecting network requests",
+            complete_verb: "Inspected network requests",
+            target_arg_keys: &[],
+            sensitive_arg_keys: &[],
+            approval_summary: "Allow reading browser network request metadata.",
+        },
+        AcpToolName::ChromeScreenshot => AcpToolDisplayDescriptor {
+            label: "Capture screenshot",
+            category: "browser",
+            progress_verb: "Capturing screenshot",
+            complete_verb: "Captured screenshot",
+            target_arg_keys: &["format"],
+            sensitive_arg_keys: &[],
+            approval_summary: "Allow capturing a browser screenshot.",
+        },
+    }
+}
+
+pub fn acp_tool_display_for_provider(
+    tool_name: &str,
+    args: &serde_json::Value,
+) -> serde_json::Value {
+    let Some(tool) = AcpToolName::from_provider_alias(tool_name) else {
+        return fallback_tool_display(tool_name, args);
+    };
+    let display = acp_tool_display(tool);
+    let target = summarize_target(display.target_arg_keys, args);
+    json!({
+        "label": display.label,
+        "title": target.as_ref().map(|target| format!("{} {target}", display.progress_verb)).unwrap_or_else(|| display.label.to_string()),
+        "subtitle": target,
+        "category": display.category,
+        "status": "requested",
+        "progress": display.progress_verb,
+        "complete": display.complete_verb,
+        "approval_summary": display.approval_summary,
+        "arguments_summary": summarize_arguments(args, display.sensitive_arg_keys),
+        "target": summarize_target_object(display.target_arg_keys, args),
+    })
+}
+
+fn fallback_tool_display(tool_name: &str, args: &serde_json::Value) -> serde_json::Value {
+    json!({
+        "label": tool_name,
+        "title": format!("Use {tool_name}"),
+        "category": "tool",
+        "status": "requested",
+        "arguments_summary": summarize_arguments(args, &[]),
+    })
+}
+
+fn summarize_target(keys: &[&str], args: &serde_json::Value) -> Option<String> {
+    let object = args.as_object()?;
+    let mut values = Vec::new();
+    for key in keys {
+        if let Some(value) = object.get(*key).and_then(|value| value.as_str()) {
+            let trimmed = value.trim();
+            if !trimmed.is_empty() {
+                values.push(preview(trimmed, 96));
+            }
+        }
+    }
+    match values.len() {
+        0 => None,
+        1 => values.into_iter().next(),
+        _ => Some(values.join(" → ")),
+    }
+}
+
+fn summarize_target_object(keys: &[&str], args: &serde_json::Value) -> serde_json::Value {
+    let Some(object) = args.as_object() else {
+        return serde_json::Value::Null;
+    };
+    let mut out = serde_json::Map::new();
+    for key in keys {
+        if let Some(value) = object.get(*key) {
+            out.insert((*key).to_string(), summarize_value(value, false));
+        }
+    }
+    serde_json::Value::Object(out)
+}
+
+fn summarize_arguments(args: &serde_json::Value, sensitive_keys: &[&str]) -> serde_json::Value {
+    let Some(object) = args.as_object() else {
+        return summarize_value(args, false);
+    };
+    let mut out = serde_json::Map::new();
+    for (key, value) in object {
+        out.insert(
+            key.clone(),
+            summarize_value(
+                value,
+                sensitive_keys.iter().any(|sensitive| sensitive == key),
+            ),
+        );
+    }
+    serde_json::Value::Object(out)
+}
+
+fn summarize_value(value: &serde_json::Value, sensitive: bool) -> serde_json::Value {
+    if sensitive {
+        return json!({ "redacted": true, "kind": value_kind(value), "bytes": value.to_string().len() });
+    }
+    match value {
+        serde_json::Value::String(s) => json!(preview(s, 160)),
+        serde_json::Value::Array(items) => {
+            json!({ "items": items.len(), "preview": items.iter().take(5).map(|v| summarize_value(v, false)).collect::<Vec<_>>() })
+        }
+        serde_json::Value::Object(map) => {
+            json!({ "keys": map.keys().take(20).cloned().collect::<Vec<_>>() })
+        }
+        _ => value.clone(),
+    }
+}
+
+fn value_kind(value: &serde_json::Value) -> &'static str {
+    match value {
+        serde_json::Value::Null => "null",
+        serde_json::Value::Bool(_) => "boolean",
+        serde_json::Value::Number(_) => "number",
+        serde_json::Value::String(_) => "string",
+        serde_json::Value::Array(_) => "array",
+        serde_json::Value::Object(_) => "object",
+    }
+}
+
+fn preview(value: &str, max_chars: usize) -> String {
+    let mut out = value.chars().take(max_chars).collect::<String>();
+    if value.chars().count() > max_chars {
+        out.push('…');
+    }
+    out
+}
+
 pub fn supported_provider_tool_names() -> Vec<&'static str> {
     AcpToolName::all()
         .iter()
@@ -1983,6 +2372,14 @@ pub fn acp_client_tool_descriptor(tool: &AcpToolDescriptor) -> serde_json::Value
         object.insert(
             "x-bears-content-class".to_string(),
             json!(tool.permission_class),
+        );
+        object.insert(
+            "x-bears-display".to_string(),
+            acp_tool_display(
+                AcpToolName::from_provider_alias(tool.provider_name)
+                    .expect("descriptor provider name resolves"),
+            )
+            .to_json(),
         );
     }
     descriptor

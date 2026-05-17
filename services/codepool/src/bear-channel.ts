@@ -278,6 +278,39 @@ export function summarizeApprovalRequestEvent(ev: Record<string, unknown>): {
     };
 }
 
+function toolDisplayFromMessage(msg: SDKMessage): {
+    tool: string;
+    label?: string;
+    summary?: string;
+} {
+    const raw = msg as unknown as Record<string, unknown>;
+    const tool = String(raw.name ?? "tool");
+    const display =
+        raw.display && typeof raw.display === "object"
+            ? (raw.display as Record<string, unknown>)
+            : undefined;
+    const label =
+        typeof display?.title === "string" && display.title.trim()
+            ? display.title
+            : typeof display?.label === "string" && display.label.trim()
+              ? display.label
+              : typeof raw.label === "string" && raw.label.trim()
+                ? raw.label
+                : undefined;
+    const subtitle =
+        typeof display?.subtitle === "string" && display.subtitle.trim()
+            ? display.subtitle
+            : undefined;
+    const summary =
+        typeof display?.approval_summary === "string" &&
+        display.approval_summary.trim()
+            ? subtitle
+                ? `${display.approval_summary} ${subtitle}`
+                : display.approval_summary
+            : subtitle;
+    return { tool, label, summary };
+}
+
 function llmApiErrorDetail(ev: Record<string, unknown>): string {
     const summary = extractUpstreamErrorSummary(ev);
     const parts = [
@@ -312,24 +345,27 @@ export function sdkMessageToBearChannelEvents(
         case "result":
         case "retry":
             return [];
-        case "tool_call":
+        case "tool_call": {
+            const display = toolDisplayFromMessage(msg);
             return [
                 {
                     type: "server_tool_started",
-                    tool: String(
-                        (msg as unknown as { name?: unknown }).name ?? "tool",
-                    ),
+                    tool: display.tool,
+                    label: display.label,
                 },
             ];
-        case "tool_result":
+        }
+        case "tool_result": {
+            const display = toolDisplayFromMessage(msg);
             return [
                 {
                     type: "server_tool_finished",
-                    tool: String(
-                        (msg as unknown as { name?: unknown }).name ?? "tool",
-                    ),
+                    tool: display.tool,
+                    label: display.label,
+                    summary: display.summary,
                 },
             ];
+        }
         case "assistant":
             return [
                 { type: "assistant_delta", text: msg.content, id: msg.uuid },
