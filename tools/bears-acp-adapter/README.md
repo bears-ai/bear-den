@@ -37,6 +37,23 @@ Not implemented yet:
 - terminal tool execution
 - broader file mutation tools beyond ACP's standard read/write text-file requests
 
+## Chrome DevTools tools
+
+The adapter can expose Chrome/Chromium/Edge browser tools when browser automation is actually
+available.
+
+Availability is detected in this order:
+
+1. explicit CDP endpoint via `BEARS_CHROME_CDP_URL`
+2. explicit CDP endpoint via `BEARS_BROWSER_CDP_URL`
+3. managed local browser launch, if a supported Chrome/Chromium/Edge executable can be found
+
+If neither an explicit CDP endpoint nor a launchable local browser is available, the adapter does
+not advertise the Chrome tools.
+
+When managed local browser launch is used, the adapter starts a local headless browser with a
+temporary profile and a localhost-only remote-debugging port on first use.
+
 ## Build
 
 From the repository root:

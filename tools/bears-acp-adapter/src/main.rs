@@ -47,8 +47,9 @@ use tokio::{
 };
 use tool_tasks::{log_tool_task_phase, ToolTaskPhase, ToolTaskRegistry};
 use tools::chrome::{
-    handle_chrome_console_messages, handle_chrome_network_requests, handle_chrome_open,
-    handle_chrome_screenshot, handle_chrome_snapshot,
+    chrome_capability_status_line, chrome_tools_available, handle_chrome_console_messages,
+    handle_chrome_network_requests, handle_chrome_open, handle_chrome_screenshot,
+    handle_chrome_snapshot,
 };
 
 use tools::fs::{
@@ -751,6 +752,10 @@ async fn run() -> Result<()> {
         local_head_sha(),
         direct_tools_context()
     );
+    eprintln!(
+        "bears-acp-adapter: chrome tools {}",
+        chrome_capability_status_line()
+    );
     if !runtime.doctor {
         if runtime.is_configured() {
             eprintln!("bears-acp-adapter: configuration looks valid");
@@ -1015,11 +1020,12 @@ fn require_arg_value(flag: &str, value: Option<String>) -> Result<String> {
 
 fn print_version_to_stderr() {
     eprintln!(
-        "bears-acp-adapter {}\nBuild git SHA: {}\nLocal HEAD SHA: {}\nACP sessions: list/resume/load; conversations bound via Den\nDirect tools: {}",
+        "bears-acp-adapter {}\nBuild git SHA: {}\nLocal HEAD SHA: {}\nACP sessions: list/resume/load; conversations bound via Den\nDirect tools: {}\nChrome tools: {}",
         env!("CARGO_PKG_VERSION"),
         env!("BEARS_ACP_ADAPTER_GIT_SHA"),
         local_head_sha(),
-        direct_tools_context()
+        direct_tools_context(),
+        chrome_capability_status_line()
     );
 }
 
@@ -1789,11 +1795,11 @@ fn adapter_capabilities_context() -> Value {
             "git_stash": { "supported": true, "version": 1 },
             "process_run": { "supported": true, "version": 1 },
             "terminal_run_command": { "supported": true, "version": 1 },
-            "chrome_open": { "supported": true, "version": 1 },
-            "chrome_snapshot": { "supported": true, "version": 1 },
-            "chrome_console_messages": { "supported": true, "version": 1 },
-            "chrome_network_requests": { "supported": true, "version": 1 },
-            "chrome_screenshot": { "supported": true, "version": 1 },
+            "chrome_open": { "supported": chrome_tools_available(), "version": 1 },
+            "chrome_snapshot": { "supported": chrome_tools_available(), "version": 1 },
+            "chrome_console_messages": { "supported": chrome_tools_available(), "version": 1 },
+            "chrome_network_requests": { "supported": chrome_tools_available(), "version": 1 },
+            "chrome_screenshot": { "supported": chrome_tools_available(), "version": 1 },
             "fs_edit_file": { "supported": true, "version": 1 },
             "fs_create_text_file": { "supported": true, "version": 1 },
             "fs_create_directory": { "supported": true, "version": 1 },
@@ -1806,6 +1812,7 @@ fn adapter_capabilities_context() -> Value {
 }
 
 fn direct_tools_context() -> Value {
+    let chrome_available = chrome_tools_available();
     json!({
         "fs_read_text_file": true,
         "fs_list_directory": true,
@@ -1822,11 +1829,11 @@ fn direct_tools_context() -> Value {
         "git_stash": true,
         "process_run": true,
         "terminal_run_command": true,
-        "chrome_open": true,
-        "chrome_snapshot": true,
-        "chrome_console_messages": true,
-        "chrome_network_requests": true,
-        "chrome_screenshot": true,
+        "chrome_open": chrome_available,
+        "chrome_snapshot": chrome_available,
+        "chrome_console_messages": chrome_available,
+        "chrome_network_requests": chrome_available,
+        "chrome_screenshot": chrome_available,
         "fs_edit_file": true,
         "fs_create_text_file": true,
         "fs_create_directory": true,
@@ -3757,6 +3764,7 @@ async fn run_doctor(http: &reqwest::Client, runtime: &RuntimeConfig) -> Result<(
         eprintln!("  executable: {}", exe.display());
     }
     eprintln!("  direct_tools: {}", direct_tools_context());
+    eprintln!("  chrome_tools: {}", chrome_capability_status_line());
     eprintln!();
 
     if runtime.api_url.trim().is_empty() {

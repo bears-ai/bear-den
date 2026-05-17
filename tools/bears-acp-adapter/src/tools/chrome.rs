@@ -1,20 +1,64 @@
 use crate::ToolPolicy;
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context, Result};
 use futures_util::{SinkExt, StreamExt};
 use reqwest::Url;
 use serde_json::{json, Value};
 use std::{
     collections::VecDeque,
+    net::TcpListener,
+    path::{Path, PathBuf},
+    process::Stdio,
     sync::{
         atomic::{AtomicU64, Ordering},
         Arc, OnceLock,
     },
+    time::Duration,
 };
-use tokio::sync::Mutex as TokioMutex;
-use tokio_tungstenite::{connect_async, tungstenite::Message};
+use tokio::{
+    net::TcpStream,
+    process::{Child, Command},
+    sync::Mutex as TokioMutex,
+};
+use tokio_tungstenite::{connect_async, tungstenite::Message, MaybeTlsStream, WebSocketStream};
 
 static NEXT_ID: AtomicU64 = AtomicU64::new(1);
 static CHROME_STATE: OnceLock<Arc<TokioMutex<ChromeState>>> = OnceLock::new();
+static CHROME_CAPABILITY: OnceLock<ChromeCapability> = OnceLock::new();
+
+#[derive(Clone, Debug)]
+pub(crate) enum ChromeCapability {
+    Unavailable { reason: String },
+    ExternalCdp { base_url: String, source: &'static str },
+    ManagedLaunchable { executable: PathBuf },
+}
+
+impl ChromeCapability {
+    pub(crate) fn detect() -> &'static Self {
+        CHROME_CAPABILITY.get_or_init(detect_chrome_capability)
+    }
+
+    pub(crate) fn is_available(&self) -> bool {
+        !matches!(self, Self::Unavailable { .. })
+    }
+
+    pub(crate) fn status_line(&self) -> String {
+        match self {
+            Self::Unavailable { reason } => format!("unavailable ({reason})"),
+            Self::ExternalCdp { base_url, source } => {
+                format!("available via {source}={base_url}")
+            }
+            Self::ManagedLaunchable { executable } => {
+                format!("available via managed local Chrome at {}", executable.display())
+            }
+        }
+    }
+}
+
+struct ManagedChrome {
+    child: Child,
+    base_url: String,
+    user_data_dir: PathBuf,
+}
 
 #[derive(Default)]
 struct ChromeState {
@@ -22,6 +66,7 @@ struct ChromeState {
     console_events: VecDeque<Value>,
     network_events: VecDeque<Value>,
     max_events: usize,
+    managed: Option<ManagedChrome>,
 }
 
 impl ChromeState {
@@ -33,6 +78,13 @@ impl ChromeState {
         if method.starts_with("Network.") {
             push_bounded(&mut self.network_events, event, self.max_events);
         }
+    }
+}
+
+impl Drop for ManagedChrome {
+    fn drop(&mut self) {
+        let _ = self.child.start_kill();
+        let _ = std::fs::remove_dir_all(&self.user_data_dir);
     }
 }
 
@@ -54,12 +106,20 @@ fn push_bounded(queue: &mut VecDeque<Value>, value: Value, max: usize) {
     }
 }
 
+pub(crate) fn chrome_tools_available() -> bool {
+    ChromeCapability::detect().is_available()
+}
+
+pub(crate) fn chrome_capability_status_line() -> String {
+    ChromeCapability::detect().status_line()
+}
+
 pub(crate) async fn handle_chrome_open(args: &Value, _policy: &ToolPolicy) -> Result<Value> {
     let url = args
         .get("url")
         .and_then(Value::as_str)
         .ok_or_else(|| anyhow!("chrome_open args missing url"))?;
-    let cdp = cdp_base_url()?;
+    let cdp = ensure_cdp_base_url().await?;
     let endpoint = format!(
         "{}/json/new?{}",
         cdp.trim_end_matches('/'),
@@ -208,25 +268,160 @@ fn truncate_detail(value: &str, max_chars: usize) -> String {
     }
 }
 
-fn cdp_base_url() -> Result<String> {
-    let value = std::env::var("BEARS_CHROME_CDP_URL")
-        .or_else(|_| std::env::var("BEARS_BROWSER_CDP_URL"))
-        .map_err(|_| {
-            anyhow!("Chrome tools require BEARS_CHROME_CDP_URL or BEARS_BROWSER_CDP_URL")
-        })?;
-    let value = value.trim().trim_end_matches('/').to_string();
-    if value.is_empty() {
-        return Err(anyhow!(
-            "Chrome tools require BEARS_CHROME_CDP_URL or BEARS_BROWSER_CDP_URL"
-        ));
+fn detect_chrome_capability() -> ChromeCapability {
+    if let Ok(value) = std::env::var("BEARS_CHROME_CDP_URL") {
+        let base_url = value.trim().trim_end_matches('/').to_string();
+        if !base_url.is_empty() {
+            return ChromeCapability::ExternalCdp {
+                base_url,
+                source: "BEARS_CHROME_CDP_URL",
+            };
+        }
     }
-    Ok(value)
+    if let Ok(value) = std::env::var("BEARS_BROWSER_CDP_URL") {
+        let base_url = value.trim().trim_end_matches('/').to_string();
+        if !base_url.is_empty() {
+            return ChromeCapability::ExternalCdp {
+                base_url,
+                source: "BEARS_BROWSER_CDP_URL",
+            };
+        }
+    }
+    if let Some(executable) = detect_local_chrome_executable() {
+        return ChromeCapability::ManagedLaunchable { executable };
+    }
+    ChromeCapability::Unavailable {
+        reason: "no BEARS_CHROME_CDP_URL/BEARS_BROWSER_CDP_URL configured and no local Chrome executable found".to_string(),
+    }
+}
+
+fn detect_local_chrome_executable() -> Option<PathBuf> {
+    let candidates = [
+        "google-chrome",
+        "google-chrome-stable",
+        "chromium",
+        "chromium-browser",
+        "chrome",
+        "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+        "/Applications/Chromium.app/Contents/MacOS/Chromium",
+        "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
+        "/usr/bin/google-chrome",
+        "/usr/bin/chromium",
+        "/usr/bin/chromium-browser",
+    ];
+    for candidate in candidates {
+        if let Some(path) = resolve_executable(candidate) {
+            return Some(path);
+        }
+    }
+    None
+}
+
+fn resolve_executable(candidate: &str) -> Option<PathBuf> {
+    let path = PathBuf::from(candidate);
+    if path.is_absolute() {
+        return path.exists().then_some(path);
+    }
+    let path_env = std::env::var_os("PATH")?;
+    for dir in std::env::split_paths(&path_env) {
+        let full = dir.join(candidate);
+        if full.exists() {
+            return Some(full);
+        }
+    }
+    None
+}
+
+async fn ensure_cdp_base_url() -> Result<String> {
+    let capability = ChromeCapability::detect().clone();
+    match capability {
+        ChromeCapability::ExternalCdp { base_url, .. } => Ok(base_url),
+        ChromeCapability::ManagedLaunchable { executable } => ensure_managed_chrome(executable).await,
+        ChromeCapability::Unavailable { reason } => Err(anyhow!(
+            "Chrome tools unavailable: {reason}"
+        )),
+    }
+}
+
+async fn ensure_managed_chrome(executable: PathBuf) -> Result<String> {
+    let state = chrome_state();
+    {
+        let mut guard = state.lock().await;
+        if let Some(managed) = guard.managed.as_mut() {
+            if let Some(status) = managed.child.try_wait()? {
+                return Err(anyhow!(
+                    "Managed Chrome exited unexpectedly with status {status}"
+                ));
+            }
+            return Ok(managed.base_url.clone());
+        }
+    }
+
+    let base_url = launch_managed_chrome(&executable).await?;
+    Ok(base_url)
+}
+
+async fn launch_managed_chrome(executable: &Path) -> Result<String> {
+    let port = choose_unused_port()?;
+    let user_data_dir = std::env::temp_dir().join(format!(
+        "bears-acp-chrome-{}-{}",
+        std::process::id(),
+        NEXT_ID.fetch_add(1, Ordering::SeqCst)
+    ));
+    std::fs::create_dir_all(&user_data_dir)?;
+
+    let mut command = Command::new(executable);
+    command
+        .arg("--headless=new")
+        .arg("--disable-gpu")
+        .arg("--no-first-run")
+        .arg("--no-default-browser-check")
+        .arg("--remote-debugging-address=127.0.0.1")
+        .arg(format!("--remote-debugging-port={port}"))
+        .arg(format!("--user-data-dir={}", user_data_dir.display()))
+        .arg("about:blank")
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+
+    let child = command
+        .spawn()
+        .with_context(|| format!("failed to launch Chrome executable {}", executable.display()))?;
+    let base_url = format!("http://127.0.0.1:{port}");
+    wait_for_cdp_ready(&base_url, Duration::from_secs(5)).await?;
+
+    let state = chrome_state();
+    state.lock().await.managed = Some(ManagedChrome {
+        child,
+        base_url: base_url.clone(),
+        user_data_dir,
+    });
+    Ok(base_url)
+}
+
+async fn wait_for_cdp_ready(base_url: &str, timeout: Duration) -> Result<()> {
+    let start = std::time::Instant::now();
+    let version_url = format!("{}/json/version", base_url.trim_end_matches('/'));
+    let client = reqwest::Client::new();
+    loop {
+        if start.elapsed() > timeout {
+            return Err(anyhow!("Timed out waiting for Chrome CDP at {version_url}"));
+        }
+        if let Ok(resp) = client.get(&version_url).send().await {
+            if resp.status().is_success() {
+                return Ok(());
+            }
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+}
+
+fn choose_unused_port() -> Result<u16> {
+    let listener = TcpListener::bind("127.0.0.1:0")?;
+    Ok(listener.local_addr()?.port())
 }
 
 struct ChromeSession {
-    ws: tokio_tungstenite::WebSocketStream<
-        tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
-    >,
+    ws: WebSocketStream<MaybeTlsStream<TcpStream>>,
     events: Vec<Value>,
 }
 
@@ -241,7 +436,7 @@ impl ChromeSession {
     }
 
     async fn connect_first_page() -> Result<Self> {
-        let cdp = cdp_base_url()?;
+        let cdp = ensure_cdp_base_url().await?;
         let list_url = format!("{}/json/list", cdp.trim_end_matches('/'));
         let targets: Vec<Value> = reqwest::Client::new()
             .get(&list_url)
@@ -296,18 +491,13 @@ impl ChromeSession {
 
     async fn pump_events_once(&mut self) -> Result<()> {
         if let Ok(Some(Ok(Message::Text(text)))) =
-            tokio::time::timeout(std::time::Duration::from_millis(25), self.ws.next()).await
+            tokio::time::timeout(Duration::from_millis(25), self.ws.next()).await
         {
             let value: Value = serde_json::from_str(&text)?;
             chrome_state().lock().await.push_event(value.clone());
             self.events.push(value);
         }
         Ok(())
-    }
-
-    #[allow(dead_code)]
-    fn drain_events(&mut self) -> Vec<Value> {
-        std::mem::take(&mut self.events)
     }
 }
 
@@ -343,12 +533,5 @@ mod tests {
         assert_eq!(state.console_events.len(), 2);
         assert_eq!(state.network_events.len(), 1);
         assert_eq!(state.console_events.back().unwrap()["params"]["n"], 3);
-    }
-
-    #[test]
-    fn cdp_base_url_requires_env() {
-        std::env::remove_var("BEARS_CHROME_CDP_URL");
-        std::env::remove_var("BEARS_BROWSER_CDP_URL");
-        assert!(cdp_base_url().is_err());
     }
 }
