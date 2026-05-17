@@ -1209,6 +1209,7 @@ async fn handle_request(
                     .insert(session_id.clone(), context);
                 send_available_commands_update(&session_id).await?;
                 let mode = MODE_ASK;
+                notify_mode_state(&session_id, mode).await?;
                 let response = NewSessionResponse::new(session_id)
                     .config_options(session_config_options_for_mode(mode))
                     .modes(session_modes_for_mode(mode));
