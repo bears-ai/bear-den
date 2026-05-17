@@ -27,9 +27,16 @@ static CHROME_CAPABILITY: OnceLock<ChromeCapability> = OnceLock::new();
 
 #[derive(Clone, Debug)]
 pub(crate) enum ChromeCapability {
-    Unavailable { reason: String },
-    ExternalCdp { base_url: String, source: &'static str },
-    ManagedLaunchable { executable: PathBuf },
+    Unavailable {
+        reason: String,
+    },
+    ExternalCdp {
+        base_url: String,
+        source: &'static str,
+    },
+    ManagedLaunchable {
+        executable: PathBuf,
+    },
 }
 
 impl ChromeCapability {
@@ -48,7 +55,10 @@ impl ChromeCapability {
                 format!("available via {source}={base_url}")
             }
             Self::ManagedLaunchable { executable } => {
-                format!("available via managed local Chrome at {}", executable.display())
+                format!(
+                    "available via managed local Chrome at {}",
+                    executable.display()
+                )
             }
         }
     }
@@ -336,10 +346,12 @@ async fn ensure_cdp_base_url() -> Result<String> {
     let capability = ChromeCapability::detect().clone();
     match capability {
         ChromeCapability::ExternalCdp { base_url, .. } => Ok(base_url),
-        ChromeCapability::ManagedLaunchable { executable } => ensure_managed_chrome(executable).await,
-        ChromeCapability::Unavailable { reason } => Err(anyhow!(
-            "Chrome tools unavailable: {reason}"
-        )),
+        ChromeCapability::ManagedLaunchable { executable } => {
+            ensure_managed_chrome(executable).await
+        }
+        ChromeCapability::Unavailable { reason } => {
+            Err(anyhow!("Chrome tools unavailable: {reason}"))
+        }
     }
 }
 
@@ -383,9 +395,12 @@ async fn launch_managed_chrome(executable: &Path) -> Result<String> {
         .stdout(Stdio::null())
         .stderr(Stdio::null());
 
-    let child = command
-        .spawn()
-        .with_context(|| format!("failed to launch Chrome executable {}", executable.display()))?;
+    let child = command.spawn().with_context(|| {
+        format!(
+            "failed to launch Chrome executable {}",
+            executable.display()
+        )
+    })?;
     let base_url = format!("http://127.0.0.1:{port}");
     wait_for_cdp_ready(&base_url, Duration::from_secs(5)).await?;
 
