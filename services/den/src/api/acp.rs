@@ -4205,10 +4205,8 @@ impl AcpStreamDiagnostics {
     fn observe_unmapped_event(&mut self, value: &serde_json::Value) {
         self.unmapped_events += 1;
         if self.unmapped_event_samples.len() < 5 {
-            self.unmapped_event_samples.push(preview_str_truncated(
-                &value.to_string(),
-                acp_debug_event_sample_chars(),
-            ));
+            self.unmapped_event_samples
+                .push(summarize_letta_event_for_log(value).to_string());
         }
     }
 
@@ -4371,6 +4369,148 @@ const SSE_JSON_PREVIEW_MAX: usize = 192;
 fn preview_bytes_utf8_lossy(bytes: &[u8]) -> String {
     let s = String::from_utf8_lossy(bytes);
     preview_str_truncated(&s, SSE_JSON_PREVIEW_MAX)
+}
+
+fn sha256_short(value: &str) -> String {
+    use base64::Engine as _;
+    use sha2::{Digest, Sha256};
+    let digest = Sha256::digest(value.as_bytes());
+    base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .encode(digest)
+        .chars()
+        .take(16)
+        .collect()
+}
+
+fn summarize_large_text_field(value: &str, allow_preview: bool) -> serde_json::Value {
+    let mut summary = serde_json::json!({
+        "redacted": true,
+        "bytes": value.len(),
+        "chars": value.chars().count(),
+        "sha256": sha256_short(value),
+    });
+    if allow_preview && !value.is_empty() {
+        summary["preview"] = serde_json::json!(preview_str_truncated(
+            value,
+            acp_debug_event_sample_chars().min(512),
+        ));
+        summary["truncated"] =
+            serde_json::json!(value.len() > acp_debug_event_sample_chars().min(512));
+    }
+    summary
+}
+
+fn summarize_tool_arguments(value: &str) -> serde_json::Value {
+    let mut summary = summarize_large_text_field(value, false);
+    if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(value) {
+        if let Some(object) = parsed.as_object() {
+            summary["json_keys"] = serde_json::json!(object.keys().cloned().collect::<Vec<_>>());
+        }
+    }
+    summary
+}
+
+fn summarize_letta_event_for_log(value: &serde_json::Value) -> serde_json::Value {
+    fn summarize(value: &serde_json::Value, depth: usize, key: Option<&str>) -> serde_json::Value {
+        const REDACTED_TEXT_FIELDS: &[&str] = &[
+            "content",
+            "reasoning",
+            "tool_return",
+            "stdout",
+            "stderr",
+            "message",
+            "detail",
+            "old_text",
+            "new_text",
+        ];
+        if depth > 3 {
+            return serde_json::json!({ "redacted": true, "reason": "max_depth" });
+        }
+        match value {
+            serde_json::Value::String(s) => {
+                if key == Some("arguments") {
+                    summarize_tool_arguments(s)
+                } else if key.is_some_and(|k| REDACTED_TEXT_FIELDS.contains(&k)) {
+                    summarize_large_text_field(s, false)
+                } else if s.len() > acp_debug_event_sample_chars() {
+                    summarize_large_text_field(s, true)
+                } else {
+                    serde_json::Value::String(s.clone())
+                }
+            }
+            serde_json::Value::Array(items) => {
+                let mut summarized = items
+                    .iter()
+                    .take(8)
+                    .map(|item| summarize(item, depth + 1, None))
+                    .collect::<Vec<_>>();
+                let shown = summarized.len();
+                if items.len() > shown {
+                    summarized.push(serde_json::json!({
+                        "truncated_items": items.len() - shown,
+                    }));
+                }
+                serde_json::Value::Array(summarized)
+            }
+            serde_json::Value::Object(object) => {
+                let mut out = serde_json::Map::new();
+                out.insert(
+                    "keys".to_string(),
+                    serde_json::json!(object.keys().cloned().collect::<Vec<_>>()),
+                );
+                for field in [
+                    "message_type",
+                    "type",
+                    "id",
+                    "run_id",
+                    "step_id",
+                    "seq_id",
+                    "tool_call_id",
+                    "stop_reason",
+                    "status",
+                    "name",
+                    "date",
+                ] {
+                    if let Some(raw) = object.get(field) {
+                        out.insert(field.to_string(), summarize(raw, depth + 1, Some(field)));
+                    }
+                }
+                for field in ["tool_call", "tool_calls", "function"] {
+                    if let Some(raw) = object.get(field) {
+                        out.insert(field.to_string(), summarize(raw, depth + 1, Some(field)));
+                    }
+                }
+                for field in [
+                    "content",
+                    "reasoning",
+                    "tool_return",
+                    "stdout",
+                    "stderr",
+                    "message",
+                    "detail",
+                    "arguments",
+                ] {
+                    if let Some(raw) = object.get(field) {
+                        out.insert(field.to_string(), summarize(raw, depth + 1, Some(field)));
+                    }
+                }
+                serde_json::Value::Object(out)
+            }
+            other => other.clone(),
+        }
+    }
+    let summarized = summarize(value, 0, None);
+    let serialized = summarized.to_string();
+    if serialized.len() > 4096 {
+        serde_json::json!({
+            "redacted": true,
+            "reason": "summary_too_large",
+            "bytes": serialized.len(),
+            "sha256": sha256_short(&serialized),
+        })
+    } else {
+        summarized
+    }
 }
 
 fn preview_str_truncated(s: &str, max: usize) -> String {
@@ -5236,6 +5376,40 @@ impl Stream for AcpLettaSseStream {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn summarize_letta_event_for_log_redacts_large_tool_return() {
+        let event = serde_json::json!({
+            "message_type": "tool_return_message",
+            "id": "message-test",
+            "run_id": "run-test",
+            "step_id": "step-test",
+            "tool_call_id": "call-test",
+            "status": "success",
+            "tool_return": "x".repeat(10_000),
+            "tool_call": {
+                "function": {
+                    "name": "fs_edit_file",
+                    "arguments": "{\"path\":\"/tmp/a\",\"old_text\":\"secret\",\"new_text\":\"replacement\"}"
+                }
+            }
+        });
+        let summary = summarize_letta_event_for_log(&event);
+        assert_eq!(summary["message_type"], "tool_return_message");
+        assert_eq!(summary["run_id"], "run-test");
+        assert_eq!(summary["tool_call_id"], "call-test");
+        assert_eq!(summary["tool_return"]["redacted"], true);
+        assert_eq!(summary["tool_return"]["bytes"], 10_000);
+        assert!(summary["tool_return"].get("preview").is_none());
+        assert_eq!(
+            summary["tool_call"]["function"]["arguments"]["redacted"],
+            true
+        );
+        assert_eq!(
+            summary["tool_call"]["function"]["arguments"]["json_keys"],
+            serde_json::json!(["new_text", "old_text", "path"])
+        );
+    }
 
     #[test]
     fn acp_text_chunker_caps_reasoning_output_per_turn() {
