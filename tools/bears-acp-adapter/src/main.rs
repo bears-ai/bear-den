@@ -713,7 +713,7 @@ struct SseFrameOutcome {
     saw_visible_output: bool,
     saw_tool_activity: bool,
     saw_error: bool,
-    compact_and_retry: bool,
+    recover_and_retry: bool,
     upstream_errors: Vec<String>,
 }
 
@@ -3127,7 +3127,7 @@ async fn handle_prompt_with_retry(
     shared_state: &AdapterSharedState,
     response_id: Value,
     params: Value,
-    allow_compact_retry: bool,
+    allow_recovery_retry: bool,
 ) -> Result<()> {
     let session_id = params
         .get("sessionId")
@@ -3263,7 +3263,7 @@ async fn handle_prompt_with_retry(
     let mut saw_visible_output = false;
     let mut saw_tool_activity = false;
     let mut saw_error = false;
-    let mut compact_and_retry = false;
+    let mut recover_and_retry = false;
     let mut upstream_errors = Vec::new();
     let mut buffer = Vec::<u8>::new();
     let mut stream = response.bytes_stream();
@@ -3302,7 +3302,7 @@ async fn handle_prompt_with_retry(
             saw_visible_output |= outcome.saw_visible_output;
             saw_tool_activity |= outcome.saw_tool_activity;
             saw_error |= outcome.saw_error;
-            compact_and_retry |= outcome.compact_and_retry;
+            recover_and_retry |= outcome.recover_and_retry;
             upstream_errors.extend(outcome.upstream_errors);
         }
     }
@@ -3321,13 +3321,13 @@ async fn handle_prompt_with_retry(
         saw_visible_output |= outcome.saw_visible_output;
         saw_tool_activity |= outcome.saw_tool_activity;
         saw_error |= outcome.saw_error;
-        compact_and_retry |= outcome.compact_and_retry;
+        recover_and_retry |= outcome.recover_and_retry;
         upstream_errors.extend(outcome.upstream_errors);
     }
 
-    if compact_and_retry && allow_compact_retry && !saw_visible_output && !saw_tool_activity {
+    if recover_and_retry && allow_recovery_retry && !saw_visible_output && !saw_tool_activity {
         eprintln!(
-            "bears-acp-adapter: compacting stuck conversation before retry session_id={} errors={}",
+            "bears-acp-adapter: asking Den to recover stuck conversation before retry session_id={} errors={}",
             session_id,
             upstream_errors.join("; ")
         );
@@ -3336,7 +3336,7 @@ async fn handle_prompt_with_retry(
                 send_agent_thought_chunk(
                     session_id,
                     &format!(
-                        "BEARS detected stale approval state, compacted the Letta conversation, and is retrying your prompt automatically. compact_result={}",
+                        "BEARS detected stale approval state, asked Den to deny pending approvals and compact if needed, and is retrying your prompt automatically. recovery_result={}",
                         result
                     ),
                 )
@@ -3356,7 +3356,7 @@ async fn handle_prompt_with_retry(
                 send_agent_message_chunk(
                     session_id,
                     &format!(
-                        "BEARS detected stale Letta approval state, but Letta conversation compaction failed. This ACP session's conversation is still wedged; please start a new ACP session. Compaction error: {err:#}"
+                        "BEARS detected stale Letta approval state, but Den recovery failed. This ACP session's conversation may still be wedged; please start a new ACP session. Recovery error: {err:#}"
                     ),
                 )
                 .await?;
@@ -3366,10 +3366,10 @@ async fn handle_prompt_with_retry(
         }
     }
 
-    if compact_and_retry && !allow_compact_retry && !saw_visible_output && !saw_tool_activity {
+    if recover_and_retry && !allow_recovery_retry && !saw_visible_output && !saw_tool_activity {
         send_agent_message_chunk(
             session_id,
-            "BEARS retried after Letta conversation compaction, but stale approval state persisted. Please start a new ACP session.",
+            "BEARS retried after Den stale-approval recovery, but stale approval state persisted. Please start a new ACP session.",
         )
         .await?;
         saw_visible_output = true;
@@ -4145,16 +4145,16 @@ async fn handle_sse_frame(
             diagnostics.saw_error = true;
             let formatted = format_den_event_error(&event);
             if looks_like_waiting_for_approval_error(&formatted) {
-                outcome.compact_and_retry = true;
+                outcome.recover_and_retry = true;
                 outcome.upstream_errors.push(
-                    "Letta was waiting for stale approval; BEARS will try Letta conversation compaction before retrying the prompt."
+                    "Letta was waiting for stale approval; BEARS will ask Den to deny pending approvals and compact if needed before retrying the prompt."
                         .to_string(),
                 );
             } else {
                 outcome.upstream_errors.push(formatted);
             }
         }
-        if outcome.compact_and_retry {
+        if outcome.recover_and_retry {
             continue;
         }
         let handled =
@@ -6110,7 +6110,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn stale_approval_event_requests_compaction_retry() {
+    async fn stale_approval_event_requests_recovery_retry() {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
         tokio::spawn(async move {
@@ -6161,9 +6161,9 @@ mod tests {
 
         assert!(outcome.saw_error);
         assert!(!outcome.saw_visible_output);
-        assert!(outcome.compact_and_retry);
+        assert!(outcome.recover_and_retry);
         assert_eq!(outcome.upstream_errors.len(), 1);
-        assert!(outcome.upstream_errors[0].contains("compaction"));
+        assert!(outcome.upstream_errors[0].contains("deny pending approvals"));
     }
 
     #[test]
