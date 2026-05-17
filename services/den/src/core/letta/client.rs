@@ -142,6 +142,13 @@ fn pending_approvals_from_variants(variants: &[Value]) -> Vec<LettaPendingApprov
 }
 
 impl LettaContinuationContext {
+    pub fn client_tools_bytes(&self) -> usize {
+        self.client_tools
+            .as_ref()
+            .map(|tools| tools.to_string().len())
+            .unwrap_or(0)
+    }
+
     pub fn tool_names(&self) -> Vec<String> {
         self.client_tools
             .as_ref()
@@ -1119,11 +1126,16 @@ impl LettaClient {
         {
             body.insert("agent_id".to_string(), json!(a));
         }
+        let client_tool_names = context.tool_names();
+        let client_tools_count = client_tool_names.len();
+        let client_tools_bytes = context.client_tools_bytes();
         tracing::info!(
             conversation_id = %context.conversation_id,
             agent_id = context.agent_id.as_deref(),
             tool_call_id,
-            client_tool_names = ?context.tool_names(),
+            client_tools_count,
+            client_tools_bytes,
+            client_tool_names = ?client_tool_names,
             max_steps = context.max_steps,
             stream_tokens = context.stream_tokens,
             "Posting Letta ACP tool return continuation"

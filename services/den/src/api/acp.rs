@@ -3498,7 +3498,7 @@ async fn prompt_inner(
             agent_id: Some(pair_agent_id.clone()),
             client_tools: client_tool_descriptors,
             stream_tokens,
-            max_steps: 2,
+            max_steps: 4,
         },
         active_turn_guard,
     );

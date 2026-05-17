@@ -137,7 +137,7 @@ pub fn map_native_letta_stream_event_to_acp_event(
                     message: format!(
                         "Model emitted textual pseudo tool call for {tool_name} instead of a native tool call."
                     ),
-                    detail: Some("This usually means the callable tool schema was unavailable or drifted during the Letta continuation request. Check descriptor_advertised and tool-return continuation logs.".to_string()),
+                    detail: Some("The tool was advertised, but the model emitted text instead of a native tool call. This can happen when the continuation tool surface is too large, tool schema handling drifted inside Letta/model provider, or the run hit a continuation budget. Check `Posting Letta ACP tool return continuation` for client_tools_count/client_tools_bytes/max_steps.".to_string()),
                     error_type: Some("pseudo_tool_call_text".to_string()),
                     request_id: None,
                     context: Some(serde_json::json!({

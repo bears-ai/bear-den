@@ -4204,13 +4204,41 @@ fn format_den_event_error(event: &Value) -> String {
     };
     if let Some(context) = event.get("context") {
         out.push_str("\nContext: ");
-        out.push_str(&context.to_string());
+        out.push_str(&format_error_context_for_display(context));
     }
     if let Some(request_id) = event.get("request_id").and_then(Value::as_str) {
         out.push_str("\nDen request_id: ");
         out.push_str(request_id);
     }
     out
+}
+
+fn format_error_context_for_display(context: &Value) -> String {
+    let Some(object) = context.as_object() else {
+        return context.to_string();
+    };
+    if object.get("preview").and_then(Value::as_str).is_some() {
+        let mut compact = serde_json::Map::new();
+        for key in [
+            "tool_name",
+            "available_client_tools",
+            "client_tools_count",
+            "client_tools_bytes",
+        ] {
+            if let Some(value) = object.get(key) {
+                compact.insert(key.to_string(), value.clone());
+            }
+        }
+        compact.insert(
+            "preview".to_string(),
+            json!({
+                "redacted": true,
+                "reason": "assistant text preview omitted from ACP display; see Den request logs for details"
+            }),
+        );
+        return Value::Object(compact).to_string();
+    }
+    context.to_string()
 }
 
 fn spawn_tool_request_task(
