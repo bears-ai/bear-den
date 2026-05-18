@@ -4650,7 +4650,7 @@ async fn map_letta_stream_frame_to_acp_adapter_events_with_persistence(
 ) -> Result<
     (
         Vec<AcpGatewayEvent>,
-        Option<(String, String, oneshot::Receiver<AcpToolResultRequest>)>,
+        Option<(String, String, AcpResolvedToolResult)>,
     ),
     std::io::Error,
 > {
@@ -4705,6 +4705,7 @@ async fn map_letta_stream_frame_to_acp_adapter_events_with_persistence(
     persist_stream_event_side_effects(&context, &mut event)
         .await
         .map_err(|err| std::io::Error::other(err.to_string()))?;
+    let mut den_server_result_rx = None;
     if let AcpGatewayEvent::ToolRequest {
         tool_call_id,
         tool_name,
@@ -4713,17 +4714,34 @@ async fn map_letta_stream_frame_to_acp_adapter_events_with_persistence(
         ..
     } = &mut event
     {
-        if matches!(
-            tool_execution_route(tool_name, args),
-            ToolExecutionRoute::AdapterLocal
-        ) {
-            adapter_result_rx = result_rx
-                .take()
-                .map(|rx| (tool_call_id.clone(), tool_name.clone(), rx));
+        match tool_execution_route(tool_name, args) {
+            ToolExecutionRoute::AdapterLocal => {
+                adapter_result_rx = result_rx
+                    .take()
+                    .map(|rx| (tool_call_id.clone(), tool_name.clone(), AcpResolvedToolResult::Receiver(rx)));
+            }
+            ToolExecutionRoute::DenServer => {
+                den_server_result_rx = result_rx
+                    .take()
+                    .map(|rx| (tool_call_id.clone(), tool_name.clone(), rx));
+            }
+            ToolExecutionRoute::Unsupported => {}
         }
     }
-    let events = vec![event];
+    let events = match den_server_result_rx {
+        Some((tool_call_id, tool_name, rx)) => {
+            let result = rx.await.map_err(|err| std::io::Error::other(err.to_string()))?;
+            adapter_result_rx = Some((tool_call_id, tool_name, AcpResolvedToolResult::Ready(result)));
+            Vec::new()
+        }
+        None => vec![event],
+    };
     Ok((events, adapter_result_rx))
+}
+
+enum AcpResolvedToolResult {
+    Receiver(oneshot::Receiver<AcpToolResultRequest>),
+    Ready(AcpToolResultRequest),
 }
 
 enum AcpPendingFuture {
@@ -4738,7 +4756,7 @@ enum AcpPendingFuture {
                                     Option<(
                                         String,
                                         String,
-                                        oneshot::Receiver<AcpToolResultRequest>,
+                                        AcpResolvedToolResult,
                                     )>,
                                 ),
                                 std::io::Error,
@@ -5066,6 +5084,12 @@ impl Stream for AcpLettaSseStream {
                                 this.active_tool_call_ids.push(tool_call_id.clone());
                                 this.persist_future = Some(AcpPendingFuture::Tool(Box::pin(
                                     async move {
+                                        let AcpResolvedToolResult::Receiver(result_rx) = result_rx else {
+                                            if let AcpResolvedToolResult::Ready(result) = result_rx {
+                                                return result;
+                                            }
+                                            unreachable!();
+                                        };
                                         let timeout_ms =
                                             acp_tool_policy_json_for_provider(&tool_name)
                                                 .get("tool_timeout_ms")
@@ -5933,6 +5957,138 @@ mod tests {
             "output was: {output}"
         );
         assert!(captured.lock().await.is_some());
+    }
+
+    #[tokio::test]
+    async fn acp_stream_routes_session_info_as_den_server_tool() {
+        use axum::{extract::State, http::header, response::IntoResponse, routing::post, Json, Router};
+        use futures::StreamExt;
+        use sqlx::postgres::PgPoolOptions;
+        use std::sync::Arc;
+        use tokio::sync::Mutex as TokioMutex;
+
+        #[derive(Clone)]
+        struct FakeState {
+            captured: Arc<TokioMutex<Option<serde_json::Value>>>,
+        }
+
+        async fn fake_tool_return(
+            State(state): State<FakeState>,
+            Json(body): Json<serde_json::Value>,
+        ) -> impl IntoResponse {
+            *state.captured.lock().await = Some(body);
+            (
+                [(header::CONTENT_TYPE, "text/event-stream; charset=utf-8")],
+                concat!(
+                    "data: {\"message_type\":\"assistant_message\",\"content\":\"oriented\"}\n\n",
+                    "data: {\"message_type\":\"stop_reason\",\"stop_reason\":\"end_turn\"}\n\n"
+                ),
+            )
+        }
+
+        let captured = Arc::new(TokioMutex::new(None));
+        let app = Router::new()
+            .route(
+                "/v1/conversations/{conversation_id}/messages",
+                post(fake_tool_return),
+            )
+            .with_state(FakeState {
+                captured: captured.clone(),
+            });
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+
+        let mut config = crate::config::Config::load();
+        config.letta_base_url = format!("http://{addr}");
+        let letta = Arc::new(crate::core::letta::LettaClient::new(&config));
+        let pool = PgPoolOptions::new()
+            .connect_lazy("postgres://postgres:postgres@127.0.0.1/postgres")
+            .unwrap();
+        let registry = AcpToolTurnCoordinator::new();
+        let request_id = Uuid::new_v4();
+        let role_runtime = RoleRuntime::new(registry.clone());
+        let turn_scope = RoleTurnScope::acp_pair(
+            Uuid::new_v4(),
+            "acp-test-session",
+            Some("conv-test-resolved".to_string()),
+        );
+        let active_turn_guard = role_runtime
+            .acquire_turn(turn_scope.clone(), request_id)
+            .unwrap();
+        let context = AcpStreamContext {
+            pool,
+            tool_turns: registry.clone(),
+            user_id: 1,
+            user_profile: None,
+            bear_id: Uuid::new_v4(),
+            bear_slug: "test-bear".to_string(),
+            acp_session_id: "acp-test-session".to_string(),
+            conversation_selection: "new-acp-test".to_string(),
+            resolved_conversation_id: Some("conv-test-resolved".to_string()),
+            upstream_target: "conv-test-resolved".to_string(),
+            workspace_roots: vec!["/workspace".to_string()],
+            session_policy: None,
+            activity: None,
+            request_id,
+            pair_agent_id: "agent-12345678-1234-4567-89ab-123456789abc".to_string(),
+            config: Arc::new(crate::config::Config::test_stub()),
+            role_runtime: role_runtime.clone(),
+            turn_scope,
+        };
+        let upstream = futures::stream::iter(vec![Ok::<Bytes, reqwest::Error>(Bytes::from(concat!(
+            "data: {\"id\":\"approval-1\",\"message_type\":\"approval_request_message\",",
+            "\"tool_call\":{\"name\":\"session_info\",\"tool_call_id\":\"call_session_info\",",
+            "\"arguments\":\"{}\"}}\n\n"
+        )))]);
+        let mut stream = AcpLettaSseStream::new(
+            upstream,
+            context,
+            Vec::new(),
+            letta,
+            LettaContinuationContext {
+                conversation_id: "conv-test-continuation".to_string(),
+                agent_id: Some("agent-12345678-1234-4567-89ab-123456789abc".to_string()),
+                client_tools: Some(serde_json::json!([{ "name": "session_info" }])),
+                stream_tokens: false,
+                max_steps: 2,
+            },
+            active_turn_guard,
+        );
+
+        let mut output = String::new();
+        while let Some(item) = stream.next().await {
+            output.push_str(&String::from_utf8(item.unwrap().to_vec()).unwrap());
+        }
+
+        assert!(!output.contains("\"type\":\"tool_request\""), "output was: {output}");
+        assert!(!output.contains("call_session_info"), "output was: {output}");
+        assert!(output.contains("oriented"), "output was: {output}");
+        assert_eq!(output.matches("\"type\":\"turn_complete\"").count(), 1, "output was: {output}");
+
+        let body = captured.lock().await.clone().unwrap();
+        assert_eq!(body["messages"][0]["type"], "approval");
+        assert_eq!(body["messages"][0]["approval_request_id"], "approval-1");
+        assert_eq!(body["messages"][0]["approvals"][0]["tool_call_id"], "call_session_info");
+        assert_eq!(body["messages"][0]["approve"], false);
+
+        let missing = registry
+            .deliver_result(
+                1,
+                "test-bear",
+                "acp-test-session",
+                "call_session_info",
+                AcpToolResultRequest {
+                    tool_call_id: Some("call_session_info".to_string()),
+                    tool_name: Some("session_info".to_string()),
+                    status: "ok".to_string(),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        assert!(matches!(missing, AcpToolResultDelivery::TurnMissing { .. }));
     }
 
     #[tokio::test]
