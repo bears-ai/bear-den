@@ -4954,6 +4954,7 @@ struct AcpLettaSseStream {
     emitted_turn_result: bool,
     deferred_turn_result: Option<AcpGatewayEvent>,
     active_turn_guard: Option<crate::core::role_runtime::RoleTurnGuard>,
+    cancel_rx: Option<tokio::sync::watch::Receiver<bool>>,
 }
 
 impl AcpLettaSseStream {
@@ -5044,7 +5045,14 @@ impl AcpLettaSseStream {
             emitted_turn_result: false,
             deferred_turn_result: None,
             active_turn_guard: Some(active_turn_guard),
+            cancel_rx: None,
         }
+    }
+
+    #[cfg(test)]
+    fn with_cancel_rx(mut self, cancel_rx: tokio::sync::watch::Receiver<bool>) -> Self {
+        self.cancel_rx = Some(cancel_rx);
+        self
     }
 
     fn cleanup_active_tool_turns(&mut self) {
@@ -5089,6 +5097,42 @@ impl Stream for AcpLettaSseStream {
         let this = self.as_mut().get_mut();
         if let Some(bytes) = this.pending.pop_front() {
             return Poll::Ready(Some(Ok(bytes)));
+        }
+
+        if this
+            .cancel_rx
+            .as_ref()
+            .is_some_and(|cancel_rx| *cancel_rx.borrow())
+            && !this.emitted_turn_result
+        {
+            this.cleanup_active_tool_turns();
+            this.pending_tool_result = None;
+            this.persist_future = None;
+            let role_result = this.context.role_runtime.turn_result(
+                TurnResultStatus::Cancelled,
+                TurnResultReason::Cancelled,
+                this.context.request_id,
+                this.context.turn_scope.clone(),
+                false,
+                serde_json::json!({
+                    "stream": this.diagnostics.diagnostic_json(&this.context),
+                    "cancelled_by": "acp_test_cancel_signal",
+                }),
+            );
+            let (status, reason, request_id, session_id, retryable, diagnostics) =
+                role_result.to_event_fields();
+            let event = AcpGatewayEvent::TurnResult {
+                status,
+                reason,
+                request_id,
+                session_id,
+                retryable,
+                diagnostics,
+            };
+            this.push_turn_result_now(event);
+            if let Some(bytes) = this.pending.pop_front() {
+                return Poll::Ready(Some(Ok(bytes)));
+            }
         }
 
         if this.persist_future.is_none()
@@ -6349,6 +6393,115 @@ mod tests {
             AcpToolResultDelivery::RecentlySettled { .. }
                 | AcpToolResultDelivery::TurnMissing { .. }
         ));
+    }
+
+    #[tokio::test]
+    async fn acp_stream_cancel_pending_local_tool() {
+        use futures::StreamExt;
+        use sqlx::postgres::PgPoolOptions;
+        use std::sync::Arc;
+
+        let pool = PgPoolOptions::new()
+            .connect_lazy("postgres://postgres:postgres@127.0.0.1/postgres")
+            .unwrap();
+        let registry = AcpToolTurnCoordinator::new();
+        let request_id = Uuid::new_v4();
+        let role_runtime = RoleRuntime::new(registry.clone());
+        let turn_scope = RoleTurnScope::acp_pair(
+            Uuid::new_v4(),
+            "acp-cancel-session",
+            Some("conv-cancel".to_string()),
+        );
+        let active_turn_guard = role_runtime
+            .acquire_turn(turn_scope.clone(), request_id)
+            .unwrap();
+        let context = AcpStreamContext {
+            pool,
+            tool_turns: registry.clone(),
+            user_id: 1,
+            user_profile: None,
+            bear_id: Uuid::new_v4(),
+            bear_slug: "test-bear".to_string(),
+            acp_session_id: "acp-cancel-session".to_string(),
+            conversation_selection: "new-acp-test".to_string(),
+            resolved_conversation_id: Some("conv-cancel".to_string()),
+            upstream_target: "conv-cancel".to_string(),
+            workspace_roots: vec!["/workspace".to_string()],
+            session_policy: None,
+            activity: None,
+            request_id,
+            pair_agent_id: "agent-12345678-1234-4567-89ab-123456789abc".to_string(),
+            config: Arc::new(crate::config::Config::test_stub()),
+            role_runtime: role_runtime.clone(),
+            turn_scope,
+        };
+        let upstream =
+            futures::stream::iter(vec![Ok::<Bytes, reqwest::Error>(Bytes::from(concat!(
+                "data: {\"id\":\"approval-cancel\",\"message_type\":\"approval_request_message\",",
+                "\"tool_call\":{\"name\":\"fs_read_text_file\",\"tool_call_id\":\"call_cancel\",",
+                "\"arguments\":\"{\\\"path\\\":\\\"/tmp/acp-cancel.txt\\\"}\"}}\n\n"
+            )))]);
+        let config = crate::config::Config::test_stub();
+        let letta = Arc::new(crate::core::letta::LettaClient::new(&config));
+        let (cancel_tx, cancel_rx) = tokio::sync::watch::channel(false);
+        let mut stream = AcpLettaSseStream::new(
+            upstream,
+            context,
+            Vec::new(),
+            letta,
+            LettaContinuationContext {
+                conversation_id: "conv-cancel".to_string(),
+                agent_id: Some("agent-12345678-1234-4567-89ab-123456789abc".to_string()),
+                client_tools: Some(serde_json::json!([{ "name": "fs_read_text_file" }])),
+                stream_tokens: false,
+                max_steps: 2,
+            },
+            active_turn_guard,
+        )
+        .with_cancel_rx(cancel_rx);
+
+        let first = stream.next().await.unwrap().unwrap();
+        let first_text = String::from_utf8(first.to_vec()).unwrap();
+        assert!(first_text.contains("\"type\":\"tool_request\""));
+        assert!(first_text.contains("\"tool_call_id\":\"call_cancel\""));
+
+        cancel_tx.send(true).unwrap();
+        let cancelled = tokio::time::timeout(std::time::Duration::from_secs(1), stream.next())
+            .await
+            .expect("cancel terminal should not hang")
+            .unwrap()
+            .unwrap();
+        let cancelled_text = String::from_utf8(cancelled.to_vec()).unwrap();
+        assert!(
+            cancelled_text.contains("\"type\":\"turn_result\""),
+            "{cancelled_text}"
+        );
+        assert!(
+            cancelled_text.contains("\"status\":\"cancelled\""),
+            "{cancelled_text}"
+        );
+        assert!(
+            cancelled_text.contains("\"reason\":\"cancelled\""),
+            "{cancelled_text}"
+        );
+
+        let late = registry
+            .deliver_result(
+                1,
+                "test-bear",
+                "acp-cancel-session",
+                "call_cancel",
+                AcpToolResultRequest {
+                    tool_call_id: Some("call_cancel".to_string()),
+                    tool_name: Some("fs_read_text_file".to_string()),
+                    status: "ok".to_string(),
+                    content: Some("late result".to_string()),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        assert!(matches!(late, AcpToolResultDelivery::TurnMissing { .. }));
+        assert!(stream.next().await.is_none());
     }
 
     #[tokio::test]
