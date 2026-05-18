@@ -2819,17 +2819,36 @@ async fn session_info(
     context: &DenToolInvocationContext,
     role: BearAgentRole,
 ) -> Result<Value, CustomError> {
-    let member_count = bears_db::count_bear_members(pool, context.bear_id).await?;
+    let member_count = match bears_db::count_bear_members(pool, context.bear_id).await {
+        Ok(count) => count,
+        Err(err) => {
+            tracing::warn!(
+                bear_id = %context.bear_id,
+                user_id = context.user_id,
+                error = %err,
+                "session_info could not count Bear members; returning degraded orientation payload"
+            );
+            0
+        }
+    };
     let current_user = user::user_by_id(pool, context.user_id).await.ok();
-    let memory_status = memory_status_value(config, context, role)
-        .await
-        .unwrap_or_else(|err| {
-            json!({
-                "configured": !config.letta_memfs_service_url.trim().is_empty(),
-                "available": false,
-                "error": err.to_string()
+    let memory_status = if config.letta_memfs_service_url.trim().is_empty() {
+        json!({
+            "configured": false,
+            "available": false,
+            "message": "MemFS sidecar is not configured (set LETTA_MEMFS_SERVICE_URL)"
+        })
+    } else {
+        memory_status_value(config, context, role)
+            .await
+            .unwrap_or_else(|err| {
+                json!({
+                    "configured": !config.letta_memfs_service_url.trim().is_empty(),
+                    "available": false,
+                    "error": err.to_string()
+                })
             })
-        });
+    };
     Ok(session_info_payload(
         context,
         role,

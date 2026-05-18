@@ -25,7 +25,7 @@ Still in progress:
 - Normalized late-result API statuses replacing scary compatibility responses such as `turn_missing`.
 - User-facing session health/status surfaces.
 - Adapter-side overlap, mode-race, MCP-log, and cancellation tests.
-- Slow `session_info` stream test cleanup; it currently exercises a DB-unavailable branch and takes about 60 seconds.
+- Slow `session_info` stream test cleanup; it currently exercises a DB-unavailable branch and takes about 60 seconds. Attempted to make `session_info` degrade on member-count and empty MemFS config, but the stream test still takes ~60s, likely due another lazy DB query path.
 
 ## Summary
 

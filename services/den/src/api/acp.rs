@@ -6194,7 +6194,7 @@ mod tests {
             activity: None,
             request_id,
             pair_agent_id: "agent-12345678-1234-4567-89ab-123456789abc".to_string(),
-            config: Arc::new(crate::config::Config::test_stub()),
+            config: Arc::new(config.clone()),
             role_runtime: role_runtime.clone(),
             turn_scope,
         };
