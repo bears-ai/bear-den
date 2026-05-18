@@ -4615,19 +4615,13 @@ async fn map_letta_stream_frame_to_acp_adapter_events_with_persistence(
         diagnostics.observe_unmapped_event(&value);
         return Ok((Vec::new(), None));
     };
-    let result_rx = if let AcpGatewayEvent::ToolRequest {
-        tool_call_id,
-        tool_name,
-        result_rx,
-        ..
-    } = &mut event
-    {
-        result_rx
-            .take()
-            .map(|rx| (tool_call_id.clone(), tool_name.clone(), rx))
-    } else {
-        None
-    };
+    // Keep both halves of the per-tool result channel on the event until
+    // `persist_stream_event_side_effects` has decided whether this is an
+    // adapter-local tool or a Den-executed server tool. Den server tools such
+    // as `web_fetch` consume `result_tx` internally and must not be stripped of
+    // the sender just because the stream driver wants to await adapter-local
+    // tool results.
+    let mut adapter_result_rx = None;
     if let AcpGatewayEvent::ToolRequest { tool_call_id, .. } = &event {
         let count = diagnostics
             .tool_request_counts
@@ -4648,14 +4642,26 @@ async fn map_letta_stream_frame_to_acp_adapter_events_with_persistence(
     persist_stream_event_side_effects(&context, &mut event)
         .await
         .map_err(|err| std::io::Error::other(err.to_string()))?;
+    if let AcpGatewayEvent::ToolRequest {
+        tool_call_id,
+        tool_name,
+        result_rx,
+        approval_required: false,
+        ..
+    } = &mut event
+    {
+        adapter_result_rx = result_rx
+            .take()
+            .map(|rx| (tool_call_id.clone(), tool_name.clone(), rx));
+    }
     let events = match &event {
         AcpGatewayEvent::ToolRequest {
             approval_required: false,
             ..
-        } if result_rx.is_some() => Vec::new(),
+        } if adapter_result_rx.is_some() => Vec::new(),
         _ => vec![event],
     };
-    Ok((events, result_rx))
+    Ok((events, adapter_result_rx))
 }
 
 enum AcpPendingFuture {

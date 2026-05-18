@@ -209,13 +209,13 @@ pub async fn server_with_state(
     let bifrost = std::sync::Arc::new(crate::core::bifrost::BifrostClient::new(config.as_ref()));
     let codepool = std::sync::Arc::new(crate::core::codepool::CodePoolClient::new(config.as_ref()));
 
-    let mut web_letta_data: Arc<dyn WebLettaDataSource> =
+    let web_letta_data: Arc<dyn WebLettaDataSource> =
         Arc::new(RealWebLettaDataSource::new(letta.clone()));
-    let mut web_memory_data: Arc<dyn WebMemoryDataSource> = Arc::new(RealWebMemoryDataSource::new(
+    let web_memory_data: Arc<dyn WebMemoryDataSource> = Arc::new(RealWebMemoryDataSource::new(
         letta.http().clone(),
         config.letta_memfs_service_url.clone(),
     ));
-    let mut web_chat_transport: Arc<dyn WebChatTransportDataSource> = Arc::new(
+    let web_chat_transport: Arc<dyn WebChatTransportDataSource> = Arc::new(
         RealWebChatTransportDataSource::new(codepool.clone(), codepool.is_enabled()),
     );
 
