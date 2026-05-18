@@ -2,7 +2,30 @@
 
 ## Status
 
-Active planning. This plan supersedes narrow ACP lifecycle patching as the near-term reliability strategy for `pair` over ACP.
+Active implementation. This plan supersedes narrow ACP lifecycle patching as the near-term reliability strategy for `pair` over ACP.
+
+### Progress snapshot
+
+Completed:
+
+- Added `AcpTurnController` in `services/den/src/core/acp_turn_controller.rs`.
+- Added pure lifecycle tests for text-only completion, adapter-local tool waits, Den-server tools, unsupported tools, timeout, cancellation, late results, orphaned approvals, status snapshots, and deduped status updates.
+- Added rigid Letta continuation payload tests for successful approvals, failed/timeout denials, and no-approval `tool_return` messages.
+- Added Den stream integration tests for adapter-local continuation, no terminal before local tool result, `session_info` Den-server routing, pending local tool timeout, and pending local tool cancellation.
+- Added test-configurable ACP local tool timeout via `BEARS_ACP_TOOL_TIMEOUT_MS`.
+- Wired `AcpTurnController` into `AcpLettaSseStream` as an observer and terminal-gating participant.
+- Added controller snapshot data to stream terminal diagnostics.
+- Cleaned Den-server route duplication by routing through active `route_direct_den_tool_request` / `route_web_fetch_tool_request` helpers while preserving `web_fetch` policy behavior.
+- Verified key lifecycle tests and `cargo check --manifest-path services/den/Cargo.toml --lib` pass.
+
+Still in progress:
+
+- Full replacement of legacy stream lifecycle fields with controller authority.
+- Real production `/cancel` endpoint signaling into active streams; current stream cancel signal is test/integration-hook level.
+- Normalized late-result API statuses replacing scary compatibility responses such as `turn_missing`.
+- User-facing session health/status surfaces.
+- Adapter-side overlap, mode-race, MCP-log, and cancellation tests.
+- Slow `session_info` stream test cleanup; it currently exercises a DB-unavailable branch and takes about 60 seconds.
 
 ## Summary
 
@@ -201,6 +224,8 @@ Avoid adding more one-off stream/adapter fixes unless needed to keep the system 
 
 ### Priority 1: Establish the lifecycle test suite
 
+Status: mostly complete for Den lifecycle and stream behavior. Adapter-side lifecycle tests remain.
+
 Create a small fake harness that does not require live Zed or live Letta.
 
 The harness should simulate:
@@ -215,6 +240,8 @@ The harness should simulate:
 
 ### Priority 2: Introduce `AcpTurnController`
 
+Status: initial implementation complete; deeper stream authority still in progress.
+
 Add a small core type that owns turn phase, obligations, terminal gating, cancellation, timeout, and late-result handling.
 
 This should begin as a pure or mostly pure Rust state machine with unit tests before being wired into HTTP/SSE code.
@@ -222,6 +249,8 @@ This should begin as a pure or mostly pure Rust state machine with unit tests be
 The controller should also expose a stable status snapshot for UX and diagnostics, including phase, open obligation counts, route-specific counts, terminal status, and late-result/recovery flags.
 
 ### Priority 3: Wire Den stream handling through the controller
+
+Status: partially complete. The controller observes stream/tool/cancel lifecycle and participates in terminal gating, but legacy fields still exist.
 
 Replace scattered lifecycle fields with controller calls.
 
@@ -236,6 +265,8 @@ Current transitional state to consolidate:
 
 ### Priority 4: Align adapter with ACP Rust crate patterns
 
+Status: not started beyond documentation/research. Den-side lifecycle tests took priority.
+
 Use the ACP Rust crate and examples to reduce hand-rolled lifecycle handling in the adapter where practical.
 
 Near-term adapter changes should focus on:
@@ -247,6 +278,8 @@ Near-term adapter changes should focus on:
 - compact tool/MCP logging.
 
 ### Priority 5: Add session health/status UX
+
+Status: planned. Controller snapshots exist in stream diagnostics, but they are not yet exposed through `session_info`, `/status`, or user-facing status updates.
 
 Add a visible status surface once the controller snapshot exists.
 
@@ -260,6 +293,8 @@ Initial options:
 Context budget visibility is desirable but can be added after we determine whether Letta/provider usage data is exact enough. If only Den estimates are available, label them as estimates.
 
 ### Priority 6: Durable obligation ledger later
+
+Status: deferred.
 
 Keep the initial controller in-memory. Add a Postgres-backed obligation ledger only after behavior stabilizes.
 
@@ -530,6 +565,8 @@ Add tests for the controller before changing stream code.
 
 #### `acp_turn_text_only_completes_once`
 
+Status: complete.
+
 Expected:
 
 - stream starts;
@@ -539,6 +576,8 @@ Expected:
 - exactly one terminal outcome.
 
 #### `acp_turn_waits_for_adapter_local_tool_before_terminal`
+
+Status: complete.
 
 Expected:
 
@@ -551,6 +590,8 @@ Expected:
 
 #### `acp_turn_den_server_tool_does_not_create_adapter_obligation`
 
+Status: complete.
+
 Expected:
 
 - `session_info` / Den-server tool request is routed `DenServer`;
@@ -560,6 +601,8 @@ Expected:
 
 #### `acp_turn_unsupported_tool_settles_without_hanging`
 
+Status: complete.
+
 Expected:
 
 - unsupported route creates deterministic failed settlement;
@@ -567,6 +610,8 @@ Expected:
 - terminal emits once.
 
 #### `acp_turn_timeout_settles_pending_adapter_tool`
+
+Status: complete.
 
 Expected:
 
@@ -576,6 +621,8 @@ Expected:
 - late result is ignored.
 
 #### `acp_turn_cancel_settles_pending_adapter_tool`
+
+Status: complete.
 
 Expected:
 
@@ -587,6 +634,8 @@ Expected:
 
 #### `acp_turn_late_result_after_terminal_is_ignored`
 
+Status: complete.
+
 Expected:
 
 - terminal already emitted;
@@ -595,6 +644,8 @@ Expected:
 - terminal remains unchanged.
 
 #### `acp_turn_orphaned_requires_approval_triggers_recovery_path`
+
+Status: complete.
 
 Expected:
 
@@ -605,6 +656,8 @@ Expected:
 
 #### `acp_turn_status_snapshot_reports_phase_and_obligations`
 
+Status: complete.
+
 Expected:
 
 - controller snapshot includes current phase;
@@ -613,6 +666,8 @@ Expected:
 - terminal fields are absent before terminal and present after terminal.
 
 #### `acp_turn_status_updates_are_deduplicated`
+
+Status: complete.
 
 Expected:
 
@@ -625,6 +680,8 @@ Adapt existing tests around `AcpLettaSseStream`.
 
 #### `acp_stream_does_not_emit_terminal_before_local_tool_result`
 
+Status: complete under current test name `acp_stream_does_not_emit_turn_result_before_local_tool_result`; keep and strengthen later if terminal event names are normalized.
+
 Current targeted regression. Keep and strengthen it.
 
 Expected:
@@ -636,6 +693,8 @@ Expected:
 
 #### `acp_stream_routes_session_info_as_den_server_tool`
 
+Status: complete but slow; test currently takes about 60 seconds due to DB-unavailable `session_info` path.
+
 Expected:
 
 - Letta emits `session_info` tool call;
@@ -645,6 +704,8 @@ Expected:
 - terminal emits once.
 
 #### `acp_stream_timeout_pending_local_tool`
+
+Status: complete.
 
 Expected:
 
@@ -657,6 +718,8 @@ Expected:
 
 #### `acp_stream_cancel_pending_local_tool`
 
+Status: complete for test-hook stream cancellation; production `/cancel` endpoint signaling remains.
+
 Expected:
 
 - local tool request emitted;
@@ -666,6 +729,8 @@ Expected:
 - late adapter result receives `late_result_ignored` or equivalent.
 
 #### `acp_stream_late_tool_result_after_timeout_does_not_resurrect_turn`
+
+Status: partially covered by `acp_stream_timeout_pending_local_tool`, which asserts a late result receives settled/missing delivery. Add a dedicated result API status test later.
 
 Expected:
 
@@ -679,6 +744,8 @@ Expected:
 
 #### `adapter_defers_mode_update_until_den_session_exists`
 
+Status: behavior implemented defensively; test not yet added.
+
 Expected:
 
 - Den mode endpoint returns `ACP session not found`;
@@ -688,6 +755,8 @@ Expected:
 
 #### `adapter_summarizes_mcp_context_in_session_logs`
 
+Status: behavior implemented defensively; test not yet added.
+
 Expected:
 
 - full MCP descriptors are present in runtime context;
@@ -695,6 +764,8 @@ Expected:
 - stderr does not include full schemas by default.
 
 #### `adapter_same_conversation_overlap_cancels_previous_turn`
+
+Status: not yet added.
 
 Expected:
 
@@ -705,6 +776,8 @@ Expected:
 
 #### `adapter_different_conversation_overlap_does_not_cancel_previous_runtime`
 
+Status: not yet added.
+
 Expected:
 
 - prompt B starts in a different conversation;
@@ -712,6 +785,8 @@ Expected:
 - UI updates are token-gated.
 
 #### `adapter_explicit_session_cancel_cancels_active_turn_and_tools`
+
+Status: not yet added.
 
 Expected:
 
@@ -724,6 +799,8 @@ Expected:
 
 #### `session_info_includes_runtime_health_snapshot`
 
+Status: not yet added. Requires active-turn runtime snapshot registry beyond stream-local controller.
+
 Expected:
 
 - `session_info` includes active turn presence/phase when a turn is active;
@@ -732,12 +809,16 @@ Expected:
 
 #### `slash_status_reports_session_health`
 
+Status: not yet added.
+
 Expected:
 
 - `/status` reports mode, conversation binding, active turn phase, pending tools, MCP summary, work-surface status, and context budget status;
 - output remains concise.
 
 #### `context_budget_marks_estimates_as_estimated`
+
+Status: not yet added. Requires Letta/provider usage data investigation.
 
 Expected:
 
@@ -747,12 +828,16 @@ Expected:
 
 #### `mcp_browser_privacy_notice_is_shown_once_per_session`
 
+Status: not yet added.
+
 Expected:
 
 - browser/devtools MCP privacy note is shown once when server is configured;
 - repeated prompts do not spam the notice.
 
 #### `recovery_status_is_visible_and_bounded`
+
+Status: not yet added.
 
 Expected:
 
@@ -768,6 +853,8 @@ This document is step 1.
 
 ### Step 2: Add pure controller module and tests
 
+Status: complete.
+
 Create a small module, likely in Den first:
 
 ```text
@@ -778,17 +865,25 @@ Keep it independent from Axum, SQLx, Reqwest, and Letta client code.
 
 ### Step 3: Add Den stream tests around current behavior
 
+Status: mostly complete for Den-side lifecycle hazards.
+
 Before wiring the controller deeply, add/keep stream tests that capture known bugs.
 
 ### Step 4: Wire controller into `AcpLettaSseStream`
+
+Status: partially complete. Controller observes lifecycle and participates in terminal gating; legacy state remains.
 
 Move lifecycle decisions out of stream polling branches and into controller calls.
 
 ### Step 5: Normalize Den tool-result API statuses
 
+Status: not yet complete. Late result behavior is tolerated in adapter/stream tests, but API status names remain transitional.
+
 Add structured late/cancelled/timeout statuses while keeping compatibility with existing adapter handling.
 
 ### Step 6: Adapter alignment
+
+Status: not yet complete.
 
 Use ACP Rust crate patterns and reference implementations to clean up:
 
@@ -801,11 +896,15 @@ Use ACP Rust crate patterns and reference implementations to clean up:
 
 ### Step 7: Add UX/status surface
 
+Status: not yet complete.
+
 Wire the controller snapshot into `session_info` and/or `/status`.
 
 Start with lifecycle and session metadata. Add context budget only after usage data source quality is understood.
 
 ### Step 8: Reference implementation comparison
+
+Status: not yet complete.
 
 Create a short research note comparing Goose, fast-agent, and ACP Rust SDK examples against the BEARS lifecycle and UX model.
 
@@ -863,4 +962,11 @@ how recovery/cancellation is explained to users
 
 ## Immediate next action
 
-Create `AcpTurnController` status snapshots and the Phase A UX/status lifecycle tests. Do not wire it into the stream until the pure lifecycle behavior is clear and boring.
+Recommended next implementation order:
+
+1. Make `acp_stream_routes_session_info_as_den_server_tool` fast and deterministic; it currently passes but takes about 60 seconds by exercising a DB-unavailable branch.
+2. Add real production `/cancel` endpoint signaling into active streams, replacing the test-only cancellation hook as the primary path.
+3. Normalize late result API responses from compatibility-style `turn_missing`/settled variants toward explicit `late_result_ignored`, `turn_cancelled`, and `turn_timed_out` statuses.
+4. Continue replacing legacy stream lifecycle state with controller authority one piece at a time.
+5. Add session health/status UX via `session_info` and/or `/status` after an active-turn snapshot registry exists.
+6. Add adapter tests for overlap, mode startup race, MCP log summarization, and explicit cancellation.
