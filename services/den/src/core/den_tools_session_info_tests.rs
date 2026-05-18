@@ -69,12 +69,27 @@ fn pair_session_info_context_fields_distinguish_role_contract_from_runtime() {
     let context = pair_context();
     let member_count = 2;
     let memory_status = json!({ "available": true });
-    let payload = super::session_info_payload(&context, BearAgentRole::Pair, None, member_count, memory_status);
+    let payload = crate::core::den_tools::session_info_payload(
+        &context,
+        BearAgentRole::Pair,
+        None,
+        member_count,
+        memory_status,
+    );
 
-    assert_eq!(payload["role_contract_context"]["contract_label"], json!("Builder Bear"));
+    assert_eq!(
+        payload["role_contract_context"]["contract_label"],
+        json!("Builder Bear")
+    );
     assert_eq!(payload["role_contract_context"]["role"], json!("pair"));
-    assert_eq!(payload["runtime_context"]["active_bear_slug"], json!("test"));
-    assert_eq!(payload["runtime_context"]["active_bear_authority"], json!("trusted_session"));
+    assert_eq!(
+        payload["runtime_context"]["active_bear_slug"],
+        json!("test")
+    );
+    assert_eq!(
+        payload["runtime_context"]["active_bear_authority"],
+        json!("trusted_session")
+    );
     assert_eq!(payload["context_composition_note"], json!("Role-contract context defines role behavior and style. Runtime context defines active Bear attachment, scope, attribution, workspace, and permissions for this session."));
     assert_eq!(payload["agent_context_summary"], json!("You are the pair-role collaborator operating under the Builder Bear role-contract context, currently attached to the test Bear runtime context."));
 }

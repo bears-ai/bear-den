@@ -2687,7 +2687,7 @@ pub(crate) fn build_work_surface_orientation_payload(
     })
 }
 
-fn session_info_payload(
+pub(crate) fn session_info_payload(
     context: &DenToolInvocationContext,
     role: BearAgentRole,
     current_user: Option<&user::User>,

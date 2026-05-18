@@ -3260,6 +3260,9 @@ async fn prompt_inner(
         "ACP prompt context assembly lengths"
     );
     let mut initial_events = Vec::new();
+    if let Some(conversation_id) = conversation_resolution.resolved_conversation_id.clone() {
+        initial_events.push(AcpGatewayEvent::ConversationResolved { conversation_id });
+    }
     if let Some(title_event) = pending_session_title_update_event(
         &state.sqlx_pool,
         user_id,
