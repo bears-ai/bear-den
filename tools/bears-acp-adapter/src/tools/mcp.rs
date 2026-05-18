@@ -437,6 +437,13 @@ async fn call_server_tool(
     .await
 }
 
+// Zed may wrap remote context-server commands as `docker exec -it ...`.
+// Stdio MCP transports require clean pipes, not a TTY; Docker exits with
+// "the input device is not a TTY" when `-t` is used from this adapter.
+// Preserve stdin (`-i`) but remove TTY allocation. This is intentionally
+// scoped to Docker exec wrappers and should remain until Zed stops adding
+// `-t` for ACP-forwarded stdio MCP servers, or until we deliberately stop
+// supporting such forwarded stdio MCP servers in remote/container sessions.
 fn stdio_safe_command_args(command: &str, args: &[String], server_name: &str) -> Vec<String> {
     if command != "docker" || !args.iter().any(|arg| arg == "exec") {
         return args.to_vec();

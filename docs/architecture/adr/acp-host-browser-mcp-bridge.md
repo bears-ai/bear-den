@@ -40,7 +40,7 @@ Dev-container browser fallback:
   container bears-acp-adapter -> host.docker.internal:<port>/mcp -> bears-acp-adapter browser-bridge -> host Chrome
 ```
 
-The container adapter will treat the host bridge as an MCP server source, not as a full ACP server. The bridge transport should be MCP Streamable HTTP where practical, with bearer-token authentication. The bridge exposes browser tools only.
+The container adapter will treat the host bridge as an MCP server source, not as a full ACP server. The bridge transport should be MCP Streamable HTTP where practical, with bearer-token authentication. The first accepted service is browser-only. Future host-local services may be added, but only as explicitly named, separately enabled, narrow MCP services that do not expose arbitrary host filesystem, process, git, ACP, or MCP registry access.
 
 ## Scope of the bridge
 
@@ -63,7 +63,39 @@ The host bridge must not expose:
 - arbitrary ACP sessions/prompts
 - generic “call any host MCP tool” functionality
 
-The bridge is browser-only by design.
+The first implementation is browser-only by design.
+
+## Future host-local services
+
+This ADR approves the browser bridge now and also establishes the rule for any future host-local bridge services. The host bridge is not a generic host capability tunnel. Future services must be:
+
+- explicitly named,
+- separately enabled,
+- tool-allowlisted,
+- auditable through diagnostics and logs,
+- incapable of arbitrary host filesystem/process access,
+- incapable of forwarding arbitrary host MCP tools by default.
+
+Plausible future services include:
+
+| Service | Default posture | Notes |
+|---|---|---|
+| `host.notify` | Optional | Host UI notifications for long-running work completion; rate-limited. |
+| `host.open_url` | Optional | Open HTTP/HTTPS URLs or allowlisted deep links on the host. |
+| `host.clipboard_write` | Optional | Write user-visible text to the host clipboard. |
+| `host.clipboard_read` | Disabled by default | Sensitive; should require per-call approval if ever enabled. |
+| `host.deeplink` | Disabled by default | Allowlist schemes/routes; avoid arbitrary application automation. |
+| `host.secrets` | Not approved | Only consider as a user-mediated credential flow, never arbitrary secret reads. |
+
+Explicitly out of scope for this bridge family unless a separate ADR approves them:
+
+- `host.filesystem`
+- `host.shell` / process execution
+- `host.git`
+- arbitrary host MCP registry access
+- full host ACP adapter access from a container adapter
+
+The implementation may eventually rename the runtime mode from `browser-bridge` to a more general `host-bridge` with explicit `--enable browser`-style service flags, but the initial implementation should remain browser-only until the browser path is stable.
 
 ## Single binary model
 
