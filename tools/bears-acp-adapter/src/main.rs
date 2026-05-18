@@ -5269,13 +5269,26 @@ async fn handle_den_event(
             Ok(false)
         }
         "tool_request" => {
-            spawn_tool_request_task(
-                config.clone(),
-                shared_state.clone(),
-                session_id.to_string(),
-                event.clone(),
-                turn_token,
-            );
+            let has_tool_name = event.get("tool_name").and_then(Value::as_str).is_some();
+            let has_tool_call_id = event.get("tool_call_id").and_then(Value::as_str).is_some();
+            if has_tool_name && has_tool_call_id {
+                spawn_tool_request_task(
+                    config.clone(),
+                    shared_state.clone(),
+                    session_id.to_string(),
+                    event.clone(),
+                    turn_token,
+                );
+            } else {
+                let message = format_den_event_error(event);
+                eprintln!(
+                    "bears-acp-adapter: ignoring malformed Den tool_request event session_id={} event={}",
+                    session_id,
+                    truncate_for_log(&event.to_string(), 400)
+                );
+                send_agent_thought_chunk_for_turn(shared_state, session_id, turn_token, &message)
+                    .await?;
+            }
             Ok(false)
         }
         "permission_request" => {
