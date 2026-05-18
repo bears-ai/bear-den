@@ -437,13 +437,46 @@ async fn call_server_tool(
     .await
 }
 
+fn stdio_safe_command_args(command: &str, args: &[String], server_name: &str) -> Vec<String> {
+    if command != "docker" || !args.iter().any(|arg| arg == "exec") {
+        return args.to_vec();
+    }
+
+    let mut rewritten = Vec::with_capacity(args.len());
+    let mut changed = false;
+    for arg in args {
+        match arg.as_str() {
+            "-it" | "-ti" => {
+                rewritten.push("-i".to_string());
+                changed = true;
+            }
+            "-t" | "--tty" => {
+                changed = true;
+            }
+            _ => rewritten.push(arg.clone()),
+        }
+    }
+
+    if changed {
+        eprintln!(
+            "bears-acp-adapter: acp_mcp_spawn_rewrite server={} reason=remove_docker_tty_for_stdio_mcp original_args={:?} rewritten_args={:?}",
+            server_name,
+            args,
+            rewritten
+        );
+    }
+
+    rewritten
+}
+
 async fn with_server_client<F, Fut, T>(server: &AcpMcpServerConfig, f: F) -> Result<T>
 where
     F: FnOnce(rmcp::service::RunningService<rmcp::RoleClient, ()>) -> Fut,
     Fut: std::future::Future<Output = Result<T>>,
 {
     let mut command = tokio::process::Command::new(&server.command);
-    command.args(&server.args);
+    let args = stdio_safe_command_args(&server.command, &server.args, &server.name);
+    command.args(&args);
     for (name, value) in &server.env {
         command.env(name, value);
     }
@@ -451,7 +484,7 @@ where
         "bears-acp-adapter: acp_mcp_spawn server={} command={} args={:?} env_names={:?}",
         server.name,
         server.command,
-        server.args,
+        args,
         server
             .env
             .iter()
