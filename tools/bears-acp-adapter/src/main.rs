@@ -1230,6 +1230,7 @@ async fn handle_request(
                     .await?;
                 let mut context = context;
                 context.raw["mcp"] = mcp_context;
+                ensure_session_context_capabilities(&mut context);
                 eprintln!(
                     "bears-acp-adapter: session/new session_id={} cwd={} roots={} direct_tools={} mcp={}",
                     session_id,
@@ -1810,6 +1811,11 @@ fn adapter_contract_context() -> Value {
 }
 
 fn adapter_capabilities_context() -> Value {
+    adapter_capabilities_context_with_client_mcp(false)
+}
+
+fn adapter_capabilities_context_with_client_mcp(has_client_mcp_tools: bool) -> Value {
+    let chrome_supported = chrome_tools_available() && !has_client_mcp_tools;
     json!({
         "name": "bears-acp-adapter",
         "version": env!("CARGO_PKG_VERSION"),
@@ -1832,11 +1838,11 @@ fn adapter_capabilities_context() -> Value {
             "git_stash": { "supported": true, "version": 1 },
             "process_run": { "supported": true, "version": 1 },
             "terminal_run_command": { "supported": true, "version": 1 },
-            "chrome_open": { "supported": chrome_tools_available(), "version": 1 },
-            "chrome_snapshot": { "supported": chrome_tools_available(), "version": 1 },
-            "chrome_console_messages": { "supported": chrome_tools_available(), "version": 1 },
-            "chrome_network_requests": { "supported": chrome_tools_available(), "version": 1 },
-            "chrome_screenshot": { "supported": chrome_tools_available(), "version": 1 },
+            "chrome_open": { "supported": chrome_supported, "version": 1, "fallback_disabled_reason": if has_client_mcp_tools { "client_mcp_tools_present" } else { "" } },
+            "chrome_snapshot": { "supported": chrome_supported, "version": 1, "fallback_disabled_reason": if has_client_mcp_tools { "client_mcp_tools_present" } else { "" } },
+            "chrome_console_messages": { "supported": chrome_supported, "version": 1, "fallback_disabled_reason": if has_client_mcp_tools { "client_mcp_tools_present" } else { "" } },
+            "chrome_network_requests": { "supported": chrome_supported, "version": 1, "fallback_disabled_reason": if has_client_mcp_tools { "client_mcp_tools_present" } else { "" } },
+            "chrome_screenshot": { "supported": chrome_supported, "version": 1, "fallback_disabled_reason": if has_client_mcp_tools { "client_mcp_tools_present" } else { "" } },
             "fs_edit_file": { "supported": true, "version": 1 },
             "fs_create_text_file": { "supported": true, "version": 1 },
             "fs_create_directory": { "supported": true, "version": 1 },
@@ -1875,6 +1881,8 @@ fn direct_tools_context_with_client_mcp(has_client_mcp_tools: bool) -> Value {
         "chrome_console_messages": chrome_available,
         "chrome_network_requests": chrome_available,
         "chrome_screenshot": chrome_available,
+        "client_mcp_tools_present": has_client_mcp_tools,
+        "chrome_tools_disabled_reason": if has_client_mcp_tools { "client_mcp_tools_present" } else { "" },
         "fs_edit_file": true,
         "fs_create_text_file": true,
         "fs_create_directory": true,
@@ -1889,9 +1897,14 @@ fn ensure_session_context_capabilities(context: &mut SessionContext) {
     if !context.raw.is_object() {
         context.raw = json!({});
     }
+    let has_client_mcp_tools = context
+        .raw
+        .pointer("/mcp/client_tools")
+        .and_then(Value::as_array)
+        .is_some_and(|tools| !tools.is_empty());
     context.raw["adapter_version"] = json!(env!("CARGO_PKG_VERSION"));
-    context.raw["adapter"] = adapter_capabilities_context();
-    context.raw["direct_tools"] = direct_tools_context();
+    context.raw["adapter"] = adapter_capabilities_context_with_client_mcp(has_client_mcp_tools);
+    context.raw["direct_tools"] = direct_tools_context_with_client_mcp(has_client_mcp_tools);
     if !context.cwd.trim().is_empty() {
         context.raw["cwd"] = json!(context.cwd.clone());
     }
@@ -2985,6 +2998,7 @@ async fn restore_session_from_den(
         .await?;
     let mut context = context;
     context.raw["mcp"] = mcp_context;
+    ensure_session_context_capabilities(&mut context);
     eprintln!(
         "bears-acp-adapter: session/resume session_id={} cwd={} roots={} direct_tools={} mcp={}",
         session_id,
@@ -3054,6 +3068,7 @@ async fn handle_session_load(
         .await?;
     let mut context = context;
     context.raw["mcp"] = mcp_context;
+    ensure_session_context_capabilities(&mut context);
     eprintln!(
         "bears-acp-adapter: session/load session_id={} cwd={} roots={} direct_tools={} mcp={}",
         session_id,
