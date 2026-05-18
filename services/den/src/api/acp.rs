@@ -5048,8 +5048,9 @@ impl AcpLettaSseStream {
             self.pending.push_back(acp_event_to_adapter_sse(event));
             return;
         }
+        let controller_snapshot = self.turn_controller.status_snapshot();
         let outstanding = self.outstanding_tool_obligations();
-        if outstanding.is_empty() {
+        if outstanding.is_empty() && controller_snapshot.open_obligations == 0 {
             self.push_turn_result_now(event);
             return;
         }
@@ -5057,7 +5058,9 @@ impl AcpLettaSseStream {
             request_id = %self.context.request_id,
             acp_session_id = %self.context.acp_session_id,
             outstanding_tool_call_ids = ?outstanding,
-            "deferred ACP turn_result until local tool obligations settle"
+            controller_open_obligations = controller_snapshot.open_obligations,
+            controller_phase = ?controller_snapshot.phase,
+            "deferred ACP turn_result until turn obligations settle"
         );
         self.deferred_turn_result = Some(event);
     }
@@ -5066,7 +5069,11 @@ impl AcpLettaSseStream {
         if self.deferred_turn_result.is_none() {
             return;
         }
-        if !self.outstanding_tool_obligations().is_empty() || self.pending_tool_result.is_some() {
+        let controller_snapshot = self.turn_controller.status_snapshot();
+        if !self.outstanding_tool_obligations().is_empty()
+            || self.pending_tool_result.is_some()
+            || controller_snapshot.open_obligations > 0
+        {
             return;
         }
         if let Some(event) = self.deferred_turn_result.take() {
@@ -5454,6 +5461,7 @@ impl Stream for AcpLettaSseStream {
                             }
                         })
                         .unwrap_or(TurnResultReason::RuntimeCleanup);
+                    this.turn_controller.on_stream_end();
                     let role_result = this.context.role_runtime.turn_result(
                         TurnResultStatus::Recovered,
                         reason,
@@ -5536,6 +5544,7 @@ impl Stream for AcpLettaSseStream {
                     error = %err,
                     "ACP upstream Letta SSE stream read error"
                 );
+                this.turn_controller.on_stream_error();
                 let role_result = this.context.role_runtime.turn_result(
                     TurnResultStatus::Failed,
                     TurnResultReason::RuntimeCleanup,
@@ -5681,6 +5690,7 @@ impl Stream for AcpLettaSseStream {
                         this.pending.push_back(acp_event_to_adapter_sse(event));
                     }
                     if !this.diagnostics.saw_turn_complete {
+                        this.turn_controller.on_stream_end();
                         let role_result = this.context.role_runtime.turn_result(
                             TurnResultStatus::Ok,
                             TurnResultReason::StreamComplete,
