@@ -31,10 +31,13 @@ The central problem is that Bear conversations contain layered context: platform
 4. **Scope before recall**
    - When a request depends on local understanding, the agent should identify current Workplace and work surface before broad memory search.
 
-5. **Minimal workplace persona**
+5. **Discovery state should be visible**
+   - Tool availability, MCP server summaries, mode/policy state, and work-surface confidence should be inspectable through `session_info`, `/status`, or equivalent ACP status UX. The user should not need to infer scope/tool state from failures.
+
+6. **Minimal workplace persona**
    - Stable role prompts should define mission and boundaries, not rich personality. Workplace agents should remain capability/policy oriented.
 
-6. **Discovery should be purposeful**
+7. **Discovery should be purposeful**
    - Self-discovery is good when scope or capability is ambiguous. It should not be mandatory for simple direct user requests.
 
 ## Context layers and placements

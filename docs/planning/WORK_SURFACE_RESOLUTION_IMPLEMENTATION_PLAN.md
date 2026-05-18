@@ -14,7 +14,7 @@ This resolution state should be visible to the Bear so it can communicate uncert
 
 1. Represent work-surface resolution explicitly.
 2. Keep resolution separate from persisted user-message content.
-3. Surface resolution through `session_info` and orientation tools.
+3. Surface resolution through `session_info`, orientation tools, and ACP session health/status surfaces.
 4. Let the Bear communicate assumptions and ask for confirmation when needed.
 5. Preserve user-confirmed resolution as provenance for later memory/plans/artifacts.
 6. Avoid overconfident automatic classification.
@@ -105,6 +105,27 @@ Initial evidence kinds:
   ]
 }
 ```
+
+## UX integration with ACP lifecycle reset
+
+The [ACP Lifecycle Reset Plan](./ACP_LIFECYCLE_RESET_PLAN.md) treats work-surface status as part of session health. Work-surface resolution should therefore be visible not only to the model through `session_info`, but also to the user/operator through `/status` or equivalent ACP status output.
+
+User-facing status should be concise:
+
+```text
+Work surface: BEARS monorepo
+Status: candidate
+Confidence: medium
+Grounding: workspace root /workspace
+```
+
+If unresolved or ambiguous, the status should say so without blocking unrelated low-risk work:
+
+```text
+Work surface: ambiguous. I may ask you to choose before writing memory or making scoped changes.
+```
+
+This UX must avoid overconfidence. A `candidate` should be described as an assumption, while `confirmed` can be described as user-confirmed.
 
 ## Phase 1: Enrich read-only orientation output
 

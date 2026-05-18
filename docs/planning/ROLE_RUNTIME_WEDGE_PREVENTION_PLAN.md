@@ -4,6 +4,8 @@
 
 Active near-term reliability work.
 
+For ACP `pair`, the near-term implementation strategy is now the [ACP Lifecycle Reset Plan](./ACP_LIFECYCLE_RESET_PLAN.md). That plan narrows this document's runtime hygiene invariant into an explicit ACP prompt-turn state machine and test suite.
+
 ## Context
 
 BEARS now exposes a simpler ontology for per-turn state: `workplan`, `activity`, `memory`, and `execution`. That reduces model confusion, but it does not by itself prevent Letta runtime wedges.
@@ -28,6 +30,10 @@ Any role/channel that uses Letta runs, tools, approvals, or streamed continuatio
 Every role executor must satisfy this invariant:
 
 > If a Letta tool/approval request is surfaced to Den or an adapter, it must eventually be settled with success/error/denial/timeout, or the owning Letta run must be explicitly cancelled before the next turn starts.
+
+For ACP `pair`, use the stronger turn-terminal invariant from the lifecycle reset:
+
+> A terminal ACP prompt result requires all local/server tool obligations for that prompt turn to be settled, cancelled, failed, or timed out.
 
 ## Current recovery stance
 
