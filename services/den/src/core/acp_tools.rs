@@ -181,6 +181,7 @@ pub enum AcpToolName {
     ChromeConsoleMessages,
     ChromeNetworkRequests,
     ChromeScreenshot,
+    McpCallTool,
 }
 
 impl AcpToolName {
@@ -213,6 +214,7 @@ impl AcpToolName {
             Self::ChromeConsoleMessages => &ACP_CHROME_CONSOLE_MESSAGES_TOOL,
             Self::ChromeNetworkRequests => &ACP_CHROME_NETWORK_REQUESTS_TOOL,
             Self::ChromeScreenshot => &ACP_CHROME_SCREENSHOT_TOOL,
+            Self::McpCallTool => &ACP_MCP_CALL_TOOL,
         }
     }
 
@@ -296,6 +298,7 @@ impl AcpToolName {
             | Self::ChromeConsoleMessages
             | Self::ChromeNetworkRequests
             | Self::ChromeScreenshot => &[],
+            Self::McpCallTool => &[],
         }
     }
 
@@ -388,6 +391,7 @@ impl AcpToolName {
             | "chrome/screenshot"
             | "chrome.screenshot"
             | "chrome_screenshot" => Some(Self::ChromeScreenshot),
+            raw if raw.starts_with("mcp__") => Some(Self::McpCallTool),
             _ => None,
         }
     }
@@ -541,6 +545,20 @@ impl AcpToolPolicy {
         policy
     }
 }
+
+pub const ACP_MCP_CALL_TOOL: AcpToolDescriptor = AcpToolDescriptor {
+    provider_name: "mcp__dynamic_tool",
+    provider_aliases: &[],
+    canonical_name: "acp.mcp.call_tool",
+    adapter_method: "mcp/call_tool",
+    adapter_aliases: &[],
+    client_method: "mcp/call_tool",
+    client_aliases: &[],
+    title: "MCP tool",
+    kind: "tool",
+    risk: "external_tool",
+    permission_class: "external_tool",
+};
 
 pub const ACP_READ_TEXT_FILE_TOOL: AcpToolDescriptor = AcpToolDescriptor {
     provider_name: "fs_read_text_file",
@@ -1356,6 +1374,7 @@ pub fn acp_tool_policy(tool: AcpToolName) -> AcpToolPolicy {
         | AcpToolName::ChromeConsoleMessages
         | AcpToolName::ChromeNetworkRequests
         | AcpToolName::ChromeScreenshot => ACP_CHROME_POLICY,
+        AcpToolName::McpCallTool => ACP_PROCESS_RUN_POLICY,
     }
 }
 
@@ -1387,6 +1406,7 @@ pub fn tool_class(tool: AcpToolName) -> AcpToolClass {
         | AcpToolName::ChromeConsoleMessages
         | AcpToolName::ChromeNetworkRequests
         | AcpToolName::ChromeScreenshot => AcpToolClass::Browser,
+        AcpToolName::McpCallTool => AcpToolClass::Execution,
     }
 }
 
@@ -1656,6 +1676,15 @@ pub fn acp_tool_display(tool: AcpToolName) -> AcpToolDisplayDescriptor {
             sensitive_arg_keys: &[],
             approval_summary: "Allow capturing a browser screenshot.",
         },
+        AcpToolName::McpCallTool => AcpToolDisplayDescriptor {
+            label: "Run MCP tool",
+            category: "mcp",
+            progress_verb: "Running MCP tool",
+            complete_verb: "Ran MCP tool",
+            target_arg_keys: &[],
+            sensitive_arg_keys: &[],
+            approval_summary: "Allow running this client-provided MCP tool.",
+        },
     }
 }
 
@@ -1797,11 +1826,21 @@ pub fn acp_client_tool_descriptors_for_client_context(
     // current adapter explicitly reports support. Adding a new local tool should
     // not force old adapters to update; they simply won't see the descriptor.
     let names = acp_provider_tool_names_for_client_context(client_context, policy);
-    let descriptors = names
+    let mut descriptors = names
         .iter()
         .filter_map(|name| AcpToolName::from_provider_alias(name))
         .map(|tool| acp_client_tool_descriptor(tool.descriptor()))
         .collect::<Vec<_>>();
+    if let Some(mcp_tools) = client_context
+        .pointer("/mcp/client_tools")
+        .and_then(|value| value.as_array())
+    {
+        // Zed forwards `context_servers` to external agents as ACP `mcpServers`.
+        // The adapter connects to stdio MCP servers and publishes descriptors here.
+        // A future MCP-over-ACP implementation should add a separate dynamic
+        // descriptor source for `type: "acp"` servers once that draft RFD stabilizes.
+        descriptors.extend(mcp_tools.iter().cloned());
+    }
     if names == vec![ACP_READ_TEXT_FILE_TOOL.provider_name]
         && !adapter_supports_tool(client_context, ACP_READ_TEXT_FILE_TOOL.provider_name)
     {
@@ -1826,6 +1865,7 @@ pub fn acp_provider_tool_names_for_client_context(
 ) -> Vec<&'static str> {
     let names = AcpToolName::all()
         .iter()
+        .filter(|tool| **tool != AcpToolName::McpCallTool)
         .filter(|tool| adapter_supports_tool(client_context, tool.descriptor().provider_name))
         .filter(|tool| policy.is_none_or(|p| p.allows_tool(**tool)))
         .map(|tool| tool.descriptor().provider_name)

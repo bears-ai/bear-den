@@ -62,6 +62,7 @@ use tools::git::{
     handle_git_add, handle_git_commit, handle_git_diff, handle_git_log, handle_git_restore,
     handle_git_show, handle_git_stash, handle_git_status,
 };
+use tools::mcp::{parse_acp_mcp_servers, AcpMcpServerConfig, McpRegistry};
 use tools::process::handle_process_run;
 use tools::terminal::handle_terminal_run_command;
 use tools::web::handle_local_web_fetch;
@@ -102,6 +103,7 @@ struct AdapterSharedState {
     session_contexts: Arc<TokioMutex<HashMap<String, SessionContext>>>,
     last_plan_update_hashes: Arc<TokioMutex<HashMap<String, u64>>>,
     tool_tasks: ToolTaskRegistry,
+    mcp_registry: McpRegistry,
     approval_cache: ApprovalCache,
     cancellation_tx: broadcast::Sender<CancellationNotice>,
     active_prompts: Arc<TokioMutex<HashMap<String, ActivePromptTurn>>>,
@@ -134,6 +136,7 @@ struct SessionContext {
     cwd: String,
     roots: Vec<String>,
     raw: Value,
+    mcp_servers: Vec<AcpMcpServerConfig>,
     conversation_id: Option<String>,
     resolved_conversation_id: Option<String>,
 }
@@ -814,6 +817,7 @@ async fn run() -> Result<()> {
         session_contexts: Arc::new(TokioMutex::new(HashMap::new())),
         last_plan_update_hashes: Arc::new(TokioMutex::new(HashMap::new())),
         tool_tasks: ToolTaskRegistry::default(),
+        mcp_registry: McpRegistry::default(),
         approval_cache,
         cancellation_tx,
         active_prompts: Arc::new(TokioMutex::new(HashMap::new())),
@@ -1220,8 +1224,14 @@ async fn handle_request(
                         return Ok(());
                     }
                 };
+                let mcp_context = shared_state
+                    .mcp_registry
+                    .configure_session(&session_id, context.mcp_servers.clone())
+                    .await?;
+                let mut context = context;
+                context.raw["mcp"] = mcp_context;
                 eprintln!(
-                    "bears-acp-adapter: session/new session_id={} cwd={} roots={} direct_tools={}",
+                    "bears-acp-adapter: session/new session_id={} cwd={} roots={} direct_tools={} mcp={}",
                     session_id,
                     context.cwd,
                     context.roots.join(","),
@@ -1229,7 +1239,8 @@ async fn handle_request(
                         .raw
                         .get("direct_tools")
                         .cloned()
-                        .unwrap_or(Value::Null)
+                        .unwrap_or(Value::Null),
+                    context.raw.get("mcp").cloned().unwrap_or(Value::Null)
                 );
                 shared_state
                     .session_contexts
@@ -1838,7 +1849,11 @@ fn adapter_capabilities_context() -> Value {
 }
 
 fn direct_tools_context() -> Value {
-    let chrome_available = chrome_tools_available();
+    direct_tools_context_with_client_mcp(false)
+}
+
+fn direct_tools_context_with_client_mcp(has_client_mcp_tools: bool) -> Value {
+    let chrome_available = chrome_tools_available() && !has_client_mcp_tools;
     json!({
         "fs_read_text_file": true,
         "fs_list_directory": true,
@@ -1886,7 +1901,7 @@ fn ensure_session_context_capabilities(context: &mut SessionContext) {
 }
 
 fn session_context_from_params(params: &Value) -> Result<SessionContext> {
-    validate_mcp_servers_unsupported(params)?;
+    let mcp_servers = parse_acp_mcp_servers(params)?;
     let roots = workspace_roots_from_params(params);
     let cwd = explicit_cwd_from_params(params)
         .transpose()?
@@ -1904,37 +1919,24 @@ fn session_context_from_params(params: &Value) -> Result<SessionContext> {
         "adapter_version": env!("CARGO_PKG_VERSION"),
         "adapter": adapter_capabilities_context(),
         "direct_tools": direct_tools_context(),
+        "mcp_servers": mcp_servers.iter().map(|server| json!({
+            "name": server.name,
+            "transport": "stdio",
+            "command": server.command,
+            "args_count": server.args.len(),
+            "env_count": server.env.len(),
+        })).collect::<Vec<_>>(),
     });
     let mut context = SessionContext {
         cwd,
         roots,
         raw,
+        mcp_servers,
         conversation_id: None,
         resolved_conversation_id: None,
     };
     ensure_session_context_capabilities(&mut context);
     Ok(context)
-}
-
-fn validate_mcp_servers_unsupported(params: &Value) -> Result<()> {
-    let Some(mcp_servers) = params
-        .get("mcpServers")
-        .or_else(|| params.get("mcp_servers"))
-    else {
-        return Ok(());
-    };
-    let non_empty = match mcp_servers {
-        Value::Null => false,
-        Value::Array(items) => !items.is_empty(),
-        Value::Object(map) => !map.is_empty(),
-        _ => true,
-    };
-    if non_empty {
-        return Err(anyhow!(
-            "ACP-provided mcpServers are not supported by the BEARS local adapter yet; configure BEARS/Den tools instead"
-        ));
-    }
-    Ok(())
 }
 
 fn explicit_cwd_from_params(params: &Value) -> Option<Result<String>> {
@@ -2190,6 +2192,7 @@ fn policy_from_event(event: &Value) -> ToolPolicy {
 
 async fn execute_local_tool(
     adapter_state: &mut AdapterState,
+    mcp_registry: &McpRegistry,
     session_id: &str,
     tool_name: &str,
     args: Value,
@@ -2287,6 +2290,9 @@ async fn execute_local_tool(
         }
         "fs_delete_path" => {
             handle_direct_delete_path(adapter_state, session_id, &args, policy).await
+        }
+        _ if mcp_registry.has_tool(session_id, tool_name).await => {
+            mcp_registry.call_tool(session_id, tool_name, args).await
         }
         _ => Err(anyhow!(
             "unsupported Den tool_request tool_name {tool_name}"
@@ -2565,7 +2571,7 @@ fn local_session_context_from_params(params: &Value) -> Result<SessionContext> {
 }
 
 fn session_context_from_den_session(params: &Value, den_session: &Value) -> Result<SessionContext> {
-    validate_mcp_servers_unsupported(params)?;
+    let mcp_servers = parse_acp_mcp_servers(params)?;
     let roots = workspace_roots_from_params(params);
     let cwd = explicit_cwd_from_params(params)
         .transpose()?
@@ -2589,6 +2595,7 @@ fn session_context_from_den_session(params: &Value, den_session: &Value) -> Resu
         cwd,
         roots,
         raw: Value::Null,
+        mcp_servers,
         conversation_id: den_session
             .get("conversation_id")
             .and_then(Value::as_str)
@@ -2604,6 +2611,13 @@ fn session_context_from_den_session(params: &Value, den_session: &Value) -> Resu
         "adapter_version": env!("CARGO_PKG_VERSION"),
         "adapter": adapter_capabilities_context(),
         "direct_tools": direct_tools_context(),
+        "mcp_servers": ctx.mcp_servers.iter().map(|server| json!({
+            "name": server.name,
+            "transport": "stdio",
+            "command": server.command,
+            "args_count": server.args.len(),
+            "env_count": server.env.len(),
+        })).collect::<Vec<_>>(),
         "den_acp_session": den_session.clone(),
     });
     ensure_session_context_capabilities(&mut ctx);
@@ -2965,8 +2979,14 @@ async fn restore_session_from_den(
     } else {
         local_session_context_from_params(params)?
     };
+    let mcp_context = shared_state
+        .mcp_registry
+        .configure_session(session_id, context.mcp_servers.clone())
+        .await?;
+    let mut context = context;
+    context.raw["mcp"] = mcp_context;
     eprintln!(
-        "bears-acp-adapter: session/resume session_id={} cwd={} roots={} direct_tools={}",
+        "bears-acp-adapter: session/resume session_id={} cwd={} roots={} direct_tools={} mcp={}",
         session_id,
         context.cwd,
         context.roots.join(","),
@@ -2974,7 +2994,8 @@ async fn restore_session_from_den(
             .raw
             .get("direct_tools")
             .cloned()
-            .unwrap_or(Value::Null)
+            .unwrap_or(Value::Null),
+        context.raw.get("mcp").cloned().unwrap_or(Value::Null)
     );
     shared_state
         .session_contexts
@@ -3027,8 +3048,14 @@ async fn handle_session_load(
     } else {
         local_session_context_from_params(params)?
     };
+    let mcp_context = shared_state
+        .mcp_registry
+        .configure_session(session_id, context.mcp_servers.clone())
+        .await?;
+    let mut context = context;
+    context.raw["mcp"] = mcp_context;
     eprintln!(
-        "bears-acp-adapter: session/load session_id={} cwd={} roots={} direct_tools={}",
+        "bears-acp-adapter: session/load session_id={} cwd={} roots={} direct_tools={} mcp={}",
         session_id,
         context.cwd,
         context.roots.join(","),
@@ -3036,7 +3063,8 @@ async fn handle_session_load(
             .raw
             .get("direct_tools")
             .cloned()
-            .unwrap_or(Value::Null)
+            .unwrap_or(Value::Null),
+        context.raw.get("mcp").cloned().unwrap_or(Value::Null)
     );
     shared_state
         .session_contexts
@@ -4477,6 +4505,7 @@ fn spawn_tool_request_task(
             &config,
             &mut task_state,
             &shared_state.tool_tasks,
+            &shared_state.mcp_registry,
             &shared_state.approval_cache,
             &session_id,
             &event,
@@ -4537,6 +4566,7 @@ async fn handle_tool_request_event(
     config: &Config,
     adapter_state: &mut AdapterState,
     task_registry: &ToolTaskRegistry,
+    mcp_registry: &McpRegistry,
     approval_cache: &ApprovalCache,
     session_id: &str,
     event: &Value,
@@ -4787,7 +4817,15 @@ async fn handle_tool_request_event(
         )
         .await
     } else {
-        execute_local_tool(adapter_state, session_id, tool_name, args, &policy).await
+        execute_local_tool(
+            adapter_state,
+            mcp_registry,
+            session_id,
+            tool_name,
+            args,
+            &policy,
+        )
+        .await
     };
     let status;
     let mut payload = json!({
@@ -5318,7 +5356,14 @@ async fn handle_den_event(
             Ok(false)
         }
         "permission_request" => {
-            handle_permission_request_event(config, adapter_state, session_id, event).await?;
+            handle_permission_request_event(
+                config,
+                adapter_state,
+                &shared_state.mcp_registry,
+                session_id,
+                event,
+            )
+            .await?;
             Ok(false)
         }
         "session_info_update" => {
@@ -5410,6 +5455,7 @@ async fn handle_den_event(
 async fn handle_permission_request_event(
     config: &Config,
     adapter_state: &mut AdapterState,
+    mcp_registry: &McpRegistry,
     session_id: &str,
     event: &Value,
 ) -> Result<()> {
@@ -5639,7 +5685,15 @@ async fn handle_permission_request_event(
             .unwrap_or(tool_name);
         let args = local_tool.get("args").cloned().unwrap_or_else(|| json!({}));
         let policy = policy_from_event(local_tool);
-        let result = execute_local_tool(adapter_state, session_id, tool_name, args, &policy).await;
+        let result = execute_local_tool(
+            adapter_state,
+            mcp_registry,
+            session_id,
+            tool_name,
+            args,
+            &policy,
+        )
+        .await;
         let started = std::time::Instant::now();
         match result {
             Ok(value) => {
