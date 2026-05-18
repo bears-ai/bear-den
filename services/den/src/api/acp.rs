@@ -2673,16 +2673,43 @@ async fn cancel_session_inner(
     else {
         return Ok(Json(serde_json::json!({ "ok": true, "cancelled": false })).into_response());
     };
+    let active = state
+        .acp_tool_turns
+        .cancel_active_turn(&session.acp_session_id);
+    let pair_agent_id =
+        bears_db::role_agent_id(&state.sqlx_pool, session.bear_id, BearAgentRole::Pair)
+            .await?
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty());
+    let cancel_result = if let Some(agent_id) = pair_agent_id.as_deref() {
+        match state.letta.cancel_agent_runs(agent_id, &[]).await {
+            Ok(value) => serde_json::json!({ "ok": true, "result": value }),
+            Err(err) if looks_like_letta_no_active_runs_error(&err) => {
+                serde_json::json!({ "ok": true, "result": "no_active_runs" })
+            }
+            Err(err) => serde_json::json!({ "ok": false, "error": err.to_string() }),
+        }
+    } else {
+        serde_json::json!({ "ok": false, "error": "pair role agent id is missing" })
+    };
+    state
+        .acp_tool_turns
+        .cleanup_session(&session.acp_session_id);
     tracing::info!(
         bear_id = %session.bear_id,
         acp_session_id = %session.acp_session_id,
         conversation_id = %session.conversation_id,
-        "ACP cancel requested; pair role uses API-direct Letta streaming"
+        active_request_id = ?active.as_ref().map(|turn| turn.request_id),
+        active_conversation_id = ?active.as_ref().and_then(|turn| turn.conversation_id.clone()),
+        pair_agent_id = ?pair_agent_id,
+        cancel_result = %cancel_result,
+        "ACP cancel requested; cancelled active pair turn and cleaned session tool state"
     );
     Ok(Json(serde_json::json!({
         "ok": true,
-        "cancelled": false,
-        "message": "ACP is API-direct for the pair role; this endpoint marked no active runtime stream as cancelled."
+        "cancelled": active.is_some(),
+        "active_turn": active.map(|turn| turn.diagnostic()),
+        "cancel_result": cancel_result,
     }))
     .into_response())
 }

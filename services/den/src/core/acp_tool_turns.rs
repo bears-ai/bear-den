@@ -278,6 +278,10 @@ impl AcpToolTurnCoordinator {
         })
     }
 
+    pub fn cancel_active_turn(&self, session_id: &str) -> Option<AcpActiveTurn> {
+        self.active_turns.lock().ok()?.remove(session_id)
+    }
+
     pub fn release_active_turn(&self, session_id: &str, request_id: Uuid) {
         if let Ok(mut active_turns) = self.active_turns.lock() {
             if active_turns
