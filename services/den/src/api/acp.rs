@@ -3602,7 +3602,8 @@ fn tool_execution_route(tool_name: &str, args: &serde_json::Value) -> ToolExecut
 async fn persist_stream_event_side_effects(
     context: &AcpStreamContext,
     event: &mut AcpGatewayEvent,
-) -> Result<(), CustomError> {
+) -> Result<Option<(String, String, oneshot::Receiver<AcpToolResultRequest>)>, CustomError> {
+    let mut den_server_result_rx = None;
     match event {
         AcpGatewayEvent::ConversationResolved { conversation_id } => {
             acp_sessions::mark_resolved(
@@ -3621,6 +3622,7 @@ async fn persist_stream_event_side_effects(
             request_id,
             args,
             result_tx,
+            result_rx,
             approval_required,
             approval_reason,
             ..
@@ -3682,7 +3684,38 @@ async fn persist_stream_event_side_effects(
                 ToolExecutionRoute::DenServer => {
                     let canonical_name = acp_den_provider_to_canonical_tool_name(tool_name)
                         .ok_or_else(|| CustomError::System("missing Den tool route".to_string()))?;
-                    handle_den_server_tool_request(context, event, canonical_name, false).await?;
+                    let result_tx = result_tx.take().ok_or_else(|| {
+                        CustomError::System("ACP Den tool request missing result channel".to_string())
+                    })?;
+                    let den_approval_request_id = approval_request_id.clone();
+                    *approval_required = false;
+                    *approval_reason = None;
+                    let result = invoke_acp_den_tool(
+                        context,
+                        canonical_name,
+                        tool_name,
+                        tool_call_id,
+                        den_approval_request_id.as_deref(),
+                        args.clone(),
+                    )
+                    .await;
+                    let _ = result_tx.send(result);
+                    if let Some(result_rx) = result_rx.take() {
+                        den_server_result_rx = Some((
+                            tool_call_id.clone(),
+                            tool_name.clone(),
+                            result_rx,
+                        ));
+                    }
+                    tracing::info!(
+                        request_id = %context.request_id,
+                        acp_session_id = %context.acp_session_id,
+                        tool_request_id = %request_id,
+                        tool_call_id = %tool_call_id,
+                        tool_name = %tool_name,
+                        canonical_tool_name = %canonical_name,
+                        "ACP Den server tool executed"
+                    );
                 }
                 ToolExecutionRoute::AdapterLocal => {
                     let result_tx = result_tx.take().ok_or_else(|| {
@@ -3718,7 +3751,7 @@ async fn persist_stream_event_side_effects(
         }
         _ => {}
     }
-    Ok(())
+    Ok(den_server_result_rx)
 }
 
 async fn handle_den_server_tool_request(
@@ -3903,7 +3936,7 @@ struct WebFetchToolArgs {
     url: String,
 }
 
-fn status_from_den_tool_result(result: &AcpToolResultRequest) -> Option<&str> {
+fn mode_from_den_tool_result(result: &AcpToolResultRequest) -> Option<&str> {
     result
         .structured_content
         .get("mode_update")
@@ -4702,10 +4735,9 @@ async fn map_letta_stream_frame_to_acp_adapter_events_with_persistence(
             return Ok((Vec::new(), None));
         }
     }
-    persist_stream_event_side_effects(&context, &mut event)
+    let mut den_server_result_rx = persist_stream_event_side_effects(&context, &mut event)
         .await
         .map_err(|err| std::io::Error::other(err.to_string()))?;
-    let mut den_server_result_rx = None;
     if let AcpGatewayEvent::ToolRequest {
         tool_call_id,
         tool_name,
@@ -4720,11 +4752,7 @@ async fn map_letta_stream_frame_to_acp_adapter_events_with_persistence(
                     .take()
                     .map(|rx| (tool_call_id.clone(), tool_name.clone(), AcpResolvedToolResult::Receiver(rx)));
             }
-            ToolExecutionRoute::DenServer => {
-                den_server_result_rx = result_rx
-                    .take()
-                    .map(|rx| (tool_call_id.clone(), tool_name.clone(), rx));
-            }
+            ToolExecutionRoute::DenServer => {}
             ToolExecutionRoute::Unsupported => {}
         }
     }
@@ -5181,7 +5209,7 @@ impl Stream for AcpLettaSseStream {
                             this.diagnostics.observe_mapped_event(&plan_event);
                             this.pending.push_back(acp_event_to_adapter_sse(plan_event));
                         }
-                        if let Some(mode) = status_from_den_tool_result(&tool_result) {
+                        if let Some(mode) = mode_from_den_tool_result(&tool_result) {
                             let mode_event = AcpGatewayEvent::ModeUpdate {
                                 mode: mode.to_string(),
                             };
@@ -6071,8 +6099,28 @@ mod tests {
         let body = captured.lock().await.clone().unwrap();
         assert_eq!(body["messages"][0]["type"], "approval");
         assert_eq!(body["messages"][0]["approval_request_id"], "approval-1");
-        assert_eq!(body["messages"][0]["approvals"][0]["tool_call_id"], "call_session_info");
-        assert_eq!(body["messages"][0]["approve"], false);
+        if body["messages"][0]["approve"] == serde_json::json!(true) {
+            assert_eq!(body["messages"][0]["approvals"][0]["type"], "tool");
+            assert_eq!(body["messages"][0]["approvals"][0]["status"], "success");
+            assert_eq!(body["messages"][0]["approvals"][0]["tool_call_id"], "call_session_info");
+            assert!(
+                body["messages"][0]["approvals"][0]["tool_return"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .contains("session")
+            );
+        } else {
+            assert_eq!(body["messages"][0]["approve"], false, "body was: {body}");
+            assert_eq!(body["messages"][0]["approvals"][0]["type"], "approval");
+            assert_eq!(body["messages"][0]["approvals"][0]["approve"], false);
+            assert_eq!(body["messages"][0]["approvals"][0]["tool_call_id"], "call_session_info");
+            assert!(
+                body["messages"][0]["approvals"][0]["reason"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .contains("Database Unavailable")
+            );
+        }
 
         let missing = registry
             .deliver_result(

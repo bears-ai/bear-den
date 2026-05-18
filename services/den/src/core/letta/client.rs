@@ -44,6 +44,80 @@ pub struct LettaContinuationContext {
     pub max_steps: u32,
 }
 
+fn conversation_tool_return_continuation_body(
+    context: &LettaContinuationContext,
+    tool_call_id: &str,
+    approval_request_id: Option<&str>,
+    status: &str,
+    tool_return: &str,
+) -> serde_json::Map<String, Value> {
+    let letta_status = if status == "ok" { "success" } else { "error" };
+    let mut body = serde_json::Map::new();
+    let tool_return_value = json!({
+        "type": "tool",
+        "status": letta_status,
+        "tool_call_id": tool_call_id,
+        "tool_return": tool_return,
+    });
+    let message = if let Some(approval_request_id) = approval_request_id {
+        if status != "ok" {
+            tracing::info!(
+                approval_request_id,
+                tool_call_id,
+                status,
+                "sending Letta approval denial for ACP tool result"
+            );
+            json!({
+                "type": "approval",
+                "approval_request_id": approval_request_id,
+                "approve": false,
+                "approvals": [{
+                    "type": "approval",
+                    "approve": false,
+                    "tool_call_id": tool_call_id,
+                    "reason": tool_return,
+                }]
+            })
+        } else {
+            tracing::debug!(
+                approval_request_id,
+                tool_call_id,
+                "sending Letta approval response with ACP tool result"
+            );
+            json!({
+                "type": "approval",
+                "approval_request_id": approval_request_id,
+                "approve": true,
+                "approvals": [tool_return_value]
+            })
+        }
+    } else {
+        json!({
+            "type": "tool_return",
+            "tool_returns": [tool_return_value]
+        })
+    };
+    body.insert("messages".to_string(), json!([message]));
+    body.insert("streaming".to_string(), json!(true));
+    body.insert("stream_tokens".to_string(), json!(context.stream_tokens));
+    if context.stream_tokens {
+        body.insert("include_pings".to_string(), json!(true));
+    }
+    body.insert("max_steps".to_string(), json!(context.max_steps));
+    if let Some(tools) = context.client_tools.clone() {
+        body.insert("client_tools".to_string(), tools);
+    }
+    if let Some(a) = context
+        .agent_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        body.insert("agent_id".to_string(), json!(a));
+    }
+    body
+}
+
 fn letta_http_error_message(operation: &str, status: StatusCode, text: &str) -> String {
     let base = format!("Letta {operation} HTTP {status}: {text}");
     if status == StatusCode::CONFLICT && text.contains("waiting for approval") {
@@ -1062,70 +1136,13 @@ impl LettaClient {
             ));
         }
 
-        let letta_status = if status == "ok" { "success" } else { "error" };
-        let mut body = serde_json::Map::new();
-        let tool_return_value = json!({
-            "type": "tool",
-            "status": letta_status,
-            "tool_call_id": tool_call_id,
-            "tool_return": tool_return,
-        });
-        let message = if let Some(approval_request_id) = approval_request_id {
-            if status != "ok" {
-                tracing::info!(
-                    approval_request_id,
-                    tool_call_id,
-                    status,
-                    "sending Letta approval denial for ACP local tool result"
-                );
-                json!({
-                    "type": "approval",
-                    "approval_request_id": approval_request_id,
-                    "approve": false,
-                    "approvals": [{
-                        "type": "approval",
-                        "approve": false,
-                        "tool_call_id": tool_call_id,
-                        "reason": tool_return,
-                    }]
-                })
-            } else {
-                tracing::debug!(
-                    approval_request_id,
-                    tool_call_id,
-                    "sending Letta approval response with ACP client tool result"
-                );
-                json!({
-                    "type": "approval",
-                    "approval_request_id": approval_request_id,
-                    "approve": true,
-                    "approvals": [tool_return_value]
-                })
-            }
-        } else {
-            json!({
-                "type": "tool_return",
-                "tool_returns": [tool_return_value]
-            })
-        };
-        body.insert("messages".to_string(), json!([message]));
-        body.insert("streaming".to_string(), json!(true));
-        body.insert("stream_tokens".to_string(), json!(context.stream_tokens));
-        if context.stream_tokens {
-            body.insert("include_pings".to_string(), json!(true));
-        }
-        body.insert("max_steps".to_string(), json!(context.max_steps));
-        if let Some(tools) = context.client_tools.clone() {
-            body.insert("client_tools".to_string(), tools);
-        }
-        if let Some(a) = context
-            .agent_id
-            .as_deref()
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-        {
-            body.insert("agent_id".to_string(), json!(a));
-        }
+        let body = conversation_tool_return_continuation_body(
+            context,
+            tool_call_id,
+            approval_request_id,
+            status,
+            tool_return,
+        );
         let client_tool_names = context.tool_names();
         let client_tools_count = client_tool_names.len();
         let client_tools_bytes = context.client_tools_bytes();
@@ -1897,6 +1914,119 @@ fn parse_letta_tool_list(v: &serde_json::Value) -> Vec<LettaToolOption> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn continuation_context_for_tests() -> LettaContinuationContext {
+        LettaContinuationContext {
+            conversation_id: "conv-test".to_string(),
+            agent_id: Some("agent-test".to_string()),
+            client_tools: Some(json!([{ "name": "session_info" }])),
+            stream_tokens: true,
+            max_steps: 3,
+        }
+    }
+
+    #[test]
+    fn letta_conversation_tool_return_continuation_approves_successful_tool_result() {
+        let context = continuation_context_for_tests();
+        let body = conversation_tool_return_continuation_body(
+            &context,
+            "call_session_info",
+            Some("approval-1"),
+            "ok",
+            "{\"session\":{\"id\":\"acp-test\"}}",
+        );
+
+        assert_eq!(body["streaming"], true);
+        assert_eq!(body["stream_tokens"], true);
+        assert_eq!(body["include_pings"], true);
+        assert_eq!(body["max_steps"], 3);
+        assert_eq!(body["agent_id"], "agent-test");
+        assert_eq!(body["client_tools"][0]["name"], "session_info");
+
+        let message = &body["messages"][0];
+        assert_eq!(message["type"], "approval");
+        assert_eq!(message["approval_request_id"], "approval-1");
+        assert_eq!(message["approve"], true);
+        assert_eq!(message["approvals"][0]["type"], "tool");
+        assert_eq!(message["approvals"][0]["status"], "success");
+        assert_eq!(message["approvals"][0]["tool_call_id"], "call_session_info");
+        assert_eq!(message["approvals"][0]["tool_return"], "{\"session\":{\"id\":\"acp-test\"}}");
+        assert!(message["approvals"][0].get("approve").is_none());
+        assert!(message["approvals"][0].get("reason").is_none());
+    }
+
+    #[test]
+    fn letta_conversation_tool_return_continuation_denies_failed_tool_result() {
+        let context = continuation_context_for_tests();
+        let body = conversation_tool_return_continuation_body(
+            &context,
+            "call_session_info",
+            Some("approval-1"),
+            "error",
+            "Database Unavailable",
+        );
+
+        let message = &body["messages"][0];
+        assert_eq!(message["type"], "approval");
+        assert_eq!(message["approval_request_id"], "approval-1");
+        assert_eq!(message["approve"], false);
+        assert_eq!(message["approvals"][0]["type"], "approval");
+        assert_eq!(message["approvals"][0]["approve"], false);
+        assert_eq!(message["approvals"][0]["tool_call_id"], "call_session_info");
+        assert_eq!(message["approvals"][0]["reason"], "Database Unavailable");
+        assert!(message["approvals"][0].get("status").is_none());
+        assert!(message["approvals"][0].get("tool_return").is_none());
+    }
+
+    #[test]
+    fn letta_conversation_tool_return_continuation_denies_timeout_tool_result() {
+        let context = continuation_context_for_tests();
+        let body = conversation_tool_return_continuation_body(
+            &context,
+            "call_fs_read",
+            Some("approval-timeout"),
+            "timeout",
+            "Tool timed out",
+        );
+
+        let message = &body["messages"][0];
+        assert_eq!(message["type"], "approval");
+        assert_eq!(message["approval_request_id"], "approval-timeout");
+        assert_eq!(message["approve"], false);
+        assert_eq!(message["approvals"][0]["type"], "approval");
+        assert_eq!(message["approvals"][0]["approve"], false);
+        assert_eq!(message["approvals"][0]["tool_call_id"], "call_fs_read");
+        assert_eq!(message["approvals"][0]["reason"], "Tool timed out");
+    }
+
+    #[test]
+    fn letta_conversation_tool_return_continuation_without_approval_uses_tool_return_message() {
+        let mut context = continuation_context_for_tests();
+        context.stream_tokens = false;
+        context.agent_id = None;
+        context.client_tools = None;
+        let body = conversation_tool_return_continuation_body(
+            &context,
+            "call_no_approval",
+            None,
+            "ok",
+            "plain result",
+        );
+
+        assert_eq!(body["streaming"], true);
+        assert_eq!(body["stream_tokens"], false);
+        assert!(body.get("include_pings").is_none());
+        assert!(body.get("agent_id").is_none());
+        assert!(body.get("client_tools").is_none());
+
+        let message = &body["messages"][0];
+        assert_eq!(message["type"], "tool_return");
+        assert!(message.get("approve").is_none());
+        assert_eq!(message["tool_returns"][0]["type"], "tool");
+        assert_eq!(message["tool_returns"][0]["status"], "success");
+        assert_eq!(message["tool_returns"][0]["tool_call_id"], "call_no_approval");
+        assert_eq!(message["tool_returns"][0]["tool_return"], "plain result");
+    }
 
     #[test]
     fn pending_approvals_from_variants_ignores_completed_requests() {
