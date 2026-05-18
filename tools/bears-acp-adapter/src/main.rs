@@ -118,7 +118,6 @@ struct CancellationNotice {
 struct ActivePromptTurn {
     token: Uuid,
     conversation_id: Option<String>,
-    response_id: Value,
 }
 
 fn env_bool(name: &str) -> bool {
@@ -1644,7 +1643,6 @@ async fn handle_request(
                         ActivePromptTurn {
                             token: turn_token,
                             conversation_id: conversation_id_for_turn.clone(),
-                            response_id: id.clone(),
                         },
                     );
                     previous
@@ -1656,28 +1654,9 @@ async fn handle_request(
                     );
                     if same_conversation {
                         eprintln!(
-                            "bears-acp-adapter: overlapping prompt for same conversation session_id={} previous_turn={} new_turn={} conversation={:?}; cancelling previous turn before restart",
+                            "bears-acp-adapter: steering prompt for same conversation session_id={} previous_turn={} new_turn={} conversation={:?}; keeping previous runtime alive and only gating stale UI text updates",
                             session_id, previous.token, turn_token, conversation_id_for_turn
                         );
-                        shared_state.approval_cache.clear_session(&session_id).await;
-                        shared_state
-                            .tool_tasks
-                            .cancel_turn(&session_id, previous.token)
-                            .await;
-                        let _ = shared_state.cancellation_tx.send(CancellationNotice {
-                            session_id: session_id.clone(),
-                            turn_token: Some(previous.token),
-                            conversation_id: previous.conversation_id.clone(),
-                        });
-                        let _ = post_session_lifecycle_action(http, config, &session_id, "cancel")
-                            .await;
-                        let _ = write_response(
-                            previous.response_id,
-                            Ok(serde_json::to_value(PromptResponse::new(
-                                StopReason::Cancelled,
-                            ))?),
-                        )
-                        .await;
                     } else {
                         eprintln!(
                             "bears-acp-adapter: overlapping prompt for different conversation session_id={} previous_turn={} new_turn={} previous_conversation={:?} new_conversation={:?}; keeping previous runtime alive and gating stale UI updates",
@@ -6329,14 +6308,11 @@ async fn send_agent_message_chunk(session_id: &str, text: &str) -> Result<()> {
 }
 
 async fn send_agent_message_chunk_for_turn(
-    shared_state: &AdapterSharedState,
+    _shared_state: &AdapterSharedState,
     session_id: &str,
-    turn_token: Uuid,
+    _turn_token: Uuid,
     text: &str,
 ) -> Result<()> {
-    if !is_current_prompt_turn(shared_state, session_id, turn_token, "agent_message_chunk").await {
-        return Ok(());
-    }
     send_agent_message_chunk(session_id, text).await
 }
 
@@ -6352,14 +6328,11 @@ async fn send_agent_thought_chunk(session_id: &str, text: &str) -> Result<()> {
 }
 
 async fn send_agent_thought_chunk_for_turn(
-    shared_state: &AdapterSharedState,
+    _shared_state: &AdapterSharedState,
     session_id: &str,
-    turn_token: Uuid,
+    _turn_token: Uuid,
     text: &str,
 ) -> Result<()> {
-    if !is_current_prompt_turn(shared_state, session_id, turn_token, "agent_thought_chunk").await {
-        return Ok(());
-    }
     send_agent_thought_chunk(session_id, text).await
 }
 

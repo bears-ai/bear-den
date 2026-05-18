@@ -113,10 +113,6 @@ impl ToolTaskRegistry {
         self.cancel_matching(session_id, None).await;
     }
 
-    pub(crate) async fn cancel_turn(&self, session_id: &str, turn_token: Uuid) {
-        self.cancel_matching(session_id, Some(turn_token)).await;
-    }
-
     async fn cancel_matching(&self, session_id: &str, turn_token: Option<Uuid>) {
         let mut tasks = self.tasks.lock().await;
         let now = std::time::Instant::now();
