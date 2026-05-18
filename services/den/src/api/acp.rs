@@ -3655,7 +3655,7 @@ async fn persist_stream_event_side_effects(
             request_id,
             args,
             result_tx,
-            result_rx,
+            result_rx: _,
             approval_required,
             approval_reason,
             ..
@@ -3718,37 +3718,27 @@ async fn persist_stream_event_side_effects(
                     );
                 }
                 ToolExecutionRoute::DenServer => {
-                    let canonical_name = acp_den_provider_to_canonical_tool_name(tool_name)
+                    let canonical_name = acp_den_provider_to_canonical_tool_name(&effect_tool_name)
                         .ok_or_else(|| CustomError::System("missing Den tool route".to_string()))?;
-                    let result_tx = result_tx.take().ok_or_else(|| {
-                        CustomError::System(
-                            "ACP Den tool request missing result channel".to_string(),
-                        )
-                    })?;
-                    let den_approval_request_id = approval_request_id.clone();
-                    *approval_required = false;
-                    *approval_reason = None;
-                    let result = invoke_acp_den_tool(
-                        context,
-                        canonical_name,
-                        tool_name,
-                        tool_call_id,
-                        den_approval_request_id.as_deref(),
-                        args.clone(),
-                    )
-                    .await;
-                    let _ = result_tx.send(result);
-                    if let Some(result_rx) = result_rx.take() {
-                        effect_den_server_result_rx = Some(result_rx);
+                    let tool_request_id = request_id.clone();
+                    if canonical_name == den_tools::DEN_WEB_FETCH {
+                        route_web_fetch_tool_request(context, event, false).await?;
+                    } else {
+                        route_direct_den_tool_request(context, event, canonical_name).await?;
+                    }
+                    if let AcpGatewayEvent::ToolRequest { result_rx, .. } = event {
+                        if let Some(result_rx) = result_rx.take() {
+                            effect_den_server_result_rx = Some(result_rx);
+                        }
                     }
                     tracing::info!(
                         request_id = %context.request_id,
                         acp_session_id = %context.acp_session_id,
-                        tool_request_id = %request_id,
-                        tool_call_id = %tool_call_id,
-                        tool_name = %tool_name,
+                        tool_request_id = %tool_request_id,
+                        tool_call_id = %effect_tool_call_id,
+                        tool_name = %effect_tool_name,
                         canonical_tool_name = %canonical_name,
-                        "ACP Den server tool executed"
+                        "ACP Den server tool routed"
                     );
                 }
                 ToolExecutionRoute::AdapterLocal => {
@@ -3791,19 +3781,7 @@ async fn persist_stream_event_side_effects(
     Ok(tool_request_effect)
 }
 
-async fn handle_den_server_tool_request(
-    context: &AcpStreamContext,
-    event: &mut AcpGatewayEvent,
-    canonical_name: &str,
-    _plan_mode_active: bool,
-) -> Result<(), CustomError> {
-    match canonical_name {
-        den_tools::DEN_WEB_FETCH => handle_web_fetch_tool_request(context, event, false).await,
-        _ => handle_direct_den_tool_request(context, event, canonical_name).await,
-    }
-}
-
-async fn handle_web_fetch_tool_request(
+async fn route_web_fetch_tool_request(
     context: &AcpStreamContext,
     event: &mut AcpGatewayEvent,
     _plan_mode_active: bool,
@@ -3916,10 +3894,10 @@ async fn handle_web_fetch_tool_request(
         };
         return Ok(());
     }
-    handle_direct_den_tool_request(context, event, den_tools::DEN_WEB_FETCH).await
+    route_direct_den_tool_request(context, event, den_tools::DEN_WEB_FETCH).await
 }
 
-async fn handle_direct_den_tool_request(
+async fn route_direct_den_tool_request(
     context: &AcpStreamContext,
     event: &mut AcpGatewayEvent,
     canonical_name: &str,
@@ -4407,10 +4385,6 @@ impl AcpStreamDiagnostics {
                 cleanup
             ),
         }
-    }
-
-    fn diagnostic_json(&self, context: &AcpStreamContext) -> serde_json::Value {
-        self.diagnostic_json_with_turn_controller(context, None)
     }
 
     fn diagnostic_json_with_turn_controller(
