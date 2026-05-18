@@ -208,10 +208,11 @@ struct LocalToolError {
 }
 
 fn session_config_options_for_mode(mode: &str) -> Vec<SessionConfigOption> {
+    let mode = normalize_mode(mode);
     vec![SessionConfigOption::select(
         "mode",
         "Session Mode",
-        mode.to_string(),
+        mode,
         vec![
             SessionConfigSelectOption::new(MODE_ASK, "Ask")
                 .description("Mutation gate closed; read, search, and inspect only."),
@@ -227,9 +228,18 @@ fn session_config_options_for_mode(mode: &str) -> Vec<SessionConfigOption> {
     .category(SessionConfigOptionCategory::Mode)]
 }
 
+fn normalize_mode(mode: &str) -> &'static str {
+    match mode.trim().to_ascii_lowercase().as_str() {
+        MODE_PLAN => MODE_PLAN,
+        MODE_WRITE => MODE_WRITE,
+        _ => MODE_ASK,
+    }
+}
+
 fn session_modes_for_mode(mode: &str) -> SessionModeState {
+    let mode = normalize_mode(mode);
     SessionModeState::new(
-        mode.to_string(),
+        mode,
         vec![
             SessionMode::new(MODE_ASK, "Ask")
                 .description("Mutation gate closed; read, search, and inspect only."),
@@ -554,6 +564,7 @@ async fn send_plan_update(session_id: &str, entries: Vec<PlanEntry>) -> Result<(
 }
 
 async fn notify_mode_state(session_id: &str, mode: &str) -> Result<()> {
+    let mode = normalize_mode(mode);
     write_notification(
         "session/update",
         json!({
@@ -569,7 +580,7 @@ async fn notify_mode_state(session_id: &str, mode: &str) -> Result<()> {
         json!({
             "sessionId": session_id,
             "update": serde_json::to_value(SessionUpdate::CurrentModeUpdate(
-                CurrentModeUpdate::new(mode.to_string())
+                CurrentModeUpdate::new(mode)
             ))?,
         }),
     )
@@ -1231,11 +1242,19 @@ async fn handle_request(
                     .insert(session_id.clone(), context);
                 send_available_commands_update(&session_id).await?;
                 let mode = MODE_ASK;
-                notify_mode_state(&session_id, mode).await?;
-                let response = NewSessionResponse::new(session_id)
+                let response = NewSessionResponse::new(session_id.clone())
                     .config_options(session_config_options_for_mode(mode))
-                    .modes(session_modes_for_mode(mode));
+                    .modes(session_modes_for_mode(mode))
+                    .meta(Some(serde_json::Map::from_iter([(
+                        "bears".to_string(),
+                        json!({
+                            "effectiveMode": mode,
+                            "source": "adapter.session_new_default",
+                            "note": "New ACP sessions default to Ask until Den session policy says otherwise."
+                        }),
+                    )])));
                 write_response(id, Ok(serde_json::to_value(response)?)).await?;
+                notify_mode_state(&session_id, mode).await?;
             }
         }
         "session/set_config_option" => {
@@ -6627,6 +6646,9 @@ mod tests {
 
     #[test]
     fn session_lifecycle_result_includes_mode_metadata() {
+        assert_eq!(normalize_mode("Write"), MODE_WRITE);
+        assert_eq!(normalize_mode("Ask"), MODE_ASK);
+        assert_eq!(normalize_mode(""), MODE_ASK);
         let value = session_lifecycle_result(MODE_PLAN).expect("load response");
         assert_eq!(value["configOptions"][0]["id"].as_str(), Some("mode"));
         assert_eq!(
