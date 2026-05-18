@@ -1831,6 +1831,17 @@ pub fn acp_client_tool_descriptors_for_client_context(
         .filter_map(|name| AcpToolName::from_provider_alias(name))
         .map(|tool| acp_client_tool_descriptor(tool.descriptor()))
         .collect::<Vec<_>>();
+    let mcp_tool_names = client_context
+        .pointer("/mcp/client_tools")
+        .and_then(|value| value.as_array())
+        .map(|tools| {
+            tools
+                .iter()
+                .filter_map(|tool| tool.get("name").and_then(|value| value.as_str()))
+                .map(str::to_string)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
     if let Some(mcp_tools) = client_context
         .pointer("/mcp/client_tools")
         .and_then(|value| value.as_array())
@@ -1841,6 +1852,14 @@ pub fn acp_client_tool_descriptors_for_client_context(
         // descriptor source for `type: "acp"` servers once that draft RFD stabilizes.
         descriptors.extend(mcp_tools.iter().cloned());
     }
+    tracing::info!(
+        phase = acp_diag_phase::DESCRIPTOR_ADVERTISED,
+        static_tools = ?names,
+        dynamic_mcp_tool_count = mcp_tool_names.len(),
+        dynamic_mcp_tools = ?mcp_tool_names,
+        final_descriptor_count = descriptors.len(),
+        "ACP client tool descriptor assembly"
+    );
     if names == vec![ACP_READ_TEXT_FILE_TOOL.provider_name]
         && !adapter_supports_tool(client_context, ACP_READ_TEXT_FILE_TOOL.provider_name)
     {

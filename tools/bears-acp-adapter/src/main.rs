@@ -62,7 +62,9 @@ use tools::git::{
     handle_git_add, handle_git_commit, handle_git_diff, handle_git_log, handle_git_restore,
     handle_git_show, handle_git_stash, handle_git_status,
 };
-use tools::mcp::{parse_acp_mcp_servers, AcpMcpServerConfig, McpRegistry};
+use tools::mcp::{
+    parse_acp_mcp_servers, summarize_acp_mcp_servers_param, AcpMcpServerConfig, McpRegistry,
+};
 use tools::process::handle_process_run;
 use tools::terminal::handle_terminal_run_command;
 use tools::web::handle_local_web_fetch;
@@ -1914,6 +1916,10 @@ fn ensure_session_context_capabilities(context: &mut SessionContext) {
 }
 
 fn session_context_from_params(params: &Value) -> Result<SessionContext> {
+    eprintln!(
+        "bears-acp-adapter: session_context_from_params mcp_summary={}",
+        summarize_acp_mcp_servers_param(params)
+    );
     let mcp_servers = parse_acp_mcp_servers(params)?;
     let roots = workspace_roots_from_params(params);
     let cwd = explicit_cwd_from_params(params)
@@ -2584,6 +2590,10 @@ fn local_session_context_from_params(params: &Value) -> Result<SessionContext> {
 }
 
 fn session_context_from_den_session(params: &Value, den_session: &Value) -> Result<SessionContext> {
+    eprintln!(
+        "bears-acp-adapter: session_context_from_den_session mcp_summary={}",
+        summarize_acp_mcp_servers_param(params)
+    );
     let mcp_servers = parse_acp_mcp_servers(params)?;
     let roots = workspace_roots_from_params(params);
     let cwd = explicit_cwd_from_params(params)
@@ -3371,13 +3381,27 @@ async fn handle_prompt_with_retry(
         .or(client_context.conversation_id.as_deref())
         .map(str::to_string);
     let conversation_log = conversation_id.as_deref().unwrap_or("<den-selected>");
+    let prompt_mcp_tool_names = client_context
+        .raw
+        .pointer("/mcp/client_tools")
+        .and_then(Value::as_array)
+        .map(|tools| {
+            tools
+                .iter()
+                .filter_map(|tool| tool.get("name").and_then(Value::as_str).map(str::to_string))
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
     eprintln!(
-        "bears-acp-adapter: session/prompt session_id={} bear={} conversation_id={} client={} direct_tools={}",
+        "bears-acp-adapter: session/prompt session_id={} bear={} conversation_id={} client={} direct_tools={} mcp_servers={} mcp_tool_count={} mcp_tool_names={:?}",
         session_id,
         config.bear,
         conversation_log,
         config.client,
-        client_context.raw.get("direct_tools").cloned().unwrap_or(Value::Null)
+        client_context.raw.get("direct_tools").cloned().unwrap_or(Value::Null),
+        client_context.raw.pointer("/mcp/servers").cloned().unwrap_or(Value::Null),
+        prompt_mcp_tool_names.len(),
+        prompt_mcp_tool_names
     );
 
     if !prompt_contains_resources(&params) {
