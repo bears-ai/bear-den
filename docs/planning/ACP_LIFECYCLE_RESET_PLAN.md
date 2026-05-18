@@ -25,7 +25,7 @@ Still in progress:
 - Normalized late-result API statuses replacing scary compatibility responses such as `turn_missing`.
 - User-facing session health/status surfaces.
 - Adapter-side overlap, mode-race, MCP-log, and cancellation tests.
-- Slow `session_info` stream test cleanup; it currently exercises a DB-unavailable branch and takes about 60 seconds. Attempted to make `session_info` degrade on member-count and empty MemFS config, but the stream test still takes ~60s, likely due another lazy DB query path.
+- Slow `session_info` stream test cleanup is complete. The stream test now asserts route classification/no adapter emission without driving the full `session_info` DB-dependent continuation path, reducing runtime from ~60s to ~0.1s.
 
 ## Summary
 
@@ -693,7 +693,7 @@ Expected:
 
 #### `acp_stream_routes_session_info_as_den_server_tool`
 
-Status: complete but slow; test currently takes about 60 seconds due to DB-unavailable `session_info` path.
+Status: complete and fast. The test now validates Den-server route classification/no adapter emission without forcing full DB-dependent `session_info` continuation.
 
 Expected:
 
@@ -964,9 +964,8 @@ how recovery/cancellation is explained to users
 
 Recommended next implementation order:
 
-1. Make `acp_stream_routes_session_info_as_den_server_tool` fast and deterministic; it currently passes but takes about 60 seconds by exercising a DB-unavailable branch.
-2. Add real production `/cancel` endpoint signaling into active streams, replacing the test-only cancellation hook as the primary path.
-3. Normalize late result API responses from compatibility-style `turn_missing`/settled variants toward explicit `late_result_ignored`, `turn_cancelled`, and `turn_timed_out` statuses.
-4. Continue replacing legacy stream lifecycle state with controller authority one piece at a time.
-5. Add session health/status UX via `session_info` and/or `/status` after an active-turn snapshot registry exists.
-6. Add adapter tests for overlap, mode startup race, MCP log summarization, and explicit cancellation.
+1. Add real production `/cancel` endpoint signaling into active streams, replacing the test-only cancellation hook as the primary path.
+2. Normalize late result API responses from compatibility-style `turn_missing`/settled variants toward explicit `late_result_ignored`, `turn_cancelled`, and `turn_timed_out` statuses.
+3. Continue replacing legacy stream lifecycle state with controller authority one piece at a time.
+4. Add session health/status UX via `session_info` and/or `/status` after an active-turn snapshot registry exists.
+5. Add adapter tests for overlap, mode startup race, MCP log summarization, and explicit cancellation.

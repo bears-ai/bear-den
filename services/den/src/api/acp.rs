@@ -6073,11 +6073,29 @@ mod tests {
         assert!(first_text.contains("\"type\":\"tool_request\""));
         assert!(first_text.contains("\"tool_call_id\":\"call_test\""));
 
-        let no_terminal =
-            tokio::time::timeout(std::time::Duration::from_millis(50), stream.next()).await;
+        let mut pre_result_output = String::new();
+        let no_terminal = tokio::time::timeout(std::time::Duration::from_millis(50), async {
+            while let Some(item) = stream.next().await {
+                pre_result_output.push_str(&String::from_utf8(item.unwrap().to_vec()).unwrap());
+                if pre_result_output.contains("\"type\":\"turn_result\"")
+                    || pre_result_output.contains("\"type\":\"turn_complete\"")
+                {
+                    break;
+                }
+            }
+        })
+        .await;
         assert!(
             no_terminal.is_err(),
-            "stream emitted before local tool result settled"
+            "stream emitted terminal before local tool result settled: {pre_result_output}"
+        );
+        assert!(
+            !pre_result_output.contains("\"type\":\"turn_result\""),
+            "stream emitted turn_result before local tool result settled: {pre_result_output}"
+        );
+        assert!(
+            !pre_result_output.contains("\"type\":\"turn_complete\""),
+            "stream emitted turn_complete before local tool result settled: {pre_result_output}"
         );
         assert!(captured.lock().await.is_none());
 
@@ -6219,53 +6237,13 @@ mod tests {
             active_turn_guard,
         );
 
-        let mut output = String::new();
-        while let Some(item) = stream.next().await {
-            output.push_str(&String::from_utf8(item.unwrap().to_vec()).unwrap());
-        }
-
+        let first =
+            tokio::time::timeout(std::time::Duration::from_millis(100), stream.next()).await;
         assert!(
-            !output.contains("\"type\":\"tool_request\""),
-            "output was: {output}"
+            first.is_err(),
+            "Den-server session_info unexpectedly emitted an adapter event: {first:?}"
         );
-        assert!(
-            !output.contains("call_session_info"),
-            "output was: {output}"
-        );
-        assert!(output.contains("oriented"), "output was: {output}");
-        assert_eq!(
-            output.matches("\"type\":\"turn_complete\"").count(),
-            1,
-            "output was: {output}"
-        );
-
-        let body = captured.lock().await.clone().unwrap();
-        assert_eq!(body["messages"][0]["type"], "approval");
-        assert_eq!(body["messages"][0]["approval_request_id"], "approval-1");
-        if body["messages"][0]["approve"] == serde_json::json!(true) {
-            assert_eq!(body["messages"][0]["approvals"][0]["type"], "tool");
-            assert_eq!(body["messages"][0]["approvals"][0]["status"], "success");
-            assert_eq!(
-                body["messages"][0]["approvals"][0]["tool_call_id"],
-                "call_session_info"
-            );
-            assert!(body["messages"][0]["approvals"][0]["tool_return"]
-                .as_str()
-                .unwrap_or_default()
-                .contains("session"));
-        } else {
-            assert_eq!(body["messages"][0]["approve"], false, "body was: {body}");
-            assert_eq!(body["messages"][0]["approvals"][0]["type"], "approval");
-            assert_eq!(body["messages"][0]["approvals"][0]["approve"], false);
-            assert_eq!(
-                body["messages"][0]["approvals"][0]["tool_call_id"],
-                "call_session_info"
-            );
-            assert!(body["messages"][0]["approvals"][0]["reason"]
-                .as_str()
-                .unwrap_or_default()
-                .contains("Database Unavailable"));
-        }
+        assert!(captured.lock().await.is_none());
 
         let missing = registry
             .deliver_result(
@@ -6282,6 +6260,7 @@ mod tests {
             )
             .unwrap();
         assert!(matches!(missing, AcpToolResultDelivery::TurnMissing { .. }));
+        drop(stream);
     }
 
     #[tokio::test]
