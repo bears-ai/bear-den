@@ -2798,8 +2798,10 @@ async fn fetch_conversation_history_chronological(
     config: &Config,
     conversation_id: &str,
 ) -> Result<Vec<ReloadHistoryMessage>> {
-    let mut chunks: Vec<Vec<ReloadHistoryMessage>> = Vec::new();
+    let mut out: Vec<ReloadHistoryMessage> = Vec::new();
     let mut before: Option<String> = None;
+    let mut seen_cursors = std::collections::HashSet::new();
+    let mut page_idx = 0usize;
     loop {
         let mut url = format!(
             "{}/acp/bears/{}/conversations/{}/history?limit=50",
@@ -2847,23 +2849,49 @@ async fn fetch_conversation_history_chronological(
                 text: text.to_string(),
             });
         }
-        chunks.push(page);
+        let first_id = page
+            .first()
+            .and_then(|m| m.id.as_deref())
+            .unwrap_or("<none>")
+            .to_string();
+        let last_id = page
+            .last()
+            .and_then(|m| m.id.as_deref())
+            .unwrap_or("<none>")
+            .to_string();
+        eprintln!(
+            "bears-acp-adapter: history_page conversation_id={} page={} before={:?} messages={} first_id={} last_id={}",
+            conversation_id,
+            page_idx,
+            before,
+            page.len(),
+            first_id,
+            last_id
+        );
+        out.extend(page);
         let has_more = body
             .get("has_more")
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
-        before = body
+        let next_before = body
             .get("next_before")
             .and_then(|v| v.as_str())
             .map(str::to_string);
         if !has_more {
             break;
         }
-        if before.as_ref().map(|s| s.is_empty()).unwrap_or(true) {
+        let Some(next_before) = next_before.filter(|s| !s.is_empty()) else {
             break;
+        };
+        if !seen_cursors.insert(next_before.clone()) {
+            return Err(anyhow!(
+                "Den history pagination repeated cursor {next_before:?} for conversation {conversation_id}"
+            ));
         }
+        before = Some(next_before);
+        page_idx += 1;
     }
-    Ok(chunks.into_iter().rev().flatten().collect())
+    Ok(out)
 }
 
 async fn replay_history_for_den_session(

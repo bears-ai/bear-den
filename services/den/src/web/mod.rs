@@ -19,11 +19,11 @@ use std::sync::OnceLock;
 
 use crate::build_info;
 use crate::errors::CustomError;
-use crate::{auth_backend::Backend, config::Config};
 use crate::web::data::{
     RealWebChatTransportDataSource, RealWebLettaDataSource, RealWebMemoryDataSource,
     WebChatTransportDataSource, WebLettaDataSource, WebMemoryDataSource,
 };
+use crate::{auth_backend::Backend, config::Config};
 
 use axum::{
     body::Body,
@@ -215,11 +215,9 @@ pub async fn server_with_state(
         letta.http().clone(),
         config.letta_memfs_service_url.clone(),
     ));
-    let mut web_chat_transport: Arc<dyn WebChatTransportDataSource> =
-        Arc::new(RealWebChatTransportDataSource::new(
-            codepool.clone(),
-            codepool.is_enabled(),
-        ));
+    let mut web_chat_transport: Arc<dyn WebChatTransportDataSource> = Arc::new(
+        RealWebChatTransportDataSource::new(codepool.clone(), codepool.is_enabled()),
+    );
 
     #[cfg(feature = "web-ui-fixtures")]
     if let Some(profile) = config.ui_fixture_profile {

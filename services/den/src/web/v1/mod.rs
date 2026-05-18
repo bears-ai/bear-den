@@ -24,7 +24,7 @@ use crate::{
             BearAgentRole,
         },
         den_tools::{self, DenToolChannelContext, DenToolInvocationContext},
-        letta::{sanitize_visible_transcript_text},
+        letta::sanitize_visible_transcript_text,
         work_plans::{self, WorkPlanListFilter, WorkPlanStatus},
     },
     errors::CustomError,
@@ -212,7 +212,10 @@ async fn chat_conversations(
     };
 
     let archived_ids = archived_conversations::list_for_bear(state.sqlx_pool(), bear.id).await?;
-    let snap = state.web_letta_data.list_agent_conversations(&agent_id).await?;
+    let snap = state
+        .web_letta_data
+        .list_agent_conversations(&agent_id)
+        .await?;
     let conversations: Vec<ChatConversationRow> = snap
         .all
         .into_iter()
@@ -273,7 +276,10 @@ async fn chat_conversation_patch(
         ));
     };
 
-    let snap = state.web_letta_data.list_agent_conversations(&agent_id).await?;
+    let snap = state
+        .web_letta_data
+        .list_agent_conversations(&agent_id)
+        .await?;
     let found = snap.all.iter().any(|r| r.id == conv_id);
     if !found {
         return Err(CustomError::NotFound("conversation not found".to_string()));

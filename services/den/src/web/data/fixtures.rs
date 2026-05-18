@@ -13,8 +13,8 @@ use uuid::Uuid;
 use crate::{
     config::UiFixtureProfile,
     core::memory_manager_head::{
-        MemfsRoleMemoryFileResponse, MemfsRoleMemorySearchResponse,
-        MemfsRoleMemoryStatusResponse, MemfsRoleMemoryTreeResponse, MemfsViewHealth,
+        MemfsRoleMemoryFileResponse, MemfsRoleMemorySearchResponse, MemfsRoleMemoryStatusResponse,
+        MemfsRoleMemoryTreeResponse, MemfsViewHealth,
     },
     errors::CustomError,
     web::data::{

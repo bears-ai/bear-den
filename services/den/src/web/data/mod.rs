@@ -13,5 +13,7 @@ pub mod memory;
 pub mod fixtures;
 
 pub use chat_transport::{RealWebChatTransportDataSource, WebChatTransportDataSource};
-pub use letta::{RealWebLettaDataSource, WebConversationRow, WebConversationSnapshot, WebLettaDataSource};
+pub use letta::{
+    RealWebLettaDataSource, WebConversationRow, WebConversationSnapshot, WebLettaDataSource,
+};
 pub use memory::{RealWebMemoryDataSource, WebMemoryDataSource};

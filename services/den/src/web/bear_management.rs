@@ -29,9 +29,9 @@ use crate::{
         },
         letta::{AgentSummary, LettaAgentDiagnostics},
         memory_manager_head::{
-            delete_memfs_role_memory_entries, fetch_memory_manager_repository_files,
-            fetch_memory_manager_repository_status, fetch_memfs_role_memory_file,
-            fetch_memfs_role_memory_tree,
+            delete_memfs_role_memory_entries, fetch_memfs_role_memory_file,
+            fetch_memfs_role_memory_tree, fetch_memory_manager_repository_files,
+            fetch_memory_manager_repository_status,
         },
         memory_proposals::{self, CreateMemoryProposal},
         pair_reflection, user,
@@ -1080,7 +1080,9 @@ async fn build_role_detail_view(
     let memfs_url = state.config.letta_memfs_service_url.trim().to_string();
     let mut role_row = BearRoleViewRow::from_agent(agent.clone(), role);
     if !memfs_url.is_empty() {
-        match state.web_memory_data.fetch_role_view_health(bear.id, role.as_str())
+        match state
+            .web_memory_data
+            .fetch_role_view_health(bear.id, role.as_str())
             .await
         {
             Ok(Some(view)) => {
@@ -1106,7 +1108,9 @@ async fn build_role_detail_view(
     let mut memory_allowed_prefixes = Vec::new();
     let mut memory_recent_activity = Vec::new();
     if !memfs_url.is_empty() {
-        match state.web_memory_data.fetch_role_memory_status(bear.id, role.as_str())
+        match state
+            .web_memory_data
+            .fetch_role_memory_status(bear.id, role.as_str())
             .await
         {
             Ok(Some(status)) => {
@@ -1206,8 +1210,10 @@ async fn bear_role_rows(
             .map_err(|err| CustomError::System(format!("invalid bear agent role in DB: {err}")))?;
         let mut row = BearRoleViewRow::from_agent(agent, role);
         if !memfs_url.is_empty() {
-            match state.web_memory_data.fetch_role_view_health(bear_id, role.as_str())
-            .await
+            match state
+                .web_memory_data
+                .fetch_role_view_health(bear_id, role.as_str())
+                .await
             {
                 Ok(Some(view)) => {
                     row.memfs_view_state = Some(view.state);
@@ -1564,7 +1570,10 @@ async fn render_bear_details_page(
         let mut rows = Vec::new();
         let mut archived_count = 0usize;
         if let Some(agent_id) = talk_agent_id.as_deref() {
-            let snap = state.web_letta_data.list_agent_conversations(agent_id).await?;
+            let snap = state
+                .web_letta_data
+                .list_agent_conversations(agent_id)
+                .await?;
             archived_count += snap
                 .all
                 .iter()
@@ -1585,7 +1594,10 @@ async fn render_bear_details_page(
             );
         }
         if let Some(agent_id) = pair_agent_id.as_deref() {
-            let snap = state.web_letta_data.list_agent_conversations(agent_id).await?;
+            let snap = state
+                .web_letta_data
+                .list_agent_conversations(agent_id)
+                .await?;
             archived_count += snap
                 .all
                 .iter()
@@ -2370,7 +2382,10 @@ async fn bear_conversations_get(
         let acp_ids = acp_conversation_ids_for_bear(state.sqlx_pool(), &bear).await?;
         let mut rows = Vec::new();
         if let Some(agent_id) = talk_agent_id.as_deref() {
-            let snap = state.web_letta_data.list_agent_conversations(agent_id).await?;
+            let snap = state
+                .web_letta_data
+                .list_agent_conversations(agent_id)
+                .await?;
             rows.extend(snap.all.into_iter().map(|mut r| {
                 if archived_ids.contains(&r.id) {
                     r.archived = true;
@@ -2386,7 +2401,10 @@ async fn bear_conversations_get(
             }));
         }
         if let Some(agent_id) = pair_agent_id.as_deref() {
-            let snap = state.web_letta_data.list_agent_conversations(agent_id).await?;
+            let snap = state
+                .web_letta_data
+                .list_agent_conversations(agent_id)
+                .await?;
             rows.extend(
                 snap.all
                     .into_iter()
@@ -2485,8 +2503,10 @@ async fn bear_memory_get(
             error: None,
         };
         if !memfs_url.is_empty() {
-            match state.web_memory_data.fetch_role_memory_status(bear.id, role.as_str())
-            .await
+            match state
+                .web_memory_data
+                .fetch_role_memory_status(bear.id, role.as_str())
+                .await
             {
                 Ok(Some(status)) => {
                     row.status_state = status.canonical_tip.as_ref().map(|_| "ok".to_string());
@@ -2518,8 +2538,10 @@ async fn bear_memory_get(
     }
 
     let selected_tree = if !memfs_url.is_empty() {
-        match state.web_memory_data.fetch_role_memory_tree(bear.id, selected_role.as_str())
-        .await
+        match state
+            .web_memory_data
+            .fetch_role_memory_tree(bear.id, selected_role.as_str())
+            .await
         {
             Ok(Some(tree)) => Some(tree),
             Ok(None) => None,
@@ -2534,8 +2556,10 @@ async fn bear_memory_get(
 
     let search_results = if !memfs_url.is_empty() {
         if let Some(query) = search_query {
-            match state.web_memory_data.search_role_memory(bear.id, selected_role.as_str(), query, Some(50))
-            .await
+            match state
+                .web_memory_data
+                .search_role_memory(bear.id, selected_role.as_str(), query, Some(50))
+                .await
             {
                 Ok(v) => v,
                 Err(err) => {
@@ -2552,8 +2576,10 @@ async fn bear_memory_get(
 
     let selected_file = if !memfs_url.is_empty() {
         if let Some(path) = selected_path {
-            match state.web_memory_data.fetch_role_memory_file(bear.id, selected_role.as_str(), path)
-            .await
+            match state
+                .web_memory_data
+                .fetch_role_memory_file(bear.id, selected_role.as_str(), path)
+                .await
             {
                 Ok(v) => v,
                 Err(err) => {

@@ -1454,9 +1454,11 @@ fn map_acp_history_page(
 ) -> (Vec<AcpConversationHistoryMessage>, bool, Option<String>) {
     let raw = letta_messages_top_array(body);
     let has_more = raw.len() >= page_limit as usize;
+    // Letta history is requested with `order_by=created_at_desc`; the last raw row is the
+    // oldest item in this page and therefore the correct `before` cursor for the next page.
     let next_before = raw.iter().filter_map(letta_message_id_string).next_back();
     let mut rows = Vec::new();
-    for msg in raw.iter() {
+    for msg in raw.iter().rev() {
         let inner = letta_inner_for_acp_history(msg);
         let message_type = inner
             .get("message_type")
@@ -2148,7 +2150,7 @@ async fn conversation_history_inner(
     };
     let body = state
         .letta
-        .list_conversation_messages(&conv_id, agent_for_conv, limit, before, true)
+        .list_conversation_messages(&conv_id, agent_for_conv, limit, before, false)
         .await?;
     let (messages, has_more, next_before) = map_acp_history_page(&body, limit);
     Ok(Json(AcpConversationHistoryResponse {
@@ -5380,6 +5382,32 @@ impl Stream for AcpLettaSseStream {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn acp_history_page_replays_desc_letta_page_chronologically() {
+        let body = serde_json::json!({
+            "messages": [
+                { "id": "m4", "message_type": "assistant_message", "content": "reply 2", "created_at": "2026-01-01T00:00:04Z" },
+                { "id": "m3", "message_type": "user_message", "content": "ask 2", "created_at": "2026-01-01T00:00:03Z" },
+                { "id": "m2", "message_type": "assistant_message", "content": "reply 1", "created_at": "2026-01-01T00:00:02Z" },
+                { "id": "m1", "message_type": "user_message", "content": "ask 1", "created_at": "2026-01-01T00:00:01Z" }
+            ]
+        });
+        let (messages, _has_more, next_before) = map_acp_history_page(&body, 4);
+        assert_eq!(next_before.as_deref(), Some("m1"));
+        assert_eq!(
+            messages
+                .iter()
+                .map(|message| (message.role.as_str(), message.text.as_str()))
+                .collect::<Vec<_>>(),
+            vec![
+                ("user", "ask 1"),
+                ("assistant", "reply 1"),
+                ("user", "ask 2"),
+                ("assistant", "reply 2"),
+            ]
+        );
+    }
 
     #[test]
     fn summarize_letta_event_for_log_redacts_large_tool_return() {

@@ -102,8 +102,15 @@ impl WebMemoryDataSource for RealWebMemoryDataSource {
         query: &str,
         limit: Option<usize>,
     ) -> Result<Option<MemfsRoleMemorySearchResponse>, CustomError> {
-        search_memfs_role_memory(&self.http, &self.memfs_base_url, bear_id, role, query, limit)
-            .await
+        search_memfs_role_memory(
+            &self.http,
+            &self.memfs_base_url,
+            bear_id,
+            role,
+            query,
+            limit,
+        )
+        .await
     }
 
     async fn fetch_role_memory_file(
