@@ -6616,6 +6616,7 @@ mod tests {
             session_contexts: Arc::new(TokioMutex::new(HashMap::new())),
             last_plan_update_hashes: Arc::new(TokioMutex::new(HashMap::new())),
             tool_tasks: ToolTaskRegistry::default(),
+            mcp_registry: McpRegistry::default(),
             approval_cache: ApprovalCache::default(),
             cancellation_tx,
             active_prompts: Arc::new(TokioMutex::new(HashMap::new())),

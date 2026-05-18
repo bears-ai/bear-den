@@ -23,7 +23,6 @@ pub(crate) struct McpRegistry {
 
 #[derive(Default)]
 struct McpSession {
-    servers: Vec<AcpMcpServerConfig>,
     tools: HashMap<String, McpToolRoute>,
 }
 
@@ -338,7 +337,7 @@ impl McpRegistry {
         let mut sessions = self.sessions.lock().await;
         let tool_count = tools.len();
         let tool_names = tools.keys().cloned().collect::<Vec<_>>();
-        sessions.insert(session_id.to_string(), McpSession { servers, tools });
+        sessions.insert(session_id.to_string(), McpSession { tools });
         eprintln!(
             "bears-acp-adapter: acp_mcp_configure_complete session_id={} dynamic_tool_count={} dynamic_tool_names={:?}",
             session_id,
