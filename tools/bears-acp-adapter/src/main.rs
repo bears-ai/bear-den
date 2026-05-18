@@ -4917,12 +4917,67 @@ async fn handle_tool_request_event(
     Ok(())
 }
 
-fn tool_completion_preview(tool_name: &str, value: &Value) -> String {
-    let content = value.get("content").and_then(Value::as_str).unwrap_or("");
-    let mut text = if content.trim().is_empty() {
-        format!("Local tool {tool_name} completed.")
+fn command_line_from_value(value: &Value) -> Option<String> {
+    let command = value.get("command")?.as_str()?.trim();
+    if command.is_empty() {
+        return None;
+    }
+    let args = value
+        .get("args")
+        .and_then(Value::as_array)
+        .map(|items| items.iter().filter_map(Value::as_str).collect::<Vec<_>>())
+        .unwrap_or_default();
+    Some(if args.is_empty() {
+        command.to_string()
     } else {
-        format!("Local tool {tool_name} completed.\n\n{content}")
+        format!("{} {}", command, args.join(" "))
+    })
+}
+
+fn tool_completion_preview(tool_name: &str, value: &Value) -> String {
+    if matches!(tool_name, "process_run" | "terminal_run_command") {
+        let command = command_line_from_value(value).unwrap_or_else(|| "command".to_string());
+        let cwd = value
+            .get("cwd")
+            .and_then(Value::as_str)
+            .unwrap_or("workspace");
+        let elapsed = value.get("elapsed_ms").and_then(Value::as_u64);
+        let timed_out = value
+            .get("timed_out")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        let status = if timed_out {
+            "timed out".to_string()
+        } else if let Some(code) = value.get("exit_code").and_then(Value::as_i64) {
+            format!("exit code {code}")
+        } else if let Some(signal) = value.get("signal").and_then(Value::as_str) {
+            format!("signal {signal}")
+        } else {
+            "completed".to_string()
+        };
+        let mut text = format!("`{command}` in `{cwd}` finished with {status}.");
+        if let Some(elapsed) = elapsed {
+            text.push_str(&format!(" elapsed_ms={elapsed}."));
+        }
+        if value
+            .get("truncated")
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+        {
+            text.push_str(" Output was truncated.");
+        }
+        return text;
+    }
+
+    let content = value
+        .get("content")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .trim();
+    let mut text = if content.is_empty() {
+        "Completed.".to_string()
+    } else {
+        content.to_string()
     };
     let max_chars = 4_000;
     if text.chars().count() > max_chars {
@@ -5848,10 +5903,6 @@ fn permission_family_label(tool_name: &str) -> &'static str {
 }
 
 fn tool_call_title(tool_name: &str, event: &Value) -> String {
-    let display = ToolDisplay::from_event(tool_name, event);
-    if event.get("display").is_some() {
-        return display.title;
-    }
     if matches!(tool_name, "process_run" | "terminal_run_command") {
         let command = event
             .get("args")
@@ -6131,7 +6182,11 @@ async fn send_tool_call_update(
     let display = event
         .map(|event| ToolDisplay::from_event(tool_name, event))
         .unwrap_or_else(|| tool_display(tool_name));
-    let mut content = vec![ToolCallContent::from(text.to_string())];
+    let mut content = Vec::new();
+    let trimmed_text = text.trim();
+    if !trimmed_text.is_empty() && trimmed_text != "Completed." {
+        content.push(ToolCallContent::from(trimmed_text.to_string()));
+    }
     content.extend(extra_content);
     let title = event
         .map(|event| tool_call_title(tool_name, event))
@@ -6765,14 +6820,28 @@ mod tests {
     #[test]
     fn tool_completion_preview_includes_content_and_truncates() {
         let value = json!({ "content": "abc" });
-        assert_eq!(
-            tool_completion_preview("fs_list_directory", &value),
-            "Local tool fs_list_directory completed.\n\nabc"
-        );
+        assert_eq!(tool_completion_preview("fs_list_directory", &value), "abc");
         let long = json!({ "content": "x".repeat(4_100) });
         let preview = tool_completion_preview("fs_read_text_file", &long);
         assert!(preview.contains("... truncated"));
         assert!(preview.chars().count() < 4_050);
+    }
+
+    #[test]
+    fn command_tool_completion_preview_shows_command() {
+        let value = json!({
+            "command": "cargo",
+            "args": ["test", "--all"],
+            "cwd": "/workspace/tools/bears-acp-adapter",
+            "exit_code": 0,
+            "timed_out": false,
+            "elapsed_ms": 1234,
+            "truncated": false
+        });
+        let preview = tool_completion_preview("terminal_run_command", &value);
+        assert!(preview.contains("`cargo test --all`"));
+        assert!(preview.contains("exit code 0"));
+        assert!(!preview.contains("Local tool"));
     }
 
     #[test]
