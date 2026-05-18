@@ -4646,21 +4646,17 @@ async fn map_letta_stream_frame_to_acp_adapter_events_with_persistence(
         tool_call_id,
         tool_name,
         result_rx,
-        approval_required: false,
+        approval_required,
         ..
     } = &mut event
     {
-        adapter_result_rx = result_rx
-            .take()
-            .map(|rx| (tool_call_id.clone(), tool_name.clone(), rx));
+        if !*approval_required {
+            adapter_result_rx = result_rx
+                .take()
+                .map(|rx| (tool_call_id.clone(), tool_name.clone(), rx));
+        }
     }
-    let events = match &event {
-        AcpGatewayEvent::ToolRequest {
-            approval_required: false,
-            ..
-        } if adapter_result_rx.is_some() => Vec::new(),
-        _ => vec![event],
-    };
+    let events = vec![event];
     Ok((events, adapter_result_rx))
 }
 
@@ -4832,16 +4828,22 @@ struct AcpLettaSseStream {
     text_chunker: AcpTextChunker,
     stream_terminated: bool,
     emitted_turn_result: bool,
+    deferred_turn_result: Option<AcpGatewayEvent>,
     active_turn_guard: Option<crate::core::role_runtime::RoleTurnGuard>,
 }
 
 impl AcpLettaSseStream {
-    fn push_turn_result_once(&mut self, event: AcpGatewayEvent) {
-        if !matches!(event, AcpGatewayEvent::TurnResult { .. }) {
-            self.diagnostics.observe_mapped_event(&event);
-            self.pending.push_back(acp_event_to_adapter_sse(event));
-            return;
-        }
+    fn outstanding_tool_obligations(&self) -> Vec<String> {
+        self.context
+            .tool_turns
+            .pending_for_session(&self.context.acp_session_id)
+            .into_iter()
+            .filter(|turn| turn.request_id == self.context.request_id)
+            .map(|turn| turn.tool_call_id)
+            .collect()
+    }
+
+    fn push_turn_result_now(&mut self, event: AcpGatewayEvent) {
         if self.emitted_turn_result {
             tracing::warn!(
                 request_id = %self.context.request_id,
@@ -4854,6 +4856,38 @@ impl AcpLettaSseStream {
         self.stream_terminated = true;
         self.diagnostics.observe_mapped_event(&event);
         self.pending.push_back(acp_event_to_adapter_sse(event));
+    }
+
+    fn push_or_defer_turn_result(&mut self, event: AcpGatewayEvent) {
+        if !matches!(event, AcpGatewayEvent::TurnResult { .. }) {
+            self.diagnostics.observe_mapped_event(&event);
+            self.pending.push_back(acp_event_to_adapter_sse(event));
+            return;
+        }
+        let outstanding = self.outstanding_tool_obligations();
+        if outstanding.is_empty() {
+            self.push_turn_result_now(event);
+            return;
+        }
+        tracing::info!(
+            request_id = %self.context.request_id,
+            acp_session_id = %self.context.acp_session_id,
+            outstanding_tool_call_ids = ?outstanding,
+            "deferred ACP turn_result until local tool obligations settle"
+        );
+        self.deferred_turn_result = Some(event);
+    }
+
+    fn try_flush_deferred_turn_result(&mut self) {
+        if self.deferred_turn_result.is_none() {
+            return;
+        }
+        if !self.outstanding_tool_obligations().is_empty() || self.pending_tool_result.is_some() {
+            return;
+        }
+        if let Some(event) = self.deferred_turn_result.take() {
+            self.push_turn_result_now(event);
+        }
     }
 
     fn new(
@@ -4884,6 +4918,7 @@ impl AcpLettaSseStream {
             text_chunker: AcpTextChunker::new(acp_text_chunk_chars()),
             stream_terminated: false,
             emitted_turn_result: false,
+            deferred_turn_result: None,
             active_turn_guard: Some(active_turn_guard),
         }
     }
@@ -4930,6 +4965,21 @@ impl Stream for AcpLettaSseStream {
         let this = self.as_mut().get_mut();
         if let Some(bytes) = this.pending.pop_front() {
             return Poll::Ready(Some(Ok(bytes)));
+        }
+
+        if this.persist_future.is_none()
+            && this.pending_tool_result.is_none()
+            && (!this.outstanding_tool_obligations().is_empty()
+                || !this.active_tool_call_ids.is_empty())
+        {
+            tracing::debug!(
+                request_id = %this.context.request_id,
+                acp_session_id = %this.context.acp_session_id,
+                outstanding_tool_call_ids = ?this.outstanding_tool_obligations(),
+                active_tool_call_ids = ?this.active_tool_call_ids,
+                "ACP stream waiting for local tool result before polling upstream terminal state"
+            );
+            return Poll::Pending;
         }
 
         if let Some(fut) = this.persist_future.as_mut() {
@@ -5076,6 +5126,7 @@ impl Stream for AcpLettaSseStream {
                         // the result and continue reading the current stream; once it ends,
                         // start the tool-return continuation.
                         this.pending_tool_result = Some(tool_result);
+                        this.try_flush_deferred_turn_result();
                         return self.poll_next(cx);
                     }
                 }
@@ -5085,6 +5136,7 @@ impl Stream for AcpLettaSseStream {
                     match result {
                         Ok(response) => {
                             this.inner = Box::pin(response.bytes_stream());
+                            this.stream_terminated = false;
                             return self.poll_next(cx);
                         }
                         Err(err) => {
@@ -5162,7 +5214,7 @@ impl Stream for AcpLettaSseStream {
                         retryable,
                         diagnostics,
                     };
-                    this.push_turn_result_once(event);
+                    this.push_or_defer_turn_result(event);
                     let event = if this.diagnostics.saw_requires_approval_stop
                         && !this.diagnostics.saw_tool_return_ack
                     {
@@ -5244,7 +5296,7 @@ impl Stream for AcpLettaSseStream {
                     retryable,
                     diagnostics,
                 };
-                this.push_turn_result_once(turn_result);
+                this.push_or_defer_turn_result(turn_result);
                 let event = serde_json::json!({
                     "type": "error",
                     "message": "Letta stream ended unexpectedly while BEARS was waiting for events.",
@@ -5278,6 +5330,18 @@ impl Stream for AcpLettaSseStream {
                 }
                 if !this.pending_raw_frames.is_empty() {
                     self.poll_next(cx)
+                } else if this.pending_tool_result.is_none()
+                    && (!this.outstanding_tool_obligations().is_empty()
+                        || !this.active_tool_call_ids.is_empty())
+                {
+                    tracing::debug!(
+                        request_id = %this.context.request_id,
+                        acp_session_id = %this.context.acp_session_id,
+                        outstanding_tool_call_ids = ?this.outstanding_tool_obligations(),
+                        active_tool_call_ids = ?this.active_tool_call_ids,
+                        "ACP upstream ended while local tool obligations are outstanding; waiting for results"
+                    );
+                    Poll::Pending
                 } else if let Some(tool_result) = this.pending_tool_result.take() {
                     let letta = this.letta.clone();
                     let continuation = this.continuation.clone();
@@ -5318,6 +5382,8 @@ impl Stream for AcpLettaSseStream {
                         })));
                     self.poll_next(cx)
                 } else if this.diagnostics.saw_requires_approval_stop
+                    && this.outstanding_tool_obligations().is_empty()
+                    && this.active_tool_call_ids.is_empty()
                     && !this.diagnostics.saw_tool_return_ack
                     && !this.diagnostics.emitted_runtime_cleanup
                 {
@@ -5372,7 +5438,7 @@ impl Stream for AcpLettaSseStream {
                             retryable,
                             diagnostics,
                         };
-                        this.push_turn_result_once(event);
+                        this.push_or_defer_turn_result(event);
                     }
                     if !this.pending.is_empty() {
                         return self.poll_next(cx);
@@ -5615,7 +5681,7 @@ mod tests {
                     request_id: Some("request-test".to_string()),
                     tool_call_id: Some("call_test".to_string()),
                     tool_name: Some("fs_read_text_file".to_string()),
-                    approval_request_id: Some("approval-1".to_string()),
+                    approval_request_id: None,
                     status: "ok".to_string(),
                     content: Some("hello from file".to_string()),
                     structured_content: serde_json::json!({}),
@@ -5638,12 +5704,10 @@ mod tests {
 
         let body = captured.lock().await.clone().unwrap();
         assert_eq!(body["client_tools"][0]["name"], "fs_read_text_file");
-        assert_eq!(body["messages"][0]["type"], "approval");
-        assert_eq!(body["messages"][0]["approval_request_id"], "approval-1");
-        assert_eq!(body["messages"][0]["approve"], true);
-        assert_eq!(body["messages"][0]["approvals"][0]["type"], "tool");
+        assert_eq!(body["messages"][0]["type"], "tool_return");
+        assert_eq!(body["messages"][0]["tool_returns"][0]["type"], "tool");
         assert_eq!(
-            body["messages"][0]["approvals"][0]["tool_call_id"],
+            body["messages"][0]["tool_returns"][0]["tool_call_id"],
             "call_test"
         );
     }
@@ -5876,7 +5940,7 @@ mod tests {
                 AcpToolResultRequest {
                     tool_call_id: Some("call_conflict".to_string()),
                     tool_name: Some("fs_read_text_file".to_string()),
-                    approval_request_id: Some("approval-1".to_string()),
+                    approval_request_id: None,
                     status: "ok".to_string(),
                     content: Some("hello".to_string()),
                     structured_content: serde_json::json!({}),

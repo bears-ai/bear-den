@@ -390,7 +390,7 @@ fn native_letta_tool_request_event_with_args(
     }
     let tool_call_id =
         tool_call_id(tool_call, inner, event).unwrap_or_else(|| format!("call-{}", Uuid::new_v4()));
-    let client_approval_required = true;
+    let client_approval_required = has_letta_approval_request;
     let letta_approval_request_id = has_letta_approval_request.then(|| {
         event
             .get("id")
@@ -498,7 +498,7 @@ impl LettaToolCallAccumulator {
         let mapped = native_letta_tool_request_event_with_args(
             event,
             inner,
-            message_type == "approval_request_message",
+            false,
             Some(args),
             Some(tool_name),
         );
@@ -993,7 +993,7 @@ mod tests {
     }
 
     #[test]
-    fn tool_call_message_requires_adapter_approval_even_without_letta_approval() {
+    fn tool_call_message_without_letta_approval_is_adapter_direct() {
         let event = tool_call_event(
             "fs_edit_file",
             serde_json::json!({
@@ -1010,11 +1010,9 @@ mod tests {
                 approval_reason,
                 ..
             } => {
-                assert!(approval_required);
+                assert!(!approval_required);
                 assert!(approval_request_id.is_none());
-                assert!(approval_reason
-                    .unwrap()
-                    .contains("BEARS requires client approval"));
+                assert!(approval_reason.is_none());
             }
             other => panic!("unexpected event: {other:?}"),
         }
