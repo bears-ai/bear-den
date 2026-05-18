@@ -54,6 +54,9 @@ use crate::{
             acp_provider_tool_names_for_client_context, acp_tool_policy_json_for_provider,
             resolve_session_policy_for_mode, AcpToolStatus,
         },
+        acp_turn_controller::{
+            AcpToolExecutionRoute as ControllerToolExecutionRoute, AcpTurnController,
+        },
         archived_conversations,
         bears::{db as bears_db, Bear, BearAgentRole},
         den_tools::{self, DenToolChannelContext, DenToolInvocationContext},
@@ -3602,6 +3605,16 @@ enum ToolExecutionRoute {
     Unsupported,
 }
 
+impl From<ToolExecutionRoute> for ControllerToolExecutionRoute {
+    fn from(route: ToolExecutionRoute) -> Self {
+        match route {
+            ToolExecutionRoute::DenServer => Self::DenServer,
+            ToolExecutionRoute::AdapterLocal => Self::AdapterLocal,
+            ToolExecutionRoute::Unsupported => Self::Unsupported,
+        }
+    }
+}
+
 fn tool_execution_route(tool_name: &str, args: &serde_json::Value) -> ToolExecutionRoute {
     if args.get("_unsupported_detail").is_some() {
         ToolExecutionRoute::Unsupported
@@ -3612,11 +3625,18 @@ fn tool_execution_route(tool_name: &str, args: &serde_json::Value) -> ToolExecut
     }
 }
 
+struct PersistedToolRequestEffect {
+    tool_call_id: String,
+    tool_name: String,
+    route: ToolExecutionRoute,
+    den_server_result_rx: Option<oneshot::Receiver<AcpToolResultRequest>>,
+}
+
 async fn persist_stream_event_side_effects(
     context: &AcpStreamContext,
     event: &mut AcpGatewayEvent,
-) -> Result<Option<(String, String, oneshot::Receiver<AcpToolResultRequest>)>, CustomError> {
-    let mut den_server_result_rx = None;
+) -> Result<Option<PersistedToolRequestEffect>, CustomError> {
+    let mut tool_request_effect = None;
     match event {
         AcpGatewayEvent::ConversationResolved { conversation_id } => {
             acp_sessions::mark_resolved(
@@ -3641,6 +3661,9 @@ async fn persist_stream_event_side_effects(
             ..
         } => {
             let route = tool_execution_route(tool_name, args);
+            let effect_tool_call_id = tool_call_id.clone();
+            let effect_tool_name = tool_name.clone();
+            let mut effect_den_server_result_rx = None;
             tracing::info!(
                 request_id = %context.request_id,
                 acp_session_id = %context.acp_session_id,
@@ -3716,8 +3739,7 @@ async fn persist_stream_event_side_effects(
                     .await;
                     let _ = result_tx.send(result);
                     if let Some(result_rx) = result_rx.take() {
-                        den_server_result_rx =
-                            Some((tool_call_id.clone(), tool_name.clone(), result_rx));
+                        effect_den_server_result_rx = Some(result_rx);
                     }
                     tracing::info!(
                         request_id = %context.request_id,
@@ -3757,10 +3779,16 @@ async fn persist_stream_event_side_effects(
                     );
                 }
             }
+            tool_request_effect = Some(PersistedToolRequestEffect {
+                tool_call_id: effect_tool_call_id,
+                tool_name: effect_tool_name,
+                route,
+                den_server_result_rx: effect_den_server_result_rx,
+            });
         }
         _ => {}
     }
-    Ok(den_server_result_rx)
+    Ok(tool_request_effect)
 }
 
 async fn handle_den_server_tool_request(
@@ -4382,6 +4410,14 @@ impl AcpStreamDiagnostics {
     }
 
     fn diagnostic_json(&self, context: &AcpStreamContext) -> serde_json::Value {
+        self.diagnostic_json_with_turn_controller(context, None)
+    }
+
+    fn diagnostic_json_with_turn_controller(
+        &self,
+        context: &AcpStreamContext,
+        turn_controller: Option<&AcpTurnController>,
+    ) -> serde_json::Value {
         serde_json::json!({
             "request_id": context.request_id,
             "acp_session_id": context.acp_session_id,
@@ -4399,6 +4435,20 @@ impl AcpStreamDiagnostics {
             "saw_turn_complete": self.saw_turn_complete,
             "saw_tool_return_ack": self.saw_tool_return_ack,
             "saw_requires_approval_stop": self.saw_requires_approval_stop,
+            "turn_controller": turn_controller.map(|controller| {
+                let snapshot = controller.status_snapshot();
+                serde_json::json!({
+                    "phase": format!("{:?}", snapshot.phase),
+                    "open_obligations": snapshot.open_obligations,
+                    "pending_adapter_tools": snapshot.pending_adapter_tools,
+                    "pending_den_tools": snapshot.pending_den_tools,
+                    "pending_permissions": snapshot.pending_permissions,
+                    "terminal_status": snapshot.terminal_status.map(|status| format!("{:?}", status)),
+                    "terminal_reason": snapshot.terminal_reason.map(|reason| format!("{:?}", reason)),
+                    "orphaned_requires_approval": snapshot.orphaned_requires_approval,
+                    "late_results_ignored": snapshot.late_results_ignored,
+                })
+            }),
         })
     }
 
@@ -4689,6 +4739,7 @@ async fn map_letta_stream_frame_to_acp_adapter_events_with_persistence(
 ) -> Result<
     (
         Vec<AcpGatewayEvent>,
+        Option<PersistedToolRequestEffect>,
         Option<(String, String, AcpResolvedToolResult)>,
     ),
     std::io::Error,
@@ -4703,9 +4754,9 @@ async fn map_letta_stream_frame_to_acp_adapter_events_with_persistence(
                 error = %msg,
                 "ACP upstream Letta SSE event JSON parse failed"
             );
-            return Ok((Vec::new(), None));
+            return Ok((Vec::new(), None, None));
         }
-        Ok(None) => return Ok((Vec::new(), None)),
+        Ok(None) => return Ok((Vec::new(), None, None)),
         Ok(Some(v)) => v,
     };
     diagnostics.observe_parsed_event(&value);
@@ -4715,7 +4766,7 @@ async fn map_letta_stream_frame_to_acp_adapter_events_with_persistence(
         &mut diagnostics.tool_call_accumulator,
     ) else {
         diagnostics.observe_unmapped_event(&value);
-        return Ok((Vec::new(), None));
+        return Ok((Vec::new(), None, None));
     };
     // Keep both halves of the per-tool result channel on the event until
     // `persist_stream_event_side_effects` has decided whether this is an
@@ -4738,10 +4789,10 @@ async fn map_letta_stream_frame_to_acp_adapter_events_with_persistence(
                 duplicate_count = *count,
                 "ignoring duplicate streamed ACP tool request"
             );
-            return Ok((Vec::new(), None));
+            return Ok((Vec::new(), None, None));
         }
     }
-    let mut den_server_result_rx = persist_stream_event_side_effects(&context, &mut event)
+    let tool_request_effect = persist_stream_event_side_effects(&context, &mut event)
         .await
         .map_err(|err| std::io::Error::other(err.to_string()))?;
     if let AcpGatewayEvent::ToolRequest {
@@ -4766,8 +4817,11 @@ async fn map_letta_stream_frame_to_acp_adapter_events_with_persistence(
             ToolExecutionRoute::Unsupported => {}
         }
     }
-    let events = match den_server_result_rx {
-        Some((tool_call_id, tool_name, rx)) => {
+    let mut tool_request_effect = tool_request_effect;
+    let events = if let Some(effect) = tool_request_effect.as_mut() {
+        if let Some(rx) = effect.den_server_result_rx.take() {
+            let tool_call_id = effect.tool_call_id.clone();
+            let tool_name = effect.tool_name.clone();
             let result = rx
                 .await
                 .map_err(|err| std::io::Error::other(err.to_string()))?;
@@ -4777,10 +4831,13 @@ async fn map_letta_stream_frame_to_acp_adapter_events_with_persistence(
                 AcpResolvedToolResult::Ready(result),
             ));
             Vec::new()
+        } else {
+            vec![event]
         }
-        None => vec![event],
+    } else {
+        vec![event]
     };
-    Ok((events, adapter_result_rx))
+    Ok((events, tool_request_effect, adapter_result_rx))
 }
 
 enum AcpResolvedToolResult {
@@ -4797,6 +4854,7 @@ enum AcpPendingFuture {
                             Result<
                                 (
                                     Vec<AcpGatewayEvent>,
+                                    Option<PersistedToolRequestEffect>,
                                     Option<(String, String, AcpResolvedToolResult)>,
                                 ),
                                 std::io::Error,
@@ -4955,6 +5013,7 @@ struct AcpLettaSseStream {
     deferred_turn_result: Option<AcpGatewayEvent>,
     active_turn_guard: Option<crate::core::role_runtime::RoleTurnGuard>,
     cancel_rx: Option<tokio::sync::watch::Receiver<bool>>,
+    turn_controller: AcpTurnController,
 }
 
 impl AcpLettaSseStream {
@@ -5046,6 +5105,11 @@ impl AcpLettaSseStream {
             deferred_turn_result: None,
             active_turn_guard: Some(active_turn_guard),
             cancel_rx: None,
+            turn_controller: {
+                let mut controller = AcpTurnController::new();
+                controller.on_stream_started();
+                controller
+            },
         }
     }
 
@@ -5105,6 +5169,7 @@ impl Stream for AcpLettaSseStream {
             .is_some_and(|cancel_rx| *cancel_rx.borrow())
             && !this.emitted_turn_result
         {
+            this.turn_controller.on_cancel();
             this.cleanup_active_tool_turns();
             this.pending_tool_result = None;
             this.persist_future = None;
@@ -5115,7 +5180,7 @@ impl Stream for AcpLettaSseStream {
                 this.context.turn_scope.clone(),
                 false,
                 serde_json::json!({
-                    "stream": this.diagnostics.diagnostic_json(&this.context),
+                    "stream": this.diagnostics.diagnostic_json_with_turn_controller(&this.context, Some(&this.turn_controller)),
                     "cancelled_by": "acp_test_cancel_signal",
                 }),
             );
@@ -5157,7 +5222,14 @@ impl Stream for AcpLettaSseStream {
                     this.persist_future = None;
                     this.diagnostics = diagnostics;
                     match result {
-                        Ok((events, result_rx)) => {
+                        Ok((events, tool_effect, result_rx)) => {
+                            if let Some(effect) = tool_effect.as_ref() {
+                                this.turn_controller.on_tool_request(
+                                    effect.tool_call_id.clone(),
+                                    effect.tool_name.clone(),
+                                    ControllerToolExecutionRoute::from(effect.route),
+                                );
+                            }
                             for event in events {
                                 for event in this.text_chunker.push(event) {
                                     this.diagnostics.observe_mapped_event(&event);
@@ -5263,6 +5335,13 @@ impl Stream for AcpLettaSseStream {
                     this.persist_future = None;
                     let tool_result = result;
                     {
+                        if let Some(done_id) = tool_result.tool_call_id.as_deref() {
+                            let ok = tool_result.status == "ok";
+                            this.turn_controller.on_adapter_tool_result(done_id, ok);
+                            if tool_result.status == "timeout" {
+                                this.turn_controller.on_tool_timeout(done_id);
+                            }
+                        }
                         if let Some(done_id) = tool_result.tool_call_id.as_deref() {
                             this.active_tool_call_ids.retain(|id| id != done_id);
                             this.context
@@ -5383,7 +5462,7 @@ impl Stream for AcpLettaSseStream {
                         true,
                         serde_json::json!({
                             "cleanup": cleanup.clone(),
-                            "stream": this.diagnostics.diagnostic_json(&this.context),
+                            "stream": this.diagnostics.diagnostic_json_with_turn_controller(&this.context, Some(&this.turn_controller)),
                         }),
                     );
                     let (status, reason, request_id, session_id, retryable, diagnostics) =
@@ -5465,7 +5544,7 @@ impl Stream for AcpLettaSseStream {
                     false,
                     serde_json::json!({
                         "error": message,
-                        "stream": this.diagnostics.diagnostic_json(&this.context),
+                        "stream": this.diagnostics.diagnostic_json_with_turn_controller(&this.context, Some(&this.turn_controller)),
                     }),
                 );
                 let (status, reason, request_id, session_id, retryable, diagnostics) =
@@ -5608,7 +5687,10 @@ impl Stream for AcpLettaSseStream {
                             this.context.request_id,
                             this.context.turn_scope.clone(),
                             false,
-                            this.diagnostics.diagnostic_json(&this.context),
+                            this.diagnostics.diagnostic_json_with_turn_controller(
+                                &this.context,
+                                Some(&this.turn_controller),
+                            ),
                         );
                         let (status, reason, request_id, session_id, retryable, diagnostics) =
                             role_result.to_event_fields();
