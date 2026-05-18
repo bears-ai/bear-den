@@ -116,6 +116,19 @@ fn acp_debug_ui_enabled() -> bool {
     env_flag("BEARS_ACP_DEBUG_UI")
 }
 
+fn acp_tool_timeout_ms_for_provider(tool_name: &str) -> u64 {
+    std::env::var("BEARS_ACP_TOOL_TIMEOUT_MS")
+        .ok()
+        .and_then(|value| value.trim().parse::<u64>().ok())
+        .map(|value| value.clamp(1, 300_000))
+        .unwrap_or_else(|| {
+            acp_tool_policy_json_for_provider(tool_name)
+                .get("tool_timeout_ms")
+                .and_then(serde_json::Value::as_u64)
+                .unwrap_or(30_000)
+        })
+}
+
 fn acp_debug_event_sample_chars() -> usize {
     std::env::var("ACP_DEBUG_EVENT_SAMPLE_CHARS")
         .ok()
@@ -3685,7 +3698,9 @@ async fn persist_stream_event_side_effects(
                     let canonical_name = acp_den_provider_to_canonical_tool_name(tool_name)
                         .ok_or_else(|| CustomError::System("missing Den tool route".to_string()))?;
                     let result_tx = result_tx.take().ok_or_else(|| {
-                        CustomError::System("ACP Den tool request missing result channel".to_string())
+                        CustomError::System(
+                            "ACP Den tool request missing result channel".to_string(),
+                        )
                     })?;
                     let den_approval_request_id = approval_request_id.clone();
                     *approval_required = false;
@@ -3701,11 +3716,8 @@ async fn persist_stream_event_side_effects(
                     .await;
                     let _ = result_tx.send(result);
                     if let Some(result_rx) = result_rx.take() {
-                        den_server_result_rx = Some((
-                            tool_call_id.clone(),
-                            tool_name.clone(),
-                            result_rx,
-                        ));
+                        den_server_result_rx =
+                            Some((tool_call_id.clone(), tool_name.clone(), result_rx));
                     }
                     tracing::info!(
                         request_id = %context.request_id,
@@ -3730,10 +3742,7 @@ async fn persist_stream_event_side_effects(
                         tool_call_id: tool_call_id.clone(),
                         tool_name: tool_name.clone(),
                         approval_request_id: approval_request_id.clone(),
-                        timeout_ms: acp_tool_policy_json_for_provider(tool_name)
-                            .get("tool_timeout_ms")
-                            .and_then(serde_json::Value::as_u64)
-                            .unwrap_or(30_000),
+                        timeout_ms: acp_tool_timeout_ms_for_provider(tool_name),
                         result_tx,
                     })?;
                     tracing::info!(
@@ -3838,10 +3847,7 @@ async fn handle_web_fetch_tool_request(
             tool_call_id: tool_call_id.clone(),
             tool_name: tool_name.clone(),
             approval_request_id: approval_request_id.clone(),
-            timeout_ms: acp_tool_policy_json_for_provider(tool_name)
-                .get("tool_timeout_ms")
-                .and_then(serde_json::Value::as_u64)
-                .unwrap_or(30_000),
+            timeout_ms: acp_tool_timeout_ms_for_provider(tool_name),
             result_tx,
         })?;
         return Ok(());
@@ -4748,9 +4754,13 @@ async fn map_letta_stream_frame_to_acp_adapter_events_with_persistence(
     {
         match tool_execution_route(tool_name, args) {
             ToolExecutionRoute::AdapterLocal => {
-                adapter_result_rx = result_rx
-                    .take()
-                    .map(|rx| (tool_call_id.clone(), tool_name.clone(), AcpResolvedToolResult::Receiver(rx)));
+                adapter_result_rx = result_rx.take().map(|rx| {
+                    (
+                        tool_call_id.clone(),
+                        tool_name.clone(),
+                        AcpResolvedToolResult::Receiver(rx),
+                    )
+                });
             }
             ToolExecutionRoute::DenServer => {}
             ToolExecutionRoute::Unsupported => {}
@@ -4758,8 +4768,14 @@ async fn map_letta_stream_frame_to_acp_adapter_events_with_persistence(
     }
     let events = match den_server_result_rx {
         Some((tool_call_id, tool_name, rx)) => {
-            let result = rx.await.map_err(|err| std::io::Error::other(err.to_string()))?;
-            adapter_result_rx = Some((tool_call_id, tool_name, AcpResolvedToolResult::Ready(result)));
+            let result = rx
+                .await
+                .map_err(|err| std::io::Error::other(err.to_string()))?;
+            adapter_result_rx = Some((
+                tool_call_id,
+                tool_name,
+                AcpResolvedToolResult::Ready(result),
+            ));
             Vec::new()
         }
         None => vec![event],
@@ -4781,11 +4797,7 @@ enum AcpPendingFuture {
                             Result<
                                 (
                                     Vec<AcpGatewayEvent>,
-                                    Option<(
-                                        String,
-                                        String,
-                                        AcpResolvedToolResult,
-                                    )>,
+                                    Option<(String, String, AcpResolvedToolResult)>,
                                 ),
                                 std::io::Error,
                             >,
@@ -5109,20 +5121,26 @@ impl Stream for AcpLettaSseStream {
                                 }
                             }
                             if let Some((tool_call_id, tool_name, result_rx)) = result_rx {
+                                let approval_request_id = this
+                                    .context
+                                    .tool_turns
+                                    .pending_for_session(&this.context.acp_session_id)
+                                    .into_iter()
+                                    .find(|pending| pending.tool_call_id == tool_call_id)
+                                    .and_then(|pending| pending.approval_request_id);
                                 this.active_tool_call_ids.push(tool_call_id.clone());
                                 this.persist_future = Some(AcpPendingFuture::Tool(Box::pin(
                                     async move {
-                                        let AcpResolvedToolResult::Receiver(result_rx) = result_rx else {
-                                            if let AcpResolvedToolResult::Ready(result) = result_rx {
+                                        let AcpResolvedToolResult::Receiver(result_rx) = result_rx
+                                        else {
+                                            if let AcpResolvedToolResult::Ready(result) = result_rx
+                                            {
                                                 return result;
                                             }
                                             unreachable!();
                                         };
                                         let timeout_ms =
-                                            acp_tool_policy_json_for_provider(&tool_name)
-                                                .get("tool_timeout_ms")
-                                                .and_then(serde_json::Value::as_u64)
-                                                .unwrap_or(30_000);
+                                            acp_tool_timeout_ms_for_provider(&tool_name);
                                         match tokio::time::timeout(
                                             std::time::Duration::from_millis(timeout_ms),
                                             result_rx,
@@ -5132,6 +5150,7 @@ impl Stream for AcpLettaSseStream {
                                             Err(_) => AcpToolResultRequest {
                                                 tool_call_id: Some(tool_call_id.clone()),
                                                 tool_name: Some(tool_name.clone()),
+                                                approval_request_id: approval_request_id.clone(),
                                                 status: "timeout".to_string(),
                                                 content: Some(format!(
                                                     "BEARS denied this approval automatically because `{tool_name}` timed out after {timeout_ms}ms."
@@ -5149,6 +5168,7 @@ impl Stream for AcpLettaSseStream {
                                             Ok(Err(err)) => AcpToolResultRequest {
                                                 tool_call_id: Some(tool_call_id.clone()),
                                                 tool_name: Some(tool_name.clone()),
+                                                approval_request_id: approval_request_id.clone(),
                                                 status: "error".to_string(),
                                                 content: Some(format!(
                                                     "BEARS denied this approval automatically because the ACP local tool result channel closed: {err}"
@@ -5989,7 +6009,9 @@ mod tests {
 
     #[tokio::test]
     async fn acp_stream_routes_session_info_as_den_server_tool() {
-        use axum::{extract::State, http::header, response::IntoResponse, routing::post, Json, Router};
+        use axum::{
+            extract::State, http::header, response::IntoResponse, routing::post, Json, Router,
+        };
         use futures::StreamExt;
         use sqlx::postgres::PgPoolOptions;
         use std::sync::Arc;
@@ -6066,11 +6088,12 @@ mod tests {
             role_runtime: role_runtime.clone(),
             turn_scope,
         };
-        let upstream = futures::stream::iter(vec![Ok::<Bytes, reqwest::Error>(Bytes::from(concat!(
-            "data: {\"id\":\"approval-1\",\"message_type\":\"approval_request_message\",",
-            "\"tool_call\":{\"name\":\"session_info\",\"tool_call_id\":\"call_session_info\",",
-            "\"arguments\":\"{}\"}}\n\n"
-        )))]);
+        let upstream =
+            futures::stream::iter(vec![Ok::<Bytes, reqwest::Error>(Bytes::from(concat!(
+                "data: {\"id\":\"approval-1\",\"message_type\":\"approval_request_message\",",
+                "\"tool_call\":{\"name\":\"session_info\",\"tool_call_id\":\"call_session_info\",",
+                "\"arguments\":\"{}\"}}\n\n"
+            )))]);
         let mut stream = AcpLettaSseStream::new(
             upstream,
             context,
@@ -6091,10 +6114,20 @@ mod tests {
             output.push_str(&String::from_utf8(item.unwrap().to_vec()).unwrap());
         }
 
-        assert!(!output.contains("\"type\":\"tool_request\""), "output was: {output}");
-        assert!(!output.contains("call_session_info"), "output was: {output}");
+        assert!(
+            !output.contains("\"type\":\"tool_request\""),
+            "output was: {output}"
+        );
+        assert!(
+            !output.contains("call_session_info"),
+            "output was: {output}"
+        );
         assert!(output.contains("oriented"), "output was: {output}");
-        assert_eq!(output.matches("\"type\":\"turn_complete\"").count(), 1, "output was: {output}");
+        assert_eq!(
+            output.matches("\"type\":\"turn_complete\"").count(),
+            1,
+            "output was: {output}"
+        );
 
         let body = captured.lock().await.clone().unwrap();
         assert_eq!(body["messages"][0]["type"], "approval");
@@ -6102,24 +6135,26 @@ mod tests {
         if body["messages"][0]["approve"] == serde_json::json!(true) {
             assert_eq!(body["messages"][0]["approvals"][0]["type"], "tool");
             assert_eq!(body["messages"][0]["approvals"][0]["status"], "success");
-            assert_eq!(body["messages"][0]["approvals"][0]["tool_call_id"], "call_session_info");
-            assert!(
-                body["messages"][0]["approvals"][0]["tool_return"]
-                    .as_str()
-                    .unwrap_or_default()
-                    .contains("session")
+            assert_eq!(
+                body["messages"][0]["approvals"][0]["tool_call_id"],
+                "call_session_info"
             );
+            assert!(body["messages"][0]["approvals"][0]["tool_return"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("session"));
         } else {
             assert_eq!(body["messages"][0]["approve"], false, "body was: {body}");
             assert_eq!(body["messages"][0]["approvals"][0]["type"], "approval");
             assert_eq!(body["messages"][0]["approvals"][0]["approve"], false);
-            assert_eq!(body["messages"][0]["approvals"][0]["tool_call_id"], "call_session_info");
-            assert!(
-                body["messages"][0]["approvals"][0]["reason"]
-                    .as_str()
-                    .unwrap_or_default()
-                    .contains("Database Unavailable")
+            assert_eq!(
+                body["messages"][0]["approvals"][0]["tool_call_id"],
+                "call_session_info"
             );
+            assert!(body["messages"][0]["approvals"][0]["reason"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("Database Unavailable"));
         }
 
         let missing = registry
@@ -6137,6 +6172,183 @@ mod tests {
             )
             .unwrap();
         assert!(matches!(missing, AcpToolResultDelivery::TurnMissing { .. }));
+    }
+
+    #[tokio::test]
+    async fn acp_stream_timeout_pending_local_tool() {
+        use axum::{
+            extract::State, http::header, response::IntoResponse, routing::post, Json, Router,
+        };
+        use futures::StreamExt;
+        use sqlx::postgres::PgPoolOptions;
+        use std::sync::Arc;
+        use tokio::sync::Mutex as TokioMutex;
+
+        #[derive(Clone)]
+        struct FakeState {
+            captured: Arc<TokioMutex<Option<serde_json::Value>>>,
+        }
+
+        async fn fake_tool_return(
+            State(state): State<FakeState>,
+            Json(body): Json<serde_json::Value>,
+        ) -> impl IntoResponse {
+            *state.captured.lock().await = Some(body);
+            (
+                [(header::CONTENT_TYPE, "text/event-stream; charset=utf-8")],
+                concat!(
+                    "data: {\"message_type\":\"assistant_message\",\"content\":\"handled timeout\"}\n\n",
+                    "data: {\"message_type\":\"stop_reason\",\"stop_reason\":\"end_turn\"}\n\n"
+                ),
+            )
+        }
+
+        let captured = Arc::new(TokioMutex::new(None));
+        let app = Router::new()
+            .route(
+                "/v1/conversations/{conversation_id}/messages",
+                post(fake_tool_return),
+            )
+            .with_state(FakeState {
+                captured: captured.clone(),
+            });
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+
+        std::env::set_var("BEARS_ACP_TOOL_TIMEOUT_MS", "20");
+
+        let mut config = crate::config::Config::load();
+        config.letta_base_url = format!("http://{addr}");
+        let letta = Arc::new(crate::core::letta::LettaClient::new(&config));
+        let pool = PgPoolOptions::new()
+            .connect_lazy("postgres://postgres:postgres@127.0.0.1/postgres")
+            .unwrap();
+        let registry = AcpToolTurnCoordinator::new();
+        let request_id = Uuid::new_v4();
+        let role_runtime = RoleRuntime::new(registry.clone());
+        let turn_scope = RoleTurnScope::acp_pair(
+            Uuid::new_v4(),
+            "acp-timeout-session",
+            Some("conv-timeout".to_string()),
+        );
+        let active_turn_guard = role_runtime
+            .acquire_turn(turn_scope.clone(), request_id)
+            .unwrap();
+        let context = AcpStreamContext {
+            pool,
+            tool_turns: registry.clone(),
+            user_id: 1,
+            user_profile: None,
+            bear_id: Uuid::new_v4(),
+            bear_slug: "test-bear".to_string(),
+            acp_session_id: "acp-timeout-session".to_string(),
+            conversation_selection: "new-acp-test".to_string(),
+            resolved_conversation_id: Some("conv-timeout".to_string()),
+            upstream_target: "conv-timeout".to_string(),
+            workspace_roots: vec!["/workspace".to_string()],
+            session_policy: None,
+            activity: None,
+            request_id,
+            pair_agent_id: "agent-12345678-1234-4567-89ab-123456789abc".to_string(),
+            config: Arc::new(crate::config::Config::test_stub()),
+            role_runtime: role_runtime.clone(),
+            turn_scope,
+        };
+        let upstream = futures::stream::iter(vec![
+            Ok::<Bytes, reqwest::Error>(Bytes::from(concat!(
+                "data: {\"id\":\"approval-timeout\",\"message_type\":\"approval_request_message\",",
+                "\"tool_call\":{\"name\":\"fs_read_text_file\",\"tool_call_id\":\"call_timeout\",",
+                "\"arguments\":\"{\\\"path\\\":\\\"/tmp/acp-timeout.txt\\\"}\"}}\n\n"
+            ))),
+            Ok::<Bytes, reqwest::Error>(Bytes::from(
+                "data: {\"message_type\":\"stop_reason\",\"stop_reason\":\"requires_approval\"}\n\n",
+            )),
+        ]);
+        let mut stream = AcpLettaSseStream::new(
+            upstream,
+            context,
+            Vec::new(),
+            letta,
+            LettaContinuationContext {
+                conversation_id: "conv-timeout".to_string(),
+                agent_id: Some("agent-12345678-1234-4567-89ab-123456789abc".to_string()),
+                client_tools: Some(serde_json::json!([{ "name": "fs_read_text_file" }])),
+                stream_tokens: false,
+                max_steps: 2,
+            },
+            active_turn_guard,
+        );
+
+        let first = stream.next().await.unwrap().unwrap();
+        let first_text = String::from_utf8(first.to_vec()).unwrap();
+        assert!(first_text.contains("\"type\":\"tool_request\""));
+        assert!(first_text.contains("\"tool_call_id\":\"call_timeout\""));
+
+        let mut output = String::new();
+        let stream_result = tokio::time::timeout(std::time::Duration::from_secs(2), async {
+            while let Some(item) = stream.next().await {
+                output.push_str(&String::from_utf8(item.unwrap().to_vec()).unwrap());
+            }
+        })
+        .await;
+        std::env::remove_var("BEARS_ACP_TOOL_TIMEOUT_MS");
+        assert!(
+            stream_result.is_ok(),
+            "stream timed out; output was: {output}"
+        );
+
+        assert!(
+            output.contains("Local tool fs_read_text_file completed"),
+            "output was: {output}"
+        );
+        assert!(output.contains("handled timeout"), "output was: {output}");
+        assert_eq!(
+            output.matches("\"type\":\"turn_complete\"").count(),
+            1,
+            "output was: {output}"
+        );
+
+        let body = captured.lock().await.clone().unwrap();
+        assert_eq!(body["messages"][0]["type"], "approval");
+        assert_eq!(
+            body["messages"][0]["approval_request_id"],
+            "approval-timeout"
+        );
+        assert_eq!(body["messages"][0]["approve"], false);
+        assert_eq!(body["messages"][0]["approvals"][0]["type"], "approval");
+        assert_eq!(body["messages"][0]["approvals"][0]["approve"], false);
+        assert_eq!(
+            body["messages"][0]["approvals"][0]["tool_call_id"],
+            "call_timeout"
+        );
+        assert!(body["messages"][0]["approvals"][0]["reason"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("timed out after 20ms"));
+
+        let late = registry
+            .deliver_result(
+                1,
+                "test-bear",
+                "acp-timeout-session",
+                "call_timeout",
+                AcpToolResultRequest {
+                    tool_call_id: Some("call_timeout".to_string()),
+                    tool_name: Some("fs_read_text_file".to_string()),
+                    status: "ok".to_string(),
+                    content: Some("late result".to_string()),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        assert!(matches!(
+            late,
+            AcpToolResultDelivery::RecentlySettled { .. }
+                | AcpToolResultDelivery::TurnMissing { .. }
+        ));
     }
 
     #[tokio::test]
