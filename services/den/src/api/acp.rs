@@ -3624,84 +3624,98 @@ async fn persist_stream_event_side_effects(
             approval_required,
             approval_reason,
             ..
-        } => match tool_execution_route(tool_name, args) {
-            ToolExecutionRoute::Unsupported => {
-                let result_tx = result_tx.take().ok_or_else(|| {
-                    CustomError::System(
-                        "ACP unsupported tool request missing result channel".to_string(),
-                    )
-                })?;
-                *approval_required = false;
-                *approval_reason = None;
-                let detail = args
-                    .get("_unsupported_detail")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("Unsupported ACP/Den tool")
-                    .to_string();
-                let result = AcpToolResultRequest {
-                    turn_id: None,
-                    request_id: Some(context.request_id.to_string()),
-                    tool_call_id: Some(tool_call_id.clone()),
-                    tool_name: Some(tool_name.clone()),
-                    approval_request_id: approval_request_id.clone(),
-                    status: "unsupported".to_string(),
-                    content: Some(detail.clone()),
-                    structured_content: serde_json::json!({}),
-                    diagnostic: serde_json::json!({
-                        "component": "den.acp",
-                        "phase": "unsupported_tool_settled",
-                        "tool_name": tool_name,
-                        "tool_call_id": tool_call_id,
-                    }),
-                    ..Default::default()
-                };
-                let _ = result_tx.send(result);
-                tracing::warn!(
-                    request_id = %context.request_id,
-                    acp_session_id = %context.acp_session_id,
-                    tool_request_id = %request_id,
-                    tool_call_id = %tool_call_id,
-                    tool_name = %tool_name,
-                    detail = %detail,
-                    "ACP unsupported tool request settled with error result"
-                );
+        } => {
+            let route = tool_execution_route(tool_name, args);
+            tracing::info!(
+                request_id = %context.request_id,
+                acp_session_id = %context.acp_session_id,
+                tool_request_id = %request_id,
+                tool_call_id = %tool_call_id,
+                tool_name = %tool_name,
+                route = ?route,
+                approval_required = %approval_required,
+                approval_request_id = ?approval_request_id,
+                "ACP tool request route classified"
+            );
+            match route {
+                ToolExecutionRoute::Unsupported => {
+                    let result_tx = result_tx.take().ok_or_else(|| {
+                        CustomError::System(
+                            "ACP unsupported tool request missing result channel".to_string(),
+                        )
+                    })?;
+                    *approval_required = false;
+                    *approval_reason = None;
+                    let detail = args
+                        .get("_unsupported_detail")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("Unsupported ACP/Den tool")
+                        .to_string();
+                    let result = AcpToolResultRequest {
+                        turn_id: None,
+                        request_id: Some(context.request_id.to_string()),
+                        tool_call_id: Some(tool_call_id.clone()),
+                        tool_name: Some(tool_name.clone()),
+                        approval_request_id: approval_request_id.clone(),
+                        status: "unsupported".to_string(),
+                        content: Some(detail.clone()),
+                        structured_content: serde_json::json!({}),
+                        diagnostic: serde_json::json!({
+                            "component": "den.acp",
+                            "phase": "unsupported_tool_settled",
+                            "tool_name": tool_name,
+                            "tool_call_id": tool_call_id,
+                        }),
+                        ..Default::default()
+                    };
+                    let _ = result_tx.send(result);
+                    tracing::warn!(
+                        request_id = %context.request_id,
+                        acp_session_id = %context.acp_session_id,
+                        tool_request_id = %request_id,
+                        tool_call_id = %tool_call_id,
+                        tool_name = %tool_name,
+                        detail = %detail,
+                        "ACP unsupported tool request settled with error result"
+                    );
+                }
+                ToolExecutionRoute::DenServer => {
+                    let canonical_name = acp_den_provider_to_canonical_tool_name(tool_name)
+                        .ok_or_else(|| CustomError::System("missing Den tool route".to_string()))?;
+                    handle_den_server_tool_request(context, event, canonical_name, false).await?;
+                }
+                ToolExecutionRoute::AdapterLocal => {
+                    let result_tx = result_tx.take().ok_or_else(|| {
+                        CustomError::System("ACP tool request missing result channel".to_string())
+                    })?;
+                    context.tool_turns.register(AcpToolTurnRegistration {
+                        user_id: context.user_id,
+                        bear_id: context.bear_id,
+                        bear_slug: context.bear_slug.clone(),
+                        acp_session_id: context.acp_session_id.clone(),
+                        request_id: context.request_id,
+                        tool_call_id: tool_call_id.clone(),
+                        tool_name: tool_name.clone(),
+                        approval_request_id: approval_request_id.clone(),
+                        timeout_ms: acp_tool_policy_json_for_provider(tool_name)
+                            .get("tool_timeout_ms")
+                            .and_then(serde_json::Value::as_u64)
+                            .unwrap_or(30_000),
+                        result_tx,
+                    })?;
+                    tracing::info!(
+                        request_id = %context.request_id,
+                        acp_session_id = %context.acp_session_id,
+                        tool_request_id = %request_id,
+                        tool_call_id = %tool_call_id,
+                        tool_name = %tool_name,
+                        approval_required = %approval_required,
+                        approval_request_id = ?approval_request_id,
+                        "ACP adapter-local tool obligation registered"
+                    );
+                }
             }
-            ToolExecutionRoute::DenServer => {
-                let canonical_name = acp_den_provider_to_canonical_tool_name(tool_name)
-                    .ok_or_else(|| CustomError::System("missing Den tool route".to_string()))?;
-                handle_den_server_tool_request(context, event, canonical_name, false).await?;
-            }
-            ToolExecutionRoute::AdapterLocal => {
-                let result_tx = result_tx.take().ok_or_else(|| {
-                    CustomError::System("ACP tool request missing result channel".to_string())
-                })?;
-                context.tool_turns.register(AcpToolTurnRegistration {
-                    user_id: context.user_id,
-                    bear_id: context.bear_id,
-                    bear_slug: context.bear_slug.clone(),
-                    acp_session_id: context.acp_session_id.clone(),
-                    request_id: context.request_id,
-                    tool_call_id: tool_call_id.clone(),
-                    tool_name: tool_name.clone(),
-                    approval_request_id: approval_request_id.clone(),
-                    timeout_ms: acp_tool_policy_json_for_provider(tool_name)
-                        .get("tool_timeout_ms")
-                        .and_then(serde_json::Value::as_u64)
-                        .unwrap_or(30_000),
-                    result_tx,
-                })?;
-                tracing::info!(
-                    request_id = %context.request_id,
-                    acp_session_id = %context.acp_session_id,
-                    tool_request_id = %request_id,
-                    tool_call_id = %tool_call_id,
-                    tool_name = %tool_name,
-                    approval_required = %approval_required,
-                    approval_request_id = ?approval_request_id,
-                    "ACP adapter-local tool obligation registered"
-                );
-            }
-        },
+        }
         _ => {}
     }
     Ok(())

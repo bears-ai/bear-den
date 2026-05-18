@@ -693,6 +693,46 @@ fn truncate_for_log(s: &str, max: usize) -> String {
     }
 }
 
+fn summarize_mcp_for_log(mcp: Option<&Value>) -> Value {
+    let Some(mcp) = mcp else {
+        return Value::Null;
+    };
+    let servers = mcp
+        .get("servers")
+        .and_then(Value::as_array)
+        .map(|servers| {
+            servers
+                .iter()
+                .map(|server| {
+                    json!({
+                        "name": server.get("name").and_then(Value::as_str),
+                        "status": server.get("status").and_then(Value::as_str),
+                        "transport": server.get("transport").and_then(Value::as_str),
+                        "tool_count": server.get("tool_count").and_then(Value::as_u64),
+                    })
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    let tool_names = mcp
+        .get("client_tools")
+        .and_then(Value::as_array)
+        .map(|tools| {
+            tools
+                .iter()
+                .filter_map(|tool| tool.get("name").and_then(Value::as_str))
+                .map(str::to_string)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    json!({
+        "server_count": servers.len(),
+        "servers": servers,
+        "tool_count": tool_names.len(),
+        "tool_names": tool_names,
+    })
+}
+
 #[derive(Default)]
 struct SseStreamDiagnostics {
     frames: usize,
@@ -1243,7 +1283,7 @@ async fn handle_request(
                         .get("direct_tools")
                         .cloned()
                         .unwrap_or(Value::Null),
-                    context.raw.get("mcp").cloned().unwrap_or(Value::Null)
+                    summarize_mcp_for_log(context.raw.get("mcp"))
                 );
                 shared_state
                     .session_contexts
@@ -2753,6 +2793,24 @@ async fn request_den_session_mode(
     let status = response.status();
     let body = response.text().await.unwrap_or_default();
     if !status.is_success() {
+        if status == reqwest::StatusCode::NOT_FOUND && body.contains("ACP session not found") {
+            eprintln!(
+                "bears-acp-adapter: Den session mode deferred because session is not known yet session_id={} requested_mode={} status={} body={}",
+                session_id,
+                requested_mode,
+                status,
+                truncate_for_log(body.trim(), 240)
+            );
+            return Ok((
+                MODE_ASK,
+                json!({
+                    "message": "Den session is not created yet; keeping adapter-local Ask mode until the first prompt binds the session.",
+                    "deferred": true,
+                    "status": status.as_u16(),
+                    "source": "adapter.den_session_mode_not_found"
+                }),
+            ));
+        }
         return Err(anyhow!(
             "Den session mode endpoint returned HTTP {status}: {}",
             body.trim()
@@ -3019,7 +3077,7 @@ async fn restore_session_from_den(
             .get("direct_tools")
             .cloned()
             .unwrap_or(Value::Null),
-        context.raw.get("mcp").cloned().unwrap_or(Value::Null)
+        summarize_mcp_for_log(context.raw.get("mcp"))
     );
     shared_state
         .session_contexts
@@ -3089,7 +3147,7 @@ async fn handle_session_load(
             .get("direct_tools")
             .cloned()
             .unwrap_or(Value::Null),
-        context.raw.get("mcp").cloned().unwrap_or(Value::Null)
+        summarize_mcp_for_log(context.raw.get("mcp"))
     );
     shared_state
         .session_contexts
@@ -4840,6 +4898,74 @@ async fn handle_tool_request_event(
         tool_name,
         ToolTaskPhase::ExecutionStarted,
     );
+    if tool_name == "session_info" {
+        let local_err = LocalToolError::error(
+            "Den routed server-side tool `session_info` to the ACP adapter unexpectedly; this tool must be executed inside Den.".to_string(),
+        );
+        task_registry
+            .set_phase(
+                session_id,
+                tool_call_id,
+                tool_name,
+                ToolTaskPhase::ExecutionFailed,
+            )
+            .await;
+        log_tool_task_phase(
+            session_id,
+            tool_call_id,
+            tool_name,
+            ToolTaskPhase::ExecutionFailed,
+        );
+        let mut payload = json!({
+            "turn_id": event.get("turn_id").and_then(Value::as_str),
+            "request_id": event.get("request_id").and_then(Value::as_str),
+            "tool_call_id": tool_call_id,
+            "approval_request_id": event.get("approval_request_id").and_then(Value::as_str),
+            "tool_name": tool_name,
+            "status": local_err.status_str(),
+            "content": local_err.message,
+            "structured_content": {},
+            "diagnostic": {
+                "component": "bears-acp-adapter",
+                "adapter_version": env!("CARGO_PKG_VERSION"),
+                "phase": "unexpected_den_server_tool_routed_to_adapter",
+                "session_id": session_id,
+                "tool_call_id": tool_call_id,
+                "tool_name": tool_name,
+                "duration_ms": started.elapsed().as_millis(),
+            }
+        });
+        merge_diagnostic(&mut payload["diagnostic"], local_err.diagnostic);
+        if let Err(err) = post_tool_result(config, session_id, tool_call_id, payload).await {
+            if is_turn_missing_error(&err) {
+                eprintln!(
+                    "bears-acp-adapter: late unexpected server-tool result ignored because Den turn is gone session_id={} tool_call_id={} tool_name={} error={:#}",
+                    session_id,
+                    tool_call_id,
+                    tool_name,
+                    err
+                );
+                return Ok(());
+            }
+            return Err(err);
+        }
+        task_registry
+            .set_phase(
+                session_id,
+                tool_call_id,
+                tool_name,
+                ToolTaskPhase::ResultPosted,
+            )
+            .await;
+        log_tool_task_phase(
+            session_id,
+            tool_call_id,
+            tool_name,
+            ToolTaskPhase::ResultPosted,
+        );
+        return Ok(());
+    }
+
     let result = if let Some(ref plan) = replace_plan {
         let context = session_context(adapter_state, session_id)?;
         plan.apply(context, &policy)
@@ -4971,6 +5097,16 @@ async fn handle_tool_request_event(
         }
     }
     if let Err(err) = post_tool_result(config, session_id, tool_call_id, payload).await {
+        if is_turn_missing_error(&err) {
+            eprintln!(
+                "bears-acp-adapter: late local tool result ignored because Den turn is gone session_id={} tool_call_id={} tool_name={} error={:#}",
+                session_id,
+                tool_call_id,
+                tool_name,
+                err
+            );
+            return Ok(());
+        }
         task_registry
             .set_phase(
                 session_id,
@@ -5294,6 +5430,11 @@ async fn post_permission_result(
         return Err(anyhow!(den_status_error_message(status, body.trim())));
     }
     Ok(serde_json::from_str(&body).unwrap_or_else(|_| json!({ "raw": body })))
+}
+
+fn is_turn_missing_error(err: &anyhow::Error) -> bool {
+    let message = format!("{err:#}");
+    message.contains("turn_missing") || message.contains("tool_result_missing")
 }
 
 async fn post_tool_result(
