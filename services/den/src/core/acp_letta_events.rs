@@ -498,7 +498,7 @@ impl LettaToolCallAccumulator {
         let mapped = native_letta_tool_request_event_with_args(
             event,
             inner,
-            false,
+            message_type == "approval_request_message",
             Some(args),
             Some(tool_name),
         );
@@ -993,7 +993,7 @@ mod tests {
     }
 
     #[test]
-    fn tool_call_message_without_letta_approval_is_adapter_direct() {
+    fn tool_call_message_requires_adapter_result_without_letta_approval() {
         let event = tool_call_event(
             "fs_edit_file",
             serde_json::json!({

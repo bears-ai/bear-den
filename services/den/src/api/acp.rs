@@ -3582,6 +3582,23 @@ struct AcpStreamContext {
     turn_scope: RoleTurnScope,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ToolExecutionRoute {
+    DenServer,
+    AdapterLocal,
+    Unsupported,
+}
+
+fn tool_execution_route(tool_name: &str, args: &serde_json::Value) -> ToolExecutionRoute {
+    if args.get("_unsupported_detail").is_some() {
+        ToolExecutionRoute::Unsupported
+    } else if acp_den_provider_to_canonical_tool_name(tool_name).is_some() {
+        ToolExecutionRoute::DenServer
+    } else {
+        ToolExecutionRoute::AdapterLocal
+    }
+}
+
 async fn persist_stream_event_side_effects(
     context: &AcpStreamContext,
     event: &mut AcpGatewayEvent,
@@ -3607,8 +3624,8 @@ async fn persist_stream_event_side_effects(
             approval_required,
             approval_reason,
             ..
-        } => {
-            if args.get("_unsupported_detail").is_some() {
+        } => match tool_execution_route(tool_name, args) {
+            ToolExecutionRoute::Unsupported => {
                 let result_tx = result_tx.take().ok_or_else(|| {
                     CustomError::System(
                         "ACP unsupported tool request missing result channel".to_string(),
@@ -3648,10 +3665,13 @@ async fn persist_stream_event_side_effects(
                     detail = %detail,
                     "ACP unsupported tool request settled with error result"
                 );
-            } else if let Some(canonical_name) = acp_den_provider_to_canonical_tool_name(tool_name)
-            {
+            }
+            ToolExecutionRoute::DenServer => {
+                let canonical_name = acp_den_provider_to_canonical_tool_name(tool_name)
+                    .ok_or_else(|| CustomError::System("missing Den tool route".to_string()))?;
                 handle_den_server_tool_request(context, event, canonical_name, false).await?;
-            } else {
+            }
+            ToolExecutionRoute::AdapterLocal => {
                 let result_tx = result_tx.take().ok_or_else(|| {
                     CustomError::System("ACP tool request missing result channel".to_string())
                 })?;
@@ -3676,10 +3696,12 @@ async fn persist_stream_event_side_effects(
                     tool_request_id = %request_id,
                     tool_call_id = %tool_call_id,
                     tool_name = %tool_name,
-                    "ACP tool request registered"
+                    approval_required = %approval_required,
+                    approval_request_id = ?approval_request_id,
+                    "ACP adapter-local tool obligation registered"
                 );
             }
-        }
+        },
         _ => {}
     }
     Ok(())
@@ -4672,12 +4694,15 @@ async fn map_letta_stream_frame_to_acp_adapter_events_with_persistence(
     if let AcpGatewayEvent::ToolRequest {
         tool_call_id,
         tool_name,
+        args,
         result_rx,
-        approval_required,
         ..
     } = &mut event
     {
-        if !*approval_required {
+        if matches!(
+            tool_execution_route(tool_name, args),
+            ToolExecutionRoute::AdapterLocal
+        ) {
             adapter_result_rx = result_rx
                 .take()
                 .map(|rx| (tool_call_id.clone(), tool_name.clone(), rx));
@@ -5731,10 +5756,12 @@ mod tests {
 
         let body = captured.lock().await.clone().unwrap();
         assert_eq!(body["client_tools"][0]["name"], "fs_read_text_file");
-        assert_eq!(body["messages"][0]["type"], "tool_return");
-        assert_eq!(body["messages"][0]["tool_returns"][0]["type"], "tool");
+        assert_eq!(body["messages"][0]["type"], "approval");
+        assert_eq!(body["messages"][0]["approval_request_id"], "approval-1");
+        assert_eq!(body["messages"][0]["approve"], true);
+        assert_eq!(body["messages"][0]["approvals"][0]["type"], "tool");
         assert_eq!(
-            body["messages"][0]["tool_returns"][0]["tool_call_id"],
+            body["messages"][0]["approvals"][0]["tool_call_id"],
             "call_test"
         );
     }
