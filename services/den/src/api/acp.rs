@@ -243,6 +243,8 @@ pub struct AcpPromptRequest {
 struct AcpToolResultResponse {
     accepted: bool,
     reason: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    settlement: Option<String>,
     turn_id: Option<String>,
     tool_call_id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -2455,6 +2457,15 @@ async fn tool_result(
     }
 }
 
+fn late_result_settlement_from_status(status: &str) -> &'static str {
+    match status {
+        "timeout" => "timed_out",
+        "cancelled" => "cancelled",
+        "ok" | "error" | "unsupported" => "already_settled",
+        _ => "unknown",
+    }
+}
+
 async fn tool_result_inner(
     state: ApiState,
     slug: String,
@@ -2506,6 +2517,7 @@ async fn tool_result_inner(
             Ok(Json(AcpToolResultResponse {
                 accepted: true,
                 reason: "delivered".to_string(),
+                settlement: None,
                 turn_id: body.turn_id,
                 tool_call_id,
                 diagnostic: Some(serde_json::json!({
@@ -2521,12 +2533,13 @@ async fn tool_result_inner(
             tool_call_id,
         } => Ok(Json(AcpToolResultResponse {
             accepted: false,
-            reason: "turn_missing".to_string(),
+            reason: "late_result_ignored".to_string(),
+            settlement: Some("unknown".to_string()),
             turn_id,
             tool_call_id,
             diagnostic: Some(serde_json::json!({
                 "component": "den.acp",
-                "phase": "tool_result_missing",
+                "phase": "late_tool_result_ignored",
             })),
         })
         .into_response()),
@@ -2535,7 +2548,8 @@ async fn tool_result_inner(
             tool_call_id,
         } => Ok(Json(AcpToolResultResponse {
             accepted: false,
-            reason: "already_settled".to_string(),
+            reason: "late_result_ignored".to_string(),
+            settlement: Some("already_settled".to_string()),
             turn_id,
             tool_call_id: tool_call_id.clone(),
             diagnostic: state
@@ -2550,7 +2564,8 @@ async fn tool_result_inner(
             cached,
         } => Ok(Json(AcpToolResultResponse {
             accepted: false,
-            reason: "recently_settled".to_string(),
+            reason: "late_result_ignored".to_string(),
+            settlement: Some(late_result_settlement_from_status(&cached.status).to_string()),
             turn_id,
             tool_call_id,
             diagnostic: Some(cached.diagnostic()),
