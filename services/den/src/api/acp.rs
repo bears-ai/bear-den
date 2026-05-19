@@ -5069,7 +5069,7 @@ struct AcpLettaSseStream {
     context: AcpStreamContext,
     letta: Arc<crate::core::letta::LettaClient>,
     continuation: LettaContinuationContext,
-    pending_tool_result: Option<AcpToolResultRequest>,
+    queued_tool_result_continuation: Option<AcpToolResultRequest>,
     diagnostics: AcpStreamDiagnostics,
     logged_summary: bool,
     persist_future: Option<AcpPendingFuture>,
@@ -5166,7 +5166,7 @@ impl AcpLettaSseStream {
         }
         let controller_snapshot = self.turn_controller.status_snapshot();
         let outstanding = self.outstanding_tool_obligations();
-        let pending_tool_continuation = self.pending_tool_result.is_some();
+        let pending_tool_continuation = self.queued_tool_result_continuation.is_some();
         tracing::warn!(
             request_id = %self.context.request_id,
             acp_session_id = %self.context.acp_session_id,
@@ -5200,7 +5200,7 @@ impl AcpLettaSseStream {
             context,
             letta,
             continuation,
-            pending_tool_result: None,
+            queued_tool_result_continuation: None,
             diagnostics: AcpStreamDiagnostics::default(),
             logged_summary: false,
             persist_future: None,
@@ -5294,7 +5294,7 @@ impl Stream for AcpLettaSseStream {
                     .tool_turns
                     .remove(&this.context.acp_session_id, tool_call_id);
             }
-            this.pending_tool_result = None;
+            this.queued_tool_result_continuation = None;
             this.persist_future = None;
             let role_result = this.context.role_runtime.turn_result(
                 TurnResultStatus::Cancelled,
@@ -5314,7 +5314,7 @@ impl Stream for AcpLettaSseStream {
         }
 
         if this.persist_future.is_none()
-            && this.pending_tool_result.is_none()
+            && this.queued_tool_result_continuation.is_none()
             && !this.outstanding_tool_obligations().is_empty()
         {
             if !this.outstanding_tool_obligations().is_empty() {
@@ -5510,7 +5510,7 @@ impl Stream for AcpLettaSseStream {
                         // HTTP 409 (another run is still processing this conversation). Store
                         // the result and continue reading the current stream; once it ends,
                         // start the tool-return continuation.
-                        this.pending_tool_result = Some(tool_result);
+                        this.queued_tool_result_continuation = Some(tool_result);
                         return self.poll_next(cx);
                     }
                 }
@@ -5699,7 +5699,7 @@ impl Stream for AcpLettaSseStream {
                 {
                     this.turn_controller.on_requires_approval_stop();
                     self.poll_next(cx)
-                } else if this.pending_tool_result.is_none()
+                } else if this.queued_tool_result_continuation.is_none()
                     && !this.outstanding_tool_obligations().is_empty()
                 {
                     tracing::debug!(
@@ -5709,7 +5709,7 @@ impl Stream for AcpLettaSseStream {
                         "ACP upstream ended while local tool obligations are outstanding; waiting for results"
                     );
                     Poll::Pending
-                } else if let Some(tool_result) = this.pending_tool_result.take() {
+                } else if let Some(tool_result) = this.queued_tool_result_continuation.take() {
                     let letta = this.letta.clone();
                     let continuation = this.continuation.clone();
                     let tool_name = tool_result
@@ -6362,6 +6362,85 @@ mod tests {
             "output was: {output}"
         );
         assert!(captured.lock().await.is_some());
+    }
+
+    #[tokio::test]
+    async fn acp_stream_duplicate_turn_complete_emits_once() {
+        use futures::StreamExt;
+        use sqlx::postgres::PgPoolOptions;
+        use std::sync::Arc;
+
+        let config = crate::config::Config::test_stub();
+        let letta = Arc::new(crate::core::letta::LettaClient::new(&config));
+        let pool = PgPoolOptions::new()
+            .connect_lazy("postgres://postgres:postgres@127.0.0.1/postgres")
+            .unwrap();
+        let registry = AcpToolTurnCoordinator::new();
+        let request_id = Uuid::new_v4();
+        let role_runtime = RoleRuntime::new(registry.clone());
+        let turn_scope = RoleTurnScope::acp_pair(
+            Uuid::new_v4(),
+            "acp-test-session",
+            Some("conv-test-resolved".to_string()),
+        );
+        let active_turn_guard = role_runtime
+            .acquire_turn(turn_scope.clone(), request_id)
+            .unwrap();
+        let context = AcpStreamContext {
+            pool,
+            tool_turns: registry,
+            user_id: 1,
+            user_profile: None,
+            bear_id: Uuid::new_v4(),
+            bear_slug: "test-bear".to_string(),
+            acp_session_id: "acp-test-session".to_string(),
+            conversation_selection: "new-acp-test".to_string(),
+            resolved_conversation_id: Some("conv-test-resolved".to_string()),
+            upstream_target: "conv-test-resolved".to_string(),
+            workspace_roots: vec!["/workspace".to_string()],
+            session_policy: None,
+            activity: None,
+            request_id,
+            pair_agent_id: "agent-12345678-1234-4567-89ab-123456789abc".to_string(),
+            config: Arc::new(crate::config::Config::test_stub()),
+            role_runtime: role_runtime.clone(),
+            turn_scope,
+        };
+        let upstream =
+            futures::stream::iter(vec![Ok::<Bytes, reqwest::Error>(Bytes::from(concat!(
+                "data: {\"message_type\":\"stop_reason\",\"stop_reason\":\"end_turn\"}\n\n",
+                "data: {\"message_type\":\"stop_reason\",\"stop_reason\":\"end_turn\"}\n\n"
+            )))]);
+        let mut stream = AcpLettaSseStream::new(
+            upstream,
+            context,
+            Vec::new(),
+            letta,
+            LettaContinuationContext {
+                conversation_id: "conv-test-continuation".to_string(),
+                agent_id: Some("agent-12345678-1234-4567-89ab-123456789abc".to_string()),
+                client_tools: None,
+                stream_tokens: false,
+                max_steps: 2,
+            },
+            active_turn_guard,
+        );
+
+        let mut output = String::new();
+        while let Some(item) = stream.next().await {
+            output.push_str(&String::from_utf8(item.unwrap().to_vec()).unwrap());
+        }
+
+        assert_eq!(
+            output.matches("\"type\":\"turn_complete\"").count(),
+            1,
+            "output was: {output}"
+        );
+        assert_eq!(
+            output.matches("\"type\":\"turn_result\"").count(),
+            0,
+            "output was: {output}"
+        );
     }
 
     #[tokio::test]
