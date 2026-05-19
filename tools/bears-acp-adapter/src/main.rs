@@ -6907,6 +6907,71 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn adapter_explicit_session_cancel_cancels_active_turn_and_tools() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut reader = BufReader::new(stream);
+            let mut line = String::new();
+            loop {
+                line.clear();
+                let n = reader.read_line(&mut line).await.unwrap();
+                if n == 0 || line == "\r\n" || line == "\n" {
+                    break;
+                }
+            }
+            stream = reader.into_inner();
+            use tokio::io::AsyncWriteExt;
+            stream
+                .write_all(
+                    b"HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: 11\r\n\r\n{\"ok\":true}",
+                )
+                .await
+                .unwrap();
+        });
+        let config = Config {
+            api_url: format!("http://{addr}"),
+            bear: "test-bear".to_string(),
+            token: "token-test".to_string(),
+            client: "zed".to_string(),
+        };
+        let shared = test_shared_state();
+        let turn_token = Uuid::new_v4();
+        shared.active_prompts.lock().await.insert(
+            "acp-session".to_string(),
+            ActivePromptTurn {
+                token: turn_token,
+                conversation_id: Some("conv-1".to_string()),
+            },
+        );
+        shared
+            .tool_tasks
+            .register("acp-session", "call-1", "fs_read_text_file", Some(turn_token))
+            .await;
+        let mut cancel_rx = shared.cancellation_tx.subscribe();
+        let http = reqwest::Client::new();
+
+        handle_session_cancel(
+            &http,
+            &config,
+            &shared,
+            json!({ "sessionId": "acp-session" }),
+        )
+        .await
+        .unwrap();
+
+        assert!(shared.active_prompts.lock().await.get("acp-session").is_none());
+        let tasks = shared.tool_tasks.list_for_session("acp-session").await;
+        assert_eq!(tasks.len(), 1);
+        assert_eq!(tasks[0].phase, ToolTaskPhase::Cancelled);
+        let notice = cancel_rx.recv().await.expect("cancellation notice");
+        assert_eq!(notice.session_id, "acp-session");
+        assert_eq!(notice.turn_token, None);
+        assert_eq!(notice.conversation_id, None);
+    }
+
+    #[tokio::test]
     async fn adapter_same_conversation_overlap_sends_cancellation_for_previous_turn() {
         let shared = test_shared_state();
         let previous_token = Uuid::new_v4();
