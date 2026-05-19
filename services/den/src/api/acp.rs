@@ -70,7 +70,9 @@ use crate::{
         pair_reflection::{self, CompletePairReflectionRun, CreatePairReflectionRun},
         pair_turn::{post_pair_turn_messages_streaming, PairTurnBoundaryLog, PairTurnRequest},
         reflection_conductor,
-        role_runtime::{RoleRuntime, RoleTurnScope, TurnResultReason, TurnResultStatus},
+        role_runtime::{
+            RoleRuntime, RoleTurnResult, RoleTurnScope, TurnResultReason, TurnResultStatus,
+        },
         turn_state, user, web_policy,
         work_plans::{self, WorkPlanLookup, WorkPlanProjection},
     },
@@ -5072,7 +5074,7 @@ struct AcpLettaSseStream {
     logged_summary: bool,
     persist_future: Option<AcpPendingFuture>,
     text_chunker: AcpTextChunker,
-    deferred_terminal_result: Option<AcpGatewayEvent>,
+    deferred_terminal_result: Option<RoleTurnResult>,
     active_turn_guard: Option<crate::core::role_runtime::RoleTurnGuard>,
     cancel_rx: Option<tokio::sync::watch::Receiver<bool>>,
     cancel_handle: Option<AcpActiveTurnCancelHandle>,
@@ -5102,7 +5104,20 @@ impl AcpLettaSseStream {
         self.turn_controller.may_emit_terminal() && outstanding.is_empty() && !pending_tool_result
     }
 
-    fn push_turn_result_now(&mut self, event: AcpGatewayEvent) {
+    fn turn_result_event(role_result: &RoleTurnResult) -> AcpGatewayEvent {
+        let (status, reason, request_id, session_id, retryable, diagnostics) =
+            role_result.to_event_fields();
+        AcpGatewayEvent::TurnResult {
+            status,
+            reason,
+            request_id,
+            session_id,
+            retryable,
+            diagnostics,
+        }
+    }
+
+    fn push_terminal_result_now(&mut self, role_result: RoleTurnResult) {
         let Some(controller_terminal) = self.turn_controller.take_terminal_event() else {
             let snapshot = self.turn_controller.status_snapshot();
             tracing::warn!(
@@ -5123,18 +5138,14 @@ impl AcpLettaSseStream {
             controller_terminal_reason = ?controller_terminal.reason,
             "emitting ACP turn_result authorized by turn controller"
         );
+        let event = Self::turn_result_event(&role_result);
         self.diagnostics.observe_mapped_event(&event);
         self.pending.push_back(acp_event_to_adapter_sse(event));
     }
 
-    fn push_or_defer_turn_result(&mut self, event: AcpGatewayEvent) {
-        if !matches!(event, AcpGatewayEvent::TurnResult { .. }) {
-            self.diagnostics.observe_mapped_event(&event);
-            self.pending.push_back(acp_event_to_adapter_sse(event));
-            return;
-        }
+    fn push_or_defer_terminal_result(&mut self, role_result: RoleTurnResult) {
         if self.controller_allows_terminal() {
-            self.push_turn_result_now(event);
+            self.push_terminal_result_now(role_result);
             return;
         }
         let controller_snapshot = self.turn_controller.status_snapshot();
@@ -5150,15 +5161,15 @@ impl AcpLettaSseStream {
             controller_terminal_reason = ?controller_snapshot.terminal_reason,
             "deferred ACP turn_result until turn controller allows terminal emission"
         );
-        self.deferred_terminal_result = Some(event);
+        self.deferred_terminal_result = Some(role_result);
     }
 
     fn try_flush_deferred_terminal_result(&mut self) {
         if self.deferred_terminal_result.is_none() || !self.controller_allows_terminal() {
             return;
         }
-        if let Some(event) = self.deferred_terminal_result.take() {
-            self.push_turn_result_now(event);
+        if let Some(role_result) = self.deferred_terminal_result.take() {
+            self.push_terminal_result_now(role_result);
         }
     }
 
@@ -5290,17 +5301,7 @@ impl Stream for AcpLettaSseStream {
                     "cancelled_by": "acp_test_cancel_signal",
                 }),
             );
-            let (status, reason, request_id, session_id, retryable, diagnostics) =
-                role_result.to_event_fields();
-            let event = AcpGatewayEvent::TurnResult {
-                status,
-                reason,
-                request_id,
-                session_id,
-                retryable,
-                diagnostics,
-            };
-            this.push_turn_result_now(event);
+            this.push_terminal_result_now(role_result);
             if let Some(bytes) = this.pending.pop_front() {
                 return Poll::Ready(Some(Ok(bytes)));
             }
@@ -5586,17 +5587,7 @@ impl Stream for AcpLettaSseStream {
                             "stream": this.diagnostics.diagnostic_json_with_turn_controller(&this.context, Some(&this.turn_controller)),
                         }),
                     );
-                    let (status, reason, request_id, session_id, retryable, diagnostics) =
-                        role_result.to_event_fields();
-                    let event = AcpGatewayEvent::TurnResult {
-                        status,
-                        reason,
-                        request_id,
-                        session_id,
-                        retryable,
-                        diagnostics,
-                    };
-                    this.push_or_defer_turn_result(event);
+                    this.push_or_defer_terminal_result(role_result);
                     let event = if this.diagnostics.saw_requires_approval_stop
                         && !this.diagnostics.saw_tool_return_ack
                     {
@@ -5669,17 +5660,7 @@ impl Stream for AcpLettaSseStream {
                         "stream": this.diagnostics.diagnostic_json_with_turn_controller(&this.context, Some(&this.turn_controller)),
                     }),
                 );
-                let (status, reason, request_id, session_id, retryable, diagnostics) =
-                    role_result.to_event_fields();
-                let turn_result = AcpGatewayEvent::TurnResult {
-                    status,
-                    reason,
-                    request_id,
-                    session_id,
-                    retryable,
-                    diagnostics,
-                };
-                this.push_or_defer_turn_result(turn_result);
+                this.push_or_defer_terminal_result(role_result);
                 let event = serde_json::json!({
                     "type": "error",
                     "message": "Letta stream ended unexpectedly while BEARS was waiting for events.",
@@ -5818,17 +5799,7 @@ impl Stream for AcpLettaSseStream {
                                 Some(&this.turn_controller),
                             ),
                         );
-                        let (status, reason, request_id, session_id, retryable, diagnostics) =
-                            role_result.to_event_fields();
-                        let event = AcpGatewayEvent::TurnResult {
-                            status,
-                            reason,
-                            request_id,
-                            session_id,
-                            retryable,
-                            diagnostics,
-                        };
-                        this.push_or_defer_turn_result(event);
+                        this.push_or_defer_terminal_result(role_result);
                     }
                     if !this.pending.is_empty() {
                         return self.poll_next(cx);
