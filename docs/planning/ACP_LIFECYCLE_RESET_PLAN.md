@@ -13,6 +13,7 @@ Active implementation. This plan supersedes narrow ACP lifecycle patching as the
 - Expected late tool results after timeout/cancel should use non-alarming API wording: top-level `reason = late_result_ignored`, with detail in `settlement = timed_out | cancelled | already_settled | unknown`.
 - `session_info` is the canonical runtime/session health surface. Human-facing `/status` should be a presentation of the same Den-owned data rather than a separate source of truth.
 - `session_info` may degrade when optional backing systems are unavailable, but it must log the degradation and represent unavailable enrichment fields explicitly where schemas allow.
+- Push status should be implemented in ACPv1-compatible layers: visible status text for important lifecycle transitions, `session_info_update._meta.bears.runtime` for protocol-valid structured metadata, and ACPv2-style `state_change` later when supported.
 
 ### Progress snapshot
 
@@ -301,7 +302,7 @@ Near-term adapter changes should focus on:
 
 ### Priority 5: Add session health/status UX
 
-Status: planned. Controller snapshots exist in stream diagnostics, but they are not yet exposed through `session_info`, `/status`, or user-facing status updates.
+Status: planned. Controller snapshots exist in stream diagnostics, but they are not yet exposed through `session_info`, `/status`, `session_info_update._meta`, or user-facing status updates.
 
 Add a visible status surface once the controller snapshot exists. Shape it so it can map naturally to ACPv2 `state_change` notifications later.
 
@@ -469,7 +470,7 @@ Example response:
 
 ### Turn phase visibility
 
-Map lifecycle phases to concise status updates.
+Map lifecycle phases to concise status updates. This is the primary ACPv1-compatible push status path because current clients such as Zed already render normal session/update text/tool/status progress.
 
 Examples:
 
@@ -482,6 +483,8 @@ Recovering stale model approval…
 ```
 
 Status messages should be deduplicated and should not flood the conversation.
+
+These visible status messages should be concise and user-facing. They should mirror, not replace, canonical structured health in `session_info`.
 
 ### Tool obligation visibility
 
@@ -509,6 +512,8 @@ late_result_ignored
 
 Add a compact session health surface first through `session_info`. Human-facing `/status` should render the same underlying Den-owned health data rather than inventing a parallel status model.
 
+For ACPv1 push metadata, mirror a compact subset through `session_info_update._meta.bears.runtime` after the canonical `session_info` shape exists. This is protocol-valid but clients may or may not visibly render arbitrary `_meta` fields.
+
 Suggested fields:
 
 ```text
@@ -531,7 +536,7 @@ context_budget.used_tokens
 context_budget.remaining_tokens
 ```
 
-The `state` and `stop_reason` fields intentionally mirror ACPv2 `state_change` direction.
+The `state` and `stop_reason` fields intentionally mirror ACPv2 `state_change` direction. Do not emit ACPv2 `state_change` as a primary production behavior until the client advertises support or BEARS gates it behind a capability/future flag.
 
 ### Context budget
 
@@ -952,11 +957,17 @@ Use ACP Rust crate patterns and reference implementations to clean up:
 - logging summaries;
 - status/session health update shapes.
 
-### Step 7: Add `session_info` runtime/session health surface
+### Step 7: Add `session_info` runtime/session health surface and push status mirrors
 
 Status: not yet complete.
 
 Wire the controller/runtime snapshot into `session_info` first. Treat human-facing `/status` as a presentation of this same Den-owned data.
+
+Push status layering:
+
+1. Visible ACPv1 status text for important lifecycle transitions such as `running`, `requires_action`, `cancelling`, and recovery.
+2. Protocol-valid `session_info_update._meta.bears.runtime` metadata mirroring a compact subset of `session_info.runtime`.
+3. Future ACPv2 `state_change` mapping once supported or capability-gated.
 
 Start with lifecycle and session metadata. Add context budget only after usage data source quality is understood.
 
@@ -995,7 +1006,7 @@ how recovery/cancellation is explained to users
 - Adapter tests cover startup mode race, MCP log summarization, overlap, and cancellation.
 - Exactly-once terminal behavior is enforced by state-machine logic rather than scattered guards.
 - Late tool results are acknowledged as ignored instead of reported as surprising `turn_missing` failures.
-- Users and models can inspect active turn phase, pending obligations, mode, MCP summary, work-surface state, and context budget status through canonical `session_info`; `/status` may present the same data for humans.
+- Users and models can inspect active turn phase, pending obligations, mode, MCP summary, work-surface state, and context budget status through canonical `session_info`; `/status` may present the same data for humans, and ACPv1 push status may mirror concise progress/metadata without becoming authoritative.
 - Recovery, cancellation, timeout, and waiting-on-tool states are visible as concise status updates.
 
 ## Non-goals
@@ -1015,7 +1026,7 @@ how recovery/cancellation is explained to users
 - What exact compatibility response should replace `turn_missing` for late results: `late_result_ignored`, `turn_cancelled`, or `unknown_turn`?
 - How much of MCP tool execution should remain adapter-local versus being represented as Den-managed external obligations?
 - Should session mode updates be persisted before first prompt, or remain adapter-local until Den session binding exists?
-- `session_info` is the chosen canonical surface for context budget and session health. Open question: which additional presentation/update surfaces should mirror it: slash `/status`, `session_info_update`, ACPv2-style `state_change`, or a future session usage/status extension?
+- `session_info` is the chosen canonical surface for context budget and session health. Additional mirrors are now ordered: visible ACPv1 status text first for lifecycle progress, `/status` as human presentation, `session_info_update._meta.bears.runtime` as protocol-valid metadata, and ACPv2-style `state_change` only when supported/capability-gated.
 - Can Letta provide exact context-window usage for the current run, or do we need an explicitly estimated Den-side budget?
 - If future ACP/Zed versions support multiple active conversations inside one session, what scoped cancel body should become required? Current assumption is 1:1 session/conversation, so scoped fields remain optional diagnostics/future compatibility.
 
@@ -1026,5 +1037,5 @@ Recommended next implementation order:
 1. Add real production session-level `/cancel` endpoint signaling into active streams, replacing the test-only cancellation hook as the primary path. Store request/conversation metadata for diagnostics and future scoped cancellation, but do not require scoped cancel fields yet.
 2. Normalize late result API responses from compatibility-style `turn_missing`/settled variants toward `reason = late_result_ignored` plus `settlement` detail.
 3. Continue replacing legacy stream lifecycle state with controller authority one piece at a time.
-4. Add `session_info.runtime` / session health data after an active-turn snapshot registry exists. Render human `/status` from this same data later.
+4. Add `session_info.runtime` / session health data after an active-turn snapshot registry exists. Render human `/status` from this same data later, and mirror compact runtime metadata through `session_info_update._meta.bears.runtime` where safe.
 5. Add adapter tests for overlap, mode startup race, MCP log summarization, and explicit cancellation.
