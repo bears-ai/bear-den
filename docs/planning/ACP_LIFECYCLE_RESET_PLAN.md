@@ -4,6 +4,16 @@
 
 Active implementation. This plan supersedes narrow ACP lifecycle patching as the near-term reliability strategy for `pair` over ACP.
 
+### Working assumptions
+
+- ACP/Zed sessions are assumed to map 1:1 with Den/Letta conversations for the current implementation. Den still records `request_id` and `conversation_id` for diagnostics and future scoped-cancel compatibility, but production cancellation can be session-level for now.
+- Den/Letta is the source of truth for session history, message acceptance, tool obligations, terminal state, and replay.
+- ACPv2 prompt lifecycle direction should inform internal naming and UX even while BEARS remains ACPv1-compatible: prompt acceptance and turn completion are separate concepts, and turn state should be surfaced through session updates/status rather than inferred from request lifetime.
+- ACPv2-style states map well to BEARS turn phases: `running`, `requires_action`, and `idle` should be preferred in user/status surfaces where possible.
+- Expected late tool results after timeout/cancel should use non-alarming API wording: top-level `reason = late_result_ignored`, with detail in `settlement = timed_out | cancelled | already_settled | unknown`.
+- `session_info` is the canonical runtime/session health surface. Human-facing `/status` should be a presentation of the same Den-owned data rather than a separate source of truth.
+- `session_info` may degrade when optional backing systems are unavailable, but it must log the degradation and represent unavailable enrichment fields explicitly where schemas allow.
+
 ### Progress snapshot
 
 Completed:
@@ -22,8 +32,8 @@ Still in progress:
 
 - Full replacement of legacy stream lifecycle fields with controller authority.
 - Real production `/cancel` endpoint signaling into active streams; current stream cancel signal is test/integration-hook level.
-- Normalized late-result API statuses replacing scary compatibility responses such as `turn_missing`.
-- User-facing session health/status surfaces.
+- Normalized late-result API statuses replacing scary compatibility responses such as `turn_missing`; accepted decision is `reason = late_result_ignored` plus a `settlement` detail.
+- `session_info.runtime` / session health surface, with human `/status` rendered from the same data.
 - Adapter-side overlap, mode-race, MCP-log, and cancellation tests.
 - Slow `session_info` stream test cleanup is complete. The stream test now asserts route classification/no adapter emission without driving the full `session_info` DB-dependent continuation path, reducing runtime from ~60s to ~0.1s.
 - Full `acp_stream_` Den stream lifecycle test group now passes after clarifying the no-premature-terminal test to allow an auto-timeout settlement in full-group Tokio scheduling while still forbidding terminal/continuation before a real or synthetic settlement.
@@ -45,6 +55,7 @@ Priorities:
 - Prefer official ACP types and lifecycle shapes over hand-rolled JSON where practical.
 - Validate stop reasons, session updates, permission requests, tool-call statuses, and session metadata against the SDK model.
 - Use SDK examples to check ordering of `session/new`, notifications, `session/prompt`, `session/cancel`, and prompt responses.
+- Track ACPv2 prompt lifecycle direction: prompt request acceptance is distinct from turn completion, and agent session updates/state changes carry turn lifecycle status.
 
 ### Goose
 
@@ -73,9 +84,11 @@ Relevant patterns to study:
 
 ## Principles
 
-### 1. ACP prompt turns are request/response lifecycles, not loose streams
+### 1. ACP prompt turns are explicit lifecycles, not loose streams
 
-A `session/prompt` request owns exactly one prompt turn. Streaming updates are subordinate to that request. The prompt response must not be produced until the turn has reached a terminal state.
+In ACPv1, a `session/prompt` request effectively spans a prompt turn. In ACPv2 draft semantics, `session/prompt` responds when the prompt is accepted and turn completion is carried by session updates/state changes. BEARS should model the turn explicitly rather than relying on JSON-RPC request lifetime.
+
+Streaming updates are subordinate to Den's turn lifecycle. A turn must not be considered terminal until Den's lifecycle state reaches a terminal outcome.
 
 ### 2. Exactly one terminal outcome per prompt turn
 
@@ -128,9 +141,9 @@ Approval state:
 
 Do not infer execution route from approval flags.
 
-### 5. Den is authoritative for turn obligations
+### 5. Den is authoritative for turn obligations and session history
 
-Den owns the canonical turn lifecycle and obligation ledger because Den bridges Letta state, Bear policy, session binding, and adapter-local result posting.
+Den owns the canonical turn lifecycle and obligation ledger because Den bridges Letta state, Bear policy, session binding, and adapter-local result posting. Den/Letta is also the source of truth for accepted user messages, assistant output, and replay; the ACP client is a view over that session.
 
 The adapter should be a UI/client-tool executor bridge:
 
@@ -143,7 +156,9 @@ The adapter should be a UI/client-tool executor bridge:
 
 The adapter should not decide whether the Den/Letta turn is still alive.
 
-### 6. Cancellation is a state transition, not an error path
+### 6. Cancellation is a session-level state transition, not an error path
+
+Given the current working assumption that one ACP session maps to one Den/Letta conversation, production `/cancel` should cancel the active turn for that ACP session. Den should still retain request/conversation metadata in the active-turn registry so scoped cancellation can be added later if ACP/Zed behavior changes.
 
 Cancellation must:
 
@@ -193,6 +208,12 @@ Full schemas belong behind explicit debug logging.
 ### 10. User-visible state is part of lifecycle correctness
 
 A prompt turn should not feel like an opaque spinner. The user should be able to tell whether BEARS is thinking, waiting on a local tool, waiting for permission, continuing after a tool result, cancelling, recovering, or blocked.
+
+Use ACPv2-compatible state vocabulary where practical:
+
+- `running` for active model/tool work;
+- `requires_action` for waiting on permission, local tool result, or user input;
+- `idle` for terminal/ready state with stop reason and usage/context data when available.
 
 Lifecycle state should therefore produce concise UX status, not only logs. Status should be terse, deduplicated, and distinct from final assistant answer text.
 
@@ -282,7 +303,7 @@ Near-term adapter changes should focus on:
 
 Status: planned. Controller snapshots exist in stream diagnostics, but they are not yet exposed through `session_info`, `/status`, or user-facing status updates.
 
-Add a visible status surface once the controller snapshot exists.
+Add a visible status surface once the controller snapshot exists. Shape it so it can map naturally to ACPv2 `state_change` notifications later.
 
 Initial options:
 
@@ -414,6 +435,36 @@ unknown_tool_call
 
 `turn_missing` should become an internal compatibility fallback, not the primary operational status.
 
+Decision: expected late results should return a non-alarming top-level reason:
+
+```text
+late_result_ignored
+```
+
+and a separate settlement detail:
+
+```text
+timed_out
+cancelled
+already_settled
+unknown
+```
+
+Example response:
+
+```json
+{
+  "accepted": false,
+  "reason": "late_result_ignored",
+  "settlement": "timed_out",
+  "tool_call_id": "call_...",
+  "diagnostic": {
+    "component": "den.acp",
+    "phase": "late_tool_result_ignored"
+  }
+}
+```
+
 ## UX plan
 
 ### Turn phase visibility
@@ -456,13 +507,15 @@ late_result_ignored
 
 ### Session health
 
-Add a compact session health surface available through `session_info` and/or `/status`.
+Add a compact session health surface first through `session_info`. Human-facing `/status` should render the same underlying Den-owned health data rather than inventing a parallel status model.
 
 Suggested fields:
 
 ```text
 session_id
 conversation_id
+state                 # running | requires_action | idle
+stop_reason
 requested_mode
 effective_mode
 active_turn.present
@@ -478,9 +531,11 @@ context_budget.used_tokens
 context_budget.remaining_tokens
 ```
 
+The `state` and `stop_reason` fields intentionally mirror ACPv2 `state_change` direction.
+
 ### Context budget
 
-Investigate Letta/provider usage data before implementation.
+Investigate Letta/provider usage data before implementation. Context budget should be represented in `session_info` first; `/status` can present it later.
 
 If exact data is available, expose it as exact. If Den estimates usage from messages/tool payloads, expose it as estimated. If neither is available, expose `unavailable` rather than inventing numbers.
 
@@ -719,7 +774,7 @@ Expected:
 
 #### `acp_stream_cancel_pending_local_tool`
 
-Status: complete for test-hook stream cancellation; production `/cancel` endpoint signaling remains.
+Status: complete for test-hook stream cancellation; production `/cancel` endpoint signaling remains. Production cancel should be session-level under the current 1:1 ACP session ↔ Den/Letta conversation assumption.
 
 Expected:
 
@@ -766,7 +821,7 @@ Expected:
 
 #### `adapter_same_conversation_overlap_cancels_previous_turn`
 
-Status: not yet added.
+Status: not yet added. With the 1:1 session/conversation assumption, same-session overlap should cancel or queue within the same Den/Letta conversation rather than creating concurrent conversation runtimes.
 
 Expected:
 
@@ -800,7 +855,7 @@ Expected:
 
 #### `session_info_includes_runtime_health_snapshot`
 
-Status: not yet added. Requires active-turn runtime snapshot registry beyond stream-local controller.
+Status: not yet added. This is the priority UX/status test. Requires active-turn runtime snapshot registry beyond stream-local controller.
 
 Expected:
 
@@ -810,7 +865,7 @@ Expected:
 
 #### `slash_status_reports_session_health`
 
-Status: not yet added.
+Status: not yet added. This should render the same data exposed by `session_info`, not define a separate status source.
 
 Expected:
 
@@ -876,9 +931,11 @@ Status: partially complete. Controller observes lifecycle and participates in te
 
 Move lifecycle decisions out of stream polling branches and into controller calls.
 
-### Step 5: Normalize Den tool-result API statuses
+### Step 5: Add production active-stream cancellation and normalize Den tool-result API statuses
 
-Status: not yet complete. Late result behavior is tolerated in adapter/stream tests, but API status names remain transitional.
+Status: not yet complete. Test-hook stream cancellation exists, but `/cancel` does not yet signal active streams. Late result behavior is tolerated in adapter/stream tests, but API status names remain transitional. Accepted API direction is `late_result_ignored` plus `settlement` detail.
+
+Under the current 1:1 session/conversation assumption, add a session-level active stream cancellation registry first. Preserve request/conversation metadata for future scoped cancel checks.
 
 Add structured late/cancelled/timeout statuses while keeping compatibility with existing adapter handling.
 
@@ -895,11 +952,11 @@ Use ACP Rust crate patterns and reference implementations to clean up:
 - logging summaries;
 - status/session health update shapes.
 
-### Step 7: Add UX/status surface
+### Step 7: Add `session_info` runtime/session health surface
 
 Status: not yet complete.
 
-Wire the controller snapshot into `session_info` and/or `/status`.
+Wire the controller/runtime snapshot into `session_info` first. Treat human-facing `/status` as a presentation of this same Den-owned data.
 
 Start with lifecycle and session metadata. Add context budget only after usage data source quality is understood.
 
@@ -938,7 +995,7 @@ how recovery/cancellation is explained to users
 - Adapter tests cover startup mode race, MCP log summarization, overlap, and cancellation.
 - Exactly-once terminal behavior is enforced by state-machine logic rather than scattered guards.
 - Late tool results are acknowledged as ignored instead of reported as surprising `turn_missing` failures.
-- Users can inspect active turn phase, pending obligations, mode, MCP summary, work-surface state, and context budget status through `session_info` and/or `/status`.
+- Users and models can inspect active turn phase, pending obligations, mode, MCP summary, work-surface state, and context budget status through canonical `session_info`; `/status` may present the same data for humans.
 - Recovery, cancellation, timeout, and waiting-on-tool states are visible as concise status updates.
 
 ## Non-goals
@@ -958,15 +1015,16 @@ how recovery/cancellation is explained to users
 - What exact compatibility response should replace `turn_missing` for late results: `late_result_ignored`, `turn_cancelled`, or `unknown_turn`?
 - How much of MCP tool execution should remain adapter-local versus being represented as Den-managed external obligations?
 - Should session mode updates be persisted before first prompt, or remain adapter-local until Den session binding exists?
-- Which ACP surface is best for context budget and session health: `session_info`, slash `/status`, `session_info_update`, or a future session usage/status extension?
+- `session_info` is the chosen canonical surface for context budget and session health. Open question: which additional presentation/update surfaces should mirror it: slash `/status`, `session_info_update`, ACPv2-style `state_change`, or a future session usage/status extension?
 - Can Letta provide exact context-window usage for the current run, or do we need an explicitly estimated Den-side budget?
+- If future ACP/Zed versions support multiple active conversations inside one session, what scoped cancel body should become required? Current assumption is 1:1 session/conversation, so scoped fields remain optional diagnostics/future compatibility.
 
 ## Immediate next action
 
 Recommended next implementation order:
 
-1. Add real production `/cancel` endpoint signaling into active streams, replacing the test-only cancellation hook as the primary path.
-2. Normalize late result API responses from compatibility-style `turn_missing`/settled variants toward explicit `late_result_ignored`, `turn_cancelled`, and `turn_timed_out` statuses.
+1. Add real production session-level `/cancel` endpoint signaling into active streams, replacing the test-only cancellation hook as the primary path. Store request/conversation metadata for diagnostics and future scoped cancellation, but do not require scoped cancel fields yet.
+2. Normalize late result API responses from compatibility-style `turn_missing`/settled variants toward `reason = late_result_ignored` plus `settlement` detail.
 3. Continue replacing legacy stream lifecycle state with controller authority one piece at a time.
-4. Add session health/status UX via `session_info` and/or `/status` after an active-turn snapshot registry exists.
+4. Add `session_info.runtime` / session health data after an active-turn snapshot registry exists. Render human `/status` from this same data later.
 5. Add adapter tests for overlap, mode startup race, MCP log summarization, and explicit cancellation.
