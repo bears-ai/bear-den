@@ -1085,6 +1085,200 @@ async fn acp_cancel_session_signals_active_stream_and_cleans_pending_tool() {
 }
 
 #[tokio::test]
+async fn acp_tool_result_late_response_normalization_endpoint_cases() {
+    let fixture = test_app().await;
+    let user_bear = create_test_user_bear(&fixture.pool, true).await;
+
+    let missing = post_tool_result(
+        fixture.app.clone(),
+        &user_bear.bear_slug,
+        "session-late-missing",
+        "call-missing",
+        Some(&user_bear.raw_token),
+        json!({
+            "tool_call_id": "call-missing",
+            "tool_name": "fs_read_text_file",
+            "status": "ok",
+            "content": "late missing result"
+        }),
+    )
+    .await;
+    assert_eq!(missing.status(), StatusCode::OK);
+    let missing_json: Value = serde_json::from_str(&response_text(missing).await).unwrap();
+    assert_eq!(missing_json["accepted"], false, "{missing_json}");
+    assert_eq!(
+        missing_json["reason"],
+        json!("late_result_ignored"),
+        "{missing_json}"
+    );
+    assert_eq!(
+        missing_json["settlement"],
+        json!("unknown"),
+        "{missing_json}"
+    );
+
+    fixture
+        .letta_script
+        .lock()
+        .await
+        .push(letta_tool_request_sse(
+            "fs_read_text_file",
+            "call-late-already",
+            json!({ "path": "/tmp/acp-workspace/already.md" }),
+        ));
+    let mut already_prompt = post_prompt(
+        fixture.app.clone(),
+        &user_bear.bear_slug,
+        "session-late-already",
+        Some(&user_bear.raw_token),
+        json!({ "message": "read then duplicate", "client": "zed" }),
+    )
+    .await;
+    assert_eq!(already_prompt.status(), StatusCode::OK);
+    let already_first = read_response_until(&mut already_prompt, "call-late-already").await;
+    assert!(
+        already_first.contains("\"type\":\"tool_request\""),
+        "{already_first}"
+    );
+    let accepted = post_tool_result(
+        fixture.app.clone(),
+        &user_bear.bear_slug,
+        "session-late-already",
+        "call-late-already",
+        Some(&user_bear.raw_token),
+        json!({
+            "tool_call_id": "call-late-already",
+            "tool_name": "fs_read_text_file",
+            "approval_request_id": "approval-call-late-already",
+            "status": "ok",
+            "content": "first result"
+        }),
+    )
+    .await;
+    assert_eq!(accepted.status(), StatusCode::OK);
+    let accepted_json: Value = serde_json::from_str(&response_text(accepted).await).unwrap();
+    assert_eq!(accepted_json["accepted"], true, "{accepted_json}");
+    let duplicate = post_tool_result(
+        fixture.app.clone(),
+        &user_bear.bear_slug,
+        "session-late-already",
+        "call-late-already",
+        Some(&user_bear.raw_token),
+        json!({
+            "tool_call_id": "call-late-already",
+            "tool_name": "fs_read_text_file",
+            "approval_request_id": "approval-call-late-already",
+            "status": "ok",
+            "content": "duplicate result"
+        }),
+    )
+    .await;
+    assert_eq!(duplicate.status(), StatusCode::OK);
+    let duplicate_json: Value = serde_json::from_str(&response_text(duplicate).await).unwrap();
+    assert_eq!(duplicate_json["accepted"], false, "{duplicate_json}");
+    assert_eq!(
+        duplicate_json["reason"],
+        json!("late_result_ignored"),
+        "{duplicate_json}"
+    );
+    assert_eq!(
+        duplicate_json["settlement"],
+        json!("already_settled"),
+        "{duplicate_json}"
+    );
+
+    for (session_id, call_id, first_status, expected_settlement) in [
+        (
+            "session-late-timeout",
+            "call-late-timeout",
+            "timeout",
+            "timed_out",
+        ),
+        (
+            "session-late-cancelled",
+            "call-late-cancelled",
+            "cancelled",
+            "cancelled",
+        ),
+    ] {
+        fixture
+            .letta_script
+            .lock()
+            .await
+            .push(letta_tool_request_sse(
+                "fs_read_text_file",
+                call_id,
+                json!({ "path": format!("/tmp/acp-workspace/{call_id}.md") }),
+            ));
+        let mut prompt = post_prompt(
+            fixture.app.clone(),
+            &user_bear.bear_slug,
+            session_id,
+            Some(&user_bear.raw_token),
+            json!({ "message": format!("read then {first_status}"), "client": "zed" }),
+        )
+        .await;
+        assert_eq!(prompt.status(), StatusCode::OK);
+        let first = read_response_until(&mut prompt, call_id).await;
+        assert!(first.contains("\"type\":\"tool_request\""), "{first}");
+        let first_result = post_tool_result(
+            fixture.app.clone(),
+            &user_bear.bear_slug,
+            session_id,
+            call_id,
+            Some(&user_bear.raw_token),
+            json!({
+                "tool_call_id": call_id,
+                "tool_name": "fs_read_text_file",
+                "approval_request_id": format!("approval-{call_id}"),
+                "status": first_status,
+                "content": format!("first {first_status} result")
+            }),
+        )
+        .await;
+        assert_eq!(first_result.status(), StatusCode::OK);
+        let first_result_json: Value =
+            serde_json::from_str(&response_text(first_result).await).unwrap();
+        assert_eq!(first_result_json["accepted"], true, "{first_result_json}");
+        let settled_output =
+            read_response_until(&mut prompt, "Local tool fs_read_text_file completed").await;
+        assert!(
+            settled_output.contains("Local tool fs_read_text_file completed"),
+            "{settled_output}"
+        );
+
+        let late = post_tool_result(
+            fixture.app.clone(),
+            &user_bear.bear_slug,
+            session_id,
+            call_id,
+            Some(&user_bear.raw_token),
+            json!({
+                "tool_call_id": call_id,
+                "tool_name": "fs_read_text_file",
+                "approval_request_id": format!("approval-{call_id}"),
+                "status": "ok",
+                "content": "late after settled"
+            }),
+        )
+        .await;
+        assert_eq!(late.status(), StatusCode::OK);
+        let late_json: Value = serde_json::from_str(&response_text(late).await).unwrap();
+        assert_eq!(late_json["accepted"], false, "{late_json}");
+        assert_eq!(
+            late_json["reason"],
+            json!("late_result_ignored"),
+            "{late_json}"
+        );
+        assert_eq!(
+            late_json["settlement"],
+            json!(expected_settlement),
+            "{late_json}"
+        );
+    }
+}
+
+#[tokio::test]
 async fn acp_list_directory_tool_request_round_trips_result_to_letta() {
     let fixture = test_app().await;
     let user_bear = create_test_user_bear(&fixture.pool, true).await;

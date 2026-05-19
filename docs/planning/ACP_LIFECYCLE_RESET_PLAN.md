@@ -1096,8 +1096,7 @@ resource_link_is_reference_not_human_message
 
 Recommended next implementation order:
 
-1. Add full HTTP endpoint-level tests for late result response normalization if needed; unit coverage currently verifies response mapping.
-2. Adapter lifecycle tests from this plan are complete. Remaining adapter work is outside this lifecycle slice unless new regressions appear.
+1. Adapter lifecycle tests from this plan are complete. Remaining adapter work is outside this lifecycle slice unless new regressions appear.
 
 Stream lifecycle cleanup completed:
 
@@ -1114,3 +1113,8 @@ Session health/status cleanup completed:
 - The `/runtime` endpoint exposes `stream_turn` diagnostics so active stream registration is visible over HTTP, not only in pushed metadata.
 - Adapter `/status` renders Den-provided canonical `runtime` and `context_budget` fields instead of treating `turn_state` as the primary runtime surface.
 - The active-stream `/cancel` integration test now also verifies the live `/runtime` response reports `requires_action`, an active stream turn, pending adapter obligations, and unavailable context budget.
+
+Late result response normalization completed:
+
+- HTTP endpoint-level coverage now verifies `late_result_ignored` responses for missing turns (`unknown` settlement), duplicate pre-cleanup results (`already_settled` settlement), late timeout results (`timed_out` settlement), and late cancelled results (`cancelled` settlement).
+- These endpoint shapes preserve the ACPv2-facing contract for late tool-result settlement semantics.
