@@ -3836,16 +3836,12 @@ fn capabilities_report(adapter_state: &AdapterState) -> String {
     )
 }
 
-async fn status_report(
-    http: &reqwest::Client,
-    config: &Config,
-    adapter_state: &AdapterState,
-    shared_state: &AdapterSharedState,
+fn render_status_report(
     session_id: &str,
+    context: &SessionContext,
+    den_runtime: Option<&Value>,
+    tasks: &[tool_tasks::ToolTaskRecord],
 ) -> String {
-    let context = client_context_for_doctor(adapter_state, session_id);
-    let den_runtime = fetch_den_runtime_state(http, config, session_id).await.ok();
-    let tasks = shared_state.tool_tasks.list_for_session(session_id).await;
     let mut lines = vec!["BEARS ACP status".to_string(), String::new()];
     lines.push(format!("- ACP session: {session_id}"));
     lines.push(format!(
@@ -3856,7 +3852,7 @@ async fn status_report(
             .or(context.conversation_id.as_deref())
             .unwrap_or("<den-selected>")
     ));
-    if let Some(runtime) = den_runtime.as_ref() {
+    if let Some(runtime) = den_runtime {
         let turn_state = runtime.get("turn_state").unwrap_or(runtime);
         lines.push(format!(
             "- Den runtime: {}",
@@ -3885,6 +3881,19 @@ async fn status_report(
     ));
     lines.push("- Context budget: unavailable".to_string());
     lines.join("\n")
+}
+
+async fn status_report(
+    http: &reqwest::Client,
+    config: &Config,
+    adapter_state: &AdapterState,
+    shared_state: &AdapterSharedState,
+    session_id: &str,
+) -> String {
+    let context = client_context_for_doctor(adapter_state, session_id);
+    let den_runtime = fetch_den_runtime_state(http, config, session_id).await.ok();
+    let tasks = shared_state.tool_tasks.list_for_session(session_id).await;
+    render_status_report(session_id, &context, den_runtime.as_ref(), &tasks)
 }
 
 fn compact_json_for_status(value: &Value) -> String {
@@ -6868,6 +6877,43 @@ mod tests {
             cancellation_tx,
             active_prompts: Arc::new(TokioMutex::new(HashMap::new())),
         }
+    }
+
+    #[test]
+    fn parse_status_slash_command() {
+        assert_eq!(parse_local_slash_command("/status"), Some(LocalSlashCommand::Status));
+    }
+
+    #[test]
+    fn status_report_renders_session_health_summary() {
+        let mut context = SessionContext {
+            cwd: "/workspace".to_string(),
+            roots: vec!["/workspace".to_string()],
+            conversation_id: Some("conv-selected".to_string()),
+            resolved_conversation_id: Some("conv-resolved".to_string()),
+            ..Default::default()
+        };
+        context.raw["mcp"] = json!({
+            "servers": [{"name": "chrome-devtools-custom", "status": "ok", "transport": "stdio", "tool_count": 29}],
+            "client_tools": [{"name": "mcp__chrome_devtools_custom__take_snapshot"}]
+        });
+        let den_runtime = json!({
+            "turn_state": {
+                "runtime": {
+                    "state": "requires_action",
+                    "active_turn": {"pending_obligations": 1}
+                }
+            }
+        });
+        let report = render_status_report("acp-test", &context, Some(&den_runtime), &[]);
+
+        assert!(report.contains("BEARS ACP status"));
+        assert!(report.contains("ACP session: acp-test"));
+        assert!(report.contains("Conversation: conv-resolved"));
+        assert!(report.contains("requires_action"));
+        assert!(report.contains("Adapter-local tools: none active"));
+        assert!(report.contains("chrome-devtools-custom"));
+        assert!(report.contains("Context budget: unavailable"));
     }
 
     #[test]
