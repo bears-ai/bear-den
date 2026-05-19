@@ -497,6 +497,48 @@ mod tests {
     use super::*;
 
     #[test]
+    fn active_turn_cancel_registry_signals_and_unregisters_session_turn() {
+        let registry = AcpActiveTurnCancelRegistry::new();
+        let request_id = Uuid::new_v4();
+        let (handle, cancel_rx) =
+            registry.register("acp-session-1", request_id, Some("conv-1".to_string()));
+
+        let active = registry
+            .active_for_session("acp-session-1")
+            .expect("active registration");
+        assert_eq!(active.request_id, request_id);
+        assert_eq!(active.conversation_id.as_deref(), Some("conv-1"));
+        assert!(!*cancel_rx.borrow());
+
+        let cancelled = registry
+            .cancel_session("acp-session-1")
+            .expect("cancelled registration");
+        assert_eq!(cancelled.request_id, request_id);
+        assert!(*cancel_rx.borrow());
+
+        drop(handle);
+        assert!(registry.active_for_session("acp-session-1").is_none());
+    }
+
+    #[test]
+    fn active_turn_cancel_registry_does_not_unregister_newer_turn_from_old_handle() {
+        let registry = AcpActiveTurnCancelRegistry::new();
+        let old_request_id = Uuid::new_v4();
+        let new_request_id = Uuid::new_v4();
+        let (old_handle, _old_rx) = registry.register("acp-session-1", old_request_id, None);
+        let (_new_handle, _new_rx) = registry.register("acp-session-1", new_request_id, None);
+
+        drop(old_handle);
+        assert_eq!(
+            registry
+                .active_for_session("acp-session-1")
+                .expect("newer turn survives")
+                .request_id,
+            new_request_id
+        );
+    }
+
+    #[test]
     fn acp_turn_text_only_completes_once() {
         let mut turn = AcpTurnController::new();
         turn.on_stream_started();

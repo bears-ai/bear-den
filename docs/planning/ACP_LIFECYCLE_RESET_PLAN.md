@@ -32,7 +32,7 @@ Completed:
 Still in progress:
 
 - Full replacement of legacy stream lifecycle fields with controller authority.
-- Real production `/cancel` endpoint signaling into active streams is initially wired via a session-level `AcpActiveTurnCancelRegistry`. Endpoint-level integration tests still need to be added.
+- Real production `/cancel` endpoint signaling into active streams is initially wired via a session-level `AcpActiveTurnCancelRegistry`. The endpoint now signals before auth/session-row lookup, which supports early cancellation races. Registry unit tests cover signaling, unregistering, and stale handle safety; full HTTP endpoint integration tests still need to be added.
 - Normalized late-result API statuses replacing scary compatibility responses such as `turn_missing`; accepted decision is `reason = late_result_ignored` plus a `settlement` detail.
 - `session_info.runtime` / session health surface, with human `/status` rendered from the same data.
 - Adapter-side overlap, mode-race, MCP-log, and cancellation tests.
@@ -938,7 +938,7 @@ Move lifecycle decisions out of stream polling branches and into controller call
 
 ### Step 5: Add production active-stream cancellation and normalize Den tool-result API statuses
 
-Status: partially complete. Test-hook stream cancellation exists, and `/cancel` now signals active streams through a session-level cancellation registry. Endpoint-level tests are still needed. Late result behavior is tolerated in adapter/stream tests, but API status names remain transitional. Accepted API direction is `late_result_ignored` plus `settlement` detail.
+Status: partially complete. Test-hook stream cancellation exists, and `/cancel` now signals active streams through a session-level cancellation registry before auth/session-row lookup. Registry unit tests cover signaling/unregistering/stale-handle safety; full HTTP endpoint tests are still needed. Late result behavior is tolerated in adapter/stream tests, but API status names remain transitional. Accepted API direction is `late_result_ignored` plus `settlement` detail.
 
 Under the current 1:1 session/conversation assumption, add a session-level active stream cancellation registry first. Preserve request/conversation metadata for future scoped cancel checks.
 
@@ -1034,7 +1034,7 @@ how recovery/cancellation is explained to users
 
 Recommended next implementation order:
 
-1. Add endpoint-level tests for production session-level `/cancel` active-stream signaling. Initial registry wiring exists and stores request/conversation metadata for diagnostics and future scoped cancellation, but endpoint behavior is not yet covered by a test.
+1. Add full HTTP endpoint-level tests for production session-level `/cancel` active-stream signaling. Initial registry wiring exists and stores request/conversation metadata for diagnostics and future scoped cancellation; registry behavior has unit coverage, but endpoint/auth/session integration is not yet covered.
 2. Normalize late result API responses from compatibility-style `turn_missing`/settled variants toward `reason = late_result_ignored` plus `settlement` detail.
 3. Continue replacing legacy stream lifecycle state with controller authority one piece at a time.
 4. Add `session_info.runtime` / session health data after an active-turn snapshot registry exists. Render human `/status` from this same data later, and mirror compact runtime metadata through `session_info_update._meta.bears.runtime` where safe.
