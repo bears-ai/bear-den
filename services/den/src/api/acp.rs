@@ -1554,6 +1554,7 @@ async fn pending_session_title_update_event(
         updated_at: session
             .conversation_title_updated_at
             .map(format_acp_session_timestamp),
+        meta: None,
     }))
 }
 
@@ -5299,6 +5300,25 @@ impl Stream for AcpLettaSseStream {
             && this.pending_tool_result.is_none()
             && !this.outstanding_tool_obligations().is_empty()
         {
+            if !this.outstanding_tool_obligations().is_empty() {
+                let runtime = this.context.role_runtime.tool_turn_runtime_snapshot(
+                    &this.context.acp_session_id,
+                    &this.context.tool_turns,
+                );
+                this.pending.push_back(acp_event_to_adapter_sse(
+                    AcpGatewayEvent::SessionInfoUpdate {
+                        title: None,
+                        updated_at: None,
+                        meta: Some(serde_json::json!({
+                            "bears": {
+                                "runtime": runtime,
+                                "context_budget": default_unavailable_context_budget(),
+                            }
+                        })),
+                    },
+                ));
+                return self.poll_next(cx);
+            }
             tracing::debug!(
                 request_id = %this.context.request_id,
                 acp_session_id = %this.context.acp_session_id,
@@ -6060,8 +6080,12 @@ mod tests {
             .connect_lazy("postgres://postgres:postgres@127.0.0.1/postgres")
             .unwrap();
         let registry = AcpToolTurnCoordinator::new();
+        let cancel_registry = crate::core::acp_turn_controller::AcpActiveTurnCancelRegistry::new();
         let request_id = Uuid::new_v4();
-        let role_runtime = RoleRuntime::new(registry.clone());
+        let role_runtime = RoleRuntime::with_turn_cancellations(
+            registry.clone(),
+            cancel_registry.clone(),
+        );
         let turn_scope = RoleTurnScope::acp_pair(
             Uuid::new_v4(),
             "acp-test-session",
@@ -6119,6 +6143,18 @@ mod tests {
         let first_text = String::from_utf8(first.to_vec()).unwrap();
         assert!(first_text.contains("\"type\":\"tool_request\""));
         assert!(first_text.contains("\"tool_call_id\":\"call_test\""));
+
+        let (_cancel_handle, _cancel_rx) = cancel_registry.register(
+            "acp-test-session",
+            request_id,
+            Some("conv-test-resolved".to_string()),
+        );
+        let runtime_snapshot = cancel_registry.runtime_snapshot_for_session("acp-test-session", &registry);
+        assert_eq!(runtime_snapshot["state"], serde_json::json!("requires_action"));
+        assert_eq!(
+            runtime_snapshot["active_turn"]["pending_obligations"],
+            serde_json::json!(1)
+        );
 
         let delivery = registry
             .deliver_result(

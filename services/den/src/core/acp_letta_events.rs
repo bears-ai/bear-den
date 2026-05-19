@@ -85,6 +85,7 @@ pub enum AcpGatewayEvent {
     SessionInfoUpdate {
         title: Option<String>,
         updated_at: Option<String>,
+        meta: Option<serde_json::Value>,
     },
 }
 
@@ -809,15 +810,25 @@ pub fn acp_event_to_adapter_sse(event: AcpGatewayEvent) -> Bytes {
                 "transport_version": 3,
             }
         }),
-        AcpGatewayEvent::SessionInfoUpdate { title, updated_at } => serde_json::json!({
-            "type": "session_info_update",
-            "title": title,
-            "updated_at": updated_at,
-            "diagnostic": {
+        AcpGatewayEvent::SessionInfoUpdate {
+            title,
+            updated_at,
+            meta,
+        } => {
+            let mut mapped = serde_json::json!({
+                "type": "session_info_update",
+                "title": title,
+                "updated_at": updated_at,
+                "diagnostic": {
                 "component": "den.acp",
-                "phase": "session_info_update"
+                    "phase": "session_info_update"
+                }
+            });
+            if let Some(meta) = meta {
+                mapped["meta"] = meta;
             }
-        }),
+            mapped
+        }
         AcpGatewayEvent::PlanUpdate(plan) => serde_json::json!({
             "type": "plan_update",
             "plan_id": plan.id,

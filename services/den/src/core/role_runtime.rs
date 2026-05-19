@@ -179,6 +179,10 @@ impl RoleRuntime {
         }
     }
 
+    pub fn turn_cancellations(&self) -> Option<&AcpActiveTurnCancelRegistry> {
+        self.turn_cancellations.as_ref()
+    }
+
     pub fn tool_turn_runtime_snapshot(
         &self,
         acp_session_id: &str,
