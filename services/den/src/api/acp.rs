@@ -5074,7 +5074,6 @@ struct AcpLettaSseStream {
     logged_summary: bool,
     persist_future: Option<AcpPendingFuture>,
     text_chunker: AcpTextChunker,
-    deferred_terminal_result: Option<RoleTurnResult>,
     active_turn_guard: Option<crate::core::role_runtime::RoleTurnGuard>,
     cancel_rx: Option<tokio::sync::watch::Receiver<bool>>,
     cancel_handle: Option<AcpActiveTurnCancelHandle>,
@@ -5092,13 +5091,8 @@ impl AcpLettaSseStream {
             .collect()
     }
 
-    fn pending_tool_continuation_blocks_terminal(&self) -> bool {
-        self.pending_tool_result.is_some()
-    }
-
     fn controller_allows_terminal(&self) -> bool {
         self.turn_controller.may_emit_terminal()
-            && !self.pending_tool_continuation_blocks_terminal()
     }
 
     fn turn_result_event(role_result: &RoleTurnResult) -> AcpGatewayEvent {
@@ -5165,15 +5159,15 @@ impl AcpLettaSseStream {
         self.push_adapter_event(event);
     }
 
-    fn push_or_defer_terminal_result(&mut self, role_result: RoleTurnResult) {
+    fn push_terminal_result_when_ready(&mut self, role_result: RoleTurnResult) {
         if self.controller_allows_terminal() {
             self.push_terminal_result_now(role_result);
             return;
         }
         let controller_snapshot = self.turn_controller.status_snapshot();
         let outstanding = self.outstanding_tool_obligations();
-        let pending_tool_continuation = self.pending_tool_continuation_blocks_terminal();
-        tracing::info!(
+        let pending_tool_continuation = self.pending_tool_result.is_some();
+        tracing::warn!(
             request_id = %self.context.request_id,
             acp_session_id = %self.context.acp_session_id,
             outstanding_tool_call_ids = ?outstanding,
@@ -5182,18 +5176,8 @@ impl AcpLettaSseStream {
             controller_phase = ?controller_snapshot.phase,
             controller_terminal_status = ?controller_snapshot.terminal_status,
             controller_terminal_reason = ?controller_snapshot.terminal_reason,
-            "deferred ACP turn_result until turn controller/continuation state allows terminal emission"
+            "suppressed ACP turn_result because turn controller was not ready"
         );
-        self.deferred_terminal_result = Some(role_result);
-    }
-
-    fn try_flush_deferred_terminal_result(&mut self) {
-        if self.deferred_terminal_result.is_none() || !self.controller_allows_terminal() {
-            return;
-        }
-        if let Some(role_result) = self.deferred_terminal_result.take() {
-            self.push_terminal_result_now(role_result);
-        }
     }
 
     fn new(
@@ -5221,7 +5205,6 @@ impl AcpLettaSseStream {
             logged_summary: false,
             persist_future: None,
             text_chunker: AcpTextChunker::new(acp_text_chunk_chars()),
-            deferred_terminal_result: None,
             active_turn_guard: Some(active_turn_guard),
             cancel_rx: None,
             cancel_handle: None,
@@ -5528,7 +5511,6 @@ impl Stream for AcpLettaSseStream {
                         // the result and continue reading the current stream; once it ends,
                         // start the tool-return continuation.
                         this.pending_tool_result = Some(tool_result);
-                        this.try_flush_deferred_terminal_result();
                         return self.poll_next(cx);
                     }
                 }
@@ -5606,7 +5588,7 @@ impl Stream for AcpLettaSseStream {
                             "stream": this.diagnostics.diagnostic_json_with_turn_controller(&this.context, Some(&this.turn_controller)),
                         }),
                     );
-                    this.push_or_defer_terminal_result(role_result);
+                    this.push_terminal_result_when_ready(role_result);
                     let event = if this.diagnostics.saw_requires_approval_stop
                         && !this.diagnostics.saw_tool_return_ack
                     {
@@ -5678,7 +5660,7 @@ impl Stream for AcpLettaSseStream {
                         "stream": this.diagnostics.diagnostic_json_with_turn_controller(&this.context, Some(&this.turn_controller)),
                     }),
                 );
-                this.push_or_defer_terminal_result(role_result);
+                this.push_terminal_result_when_ready(role_result);
                 let event = serde_json::json!({
                     "type": "error",
                     "message": "Letta stream ended unexpectedly while BEARS was waiting for events.",
@@ -5815,7 +5797,7 @@ impl Stream for AcpLettaSseStream {
                                 Some(&this.turn_controller),
                             ),
                         );
-                        this.push_or_defer_terminal_result(role_result);
+                        this.push_terminal_result_when_ready(role_result);
                     }
                     if !this.pending.is_empty() {
                         return self.poll_next(cx);
