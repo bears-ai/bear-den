@@ -1,4 +1,10 @@
-use std::collections::BTreeMap;
+use std::{
+    collections::{BTreeMap, HashMap},
+    sync::{Arc, Mutex},
+};
+
+use tokio::sync::watch;
+use uuid::Uuid;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AcpTurnPhase {
@@ -94,6 +100,93 @@ pub struct AcpTurnStatusUpdate {
     pub text: &'static str,
 }
 
+#[derive(Debug, Clone)]
+pub struct AcpActiveTurnCancelRegistration {
+    pub acp_session_id: String,
+    pub request_id: Uuid,
+    pub conversation_id: Option<String>,
+    pub cancel_tx: watch::Sender<bool>,
+}
+
+#[derive(Debug, Clone)]
+pub struct AcpActiveTurnCancelHandle {
+    registry: AcpActiveTurnCancelRegistry,
+    acp_session_id: String,
+    request_id: Uuid,
+}
+
+impl Drop for AcpActiveTurnCancelHandle {
+    fn drop(&mut self) {
+        self.registry
+            .unregister_if_matches(&self.acp_session_id, self.request_id);
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct AcpActiveTurnCancelRegistry {
+    inner: Arc<Mutex<HashMap<String, AcpActiveTurnCancelRegistration>>>,
+}
+
+impl AcpActiveTurnCancelRegistry {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn register(
+        &self,
+        acp_session_id: impl Into<String>,
+        request_id: Uuid,
+        conversation_id: Option<String>,
+    ) -> (AcpActiveTurnCancelHandle, watch::Receiver<bool>) {
+        let acp_session_id = acp_session_id.into();
+        let (cancel_tx, cancel_rx) = watch::channel(false);
+        if let Ok(mut inner) = self.inner.lock() {
+            inner.insert(
+                acp_session_id.clone(),
+                AcpActiveTurnCancelRegistration {
+                    acp_session_id: acp_session_id.clone(),
+                    request_id,
+                    conversation_id,
+                    cancel_tx,
+                },
+            );
+        }
+        (
+            AcpActiveTurnCancelHandle {
+                registry: self.clone(),
+                acp_session_id,
+                request_id,
+            },
+            cancel_rx,
+        )
+    }
+
+    pub fn cancel_session(&self, acp_session_id: &str) -> Option<AcpActiveTurnCancelRegistration> {
+        let registration = self.inner.lock().ok()?.get(acp_session_id).cloned()?;
+        let _ = registration.cancel_tx.send(true);
+        Some(registration)
+    }
+
+    pub fn active_for_session(
+        &self,
+        acp_session_id: &str,
+    ) -> Option<AcpActiveTurnCancelRegistration> {
+        self.inner.lock().ok()?.get(acp_session_id).cloned()
+    }
+
+    fn unregister_if_matches(&self, acp_session_id: &str, request_id: Uuid) {
+        let Ok(mut inner) = self.inner.lock() else {
+            return;
+        };
+        let should_remove = inner
+            .get(acp_session_id)
+            .is_some_and(|registration| registration.request_id == request_id);
+        if should_remove {
+            inner.remove(acp_session_id);
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AcpTurnController {
     phase: AcpTurnPhase,
@@ -160,7 +253,10 @@ impl AcpTurnController {
                 AcpToolExecutionRoute::Unsupported => {}
             }
         }
-        let terminal = self.emitted_terminal.as_ref().or(self.ready_terminal.as_ref());
+        let terminal = self
+            .emitted_terminal
+            .as_ref()
+            .or(self.ready_terminal.as_ref());
         AcpTurnStatusSnapshot {
             phase: self.phase,
             open_obligations: self.open_obligation_count(),
@@ -266,7 +362,11 @@ impl AcpTurnController {
         }
     }
 
-    pub fn on_den_tool_settled(&mut self, tool_call_id: &str, ok: bool) -> AcpToolResultDisposition {
+    pub fn on_den_tool_settled(
+        &mut self,
+        tool_call_id: &str,
+        ok: bool,
+    ) -> AcpToolResultDisposition {
         self.settle_tool(tool_call_id, ok)
     }
 
@@ -413,7 +513,11 @@ mod tests {
     fn acp_turn_waits_for_adapter_local_tool_before_terminal() {
         let mut turn = AcpTurnController::new();
         turn.on_stream_started();
-        turn.on_tool_request("call_1", "fs_read_text_file", AcpToolExecutionRoute::AdapterLocal);
+        turn.on_tool_request(
+            "call_1",
+            "fs_read_text_file",
+            AcpToolExecutionRoute::AdapterLocal,
+        );
         turn.on_requires_approval_stop();
         turn.on_stream_end();
 
@@ -474,7 +578,11 @@ mod tests {
     fn acp_turn_timeout_settles_pending_adapter_tool() {
         let mut turn = AcpTurnController::new();
         turn.on_stream_started();
-        turn.on_tool_request("call_1", "fs_read_text_file", AcpToolExecutionRoute::AdapterLocal);
+        turn.on_tool_request(
+            "call_1",
+            "fs_read_text_file",
+            AcpToolExecutionRoute::AdapterLocal,
+        );
 
         assert_eq!(
             turn.on_tool_timeout("call_1"),
@@ -494,7 +602,11 @@ mod tests {
     fn acp_turn_cancel_settles_pending_adapter_tool() {
         let mut turn = AcpTurnController::new();
         turn.on_stream_started();
-        turn.on_tool_request("call_1", "fs_read_text_file", AcpToolExecutionRoute::AdapterLocal);
+        turn.on_tool_request(
+            "call_1",
+            "fs_read_text_file",
+            AcpToolExecutionRoute::AdapterLocal,
+        );
         turn.on_cancel();
 
         assert_eq!(turn.open_obligation_count(), 0);
@@ -545,7 +657,11 @@ mod tests {
     fn acp_turn_status_snapshot_reports_phase_and_obligations() {
         let mut turn = AcpTurnController::new();
         turn.on_stream_started();
-        turn.on_tool_request("call_local", "fs_read_text_file", AcpToolExecutionRoute::AdapterLocal);
+        turn.on_tool_request(
+            "call_local",
+            "fs_read_text_file",
+            AcpToolExecutionRoute::AdapterLocal,
+        );
         turn.on_tool_request("call_den", "session_info", AcpToolExecutionRoute::DenServer);
 
         let snapshot = turn.status_snapshot();
@@ -586,7 +702,11 @@ mod tests {
         assert_eq!(turn.take_status_update().expect("thinking").key, "thinking");
         assert_eq!(turn.take_status_update(), None);
 
-        turn.on_tool_request("call_1", "fs_read_text_file", AcpToolExecutionRoute::AdapterLocal);
+        turn.on_tool_request(
+            "call_1",
+            "fs_read_text_file",
+            AcpToolExecutionRoute::AdapterLocal,
+        );
         assert_eq!(
             turn.take_status_update().expect("waiting").key,
             "waiting_for_local_tool"

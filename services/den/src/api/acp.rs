@@ -55,7 +55,8 @@ use crate::{
             resolve_session_policy_for_mode, AcpToolStatus,
         },
         acp_turn_controller::{
-            AcpToolExecutionRoute as ControllerToolExecutionRoute, AcpTurnController,
+            AcpActiveTurnCancelHandle, AcpToolExecutionRoute as ControllerToolExecutionRoute,
+            AcpTurnController,
         },
         archived_conversations,
         bears::{db as bears_db, Bear, BearAgentRole},
@@ -2689,6 +2690,9 @@ async fn cancel_session_inner(
     else {
         return Ok(Json(serde_json::json!({ "ok": true, "cancelled": false })).into_response());
     };
+    let stream_cancel = state
+        .acp_turn_cancellations
+        .cancel_session(&session.acp_session_id);
     let active = state
         .acp_tool_turns
         .cancel_active_turn(&session.acp_session_id);
@@ -2715,16 +2719,21 @@ async fn cancel_session_inner(
         bear_id = %session.bear_id,
         acp_session_id = %session.acp_session_id,
         conversation_id = %session.conversation_id,
-        active_request_id = ?active.as_ref().map(|turn| turn.request_id),
-        active_conversation_id = ?active.as_ref().and_then(|turn| turn.conversation_id.clone()),
+        active_request_id = ?active.as_ref().map(|turn| turn.request_id).or_else(|| stream_cancel.as_ref().map(|turn| turn.request_id)),
+        active_conversation_id = ?active.as_ref().and_then(|turn| turn.conversation_id.clone()).or_else(|| stream_cancel.as_ref().and_then(|turn| turn.conversation_id.clone())),
         pair_agent_id = ?pair_agent_id,
         cancel_result = %cancel_result,
         "ACP cancel requested; cancelled active pair turn and cleaned session tool state"
     );
     Ok(Json(serde_json::json!({
         "ok": true,
-        "cancelled": active.is_some(),
+        "cancelled": active.is_some() || stream_cancel.is_some(),
         "active_turn": active.map(|turn| turn.diagnostic()),
+        "stream_turn": stream_cancel.map(|turn| serde_json::json!({
+            "acp_session_id": turn.acp_session_id,
+            "request_id": turn.request_id,
+            "conversation_id": turn.conversation_id,
+        })),
         "cancel_result": cancel_result,
     }))
     .into_response())
@@ -3518,6 +3527,11 @@ async fn prompt_inner(
     let activity = current_activity_plan
         .as_ref()
         .map(|plan| serde_json::json!(plan));
+    let (cancel_handle, cancel_rx) = state.acp_turn_cancellations.register(
+        session_id.to_string(),
+        request_id,
+        conversation_resolution.resolved_conversation_id.clone(),
+    );
     let stream = AcpLettaSseStream::new(
         upstream.bytes_stream(),
         AcpStreamContext {
@@ -3550,7 +3564,8 @@ async fn prompt_inner(
             max_steps: 4,
         },
         active_turn_guard,
-    );
+    )
+    .with_cancel_registration(cancel_handle, cancel_rx);
     let request_id_header = HeaderValue::from_str(&request_id.to_string()).map_err(|_| {
         ApiError::new(
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -4987,6 +5002,7 @@ struct AcpLettaSseStream {
     deferred_turn_result: Option<AcpGatewayEvent>,
     active_turn_guard: Option<crate::core::role_runtime::RoleTurnGuard>,
     cancel_rx: Option<tokio::sync::watch::Receiver<bool>>,
+    cancel_handle: Option<AcpActiveTurnCancelHandle>,
     turn_controller: AcpTurnController,
 }
 
@@ -5086,6 +5102,7 @@ impl AcpLettaSseStream {
             deferred_turn_result: None,
             active_turn_guard: Some(active_turn_guard),
             cancel_rx: None,
+            cancel_handle: None,
             turn_controller: {
                 let mut controller = AcpTurnController::new();
                 controller.on_stream_started();
@@ -5096,6 +5113,16 @@ impl AcpLettaSseStream {
 
     #[cfg(test)]
     fn with_cancel_rx(mut self, cancel_rx: tokio::sync::watch::Receiver<bool>) -> Self {
+        self.cancel_rx = Some(cancel_rx);
+        self
+    }
+
+    fn with_cancel_registration(
+        mut self,
+        handle: AcpActiveTurnCancelHandle,
+        cancel_rx: tokio::sync::watch::Receiver<bool>,
+    ) -> Self {
+        self.cancel_handle = Some(handle);
         self.cancel_rx = Some(cancel_rx);
         self
     }
@@ -5114,6 +5141,7 @@ impl AcpLettaSseStream {
     fn log_summary_once(&mut self) {
         if !self.logged_summary {
             self.cleanup_active_tool_turns();
+            self.cancel_handle.take();
             if let Some(guard) = self.active_turn_guard.take() {
                 guard.release();
             }
@@ -5126,6 +5154,7 @@ impl AcpLettaSseStream {
 impl Drop for AcpLettaSseStream {
     fn drop(&mut self) {
         self.cleanup_active_tool_turns();
+        self.cancel_handle.take();
         if let Some(guard) = self.active_turn_guard.take() {
             guard.release();
         }

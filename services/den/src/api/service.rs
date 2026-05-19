@@ -47,6 +47,9 @@ pub struct ApiState {
     pub bifrost: Arc<BifrostClient>,
     /// Process-local active ACP direct tool turns.
     pub(crate) acp_tool_turns: crate::core::acp_tool_turns::AcpToolTurnCoordinator,
+    /// Process-local active ACP stream cancellation signals.
+    pub(crate) acp_turn_cancellations:
+        crate::core::acp_turn_controller::AcpActiveTurnCancelRegistry,
 }
 
 async fn api_readiness(State(state): State<ApiState>) -> Result<&'static str, StatusCode> {
@@ -108,6 +111,8 @@ pub async fn create_api_app(
         letta: Arc::new(LettaClient::new(config.as_ref())),
         bifrost: Arc::new(BifrostClient::new(config.as_ref())),
         acp_tool_turns: crate::core::acp_tool_turns::AcpToolTurnCoordinator::new(),
+        acp_turn_cancellations: crate::core::acp_turn_controller::AcpActiveTurnCancelRegistry::new(
+        ),
     };
 
     // Create OAuth state (separate from main API state for OAuth endpoints)
