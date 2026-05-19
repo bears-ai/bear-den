@@ -35,7 +35,7 @@ Still in progress:
 - Real production `/cancel` endpoint signaling into active streams is initially wired via a session-level `AcpActiveTurnCancelRegistry`. The endpoint now signals before auth/session-row lookup, which supports early cancellation races. Registry unit tests cover signaling, unregistering, and stale handle safety; full HTTP endpoint integration tests still need to be added.
 - Normalized late-result API response shape is implemented and unit-tested for Den tool-result responses: compatibility variants now return `reason = late_result_ignored` plus `settlement` detail (`timed_out`, `cancelled`, `already_settled`, or `unknown`). Full HTTP endpoint tests can still be added later.
 - `session_info.runtime` and `session_info.context_budget` shape is implemented and tested. It defaults to idle/no-active-turn and context budget unavailable, can use active-turn registry snapshots through `DenToolInvocationContext`, and ACP stream tests now verify the registry reports `requires_action` with pending obligations.
-- Adapter-side overlap, mode-race, MCP-log, and cancellation tests. Initial `/status` slash command is implemented and tested as a human presentation over Den runtime plus adapter-local task/MCP summaries. Adapter can now mirror Den-provided runtime/context-budget metadata through `session_info_update._meta.bears`; overlap/cancel/mode-race tests remain.
+- Adapter-side tests are in progress. Mode startup race and MCP log summarization tests are now added. Initial `/status` slash command is implemented and tested as a human presentation over Den runtime plus adapter-local task/MCP summaries. Adapter can mirror Den-provided runtime/context-budget metadata through `session_info_update._meta.bears`; overlap and explicit cancellation tests remain.
 - Slow `session_info` stream test cleanup is complete. The stream test now asserts route classification/no adapter emission without driving the full `session_info` DB-dependent continuation path, reducing runtime from ~60s to ~0.1s.
 - Full `acp_stream_` Den stream lifecycle test group now passes after clarifying the no-premature-terminal test to allow an auto-timeout settlement in full-group Tokio scheduling while still forbidding terminal/continuation before a real or synthetic settlement.
 
@@ -805,7 +805,7 @@ Expected:
 
 #### `adapter_defers_mode_update_until_den_session_exists`
 
-Status: behavior implemented defensively; test not yet added.
+Status: complete. Test added.
 
 Expected:
 
@@ -816,7 +816,7 @@ Expected:
 
 #### `adapter_summarizes_mcp_context_in_session_logs`
 
-Status: behavior implemented defensively; test not yet added.
+Status: complete. Test added.
 
 Expected:
 
@@ -1038,4 +1038,4 @@ Recommended next implementation order:
 2. Continue replacing legacy stream lifecycle state with controller authority one piece at a time.
 3. Add full HTTP endpoint-level tests for late result response normalization if needed; unit coverage currently verifies response mapping.
 4. Wire live active-turn registry snapshots into `session_info` endpoint/tool calls broadly, then tighten human `/status` to render this same canonical data. Initial `/status` exists but currently combines Den runtime endpoint, adapter-local task list, MCP summary, and unavailable context budget. Adapter-side mirroring of Den-provided runtime/context-budget metadata through `session_info_update._meta.bears` is wired; add tests and Den emission coverage.
-5. Add remaining adapter tests for overlap, mode startup race, MCP log summarization, and explicit cancellation. `/status` parsing/rendering now has basic tests.
+5. Add remaining adapter tests for overlap and explicit cancellation. Mode startup race, MCP log summarization, and `/status` parsing/rendering now have tests.

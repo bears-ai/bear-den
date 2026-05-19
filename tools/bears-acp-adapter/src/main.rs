@@ -6927,6 +6927,75 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn adapter_defers_mode_update_until_den_session_exists() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut reader = BufReader::new(stream);
+            let mut line = String::new();
+            loop {
+                line.clear();
+                let n = reader.read_line(&mut line).await.unwrap();
+                if n == 0 || line == "\r\n" || line == "\n" {
+                    break;
+                }
+            }
+            stream = reader.into_inner();
+            use tokio::io::AsyncWriteExt;
+            let body = r#"{"error":"ACP session not found","error_code":"not_found"}"#;
+            let response = format!(
+                "HTTP/1.1 404 Not Found\r\ncontent-type: application/json\r\ncontent-length: {}\r\n\r\n{}",
+                body.len(),
+                body
+            );
+            stream.write_all(response.as_bytes()).await.unwrap();
+        });
+        let config = Config {
+            api_url: format!("http://{addr}"),
+            token: "token-test".to_string(),
+            bear: "meta".to_string(),
+            client: "zed".to_string(),
+        };
+        let http = reqwest::Client::new();
+        let (mode, response) = request_den_session_mode(&http, Some(&config), "acp-missing", MODE_WRITE)
+            .await
+            .unwrap();
+
+        assert_eq!(mode, MODE_ASK);
+        assert_eq!(response["deferred"], true);
+        assert_eq!(response["source"], "adapter.den_session_mode_not_found");
+    }
+
+    #[test]
+    fn adapter_summarizes_mcp_context_in_session_logs() {
+        let mcp = json!({
+            "servers": [{
+                "name": "chrome-devtools-custom",
+                "status": "ok",
+                "transport": "stdio",
+                "tool_count": 29,
+                "command": "docker"
+            }],
+            "client_tools": [{
+                "name": "mcp__chrome_devtools_custom__take_snapshot",
+                "description": "large schema should not be dumped",
+                "input_schema": {"properties": {"huge": {"type": "string"}}}
+            }]
+        });
+        let summary = summarize_mcp_for_log(Some(&mcp));
+
+        assert_eq!(summary["server_count"], 1);
+        assert_eq!(summary["tool_count"], 1);
+        assert_eq!(summary["servers"][0]["name"], "chrome-devtools-custom");
+        assert_eq!(summary["tool_names"][0], "mcp__chrome_devtools_custom__take_snapshot");
+        let rendered = summary.to_string();
+        assert!(!rendered.contains("large schema should not be dumped"));
+        assert!(!rendered.contains("input_schema"));
+        assert!(!rendered.contains("docker"));
+    }
+
+    #[tokio::test]
     async fn stale_approval_event_requests_recovery_retry() {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
