@@ -56,7 +56,7 @@ use crate::{
         },
         acp_turn_controller::{
             AcpActiveTurnCancelHandle, AcpToolExecutionRoute as ControllerToolExecutionRoute,
-            AcpTurnController,
+            AcpTurnController, AcpTurnPhase,
         },
         archived_conversations,
         bears::{db as bears_db, Bear, BearAgentRole},
@@ -5072,8 +5072,7 @@ struct AcpLettaSseStream {
     logged_summary: bool,
     persist_future: Option<AcpPendingFuture>,
     text_chunker: AcpTextChunker,
-    stream_terminated: bool,
-    terminal_waiting_for_obligations: Option<AcpGatewayEvent>,
+    deferred_terminal_result: Option<AcpGatewayEvent>,
     active_turn_guard: Option<crate::core::role_runtime::RoleTurnGuard>,
     cancel_rx: Option<tokio::sync::watch::Receiver<bool>>,
     cancel_handle: Option<AcpActiveTurnCancelHandle>,
@@ -5104,14 +5103,6 @@ impl AcpLettaSseStream {
     }
 
     fn push_turn_result_now(&mut self, event: AcpGatewayEvent) {
-        if self.stream_terminated {
-            tracing::warn!(
-                request_id = %self.context.request_id,
-                acp_session_id = %self.context.acp_session_id,
-                "suppressed duplicate ACP turn_result"
-            );
-            return;
-        }
         let Some(controller_terminal) = self.turn_controller.take_terminal_event() else {
             let snapshot = self.turn_controller.status_snapshot();
             tracing::warn!(
@@ -5132,7 +5123,6 @@ impl AcpLettaSseStream {
             controller_terminal_reason = ?controller_terminal.reason,
             "emitting ACP turn_result authorized by turn controller"
         );
-        self.stream_terminated = true;
         self.diagnostics.observe_mapped_event(&event);
         self.pending.push_back(acp_event_to_adapter_sse(event));
     }
@@ -5160,14 +5150,14 @@ impl AcpLettaSseStream {
             controller_terminal_reason = ?controller_snapshot.terminal_reason,
             "deferred ACP turn_result until turn controller allows terminal emission"
         );
-        self.terminal_waiting_for_obligations = Some(event);
+        self.deferred_terminal_result = Some(event);
     }
 
-    fn try_flush_terminal_waiting_for_obligations(&mut self) {
-        if self.terminal_waiting_for_obligations.is_none() || !self.controller_allows_terminal() {
+    fn try_flush_deferred_terminal_result(&mut self) {
+        if self.deferred_terminal_result.is_none() || !self.controller_allows_terminal() {
             return;
         }
-        if let Some(event) = self.terminal_waiting_for_obligations.take() {
+        if let Some(event) = self.deferred_terminal_result.take() {
             self.push_turn_result_now(event);
         }
     }
@@ -5197,8 +5187,7 @@ impl AcpLettaSseStream {
             logged_summary: false,
             persist_future: None,
             text_chunker: AcpTextChunker::new(acp_text_chunk_chars()),
-            stream_terminated: false,
-            terminal_waiting_for_obligations: None,
+            deferred_terminal_result: None,
             active_turn_guard: Some(active_turn_guard),
             cancel_rx: None,
             cancel_handle: None,
@@ -5279,11 +5268,7 @@ impl Stream for AcpLettaSseStream {
             .cancel_rx
             .as_ref()
             .is_some_and(|cancel_rx| *cancel_rx.borrow())
-            && this
-                .turn_controller
-                .status_snapshot()
-                .terminal_status
-                .is_none()
+            && this.turn_controller.phase() != AcpTurnPhase::Terminal
         {
             this.turn_controller.on_cancel();
             let cancelled_tool_call_ids = this.outstanding_tool_obligations();
@@ -5523,7 +5508,7 @@ impl Stream for AcpLettaSseStream {
                         // the result and continue reading the current stream; once it ends,
                         // start the tool-return continuation.
                         this.pending_tool_result = Some(tool_result);
-                        this.try_flush_terminal_waiting_for_obligations();
+                        this.try_flush_deferred_terminal_result();
                         return self.poll_next(cx);
                     }
                 }
@@ -5533,7 +5518,6 @@ impl Stream for AcpLettaSseStream {
                     match result {
                         Ok(response) => {
                             this.inner = Box::pin(response.bytes_stream());
-                            this.stream_terminated = false;
                             return self.poll_next(cx);
                         }
                         Err(err) => {
@@ -5650,7 +5634,7 @@ impl Stream for AcpLettaSseStream {
             return self.poll_next(cx);
         }
 
-        if this.stream_terminated {
+        if this.turn_controller.phase() == AcpTurnPhase::Terminal {
             this.log_summary_once();
             return Poll::Ready(None);
         }
