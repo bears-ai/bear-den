@@ -2916,12 +2916,18 @@ struct ReloadHistoryMessage {
     text: String,
 }
 
+fn flatten_history_pages_chronological(
+    pages_newest_first: Vec<Vec<ReloadHistoryMessage>>,
+) -> Vec<ReloadHistoryMessage> {
+    pages_newest_first.into_iter().rev().flatten().collect()
+}
+
 async fn fetch_conversation_history_chronological(
     http: &reqwest::Client,
     config: &Config,
     conversation_id: &str,
 ) -> Result<Vec<ReloadHistoryMessage>> {
-    let mut out: Vec<ReloadHistoryMessage> = Vec::new();
+    let mut pages_newest_first: Vec<Vec<ReloadHistoryMessage>> = Vec::new();
     let mut before: Option<String> = None;
     let mut seen_cursors = std::collections::HashSet::new();
     let mut page_idx = 0usize;
@@ -2991,7 +2997,7 @@ async fn fetch_conversation_history_chronological(
             first_id,
             last_id
         );
-        out.extend(page);
+        pages_newest_first.push(page);
         let has_more = body
             .get("has_more")
             .and_then(|v| v.as_bool())
@@ -3014,7 +3020,7 @@ async fn fetch_conversation_history_chronological(
         before = Some(next_before);
         page_idx += 1;
     }
-    Ok(out)
+    Ok(flatten_history_pages_chronological(pages_newest_first))
 }
 
 async fn replay_history_for_den_session(
@@ -7913,6 +7919,42 @@ mod tests {
             .collect::<Vec<_>>();
         assert_eq!(page[0].id.as_deref(), Some("msg-1"));
         assert_eq!(page[1].id.as_deref(), Some("msg-2"));
+    }
+
+    #[test]
+    fn history_pages_flatten_oldest_to_newest_across_desc_pagination() {
+        let pages = vec![
+            vec![
+                ReloadHistoryMessage {
+                    id: Some("m3".to_string()),
+                    role: "user".to_string(),
+                    text: "ask 2".to_string(),
+                },
+                ReloadHistoryMessage {
+                    id: Some("m4".to_string()),
+                    role: "assistant".to_string(),
+                    text: "reply 2".to_string(),
+                },
+            ],
+            vec![
+                ReloadHistoryMessage {
+                    id: Some("m1".to_string()),
+                    role: "user".to_string(),
+                    text: "ask 1".to_string(),
+                },
+                ReloadHistoryMessage {
+                    id: Some("m2".to_string()),
+                    role: "assistant".to_string(),
+                    text: "reply 1".to_string(),
+                },
+            ],
+        ];
+        let messages = flatten_history_pages_chronological(pages);
+        let ids = messages
+            .iter()
+            .map(|message| message.id.as_deref().unwrap_or("<none>"))
+            .collect::<Vec<_>>();
+        assert_eq!(ids, vec!["m1", "m2", "m3", "m4"]);
     }
 
     #[test]
