@@ -3372,6 +3372,16 @@ fn render_compact_recovery_result(result: Value) -> String {
     )
 }
 
+fn prompt_end_turn_response_value() -> Result<Value> {
+    Ok(serde_json::to_value(PromptResponse::new(
+        StopReason::EndTurn,
+    ))?)
+}
+
+async fn write_prompt_end_turn_response(response_id: Value) -> Result<()> {
+    write_response(response_id, Ok(prompt_end_turn_response_value()?)).await
+}
+
 async fn handle_prompt(
     http: &reqwest::Client,
     config: &Config,
@@ -3463,6 +3473,7 @@ async fn handle_prompt_with_retry(
         )
         .await;
         send_agent_message_chunk_for_turn(shared_state, session_id, turn_token, &report).await?;
+        write_prompt_end_turn_response(response_id).await?;
         return Ok(());
     }
     let mut client_context = shared_state
@@ -3568,13 +3579,7 @@ async fn handle_prompt_with_retry(
             ),
         )
         .await?;
-        write_response(
-            response_id,
-            Ok(serde_json::to_value(PromptResponse::new(
-                StopReason::EndTurn,
-            ))?),
-        )
-        .await?;
+        write_prompt_end_turn_response(response_id).await?;
         return Ok(());
     }
 
@@ -3751,16 +3756,7 @@ async fn handle_prompt_with_retry(
         ));
     }
 
-    let stop_reason = if saw_done {
-        StopReason::EndTurn
-    } else {
-        StopReason::EndTurn
-    };
-    write_response(
-        response_id,
-        Ok(serde_json::to_value(PromptResponse::new(stop_reason))?),
-    )
-    .await?;
+    write_prompt_end_turn_response(response_id).await?;
     Ok(())
 }
 
@@ -7663,6 +7659,12 @@ mod tests {
             parse_local_slash_command("/status"),
             Some(LocalSlashCommand::Status)
         );
+    }
+
+    #[test]
+    fn prompt_end_turn_response_uses_end_turn_stop_reason() {
+        let value = prompt_end_turn_response_value().unwrap();
+        assert_eq!(value["stopReason"], json!("end_turn"));
     }
 
     #[test]
