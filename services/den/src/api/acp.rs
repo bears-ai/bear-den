@@ -5091,6 +5091,18 @@ impl AcpLettaSseStream {
             .collect()
     }
 
+    fn terminal_blockers(&self) -> (Vec<String>, bool) {
+        (
+            self.outstanding_tool_obligations(),
+            self.pending_tool_result.is_some(),
+        )
+    }
+
+    fn controller_allows_terminal(&self) -> bool {
+        let (outstanding, pending_tool_result) = self.terminal_blockers();
+        self.turn_controller.may_emit_terminal() && outstanding.is_empty() && !pending_tool_result
+    }
+
     fn push_turn_result_now(&mut self, event: AcpGatewayEvent) {
         if self.stream_terminated {
             tracing::warn!(
@@ -5100,7 +5112,26 @@ impl AcpLettaSseStream {
             );
             return;
         }
-        let _ = self.turn_controller.take_terminal_event();
+        let Some(controller_terminal) = self.turn_controller.take_terminal_event() else {
+            let snapshot = self.turn_controller.status_snapshot();
+            tracing::warn!(
+                request_id = %self.context.request_id,
+                acp_session_id = %self.context.acp_session_id,
+                controller_phase = ?snapshot.phase,
+                controller_open_obligations = snapshot.open_obligations,
+                controller_terminal_status = ?snapshot.terminal_status,
+                controller_terminal_reason = ?snapshot.terminal_reason,
+                "suppressed ACP turn_result because turn controller did not allow terminal emission"
+            );
+            return;
+        };
+        tracing::debug!(
+            request_id = %self.context.request_id,
+            acp_session_id = %self.context.acp_session_id,
+            controller_terminal_status = ?controller_terminal.status,
+            controller_terminal_reason = ?controller_terminal.reason,
+            "emitting ACP turn_result authorized by turn controller"
+        );
         self.stream_terminated = true;
         self.diagnostics.observe_mapped_event(&event);
         self.pending.push_back(acp_event_to_adapter_sse(event));
@@ -5112,32 +5143,28 @@ impl AcpLettaSseStream {
             self.pending.push_back(acp_event_to_adapter_sse(event));
             return;
         }
-        let controller_snapshot = self.turn_controller.status_snapshot();
-        let outstanding = self.outstanding_tool_obligations();
-        if outstanding.is_empty() && controller_snapshot.open_obligations == 0 {
+        if self.controller_allows_terminal() {
             self.push_turn_result_now(event);
             return;
         }
+        let controller_snapshot = self.turn_controller.status_snapshot();
+        let (outstanding, pending_tool_result) = self.terminal_blockers();
         tracing::info!(
             request_id = %self.context.request_id,
             acp_session_id = %self.context.acp_session_id,
             outstanding_tool_call_ids = ?outstanding,
+            pending_tool_result,
             controller_open_obligations = controller_snapshot.open_obligations,
             controller_phase = ?controller_snapshot.phase,
-            "deferred ACP turn_result until turn obligations settle"
+            controller_terminal_status = ?controller_snapshot.terminal_status,
+            controller_terminal_reason = ?controller_snapshot.terminal_reason,
+            "deferred ACP turn_result until turn controller allows terminal emission"
         );
         self.terminal_waiting_for_obligations = Some(event);
     }
 
     fn try_flush_terminal_waiting_for_obligations(&mut self) {
-        if self.terminal_waiting_for_obligations.is_none() {
-            return;
-        }
-        let controller_snapshot = self.turn_controller.status_snapshot();
-        if !self.outstanding_tool_obligations().is_empty()
-            || self.pending_tool_result.is_some()
-            || controller_snapshot.open_obligations > 0
-        {
+        if self.terminal_waiting_for_obligations.is_none() || !self.controller_allows_terminal() {
             return;
         }
         if let Some(event) = self.terminal_waiting_for_obligations.take() {
