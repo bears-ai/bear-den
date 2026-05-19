@@ -4301,6 +4301,37 @@ enum AcpPromptBlockProvenance {
     Unsupported,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AcpPromptContextDeliveryPolicy {
+    ReferenceOnly,
+    DiagnosticOnly,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct AcpPromptResourceReference {
+    block_type: AcpPromptBlockType,
+    provenance: AcpPromptBlockProvenance,
+    uri: Option<String>,
+    name: Option<String>,
+    mime_type: Option<String>,
+    text_bytes: Option<usize>,
+    delivery_policy: AcpPromptContextDeliveryPolicy,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+struct AcpPromptContextDiagnostics {
+    synthetic_context_omitted: usize,
+    unsupported_blocks: usize,
+    resource_bodies_not_in_human_message: usize,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+struct AcpPromptContextBundle {
+    human_message: String,
+    resource_references: Vec<AcpPromptResourceReference>,
+    diagnostics: AcpPromptContextDiagnostics,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct AcpPromptBlockClassification {
     block_type: AcpPromptBlockType,
@@ -4417,21 +4448,56 @@ fn looks_like_client_synthetic_context(text: &str) -> bool {
             || lower.contains("zed"))
 }
 
-fn prompt_text_from_params(params: &Value) -> Result<String> {
+fn prompt_context_from_params(params: &Value) -> Result<AcpPromptContextBundle> {
     let prompt = params
         .get("prompt")
         .and_then(Value::as_array)
         .ok_or_else(|| anyhow!("session/prompt params missing prompt array"))?;
 
-    let text = prompt
-        .iter()
-        .filter(|block| classify_prompt_block(block).include_in_human_message())
-        .filter_map(prompt_block_text_for_human_message)
-        .collect::<Vec<_>>()
-        .join("\n\n")
-        .trim()
-        .to_string();
+    let mut human_parts = Vec::new();
+    let mut bundle = AcpPromptContextBundle::default();
+    for block in prompt {
+        let classification = classify_prompt_block(block);
+        if classification.include_in_human_message() {
+            if let Some(text) = prompt_block_text_for_human_message(block) {
+                human_parts.push(text.to_string());
+            }
+            continue;
+        }
+        match classification.block_type {
+            AcpPromptBlockType::Resource | AcpPromptBlockType::ResourceLink => {
+                if classification.provenance == AcpPromptBlockProvenance::ClientSyntheticContext {
+                    bundle.diagnostics.synthetic_context_omitted += 1;
+                    if let Some(reference) = prompt_resource_reference_from_block(
+                        block,
+                        &classification,
+                        AcpPromptContextDeliveryPolicy::DiagnosticOnly,
+                    ) {
+                        bundle.resource_references.push(reference);
+                    }
+                    continue;
+                }
+                if let Some(reference) = prompt_resource_reference_from_block(
+                    block,
+                    &classification,
+                    AcpPromptContextDeliveryPolicy::ReferenceOnly,
+                ) {
+                    if reference.text_bytes.is_some() {
+                        bundle.diagnostics.resource_bodies_not_in_human_message += 1;
+                    }
+                    bundle.resource_references.push(reference);
+                }
+            }
+            AcpPromptBlockType::Other => bundle.diagnostics.unsupported_blocks += 1,
+            AcpPromptBlockType::Text => {}
+        }
+    }
+    bundle.human_message = human_parts.join("\n\n").trim().to_string();
+    Ok(bundle)
+}
 
+fn prompt_text_from_params(params: &Value) -> Result<String> {
+    let text = prompt_context_from_params(params)?.human_message;
     if text.is_empty() {
         Err(anyhow!(
             "prompt did not contain supported human-authored text content"
@@ -4446,6 +4512,60 @@ fn prompt_block_text_for_human_message(block: &Value) -> Option<&str> {
         "text" => block.get("text").and_then(Value::as_str),
         _ => None,
     }
+}
+
+fn prompt_resource_reference_from_block(
+    block: &Value,
+    classification: &AcpPromptBlockClassification,
+    delivery_policy: AcpPromptContextDeliveryPolicy,
+) -> Option<AcpPromptResourceReference> {
+    match classification.block_type {
+        AcpPromptBlockType::Resource => {
+            let resource = block.get("resource")?;
+            let text = resource.get("text").and_then(Value::as_str);
+            Some(AcpPromptResourceReference {
+                block_type: classification.block_type,
+                provenance: classification.provenance,
+                uri: prompt_string_field(resource, &["uri", "url"])
+                    .or_else(|| prompt_string_field(block, &["uri", "url"])),
+                name: prompt_string_field(resource, &["name", "title"])
+                    .or_else(|| prompt_string_field(block, &["name", "title"])),
+                mime_type: prompt_string_field(
+                    resource,
+                    &["mime_type", "mimeType", "media_type", "mediaType"],
+                )
+                .or_else(|| {
+                    prompt_string_field(
+                        block,
+                        &["mime_type", "mimeType", "media_type", "mediaType"],
+                    )
+                }),
+                text_bytes: text.map(str::len),
+                delivery_policy,
+            })
+        }
+        AcpPromptBlockType::ResourceLink => Some(AcpPromptResourceReference {
+            block_type: classification.block_type,
+            provenance: classification.provenance,
+            uri: prompt_string_field(block, &["uri", "url"]),
+            name: prompt_string_field(block, &["name", "title"]),
+            mime_type: prompt_string_field(
+                block,
+                &["mime_type", "mimeType", "media_type", "mediaType"],
+            ),
+            text_bytes: None,
+            delivery_policy,
+        }),
+        _ => None,
+    }
+}
+
+fn prompt_string_field(value: &Value, keys: &[&str]) -> Option<String> {
+    keys.iter()
+        .filter_map(|key| value.get(*key).and_then(Value::as_str))
+        .map(str::trim)
+        .find(|s| !s.is_empty())
+        .map(str::to_string)
 }
 
 fn prompt_conversation_id_from_params(params: &Value) -> Option<String> {
@@ -4661,20 +4781,7 @@ fn prompt_contains_resources(params: &Value) -> bool {
 }
 
 fn prompt_text_for_display_from_params(params: &Value) -> Result<String> {
-    let prompt = params
-        .get("prompt")
-        .and_then(Value::as_array)
-        .ok_or_else(|| anyhow!("session/prompt params missing prompt array"))?;
-
-    let text = prompt
-        .iter()
-        .filter(|block| classify_prompt_block(block).include_in_display())
-        .filter_map(prompt_block_text_for_human_message)
-        .collect::<Vec<_>>()
-        .join("\n\n")
-        .trim()
-        .to_string();
-
+    let text = prompt_context_from_params(params)?.human_message;
     if text.is_empty() {
         Err(anyhow!("prompt did not contain displayable text content"))
     } else {
@@ -7158,6 +7265,68 @@ mod tests {
     }
 
     #[test]
+    fn prompt_context_extracts_resource_reference_without_body_in_human_message() {
+        let params = json!({
+            "prompt": [
+                {"type": "text", "text": "Please inspect this."},
+                {"type": "resource", "resource": {
+                    "uri": "file:///tmp/a",
+                    "name": "a.txt",
+                    "mimeType": "text/plain",
+                    "text": "file contents"
+                }}
+            ]
+        });
+        let bundle = prompt_context_from_params(&params).unwrap();
+
+        assert_eq!(bundle.human_message, "Please inspect this.");
+        assert_eq!(bundle.resource_references.len(), 1);
+        let reference = &bundle.resource_references[0];
+        assert_eq!(reference.block_type, AcpPromptBlockType::Resource);
+        assert_eq!(
+            reference.provenance,
+            AcpPromptBlockProvenance::ClientResource
+        );
+        assert_eq!(reference.uri.as_deref(), Some("file:///tmp/a"));
+        assert_eq!(reference.name.as_deref(), Some("a.txt"));
+        assert_eq!(reference.mime_type.as_deref(), Some("text/plain"));
+        assert_eq!(reference.text_bytes, Some("file contents".len()));
+        assert_eq!(
+            reference.delivery_policy,
+            AcpPromptContextDeliveryPolicy::ReferenceOnly
+        );
+        assert_eq!(bundle.diagnostics.resource_bodies_not_in_human_message, 1);
+        assert!(!bundle.human_message.contains("file contents"));
+    }
+
+    #[test]
+    fn synthetic_resource_is_diagnostic_only_context() {
+        let params = json!({
+            "prompt": [
+                {"type": "text", "text": "Please continue."},
+                {"type": "resource", "resource": {
+                    "uri": "zed://system",
+                    "text": "{\"system_alert\":\"client synthetic summary from zed\"}"
+                }}
+            ]
+        });
+        let bundle = prompt_context_from_params(&params).unwrap();
+
+        assert_eq!(bundle.human_message, "Please continue.");
+        assert_eq!(bundle.diagnostics.synthetic_context_omitted, 1);
+        assert_eq!(bundle.resource_references.len(), 1);
+        assert_eq!(
+            bundle.resource_references[0].provenance,
+            AcpPromptBlockProvenance::ClientSyntheticContext
+        );
+        assert_eq!(
+            bundle.resource_references[0].delivery_policy,
+            AcpPromptContextDeliveryPolicy::DiagnosticOnly
+        );
+        assert!(!bundle.human_message.contains("system_alert"));
+    }
+
+    #[test]
     fn resource_link_is_reference_not_human_message() {
         let params = json!({
             "prompt": [
@@ -7168,6 +7337,7 @@ mod tests {
         let classification = classify_prompt_block(&params["prompt"][1]);
         let prompt = prompt_text_from_params(&params).unwrap();
         let display_prompt = prompt_display_text_from_params(&params).unwrap();
+        let bundle = prompt_context_from_params(&params).unwrap();
 
         assert_eq!(
             classification.provenance,
@@ -7177,6 +7347,20 @@ mod tests {
         assert!(!classification.include_in_display());
         assert_eq!(prompt, "Please consider this reference.");
         assert_eq!(display_prompt, "Please consider this reference.");
+        assert_eq!(bundle.resource_references.len(), 1);
+        assert_eq!(
+            bundle.resource_references[0].block_type,
+            AcpPromptBlockType::ResourceLink
+        );
+        assert_eq!(
+            bundle.resource_references[0].uri.as_deref(),
+            Some("file:///tmp/b")
+        );
+        assert_eq!(bundle.resource_references[0].name.as_deref(), Some("b.txt"));
+        assert_eq!(
+            bundle.resource_references[0].delivery_policy,
+            AcpPromptContextDeliveryPolicy::ReferenceOnly
+        );
         assert!(!prompt.contains("Referenced resource"));
         assert!(!display_prompt.contains("Referenced resource"));
     }

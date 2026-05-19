@@ -215,6 +215,8 @@ Referenced resource: file:///workspace/README.md (...)
 
 That makes it look as though the user typed content they did not type.
 
+For Letta, do not use message/content `type` as a provenance channel; `type` is the schema discriminator (`message`, `text`, `image`, `tool_return`, etc.). Prefer reference-plus-tool semantics for files: send the user's actual message plus the file id/path as referenced host context, then let file contents enter Letta history as a tool return when the agent calls the file-read tool. Inline small non-fetchable snippets only with explicit `<host_context>` provenance delimiters, and do not use `role: system` for arbitrary file contents.
+
 ## 12. Implement a real JSON-RPC dispatcher
 
 An ACP adapter/server should have exactly one stdin reader.

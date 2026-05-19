@@ -1032,7 +1032,7 @@ how recovery/cancellation is explained to users
 
 ## Prompt hygiene and provenance progress
 
-Status: adapter-side prompt block provenance classification is implemented and tested. Prompt flattening now uses provenance/accounted block type rather than heuristic content stripping.
+Status: adapter-side prompt block provenance classification and phase-1 prompt context bundle extraction are implemented and tested. Prompt flattening now uses provenance/accounted block type rather than heuristic content stripping.
 
 ACP spec note: `ContentBlock::Resource` is the preferred ACP way for clients to include embedded context such as @-mentioned files; all agents must support text and resource links, while embedded resource support is capability-gated. Therefore BEARS should not assume all protocol-valid prompt blocks are human-authored user-message text.
 
@@ -1044,13 +1044,16 @@ Completed:
 - Prompt flattening includes only blocks whose classification-derived `include_in_human_message()` policy returns true.
 - `text` blocks remain human-authored by default, including intentional pasted debugging payloads containing `system_alert`.
 - `resource` and `resource_link` blocks are treated as client-provided context/reference by default and are not persisted as Letta `human_message` text.
+- `AcpPromptContextBundle` extracts human message text separately from resource references so future delivery can use reference/tool-return semantics instead of pretending resources are user text.
+- Resource bodies are counted as excluded from human text; resource links are reference-only; likely synthetic resource context is diagnostic-only.
 - Likely synthetic resource context is now a diagnostic provenance classification (`client_synthetic_context`), not the deciding reason for omission.
-- Tests verify text, resource, synthetic resource, user-pasted debug text, and resource link classifications.
+- Tests verify text, resource, synthetic resource, user-pasted debug text, resource link classifications, and phase-1 resource reference extraction.
 
 Still remaining:
 
 - Add higher-level prompt persistence/boundary tests once the adapter/Den boundary exposes a clean seam.
-- Add explicit future handling for ACP resources so client-provided context can be exposed to models as context/reference without becoming Letta `human_message` text.
+- Phase 2: decide how to deliver extracted resource references to Den/Letta, likely as reference-only host context that asks the model to use file/content tools for authoritative contents.
+- Phase 3 later: only inline small non-fetchable snippets with strong `<host_context>` provenance delimiters and strict size limits.
 
 Target provenance model:
 
@@ -1078,9 +1081,10 @@ Target flattening policy:
 Implemented adapter seam:
 
 - Added `AcpPromptBlockClassification` and `classify_prompt_block` internal helper.
-- `prompt_text_from_params` includes only blocks whose classification-derived `include_in_human_message()` policy returns true.
-- `prompt_display_text_from_params` uses the same classifier via `include_in_display()` instead of a separate text-block-only path.
-- Resource content remains out of the Letta `human_message` flattening path pending future explicit context/resource handling.
+- Added `AcpPromptContextBundle` with `human_message`, `resource_references`, and extraction diagnostics.
+- `prompt_text_from_params` reads only `bundle.human_message`.
+- `prompt_display_text_from_params` uses the same bundle human message path instead of a separate text-block-only path.
+- Resource content remains out of the Letta `human_message` flattening path; local/resource references are available for future reference-only host-context delivery.
 
 Tests added/kept:
 
@@ -1090,6 +1094,8 @@ resource_block_is_client_context_not_human_message
 synthetic_resource_is_client_synthetic_context
 user_pasted_system_alert_text_remains_human_text
 resource_link_is_reference_not_human_message
+prompt_context_extracts_resource_reference_without_body_in_human_message
+synthetic_resource_is_diagnostic_only_context
 ```
 
 ## Immediate next action
