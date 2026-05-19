@@ -2745,7 +2745,6 @@ async fn cancel_session_inner(
     session_id: String,
     headers: HeaderMap,
 ) -> Result<Response, CustomError> {
-    let stream_cancel = state.acp_turn_cancellations.cancel_session(&session_id);
     let user_id = authenticate_acp_code_token(&state, &headers, &slug).await?;
     let Some(session) =
         acp_sessions::find_for_user_bear_session(&state.sqlx_pool, user_id, &slug, &session_id)
@@ -2753,15 +2752,14 @@ async fn cancel_session_inner(
     else {
         return Ok(Json(serde_json::json!({
             "ok": true,
-            "cancelled": stream_cancel.is_some(),
-            "stream_turn": stream_cancel.map(|turn| serde_json::json!({
-                "acp_session_id": turn.acp_session_id,
-                "request_id": turn.request_id,
-                "conversation_id": turn.conversation_id,
-            })),
+            "cancelled": false,
+            "stream_turn": serde_json::Value::Null,
         }))
         .into_response());
     };
+    let stream_cancel = state
+        .acp_turn_cancellations
+        .cancel_session(&session.acp_session_id);
     let active = state
         .acp_tool_turns
         .cancel_active_turn(&session.acp_session_id);
@@ -6082,10 +6080,8 @@ mod tests {
         let registry = AcpToolTurnCoordinator::new();
         let cancel_registry = crate::core::acp_turn_controller::AcpActiveTurnCancelRegistry::new();
         let request_id = Uuid::new_v4();
-        let role_runtime = RoleRuntime::with_turn_cancellations(
-            registry.clone(),
-            cancel_registry.clone(),
-        );
+        let role_runtime =
+            RoleRuntime::with_turn_cancellations(registry.clone(), cancel_registry.clone());
         let turn_scope = RoleTurnScope::acp_pair(
             Uuid::new_v4(),
             "acp-test-session",
@@ -6149,8 +6145,12 @@ mod tests {
             request_id,
             Some("conv-test-resolved".to_string()),
         );
-        let runtime_snapshot = cancel_registry.runtime_snapshot_for_session("acp-test-session", &registry);
-        assert_eq!(runtime_snapshot["state"], serde_json::json!("requires_action"));
+        let runtime_snapshot =
+            cancel_registry.runtime_snapshot_for_session("acp-test-session", &registry);
+        assert_eq!(
+            runtime_snapshot["state"],
+            serde_json::json!("requires_action")
+        );
         assert_eq!(
             runtime_snapshot["active_turn"]["pending_obligations"],
             serde_json::json!(1)

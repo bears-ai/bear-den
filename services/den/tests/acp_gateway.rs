@@ -35,6 +35,7 @@ use uuid::Uuid;
 struct TestLettaState {
     captured: Arc<Mutex<Option<Value>>>,
     requests: Arc<Mutex<Vec<Value>>>,
+    cancel_requests: Arc<Mutex<Vec<Value>>>,
     script: Arc<Mutex<Vec<String>>>,
 }
 
@@ -43,6 +44,7 @@ struct TestApp {
     pool: sqlx::PgPool,
     captured_letta_body: Arc<Mutex<Option<Value>>>,
     letta_requests: Arc<Mutex<Vec<Value>>>,
+    letta_cancel_requests: Arc<Mutex<Vec<Value>>>,
     letta_script: Arc<Mutex<Vec<String>>>,
     _db_permit: SemaphorePermit<'static>,
 }
@@ -87,14 +89,17 @@ async fn start_fake_letta() -> (
     String,
     Arc<Mutex<Option<Value>>>,
     Arc<Mutex<Vec<Value>>>,
+    Arc<Mutex<Vec<Value>>>,
     Arc<Mutex<Vec<String>>>,
 ) {
     let captured = Arc::new(Mutex::new(None));
     let requests = Arc::new(Mutex::new(Vec::new()));
+    let cancel_requests = Arc::new(Mutex::new(Vec::new()));
     let script = Arc::new(Mutex::new(Vec::new()));
     let state = TestLettaState {
         captured: captured.clone(),
         requests: requests.clone(),
+        cancel_requests: cancel_requests.clone(),
         script: script.clone(),
     };
     let app = Router::new()
@@ -102,6 +107,10 @@ async fn start_fake_letta() -> (
         .route(
             "/v1/conversations/{conversation_id}/messages",
             post(fake_letta_conversation_messages),
+        )
+        .route(
+            "/v1/agents/{agent_id}/messages/cancel",
+            post(fake_letta_cancel_agent_runs),
         )
         .with_state(state);
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
@@ -111,7 +120,13 @@ async fn start_fake_letta() -> (
     tokio::spawn(async move {
         axum::serve(listener, app).await.expect("fake Letta server");
     });
-    (format!("http://{addr}"), captured, requests, script)
+    (
+        format!("http://{addr}"),
+        captured,
+        requests,
+        cancel_requests,
+        script,
+    )
 }
 
 async fn fake_letta_create_conversation(
@@ -152,6 +167,16 @@ async fn fake_letta_conversation_messages(
         .into_response()
 }
 
+async fn fake_letta_cancel_agent_runs(
+    State(state): State<TestLettaState>,
+    Path(agent_id): Path<String>,
+    Json(mut body): Json<Value>,
+) -> Json<Value> {
+    body["agent_id"] = json!(agent_id);
+    state.cancel_requests.lock().await.push(body);
+    Json(json!({ "cancelled": true }))
+}
+
 async fn test_app() -> TestApp {
     let db_permit = DB_TEST_PERMITS
         .acquire()
@@ -171,7 +196,7 @@ async fn test_app() -> TestApp {
         apply_app_migrations(&pool).await;
     }
 
-    let (letta_base_url, captured_letta_body, letta_requests, letta_script) =
+    let (letta_base_url, captured_letta_body, letta_requests, letta_cancel_requests, letta_script) =
         start_fake_letta().await;
     let mut config = Config::load();
     config.database_url = database_url;
@@ -196,6 +221,7 @@ async fn test_app() -> TestApp {
         pool,
         captured_letta_body,
         letta_requests,
+        letta_cancel_requests,
         letta_script,
         _db_permit: db_permit,
     }
@@ -432,6 +458,28 @@ async fn post_tool_result(
     app.oneshot(builder.body(Body::from(body.to_string())).unwrap())
         .await
         .expect("ACP tool result response")
+}
+
+async fn post_cancel_session(
+    app: axum::Router,
+    slug: &str,
+    session_id: &str,
+    token: Option<&str>,
+    mut body: Value,
+) -> axum::response::Response {
+    if body.get("adapter_contract").is_none() {
+        body["adapter_contract"] = json!({ "name": "bears.acp.adapter", "version": 1 });
+    }
+    let mut builder = Request::builder()
+        .method("POST")
+        .uri(format!("/acp/bears/{slug}/sessions/{session_id}/cancel"))
+        .header(header::CONTENT_TYPE, "application/json");
+    if let Some(token) = token {
+        builder = builder.header(header::AUTHORIZATION, format!("Bearer {token}"));
+    }
+    app.oneshot(builder.body(Body::from(body.to_string())).unwrap())
+        .await
+        .expect("ACP cancel session response")
 }
 
 fn letta_tool_request_sse(tool_name: &str, tool_call_id: &str, args: Value) -> String {
@@ -883,6 +931,99 @@ async fn acp_read_text_file_tool_request_round_trips_result_to_letta() {
     assert_eq!(
         requests[1]["messages"][0]["approvals"][0]["tool_return"],
         "# README\n"
+    );
+}
+
+#[tokio::test]
+async fn acp_cancel_session_signals_active_stream_and_cleans_pending_tool() {
+    let fixture = test_app().await;
+    let user_bear = create_test_user_bear(&fixture.pool, true).await;
+    fixture
+        .letta_script
+        .lock()
+        .await
+        .push(letta_tool_request_sse(
+            "fs_read_text_file",
+            "call-cancel-e2e",
+            json!({ "path": "/tmp/acp-workspace/README.md" }),
+        ));
+
+    let mut prompt = post_prompt(
+        fixture.app.clone(),
+        &user_bear.bear_slug,
+        "session-cancel-e2e",
+        Some(&user_bear.raw_token),
+        json!({ "message": "read and then wait", "client": "zed" }),
+    )
+    .await;
+    assert_eq!(prompt.status(), StatusCode::OK);
+    let first = read_response_until(&mut prompt, "\"type\":\"tool_request\"").await;
+    assert!(first.contains("call-cancel-e2e"), "{first}");
+
+    let cancel = post_cancel_session(
+        fixture.app.clone(),
+        &user_bear.bear_slug,
+        "session-cancel-e2e",
+        Some(&user_bear.raw_token),
+        json!({}),
+    )
+    .await;
+    assert_eq!(cancel.status(), StatusCode::OK);
+    let cancel_json: Value = serde_json::from_str(&response_text(cancel).await).unwrap();
+    assert_eq!(cancel_json["ok"], true, "{cancel_json}");
+    assert_eq!(cancel_json["cancelled"], true, "{cancel_json}");
+    assert_eq!(
+        cancel_json["stream_turn"]["acp_session_id"],
+        json!("session-cancel-e2e"),
+        "{cancel_json}"
+    );
+    assert_eq!(
+        cancel_json["active_turn"]["session_id"],
+        json!("session-cancel-e2e"),
+        "{cancel_json}"
+    );
+    assert_eq!(cancel_json["cancel_result"]["ok"], true, "{cancel_json}");
+
+    let late_result = post_tool_result(
+        fixture.app.clone(),
+        &user_bear.bear_slug,
+        "session-cancel-e2e",
+        "call-cancel-e2e",
+        Some(&user_bear.raw_token),
+        json!({
+            "tool_call_id": "call-cancel-e2e",
+            "tool_name": "fs_read_text_file",
+            "approval_request_id": "approval-call-cancel-e2e",
+            "status": "cancelled",
+            "content": "cancelled by adapter"
+        }),
+    )
+    .await;
+    assert_eq!(late_result.status(), StatusCode::OK);
+    let late_result_json: Value = serde_json::from_str(&response_text(late_result).await).unwrap();
+    assert_eq!(late_result_json["accepted"], false, "{late_result_json}");
+    assert_eq!(
+        late_result_json["reason"],
+        json!("late_result_ignored"),
+        "{late_result_json}"
+    );
+
+    let cancelled = read_response_until(&mut prompt, "\"status\":\"cancelled\"").await;
+    assert!(
+        cancelled.contains("\"type\":\"turn_result\""),
+        "{cancelled}"
+    );
+    assert!(
+        cancelled.contains("\"reason\":\"cancelled\""),
+        "{cancelled}"
+    );
+
+    let cancel_requests = fixture.letta_cancel_requests.lock().await.clone();
+    assert!(
+        cancel_requests
+            .iter()
+            .any(|request| request["agent_id"] == user_bear.pair_agent_id),
+        "expected at least one Letta cancel request for pair agent; got {cancel_requests:?}"
     );
 }
 

@@ -1096,8 +1096,7 @@ resource_link_is_reference_not_human_message
 
 Recommended next implementation order:
 
-1. Add full HTTP endpoint-level tests for production session-level `/cancel` active-stream signaling. Initial registry wiring exists and stores request/conversation metadata for diagnostics and future scoped cancellation; registry behavior has unit coverage, but endpoint/auth/session integration is not yet covered.
-2. Continue replacing legacy stream lifecycle state with controller authority one piece at a time.
-3. Add full HTTP endpoint-level tests for late result response normalization if needed; unit coverage currently verifies response mapping.
-4. Wire live active-turn registry snapshots into `session_info` endpoint/tool calls broadly, then tighten human `/status` to render this same canonical data. Initial `/status` exists but currently combines Den runtime endpoint, adapter-local task list, MCP summary, and unavailable context budget. Adapter-side mirroring of Den-provided runtime/context-budget metadata through `session_info_update._meta.bears` is wired; add tests and Den emission coverage.
-5. Adapter lifecycle tests from this plan are complete. Remaining adapter work is outside this lifecycle slice unless new regressions appear.
+1. Continue replacing legacy stream lifecycle state with controller authority one piece at a time. Full HTTP endpoint-level coverage for production session-level `/cancel` active-stream signaling now validates authenticated `/cancel` signalling the active stream, invoking Letta run cancellation, returning `stream_turn` diagnostics, and causing late adapter tool results to be ignored.
+2. Add full HTTP endpoint-level tests for late result response normalization if needed; unit coverage currently verifies response mapping.
+3. Wire live active-turn registry snapshots into `session_info` endpoint/tool calls broadly, then tighten human `/status` to render this same canonical data. Initial `/status` exists but currently combines Den runtime endpoint, adapter-local task list, MCP summary, and unavailable context budget. Adapter-side mirroring of Den-provided runtime/context-budget metadata through `session_info_update._meta.bears` is wired; add tests and Den emission coverage.
+4. Adapter lifecycle tests from this plan are complete. Remaining adapter work is outside this lifecycle slice unless new regressions appear.
