@@ -1609,6 +1609,10 @@ pub struct DenToolInvocationContext {
     pub session_policy: Option<Value>,
     #[serde(default)]
     pub activity: Option<Value>,
+    #[serde(default)]
+    pub runtime: Option<Value>,
+    #[serde(default)]
+    pub context_budget: Option<Value>,
     pub request_id: Option<String>,
     #[serde(default)]
     pub channel: DenToolChannelContext,
@@ -2700,24 +2704,28 @@ pub(crate) fn session_info_payload(
         "cwd": context.workspace_roots.first().cloned(),
         "source": if context.workspace_roots.is_empty() { "none" } else { "trusted_session" }
     });
-    let runtime = json!({
-        "state": "idle",
-        "active_turn": {
-            "present": false,
-            "phase": Value::Null,
-            "pending_obligations": 0,
-            "pending_adapter_tools": 0,
-            "pending_den_tools": 0,
-            "pending_permissions": 0,
-        },
-        "last_terminal": Value::Null,
-        "last_recovery": Value::Null,
-        "source": "session_info_default",
+    let runtime = context.runtime.clone().unwrap_or_else(|| {
+        json!({
+            "state": "idle",
+            "active_turn": {
+                "present": false,
+                "phase": Value::Null,
+                "pending_obligations": 0,
+                "pending_adapter_tools": 0,
+                "pending_den_tools": 0,
+                "pending_permissions": 0,
+            },
+            "last_terminal": Value::Null,
+            "last_recovery": Value::Null,
+            "source": "session_info_default",
+        })
     });
-    let context_budget = json!({
-        "status": "unavailable",
-        "reason": "Letta/provider context usage data is not wired into Den session_info yet",
-        "source": "den.session_info",
+    let context_budget = context.context_budget.clone().unwrap_or_else(|| {
+        json!({
+            "status": "unavailable",
+            "reason": "Letta/provider context usage data is not wired into Den session_info yet",
+            "source": "den.session_info",
+        })
     });
     let workplace = json!({
         "role": role.as_str(),

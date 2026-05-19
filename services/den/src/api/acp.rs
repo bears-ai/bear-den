@@ -2464,6 +2464,31 @@ async fn tool_result(
     }
 }
 
+fn this_stream_runtime_context_unavailable() -> serde_json::Value {
+    serde_json::json!({
+        "state": "running",
+        "active_turn": {
+            "present": true,
+            "phase": "unknown",
+            "pending_obligations": serde_json::Value::Null,
+            "pending_adapter_tools": serde_json::Value::Null,
+            "pending_den_tools": serde_json::Value::Null,
+            "pending_permissions": serde_json::Value::Null,
+        },
+        "last_terminal": serde_json::Value::Null,
+        "last_recovery": serde_json::Value::Null,
+        "source": "acp_stream_context_unavailable",
+    })
+}
+
+fn default_unavailable_context_budget() -> serde_json::Value {
+    serde_json::json!({
+        "status": "unavailable",
+        "reason": "Letta/provider context usage data is not wired into Den session_info yet",
+        "source": "den.acp",
+    })
+}
+
 fn late_result_settlement_from_status(status: &str) -> &'static str {
     match status {
         "timeout" => "timed_out",
@@ -4254,6 +4279,8 @@ async fn invoke_acp_den_tool(
         workspace_roots: context.workspace_roots.clone(),
         session_policy: context.session_policy.clone(),
         activity: context.activity.clone(),
+        runtime: Some(this_stream_runtime_context_unavailable()),
+        context_budget: Some(default_unavailable_context_budget()),
         request_id: Some(context.request_id.to_string()),
         channel: DenToolChannelContext {
             family: Some("acp".to_string()),

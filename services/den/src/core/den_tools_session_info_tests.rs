@@ -27,6 +27,8 @@ fn pair_context() -> DenToolInvocationContext {
         workspace_roots: vec!["/workspace".to_string()],
         session_policy: None,
         activity: None,
+        runtime: None,
+        context_budget: None,
         request_id: None,
         channel: Default::default(),
     }
@@ -125,6 +127,49 @@ fn pair_session_info_includes_runtime_health_and_context_budget_defaults() {
         payload["context_budget"]["source"],
         json!("den.session_info")
     );
+}
+
+#[test]
+fn pair_session_info_uses_context_runtime_health_when_available() {
+    let mut context = pair_context();
+    context.runtime = Some(json!({
+        "state": "requires_action",
+        "active_turn": {
+            "present": true,
+            "phase": "WaitingForObligations",
+            "pending_obligations": 1,
+            "pending_adapter_tools": 1,
+            "pending_den_tools": 0,
+            "pending_permissions": 0
+        },
+        "source": "acp_active_turn_registry"
+    }));
+    context.context_budget = Some(json!({
+        "status": "estimated",
+        "used_tokens": 1000,
+        "remaining_tokens": 9000,
+        "source": "test"
+    }));
+    let payload = crate::core::den_tools::session_info_payload(
+        &context,
+        BearAgentRole::Pair,
+        None,
+        2,
+        json!({ "available": true }),
+    );
+
+    assert_eq!(payload["runtime"]["state"], json!("requires_action"));
+    assert_eq!(payload["runtime"]["active_turn"]["present"], json!(true));
+    assert_eq!(
+        payload["runtime"]["active_turn"]["pending_adapter_tools"],
+        json!(1)
+    );
+    assert_eq!(
+        payload["runtime"]["source"],
+        json!("acp_active_turn_registry")
+    );
+    assert_eq!(payload["context_budget"]["status"], json!("estimated"));
+    assert_eq!(payload["context_budget"]["source"], json!("test"));
 }
 
 #[test]
