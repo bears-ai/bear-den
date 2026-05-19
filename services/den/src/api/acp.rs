@@ -5092,16 +5092,13 @@ impl AcpLettaSseStream {
             .collect()
     }
 
-    fn terminal_blockers(&self) -> (Vec<String>, bool) {
-        (
-            self.outstanding_tool_obligations(),
-            self.pending_tool_result.is_some(),
-        )
+    fn pending_tool_continuation_blocks_terminal(&self) -> bool {
+        self.pending_tool_result.is_some()
     }
 
     fn controller_allows_terminal(&self) -> bool {
-        let (outstanding, pending_tool_result) = self.terminal_blockers();
-        self.turn_controller.may_emit_terminal() && outstanding.is_empty() && !pending_tool_result
+        self.turn_controller.may_emit_terminal()
+            && !self.pending_tool_continuation_blocks_terminal()
     }
 
     fn turn_result_event(role_result: &RoleTurnResult) -> AcpGatewayEvent {
@@ -5115,6 +5112,32 @@ impl AcpLettaSseStream {
             retryable,
             diagnostics,
         }
+    }
+
+    fn push_adapter_event(&mut self, event: AcpGatewayEvent) {
+        if matches!(event, AcpGatewayEvent::TurnComplete { .. }) {
+            self.turn_controller.on_stream_end();
+            let Some(controller_terminal) = self.turn_controller.take_terminal_event() else {
+                let snapshot = self.turn_controller.status_snapshot();
+                tracing::info!(
+                    request_id = %self.context.request_id,
+                    acp_session_id = %self.context.acp_session_id,
+                    controller_phase = ?snapshot.phase,
+                    controller_open_obligations = snapshot.open_obligations,
+                    "suppressed ACP turn_complete until turn controller allows terminal emission"
+                );
+                return;
+            };
+            tracing::debug!(
+                request_id = %self.context.request_id,
+                acp_session_id = %self.context.acp_session_id,
+                controller_terminal_status = ?controller_terminal.status,
+                controller_terminal_reason = ?controller_terminal.reason,
+                "emitting ACP turn_complete authorized by turn controller"
+            );
+        }
+        self.diagnostics.observe_mapped_event(&event);
+        self.pending.push_back(acp_event_to_adapter_sse(event));
     }
 
     fn push_terminal_result_now(&mut self, role_result: RoleTurnResult) {
@@ -5139,8 +5162,7 @@ impl AcpLettaSseStream {
             "emitting ACP turn_result authorized by turn controller"
         );
         let event = Self::turn_result_event(&role_result);
-        self.diagnostics.observe_mapped_event(&event);
-        self.pending.push_back(acp_event_to_adapter_sse(event));
+        self.push_adapter_event(event);
     }
 
     fn push_or_defer_terminal_result(&mut self, role_result: RoleTurnResult) {
@@ -5149,17 +5171,18 @@ impl AcpLettaSseStream {
             return;
         }
         let controller_snapshot = self.turn_controller.status_snapshot();
-        let (outstanding, pending_tool_result) = self.terminal_blockers();
+        let outstanding = self.outstanding_tool_obligations();
+        let pending_tool_continuation = self.pending_tool_continuation_blocks_terminal();
         tracing::info!(
             request_id = %self.context.request_id,
             acp_session_id = %self.context.acp_session_id,
             outstanding_tool_call_ids = ?outstanding,
-            pending_tool_result,
+            pending_tool_continuation,
             controller_open_obligations = controller_snapshot.open_obligations,
             controller_phase = ?controller_snapshot.phase,
             controller_terminal_status = ?controller_snapshot.terminal_status,
             controller_terminal_reason = ?controller_snapshot.terminal_reason,
-            "deferred ACP turn_result until turn controller allows terminal emission"
+            "deferred ACP turn_result until turn controller/continuation state allows terminal emission"
         );
         self.deferred_terminal_result = Some(role_result);
     }
@@ -5356,8 +5379,7 @@ impl Stream for AcpLettaSseStream {
                             }
                             for event in events {
                                 for event in this.text_chunker.push(event) {
-                                    this.diagnostics.observe_mapped_event(&event);
-                                    this.pending.push_back(acp_event_to_adapter_sse(event));
+                                    this.push_adapter_event(event);
                                 }
                             }
                             if let Some((tool_call_id, tool_name, result_rx)) = result_rx {
@@ -5447,8 +5469,7 @@ impl Stream for AcpLettaSseStream {
                                     "acp_session_id": this.context.acp_session_id,
                                 })),
                             };
-                            this.diagnostics.observe_mapped_event(&event);
-                            this.pending.push_back(acp_event_to_adapter_sse(event));
+                            this.push_adapter_event(event);
                             return self.poll_next(cx);
                         }
                     }
@@ -5471,15 +5492,13 @@ impl Stream for AcpLettaSseStream {
                                 .remove(&this.context.acp_session_id, done_id);
                         }
                         if let Some(plan_event) = plan_update_from_den_tool_result(&tool_result) {
-                            this.diagnostics.observe_mapped_event(&plan_event);
-                            this.pending.push_back(acp_event_to_adapter_sse(plan_event));
+                            this.push_adapter_event(plan_event);
                         }
                         if let Some(mode) = mode_from_den_tool_result(&tool_result) {
                             let mode_event = AcpGatewayEvent::ModeUpdate {
                                 mode: mode.to_string(),
                             };
-                            this.diagnostics.observe_mapped_event(&mode_event);
-                            this.pending.push_back(acp_event_to_adapter_sse(mode_event));
+                            this.push_adapter_event(mode_event);
                         }
                         let tool_name = tool_result
                             .tool_name
@@ -5603,8 +5622,7 @@ impl Stream for AcpLettaSseStream {
                     } else {
                         this.diagnostics.continuation_cleanup_event(cleanup)
                     };
-                    this.diagnostics.observe_mapped_event(&event);
-                    this.pending.push_back(acp_event_to_adapter_sse(event));
+                    this.push_adapter_event(event);
                     return self.poll_next(cx);
                 }
             }
@@ -5777,16 +5795,14 @@ impl Stream for AcpLettaSseStream {
                     self.poll_next(cx)
                 } else if let Some(event) = this.diagnostics.empty_turn_error_event(&this.context) {
                     for event in this.text_chunker.push(event) {
-                        this.diagnostics.observe_mapped_event(&event);
-                        this.pending.push_back(acp_event_to_adapter_sse(event));
+                        this.push_adapter_event(event);
                     }
                     self.poll_next(cx)
                 } else {
                     for event in this.text_chunker.flush_all() {
-                        this.diagnostics.observe_mapped_event(&event);
-                        this.pending.push_back(acp_event_to_adapter_sse(event));
+                        this.push_adapter_event(event);
                     }
-                    if !this.diagnostics.saw_turn_complete {
+                    if this.turn_controller.phase() != AcpTurnPhase::Terminal {
                         this.turn_controller.on_stream_end();
                         let role_result = this.context.role_runtime.turn_result(
                             TurnResultStatus::Ok,
