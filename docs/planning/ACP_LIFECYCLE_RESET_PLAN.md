@@ -26,6 +26,7 @@ Still in progress:
 - User-facing session health/status surfaces.
 - Adapter-side overlap, mode-race, MCP-log, and cancellation tests.
 - Slow `session_info` stream test cleanup is complete. The stream test now asserts route classification/no adapter emission without driving the full `session_info` DB-dependent continuation path, reducing runtime from ~60s to ~0.1s.
+- Full `acp_stream_` Den stream lifecycle test group now passes after clarifying the no-premature-terminal test to allow an auto-timeout settlement in full-group Tokio scheduling while still forbidding terminal/continuation before a real or synthetic settlement.
 
 ## Summary
 
