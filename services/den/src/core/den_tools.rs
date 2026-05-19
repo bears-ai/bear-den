@@ -2700,6 +2700,25 @@ pub(crate) fn session_info_payload(
         "cwd": context.workspace_roots.first().cloned(),
         "source": if context.workspace_roots.is_empty() { "none" } else { "trusted_session" }
     });
+    let runtime = json!({
+        "state": "idle",
+        "active_turn": {
+            "present": false,
+            "phase": Value::Null,
+            "pending_obligations": 0,
+            "pending_adapter_tools": 0,
+            "pending_den_tools": 0,
+            "pending_permissions": 0,
+        },
+        "last_terminal": Value::Null,
+        "last_recovery": Value::Null,
+        "source": "session_info_default",
+    });
+    let context_budget = json!({
+        "status": "unavailable",
+        "reason": "Letta/provider context usage data is not wired into Den session_info yet",
+        "source": "den.session_info",
+    });
     let workplace = json!({
         "role": role.as_str(),
         "memory_surface": format!("{}/", role.as_str()),
@@ -2772,6 +2791,8 @@ pub(crate) fn session_info_payload(
             "membership_role": context.membership_role,
             "is_bear_admin": role_is_bear_admin(context.membership_role.as_deref())
         },
+        "runtime": runtime,
+        "context_budget": context_budget,
         "session": {
             "conversation_id": context.conversation_id,
             "session_id": context.session_id,

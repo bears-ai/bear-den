@@ -31,10 +31,10 @@ Completed:
 
 Still in progress:
 
-- Full replacement of legacy stream lifecycle fields with controller authority. Latest progress: removed legacy `active_tool_call_ids` and `emitted_turn_result`; `requires_approval` stops flow through `AcpTurnController::on_requires_approval_stop`, and orphaned cleanup is gated by controller open-obligation state. `stream_terminated` and `deferred_turn_result` remain as stream mechanics.
+- Full replacement of legacy stream lifecycle fields with controller authority. Latest progress: removed legacy `active_tool_call_ids` and `emitted_turn_result`; `requires_approval` stops flow through `AcpTurnController::on_requires_approval_stop`, and orphaned cleanup is gated by controller open-obligation state. Remaining stream mechanics are explicitly named `stream_terminated`, `pending_tool_result`, and `terminal_waiting_for_obligations`.
 - Real production `/cancel` endpoint signaling into active streams is initially wired via a session-level `AcpActiveTurnCancelRegistry`. The endpoint now signals before auth/session-row lookup, which supports early cancellation races. Registry unit tests cover signaling, unregistering, and stale handle safety; full HTTP endpoint integration tests still need to be added.
 - Normalized late-result API response shape is implemented and unit-tested for Den tool-result responses: compatibility variants now return `reason = late_result_ignored` plus `settlement` detail (`timed_out`, `cancelled`, `already_settled`, or `unknown`). Full HTTP endpoint tests can still be added later.
-- `session_info.runtime` / session health surface, with human `/status` rendered from the same data.
+- Initial `session_info.runtime` and `session_info.context_budget` default shape is implemented and tested. It currently reports idle/no-active-turn and context budget unavailable; active-turn registry integration remains.
 - Adapter-side overlap, mode-race, MCP-log, and cancellation tests.
 - Slow `session_info` stream test cleanup is complete. The stream test now asserts route classification/no adapter emission without driving the full `session_info` DB-dependent continuation path, reducing runtime from ~60s to ~0.1s.
 - Full `acp_stream_` Den stream lifecycle test group now passes after clarifying the no-premature-terminal test to allow an auto-timeout settlement in full-group Tokio scheduling while still forbidding terminal/continuation before a real or synthetic settlement.
@@ -302,7 +302,7 @@ Near-term adapter changes should focus on:
 
 ### Priority 5: Add session health/status UX
 
-Status: planned. Controller snapshots exist in stream diagnostics, but they are not yet exposed through `session_info`, `/status`, `session_info_update._meta`, or user-facing status updates.
+Status: partially complete. Default `session_info.runtime` and `session_info.context_budget` fields exist and are tested. They do not yet include active-turn registry snapshots, `/status` presentation, `session_info_update._meta`, or pushed visible status updates.
 
 Add a visible status surface once the controller snapshot exists. Shape it so it can map naturally to ACPv2 `state_change` notifications later.
 
@@ -860,7 +860,7 @@ Expected:
 
 #### `session_info_includes_runtime_health_snapshot`
 
-Status: not yet added. This is the priority UX/status test. Requires active-turn runtime snapshot registry beyond stream-local controller.
+Status: partially complete. Default idle/no-active-turn runtime and unavailable context-budget fields are tested. Active-turn runtime snapshot registry integration remains.
 
 Expected:
 
@@ -932,7 +932,7 @@ Before wiring the controller deeply, add/keep stream tests that capture known bu
 
 ### Step 4: Wire controller into `AcpLettaSseStream`
 
-Status: partially complete. Controller observes lifecycle, participates in terminal gating, receives `requires_approval` stop observations, and gates orphaned approval cleanup. Legacy `active_tool_call_ids` and `emitted_turn_result` have been removed; `stream_terminated`, `pending_tool_result`, and `deferred_turn_result` remain as stream mechanics.
+Status: partially complete. Controller observes lifecycle, participates in terminal gating, receives `requires_approval` stop observations, and gates orphaned approval cleanup. Legacy `active_tool_call_ids` and `emitted_turn_result` have been removed; `stream_terminated`, `pending_tool_result`, and `terminal_waiting_for_obligations` remain as explicitly named stream mechanics.
 
 Move lifecycle decisions out of stream polling branches and into controller calls.
 
@@ -1037,5 +1037,5 @@ Recommended next implementation order:
 1. Add full HTTP endpoint-level tests for production session-level `/cancel` active-stream signaling. Initial registry wiring exists and stores request/conversation metadata for diagnostics and future scoped cancellation; registry behavior has unit coverage, but endpoint/auth/session integration is not yet covered.
 2. Continue replacing legacy stream lifecycle state with controller authority one piece at a time.
 3. Add full HTTP endpoint-level tests for late result response normalization if needed; unit coverage currently verifies response mapping.
-4. Add `session_info.runtime` / session health data after an active-turn snapshot registry exists. Render human `/status` from this same data later, and mirror compact runtime metadata through `session_info_update._meta.bears.runtime` where safe.
+4. Extend `session_info.runtime` from default idle/no-active-turn fields to include active-turn snapshot registry data. Render human `/status` from this same data later, and mirror compact runtime metadata through `session_info_update._meta.bears.runtime` where safe.
 5. Add adapter tests for overlap, mode startup race, MCP log summarization, and explicit cancellation.

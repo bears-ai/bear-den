@@ -5057,7 +5057,7 @@ struct AcpLettaSseStream {
     persist_future: Option<AcpPendingFuture>,
     text_chunker: AcpTextChunker,
     stream_terminated: bool,
-    deferred_turn_result: Option<AcpGatewayEvent>,
+    terminal_waiting_for_obligations: Option<AcpGatewayEvent>,
     active_turn_guard: Option<crate::core::role_runtime::RoleTurnGuard>,
     cancel_rx: Option<tokio::sync::watch::Receiver<bool>>,
     cancel_handle: Option<AcpActiveTurnCancelHandle>,
@@ -5110,11 +5110,11 @@ impl AcpLettaSseStream {
             controller_phase = ?controller_snapshot.phase,
             "deferred ACP turn_result until turn obligations settle"
         );
-        self.deferred_turn_result = Some(event);
+        self.terminal_waiting_for_obligations = Some(event);
     }
 
-    fn try_flush_deferred_turn_result(&mut self) {
-        if self.deferred_turn_result.is_none() {
+    fn try_flush_terminal_waiting_for_obligations(&mut self) {
+        if self.terminal_waiting_for_obligations.is_none() {
             return;
         }
         let controller_snapshot = self.turn_controller.status_snapshot();
@@ -5124,7 +5124,7 @@ impl AcpLettaSseStream {
         {
             return;
         }
-        if let Some(event) = self.deferred_turn_result.take() {
+        if let Some(event) = self.terminal_waiting_for_obligations.take() {
             self.push_turn_result_now(event);
         }
     }
@@ -5155,7 +5155,7 @@ impl AcpLettaSseStream {
             persist_future: None,
             text_chunker: AcpTextChunker::new(acp_text_chunk_chars()),
             stream_terminated: false,
-            deferred_turn_result: None,
+            terminal_waiting_for_obligations: None,
             active_turn_guard: Some(active_turn_guard),
             cancel_rx: None,
             cancel_handle: None,
@@ -5461,7 +5461,7 @@ impl Stream for AcpLettaSseStream {
                         // the result and continue reading the current stream; once it ends,
                         // start the tool-return continuation.
                         this.pending_tool_result = Some(tool_result);
-                        this.try_flush_deferred_turn_result();
+                        this.try_flush_terminal_waiting_for_obligations();
                         return self.poll_next(cx);
                     }
                 }

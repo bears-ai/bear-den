@@ -95,6 +95,39 @@ fn pair_session_info_context_fields_distinguish_role_contract_from_runtime() {
 }
 
 #[test]
+fn pair_session_info_includes_runtime_health_and_context_budget_defaults() {
+    let context = pair_context();
+    let payload = crate::core::den_tools::session_info_payload(
+        &context,
+        BearAgentRole::Pair,
+        None,
+        2,
+        json!({ "available": true }),
+    );
+
+    assert_eq!(payload["runtime"]["state"], json!("idle"));
+    assert_eq!(payload["runtime"]["active_turn"]["present"], json!(false));
+    assert_eq!(
+        payload["runtime"]["active_turn"]["pending_obligations"],
+        json!(0)
+    );
+    assert_eq!(
+        payload["runtime"]["active_turn"]["pending_adapter_tools"],
+        json!(0)
+    );
+    assert_eq!(
+        payload["runtime"]["active_turn"]["pending_den_tools"],
+        json!(0)
+    );
+    assert_eq!(payload["runtime"]["source"], json!("session_info_default"));
+    assert_eq!(payload["context_budget"]["status"], json!("unavailable"));
+    assert_eq!(
+        payload["context_budget"]["source"],
+        json!("den.session_info")
+    );
+}
+
+#[test]
 fn pair_session_info_descriptor_is_canonical_orientation_tool() {
     let descriptors = builtin_den_tool_descriptors_for_role(BearAgentRole::Pair);
     let session_info = descriptors
