@@ -5054,11 +5054,9 @@ struct AcpLettaSseStream {
     pending_tool_result: Option<AcpToolResultRequest>,
     diagnostics: AcpStreamDiagnostics,
     logged_summary: bool,
-    active_tool_call_ids: Vec<String>,
     persist_future: Option<AcpPendingFuture>,
     text_chunker: AcpTextChunker,
     stream_terminated: bool,
-    emitted_turn_result: bool,
     deferred_turn_result: Option<AcpGatewayEvent>,
     active_turn_guard: Option<crate::core::role_runtime::RoleTurnGuard>,
     cancel_rx: Option<tokio::sync::watch::Receiver<bool>>,
@@ -5078,7 +5076,7 @@ impl AcpLettaSseStream {
     }
 
     fn push_turn_result_now(&mut self, event: AcpGatewayEvent) {
-        if self.emitted_turn_result {
+        if self.stream_terminated {
             tracing::warn!(
                 request_id = %self.context.request_id,
                 acp_session_id = %self.context.acp_session_id,
@@ -5086,7 +5084,7 @@ impl AcpLettaSseStream {
             );
             return;
         }
-        self.emitted_turn_result = true;
+        let _ = self.turn_controller.take_terminal_event();
         self.stream_terminated = true;
         self.diagnostics.observe_mapped_event(&event);
         self.pending.push_back(acp_event_to_adapter_sse(event));
@@ -5154,11 +5152,9 @@ impl AcpLettaSseStream {
             pending_tool_result: None,
             diagnostics: AcpStreamDiagnostics::default(),
             logged_summary: false,
-            active_tool_call_ids: Vec::new(),
             persist_future: None,
             text_chunker: AcpTextChunker::new(acp_text_chunk_chars()),
             stream_terminated: false,
-            emitted_turn_result: false,
             deferred_turn_result: None,
             active_turn_guard: Some(active_turn_guard),
             cancel_rx: None,
@@ -5188,13 +5184,16 @@ impl AcpLettaSseStream {
     }
 
     fn cleanup_active_tool_turns(&mut self) {
-        if self.active_tool_call_ids.is_empty() {
-            return;
-        }
-        for tool_call_id in self.active_tool_call_ids.drain(..) {
+        for pending in self
+            .context
+            .tool_turns
+            .pending_for_session(&self.context.acp_session_id)
+            .into_iter()
+            .filter(|pending| pending.request_id == self.context.request_id)
+        {
             self.context
                 .tool_turns
-                .remove(&self.context.acp_session_id, &tool_call_id);
+                .remove(&self.context.acp_session_id, &pending.tool_call_id);
         }
     }
 
@@ -5237,10 +5236,19 @@ impl Stream for AcpLettaSseStream {
             .cancel_rx
             .as_ref()
             .is_some_and(|cancel_rx| *cancel_rx.borrow())
-            && !this.emitted_turn_result
+            && this
+                .turn_controller
+                .status_snapshot()
+                .terminal_status
+                .is_none()
         {
             this.turn_controller.on_cancel();
-            this.cleanup_active_tool_turns();
+            let cancelled_tool_call_ids = this.outstanding_tool_obligations();
+            for tool_call_id in &cancelled_tool_call_ids {
+                this.context
+                    .tool_turns
+                    .remove(&this.context.acp_session_id, tool_call_id);
+            }
             this.pending_tool_result = None;
             this.persist_future = None;
             let role_result = this.context.role_runtime.turn_result(
@@ -5272,14 +5280,12 @@ impl Stream for AcpLettaSseStream {
 
         if this.persist_future.is_none()
             && this.pending_tool_result.is_none()
-            && (!this.outstanding_tool_obligations().is_empty()
-                || !this.active_tool_call_ids.is_empty())
+            && !this.outstanding_tool_obligations().is_empty()
         {
             tracing::debug!(
                 request_id = %this.context.request_id,
                 acp_session_id = %this.context.acp_session_id,
                 outstanding_tool_call_ids = ?this.outstanding_tool_obligations(),
-                active_tool_call_ids = ?this.active_tool_call_ids,
                 "ACP stream waiting for local tool result before polling upstream terminal state"
             );
             return Poll::Pending;
@@ -5314,7 +5320,6 @@ impl Stream for AcpLettaSseStream {
                                     .into_iter()
                                     .find(|pending| pending.tool_call_id == tool_call_id)
                                     .and_then(|pending| pending.approval_request_id);
-                                this.active_tool_call_ids.push(tool_call_id.clone());
                                 this.persist_future = Some(AcpPendingFuture::Tool(Box::pin(
                                     async move {
                                         let AcpResolvedToolResult::Receiver(result_rx) = result_rx
@@ -5413,7 +5418,6 @@ impl Stream for AcpLettaSseStream {
                             }
                         }
                         if let Some(done_id) = tool_result.tool_call_id.as_deref() {
-                            this.active_tool_call_ids.retain(|id| id != done_id);
                             this.context
                                 .tool_turns
                                 .remove(&this.context.acp_session_id, done_id);
@@ -5664,20 +5668,17 @@ impl Stream for AcpLettaSseStream {
                 if !this.pending_raw_frames.is_empty() {
                     self.poll_next(cx)
                 } else if this.diagnostics.saw_requires_approval_stop
-                    && (!this.outstanding_tool_obligations().is_empty()
-                        || !this.active_tool_call_ids.is_empty())
+                    && !this.outstanding_tool_obligations().is_empty()
                 {
                     this.turn_controller.on_requires_approval_stop();
                     self.poll_next(cx)
                 } else if this.pending_tool_result.is_none()
-                    && (!this.outstanding_tool_obligations().is_empty()
-                        || !this.active_tool_call_ids.is_empty())
+                    && !this.outstanding_tool_obligations().is_empty()
                 {
                     tracing::debug!(
                         request_id = %this.context.request_id,
                         acp_session_id = %this.context.acp_session_id,
                         outstanding_tool_call_ids = ?this.outstanding_tool_obligations(),
-                        active_tool_call_ids = ?this.active_tool_call_ids,
                         "ACP upstream ended while local tool obligations are outstanding; waiting for results"
                     );
                     Poll::Pending
@@ -5723,7 +5724,6 @@ impl Stream for AcpLettaSseStream {
                 } else if this.diagnostics.saw_requires_approval_stop
                     && this.turn_controller.status_snapshot().open_obligations == 0
                     && this.outstanding_tool_obligations().is_empty()
-                    && this.active_tool_call_ids.is_empty()
                     && !this.diagnostics.saw_tool_return_ack
                     && !this.diagnostics.emitted_runtime_cleanup
                 {
@@ -6709,8 +6709,9 @@ mod tests {
         cancel_tx.send(true).unwrap();
         let cancelled = tokio::time::timeout(std::time::Duration::from_secs(1), stream.next())
             .await
-            .expect("cancel terminal should not hang")
-            .unwrap()
+            .expect("cancel terminal should not hang");
+        let cancelled = cancelled
+            .expect("cancel should emit terminal before ending")
             .unwrap();
         let cancelled_text = String::from_utf8(cancelled.to_vec()).unwrap();
         assert!(
