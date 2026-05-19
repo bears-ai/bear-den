@@ -3415,13 +3415,19 @@ async fn handle_prompt_with_retry(
         .get("sessionId")
         .and_then(Value::as_str)
         .ok_or_else(|| anyhow!("session/prompt params missing sessionId"))?;
+    let prompt_shape = prompt_block_shape(&params);
     let prompt = prompt_text_from_params(&params)?;
     let display_prompt = prompt_display_text_from_params(&params).unwrap_or_else(|| prompt.clone());
     eprintln!(
-        "bears-acp-adapter: session/prompt session_id={} prompt_len={} display_prompt_len={} prompt_has_trusted_mode_suffix={} display_has_trusted_mode_suffix={} prompt_has_system_reminder={} display_has_system_reminder={}",
+        "bears-acp-adapter: session/prompt session_id={} prompt_len={} display_prompt_len={} prompt_blocks={{text:{}, resource:{}, resource_link:{}, other:{}}} synthetic_system_alert_detected={} prompt_has_trusted_mode_suffix={} display_has_trusted_mode_suffix={} prompt_has_system_reminder={} display_has_system_reminder={}",
         session_id,
         prompt.len(),
         display_prompt.len(),
+        prompt_shape.text,
+        prompt_shape.resource,
+        prompt_shape.resource_link,
+        prompt_shape.other,
+        prompt_shape.synthetic_system_alert_detected,
         prompt.contains("Trusted ACP session mode this turn:"),
         display_prompt.contains("Trusted ACP session mode this turn:"),
         prompt.contains("<system-reminder>"),
@@ -4248,6 +4254,63 @@ fn den_status_error_message(status: reqwest::StatusCode, body: &str) -> String {
     } else {
         format!("Den API returned HTTP {status}: {body}. {hint}")
     }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+struct PromptBlockShape {
+    text: usize,
+    resource: usize,
+    resource_link: usize,
+    other: usize,
+    synthetic_system_alert_detected: bool,
+}
+
+fn prompt_block_shape(params: &Value) -> PromptBlockShape {
+    let mut shape = PromptBlockShape::default();
+    let Some(prompt) = params.get("prompt").and_then(Value::as_array) else {
+        return shape;
+    };
+    for block in prompt {
+        match block.get("type").and_then(Value::as_str).unwrap_or("") {
+            "text" => {
+                shape.text += 1;
+                if block
+                    .get("text")
+                    .and_then(Value::as_str)
+                    .is_some_and(looks_like_client_synthetic_system_alert)
+                {
+                    shape.synthetic_system_alert_detected = true;
+                }
+            }
+            "resource" => {
+                shape.resource += 1;
+                if block
+                    .get("resource")
+                    .and_then(|resource| resource.get("text"))
+                    .and_then(Value::as_str)
+                    .is_some_and(looks_like_client_synthetic_system_alert)
+                {
+                    shape.synthetic_system_alert_detected = true;
+                }
+            }
+            "resource_link" => shape.resource_link += 1,
+            _ => shape.other += 1,
+        }
+    }
+    shape
+}
+
+fn looks_like_client_synthetic_system_alert(text: &str) -> bool {
+    let trimmed = text.trim();
+    if trimmed.len() > 4096 {
+        return false;
+    }
+    let lower = trimmed.to_ascii_lowercase();
+    lower.contains("system_alert")
+        && (lower.contains("client")
+            || lower.contains("summary")
+            || lower.contains("synthetic")
+            || lower.contains("zed"))
 }
 
 fn prompt_text_from_params(params: &Value) -> Result<String> {
@@ -6904,6 +6967,41 @@ mod tests {
             cancellation_tx,
             active_prompts: Arc::new(TokioMutex::new(HashMap::new())),
         }
+    }
+
+    #[test]
+    fn prompt_block_shape_counts_blocks_without_content_and_detects_synthetic_alert() {
+        let params = json!({
+            "prompt": [
+                {"type": "text", "text": "hello"},
+                {"type": "resource", "resource": {"uri": "file:///tmp/a", "text": "{\"system_alert\":\"client synthetic summary\"}"}},
+                {"type": "resource_link", "uri": "file:///tmp/b"},
+                {"type": "image", "data": "..."}
+            ]
+        });
+        let shape = prompt_block_shape(&params);
+
+        assert_eq!(shape.text, 1);
+        assert_eq!(shape.resource, 1);
+        assert_eq!(shape.resource_link, 1);
+        assert_eq!(shape.other, 1);
+        assert!(shape.synthetic_system_alert_detected);
+    }
+
+    #[test]
+    fn prompt_block_shape_preserves_user_pasted_system_alert_debug_text() {
+        let params = json!({
+            "prompt": [{
+                "type": "text",
+                "text": "I pasted this debugging payload intentionally: {\"system_alert\":\"raw fixture\"}"
+            }]
+        });
+        let shape = prompt_block_shape(&params);
+        let prompt = prompt_text_from_params(&params).unwrap();
+
+        assert_eq!(shape.text, 1);
+        assert!(!shape.synthetic_system_alert_detected);
+        assert!(prompt.contains("system_alert"));
     }
 
     #[tokio::test]

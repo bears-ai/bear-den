@@ -1030,6 +1030,22 @@ how recovery/cancellation is explained to users
 - Can Letta provide exact context-window usage for the current run, or do we need an explicitly estimated Den-side budget?
 - If future ACP/Zed versions support multiple active conversations inside one session, what scoped cancel body should become required? Current assumption is 1:1 session/conversation, so scoped fields remain optional diagnostics/future compatibility.
 
+## Prompt hygiene progress
+
+Status: initial adapter-side prompt block shape logging is implemented and tested.
+
+Completed:
+
+- Adapter logs prompt block shape before/alongside flattening without logging block contents.
+- Shape tracks `text`, `resource`, `resource_link`, and `other` counts.
+- Shape flags likely client-synthetic `system_alert` summaries when they appear in short client/resource synthetic contexts.
+- Tests verify synthetic alert detection and preservation of user-pasted `system_alert` debugging text.
+
+Still remaining:
+
+- Prevent confirmed client-synthetic summaries from being persisted to Letta as `human_message` without stripping intentional user debug text.
+- Add higher-level prompt persistence/boundary tests once the adapter/Den boundary exposes a clean seam.
+
 ## Immediate next action
 
 Recommended next implementation order:
