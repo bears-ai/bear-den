@@ -88,6 +88,8 @@ const BEARS_ACP_ADAPTER_CONTRACT_MAX_SUPPORTED: u32 = 1;
 // adapter processes. Set this to true only when a Den change is actually
 // incompatible with adapters that do not send `adapter_contract`.
 const BEARS_ACP_ADAPTER_CONTRACT_REQUIRED: bool = false;
+const ACP_MANUAL_RECOVERY_APPROVAL_DENIAL_REASON: &str = "BEARS closed an expired ACP approval request during manual recovery. This denial applies only to that stale request; it is not a user or web policy block. Retry the tool if it is still needed.";
+const ACP_STALE_APPROVAL_RECOVERY_DENIAL_REASON: &str = "BEARS closed an expired ACP approval request during stale-approval recovery. This denial applies only to that stale request; it is not a user or web policy block. Retry the tool if it is still needed.";
 
 fn env_flag(name: &str) -> bool {
     std::env::var(name).ok().is_some_and(|value| {
@@ -2695,7 +2697,7 @@ async fn compact_session_inner(
         .deny_pending_conversation_approvals(
             conversation_id,
             pair_agent_id.as_deref(),
-            "Denied by BEARS manual ACP recovery command",
+            ACP_MANUAL_RECOVERY_APPROVAL_DENIAL_REASON,
         )
         .await?;
     let compact_result = state.letta.compact_conversation(conversation_id).await?;
@@ -3556,7 +3558,7 @@ async fn prompt_inner(
                         .deny_pending_conversation_approvals(
                             &conversation_resolution.upstream_target,
                             Some(&pair_agent_id),
-                            "Denied by BEARS stale ACP approval recovery",
+                            ACP_STALE_APPROVAL_RECOVERY_DENIAL_REASON,
                         )
                         .await
                     {
@@ -4484,7 +4486,7 @@ impl AcpStreamDiagnostics {
         self.emitted_runtime_cleanup = true;
         Some(AcpGatewayEvent::StatusText {
             text: format!(
-                "BEARS detected a stale Letta approval state, cleared it, and stopped this turn safely. Please retry your message. cleanup={}",
+                "BEARS detected stale Letta approval/runtime state, cancelled local obligations/runs, and stopped this turn safely. Please retry your message; any recovery denial applies only to the expired request, not future tool use. cleanup={}",
                 cleanup
             ),
         })
@@ -4494,7 +4496,7 @@ impl AcpStreamDiagnostics {
         self.emitted_runtime_cleanup = true;
         AcpGatewayEvent::StatusText {
             text: format!(
-                "BEARS could not continue Letta after a tool result because the runtime looked wedged. I cleared stale approval/run state. Please retry your message. cleanup={}",
+                "BEARS could not continue Letta after a tool result because the runtime looked wedged. I cancelled local obligations/runs and stopped this turn safely. Please retry your message; any recovery denial applies only to the expired request, not future tool use. cleanup={}",
                 cleanup
             ),
         }
@@ -5833,6 +5835,19 @@ impl Stream for AcpLettaSseStream {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn acp_recovery_approval_denial_reasons_do_not_look_like_policy_blocks() {
+        for reason in [
+            ACP_MANUAL_RECOVERY_APPROVAL_DENIAL_REASON,
+            ACP_STALE_APPROVAL_RECOVERY_DENIAL_REASON,
+        ] {
+            assert!(!reason.contains("Denied by BEARS"));
+            assert!(reason.contains("expired ACP approval request"));
+            assert!(reason.contains("not a user or web policy block"));
+            assert!(reason.contains("Retry the tool"));
+        }
+    }
 
     #[test]
     fn acp_history_page_replays_desc_letta_page_chronologically() {

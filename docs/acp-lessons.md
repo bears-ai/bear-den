@@ -427,3 +427,11 @@ Expose metrics for:
 - SSE write/backpressure timing if SSE is in the path.
 
 These metrics make it possible to distinguish model/tool behavior from protocol delivery failures.
+
+## 26. Recovery approval denials must not read like durable policy
+
+Letta stale-approval recovery may require BEARS to submit an explicit approval denial for an expired/orphaned tool call. That denial becomes part of the model-visible conversation state, so its reason must be phrased as runtime recovery, not as a current user or web policy decision.
+
+Avoid reason strings like “Denied by BEARS manual ACP recovery command”. Models can reasonably interpret those as durable tool policy and refuse future `web_fetch` attempts even when Den `/status` reports no pending permissions and no active turn.
+
+Use wording that says the denial applies only to the stale request, is not a user/web policy block, and that the model should retry the tool if it is still needed. If an existing session already contains the old wording, Den may be idle and healthy while the Letta transcript remains semantically poisoned; a fresh ACP session or explicit retry instruction may be needed for that historical conversation.

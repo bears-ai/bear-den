@@ -4,10 +4,7 @@ use den::{
     config::Config,
     core::{
         bears::{db as bears_db, BearAgentRole},
-        den_tools::{
-            self, DenToolChannelContext, DenToolInvocationContext, DEN_WORK_PLAN_LIST,
-            DEN_WORK_PLAN_UPDATE,
-        },
+        den_tools::{self, DenToolInvocationContext, DEN_WORK_PLAN_LIST, DEN_WORK_PLAN_UPDATE},
         work_plans::{
             self, WorkPlanItem, WorkPlanItemStatus, WorkPlanListFilter, WorkPlanStatus,
             WorkPlanUpdate, WorkPlanUpsert, WorkPlanVisibility,
@@ -89,29 +86,32 @@ async fn insert_role_agent(
 }
 
 fn den_context(bear_id: Uuid, user_id: i32, role_agent_id: &str) -> DenToolInvocationContext {
-    DenToolInvocationContext {
-        bear_id,
-        bear_slug: "work-plan-test".to_string(),
-        role_agent_id: role_agent_id.to_string(),
-        agent_role: Some(BearAgentRole::Pair),
-        user_id,
-        username: Some("work-plan-user".to_string()),
-        membership_role: Some(bears_db::BEAR_ROLE_ADMIN.to_string()),
-        conversation_id: "conv-den-tool-work-plan".to_string(),
-        session_id: "session-den-tool-work-plan".to_string(),
-        acp_session_id: Some("session-den-tool-work-plan".to_string()),
-        conversation_selection: Some("conv-den-tool-work-plan".to_string()),
-        runtime_target: Some("conv-den-tool-work-plan".to_string()),
-        workspace_roots: Vec::new(),
-        session_policy: None,
-        activity: None,
-        request_id: Some(Uuid::new_v4().to_string()),
-        channel: DenToolChannelContext {
-            family: Some("acp".to_string()),
-            client: Some("zed".to_string()),
-            protocol: Some("acp".to_string()),
-        },
-    }
+    serde_json::from_value(json!({
+        "bear_id": bear_id,
+        "bear_slug": "work-plan-test",
+        "role_agent_id": role_agent_id,
+        "agent_role": "pair",
+        "user_id": user_id,
+        "username": "work-plan-user",
+        "membership_role": bears_db::BEAR_ROLE_ADMIN,
+        "conversation_id": "conv-den-tool-work-plan",
+        "session_id": "session-den-tool-work-plan",
+        "acp_session_id": "session-den-tool-work-plan",
+        "conversation_selection": "conv-den-tool-work-plan",
+        "runtime_target": "conv-den-tool-work-plan",
+        "workspace_roots": [],
+        "session_policy": null,
+        "activity": null,
+        "runtime": null,
+        "context_budget": null,
+        "request_id": Uuid::new_v4().to_string(),
+        "channel": {
+            "family": "acp",
+            "client": "zed",
+            "protocol": "acp"
+        }
+    }))
+    .expect("valid Den tool invocation context")
 }
 
 fn item(id: &str, status: WorkPlanItemStatus) -> WorkPlanItem {

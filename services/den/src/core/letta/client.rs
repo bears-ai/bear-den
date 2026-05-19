@@ -1950,7 +1950,10 @@ mod tests {
         assert_eq!(message["approvals"][0]["type"], "tool");
         assert_eq!(message["approvals"][0]["status"], "success");
         assert_eq!(message["approvals"][0]["tool_call_id"], "call_session_info");
-        assert_eq!(message["approvals"][0]["tool_return"], "{\"session\":{\"id\":\"acp-test\"}}");
+        assert_eq!(
+            message["approvals"][0]["tool_return"],
+            "{\"session\":{\"id\":\"acp-test\"}}"
+        );
         assert!(message["approvals"][0].get("approve").is_none());
         assert!(message["approvals"][0].get("reason").is_none());
     }
@@ -2024,7 +2027,10 @@ mod tests {
         assert!(message.get("approve").is_none());
         assert_eq!(message["tool_returns"][0]["type"], "tool");
         assert_eq!(message["tool_returns"][0]["status"], "success");
-        assert_eq!(message["tool_returns"][0]["tool_call_id"], "call_no_approval");
+        assert_eq!(
+            message["tool_returns"][0]["tool_call_id"],
+            "call_no_approval"
+        );
         assert_eq!(message["tool_returns"][0]["tool_return"], "plain result");
     }
 
