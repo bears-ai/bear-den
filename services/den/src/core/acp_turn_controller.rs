@@ -3,8 +3,11 @@ use std::{
     sync::{Arc, Mutex},
 };
 
+use serde_json::{json, Value};
 use tokio::sync::watch;
 use uuid::Uuid;
+
+use crate::core::acp_tool_turns::AcpToolTurnCoordinator;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AcpTurnPhase {
@@ -172,6 +175,61 @@ impl AcpActiveTurnCancelRegistry {
         acp_session_id: &str,
     ) -> Option<AcpActiveTurnCancelRegistration> {
         self.inner.lock().ok()?.get(acp_session_id).cloned()
+    }
+
+    pub fn runtime_snapshot_for_session(
+        &self,
+        acp_session_id: &str,
+        tool_turns: &AcpToolTurnCoordinator,
+    ) -> Value {
+        let Some(active) = self.active_for_session(acp_session_id) else {
+            return json!({
+                "state": "idle",
+                "active_turn": {
+                    "present": false,
+                    "phase": Value::Null,
+                    "pending_obligations": 0,
+                    "pending_adapter_tools": 0,
+                    "pending_den_tools": 0,
+                    "pending_permissions": 0,
+                },
+                "last_terminal": Value::Null,
+                "last_recovery": Value::Null,
+                "source": "acp_active_turn_registry",
+            });
+        };
+        let pending = tool_turns
+            .pending_for_session(acp_session_id)
+            .into_iter()
+            .filter(|pending| pending.request_id == active.request_id)
+            .collect::<Vec<_>>();
+        let pending_obligations = pending.len();
+        let state = if pending_obligations > 0 {
+            "requires_action"
+        } else {
+            "running"
+        };
+        let phase = if pending_obligations > 0 {
+            "WaitingForObligations"
+        } else {
+            "Streaming"
+        };
+        json!({
+            "state": state,
+            "active_turn": {
+                "present": true,
+                "phase": phase,
+                "request_id": active.request_id,
+                "conversation_id": active.conversation_id,
+                "pending_obligations": pending_obligations,
+                "pending_adapter_tools": pending_obligations,
+                "pending_den_tools": 0,
+                "pending_permissions": 0,
+            },
+            "last_terminal": Value::Null,
+            "last_recovery": Value::Null,
+            "source": "acp_active_turn_registry",
+        })
     }
 
     fn unregister_if_matches(&self, acp_session_id: &str, request_id: Uuid) {
@@ -536,6 +594,66 @@ mod tests {
                 .request_id,
             new_request_id
         );
+    }
+
+    #[test]
+    fn active_turn_runtime_snapshot_reports_idle_without_active_turn() {
+        let registry = AcpActiveTurnCancelRegistry::new();
+        let tool_turns = AcpToolTurnCoordinator::new();
+        let snapshot = registry.runtime_snapshot_for_session("acp-session", &tool_turns);
+
+        assert_eq!(snapshot["state"], "idle");
+        assert_eq!(snapshot["active_turn"]["present"], false);
+        assert_eq!(snapshot["active_turn"]["pending_obligations"], 0);
+        assert_eq!(snapshot["source"], "acp_active_turn_registry");
+    }
+
+    #[test]
+    fn active_turn_runtime_snapshot_reports_running_without_pending_tools() {
+        let registry = AcpActiveTurnCancelRegistry::new();
+        let tool_turns = AcpToolTurnCoordinator::new();
+        let request_id = Uuid::new_v4();
+        let (_handle, _rx) =
+            registry.register("acp-session", request_id, Some("conv-test".to_string()));
+        let snapshot = registry.runtime_snapshot_for_session("acp-session", &tool_turns);
+
+        assert_eq!(snapshot["state"], "running");
+        assert_eq!(snapshot["active_turn"]["present"], true);
+        assert_eq!(snapshot["active_turn"]["phase"], "Streaming");
+        assert_eq!(snapshot["active_turn"]["request_id"], json!(request_id));
+        assert_eq!(snapshot["active_turn"]["conversation_id"], "conv-test");
+        assert_eq!(snapshot["active_turn"]["pending_obligations"], 0);
+    }
+
+    #[test]
+    fn active_turn_runtime_snapshot_reports_requires_action_with_pending_tool() {
+        let registry = AcpActiveTurnCancelRegistry::new();
+        let tool_turns = AcpToolTurnCoordinator::new();
+        let request_id = Uuid::new_v4();
+        let (_handle, _rx) = registry.register("acp-session", request_id, None);
+        let (tx, _rx) = tokio::sync::oneshot::channel();
+        tool_turns
+            .register(crate::core::acp_tool_turns::AcpToolTurnRegistration {
+                user_id: 1,
+                bear_id: Uuid::new_v4(),
+                bear_slug: "test-bear".to_string(),
+                acp_session_id: "acp-session".to_string(),
+                request_id,
+                tool_call_id: "call-1".to_string(),
+                tool_name: "fs_read_text_file".to_string(),
+                approval_request_id: Some("approval-1".to_string()),
+                timeout_ms: 30_000,
+                result_tx: tx,
+            })
+            .unwrap();
+        let snapshot = registry.runtime_snapshot_for_session("acp-session", &tool_turns);
+
+        assert_eq!(snapshot["state"], "requires_action");
+        assert_eq!(snapshot["active_turn"]["present"], true);
+        assert_eq!(snapshot["active_turn"]["phase"], "WaitingForObligations");
+        assert_eq!(snapshot["active_turn"]["pending_obligations"], 1);
+        assert_eq!(snapshot["active_turn"]["pending_adapter_tools"], 1);
+        assert_eq!(snapshot["active_turn"]["pending_den_tools"], 0);
     }
 
     #[test]

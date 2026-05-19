@@ -1,7 +1,12 @@
 use serde_json::{json, Value};
 use uuid::Uuid;
 
-use crate::{core::acp_tool_turns::AcpToolTurnCoordinator, errors::CustomError};
+use crate::{
+    core::{
+        acp_tool_turns::AcpToolTurnCoordinator, acp_turn_controller::AcpActiveTurnCancelRegistry,
+    },
+    errors::CustomError,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RoleRuntimeRole {
@@ -153,11 +158,50 @@ impl RoleTurnResult {
 #[derive(Debug, Clone)]
 pub struct RoleRuntime {
     tool_turns: AcpToolTurnCoordinator,
+    turn_cancellations: Option<AcpActiveTurnCancelRegistry>,
 }
 
 impl RoleRuntime {
     pub fn new(tool_turns: AcpToolTurnCoordinator) -> Self {
-        Self { tool_turns }
+        Self {
+            tool_turns,
+            turn_cancellations: None,
+        }
+    }
+
+    pub fn with_turn_cancellations(
+        tool_turns: AcpToolTurnCoordinator,
+        turn_cancellations: AcpActiveTurnCancelRegistry,
+    ) -> Self {
+        Self {
+            tool_turns,
+            turn_cancellations: Some(turn_cancellations),
+        }
+    }
+
+    pub fn tool_turn_runtime_snapshot(
+        &self,
+        acp_session_id: &str,
+        tool_turns: &AcpToolTurnCoordinator,
+    ) -> Value {
+        if let Some(registry) = self.turn_cancellations.as_ref() {
+            registry.runtime_snapshot_for_session(acp_session_id, tool_turns)
+        } else {
+            json!({
+                "state": "idle",
+                "active_turn": {
+                    "present": false,
+                    "phase": Value::Null,
+                    "pending_obligations": 0,
+                    "pending_adapter_tools": 0,
+                    "pending_den_tools": 0,
+                    "pending_permissions": 0,
+                },
+                "last_terminal": Value::Null,
+                "last_recovery": Value::Null,
+                "source": "role_runtime_no_active_turn_registry",
+            })
+        }
     }
 
     pub fn acquire_turn(

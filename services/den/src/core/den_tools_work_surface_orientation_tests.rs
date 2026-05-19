@@ -25,6 +25,8 @@ fn context_for(role: BearAgentRole) -> DenToolInvocationContext {
         workspace_roots: vec!["/workspace/builder-bear".to_string()],
         session_policy: None,
         activity: None,
+        runtime: None,
+        context_budget: None,
         request_id: None,
         channel: Default::default(),
     }

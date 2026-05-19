@@ -139,6 +139,8 @@ fn pair_tool_surface_reminder_and_descriptors_agree_on_domains() {
             workspace_roots: Vec::new(),
             session_policy: None,
             activity: None,
+            runtime: None,
+            context_budget: None,
             request_id: None,
             channel: Default::default(),
         },

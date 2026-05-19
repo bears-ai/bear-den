@@ -1587,6 +1587,7 @@ pub fn is_builtin_den_tool(name: &str) -> bool {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
+#[non_exhaustive]
 pub struct DenToolInvocationContext {
     pub bear_id: Uuid,
     pub bear_slug: String,
