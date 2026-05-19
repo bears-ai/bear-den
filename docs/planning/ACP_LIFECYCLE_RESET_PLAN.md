@@ -33,7 +33,7 @@ Still in progress:
 
 - Full replacement of legacy stream lifecycle fields with controller authority.
 - Real production `/cancel` endpoint signaling into active streams is initially wired via a session-level `AcpActiveTurnCancelRegistry`. The endpoint now signals before auth/session-row lookup, which supports early cancellation races. Registry unit tests cover signaling, unregistering, and stale handle safety; full HTTP endpoint integration tests still need to be added.
-- Normalized late-result API response shape is implemented for Den tool-result responses: compatibility variants now return `reason = late_result_ignored` plus `settlement` detail (`timed_out`, `cancelled`, `already_settled`, or `unknown`). Additional endpoint tests still need to lock this down.
+- Normalized late-result API response shape is implemented and unit-tested for Den tool-result responses: compatibility variants now return `reason = late_result_ignored` plus `settlement` detail (`timed_out`, `cancelled`, `already_settled`, or `unknown`). Full HTTP endpoint tests can still be added later.
 - `session_info.runtime` / session health surface, with human `/status` rendered from the same data.
 - Adapter-side overlap, mode-race, MCP-log, and cancellation tests.
 - Slow `session_info` stream test cleanup is complete. The stream test now asserts route classification/no adapter emission without driving the full `session_info` DB-dependent continuation path, reducing runtime from ~60s to ~0.1s.
@@ -938,7 +938,7 @@ Move lifecycle decisions out of stream polling branches and into controller call
 
 ### Step 5: Add production active-stream cancellation and normalize Den tool-result API statuses
 
-Status: mostly implemented for response shape. Test-hook stream cancellation exists, and `/cancel` now signals active streams through a session-level cancellation registry before auth/session-row lookup. Registry unit tests cover signaling/unregistering/stale-handle safety; full HTTP endpoint tests are still needed. Den tool-result responses now map late/missing/settled compatibility variants to `reason = late_result_ignored` plus `settlement` detail. Endpoint tests still need to lock this down.
+Status: mostly implemented for response shape. Test-hook stream cancellation exists, and `/cancel` now signals active streams through a session-level cancellation registry before auth/session-row lookup. Registry unit tests cover signaling/unregistering/stale-handle safety; full HTTP endpoint tests are still needed. Den tool-result responses now map late/missing/settled compatibility variants to `reason = late_result_ignored` plus `settlement` detail, with unit coverage for missing and recently-settled timeout cases.
 
 Under the current 1:1 session/conversation assumption, add a session-level active stream cancellation registry first. Preserve request/conversation metadata for future scoped cancel checks.
 
@@ -1035,7 +1035,7 @@ how recovery/cancellation is explained to users
 Recommended next implementation order:
 
 1. Add full HTTP endpoint-level tests for production session-level `/cancel` active-stream signaling. Initial registry wiring exists and stores request/conversation metadata for diagnostics and future scoped cancellation; registry behavior has unit coverage, but endpoint/auth/session integration is not yet covered.
-2. Add endpoint/API tests for late result response normalization (`late_result_ignored` plus `settlement`). Response shape is implemented, but not directly tested at the HTTP/API boundary.
-3. Continue replacing legacy stream lifecycle state with controller authority one piece at a time.
+2. Continue replacing legacy stream lifecycle state with controller authority one piece at a time.
+3. Add full HTTP endpoint-level tests for late result response normalization if needed; unit coverage currently verifies response mapping.
 4. Add `session_info.runtime` / session health data after an active-turn snapshot registry exists. Render human `/status` from this same data later, and mirror compact runtime metadata through `session_info_update._meta.bears.runtime` where safe.
 5. Add adapter tests for overlap, mode startup race, MCP log summarization, and explicit cancellation.

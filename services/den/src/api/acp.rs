@@ -251,6 +251,13 @@ struct AcpToolResultResponse {
     diagnostic: Option<serde_json::Value>,
 }
 
+#[cfg(test)]
+impl AcpToolResultResponse {
+    fn to_value(&self) -> serde_json::Value {
+        serde_json::to_value(self).expect("AcpToolResultResponse serializes")
+    }
+}
+
 #[derive(Debug, Deserialize)]
 struct AcpPermissionDecisionRequest {
     decision: String,
@@ -2466,6 +2473,68 @@ fn late_result_settlement_from_status(status: &str) -> &'static str {
     }
 }
 
+fn acp_tool_result_response_from_delivery(
+    delivery: AcpToolResultDelivery,
+    session_id: &str,
+    tool_call_id_param: String,
+    parsed_status: AcpToolStatus,
+    tool_turns: &AcpToolTurnCoordinator,
+) -> AcpToolResultResponse {
+    match delivery {
+        AcpToolResultDelivery::Delivered { body, .. } => AcpToolResultResponse {
+            accepted: true,
+            reason: "delivered".to_string(),
+            settlement: None,
+            turn_id: body.turn_id,
+            tool_call_id: tool_call_id_param,
+            diagnostic: Some(serde_json::json!({
+                "component": "den.acp",
+                "phase": acp_diag_phase::DEN_RESULT_DELIVERED,
+                "status": parsed_status.as_str(),
+            })),
+        },
+        AcpToolResultDelivery::TurnMissing {
+            turn_id,
+            tool_call_id,
+        } => AcpToolResultResponse {
+            accepted: false,
+            reason: "late_result_ignored".to_string(),
+            settlement: Some("unknown".to_string()),
+            turn_id,
+            tool_call_id,
+            diagnostic: Some(serde_json::json!({
+                "component": "den.acp",
+                "phase": "late_tool_result_ignored",
+            })),
+        },
+        AcpToolResultDelivery::AlreadySettled {
+            turn_id,
+            tool_call_id,
+        } => AcpToolResultResponse {
+            accepted: false,
+            reason: "late_result_ignored".to_string(),
+            settlement: Some("already_settled".to_string()),
+            turn_id,
+            tool_call_id: tool_call_id.clone(),
+            diagnostic: tool_turns
+                .recently_settled(session_id, &tool_call_id)
+                .map(|cached| cached.diagnostic()),
+        },
+        AcpToolResultDelivery::RecentlySettled {
+            turn_id,
+            tool_call_id,
+            cached,
+        } => AcpToolResultResponse {
+            accepted: false,
+            reason: "late_result_ignored".to_string(),
+            settlement: Some(late_result_settlement_from_status(&cached.status).to_string()),
+            turn_id,
+            tool_call_id,
+            diagnostic: Some(cached.diagnostic()),
+        },
+    }
+}
+
 async fn tool_result_inner(
     state: ApiState,
     slug: String,
@@ -2514,63 +2583,32 @@ async fn tool_result_inner(
                 phase = acp_diag_phase::DEN_RESULT_DELIVERED,
                 "ACP tool result received"
             );
-            Ok(Json(AcpToolResultResponse {
-                accepted: true,
-                reason: "delivered".to_string(),
-                settlement: None,
-                turn_id: body.turn_id,
+            Ok(Json(acp_tool_result_response_from_delivery(
+                AcpToolResultDelivery::Delivered {
+                    body,
+                    request_id,
+                    bear_id,
+                    tool_name,
+                },
+                &session_id,
                 tool_call_id,
-                diagnostic: Some(serde_json::json!({
-                    "component": "den.acp",
-                    "phase": acp_diag_phase::DEN_RESULT_DELIVERED,
-                    "status": parsed_status.as_str(),
-                })),
-            })
+                parsed_status,
+                &state.acp_tool_turns,
+            ))
             .into_response())
         }
-        AcpToolResultDelivery::TurnMissing {
-            turn_id,
-            tool_call_id,
-        } => Ok(Json(AcpToolResultResponse {
-            accepted: false,
-            reason: "late_result_ignored".to_string(),
-            settlement: Some("unknown".to_string()),
-            turn_id,
-            tool_call_id,
-            diagnostic: Some(serde_json::json!({
-                "component": "den.acp",
-                "phase": "late_tool_result_ignored",
-            })),
-        })
-        .into_response()),
-        AcpToolResultDelivery::AlreadySettled {
-            turn_id,
-            tool_call_id,
-        } => Ok(Json(AcpToolResultResponse {
-            accepted: false,
-            reason: "late_result_ignored".to_string(),
-            settlement: Some("already_settled".to_string()),
-            turn_id,
-            tool_call_id: tool_call_id.clone(),
-            diagnostic: state
-                .acp_tool_turns
-                .recently_settled(&session_id, &tool_call_id)
-                .map(|cached| cached.diagnostic()),
-        })
-        .into_response()),
-        AcpToolResultDelivery::RecentlySettled {
-            turn_id,
-            tool_call_id,
-            cached,
-        } => Ok(Json(AcpToolResultResponse {
-            accepted: false,
-            reason: "late_result_ignored".to_string(),
-            settlement: Some(late_result_settlement_from_status(&cached.status).to_string()),
-            turn_id,
-            tool_call_id,
-            diagnostic: Some(cached.diagnostic()),
-        })
-        .into_response()),
+        delivery @ (AcpToolResultDelivery::TurnMissing { .. }
+        | AcpToolResultDelivery::AlreadySettled { .. }
+        | AcpToolResultDelivery::RecentlySettled { .. }) => {
+            Ok(Json(acp_tool_result_response_from_delivery(
+                delivery,
+                &session_id,
+                tool_call_id,
+                parsed_status,
+                &state.acp_tool_turns,
+            ))
+            .into_response())
+        }
     }
 }
 
@@ -5833,6 +5871,95 @@ mod tests {
             text: "more".to_string(),
         });
         assert!(events.is_empty());
+    }
+
+    #[test]
+    fn acp_tool_result_turn_missing_returns_late_result_ignored() {
+        let registry = AcpToolTurnCoordinator::new();
+        let response = acp_tool_result_response_from_delivery(
+            AcpToolResultDelivery::TurnMissing {
+                turn_id: Some("turn-1".to_string()),
+                tool_call_id: "call-1".to_string(),
+            },
+            "acp-session",
+            "call-1".to_string(),
+            AcpToolStatus::Ok,
+            &registry,
+        )
+        .to_value();
+
+        assert_eq!(response["accepted"], false);
+        assert_eq!(response["reason"], "late_result_ignored");
+        assert_eq!(response["settlement"], "unknown");
+        assert_eq!(response["turn_id"], "turn-1");
+        assert_eq!(response["tool_call_id"], "call-1");
+        assert_eq!(response["diagnostic"]["phase"], "late_tool_result_ignored");
+    }
+
+    #[test]
+    fn acp_tool_result_recently_settled_timeout_returns_timed_out_settlement() {
+        let registry = AcpToolTurnCoordinator::new();
+        let (tx, _rx) = tokio::sync::oneshot::channel();
+        registry
+            .register(AcpToolTurnRegistration {
+                user_id: 1,
+                bear_id: Uuid::new_v4(),
+                bear_slug: "test-bear".to_string(),
+                acp_session_id: "acp-session".to_string(),
+                request_id: Uuid::new_v4(),
+                tool_call_id: "call-timeout".to_string(),
+                tool_name: "fs_read_text_file".to_string(),
+                approval_request_id: Some("approval-timeout".to_string()),
+                timeout_ms: 1,
+                result_tx: tx,
+            })
+            .unwrap();
+        let delivered = registry
+            .deliver_result(
+                1,
+                "test-bear",
+                "acp-session",
+                "call-timeout",
+                AcpToolResultRequest {
+                    tool_call_id: Some("call-timeout".to_string()),
+                    tool_name: Some("fs_read_text_file".to_string()),
+                    status: "timeout".to_string(),
+                    content: Some("timed out".to_string()),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        assert!(matches!(delivered, AcpToolResultDelivery::Delivered { .. }));
+        registry.remove("acp-session", "call-timeout");
+        let late = registry
+            .deliver_result(
+                1,
+                "test-bear",
+                "acp-session",
+                "call-timeout",
+                AcpToolResultRequest {
+                    tool_call_id: Some("call-timeout".to_string()),
+                    tool_name: Some("fs_read_text_file".to_string()),
+                    status: "ok".to_string(),
+                    content: Some("late".to_string()),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        let response = acp_tool_result_response_from_delivery(
+            late,
+            "acp-session",
+            "call-timeout".to_string(),
+            AcpToolStatus::Ok,
+            &registry,
+        )
+        .to_value();
+
+        assert_eq!(response["accepted"], false);
+        assert_eq!(response["reason"], "late_result_ignored");
+        assert_eq!(response["settlement"], "timed_out");
+        assert_eq!(response["tool_call_id"], "call-timeout");
+        assert_eq!(response["diagnostic"]["status"], "timeout");
     }
 
     #[tokio::test]
