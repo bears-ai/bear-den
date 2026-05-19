@@ -497,6 +497,10 @@ async fn send_available_commands_update(session_id: &str) -> Result<()> {
             "runtime",
             "Show Den ACP runtime state and active adapter-local tool tasks for this session.",
         ),
+        AvailableCommand::new(
+            "status",
+            "Show concise BEARS session status rendered from Den runtime/session health.",
+        ),
         AvailableCommand::new("version", "Show BEARS adapter and Den version information."),
         AvailableCommand::new("debug-ui", "Show BEARS ACP debug UI environment status."),
     ];
@@ -529,6 +533,36 @@ async fn send_session_info_update(
         json!({
             "sessionId": session_id,
             "update": serde_json::to_value(SessionUpdate::SessionInfoUpdate(update))?,
+        }),
+    )
+    .await
+}
+
+async fn send_bears_runtime_session_info_update(
+    session_id: &str,
+    runtime: Option<Value>,
+    context_budget: Option<Value>,
+) -> Result<()> {
+    let mut bears = serde_json::Map::new();
+    if let Some(runtime) = runtime {
+        bears.insert("runtime".to_string(), runtime);
+    }
+    if let Some(context_budget) = context_budget {
+        bears.insert("context_budget".to_string(), context_budget);
+    }
+    if bears.is_empty() {
+        return Ok(());
+    }
+    write_notification(
+        "session/update",
+        json!({
+            "sessionId": session_id,
+            "update": {
+                "sessionUpdate": "session_info_update",
+                "_meta": {
+                    "bears": Value::Object(bears),
+                }
+            }
         }),
     )
     .await
@@ -3719,6 +3753,7 @@ enum LocalSlashCommand {
     Conversation,
     Capabilities,
     Runtime,
+    Status,
     Version,
     DebugUi,
 }
@@ -3730,6 +3765,7 @@ fn parse_local_slash_command(prompt: &str) -> Option<LocalSlashCommand> {
         "/conversation" => Some(LocalSlashCommand::Conversation),
         "/capabilities" => Some(LocalSlashCommand::Capabilities),
         "/runtime" => Some(LocalSlashCommand::Runtime),
+        "/status" => Some(LocalSlashCommand::Status),
         "/version" => Some(LocalSlashCommand::Version),
         "/debug-ui" => Some(LocalSlashCommand::DebugUi),
         _ => None,
@@ -3763,6 +3799,9 @@ async fn handle_local_slash_command(
         LocalSlashCommand::Conversation => conversation_report(adapter_state, session_id),
         LocalSlashCommand::Capabilities => capabilities_report(adapter_state),
         LocalSlashCommand::Runtime => runtime_report(http, config, shared_state, session_id).await,
+        LocalSlashCommand::Status => {
+            status_report(http, config, adapter_state, shared_state, session_id).await
+        }
         LocalSlashCommand::Version => version_report(http, config).await,
         LocalSlashCommand::DebugUi => debug_ui_report(),
     }
@@ -3795,6 +3834,62 @@ fn capabilities_report(adapter_state: &AdapterState) -> String {
         serde_json::to_string_pretty(&direct_tools_context())
             .unwrap_or_else(|_| direct_tools_context().to_string()),
     )
+}
+
+async fn status_report(
+    http: &reqwest::Client,
+    config: &Config,
+    adapter_state: &AdapterState,
+    shared_state: &AdapterSharedState,
+    session_id: &str,
+) -> String {
+    let context = client_context_for_doctor(adapter_state, session_id);
+    let den_runtime = fetch_den_runtime_state(http, config, session_id).await.ok();
+    let tasks = shared_state.tool_tasks.list_for_session(session_id).await;
+    let mut lines = vec!["BEARS ACP status".to_string(), String::new()];
+    lines.push(format!("- ACP session: {session_id}"));
+    lines.push(format!(
+        "- Conversation: {}",
+        context
+            .resolved_conversation_id
+            .as_deref()
+            .or(context.conversation_id.as_deref())
+            .unwrap_or("<den-selected>")
+    ));
+    if let Some(runtime) = den_runtime.as_ref() {
+        let turn_state = runtime.get("turn_state").unwrap_or(runtime);
+        lines.push(format!(
+            "- Den runtime: {}",
+            compact_json_for_status(turn_state)
+        ));
+    } else {
+        lines.push("- Den runtime: unavailable".to_string());
+    }
+    if tasks.is_empty() {
+        lines.push("- Adapter-local tools: none active".to_string());
+    } else {
+        lines.push(format!("- Adapter-local tools: {} active", tasks.len()));
+        for task in tasks.iter().take(5) {
+            lines.push(format!(
+                "  - {} {} phase={} elapsed_ms={}",
+                task.tool_name,
+                task.tool_call_id,
+                task.phase.as_str(),
+                task.started_at.elapsed().as_millis(),
+            ));
+        }
+    }
+    lines.push(format!(
+        "- MCP: {}",
+        summarize_mcp_for_log(context.raw.get("mcp"))
+    ));
+    lines.push("- Context budget: unavailable".to_string());
+    lines.join("\n")
+}
+
+fn compact_json_for_status(value: &Value) -> String {
+    let text = serde_json::to_string(value).unwrap_or_else(|_| value.to_string());
+    truncate_for_log(&text, 600)
 }
 
 async fn runtime_report(
@@ -5556,6 +5651,17 @@ async fn handle_den_event(
                 .and_then(Value::as_str)
                 .map(str::to_string);
             send_session_info_update(session_id, title, updated_at).await?;
+            let runtime = event
+                .pointer("/meta/bears/runtime")
+                .cloned()
+                .or_else(|| event.pointer("/_meta/bears/runtime").cloned())
+                .or_else(|| event.get("runtime").cloned());
+            let context_budget = event
+                .pointer("/meta/bears/context_budget")
+                .cloned()
+                .or_else(|| event.pointer("/_meta/bears/context_budget").cloned())
+                .or_else(|| event.get("context_budget").cloned());
+            send_bears_runtime_session_info_update(session_id, runtime, context_budget).await?;
             Ok(false)
         }
         "plan_update" => {
