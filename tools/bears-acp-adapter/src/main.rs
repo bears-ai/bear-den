@@ -1724,17 +1724,13 @@ async fn handle_request(
                 };
                 let turn_token = Uuid::new_v4();
                 let conversation_id_for_turn = prompt_conversation_id_from_params(&request.params);
-                let previous = {
-                    let mut active = shared_state.active_prompts.lock().await;
-                    let previous = active.insert(
-                        session_id.clone(),
-                        ActivePromptTurn {
-                            token: turn_token,
-                            conversation_id: conversation_id_for_turn.clone(),
-                        },
-                    );
-                    previous
-                };
+                let previous = register_prompt_turn_for_session(
+                    &shared_state,
+                    &session_id,
+                    turn_token,
+                    conversation_id_for_turn.clone(),
+                )
+                .await;
                 if let Some(previous) = previous {
                     let same_conversation = prompt_conversations_overlap(
                         previous.conversation_id.as_deref(),
@@ -1742,7 +1738,7 @@ async fn handle_request(
                     );
                     if same_conversation {
                         eprintln!(
-                            "bears-acp-adapter: steering prompt for same conversation session_id={} previous_turn={} new_turn={} conversation={:?}; keeping previous runtime alive and only gating stale UI text updates",
+                            "bears-acp-adapter: steering prompt for same conversation session_id={} previous_turn={} new_turn={} conversation={:?}; cancelling previous turn and gating stale UI text updates",
                             session_id, previous.token, turn_token, conversation_id_for_turn
                         );
                     } else {
@@ -4276,6 +4272,37 @@ fn prompt_conversations_overlap(previous: Option<&str>, next: Option<&str>) -> b
         // resolve both to the same Letta conversation.
         _ => true,
     }
+}
+
+async fn register_prompt_turn_for_session(
+    shared_state: &AdapterSharedState,
+    session_id: &str,
+    turn_token: Uuid,
+    conversation_id_for_turn: Option<String>,
+) -> Option<ActivePromptTurn> {
+    let previous = {
+        let mut active = shared_state.active_prompts.lock().await;
+        active.insert(
+            session_id.to_string(),
+            ActivePromptTurn {
+                token: turn_token,
+                conversation_id: conversation_id_for_turn.clone(),
+            },
+        )
+    };
+    if let Some(previous) = previous.as_ref() {
+        if prompt_conversations_overlap(
+            previous.conversation_id.as_deref(),
+            conversation_id_for_turn.as_deref(),
+        ) {
+            let _ = shared_state.cancellation_tx.send(CancellationNotice {
+                session_id: session_id.to_string(),
+                turn_token: Some(previous.token),
+                conversation_id: previous.conversation_id.clone(),
+            });
+        }
+    }
+    previous
 }
 
 fn normalize_client_capabilities(mut capabilities: Value) -> Value {
@@ -6877,6 +6904,72 @@ mod tests {
             cancellation_tx,
             active_prompts: Arc::new(TokioMutex::new(HashMap::new())),
         }
+    }
+
+    #[tokio::test]
+    async fn adapter_same_conversation_overlap_sends_cancellation_for_previous_turn() {
+        let shared = test_shared_state();
+        let previous_token = Uuid::new_v4();
+        let next_token = Uuid::new_v4();
+        register_prompt_turn_for_session(
+            &shared,
+            "acp-session",
+            previous_token,
+            Some("conv-1".to_string()),
+        )
+        .await;
+        let mut cancel_rx = shared.cancellation_tx.subscribe();
+        let previous = register_prompt_turn_for_session(
+            &shared,
+            "acp-session",
+            next_token,
+            Some("conv-1".to_string()),
+        )
+        .await
+        .expect("previous turn returned");
+        let notice = cancel_rx.recv().await.expect("cancellation notice");
+
+        assert_eq!(previous.token, previous_token);
+        assert_eq!(notice.session_id, "acp-session");
+        assert_eq!(notice.turn_token, Some(previous_token));
+        assert_eq!(notice.conversation_id.as_deref(), Some("conv-1"));
+        assert!(cancellation_matches_turn(
+            &notice,
+            "acp-session",
+            previous_token,
+            Some("conv-1")
+        ));
+    }
+
+    #[tokio::test]
+    async fn adapter_different_conversation_overlap_does_not_cancel_previous_turn() {
+        let shared = test_shared_state();
+        let previous_token = Uuid::new_v4();
+        let next_token = Uuid::new_v4();
+        register_prompt_turn_for_session(
+            &shared,
+            "acp-session",
+            previous_token,
+            Some("conv-1".to_string()),
+        )
+        .await;
+        let mut cancel_rx = shared.cancellation_tx.subscribe();
+        let previous = register_prompt_turn_for_session(
+            &shared,
+            "acp-session",
+            next_token,
+            Some("conv-2".to_string()),
+        )
+        .await
+        .expect("previous turn returned");
+
+        assert_eq!(previous.token, previous_token);
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(50), cancel_rx.recv())
+                .await
+                .is_err(),
+            "different-conversation overlap should not send cancellation"
+        );
     }
 
     #[test]
