@@ -1030,21 +1030,67 @@ how recovery/cancellation is explained to users
 - Can Letta provide exact context-window usage for the current run, or do we need an explicitly estimated Den-side budget?
 - If future ACP/Zed versions support multiple active conversations inside one session, what scoped cancel body should become required? Current assumption is 1:1 session/conversation, so scoped fields remain optional diagnostics/future compatibility.
 
-## Prompt hygiene progress
+## Prompt hygiene and provenance progress
 
-Status: initial adapter-side prompt block shape logging is implemented and tested.
+Status: adapter-side prompt block provenance classification is implemented and tested. Prompt flattening now uses provenance/accounted block type rather than heuristic content stripping.
+
+ACP spec note: `ContentBlock::Resource` is the preferred ACP way for clients to include embedded context such as @-mentioned files; all agents must support text and resource links, while embedded resource support is capability-gated. Therefore BEARS should not assume all protocol-valid prompt blocks are human-authored user-message text.
 
 Completed:
 
-- Adapter logs prompt block shape before/alongside flattening without logging block contents.
+- Adapter logs prompt block shape and provenance counts before/alongside flattening without logging block contents.
 - Shape tracks `text`, `resource`, `resource_link`, and `other` counts.
-- Shape flags likely client-synthetic `system_alert` summaries when they appear in short client/resource synthetic contexts.
-- Tests verify synthetic alert detection and preservation of user-pasted `system_alert` debugging text.
+- Shape also tracks `human_text`, `human_pasted_debug_text`, `client_resource`, `client_synthetic_context`, and `unsupported` provenance counts.
+- Prompt flattening includes only blocks whose classification-derived `include_in_human_message()` policy returns true.
+- `text` blocks remain human-authored by default, including intentional pasted debugging payloads containing `system_alert`.
+- `resource` and `resource_link` blocks are treated as client-provided context/reference by default and are not persisted as Letta `human_message` text.
+- Likely synthetic resource context is now a diagnostic provenance classification (`client_synthetic_context`), not the deciding reason for omission.
+- Tests verify text, resource, synthetic resource, user-pasted debug text, and resource link classifications.
 
 Still remaining:
 
-- Prevent confirmed client-synthetic summaries from being persisted to Letta as `human_message` without stripping intentional user debug text.
 - Add higher-level prompt persistence/boundary tests once the adapter/Den boundary exposes a clean seam.
+- Add explicit future handling for ACP resources so client-provided context can be exposed to models as context/reference without becoming Letta `human_message` text.
+
+Target provenance model:
+
+```text
+AcpPromptBlockClassification {
+  block_type: text | resource | resource_link | other
+  provenance: human_text | human_pasted_debug_text | client_resource | client_synthetic_context | unsupported
+  include_in_human_message(): bool
+  include_in_display(): bool
+  diagnostic_flags: [...]
+}
+```
+
+Target flattening policy:
+
+| Block/provenance | Letta human_message | Display | Notes |
+|---|---:|---:|---|
+| `text` / human text | yes | yes | Human-authored by default. Do not strip based on `system_alert`. |
+| user-pasted debug text | yes | yes | Preserve intentional debugging payloads. |
+| `resource` / client resource | no by default | maybe | ACP embedded context is useful but not automatically human-authored user intent. |
+| `resource_link` | no | maybe | Reference only; model can use tools if needed. |
+| client synthetic context | no | no or diagnostic | Never persist as Letta human text. |
+| unsupported | no | no | Diagnostic only. |
+
+Implemented adapter seam:
+
+- Added `AcpPromptBlockClassification` and `classify_prompt_block` internal helper.
+- `prompt_text_from_params` includes only blocks whose classification-derived `include_in_human_message()` policy returns true.
+- `prompt_display_text_from_params` uses the same classifier via `include_in_display()` instead of a separate text-block-only path.
+- Resource content remains out of the Letta `human_message` flattening path pending future explicit context/resource handling.
+
+Tests added/kept:
+
+```text
+text_block_is_human_message
+resource_block_is_client_context_not_human_message
+synthetic_resource_is_client_synthetic_context
+user_pasted_system_alert_text_remains_human_text
+resource_link_is_reference_not_human_message
+```
 
 ## Immediate next action
 

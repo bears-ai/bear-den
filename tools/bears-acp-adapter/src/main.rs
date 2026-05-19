@@ -3419,7 +3419,7 @@ async fn handle_prompt_with_retry(
     let prompt = prompt_text_from_params(&params)?;
     let display_prompt = prompt_display_text_from_params(&params).unwrap_or_else(|| prompt.clone());
     eprintln!(
-        "bears-acp-adapter: session/prompt session_id={} prompt_len={} display_prompt_len={} prompt_blocks={{text:{}, resource:{}, resource_link:{}, other:{}}} synthetic_system_alert_detected={} prompt_has_trusted_mode_suffix={} display_has_trusted_mode_suffix={} prompt_has_system_reminder={} display_has_system_reminder={}",
+        "bears-acp-adapter: session/prompt session_id={} prompt_len={} display_prompt_len={} prompt_blocks={{text:{}, resource:{}, resource_link:{}, other:{}}} prompt_provenance={{human_text:{}, human_pasted_debug_text:{}, client_resource:{}, client_synthetic_context:{}, unsupported:{}}} prompt_has_trusted_mode_suffix={} display_has_trusted_mode_suffix={} prompt_has_system_reminder={} display_has_system_reminder={}",
         session_id,
         prompt.len(),
         display_prompt.len(),
@@ -3427,7 +3427,11 @@ async fn handle_prompt_with_retry(
         prompt_shape.resource,
         prompt_shape.resource_link,
         prompt_shape.other,
-        prompt_shape.synthetic_system_alert_detected,
+        prompt_shape.human_text,
+        prompt_shape.human_pasted_debug_text,
+        prompt_shape.client_resource,
+        prompt_shape.client_synthetic_context,
+        prompt_shape.unsupported,
         prompt.contains("Trusted ACP session mode this turn:"),
         display_prompt.contains("Trusted ACP session mode this turn:"),
         prompt.contains("<system-reminder>"),
@@ -4262,7 +4266,56 @@ struct PromptBlockShape {
     resource: usize,
     resource_link: usize,
     other: usize,
-    synthetic_system_alert_detected: bool,
+    human_text: usize,
+    human_pasted_debug_text: usize,
+    client_resource: usize,
+    client_synthetic_context: usize,
+    unsupported: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AcpPromptBlockType {
+    Text,
+    Resource,
+    ResourceLink,
+    Other,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AcpPromptBlockProvenance {
+    HumanText,
+    HumanPastedDebugText,
+    ClientResource,
+    ClientSyntheticContext,
+    Unsupported,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct AcpPromptBlockClassification {
+    block_type: AcpPromptBlockType,
+    provenance: AcpPromptBlockProvenance,
+    diagnostic_flags: Vec<&'static str>,
+}
+
+impl AcpPromptBlockClassification {
+    fn new(block_type: AcpPromptBlockType, provenance: AcpPromptBlockProvenance) -> Self {
+        Self {
+            block_type,
+            provenance,
+            diagnostic_flags: Vec::new(),
+        }
+    }
+
+    fn include_in_human_message(&self) -> bool {
+        matches!(
+            self.provenance,
+            AcpPromptBlockProvenance::HumanText | AcpPromptBlockProvenance::HumanPastedDebugText
+        )
+    }
+
+    fn include_in_display(&self) -> bool {
+        self.include_in_human_message()
+    }
 }
 
 fn prompt_block_shape(params: &Value) -> PromptBlockShape {
@@ -4271,36 +4324,76 @@ fn prompt_block_shape(params: &Value) -> PromptBlockShape {
         return shape;
     };
     for block in prompt {
-        match block.get("type").and_then(Value::as_str).unwrap_or("") {
-            "text" => {
-                shape.text += 1;
-                if block
-                    .get("text")
-                    .and_then(Value::as_str)
-                    .is_some_and(looks_like_client_synthetic_system_alert)
-                {
-                    shape.synthetic_system_alert_detected = true;
-                }
-            }
-            "resource" => {
-                shape.resource += 1;
-                if block
-                    .get("resource")
-                    .and_then(|resource| resource.get("text"))
-                    .and_then(Value::as_str)
-                    .is_some_and(looks_like_client_synthetic_system_alert)
-                {
-                    shape.synthetic_system_alert_detected = true;
-                }
-            }
-            "resource_link" => shape.resource_link += 1,
-            _ => shape.other += 1,
+        let classification = classify_prompt_block(block);
+        match classification.block_type {
+            AcpPromptBlockType::Text => shape.text += 1,
+            AcpPromptBlockType::Resource => shape.resource += 1,
+            AcpPromptBlockType::ResourceLink => shape.resource_link += 1,
+            AcpPromptBlockType::Other => shape.other += 1,
+        }
+        match classification.provenance {
+            AcpPromptBlockProvenance::HumanText => shape.human_text += 1,
+            AcpPromptBlockProvenance::HumanPastedDebugText => shape.human_pasted_debug_text += 1,
+            AcpPromptBlockProvenance::ClientResource => shape.client_resource += 1,
+            AcpPromptBlockProvenance::ClientSyntheticContext => shape.client_synthetic_context += 1,
+            AcpPromptBlockProvenance::Unsupported => shape.unsupported += 1,
         }
     }
     shape
 }
 
-fn looks_like_client_synthetic_system_alert(text: &str) -> bool {
+fn classify_prompt_block(block: &Value) -> AcpPromptBlockClassification {
+    match block.get("type").and_then(Value::as_str).unwrap_or("") {
+        "text" => {
+            let provenance = if block
+                .get("text")
+                .and_then(Value::as_str)
+                .is_some_and(looks_like_pasted_debug_payload)
+            {
+                AcpPromptBlockProvenance::HumanPastedDebugText
+            } else {
+                AcpPromptBlockProvenance::HumanText
+            };
+            AcpPromptBlockClassification::new(AcpPromptBlockType::Text, provenance)
+        }
+        "resource" => {
+            let mut classification = AcpPromptBlockClassification::new(
+                AcpPromptBlockType::Resource,
+                AcpPromptBlockProvenance::ClientResource,
+            );
+            if block
+                .get("resource")
+                .and_then(|resource| resource.get("text"))
+                .and_then(Value::as_str)
+                .is_some_and(looks_like_client_synthetic_context)
+            {
+                classification.provenance = AcpPromptBlockProvenance::ClientSyntheticContext;
+                classification
+                    .diagnostic_flags
+                    .push("likely_client_synthetic_context");
+            }
+            classification
+        }
+        "resource_link" => AcpPromptBlockClassification::new(
+            AcpPromptBlockType::ResourceLink,
+            AcpPromptBlockProvenance::ClientResource,
+        ),
+        _ => AcpPromptBlockClassification::new(
+            AcpPromptBlockType::Other,
+            AcpPromptBlockProvenance::Unsupported,
+        ),
+    }
+}
+
+fn looks_like_pasted_debug_payload(text: &str) -> bool {
+    let trimmed = text.trim();
+    if trimmed.len() > 4096 {
+        return false;
+    }
+    trimmed.to_ascii_lowercase().contains("system_alert")
+}
+
+fn looks_like_client_synthetic_context(text: &str) -> bool {
     let trimmed = text.trim();
     if trimmed.len() > 4096 {
         return false;
@@ -4314,7 +4407,34 @@ fn looks_like_client_synthetic_system_alert(text: &str) -> bool {
 }
 
 fn prompt_text_from_params(params: &Value) -> Result<String> {
-    prompt_text_from_params_with_resource_mode(params, true)
+    let prompt = params
+        .get("prompt")
+        .and_then(Value::as_array)
+        .ok_or_else(|| anyhow!("session/prompt params missing prompt array"))?;
+
+    let text = prompt
+        .iter()
+        .filter(|block| classify_prompt_block(block).include_in_human_message())
+        .filter_map(prompt_block_text_for_human_message)
+        .collect::<Vec<_>>()
+        .join("\n\n")
+        .trim()
+        .to_string();
+
+    if text.is_empty() {
+        Err(anyhow!(
+            "prompt did not contain supported human-authored text content"
+        ))
+    } else {
+        Ok(text)
+    }
+}
+
+fn prompt_block_text_for_human_message(block: &Value) -> Option<&str> {
+    match block.get("type").and_then(Value::as_str).unwrap_or("") {
+        "text" => block.get("text").and_then(Value::as_str),
+        _ => None,
+    }
 }
 
 fn prompt_conversation_id_from_params(params: &Value) -> Option<String> {
@@ -4477,7 +4597,7 @@ fn push_path_value(roots: &mut Vec<String>, value: Option<&Value>) {
 }
 
 fn prompt_display_text_from_params(params: &Value) -> Option<String> {
-    prompt_text_blocks_from_params(params)
+    prompt_text_for_display_from_params(params)
         .ok()
         .map(|text| strip_prompt_scaffolding_for_display(&text))
         .filter(|text| !text.trim().is_empty())
@@ -4529,7 +4649,7 @@ fn prompt_contains_resources(params: &Value) -> bool {
         })
 }
 
-fn prompt_text_blocks_from_params(params: &Value) -> Result<String> {
+fn prompt_text_for_display_from_params(params: &Value) -> Result<String> {
     let prompt = params
         .get("prompt")
         .and_then(Value::as_array)
@@ -4537,70 +4657,15 @@ fn prompt_text_blocks_from_params(params: &Value) -> Result<String> {
 
     let text = prompt
         .iter()
-        .filter(|block| block.get("type").and_then(Value::as_str) == Some("text"))
-        .filter_map(|block| block.get("text").and_then(Value::as_str))
+        .filter(|block| classify_prompt_block(block).include_in_display())
+        .filter_map(prompt_block_text_for_human_message)
         .collect::<Vec<_>>()
         .join("\n\n")
         .trim()
         .to_string();
 
     if text.is_empty() {
-        Err(anyhow!("prompt did not contain text content for display"))
-    } else {
-        Ok(text)
-    }
-}
-
-fn prompt_text_from_params_with_resource_mode(
-    params: &Value,
-    include_resource_contents: bool,
-) -> Result<String> {
-    let prompt = params
-        .get("prompt")
-        .and_then(Value::as_array)
-        .ok_or_else(|| anyhow!("session/prompt params missing prompt array"))?;
-
-    let mut parts = Vec::new();
-    for block in prompt {
-        match block.get("type").and_then(Value::as_str).unwrap_or("") {
-            "text" => {
-                if let Some(text) = block.get("text").and_then(Value::as_str) {
-                    parts.push(text.to_string());
-                }
-            }
-            "resource_link" => {
-                let uri = block.get("uri").and_then(Value::as_str).unwrap_or("");
-                let name = block.get("name").and_then(Value::as_str).unwrap_or(uri);
-                if !uri.is_empty() || !name.is_empty() {
-                    parts.push(format!("Referenced resource: {name} ({uri})"));
-                }
-            }
-            "resource" => {
-                if let Some(resource) = block.get("resource") {
-                    let uri = resource.get("uri").and_then(Value::as_str).unwrap_or("");
-                    let name = resource
-                        .get("name")
-                        .and_then(Value::as_str)
-                        .filter(|s| !s.trim().is_empty())
-                        .unwrap_or(uri);
-                    if include_resource_contents {
-                        if let Some(text) = resource.get("text").and_then(Value::as_str) {
-                            parts.push(format!(
-                                "Referenced resource: {name} ({uri})\n<bears-acp-resource uri={uri:?} name={name:?}>\n{text}\n</bears-acp-resource>"
-                            ));
-                        }
-                    } else if !uri.is_empty() || !name.is_empty() {
-                        parts.push(format!("Referenced resource: {name} ({uri})"));
-                    }
-                }
-            }
-            _ => {}
-        }
-    }
-
-    let text = parts.join("\n\n").trim().to_string();
-    if text.is_empty() {
-        Err(anyhow!("prompt did not contain supported text content"))
+        Err(anyhow!("prompt did not contain displayable text content"))
     } else {
         Ok(text)
     }
@@ -6970,7 +7035,7 @@ mod tests {
     }
 
     #[test]
-    fn prompt_block_shape_counts_blocks_without_content_and_detects_synthetic_alert() {
+    fn prompt_block_shape_counts_blocks_and_provenance_without_content() {
         let params = json!({
             "prompt": [
                 {"type": "text", "text": "hello"},
@@ -6985,23 +7050,124 @@ mod tests {
         assert_eq!(shape.resource, 1);
         assert_eq!(shape.resource_link, 1);
         assert_eq!(shape.other, 1);
-        assert!(shape.synthetic_system_alert_detected);
+        assert_eq!(shape.human_text, 1);
+        assert_eq!(shape.client_synthetic_context, 1);
+        assert_eq!(shape.client_resource, 1);
+        assert_eq!(shape.unsupported, 1);
     }
 
     #[test]
-    fn prompt_block_shape_preserves_user_pasted_system_alert_debug_text() {
+    fn text_block_is_human_message() {
+        let params = json!({
+            "prompt": [{"type": "text", "text": "Please continue."}]
+        });
+        let classification = classify_prompt_block(&params["prompt"][0]);
+        let prompt = prompt_text_from_params(&params).unwrap();
+        let display_prompt = prompt_display_text_from_params(&params).unwrap();
+
+        assert_eq!(
+            classification.provenance,
+            AcpPromptBlockProvenance::HumanText
+        );
+        assert!(classification.include_in_human_message());
+        assert!(classification.include_in_display());
+        assert_eq!(prompt, "Please continue.");
+        assert_eq!(display_prompt, "Please continue.");
+    }
+
+    #[test]
+    fn resource_block_is_client_context_not_human_message() {
+        let params = json!({
+            "prompt": [
+                {"type": "text", "text": "Please inspect this."},
+                {"type": "resource", "resource": {"uri": "file:///tmp/a", "name": "a.txt", "text": "file contents"}}
+            ]
+        });
+        let classification = classify_prompt_block(&params["prompt"][1]);
+        let prompt = prompt_text_from_params(&params).unwrap();
+        let display_prompt = prompt_display_text_from_params(&params).unwrap();
+
+        assert_eq!(
+            classification.provenance,
+            AcpPromptBlockProvenance::ClientResource
+        );
+        assert!(!classification.include_in_human_message());
+        assert!(!classification.include_in_display());
+        assert_eq!(prompt, "Please inspect this.");
+        assert_eq!(display_prompt, "Please inspect this.");
+        assert!(!prompt.contains("file contents"));
+        assert!(!display_prompt.contains("file contents"));
+    }
+
+    #[test]
+    fn synthetic_resource_is_client_synthetic_context() {
+        let params = json!({
+            "prompt": [
+                {"type": "text", "text": "Please continue."},
+                {"type": "resource", "resource": {"uri": "zed://system", "text": "{\"system_alert\":\"client synthetic summary from zed\"}"}}
+            ]
+        });
+        let classification = classify_prompt_block(&params["prompt"][1]);
+        let prompt = prompt_text_from_params(&params).unwrap();
+
+        assert_eq!(
+            classification.provenance,
+            AcpPromptBlockProvenance::ClientSyntheticContext
+        );
+        assert_eq!(
+            classification.diagnostic_flags,
+            vec!["likely_client_synthetic_context"]
+        );
+        assert!(!classification.include_in_human_message());
+        assert_eq!(prompt, "Please continue.");
+        assert!(!prompt.contains("system_alert"));
+        assert!(!prompt.contains("synthetic summary"));
+    }
+
+    #[test]
+    fn user_pasted_system_alert_text_remains_human_text() {
         let params = json!({
             "prompt": [{
                 "type": "text",
                 "text": "I pasted this debugging payload intentionally: {\"system_alert\":\"raw fixture\"}"
             }]
         });
+        let classification = classify_prompt_block(&params["prompt"][0]);
         let shape = prompt_block_shape(&params);
         let prompt = prompt_text_from_params(&params).unwrap();
 
+        assert_eq!(
+            classification.provenance,
+            AcpPromptBlockProvenance::HumanPastedDebugText
+        );
+        assert!(classification.include_in_human_message());
         assert_eq!(shape.text, 1);
-        assert!(!shape.synthetic_system_alert_detected);
+        assert_eq!(shape.human_pasted_debug_text, 1);
         assert!(prompt.contains("system_alert"));
+    }
+
+    #[test]
+    fn resource_link_is_reference_not_human_message() {
+        let params = json!({
+            "prompt": [
+                {"type": "text", "text": "Please consider this reference."},
+                {"type": "resource_link", "uri": "file:///tmp/b", "name": "b.txt"}
+            ]
+        });
+        let classification = classify_prompt_block(&params["prompt"][1]);
+        let prompt = prompt_text_from_params(&params).unwrap();
+        let display_prompt = prompt_display_text_from_params(&params).unwrap();
+
+        assert_eq!(
+            classification.provenance,
+            AcpPromptBlockProvenance::ClientResource
+        );
+        assert!(!classification.include_in_human_message());
+        assert!(!classification.include_in_display());
+        assert_eq!(prompt, "Please consider this reference.");
+        assert_eq!(display_prompt, "Please consider this reference.");
+        assert!(!prompt.contains("Referenced resource"));
+        assert!(!display_prompt.contains("Referenced resource"));
     }
 
     #[tokio::test]
@@ -7045,7 +7211,12 @@ mod tests {
         );
         shared
             .tool_tasks
-            .register("acp-session", "call-1", "fs_read_text_file", Some(turn_token))
+            .register(
+                "acp-session",
+                "call-1",
+                "fs_read_text_file",
+                Some(turn_token),
+            )
             .await;
         let mut cancel_rx = shared.cancellation_tx.subscribe();
         let http = reqwest::Client::new();
@@ -7059,7 +7230,12 @@ mod tests {
         .await
         .unwrap();
 
-        assert!(shared.active_prompts.lock().await.get("acp-session").is_none());
+        assert!(shared
+            .active_prompts
+            .lock()
+            .await
+            .get("acp-session")
+            .is_none());
         let tasks = shared.tool_tasks.list_for_session("acp-session").await;
         assert_eq!(tasks.len(), 1);
         assert_eq!(tasks[0].phase, ToolTaskPhase::Cancelled);
@@ -7137,7 +7313,10 @@ mod tests {
 
     #[test]
     fn parse_status_slash_command() {
-        assert_eq!(parse_local_slash_command("/status"), Some(LocalSlashCommand::Status));
+        assert_eq!(
+            parse_local_slash_command("/status"),
+            Some(LocalSlashCommand::Status)
+        );
     }
 
     #[test]
@@ -7214,9 +7393,10 @@ mod tests {
             client: "zed".to_string(),
         };
         let http = reqwest::Client::new();
-        let (mode, response) = request_den_session_mode(&http, Some(&config), "acp-missing", MODE_WRITE)
-            .await
-            .unwrap();
+        let (mode, response) =
+            request_den_session_mode(&http, Some(&config), "acp-missing", MODE_WRITE)
+                .await
+                .unwrap();
 
         assert_eq!(mode, MODE_ASK);
         assert_eq!(response["deferred"], true);
@@ -7244,7 +7424,10 @@ mod tests {
         assert_eq!(summary["server_count"], 1);
         assert_eq!(summary["tool_count"], 1);
         assert_eq!(summary["servers"][0]["name"], "chrome-devtools-custom");
-        assert_eq!(summary["tool_names"][0], "mcp__chrome_devtools_custom__take_snapshot");
+        assert_eq!(
+            summary["tool_names"][0],
+            "mcp__chrome_devtools_custom__take_snapshot"
+        );
         let rendered = summary.to_string();
         assert!(!rendered.contains("large schema should not be dumped"));
         assert!(!rendered.contains("input_schema"));
