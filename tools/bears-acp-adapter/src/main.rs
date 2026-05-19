@@ -4891,9 +4891,17 @@ async fn handle_sse_frame(
         if ty == "assistant_text_delta" || ty == "status_text" {
             let text = event.get("text").and_then(Value::as_str).unwrap_or("");
             outcome.saw_visible_output |= !text.is_empty();
-        } else if ty == "tool_request" {
+        } else if den_event_type_is_tool_activity(ty) {
             outcome.saw_tool_activity = true;
             diagnostics.saw_tool_activity = true;
+            if ty == "permission_request" {
+                // Permission requests are visible ACP client activity. Some Den-side
+                // permission workflows settle via the permission result endpoint rather
+                // than a later streamed terminal event, so a stream containing only a
+                // permission request is not an empty/failed turn.
+                outcome.saw_visible_output = true;
+                diagnostics.saw_visible_output = true;
+            }
         } else if ty == "error" {
             outcome.saw_error = true;
             diagnostics.saw_error = true;
@@ -4946,6 +4954,10 @@ async fn handle_sse_frame(
         }
     }
     Ok(outcome)
+}
+
+fn den_event_type_is_tool_activity(ty: &str) -> bool {
+    matches!(ty, "tool_request" | "permission_request")
 }
 
 fn looks_like_waiting_for_approval_error(message: &str) -> bool {
@@ -8018,6 +8030,20 @@ mod tests {
         assert_eq!(payload["update"]["entries"][0]["status"], "pending");
         assert_eq!(payload["update"]["entries"][1]["priority"], "medium");
         assert_eq!(payload["update"]["entries"][1]["status"], "in_progress");
+    }
+
+    #[test]
+    fn permission_request_counts_as_tool_activity() {
+        assert!(den_event_type_is_tool_activity("permission_request"));
+        assert!(den_event_type_is_tool_activity("tool_request"));
+        assert!(!den_event_type_is_tool_activity("conversation_resolved"));
+    }
+
+    #[test]
+    fn permission_request_activity_is_successful_without_stream_terminal() {
+        assert!(stream_has_successful_terminal_condition(
+            true, false, false, true
+        ));
     }
 
     #[test]
