@@ -1052,7 +1052,6 @@ Completed:
 Still remaining:
 
 - Add higher-level prompt persistence/boundary tests once the adapter/Den boundary exposes a clean seam.
-- Phase 2: decide how to deliver extracted resource references to Den/Letta, likely as reference-only host context that asks the model to use file/content tools for authoritative contents.
 - Phase 3 later: only inline small non-fetchable snippets with strong `<host_context>` provenance delimiters and strict size limits.
 
 Target provenance model:
@@ -1084,7 +1083,8 @@ Implemented adapter seam:
 - Added `AcpPromptContextBundle` with `human_message`, `resource_references`, and extraction diagnostics.
 - `prompt_text_from_params` reads only `bundle.human_message`.
 - `prompt_display_text_from_params` uses the same bundle human message path instead of a separate text-block-only path.
-- Resource content remains out of the Letta `human_message` flattening path; local/resource references are available for future reference-only host-context delivery.
+- Resource content remains out of the human-authored text path; reference-only resources are delivered to Den/Letta as bounded `<host_context kind="referenced_resources" delivery="reference_only">` metadata followed by the actual `<user_message>` text.
+- Diagnostic-only synthetic resources are not delivered in host context.
 
 Tests added/kept:
 
@@ -1096,6 +1096,9 @@ user_pasted_system_alert_text_remains_human_text
 resource_link_is_reference_not_human_message
 prompt_context_extracts_resource_reference_without_body_in_human_message
 synthetic_resource_is_diagnostic_only_context
+prompt_den_message_without_resources_is_plain_human_message
+prompt_den_message_includes_reference_host_context_without_resource_body
+prompt_den_message_omits_diagnostic_only_synthetic_resource_context
 ```
 
 ## Immediate next action
