@@ -482,6 +482,23 @@ async fn post_cancel_session(
         .expect("ACP cancel session response")
 }
 
+async fn get_acp_session_runtime(
+    app: axum::Router,
+    slug: &str,
+    session_id: &str,
+    token: Option<&str>,
+) -> axum::response::Response {
+    let mut builder = Request::builder()
+        .method("GET")
+        .uri(format!("/acp/bears/{slug}/sessions/{session_id}/runtime"));
+    if let Some(token) = token {
+        builder = builder.header(header::AUTHORIZATION, format!("Bearer {token}"));
+    }
+    app.oneshot(builder.body(Body::empty()).unwrap())
+        .await
+        .expect("ACP session runtime response")
+}
+
 fn letta_tool_request_sse(tool_name: &str, tool_call_id: &str, args: Value) -> String {
     format!(
         "data: {}\n\n",
@@ -959,6 +976,46 @@ async fn acp_cancel_session_signals_active_stream_and_cleans_pending_tool() {
     assert_eq!(prompt.status(), StatusCode::OK);
     let first = read_response_until(&mut prompt, "\"type\":\"tool_request\"").await;
     assert!(first.contains("call-cancel-e2e"), "{first}");
+
+    let runtime = get_acp_session_runtime(
+        fixture.app.clone(),
+        &user_bear.bear_slug,
+        "session-cancel-e2e",
+        Some(&user_bear.raw_token),
+    )
+    .await;
+    assert_eq!(runtime.status(), StatusCode::OK);
+    let runtime_json: Value = serde_json::from_str(&response_text(runtime).await).unwrap();
+    assert_eq!(
+        runtime_json["runtime"]["state"],
+        json!("requires_action"),
+        "{runtime_json}"
+    );
+    assert_eq!(
+        runtime_json["runtime"]["active_turn"]["present"],
+        json!(true),
+        "{runtime_json}"
+    );
+    assert_eq!(
+        runtime_json["runtime"]["active_turn"]["pending_adapter_tools"],
+        json!(1),
+        "{runtime_json}"
+    );
+    assert_eq!(
+        runtime_json["runtime"]["source"],
+        json!("acp_active_turn_registry"),
+        "{runtime_json}"
+    );
+    assert_eq!(
+        runtime_json["stream_turn"]["active"],
+        json!(true),
+        "{runtime_json}"
+    );
+    assert_eq!(
+        runtime_json["context_budget"]["status"],
+        json!("unavailable"),
+        "{runtime_json}"
+    );
 
     let cancel = post_cancel_session(
         fixture.app.clone(),

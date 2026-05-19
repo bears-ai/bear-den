@@ -3859,13 +3859,25 @@ fn render_status_report(
             .unwrap_or("<den-selected>")
     ));
     if let Some(runtime) = den_runtime {
-        let turn_state = runtime.get("turn_state").unwrap_or(runtime);
+        let canonical_runtime = runtime
+            .get("runtime")
+            .or_else(|| runtime.pointer("/turn_state/runtime"))
+            .unwrap_or(runtime);
         lines.push(format!(
             "- Den runtime: {}",
-            compact_json_for_status(turn_state)
+            compact_json_for_status(canonical_runtime)
         ));
+        if let Some(context_budget) = runtime.get("context_budget") {
+            lines.push(format!(
+                "- Context budget: {}",
+                compact_json_for_status(context_budget)
+            ));
+        } else {
+            lines.push("- Context budget: unavailable".to_string());
+        }
     } else {
         lines.push("- Den runtime: unavailable".to_string());
+        lines.push("- Context budget: unavailable".to_string());
     }
     if tasks.is_empty() {
         lines.push("- Adapter-local tools: none active".to_string());
@@ -3885,7 +3897,6 @@ fn render_status_report(
         "- MCP: {}",
         summarize_mcp_for_log(context.raw.get("mcp"))
     ));
-    lines.push("- Context budget: unavailable".to_string());
     lines.join("\n")
 }
 
@@ -7333,11 +7344,14 @@ mod tests {
             "client_tools": [{"name": "mcp__chrome_devtools_custom__take_snapshot"}]
         });
         let den_runtime = json!({
-            "turn_state": {
-                "runtime": {
-                    "state": "requires_action",
-                    "active_turn": {"pending_obligations": 1}
-                }
+            "runtime": {
+                "state": "requires_action",
+                "active_turn": {"pending_obligations": 1},
+                "source": "acp_active_turn_registry"
+            },
+            "context_budget": {
+                "status": "unavailable",
+                "source": "den.acp"
             }
         });
         let report = render_status_report("acp-test", &context, Some(&den_runtime), &[]);
@@ -7348,7 +7362,8 @@ mod tests {
         assert!(report.contains("requires_action"));
         assert!(report.contains("Adapter-local tools: none active"));
         assert!(report.contains("chrome-devtools-custom"));
-        assert!(report.contains("Context budget: unavailable"));
+        assert!(report.contains("Context budget:"));
+        assert!(report.contains("den.acp"));
     }
 
     #[test]

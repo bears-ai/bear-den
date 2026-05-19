@@ -1096,9 +1096,8 @@ resource_link_is_reference_not_human_message
 
 Recommended next implementation order:
 
-1. Wire live active-turn registry snapshots into `session_info` endpoint/tool calls broadly, then tighten human `/status` to render this same canonical data. Initial `/status` exists but currently combines Den runtime endpoint, adapter-local task list, MCP summary, and unavailable context budget. Adapter-side mirroring of Den-provided runtime/context-budget metadata through `session_info_update._meta.bears` is wired; add tests and Den emission coverage.
-2. Add full HTTP endpoint-level tests for late result response normalization if needed; unit coverage currently verifies response mapping.
-3. Adapter lifecycle tests from this plan are complete. Remaining adapter work is outside this lifecycle slice unless new regressions appear.
+1. Add full HTTP endpoint-level tests for late result response normalization if needed; unit coverage currently verifies response mapping.
+2. Adapter lifecycle tests from this plan are complete. Remaining adapter work is outside this lifecycle slice unless new regressions appear.
 
 Stream lifecycle cleanup completed:
 
@@ -1108,3 +1107,10 @@ Stream lifecycle cleanup completed:
 - Tool-result continuation state is named `queued_tool_result_continuation` and only represents a queued Letta continuation payload, not terminal readiness.
 - Duplicate `turn_complete` stream events have explicit coverage and emit at most one terminal event.
 - Full HTTP endpoint-level coverage for production session-level `/cancel` active-stream signaling validates authenticated `/cancel` signalling the active stream, invoking Letta run cancellation, returning `stream_turn` diagnostics, and causing late adapter tool results to be ignored.
+
+Session health/status cleanup completed:
+
+- The Den ACP `/runtime` endpoint now returns canonical `runtime` and `context_budget` fields alongside legacy diagnostics, using the active-turn cancellation registry when available.
+- The `/runtime` endpoint exposes `stream_turn` diagnostics so active stream registration is visible over HTTP, not only in pushed metadata.
+- Adapter `/status` renders Den-provided canonical `runtime` and `context_budget` fields instead of treating `turn_state` as the primary runtime surface.
+- The active-stream `/cancel` integration test now also verifies the live `/runtime` response reports `requires_action`, an active stream turn, pending adapter obligations, and unavailable context budget.

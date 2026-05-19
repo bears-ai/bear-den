@@ -1787,11 +1787,25 @@ async fn get_acp_session_runtime_inner(
         session_id.to_string(),
         row.resolved_conversation_id.clone(),
     );
-    let role_runtime = RoleRuntime::new(state.acp_tool_turns.clone());
+    let role_runtime = RoleRuntime::with_turn_cancellations(
+        state.acp_tool_turns.clone(),
+        state.acp_turn_cancellations.clone(),
+    );
+    let runtime = role_runtime.tool_turn_runtime_snapshot(session_id, &state.acp_tool_turns);
     let active_turn = state
         .acp_tool_turns
         .active_turn_for_session(session_id)
         .map(|turn| turn.diagnostic());
+    let stream_turn = state
+        .acp_turn_cancellations
+        .active_for_session(session_id)
+        .map(|turn| {
+            serde_json::json!({
+                "acp_session_id": turn.acp_session_id,
+                "request_id": turn.request_id,
+                "conversation_id": turn.conversation_id,
+            })
+        });
     let pending = state
         .acp_tool_turns
         .pending_for_session(session_id)
@@ -1822,9 +1836,15 @@ async fn get_acp_session_runtime_inner(
             "active": active_turn.is_some(),
             "turn": active_turn,
         },
+        "stream_turn": {
+            "active": stream_turn.is_some(),
+            "turn": stream_turn,
+        },
         "pending_tools": pending,
         "expired_tools": expired,
-        "runtime": role_runtime.pending_diagnostics(&role_scope),
+        "tool_turns": role_runtime.pending_diagnostics(&role_scope),
+        "runtime": runtime,
+        "context_budget": default_unavailable_context_budget(),
         "turn_state": turn_context.workflow_state,
         "session_policy": turn_context.policy.to_json(),
         "activity": activity_plan,
