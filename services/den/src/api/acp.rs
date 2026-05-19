@@ -4003,7 +4003,32 @@ async fn route_web_fetch_tool_request(
         };
         return Ok(());
     }
-    route_direct_den_tool_request(context, event, den_tools::DEN_WEB_FETCH).await
+    // `route_web_fetch_tool_request` owns `result_tx` from the start so it can
+    // either park it behind an ACP permission request, register it for local
+    // adapter execution, or settle validation/policy errors. Do not re-enter
+    // `route_direct_den_tool_request` here: that helper would try to take the
+    // already-owned channel a second time and fail the turn.
+    let result = invoke_acp_den_tool(
+        context,
+        den_tools::DEN_WEB_FETCH,
+        tool_name,
+        tool_call_id,
+        approval_request_id.as_deref(),
+        args.clone(),
+    )
+    .await;
+    let _ = result_tx.send(result);
+    tracing::info!(
+        request_id = %context.request_id,
+        acp_session_id = %context.acp_session_id,
+        tool_request_id = %request_id,
+        tool_call_id = %tool_call_id,
+        tool_name = %tool_name,
+        canonical_tool_name = %den_tools::DEN_WEB_FETCH,
+        web_approval_decision = %decision.as_str(),
+        "ACP Den web_fetch tool executed"
+    );
+    Ok(())
 }
 
 async fn route_direct_den_tool_request(
