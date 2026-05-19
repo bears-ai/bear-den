@@ -5663,6 +5663,12 @@ impl Stream for AcpLettaSseStream {
                 }
                 if !this.pending_raw_frames.is_empty() {
                     self.poll_next(cx)
+                } else if this.diagnostics.saw_requires_approval_stop
+                    && (!this.outstanding_tool_obligations().is_empty()
+                        || !this.active_tool_call_ids.is_empty())
+                {
+                    this.turn_controller.on_requires_approval_stop();
+                    self.poll_next(cx)
                 } else if this.pending_tool_result.is_none()
                     && (!this.outstanding_tool_obligations().is_empty()
                         || !this.active_tool_call_ids.is_empty())
@@ -5715,6 +5721,7 @@ impl Stream for AcpLettaSseStream {
                         })));
                     self.poll_next(cx)
                 } else if this.diagnostics.saw_requires_approval_stop
+                    && this.turn_controller.status_snapshot().open_obligations == 0
                     && this.outstanding_tool_obligations().is_empty()
                     && this.active_tool_call_ids.is_empty()
                     && !this.diagnostics.saw_tool_return_ack

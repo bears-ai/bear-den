@@ -31,7 +31,7 @@ Completed:
 
 Still in progress:
 
-- Full replacement of legacy stream lifecycle fields with controller authority.
+- Full replacement of legacy stream lifecycle fields with controller authority. Latest progress: `requires_approval` stops now flow through `AcpTurnController::on_requires_approval_stop`, and orphaned cleanup is gated by controller open-obligation state.
 - Real production `/cancel` endpoint signaling into active streams is initially wired via a session-level `AcpActiveTurnCancelRegistry`. The endpoint now signals before auth/session-row lookup, which supports early cancellation races. Registry unit tests cover signaling, unregistering, and stale handle safety; full HTTP endpoint integration tests still need to be added.
 - Normalized late-result API response shape is implemented and unit-tested for Den tool-result responses: compatibility variants now return `reason = late_result_ignored` plus `settlement` detail (`timed_out`, `cancelled`, `already_settled`, or `unknown`). Full HTTP endpoint tests can still be added later.
 - `session_info.runtime` / session health surface, with human `/status` rendered from the same data.
@@ -932,7 +932,7 @@ Before wiring the controller deeply, add/keep stream tests that capture known bu
 
 ### Step 4: Wire controller into `AcpLettaSseStream`
 
-Status: partially complete. Controller observes lifecycle and participates in terminal gating; legacy state remains.
+Status: partially complete. Controller observes lifecycle, participates in terminal gating, receives `requires_approval` stop observations, and gates orphaned approval cleanup. Legacy stream fields remain.
 
 Move lifecycle decisions out of stream polling branches and into controller calls.
 
