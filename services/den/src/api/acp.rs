@@ -5024,8 +5024,10 @@ impl AcpTextChunker {
                 if self.reasoning_limit_reached {
                     return Vec::new();
                 }
+                let first_status_for_turn =
+                    self.emitted_reasoning_bytes == 0 && self.reasoning.is_empty();
                 self.reasoning.push_str(&text);
-                if should_flush_text(&self.reasoning, self.max_chars) {
+                if first_status_for_turn || should_flush_text(&self.reasoning, self.max_chars) {
                     self.flush_reasoning().into_iter().collect()
                 } else {
                     Vec::new()
@@ -5935,13 +5937,24 @@ mod tests {
     }
 
     #[test]
+    fn acp_text_chunker_flushes_first_reasoning_status_without_waiting_for_punctuation() {
+        let mut chunker = AcpTextChunker::new_with_reasoning_limit(1024, 128);
+        let events = chunker.push(AcpGatewayEvent::StatusText {
+            text: "Thinking".to_string(),
+        });
+        assert_eq!(events.len(), 1);
+        let AcpGatewayEvent::StatusText { text } = &events[0] else {
+            panic!("expected status text");
+        };
+        assert_eq!(text, "Thinking");
+    }
+
+    #[test]
     fn acp_text_chunker_caps_reasoning_output_per_turn() {
         let mut chunker = AcpTextChunker::new_with_reasoning_limit(1024, 10);
         let events = chunker.push(AcpGatewayEvent::StatusText {
             text: "abcdefghijklmnopqrstuvwxyz".to_string(),
         });
-        assert!(events.is_empty());
-        let events = chunker.flush_all();
         assert_eq!(events.len(), 1);
         let AcpGatewayEvent::StatusText { text } = &events[0] else {
             panic!("expected status text");
