@@ -154,14 +154,34 @@ Regenerate **harness deploy artifacts** (e.g. `letta-code.yaml` from the operato
 
 **Den is the system of record for which [Letta Code / Agent Skills](https://docs.letta.com/letta-code/skills/) each bear role may use.** Operators attach skills **per bear** and Den projects them to the appropriate role agents. **Letta Code** **loads and runs** skills from the filesystem layouts it supports; Den does not reimplement the skill runtime.
 
+In BEARS, durable skills are treated as a **special class of Bear memory artifact**. That means Den is not only tracking a catalog/attachment relationship, but also governing canonical skill storage, metadata, review state, role applicability, and runtime materialization.
+
+**Canonical durable format**
+
+Canonical Bear skills live in the Bear MemFS `skills/` namespace as flat skill bundles:
+
+```text
+skills/
+  <skill-slug>/
+    SKILL.md
+    bears.yaml
+```
+
+- `SKILL.md` contains portable skill content.
+- `bears.yaml` contains BEARS-specific metadata such as lifecycle, review state, role applicability, provenance, dependencies, sharing policy, and sync/materialization state.
+
+The namespace is flat at the skill-id level: BEARS does **not** encode authoritative role or lifecycle semantics in nested directory trees.
+
 **Responsibilities**
 
 - **Catalog:** Den stores skill metadata (name, source URL or package id, pinned revision, scope: org-wide vs user-uploaded) and optional trust flags.
+- **Canonical skill memory:** Den records which catalog, imported, shared, or Bear-authored skills have been adopted into canonical Bear skill memory.
 - **Attachment:** `(bear_id, skill_id, enabled, order)` plus role applicability (or equivalent) defines the skill set projected to that bear’s role agents.
-- **Materialization:** On change, Den writes or syncs [Agent Skills](https://agentskills.io/)–compatible **directories** (`SKILL.md` + assets) onto paths **Letta Code** reads—e.g. per-role-agent under `~/.letta/agents/{letta_agent_id}/skills/`, shared org library mapped to **global** skill dirs—**exact layout depends on your Letta Code version**; keep this mapping in deploy docs next to volume mounts.
-- **Sharing:** Reuse the same catalog entry across many bears; materialize **copies** per agent dir or use a **shared** directory plus Den policy for who may attach which catalog skill.
+- **Materialization:** On change, Den writes or syncs canonical Bear skill bundles into the [Agent Skills](https://agentskills.io/)–compatible runtime layouts Letta Code reads—e.g. under per-role-agent paths such as `~/.letta/agents/{letta_agent_id}/skills/` or another deploy-specific location. These runtime trees are **materialized views**, not canonical storage.
+- **Sharing:** Reuse the same catalog entry across many bears; preserve provenance when a skill is imported or shared; materialize copies or projections per runtime layout as needed.
+- **Drift handling:** Treat runtime-only skill changes as drift unless explicitly imported back through a governed review/promotion path.
 
-**Operator console:** paste GitHub URLs, pick from catalog, preview, enable/disable, reorder. **GitOps:** exported config or CI can drive the same materialization inputs as the UI.
+**Operator console:** paste GitHub URLs, pick from catalog, preview, enable/disable, reorder, and eventually inspect readiness/review/sync state derived from `bears.yaml`. **GitOps:** exported config or CI can drive the same materialization inputs as the UI.
 
 **Security:** Treat skills as **trusted code adjacent to the agent**; restrict who can publish org skills; cap size; validate fetches (SSRF, malware, prompt injection) per org policy.
 
@@ -169,7 +189,7 @@ Regenerate **harness deploy artifacts** (e.g. `letta-code.yaml` from the operato
 
 **Beyond static catalog skills:** BEARS targets **dynamic** skills—operators attach **catalog** skills per bear (above), and **bears** may **create or refine** skills over time using **Letta Code** capabilities (e.g. upstream **skills-creation** patterns) and Letta **subagent** mechanisms such as **`reflection`** for auto-discovery. **Den** does not run the skill runtime; it **extends bear provisioning** so each bear’s configuration includes **predefined subagents** and remains **GitOps-friendly**.
 
-**Single ADR:** [dynamic-skills-subagents.md](adr/dynamic-skills-subagents.md) — preliminary decisions, security notes, and an **inspirational** expert sketch (e.g. `skill-curator` subagent, `Task` policy, `SubagentStop` hook, git staging). BEARS prioritizes **user/operator control** over promoted skills; expert “conservative” bias is optional, not the default product goal.
+**Single ADR:** [dynamic-skills-subagents.md](adr/dynamic-skills-subagents.md) — canonical decisions for Bear skill bundles (`SKILL.md` + `bears.yaml`), storage/sync rules, skill governance, and an **inspirational** expert sketch (e.g. `skill-curator` subagent, `Task` policy, `SubagentStop` hook, git staging). BEARS prioritizes **user/operator control** over promoted skills; expert “conservative” bias is optional, not the default product goal.
 
 ### Den-managed MCP servers (Phase 1)
 
