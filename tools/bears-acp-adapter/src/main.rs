@@ -5641,6 +5641,9 @@ fn command_line_from_value(value: &Value) -> Option<String> {
 }
 
 fn tool_completion_preview(tool_name: &str, value: &Value) -> String {
+    if matches!(tool_name, "fs_read_text_file" | "fs.read_text_file") {
+        return read_text_file_completion_preview(value);
+    }
     if matches!(tool_name, "process_run" | "terminal_run_command") {
         let command = command_line_from_value(value).unwrap_or_else(|| "command".to_string());
         let cwd = value
@@ -5691,6 +5694,71 @@ fn tool_completion_preview(tool_name: &str, value: &Value) -> String {
         text.push_str("\n... truncated");
     }
     text
+}
+
+fn read_text_file_completion_preview(value: &Value) -> String {
+    let content = value.get("content").and_then(Value::as_str).unwrap_or("");
+    if content.is_empty() {
+        return "Read text file completed with empty content.".to_string();
+    }
+    let path = value
+        .get("path")
+        .and_then(Value::as_str)
+        .filter(|path| !path.trim().is_empty());
+    let max_chars = 4_000;
+    let truncated = content.chars().count() > max_chars;
+    let mut display_content = if truncated {
+        let mut value = content.chars().take(max_chars).collect::<String>();
+        value.push_str("\n... truncated");
+        value
+    } else {
+        content.to_string()
+    };
+    if !display_content.ends_with('\n') {
+        display_content.push('\n');
+    }
+    let fence = markdown_fence_for_content(&display_content);
+    let mut text = String::new();
+    if let Some(path) = path {
+        text.push_str(&format!("Read {}:\n\n", markdown_inline_code(path)));
+    }
+    text.push_str(&fence);
+    text.push('\n');
+    text.push_str(&display_content);
+    text.push_str(&fence);
+    if value
+        .get("truncated")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+        && !truncated
+    {
+        text.push_str("\n\nFile output was truncated by the read operation.");
+    }
+    text
+}
+
+fn markdown_inline_code(value: &str) -> String {
+    let tick_count = value.chars().filter(|ch| *ch == '`').count();
+    if tick_count == 0 {
+        format!("`{value}`")
+    } else {
+        let fence = "`".repeat(tick_count + 1);
+        format!("{fence} {value} {fence}")
+    }
+}
+
+fn markdown_fence_for_content(content: &str) -> String {
+    let mut max_run = 0usize;
+    let mut current = 0usize;
+    for ch in content.chars() {
+        if ch == '`' {
+            current += 1;
+            max_run = max_run.max(current);
+        } else {
+            current = 0;
+        }
+    }
+    "`".repeat(3.max(max_run + 1))
 }
 
 async fn post_local_tool_error_result(
@@ -8156,8 +8224,41 @@ mod tests {
         assert_eq!(tool_completion_preview("fs_list_directory", &value), "abc");
         let long = json!({ "content": "x".repeat(4_100) });
         let preview = tool_completion_preview("fs_read_text_file", &long);
+        assert!(preview.starts_with("```\n"));
         assert!(preview.contains("... truncated"));
         assert!(preview.chars().count() < 4_050);
+    }
+
+    #[test]
+    fn read_text_file_completion_preview_wraps_content_in_escaping_code_fence() {
+        let value = json!({
+            "path": "/workspace/README.md",
+            "content": "before\n```\nnot a real fence break\n```\nafter"
+        });
+        let preview = tool_completion_preview("fs_read_text_file", &value);
+
+        assert!(
+            preview.starts_with("Read `/workspace/README.md`:"),
+            "{preview}"
+        );
+        assert!(preview.contains("````\nbefore"), "{preview}");
+        assert!(preview.contains("```\nnot a real fence break"), "{preview}");
+        assert!(preview.ends_with("````"), "{preview}");
+    }
+
+    #[test]
+    fn read_text_file_completion_preview_escapes_backticks_in_path() {
+        let value = json!({
+            "path": "/workspace/`odd`.md",
+            "content": "hello"
+        });
+        let preview = tool_completion_preview("fs_read_text_file", &value);
+
+        assert!(
+            preview.starts_with("Read ``` /workspace/`odd`.md ```:"),
+            "{preview}"
+        );
+        assert!(preview.contains("```\nhello\n```"), "{preview}");
     }
 
     #[test]
