@@ -1,19 +1,91 @@
 use anyhow::{anyhow, Context, Result};
+use reqwest::header::{HeaderName, HeaderValue, AUTHORIZATION};
 use rmcp::{
     model::CallToolRequestParams,
-    transport::{ConfigureCommandExt, TokioChildProcess},
-    ServiceExt,
+    service::RunningService,
+    transport::{
+        streamable_http_client::StreamableHttpClientTransportConfig,
+        StreamableHttpClientTransport,
+        ConfigureCommandExt, TokioChildProcess,
+    },
+    RoleClient, ServiceExt,
 };
 use serde_json::{json, Map, Value};
 use std::{collections::HashMap, sync::Arc};
 use tokio::sync::Mutex as TokioMutex;
 
+const DEFAULT_HOST_BROWSER_MCP_SERVER_NAME: &str = "host-browser";
+pub(crate) const HOST_BROWSER_MCP_URL_ENV: &str = "BEARS_HOST_BROWSER_MCP_URL";
+pub(crate) const HOST_BROWSER_MCP_TOKEN_ENV: &str = "BEARS_HOST_BROWSER_MCP_TOKEN";
+pub(crate) const HOST_BROWSER_MCP_SERVER_NAME_ENV: &str = "BEARS_HOST_BROWSER_MCP_SERVER_NAME";
+
 #[derive(Clone, Debug)]
-pub(crate) struct AcpMcpServerConfig {
-    pub(crate) name: String,
-    pub(crate) command: String,
-    pub(crate) args: Vec<String>,
-    pub(crate) env: Vec<(String, String)>,
+pub(crate) enum McpSourceConfig {
+    ClientForwardedStdio {
+        name: String,
+        command: String,
+        args: Vec<String>,
+        env: Vec<(String, String)>,
+    },
+    HostBrowserBridge {
+        name: String,
+        url: String,
+        token: String,
+    },
+}
+
+impl McpSourceConfig {
+    pub(crate) fn name(&self) -> &str {
+        match self {
+            Self::ClientForwardedStdio { name, .. } | Self::HostBrowserBridge { name, .. } => name,
+        }
+    }
+
+    pub(crate) fn source_kind(&self) -> &'static str {
+        match self {
+            Self::ClientForwardedStdio { .. } => "client_forwarded",
+            Self::HostBrowserBridge { .. } => "host_browser_bridge",
+        }
+    }
+
+    pub(crate) fn transport(&self) -> &'static str {
+        match self {
+            Self::ClientForwardedStdio { .. } => "stdio",
+            Self::HostBrowserBridge { .. } => "streamable_http",
+        }
+    }
+
+    pub(crate) fn trust_boundary(&self) -> &'static str {
+        match self {
+            Self::ClientForwardedStdio { .. } => "client_forwarded_mcp",
+            Self::HostBrowserBridge { .. } => "host_browser_only",
+        }
+    }
+
+    pub(crate) fn safe_summary_for_session_context(&self) -> Value {
+        match self {
+            Self::ClientForwardedStdio {
+                name,
+                command,
+                args,
+                env,
+            } => json!({
+                "name": name,
+                "source": self.source_kind(),
+                "transport": self.transport(),
+                "command": command,
+                "args_count": args.len(),
+                "env_count": env.len(),
+            }),
+            Self::HostBrowserBridge { name, url, .. } => json!({
+                "name": name,
+                "source": self.source_kind(),
+                "transport": self.transport(),
+                "url": redact_url_for_log(url),
+                "auth": "bearer",
+            }),
+        }
+    }
 }
 
 #[derive(Clone, Default)]
@@ -28,7 +100,7 @@ struct McpSession {
 
 #[derive(Clone)]
 struct McpToolRoute {
-    server: AcpMcpServerConfig,
+    source: McpSourceConfig,
     original_tool_name: String,
 }
 
@@ -112,7 +184,7 @@ fn redact_url_for_log(url: &str) -> String {
     }
 }
 
-pub(crate) fn parse_acp_mcp_servers(params: &Value) -> Result<Vec<AcpMcpServerConfig>> {
+pub(crate) fn parse_acp_mcp_servers(params: &Value) -> Result<Vec<McpSourceConfig>> {
     let Some(raw) = params
         .get("mcpServers")
         .or_else(|| params.get("mcp_servers"))
@@ -141,11 +213,14 @@ pub(crate) fn parse_acp_mcp_servers(params: &Value) -> Result<Vec<AcpMcpServerCo
                 transport_type,
                 summarize_mcp_server_param(item)
             );
-            // MCP-over-ACP is currently only a draft ACP RFD. When it stabilizes,
-            // this parser should accept `type: "acp"` and route MCP messages over
-            // the existing ACP channel instead of spawning stdio child processes.
+            if transport_type == "sse" {
+                return Err(anyhow!(
+                    "ACP MCP server {:?} uses unsupported transport {transport_type:?}; BEARS currently supports stdio and streamable HTTP MCP servers, but not SSE",
+                    item.get("name").and_then(Value::as_str).unwrap_or("<unnamed>")
+                ));
+            }
             return Err(anyhow!(
-                "ACP MCP server {:?} uses unsupported transport {transport_type:?}; BEARS currently supports stdio MCP servers forwarded by Zed",
+                "ACP MCP server {:?} uses unsupported transport {transport_type:?}; BEARS currently supports stdio and streamable HTTP MCP servers forwarded by Zed",
                 item.get("name").and_then(Value::as_str).unwrap_or("<unnamed>")
             ));
         }
@@ -176,13 +251,13 @@ pub(crate) fn parse_acp_mcp_servers(params: &Value) -> Result<Vec<AcpMcpServerCo
             .unwrap_or_default();
         let env = parse_env(item.get("env"))?;
         eprintln!(
-            "bears-acp-adapter: acp_mcp_parse accepted_stdio name={} command={} args_count={} env_names={:?}",
+            "bears-acp-adapter: acp_mcp_parse accepted_stdio source_kind=client_forwarded name={} command={} args_count={} env_names={:?}",
             name,
             command,
             args.len(),
             env.iter().map(|(name, _)| name.clone()).collect::<Vec<_>>()
         );
-        servers.push(AcpMcpServerConfig {
+        servers.push(McpSourceConfig::ClientForwardedStdio {
             name,
             command,
             args,
@@ -194,6 +269,57 @@ pub(crate) fn parse_acp_mcp_servers(params: &Value) -> Result<Vec<AcpMcpServerCo
         servers.len()
     );
     Ok(servers)
+}
+
+pub(crate) fn host_browser_bridge_config_from_env() -> Option<McpSourceConfig> {
+    let url = std::env::var(HOST_BROWSER_MCP_URL_ENV)
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())?;
+    let token = std::env::var(HOST_BROWSER_MCP_TOKEN_ENV)
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    let name = std::env::var(HOST_BROWSER_MCP_SERVER_NAME_ENV)
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| DEFAULT_HOST_BROWSER_MCP_SERVER_NAME.to_string());
+    token.map(|token| McpSourceConfig::HostBrowserBridge { name, url, token })
+}
+
+pub(crate) fn host_browser_bridge_env_summary() -> Value {
+    let configured_url = std::env::var(HOST_BROWSER_MCP_URL_ENV)
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    let has_token = std::env::var(HOST_BROWSER_MCP_TOKEN_ENV)
+        .ok()
+        .map(|value| !value.trim().is_empty())
+        .unwrap_or(false);
+    let server_name = std::env::var(HOST_BROWSER_MCP_SERVER_NAME_ENV)
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| DEFAULT_HOST_BROWSER_MCP_SERVER_NAME.to_string());
+    let configured = configured_url.is_some() && has_token;
+    let status = if configured {
+        "configured"
+    } else if configured_url.is_some() {
+        "missing_token"
+    } else {
+        "unconfigured"
+    };
+    json!({
+        "configured": configured,
+        "status": status,
+        "server_name": server_name,
+        "url": configured_url.map(|url| redact_url_for_log(&url)),
+        "url_env": HOST_BROWSER_MCP_URL_ENV,
+        "token_env": HOST_BROWSER_MCP_TOKEN_ENV,
+        "server_name_env": HOST_BROWSER_MCP_SERVER_NAME_ENV,
+        "has_token": has_token,
+    })
 }
 
 fn parse_env(raw: Option<&Value>) -> Result<Vec<(String, String)>> {
@@ -255,26 +381,45 @@ impl McpRegistry {
     pub(crate) async fn configure_session(
         &self,
         session_id: &str,
-        servers: Vec<AcpMcpServerConfig>,
+        sources: Vec<McpSourceConfig>,
     ) -> Result<Value> {
         let mut tools = HashMap::new();
         let mut descriptors = Vec::new();
         let mut server_summaries = Vec::new();
         eprintln!(
-            "bears-acp-adapter: acp_mcp_configure session_id={} server_count={}",
+            "bears-acp-adapter: acp_mcp_configure session_id={} source_count={}",
             session_id,
-            servers.len()
+            sources.len()
         );
-        for server in &servers {
-            eprintln!(
-                "bears-acp-adapter: acp_mcp_discovery_start session_id={} server={} command={} args_count={} env_count={}",
-                session_id,
-                server.name,
-                server.command,
-                server.args.len(),
-                server.env.len()
-            );
-            match discover_server_tools(server).await {
+        for source in &sources {
+            match source {
+                McpSourceConfig::ClientForwardedStdio {
+                    name,
+                    command,
+                    args,
+                    env,
+                } => {
+                    eprintln!(
+                        "bears-acp-adapter: acp_mcp_discovery_start session_id={} source_kind={} server={} command={} args_count={} env_count={}",
+                        session_id,
+                        source.source_kind(),
+                        name,
+                        command,
+                        args.len(),
+                        env.len()
+                    );
+                }
+                McpSourceConfig::HostBrowserBridge { name, url, .. } => {
+                    eprintln!(
+                        "bears-acp-adapter: acp_mcp_discovery_start session_id={} source_kind={} server={} url={}",
+                        session_id,
+                        source.source_kind(),
+                        name,
+                        redact_url_for_log(url)
+                    );
+                }
+            }
+            match discover_server_tools(source).await {
                 Ok(server_tools) => {
                     let tool_names = server_tools
                         .iter()
@@ -283,54 +428,81 @@ impl McpRegistry {
                         })
                         .collect::<Vec<_>>();
                     eprintln!(
-                        "bears-acp-adapter: acp_mcp_discovery_ok session_id={} server={} tool_count={} tool_names={:?}",
+                        "bears-acp-adapter: acp_mcp_discovery_ok session_id={} source_kind={} server={} transport={} tool_count={} tool_names={:?}",
                         session_id,
-                        server.name,
+                        source.source_kind(),
+                        source.name(),
+                        source.transport(),
                         server_tools.len(),
                         tool_names
                     );
-                    server_summaries.push(json!({
-                        "name": server.name,
-                        "transport": "stdio",
-                        "command": server.command,
-                        "tool_count": server_tools.len(),
-                        "status": "ok",
-                    }));
+                    server_summaries.push(match source {
+                        McpSourceConfig::ClientForwardedStdio { name, command, .. } => json!({
+                            "name": name,
+                            "source": source.source_kind(),
+                            "transport": source.transport(),
+                            "trust_boundary": source.trust_boundary(),
+                            "command": command,
+                            "tool_count": server_tools.len(),
+                            "status": "ok",
+                        }),
+                        McpSourceConfig::HostBrowserBridge { name, url, .. } => json!({
+                            "name": name,
+                            "source": source.source_kind(),
+                            "transport": source.transport(),
+                            "trust_boundary": source.trust_boundary(),
+                            "url": redact_url_for_log(url),
+                            "tool_count": server_tools.len(),
+                            "status": "ok",
+                        }),
+                    });
                     for tool in server_tools {
                         let original_name = tool
                             .get("name")
                             .and_then(Value::as_str)
                             .unwrap_or("tool")
                             .to_string();
-                        let provider_name = mcp_provider_name(&server.name, &original_name);
+                        let provider_name = mcp_provider_name(source.name(), &original_name);
                         tools.insert(
                             provider_name.clone(),
                             McpToolRoute {
-                                server: server.clone(),
+                                source: source.clone(),
                                 original_tool_name: original_name,
                             },
                         );
-                        descriptors.push(mcp_client_tool_descriptor(
-                            &provider_name,
-                            &server.name,
-                            tool,
-                        ));
+                        descriptors.push(mcp_client_tool_descriptor(&provider_name, source, tool));
                     }
                 }
                 Err(err) => {
                     eprintln!(
-                        "bears-acp-adapter: acp_mcp_discovery_error session_id={} server={} error={err:#}",
+                        "bears-acp-adapter: acp_mcp_discovery_error session_id={} source_kind={} server={} transport={} error={err:#}",
                         session_id,
-                        server.name
+                        source.source_kind(),
+                        source.name(),
+                        source.transport(),
                     );
-                    server_summaries.push(json!({
-                        "name": server.name,
-                        "transport": "stdio",
-                        "command": server.command,
-                        "tool_count": 0,
-                        "status": "error",
-                        "error": format!("{err:#}"),
-                    }));
+                    server_summaries.push(match source {
+                        McpSourceConfig::ClientForwardedStdio { name, command, .. } => json!({
+                            "name": name,
+                            "source": source.source_kind(),
+                            "transport": source.transport(),
+                            "trust_boundary": source.trust_boundary(),
+                            "command": command,
+                            "tool_count": 0,
+                            "status": "error",
+                            "error": format!("{err:#}"),
+                        }),
+                        McpSourceConfig::HostBrowserBridge { name, url, .. } => json!({
+                            "name": name,
+                            "source": source.source_kind(),
+                            "transport": source.transport(),
+                            "trust_boundary": source.trust_boundary(),
+                            "url": redact_url_for_log(url),
+                            "tool_count": 0,
+                            "status": "error",
+                            "error": format!("{err:#}"),
+                        }),
+                    });
                 }
             }
         }
@@ -373,12 +545,12 @@ impl McpRegistry {
             .ok_or_else(|| {
                 anyhow!("MCP tool {provider_name:?} is not registered for ACP session {session_id}")
             })?;
-        call_server_tool(&route.server, &route.original_tool_name, args).await
+        call_server_tool(&route.source, &route.original_tool_name, args).await
     }
 }
 
-async fn discover_server_tools(server: &AcpMcpServerConfig) -> Result<Vec<Value>> {
-    with_server_client(server, |client| async move {
+async fn discover_server_tools(source: &McpSourceConfig) -> Result<Vec<Value>> {
+    with_server_client(source, |client| async move {
         let tools = client.peer().list_all_tools().await?;
         let values = tools
             .into_iter()
@@ -389,20 +561,18 @@ async fn discover_server_tools(server: &AcpMcpServerConfig) -> Result<Vec<Value>
     .await
 }
 
-async fn call_server_tool(
-    server: &AcpMcpServerConfig,
-    tool_name: &str,
-    args: Value,
-) -> Result<Value> {
+async fn call_server_tool(source: &McpSourceConfig, tool_name: &str, args: Value) -> Result<Value> {
     eprintln!(
-        "bears-acp-adapter: acp_mcp_call_start server={} tool={} args_keys={:?}",
-        server.name,
+        "bears-acp-adapter: acp_mcp_call_start source_kind={} server={} transport={} tool={} args_keys={:?}",
+        source.source_kind(),
+        source.name(),
+        source.transport(),
         tool_name,
         args.as_object()
             .map(|map| map.keys().cloned().collect::<Vec<_>>())
             .unwrap_or_default()
     );
-    with_server_client(server, |client| async move {
+    with_server_client(source, |client| async move {
         let arguments = match args {
             Value::Object(map) => Some(map),
             Value::Null => None,
@@ -418,8 +588,10 @@ async fn call_server_tool(
         }
         let result = client.peer().call_tool(params).await?;
         eprintln!(
-            "bears-acp-adapter: acp_mcp_call_ok server={} tool={} is_error={:?} content_items={} structured={}",
-            server.name,
+            "bears-acp-adapter: acp_mcp_call_ok source_kind={} server={} transport={} tool={} is_error={:?} content_items={} structured={}",
+            source.source_kind(),
+            source.name(),
+            source.transport(),
             tool_name,
             result.is_error,
             result.content.len(),
@@ -436,13 +608,6 @@ async fn call_server_tool(
     .await
 }
 
-// Zed may wrap remote context-server commands as `docker exec -it ...`.
-// Stdio MCP transports require clean pipes, not a TTY; Docker exits with
-// "the input device is not a TTY" when `-t` is used from this adapter.
-// Preserve stdin (`-i`) but remove TTY allocation. This is intentionally
-// scoped to Docker exec wrappers and should remain until Zed stops adding
-// `-t` for ACP-forwarded stdio MCP servers, or until we deliberately stop
-// supporting such forwarded stdio MCP servers in remote/container sessions.
 fn stdio_safe_command_args(command: &str, args: &[String], server_name: &str) -> Vec<String> {
     if command != "docker" || !args.iter().any(|arg| arg == "exec") {
         return args.to_vec();
@@ -475,59 +640,115 @@ fn stdio_safe_command_args(command: &str, args: &[String], server_name: &str) ->
     rewritten
 }
 
-async fn with_server_client<F, Fut, T>(server: &AcpMcpServerConfig, f: F) -> Result<T>
+async fn with_server_client<F, Fut, T>(source: &McpSourceConfig, f: F) -> Result<T>
 where
-    F: FnOnce(rmcp::service::RunningService<rmcp::RoleClient, ()>) -> Fut,
+    F: FnOnce(RunningService<RoleClient, ()>) -> Fut,
     Fut: std::future::Future<Output = Result<T>>,
 {
-    let mut command = tokio::process::Command::new(&server.command);
-    let args = stdio_safe_command_args(&server.command, &server.args, &server.name);
-    command.args(&args);
-    for (name, value) in &server.env {
-        command.env(name, value);
+    match source {
+        McpSourceConfig::ClientForwardedStdio {
+            name,
+            command,
+            args,
+            env,
+        } => {
+            let mut command_process = tokio::process::Command::new(command);
+            let args = stdio_safe_command_args(command, args, name);
+            command_process.args(&args);
+            for (name, value) in env {
+                command_process.env(name, value);
+            }
+            eprintln!(
+                "bears-acp-adapter: acp_mcp_spawn source_kind={} server={} command={} args={:?} env_names={:?}",
+                source.source_kind(),
+                name,
+                command,
+                args,
+                env.iter()
+                    .map(|(name, _)| name.clone())
+                    .collect::<Vec<_>>()
+            );
+            let transport = TokioChildProcess::new(command_process.configure(|cmd| {
+                cmd.kill_on_drop(true);
+            }))
+            .with_context(|| format!("spawn MCP stdio server {name}"))?;
+            let client = ().serve(transport).await?;
+            f(client).await
+        }
+        McpSourceConfig::HostBrowserBridge { name, url, token } => {
+            eprintln!(
+                "bears-acp-adapter: acp_mcp_connect_http source_kind={} server={} url={} auth=bearer",
+                source.source_kind(),
+                name,
+                redact_url_for_log(url)
+            );
+            let headers = bearer_auth_headers(token)?;
+            let transport = StreamableHttpClientTransport::from_config(
+                StreamableHttpClientTransportConfig::with_uri(url.clone())
+                    .custom_headers(headers)
+                    .reinit_on_expired_session(true),
+            );
+            let client = ().serve(transport).await?;
+            f(client).await
+        }
     }
-    eprintln!(
-        "bears-acp-adapter: acp_mcp_spawn server={} command={} args={:?} env_names={:?}",
-        server.name,
-        server.command,
-        args,
-        server
-            .env
-            .iter()
-            .map(|(name, _)| name.clone())
-            .collect::<Vec<_>>()
-    );
-    let transport = TokioChildProcess::new(command.configure(|cmd| {
-        cmd.kill_on_drop(true);
-    }))
-    .with_context(|| format!("spawn MCP stdio server {}", server.name))?;
-    let client = ().serve(transport).await?;
-    let result = f(client).await;
-    result
 }
 
-fn mcp_client_tool_descriptor(provider_name: &str, server_name: &str, tool: Value) -> Value {
+fn bearer_auth_headers(token: &str) -> Result<std::collections::HashMap<HeaderName, HeaderValue>> {
+    let mut headers = std::collections::HashMap::new();
+    headers.insert(
+        AUTHORIZATION,
+        HeaderValue::from_str(&format!("Bearer {token}"))
+            .context("invalid bearer token for MCP Authorization header")?,
+    );
+    headers.insert(
+        HeaderName::from_static("x-bears-mcp-source"),
+        HeaderValue::from_static("host_browser_bridge"),
+    );
+    Ok(headers)
+}
+
+fn mcp_client_tool_descriptor(provider_name: &str, source: &McpSourceConfig, tool: Value) -> Value {
     let description = tool
         .get("description")
         .and_then(Value::as_str)
-        .unwrap_or("MCP tool forwarded by Zed over ACP.");
+        .unwrap_or(match source {
+            McpSourceConfig::ClientForwardedStdio { .. } => "MCP tool forwarded by Zed over ACP.",
+            McpSourceConfig::HostBrowserBridge { .. } => {
+                "Browser MCP tool served by the BEARS host browser bridge."
+            }
+        });
     let input_schema = tool
         .get("inputSchema")
         .or_else(|| tool.get("input_schema"))
         .cloned()
         .unwrap_or_else(|| json!({ "type": "object", "properties": {} }));
+    let (scope, orientation, rendered_description) = match source {
+        McpSourceConfig::ClientForwardedStdio { name, .. } => (
+            "client_mcp_server",
+            "This tool comes from a Zed context server forwarded to BEARS over ACP. Use it when the server name and tool description match the user's request.",
+            format!("MCP server `{name}`: {description}"),
+        ),
+        McpSourceConfig::HostBrowserBridge { name, .. } => (
+            "host_browser_bridge",
+            "This tool runs against the host browser bridge outside the container. It can inspect or control the host browser, but it does not expose host filesystem, host shell, or host git tools.",
+            format!("Host browser MCP server `{name}`: {description}"),
+        ),
+    };
     json!({
         "name": provider_name,
-        "description": format!("MCP server `{server_name}`: {description}"),
+        "description": rendered_description,
         "input_schema": input_schema,
-        "scope": "client_mcp_server",
+        "scope": scope,
         "side_effect_class": "unknown_external_tool",
         "approval_sensitivity": "request_client_permission_unless_policy_allows",
-        "orientation": "This tool comes from a Zed context server forwarded to BEARS over ACP. Use it when the server name and tool description match the user's request.",
+        "orientation": orientation,
         "x_bears": {
-            "source": "acp_mcp_server",
-            "server": server_name,
-            "original_tool": tool.get("name").cloned().unwrap_or(Value::Null)
+            "source": source.source_kind(),
+            "server": source.name(),
+            "original_tool": tool.get("name").cloned().unwrap_or(Value::Null),
+            "transport": source.transport(),
+            "trust_boundary": source.trust_boundary(),
         }
     })
 }

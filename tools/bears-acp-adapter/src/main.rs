@@ -63,7 +63,8 @@ use tools::git::{
     handle_git_show, handle_git_stash, handle_git_status,
 };
 use tools::mcp::{
-    parse_acp_mcp_servers, summarize_acp_mcp_servers_param, AcpMcpServerConfig, McpRegistry,
+    host_browser_bridge_config_from_env, host_browser_bridge_env_summary, parse_acp_mcp_servers,
+    summarize_acp_mcp_servers_param, McpRegistry, McpSourceConfig,
 };
 use tools::process::handle_process_run;
 use tools::terminal::handle_terminal_run_command;
@@ -138,7 +139,7 @@ struct SessionContext {
     cwd: String,
     roots: Vec<String>,
     raw: Value,
-    mcp_servers: Vec<AcpMcpServerConfig>,
+    mcp_sources: Vec<McpSourceConfig>,
     conversation_id: Option<String>,
     resolved_conversation_id: Option<String>,
 }
@@ -1302,7 +1303,7 @@ async fn handle_request(
                 };
                 let mcp_context = shared_state
                     .mcp_registry
-                    .configure_session(&session_id, context.mcp_servers.clone())
+                    .configure_session(&session_id, context.mcp_sources.clone())
                     .await?;
                 let mut context = context;
                 context.raw["mcp"] = mcp_context;
@@ -1923,11 +1924,11 @@ fn adapter_capabilities_context_with_client_mcp(has_client_mcp_tools: bool) -> V
             "git_stash": { "supported": true, "version": 1 },
             "process_run": { "supported": true, "version": 1 },
             "terminal_run_command": { "supported": true, "version": 1 },
-            "chrome_open": { "supported": chrome_supported, "version": 1, "fallback_disabled_reason": if has_client_mcp_tools { "client_mcp_tools_present" } else { "" } },
-            "chrome_snapshot": { "supported": chrome_supported, "version": 1, "fallback_disabled_reason": if has_client_mcp_tools { "client_mcp_tools_present" } else { "" } },
-            "chrome_console_messages": { "supported": chrome_supported, "version": 1, "fallback_disabled_reason": if has_client_mcp_tools { "client_mcp_tools_present" } else { "" } },
-            "chrome_network_requests": { "supported": chrome_supported, "version": 1, "fallback_disabled_reason": if has_client_mcp_tools { "client_mcp_tools_present" } else { "" } },
-            "chrome_screenshot": { "supported": chrome_supported, "version": 1, "fallback_disabled_reason": if has_client_mcp_tools { "client_mcp_tools_present" } else { "" } },
+            "chrome_open": { "supported": chrome_supported, "version": 1, "fallback_disabled_reason": if has_client_mcp_tools { "external_browser_mcp_tools_present" } else { "" } },
+            "chrome_snapshot": { "supported": chrome_supported, "version": 1, "fallback_disabled_reason": if has_client_mcp_tools { "external_browser_mcp_tools_present" } else { "" } },
+            "chrome_console_messages": { "supported": chrome_supported, "version": 1, "fallback_disabled_reason": if has_client_mcp_tools { "external_browser_mcp_tools_present" } else { "" } },
+            "chrome_network_requests": { "supported": chrome_supported, "version": 1, "fallback_disabled_reason": if has_client_mcp_tools { "external_browser_mcp_tools_present" } else { "" } },
+            "chrome_screenshot": { "supported": chrome_supported, "version": 1, "fallback_disabled_reason": if has_client_mcp_tools { "external_browser_mcp_tools_present" } else { "" } },
             "fs_edit_file": { "supported": true, "version": 1 },
             "fs_create_text_file": { "supported": true, "version": 1 },
             "fs_create_directory": { "supported": true, "version": 1 },
@@ -1967,7 +1968,7 @@ fn direct_tools_context_with_client_mcp(has_client_mcp_tools: bool) -> Value {
         "chrome_network_requests": chrome_available,
         "chrome_screenshot": chrome_available,
         "client_mcp_tools_present": has_client_mcp_tools,
-        "chrome_tools_disabled_reason": if has_client_mcp_tools { "client_mcp_tools_present" } else { "" },
+        "chrome_tools_disabled_reason": if has_client_mcp_tools { "external_browser_mcp_tools_present" } else { "" },
         "fs_edit_file": true,
         "fs_create_text_file": true,
         "fs_create_directory": true,
@@ -1982,14 +1983,27 @@ fn ensure_session_context_capabilities(context: &mut SessionContext) {
     if !context.raw.is_object() {
         context.raw = json!({});
     }
-    let has_client_mcp_tools = context
+    let (has_client_mcp_tools, has_host_browser_bridge_tools) = context
         .raw
         .pointer("/mcp/client_tools")
         .and_then(Value::as_array)
-        .is_some_and(|tools| !tools.is_empty());
+        .map(|tools| {
+            let has_client = tools.iter().any(|tool| {
+                tool.pointer("/x_bears/source")
+                    .and_then(Value::as_str)
+                    .is_some_and(|source| source == "client_forwarded")
+            });
+            let has_host_bridge = tools.iter().any(|tool| {
+                tool.pointer("/x_bears/source")
+                    .and_then(Value::as_str)
+                    .is_some_and(|source| source == "host_browser_bridge")
+            });
+            (has_client, has_host_bridge)
+        })
+        .unwrap_or((false, false));
     context.raw["adapter_version"] = json!(env!("CARGO_PKG_VERSION"));
     context.raw["adapter"] = adapter_capabilities_context_with_client_mcp(has_client_mcp_tools);
-    context.raw["direct_tools"] = direct_tools_context_with_client_mcp(has_client_mcp_tools);
+    context.raw["direct_tools"] = direct_tools_context_with_client_mcp(has_client_mcp_tools || has_host_browser_bridge_tools);
     if !context.cwd.trim().is_empty() {
         context.raw["cwd"] = json!(context.cwd.clone());
     }
@@ -2003,7 +2017,10 @@ fn session_context_from_params(params: &Value) -> Result<SessionContext> {
         "bears-acp-adapter: session_context_from_params mcp_summary={}",
         summarize_acp_mcp_servers_param(params)
     );
-    let mcp_servers = parse_acp_mcp_servers(params)?;
+    let mut mcp_sources = parse_acp_mcp_servers(params)?;
+    if let Some(host_browser_bridge) = host_browser_bridge_config_from_env() {
+        mcp_sources.push(host_browser_bridge);
+    }
     let roots = workspace_roots_from_params(params);
     let cwd = explicit_cwd_from_params(params)
         .transpose()?
@@ -2021,19 +2038,17 @@ fn session_context_from_params(params: &Value) -> Result<SessionContext> {
         "adapter_version": env!("CARGO_PKG_VERSION"),
         "adapter": adapter_capabilities_context(),
         "direct_tools": direct_tools_context(),
-        "mcp_servers": mcp_servers.iter().map(|server| json!({
-            "name": server.name,
-            "transport": "stdio",
-            "command": server.command,
-            "args_count": server.args.len(),
-            "env_count": server.env.len(),
-        })).collect::<Vec<_>>(),
+        "mcp_servers": mcp_sources
+            .iter()
+            .map(McpSourceConfig::safe_summary_for_session_context)
+            .collect::<Vec<_>>(),
+        "host_browser_bridge": host_browser_bridge_env_summary(),
     });
     let mut context = SessionContext {
         cwd,
         roots,
         raw,
-        mcp_servers,
+        mcp_sources,
         conversation_id: None,
         resolved_conversation_id: None,
     };
@@ -2677,7 +2692,10 @@ fn session_context_from_den_session(params: &Value, den_session: &Value) -> Resu
         "bears-acp-adapter: session_context_from_den_session mcp_summary={}",
         summarize_acp_mcp_servers_param(params)
     );
-    let mcp_servers = parse_acp_mcp_servers(params)?;
+    let mut mcp_sources = parse_acp_mcp_servers(params)?;
+    if let Some(host_browser_bridge) = host_browser_bridge_config_from_env() {
+        mcp_sources.push(host_browser_bridge);
+    }
     let roots = workspace_roots_from_params(params);
     let cwd = explicit_cwd_from_params(params)
         .transpose()?
@@ -2701,7 +2719,7 @@ fn session_context_from_den_session(params: &Value, den_session: &Value) -> Resu
         cwd,
         roots,
         raw: Value::Null,
-        mcp_servers,
+        mcp_sources,
         conversation_id: den_session
             .get("conversation_id")
             .and_then(Value::as_str)
@@ -2717,13 +2735,12 @@ fn session_context_from_den_session(params: &Value, den_session: &Value) -> Resu
         "adapter_version": env!("CARGO_PKG_VERSION"),
         "adapter": adapter_capabilities_context(),
         "direct_tools": direct_tools_context(),
-        "mcp_servers": ctx.mcp_servers.iter().map(|server| json!({
-            "name": server.name,
-            "transport": "stdio",
-            "command": server.command,
-            "args_count": server.args.len(),
-            "env_count": server.env.len(),
-        })).collect::<Vec<_>>(),
+        "mcp_servers": ctx
+            .mcp_sources
+            .iter()
+            .map(McpSourceConfig::safe_summary_for_session_context)
+            .collect::<Vec<_>>(),
+        "host_browser_bridge": host_browser_bridge_env_summary(),
         "den_acp_session": den_session.clone(),
     });
     ensure_session_context_capabilities(&mut ctx);
@@ -3111,7 +3128,7 @@ async fn restore_session_from_den(
     };
     let mcp_context = shared_state
         .mcp_registry
-        .configure_session(session_id, context.mcp_servers.clone())
+        .configure_session(session_id, context.mcp_sources.clone())
         .await?;
     let mut context = context;
     context.raw["mcp"] = mcp_context;
@@ -3181,7 +3198,7 @@ async fn handle_session_load(
     };
     let mcp_context = shared_state
         .mcp_registry
-        .configure_session(session_id, context.mcp_servers.clone())
+        .configure_session(session_id, context.mcp_sources.clone())
         .await?;
     let mut context = context;
     context.raw["mcp"] = mcp_context;
@@ -3857,11 +3874,13 @@ fn conversation_report(adapter_state: &AdapterState, session_id: &str) -> String
 
 fn capabilities_report(adapter_state: &AdapterState) -> String {
     format!(
-        "BEARS ACP capabilities\n\nClient capabilities:\n{}\n\nAdapter direct tools:\n{}",
+        "BEARS ACP capabilities\n\nClient capabilities:\n{}\n\nAdapter direct tools:\n{}\n\nHost browser bridge env:\n{}",
         serde_json::to_string_pretty(&adapter_state.client_capabilities)
             .unwrap_or_else(|_| adapter_state.client_capabilities.to_string()),
         serde_json::to_string_pretty(&direct_tools_context())
             .unwrap_or_else(|_| direct_tools_context().to_string()),
+        serde_json::to_string_pretty(&host_browser_bridge_env_summary())
+            .unwrap_or_else(|_| host_browser_bridge_env_summary().to_string()),
     )
 }
 
@@ -4049,7 +4068,7 @@ async fn acp_doctor_report(
         Err(err) => format!("not validated: {err:#}"),
     };
     format!(
-        "BEARS ACP doctor\n\nAdapter:\n- version: {}\n- git_sha: {}\n- contract: {} v{}\n\nDen:\n- api_url: {}\n- bear: {}\n- server: {}\n- token: {}\n\nClient capabilities:\n{}\n\nSession:\n- cwd: {}\n- roots: {}\n- resolved_conversation_id: {}\n\nDirect tools: {}",
+        "BEARS ACP doctor\n\nAdapter:\n- version: {}\n- git_sha: {}\n- contract: {} v{}\n\nDen:\n- api_url: {}\n- bear: {}\n- server: {}\n- token: {}\n\nClient capabilities:\n{}\n\nSession:\n- cwd: {}\n- roots: {}\n- resolved_conversation_id: {}\n\nDirect tools: {}\n\nHost browser bridge env:\n{}",
         env!("CARGO_PKG_VERSION"),
         env!("BEARS_ACP_ADAPTER_GIT_SHA"),
         BEARS_ACP_ADAPTER_CONTRACT_NAME,
@@ -4063,6 +4082,7 @@ async fn acp_doctor_report(
         if context.roots.is_empty() { "<none>".to_string() } else { context.roots.join(", ") },
         context.resolved_conversation_id.as_deref().unwrap_or("<none>"),
         direct_tools_context(),
+        host_browser_bridge_env_summary(),
     )
 }
 
