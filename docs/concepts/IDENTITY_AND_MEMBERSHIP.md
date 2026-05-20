@@ -96,6 +96,66 @@ Clients and model messages must not be trusted to declare:
 
 Den constructs trusted context after authentication and membership checks, then passes only the needed scope downstream.
 
+## Conversation, thread, and session
+
+BEARS distinguishes among **conversations**, **threads**, and **sessions**.
+
+- A **conversation** is the durable, user-visible exchange between a human and a Bear. It is the default cross-surface term for chat history, titles, summaries, and contextual continuity.
+- A **thread** is a channel-native reply structure, such as a Slack thread. Use this term only when the underlying surface explicitly has thread semantics.
+- A **session** is a runtime interaction context, such as an ACP session, browser connection, or authenticated client binding. Sessions are operational and may be temporary; they can attach to existing conversations.
+
+Prefer **conversation** over **thread** or **session** unless channel structure or runtime binding is specifically what matters.
+
+### Guidance
+
+Use **conversation** when the focus is:
+
+- continuity over time,
+- user-visible exchange history,
+- titles or summaries,
+- memory or task provenance,
+- or the durable interaction record a Bear is participating in.
+
+Use **thread** when the focus is:
+
+- a channel-native reply structure,
+- a Slack or Discord thread,
+- reply nesting,
+- or a transport/UI anchor specific to one messaging surface.
+
+Use **session** when the focus is:
+
+- a live runtime binding,
+- client authentication or connection context,
+- ACP or browser attachment state,
+- tool scope,
+- workspace binding,
+- or execution lifecycle.
+
+### Relationship
+
+A helpful default model is:
+
+- a **session** participates in or accesses a **conversation**,
+- a **thread** may host or represent a **conversation**,
+- a **conversation** may span multiple **sessions**,
+- and a **conversation** may exist without any thread concept at all.
+
+### Product language
+
+Prefer:
+
+- “The ACP session is attached to conversation `conv_123`.”
+- “This Slack thread maps to a Bear conversation.”
+- “Conversation summaries are durable; session metadata is ephemeral.”
+- “A user may return to the same conversation in a new session.”
+
+Avoid:
+
+- “session” when you mean durable chat history,
+- “thread” as the universal term for all Bear interactions,
+- or “conversation” when you specifically mean a runtime binding or channel-native reply structure.
+
 ## Product language
 
 Prefer:
