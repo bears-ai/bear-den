@@ -19,7 +19,7 @@ use agent_client_protocol::schema::{
     ToolCallContent, ToolCallLocation, ToolCallStatus, ToolCallUpdate, ToolCallUpdateFields,
     ToolKind, WaitForTerminalExitRequest, WaitForTerminalExitResponse,
 };
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, bail, Context, Result};
 
 use approvals::{
     approval_url_host_scope, parse_permission_decision, permission_class_for_tool,
@@ -28,8 +28,11 @@ use approvals::{
 use futures_util::StreamExt;
 use json_rpc::{id_key, write_json, JsonRpcTransport};
 use paths::{file_uri_or_path_to_path, is_absolute_local_path, normalize_requested_tool_path};
+use http::StatusCode;
 use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, CONTENT_TYPE};
 use reqwest::Url;
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 #[cfg(test)]
 use std::fs;
@@ -45,6 +48,13 @@ use tokio::{
     io::{self, AsyncBufReadExt, BufReader},
     sync::{broadcast, mpsc, Mutex as TokioMutex},
 };
+use rmcp::{
+    handler::server::{common::{schema_for_type, FromContextPart}, router::Router as McpRouter, wrapper::Parameters, ServerHandler},
+    model::{CallToolResult, Content, Implementation as McpImplementation, ServerCapabilities, ServerInfo, Tool as McpTool},
+    transport::{streamable_http_server::session::local::LocalSessionManager, StreamableHttpServerConfig, StreamableHttpService},
+};
+use tower_service::Service;
+use axum::{extract::State, response::IntoResponse};
 use tool_tasks::{log_tool_task_phase, ToolTaskPhase, ToolTaskRegistry};
 use tools::chrome::{
     chrome_capability_status_line, chrome_tools_available, handle_chrome_console_messages,
@@ -86,10 +96,19 @@ struct RuntimeConfig {
     diagnostics: Vec<String>,
     check_server: bool,
     doctor: bool,
+    browser_bridge: Option<BrowserBridgeConfig>,
     api_url: String,
     bear: String,
     token_env: String,
     client: String,
+}
+
+#[derive(Clone, Debug)]
+struct BrowserBridgeConfig {
+    bind: String,
+    token: String,
+    path: String,
+    allowed_origins: Vec<String>,
 }
 
 #[derive(Clone, Default)]
@@ -832,6 +851,255 @@ fn stream_has_successful_terminal_condition(
     saw_visible_output || saw_error || (saw_done && saw_tool_activity)
 }
 
+#[derive(Clone, Default)]
+struct BrowserBridgeServer;
+
+#[derive(Debug, Deserialize, JsonSchema)]
+struct ChromeOpenArgs {
+    url: String,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+struct ChromeListArgs {
+    #[serde(default)]
+    limit: Option<u64>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+struct ChromeScreenshotArgs {
+    #[serde(default)]
+    format: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct HealthResponse {
+    ok: bool,
+    service: &'static str,
+    chrome: String,
+}
+
+impl ServerHandler for BrowserBridgeServer {
+    fn get_info(&self) -> ServerInfo {
+        let mut capabilities = ServerCapabilities::default();
+        capabilities.tools = Some(Default::default());
+        ServerInfo::new(capabilities)
+        .with_server_info(
+            McpImplementation::new("bears-host-browser-bridge", env!("CARGO_PKG_VERSION"))
+                .with_title("BEARS Host Browser MCP Bridge")
+                .with_description("Browser-only MCP bridge served by bears-acp-adapter."),
+        )
+        .with_instructions("This MCP server exposes browser-only tools from the BEARS host browser bridge. It can inspect and control the local browser via Chrome DevTools Protocol, but it does not provide host filesystem, host shell, or host git access.")
+    }
+}
+
+async fn browser_bridge_tool_result(value: Result<Value>) -> Result<CallToolResult, rmcp::ErrorData> {
+    let mut result = CallToolResult::default();
+    match value {
+        Ok(value) => {
+            result.content = vec![Content::text(value.to_string())];
+            result.structured_content = Some(value);
+            result.is_error = Some(false);
+        }
+        Err(err) => {
+            result.content = vec![Content::text(format!("browser bridge tool error: {err:#}"))];
+            result.structured_content = Some(json!({ "ok": false, "error": format!("{err:#}") }));
+            result.is_error = Some(true);
+        }
+    }
+    Ok(result)
+}
+
+fn browser_bridge_authorized(headers: &axum::http::HeaderMap, config: &BrowserBridgeConfig) -> bool {
+    let auth = headers
+        .get(http::header::AUTHORIZATION)
+        .and_then(|value: &axum::http::HeaderValue| value.to_str().ok())
+        .unwrap_or("");
+    let expected = format!("Bearer {}", config.token);
+    auth == expected
+}
+
+async fn browser_bridge_mcp_handler(
+    State((config, service)): State<(
+        BrowserBridgeConfig,
+        Arc<TokioMutex<StreamableHttpService<McpRouter<BrowserBridgeServer>, LocalSessionManager>>>,
+    )>,
+    request: axum::extract::Request,
+) -> impl axum::response::IntoResponse {
+    if !browser_bridge_authorized(request.headers(), &config) {
+        return (StatusCode::UNAUTHORIZED, "unauthorized").into_response();
+    }
+    let mut service = service.lock().await;
+    match service.call(request).await {
+        Ok(response) => response.into_response(),
+        Err(err) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("browser bridge transport error: {err:#}"),
+        )
+            .into_response(),
+    }
+}
+
+async fn run_browser_bridge(config: BrowserBridgeConfig) -> Result<()> {
+    use axum::{
+        routing::{any, get},
+        Router,
+    };
+
+    let session_manager = Arc::new(LocalSessionManager::default());
+    let service = Arc::new(TokioMutex::new(StreamableHttpService::new(
+        || {
+            let router = McpRouter::new(BrowserBridgeServer)
+                .with_tool(route_browser_open())
+                .with_tool(route_browser_snapshot())
+                .with_tool(route_browser_console_messages())
+                .with_tool(route_browser_network_requests())
+                .with_tool(route_browser_screenshot());
+            Ok(router)
+        },
+        session_manager,
+        StreamableHttpServerConfig::default()
+            .with_stateful_mode(false)
+            .with_json_response(true)
+            .with_allowed_hosts(["127.0.0.1", "localhost", "::1"])
+            .with_allowed_origins(config.allowed_origins.clone()),
+    )));
+
+    let mcp_path = config.path.clone();
+    let bind = config.bind.clone();
+    let app = Router::new()
+        .route(
+            "/health",
+            get({
+                move || async move {
+                    axum::Json(HealthResponse {
+                        ok: true,
+                        service: "bears-host-browser-bridge",
+                        chrome: chrome_capability_status_line(),
+                    })
+                }
+            }),
+        )
+        .route(&mcp_path, any(browser_bridge_mcp_handler))
+        .with_state((config.clone(), service.clone()));
+
+    let listener = tokio::net::TcpListener::bind(&bind)
+        .await
+        .with_context(|| format!("bind browser bridge listener on {bind}"))?;
+    eprintln!(
+        "bears-acp-adapter: browser-bridge listening addr={} path={} chrome={} origins={:?}",
+        bind,
+        mcp_path,
+        chrome_capability_status_line(),
+        config.allowed_origins
+    );
+    axum::serve(listener, app)
+        .await
+        .context("serve browser bridge HTTP")
+}
+
+fn browser_tool(name: &'static str, description: &'static str, input_schema: std::sync::Arc<serde_json::Map<String, Value>>) -> McpTool {
+    let mut tool = McpTool::default();
+    tool.name = name.into();
+    tool.description = Some(description.into());
+    tool.input_schema = input_schema;
+    tool
+}
+
+fn route_browser_open() -> rmcp::handler::server::router::tool::ToolRoute<BrowserBridgeServer> {
+    rmcp::handler::server::router::tool::ToolRoute::new_dyn(
+        browser_tool(
+            "browser_open",
+            "Open a URL in the host browser and focus the new tab/target.",
+            schema_for_type::<ChromeOpenArgs>(),
+        ),
+        |mut context| {
+            Box::pin(async move {
+                let Parameters(args): Parameters<ChromeOpenArgs> =
+                    Parameters::from_context_part(&mut context)?;
+                browser_bridge_tool_result(
+                    handle_chrome_open(&json!({ "url": args.url }), &ToolPolicy::default()).await,
+                )
+                .await
+            })
+        },
+    )
+}
+
+fn route_browser_snapshot() -> rmcp::handler::server::router::tool::ToolRoute<BrowserBridgeServer> {
+    rmcp::handler::server::router::tool::ToolRoute::new_dyn(
+        browser_tool(
+            "browser_snapshot",
+            "Capture an accessibility-tree text snapshot of the active browser page.",
+            schema_for_type::<()>(),
+        ),
+        |_context| {
+            Box::pin(async move {
+                browser_bridge_tool_result(handle_chrome_snapshot(&Value::Null, &ToolPolicy::default()).await).await
+            })
+        },
+    )
+}
+
+fn route_browser_console_messages() -> rmcp::handler::server::router::tool::ToolRoute<BrowserBridgeServer> {
+    rmcp::handler::server::router::tool::ToolRoute::new_dyn(
+        browser_tool(
+            "browser_console_messages",
+            "List recent console and log events from the active browser page.",
+            schema_for_type::<ChromeListArgs>(),
+        ),
+        |mut context| {
+            Box::pin(async move {
+                let Parameters(args): Parameters<ChromeListArgs> =
+                    Parameters::from_context_part(&mut context)?;
+                browser_bridge_tool_result(
+                    handle_chrome_console_messages(&json!({ "limit": args.limit }), &ToolPolicy::default()).await,
+                )
+                .await
+            })
+        },
+    )
+}
+
+fn route_browser_network_requests() -> rmcp::handler::server::router::tool::ToolRoute<BrowserBridgeServer> {
+    rmcp::handler::server::router::tool::ToolRoute::new_dyn(
+        browser_tool(
+            "browser_network_requests",
+            "List recent network request events from the active browser page.",
+            schema_for_type::<ChromeListArgs>(),
+        ),
+        |mut context| {
+            Box::pin(async move {
+                let Parameters(args): Parameters<ChromeListArgs> =
+                    Parameters::from_context_part(&mut context)?;
+                browser_bridge_tool_result(
+                    handle_chrome_network_requests(&json!({ "limit": args.limit }), &ToolPolicy::default()).await,
+                )
+                .await
+            })
+        },
+    )
+}
+
+fn route_browser_screenshot() -> rmcp::handler::server::router::tool::ToolRoute<BrowserBridgeServer> {
+    rmcp::handler::server::router::tool::ToolRoute::new_dyn(
+        browser_tool(
+            "browser_screenshot",
+            "Capture a screenshot of the active browser page.",
+            schema_for_type::<ChromeScreenshotArgs>(),
+        ),
+        |mut context| {
+            Box::pin(async move {
+                let Parameters(args): Parameters<ChromeScreenshotArgs> =
+                    Parameters::from_context_part(&mut context)?;
+                browser_bridge_tool_result(
+                    handle_chrome_screenshot(&json!({ "format": args.format }), &ToolPolicy::default()).await,
+                )
+                .await
+            })
+        },
+    )
+}
+
 #[tokio::main]
 async fn main() {
     if let Err(err) = run().await {
@@ -854,6 +1122,11 @@ async fn run() -> Result<()> {
         "bears-acp-adapter: chrome tools {}",
         chrome_capability_status_line()
     );
+    if let Some(browser_bridge) = runtime.browser_bridge.clone() {
+        run_browser_bridge(browser_bridge).await?;
+        return Ok(());
+    }
+
     if !runtime.doctor {
         if runtime.is_configured() {
             eprintln!("bears-acp-adapter: configuration looks valid");
@@ -949,6 +1222,58 @@ async fn run() -> Result<()> {
     Ok(())
 }
 
+impl BrowserBridgeConfig {
+    fn from_args(mut args: impl Iterator<Item = String>) -> Result<Self> {
+        let mut bind = env::var("BEARS_HOST_BROWSER_MCP_BIND")
+            .unwrap_or_else(|_| "127.0.0.1:3766".to_string());
+        let mut token = env::var("BEARS_HOST_BROWSER_MCP_TOKEN").unwrap_or_default();
+        let mut path = env::var("BEARS_HOST_BROWSER_MCP_PATH").unwrap_or_else(|_| "/mcp".to_string());
+        let mut allowed_origins = env::var("BEARS_HOST_BROWSER_MCP_ALLOWED_ORIGINS")
+            .ok()
+            .map(|value| {
+                value
+                    .split(',')
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .map(str::to_string)
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+
+        while let Some(arg) = args.next() {
+            match arg.as_str() {
+                "--bind" => bind = require_arg_value("--bind", args.next())?,
+                "--token" => token = require_arg_value("--token", args.next())?,
+                "--path" => path = require_arg_value("--path", args.next())?,
+                "--allow-origin" => allowed_origins.push(require_arg_value("--allow-origin", args.next())?),
+                "--help" | "-h" => {
+                    print_browser_bridge_help_to_stderr();
+                    std::process::exit(0);
+                }
+                unknown => bail!("unknown browser-bridge argument {unknown:?}; use `bears-acp-adapter browser-bridge --help`"),
+            }
+        }
+
+        bind = bind.trim().to_string();
+        token = token.trim().to_string();
+        if bind.is_empty() {
+            bail!("browser-bridge requires a non-empty bind address; pass --bind <host:port>");
+        }
+        if token.is_empty() {
+            bail!("browser-bridge requires a bearer token; set BEARS_HOST_BROWSER_MCP_TOKEN or pass --token <token>");
+        }
+        path = normalize_browser_bridge_path(&path);
+        allowed_origins.retain(|origin| !origin.trim().is_empty());
+
+        Ok(Self {
+            bind,
+            token,
+            path,
+            allowed_origins,
+        })
+    }
+}
+
 impl RuntimeConfig {
     fn from_env_and_args() -> Result<Self> {
         let mut api_url = env::var("BEARS_DEN_API_URL").unwrap_or_default();
@@ -959,10 +1284,15 @@ impl RuntimeConfig {
         let mut check_config = false;
         let mut check_server = false;
         let mut doctor = false;
+        let mut browser_bridge: Option<BrowserBridgeConfig> = None;
 
         let mut args = env::args().skip(1);
         while let Some(arg) = args.next() {
             match arg.as_str() {
+                "browser-bridge" => {
+                    browser_bridge = Some(BrowserBridgeConfig::from_args(args)?);
+                    break;
+                }
                 "--api-url" => api_url = require_arg_value("--api-url", args.next())?,
                 "--bear" => bear = require_arg_value("--bear", args.next())?,
                 "--token" => token = require_arg_value("--token", args.next())?,
@@ -1027,11 +1357,16 @@ impl RuntimeConfig {
             diagnostics,
             check_server,
             doctor,
+            browser_bridge: browser_bridge.clone(),
             api_url,
             bear,
             token_env,
             client,
         };
+        if browser_bridge.is_some() {
+            return Ok(runtime);
+        }
+
         if check_config {
             if runtime.is_configured() {
                 eprintln!("bears-acp-adapter: configuration looks valid");
@@ -1139,11 +1474,28 @@ fn local_head_sha() -> String {
         .unwrap_or_else(|| "unavailable".to_string())
 }
 
+fn normalize_browser_bridge_path(path: &str) -> String {
+    let trimmed = path.trim();
+    if trimmed.is_empty() || trimmed == "/" {
+        "/mcp".to_string()
+    } else if trimmed.starts_with('/') {
+        trimmed.trim_end_matches('/').to_string()
+    } else {
+        format!("/{}", trimmed.trim_end_matches('/'))
+    }
+}
+
+fn print_browser_bridge_help_to_stderr() {
+    eprintln!(
+        "bears-acp-adapter browser-bridge\n\nUsage: bears-acp-adapter browser-bridge [--bind 127.0.0.1:3766] [--path /mcp] [--token <token>] [--allow-origin <origin>]...\n\nOptions:\n  --bind <host:port>      Bind address for the host browser MCP bridge HTTP server\n  --path <path>           MCP HTTP path, default /mcp\n  --token <token>         Required bearer token for Authorization: Bearer <token>\n  --allow-origin <url>    Allowed Origin value for browser requests; repeatable\n  --help                  Show this help\n\nEnvironment fallbacks:\n  BEARS_HOST_BROWSER_MCP_BIND\n  BEARS_HOST_BROWSER_MCP_PATH\n  BEARS_HOST_BROWSER_MCP_TOKEN\n  BEARS_HOST_BROWSER_MCP_ALLOWED_ORIGINS  comma-separated list",
+    );
+}
+
 fn print_help_to_stderr() {
     eprintln!(
         "bears-acp-adapter {}\nBuild git SHA: {}\nLocal HEAD SHA: {}\nACP sessions: list/resume/load; conversations bound via Den\n\n\
-Usage: bears-acp-adapter --api-url <url> --bear <slug> [--client zed] [--token-env BEARS_DEN_TOKEN]\n       bears-acp-adapter doctor\n\n\
-Options:\n  --api-url <url>        Den API origin, for example https://api.bears.example\n  --bear <slug>          Bear slug to chat with\n  --token <token>        Den ACP token with acp:chat scope\n  --token-env <env-var>  Read the Den bearer token from this environment variable\n  --client <name>        Client label: zed, opencode, or acp_adapter\n  --check-config         Validate configuration and exit without starting ACP stdio\n  --check-server         Fetch Den /version and exit without starting ACP stdio\n  doctor, --doctor       Run user-friendly setup checks and exit\n  --version              Show version/build behavior and exit\n  --help                 Show this help\n\n\
+Usage: bears-acp-adapter --api-url <url> --bear <slug> [--client zed] [--token-env BEARS_DEN_TOKEN]\n       bears-acp-adapter doctor\n       bears-acp-adapter browser-bridge [--bind 127.0.0.1:3766] [--path /mcp] [--token <token>]\n\n\
+Options:\n  --api-url <url>        Den API origin, for example https://api.bears.example\n  --bear <slug>          Bear slug to chat with\n  --token <token>        Den ACP token with acp:chat scope\n  --token-env <env-var>  Read the Den bearer token from this environment variable\n  --client <name>        Client label: zed, opencode, or acp_adapter\n  --check-config         Validate configuration and exit without starting ACP stdio\n  --check-server         Fetch Den /version and exit without starting ACP stdio\n  doctor, --doctor       Run user-friendly setup checks and exit\n  browser-bridge         Serve browser-only MCP tools over local Streamable HTTP\n  --version              Show version/build behavior and exit\n  --help                 Show this help\n\n\
 Environment fallbacks:\n  BEARS_DEN_API_URL\n  BEARS_BEAR_SLUG\n  BEARS_DEN_TOKEN\n  BEARS_DEN_TOKEN_ENV\n  BEARS_ACP_CLIENT\n\n\
 BEARS_DEN_API_URL should be the API origin only, not the full /acp/bears/... endpoint.",
         env!("CARGO_PKG_VERSION"),
@@ -7775,6 +8127,7 @@ mod tests {
             diagnostics: Vec::new(),
             check_server: false,
             doctor: false,
+            browser_bridge: None,
             api_url: String::new(),
             bear: String::new(),
             token_env: String::new(),
