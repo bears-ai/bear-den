@@ -158,6 +158,33 @@ Recommendation for first implementation: reuse/extract the existing BEARS Chrome
 - Non-browser tools are not present.
 - Bridge starts without contacting Den.
 
+### Implementation notes (current)
+
+Implemented in `tools/bears-acp-adapter`:
+
+- `bears-acp-adapter browser-bridge --bind 127.0.0.1:3766 --path /mcp --token <token>`
+- Environment fallbacks:
+  - `BEARS_HOST_BROWSER_MCP_BIND`
+  - `BEARS_HOST_BROWSER_MCP_PATH`
+  - `BEARS_HOST_BROWSER_MCP_TOKEN`
+  - `BEARS_HOST_BROWSER_MCP_ALLOWED_ORIGINS`
+- Readiness endpoint:
+  - `GET /health`
+- MCP endpoint:
+  - `POST /mcp` and related Streamable HTTP traffic on the configured path
+- Auth:
+  - `Authorization: Bearer <token>` required for MCP endpoint
+
+Currently exposed bridge tools are browser-only wrappers over the adapter’s existing Chrome/CDP implementation:
+
+- `browser_open`
+- `browser_snapshot`
+- `browser_console_messages`
+- `browser_network_requests`
+- `browser_screenshot`
+
+Notable CLI detail: the implementation currently uses `--bind` rather than the earlier draft’s `--listen`.
+
 ## Phase 4: Bridge security controls
 
 ### Tasks

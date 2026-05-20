@@ -10709,4 +10709,62 @@ mod tests {
         assert_eq!(m["sessions"][0]["sessionId"], "s1");
         assert_eq!(m["sessions"][0]["cwd"], "/tmp");
     }
+
+    #[test]
+    fn browser_bridge_config_from_args_reads_flags_and_normalizes_path() {
+        let config = BrowserBridgeConfig::from_args(
+            vec![
+                "--bind".to_string(),
+                "127.0.0.1:7777".to_string(),
+                "--token".to_string(),
+                "secret-token".to_string(),
+                "--path".to_string(),
+                "bridge/".to_string(),
+                "--allow-origin".to_string(),
+                "https://example.test".to_string(),
+            ]
+            .into_iter(),
+        )
+        .unwrap();
+        assert_eq!(config.bind, "127.0.0.1:7777");
+        assert_eq!(config.token, "secret-token");
+        assert_eq!(config.path, "/bridge");
+        assert_eq!(config.allowed_origins, vec!["https://example.test"]);
+    }
+
+    #[test]
+    fn browser_bridge_config_requires_token() {
+        std::env::remove_var("BEARS_HOST_BROWSER_MCP_TOKEN");
+        let err = BrowserBridgeConfig::from_args(std::iter::empty()).unwrap_err();
+        assert!(format!("{err:#}").contains("requires a bearer token"));
+    }
+
+    #[test]
+    fn normalize_browser_bridge_path_defaults_to_mcp() {
+        assert_eq!(normalize_browser_bridge_path(""), "/mcp");
+        assert_eq!(normalize_browser_bridge_path("/"), "/mcp");
+        assert_eq!(normalize_browser_bridge_path("bridge"), "/bridge");
+        assert_eq!(normalize_browser_bridge_path("/bridge/"), "/bridge");
+    }
+
+    #[test]
+    fn browser_bridge_authorized_accepts_expected_bearer_token() {
+        let config = BrowserBridgeConfig {
+            bind: "127.0.0.1:3766".to_string(),
+            token: "topsecret".to_string(),
+            path: "/mcp".to_string(),
+            allowed_origins: Vec::new(),
+        };
+        let mut headers = axum::http::HeaderMap::new();
+        headers.insert(
+            axum::http::header::AUTHORIZATION,
+            axum::http::HeaderValue::from_static("Bearer topsecret"),
+        );
+        assert!(browser_bridge_authorized(&headers, &config));
+        headers.insert(
+            axum::http::header::AUTHORIZATION,
+            axum::http::HeaderValue::from_static("Bearer nope"),
+        );
+        assert!(!browser_bridge_authorized(&headers, &config));
+    }
 }
