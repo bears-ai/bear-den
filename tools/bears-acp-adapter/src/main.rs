@@ -1827,8 +1827,9 @@ async fn handle_request(
             }
         }
         "session/cancel" => {
-            if let Some(id) = request.id {
-                let Some(config) = runtime.config.as_ref() else {
+            let id = request.id;
+            let Some(config) = runtime.config.as_ref() else {
+                if let Some(id) = id {
                     write_response(
                         id,
                         Err(configuration_error(Some(json!({
@@ -1837,14 +1838,22 @@ async fn handle_request(
                         })))),
                     )
                     .await?;
-                    return Ok(());
-                };
-                match handle_session_cancel(http, config, &shared_state, request.params).await {
-                    Ok(()) => {
+                } else {
+                    eprintln!(
+                        "bears-acp-adapter: ignoring session/cancel notification because adapter is not configured"
+                    );
+                }
+                return Ok(());
+            };
+            match handle_session_cancel(http, config, &shared_state, request.params).await {
+                Ok(()) => {
+                    if let Some(id) = id {
                         write_response(id, Ok(serde_json::to_value(CloseSessionResponse::new())?))
-                            .await?
+                            .await?;
                     }
-                    Err(err) => {
+                }
+                Err(err) => {
+                    if let Some(id) = id {
                         write_response(
                             id,
                             Err(json_rpc_error(
@@ -1854,6 +1863,10 @@ async fn handle_request(
                             )),
                         )
                         .await?;
+                    } else {
+                        eprintln!(
+                            "bears-acp-adapter: session/cancel notification failed error={err:#}"
+                        );
                     }
                 }
             }
@@ -7653,6 +7666,96 @@ mod tests {
         assert_eq!(notice.session_id, "acp-session");
         assert_eq!(notice.turn_token, None);
         assert_eq!(notice.conversation_id, None);
+    }
+
+    #[tokio::test]
+    async fn adapter_session_cancel_notification_cancels_active_turn_and_tools() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut reader = BufReader::new(stream);
+            let mut line = String::new();
+            loop {
+                line.clear();
+                let n = reader.read_line(&mut line).await.unwrap();
+                if n == 0 || line == "\r\n" || line == "\n" {
+                    break;
+                }
+            }
+            stream = reader.into_inner();
+            use tokio::io::AsyncWriteExt;
+            stream
+                .write_all(
+                    b"HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: 11\r\n\r\n{\"ok\":true}",
+                )
+                .await
+                .unwrap();
+        });
+        let config = Config {
+            api_url: format!("http://{addr}"),
+            bear: "test-bear".to_string(),
+            token: "token-test".to_string(),
+            client: "zed".to_string(),
+        };
+        let mut runtime = RuntimeConfig {
+            config: Some(config),
+            diagnostics: Vec::new(),
+            check_server: false,
+            doctor: false,
+            api_url: String::new(),
+            bear: String::new(),
+            token_env: String::new(),
+            client: "zed".to_string(),
+        };
+        let mut adapter_state = AdapterState::default();
+        let shared = test_shared_state();
+        let turn_token = Uuid::new_v4();
+        shared.active_prompts.lock().await.insert(
+            "acp-session".to_string(),
+            ActivePromptTurn {
+                token: turn_token,
+                conversation_id: Some("conv-1".to_string()),
+            },
+        );
+        shared
+            .tool_tasks
+            .register(
+                "acp-session",
+                "call-1",
+                "fs_read_text_file",
+                Some(turn_token),
+            )
+            .await;
+        let mut cancel_rx = shared.cancellation_tx.subscribe();
+        let http = reqwest::Client::new();
+
+        handle_request(
+            &http,
+            &mut runtime,
+            &mut adapter_state,
+            &shared,
+            JsonRpcRequest {
+                id: None,
+                method: "session/cancel".to_string(),
+                params: json!({ "sessionId": "acp-session" }),
+            },
+        )
+        .await
+        .unwrap();
+
+        assert!(shared
+            .active_prompts
+            .lock()
+            .await
+            .get("acp-session")
+            .is_none());
+        let tasks = shared.tool_tasks.list_for_session("acp-session").await;
+        assert_eq!(tasks.len(), 1);
+        assert_eq!(tasks[0].phase, ToolTaskPhase::Cancelled);
+        let notice = cancel_rx.recv().await.expect("cancellation notice");
+        assert_eq!(notice.session_id, "acp-session");
+        assert_eq!(notice.turn_token, None);
     }
 
     #[tokio::test]
