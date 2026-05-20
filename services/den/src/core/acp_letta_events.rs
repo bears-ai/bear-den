@@ -223,8 +223,26 @@ pub fn map_native_letta_stream_event_to_acp_event(
 }
 
 fn extract_stream_text_delta(event: &serde_json::Value) -> Option<AcpGatewayEvent> {
-    let kind = stream_text_delta_kind(event)?;
-    let text = stream_text_delta_text(event)?;
+    let kind = stream_text_delta_kind(event);
+    let (kind, text) = match kind {
+        Some(StreamTextDeltaKind::Assistant) => (
+            StreamTextDeltaKind::Assistant,
+            stream_assistant_delta_text(event).or_else(|| stream_text_delta_text(event))?,
+        ),
+        Some(StreamTextDeltaKind::Reasoning) => (
+            StreamTextDeltaKind::Reasoning,
+            stream_reasoning_delta_text(event).or_else(|| stream_text_delta_text(event))?,
+        ),
+        None => {
+            if let Some(text) = stream_reasoning_delta_text(event) {
+                (StreamTextDeltaKind::Reasoning, text)
+            } else if let Some(text) = stream_assistant_delta_text(event) {
+                (StreamTextDeltaKind::Assistant, text)
+            } else {
+                return None;
+            }
+        }
+    };
     if text.is_empty() {
         return None;
     }
@@ -267,7 +285,7 @@ fn stream_text_delta_kind(event: &serde_json::Value) -> Option<StreamTextDeltaKi
     None
 }
 
-fn stream_text_delta_text(event: &serde_json::Value) -> Option<String> {
+fn stream_assistant_delta_text(event: &serde_json::Value) -> Option<String> {
     for pointer in [
         "/text",
         "/delta/text",
@@ -287,6 +305,32 @@ fn stream_text_delta_text(event: &serde_json::Value) -> Option<String> {
         }
     }
     None
+}
+
+fn stream_reasoning_delta_text(event: &serde_json::Value) -> Option<String> {
+    for pointer in [
+        "/reasoning",
+        "/thinking",
+        "/thought",
+        "/delta/reasoning",
+        "/delta/reasoning_content",
+        "/delta/thinking",
+        "/delta/thought",
+        "/choices/0/delta/reasoning",
+        "/choices/0/delta/reasoning_content",
+        "/choices/0/delta/thinking",
+        "/message/delta/reasoning",
+        "/message/delta/reasoning_content",
+    ] {
+        if let Some(text) = event.pointer(pointer).and_then(|v| v.as_str()) {
+            return Some(text.to_string());
+        }
+    }
+    None
+}
+
+fn stream_text_delta_text(event: &serde_json::Value) -> Option<String> {
+    stream_reasoning_delta_text(event).or_else(|| stream_assistant_delta_text(event))
 }
 
 fn pseudo_tool_call_name(text: &str) -> Option<String> {
@@ -391,7 +435,8 @@ fn native_letta_tool_request_event_with_args(
     }
     let tool_call_id =
         tool_call_id(tool_call, inner, event).unwrap_or_else(|| format!("call-{}", Uuid::new_v4()));
-    let client_approval_required = has_letta_approval_request;
+    let adapter_approval_required =
+        acp_tool.is_some() && !den_server_tool && unsupported_tool_detail.is_none();
     let letta_approval_request_id = has_letta_approval_request.then(|| {
         event
             .get("id")
@@ -433,10 +478,8 @@ fn native_letta_tool_request_event_with_args(
         } else {
             args
         },
-        approval_required: client_approval_required
-            && !den_server_tool
-            && unsupported_tool_detail.is_none(),
-        approval_reason: (!den_server_tool && unsupported_tool_detail.is_none()).then(|| {
+        approval_required: adapter_approval_required,
+        approval_reason: adapter_approval_required.then(|| {
             "BEARS requires client approval before running this local ACP tool.".to_string()
         }),
         result_tx: Some(result_tx),
@@ -461,6 +504,7 @@ pub struct LettaToolCallAccumulator {
     names: BTreeMap<String, String>,
     argument_buffers: BTreeMap<String, String>,
     emitted: BTreeMap<String, usize>,
+    openai_delta_index_ids: BTreeMap<String, String>,
 }
 
 impl LettaToolCallAccumulator {
@@ -479,6 +523,9 @@ impl LettaToolCallAccumulator {
             .and_then(|v| v.as_str())
             .or_else(|| event.get("message_type").and_then(|v| v.as_str()))
             .unwrap_or("");
+        if let Some(mapped) = self.observe_openai_tool_call_delta(event) {
+            return Some(mapped);
+        }
         if !matches!(
             message_type,
             "tool_call_message" | "approval_request_message" | "function_call"
@@ -511,6 +558,57 @@ impl LettaToolCallAccumulator {
         mapped
     }
 
+    fn observe_openai_tool_call_delta(
+        &mut self,
+        event: &serde_json::Value,
+    ) -> Option<AcpGatewayEvent> {
+        let tool_call = openai_stream_tool_call_delta(event)?;
+        let index_key = tool_call
+            .get("index")
+            .map(openai_tool_call_index_key)
+            .unwrap_or_else(|| "0".to_string());
+        if let Some(id) = tool_call_id(Some(tool_call), &serde_json::Value::Null, event) {
+            self.openai_delta_index_ids
+                .insert(index_key.clone(), id.clone());
+        }
+        let tool_call_id = self.openai_delta_index_ids.get(&index_key)?.clone();
+        if self.emitted.contains_key(&tool_call_id) {
+            return None;
+        }
+        if let Some(name) = tool_call_name(Some(tool_call), &serde_json::Value::Null, event) {
+            self.names.insert(tool_call_id.clone(), name.to_string());
+        }
+        let args = self.parse_args_fragment(
+            &tool_call_id,
+            Some(tool_call),
+            &serde_json::Value::Null,
+            event,
+        )?;
+        let tool_name = self.names.get(&tool_call_id)?.clone();
+        let synthetic = serde_json::json!({
+            "message_type": "function_call",
+            "tool_call": {
+                "name": tool_name.clone(),
+                "tool_call_id": tool_call_id.clone(),
+                "arguments": args.clone(),
+            }
+        });
+        let mapped = native_letta_tool_request_event_with_args(
+            &synthetic,
+            &synthetic,
+            false,
+            Some(args),
+            Some(&tool_name),
+        );
+        if mapped.is_some() {
+            self.names.remove(&tool_call_id);
+            self.argument_buffers.remove(&tool_call_id);
+            self.openai_delta_index_ids.remove(&index_key);
+            *self.emitted.entry(tool_call_id).or_insert(0) += 1;
+        }
+        mapped
+    }
+
     fn parse_args_fragment(
         &mut self,
         tool_call_id: &str,
@@ -536,6 +634,28 @@ impl LettaToolCallAccumulator {
             Some(args_raw.clone())
         }
     }
+}
+
+fn openai_stream_tool_call_delta(event: &serde_json::Value) -> Option<&serde_json::Value> {
+    event
+        .pointer("/choices/0/delta/tool_calls")
+        .and_then(|v| v.as_array())
+        .and_then(|items| items.first())
+        .or_else(|| {
+            event
+                .pointer("/delta/tool_calls")
+                .and_then(|v| v.as_array())
+                .and_then(|items| items.first())
+        })
+}
+
+fn openai_tool_call_index_key(value: &serde_json::Value) -> String {
+    value
+        .as_u64()
+        .map(|index| index.to_string())
+        .or_else(|| value.as_i64().map(|index| index.to_string()))
+        .or_else(|| value.as_str().map(str::to_string))
+        .unwrap_or_else(|| "0".to_string())
 }
 
 fn tool_call_value<'a>(
@@ -1004,7 +1124,7 @@ mod tests {
     }
 
     #[test]
-    fn tool_call_message_requires_adapter_result_without_letta_approval() {
+    fn tool_call_message_requires_adapter_approval_without_letta_approval_id() {
         let event = tool_call_event(
             "fs_edit_file",
             serde_json::json!({
@@ -1021,9 +1141,9 @@ mod tests {
                 approval_reason,
                 ..
             } => {
-                assert!(!approval_required);
+                assert!(approval_required);
                 assert!(approval_request_id.is_none());
-                assert!(approval_reason.is_none());
+                assert!(approval_reason.is_some());
             }
             other => panic!("unexpected event: {other:?}"),
         }
@@ -1113,6 +1233,18 @@ mod tests {
     }
 
     #[test]
+    fn maps_openai_style_assistant_delta_without_repeated_role() {
+        let event = serde_json::json!({
+            "type": "chat.completion.chunk",
+            "choices": [{ "delta": { "content": " world" } }]
+        });
+        match map_native_letta_stream_event_to_acp_event(&event) {
+            Some(AcpGatewayEvent::AssistantTextDelta { text }) => assert_eq!(text, " world"),
+            other => panic!("unexpected event: {other:?}"),
+        }
+    }
+
+    #[test]
     fn maps_reasoning_delta_fallback() {
         let event = serde_json::json!({
             "type": "reasoning_delta",
@@ -1120,6 +1252,74 @@ mod tests {
         });
         match map_native_letta_stream_event_to_acp_event(&event) {
             Some(AcpGatewayEvent::StatusText { text }) => assert_eq!(text, "thinking"),
+            other => panic!("unexpected event: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn maps_openai_style_reasoning_content_delta() {
+        let event = serde_json::json!({
+            "type": "chat.completion.chunk",
+            "choices": [{ "delta": { "reasoning_content": "thinking" } }]
+        });
+        match map_native_letta_stream_event_to_acp_event(&event) {
+            Some(AcpGatewayEvent::StatusText { text }) => assert_eq!(text, "thinking"),
+            other => panic!("unexpected event: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn accumulates_openai_style_tool_call_deltas() {
+        let mut accumulator = LettaToolCallAccumulator::default();
+        let first = serde_json::json!({
+            "type": "chat.completion.chunk",
+            "choices": [{
+                "delta": {
+                    "tool_calls": [{
+                        "index": 0,
+                        "id": "call_web_fetch",
+                        "type": "function",
+                        "function": {
+                            "name": "web_fetch",
+                            "arguments": "{\"url\":\"https://exa"
+                        }
+                    }]
+                }
+            }]
+        });
+        assert!(map_native_letta_stream_event_to_acp_event_with_accumulator(
+            &first,
+            &mut accumulator
+        )
+        .is_none());
+
+        let second = serde_json::json!({
+            "type": "chat.completion.chunk",
+            "choices": [{
+                "delta": {
+                    "tool_calls": [{
+                        "index": 0,
+                        "function": {
+                            "arguments": "mple.com/docs\"}"
+                        }
+                    }]
+                }
+            }]
+        });
+        match map_native_letta_stream_event_to_acp_event_with_accumulator(&second, &mut accumulator)
+        {
+            Some(AcpGatewayEvent::ToolRequest {
+                tool_call_id,
+                tool_name,
+                args,
+                approval_required,
+                ..
+            }) => {
+                assert_eq!(tool_call_id, "call_web_fetch");
+                assert_eq!(tool_name, "web_fetch");
+                assert_eq!(args["url"], "https://example.com/docs");
+                assert!(!approval_required);
+            }
             other => panic!("unexpected event: {other:?}"),
         }
     }
