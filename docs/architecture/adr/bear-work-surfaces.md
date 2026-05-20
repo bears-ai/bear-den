@@ -2,7 +2,6 @@
 
 **Status:** Accepted
 **Date:** 2026-05-17
-**Supersedes:** Prior `Workplace` terminology previously used at this path; archived in `bear-workplaces.archived-2026-05-17.md`
 **Deciders:** Hans
 
 ## Context
