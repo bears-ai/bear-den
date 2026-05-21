@@ -595,18 +595,19 @@ async fn call_server_tool(source: &McpSourceConfig, tool_name: &str, args: Value
             params = params.with_arguments(arguments);
         }
         let result = client.peer().call_tool(params).await?;
+        let structured = serde_json::to_value(&result)?;
+        let content = mcp_tool_result_content(&structured);
         eprintln!(
-            "bears-acp-adapter: acp_mcp_call_ok source_kind={} server={} transport={} tool={} is_error={:?} content_items={} structured={}",
+            "bears-acp-adapter: acp_mcp_call_ok source_kind={} server={} transport={} tool={} is_error={:?} content_items={} structured={} content_preview={:?}",
             source.source_kind(),
             source.name(),
             source.transport(),
             tool_name,
             result.is_error,
             result.content.len(),
-            result.structured_content.is_some()
+            result.structured_content.is_some(),
+            truncate_for_mcp_log(&content, 500)
         );
-        let structured = serde_json::to_value(&result)?;
-        let content = mcp_tool_result_content(&structured);
         Ok(json!({
             "ok": result.is_error != Some(true),
             "content": content,
@@ -806,6 +807,18 @@ fn active_browser_source_from_descriptors(descriptors: &[Value]) -> &'static str
         return "host_browser_bridge";
     }
     "none"
+}
+
+fn truncate_for_mcp_log(value: &str, max_chars: usize) -> String {
+    let mut out = String::new();
+    for (idx, ch) in value.chars().enumerate() {
+        if idx >= max_chars {
+            out.push_str("...");
+            break;
+        }
+        out.push(ch);
+    }
+    out
 }
 
 fn mcp_tool_result_content(result: &Value) -> String {

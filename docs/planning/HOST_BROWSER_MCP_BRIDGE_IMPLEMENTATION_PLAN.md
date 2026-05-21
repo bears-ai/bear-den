@@ -100,6 +100,7 @@ mcp__host_browser__take_snapshot
 
 - Existing stdio MCP behavior remains unchanged.
 - Logs identify source kind for each discovered MCP server and tool.
+- Tool-call logs include a sanitized/truncated MCP result content preview when tools return errors, so host-vs-container runtime failures are visible without relying on model summaries.
 - Dynamic descriptors include source metadata.
 
 ## Phase 2: Add MCP Streamable HTTP client support
@@ -369,7 +370,7 @@ A Zed task can start the host bridge without making it a login service. Exact ho
 ## Rollout sequence
 
 1. Land documentation and current diagnostics.
-2. Add tests for existing MCP stdio registry and Docker TTY rewrite.
+2. Add tests for existing MCP stdio registry, Docker TTY rewrite, and MCP error-result content previews.
 3. Add Streamable HTTP MCP client support.
 4. Add `browser-bridge` mode with minimal browser MCP tools.
 5. Add container adapter host bridge registration.
