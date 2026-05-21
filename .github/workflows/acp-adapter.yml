@@ -18,6 +18,8 @@ on:
 
 env:
     CARGO_TERM_COLOR: always
+    BEARS_ACP_ADAPTER_MACOS_INSTALLER_IDENTITY: ${{ vars.MACOS_INSTALLER_CERT_IDENTITY_PUBLIC }}
+    BEARS_ACP_ADAPTER_MACOS_INSTALLER_TEAM_ID: ${{ vars.MACOS_INSTALLER_TEAM_ID }}
 
 permissions:
     contents: write
@@ -152,6 +154,36 @@ jobs:
               if: env.APP_STORE_CONNECT_API_KEY_BASE64 != '' && env.MACOS_INSTALLER_CERT_IDENTITY != ''
               run: ./packaging/macos/notarize.sh --pkg dist/macos/bears-acp-adapter-aarch64-apple-darwin.pkg
 
+            - name: Select public update channel
+              if: github.event_name == 'release'
+              run: |
+                  if [ "${{ github.event.release.prerelease }}" = "true" ]; then
+                    echo "UPDATE_CHANNEL=beta" >> "$GITHUB_ENV"
+                  else
+                    echo "UPDATE_CHANNEL=stable" >> "$GITHUB_ENV"
+                  fi
+
+            - name: Generate public update payload
+              if: github.event_name == 'release'
+              run: |
+                  mkdir -p "dist/update-site/bears-acp-adapter/$UPDATE_CHANNEL"
+                  cp dist/macos/bears-acp-adapter-aarch64-apple-darwin.pkg "dist/update-site/bears-acp-adapter/$UPDATE_CHANNEL/bears-acp-adapter-aarch64-apple-darwin.pkg"
+                  ./packaging/macos/generate-update-manifest.sh \
+                    --pkg "dist/update-site/bears-acp-adapter/$UPDATE_CHANNEL/bears-acp-adapter-aarch64-apple-darwin.pkg" \
+                    --output "dist/update-site/bears-acp-adapter/$UPDATE_CHANNEL/aarch64-apple-darwin.json" \
+                    --base-url "https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/bears-acp-adapter/$UPDATE_CHANNEL" \
+                    --channel "$UPDATE_CHANNEL" \
+                    --target aarch64-apple-darwin \
+                    --release-notes-url "${{ github.event.release.html_url }}"
+
+            - name: Upload public update payload artifact
+              if: github.event_name == 'release'
+              uses: actions/upload-artifact@v4
+              with:
+                  name: bears-acp-adapter-update-site
+                  path: dist/update-site
+                  if-no-files-found: error
+
             - name: Upload macOS package artifact
               uses: actions/upload-artifact@v4
               with:
@@ -163,4 +195,27 @@ jobs:
               if: github.event_name == 'release'
               uses: softprops/action-gh-release@v2
               with:
-                  files: dist/macos/bears-acp-adapter-aarch64-apple-darwin.pkg
+                  files: |
+                      dist/macos/bears-acp-adapter-aarch64-apple-darwin.pkg
+                      dist/update-site/bears-acp-adapter/${{ env.UPDATE_CHANNEL }}/aarch64-apple-darwin.json
+
+    publish-update-site:
+        name: Publish ACP adapter update site
+        runs-on: ubuntu-24.04
+        needs: macos-pkg
+        if: github.event_name == 'release'
+
+        steps:
+            - name: Download public update payload
+              uses: actions/download-artifact@v4
+              with:
+                  name: bears-acp-adapter-update-site
+                  path: dist/update-site
+
+            - name: Publish to gh-pages branch
+              uses: peaceiris/actions-gh-pages@v3
+              with:
+                  github_token: ${{ secrets.GITHUB_TOKEN }}
+                  publish_dir: dist/update-site
+                  publish_branch: gh-pages
+                  keep_files: true

@@ -4,9 +4,8 @@ use rmcp::{
     model::CallToolRequestParams,
     service::RunningService,
     transport::{
-        streamable_http_client::StreamableHttpClientTransportConfig,
-        StreamableHttpClientTransport,
-        ConfigureCommandExt, TokioChildProcess,
+        streamable_http_client::StreamableHttpClientTransportConfig, ConfigureCommandExt,
+        StreamableHttpClientTransport, TokioChildProcess,
     },
     RoleClient, ServiceExt,
 };

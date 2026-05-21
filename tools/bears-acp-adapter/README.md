@@ -94,6 +94,36 @@ bears-acp-adapter doctor
 
 `doctor` prints the installed command path, version/build metadata, OS/architecture, required environment status, Den `/version` reachability when configuration is valid, and copy/paste-ready ACP client environment hints.
 
+## Updates
+
+The macOS `.pkg` install can update itself by downloading and verifying a newer signed/notarized package from the public update manifest. Check for updates with:
+
+```bash
+bears-acp-adapter update-check
+```
+
+Install an available update with the macOS Installer GUI:
+
+```bash
+bears-acp-adapter update
+```
+
+For terminal-driven installs, use:
+
+```bash
+bears-acp-adapter update --install --yes
+```
+
+Update options:
+
+- `--channel <stable|beta>` selects the public update channel. The default is `BEARS_ACP_UPDATE_CHANNEL` or `stable`.
+- `--manifest-url <url>` overrides the manifest URL. The default stable arm64 macOS manifest is `https://theartificial.github.io/BEARS/bears-acp-adapter/stable/aarch64-apple-darwin.json`.
+- `--open` downloads, verifies, and opens the `.pkg` in macOS Installer.
+- `--install`/`--cli` downloads, verifies, and runs `sudo /usr/sbin/installer`.
+- `--download-only` downloads and verifies the `.pkg` without installing.
+
+Verification checks include the manifest SHA-256 digest, macOS package signature, optional expected Developer ID Installer identity/team ID, Gatekeeper install assessment, and stapled notarization ticket validation.
+
 You can also validate which Den server build the adapter reaches, without speaking ACP to the editor:
 
 ```bash

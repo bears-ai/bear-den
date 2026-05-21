@@ -5,6 +5,8 @@ fn main() {
     println!("cargo:rerun-if-env-changed=GITHUB_SHA");
     println!("cargo:rerun-if-env-changed=BEARS_ACP_ADAPTER_BUILD_SHA");
     println!("cargo:rerun-if-env-changed=SOURCE_DATE_EPOCH");
+    println!("cargo:rerun-if-env-changed=BEARS_ACP_ADAPTER_MACOS_INSTALLER_IDENTITY");
+    println!("cargo:rerun-if-env-changed=BEARS_ACP_ADAPTER_MACOS_INSTALLER_TEAM_ID");
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-changed=src/main.rs");
     println!("cargo:rerun-if-changed=../../.git/HEAD");
@@ -24,6 +26,9 @@ fn main() {
         .or_else(local_repo_head_sha)
         .unwrap_or_else(|| "unknown".to_string());
     println!("cargo:rustc-env=BEARS_ACP_ADAPTER_GIT_SHA={build_sha}");
+
+    forward_optional_env("BEARS_ACP_ADAPTER_MACOS_INSTALLER_IDENTITY");
+    forward_optional_env("BEARS_ACP_ADAPTER_MACOS_INSTALLER_TEAM_ID");
 }
 
 fn build_time_utc_rfc3339() -> String {
@@ -70,4 +75,12 @@ fn local_repo_head_sha() -> Option<String> {
         .filter(|output| output.status.success())
         .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_string())
         .filter(|s| !s.is_empty())
+}
+
+fn forward_optional_env(name: &str) {
+    if let Ok(value) = std::env::var(name) {
+        if !value.trim().is_empty() {
+            println!("cargo:rustc-env={name}={value}");
+        }
+    }
 }
