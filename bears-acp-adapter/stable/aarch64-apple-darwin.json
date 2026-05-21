@@ -1,15 +1,15 @@
 {
   "channel": "stable",
-  "version": "0.1.0",
+  "version": "0.1.2",
   "platforms": {
     "aarch64-apple-darwin": {
       "pkg_url": "https://TheArtificial.github.io/BEARS/bears-acp-adapter/stable/bears-acp-adapter-aarch64-apple-darwin.pkg",
-      "sha256": "5539006dc0a27dd23c6a717c68f96c870f76c4917961122a525f9296edac577e",
+      "sha256": "8ee6b1256e4f2d05fc1ce30d23a7acb5343ed8ddc784e502649a474a163369a9",
       "min_macos": "13.0",
-      "size": 6226701,
+      "size": 6229509,
       "package_identifier": "ai.bears.acp-adapter"
     }
   },
-  "release_notes_url": "https://github.com/TheArtificial/BEARS/releases/tag/v0.1.1",
+  "release_notes_url": "https://github.com/TheArtificial/BEARS/releases/tag/bears-acp-adapter/v0.1.2",
   "mandatory": false
 }

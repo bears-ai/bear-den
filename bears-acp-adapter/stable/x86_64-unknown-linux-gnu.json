@@ -1,0 +1,13 @@
+{
+  "channel": "stable",
+  "version": "0.1.2",
+  "platforms": {
+    "x86_64-unknown-linux-gnu": {
+      "binary_url": "https://TheArtificial.github.io/BEARS/bears-acp-adapter/stable/bears-acp-adapter-x86_64-unknown-linux-gnu",
+      "sha256": "f84ac0aafe846035f0f14f70e07974bbd59388d03b8ef7730d7187264141d25a",
+      "size": 19292288
+    }
+  },
+  "release_notes_url": "https://github.com/TheArtificial/BEARS/releases/tag/bears-acp-adapter/v0.1.2",
+  "mandatory": false
+}
