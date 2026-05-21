@@ -10,7 +10,7 @@ use rmcp::{
     RoleClient, ServiceExt,
 };
 use serde_json::{json, Map, Value};
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::{BTreeMap, HashMap}, sync::Arc};
 use tokio::sync::Mutex as TokioMutex;
 
 const DEFAULT_HOST_BROWSER_MCP_SERVER_NAME: &str = "host-browser";
@@ -508,11 +508,17 @@ impl McpRegistry {
         let mut sessions = self.sessions.lock().await;
         let tool_count = tools.len();
         let tool_names = tools.keys().cloned().collect::<Vec<_>>();
+        let source_counts = summarize_descriptor_source_counts(&descriptors);
+        let browser_source = active_browser_source_from_descriptors(&descriptors);
+        let browser_tool_count = count_browser_tools(&descriptors);
         sessions.insert(session_id.to_string(), McpSession { tools });
         eprintln!(
-            "bears-acp-adapter: acp_mcp_configure_complete session_id={} dynamic_tool_count={} dynamic_tool_names={:?}",
+            "bears-acp-adapter: acp_mcp_configure_complete session_id={} dynamic_tool_count={} browser_tool_count={} source_counts={} active_browser_source={} dynamic_tool_names={:?}",
             session_id,
             tool_count,
+            browser_tool_count,
+            serde_json::to_string(&source_counts).unwrap_or_else(|_| source_counts.to_string()),
+            browser_source,
             tool_names
         );
         Ok(json!({
@@ -752,6 +758,53 @@ fn mcp_client_tool_descriptor(provider_name: &str, source: &McpSourceConfig, too
     })
 }
 
+fn summarize_descriptor_source_counts(descriptors: &[Value]) -> Value {
+    let mut counts: BTreeMap<String, usize> = BTreeMap::new();
+    for descriptor in descriptors {
+        let source = descriptor
+            .pointer("/x_bears/source")
+            .and_then(Value::as_str)
+            .unwrap_or("unknown")
+            .to_string();
+        *counts.entry(source).or_default() += 1;
+    }
+    json!(counts)
+}
+
+fn count_browser_tools(descriptors: &[Value]) -> usize {
+    descriptors
+        .iter()
+        .filter(|descriptor| {
+            descriptor
+                .pointer("/x_bears/source")
+                .and_then(Value::as_str)
+                .is_some_and(|source| matches!(source, "client_forwarded" | "host_browser_bridge"))
+        })
+        .count()
+}
+
+fn active_browser_source_from_descriptors(descriptors: &[Value]) -> &'static str {
+    let has_client_forwarded = descriptors.iter().any(|descriptor| {
+        descriptor
+            .pointer("/x_bears/source")
+            .and_then(Value::as_str)
+            .is_some_and(|source| source == "client_forwarded")
+    });
+    if has_client_forwarded {
+        return "client_forwarded_mcp";
+    }
+    let has_host_bridge = descriptors.iter().any(|descriptor| {
+        descriptor
+            .pointer("/x_bears/source")
+            .and_then(Value::as_str)
+            .is_some_and(|source| source == "host_browser_bridge")
+    });
+    if has_host_bridge {
+        return "host_browser_bridge";
+    }
+    "none"
+}
+
 fn mcp_tool_result_content(result: &Value) -> String {
     let mut text = Vec::new();
     if let Some(items) = result.get("content").and_then(Value::as_array) {
@@ -765,5 +818,27 @@ fn mcp_tool_result_content(result: &Value) -> String {
         result.to_string()
     } else {
         text.join("\n")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn summarize_descriptor_source_counts_groups_by_source() {
+        let descriptors = vec![
+            json!({ "x_bears": { "source": "client_forwarded" } }),
+            json!({ "x_bears": { "source": "client_forwarded" } }),
+            json!({ "x_bears": { "source": "host_browser_bridge" } }),
+        ];
+        let counts = summarize_descriptor_source_counts(&descriptors);
+        assert_eq!(counts["client_forwarded"], 2);
+        assert_eq!(counts["host_browser_bridge"], 1);
+        assert_eq!(count_browser_tools(&descriptors), 3);
+        assert_eq!(
+            active_browser_source_from_descriptors(&descriptors),
+            "client_forwarded_mcp"
+        );
     }
 }

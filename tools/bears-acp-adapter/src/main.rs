@@ -4262,7 +4262,9 @@ async fn handle_local_slash_command(
         }
         LocalSlashCommand::Conversation => conversation_report(adapter_state, session_id),
         LocalSlashCommand::Capabilities => capabilities_report(adapter_state),
-        LocalSlashCommand::Runtime => runtime_report(http, config, shared_state, session_id).await,
+        LocalSlashCommand::Runtime => {
+            runtime_report(http, config, adapter_state, shared_state, session_id).await
+        }
         LocalSlashCommand::Status => {
             status_report(http, config, adapter_state, shared_state, session_id).await
         }
@@ -4290,13 +4292,77 @@ fn conversation_report(adapter_state: &AdapterState, session_id: &str) -> String
     )
 }
 
+fn descriptor_source_counts(descriptors: &[Value]) -> Value {
+    let mut counts = std::collections::BTreeMap::new();
+    for descriptor in descriptors {
+        let source = descriptor
+            .pointer("/x_bears/source")
+            .and_then(Value::as_str)
+            .unwrap_or("unknown")
+            .to_string();
+        *counts.entry(source).or_insert(0usize) += 1;
+    }
+    json!(counts)
+}
+
+fn browser_tool_source_summary(context: &SessionContext) -> Value {
+    let client_tools = context
+        .raw
+        .pointer("/mcp/client_tools")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let has_client_forwarded = client_tools.iter().any(|tool| {
+        tool.pointer("/x_bears/source")
+            .and_then(Value::as_str)
+            .is_some_and(|source| source == "client_forwarded")
+    });
+    let has_host_bridge = client_tools.iter().any(|tool| {
+        tool.pointer("/x_bears/source")
+            .and_then(Value::as_str)
+            .is_some_and(|source| source == "host_browser_bridge")
+    });
+    let chrome_available = chrome_tools_available();
+    let active_source = if has_client_forwarded {
+        "client_forwarded_mcp"
+    } else if has_host_bridge {
+        "host_browser_bridge"
+    } else if chrome_available {
+        "local_chrome_fallback"
+    } else {
+        "none"
+    };
+    let unavailable_reason = if active_source == "none" {
+        Some(chrome_capability_status_line())
+    } else {
+        None
+    };
+    json!({
+        "active_source": active_source,
+        "total_client_tools": client_tools.len(),
+        "source_counts": descriptor_source_counts(&client_tools),
+        "client_forwarded_mcp_tools": has_client_forwarded,
+        "host_browser_bridge_tools": has_host_bridge,
+        "local_chrome_fallback_available": chrome_available,
+        "chrome_capability": chrome_capability_status_line(),
+        "host_browser_bridge_env": host_browser_bridge_env_summary(),
+        "unavailable_reason": unavailable_reason,
+    })
+}
+
 fn capabilities_report(adapter_state: &AdapterState) -> String {
+    let context = SessionContext {
+        raw: json!({}),
+        ..Default::default()
+    };
     format!(
-        "BEARS ACP capabilities\n\nClient capabilities:\n{}\n\nAdapter direct tools:\n{}\n\nHost browser bridge env:\n{}",
+        "BEARS ACP capabilities\n\nClient capabilities:\n{}\n\nAdapter direct tools:\n{}\n\nBrowser tool source:\n{}\n\nHost browser bridge env:\n{}",
         serde_json::to_string_pretty(&adapter_state.client_capabilities)
             .unwrap_or_else(|_| adapter_state.client_capabilities.to_string()),
         serde_json::to_string_pretty(&direct_tools_context())
             .unwrap_or_else(|_| direct_tools_context().to_string()),
+        serde_json::to_string_pretty(&browser_tool_source_summary(&context))
+            .unwrap_or_else(|_| browser_tool_source_summary(&context).to_string()),
         serde_json::to_string_pretty(&host_browser_bridge_env_summary())
             .unwrap_or_else(|_| host_browser_bridge_env_summary().to_string()),
     )
@@ -4357,6 +4423,10 @@ fn render_status_report(
         "- MCP: {}",
         summarize_mcp_for_log(context.raw.get("mcp"))
     ));
+    lines.push(format!(
+        "- Browser tools: {}",
+        compact_json_for_status(&browser_tool_source_summary(context))
+    ));
     lines.join("\n")
 }
 
@@ -4381,10 +4451,18 @@ fn compact_json_for_status(value: &Value) -> String {
 async fn runtime_report(
     http: &reqwest::Client,
     config: &Config,
+    adapter_state: &AdapterState,
     shared_state: &AdapterSharedState,
     session_id: &str,
 ) -> String {
+    let context = client_context_for_doctor(adapter_state, session_id);
     let mut lines = vec!["BEARS ACP runtime".to_string(), String::new()];
+    lines.push("Browser tools:".to_string());
+    lines.push(
+        serde_json::to_string_pretty(&browser_tool_source_summary(&context))
+            .unwrap_or_else(|_| browser_tool_source_summary(&context).to_string()),
+    );
+    lines.push(String::new());
     match fetch_den_runtime_state(http, config, session_id).await {
         Ok(value) => {
             lines.push("Den runtime state:".to_string());
@@ -4486,7 +4564,7 @@ async fn acp_doctor_report(
         Err(err) => format!("not validated: {err:#}"),
     };
     format!(
-        "BEARS ACP doctor\n\nAdapter:\n- version: {}\n- git_sha: {}\n- contract: {} v{}\n\nDen:\n- api_url: {}\n- bear: {}\n- server: {}\n- token: {}\n\nClient capabilities:\n{}\n\nSession:\n- cwd: {}\n- roots: {}\n- resolved_conversation_id: {}\n\nDirect tools: {}\n\nHost browser bridge env:\n{}",
+        "BEARS ACP doctor\n\nAdapter:\n- version: {}\n- git_sha: {}\n- contract: {} v{}\n\nDen:\n- api_url: {}\n- bear: {}\n- server: {}\n- token: {}\n\nClient capabilities:\n{}\n\nSession:\n- cwd: {}\n- roots: {}\n- resolved_conversation_id: {}\n\nDirect tools: {}\n\nBrowser tool source:\n{}\n\nHost browser bridge env:\n{}",
         env!("CARGO_PKG_VERSION"),
         env!("BEARS_ACP_ADAPTER_GIT_SHA"),
         BEARS_ACP_ADAPTER_CONTRACT_NAME,
@@ -4500,6 +4578,8 @@ async fn acp_doctor_report(
         if context.roots.is_empty() { "<none>".to_string() } else { context.roots.join(", ") },
         context.resolved_conversation_id.as_deref().unwrap_or("<none>"),
         direct_tools_context(),
+        serde_json::to_string_pretty(&browser_tool_source_summary(context))
+            .unwrap_or_else(|_| browser_tool_source_summary(context).to_string()),
         host_browser_bridge_env_summary(),
     )
 }
@@ -4530,6 +4610,10 @@ async fn run_doctor(http: &reqwest::Client, runtime: &RuntimeConfig) -> Result<(
     }
     eprintln!("  direct_tools: {}", direct_tools_context());
     eprintln!("  chrome_tools: {}", chrome_capability_status_line());
+    eprintln!(
+        "  host_browser_bridge_env: {}",
+        host_browser_bridge_env_summary()
+    );
     eprintln!();
     eprintln!("{}", update_doctor_line(http).await);
     eprintln!();
@@ -10976,6 +11060,7 @@ mod tests {
         let response = client
             .post(format!("http://{addr}/mcp"))
             .header(reqwest::header::AUTHORIZATION, "Bearer secret-token")
+            .header(reqwest::header::ACCEPT, "application/json, text/event-stream")
             .json(&json!({
                 "jsonrpc": "2.0",
                 "id": 1,
@@ -10985,14 +11070,71 @@ mod tests {
             .send()
             .await
             .unwrap();
-        assert_ne!(response.status(), StatusCode::UNAUTHORIZED);
+        let status = response.status();
+        assert_ne!(status, StatusCode::UNAUTHORIZED);
         let body = response.text().await.unwrap();
-        assert!(
-            body.contains("browser_open")
-                || body.contains("browser_snapshot")
-                || body.contains("tools")
-        );
+        assert!(status.is_success(), "status={status} body={body}");
+        assert_ne!(body, "unauthorized");
 
         server.abort();
+    }
+
+    #[test]
+    fn browser_tool_source_summary_prefers_client_forwarded_then_host_bridge_then_local() {
+        let mut context = SessionContext::default();
+        context.raw = json!({
+            "mcp": {
+                "client_tools": [
+                    { "x_bears": { "source": "client_forwarded" } },
+                    { "x_bears": { "source": "host_browser_bridge" } }
+                ]
+            }
+        });
+        let summary = browser_tool_source_summary(&context);
+        assert_eq!(summary["active_source"], "client_forwarded_mcp");
+        assert_eq!(summary["total_client_tools"], 2);
+        assert_eq!(summary["source_counts"]["client_forwarded"], 1);
+        assert_eq!(summary["source_counts"]["host_browser_bridge"], 1);
+
+        context.raw = json!({
+            "mcp": {
+                "client_tools": [
+                    { "x_bears": { "source": "host_browser_bridge" } }
+                ]
+            }
+        });
+        let summary = browser_tool_source_summary(&context);
+        assert_eq!(summary["active_source"], "host_browser_bridge");
+        assert_eq!(summary["total_client_tools"], 1);
+        assert_eq!(summary["source_counts"]["host_browser_bridge"], 1);
+    }
+
+    #[tokio::test]
+    async fn runtime_report_includes_browser_tools_section() {
+        let http = reqwest::Client::new();
+        let config = Config {
+            api_url: "http://127.0.0.1:1".to_string(),
+            bear: "test-bear".to_string(),
+            token: "token-test".to_string(),
+            client: "zed".to_string(),
+        };
+        let mut adapter_state = AdapterState::default();
+        adapter_state.session_contexts.insert(
+            "session-1".to_string(),
+            SessionContext {
+                raw: json!({
+                    "mcp": {
+                        "client_tools": [
+                            { "x_bears": { "source": "host_browser_bridge" } }
+                        ]
+                    }
+                }),
+                ..Default::default()
+            },
+        );
+        let shared = test_shared_state();
+        let report = runtime_report(&http, &config, &adapter_state, &shared, "session-1").await;
+        assert!(report.contains("Browser tools:"));
+        assert!(report.contains("host_browser_bridge"));
     }
 }
