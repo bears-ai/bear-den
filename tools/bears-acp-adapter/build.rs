@@ -5,6 +5,7 @@ fn main() {
     println!("cargo:rerun-if-env-changed=GITHUB_SHA");
     println!("cargo:rerun-if-env-changed=BEARS_ACP_ADAPTER_BUILD_SHA");
     println!("cargo:rerun-if-env-changed=SOURCE_DATE_EPOCH");
+    println!("cargo:rerun-if-env-changed=BEARS_ACP_ADAPTER_RELEASE_VERSION");
     println!("cargo:rerun-if-env-changed=BEARS_ACP_ADAPTER_MACOS_INSTALLER_IDENTITY");
     println!("cargo:rerun-if-env-changed=BEARS_ACP_ADAPTER_MACOS_INSTALLER_TEAM_ID");
     println!("cargo:rerun-if-changed=build.rs");
@@ -14,6 +15,14 @@ fn main() {
 
     let built_at = build_time_utc_rfc3339();
     println!("cargo:rustc-env=BEARS_ACP_ADAPTER_BUILT_AT_UTC={built_at}");
+
+    let adapter_version = std::env::var("BEARS_ACP_ADAPTER_RELEASE_VERSION")
+        .ok()
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or_else(|| {
+            std::env::var("CARGO_PKG_VERSION").expect("CARGO_PKG_VERSION set by Cargo")
+        });
+    println!("cargo:rustc-env=BEARS_ACP_ADAPTER_VERSION={adapter_version}");
 
     let build_sha = std::env::var("BEARS_ACP_ADAPTER_BUILD_SHA")
         .ok()

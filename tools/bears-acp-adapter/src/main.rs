@@ -203,6 +203,10 @@ const MODE_WRITE: &str = "write";
 const BEARS_ACP_ADAPTER_CONTRACT_NAME: &str = "bears.acp.adapter";
 const BEARS_ACP_ADAPTER_CONTRACT_VERSION: u32 = 1;
 
+pub(crate) fn adapter_version() -> &'static str {
+    env!("BEARS_ACP_ADAPTER_VERSION")
+}
+
 impl ToolPolicy {
     fn risk(&self) -> &str {
         if self.create_files.is_some()
@@ -901,7 +905,7 @@ impl ServerHandler for BrowserBridgeServer {
         capabilities.tools = Some(Default::default());
         ServerInfo::new(capabilities)
         .with_server_info(
-            McpImplementation::new("bears-host-browser-bridge", env!("CARGO_PKG_VERSION"))
+            McpImplementation::new("bears-host-browser-bridge", adapter_version())
                 .with_title("BEARS Host Browser MCP Bridge")
                 .with_description("Browser-only MCP bridge served by bears-acp-adapter."),
         )
@@ -1164,7 +1168,7 @@ async fn run() -> Result<()> {
     let mut runtime = RuntimeConfig::from_env_and_args()?;
     eprintln!(
         "bears-acp-adapter: starting version={} build_git_sha={} built_at_utc={} local_head_sha={} ACP sessions=list/resume/load supported direct_tools={}",
-        env!("CARGO_PKG_VERSION"),
+        adapter_version(),
         env!("BEARS_ACP_ADAPTER_GIT_SHA"),
         env!("BEARS_ACP_ADAPTER_BUILT_AT_UTC"),
         local_head_sha(),
@@ -1523,7 +1527,7 @@ fn require_arg_value(flag: &str, value: Option<String>) -> Result<String> {
 fn print_version_to_stderr() {
     eprintln!(
         "bears-acp-adapter {}\nBuild git SHA: {}\nLocal HEAD SHA: {}\nACP sessions: list/resume/load; conversations bound via Den\nDirect tools: {}\nChrome tools: {}",
-        env!("CARGO_PKG_VERSION"),
+        adapter_version(),
         env!("BEARS_ACP_ADAPTER_GIT_SHA"),
         local_head_sha(),
         direct_tools_context(),
@@ -1566,7 +1570,7 @@ Usage: bears-acp-adapter --api-url <url> --bear <slug> [--client zed] [--token-e
 Options:\n  --api-url <url>        Den API origin, for example https://api.bears.example\n  --bear <slug>          Bear slug to chat with\n  --token <token>        Den ACP token with acp:chat scope\n  --token-env <env-var>  Read the Den bearer token from this environment variable\n  --client <name>        Client label: zed, opencode, or acp_adapter\n  --check-config         Validate configuration and exit without starting ACP stdio\n  --check-server         Fetch Den /version and exit without starting ACP stdio\n  doctor, --doctor       Run user-friendly setup checks and exit\n  update-check           Check for a newer signed macOS package\n  update                 Download, verify, and install/open a newer macOS package\n  browser-bridge         Serve browser-only MCP tools over local Streamable HTTP\n  --version              Show version/build behavior and exit\n  --help                 Show this help\n\n\
 Environment fallbacks:\n  BEARS_DEN_API_URL\n  BEARS_BEAR_SLUG\n  BEARS_DEN_TOKEN\n  BEARS_DEN_TOKEN_ENV\n  BEARS_ACP_CLIENT\n  BEARS_ACP_UPDATE_CHANNEL\n  BEARS_ACP_UPDATE_MANIFEST_URL\n\n\
 BEARS_DEN_API_URL should be the API origin only, not the full /acp/bears/... endpoint.",
-        env!("CARGO_PKG_VERSION"),
+        adapter_version(),
         env!("BEARS_ACP_ADAPTER_GIT_SHA"),
         local_head_sha()
     );
@@ -2337,7 +2341,7 @@ fn adapter_capabilities_context_with_client_mcp(has_client_mcp_tools: bool) -> V
     let chrome_supported = chrome_tools_available() && !has_client_mcp_tools;
     json!({
         "name": "bears-acp-adapter",
-        "version": env!("CARGO_PKG_VERSION"),
+        "version": adapter_version(),
         "git_sha": env!("BEARS_ACP_ADAPTER_GIT_SHA"),
         "built_at_utc": env!("BEARS_ACP_ADAPTER_BUILT_AT_UTC"),
         "api_contract": adapter_contract_context(),
@@ -2436,7 +2440,7 @@ fn ensure_session_context_capabilities(context: &mut SessionContext) {
             (has_client, has_host_bridge)
         })
         .unwrap_or((false, false));
-    context.raw["adapter_version"] = json!(env!("CARGO_PKG_VERSION"));
+    context.raw["adapter_version"] = json!(adapter_version());
     context.raw["adapter"] = adapter_capabilities_context_with_client_mcp(has_client_mcp_tools);
     context.raw["direct_tools"] =
         direct_tools_context_with_client_mcp(has_client_mcp_tools || has_host_browser_bridge_tools);
@@ -2471,7 +2475,7 @@ fn session_context_from_params(params: &Value) -> Result<SessionContext> {
     let raw = json!({
         "cwd": cwd,
         "workspace_roots": roots,
-        "adapter_version": env!("CARGO_PKG_VERSION"),
+        "adapter_version": adapter_version(),
         "adapter": adapter_capabilities_context(),
         "direct_tools": direct_tools_context(),
         "mcp_servers": mcp_sources
@@ -3019,8 +3023,7 @@ fn initialize_result(runtime: &RuntimeConfig) -> Result<Value> {
                 .resume(Some(SessionResumeCapabilities::new()))
                 .close(Some(SessionCloseCapabilities::new())),
         );
-    let info =
-        Implementation::new("bears", env!("CARGO_PKG_VERSION")).title(Some("BEARS".to_string()));
+    let info = Implementation::new("bears", adapter_version()).title(Some("BEARS".to_string()));
     let auth_methods = if runtime.should_advertise_auth_method() {
         vec![AuthMethod::EnvVar(
             AuthMethodEnvVar::new(
@@ -3171,7 +3174,7 @@ fn session_context_from_den_session(params: &Value, den_session: &Value) -> Resu
     ctx.raw = json!({
         "cwd": ctx.cwd.clone(),
         "workspace_roots": ctx.roots.clone(),
-        "adapter_version": env!("CARGO_PKG_VERSION"),
+        "adapter_version": adapter_version(),
         "adapter": adapter_capabilities_context(),
         "direct_tools": direct_tools_context(),
         "mcp_servers": ctx
@@ -3971,7 +3974,7 @@ async fn handle_prompt_with_retry(
             );
             SessionContext {
                 raw: json!({
-                    "adapter_version": env!("CARGO_PKG_VERSION"),
+                    "adapter_version": adapter_version(),
                     "adapter": adapter_capabilities_context(),
                     "direct_tools": direct_tools_context(),
                 }),
@@ -4504,7 +4507,7 @@ async fn status_report(
     {
         Ok(environment) => environment,
         Err(err) => json!({
-            "runtime": { "kind": "acp_adapter", "version": env!("CARGO_PKG_VERSION") },
+            "runtime": { "kind": "acp_adapter", "version": adapter_version() },
             "session": { "id": session_id },
             "services": { "den": { "status": "unavailable", "error": format!("{err:#}") } },
             "browser": Value::Null,
@@ -4591,7 +4594,7 @@ async fn version_report(http: &reqwest::Client, config: &Config) -> String {
     let host_bridge_env = host_browser_bridge_env_summary();
     format!(
         "BEARS ACP version\n\nAdapter: version={} git_sha={} built_at_utc={} contract={} v{}\nAdapter metadata:\n{}\n\nHost browser bridge env:\n{}\n\nDen: {}",
-        env!("CARGO_PKG_VERSION"),
+        adapter_version(),
         env!("BEARS_ACP_ADAPTER_GIT_SHA"),
         env!("BEARS_ACP_ADAPTER_BUILT_AT_UTC"),
         BEARS_ACP_ADAPTER_CONTRACT_NAME,
@@ -4633,7 +4636,7 @@ async fn acp_doctor_report(
     };
     format!(
         "BEARS ACP doctor\n\nAdapter:\n- version: {}\n- git_sha: {}\n- built_at_utc: {}\n- contract: {} v{}\n\nDen:\n- api_url: {}\n- bear: {}\n- server: {}\n- token: {}\n\nClient capabilities:\n{}\n\nSession:\n- cwd: {}\n- roots: {}\n- resolved_conversation_id: {}\n\nDirect tools: {}\n\nBrowser tool source:\n{}\n\nHost browser bridge env:\n{}\n\nSession MCP state:\n{}",
-        env!("CARGO_PKG_VERSION"),
+        adapter_version(),
         env!("BEARS_ACP_ADAPTER_GIT_SHA"),
         env!("BEARS_ACP_ADAPTER_BUILT_AT_UTC"),
         BEARS_ACP_ADAPTER_CONTRACT_NAME,
@@ -4673,7 +4676,7 @@ async fn run_doctor(http: &reqwest::Client, runtime: &RuntimeConfig) -> Result<(
     let mut failed = false;
     eprintln!("BEARS ACP Adapter Doctor\n");
     eprintln!("✓ Adapter binary runs");
-    eprintln!("  version: {}", env!("CARGO_PKG_VERSION"));
+    eprintln!("  version: {}", adapter_version());
     eprintln!("  build_git_sha: {}", env!("BEARS_ACP_ADAPTER_GIT_SHA"));
     eprintln!("  built_at_utc: {}", env!("BEARS_ACP_ADAPTER_BUILT_AT_UTC"));
     eprintln!("  local_head_sha: {}", local_head_sha());
@@ -6013,7 +6016,7 @@ async fn handle_tool_request_event(
             "structured_content": {},
             "diagnostic": {
                 "component": "bears-acp-adapter",
-                "adapter_version": env!("CARGO_PKG_VERSION"),
+                "adapter_version": adapter_version(),
                 "phase": "unexpected_den_server_tool_routed_to_adapter",
                 "session_id": session_id,
                 "tool_call_id": tool_call_id,
@@ -6087,7 +6090,7 @@ async fn handle_tool_request_event(
         "tool_name": tool_name,
         "diagnostic": {
             "component": "bears-acp-adapter",
-            "adapter_version": env!("CARGO_PKG_VERSION"),
+            "adapter_version": adapter_version(),
             "phase": "adapter_execution_started",
             "session_id": session_id,
             "tool_call_id": tool_call_id,
@@ -6400,7 +6403,7 @@ async fn post_local_tool_error_result(
         "structured_content": {},
         "diagnostic": {
             "component": "bears-acp-adapter",
-            "adapter_version": env!("CARGO_PKG_VERSION"),
+            "adapter_version": adapter_version(),
             "phase": "adapter_execution_failed",
             "session_id": session_id,
             "tool_call_id": tool_call_id,

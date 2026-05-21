@@ -139,13 +139,13 @@ pub async fn update_doctor_line(http: &reqwest::Client) -> String {
     match fetch_update_status(http, &options).await {
         Ok(status) if status.update_available => format!(
             "• Adapter update available: {} -> {}\n  Run: bears-acp-adapter update\n  Manifest: {}",
-            env!("CARGO_PKG_VERSION"),
+            crate::adapter_version(),
             status.manifest.version,
             status.manifest_url
         ),
         Ok(status) => format!(
             "✓ Adapter update check: current version {} is up to date for {} ({})",
-            env!("CARGO_PKG_VERSION"),
+            crate::adapter_version(),
             status.channel_label(),
             status.target
         ),
@@ -232,7 +232,7 @@ async fn fetch_update_status(
     })?;
     let platform = manifest.platforms.get(&target).cloned();
     let update_available = if platform.is_some() {
-        version_is_newer(&manifest.version, env!("CARGO_PKG_VERSION"))?
+        version_is_newer(&manifest.version, crate::adapter_version())?
     } else {
         false
     };
@@ -248,7 +248,7 @@ async fn fetch_update_status(
 
 fn print_update_status(status: &UpdateStatus) {
     eprintln!("BEARS ACP adapter update check\n");
-    eprintln!("Current version: {}", env!("CARGO_PKG_VERSION"));
+    eprintln!("Current version: {}", crate::adapter_version());
     eprintln!("Latest version:  {}", status.manifest.version);
     eprintln!("Channel:         {}", status.channel_label());
     eprintln!("Platform:        {}", status.target);
@@ -500,7 +500,7 @@ fn confirm_update(options: &UpdateOptions, status: &UpdateStatus) -> Result<bool
     eprintln!();
     eprintln!(
         "Update {} -> {} is available for {}.",
-        env!("CARGO_PKG_VERSION"),
+        crate::adapter_version(),
         status.manifest.version,
         status.target
     );
