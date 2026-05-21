@@ -840,6 +840,11 @@ fn mcp_tool_result_content(result: &Value) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use anyhow::Result;
+    use axum::{extract::State, response::IntoResponse, routing::post, Json, Router};
+    use http::StatusCode;
+    use serde_json::Value;
+    use std::sync::{Arc, Mutex};
 
     #[test]
     fn summarize_descriptor_source_counts_groups_by_source() {
@@ -856,5 +861,131 @@ mod tests {
             active_browser_source_from_descriptors(&descriptors),
             "client_forwarded_mcp"
         );
+    }
+
+    async fn mock_streamable_mcp_handler(
+        State(calls): State<Arc<Mutex<Vec<String>>>>,
+        Json(body): Json<Value>,
+    ) -> axum::response::Response {
+        let method = body
+            .get("method")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string();
+        calls.lock().unwrap().push(method.clone());
+        let id = body.get("id").cloned().unwrap_or(Value::Null);
+        let response = match method.as_str() {
+            "initialize" => json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "result": {
+                    "protocolVersion": "2025-03-26",
+                    "capabilities": { "tools": { "listChanged": false } },
+                    "serverInfo": { "name": "mock-host-browser", "version": "0.1.0" }
+                }
+            }),
+            "notifications/initialized" => return StatusCode::ACCEPTED.into_response(),
+            "tools/list" => json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "result": {
+                    "tools": [
+                        {
+                            "name": "browser_snapshot",
+                            "description": "Capture a browser snapshot.",
+                            "inputSchema": { "type": "object", "properties": {} }
+                        }
+                    ]
+                }
+            }),
+            "tools/call" => json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "result": {
+                    "content": [
+                        { "type": "text", "text": "snapshot ok" }
+                    ],
+                    "isError": false,
+                    "structuredContent": { "ok": true, "snapshot": "snapshot ok" }
+                }
+            }),
+            _ => json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "error": { "code": -32601, "message": format!("unsupported method {method}") }
+            }),
+        };
+        (StatusCode::OK, Json(response)).into_response()
+    }
+
+    async fn start_mock_streamable_mcp_server() -> Result<(String, Arc<Mutex<Vec<String>>>, tokio::task::JoinHandle<()>)> {
+        let calls = Arc::new(Mutex::new(Vec::new()));
+        let app = Router::new()
+            .route("/mcp", post(mock_streamable_mcp_handler))
+            .with_state(calls.clone());
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+        let addr = listener.local_addr()?;
+        let handle = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        Ok((format!("http://{addr}/mcp"), calls, handle))
+    }
+
+    #[tokio::test]
+    async fn host_browser_bridge_http_source_discovers_and_calls_tools() {
+        let (url, calls, handle) = start_mock_streamable_mcp_server().await.unwrap();
+        let registry = McpRegistry::default();
+        let source = McpSourceConfig::HostBrowserBridge {
+            name: "host-browser".to_string(),
+            url,
+            token: "secret-token".to_string(),
+        };
+
+        let context = registry
+            .configure_session("session-1", vec![source])
+            .await
+            .unwrap();
+        let tools = context["client_tools"].as_array().unwrap();
+        assert_eq!(tools.len(), 1);
+        assert_eq!(tools[0]["x_bears"]["source"], "host_browser_bridge");
+        assert_eq!(tools[0]["name"], "mcp__host_browser__browser_snapshot");
+
+        let result = registry
+            .call_tool(
+                "session-1",
+                "mcp__host_browser__browser_snapshot",
+                Value::Null,
+            )
+            .await
+            .unwrap();
+        assert_eq!(result["ok"], true);
+        assert_eq!(result["content"], "snapshot ok");
+
+        let methods = calls.lock().unwrap().clone();
+        assert!(methods.iter().any(|method| method == "initialize"));
+        assert!(methods.iter().any(|method| method == "tools/list"));
+        assert!(methods.iter().any(|method| method == "tools/call"));
+
+        handle.abort();
+    }
+
+    #[tokio::test]
+    async fn host_browser_bridge_http_source_reports_discovery_errors_without_panicking() {
+        let registry = McpRegistry::default();
+        let source = McpSourceConfig::HostBrowserBridge {
+            name: "host-browser".to_string(),
+            url: "http://127.0.0.1:9/mcp".to_string(),
+            token: "secret-token".to_string(),
+        };
+
+        let context = registry
+            .configure_session("session-2", vec![source])
+            .await
+            .unwrap();
+        assert_eq!(context["client_tools"].as_array().unwrap().len(), 0);
+        let servers = context["servers"].as_array().unwrap();
+        assert_eq!(servers.len(), 1);
+        assert_eq!(servers[0]["status"], "error");
+        assert_eq!(servers[0]["source"], "host_browser_bridge");
     }
 }

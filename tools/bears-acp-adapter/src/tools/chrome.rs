@@ -361,23 +361,46 @@ fn detect_chrome_capability() -> ChromeCapability {
         return ChromeCapability::ManagedLaunchable { executable };
     }
     ChromeCapability::Unavailable {
-        reason: "no BEARS_CHROME_CDP_URL/BEARS_BROWSER_CDP_URL configured and no local Chrome executable found".to_string(),
+        reason: "no BEARS_CHROME_CDP_URL/BEARS_BROWSER_CDP_URL configured, no BEARS_CHROME_EXECUTABLE/BEARS_BROWSER_EXECUTABLE override resolved, and no local Chrome executable found"
+            .to_string(),
     }
 }
 
-fn detect_local_chrome_executable() -> Option<PathBuf> {
+pub(crate) fn detect_local_chrome_executable() -> Option<PathBuf> {
+    for env_name in ["BEARS_CHROME_EXECUTABLE", "BEARS_BROWSER_EXECUTABLE"] {
+        if let Ok(raw) = std::env::var(env_name) {
+            let candidate = raw.trim();
+            if candidate.is_empty() {
+                continue;
+            }
+            if let Some(path) = resolve_executable(candidate) {
+                return Some(path);
+            }
+        }
+    }
+
     let candidates = [
         "google-chrome",
         "google-chrome-stable",
         "chromium",
         "chromium-browser",
         "chrome",
+        "msedge",
+        "microsoft-edge",
         "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+        "/Applications/Google Chrome Canary.app/Contents/MacOS/Google Chrome Canary",
         "/Applications/Chromium.app/Contents/MacOS/Chromium",
         "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
         "/usr/bin/google-chrome",
+        "/usr/bin/google-chrome-stable",
         "/usr/bin/chromium",
         "/usr/bin/chromium-browser",
+        "/usr/bin/microsoft-edge",
+        "/snap/bin/chromium",
+        "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
+        "C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe",
+        "C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe",
+        "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe",
     ];
     for candidate in candidates {
         if let Some(path) = resolve_executable(candidate) {
@@ -387,9 +410,19 @@ fn detect_local_chrome_executable() -> Option<PathBuf> {
     None
 }
 
-fn resolve_executable(candidate: &str) -> Option<PathBuf> {
+pub(crate) fn resolve_executable(candidate: &str) -> Option<PathBuf> {
+    let candidate = candidate.trim();
+    if candidate.is_empty() {
+        return None;
+    }
     let path = PathBuf::from(candidate);
     if path.is_absolute() {
+        return path.exists().then_some(path);
+    }
+    if candidate.contains(std::path::MAIN_SEPARATOR)
+        || candidate.contains('/')
+        || candidate.contains('\\')
+    {
         return path.exists().then_some(path);
     }
     let path_env = std::env::var_os("PATH")?;

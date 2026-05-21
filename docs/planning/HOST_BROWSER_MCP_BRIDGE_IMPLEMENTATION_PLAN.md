@@ -133,10 +133,11 @@ Authorization: Bearer <token>
 
 - Add command dispatch in `tools/bears-acp-adapter/src/main.rs` or equivalent:
 
-```/dev/null/browser-bridge-cli.txt#L1-3
+```/dev/null/browser-bridge-cli.txt#L1-4
 bears-acp-adapter browser-bridge \
-  --listen 127.0.0.1:9277 \
-  --token-env BEARS_BROWSER_BRIDGE_TOKEN
+  --bind 127.0.0.1:3766 \
+  --path /mcp \
+  --token "$BEARS_HOST_BROWSER_MCP_TOKEN"
 ```
 
 - In `browser-bridge` mode:
@@ -184,7 +185,13 @@ Currently exposed bridge tools are browser-only wrappers over the adapter’s ex
 - `browser_network_requests`
 - `browser_screenshot`
 
-Notable CLI detail: the implementation currently uses `--bind` rather than the earlier draft’s `--listen`.
+Notable implementation details:
+
+- the implementation uses `--bind` rather than the earlier draft’s `--listen`
+- host Chrome discovery can use either an existing CDP endpoint or a local executable
+- explicit executable overrides are now supported via:
+  - `BEARS_CHROME_EXECUTABLE`
+  - `BEARS_BROWSER_EXECUTABLE`
 
 ## Phase 4: Bridge security controls
 
@@ -352,14 +359,16 @@ session/prompt ... mcp_tool_count=...
 
 No launch-on-login is required. Operators start the bridge manually or via a task:
 
-```/dev/null/start-bridge.txt#L1
-BEARS_BROWSER_BRIDGE_TOKEN=<token> bears-acp-adapter browser-bridge --listen 127.0.0.1:9277
+```/dev/null/start-bridge.txt#L1-4
+BEARS_HOST_BROWSER_MCP_TOKEN=<token> \
+BEARS_CHROME_EXECUTABLE="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
+bears-acp-adapter browser-bridge --bind 127.0.0.1:3766 --path /mcp
 ```
 
 ### Container configuration
 
 ```/dev/null/container-config.txt#L1-2
-BEARS_HOST_BROWSER_MCP_URL=http://host.docker.internal:9277/mcp
+BEARS_HOST_BROWSER_MCP_URL=http://host.docker.internal:3766/mcp
 BEARS_HOST_BROWSER_MCP_TOKEN=<same-token>
 ```
 

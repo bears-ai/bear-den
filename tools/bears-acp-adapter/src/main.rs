@@ -11016,8 +11016,8 @@ mod tests {
 
     #[test]
     fn browser_bridge_config_requires_token() {
-        std::env::remove_var("BEARS_HOST_BROWSER_MCP_TOKEN");
-        let err = BrowserBridgeConfig::from_args(std::iter::empty()).unwrap_err();
+        let err = BrowserBridgeConfig::from_args(vec!["--token".to_string(), "".to_string()].into_iter())
+            .unwrap_err();
         assert!(format!("{err:#}").contains("requires a bearer token"));
     }
 
@@ -11027,6 +11027,46 @@ mod tests {
         assert_eq!(normalize_browser_bridge_path("/"), "/mcp");
         assert_eq!(normalize_browser_bridge_path("bridge"), "/bridge");
         assert_eq!(normalize_browser_bridge_path("/bridge/"), "/bridge");
+    }
+
+    #[test]
+    fn session_context_from_params_adds_host_browser_bridge_from_env() {
+        let previous_url = std::env::var("BEARS_HOST_BROWSER_MCP_URL").ok();
+        let previous_token = std::env::var("BEARS_HOST_BROWSER_MCP_TOKEN").ok();
+        let previous_name = std::env::var("BEARS_HOST_BROWSER_MCP_SERVER_NAME").ok();
+        std::env::set_var("BEARS_HOST_BROWSER_MCP_URL", "http://host.docker.internal:3766/mcp");
+        std::env::set_var("BEARS_HOST_BROWSER_MCP_TOKEN", "secret-token");
+        std::env::set_var("BEARS_HOST_BROWSER_MCP_SERVER_NAME", "host-browser");
+
+        let context = session_context_from_params(&json!({
+            "cwd": "/workspace",
+            "workspaceFolders": [{ "path": "/workspace" }]
+        }))
+        .unwrap();
+        assert!(context.mcp_sources.iter().any(|source| matches!(
+            source,
+            McpSourceConfig::HostBrowserBridge { name, url, token }
+                if name == "host-browser"
+                    && url == "http://host.docker.internal:3766/mcp"
+                    && token == "secret-token"
+        )));
+        assert_eq!(context.raw["host_browser_bridge"]["configured"], true);
+
+        if let Some(previous) = previous_url {
+            std::env::set_var("BEARS_HOST_BROWSER_MCP_URL", previous);
+        } else {
+            std::env::remove_var("BEARS_HOST_BROWSER_MCP_URL");
+        }
+        if let Some(previous) = previous_token {
+            std::env::set_var("BEARS_HOST_BROWSER_MCP_TOKEN", previous);
+        } else {
+            std::env::remove_var("BEARS_HOST_BROWSER_MCP_TOKEN");
+        }
+        if let Some(previous) = previous_name {
+            std::env::set_var("BEARS_HOST_BROWSER_MCP_SERVER_NAME", previous);
+        } else {
+            std::env::remove_var("BEARS_HOST_BROWSER_MCP_SERVER_NAME");
+        }
     }
 
     #[test]
@@ -11048,6 +11088,34 @@ mod tests {
             axum::http::HeaderValue::from_static("Bearer nope"),
         );
         assert!(!browser_bridge_authorized(&headers, &config));
+    }
+
+    #[test]
+    fn detect_local_chrome_executable_prefers_explicit_env_override() {
+        let previous_chrome = std::env::var("BEARS_CHROME_EXECUTABLE").ok();
+        let previous_browser = std::env::var("BEARS_BROWSER_EXECUTABLE").ok();
+        let temp = env::temp_dir().join(format!(
+            "bears-acp-adapter-chrome-override-{}",
+            std::process::id()
+        ));
+        fs::write(&temp, "").unwrap();
+        std::env::set_var("BEARS_CHROME_EXECUTABLE", &temp);
+        std::env::remove_var("BEARS_BROWSER_EXECUTABLE");
+
+        let detected = crate::tools::chrome::detect_local_chrome_executable();
+        assert_eq!(detected.as_deref(), Some(temp.as_path()));
+
+        if let Some(previous) = previous_chrome {
+            std::env::set_var("BEARS_CHROME_EXECUTABLE", previous);
+        } else {
+            std::env::remove_var("BEARS_CHROME_EXECUTABLE");
+        }
+        if let Some(previous) = previous_browser {
+            std::env::set_var("BEARS_BROWSER_EXECUTABLE", previous);
+        } else {
+            std::env::remove_var("BEARS_BROWSER_EXECUTABLE");
+        }
+        let _ = fs::remove_file(&temp);
     }
 
     #[test]
