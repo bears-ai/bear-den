@@ -120,7 +120,10 @@ install_bears_acp_adapter_from_source() {
   local install_dir="$1"
   if [ -f /workspace/tools/bears-acp-adapter/Cargo.toml ]; then
     echo "bears-acp-adapter: falling back to local source build" >&2
-    cargo build --release --locked --manifest-path /workspace/tools/bears-acp-adapter/Cargo.toml
+    if ! cargo build --release --locked --manifest-path /workspace/tools/bears-acp-adapter/Cargo.toml; then
+      echo "bears-acp-adapter: locked source build failed; retrying without --locked so Cargo.lock can be refreshed for this checkout" >&2
+      cargo build --release --manifest-path /workspace/tools/bears-acp-adapter/Cargo.toml
+    fi
     ln -sf /workspace/tools/bears-acp-adapter/target/release/bears-acp-adapter "${install_dir}/bears-acp-adapter"
   else
     echo "bears-acp-adapter: set BEARS_ACP_ADAPTER_MANIFEST_URL or BEARS_ACP_ADAPTER_VERSION, or install manually" >&2
@@ -131,7 +134,7 @@ install_bears_acp_adapter() {
   local version="${BEARS_ACP_ADAPTER_VERSION:-}"
   local channel="${BEARS_ACP_ADAPTER_CHANNEL:-stable}"
   local install_dir="${BEARS_ACP_ADAPTER_INSTALL_DIR:-/usr/local/bin}"
-  local arch triple asset manifest_url manifest_tmp url sha256 size parsed_version
+  local arch triple asset manifest_url manifest_tmp url sha256 size parsed_version cargo_version
 
   arch="$(uname -m)"
   case "${arch}" in
@@ -141,6 +144,10 @@ install_bears_acp_adapter() {
   esac
 
   asset="bears-acp-adapter-${triple}"
+  cargo_version=""
+  if [ -f /workspace/tools/bears-acp-adapter/Cargo.toml ]; then
+    cargo_version="$(sed -n 's/^version = "\([^"]*\)"/\1/p' /workspace/tools/bears-acp-adapter/Cargo.toml | head -n 1)"
+  fi
 
   if [ -z "${version}" ]; then
     manifest_url="${BEARS_ACP_ADAPTER_MANIFEST_URL:-https://theartificial.github.io/BEARS/bears-acp-adapter/${channel}/${triple}.json}"
@@ -182,7 +189,7 @@ PY
       echo "bears-acp-adapter: update manifest download failed for ${manifest_url}" >&2
     fi
     rm -f "${manifest_tmp}"
-    version="0.1.0"
+    version="${cargo_version:-0.1.0}"
   fi
 
   url="https://github.com/TheArtificial/BEARS/releases/download/bears-acp-adapter%2Fv${version}/${asset}"
