@@ -1,6 +1,6 @@
 # Codepool
 
-**BEARS harness runtime** (Letta Code SDK): warm **conversation** session pool, streaming endpoints for **Den**, optional **channel listener** hooks (see `src/channel-listeners.ts`), **`GET /internal/pool`** stats, and **`GET /metrics`** (Prometheus text, in-process counters).
+**BEARS harness runtime** (Letta Code SDK): warm **conversation-scoped runtime session** pool, streaming endpoints for **Den**, optional **channel listener** hooks (see `src/channel-listeners.ts`), **`GET /internal/pool`** stats, and **`GET /metrics`** (Prometheus text, in-process counters).
 
 - **Not** the Letta server — canonical git memfs is on the Letta volume, with Letta’s **`LETTA_MEMFS_SERVICE_URL`** pointing at **MemFS Manager** / **`bears-memfs-manager`**; this process uses **`LETTA_MEMFS_LOCAL=1`** and **`~/.letta`** in the container for the Letta Code CLI mirror.
 - First-class app service under **`services/codepool/`** (alongside **`services/den/`**).

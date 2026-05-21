@@ -1,6 +1,6 @@
 # Codepool — Coolify deployment
 
-**BEARS harness** (Letta Code SDK): warm conversation session pool, streaming endpoints for **Den**, optional channel listener hooks, **`GET /internal/pool`** metrics.
+**BEARS harness** (Letta Code SDK): warm conversation-scoped runtime session pool, streaming endpoints for **Den**, optional channel listener hooks, **`GET /internal/pool`** metrics.
 
 **Stack order:** Deploy **after** [Letta](../letta/COOLIFY_DEPLOY.md) (persistence API). Deploy **before or with** [Den](../den/COOLIFY_DEPLOY.md). See [DEPLOYMENT.md](../../docs/deployment/DEPLOYMENT.md).
 
