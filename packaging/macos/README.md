@@ -130,9 +130,11 @@ Generate a manifest manually with:
 
 On release events, `.github/workflows/acp-adapter.yml` uploads that payload to the `gh-pages` branch while preserving other channels. Non-prerelease releases publish to `stable`; prereleases publish to `beta`. Enable repository Pages from the `gh-pages` branch before relying on the default URL.
 
+Pushes to `main` automatically create and publish `bears-acp-adapter/v<version>` when the version in `tools/bears-acp-adapter/Cargo.toml` does not already have a matching tag. For example, bumping Cargo.toml to `0.1.2` and merging to `main` creates/reuses `bears-acp-adapter/v0.1.2`, uploads release assets, and publishes the update site. If the matching tag already exists, the push is treated as a normal build and no update site is published.
+
 Tag pushes matching `v*` or `bears-acp-adapter/v*` also build and publish the update site. The tag suffix becomes the adapter/package/manifest version, so `bears-acp-adapter/v0.1.1` publishes version `0.1.1`. Tags with a prerelease suffix such as `v0.1.1-beta.1` publish to `beta`; other tag pushes publish to `stable`.
 
-Manual workflow dispatches do not publish the public update site unless `publish_update_site` is checked. For a manual publish, choose the `stable` or `beta` `update_channel` input and optionally provide a `release_notes_url`.
+Manual workflow dispatches do not publish the public update site unless `create_release_from_cargo` or `publish_update_site` is checked. `create_release_from_cargo` creates/reuses `bears-acp-adapter/v<version>` from Cargo.toml and publishes the update site. For a manual publish without a release, check `publish_update_site`, choose the `stable` or `beta` `update_channel` input, and optionally provide a `release_notes_url`.
 
 Linux devcontainer installs can be controlled with:
 

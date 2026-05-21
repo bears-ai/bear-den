@@ -18,7 +18,7 @@ on:
     workflow_dispatch:
         inputs:
             create_release_from_cargo:
-                description: "Create/reuse bears-acp-adapter/v<version> from Cargo.toml and publish update site"
+                description: "Create/reuse bears-acp-adapter/v<version> from Cargo.toml and publish update site. Pushes to main do this automatically when the tag does not exist."
                 type: boolean
                 default: false
             publish_update_site:
@@ -95,6 +95,17 @@ jobs:
                     release_notes_url="https://github.com/${GITHUB_REPOSITORY}/releases/tag/${tag}"
                     publish_update_site="true"
                     create_release="true"
+                  elif [ "${{ github.event_name }}" = "push" ] && [ "${GITHUB_REF_TYPE:-}" = "branch" ] && [ "${GITHUB_REF_NAME:-}" = "main" ]; then
+                    candidate_tag="bears-acp-adapter/v${cargo_version}"
+                    if git ls-remote --exit-code --tags origin "refs/tags/${candidate_tag}" >/dev/null 2>&1; then
+                      echo "Cargo version ${cargo_version} already has tag ${candidate_tag}; not creating a release from this push."
+                    else
+                      tag="$candidate_tag"
+                      release_notes_url="https://github.com/${GITHUB_REPOSITORY}/releases/tag/${tag}"
+                      publish_update_site="true"
+                      create_release="true"
+                      echo "Cargo version ${cargo_version} has no ${candidate_tag} tag; this push will create and publish it."
+                    fi
                   elif [ "${{ inputs.publish_update_site }}" = "true" ]; then
                     publish_update_site="true"
                   fi
@@ -349,6 +360,30 @@ jobs:
                       --target "$target" \
                       --release-notes-url "$UPDATE_RELEASE_NOTES_URL"
                   done
+
+            - name: Validate public update payload metadata
+              if: env.PUBLISH_UPDATE_SITE == 'true'
+              run: |
+                  python3 - "dist/update-site/bears-acp-adapter/$UPDATE_CHANNEL" "$UPDATE_VERSION" <<'PY'
+                  import json
+                  import pathlib
+                  import sys
+
+                  root = pathlib.Path(sys.argv[1])
+                  expected = sys.argv[2]
+                  failed = False
+                  for manifest_path in sorted(root.glob("*.json")):
+                      manifest = json.loads(manifest_path.read_text())
+                      actual = manifest.get("version")
+                      if actual != expected:
+                          print(f"::error file={manifest_path}::manifest version {actual!r} != expected {expected!r}")
+                          failed = True
+                      if not manifest.get("platforms"):
+                          print(f"::error file={manifest_path}::manifest has no platforms")
+                          failed = True
+                  if failed:
+                      raise SystemExit(1)
+                  PY
 
             - name: Upload public update payload artifact
               if: env.PUBLISH_UPDATE_SITE == 'true'
