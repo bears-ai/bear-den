@@ -918,7 +918,8 @@ mod tests {
         (StatusCode::OK, Json(response)).into_response()
     }
 
-    async fn start_mock_streamable_mcp_server() -> Result<(String, Arc<Mutex<Vec<String>>>, tokio::task::JoinHandle<()>)> {
+    async fn start_mock_streamable_mcp_server(
+    ) -> Result<(String, Arc<Mutex<Vec<String>>>, tokio::task::JoinHandle<()>)> {
         let calls = Arc::new(Mutex::new(Vec::new()));
         let app = Router::new()
             .route("/mcp", post(mock_streamable_mcp_handler))

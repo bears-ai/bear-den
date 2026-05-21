@@ -141,6 +141,14 @@ jobs:
                   chmod +x dist/macos/bears-acp-adapter
                   file dist/macos/bears-acp-adapter
 
+            - name: Download Linux binaries for public update payload
+              if: github.event_name == 'release' || inputs.publish_update_site
+              uses: actions/download-artifact@v5
+              with:
+                  pattern: bears-acp-adapter-*-unknown-linux-gnu
+                  path: dist/input/linux
+                  merge-multiple: true
+
             - name: Import Apple signing certificates
               if: env.MACOS_CERTIFICATES_P12_BASE64 != ''
               run: |
@@ -193,15 +201,30 @@ jobs:
             - name: Generate public update payload
               if: github.event_name == 'release' || inputs.publish_update_site
               run: |
-                  mkdir -p "dist/update-site/bears-acp-adapter/$UPDATE_CHANNEL"
-                  cp dist/macos/bears-acp-adapter-aarch64-apple-darwin.pkg "dist/update-site/bears-acp-adapter/$UPDATE_CHANNEL/bears-acp-adapter-aarch64-apple-darwin.pkg"
+                  site_dir="dist/update-site/bears-acp-adapter/$UPDATE_CHANNEL"
+                  site_url="https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/bears-acp-adapter/$UPDATE_CHANNEL"
+                  mkdir -p "$site_dir"
+
+                  cp dist/macos/bears-acp-adapter-aarch64-apple-darwin.pkg "$site_dir/bears-acp-adapter-aarch64-apple-darwin.pkg"
                   ./packaging/macos/generate-update-manifest.sh \
-                    --pkg "dist/update-site/bears-acp-adapter/$UPDATE_CHANNEL/bears-acp-adapter-aarch64-apple-darwin.pkg" \
-                    --output "dist/update-site/bears-acp-adapter/$UPDATE_CHANNEL/aarch64-apple-darwin.json" \
-                    --base-url "https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/bears-acp-adapter/$UPDATE_CHANNEL" \
+                    --pkg "$site_dir/bears-acp-adapter-aarch64-apple-darwin.pkg" \
+                    --output "$site_dir/aarch64-apple-darwin.json" \
+                    --base-url "$site_url" \
                     --channel "$UPDATE_CHANNEL" \
                     --target aarch64-apple-darwin \
                     --release-notes-url "$UPDATE_RELEASE_NOTES_URL"
+
+                  for target in x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu; do
+                    asset="bears-acp-adapter-$target"
+                    cp "dist/input/linux/$asset" "$site_dir/$asset"
+                    ./packaging/macos/generate-update-manifest.sh \
+                      --binary "$site_dir/$asset" \
+                      --output "$site_dir/$target.json" \
+                      --base-url "$site_url" \
+                      --channel "$UPDATE_CHANNEL" \
+                      --target "$target" \
+                      --release-notes-url "$UPDATE_RELEASE_NOTES_URL"
+                  done
 
             - name: Upload public update payload artifact
               if: github.event_name == 'release' || inputs.publish_update_site

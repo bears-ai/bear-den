@@ -100,7 +100,13 @@ dist/update-site/bears-acp-adapter/<stable-or-beta>/
 The payload contains:
 
 - `bears-acp-adapter-aarch64-apple-darwin.pkg`
+- `bears-acp-adapter-x86_64-unknown-linux-gnu`
+- `bears-acp-adapter-aarch64-unknown-linux-gnu`
 - `aarch64-apple-darwin.json`
+- `x86_64-unknown-linux-gnu.json`
+- `aarch64-unknown-linux-gnu.json`
+
+The macOS manifest uses `pkg_url`. Linux manifests use `binary_url`; `.devcontainer/install-workspace-tools.sh` consumes those manifests to install the current adapter in Linux devcontainers.
 
 Generate a manifest manually with:
 
@@ -112,11 +118,28 @@ Generate a manifest manually with:
   --channel stable \
   --target aarch64-apple-darwin \
   --release-notes-url https://github.com/TheArtificial/BEARS/releases/latest
+
+./packaging/macos/generate-update-manifest.sh \
+  --binary dist/update-site/bears-acp-adapter/stable/bears-acp-adapter-x86_64-unknown-linux-gnu \
+  --output dist/update-site/bears-acp-adapter/stable/x86_64-unknown-linux-gnu.json \
+  --base-url https://theartificial.github.io/BEARS/bears-acp-adapter/stable \
+  --channel stable \
+  --target x86_64-unknown-linux-gnu \
+  --release-notes-url https://github.com/TheArtificial/BEARS/releases/latest
 ```
 
 On release events, `.github/workflows/acp-adapter.yml` uploads that payload to the `gh-pages` branch while preserving other channels. Non-prerelease releases publish to `stable`; prereleases publish to `beta`. Enable repository Pages from the `gh-pages` branch before relying on the default URL.
 
 Manual workflow dispatches do not publish the public update site unless `publish_update_site` is checked. For a manual publish, choose the `stable` or `beta` `update_channel` input and optionally provide a `release_notes_url`.
+
+Linux devcontainer installs can be controlled with:
+
+| Variable | Description |
+| --- | --- |
+| `BEARS_ACP_ADAPTER_CHANNEL` | Update channel for manifest-based installs, default `stable`. |
+| `BEARS_ACP_ADAPTER_MANIFEST_URL` | Override the exact Linux manifest URL. |
+| `BEARS_ACP_ADAPTER_VERSION` | Bypass the manifest and install a specific legacy GitHub Release asset version. |
+| `BEARS_ACP_ADAPTER_INSTALL_DIR` | Install directory, default `/usr/local/bin`. |
 
 For stricter updater signer verification, set repository variables used at build time:
 

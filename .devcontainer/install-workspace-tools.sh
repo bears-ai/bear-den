@@ -77,10 +77,61 @@ done
 printf 'export PATH="%s/bin:$PATH"\n' "${CARGO_HOME}" > /etc/profile.d/cargo.sh
 chmod -R a+w "${RUSTUP_HOME}" "${CARGO_HOME}"
 
+install_bears_acp_adapter_binary() {
+  local url="$1"
+  local install_dir="$2"
+  local expected_sha256="${3:-}"
+  local expected_size="${4:-}"
+  local tmp actual_sha256 actual_size
+
+  tmp="$(mktemp)"
+  echo "bears-acp-adapter: downloading ${url}"
+  if ! curl -fsSL "${url}" -o "${tmp}"; then
+    rm -f "${tmp}"
+    return 1
+  fi
+
+  if [ -n "${expected_size}" ]; then
+    actual_size="$(wc -c < "${tmp}" | tr -d '[:space:]')"
+    if [ "${actual_size}" != "${expected_size}" ]; then
+      rm -f "${tmp}"
+      echo "bears-acp-adapter: size mismatch for ${url}: expected ${expected_size}, got ${actual_size}" >&2
+      return 1
+    fi
+  fi
+
+  if [ -n "${expected_sha256}" ]; then
+    actual_sha256="$(sha256sum "${tmp}" | awk '{print $1}')"
+    if [ "${actual_sha256}" != "${expected_sha256}" ]; then
+      rm -f "${tmp}"
+      echo "bears-acp-adapter: SHA-256 mismatch for ${url}: expected ${expected_sha256}, got ${actual_sha256}" >&2
+      return 1
+    fi
+  fi
+
+  mkdir -p "${install_dir}"
+  install -m 0755 "${tmp}" "${install_dir}/bears-acp-adapter"
+  rm -f "${tmp}"
+  "${install_dir}/bears-acp-adapter" --help >/dev/null
+  echo "bears-acp-adapter: installed to ${install_dir}/bears-acp-adapter"
+}
+
+install_bears_acp_adapter_from_source() {
+  local install_dir="$1"
+  if [ -f /workspace/tools/bears-acp-adapter/Cargo.toml ]; then
+    echo "bears-acp-adapter: falling back to local source build" >&2
+    cargo build --release --locked --manifest-path /workspace/tools/bears-acp-adapter/Cargo.toml
+    ln -sf /workspace/tools/bears-acp-adapter/target/release/bears-acp-adapter "${install_dir}/bears-acp-adapter"
+  else
+    echo "bears-acp-adapter: set BEARS_ACP_ADAPTER_MANIFEST_URL or BEARS_ACP_ADAPTER_VERSION, or install manually" >&2
+  fi
+}
+
 install_bears_acp_adapter() {
-  local version="${BEARS_ACP_ADAPTER_VERSION:-0.1.0}"
+  local version="${BEARS_ACP_ADAPTER_VERSION:-}"
+  local channel="${BEARS_ACP_ADAPTER_CHANNEL:-stable}"
   local install_dir="${BEARS_ACP_ADAPTER_INSTALL_DIR:-/usr/local/bin}"
-  local arch triple asset url tmp
+  local arch triple asset manifest_url manifest_tmp url sha256 size parsed_version
 
   arch="$(uname -m)"
   case "${arch}" in
@@ -90,26 +141,55 @@ install_bears_acp_adapter() {
   esac
 
   asset="bears-acp-adapter-${triple}"
-  url="https://github.com/TheArtificial/BEARS/releases/download/bears-acp-adapter%2Fv${version}/${asset}"
-  tmp="$(mktemp)"
 
-  echo "bears-acp-adapter: installing ${asset} from ${url}"
-  if curl -fsSL "${url}" -o "${tmp}"; then
-    mkdir -p "${install_dir}"
-    install -m 0755 "${tmp}" "${install_dir}/bears-acp-adapter"
-    rm -f "${tmp}"
-    "${install_dir}/bears-acp-adapter" --help >/dev/null
-    echo "bears-acp-adapter: installed to ${install_dir}/bears-acp-adapter"
-  else
-    rm -f "${tmp}"
-    echo "bears-acp-adapter: release download failed for ${url}" >&2
-    if [ -f /workspace/tools/bears-acp-adapter/Cargo.toml ]; then
-      echo "bears-acp-adapter: falling back to local source build" >&2
-      cargo build --release --locked --manifest-path /workspace/tools/bears-acp-adapter/Cargo.toml
-      ln -sf /workspace/tools/bears-acp-adapter/target/release/bears-acp-adapter "${install_dir}/bears-acp-adapter"
+  if [ -z "${version}" ]; then
+    manifest_url="${BEARS_ACP_ADAPTER_MANIFEST_URL:-https://theartificial.github.io/BEARS/bears-acp-adapter/${channel}/${triple}.json}"
+    manifest_tmp="$(mktemp)"
+    echo "bears-acp-adapter: checking ${channel} manifest ${manifest_url}"
+    if curl -fsSL "${manifest_url}" -o "${manifest_tmp}"; then
+      if mapfile -t manifest_values < <(python3 - "${manifest_tmp}" "${triple}" <<'PY'
+import json
+import sys
+
+path, target = sys.argv[1], sys.argv[2]
+with open(path, "r", encoding="utf-8") as f:
+    manifest = json.load(f)
+platform = manifest.get("platforms", {}).get(target)
+if not platform:
+    raise SystemExit(f"manifest does not contain target {target}")
+url = platform.get("binary_url")
+if not url:
+    raise SystemExit("manifest target does not contain binary_url")
+print(manifest.get("version", ""))
+print(url)
+print(platform.get("sha256", ""))
+print(platform.get("size", ""))
+PY
+      ); then
+        parsed_version="${manifest_values[0]:-}"
+        url="${manifest_values[1]:-}"
+        sha256="${manifest_values[2]:-}"
+        size="${manifest_values[3]:-}"
+        echo "bears-acp-adapter: installing ${asset} version ${parsed_version:-unknown} from update manifest"
+        if install_bears_acp_adapter_binary "${url}" "${install_dir}" "${sha256}" "${size}"; then
+          rm -f "${manifest_tmp}"
+          return 0
+        fi
+      else
+        echo "bears-acp-adapter: could not parse update manifest ${manifest_url}" >&2
+      fi
     else
-      echo "bears-acp-adapter: set BEARS_ACP_ADAPTER_VERSION to an existing release, or install manually" >&2
+      echo "bears-acp-adapter: update manifest download failed for ${manifest_url}" >&2
     fi
+    rm -f "${manifest_tmp}"
+    version="0.1.0"
+  fi
+
+  url="https://github.com/TheArtificial/BEARS/releases/download/bears-acp-adapter%2Fv${version}/${asset}"
+  echo "bears-acp-adapter: installing ${asset} from release fallback ${url}"
+  if ! install_bears_acp_adapter_binary "${url}" "${install_dir}"; then
+    echo "bears-acp-adapter: release download failed for ${url}" >&2
+    install_bears_acp_adapter_from_source "${install_dir}"
   fi
 }
 

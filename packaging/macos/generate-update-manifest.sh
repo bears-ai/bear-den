@@ -3,15 +3,19 @@ set -eu
 
 usage() {
   cat <<'USAGE'
-Usage: generate-update-manifest.sh --pkg <path> --output <path> --base-url <url> [options]
+Usage: generate-update-manifest.sh (--pkg <path> | --binary <path>) --output <path> --base-url <url> [options]
 
-Generate the public update manifest consumed by `bears-acp-adapter update-check` and
-`bears-acp-adapter update`.
+Generate a public update manifest for `bears-acp-adapter`.
+
+macOS manifests use `pkg_url` and are consumed by `bears-acp-adapter update-check` and
+`bears-acp-adapter update`. Linux manifests use `binary_url` and are consumed by
+`.devcontainer/install-workspace-tools.sh`.
 
 Options:
-  --pkg <path>                  Path to the signed/notarized .pkg (required)
+  --pkg <path>                  Path to the signed/notarized .pkg
+  --binary <path>               Path to a Linux adapter binary
   --output <path>               Manifest output path (required)
-  --base-url <url>              Public directory URL containing the .pkg (required)
+  --base-url <url>              Public directory URL containing the asset (required)
   --channel <name>              Update channel (default: stable)
   --version <version>           Adapter/package version (default: read from Cargo.toml)
   --target <triple>             Platform target (default: aarch64-apple-darwin)
@@ -25,6 +29,7 @@ USAGE
 
 repo_root="$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)"
 pkg=""
+binary=""
 output=""
 base_url=""
 channel="stable"
@@ -39,6 +44,10 @@ while [ "$#" -gt 0 ]; do
   case "$1" in
     --pkg)
       pkg="${2:-}"
+      shift 2
+      ;;
+    --binary)
+      binary="${2:-}"
       shift 2
       ;;
     --output)
@@ -89,8 +98,24 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 
-if [ -z "$pkg" ] || [ ! -f "$pkg" ]; then
-  echo "generate-update-manifest.sh: --pkg is required and must point to a file" >&2
+if [ -n "$pkg" ] && [ -n "$binary" ]; then
+  echo "generate-update-manifest.sh: pass either --pkg or --binary, not both" >&2
+  exit 2
+fi
+
+if [ -n "$pkg" ]; then
+  asset="$pkg"
+  url_field="pkg_url"
+elif [ -n "$binary" ]; then
+  asset="$binary"
+  url_field="binary_url"
+else
+  echo "generate-update-manifest.sh: either --pkg or --binary is required" >&2
+  exit 2
+fi
+
+if [ ! -f "$asset" ]; then
+  echo "generate-update-manifest.sh: asset not found: $asset" >&2
   exit 2
 fi
 
@@ -122,20 +147,21 @@ case "$mandatory" in
 esac
 
 base_url="$(printf '%s' "$base_url" | sed 's:/*$::')"
-pkg_name="$(basename -- "$pkg")"
-sha256="$(shasum -a 256 "$pkg" | awk '{print $1}')"
-size="$(wc -c < "$pkg" | tr -d '[:space:]')"
-pkg_url="$base_url/$pkg_name"
+asset_name="$(basename -- "$asset")"
+sha256="$(shasum -a 256 "$asset" | awk '{print $1}')"
+size="$(wc -c < "$asset" | tr -d '[:space:]')"
+asset_url="$base_url/$asset_name"
 
 mkdir -p "$(dirname -- "$output")"
 
-cat > "$output" <<JSON
+if [ "$url_field" = "pkg_url" ]; then
+  cat > "$output" <<JSON
 {
   "channel": "$channel",
   "version": "$version",
   "platforms": {
     "$target": {
-      "pkg_url": "$pkg_url",
+      "pkg_url": "$asset_url",
       "sha256": "$sha256",
       "min_macos": "$min_macos",
       "size": $size,
@@ -146,5 +172,22 @@ cat > "$output" <<JSON
   "mandatory": $mandatory
 }
 JSON
+else
+  cat > "$output" <<JSON
+{
+  "channel": "$channel",
+  "version": "$version",
+  "platforms": {
+    "$target": {
+      "binary_url": "$asset_url",
+      "sha256": "$sha256",
+      "size": $size
+    }
+  },
+  "release_notes_url": "$release_notes_url",
+  "mandatory": $mandatory
+}
+JSON
+fi
 
 echo "generate-update-manifest.sh: wrote $output"

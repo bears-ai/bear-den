@@ -106,7 +106,8 @@ struct UpdateManifest {
 
 #[derive(Clone, Debug, Deserialize)]
 struct UpdatePlatform {
-    pkg_url: String,
+    pkg_url: Option<String>,
+    binary_url: Option<String>,
     sha256: String,
     min_macos: Option<String>,
     size: Option<u64>,
@@ -259,10 +260,15 @@ fn print_update_status(status: &UpdateStatus) {
         eprintln!("Mandatory:       yes");
     }
     if let Some(platform) = status.platform.as_ref() {
-        eprintln!("Package URL:     {}", platform.pkg_url);
-        eprintln!("Package SHA256:  {}", platform.sha256);
+        if let Some(pkg_url) = platform.pkg_url.as_deref() {
+            eprintln!("Package URL:     {pkg_url}");
+        }
+        if let Some(binary_url) = platform.binary_url.as_deref() {
+            eprintln!("Binary URL:      {binary_url}");
+        }
+        eprintln!("Asset SHA256:    {}", platform.sha256);
         if let Some(size) = platform.size {
-            eprintln!("Package size:    {size} bytes");
+            eprintln!("Asset size:      {size} bytes");
         }
         if let Some(min_macos) = platform.min_macos.as_deref() {
             eprintln!("Minimum macOS:   {min_macos}");
@@ -299,12 +305,12 @@ async fn download_update_pkg(
     platform: &UpdatePlatform,
     target: &str,
 ) -> Result<PathBuf> {
-    let pkg_url = reqwest::Url::parse(&platform.pkg_url).with_context(|| {
-        format!(
-            "invalid package URL in update manifest: {}",
-            platform.pkg_url
-        )
-    })?;
+    let raw_pkg_url = platform
+        .pkg_url
+        .as_deref()
+        .ok_or_else(|| anyhow!("macOS package manifest is missing pkg_url"))?;
+    let pkg_url = reqwest::Url::parse(raw_pkg_url)
+        .with_context(|| format!("invalid package URL in update manifest: {raw_pkg_url}"))?;
     let filename = pkg_url
         .path_segments()
         .and_then(|mut segments| segments.next_back())
@@ -314,7 +320,7 @@ async fn download_update_pkg(
     let dir = create_update_download_dir()?;
     let pkg_path = dir.join(filename);
 
-    eprintln!("Downloading {}", platform.pkg_url);
+    eprintln!("Downloading {raw_pkg_url}");
     let response = http
         .get(pkg_url)
         .send()

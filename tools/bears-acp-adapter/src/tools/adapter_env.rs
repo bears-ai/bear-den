@@ -1,6 +1,6 @@
 use crate::{
-    adapter_capabilities_context, browser_tool_source_summary, direct_tools_context, session_context,
-    AdapterState, Config,
+    adapter_capabilities_context, browser_tool_source_summary, direct_tools_context,
+    session_context, AdapterState, Config,
 };
 use anyhow::Result;
 use reqwest::header::{HeaderValue, AUTHORIZATION};
@@ -76,11 +76,7 @@ pub(crate) async fn collect_bear_environment(
         }
     }
 
-    let diagnostics_status = if !errors.is_empty() {
-        "degraded"
-    } else {
-        "ok"
-    };
+    let diagnostics_status = if !errors.is_empty() { "degraded" } else { "ok" };
 
     let mut response = json!({
         "bear": {

@@ -74,6 +74,9 @@ use tools::chrome::{
 };
 use tower_service::Service;
 
+use tools::adapter_env::{
+    collect_bear_environment, fetch_den_runtime_state, handle_bear_environment,
+};
 use tools::fs::{
     handle_apply_patch, handle_copy_path, handle_create_directory, handle_create_text_file,
     handle_delete_path, handle_find_paths, handle_list_directory, handle_move_path,
@@ -84,7 +87,6 @@ use tools::git::{
     handle_git_add, handle_git_commit, handle_git_diff, handle_git_log, handle_git_restore,
     handle_git_show, handle_git_stash, handle_git_status,
 };
-use tools::adapter_env::{collect_bear_environment, fetch_den_runtime_state, handle_bear_environment};
 use tools::mcp::{
     host_browser_bridge_config_from_env, host_browser_bridge_env_summary, parse_acp_mcp_servers,
     summarize_acp_mcp_servers_param, McpRegistry, McpSourceConfig,
@@ -2819,14 +2821,9 @@ async fn execute_local_tool(
             )
             .await
         }
-        "bear_environment" => handle_bear_environment(
-            adapter_state,
-            session_id,
-            None,
-            None,
-            &args,
-        )
-        .await,
+        "bear_environment" => {
+            handle_bear_environment(adapter_state, session_id, None, None, &args).await
+        }
         "local_web_fetch" => handle_local_web_fetch(session_id, &args, policy).await,
         "chrome_open" => handle_chrome_open(&args, policy).await,
         "chrome_snapshot" => handle_chrome_snapshot(&args, policy).await,
@@ -4408,10 +4405,7 @@ fn capabilities_report(adapter_state: &AdapterState) -> String {
     )
 }
 
-fn render_status_report(
-    environment: &Value,
-    tasks: &[tool_tasks::ToolTaskRecord],
-) -> String {
+fn render_status_report(environment: &Value, tasks: &[tool_tasks::ToolTaskRecord]) -> String {
     let mut lines = vec!["BEARS ACP status".to_string(), String::new()];
     lines.push(format!(
         "- Overall: {}",
@@ -4443,7 +4437,9 @@ fn render_status_report(
         environment
             .pointer("/session/resolved_conversation_id")
             .and_then(Value::as_str)
-            .or_else(|| environment.pointer("/session/conversation_id").and_then(Value::as_str))
+            .or_else(|| environment
+                .pointer("/session/conversation_id")
+                .and_then(Value::as_str))
             .unwrap_or("<den-selected>")
     ));
     let den = environment.pointer("/services/den").unwrap_or(&Value::Null);
@@ -4474,7 +4470,10 @@ fn render_status_report(
                 .unwrap_or(&Value::Null)
         )
     ));
-    if let Some(warnings) = environment.pointer("/diagnostics/warnings").and_then(Value::as_array) {
+    if let Some(warnings) = environment
+        .pointer("/diagnostics/warnings")
+        .and_then(Value::as_array)
+    {
         for warning in warnings.iter().take(3) {
             if let Some(text) = warning.as_str() {
                 lines.push(format!("- Warning: {text}"));
@@ -11085,8 +11084,9 @@ mod tests {
 
     #[test]
     fn browser_bridge_config_requires_token() {
-        let err = BrowserBridgeConfig::from_args(vec!["--token".to_string(), "".to_string()].into_iter())
-            .unwrap_err();
+        let err =
+            BrowserBridgeConfig::from_args(vec!["--token".to_string(), "".to_string()].into_iter())
+                .unwrap_err();
         assert!(format!("{err:#}").contains("requires a bearer token"));
     }
 
@@ -11103,7 +11103,10 @@ mod tests {
         let previous_url = std::env::var("BEARS_HOST_BROWSER_MCP_URL").ok();
         let previous_token = std::env::var("BEARS_HOST_BROWSER_MCP_TOKEN").ok();
         let previous_name = std::env::var("BEARS_HOST_BROWSER_MCP_SERVER_NAME").ok();
-        std::env::set_var("BEARS_HOST_BROWSER_MCP_URL", "http://host.docker.internal:3766/mcp");
+        std::env::set_var(
+            "BEARS_HOST_BROWSER_MCP_URL",
+            "http://host.docker.internal:3766/mcp",
+        );
         std::env::set_var("BEARS_HOST_BROWSER_MCP_TOKEN", "secret-token");
         std::env::set_var("BEARS_HOST_BROWSER_MCP_SERVER_NAME", "host-browser");
 
@@ -11447,10 +11450,7 @@ mod tests {
         assert_eq!(value["session"]["id"], "session-1");
         assert_eq!(value["session"]["cwd"], "/workspace");
         assert_eq!(value["runtime"]["kind"], "acp_adapter");
-        assert_eq!(
-            value["browser"]["active_source"],
-            "host_browser_bridge"
-        );
+        assert_eq!(value["browser"]["active_source"], "host_browser_bridge");
         assert_eq!(
             value["environment_variants"]["acp_adapter"]["session_mcp"]["servers"][0]["source"],
             "host_browser_bridge"
