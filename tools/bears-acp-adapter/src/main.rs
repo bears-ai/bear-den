@@ -84,7 +84,7 @@ use tools::git::{
     handle_git_add, handle_git_commit, handle_git_diff, handle_git_log, handle_git_restore,
     handle_git_show, handle_git_stash, handle_git_status,
 };
-use tools::adapter_env::handle_adapter_env_inspect;
+use tools::adapter_env::handle_bear_environment;
 use tools::mcp::{
     host_browser_bridge_config_from_env, host_browser_bridge_env_summary, parse_acp_mcp_servers,
     summarize_acp_mcp_servers_param, McpRegistry, McpSourceConfig,
@@ -2355,7 +2355,7 @@ fn adapter_capabilities_context_with_client_mcp(has_client_mcp_tools: bool) -> V
             "git_stash": { "supported": true, "version": 1 },
             "process_run": { "supported": true, "version": 1 },
             "terminal_run_command": { "supported": true, "version": 1 },
-            "bears_adapter_env": { "supported": true, "version": 1 },
+            "bear_environment": { "supported": true, "version": 1 },
             "chrome_open": { "supported": chrome_supported, "version": 1, "fallback_disabled_reason": if has_client_mcp_tools { "external_browser_mcp_tools_present" } else { "" } },
             "chrome_snapshot": { "supported": chrome_supported, "version": 1, "fallback_disabled_reason": if has_client_mcp_tools { "external_browser_mcp_tools_present" } else { "" } },
             "chrome_console_messages": { "supported": chrome_supported, "version": 1, "fallback_disabled_reason": if has_client_mcp_tools { "external_browser_mcp_tools_present" } else { "" } },
@@ -2394,7 +2394,7 @@ fn direct_tools_context_with_client_mcp(has_client_mcp_tools: bool) -> Value {
         "git_stash": true,
         "process_run": true,
         "terminal_run_command": true,
-        "bears_adapter_env": true,
+        "bear_environment": true,
         "chrome_open": chrome_available,
         "chrome_snapshot": chrome_available,
         "chrome_console_messages": chrome_available,
@@ -2819,7 +2819,7 @@ async fn execute_local_tool(
             )
             .await
         }
-        "bears_adapter_env" => handle_adapter_env_inspect(adapter_state, session_id, &args).await,
+        "bear_environment" => handle_bear_environment(adapter_state, session_id, &args).await,
         "local_web_fetch" => handle_local_web_fetch(session_id, &args, policy).await,
         "chrome_open" => handle_chrome_open(&args, policy).await,
         "chrome_snapshot" => handle_chrome_snapshot(&args, policy).await,
@@ -7238,11 +7238,11 @@ fn tool_display(tool_name: &str) -> ToolDisplay {
             "Running terminal command in",
             "run this terminal command",
         ),
-        "bears_adapter_env" => ToolDisplay::builtin(
-            "Inspect BEARS adapter environment",
+        "bear_environment" => ToolDisplay::builtin(
+            "Inspect bear environment",
             ToolKind::Read,
-            "Inspecting adapter environment for",
-            "inspect the BEARS adapter environment",
+            "Inspecting bear environment for",
+            "inspect the bear environment",
         ),
         "chrome_open" => ToolDisplay::builtin(
             "Chrome open",
@@ -11377,7 +11377,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn adapter_env_inspect_reports_session_and_mcp_state() {
+    async fn bear_environment_reports_session_and_mcp_state() {
         let mut adapter_state = AdapterState::default();
         adapter_state.client_capabilities = json!({ "client": "zed" });
         adapter_state.session_contexts.insert(
@@ -11399,7 +11399,7 @@ mod tests {
             },
         );
 
-        let value = handle_adapter_env_inspect(
+        let value = handle_bear_environment(
             &adapter_state,
             "session-1",
             &json!({
@@ -11412,14 +11412,18 @@ mod tests {
 
         assert_eq!(value["session"]["id"], "session-1");
         assert_eq!(value["session"]["cwd"], "/workspace");
+        assert_eq!(value["runtime"]["kind"], "acp_adapter");
         assert_eq!(
-            value["browser_tool_source"]["active_source"],
+            value["browser"]["active_source"],
             "host_browser_bridge"
         );
         assert_eq!(
-            value["session"]["mcp"]["servers"][0]["source"],
+            value["environment_variants"]["acp_adapter"]["session_mcp"]["servers"][0]["source"],
             "host_browser_bridge"
         );
-        assert_eq!(value["client_capabilities"]["client"], "zed");
+        assert_eq!(
+            value["environment_variants"]["acp_adapter"]["client_capabilities"]["client"],
+            "zed"
+        );
     }
 }
