@@ -84,7 +84,7 @@ use tools::git::{
     handle_git_add, handle_git_commit, handle_git_diff, handle_git_log, handle_git_restore,
     handle_git_show, handle_git_stash, handle_git_status,
 };
-use tools::adapter_env::handle_bear_environment;
+use tools::adapter_env::{collect_bear_environment, fetch_den_runtime_state, handle_bear_environment};
 use tools::mcp::{
     host_browser_bridge_config_from_env, host_browser_bridge_env_summary, parse_acp_mcp_servers,
     summarize_acp_mcp_servers_param, McpRegistry, McpSourceConfig,
@@ -2819,7 +2819,14 @@ async fn execute_local_tool(
             )
             .await
         }
-        "bear_environment" => handle_bear_environment(adapter_state, session_id, &args).await,
+        "bear_environment" => handle_bear_environment(
+            adapter_state,
+            session_id,
+            None,
+            None,
+            &args,
+        )
+        .await,
         "local_web_fetch" => handle_local_web_fetch(session_id, &args, policy).await,
         "chrome_open" => handle_chrome_open(&args, policy).await,
         "chrome_snapshot" => handle_chrome_snapshot(&args, policy).await,
@@ -4402,42 +4409,45 @@ fn capabilities_report(adapter_state: &AdapterState) -> String {
 }
 
 fn render_status_report(
-    session_id: &str,
-    context: &SessionContext,
-    den_runtime: Option<&Value>,
+    environment: &Value,
     tasks: &[tool_tasks::ToolTaskRecord],
 ) -> String {
     let mut lines = vec!["BEARS ACP status".to_string(), String::new()];
-    lines.push(format!("- ACP session: {session_id}"));
+    lines.push(format!(
+        "- Overall: {}",
+        environment
+            .pointer("/diagnostics/status")
+            .and_then(Value::as_str)
+            .unwrap_or("unknown")
+    ));
+    lines.push(format!(
+        "- Runtime: {} {}",
+        environment
+            .pointer("/runtime/kind")
+            .and_then(Value::as_str)
+            .unwrap_or("unknown"),
+        environment
+            .pointer("/runtime/version")
+            .and_then(Value::as_str)
+            .unwrap_or("<unknown>")
+    ));
+    lines.push(format!(
+        "- ACP session: {}",
+        environment
+            .pointer("/session/id")
+            .and_then(Value::as_str)
+            .unwrap_or("<unknown>")
+    ));
     lines.push(format!(
         "- Conversation: {}",
-        context
-            .resolved_conversation_id
-            .as_deref()
-            .or(context.conversation_id.as_deref())
+        environment
+            .pointer("/session/resolved_conversation_id")
+            .and_then(Value::as_str)
+            .or_else(|| environment.pointer("/session/conversation_id").and_then(Value::as_str))
             .unwrap_or("<den-selected>")
     ));
-    if let Some(runtime) = den_runtime {
-        let canonical_runtime = runtime
-            .get("runtime")
-            .or_else(|| runtime.pointer("/turn_state/runtime"))
-            .unwrap_or(runtime);
-        lines.push(format!(
-            "- Den runtime: {}",
-            compact_json_for_status(canonical_runtime)
-        ));
-        if let Some(context_budget) = runtime.get("context_budget") {
-            lines.push(format!(
-                "- Context budget: {}",
-                compact_json_for_status(context_budget)
-            ));
-        } else {
-            lines.push("- Context budget: unavailable".to_string());
-        }
-    } else {
-        lines.push("- Den runtime: unavailable".to_string());
-        lines.push("- Context budget: unavailable".to_string());
-    }
+    let den = environment.pointer("/services/den").unwrap_or(&Value::Null);
+    lines.push(format!("- Den: {}", compact_json_for_status(den)));
     if tasks.is_empty() {
         lines.push("- Adapter-local tools: none active".to_string());
     } else {
@@ -4453,13 +4463,24 @@ fn render_status_report(
         }
     }
     lines.push(format!(
-        "- MCP: {}",
-        summarize_mcp_for_log(context.raw.get("mcp"))
+        "- Browser: {}",
+        compact_json_for_status(environment.pointer("/browser").unwrap_or(&Value::Null))
     ));
     lines.push(format!(
-        "- Browser tools: {}",
-        compact_json_for_status(&browser_tool_source_summary(context))
+        "- MCP: {}",
+        compact_json_for_status(
+            environment
+                .pointer("/environment_variants/acp_adapter/session_mcp")
+                .unwrap_or(&Value::Null)
+        )
     ));
+    if let Some(warnings) = environment.pointer("/diagnostics/warnings").and_then(Value::as_array) {
+        for warning in warnings.iter().take(3) {
+            if let Some(text) = warning.as_str() {
+                lines.push(format!("- Warning: {text}"));
+            }
+        }
+    }
     lines.join("\n")
 }
 
@@ -4470,10 +4491,34 @@ async fn status_report(
     shared_state: &AdapterSharedState,
     session_id: &str,
 ) -> String {
-    let context = client_context_for_doctor(adapter_state, session_id);
-    let den_runtime = fetch_den_runtime_state(http, config, session_id).await.ok();
+    let environment = match collect_bear_environment(
+        adapter_state,
+        session_id,
+        Some(config),
+        Some(http),
+        &json!({
+            "include_session_mcp": true,
+            "inspect_den": true
+        }),
+    )
+    .await
+    {
+        Ok(environment) => environment,
+        Err(err) => json!({
+            "runtime": { "kind": "acp_adapter", "version": env!("CARGO_PKG_VERSION") },
+            "session": { "id": session_id },
+            "services": { "den": { "status": "unavailable", "error": format!("{err:#}") } },
+            "browser": Value::Null,
+            "environment_variants": { "acp_adapter": { "session_mcp": Value::Null } },
+            "diagnostics": {
+                "status": "degraded",
+                "warnings": [format!("Could not collect full bear environment: {err:#}")],
+                "errors": [format!("{err:#}")]
+            }
+        }),
+    };
     let tasks = shared_state.tool_tasks.list_for_session(session_id).await;
-    render_status_report(session_id, &context, den_runtime.as_ref(), &tasks)
+    render_status_report(&environment, &tasks)
 }
 
 fn compact_json_for_status(value: &Value) -> String {
@@ -4536,34 +4581,6 @@ async fn runtime_report(
         }
     }
     lines.join("\n")
-}
-
-async fn fetch_den_runtime_state(
-    http: &reqwest::Client,
-    config: &Config,
-    session_id: &str,
-) -> Result<Value> {
-    let url = format!(
-        "{}/acp/bears/{}/sessions/{}/runtime",
-        config.api_url,
-        urlencoding::encode(&config.bear),
-        urlencoding::encode(session_id),
-    );
-    let response = http
-        .get(&url)
-        .header(
-            AUTHORIZATION,
-            HeaderValue::from_str(&format!("Bearer {}", config.token))?,
-        )
-        .send()
-        .await
-        .with_context(|| format!("get ACP runtime state from Den at {url}"))?;
-    let status = response.status();
-    let body = response.text().await.unwrap_or_default();
-    if !status.is_success() {
-        return Err(anyhow!(den_status_error_message(status, body.trim())));
-    }
-    Ok(serde_json::from_str(&body).unwrap_or_else(|_| json!({ "raw": body })))
 }
 
 async fn version_report(http: &reqwest::Client, config: &Config) -> String {
@@ -8585,38 +8602,52 @@ mod tests {
 
     #[test]
     fn status_report_renders_session_health_summary() {
-        let mut context = SessionContext {
-            cwd: "/workspace".to_string(),
-            roots: vec!["/workspace".to_string()],
-            conversation_id: Some("conv-selected".to_string()),
-            resolved_conversation_id: Some("conv-resolved".to_string()),
-            ..Default::default()
-        };
-        context.raw["mcp"] = json!({
-            "servers": [{"name": "chrome-devtools-custom", "status": "ok", "transport": "stdio", "tool_count": 29}],
-            "client_tools": [{"name": "mcp__chrome_devtools_custom__take_snapshot"}]
-        });
-        let den_runtime = json!({
-            "runtime": {
-                "state": "requires_action",
-                "active_turn": {"pending_obligations": 1},
-                "source": "acp_active_turn_registry"
+        let environment = json!({
+            "runtime": { "kind": "acp_adapter", "version": "0.1.0" },
+            "session": {
+                "id": "acp-test",
+                "conversation_id": "conv-selected",
+                "resolved_conversation_id": "conv-resolved"
             },
-            "context_budget": {
-                "status": "unavailable",
-                "source": "den.acp"
-            }
+            "services": {
+                "den": {
+                    "status": "ok",
+                    "runtime": {
+                        "runtime": {
+                            "state": "requires_action",
+                            "active_turn": {"pending_obligations": 1},
+                            "source": "acp_active_turn_registry"
+                        },
+                        "context_budget": {
+                            "status": "unavailable",
+                            "source": "den.acp"
+                        }
+                    }
+                }
+            },
+            "browser": {
+                "active_source": "host_browser_bridge",
+                "source_counts": {"host_browser_bridge": 1}
+            },
+            "environment_variants": {
+                "acp_adapter": {
+                    "session_mcp": {
+                        "servers": [{"name": "chrome-devtools-custom", "status": "ok", "transport": "stdio", "tool_count": 29}],
+                        "client_tools": [{"name": "mcp__chrome_devtools_custom__take_snapshot"}]
+                    }
+                }
+            },
+            "diagnostics": { "status": "ok", "warnings": [] }
         });
-        let report = render_status_report("acp-test", &context, Some(&den_runtime), &[]);
+        let report = render_status_report(&environment, &[]);
 
         assert!(report.contains("BEARS ACP status"));
         assert!(report.contains("ACP session: acp-test"));
         assert!(report.contains("Conversation: conv-resolved"));
-        assert!(report.contains("requires_action"));
         assert!(report.contains("Adapter-local tools: none active"));
         assert!(report.contains("chrome-devtools-custom"));
-        assert!(report.contains("Context budget:"));
-        assert!(report.contains("den.acp"));
+        assert!(report.contains("host_browser_bridge"));
+        assert!(report.contains("Den:"));
     }
 
     #[test]
@@ -11402,9 +11433,12 @@ mod tests {
         let value = handle_bear_environment(
             &adapter_state,
             "session-1",
+            None,
+            None,
             &json!({
                 "include_client_capabilities": true,
-                "include_session_mcp": true
+                "include_session_mcp": true,
+                "inspect_den": false
             }),
         )
         .await
@@ -11425,5 +11459,41 @@ mod tests {
             value["environment_variants"]["acp_adapter"]["client_capabilities"]["client"],
             "zed"
         );
+    }
+
+    #[test]
+    fn render_status_report_uses_environment_snapshot_and_surfaces_degraded_den() {
+        let environment = json!({
+            "runtime": { "kind": "acp_adapter", "version": "0.1.0" },
+            "session": { "id": "session-1", "resolved_conversation_id": "conv-123" },
+            "services": {
+                "den": {
+                    "configured": true,
+                    "reachable": false,
+                    "status": "unreachable",
+                    "error": "connect failed"
+                }
+            },
+            "browser": { "active_source": "host_browser_bridge" },
+            "environment_variants": {
+                "acp_adapter": {
+                    "session_mcp": {
+                        "servers": [
+                            { "source": "host_browser_bridge", "status": "ok" }
+                        ]
+                    }
+                }
+            },
+            "diagnostics": {
+                "status": "degraded",
+                "warnings": ["Den runtime is unreachable from the adapter"]
+            }
+        });
+        let report = render_status_report(&environment, &[]);
+        assert!(report.contains("Overall: degraded"));
+        assert!(report.contains("Runtime: acp_adapter 0.1.0"));
+        assert!(report.contains("Den:"));
+        assert!(report.contains("unreachable"));
+        assert!(report.contains("Warning: Den runtime is unreachable from the adapter"));
     }
 }

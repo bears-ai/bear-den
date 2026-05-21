@@ -376,6 +376,23 @@ BEARS_HOST_BROWSER_MCP_TOKEN=<same-token>
 
 A Zed task can start the host bridge without making it a login service. Exact host-path handling depends on local installation.
 
+### Diagnostics and status model
+
+Current diagnostic direction in `bears-acp-adapter`:
+
+- `bear_environment` is the structured, machine-readable environment inspection surface.
+- `/status` is a compact human-facing rendering of the same underlying environment snapshot.
+- The shared environment snapshot is intended to remain useful even when Den is unreachable.
+
+This means host-browser-bridge debugging should not rely on a separate diagnostic stack for slash commands versus tool calls. Instead, both should report from the same underlying model, including:
+
+- runtime identity and build metadata
+- session bindings
+- dynamic MCP sources and session MCP state
+- browser active source selection
+- host browser bridge env visibility
+- Den/service reachability and degraded errors
+
 ## Rollout sequence
 
 1. Land documentation and current diagnostics.
@@ -383,7 +400,7 @@ A Zed task can start the host bridge without making it a login service. Exact ho
 3. Add Streamable HTTP MCP client support.
 4. Add `browser-bridge` mode with minimal browser MCP tools.
 5. Add container adapter host bridge registration.
-6. Add slash-command diagnostics.
+6. Add shared bear-environment diagnostics (`bear_environment` plus `/status` rendering from the same environment snapshot).
 7. Run manual smoke tests from a dev-container Zed project.
 8. Decide whether to retire or keep the older built-in local Chrome fallback path.
 

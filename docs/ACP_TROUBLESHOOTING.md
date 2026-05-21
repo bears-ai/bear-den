@@ -26,6 +26,34 @@ bears-acp-adapter: starting version=... build_git_sha=... local_head_sha=...
 
 If Den and adapter are not both current, fix that first. Many ACP failures are version skew.
 
+## 1a. Inspect bear environment and status
+
+The ACP adapter now exposes a single read-only diagnostic tool, `bear_environment`, plus `/status` as a compact human rendering of the same underlying environment snapshot.
+
+Use these when you need to distinguish between:
+
+- adapter runtime problems
+- Den reachability problems
+- session/MCP registration problems
+- host browser bridge configuration problems
+- local Chrome fallback problems
+
+Expected behavior:
+
+- `bear_environment` returns structured environment state for the current bear/session/runtime.
+- `/status` renders a compact summary from the same shared snapshot.
+- If Den cannot be reached, `/status` should still show meaningful degraded status rather than failing silently.
+
+For host browser bridge debugging, the most relevant fields are:
+
+- `browser.active_source`
+- `services.den`
+- `environment_variants.acp_adapter.host_browser_bridge_env`
+- `environment_variants.acp_adapter.session_mcp`
+- `diagnostics.status`
+- `diagnostics.warnings`
+- `diagnostics.errors`
+
 ---
 
 ## 2. Basic chat diagnostic

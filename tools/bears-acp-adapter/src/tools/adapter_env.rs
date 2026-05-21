@@ -1,15 +1,18 @@
 use crate::{
     adapter_capabilities_context, browser_tool_source_summary, direct_tools_context, session_context,
-    AdapterState,
+    AdapterState, Config,
 };
 use anyhow::Result;
+use reqwest::header::{HeaderValue, AUTHORIZATION};
 use serde_json::{json, Value};
 
 use super::mcp::host_browser_bridge_env_summary;
 
-pub(crate) async fn handle_bear_environment(
+pub(crate) async fn collect_bear_environment(
     adapter_state: &AdapterState,
     session_id: &str,
+    config: Option<&Config>,
+    http: Option<&reqwest::Client>,
     args: &Value,
 ) -> Result<Value> {
     let context = session_context(adapter_state, session_id)?;
@@ -25,11 +28,59 @@ pub(crate) async fn handle_bear_environment(
         .get("include_raw_context")
         .and_then(Value::as_bool)
         .unwrap_or(false);
+    let inspect_den = args
+        .get("inspect_den")
+        .and_then(Value::as_bool)
+        .unwrap_or(true);
 
     let adapter = adapter_capabilities_context();
     let direct_tools = direct_tools_context();
     let browser = browser_tool_source_summary(context);
     let host_bridge_env = host_browser_bridge_env_summary();
+
+    let mut den_service = json!({
+        "available": false,
+        "configured": false,
+        "status": "not_inspected",
+    });
+    let mut warnings = Vec::<Value>::new();
+    let mut errors = Vec::<Value>::new();
+
+    if inspect_den {
+        if let (Some(config), Some(http)) = (config, http) {
+            den_service["configured"] = Value::Bool(true);
+            match fetch_den_runtime_state(http, config, session_id).await {
+                Ok(runtime) => {
+                    den_service = json!({
+                        "available": true,
+                        "configured": true,
+                        "reachable": true,
+                        "status": "ok",
+                        "runtime": runtime,
+                    });
+                }
+                Err(err) => {
+                    den_service = json!({
+                        "available": false,
+                        "configured": true,
+                        "reachable": false,
+                        "status": "unreachable",
+                        "error": format!("{err:#}"),
+                    });
+                    warnings.push(json!("Den runtime is unreachable from the adapter"));
+                    errors.push(json!(format!("Den runtime inspection failed: {err:#}")));
+                }
+            }
+        } else {
+            den_service["status"] = json!("not_available_in_this_runtime");
+        }
+    }
+
+    let diagnostics_status = if !errors.is_empty() {
+        "degraded"
+    } else {
+        "ok"
+    };
 
     let mut response = json!({
         "bear": {
@@ -62,10 +113,7 @@ pub(crate) async fn handle_bear_environment(
         },
         "browser": browser,
         "services": {
-            "den": {
-                "available": false,
-                "status": "not_inspected_by_this_tool"
-            }
+            "den": den_service
         },
         "environment_variants": {
             "acp_adapter": {
@@ -74,8 +122,9 @@ pub(crate) async fn handle_bear_environment(
             }
         },
         "diagnostics": {
-            "warnings": [],
-            "status": "ok"
+            "warnings": warnings,
+            "errors": errors,
+            "status": diagnostics_status
         }
     });
 
@@ -93,4 +142,41 @@ pub(crate) async fn handle_bear_environment(
     }
 
     Ok(response)
+}
+
+pub(crate) async fn handle_bear_environment(
+    adapter_state: &AdapterState,
+    session_id: &str,
+    config: Option<&Config>,
+    http: Option<&reqwest::Client>,
+    args: &Value,
+) -> Result<Value> {
+    collect_bear_environment(adapter_state, session_id, config, http, args).await
+}
+
+pub(crate) async fn fetch_den_runtime_state(
+    http: &reqwest::Client,
+    config: &Config,
+    session_id: &str,
+) -> Result<Value> {
+    let url = format!(
+        "{}/acp/bears/{}/sessions/{}/runtime",
+        config.api_url,
+        urlencoding::encode(&config.bear),
+        urlencoding::encode(session_id),
+    );
+    let response = http
+        .get(&url)
+        .header(
+            AUTHORIZATION,
+            HeaderValue::from_str(&format!("Bearer {}", config.token))?,
+        )
+        .send()
+        .await?;
+    let status = response.status();
+    let body = response.text().await.unwrap_or_default();
+    if !status.is_success() {
+        anyhow::bail!(crate::den_status_error_message(status, body.trim()));
+    }
+    Ok(serde_json::from_str(&body).unwrap_or_else(|_| json!({ "raw": body })))
 }
