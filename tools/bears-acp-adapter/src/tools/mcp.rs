@@ -10,7 +10,10 @@ use rmcp::{
     RoleClient, ServiceExt,
 };
 use serde_json::{json, Map, Value};
-use std::{collections::{BTreeMap, HashMap}, sync::Arc};
+use std::{
+    collections::{BTreeMap, HashMap},
+    sync::Arc,
+};
 use tokio::sync::Mutex as TokioMutex;
 
 const DEFAULT_HOST_BROWSER_MCP_SERVER_NAME: &str = "host-browser";

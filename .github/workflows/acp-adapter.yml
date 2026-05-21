@@ -13,8 +13,24 @@ on:
             - "packaging/macos/**"
             - ".github/workflows/acp-adapter.yml"
     workflow_dispatch:
+        inputs:
+            publish_update_site:
+                description: "Publish the generated macOS update payload to the public gh-pages update site"
+                type: boolean
+                default: false
+            update_channel:
+                description: "Update channel to publish when manually dispatching"
+                type: choice
+                options: [stable, beta]
+                default: beta
+            release_notes_url:
+                description: "Optional release notes URL for manually generated update manifests"
+                type: string
+                required: false
     release:
-        types: [created]
+        # `published` covers the user-visible release event, including drafts that are published later.
+        # `created` is easy to miss with draft release flows and can cause release-only jobs to skip during manual reruns.
+        types: [published]
 
 env:
     CARGO_TERM_COLOR: always
@@ -46,18 +62,23 @@ jobs:
                       binary_name: bears-acp-adapter
 
         steps:
-            - uses: actions/checkout@v4
+            - uses: actions/checkout@v5
 
             - name: Install Rust toolchain
-              uses: dtolnay/rust-toolchain@stable
-              with:
-                  targets: ${{ matrix.target }}
+              run: |
+                  rustup toolchain install stable --profile minimal --target ${{ matrix.target }}
+                  rustup default stable
 
             - name: Cache Cargo
-              uses: Swatinem/rust-cache@v2
+              uses: actions/cache@v5
               with:
-                  workspaces: tools/bears-acp-adapter -> target
-                  key: ${{ matrix.target }}
+                  path: |
+                      ~/.cargo/registry
+                      ~/.cargo/git
+                      tools/bears-acp-adapter/target
+                  key: cargo-${{ runner.os }}-${{ runner.arch }}-${{ matrix.target }}-${{ hashFiles('tools/bears-acp-adapter/Cargo.lock') }}
+                  restore-keys: |
+                      cargo-${{ runner.os }}-${{ runner.arch }}-${{ matrix.target }}-
 
             - name: Build adapter
               run: cargo build --release --target ${{ matrix.target }} --manifest-path tools/bears-acp-adapter/Cargo.toml
@@ -77,7 +98,7 @@ jobs:
                   Copy-Item "tools/bears-acp-adapter/target/${{ matrix.target }}/release/${{ matrix.binary_name }}" "dist/${{ matrix.artifact_name }}.exe"
 
             - name: Upload build artifact
-              uses: actions/upload-artifact@v4
+              uses: actions/upload-artifact@v5
               with:
                   name: ${{ matrix.artifact_name }}
                   path: dist/*
@@ -85,9 +106,9 @@ jobs:
 
             - name: Attach binary to GitHub release
               if: github.event_name == 'release'
-              uses: softprops/action-gh-release@v2
-              with:
-                  files: dist/*
+              env:
+                  GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+              run: gh release upload "${{ github.event.release.tag_name }}" dist/* --clobber
 
     macos-pkg:
         name: Build macOS arm64 installer package
@@ -105,10 +126,10 @@ jobs:
             APP_STORE_CONNECT_API_KEY_BASE64: ${{ secrets.APP_STORE_CONNECT_API_KEY_BASE64 }}
 
         steps:
-            - uses: actions/checkout@v4
+            - uses: actions/checkout@v5
 
             - name: Download arm64 macOS binary
-              uses: actions/download-artifact@v4
+              uses: actions/download-artifact@v5
               with:
                   name: bears-acp-adapter-aarch64-apple-darwin
                   path: dist/input/aarch64-apple-darwin
@@ -155,16 +176,22 @@ jobs:
               run: ./packaging/macos/notarize.sh --pkg dist/macos/bears-acp-adapter-aarch64-apple-darwin.pkg
 
             - name: Select public update channel
-              if: github.event_name == 'release'
+              if: github.event_name == 'release' || inputs.publish_update_site
               run: |
-                  if [ "${{ github.event.release.prerelease }}" = "true" ]; then
-                    echo "UPDATE_CHANNEL=beta" >> "$GITHUB_ENV"
+                  if [ "${{ github.event_name }}" = "release" ]; then
+                    if [ "${{ github.event.release.prerelease }}" = "true" ]; then
+                      echo "UPDATE_CHANNEL=beta" >> "$GITHUB_ENV"
+                    else
+                      echo "UPDATE_CHANNEL=stable" >> "$GITHUB_ENV"
+                    fi
+                    echo "UPDATE_RELEASE_NOTES_URL=${{ github.event.release.html_url }}" >> "$GITHUB_ENV"
                   else
-                    echo "UPDATE_CHANNEL=stable" >> "$GITHUB_ENV"
+                    echo "UPDATE_CHANNEL=${{ inputs.update_channel }}" >> "$GITHUB_ENV"
+                    echo "UPDATE_RELEASE_NOTES_URL=${{ inputs.release_notes_url }}" >> "$GITHUB_ENV"
                   fi
 
             - name: Generate public update payload
-              if: github.event_name == 'release'
+              if: github.event_name == 'release' || inputs.publish_update_site
               run: |
                   mkdir -p "dist/update-site/bears-acp-adapter/$UPDATE_CHANNEL"
                   cp dist/macos/bears-acp-adapter-aarch64-apple-darwin.pkg "dist/update-site/bears-acp-adapter/$UPDATE_CHANNEL/bears-acp-adapter-aarch64-apple-darwin.pkg"
@@ -174,18 +201,18 @@ jobs:
                     --base-url "https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/bears-acp-adapter/$UPDATE_CHANNEL" \
                     --channel "$UPDATE_CHANNEL" \
                     --target aarch64-apple-darwin \
-                    --release-notes-url "${{ github.event.release.html_url }}"
+                    --release-notes-url "$UPDATE_RELEASE_NOTES_URL"
 
             - name: Upload public update payload artifact
-              if: github.event_name == 'release'
-              uses: actions/upload-artifact@v4
+              if: github.event_name == 'release' || inputs.publish_update_site
+              uses: actions/upload-artifact@v5
               with:
                   name: bears-acp-adapter-update-site
                   path: dist/update-site
                   if-no-files-found: error
 
             - name: Upload macOS package artifact
-              uses: actions/upload-artifact@v4
+              uses: actions/upload-artifact@v5
               with:
                   name: bears-acp-adapter-aarch64-apple-darwin-pkg
                   path: dist/macos/bears-acp-adapter-aarch64-apple-darwin.pkg
@@ -193,29 +220,52 @@ jobs:
 
             - name: Attach macOS package to GitHub release
               if: github.event_name == 'release'
-              uses: softprops/action-gh-release@v2
-              with:
-                  files: |
-                      dist/macos/bears-acp-adapter-aarch64-apple-darwin.pkg
-                      dist/update-site/bears-acp-adapter/${{ env.UPDATE_CHANNEL }}/aarch64-apple-darwin.json
+              env:
+                  GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+              run: |
+                  gh release upload "${{ github.event.release.tag_name }}" \
+                    dist/macos/bears-acp-adapter-aarch64-apple-darwin.pkg \
+                    "dist/update-site/bears-acp-adapter/${{ env.UPDATE_CHANNEL }}/aarch64-apple-darwin.json" \
+                    --clobber
 
     publish-update-site:
         name: Publish ACP adapter update site
         runs-on: ubuntu-24.04
         needs: macos-pkg
-        if: github.event_name == 'release'
+        if: github.event_name == 'release' || inputs.publish_update_site
 
         steps:
             - name: Download public update payload
-              uses: actions/download-artifact@v4
+              uses: actions/download-artifact@v5
               with:
                   name: bears-acp-adapter-update-site
                   path: dist/update-site
 
             - name: Publish to gh-pages branch
-              uses: peaceiris/actions-gh-pages@v3
-              with:
-                  github_token: ${{ secrets.GITHUB_TOKEN }}
-                  publish_dir: dist/update-site
-                  publish_branch: gh-pages
-                  keep_files: true
+              env:
+                  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+              run: |
+                  set -eu
+                  work_dir="$(mktemp -d)"
+                  repo_url="https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+                  if git ls-remote --exit-code --heads "$repo_url" gh-pages >/dev/null 2>&1; then
+                    git clone --depth 1 --branch gh-pages "$repo_url" "$work_dir"
+                  else
+                    git clone --depth 1 "$repo_url" "$work_dir"
+                    cd "$work_dir"
+                    git checkout --orphan gh-pages
+                    git rm -rf . >/dev/null 2>&1 || true
+                    cd "$GITHUB_WORKSPACE"
+                  fi
+                  cp -R dist/update-site/. "$work_dir/"
+                  cd "$work_dir"
+                  touch .nojekyll
+                  git config user.name "github-actions[bot]"
+                  git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+                  git add .
+                  if git diff --cached --quiet; then
+                    echo "No update site changes to publish."
+                    exit 0
+                  fi
+                  git commit -m "Publish BEARS ACP adapter update site"
+                  git push origin gh-pages

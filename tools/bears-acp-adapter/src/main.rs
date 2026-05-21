@@ -2213,8 +2213,9 @@ async fn handle_request(
             }
         }
         "session/close" => {
-            if let Some(id) = request.id {
-                let Some(config) = runtime.config.as_ref() else {
+            let id = request.id;
+            let Some(config) = runtime.config.as_ref() else {
+                if let Some(id) = id {
                     write_response(
                         id,
                         Err(configuration_error(Some(json!({
@@ -2223,14 +2224,22 @@ async fn handle_request(
                         })))),
                     )
                     .await?;
-                    return Ok(());
-                };
-                match handle_session_close(http, config, &shared_state, request.params).await {
-                    Ok(()) => {
+                } else {
+                    eprintln!(
+                        "bears-acp-adapter: ignoring session/close notification because adapter is not configured"
+                    );
+                }
+                return Ok(());
+            };
+            match handle_session_close(http, config, &shared_state, request.params).await {
+                Ok(()) => {
+                    if let Some(id) = id {
                         write_response(id, Ok(serde_json::to_value(CloseSessionResponse::new())?))
-                            .await?
+                            .await?;
                     }
-                    Err(err) => {
+                }
+                Err(err) => {
+                    if let Some(id) = id {
                         write_response(
                             id,
                             Err(json_rpc_error(
@@ -2240,6 +2249,10 @@ async fn handle_request(
                             )),
                         )
                         .await?;
+                    } else {
+                        eprintln!(
+                            "bears-acp-adapter: session/close notification failed error={err:#}"
+                        );
                     }
                 }
             }
@@ -3680,6 +3693,18 @@ async fn handle_session_close(
         .lock()
         .await
         .remove(session_id);
+    shared_state
+        .session_contexts
+        .lock()
+        .await
+        .remove(session_id);
+    shared_state.active_prompts.lock().await.remove(session_id);
+    shared_state.tool_tasks.cancel_session(session_id).await;
+    let _ = shared_state.cancellation_tx.send(CancellationNotice {
+        session_id: session_id.to_string(),
+        turn_token: None,
+        conversation_id: None,
+    });
     post_session_lifecycle_action(http, config, session_id, "close").await
 }
 
@@ -8245,6 +8270,110 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn adapter_session_close_notification_posts_den_archive_and_cancels_local_state() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let request_line = Arc::new(TokioMutex::new(None::<String>));
+        let request_line_for_server = request_line.clone();
+        tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut reader = BufReader::new(stream);
+            let mut line = String::new();
+            let mut first_line = None;
+            loop {
+                line.clear();
+                let n = reader.read_line(&mut line).await.unwrap();
+                if first_line.is_none() && n > 0 {
+                    first_line = Some(line.trim().to_string());
+                }
+                if n == 0 || line == "\r\n" || line == "\n" {
+                    break;
+                }
+            }
+            *request_line_for_server.lock().await = first_line;
+            stream = reader.into_inner();
+            use tokio::io::AsyncWriteExt;
+            stream
+                .write_all(
+                    b"HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: 11\r\n\r\n{\"ok\":true}",
+                )
+                .await
+                .unwrap();
+        });
+        let config = Config {
+            api_url: format!("http://{addr}"),
+            bear: "test-bear".to_string(),
+            token: "token-test".to_string(),
+            client: "zed".to_string(),
+        };
+        let mut runtime = RuntimeConfig {
+            config: Some(config),
+            diagnostics: Vec::new(),
+            check_server: false,
+            doctor: false,
+            update_command: None,
+            browser_bridge: None,
+            api_url: String::new(),
+            bear: String::new(),
+            token_env: String::new(),
+            client: "zed".to_string(),
+        };
+        let mut adapter_state = AdapterState::default();
+        let shared = test_shared_state();
+        let turn_token = Uuid::new_v4();
+        shared.active_prompts.lock().await.insert(
+            "acp-session".to_string(),
+            ActivePromptTurn {
+                token: turn_token,
+                conversation_id: Some("conv-1".to_string()),
+            },
+        );
+        shared
+            .tool_tasks
+            .register(
+                "acp-session",
+                "call-1",
+                "fs_read_text_file",
+                Some(turn_token),
+            )
+            .await;
+        let mut cancel_rx = shared.cancellation_tx.subscribe();
+        let http = reqwest::Client::new();
+
+        handle_request(
+            &http,
+            &mut runtime,
+            &mut adapter_state,
+            &shared,
+            JsonRpcRequest {
+                id: None,
+                method: "session/close".to_string(),
+                params: json!({ "sessionId": "acp-session" }),
+            },
+        )
+        .await
+        .unwrap();
+
+        let request_line = request_line.lock().await.clone().unwrap_or_default();
+        assert!(
+            request_line.starts_with("POST /acp/bears/test-bear/sessions/acp-session/close "),
+            "request_line={request_line:?}"
+        );
+        assert!(shared
+            .active_prompts
+            .lock()
+            .await
+            .get("acp-session")
+            .is_none());
+        let tasks = shared.tool_tasks.list_for_session("acp-session").await;
+        assert_eq!(tasks.len(), 1);
+        assert_eq!(tasks[0].phase, ToolTaskPhase::Cancelled);
+        let notice = cancel_rx.recv().await.expect("close cancellation notice");
+        assert_eq!(notice.session_id, "acp-session");
+        assert_eq!(notice.turn_token, None);
+    }
+
+    #[tokio::test]
     async fn adapter_session_cancel_notification_cancels_active_turn_and_tools() {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
@@ -11060,7 +11189,10 @@ mod tests {
         let response = client
             .post(format!("http://{addr}/mcp"))
             .header(reqwest::header::AUTHORIZATION, "Bearer secret-token")
-            .header(reqwest::header::ACCEPT, "application/json, text/event-stream")
+            .header(
+                reqwest::header::ACCEPT,
+                "application/json, text/event-stream",
+            )
             .json(&json!({
                 "jsonrpc": "2.0",
                 "id": 1,

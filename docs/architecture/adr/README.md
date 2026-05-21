@@ -14,12 +14,14 @@ Use ADRs for cross-cutting product and architecture decisions that are expected 
 | [acp-session-bindings.md](acp-session-bindings.md) | Accepted | ACP sessions as protocol bindings, cwd/list/load/cancel/MCP/auth semantics |
 | [artifacts-garage.md](artifacts-garage.md) | Proposed | Artifacts bucket, Garage/S3 storage, Cabinet attachment separation, GC policy |
 | [bear-memory-tool-boundary.md](bear-memory-tool-boundary.md) | Accepted | Boundary between Letta Code-native MemFS tools and Den-hosted bear tools |
-| [bear-workplaces.md](bear-workplaces.md) | Accepted | Workplace as the Bear-level setting for plans, tasks, artifacts, memory, and work activity |
+| [bearwire-protocol.md](bearwire-protocol.md) | Proposed | BearWire as the Den ⇄ trusted runtime protocol for ACP adapters, desktop companions, diagnostics, and future edge runtimes |
+| [bear-work-surfaces.md](bear-work-surfaces.md) | Accepted | Work surface as the Bear-level setting for plans, tasks, artifacts, memory, and work activity |
 | [cabinet-reading-pipeline.md](cabinet-reading-pipeline.md) | Proposed | Cabinet document ingestion and reading pipeline |
 | [dynamic-skills-subagents.md](dynamic-skills-subagents.md) | Proposed | Dynamic skills, reflection subagents, bear-authored capability growth |
 | [memfs-sidecar-repo-views.md](memfs-sidecar-repo-views.md) | Accepted | Canonical Bear MemFS repo plus per-agent sidecar repo views |
 | [multi-user-memory.md](multi-user-memory.md) | Proposed | Multi-user memory model and Letta-native memory visibility |
 | [provider-safe-tool-naming.md](provider-safe-tool-naming.md) | Accepted | Provider-safe tool names with scoped canonical BEARS tool identities |
+| [tool-naming-and-execution-strategy.md](tool-naming-and-execution-strategy.md) | Accepted | Tool naming layers, descriptor ownership, execution classes, and adapter compatibility policy |
 | [reflection-system.md](reflection-system.md) | Accepted | Reflection as the auditable background review, memory curation, indexing, and adaptation system |
 | [routines-automation.md](routines-automation.md) | Proposed | Den-managed routines, scheduling, output handling, learning constraints |
 | [schema-first-path-strategy.md](schema-first-path-strategy.md) | Accepted | Conservative schema-first path ownership and Den-generated durable artifact paths |

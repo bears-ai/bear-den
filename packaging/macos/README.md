@@ -114,7 +114,9 @@ Generate a manifest manually with:
   --release-notes-url https://github.com/TheArtificial/BEARS/releases/latest
 ```
 
-On release events, `.github/workflows/acp-adapter.yml` uploads that payload to the `gh-pages` branch with `keep_files: true`, preserving other channels. Non-prerelease releases publish to `stable`; prereleases publish to `beta`. Enable repository Pages from the `gh-pages` branch before relying on the default URL.
+On release events, `.github/workflows/acp-adapter.yml` uploads that payload to the `gh-pages` branch while preserving other channels. Non-prerelease releases publish to `stable`; prereleases publish to `beta`. Enable repository Pages from the `gh-pages` branch before relying on the default URL.
+
+Manual workflow dispatches do not publish the public update site unless `publish_update_site` is checked. For a manual publish, choose the `stable` or `beta` `update_channel` input and optionally provide a `release_notes_url`.
 
 For stricter updater signer verification, set repository variables used at build time:
 
