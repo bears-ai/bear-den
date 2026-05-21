@@ -211,6 +211,24 @@ Notable CLI detail: the implementation currently uses `--bind` rather than the e
 - Tool list contains no host filesystem/process/git tools.
 - Browser network output redacts sensitive headers.
 
+### Implementation notes (current)
+
+Implemented hardening so far:
+
+- `browser_open` now validates URL schemes and only allows `http` and `https`.
+- Browser network event output redacts common sensitive headers recursively, including:
+  - `authorization`
+  - `cookie`
+  - `set-cookie`
+  - `x-api-key`
+  - `proxy-authorization`
+
+Still pending for fuller Phase 4 completion:
+
+- explicit policy for JavaScript evaluation exposure (currently not exposed by bridge tool list)
+- any additional redaction classes beyond the common header set above
+- optional integration tests that exercise the HTTP bridge endpoints directly
+
 ## Phase 5: Container adapter host bridge registration
 
 ### Tasks

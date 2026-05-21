@@ -2,7 +2,7 @@ use crate::ToolPolicy;
 use anyhow::{anyhow, Context, Result};
 use futures_util::{SinkExt, StreamExt};
 use reqwest::Url;
-use serde_json::{json, Value};
+use serde_json::{json, Map, Value};
 use std::{
     collections::VecDeque,
     net::TcpListener,
@@ -129,6 +129,7 @@ pub(crate) async fn handle_chrome_open(args: &Value, _policy: &ToolPolicy) -> Re
         .get("url")
         .and_then(Value::as_str)
         .ok_or_else(|| anyhow!("chrome_open args missing url"))?;
+    validate_chrome_open_url(url)?;
     let cdp = ensure_cdp_base_url().await?;
     let endpoint = format!(
         "{}/json/new?{}",
@@ -218,6 +219,7 @@ pub(crate) async fn handle_chrome_network_requests(
         .rev()
         .take(limit)
         .cloned()
+        .map(redact_network_event)
         .collect::<Vec<_>>();
     let content = format_chrome_events("Chrome network requests", &entries);
     Ok(json!({ "ok": true, "requests": entries, "content": content }))
@@ -235,6 +237,64 @@ pub(crate) async fn handle_chrome_screenshot(args: &Value, _policy: &ToolPolicy)
     let data = result.get("data").and_then(Value::as_str).unwrap_or("");
     Ok(
         json!({ "ok": true, "format": format, "data_base64": data, "bytes_base64": data.len(), "content": format!("Captured Chrome screenshot ({} base64 bytes)", data.len()) }),
+    )
+}
+
+fn validate_chrome_open_url(url: &str) -> Result<()> {
+    let parsed = Url::parse(url).with_context(|| format!("invalid chrome_open url {url:?}"))?;
+    match parsed.scheme() {
+        "http" | "https" => Ok(()),
+        scheme => Err(anyhow!(
+            "chrome_open only allows http and https URLs; rejected scheme {scheme:?}"
+        )),
+    }
+}
+
+fn redact_network_event(event: Value) -> Value {
+    let mut event = event;
+    redact_sensitive_headers_in_value(&mut event);
+    event
+}
+
+fn redact_sensitive_headers_in_value(value: &mut Value) {
+    match value {
+        Value::Object(map) => {
+            redact_headers_map_if_present(map, "headers");
+            redact_headers_map_if_present(map, "requestHeaders");
+            redact_headers_map_if_present(map, "responseHeaders");
+            for child in map.values_mut() {
+                redact_sensitive_headers_in_value(child);
+            }
+        }
+        Value::Array(values) => {
+            for child in values {
+                redact_sensitive_headers_in_value(child);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn redact_headers_map_if_present(map: &mut Map<String, Value>, key: &str) {
+    let Some(Value::Object(headers)) = map.get_mut(key) else {
+        return;
+    };
+    for (name, value) in headers.iter_mut() {
+        if should_redact_header(name) {
+            *value = Value::String("<redacted>".to_string());
+        }
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn test_redact_network_event(event: Value) -> Value {
+    redact_network_event(event)
+}
+
+fn should_redact_header(name: &str) -> bool {
+    matches!(
+        name.trim().to_ascii_lowercase().as_str(),
+        "authorization" | "cookie" | "set-cookie" | "x-api-key" | "proxy-authorization"
     )
 }
 

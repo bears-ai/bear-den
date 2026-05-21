@@ -10767,4 +10767,46 @@ mod tests {
         );
         assert!(!browser_bridge_authorized(&headers, &config));
     }
+
+    #[test]
+    fn chrome_open_rejects_non_http_schemes() {
+        let args = json!({ "url": "javascript:alert(1)" });
+        let policy = ToolPolicy::default();
+        let future = crate::tools::chrome::handle_chrome_open(&args, &policy);
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let err = rt.block_on(future).unwrap_err();
+        assert!(format!("{err:#}").contains("only allows http and https"));
+    }
+
+    #[test]
+    fn chrome_network_redaction_redacts_sensitive_headers() {
+        let redacted = serde_json::json!({
+            "method": "Network.requestWillBeSentExtraInfo",
+            "params": {
+                "headers": {
+                    "Authorization": "Bearer secret",
+                    "Cookie": "a=b",
+                    "X-Api-Key": "xyz",
+                    "User-Agent": "ok"
+                },
+                "requestHeaders": {
+                    "Proxy-Authorization": "Basic abc",
+                    "Accept": "*/*"
+                },
+                "responseHeaders": {
+                    "Set-Cookie": "session=1",
+                    "Content-Type": "text/html"
+                }
+            }
+        });
+        let value = crate::tools::chrome::test_redact_network_event(redacted);
+        assert_eq!(value["params"]["headers"]["Authorization"], "<redacted>");
+        assert_eq!(value["params"]["headers"]["Cookie"], "<redacted>");
+        assert_eq!(value["params"]["headers"]["X-Api-Key"], "<redacted>");
+        assert_eq!(value["params"]["headers"]["User-Agent"], "ok");
+        assert_eq!(value["params"]["requestHeaders"]["Proxy-Authorization"], "<redacted>");
+        assert_eq!(value["params"]["requestHeaders"]["Accept"], "*/*");
+        assert_eq!(value["params"]["responseHeaders"]["Set-Cookie"], "<redacted>");
+        assert_eq!(value["params"]["responseHeaders"]["Content-Type"], "text/html");
+    }
 }
