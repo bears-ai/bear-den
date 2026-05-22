@@ -6,8 +6,8 @@ use serde::Serialize;
 use serde_json::Value;
 
 use super::conversation_title::{
-    display_conversation_title, first_user_message_text_for_title, is_acceptable_derived_title,
-    is_meaningful_conversation_title, UNTITLED_THREAD,
+    display_conversation_title, first_user_message_text_for_title,
+    is_meaningful_conversation_title,
 };
 use super::LettaClient;
 
@@ -128,17 +128,7 @@ async fn resolve_conversation_row_title(
     };
 
     let first_user = first_user_message_text_for_title(&body);
-    let title = display_conversation_title(summary, conv_id, first_user.as_deref());
-
-    let should_persist = title != UNTITLED_THREAD && is_acceptable_derived_title(&title, conv_id);
-
-    if should_persist {
-        if let Err(e) = letta.patch_conversation_summary(conv_id, &title).await {
-            tracing::warn!(%e, %conv_id, "patch conversation summary (title) failed");
-        }
-    }
-
-    title
+    display_conversation_title(summary, conv_id, first_user.as_deref())
 }
 
 /// Loads and sorts conversations for a Letta agent: main thread plus `conv-…` rows from
