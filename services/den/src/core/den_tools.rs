@@ -126,6 +126,8 @@ pub const DEN_WEB_FETCH_PROVIDER: &str = "web_fetch";
 pub const DEN_WEB_FETCH_LEGACY_PROVIDER: &str = "den_web_fetch";
 pub const DEN_WEB_SEARCH: &str = "den.web.search";
 pub const DEN_WEB_SEARCH_PROVIDER: &str = "web_search";
+pub const DEN_BEAR_ENVIRONMENT: &str = "den.bear.environment";
+pub const DEN_BEAR_ENVIRONMENT_PROVIDER: &str = "bear_environment";
 pub const DEN_SITUATION_GET: &str = "den.session.info";
 pub const DEN_SITUATION_GET_PROVIDER: &str = "session_info";
 pub const DEN_SITUATION_GET_LEGACY_PROVIDER: &str = "situation_get";
@@ -201,6 +203,7 @@ pub fn provider_safe_tool_name(name: &str) -> String {
         DEN_CONVERSATION_SET_TITLE => return DEN_CONVERSATION_SET_TITLE_PROVIDER.to_string(),
         DEN_WEB_FETCH => return DEN_WEB_FETCH_PROVIDER.to_string(),
         DEN_WEB_SEARCH => return DEN_WEB_SEARCH_PROVIDER.to_string(),
+        DEN_BEAR_ENVIRONMENT => return DEN_BEAR_ENVIRONMENT_PROVIDER.to_string(),
         DEN_SITUATION_GET => return DEN_SITUATION_GET_PROVIDER.to_string(),
         DEN_MEMORY_WRITE_ENTRY => return DEN_MEMORY_WRITE_ENTRY_PROVIDER.to_string(),
         DEN_MEMORY_STATUS => return DEN_MEMORY_STATUS_PROVIDER.to_string(),
@@ -372,6 +375,15 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
                 "required": ["query"],
                 "additionalProperties": false
             }),
+        ),
+        descriptor(
+            DEN_BEAR_ENVIRONMENT,
+            "Bear environment",
+            "Return a structured, harness-level snapshot of the current Bear operating environment for this interaction. Includes baseline runtime/session/workspace/tool/service diagnostics and, when available, ACP-aware variants. Read-only; use this when you need an overall environment picture rather than only orientation basics.",
+            "session",
+            &["situation.read"],
+            PAIR_ROLES,
+            empty_schema(),
         ),
         descriptor(
             DEN_SITUATION_GET,
@@ -940,6 +952,11 @@ fn den_tool_description(name: &'static str, description: &'static str) -> &'stat
             side_effect: ToolSideEffectKind::ExternalNetwork,
             orientation: ToolOrientationPolicy::UseSessionInfoIfScopeUnclear,
         }),
+        DEN_BEAR_ENVIRONMENT => Some(ToolDescriptorGuidance {
+            scope: ToolScopeKind::Conversation,
+            side_effect: ToolSideEffectKind::ReadOnly,
+            orientation: ToolOrientationPolicy::UseSessionInfoIfScopeUnclear,
+        }),
         DEN_MEMORY_WRITE_ENTRY => Some(ToolDescriptorGuidance {
             scope: ToolScopeKind::BearRoleMemory,
             side_effect: ToolSideEffectKind::WritesMemory,
@@ -1063,6 +1080,16 @@ pub fn den_tool_display(name: &'static str, label: &'static str) -> AcpToolDispl
             target_arg_keys: &["query"],
             sensitive_arg_keys: &[],
             approval_summary: "Search the web through the configured Den provider.",
+        },
+        DEN_BEAR_ENVIRONMENT => AcpToolDisplayDescriptor {
+            label,
+            category: "orientation",
+            progress_verb: "Inspecting bear environment",
+            complete_verb: "Inspected bear environment",
+            target_arg_keys: &[],
+            sensitive_arg_keys: &[],
+            approval_summary:
+                "Read a structured snapshot of the current Bear runtime environment.",
         },
         DEN_SITUATION_GET => AcpToolDisplayDescriptor {
             label,
@@ -1378,9 +1405,11 @@ fn tool_domain(name: &str) -> &'static str {
         | DEN_MEMORY_READ_PROPOSAL
         | DEN_MEMORY_RESOLVE_PROPOSAL
         | DEN_MEMORY_APPLY_CORE_UPDATE => "memory",
-        DEN_CONVERSATION_SET_TITLE | DEN_WEB_FETCH | DEN_WEB_SEARCH | DEN_SITUATION_GET => {
-            "execution"
-        }
+        DEN_CONVERSATION_SET_TITLE
+        | DEN_WEB_FETCH
+        | DEN_WEB_SEARCH
+        | DEN_BEAR_ENVIRONMENT
+        | DEN_SITUATION_GET => "execution",
         _ => "execution",
     }
 }
@@ -1389,6 +1418,7 @@ fn tool_content_class(name: &str) -> Option<&'static str> {
     match name {
         DEN_MEMORY_WRITE_ENTRY => Some("semantic_memory"),
         DEN_MEMORY_CREATE_WORK_SURFACE_SCAFFOLD => Some("semantic_memory"),
+        DEN_BEAR_ENVIRONMENT => Some("activity_status"),
         DEN_PLAN_MODE_EXIT => Some("workplan_artifact"),
         DEN_WORK_PLAN_UPDATE => Some("activity_status"),
         DEN_WORK_PLAN_REQUEST_HANDOFF => Some("task_intent"),
@@ -1518,6 +1548,7 @@ pub fn provider_aliases_for_tool(name: &str) -> &'static [&'static str] {
             "conversation_rename",
         ],
         DEN_PLAN_MODE_RECORD_APPROVAL => &["approve_plan", "approve_current_plan"],
+        DEN_BEAR_ENVIRONMENT => &["den_bear_environment"],
         DEN_SITUATION_GET => &[DEN_SITUATION_GET_LEGACY_PROVIDER, "den_situation_get"],
         DEN_MEMORY_WRITE_ENTRY => &["den_memory_write_entry"],
         DEN_MEMORY_STATUS => &["den_memory_status"],
@@ -1551,6 +1582,7 @@ pub fn is_builtin_den_tool(name: &str) -> bool {
             | DEN_CAPABILITIES_LIST_SELF
             | DEN_CHANNEL_GET_CONTEXT
             | DEN_POLICY_GET_SELF
+            | DEN_BEAR_ENVIRONMENT
             | DEN_CONVERSATION_SET_TITLE
             | DEN_WEB_FETCH
             | DEN_WEB_SEARCH
@@ -1560,6 +1592,8 @@ pub fn is_builtin_den_tool(name: &str) -> bool {
             | DEN_MEMORY_TREE
             | DEN_MEMORY_READ
             | DEN_MEMORY_SEARCH
+            | DEN_MEMORY_ORIENT_WORK_SURFACE
+            | DEN_MEMORY_CREATE_WORK_SURFACE_SCAFFOLD
             | DEN_MEMORY_REQUEST_REVIEW
             | DEN_MEMORY_LIST_PROPOSALS
             | DEN_MEMORY_READ_PROPOSAL
@@ -1855,6 +1889,7 @@ pub async fn invoke_den_tool(
         }
         DEN_WEB_FETCH => web_fetch(pool, &context, arguments).await,
         DEN_WEB_SEARCH => web_search(pool, config, &context, arguments).await,
+        DEN_BEAR_ENVIRONMENT => bear_environment(pool, config, &context, role).await,
         DEN_SITUATION_GET => session_info(pool, config, &context, role).await,
         DEN_MEMORY_WRITE_ENTRY => write_memory_entry(pool, config, &context, role, arguments).await,
         DEN_MEMORY_STATUS => memory_status(config, &context, role).await,
@@ -2692,6 +2727,151 @@ pub(crate) fn build_work_surface_orientation_payload(
     })
 }
 
+pub(crate) fn bear_environment_payload(
+    context: &DenToolInvocationContext,
+    config: &Config,
+    role: BearAgentRole,
+    current_user: Option<&user::User>,
+    member_count: i64,
+    memory_status: Value,
+) -> Value {
+    let session_info = session_info_payload(context, role, current_user, member_count, memory_status.clone());
+    let runtime = session_info.get("runtime").cloned().unwrap_or_else(|| json!({
+        "state": "idle",
+        "source": "bear_environment_default"
+    }));
+    let session = json!({
+        "id": context.session_id,
+        "acp_session_id": source_acp_session_id(context),
+        "conversation_id": clean_optional(&context.conversation_id),
+        "conversation_selection": context.conversation_selection,
+        "runtime_target": context.runtime_target,
+        "request_id": context.request_id,
+        "channel": context.channel,
+        "active_turn": runtime.get("active_turn").cloned().unwrap_or(Value::Null),
+    });
+    let workspace = json!({
+        "cwd": context.workspace_roots.first().cloned(),
+        "roots": context.workspace_roots,
+        "source": if context.workspace_roots.is_empty() { "none" } else { "trusted_session" },
+        "work_surface": infer_work_surface_hint(context, role)["work_surface"].clone(),
+    });
+    let tools = json!({
+        "session_policy": context.session_policy,
+        "available_den_tools": builtin_den_tool_descriptors_for_role(role)
+            .into_iter()
+            .map(|descriptor| json!({
+                "name": descriptor.name,
+                "provider_name": descriptor.provider_name,
+                "scope": descriptor.scope,
+                "domain": descriptor.domain,
+                "kind": descriptor.kind,
+                "availability": descriptor.availability,
+            }))
+            .collect::<Vec<_>>(),
+    });
+    let browser = json!({
+        "status": "unknown",
+        "active_source": Value::Null,
+        "note": "Browser environment providers are not yet integrated into harness-level bear_environment for non-adapter baseline snapshots.",
+    });
+    let services = json!({
+        "den": {
+            "status": "ok",
+            "configured": true,
+            "reachable": true,
+            "role": role.as_str(),
+            "channel": context.channel,
+        },
+        "memory": {
+            "status": if memory_status.get("available").and_then(Value::as_bool).unwrap_or(false) {
+                "ok"
+            } else if memory_status.get("configured").and_then(Value::as_bool).unwrap_or(false) {
+                "degraded"
+            } else {
+                "unavailable"
+            },
+            "details": memory_status,
+        },
+    });
+    let is_acp = source_acp_session_id(context).is_some();
+    let diagnostics_status = if services["memory"]["status"] == "degraded" {
+        "degraded"
+    } else {
+        "ok"
+    };
+    json!({
+        "bear": {
+            "id": context.bear_id,
+            "slug": context.bear_slug,
+            "role": role.as_str(),
+            "role_agent_id": context.role_agent_id,
+            "member_count": member_count,
+            "contract_label": match role {
+                BearAgentRole::Pair => Value::String("Builder Bear".to_string()),
+                _ => Value::Null,
+            },
+            "current_user": current_user.map(|user| json!({
+                "user_id": user.id,
+                "username": user.username,
+                "display_name": user.display_name,
+                "membership_role": context.membership_role,
+            })).unwrap_or_else(|| json!({
+                "user_id": context.user_id,
+                "username": context.username,
+                "membership_role": context.membership_role,
+            })),
+        },
+        "runtime": {
+            "kind": context.channel.family.clone().unwrap_or_else(|| "den".to_string()),
+            "family": context.channel.protocol.clone().unwrap_or_else(|| "den".to_string()),
+            "state": runtime.get("state").cloned().unwrap_or_else(|| json!("unknown")),
+            "channel": context.channel,
+            "context_budget": context.context_budget,
+            "memfs_configured": !config.letta_memfs_service_url.trim().is_empty(),
+        },
+        "session": session,
+        "workspace": workspace,
+        "tools": tools,
+        "browser": browser,
+        "services": services,
+        "environment_variants": {
+            "acp": if is_acp {
+                json!({
+                    "status": "ok",
+                    "session": {
+                        "acp_session_id": source_acp_session_id(context),
+                        "conversation_selection": context.conversation_selection,
+                        "runtime_target": context.runtime_target,
+                    },
+                    "runtime": runtime,
+                    "permissions": context.session_policy,
+                })
+            } else {
+                json!({ "status": "not_applicable" })
+            },
+            "adapter": if is_acp {
+                json!({
+                    "status": "unavailable",
+                    "note": "Adapter enrichment is not yet wired into harness-level bear_environment.",
+                })
+            } else {
+                json!({ "status": "not_applicable" })
+            },
+        },
+        "diagnostics": {
+            "status": diagnostics_status,
+            "warnings": if is_acp {
+                json!(["Adapter enrichment is not yet integrated into harness-level bear_environment."])
+            } else {
+                json!([])
+            },
+            "errors": json!([]),
+        },
+        "session_info": session_info,
+    })
+}
+
 pub(crate) fn session_info_payload(
     context: &DenToolInvocationContext,
     role: BearAgentRole,
@@ -2841,6 +3021,54 @@ pub(crate) fn session_info_payload(
             "Do not use memory entry tools for tasks, active plans, observations, run results, Cabinet writes, or direct core updates."
         ]
     })
+}
+
+async fn bear_environment(
+    pool: &PgPool,
+    config: &Config,
+    context: &DenToolInvocationContext,
+    role: BearAgentRole,
+) -> Result<Value, CustomError> {
+    let member_count = match bears_db::count_bear_members(pool, context.bear_id).await {
+        Ok(count) => count,
+        Err(err) => {
+            tracing::warn!(
+                bear_id = %context.bear_id,
+                user_id = context.user_id,
+                error = %err,
+                "bear_environment could not count Bear members; returning degraded environment payload"
+            );
+            0
+        }
+    };
+    let current_user = user::user_by_id(pool, context.user_id).await.ok();
+    let memory_status = if config.letta_memfs_service_url.trim().is_empty() {
+        json!({
+            "configured": false,
+            "available": false,
+            "status": "unavailable",
+            "message": "MemFS sidecar is not configured (set LETTA_MEMFS_SERVICE_URL)"
+        })
+    } else {
+        memory_status_value(config, context, role)
+            .await
+            .unwrap_or_else(|err| {
+                json!({
+                    "configured": !config.letta_memfs_service_url.trim().is_empty(),
+                    "available": false,
+                    "status": "degraded",
+                    "error": err.to_string()
+                })
+            })
+    };
+    Ok(bear_environment_payload(
+        context,
+        config,
+        role,
+        current_user.as_ref(),
+        member_count,
+        memory_status,
+    ))
 }
 
 async fn session_info(
@@ -4788,6 +5016,15 @@ mod tests {
             .expect("web search descriptor exists");
         assert_eq!(web_search.provider_name, DEN_WEB_SEARCH_PROVIDER);
 
+        let bear_environment = descriptors
+            .iter()
+            .find(|descriptor| descriptor.name == DEN_BEAR_ENVIRONMENT)
+            .expect("bear environment descriptor exists");
+        assert_eq!(
+            bear_environment.provider_name,
+            DEN_BEAR_ENVIRONMENT_PROVIDER
+        );
+
         let situation = descriptors
             .iter()
             .find(|descriptor| descriptor.name == DEN_SITUATION_GET)
@@ -4833,6 +5070,7 @@ mod tests {
             .map(|descriptor| descriptor.provider_name)
             .collect::<HashSet<_>>();
         assert!(provider_names.contains("session_info"));
+        assert!(provider_names.contains("bear_environment"));
         assert!(provider_names.contains("set_conversation_title"));
         assert!(provider_names.contains("web_search"));
         assert!(provider_names.contains("memory_browse"));
@@ -4849,6 +5087,54 @@ mod tests {
         assert!(!provider_names.contains("den_memory_read"));
         assert!(!provider_names.contains("den_work_plan_update"));
         assert!(!provider_names.contains("den_plan_mode_enter"));
+    }
+
+    #[test]
+    fn bear_environment_payload_exposes_baseline_sections() {
+        let context = DenToolInvocationContext {
+            bear_id: Uuid::nil(),
+            bear_slug: "meta".to_string(),
+            role_agent_id: "agent-123".to_string(),
+            agent_role: Some(BearAgentRole::Pair),
+            user_id: 7,
+            username: Some("gerwitz".to_string()),
+            membership_role: Some("admin".to_string()),
+            conversation_id: "conv-123".to_string(),
+            session_id: "sess-123".to_string(),
+            acp_session_id: Some("acp-123".to_string()),
+            conversation_selection: Some("conv-123".to_string()),
+            runtime_target: Some("conv-123".to_string()),
+            workspace_roots: vec!["/workspace".to_string()],
+            session_policy: Some(json!({ "mode_label": "Write" })),
+            activity: None,
+            runtime: Some(json!({
+                "state": "running",
+                "active_turn": { "present": true, "pending_obligations": 0 }
+            })),
+            context_budget: Some(json!({ "status": "unavailable" })),
+            request_id: Some("req-123".to_string()),
+            channel: DenToolChannelContext {
+                family: Some("acp".to_string()),
+                client: Some("api-direct".to_string()),
+                protocol: Some("acp".to_string()),
+            },
+        };
+        let payload = bear_environment_payload(
+            &context,
+            &Config::test_stub(),
+            BearAgentRole::Pair,
+            None,
+            2,
+            json!({ "configured": false, "available": false }),
+        );
+
+        assert_eq!(payload["bear"]["slug"], "meta");
+        assert_eq!(payload["runtime"]["state"], "running");
+        assert_eq!(payload["session"]["id"], "sess-123");
+        assert_eq!(payload["workspace"]["cwd"], "/workspace");
+        assert_eq!(payload["environment_variants"]["acp"]["status"], "ok");
+        assert_eq!(payload["environment_variants"]["adapter"]["status"], "unavailable");
+        assert!(payload["tools"]["available_den_tools"].is_array());
     }
 
     #[test]
@@ -4899,7 +5185,11 @@ mod tests {
     #[test]
     fn all_descriptors_are_known_tools() {
         for descriptor in builtin_den_tool_descriptors() {
-            assert!(is_builtin_den_tool(descriptor.name));
+            assert!(
+                is_builtin_den_tool(descriptor.name),
+                "unknown descriptor name: {}",
+                descriptor.name
+            );
         }
     }
 
@@ -4909,6 +5199,7 @@ mod tests {
         assert!(pair.contains(DEN_CONVERSATION_SET_TITLE));
         assert!(pair.contains(DEN_WEB_FETCH));
         assert!(pair.contains(DEN_WEB_SEARCH));
+        assert!(pair.contains(DEN_BEAR_ENVIRONMENT));
         assert!(pair.contains(DEN_SITUATION_GET));
         assert!(pair.contains(DEN_MEMORY_WRITE_ENTRY));
         assert!(pair.contains(DEN_MEMORY_STATUS));
