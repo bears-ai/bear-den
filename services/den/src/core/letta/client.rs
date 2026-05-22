@@ -131,8 +131,15 @@ fn letta_http_error_message(operation: &str, status: StatusCode, text: &str) -> 
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
 pub struct LettaPendingApproval {
+    pub source_message_id: Option<String>,
     pub tool_call_id: String,
     pub name: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PendingApprovalDenialMode {
+    PostToConversation,
+    InspectOnly,
 }
 
 fn message_type(value: &Value) -> Option<&str> {
@@ -142,7 +149,10 @@ fn message_type(value: &Value) -> Option<&str> {
         .and_then(Value::as_str)
 }
 
-fn collect_tool_calls(value: Option<&Value>) -> Vec<LettaPendingApproval> {
+fn collect_tool_calls(
+    value: Option<&Value>,
+    source_message_id: Option<&str>,
+) -> Vec<LettaPendingApproval> {
     let Some(value) = value else {
         return Vec::new();
     };
@@ -160,7 +170,11 @@ fn collect_tool_calls(value: Option<&Value>) -> Vec<LettaPendingApproval> {
                 .and_then(Value::as_str)
                 .filter(|s| !s.is_empty())
                 .map(str::to_string);
-            Some(LettaPendingApproval { tool_call_id, name })
+            Some(LettaPendingApproval {
+                source_message_id: source_message_id.map(str::to_string),
+                tool_call_id,
+                name,
+            })
         })
         .collect()
 }
@@ -173,10 +187,15 @@ fn pending_approvals_from_variants(variants: &[Value]) -> Vec<LettaPendingApprov
         return Vec::new();
     };
 
+    let source_message_id = approval_request
+        .get("id")
+        .and_then(Value::as_str)
+        .filter(|s| !s.is_empty());
     let requested = collect_tool_calls(
         approval_request
             .get("tool_calls")
             .or_else(|| approval_request.get("tool_call")),
+        source_message_id,
     );
     let mut completed = HashSet::new();
 
@@ -990,11 +1009,15 @@ impl LettaClient {
         conversation_id: &str,
         agent_id: Option<&str>,
         reason: &str,
+        mode: PendingApprovalDenialMode,
     ) -> Result<Vec<LettaPendingApproval>, CustomError> {
         let pending = self
             .pending_conversation_approvals(conversation_id, agent_id)
             .await?;
         if pending.is_empty() {
+            return Ok(pending);
+        }
+        if matches!(mode, PendingApprovalDenialMode::InspectOnly) {
             return Ok(pending);
         }
 
@@ -2060,11 +2083,13 @@ mod tests {
         assert_eq!(pending.len(), 1);
         assert_eq!(pending[0].tool_call_id, "call-pending");
         assert_eq!(pending[0].name.as_deref(), Some("fs_edit_file"));
+        assert_eq!(pending[0].source_message_id, None);
     }
 
     #[test]
     fn pending_approvals_from_variants_supports_single_tool_call_shape() {
         let variants = vec![json!({
+            "id": "approval-2",
             "message_type": "approval_request_message",
             "tool_call": { "tool_call_id": "call-single" }
         })];
@@ -2073,6 +2098,24 @@ mod tests {
 
         assert_eq!(pending.len(), 1);
         assert_eq!(pending[0].tool_call_id, "call-single");
+        assert_eq!(pending[0].source_message_id.as_deref(), Some("approval-2"));
+    }
+
+    #[test]
+    fn inspect_only_pending_approval_denial_mode_returns_pending_without_posting() {
+        let pending = vec![LettaPendingApproval {
+            source_message_id: Some("approval-9".to_string()),
+            tool_call_id: "call-stale".to_string(),
+            name: Some("fs_edit_file".to_string()),
+        }];
+
+        assert!(matches!(
+            PendingApprovalDenialMode::InspectOnly,
+            PendingApprovalDenialMode::InspectOnly
+        ));
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0].tool_call_id, "call-stale");
+        assert_eq!(pending[0].source_message_id.as_deref(), Some("approval-9"));
     }
 
     #[test]

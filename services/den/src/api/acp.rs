@@ -64,6 +64,7 @@ use crate::{
         letta::{
             load_agent_conversations, normalize_display_status_text,
             sanitize_visible_transcript_text, LettaContinuationContext,
+            PendingApprovalDenialMode,
         },
         memory_manager_head::{write_memfs_role_memory_entry, MemfsWriteRoleMemoryEntryRequest},
         memory_proposals::{self, CreateMemoryProposal},
@@ -2698,6 +2699,7 @@ async fn compact_session_inner(
             conversation_id,
             pair_agent_id.as_deref(),
             ACP_MANUAL_RECOVERY_APPROVAL_DENIAL_REASON,
+            PendingApprovalDenialMode::PostToConversation,
         )
         .await?;
     let compact_result = state.letta.compact_conversation(conversation_id).await?;
@@ -2708,6 +2710,7 @@ async fn compact_session_inner(
         pair_agent_id = ?pair_agent_id,
         denied_count = denied.len(),
         denied_tool_call_ids = ?denied.iter().map(|p| p.tool_call_id.as_str()).collect::<Vec<_>>(),
+        denied_source_message_ids = ?denied.iter().filter_map(|p| p.source_message_id.as_deref()).collect::<Vec<_>>(),
         "ACP session recovery requested: denied pending Letta approvals and compacted conversation"
     );
     Ok(Json(serde_json::json!({
@@ -2719,6 +2722,7 @@ async fn compact_session_inner(
             "attempted": true,
             "denied_count": denied.len(),
             "denied_tool_call_ids": denied.iter().map(|p| p.tool_call_id.as_str()).collect::<Vec<_>>(),
+            "denied_source_message_ids": denied.iter().filter_map(|p| p.source_message_id.as_deref()).collect::<Vec<_>>(),
         },
         "compact_result": compact_result,
     }))
@@ -3550,6 +3554,7 @@ async fn prompt_inner(
                         acp_session_id = %session_id,
                         pair_agent_id = %pair_agent_id,
                         conversation_id = %conversation_resolution.upstream_target,
+                        active_tool_call_id = tracing::field::Empty,
                         error = %retry_err,
                         "Stale approval persisted after run cleanup; denying pending Letta approvals before final ACP prompt retry"
                     );
@@ -3559,6 +3564,7 @@ async fn prompt_inner(
                             &conversation_resolution.upstream_target,
                             Some(&pair_agent_id),
                             ACP_STALE_APPROVAL_RECOVERY_DENIAL_REASON,
+                            PendingApprovalDenialMode::InspectOnly,
                         )
                         .await
                     {
@@ -3572,7 +3578,9 @@ async fn prompt_inner(
                         conversation_id = %conversation_resolution.upstream_target,
                         denied_count = denied.len(),
                         denied_tool_call_ids = ?denied.iter().map(|p| p.tool_call_id.as_str()).collect::<Vec<_>>(),
-                        "Submitted Letta approval denials after stale approval retry failure"
+                        denied_source_message_ids = ?denied.iter().filter_map(|p| p.source_message_id.as_deref()).collect::<Vec<_>>(),
+                        active_tool_call_id = tracing::field::Empty,
+                        "Detected stale pending Letta approvals after retry failure; suppressed conversation-posted denial to avoid contaminating later turns"
                     );
                     match post_pair_turn_messages_streaming(
                         state.letta.as_ref(),
@@ -4497,35 +4505,10 @@ impl AcpStreamDiagnostics {
         })
     }
 
-    fn orphaned_requires_approval_event(
-        &mut self,
-        _context: &AcpStreamContext,
-        cleanup: serde_json::Value,
-    ) -> Option<AcpGatewayEvent> {
-        if self.emitted_runtime_cleanup
-            || !self.saw_requires_approval_stop
-            || self.saw_tool_return_ack
-        {
-            return None;
-        }
+    fn mark_runtime_cleanup_emitted(&mut self) {
         self.emitted_runtime_cleanup = true;
-        Some(AcpGatewayEvent::StatusText {
-            text: format!(
-                "BEARS detected stale Letta approval/runtime state, cancelled local obligations/runs, and stopped this turn safely. Please retry your message; any recovery denial applies only to the expired request, not future tool use. cleanup={}",
-                cleanup
-            ),
-        })
     }
 
-    fn continuation_cleanup_event(&mut self, cleanup: serde_json::Value) -> AcpGatewayEvent {
-        self.emitted_runtime_cleanup = true;
-        AcpGatewayEvent::StatusText {
-            text: format!(
-                "BEARS could not continue Letta after a tool result because the runtime looked wedged. I cancelled local obligations/runs and stopped this turn safely. Please retry your message; any recovery denial applies only to the expired request, not future tool use. cleanup={}",
-                cleanup
-            ),
-        }
-    }
 
     fn diagnostic_json_with_turn_controller(
         &self,
@@ -5638,22 +5621,7 @@ impl Stream for AcpLettaSseStream {
                         }),
                     );
                     this.push_terminal_result_when_ready(role_result);
-                    let event = if this.diagnostics.saw_requires_approval_stop
-                        && !this.diagnostics.saw_tool_return_ack
-                    {
-                        this.diagnostics
-                            .orphaned_requires_approval_event(&this.context, cleanup)
-                            .unwrap_or_else(|| {
-                                this.diagnostics
-                                    .continuation_cleanup_event(serde_json::json!({
-                                        "ok": true,
-                                        "reason": "cleanup_completed"
-                                    }))
-                            })
-                    } else {
-                        this.diagnostics.continuation_cleanup_event(cleanup)
-                    };
-                    this.push_adapter_event(event);
+                    this.diagnostics.mark_runtime_cleanup_emitted();
                     return self.poll_next(cx);
                 }
             }
@@ -7022,12 +6990,17 @@ mod tests {
         let mut output = String::new();
         while let Some(item) = stream.next().await {
             output.push_str(&String::from_utf8(item.unwrap().to_vec()).unwrap());
-            if output.contains("stale Letta approval state") {
-                break;
-            }
         }
-        assert!(output.contains("stale Letta approval state"), "{output}");
+        assert!(!output.contains("status_text"), "{output}");
+        assert!(!output.contains("runtime recovery"), "{output}");
+        assert!(output.contains("\"type\":\"turn_result\""), "{output}");
         assert_eq!(*cancel_calls.lock().await, 1);
+    }
+
+    #[test]
+    fn stale_approval_recovery_uses_inspect_only_mode_to_avoid_conversation_contamination() {
+        let mode = PendingApprovalDenialMode::InspectOnly;
+        assert!(matches!(mode, PendingApprovalDenialMode::InspectOnly));
     }
 
     #[tokio::test]

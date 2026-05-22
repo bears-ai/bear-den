@@ -18,7 +18,8 @@ pub use assistant_display::{
     normalize_display_status_text, sanitize_visible_transcript_text, strip_letta_harness_for_user,
 };
 pub use client::{
-    LettaAgentListItem, LettaClient, LettaContinuationContext, LettaModelOption, LettaToolOption,
+    LettaAgentListItem, LettaClient, LettaContinuationContext, LettaModelOption,
+    LettaPendingApproval, LettaToolOption, PendingApprovalDenialMode,
 };
 pub use conversation_title::{
     display_conversation_title, first_user_message_text_for_title, is_acceptable_derived_title,
