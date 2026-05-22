@@ -107,6 +107,12 @@ export type BearChannelErrorContext = {
     upstream_error?: unknown;
 };
 
+export function isCancelledStopReason(stopReason: string | undefined): boolean {
+    if (!stopReason) return false;
+    const normalized = stopReason.trim().toLowerCase();
+    return normalized === "cancelled" || normalized === "canceled";
+}
+
 export type ParsedBearChannelRequest = {
     conversationId: string;
     agentId: string;
@@ -437,6 +443,9 @@ export function sdkMessageToBearChannelEvents(
                         ];
                     }
                     if (stopReason === "requires_approval") {
+                        return [];
+                    }
+                    if (isCancelledStopReason(stopReason)) {
                         return [];
                     }
                     if (stopReason && stopReason !== "end_turn") {

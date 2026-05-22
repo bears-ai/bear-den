@@ -860,6 +860,7 @@ struct SseFrameOutcome {
     saw_tool_activity: bool,
     saw_error: bool,
     recover_and_retry: bool,
+    saw_cancellation_error: bool,
     upstream_errors: Vec<String>,
 }
 
@@ -4131,6 +4132,7 @@ async fn handle_prompt_with_retry(
     let mut saw_tool_activity = false;
     let mut saw_error = false;
     let mut recover_and_retry = false;
+    let mut saw_cancellation_error = false;
     let mut upstream_errors = Vec::new();
     let mut buffer = Vec::<u8>::new();
     let mut stream = response.bytes_stream();
@@ -4171,6 +4173,7 @@ async fn handle_prompt_with_retry(
             saw_tool_activity |= outcome.saw_tool_activity;
             saw_error |= outcome.saw_error;
             recover_and_retry |= outcome.recover_and_retry;
+            saw_cancellation_error |= outcome.saw_cancellation_error;
             upstream_errors.extend(outcome.upstream_errors);
         }
     }
@@ -4191,6 +4194,7 @@ async fn handle_prompt_with_retry(
         saw_tool_activity |= outcome.saw_tool_activity;
         saw_error |= outcome.saw_error;
         recover_and_retry |= outcome.recover_and_retry;
+        saw_cancellation_error |= outcome.saw_cancellation_error;
         upstream_errors.extend(outcome.upstream_errors);
     }
 
@@ -4258,6 +4262,21 @@ async fn handle_prompt_with_retry(
                 "bears-acp-adapter: ignoring upstream error after visible output: {}",
                 upstream_errors.join("; ")
             );
+        } else if saw_cancellation_error {
+            eprintln!(
+                "bears-acp-adapter: suppressing compact/collapse recovery hint for cancellation session_id={} errors={}",
+                session_id,
+                upstream_errors.join("; ")
+            );
+            send_agent_message_chunk_for_turn(
+                shared_state,
+                session_id,
+                turn_token,
+                "BEARS request was cancelled.",
+            )
+            .await?;
+            saw_visible_output = true;
+            upstream_errors.clear();
         } else {
             let message = format!(
                 "BEARS upstream stream reported error: {}",
@@ -5593,6 +5612,7 @@ async fn handle_sse_frame(
                         .to_string(),
                 );
             } else {
+                outcome.saw_cancellation_error = looks_like_cancellation_error(&formatted);
                 outcome.upstream_errors.push(formatted);
             }
         }
@@ -5643,6 +5663,20 @@ fn den_event_type_is_tool_activity(ty: &str) -> bool {
 fn looks_like_waiting_for_approval_error(message: &str) -> bool {
     let message = message.to_ascii_lowercase();
     message.contains("waiting for approval") || message.contains("please approve or deny")
+}
+
+fn looks_like_cancellation_error(message: &str) -> bool {
+    let message = message.to_ascii_lowercase();
+    message.contains("stop_reason: cancelled")
+        || message.contains("stop_reason=cancelled")
+        || message.contains("stop_reason: canceled")
+        || message.contains("stop_reason=canceled")
+        || message.contains("producing assistant output: cancelled")
+        || message.contains("producing assistant output: canceled")
+        || message == "cancelled"
+        || message == "canceled"
+        || message.ends_with(": cancelled")
+        || message.ends_with(": canceled")
 }
 
 fn format_den_event_error(event: &Value) -> String {
@@ -8746,6 +8780,20 @@ mod tests {
         ));
         assert!(looks_like_waiting_for_approval_error(
             "Please Approve Or Deny this stale request"
+        ));
+    }
+
+    #[test]
+    fn cancellation_detection_matches_cancelled_and_canceled_errors() {
+        assert!(looks_like_cancellation_error(
+            "Letta stopped before producing assistant output: cancelled"
+        ));
+        assert!(looks_like_cancellation_error(
+            "Letta stopped before producing assistant output: canceled"
+        ));
+        assert!(looks_like_cancellation_error("cancelled"));
+        assert!(!looks_like_cancellation_error(
+            "Letta stopped before producing assistant output: max_steps"
         ));
     }
 

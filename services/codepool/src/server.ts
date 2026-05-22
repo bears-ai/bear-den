@@ -12,6 +12,7 @@ import { handleOpenAIChatCompletions } from "./openai.js";
 import {
     bearChannelEventToSseDataLine,
     extractUpstreamErrorSummary,
+    isCancelledStopReason,
     parseBearChannelRequest,
     runtimeErrorContext,
     sdkMessageToBearChannelEvents,
@@ -431,6 +432,7 @@ export function attachRoutes(
             const sdkMessageTypes: Record<string, number> = {};
             const unmappedStreamEventSamples: unknown[] = [];
             const upstreamErrorSamples: unknown[] = [];
+            let sawCancelledStopReason = false;
 
             try {
                 const denToolContext = buildDenToolRuntimeContext(
@@ -480,6 +482,20 @@ export function attachRoutes(
                                 preview: summary.preview,
                             });
                         }
+                        if (
+                            ev &&
+                            typeof ev === "object" &&
+                            (ev as { message_type?: unknown }).message_type ===
+                                "stop_reason" &&
+                            isCancelledStopReason(
+                                typeof (ev as { stop_reason?: unknown }).stop_reason ===
+                                    "string"
+                                    ? (ev as { stop_reason?: string }).stop_reason
+                                    : undefined,
+                            )
+                        ) {
+                            sawCancelledStopReason = true;
+                        }
                     }
                     const events = sdkMessageToBearChannelEvents(msg);
                     if (
@@ -528,10 +544,17 @@ export function attachRoutes(
                             ? upstreamErrorSamples
                             : undefined,
                 };
-                let outcome: "ok" | "upstream_error" | "empty_fallback";
+                let outcome:
+                    | "ok"
+                    | "upstream_error"
+                    | "empty_fallback"
+                    | "cancelled";
                 if (hadAssistantOrReasoning) {
                     recordStreamFinishedOk();
                     outcome = "ok";
+                } else if (sawCancelledStopReason) {
+                    recordStreamFinishedOk();
+                    outcome = "cancelled";
                 } else if (sawUpstreamErrorMessage) {
                     recordStreamFinishedUpstreamError();
                     outcome = "upstream_error";
