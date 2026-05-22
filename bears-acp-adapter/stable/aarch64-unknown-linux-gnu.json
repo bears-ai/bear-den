@@ -1,13 +1,13 @@
 {
   "channel": "stable",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "platforms": {
     "aarch64-unknown-linux-gnu": {
       "binary_url": "https://TheArtificial.github.io/BEARS/bears-acp-adapter/stable/bears-acp-adapter-aarch64-unknown-linux-gnu",
-      "sha256": "360b4991866555dae5c109b747cedc71d215f5fb3a4469eeefc2ab97622095d5",
-      "size": 17852984
+      "sha256": "8ddbe650df39cce71e682de686ea96fa8508e4c6295d98a3bdccf85a6499b663",
+      "size": 17816360
     }
   },
-  "release_notes_url": "https://github.com/TheArtificial/BEARS/releases/tag/bears-acp-adapter/v0.1.2",
+  "release_notes_url": "https://github.com/TheArtificial/BEARS/releases/tag/bears-acp-adapter/v0.1.3",
   "mandatory": false
 }
