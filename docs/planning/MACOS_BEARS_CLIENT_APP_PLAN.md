@@ -8,9 +8,11 @@ Evolve the macOS distribution from a signed `.pkg` that installs `bears-acp-adap
 
 The app should improve onboarding for non-technical macOS users without moving protocol authority, Bear provisioning authority, or runtime policy out of Den.
 
+Longer term, the app should be designed so it can become a **universal Apple client** with an iOS/iPadOS version. The first shipping target remains macOS, but architectural choices should avoid baking in assumptions that only work for macOS helper binaries, local filesystem access, or ACP process launching.
+
 ## Summary decision
 
-Build a native **SwiftUI macOS app** as a platform shell around the existing shared Rust adapter/runtime core.
+Build a native **SwiftUI macOS app** as a platform shell around the existing shared Rust adapter/runtime core, while keeping app UI/state architecture portable enough for a future iOS/iPadOS target.
 
 ```text
 Shared Rust core
@@ -28,29 +30,69 @@ The shared Rust core remains the source of truth for:
 - local tool/capability negotiation;
 - future reconnect/resume logic.
 
-The macOS app owns:
+The Apple client app owns:
 
 - native onboarding UI;
 - token/login setup;
 - Keychain integration;
-- local config editing;
-- running `doctor` and showing results;
-- configuring supported ACP clients when possible;
+- local config editing where the platform permits it;
+- running `doctor` and showing results on macOS;
+- configuring supported ACP clients when possible on macOS;
 - showing logs/status;
-- installing/updating the helper CLI;
-- future BearWire desktop runtime features.
+- installing/updating the helper CLI on macOS;
+- future BearWire desktop runtime features on macOS;
+- future mobile-friendly Bear status, administration, notifications, and remote-control UX on iOS/iPadOS.
 
 ## Non-goals
 
 - Do not put ACP/BearWire protocol logic primarily in Swift.
 - Do not make the macOS app required for Linux/devcontainer use.
 - Do not add macOS frameworks to the Linux adapter build.
+- Do not put macOS-only assumptions into shared Apple UI/state code that should later run on iOS/iPadOS.
 - Do not make local runtime access imply Bear administration authority.
 - Do not replace Den admin APIs or the Den operator console.
 - Do not introduce a persistent LaunchAgent until there is a clear need.
 - Do not turn the app into an external agent protocol surface; A2A remains the future external agent interoperability path.
 
 ## Architecture
+
+### Universal Apple app direction
+
+The app should be structured as an Apple client, not only as a macOS installer UI.
+
+Architectural implications:
+
+- Prefer SwiftUI and shared view models that can compile for macOS and iOS/iPadOS.
+- Keep macOS-only features behind platform-specific services/protocols.
+- Treat helper binary management, ACP client auto-configuration, local filesystem access, LaunchAgents, and process spawning as macOS capabilities, not universal app assumptions.
+- Treat iOS/iPadOS as a remote/administrative client: it can authenticate with Den, show Bear status, manage allowed administration flows, receive notifications, and interact with remote BearWire-capable runtimes, but it cannot host the same local ACP stdio adapter model.
+- Keep Den/BearWire APIs usable by both macOS and iOS clients without requiring local helper availability.
+
+Suggested layering:
+
+```text
+Shared Apple app layer
+  - SwiftUI views
+  - app navigation/state
+  - Den API client
+  - auth/session model
+  - Bear/admin/status models
+
+macOS services
+  - helper install/update
+  - run doctor
+  - ACP client configuration
+  - local logs
+  - workspace registration
+  - optional LaunchAgent
+
+iOS/iPadOS services
+  - remote Den auth
+  - notifications
+  - Bear/admin/status UI
+  - remote workspace/runtime selection
+  - no local ACP stdio helper
+```
 
 ### Shared Rust core
 
@@ -121,11 +163,13 @@ The app should prefer `--json` commands rather than scraping human-readable text
 
 ### macOS app shell
 
-Add a native macOS app, preferably under:
+Add a native macOS app under:
 
 ```text
-apps/macos/Bears/
+apps/apple/Bears/
 ```
+
+Use a universal-first structure from the start. The macOS target is the first shipping target, but reusable SwiftUI views, view models, auth/session state, and Den API clients should live in shared Apple code so an iOS/iPadOS target can be added later without rewriting product logic.
 
 The app should bundle or install the same signed adapter binary:
 
@@ -133,15 +177,19 @@ The app should bundle or install the same signed adapter binary:
 Bears.app/Contents/Resources/bin/bears-acp-adapter
 ```
 
-The app can either run the bundled helper directly or install/symlink it into a stable location.
-
-Preferred user-local helper location:
+The app bundles the helper and installs/updates it into a stable user-local location on first launch:
 
 ```text
 ~/Library/Application Support/Bears/bin/bears-acp-adapter
 ```
 
-Keep `/usr/local/bin/bears-acp-adapter` support for the current `.pkg` path and technical users.
+The app-managed ACP client command should use the fully expanded absolute path, not `~`, for example:
+
+```text
+/Users/alice/Library/Application Support/Bears/bin/bears-acp-adapter
+```
+
+The app should not install or symlink into `/usr/local/bin`, because that commonly triggers an administrator authentication prompt even for admin users. Keep `/usr/local/bin/bears-acp-adapter` only for the separate `.pkg` / technical CLI install path.
 
 ## Config and secrets
 
@@ -201,7 +249,9 @@ service: ai.bears.client
 account: <profile-or-human-id>
 ```
 
-Initially, the Swift app may read from Keychain and pass the token to the helper process through environment variables. Later, the Rust CLI can learn to read Keychain directly behind a macOS-only feature flag if that improves UX.
+The Swift app owns Keychain access. The Rust helper should not read Keychain directly in the initial architecture.
+
+For app-managed launches or client auto-configuration, the app provides the token to the helper through the selected client configuration mechanism, typically environment variables or client-specific config generated by the app. Linux/devcontainer remains env/config based.
 
 Do not store Den tokens in plain-text config files.
 
@@ -238,12 +288,17 @@ No background daemon required.
 
 Add client-specific setup helpers.
 
+Initial target order:
+
+1. **Zed auto-configuration** — first because the external-agent config path is documented and already validated with the adapter.
+2. **aizen guided/manual configuration** — provide copy/paste instructions first; only add auto-write once its config format and rollback behavior are verified.
+
 Potential helpers:
 
-- detect aizen installation/config;
+- detect supported ACP client installation/config;
 - generate copy/paste config;
 - write config when safe and reversible;
-- detect Zed settings and show custom agent snippet;
+- detect Zed settings and add/update the custom agent entry;
 - validate configured command path;
 - explain missing permissions/env vars.
 
@@ -265,7 +320,40 @@ Potential features:
 
 Still avoid LaunchAgent unless needed.
 
-### Phase 4 — optional LaunchAgent/helper
+### Phase 4 — universal Apple client expansion
+
+Before adding substantial macOS-only background infrastructure, identify which app features should also exist on iOS/iPadOS.
+
+Universal Apple feature priority:
+
+1. **Bear status/admin** — Bear list/detail/status, role provisioning state, Den connection health, membership/admin controls where authorized, and basic diagnostics.
+2. **Lightweight chat/status** — a simple mobile-friendly Bear interaction/status surface after status/admin is useful.
+3. **Notifications and review inbox** — task approvals, Reflection proposals, memory review items, and work handoffs once backend queues are mature.
+4. **Remote runtime selection/control** — later, once BearWire connected runtimes exist.
+
+Likely universal features:
+
+- Den login/session management;
+- Bear list/detail/status;
+- Bear administration for authorized humans;
+- provisioning/reconciliation status;
+- memory/reflection/diagnostic summaries;
+- lightweight chat/status;
+- notifications and review inbox;
+- remote workspace/runtime selection once BearWire runtimes exist.
+
+macOS-only features:
+
+- install/update local helper;
+- run ACP stdio adapter;
+- configure local ACP clients;
+- read local logs;
+- register local workspaces;
+- local permission prompt surface for filesystem/process tools.
+
+### Phase 5 — optional LaunchAgent/helper
+
+Start with no LaunchAgent. Then use app-open helper management first. Promote the helper to a persistent LaunchAgent only when always-on behavior is needed.
 
 Introduce a persistent helper only when the product needs background behavior such as:
 
@@ -360,10 +448,18 @@ Keep workflows separate:
 
 `macos-app.yml`:
 
-- builds SwiftUI app;
+- builds SwiftUI macOS app;
 - embeds/downloads signed helper;
 - signs/notarizes app/dmg;
 - uploads app artifact.
+
+Future Apple client CI may add:
+
+```text
+.github/workflows/apple-client.yml
+```
+
+for shared Swift package tests and iOS/iPadOS builds that do not embed the macOS helper.
 
 App build failures should not block Linux/devcontainer adapter releases unless explicitly configured for a release gate.
 
@@ -387,7 +483,15 @@ macOS-only code should live in:
 apps/macos/Bears/
 ```
 
-or behind explicit `cfg(target_os = "macos")` feature gates if it must be in Rust.
+or under a macOS-specific target inside a future shared Apple app tree:
+
+```text
+apps/apple/Bears/macOS/
+```
+
+Shared SwiftUI/state code should avoid direct dependencies on helper processes, local filesystem privileges, and AppKit-only APIs so it can later compile for iOS/iPadOS.
+
+Rust macOS-specific code should stay behind explicit `cfg(target_os = "macos")` feature gates if it must be in Rust.
 
 The default devcontainer workflow should continue to build and test only the portable adapter/core.
 
@@ -405,9 +509,11 @@ Run on Linux and macOS:
 - BearWire client message encoding once implemented;
 - local tool policy decisions.
 
-### macOS app tests
+### Apple app tests
 
-Run on macOS CI:
+Run shared Swift tests for app models, Den API clients, auth/session state, and view models without requiring a macOS helper.
+
+Run macOS-specific tests on macOS CI:
 
 - app builds;
 - helper is embedded or discoverable;
@@ -415,6 +521,8 @@ Run on macOS CI:
 - config file read/write works in a temp home;
 - `doctor --json` can be invoked from the app wrapper;
 - notarization succeeds on release builds.
+
+Future iOS/iPadOS tests should verify that shared UI/state code builds without helper-process assumptions.
 
 ### Manual beta checklist
 
@@ -439,26 +547,28 @@ Run on macOS CI:
 
 ## Open questions
 
-1. Should the first SwiftUI app bundle the helper binary only, or install it into `~/Library/Application Support/Bears/bin/` on first launch?
-2. Should `/usr/local/bin/bears-acp-adapter` remain the recommended ACP client command once the app exists, or should app-managed installs prefer the user-local helper path?
-3. Should the Swift app own Keychain access permanently, or should the Rust helper learn macOS Keychain access behind a feature flag?
-4. Which ACP clients should receive automatic configuration first: aizen, Zed, or both?
-5. What app name should be used in Finder and releases: `Bears`, `BEARS`, or `Bears Client`?
-6. When does the app need a LaunchAgent rather than app-open-only runtime management?
+1. What app name should be used in Finder and releases: `Bears`, `BEARS`, or `Bears Client`?
+2. What exact Zed settings mutation strategy is safest: direct JSON edit, generated snippet, or user-confirmed patch preview?
+3. What exact aizen configuration format and rollback behavior should the app support before enabling auto-configuration?
+4. Which app features require online Den connectivity versus local-only status?
+5. What backend API shape should the first iOS/iPadOS Bear status/admin screens use?
+6. When does app-open helper management become insufficient and justify a LaunchAgent?
 
 ## Suggested implementation sequence
 
 1. Add `doctor --json` to `bears-acp-adapter`.
 2. Add app-managed config file support to the shared Rust adapter.
 3. Add stable machine-readable config/auth status commands.
-4. Create minimal SwiftUI app under `apps/macos/Bears/`.
-5. Bundle or install the existing signed adapter helper.
+4. Create minimal SwiftUI app under `apps/apple/Bears/` with shared view models separated from macOS helper services.
+5. Bundle the existing signed adapter helper and install/update it to `~/Library/Application Support/Bears/bin/` on first launch.
 6. Add Den URL/token/Bear config UI.
 7. Run and render `doctor --json` in the app.
-8. Add client setup guidance for aizen and Zed.
+8. Add Zed auto-configuration and aizen guided/manual setup.
 9. Add signing/notarization workflow for `.app`/`.dmg`.
-10. Beta test app + existing `.pkg` side by side.
-11. Add BearWire desktop runtime features only after BearWire v1 is defined and stable.
+10. Add shared Apple app tests that can later run for iOS/iPadOS.
+11. Beta test app + existing `.pkg` side by side.
+12. Add BearWire desktop runtime features only after BearWire v1 is defined and stable.
+13. Add iOS/iPadOS target only after the shared app model and Den APIs are stable enough to avoid duplicating product logic, starting with Bear status/admin, then lightweight chat/status, then notifications/review inbox.
 
 ## Related documents
 
