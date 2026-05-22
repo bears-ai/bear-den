@@ -193,11 +193,11 @@ jobs:
                       target: aarch64-apple-darwin
                       artifact_name: bears-acp-adapter-aarch64-apple-darwin
                       binary_name: bears-acp-adapter
-                    - os: ubuntu-24.04
+                    - os: ubuntu-22.04
                       target: x86_64-unknown-linux-gnu
                       artifact_name: bears-acp-adapter-x86_64-unknown-linux-gnu
                       binary_name: bears-acp-adapter
-                    - os: ubuntu-24.04-arm
+                    - os: ubuntu-22.04-arm
                       target: aarch64-unknown-linux-gnu
                       artifact_name: bears-acp-adapter-aarch64-unknown-linux-gnu
                       binary_name: bears-acp-adapter
@@ -230,6 +230,21 @@ jobs:
                   mkdir -p dist
                   cp "tools/bears-acp-adapter/target/${{ matrix.target }}/release/${{ matrix.binary_name }}" "dist/${{ matrix.artifact_name }}"
                   chmod +x "dist/${{ matrix.artifact_name }}"
+
+            - name: Check Linux glibc compatibility
+              if: runner.os == 'Linux'
+              run: |
+                  set -eu
+                  artifact="dist/${{ matrix.artifact_name }}"
+                  versions="$(objdump -T "$artifact" | sed -n 's/.*GLIBC_\([0-9][0-9.]*\).*/\1/p' | sort -Vu)"
+                  required="$(printf '%s\n' "$versions" | tail -n 1)"
+                  echo "Detected GLIBC symbol versions:"
+                  printf '%s\n' "$versions"
+                  case "$required" in
+                    "") echo "No dynamic GLIBC requirement detected." ;;
+                    2.3[0-5]|2.[0-2][0-9]|1.*|0.*) echo "Maximum GLIBC requirement: $required" ;;
+                    *) echo "::error::Linux artifact requires GLIBC_$required; build on an older runner or use a more compatible target"; exit 1 ;;
+                  esac
 
             - name: Stage artifact (Windows)
               if: runner.os == 'Windows'

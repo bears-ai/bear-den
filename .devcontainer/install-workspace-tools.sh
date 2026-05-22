@@ -109,10 +109,16 @@ install_bears_acp_adapter_binary() {
     fi
   fi
 
+  chmod 0755 "${tmp}"
+  if ! "${tmp}" --help >/dev/null; then
+    rm -f "${tmp}"
+    echo "bears-acp-adapter: downloaded binary failed to run on this system; leaving any existing install untouched" >&2
+    return 1
+  fi
+
   mkdir -p "${install_dir}"
   install -m 0755 "${tmp}" "${install_dir}/bears-acp-adapter"
   rm -f "${tmp}"
-  "${install_dir}/bears-acp-adapter" --help >/dev/null
   echo "bears-acp-adapter: installed to ${install_dir}/bears-acp-adapter"
 }
 
