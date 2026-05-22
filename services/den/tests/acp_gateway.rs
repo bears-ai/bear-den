@@ -12,7 +12,7 @@ use den::{
     api,
     config::Config,
     core::{
-        acp_tokens,
+        acp_sessions, acp_tokens,
         bears::{db as bears_db, BearAgentRole},
         work_plans::{
             self, WorkPlanItem, WorkPlanItemStatus, WorkPlanStatus, WorkPlanUpdate, WorkPlanUpsert,
@@ -433,6 +433,30 @@ async fn post_permission_result(
     app.oneshot(builder.body(Body::from(body.to_string())).unwrap())
         .await
         .expect("ACP permission result response")
+}
+
+async fn post_adapter_environment(
+    app: axum::Router,
+    slug: &str,
+    session_id: &str,
+    token: Option<&str>,
+    mut body: Value,
+) -> axum::response::Response {
+    if body.get("adapter_contract").is_none() {
+        body["adapter_contract"] = json!({ "name": "bears.acp.adapter", "version": 1 });
+    }
+    let mut builder = Request::builder()
+        .method("POST")
+        .uri(format!(
+            "/acp/bears/{slug}/sessions/{session_id}/adapter-environment"
+        ))
+        .header(header::CONTENT_TYPE, "application/json");
+    if let Some(token) = token {
+        builder = builder.header(header::AUTHORIZATION, format!("Bearer {token}"));
+    }
+    app.oneshot(builder.body(Body::from(body.to_string())).unwrap())
+        .await
+        .expect("ACP adapter environment response")
 }
 
 async fn post_tool_result(
@@ -2375,6 +2399,59 @@ async fn acp_session_responses_default_to_ask_policy_without_plan_mode() {
         row["session_policy"]["allowed_tool_classes"],
         json!(["read_only"])
     );
+}
+
+#[tokio::test]
+async fn acp_adapter_environment_is_stored_and_exposed_in_runtime() {
+    let fixture = test_app().await;
+    let user_bear = create_test_user_bear(&fixture.pool, true).await;
+
+    acp_sessions::upsert_session(
+        &fixture.pool,
+        acp_sessions::UpsertAcpSession {
+            user_id: user_bear.user_id,
+            bear_id: user_bear.bear_id,
+            bear_slug: user_bear.bear_slug.clone(),
+            acp_session_id: "session-env".to_string(),
+            runtime_session_id: "runtime-env".to_string(),
+            conversation_id: "conv-env".to_string(),
+            resolved_conversation_id: Some("conv-env".to_string()),
+            client: "zed".to_string(),
+            cwd: Some("/workspace".to_string()),
+            current_mode: Some("ask".to_string()),
+        },
+    )
+    .await
+    .expect("upsert ACP session");
+
+    let snapshot = json!({
+        "bear": { "identity": "Builder Bear" },
+        "runtime": { "kind": "acp_adapter" },
+        "session": { "id": "session-env", "cwd": "/workspace" },
+        "diagnostics": { "status": "ok" }
+    });
+
+    let post = post_adapter_environment(
+        fixture.app.clone(),
+        &user_bear.bear_slug,
+        "session-env",
+        Some(&user_bear.raw_token),
+        json!({ "environment": snapshot }),
+    )
+    .await;
+    assert_eq!(post.status(), StatusCode::OK);
+
+    let runtime = get_acp_session_runtime(
+        fixture.app,
+        &user_bear.bear_slug,
+        "session-env",
+        Some(&user_bear.raw_token),
+    )
+    .await;
+    assert_eq!(runtime.status(), StatusCode::OK);
+    let body: Value = serde_json::from_str(&response_text(runtime).await).expect("runtime JSON");
+    assert_eq!(body["adapter_environment"]["runtime"]["kind"], "acp_adapter");
+    assert_eq!(body["adapter_environment"]["session"]["id"], "session-env");
 }
 
 #[tokio::test]

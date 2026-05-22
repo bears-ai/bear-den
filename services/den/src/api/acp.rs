@@ -16,6 +16,7 @@ use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use bytes::Bytes;
 use futures::{ready, Stream};
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 use sqlx::PgPool;
 use std::{
     collections::{BTreeMap, HashMap, VecDeque},
@@ -180,6 +181,10 @@ pub fn router() -> Router<ApiState> {
             "/bears/{slug}/sessions/{session_id}/mode",
             post(set_session_mode),
         )
+        .route(
+            "/bears/{slug}/sessions/{session_id}/adapter-environment",
+            post(post_adapter_environment),
+        )
         .route("/bears/{slug}/sessions/{session_id}/prompt", post(prompt))
         .route(
             "/bears/{slug}/sessions/{session_id}/tool-results/{tool_call_id}",
@@ -268,6 +273,13 @@ struct AcpPermissionDecisionRequest {
     decision: String,
     #[serde(default)]
     plan_mode_id: Option<Uuid>,
+    #[serde(default)]
+    adapter_contract: Option<AdapterContract>,
+}
+
+#[derive(Debug, Deserialize)]
+struct AcpAdapterEnvironmentRequest {
+    environment: serde_json::Value,
     #[serde(default)]
     adapter_contract: Option<AdapterContract>,
 }
@@ -405,6 +417,11 @@ pub(crate) struct AcpSessionHttp {
 
 fn format_acp_session_timestamp(t: time::OffsetDateTime) -> String {
     t.format(&Rfc3339).unwrap_or_else(|_| t.to_string())
+}
+
+fn tools_enabled_for_client(client: &str) -> bool {
+    let normalized = normalize_acp_client(Some(client));
+    matches!(normalized.as_str(), "zed" | "cursor" | "vscode" | "windsurf")
 }
 
 #[derive(Debug, Clone)]
@@ -1821,6 +1838,16 @@ async fn get_acp_session_runtime_inner(
         .into_iter()
         .map(|turn| turn.diagnostic())
         .collect::<Vec<_>>();
+    let adapter_environment = if tools_enabled_for_client(&row.client) {
+        row.adapter_environment.unwrap_or_else(|| {
+            json!({
+                "status": "unavailable",
+                "note": "ACP adapter has not published an environment snapshot for this session yet.",
+            })
+        })
+    } else {
+        serde_json::json!({ "status": "not_applicable" })
+    };
     Ok(Json(serde_json::json!({
         "ok": true,
         "bear_id": bear.id,
@@ -1847,6 +1874,7 @@ async fn get_acp_session_runtime_inner(
         "expired_tools": expired,
         "tool_turns": role_runtime.pending_diagnostics(&role_scope),
         "runtime": runtime,
+        "adapter_environment": adapter_environment,
         "context_budget": default_unavailable_context_budget(),
         "turn_state": turn_context.workflow_state,
         "session_policy": turn_context.policy.to_json(),
@@ -1867,6 +1895,57 @@ async fn set_session_mode(
         Ok(response) => response,
         Err(err) => acp_error_response(err, request_id),
     }
+}
+
+async fn post_adapter_environment(
+    State(state): State<ApiState>,
+    Path((slug, session_id)): Path<(String, String)>,
+    headers: HeaderMap,
+    Json(body): Json<AcpAdapterEnvironmentRequest>,
+) -> Response {
+    let request_id = Uuid::new_v4();
+    match post_adapter_environment_inner(state, slug, session_id, headers, body).await {
+        Ok(response) => response,
+        Err(err) => acp_error_response(err, request_id),
+    }
+}
+
+async fn post_adapter_environment_inner(
+    state: ApiState,
+    slug: String,
+    session_id: String,
+    headers: HeaderMap,
+    body: AcpAdapterEnvironmentRequest,
+) -> Result<Response, CustomError> {
+    let token = auth::extract_bearer_token(&headers)
+        .map_err(|err| CustomError::Authentication(err.message))?;
+    let auth = authenticate_acp_code_token_with_auth(&state, &token, &slug).await?;
+    if !acp_tokens::scopes_contains(&auth.scopes, acp_tokens::acp_tools_scope()) {
+        return Err(CustomError::Authorization(
+            "ACP token is missing required acp:tools scope".to_string(),
+        ));
+    }
+    let session = acp_sessions::find_for_user_bear_session(
+        &state.sqlx_pool,
+        auth.user_id,
+        &slug,
+        &session_id,
+    )
+    .await?
+    .ok_or_else(|| CustomError::NotFound("ACP session not found".to_string()))?;
+    acp_sessions::update_adapter_environment(
+        &state.sqlx_pool,
+        auth.user_id,
+        session.bear_id,
+        &session_id,
+        &body.environment,
+    )
+    .await?;
+    Ok(Json(serde_json::json!({
+        "accepted": true,
+        "reason": "stored",
+    }))
+    .into_response())
 }
 
 async fn set_session_mode_inner(
@@ -3351,6 +3430,7 @@ async fn prompt_inner(
         resolved_conversation_id: None,
         client: "acp".to_string(),
         cwd: Some(cwd.clone()),
+        adapter_environment: None,
         current_mode: session_mode,
         conversation_title: None,
         conversation_title_updated_at: None,
@@ -3644,6 +3724,7 @@ async fn prompt_inner(
             bear_id: bear.id,
             bear_slug: bear.slug.clone(),
             acp_session_id: session_id.to_string(),
+            client: client.clone(),
             conversation_selection: conversation_resolution.session_selection.clone(),
             resolved_conversation_id: conversation_resolution.resolved_conversation_id.clone(),
             upstream_target: conversation_resolution.upstream_target.clone(),
@@ -3702,6 +3783,7 @@ struct AcpStreamContext {
     bear_id: Uuid,
     bear_slug: String,
     acp_session_id: String,
+    client: String,
     conversation_selection: String,
     resolved_conversation_id: Option<String>,
     upstream_target: String,
@@ -4285,6 +4367,112 @@ fn settle_den_tool_error(
     let _ = result_tx.send(result);
 }
 
+async fn invoke_acp_runtime_local_tool(
+    context: &AcpStreamContext,
+    tool_name: &str,
+    tool_call_id: &str,
+    args: serde_json::Value,
+) -> AcpToolResultRequest {
+    match tool_name {
+        "bear_environment" => {
+            let tool_context = DenToolInvocationContext {
+                bear_id: context.bear_id,
+                bear_slug: context.bear_slug.clone(),
+                role_agent_id: context.pair_agent_id.clone().into(),
+                agent_role: Some(BearAgentRole::Pair),
+                user_id: context.user_id,
+                username: context.user_profile.as_ref().map(|user| user.username.clone()),
+                membership_role: bears_db::membership_role_for_user(&context.pool, context.user_id, context.bear_id)
+                    .await
+                    .ok()
+                    .flatten()
+                    .flatten(),
+                conversation_id: context
+                    .resolved_conversation_id
+                    .clone()
+                    .unwrap_or_else(|| context.upstream_target.clone()),
+                session_id: context.acp_session_id.clone(),
+                acp_session_id: Some(context.acp_session_id.clone()),
+                conversation_selection: Some(context.conversation_selection.clone()),
+                runtime_target: Some(context.upstream_target.clone()),
+                workspace_roots: context.workspace_roots.clone(),
+                session_policy: context.session_policy.clone(),
+                activity: context.activity.clone(),
+                runtime: Some(
+                    context
+                        .role_runtime
+                        .tool_turn_runtime_snapshot(&context.acp_session_id, &context.tool_turns),
+                ),
+                context_budget: Some(default_unavailable_context_budget()),
+                request_id: Some(context.request_id.to_string()),
+                channel: DenToolChannelContext {
+                    family: Some("acp_runtime".to_string()),
+                    client: Some(context.client.clone()),
+                    protocol: Some("acp".to_string()),
+                },
+            };
+            match den_tools::invoke_den_tool(
+                &context.pool,
+                context.config.as_ref(),
+                den_tools::DEN_BEAR_ENVIRONMENT,
+                args,
+                tool_context,
+            )
+            .await
+            {
+                Ok(value) => AcpToolResultRequest {
+                    turn_id: None,
+                    request_id: Some(context.request_id.to_string()),
+                    tool_call_id: Some(tool_call_id.to_string()),
+                    tool_name: Some(tool_name.to_string()),
+                    approval_request_id: None,
+                    status: "ok".to_string(),
+                    content: Some(serde_json::to_string_pretty(&value).unwrap_or_else(|_| value.to_string())),
+                    structured_content: value,
+                    diagnostic: serde_json::json!({
+                        "component": "den.acp",
+                        "phase": "runtime_local_tool_result",
+                        "tool_name": tool_name,
+                    }),
+                    ..Default::default()
+                },
+                Err(err) => AcpToolResultRequest {
+                    turn_id: None,
+                    request_id: Some(context.request_id.to_string()),
+                    tool_call_id: Some(tool_call_id.to_string()),
+                    tool_name: Some(tool_name.to_string()),
+                    approval_request_id: None,
+                    status: "error".to_string(),
+                    content: Some(err.to_string()),
+                    structured_content: serde_json::json!({}),
+                    diagnostic: serde_json::json!({
+                        "component": "den.acp",
+                        "phase": "runtime_local_tool_error",
+                        "tool_name": tool_name,
+                    }),
+                    ..Default::default()
+                },
+            }
+        }
+        _ => AcpToolResultRequest {
+            turn_id: None,
+            request_id: Some(context.request_id.to_string()),
+            tool_call_id: Some(tool_call_id.to_string()),
+            tool_name: Some(tool_name.to_string()),
+            approval_request_id: None,
+            status: "error".to_string(),
+            content: Some(format!("unsupported ACP runtime local tool: {tool_name}")),
+            structured_content: serde_json::json!({}),
+            diagnostic: serde_json::json!({
+                "component": "den.acp",
+                "phase": "runtime_local_tool_unsupported",
+                "tool_name": tool_name,
+            }),
+            ..Default::default()
+        },
+    }
+}
+
 async fn invoke_acp_den_tool(
     context: &AcpStreamContext,
     canonical_name: &str,
@@ -4293,6 +4481,9 @@ async fn invoke_acp_den_tool(
     approval_request_id: Option<&str>,
     args: serde_json::Value,
 ) -> AcpToolResultRequest {
+    if canonical_name == den_tools::DEN_BEAR_ENVIRONMENT {
+        return invoke_acp_runtime_local_tool(context, "bear_environment", tool_call_id, args).await;
+    }
     let membership_role =
         bears_db::membership_role_for_user(&context.pool, context.user_id, context.bear_id)
             .await
@@ -6119,6 +6310,7 @@ mod tests {
             bear_id: Uuid::new_v4(),
             bear_slug: "test-bear".to_string(),
             acp_session_id: "acp-test-session".to_string(),
+            client: "zed".to_string(),
             conversation_selection: "new-acp-test".to_string(),
             resolved_conversation_id: Some("conv-test-resolved".to_string()),
             upstream_target: "conv-test-resolved".to_string(),
@@ -6290,6 +6482,7 @@ mod tests {
             bear_id: Uuid::new_v4(),
             bear_slug: "test-bear".to_string(),
             acp_session_id: "acp-test-session".to_string(),
+            client: "zed".to_string(),
             conversation_selection: "new-acp-test".to_string(),
             resolved_conversation_id: Some("conv-test-resolved".to_string()),
             upstream_target: "conv-test-resolved".to_string(),
@@ -6435,6 +6628,7 @@ mod tests {
             bear_id: Uuid::new_v4(),
             bear_slug: "test-bear".to_string(),
             acp_session_id: "acp-test-session".to_string(),
+            client: "zed".to_string(),
             conversation_selection: "new-acp-test".to_string(),
             resolved_conversation_id: Some("conv-test-resolved".to_string()),
             upstream_target: "conv-test-resolved".to_string(),
@@ -6553,6 +6747,7 @@ mod tests {
             bear_id: Uuid::new_v4(),
             bear_slug: "test-bear".to_string(),
             acp_session_id: "acp-test-session".to_string(),
+            client: "zed".to_string(),
             conversation_selection: "new-acp-test".to_string(),
             resolved_conversation_id: Some("conv-test-resolved".to_string()),
             upstream_target: "conv-test-resolved".to_string(),
@@ -6683,6 +6878,7 @@ mod tests {
             bear_id: Uuid::new_v4(),
             bear_slug: "test-bear".to_string(),
             acp_session_id: "acp-timeout-session".to_string(),
+            client: "zed".to_string(),
             conversation_selection: "new-acp-test".to_string(),
             resolved_conversation_id: Some("conv-timeout".to_string()),
             upstream_target: "conv-timeout".to_string(),
@@ -6817,6 +7013,7 @@ mod tests {
             bear_id: Uuid::new_v4(),
             bear_slug: "test-bear".to_string(),
             acp_session_id: "acp-cancel-session".to_string(),
+            client: "zed".to_string(),
             conversation_selection: "new-acp-test".to_string(),
             resolved_conversation_id: Some("conv-cancel".to_string()),
             upstream_target: "conv-cancel".to_string(),
@@ -6957,6 +7154,7 @@ mod tests {
             bear_id: Uuid::new_v4(),
             bear_slug: "test-bear".to_string(),
             acp_session_id: "acp-orphaned-approval".to_string(),
+            client: "zed".to_string(),
             conversation_selection: "conv-test".to_string(),
             resolved_conversation_id: Some("conv-test".to_string()),
             upstream_target: "conv-test".to_string(),
@@ -7082,6 +7280,7 @@ mod tests {
             bear_id: Uuid::new_v4(),
             bear_slug: "test-bear".to_string(),
             acp_session_id: "acp-continuation-conflict".to_string(),
+            client: "zed".to_string(),
             conversation_selection: "conv-test".to_string(),
             resolved_conversation_id: Some("conv-test".to_string()),
             upstream_target: "conv-test".to_string(),

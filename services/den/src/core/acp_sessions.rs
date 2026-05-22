@@ -33,6 +33,8 @@ pub struct AcpSessionRow {
     pub client: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cwd: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub adapter_environment: Option<serde_json::Value>,
     pub current_mode: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub conversation_title: Option<String>,
@@ -145,6 +147,7 @@ fn acp_session_row_from_sql(row: &PgRow) -> AcpSessionRow {
         resolved_conversation_id: row.get("resolved_conversation_id"),
         client: row.get("client"),
         cwd: row.get("cwd"),
+        adapter_environment: row.get("adapter_environment"),
         current_mode: row.get("current_mode"),
         conversation_title: row.get("conversation_title"),
         conversation_title_updated_at: row.get("conversation_title_updated_at"),
@@ -165,7 +168,7 @@ pub async fn find_for_user_bear_session(
     let row = sqlx::query(
         r#"
         SELECT id, user_id, bear_id, bear_slug, acp_session_id, runtime_session_id,
-               conversation_id, resolved_conversation_id, client, cwd, current_mode,
+               conversation_id, resolved_conversation_id, client, cwd, adapter_environment, current_mode,
                conversation_title, conversation_title_updated_at, conversation_title_synced_at,
                closed_at, archived_at, created_at, updated_at
         FROM acp_sessions
@@ -197,7 +200,7 @@ pub async fn list_for_user_bear(
     let rows = sqlx::query(
         r#"
         SELECT id, user_id, bear_id, bear_slug, acp_session_id, runtime_session_id,
-               conversation_id, resolved_conversation_id, client, cwd, current_mode,
+               conversation_id, resolved_conversation_id, client, cwd, adapter_environment, current_mode,
                conversation_title, conversation_title_updated_at, conversation_title_synced_at,
                closed_at, archived_at, created_at, updated_at
         FROM acp_sessions
@@ -224,6 +227,30 @@ pub async fn list_for_user_bear(
     .await?;
 
     Ok(rows.iter().map(acp_session_row_from_sql).collect())
+}
+
+pub async fn update_adapter_environment(
+    pool: &PgPool,
+    user_id: i32,
+    bear_id: Uuid,
+    acp_session_id: &str,
+    adapter_environment: &serde_json::Value,
+) -> Result<(), CustomError> {
+    sqlx::query(
+        r#"
+        UPDATE acp_sessions
+        SET adapter_environment = $4,
+            updated_at = NOW()
+        WHERE user_id = $1 AND bear_id = $2 AND acp_session_id = $3
+        "#,
+    )
+    .bind(user_id)
+    .bind(bear_id)
+    .bind(acp_session_id)
+    .bind(adapter_environment)
+    .execute(pool)
+    .await?;
+    Ok(())
 }
 
 pub async fn mark_closed(pool: &PgPool, id: Uuid) -> Result<(), CustomError> {

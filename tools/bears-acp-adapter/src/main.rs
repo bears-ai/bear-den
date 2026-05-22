@@ -1752,6 +1752,26 @@ async fn handle_request(
                 adapter_state
                     .session_contexts
                     .insert(session_id.clone(), context);
+                if let Some(config) = runtime.config.as_ref() {
+                    if let Ok(snapshot) = collect_bear_environment(
+                        adapter_state,
+                        &session_id,
+                        Some(config),
+                        Some(http),
+                        &json!({
+                            "include_session_mcp": true,
+                            "include_client_capabilities": true,
+                            "include_raw_context": true,
+                            "inspect_den": false,
+                        }),
+                    )
+                    .await
+                    {
+                        if let Err(err) = post_adapter_environment(config, &session_id, snapshot).await {
+                            eprintln!("bears-acp-adapter: failed to publish adapter environment after session/new session_id={} error={err:#}", session_id);
+                        }
+                    }
+                }
                 send_available_commands_update(&session_id).await?;
                 let mode = MODE_ASK;
                 let response = NewSessionResponse::new(session_id.clone())
@@ -3595,6 +3615,24 @@ async fn restore_session_from_den(
     adapter_state
         .session_contexts
         .insert(session_id.to_string(), context);
+    if let Ok(snapshot) = collect_bear_environment(
+        adapter_state,
+        session_id,
+        Some(config),
+        Some(http),
+        &json!({
+            "include_session_mcp": true,
+            "include_client_capabilities": true,
+            "include_raw_context": true,
+            "inspect_den": false,
+        }),
+    )
+    .await
+    {
+        if let Err(err) = post_adapter_environment(config, session_id, snapshot).await {
+            eprintln!("bears-acp-adapter: failed to publish adapter environment after session/resume session_id={} error={err:#}", session_id);
+        }
+    }
     send_available_commands_update(session_id).await?;
     if let Some(den) = den.as_ref() {
         replay_history_for_den_session(http, config, session_id, den, "session/resume").await?;
@@ -3665,6 +3703,24 @@ async fn handle_session_load(
     adapter_state
         .session_contexts
         .insert(session_id.to_string(), context);
+    if let Ok(snapshot) = collect_bear_environment(
+        adapter_state,
+        session_id,
+        Some(config),
+        Some(http),
+        &json!({
+            "include_session_mcp": true,
+            "include_client_capabilities": true,
+            "include_raw_context": true,
+            "inspect_den": false,
+        }),
+    )
+    .await
+    {
+        if let Err(err) = post_adapter_environment(config, session_id, snapshot).await {
+            eprintln!("bears-acp-adapter: failed to publish adapter environment after session/load session_id={} error={err:#}", session_id);
+        }
+    }
 
     send_available_commands_update(session_id).await?;
     if let Some(den) = den.as_ref() {
@@ -6592,6 +6648,37 @@ async fn post_permission_result(
 fn is_turn_missing_error(err: &anyhow::Error) -> bool {
     let message = format!("{err:#}");
     message.contains("turn_missing") || message.contains("tool_result_missing")
+}
+
+async fn post_adapter_environment(
+    config: &Config,
+    session_id: &str,
+    environment: Value,
+) -> Result<()> {
+    let payload = with_adapter_contract(json!({ "environment": environment }));
+    let url = format!(
+        "{}/acp/bears/{}/sessions/{}/adapter-environment",
+        config.api_url,
+        urlencoding::encode(&config.bear),
+        urlencoding::encode(session_id),
+    );
+    let response = reqwest::Client::new()
+        .post(&url)
+        .header(
+            AUTHORIZATION,
+            HeaderValue::from_str(&format!("Bearer {}", config.token))?,
+        )
+        .header(CONTENT_TYPE, HeaderValue::from_static("application/json"))
+        .json(&payload)
+        .send()
+        .await
+        .with_context(|| format!("post ACP adapter environment to Den at {url}"))?;
+    let status = response.status();
+    let body = response.text().await.unwrap_or_default();
+    if !status.is_success() {
+        return Err(anyhow!(den_status_error_message(status, body.trim())));
+    }
+    Ok(())
 }
 
 async fn post_tool_result(

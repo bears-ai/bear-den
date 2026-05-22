@@ -15,6 +15,7 @@ fn acp_session_http_surfaces_turn_state_without_legacy_state_compat_fields() {
         resolved_conversation_id: None,
         client: "zed".to_string(),
         cwd: Some("/workspace".to_string()),
+        adapter_environment: None,
         current_mode: "write".to_string(),
         conversation_title: None,
         conversation_title_updated_at: None,

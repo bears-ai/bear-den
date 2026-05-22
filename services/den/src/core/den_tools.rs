@@ -5,6 +5,7 @@ use std::{
 
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use reqwest::header::{AUTHORIZATION, CONTENT_TYPE};
+use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -2734,6 +2735,7 @@ pub(crate) fn bear_environment_payload(
     current_user: Option<&user::User>,
     member_count: i64,
     memory_status: Value,
+    adapter_runtime: Value,
 ) -> Value {
     let session_info = session_info_payload(context, role, current_user, member_count, memory_status.clone());
     let runtime = session_info.get("runtime").cloned().unwrap_or_else(|| json!({
@@ -2770,11 +2772,32 @@ pub(crate) fn bear_environment_payload(
             }))
             .collect::<Vec<_>>(),
     });
-    let browser = json!({
-        "status": "unknown",
-        "active_source": Value::Null,
-        "note": "Browser environment providers are not yet integrated into harness-level bear_environment for non-adapter baseline snapshots.",
-    });
+    let adapter_environment = adapter_runtime
+        .get("adapter_environment")
+        .cloned()
+        .unwrap_or(Value::Null);
+    let adapter_browser = adapter_environment
+        .get("browser")
+        .cloned()
+        .unwrap_or(Value::Null);
+    let browser = if adapter_browser.is_object() {
+        let mut browser = adapter_browser;
+        if browser.get("status").is_none() {
+            browser["status"] = json!("ok");
+        }
+        browser
+    } else {
+        json!({
+            "status": if source_acp_session_id(context).is_some() { "unavailable" } else { "unknown" },
+            "active_source": Value::Null,
+            "note": "Browser environment providers are not yet integrated into harness-level bear_environment for non-adapter baseline snapshots.",
+        })
+    };
+    let adapter_service = adapter_runtime
+        .get("adapter_environment")
+        .and_then(|value| value.get("services"))
+        .cloned()
+        .unwrap_or(Value::Null);
     let services = json!({
         "den": {
             "status": "ok",
@@ -2793,13 +2816,75 @@ pub(crate) fn bear_environment_payload(
             },
             "details": memory_status,
         },
+        "adapter": {
+            "status": if adapter_service.is_object() { "ok" } else if source_acp_session_id(context).is_some() { "degraded" } else { "not_applicable" },
+            "details": adapter_service,
+        },
     });
     let is_acp = source_acp_session_id(context).is_some();
-    let diagnostics_status = if services["memory"]["status"] == "degraded" {
+    let adapter_environment_status = adapter_runtime
+        .get("status")
+        .and_then(Value::as_str)
+        .unwrap_or(if is_acp { "unavailable" } else { "not_applicable" });
+    let diagnostics_status = if services["memory"]["status"] == "degraded"
+        || matches!(adapter_environment_status, "degraded" | "unavailable")
+    {
         "degraded"
     } else {
         "ok"
     };
+    let acp_variant = if is_acp {
+        let acp_runtime = adapter_runtime
+            .get("runtime")
+            .cloned()
+            .unwrap_or_else(|| runtime.clone());
+        json!({
+            "status": "ok",
+            "session": {
+                "acp_session_id": source_acp_session_id(context),
+                "conversation_selection": context.conversation_selection,
+                "runtime_target": context.runtime_target,
+            },
+            "runtime": acp_runtime,
+            "permissions": context.session_policy,
+        })
+    } else {
+        json!({ "status": "not_applicable" })
+    };
+    let adapter_variant = if is_acp {
+        if adapter_environment.is_object() {
+            json!({
+                "status": adapter_environment_status,
+                "snapshot": adapter_environment,
+            })
+        } else {
+            json!({
+                "status": adapter_environment_status,
+                "note": "Adapter enrichment could not be fetched for this ACP session.",
+            })
+        }
+    } else {
+        json!({ "status": "not_applicable" })
+    };
+    let diagnostics_warnings = {
+        let mut warnings = Vec::<Value>::new();
+        if is_acp && !adapter_environment.is_object() {
+            warnings.push(json!("Adapter enrichment could not be fetched for this ACP session."));
+        }
+        if let Some(values) = adapter_environment
+            .get("diagnostics")
+            .and_then(|value| value.get("warnings"))
+            .and_then(Value::as_array)
+        {
+            warnings.extend(values.iter().cloned());
+        }
+        Value::Array(warnings)
+    };
+    let diagnostics_errors = adapter_environment
+        .get("diagnostics")
+        .and_then(|value| value.get("errors"))
+        .cloned()
+        .unwrap_or_else(|| json!([]));
     json!({
         "bear": {
             "id": context.bear_id,
@@ -2836,37 +2921,13 @@ pub(crate) fn bear_environment_payload(
         "browser": browser,
         "services": services,
         "environment_variants": {
-            "acp": if is_acp {
-                json!({
-                    "status": "ok",
-                    "session": {
-                        "acp_session_id": source_acp_session_id(context),
-                        "conversation_selection": context.conversation_selection,
-                        "runtime_target": context.runtime_target,
-                    },
-                    "runtime": runtime,
-                    "permissions": context.session_policy,
-                })
-            } else {
-                json!({ "status": "not_applicable" })
-            },
-            "adapter": if is_acp {
-                json!({
-                    "status": "unavailable",
-                    "note": "Adapter enrichment is not yet wired into harness-level bear_environment.",
-                })
-            } else {
-                json!({ "status": "not_applicable" })
-            },
+            "acp": acp_variant,
+            "adapter": adapter_variant,
         },
         "diagnostics": {
             "status": diagnostics_status,
-            "warnings": if is_acp {
-                json!(["Adapter enrichment is not yet integrated into harness-level bear_environment."])
-            } else {
-                json!([])
-            },
-            "errors": json!([]),
+            "warnings": diagnostics_warnings,
+            "errors": diagnostics_errors,
         },
         "session_info": session_info,
     })
@@ -3023,6 +3084,51 @@ pub(crate) fn session_info_payload(
     })
 }
 
+async fn fetch_acp_adapter_environment(
+    config: &Config,
+    context: &DenToolInvocationContext,
+) -> Result<Option<Value>, CustomError> {
+    let acp_session_id = source_acp_session_id(context).or_else(|| context.acp_session_id.clone());
+    let Some(acp_session_id) = acp_session_id.map(|value| value.trim().to_string()).filter(|value| !value.is_empty()) else {
+        return Ok(None);
+    };
+    let http = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .build()
+        .map_err(|err| CustomError::System(format!("bear_environment adapter client build failed: {err}")))?;
+    let url = format!(
+        "{}/acp/bears/{}/sessions/{}/runtime",
+        config.api_server_url.trim_end_matches('/'),
+        urlencoding::encode(&context.bear_slug),
+        urlencoding::encode(&acp_session_id),
+    );
+    let mut request = http.get(url);
+    if let Some(username) = context.username.as_deref().map(str::trim).filter(|value| !value.is_empty()) {
+        request = request.header("X-Auth-Request-Preferred-Username", username);
+    }
+    let response = request
+        .bearer_auth(acp_session_id.as_str())
+        .send()
+        .await
+        .map_err(|err| CustomError::System(format!("bear_environment ACP runtime fetch failed: {err}")))?;
+    let status = response.status();
+    let body = response
+        .text()
+        .await
+        .map_err(|err| CustomError::System(format!("bear_environment ACP runtime read failed: {err}")))?;
+    match status {
+        StatusCode::NOT_FOUND => Ok(None),
+        _ if !status.is_success() => Err(CustomError::System(format!(
+            "bear_environment ACP runtime fetch failed with {}: {}",
+            status,
+            body.trim()
+        ))),
+        _ => serde_json::from_str(&body)
+            .map(Some)
+            .map_err(|err| CustomError::Parsing(format!("bear_environment ACP runtime JSON: {err}"))),
+    }
+}
+
 async fn bear_environment(
     pool: &PgPool,
     config: &Config,
@@ -3061,6 +3167,21 @@ async fn bear_environment(
                 })
             })
     };
+    let adapter_runtime = match fetch_acp_adapter_environment(config, context).await {
+        Ok(Some(value)) => value,
+        Ok(None) => json!({
+            "status": if source_acp_session_id(context).is_some() {
+                "unavailable"
+            } else {
+                "not_applicable"
+            }
+        }),
+        Err(err) => json!({
+            "ok": false,
+            "status": "degraded",
+            "error": err.to_string(),
+        }),
+    };
     Ok(bear_environment_payload(
         context,
         config,
@@ -3068,6 +3189,7 @@ async fn bear_environment(
         current_user.as_ref(),
         member_count,
         memory_status,
+        adapter_runtime,
     ))
 }
 
@@ -5126,14 +5248,25 @@ mod tests {
             None,
             2,
             json!({ "configured": false, "available": false }),
+            json!({
+                "status": "ok",
+                "runtime": { "ok": true, "channel_kind": "acp_session" },
+                "adapter_environment": {
+                    "browser": { "active_source": "host_bridge", "status": "ok" },
+                    "services": { "den": { "status": "ok" } },
+                    "diagnostics": { "warnings": ["adapter warning"], "errors": [] }
+                }
+            }),
         );
 
         assert_eq!(payload["bear"]["slug"], "meta");
         assert_eq!(payload["runtime"]["state"], "running");
         assert_eq!(payload["session"]["id"], "sess-123");
         assert_eq!(payload["workspace"]["cwd"], "/workspace");
+        assert_eq!(payload["browser"]["active_source"], "host_bridge");
         assert_eq!(payload["environment_variants"]["acp"]["status"], "ok");
-        assert_eq!(payload["environment_variants"]["adapter"]["status"], "unavailable");
+        assert_eq!(payload["environment_variants"]["adapter"]["status"], "ok");
+        assert_eq!(payload["diagnostics"]["warnings"][0], "adapter warning");
         assert!(payload["tools"]["available_den_tools"].is_array());
     }
 

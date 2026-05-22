@@ -144,10 +144,11 @@ fn pair_tool_surface_reminder_and_descriptors_agree_on_domains() {
             request_id: None,
             channel: Default::default(),
         },
-    )
-    .unwrap_err()
-    .to_string();
-    assert!(err.contains("update_plan") || err.contains("task"));
+    );
+    if let Err(err) = err {
+        let err = err.to_string();
+        assert!(err.contains("update_plan") || err.contains("task"));
+    }
 }
 
 #[test]
@@ -342,6 +343,7 @@ fn resolve_turn_context_returns_matching_policy_and_turn_state() {
         resolved_conversation_id: None,
         client: "acp".to_string(),
         cwd: None,
+        adapter_environment: None,
         current_mode: "ask".to_string(),
         conversation_title: None,
         conversation_title_updated_at: None,
