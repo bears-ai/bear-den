@@ -161,6 +161,20 @@ struct ActivePromptTurn {
     conversation_id: Option<String>,
 }
 
+#[derive(Default)]
+struct SseFrameOutcome {
+    saw_visible_output: bool,
+    saw_tool_activity: bool,
+    saw_error: bool,
+    saw_done: bool,
+    recover_and_retry: bool,
+    saw_cancellation_error: bool,
+    terminal_outcome: Option<String>,
+    recovery_hint: Option<String>,
+    terminal_user_message: Option<String>,
+    upstream_errors: Vec<String>,
+}
+
 fn env_bool(name: &str) -> bool {
     env::var(name).ok().is_some_and(|value| {
         matches!(
@@ -851,17 +865,6 @@ impl SseStreamDiagnostics {
             self.saw_error,
         )
     }
-}
-
-#[derive(Default)]
-struct SseFrameOutcome {
-    saw_done: bool,
-    saw_visible_output: bool,
-    saw_tool_activity: bool,
-    saw_error: bool,
-    recover_and_retry: bool,
-    saw_cancellation_error: bool,
-    upstream_errors: Vec<String>,
 }
 
 fn stream_has_successful_terminal_condition(
@@ -4133,6 +4136,9 @@ async fn handle_prompt_with_retry(
     let mut saw_error = false;
     let mut recover_and_retry = false;
     let mut saw_cancellation_error = false;
+    let mut terminal_outcome: Option<String> = None;
+    let mut recovery_hint: Option<String> = None;
+    let mut terminal_user_message: Option<String> = None;
     let mut upstream_errors = Vec::new();
     let mut buffer = Vec::<u8>::new();
     let mut stream = response.bytes_stream();
@@ -4174,6 +4180,15 @@ async fn handle_prompt_with_retry(
             saw_error |= outcome.saw_error;
             recover_and_retry |= outcome.recover_and_retry;
             saw_cancellation_error |= outcome.saw_cancellation_error;
+            if terminal_outcome.is_none() {
+                terminal_outcome = outcome.terminal_outcome;
+            }
+            if recovery_hint.is_none() {
+                recovery_hint = outcome.recovery_hint;
+            }
+            if terminal_user_message.is_none() {
+                terminal_user_message = outcome.terminal_user_message;
+            }
             upstream_errors.extend(outcome.upstream_errors);
         }
     }
@@ -4195,6 +4210,15 @@ async fn handle_prompt_with_retry(
         saw_error |= outcome.saw_error;
         recover_and_retry |= outcome.recover_and_retry;
         saw_cancellation_error |= outcome.saw_cancellation_error;
+        if terminal_outcome.is_none() {
+            terminal_outcome = outcome.terminal_outcome;
+        }
+        if recovery_hint.is_none() {
+            recovery_hint = outcome.recovery_hint;
+        }
+        if terminal_user_message.is_none() {
+            terminal_user_message = outcome.terminal_user_message;
+        }
         upstream_errors.extend(outcome.upstream_errors);
     }
 
@@ -4262,17 +4286,20 @@ async fn handle_prompt_with_retry(
                 "bears-acp-adapter: ignoring upstream error after visible output: {}",
                 upstream_errors.join("; ")
             );
-        } else if saw_cancellation_error {
+        } else if saw_cancellation_error || terminal_outcome.as_deref() == Some("cancelled") {
             eprintln!(
-                "bears-acp-adapter: suppressing compact/collapse recovery hint for cancellation session_id={} errors={}",
+                "bears-acp-adapter: suppressing recovery hint for cancellation session_id={} errors={}",
                 session_id,
                 upstream_errors.join("; ")
             );
+            let message = terminal_user_message
+                .as_deref()
+                .unwrap_or("BEARS request was cancelled.");
             send_agent_message_chunk_for_turn(
                 shared_state,
                 session_id,
                 turn_token,
-                "BEARS request was cancelled.",
+                message,
             )
             .await?;
             saw_visible_output = true;
@@ -4282,17 +4309,26 @@ async fn handle_prompt_with_retry(
                 "BEARS upstream stream reported error: {}",
                 upstream_errors.join("; ")
             );
+            let rendered = match recovery_hint.as_deref() {
+                Some("compact_and_retry") => format!(
+                    "{message}\n\nThe ACP session is still alive, so you can use `/compact` or `/collapse` to try recovery."
+                ),
+                Some("check_upstream_logs") => terminal_user_message.clone().unwrap_or_else(|| {
+                    format!(
+                        "{message}\n\nBEARS recommends checking Codepool/Letta logs before retrying."
+                    )
+                }),
+                _ => terminal_user_message.clone().unwrap_or(message.clone()),
+            };
             eprintln!(
                 "bears-acp-adapter: converting upstream stream error into terminal ACP turn session_id={} message={}",
-                session_id, message
+                session_id, rendered
             );
             send_agent_message_chunk_for_turn(
                 shared_state,
                 session_id,
                 turn_token,
-                &format!(
-                    "{message}\n\nThe ACP session is still alive, so you can use `/compact` or `/collapse` to try recovery."
-                ),
+                &rendered,
             )
             .await?;
             saw_visible_output = true;
@@ -5604,15 +5640,35 @@ async fn handle_sse_frame(
         } else if ty == "error" {
             outcome.saw_error = true;
             diagnostics.saw_error = true;
+            if let Some(terminal) = event.get("terminal") {
+                if let Some(value) = terminal.get("outcome") {
+                    outcome.terminal_outcome = value.as_str().map(str::to_string);
+                }
+                if let Some(value) = terminal.get("recovery_hint") {
+                    outcome.recovery_hint = value.as_str().map(str::to_string);
+                }
+                if let Some(value) = terminal.get("user_message") {
+                    outcome.terminal_user_message = value.as_str().map(str::to_string);
+                }
+            }
             let formatted = format_den_event_error(&event);
-            if looks_like_waiting_for_approval_error(&formatted) {
+            if looks_like_waiting_for_approval_error(&formatted)
+                || outcome.recovery_hint.as_deref() == Some("compact_and_retry")
+            {
                 outcome.recover_and_retry = true;
                 outcome.upstream_errors.push(
                     "Letta was waiting for stale approval; BEARS will ask Den to deny pending approvals and compact if needed before retrying the prompt."
                         .to_string(),
                 );
             } else {
-                outcome.saw_cancellation_error = looks_like_cancellation_error(&formatted);
+                outcome.saw_cancellation_error = outcome.terminal_outcome.as_deref() == Some("cancelled")
+                    || outcome.recovery_hint.as_deref() == Some("none")
+                        && event
+                            .get("terminal")
+                            .and_then(|terminal| terminal.get("outcome"))
+                            .and_then(Value::as_str)
+                            == Some("cancelled")
+                    || looks_like_cancellation_error(&formatted);
                 outcome.upstream_errors.push(formatted);
             }
         }
@@ -5628,6 +5684,17 @@ async fn handle_sse_frame(
             turn_token,
         )
         .await?;
+        if ty == "turn_result" || ty == "turn_complete" || ty == "done" {
+            if let Some(value) = event.get("outcome").and_then(Value::as_str) {
+                outcome.terminal_outcome = Some(value.to_string());
+            }
+            if let Some(value) = event.get("recovery_hint").and_then(Value::as_str) {
+                outcome.recovery_hint = Some(value.to_string());
+            }
+            if let Some(value) = event.get("user_message").and_then(Value::as_str) {
+                outcome.terminal_user_message = Some(value.to_string());
+            }
+        }
         outcome.saw_done |= handled;
         diagnostics.saw_turn_complete |= handled;
         diagnostics.saw_visible_output |= outcome.saw_visible_output;
@@ -5644,6 +5711,7 @@ async fn handle_sse_frame(
                 | "conversation_resolved"
                 | "turn_complete"
                 | "turn_result"
+                | "done"
         ) {
             diagnostics.observe_unknown(&event);
             eprintln!(
@@ -6917,6 +6985,7 @@ async fn handle_den_event(
 
         "turn_result" => Ok(true),
         "turn_complete" => Ok(true),
+        "done" => Ok(true),
         _ => Ok(false),
     }
 }
@@ -8924,8 +8993,49 @@ mod tests {
         assert!(outcome.saw_error);
         assert!(!outcome.saw_visible_output);
         assert!(outcome.recover_and_retry);
+        assert_eq!(outcome.recovery_hint.as_deref(), None);
         assert_eq!(outcome.upstream_errors.len(), 1);
         assert!(outcome.upstream_errors[0].contains("deny pending approvals"));
+    }
+
+    #[tokio::test]
+    async fn typed_terminal_metadata_is_captured_from_error_and_done_events() {
+        let config = Config {
+            api_url: "http://example.invalid".to_string(),
+            bear: "test-bear".to_string(),
+            token: "token".to_string(),
+            client: "test".to_string(),
+        };
+        let root = unique_test_dir("typed-terminal");
+        let mut adapter_state = test_adapter_state("session-1", &root);
+        let shared_state = test_shared_state();
+        let mut diagnostics = SseStreamDiagnostics::default();
+        let frame = br#"data: {"type":"error","message":"No response from the assistant.","detail":"empty stream","terminal":{"outcome":"empty_fallback","recovery_hint":"check_upstream_logs","user_message":"Check Codepool/Letta logs and retry if appropriate."}}
+
+data: {"type":"done","outcome":"empty_fallback","recovery_hint":"check_upstream_logs","user_message":"Check Codepool/Letta logs and retry if appropriate."}
+
+"#;
+
+        let outcome = handle_sse_frame(
+            &config,
+            &mut adapter_state,
+            &shared_state,
+            "session-1",
+            frame,
+            &mut diagnostics,
+            Uuid::new_v4(),
+        )
+        .await
+        .unwrap();
+
+        assert!(outcome.saw_error);
+        assert!(outcome.saw_done);
+        assert_eq!(outcome.terminal_outcome.as_deref(), Some("empty_fallback"));
+        assert_eq!(outcome.recovery_hint.as_deref(), Some("check_upstream_logs"));
+        assert_eq!(
+            outcome.terminal_user_message.as_deref(),
+            Some("Check Codepool/Letta logs and retry if appropriate.")
+        );
     }
 
     #[test]

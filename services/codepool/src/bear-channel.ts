@@ -61,6 +61,24 @@ export type BearChannelRequest = {
     request_id?: string;
 };
 
+export type BearChannelTerminalOutcome =
+    | "ok"
+    | "upstream_error"
+    | "empty_fallback"
+    | "cancelled";
+
+export type BearChannelRecoveryHint =
+    | "none"
+    | "retry"
+    | "compact_and_retry"
+    | "check_upstream_logs";
+
+export type BearChannelTerminal = {
+    outcome: BearChannelTerminalOutcome;
+    recovery_hint?: BearChannelRecoveryHint;
+    user_message?: string;
+};
+
 export type BearChannelEvent =
     | { type: "assistant_delta"; text: string; id?: string }
     | { type: "reasoning_delta"; text: string; id?: string }
@@ -86,11 +104,14 @@ export type BearChannelEvent =
           error_type?: string;
           request_id?: string;
           context?: BearChannelErrorContext;
+          terminal?: BearChannelTerminal;
       }
     | { type: "conversation_resolved"; conversation_id: string }
     | {
           type: "done";
-          outcome?: "ok" | "upstream_error" | "empty_fallback" | "cancelled";
+          outcome?: BearChannelTerminalOutcome;
+          recovery_hint?: BearChannelRecoveryHint;
+          user_message?: string;
       };
 
 export type BearChannelErrorContext = {
@@ -408,6 +429,10 @@ export function sdkMessageToBearChannelEvents(
                     return [{ type: "reasoning_delta", text, id: msg.uuid }];
                 }
                 if (ev.message_type === "error_message") {
+                    const terminal =
+                        ev.terminal && typeof ev.terminal === "object"
+                            ? (ev.terminal as Record<string, unknown>)
+                            : undefined;
                     return [
                         {
                             type: "error",
@@ -423,6 +448,22 @@ export function sdkMessageToBearChannelEvents(
                                 typeof ev.error_type === "string"
                                     ? ev.error_type
                                     : undefined,
+                            terminal: terminal
+                                ? {
+                                      outcome:
+                                          typeof terminal.outcome === "string"
+                                              ? (terminal.outcome as BearChannelTerminalOutcome)
+                                              : "upstream_error",
+                                      recovery_hint:
+                                          typeof terminal.recovery_hint === "string"
+                                              ? (terminal.recovery_hint as BearChannelRecoveryHint)
+                                              : undefined,
+                                      user_message:
+                                          typeof terminal.user_message === "string"
+                                              ? terminal.user_message
+                                              : undefined,
+                                  }
+                                : undefined,
                         },
                     ];
                 }

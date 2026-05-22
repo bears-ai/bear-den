@@ -592,11 +592,34 @@ export function attachRoutes(
                                         ? upstreamErrorSamples
                                         : undefined,
                             },
+                            terminal: {
+                                outcome,
+                                recovery_hint: "check_upstream_logs",
+                                user_message:
+                                    "BEARS ended the turn without producing any assistant output. Check Codepool/Letta logs and retry if appropriate.",
+                            },
                         })}\n\n`,
                     );
                 }
                 res.write(
-                    `data: ${bearChannelEventToSseDataLine({ type: "done", outcome })}\n\n`,
+                    `data: ${bearChannelEventToSseDataLine({
+                        type: "done",
+                        outcome,
+                        recovery_hint:
+                            outcome === "empty_fallback"
+                                ? "check_upstream_logs"
+                                : outcome === "cancelled"
+                                  ? "none"
+                                  : outcome === "upstream_error"
+                                    ? "check_upstream_logs"
+                                    : "none",
+                        user_message:
+                            outcome === "empty_fallback"
+                                ? "BEARS ended the turn without producing any assistant output. Check Codepool/Letta logs and retry if appropriate."
+                                : outcome === "cancelled"
+                                  ? "BEARS request was cancelled."
+                                  : undefined,
+                    })}\n\n`,
                 );
                 res.end();
                 const ms = Date.now() - t0;
