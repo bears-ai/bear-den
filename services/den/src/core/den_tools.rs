@@ -2737,11 +2737,19 @@ pub(crate) fn bear_environment_payload(
     memory_status: Value,
     adapter_runtime: Value,
 ) -> Value {
-    let session_info = session_info_payload(context, role, current_user, member_count, memory_status.clone());
-    let runtime = session_info.get("runtime").cloned().unwrap_or_else(|| json!({
-        "state": "idle",
-        "source": "bear_environment_default"
-    }));
+    let session_info = session_info_payload(
+        context,
+        role,
+        current_user,
+        member_count,
+        memory_status.clone(),
+    );
+    let runtime = session_info.get("runtime").cloned().unwrap_or_else(|| {
+        json!({
+            "state": "idle",
+            "source": "bear_environment_default"
+        })
+    });
     let session = json!({
         "id": context.session_id,
         "acp_session_id": source_acp_session_id(context),
@@ -2825,7 +2833,11 @@ pub(crate) fn bear_environment_payload(
     let adapter_environment_status = adapter_runtime
         .get("status")
         .and_then(Value::as_str)
-        .unwrap_or(if is_acp { "unavailable" } else { "not_applicable" });
+        .unwrap_or(if is_acp {
+            "unavailable"
+        } else {
+            "not_applicable"
+        });
     let diagnostics_status = if services["memory"]["status"] == "degraded"
         || matches!(adapter_environment_status, "degraded" | "unavailable")
     {
@@ -2869,7 +2881,9 @@ pub(crate) fn bear_environment_payload(
     let diagnostics_warnings = {
         let mut warnings = Vec::<Value>::new();
         if is_acp && !adapter_environment.is_object() {
-            warnings.push(json!("Adapter enrichment could not be fetched for this ACP session."));
+            warnings.push(json!(
+                "Adapter enrichment could not be fetched for this ACP session."
+            ));
         }
         if let Some(values) = adapter_environment
             .get("diagnostics")
@@ -3089,13 +3103,20 @@ async fn fetch_acp_adapter_environment(
     context: &DenToolInvocationContext,
 ) -> Result<Option<Value>, CustomError> {
     let acp_session_id = source_acp_session_id(context).or_else(|| context.acp_session_id.clone());
-    let Some(acp_session_id) = acp_session_id.map(|value| value.trim().to_string()).filter(|value| !value.is_empty()) else {
+    let Some(acp_session_id) = acp_session_id
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+    else {
         return Ok(None);
     };
     let http = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(10))
         .build()
-        .map_err(|err| CustomError::System(format!("bear_environment adapter client build failed: {err}")))?;
+        .map_err(|err| {
+            CustomError::System(format!(
+                "bear_environment adapter client build failed: {err}"
+            ))
+        })?;
     let url = format!(
         "{}/acp/bears/{}/sessions/{}/runtime",
         config.api_server_url.trim_end_matches('/'),
@@ -3103,19 +3124,25 @@ async fn fetch_acp_adapter_environment(
         urlencoding::encode(&acp_session_id),
     );
     let mut request = http.get(url);
-    if let Some(username) = context.username.as_deref().map(str::trim).filter(|value| !value.is_empty()) {
+    if let Some(username) = context
+        .username
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
         request = request.header("X-Auth-Request-Preferred-Username", username);
     }
     let response = request
         .bearer_auth(acp_session_id.as_str())
         .send()
         .await
-        .map_err(|err| CustomError::System(format!("bear_environment ACP runtime fetch failed: {err}")))?;
+        .map_err(|err| {
+            CustomError::System(format!("bear_environment ACP runtime fetch failed: {err}"))
+        })?;
     let status = response.status();
-    let body = response
-        .text()
-        .await
-        .map_err(|err| CustomError::System(format!("bear_environment ACP runtime read failed: {err}")))?;
+    let body = response.text().await.map_err(|err| {
+        CustomError::System(format!("bear_environment ACP runtime read failed: {err}"))
+    })?;
     match status {
         StatusCode::NOT_FOUND => Ok(None),
         _ if !status.is_success() => Err(CustomError::System(format!(
@@ -3123,9 +3150,9 @@ async fn fetch_acp_adapter_environment(
             status,
             body.trim()
         ))),
-        _ => serde_json::from_str(&body)
-            .map(Some)
-            .map_err(|err| CustomError::Parsing(format!("bear_environment ACP runtime JSON: {err}"))),
+        _ => serde_json::from_str(&body).map(Some).map_err(|err| {
+            CustomError::Parsing(format!("bear_environment ACP runtime JSON: {err}"))
+        }),
     }
 }
 
@@ -3540,6 +3567,10 @@ async fn write_memory_entry(
     validate_optional_object("source", &args.source)?;
     let current_user = user::user_by_id(pool, context.user_id).await.ok();
     let source = merge_memory_entry_source_with_human(args.source, context, current_user.as_ref());
+    let authenticated_username = current_user
+        .as_ref()
+        .map(|user| user.username.clone())
+        .or_else(|| context.username.clone());
     let request = MemfsWriteRoleMemoryEntryRequest {
         kind,
         title,
@@ -3548,7 +3579,7 @@ async fn write_memory_entry(
         refs: args.refs,
         lifecycle: args.lifecycle,
         source,
-        author: context.username.clone(),
+        author: authenticated_username,
         conversation_id: clean_optional(&context.conversation_id),
         session_id: source_acp_session_id(context).or_else(|| clean_optional(&context.session_id)),
         acp_session_id: context

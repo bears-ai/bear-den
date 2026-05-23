@@ -6,8 +6,7 @@ use serde::Serialize;
 use serde_json::Value;
 
 use super::conversation_title::{
-    display_conversation_title, first_user_message_text_for_title,
-    is_meaningful_conversation_title,
+    display_conversation_title, first_user_message_text_for_title, is_meaningful_conversation_title,
 };
 use super::LettaClient;
 

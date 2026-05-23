@@ -194,6 +194,68 @@ def test_pair_plan_memory_entry_writes_under_pair_plans(memfs):
     assert result["path"] in files
 
 
+def test_pair_memory_entry_uses_authenticated_author_in_semantic_path(memfs):
+    register_view(memfs, agent_id="agent-pair", bear_id="bear-semantic", role="pair")
+    result = memfs._write_role_memory_entry(
+        "bear-semantic",
+        "pair",
+        {
+            "kind": "summary",
+            "title": "Sprint Review Notes",
+            "body": "Reviewed outcomes and follow-ups.",
+            "author": "gerwitz",
+        },
+        memfs.DEFAULT_ORG,
+    )
+    assert result["ok"] is True
+    assert result["path"] == "pair/summaries/gerwitz/sprint-review-notes.md"
+
+
+def test_pair_memory_entry_falls_back_to_shared_runtime_target_when_author_missing(memfs):
+    register_view(memfs, agent_id="agent-pair", bear_id="bear-shared", role="pair")
+    result = memfs._write_role_memory_entry(
+        "bear-shared",
+        "pair",
+        {
+            "kind": "note",
+            "title": "Conversation Context",
+            "body": "Shared context note.",
+            "runtime_target": "conv-1234-abcd",
+        },
+        memfs.DEFAULT_ORG,
+    )
+    assert result["ok"] is True
+    assert result["path"] == "pair/notes/conv-1234-abcd/conversation-context.md"
+
+
+def test_pair_memory_entry_adds_numeric_suffix_on_semantic_path_collision(memfs):
+    register_view(memfs, agent_id="agent-pair", bear_id="bear-collision", role="pair")
+    first = memfs._write_role_memory_entry(
+        "bear-collision",
+        "pair",
+        {
+            "kind": "summary",
+            "title": "Daily Sync",
+            "body": "First summary.",
+            "author": "gerwitz",
+        },
+        memfs.DEFAULT_ORG,
+    )
+    second = memfs._write_role_memory_entry(
+        "bear-collision",
+        "pair",
+        {
+            "kind": "summary",
+            "title": "Daily Sync",
+            "body": "Second summary.",
+            "author": "gerwitz",
+        },
+        memfs.DEFAULT_ORG,
+    )
+    assert first["path"] == "pair/summaries/gerwitz/daily-sync.md"
+    assert second["path"] == "pair/summaries/gerwitz/daily-sync-2.md"
+
+
 def test_override_canonical_wins_resets_quarantined_view(memfs, tmp_path):
     record = register_view(memfs, agent_id="agent-talk", role="talk")
     work = clone_view(memfs, "agent-talk", tmp_path=tmp_path)

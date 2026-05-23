@@ -14,6 +14,8 @@ pub mod den_tools;
 #[cfg(test)]
 mod den_tools_descriptor_guidance_tests;
 #[cfg(test)]
+mod den_tools_memory_write_tests;
+#[cfg(test)]
 mod den_tools_session_info_tests;
 #[cfg(test)]
 mod den_tools_session_role_semantics_tests;
