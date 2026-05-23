@@ -1877,16 +1877,22 @@ async fn handle_request(
                         "bears-acp-adapter: Den adjusted client-requested mode={} for session_id={} to effective mode={}",
                         requested_mode, session_id, mode
                     );
-                    eprintln!(
-                        "bears-acp-adapter: mode request adjusted session_id={} requested_mode={} effective_mode={} message={}",
-                        session_id,
-                        requested_mode,
-                        mode,
-                        den_response
-                            .get("message")
-                            .and_then(Value::as_str)
-                            .unwrap_or("Den session policy adjusted the requested mode.")
-                    );
+                    let deferred = den_response
+                        .get("deferred")
+                        .and_then(Value::as_bool)
+                        .unwrap_or(false);
+                    if !deferred {
+                        eprintln!(
+                            "bears-acp-adapter: mode request adjusted session_id={} requested_mode={} effective_mode={} message={}",
+                            session_id,
+                            requested_mode,
+                            mode,
+                            den_response
+                                .get("message")
+                                .and_then(Value::as_str)
+                                .unwrap_or("Den session policy adjusted the requested mode.")
+                        );
+                    }
                 }
                 notify_mode_state(session_id, mode).await?;
                 write_response(
@@ -1953,16 +1959,22 @@ async fn handle_request(
                         "bears-acp-adapter: Den adjusted client-requested legacy mode={} for session_id={} to effective mode={}",
                         requested_mode, session_id, mode
                     );
-                    eprintln!(
-                        "bears-acp-adapter: mode request adjusted session_id={} requested_mode={} effective_mode={} message={}",
-                        session_id,
-                        requested_mode,
-                        mode,
-                        den_response
-                            .get("message")
-                            .and_then(Value::as_str)
-                            .unwrap_or("Den session policy adjusted the requested mode.")
-                    );
+                    let deferred = den_response
+                        .get("deferred")
+                        .and_then(Value::as_bool)
+                        .unwrap_or(false);
+                    if !deferred {
+                        eprintln!(
+                            "bears-acp-adapter: mode request adjusted session_id={} requested_mode={} effective_mode={} message={}",
+                            session_id,
+                            requested_mode,
+                            mode,
+                            den_response
+                                .get("message")
+                                .and_then(Value::as_str)
+                                .unwrap_or("Den session policy adjusted the requested mode.")
+                        );
+                    }
                 }
                 notify_mode_state(session_id, mode).await?;
                 write_response(
