@@ -40,6 +40,7 @@ The Apple client app owns:
 - configuring supported ACP clients when possible on macOS;
 - showing logs/status;
 - installing/updating the helper CLI on macOS;
+- app self-update on macOS with Sparkle;
 - future BearWire desktop runtime features on macOS;
 - future mobile-friendly Bear status, administration, notifications, and remote-control UX on iOS/iPadOS.
 
@@ -257,11 +258,13 @@ Do not store Den tokens in plain-text config files.
 
 ## App UX phases
 
-### Phase 1 — setup companion
+### Phase 1 — setup companion with self-update
 
-The first app should be intentionally small.
+The first app should be intentionally small, but it must include app self-update. Keeping the client compatible with a rapidly evolving Den/BearWire server is an initial motivation for shipping an app rather than only a `.pkg`.
 
-Screens:
+Use **Sparkle** for macOS app updates in Phase 1.
+
+Screens/features:
 
 - Welcome / install status;
 - Den API URL;
@@ -270,7 +273,9 @@ Screens:
 - run `doctor`;
 - ACP client setup instructions;
 - copy adapter command;
-- logs/help.
+- logs/help;
+- update status / check for updates;
+- update channel display, initially `beta` or equivalent.
 
 Primary user flow:
 
@@ -283,6 +288,14 @@ Open Bears.app
 ```
 
 No background daemon required.
+
+Sparkle update requirements:
+
+- appcast generation must be part of the macOS app release pipeline;
+- app update signing keys must be distinct from Apple Developer ID certificates;
+- release notes must include both app and bundled adapter versions;
+- the app must re-check/install the bundled helper after an app update;
+- the update channel should be explicit so beta users are not surprised by rapid updates.
 
 ### Phase 2 — client configuration helper
 
@@ -393,6 +406,139 @@ Rules:
 4. BearWire may carry admin requests only under explicit admin/operator authorization.
 5. Local runtime presence must never imply permission to administer a Bear.
 
+## Versioning and update model
+
+The app and adapter have separate versions.
+
+```text
+Bears.app version = product/UI/update version
+bears-acp-adapter version = runtime/protocol/helper version
+```
+
+They may move together early, but equality must not be assumed.
+
+Every app release declares the adapter version it bundles.
+
+Example release metadata:
+
+```json
+{
+  "app": {
+    "version": "0.3.0",
+    "build": "42",
+    "git_sha": "appsha123"
+  },
+  "adapter": {
+    "version": "0.5.2",
+    "git_sha": "adaptersha456",
+    "bearwire_protocol": 1
+  },
+  "compatibility": {
+    "min_den_version": "0.8.0",
+    "supported_bearwire_protocols": [1]
+  }
+}
+```
+
+Bundle this metadata in the app:
+
+```text
+Bears.app/Contents/Resources/bears-release.json
+```
+
+The app should display version diagnostics such as:
+
+```text
+Bears.app 0.3.0
+Adapter 0.5.2 (adaptersha456)
+Den 0.8.4 (densha789)
+BearWire protocol 1
+```
+
+### App-managed helper update policy
+
+For app-managed installs, the app owns:
+
+```text
+~/Library/Application Support/Bears/bin/bears-acp-adapter
+```
+
+On app launch and after every app update:
+
+1. read bundled adapter version metadata;
+2. read installed helper version using `bears-acp-adapter --version --json`;
+3. if helper is missing or older than bundled helper, replace it automatically;
+4. if helper is the same version, do nothing;
+5. if helper is newer, keep it if protocol-compatible and warn only if incompatible.
+
+The app-generated ACP client config should continue to use the user-local helper path. The app should not mutate `/usr/local/bin`.
+
+### Compatibility checks
+
+Compatibility should be explicit and capability/protocol based, not only semver equality.
+
+The adapter should expose:
+
+```text
+bears-acp-adapter --version --json
+```
+
+with fields for:
+
+- adapter version;
+- git SHA;
+- build time;
+- supported BearWire protocol versions;
+- supported local capabilities.
+
+`doctor --json` should include Den compatibility information when reachable:
+
+- Den version;
+- Den git SHA;
+- supported BearWire protocol versions;
+- ACP gateway availability;
+- auth/token status.
+
+The app should surface mismatches clearly:
+
+```text
+Adapter too old for this Den.
+Den too old for this adapter.
+Installed helper is newer than bundled helper but compatible.
+```
+
+### Release tags and pipeline inputs
+
+Use separate release identities:
+
+```text
+adapter/v0.5.2
+bears-app/v0.3.0
+```
+
+The app release pipeline should take an explicit adapter version input or read a pinned file such as:
+
+```text
+apps/apple/Bears/ADAPTER_VERSION
+```
+
+The app workflow downloads or builds that adapter version, embeds it, writes `bears-release.json`, and signs/notarizes the result.
+
+### Sparkle update policy
+
+Sparkle is included in Phase 1 for macOS app self-update.
+
+Initial policy:
+
+- one beta update channel is acceptable;
+- stable/beta/dev channels may be added later;
+- Sparkle updates the app bundle;
+- after Sparkle installs a new app version, the app updates the user-local helper from the bundled helper;
+- Sparkle appcast entries must include app version, bundled adapter version, minimum Den version, and release notes;
+- update checks should be user-visible and not silently disruptive during active ACP sessions.
+
+Sparkle does not update `/usr/local/bin` or the standalone `.pkg` install. CLI-only users continue to update through `.pkg`/release artifacts.
+
 ## Packaging and distribution
 
 ### Keep the `.pkg`
@@ -450,7 +596,10 @@ Keep workflows separate:
 
 - builds SwiftUI macOS app;
 - embeds/downloads signed helper;
+- writes `bears-release.json`;
 - signs/notarizes app/dmg;
+- signs Sparkle update artifact;
+- generates or updates Sparkle appcast;
 - uploads app artifact.
 
 Future Apple client CI may add:
@@ -520,6 +669,8 @@ Run macOS-specific tests on macOS CI:
 - signed helper passes `codesign --verify`;
 - config file read/write works in a temp home;
 - `doctor --json` can be invoked from the app wrapper;
+- Sparkle framework is present and configured;
+- Sparkle update artifact/appcast can be generated on release builds;
 - notarization succeeds on release builds.
 
 Future iOS/iPadOS tests should verify that shared UI/state code builds without helper-process assumptions.
@@ -531,7 +682,10 @@ Future iOS/iPadOS tests should verify that shared UI/state code builds without h
 - app opens without Terminal;
 - user can enter config/token;
 - `doctor` result is readable;
-- aizen/Zed setup path works;
+- Zed setup path works;
+- aizen guided/manual setup is understandable;
+- Sparkle detects and installs a beta update;
+- after app update, helper is updated from the bundled helper;
 - uninstall removes app/helper/config if user chooses;
 - token can be revoked/removed.
 
@@ -544,31 +698,38 @@ Future iOS/iPadOS tests should verify that shared UI/state code builds without h
 - Admin actions require Den admin/operator authorization.
 - The helper should expose no unauthenticated local network control surface.
 - If a local HTTP/IPC helper is added, bind to loopback by default and use bearer or OS-mediated authorization.
+- Protect Sparkle signing keys separately from Apple Developer ID certificates.
+- Do not store Sparkle private keys in the repository.
+- Treat the appcast hosting location as release infrastructure; unauthorized appcast changes could steer client updates.
 
 ## Open questions
 
 1. What app name should be used in Finder and releases: `Bears`, `BEARS`, or `Bears Client`?
-2. What exact Zed settings mutation strategy is safest: direct JSON edit, generated snippet, or user-confirmed patch preview?
-3. What exact aizen configuration format and rollback behavior should the app support before enabling auto-configuration?
-4. Which app features require online Den connectivity versus local-only status?
-5. What backend API shape should the first iOS/iPadOS Bear status/admin screens use?
-6. When does app-open helper management become insufficient and justify a LaunchAgent?
+2. Where should Sparkle appcasts be hosted for beta and future stable channels?
+3. What update channels should exist initially: beta only, or beta + stable?
+4. What exact Zed settings mutation strategy is safest: direct JSON edit, generated snippet, or user-confirmed patch preview?
+5. What exact aizen configuration format and rollback behavior should the app support before enabling auto-configuration?
+6. Which app features require online Den connectivity versus local-only status?
+7. What backend API shape should the first iOS/iPadOS Bear status/admin screens use?
+8. When does app-open helper management become insufficient and justify a LaunchAgent?
 
 ## Suggested implementation sequence
 
 1. Add `doctor --json` to `bears-acp-adapter`.
 2. Add app-managed config file support to the shared Rust adapter.
 3. Add stable machine-readable config/auth status commands.
-4. Create minimal SwiftUI app under `apps/apple/Bears/` with shared view models separated from macOS helper services.
-5. Bundle the existing signed adapter helper and install/update it to `~/Library/Application Support/Bears/bin/` on first launch.
-6. Add Den URL/token/Bear config UI.
-7. Run and render `doctor --json` in the app.
-8. Add Zed auto-configuration and aizen guided/manual setup.
-9. Add signing/notarization workflow for `.app`/`.dmg`.
-10. Add shared Apple app tests that can later run for iOS/iPadOS.
-11. Beta test app + existing `.pkg` side by side.
-12. Add BearWire desktop runtime features only after BearWire v1 is defined and stable.
-13. Add iOS/iPadOS target only after the shared app model and Den APIs are stable enough to avoid duplicating product logic, starting with Bear status/admin, then lightweight chat/status, then notifications/review inbox.
+4. Add `--version --json` and release metadata needed by the app.
+5. Create minimal SwiftUI app under `apps/apple/Bears/` with shared view models separated from macOS helper services.
+6. Bundle the existing signed adapter helper and install/update it to `~/Library/Application Support/Bears/bin/` on first launch.
+7. Add Sparkle to the macOS app and create beta appcast generation in CI.
+8. Add Den URL/token/Bear config UI.
+9. Run and render `doctor --json` in the app.
+10. Add Zed auto-configuration and aizen guided/manual setup.
+11. Add signing/notarization workflow for `.app`/`.dmg`.
+12. Add shared Apple app tests that can later run for iOS/iPadOS.
+13. Beta test app + existing `.pkg` side by side, including Sparkle update from one beta build to another.
+14. Add BearWire desktop runtime features only after BearWire v1 is defined and stable.
+15. Add iOS/iPadOS target only after the shared app model and Den APIs are stable enough to avoid duplicating product logic, starting with Bear status/admin, then lightweight chat/status, then notifications/review inbox.
 
 ## Related documents
 
