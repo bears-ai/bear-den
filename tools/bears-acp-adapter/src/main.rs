@@ -645,14 +645,10 @@ async fn send_plan_update(session_id: &str, entries: Vec<PlanEntry>) -> Result<(
     )
     .await?;
     if env_bool("BEARS_ACP_DEBUG_UI") {
-        send_agent_thought_chunk(
-            session_id,
-            &format!(
-                "BEARS debug: sent ACP plan update with {entry_count} entr{}; if your client supports ACP Agent Plan UI, you should now see a planning/task list.",
-                if entry_count == 1 { "y" } else { "ies" }
-            ),
-        )
-        .await?;
+        eprintln!(
+            "bears-acp-adapter: debug ui sent ACP plan update session_id={} entry_count={}",
+            session_id, entry_count
+        );
     }
     Ok(())
 }
@@ -1881,17 +1877,16 @@ async fn handle_request(
                         "bears-acp-adapter: Den adjusted client-requested mode={} for session_id={} to effective mode={}",
                         requested_mode, session_id, mode
                     );
-                    send_agent_thought_chunk(
+                    eprintln!(
+                        "bears-acp-adapter: mode request adjusted session_id={} requested_mode={} effective_mode={} message={}",
                         session_id,
-                        &format!(
-                            "BEARS mode request `{requested_mode}` resolved to `{mode}`. {}",
-                            den_response
-                                .get("message")
-                                .and_then(Value::as_str)
-                                .unwrap_or("Den session policy adjusted the requested mode.")
-                        ),
-                    )
-                    .await?;
+                        requested_mode,
+                        mode,
+                        den_response
+                            .get("message")
+                            .and_then(Value::as_str)
+                            .unwrap_or("Den session policy adjusted the requested mode.")
+                    );
                 }
                 notify_mode_state(session_id, mode).await?;
                 write_response(
@@ -1958,17 +1953,16 @@ async fn handle_request(
                         "bears-acp-adapter: Den adjusted client-requested legacy mode={} for session_id={} to effective mode={}",
                         requested_mode, session_id, mode
                     );
-                    send_agent_thought_chunk(
+                    eprintln!(
+                        "bears-acp-adapter: mode request adjusted session_id={} requested_mode={} effective_mode={} message={}",
                         session_id,
-                        &format!(
-                            "BEARS mode request `{requested_mode}` resolved to `{mode}`. {}",
-                            den_response
-                                .get("message")
-                                .and_then(Value::as_str)
-                                .unwrap_or("Den session policy adjusted the requested mode.")
-                        ),
-                    )
-                    .await?;
+                        requested_mode,
+                        mode,
+                        den_response
+                            .get("message")
+                            .and_then(Value::as_str)
+                            .unwrap_or("Den session policy adjusted the requested mode.")
+                    );
                 }
                 notify_mode_state(session_id, mode).await?;
                 write_response(
@@ -6929,12 +6923,7 @@ async fn handle_den_event(
             }
             Ok(false)
         }
-        "error" => {
-            let message = format_den_event_error(event);
-            send_agent_thought_chunk_for_turn(shared_state, session_id, turn_token, &message)
-                .await?;
-            Ok(false)
-        }
+        "error" => Ok(false),
         "tool_request" => {
             let has_tool_name = event.get("tool_name").and_then(Value::as_str).is_some();
             let has_tool_call_id = event.get("tool_call_id").and_then(Value::as_str).is_some();
@@ -6947,14 +6936,11 @@ async fn handle_den_event(
                     turn_token,
                 );
             } else {
-                let message = format_den_event_error(event);
                 eprintln!(
                     "bears-acp-adapter: ignoring malformed Den tool_request event session_id={} event={}",
                     session_id,
                     truncate_for_log(&event.to_string(), 400)
                 );
-                send_agent_thought_chunk_for_turn(shared_state, session_id, turn_token, &message)
-                    .await?;
             }
             Ok(false)
         }
