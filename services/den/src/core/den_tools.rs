@@ -1089,8 +1089,7 @@ pub fn den_tool_display(name: &'static str, label: &'static str) -> AcpToolDispl
             complete_verb: "Inspected bear environment",
             target_arg_keys: &[],
             sensitive_arg_keys: &[],
-            approval_summary:
-                "Read a structured snapshot of the current Bear runtime environment.",
+            approval_summary: "Read a structured snapshot of the current Bear runtime environment.",
         },
         DEN_SITUATION_GET => AcpToolDisplayDescriptor {
             label,

@@ -7426,7 +7426,11 @@ mod tests {
         assert!(!output.contains("status_text"), "{output}");
         assert!(!output.contains("runtime recovery"), "{output}");
         assert!(output.contains("\"type\":\"turn_result\""), "{output}");
-        assert_eq!(*cancel_calls.lock().await, 1);
+        assert_eq!(
+            *cancel_calls.lock().await,
+            0,
+            "orphaned cleanup without run_ids must not issue an agent-wide Letta cancel"
+        );
     }
 
     #[test]
@@ -7529,7 +7533,7 @@ mod tests {
         };
         let upstream = futures::stream::iter(vec![
             Ok::<Bytes, reqwest::Error>(Bytes::from(concat!(
-                "data: {\"id\":\"approval-1\",\"message_type\":\"approval_request_message\",",
+                "data: {\"id\":\"approval-1\",\"run_id\":\"run-conflict\",\"message_type\":\"approval_request_message\",",
                 "\"tool_call\":{\"name\":\"fs_read_text_file\",\"tool_call_id\":\"call_conflict\",",
                 "\"arguments\":\"{\\\"path\\\":\\\"/tmp/acp-test.txt\\\"}\"}}\n\n"
             ))),
