@@ -253,6 +253,44 @@ pub async fn update_adapter_environment(
     Ok(())
 }
 
+pub async fn update_client_conversation_title(
+    pool: &PgPool,
+    user_id: i32,
+    bear_id: Uuid,
+    acp_session_id: &str,
+    title: Option<&str>,
+) -> Result<(), CustomError> {
+    let normalized = title
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| value.chars().take(120).collect::<String>());
+    sqlx::query(
+        r#"
+        UPDATE acp_sessions
+        SET conversation_title = $4,
+            conversation_title_updated_at = CASE
+                WHEN $4::text IS NULL THEN conversation_title_updated_at
+                WHEN conversation_title IS DISTINCT FROM $4 THEN NOW()
+                ELSE conversation_title_updated_at
+            END,
+            conversation_title_synced_at = CASE
+                WHEN $4::text IS NULL THEN conversation_title_synced_at
+                WHEN conversation_title IS DISTINCT FROM $4 THEN NULL
+                ELSE conversation_title_synced_at
+            END,
+            updated_at = NOW()
+        WHERE user_id = $1 AND bear_id = $2 AND acp_session_id = $3
+        "#,
+    )
+    .bind(user_id)
+    .bind(bear_id)
+    .bind(acp_session_id)
+    .bind(normalized)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
 pub async fn mark_closed(pool: &PgPool, id: Uuid) -> Result<(), CustomError> {
     sqlx::query(
         r#"

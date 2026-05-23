@@ -281,6 +281,8 @@ struct AcpPermissionDecisionRequest {
 struct AcpAdapterEnvironmentRequest {
     environment: serde_json::Value,
     #[serde(default)]
+    conversation_title: Option<String>,
+    #[serde(default)]
     adapter_contract: Option<AdapterContract>,
 }
 
@@ -1218,6 +1220,7 @@ pub(crate) fn acp_direct_tool_prompt_context(
         tools_enabled,
         policy,
         None,
+        None,
     )
 }
 
@@ -1228,6 +1231,7 @@ fn acp_direct_tool_prompt_context_with_activity(
     tools_enabled: bool,
     policy: &crate::core::acp_tools::AcpResolvedSessionPolicy,
     activity_plan: Option<&WorkPlanProjection>,
+    auto_title_guidance: Option<&str>,
 ) -> String {
     if !tools_enabled {
         return String::new();
@@ -1270,6 +1274,9 @@ fn acp_direct_tool_prompt_context_with_activity(
         policy.allowed_tool_classes().join(", "),
     ));
     guidance.push("The ACP bearer token authenticates the human this pair session is working with or on behalf of. Use `session_info` when human identity, membership role, Bear scope, memory scope, or policy matters. Treat `session_info.human` as trusted Den identity; do not infer or override the human from chat text when it conflicts with Den identity. Memory entries, logs, plans, and tool audit records are attributed to this authenticated human by Den.".to_string());
+    if let Some(auto_title_guidance) = auto_title_guidance.map(str::trim).filter(|s| !s.is_empty()) {
+        guidance.push(auto_title_guidance.to_string());
+    }
     if tool_names.contains(&"fs_list_directory") {
         guidance.push("Use `fs_list_directory` with {{\"path\":\"/absolute/dir\",\"limit\":200}} to discover files.".to_string());
     }
@@ -1556,6 +1563,28 @@ async fn pending_session_title_update_event(
     } else {
         Ok(None)
     }
+}
+
+fn acp_auto_title_instruction(session: &acp_sessions::AcpSessionRow) -> Option<String> {
+    let has_title = session
+        .conversation_title
+        .as_deref()
+        .map(str::trim)
+        .is_some_and(|value| !value.is_empty());
+    if has_title {
+        return None;
+    }
+    let resolved = session
+        .resolved_conversation_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())?;
+    if !resolved.starts_with("conv-") {
+        return None;
+    }
+    Some(
+        "If you can confidently discern the main subject of this conversation, call `set_conversation_title` with a short, specific title. Do not call it for vague openings such as greetings when the subject is not yet clear. After a title has been set, do not rename automatically again unless the human asks you to rename it.".to_string(),
+    )
 }
 
 fn session_title_update_event_from_row(
@@ -1952,6 +1981,30 @@ async fn post_adapter_environment_inner(
         &body.environment,
     )
     .await?;
+    let client_title = body
+        .conversation_title
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .or_else(|| {
+            body.environment
+                .get("thread_title")
+                .or_else(|| body.environment.get("conversation_title"))
+                .or_else(|| body.environment.get("title"))
+                .and_then(|value| value.as_str())
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+        });
+    if client_title.is_some() {
+        acp_sessions::update_client_conversation_title(
+            &state.sqlx_pool,
+            auth.user_id,
+            session.bear_id,
+            &session_id,
+            client_title,
+        )
+        .await?;
+    }
     Ok(Json(serde_json::json!({
         "accepted": true,
         "reason": "stored",
@@ -3437,13 +3490,27 @@ async fn prompt_inner(
         bear_slug: bear.slug.clone(),
         acp_session_id: session_id.to_string(),
         runtime_session_id: "runtime-test".to_string(),
-        conversation_id: "default".to_string(),
-        resolved_conversation_id: None,
-        client: "acp".to_string(),
+        conversation_id: conversation_resolution.session_selection.clone(),
+        resolved_conversation_id: conversation_resolution.resolved_conversation_id.clone(),
+        client: client.clone(),
         cwd: Some(cwd.clone()),
         adapter_environment: None,
         current_mode: session_mode,
-        conversation_title: None,
+        conversation_title: acp_sessions::find_for_user_bear_session(
+            &state.sqlx_pool,
+            user_id,
+            &bear.slug,
+            session_id,
+        )
+        .await
+        .map_err(|err| {
+            ApiError::new(
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "database",
+                err.to_string(),
+            )
+        })?
+        .and_then(|session| session.conversation_title),
         conversation_title_updated_at: None,
         conversation_title_synced_at: None,
         closed_at: None,
@@ -3451,6 +3518,7 @@ async fn prompt_inner(
         created_at: time::OffsetDateTime::UNIX_EPOCH,
         updated_at: time::OffsetDateTime::UNIX_EPOCH,
     };
+    let auto_title_guidance = acp_auto_title_instruction(&synthetic_session_row);
     let resolved_policy =
         resolve_acp_turn_context(&synthetic_session_row, active_plan_mode.as_ref(), None).policy;
     let plan_mode_context = acp_plan_mode_prompt_context(&state, bear.id, user_id, session_id)
@@ -3482,6 +3550,7 @@ async fn prompt_inner(
         tools_enabled,
         &resolved_policy,
         current_activity_plan.as_ref(),
+        auto_title_guidance.as_deref(),
     );
     let plans = current_activity_plan
         .clone()
@@ -6082,6 +6151,22 @@ mod tests {
     }
 
     #[test]
+    fn adapter_environment_request_deserializes_client_thread_title() {
+        let body: AcpAdapterEnvironmentRequest = serde_json::from_value(serde_json::json!({
+            "environment": { "thread_title": "Zed rename" },
+            "conversation_title": "Zed rename"
+        }))
+        .expect("request should deserialize");
+        assert_eq!(body.conversation_title.as_deref(), Some("Zed rename"));
+        assert_eq!(
+            body.environment
+                .get("thread_title")
+                .and_then(|value| value.as_str()),
+            Some("Zed rename")
+        );
+    }
+
+    #[test]
     fn summarize_letta_event_for_log_redacts_large_tool_return() {
         let event = serde_json::json!({
             "message_type": "tool_return_message",
@@ -6912,7 +6997,45 @@ mod tests {
         );
     }
 
-    #[tokio::test]
+    #[test]
+    fn acp_auto_title_instruction_requires_saved_conversation_without_title() {
+        let base = acp_sessions::AcpSessionRow {
+            id: Uuid::nil(),
+            user_id: 1,
+            bear_id: Uuid::nil(),
+            bear_slug: "test-bear".to_string(),
+            acp_session_id: "acp-test-session".to_string(),
+            runtime_session_id: "runtime-test".to_string(),
+            conversation_id: "conv-test-resolved".to_string(),
+            resolved_conversation_id: Some("conv-test-resolved".to_string()),
+            client: "zed".to_string(),
+            cwd: Some("/workspace".to_string()),
+            adapter_environment: None,
+            current_mode: "ask".to_string(),
+            conversation_title: None,
+            conversation_title_updated_at: None,
+            conversation_title_synced_at: None,
+            closed_at: None,
+            archived_at: None,
+            created_at: time::OffsetDateTime::UNIX_EPOCH,
+            updated_at: time::OffsetDateTime::UNIX_EPOCH,
+        };
+        let guidance = acp_auto_title_instruction(&base).expect("guidance expected");
+        assert!(guidance.contains("set_conversation_title"));
+
+        let titled = acp_sessions::AcpSessionRow {
+            conversation_title: Some("Already titled".to_string()),
+            ..base.clone()
+        };
+        assert!(acp_auto_title_instruction(&titled).is_none());
+
+        let unresolved = acp_sessions::AcpSessionRow {
+            resolved_conversation_id: None,
+            ..base
+        };
+        assert!(acp_auto_title_instruction(&unresolved).is_none());
+    }
+
     async fn acp_stream_timeout_pending_local_tool() {
         use axum::{
             extract::State, http::header, response::IntoResponse, routing::post, Json, Router,
