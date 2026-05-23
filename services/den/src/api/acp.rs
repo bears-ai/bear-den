@@ -1550,15 +1550,23 @@ async fn pending_session_title_update_event(
     else {
         return Ok(None);
     };
-    let Some(title) = session
+    if let Some(event) = session_title_update_event_from_row(&session) {
+        acp_sessions::mark_title_synced(pool, user_id, bear_id, acp_session_id).await?;
+        Ok(Some(event))
+    } else {
+        Ok(None)
+    }
+}
+
+fn session_title_update_event_from_row(
+    session: &acp_sessions::AcpSessionRow,
+) -> Option<AcpGatewayEvent> {
+    let title = session
         .conversation_title
         .as_deref()
         .map(str::trim)
         .filter(|s| !s.is_empty())
-        .map(str::to_string)
-    else {
-        return Ok(None);
-    };
+        .map(str::to_string)?;
     let needs_sync = match (
         session.conversation_title_updated_at,
         session.conversation_title_synced_at,
@@ -1567,17 +1575,13 @@ async fn pending_session_title_update_event(
         (Some(_), None) => true,
         _ => false,
     };
-    if !needs_sync {
-        return Ok(None);
-    }
-    acp_sessions::mark_title_synced(pool, user_id, bear_id, acp_session_id).await?;
-    Ok(Some(AcpGatewayEvent::SessionInfoUpdate {
+    needs_sync.then_some(AcpGatewayEvent::SessionInfoUpdate {
         title: Some(title),
         updated_at: session
             .conversation_title_updated_at
             .map(format_acp_session_timestamp),
         meta: None,
-    }))
+    })
 }
 
 async fn prompt(
@@ -1854,6 +1858,13 @@ async fn get_acp_session_runtime_inner(
         "role": "pair",
         "channel_kind": "acp_session",
         "acp_session_id": session_id,
+        "title": row.conversation_title,
+        "conversation_title_updated_at": row
+            .conversation_title_updated_at
+            .map(format_acp_session_timestamp),
+        "conversation_title_synced_at": row
+            .conversation_title_synced_at
+            .map(format_acp_session_timestamp),
         "conversation": {
             "session_selection": row.conversation_id,
             "resolved_conversation_id": row.resolved_conversation_id,
@@ -3489,6 +3500,7 @@ async fn prompt_inner(
         "ACP prompt context assembly lengths"
     );
     let mut initial_events = Vec::new();
+    let mut session_info_event_sent = false;
     if let Some(conversation_id) = conversation_resolution.resolved_conversation_id.clone() {
         initial_events.push(AcpGatewayEvent::ConversationResolved { conversation_id });
     }
@@ -3504,6 +3516,7 @@ async fn prompt_inner(
         let (status, code, message) = acp_error_status_message(&err);
         ApiError::new(status, code, message)
     })? {
+        session_info_event_sent = true;
         initial_events.push(title_event);
     }
     if let Some(plan_event) = current_activity_plan
@@ -3738,6 +3751,7 @@ async fn prompt_inner(
             turn_scope,
         },
         initial_events,
+        session_info_event_sent,
         state.letta.clone(),
         LettaContinuationContext {
             conversation_id: conversation_resolution.upstream_target.clone(),
@@ -5296,6 +5310,7 @@ struct AcpLettaSseStream {
     diagnostics: AcpStreamDiagnostics,
     logged_summary: bool,
     persist_future: Option<AcpPendingFuture>,
+    session_info_event_sent: bool,
     text_chunker: AcpTextChunker,
     active_turn_guard: Option<crate::core::role_runtime::RoleTurnGuard>,
     cancel_rx: Option<tokio::sync::watch::Receiver<bool>>,
@@ -5353,6 +5368,9 @@ impl AcpLettaSseStream {
                 "emitting ACP turn_complete authorized by turn controller"
             );
         }
+        if matches!(event, AcpGatewayEvent::SessionInfoUpdate { .. }) {
+            self.session_info_event_sent = true;
+        }
         self.diagnostics.observe_mapped_event(&event);
         self.pending.push_back(acp_event_to_adapter_sse(event));
     }
@@ -5407,6 +5425,7 @@ impl AcpLettaSseStream {
         inner: impl Stream<Item = Result<Bytes, reqwest::Error>> + Send + 'static,
         context: AcpStreamContext,
         initial_events: Vec<AcpGatewayEvent>,
+        session_info_event_sent: bool,
         letta: Arc<crate::core::letta::LettaClient>,
         continuation: LettaContinuationContext,
         active_turn_guard: crate::core::role_runtime::RoleTurnGuard,
@@ -5427,6 +5446,7 @@ impl AcpLettaSseStream {
             diagnostics: AcpStreamDiagnostics::default(),
             logged_summary: false,
             persist_future: None,
+            session_info_event_sent,
             text_chunker: AcpTextChunker::new(acp_text_chunk_chars()),
             active_turn_guard: Some(active_turn_guard),
             cancel_rx: None,
@@ -6337,6 +6357,7 @@ mod tests {
             upstream,
             context,
             Vec::new(),
+            false,
             letta,
             LettaContinuationContext {
                 conversation_id: "conv-test-continuation".to_string(),
@@ -6509,6 +6530,7 @@ mod tests {
             upstream,
             context,
             Vec::new(),
+            false,
             letta,
             LettaContinuationContext {
                 conversation_id: "conv-test-continuation".to_string(),
@@ -6650,6 +6672,7 @@ mod tests {
             upstream,
             context,
             Vec::new(),
+            false,
             letta,
             LettaContinuationContext {
                 conversation_id: "conv-test-continuation".to_string(),
@@ -6770,6 +6793,7 @@ mod tests {
             upstream,
             context,
             Vec::new(),
+            false,
             letta,
             LettaContinuationContext {
                 conversation_id: "conv-test-continuation".to_string(),
@@ -6905,6 +6929,7 @@ mod tests {
             upstream,
             context,
             Vec::new(),
+            false,
             letta,
             LettaContinuationContext {
                 conversation_id: "conv-timeout".to_string(),
@@ -7039,6 +7064,7 @@ mod tests {
             upstream,
             context,
             Vec::new(),
+            false,
             letta,
             LettaContinuationContext {
                 conversation_id: "conv-cancel".to_string(),
@@ -7174,6 +7200,7 @@ mod tests {
             upstream,
             context,
             Vec::new(),
+            false,
             letta,
             LettaContinuationContext {
                 conversation_id: "conv-test".to_string(),
@@ -7307,6 +7334,7 @@ mod tests {
             upstream,
             context,
             Vec::new(),
+            false,
             letta,
             LettaContinuationContext {
                 conversation_id: "conv-test".to_string(),
