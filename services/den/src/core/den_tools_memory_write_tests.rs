@@ -51,8 +51,7 @@ fn merge_memory_entry_source_prefers_authenticated_user_username() {
     let context = sample_context();
     let current_user = sample_user();
 
-    let merged =
-        merge_memory_entry_source_with_human(None, &context, Some(&current_user)).unwrap();
+    let merged = merge_memory_entry_source_with_human(None, &context, Some(&current_user)).unwrap();
 
     assert_eq!(merged["human"]["user_id"], 7);
     assert_eq!(merged["human"]["username"], "gerwitz");
@@ -66,12 +65,9 @@ fn merge_memory_entry_source_prefers_authenticated_user_username() {
 fn merge_memory_entry_source_falls_back_to_context_username() {
     let context = sample_context();
 
-    let merged = merge_memory_entry_source_with_human(
-        Some(json!({"origin": "test"})),
-        &context,
-        None,
-    )
-    .unwrap();
+    let merged =
+        merge_memory_entry_source_with_human(Some(json!({"origin": "test"})), &context, None)
+            .unwrap();
 
     assert_eq!(merged["origin"], "test");
     assert_eq!(merged["human"]["username"], "context-user");
