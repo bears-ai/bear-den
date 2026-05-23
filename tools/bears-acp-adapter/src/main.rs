@@ -192,6 +192,7 @@ struct SessionContext {
     mcp_sources: Vec<McpSourceConfig>,
     conversation_id: Option<String>,
     resolved_conversation_id: Option<String>,
+    thread_title: Option<String>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -1771,7 +1772,7 @@ async fn handle_request(
                     )
                     .await
                     {
-                        if let Err(err) = post_adapter_environment(config, &session_id, snapshot).await {
+                        if let Err(err) = post_adapter_environment(config, &session_id, snapshot, None).await {
                             eprintln!("bears-acp-adapter: failed to publish adapter environment after session/new session_id={} error={err:#}", session_id);
                         }
                     }
@@ -2515,6 +2516,7 @@ fn session_context_from_params(params: &Value) -> Result<SessionContext> {
         mcp_sources,
         conversation_id: None,
         resolved_conversation_id: None,
+        thread_title: None,
     };
     ensure_session_context_capabilities(&mut context);
     Ok(context)
@@ -3194,6 +3196,12 @@ fn session_context_from_den_session(params: &Value, den_session: &Value) -> Resu
             .get("resolved_conversation_id")
             .and_then(Value::as_str)
             .map(str::to_string),
+        thread_title: den_session
+            .get("title")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string),
     };
     ctx.raw = json!({
         "cwd": ctx.cwd.clone(),
@@ -3633,7 +3641,7 @@ async fn restore_session_from_den(
     )
     .await
     {
-        if let Err(err) = post_adapter_environment(config, session_id, snapshot).await {
+        if let Err(err) = post_adapter_environment(config, session_id, snapshot, None).await {
             eprintln!("bears-acp-adapter: failed to publish adapter environment after session/resume session_id={} error={err:#}", session_id);
         }
     }
@@ -3721,7 +3729,7 @@ async fn handle_session_load(
     )
     .await
     {
-        if let Err(err) = post_adapter_environment(config, session_id, snapshot).await {
+        if let Err(err) = post_adapter_environment(config, session_id, snapshot, None).await {
             eprintln!("bears-acp-adapter: failed to publish adapter environment after session/load session_id={} error={err:#}", session_id);
         }
     }
@@ -6756,8 +6764,15 @@ async fn post_adapter_environment(
     config: &Config,
     session_id: &str,
     environment: Value,
+    conversation_title: Option<&str>,
 ) -> Result<()> {
-    let payload = with_adapter_contract(json!({ "environment": environment }));
+    let title = conversation_title
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    let payload = with_adapter_contract(json!({
+        "environment": environment,
+        "conversation_title": title,
+    }));
     let url = format!(
         "{}/acp/bears/{}/sessions/{}/adapter-environment",
         config.api_url,
@@ -6896,7 +6911,15 @@ async fn handle_den_event(
             let title = event
                 .get("title")
                 .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
                 .map(str::to_string);
+            if let Some(context) = adapter_state.session_contexts.get_mut(session_id) {
+                context.thread_title = title.clone();
+            }
+            if let Some(context) = shared_state.session_contexts.lock().await.get_mut(session_id) {
+                context.thread_title = title.clone();
+            }
             let updated_at = event
                 .get("updated_at")
                 .and_then(Value::as_str)
@@ -6968,13 +6991,40 @@ async fn handle_den_event(
                     .entry(session_id.to_string())
                     .or_default();
                 context.resolved_conversation_id = Some(conversation_id.to_string());
-                shared_state
-                    .session_contexts
-                    .lock()
+                let thread_title = context.thread_title.clone();
+                {
+                    let mut shared_contexts = shared_state.session_contexts.lock().await;
+                    let shared = shared_contexts.entry(session_id.to_string()).or_default();
+                    shared.resolved_conversation_id = Some(conversation_id.to_string());
+                    if thread_title.is_some() {
+                        shared.thread_title = thread_title.clone();
+                    }
+                }
+                if let (Some(config), Some(title)) = (config.as_ref(), thread_title.as_deref()) {
+                    if let Ok(snapshot) = collect_bear_environment(
+                        adapter_state,
+                        session_id,
+                        Some(config),
+                        None,
+                        &json!({
+                            "include_session_mcp": true,
+                            "include_client_capabilities": true,
+                            "include_raw_context": true,
+                            "inspect_den": false,
+                        }),
+                    )
                     .await
-                    .entry(session_id.to_string())
-                    .or_default()
-                    .resolved_conversation_id = Some(conversation_id.to_string());
+                    {
+                        if let Err(err) =
+                            post_adapter_environment(config, session_id, snapshot, Some(title)).await
+                        {
+                            eprintln!(
+                                "bears-acp-adapter: failed to publish adapter environment after conversation_resolved session_id={} error={err:#}",
+                                session_id
+                            );
+                        }
+                    }
+                }
                 eprintln!(
                     "bears-acp-adapter: session_id={} resolved conversation_id={}",
                     session_id, conversation_id
