@@ -4450,7 +4450,7 @@ async fn update_work_plan(
     }))
 }
 
-fn merge_memory_entry_source_with_human(
+pub(crate) fn merge_memory_entry_source_with_human(
     source: Option<Value>,
     context: &DenToolInvocationContext,
     current_user: Option<&user::User>,
