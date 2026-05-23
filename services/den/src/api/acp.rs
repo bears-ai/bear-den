@@ -6832,6 +6832,87 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn acp_stream_emits_initial_session_info_update() {
+        use futures::StreamExt;
+        use sqlx::postgres::PgPoolOptions;
+        use std::sync::Arc;
+
+        let mut config = crate::config::Config::load();
+        config.letta_base_url = "http://127.0.0.1:9".to_string();
+        let letta = Arc::new(crate::core::letta::LettaClient::new(&config));
+        let pool = PgPoolOptions::new()
+            .connect_lazy("postgres://postgres:postgres@127.0.0.1/postgres")
+            .unwrap();
+        let registry = AcpToolTurnCoordinator::new();
+        let request_id = Uuid::new_v4();
+        let role_runtime = RoleRuntime::new(registry.clone());
+        let turn_scope = RoleTurnScope::acp_pair(
+            Uuid::new_v4(),
+            "acp-test-session",
+            Some("conv-test-resolved".to_string()),
+        );
+        let active_turn_guard = role_runtime
+            .acquire_turn(turn_scope.clone(), request_id)
+            .unwrap();
+        let context = AcpStreamContext {
+            pool,
+            tool_turns: registry,
+            user_id: 1,
+            user_profile: None,
+            bear_id: Uuid::new_v4(),
+            bear_slug: "test-bear".to_string(),
+            acp_session_id: "acp-test-session".to_string(),
+            client: "zed".to_string(),
+            conversation_selection: "conv-test-resolved".to_string(),
+            resolved_conversation_id: Some("conv-test-resolved".to_string()),
+            upstream_target: "conv-test-resolved".to_string(),
+            workspace_roots: vec!["/workspace".to_string()],
+            session_policy: None,
+            activity: None,
+            request_id,
+            pair_agent_id: "agent-12345678-1234-4567-89ab-123456789abc".to_string(),
+            config: Arc::new(config.clone()),
+            role_runtime,
+            turn_scope,
+        };
+        let upstream = futures::stream::pending::<Result<Bytes, reqwest::Error>>();
+        let mut stream = AcpLettaSseStream::new(
+            upstream,
+            context,
+            vec![AcpGatewayEvent::SessionInfoUpdate {
+                title: Some("Renamed in same turn".to_string()),
+                updated_at: Some("2026-05-23T00:00:00Z".to_string()),
+                meta: None,
+            }],
+            true,
+            letta,
+            LettaContinuationContext {
+                conversation_id: "conv-test-resolved".to_string(),
+                agent_id: Some("agent-12345678-1234-4567-89ab-123456789abc".to_string()),
+                client_tools: None,
+                stream_tokens: false,
+                max_steps: 1,
+            },
+            active_turn_guard,
+        );
+
+        let first = tokio::time::timeout(std::time::Duration::from_millis(100), stream.next())
+            .await
+            .expect("expected initial session info update without waiting for next prompt")
+            .expect("stream should yield an event")
+            .expect("event should serialize");
+        let output = String::from_utf8(first.to_vec()).unwrap();
+        assert!(
+            output.contains("\"type\":\"session_info_update\""),
+            "output was: {output}"
+        );
+        assert!(
+            output.contains("Renamed in same turn"),
+            "output was: {output}"
+        );
+    }
+
+    #[tokio::test]
     async fn acp_stream_timeout_pending_local_tool() {
         use axum::{
             extract::State, http::header, response::IntoResponse, routing::post, Json, Router,
