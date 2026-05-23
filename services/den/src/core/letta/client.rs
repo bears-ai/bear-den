@@ -1119,11 +1119,14 @@ impl LettaClient {
                 "Letta is not configured (set LETTA_BASE_URL)".to_string(),
             ));
         }
+        if run_ids.is_empty() {
+            return Err(CustomError::ValidationError(
+                "refusing to cancel Letta agent runs without explicit run_ids; agent-wide cancellation is unsafe for concurrent ACP sessions".to_string(),
+            ));
+        }
         let url = format!("{}/v1/agents/{}/messages/cancel", self.base_url, agent_id);
         let mut body = serde_json::Map::new();
-        if !run_ids.is_empty() {
-            body.insert("run_ids".to_string(), json!(run_ids));
-        }
+        body.insert("run_ids".to_string(), json!(run_ids));
         let resp = self
             .http
             .post(url)

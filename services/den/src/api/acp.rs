@@ -64,8 +64,7 @@ use crate::{
         den_tools::{self, DenToolChannelContext, DenToolInvocationContext},
         letta::{
             load_agent_conversations, normalize_display_status_text,
-            sanitize_visible_transcript_text, LettaContinuationContext,
-            PendingApprovalDenialMode,
+            sanitize_visible_transcript_text, LettaContinuationContext, PendingApprovalDenialMode,
         },
         memory_manager_head::{write_memfs_role_memory_entry, MemfsWriteRoleMemoryEntryRequest},
         memory_proposals::{self, CreateMemoryProposal},
@@ -423,7 +422,10 @@ fn format_acp_session_timestamp(t: time::OffsetDateTime) -> String {
 
 fn tools_enabled_for_client(client: &str) -> bool {
     let normalized = normalize_acp_client(Some(client));
-    matches!(normalized.as_str(), "zed" | "cursor" | "vscode" | "windsurf")
+    matches!(
+        normalized.as_str(),
+        "zed" | "cursor" | "vscode" | "windsurf"
+    )
 }
 
 #[derive(Debug, Clone)]
@@ -1026,6 +1028,43 @@ fn looks_like_letta_no_active_runs_error(err: &CustomError) -> bool {
     message.contains("no active runs to cancel")
 }
 
+async fn cancel_letta_runs_by_id_or_skip(
+    letta: &crate::core::letta::LettaClient,
+    pair_agent_id: &str,
+    run_ids: &[String],
+    reason: &str,
+) -> serde_json::Value {
+    if run_ids.is_empty() {
+        return serde_json::json!({
+            "ok": true,
+            "skipped": true,
+            "reason": "no_run_ids",
+            "requested_reason": reason,
+            "message": "Skipped Letta run cancellation because no run IDs were known; refusing agent-wide cancel for concurrent ACP safety.",
+        });
+    }
+    match letta.cancel_agent_runs(pair_agent_id, run_ids).await {
+        Ok(value) => serde_json::json!({
+            "ok": true,
+            "skipped": false,
+            "run_ids": run_ids,
+            "result": value,
+        }),
+        Err(err) if looks_like_letta_no_active_runs_error(&err) => serde_json::json!({
+            "ok": true,
+            "skipped": false,
+            "run_ids": run_ids,
+            "result": "no_active_runs",
+        }),
+        Err(err) => serde_json::json!({
+            "ok": false,
+            "skipped": false,
+            "run_ids": run_ids,
+            "error": err.to_string(),
+        }),
+    }
+}
+
 async fn acp_preflight_runtime_hygiene(
     state: &ApiState,
     session_id: &str,
@@ -1034,51 +1073,21 @@ async fn acp_preflight_runtime_hygiene(
     reason: &str,
 ) -> serde_json::Value {
     state.acp_tool_turns.cleanup_session(session_id);
-    match state.letta.cancel_agent_runs(pair_agent_id, &[]).await {
-        Ok(value) => {
-            tracing::info!(
-                acp_session_id = %session_id,
-                bear_id = %bear_id,
-                pair_agent_id = %pair_agent_id,
-                reason,
-                "ACP runtime hygiene completed before prompt"
-            );
-            serde_json::json!({
-                "ok": true,
-                "reason": reason,
-                "cancel_result": value,
-            })
-        }
-        Err(err) if looks_like_letta_no_active_runs_error(&err) => {
-            tracing::info!(
-                acp_session_id = %session_id,
-                bear_id = %bear_id,
-                pair_agent_id = %pair_agent_id,
-                reason,
-                "ACP runtime hygiene found no active Letta runs before prompt"
-            );
-            serde_json::json!({
-                "ok": true,
-                "reason": reason,
-                "cancel_result": "no_active_runs",
-            })
-        }
-        Err(err) => {
-            tracing::warn!(
-                acp_session_id = %session_id,
-                bear_id = %bear_id,
-                pair_agent_id = %pair_agent_id,
-                reason,
-                error = %err,
-                "ACP runtime hygiene failed before prompt; continuing prompt attempt"
-            );
-            serde_json::json!({
-                "ok": false,
-                "reason": reason,
-                "error": err.to_string(),
-            })
-        }
-    }
+    let cancel_result =
+        cancel_letta_runs_by_id_or_skip(state.letta.as_ref(), pair_agent_id, &[], reason).await;
+    tracing::info!(
+        acp_session_id = %session_id,
+        bear_id = %bear_id,
+        pair_agent_id = %pair_agent_id,
+        reason,
+        cancel_result = %cancel_result,
+        "ACP runtime hygiene cleaned process-local state before prompt"
+    );
+    serde_json::json!({
+        "ok": cancel_result.get("ok").and_then(serde_json::Value::as_bool).unwrap_or(false),
+        "reason": reason,
+        "cancel_result": cancel_result,
+    })
 }
 
 async fn acp_cleanup_stale_runtime_state(
@@ -1092,60 +1101,45 @@ async fn acp_cleanup_stale_runtime_state(
     request_id: Uuid,
 ) -> serde_json::Value {
     tool_turns.cleanup_session(&acp_session_id);
-    match letta.cancel_agent_runs(&pair_agent_id, &run_ids).await {
-        Ok(value) => {
-            tracing::warn!(
-                request_id = %request_id,
-                acp_session_id = %acp_session_id,
-                bear_id = %bear_id,
-                pair_agent_id = %pair_agent_id,
-                run_ids = ?run_ids,
-                reason,
-                "ACP stale Letta runtime state cleaned"
-            );
-            serde_json::json!({
-                "ok": true,
-                "reason": reason,
-                "run_ids": run_ids,
-                "cancel_result": value,
-            })
-        }
-        Err(err) if looks_like_letta_no_active_runs_error(&err) => {
-            tracing::warn!(
-                request_id = %request_id,
-                acp_session_id = %acp_session_id,
-                bear_id = %bear_id,
-                pair_agent_id = %pair_agent_id,
-                run_ids = ?run_ids,
-                reason,
-                "ACP stale Letta runtime cleanup found no active runs"
-            );
-            serde_json::json!({
-                "ok": true,
-                "reason": reason,
-                "run_ids": run_ids,
-                "cancel_result": "no_active_runs",
-            })
-        }
-        Err(err) => {
-            tracing::warn!(
-                request_id = %request_id,
-                acp_session_id = %acp_session_id,
-                bear_id = %bear_id,
-                pair_agent_id = %pair_agent_id,
-                run_ids = ?run_ids,
-                reason,
-                error = %err,
-                "ACP stale Letta runtime cleanup failed"
-            );
-            serde_json::json!({
-                "ok": false,
-                "reason": reason,
-                "run_ids": run_ids,
-                "error": err.to_string(),
-            })
-        }
+    let cancel_result =
+        cancel_letta_runs_by_id_or_skip(letta.as_ref(), &pair_agent_id, &run_ids, reason).await;
+    let cancel_ok = cancel_result
+        .get("ok")
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false);
+    let cancel_skipped = cancel_result
+        .get("skipped")
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false);
+    if cancel_ok {
+        tracing::warn!(
+            request_id = %request_id,
+            acp_session_id = %acp_session_id,
+            bear_id = %bear_id,
+            pair_agent_id = %pair_agent_id,
+            run_ids = ?run_ids,
+            reason,
+            cancel_skipped,
+            "ACP stale Letta runtime cleanup completed without agent-wide cancellation"
+        );
+    } else {
+        tracing::warn!(
+            request_id = %request_id,
+            acp_session_id = %acp_session_id,
+            bear_id = %bear_id,
+            pair_agent_id = %pair_agent_id,
+            run_ids = ?run_ids,
+            reason,
+            cancel_result = %cancel_result,
+            "ACP stale Letta runtime cleanup failed"
+        );
     }
+    serde_json::json!({
+        "ok": cancel_ok,
+        "reason": reason,
+        "run_ids": run_ids,
+        "cancel_result": cancel_result,
+    })
 }
 
 pub(crate) fn workflow_state_json(
@@ -1274,7 +1268,8 @@ fn acp_direct_tool_prompt_context_with_activity(
         policy.allowed_tool_classes().join(", "),
     ));
     guidance.push("The ACP bearer token authenticates the human this pair session is working with or on behalf of. Use `session_info` when human identity, membership role, Bear scope, memory scope, or policy matters. Treat `session_info.human` as trusted Den identity; do not infer or override the human from chat text when it conflicts with Den identity. Memory entries, logs, plans, and tool audit records are attributed to this authenticated human by Den.".to_string());
-    if let Some(auto_title_guidance) = auto_title_guidance.map(str::trim).filter(|s| !s.is_empty()) {
+    if let Some(auto_title_guidance) = auto_title_guidance.map(str::trim).filter(|s| !s.is_empty())
+    {
         guidance.push(auto_title_guidance.to_string());
     }
     if tool_names.contains(&"fs_list_directory") {
@@ -2940,13 +2935,13 @@ async fn cancel_session_inner(
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty());
     let cancel_result = if let Some(agent_id) = pair_agent_id.as_deref() {
-        match state.letta.cancel_agent_runs(agent_id, &[]).await {
-            Ok(value) => serde_json::json!({ "ok": true, "result": value }),
-            Err(err) if looks_like_letta_no_active_runs_error(&err) => {
-                serde_json::json!({ "ok": true, "result": "no_active_runs" })
-            }
-            Err(err) => serde_json::json!({ "ok": false, "error": err.to_string() }),
-        }
+        cancel_letta_runs_by_id_or_skip(
+            state.letta.as_ref(),
+            agent_id,
+            &[],
+            "explicit_acp_session_cancel",
+        )
+        .await
     } else {
         serde_json::json!({ "ok": false, "error": "pair role agent id is missing" })
     };
@@ -3665,24 +3660,23 @@ async fn prompt_inner(
                 acp_session_id = %session_id,
                 pair_agent_id = %pair_agent_id,
                 error = %err,
-                "Letta conversation is waiting for a stale approval; cancelling agent runs and retrying ACP prompt once"
+                "Letta conversation is waiting for stale approval; skipping agent-wide cancel before retry"
             );
             state.acp_tool_turns.cleanup_session(session_id);
-            match state.letta.cancel_agent_runs(&pair_agent_id, &[]).await {
-                Ok(_) => {}
-                Err(cancel_err) if looks_like_letta_no_active_runs_error(&cancel_err) => {
-                    tracing::info!(
-                        %request_id,
-                        acp_session_id = %session_id,
-                        pair_agent_id = %pair_agent_id,
-                        "No active Letta runs to cancel before stale-approval retry; checking persisted approval state next if retry still fails"
-                    );
-                }
-                Err(cancel_err) => {
-                    tracing::warn!(%request_id, error = %cancel_err, "failed to cancel Letta runs before ACP retry");
-                    return Ok(Err(err));
-                }
-            }
+            let cancel_result = cancel_letta_runs_by_id_or_skip(
+                state.letta.as_ref(),
+                &pair_agent_id,
+                &[],
+                "stale_approval_retry",
+            )
+            .await;
+            tracing::info!(
+                %request_id,
+                acp_session_id = %session_id,
+                pair_agent_id = %pair_agent_id,
+                cancel_result = %cancel_result,
+                "ACP stale-approval retry cleaned process-local state without agent-wide cancellation"
+            );
             match post_pair_turn_messages_streaming(
                 state.letta.as_ref(),
                 PairTurnRequest {
@@ -4464,12 +4458,19 @@ async fn invoke_acp_runtime_local_tool(
                 role_agent_id: context.pair_agent_id.clone().into(),
                 agent_role: Some(BearAgentRole::Pair),
                 user_id: context.user_id,
-                username: context.user_profile.as_ref().map(|user| user.username.clone()),
-                membership_role: bears_db::membership_role_for_user(&context.pool, context.user_id, context.bear_id)
-                    .await
-                    .ok()
-                    .flatten()
-                    .flatten(),
+                username: context
+                    .user_profile
+                    .as_ref()
+                    .map(|user| user.username.clone()),
+                membership_role: bears_db::membership_role_for_user(
+                    &context.pool,
+                    context.user_id,
+                    context.bear_id,
+                )
+                .await
+                .ok()
+                .flatten()
+                .flatten(),
                 conversation_id: context
                     .resolved_conversation_id
                     .clone()
@@ -4510,7 +4511,9 @@ async fn invoke_acp_runtime_local_tool(
                     tool_name: Some(tool_name.to_string()),
                     approval_request_id: None,
                     status: "ok".to_string(),
-                    content: Some(serde_json::to_string_pretty(&value).unwrap_or_else(|_| value.to_string())),
+                    content: Some(
+                        serde_json::to_string_pretty(&value).unwrap_or_else(|_| value.to_string()),
+                    ),
                     structured_content: value,
                     diagnostic: serde_json::json!({
                         "component": "den.acp",
@@ -4565,7 +4568,8 @@ async fn invoke_acp_den_tool(
     args: serde_json::Value,
 ) -> AcpToolResultRequest {
     if canonical_name == den_tools::DEN_BEAR_ENVIRONMENT {
-        return invoke_acp_runtime_local_tool(context, "bear_environment", tool_call_id, args).await;
+        return invoke_acp_runtime_local_tool(context, "bear_environment", tool_call_id, args)
+            .await;
     }
     let membership_role =
         bears_db::membership_role_for_user(&context.pool, context.user_id, context.bear_id)
@@ -4782,7 +4786,6 @@ impl AcpStreamDiagnostics {
     fn mark_runtime_cleanup_emitted(&mut self) {
         self.emitted_runtime_cleanup = true;
     }
-
 
     fn diagnostic_json_with_turn_controller(
         &self,

@@ -1064,6 +1064,11 @@ async fn acp_cancel_session_signals_active_stream_and_cleans_pending_tool() {
         "{cancel_json}"
     );
     assert_eq!(cancel_json["cancel_result"]["ok"], true, "{cancel_json}");
+    assert_eq!(
+        cancel_json["cancel_result"]["skipped"],
+        true,
+        "explicit ACP cancel must not issue an agent-wide Letta cancel without run_ids: {cancel_json}"
+    );
 
     let late_result = post_tool_result(
         fixture.app.clone(),
@@ -1101,10 +1106,8 @@ async fn acp_cancel_session_signals_active_stream_and_cleans_pending_tool() {
 
     let cancel_requests = fixture.letta_cancel_requests.lock().await.clone();
     assert!(
-        cancel_requests
-            .iter()
-            .any(|request| request["agent_id"] == user_bear.pair_agent_id),
-        "expected at least one Letta cancel request for pair agent; got {cancel_requests:?}"
+        cancel_requests.is_empty(),
+        "explicit ACP cancel without known run_ids must not send agent-wide Letta cancel requests; got {cancel_requests:?}"
     );
 }
 
@@ -2450,7 +2453,10 @@ async fn acp_adapter_environment_is_stored_and_exposed_in_runtime() {
     .await;
     assert_eq!(runtime.status(), StatusCode::OK);
     let body: Value = serde_json::from_str(&response_text(runtime).await).expect("runtime JSON");
-    assert_eq!(body["adapter_environment"]["runtime"]["kind"], "acp_adapter");
+    assert_eq!(
+        body["adapter_environment"]["runtime"]["kind"],
+        "acp_adapter"
+    );
     assert_eq!(body["adapter_environment"]["session"]["id"], "session-env");
 }
 

@@ -1772,7 +1772,9 @@ async fn handle_request(
                     )
                     .await
                     {
-                        if let Err(err) = post_adapter_environment(config, &session_id, snapshot, None).await {
+                        if let Err(err) =
+                            post_adapter_environment(config, &session_id, snapshot, None).await
+                        {
                             eprintln!("bears-acp-adapter: failed to publish adapter environment after session/new session_id={} error={err:#}", session_id);
                         }
                     }
@@ -4303,13 +4305,8 @@ async fn handle_prompt_with_retry(
             let message = terminal_user_message
                 .as_deref()
                 .unwrap_or("BEARS request was cancelled.");
-            send_agent_message_chunk_for_turn(
-                shared_state,
-                session_id,
-                turn_token,
-                message,
-            )
-            .await?;
+            send_agent_message_chunk_for_turn(shared_state, session_id, turn_token, message)
+                .await?;
             saw_visible_output = true;
             upstream_errors.clear();
         } else {
@@ -4332,13 +4329,8 @@ async fn handle_prompt_with_retry(
                 "bears-acp-adapter: converting upstream stream error into terminal ACP turn session_id={} message={}",
                 session_id, rendered
             );
-            send_agent_message_chunk_for_turn(
-                shared_state,
-                session_id,
-                turn_token,
-                &rendered,
-            )
-            .await?;
+            send_agent_message_chunk_for_turn(shared_state, session_id, turn_token, &rendered)
+                .await?;
             saw_visible_output = true;
             upstream_errors.clear();
         }
@@ -5669,7 +5661,8 @@ async fn handle_sse_frame(
                         .to_string(),
                 );
             } else {
-                outcome.saw_cancellation_error = outcome.terminal_outcome.as_deref() == Some("cancelled")
+                outcome.saw_cancellation_error = outcome.terminal_outcome.as_deref()
+                    == Some("cancelled")
                     || outcome.recovery_hint.as_deref() == Some("none")
                         && event
                             .get("terminal")
@@ -5825,6 +5818,58 @@ fn cancellation_matches_turn(
     true
 }
 
+enum ToolTaskWaitOutcome<T> {
+    ToolFinished(T),
+    Cancelled(CancellationNotice),
+}
+
+async fn wait_for_tool_future_or_matching_cancellation<F>(
+    shared_state: &AdapterSharedState,
+    session_id: &str,
+    turn_token: Uuid,
+    conversation_id: Option<&str>,
+    tool_future: F,
+) -> ToolTaskWaitOutcome<F::Output>
+where
+    F: std::future::Future,
+{
+    let mut cancellation_rx = shared_state.cancellation_tx.subscribe();
+    let mut cancellation_closed = false;
+    tokio::pin!(tool_future);
+    loop {
+        tokio::select! {
+            result = &mut tool_future => return ToolTaskWaitOutcome::ToolFinished(result),
+            cancelled = cancellation_rx.recv(), if !cancellation_closed => {
+                match cancelled {
+                    Ok(notice) if cancellation_matches_turn(&notice, session_id, turn_token, conversation_id) => {
+                        return ToolTaskWaitOutcome::Cancelled(notice);
+                    }
+                    Ok(notice) => {
+                        eprintln!(
+                            "bears-acp-adapter: ignored unrelated cancellation notice while local tool was running session_id={} turn_token={} notice_session_id={} notice_turn_token={:?}",
+                            session_id,
+                            turn_token,
+                            notice.session_id,
+                            notice.turn_token,
+                        );
+                    }
+                    Err(broadcast::error::RecvError::Lagged(skipped)) => {
+                        eprintln!(
+                            "bears-acp-adapter: local tool cancellation receiver lagged session_id={} turn_token={} skipped={}",
+                            session_id,
+                            turn_token,
+                            skipped,
+                        );
+                    }
+                    Err(broadcast::error::RecvError::Closed) => {
+                        cancellation_closed = true;
+                    }
+                }
+            }
+        }
+    }
+}
+
 fn spawn_tool_request_task(
     config: Config,
     shared_state: AdapterSharedState,
@@ -5852,7 +5897,6 @@ fn spawn_tool_request_task(
             session_contexts: shared_state.session_contexts.lock().await.clone(),
             transport: shared_state.transport.clone(),
         };
-        let mut cancellation_rx = shared_state.cancellation_tx.subscribe();
         let tool_future = handle_tool_request_event(
             &config,
             &mut task_state,
@@ -5862,32 +5906,50 @@ fn spawn_tool_request_task(
             &session_id,
             &event,
         );
-        let result = tokio::select! {
-            result = tool_future => result,
-            cancelled = cancellation_rx.recv() => {
-                match cancelled {
-                    Ok(cancelled) if cancellation_matches_turn(&cancelled, &session_id, turn_token, None) => {
-                        shared_state
-                            .tool_tasks
-                            .set_phase(&session_id, &tool_call_id, &tool_name, ToolTaskPhase::Cancelled)
-                            .await;
-                        log_tool_task_phase(&session_id, &tool_call_id, &tool_name, ToolTaskPhase::Cancelled);
-                        let local_err = LocalToolError::cancelled("ACP session was cancelled before local tool completed");
-                        let _ = post_local_tool_error_result(
-                            &config,
-                            &session_id,
-                            &tool_call_id,
-                            &tool_name,
-                            &event,
-                            local_err,
-                            std::time::Instant::now(),
-                        )
-                        .await;
-                        let _ = shared_state.tool_tasks.remove(&session_id, &tool_call_id).await;
-                        return;
-                    }
-                    _ => Ok(()),
-                }
+        let result = match wait_for_tool_future_or_matching_cancellation(
+            &shared_state,
+            &session_id,
+            turn_token,
+            None,
+            tool_future,
+        )
+        .await
+        {
+            ToolTaskWaitOutcome::ToolFinished(result) => result,
+            ToolTaskWaitOutcome::Cancelled(_notice) => {
+                shared_state
+                    .tool_tasks
+                    .set_phase(
+                        &session_id,
+                        &tool_call_id,
+                        &tool_name,
+                        ToolTaskPhase::Cancelled,
+                    )
+                    .await;
+                log_tool_task_phase(
+                    &session_id,
+                    &tool_call_id,
+                    &tool_name,
+                    ToolTaskPhase::Cancelled,
+                );
+                let local_err = LocalToolError::cancelled(
+                    "ACP session was cancelled before local tool completed",
+                );
+                let _ = post_local_tool_error_result(
+                    &config,
+                    &session_id,
+                    &tool_call_id,
+                    &tool_name,
+                    &event,
+                    local_err,
+                    std::time::Instant::now(),
+                )
+                .await;
+                let _ = shared_state
+                    .tool_tasks
+                    .remove(&session_id, &tool_call_id)
+                    .await;
+                return;
             }
         };
         if let Err(err) = result {
@@ -6917,7 +6979,12 @@ async fn handle_den_event(
             if let Some(context) = adapter_state.session_contexts.get_mut(session_id) {
                 context.thread_title = title.clone();
             }
-            if let Some(context) = shared_state.session_contexts.lock().await.get_mut(session_id) {
+            if let Some(context) = shared_state
+                .session_contexts
+                .lock()
+                .await
+                .get_mut(session_id)
+            {
                 context.thread_title = title.clone();
             }
             let updated_at = event
@@ -7000,7 +7067,7 @@ async fn handle_den_event(
                         shared.thread_title = thread_title.clone();
                     }
                 }
-                if let (Some(config), Some(title)) = (config.as_ref(), thread_title.as_deref()) {
+                if let Some(title) = thread_title.as_deref() {
                     if let Ok(snapshot) = collect_bear_environment(
                         adapter_state,
                         session_id,
@@ -7016,7 +7083,8 @@ async fn handle_den_event(
                     .await
                     {
                         if let Err(err) =
-                            post_adapter_environment(config, session_id, snapshot, Some(title)).await
+                            post_adapter_environment(config, session_id, snapshot, Some(title))
+                                .await
                         {
                             eprintln!(
                                 "bears-acp-adapter: failed to publish adapter environment after conversation_resolved session_id={} error={err:#}",
@@ -7956,12 +8024,16 @@ async fn send_agent_message_chunk(session_id: &str, text: &str) -> Result<()> {
 }
 
 async fn send_agent_message_chunk_for_turn(
-    _shared_state: &AdapterSharedState,
+    shared_state: &AdapterSharedState,
     session_id: &str,
-    _turn_token: Uuid,
+    turn_token: Uuid,
     text: &str,
 ) -> Result<()> {
-    send_agent_message_chunk(session_id, text).await
+    if is_current_prompt_turn(shared_state, session_id, turn_token, "agent_message_chunk").await {
+        send_agent_message_chunk(session_id, text).await
+    } else {
+        Ok(())
+    }
 }
 
 async fn send_agent_thought_chunk(session_id: &str, text: &str) -> Result<()> {
@@ -7976,12 +8048,16 @@ async fn send_agent_thought_chunk(session_id: &str, text: &str) -> Result<()> {
 }
 
 async fn send_agent_thought_chunk_for_turn(
-    _shared_state: &AdapterSharedState,
+    shared_state: &AdapterSharedState,
     session_id: &str,
-    _turn_token: Uuid,
+    turn_token: Uuid,
     text: &str,
 ) -> Result<()> {
-    send_agent_thought_chunk(session_id, text).await
+    if is_current_prompt_turn(shared_state, session_id, turn_token, "agent_thought_chunk").await {
+        send_agent_thought_chunk(session_id, text).await
+    } else {
+        Ok(())
+    }
 }
 
 /// Adapter-local mirror of Den's `core::letta::normalize_display_status_text`.
@@ -8828,6 +8904,77 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn adapter_tool_wait_ignores_unrelated_cancellation_notice() {
+        let shared = test_shared_state();
+        let turn_token = Uuid::new_v4();
+        let sender = shared.cancellation_tx.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            let _ = sender.send(CancellationNotice {
+                session_id: "other-session".to_string(),
+                turn_token: None,
+                conversation_id: None,
+            });
+        });
+
+        let outcome = wait_for_tool_future_or_matching_cancellation(
+            &shared,
+            "acp-session",
+            turn_token,
+            None,
+            async {
+                tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+                42
+            },
+        )
+        .await;
+
+        match outcome {
+            ToolTaskWaitOutcome::ToolFinished(value) => assert_eq!(value, 42),
+            ToolTaskWaitOutcome::Cancelled(notice) => {
+                panic!("unrelated cancellation should have been ignored: {notice:?}")
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn adapter_tool_wait_stops_on_matching_cancellation_notice() {
+        let shared = test_shared_state();
+        let turn_token = Uuid::new_v4();
+        let sender = shared.cancellation_tx.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            let _ = sender.send(CancellationNotice {
+                session_id: "acp-session".to_string(),
+                turn_token: Some(turn_token),
+                conversation_id: None,
+            });
+        });
+
+        let outcome = wait_for_tool_future_or_matching_cancellation(
+            &shared,
+            "acp-session",
+            turn_token,
+            None,
+            async {
+                tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+                42
+            },
+        )
+        .await;
+
+        match outcome {
+            ToolTaskWaitOutcome::Cancelled(notice) => {
+                assert_eq!(notice.session_id, "acp-session");
+                assert_eq!(notice.turn_token, Some(turn_token));
+            }
+            ToolTaskWaitOutcome::ToolFinished(value) => {
+                panic!("matching cancellation should have won before tool result {value}")
+            }
+        }
+    }
+
     #[test]
     fn parse_status_slash_command() {
         assert_eq!(
@@ -9081,7 +9228,10 @@ data: {"type":"done","outcome":"empty_fallback","recovery_hint":"check_upstream_
         assert!(outcome.saw_error);
         assert!(outcome.saw_done);
         assert_eq!(outcome.terminal_outcome.as_deref(), Some("empty_fallback"));
-        assert_eq!(outcome.recovery_hint.as_deref(), Some("check_upstream_logs"));
+        assert_eq!(
+            outcome.recovery_hint.as_deref(),
+            Some("check_upstream_logs")
+        );
         assert_eq!(
             outcome.terminal_user_message.as_deref(),
             Some("Check Codepool/Letta logs and retry if appropriate.")
