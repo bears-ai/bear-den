@@ -108,6 +108,7 @@ pub struct AcpActiveTurnCancelRegistration {
     pub acp_session_id: String,
     pub request_id: Uuid,
     pub conversation_id: Option<String>,
+    pub run_ids: Vec<String>,
     pub cancel_tx: watch::Sender<bool>,
 }
 
@@ -150,6 +151,7 @@ impl AcpActiveTurnCancelRegistry {
                     acp_session_id: acp_session_id.clone(),
                     request_id,
                     conversation_id,
+                    run_ids: Vec::new(),
                     cancel_tx,
                 },
             );
@@ -168,6 +170,27 @@ impl AcpActiveTurnCancelRegistry {
         let registration = self.inner.lock().ok()?.get(acp_session_id).cloned()?;
         let _ = registration.cancel_tx.send(true);
         Some(registration)
+    }
+
+    pub fn record_run_id(&self, acp_session_id: &str, request_id: Uuid, run_id: &str) -> bool {
+        let run_id = run_id.trim();
+        if run_id.is_empty() {
+            return false;
+        }
+        let Ok(mut inner) = self.inner.lock() else {
+            return false;
+        };
+        let Some(registration) = inner.get_mut(acp_session_id) else {
+            return false;
+        };
+        if registration.request_id != request_id {
+            return false;
+        }
+        if registration.run_ids.iter().any(|known| known == run_id) {
+            return false;
+        }
+        registration.run_ids.push(run_id.to_string());
+        true
     }
 
     pub fn active_for_session(
@@ -192,6 +215,7 @@ impl AcpActiveTurnCancelRegistry {
                     "pending_adapter_tools": 0,
                     "pending_den_tools": 0,
                     "pending_permissions": 0,
+                    "run_ids": [],
                 },
                 "last_terminal": Value::Null,
                 "last_recovery": Value::Null,
@@ -221,6 +245,7 @@ impl AcpActiveTurnCancelRegistry {
                 "phase": phase,
                 "request_id": active.request_id,
                 "conversation_id": active.conversation_id,
+                "run_ids": active.run_ids,
                 "pending_obligations": pending_obligations,
                 "pending_adapter_tools": pending_obligations,
                 "pending_den_tools": 0,
@@ -566,16 +591,49 @@ mod tests {
             .expect("active registration");
         assert_eq!(active.request_id, request_id);
         assert_eq!(active.conversation_id.as_deref(), Some("conv-1"));
+        assert!(active.run_ids.is_empty());
         assert!(!*cancel_rx.borrow());
 
         let cancelled = registry
             .cancel_session("acp-session-1")
             .expect("cancelled registration");
         assert_eq!(cancelled.request_id, request_id);
+        assert!(cancelled.run_ids.is_empty());
         assert!(*cancel_rx.borrow());
 
         drop(handle);
         assert!(registry.active_for_session("acp-session-1").is_none());
+    }
+
+    #[test]
+    fn active_turn_cancel_registry_records_run_ids_for_matching_turn() {
+        let registry = AcpActiveTurnCancelRegistry::new();
+        let request_id = Uuid::new_v4();
+        let wrong_request_id = Uuid::new_v4();
+        let (_handle, _rx) = registry.register("acp-session-1", request_id, None);
+
+        assert!(!registry.record_run_id("acp-session-1", request_id, "   "));
+        assert!(!registry.record_run_id("acp-session-1", wrong_request_id, "run-wrong"));
+        assert!(!registry.record_run_id("missing-session", request_id, "run-missing"));
+        assert!(registry.record_run_id("acp-session-1", request_id, " run-1 "));
+        assert!(!registry.record_run_id("acp-session-1", request_id, "run-1"));
+        assert!(registry.record_run_id("acp-session-1", request_id, "run-2"));
+
+        let active = registry
+            .active_for_session("acp-session-1")
+            .expect("active registration");
+        assert_eq!(
+            active.run_ids,
+            vec!["run-1".to_string(), "run-2".to_string()]
+        );
+
+        let cancelled = registry
+            .cancel_session("acp-session-1")
+            .expect("cancelled registration");
+        assert_eq!(
+            cancelled.run_ids,
+            vec!["run-1".to_string(), "run-2".to_string()]
+        );
     }
 
     #[test]
@@ -605,6 +663,7 @@ mod tests {
         assert_eq!(snapshot["state"], "idle");
         assert_eq!(snapshot["active_turn"]["present"], false);
         assert_eq!(snapshot["active_turn"]["pending_obligations"], 0);
+        assert_eq!(snapshot["active_turn"]["run_ids"], json!([]));
         assert_eq!(snapshot["source"], "acp_active_turn_registry");
     }
 
@@ -615,6 +674,7 @@ mod tests {
         let request_id = Uuid::new_v4();
         let (_handle, _rx) =
             registry.register("acp-session", request_id, Some("conv-test".to_string()));
+        assert!(registry.record_run_id("acp-session", request_id, "run-snapshot"));
         let snapshot = registry.runtime_snapshot_for_session("acp-session", &tool_turns);
 
         assert_eq!(snapshot["state"], "running");
@@ -622,6 +682,7 @@ mod tests {
         assert_eq!(snapshot["active_turn"]["phase"], "Streaming");
         assert_eq!(snapshot["active_turn"]["request_id"], json!(request_id));
         assert_eq!(snapshot["active_turn"]["conversation_id"], "conv-test");
+        assert_eq!(snapshot["active_turn"]["run_ids"], json!(["run-snapshot"]));
         assert_eq!(snapshot["active_turn"]["pending_obligations"], 0);
     }
 

@@ -523,19 +523,38 @@ async fn get_acp_session_runtime(
         .expect("ACP session runtime response")
 }
 
+fn letta_tool_request_sse_value(
+    tool_name: &str,
+    tool_call_id: &str,
+    args: Value,
+    run_id: Option<&str>,
+) -> String {
+    let mut event = json!({
+        "id": format!("approval-{tool_call_id}"),
+        "message_type": "approval_request_message",
+        "tool_call": {
+            "name": tool_name,
+            "tool_call_id": tool_call_id,
+            "arguments": args.to_string(),
+        }
+    });
+    if let Some(run_id) = run_id {
+        event["run_id"] = json!(run_id);
+    }
+    format!("data: {event}\n\n")
+}
+
 fn letta_tool_request_sse(tool_name: &str, tool_call_id: &str, args: Value) -> String {
-    format!(
-        "data: {}\n\n",
-        json!({
-            "id": format!("approval-{tool_call_id}"),
-            "message_type": "approval_request_message",
-            "tool_call": {
-                "name": tool_name,
-                "tool_call_id": tool_call_id,
-                "arguments": args.to_string(),
-            }
-        })
-    )
+    letta_tool_request_sse_value(tool_name, tool_call_id, args, None)
+}
+
+fn letta_tool_request_sse_with_run_id(
+    tool_name: &str,
+    tool_call_id: &str,
+    args: Value,
+    run_id: &str,
+) -> String {
+    letta_tool_request_sse_value(tool_name, tool_call_id, args, Some(run_id))
 }
 
 fn letta_malformed_tool_request_sse(tool_name: &str, tool_call_id: &str, args: Value) -> String {
@@ -983,10 +1002,11 @@ async fn acp_cancel_session_signals_active_stream_and_cleans_pending_tool() {
         .letta_script
         .lock()
         .await
-        .push(letta_tool_request_sse(
+        .push(letta_tool_request_sse_with_run_id(
             "fs_read_text_file",
             "call-cancel-e2e",
             json!({ "path": "/tmp/acp-workspace/README.md" }),
+            "run-cancel-e2e",
         ));
 
     let mut prompt = post_prompt(
@@ -1026,6 +1046,11 @@ async fn acp_cancel_session_signals_active_stream_and_cleans_pending_tool() {
         "{runtime_json}"
     );
     assert_eq!(
+        runtime_json["runtime"]["active_turn"]["run_ids"],
+        json!(["run-cancel-e2e"]),
+        "{runtime_json}"
+    );
+    assert_eq!(
         runtime_json["runtime"]["source"],
         json!("acp_active_turn_registry"),
         "{runtime_json}"
@@ -1033,6 +1058,11 @@ async fn acp_cancel_session_signals_active_stream_and_cleans_pending_tool() {
     assert_eq!(
         runtime_json["stream_turn"]["active"],
         json!(true),
+        "{runtime_json}"
+    );
+    assert_eq!(
+        runtime_json["stream_turn"]["turn"]["run_ids"],
+        json!(["run-cancel-e2e"]),
         "{runtime_json}"
     );
     assert_eq!(
@@ -1059,15 +1089,24 @@ async fn acp_cancel_session_signals_active_stream_and_cleans_pending_tool() {
         "{cancel_json}"
     );
     assert_eq!(
+        cancel_json["stream_turn"]["run_ids"],
+        json!(["run-cancel-e2e"]),
+        "{cancel_json}"
+    );
+    assert_eq!(
         cancel_json["active_turn"]["session_id"],
         json!("session-cancel-e2e"),
         "{cancel_json}"
     );
     assert_eq!(cancel_json["cancel_result"]["ok"], true, "{cancel_json}");
     assert_eq!(
-        cancel_json["cancel_result"]["skipped"],
-        true,
-        "explicit ACP cancel must not issue an agent-wide Letta cancel without run_ids: {cancel_json}"
+        cancel_json["cancel_result"]["skipped"], false,
+        "explicit ACP cancel should target known Letta run_ids: {cancel_json}"
+    );
+    assert_eq!(
+        cancel_json["cancel_result"]["run_ids"],
+        json!(["run-cancel-e2e"]),
+        "{cancel_json}"
     );
 
     let late_result = post_tool_result(
@@ -1105,9 +1144,20 @@ async fn acp_cancel_session_signals_active_stream_and_cleans_pending_tool() {
     );
 
     let cancel_requests = fixture.letta_cancel_requests.lock().await.clone();
-    assert!(
-        cancel_requests.is_empty(),
-        "explicit ACP cancel without known run_ids must not send agent-wide Letta cancel requests; got {cancel_requests:?}"
+    assert_eq!(
+        cancel_requests.len(),
+        1,
+        "explicit ACP cancel with known run_ids should send exactly one targeted Letta cancel request; got {cancel_requests:?}"
+    );
+    assert_eq!(
+        cancel_requests[0]["agent_id"],
+        json!(user_bear.pair_agent_id),
+        "{cancel_requests:?}"
+    );
+    assert_eq!(
+        cancel_requests[0]["run_ids"],
+        json!(["run-cancel-e2e"]),
+        "{cancel_requests:?}"
     );
 }
 

@@ -1038,6 +1038,8 @@ async fn cancel_letta_runs_by_id_or_skip(
         return serde_json::json!({
             "ok": true,
             "skipped": true,
+            "attempted": false,
+            "run_ids": run_ids,
             "reason": "no_run_ids",
             "requested_reason": reason,
             "message": "Skipped Letta run cancellation because no run IDs were known; refusing agent-wide cancel for concurrent ACP safety.",
@@ -1047,18 +1049,21 @@ async fn cancel_letta_runs_by_id_or_skip(
         Ok(value) => serde_json::json!({
             "ok": true,
             "skipped": false,
+            "attempted": true,
             "run_ids": run_ids,
             "result": value,
         }),
         Err(err) if looks_like_letta_no_active_runs_error(&err) => serde_json::json!({
             "ok": true,
             "skipped": false,
+            "attempted": true,
             "run_ids": run_ids,
             "result": "no_active_runs",
         }),
         Err(err) => serde_json::json!({
             "ok": false,
             "skipped": false,
+            "attempted": true,
             "run_ids": run_ids,
             "error": err.to_string(),
         }),
@@ -1072,14 +1077,42 @@ async fn acp_preflight_runtime_hygiene(
     pair_agent_id: &str,
     reason: &str,
 ) -> serde_json::Value {
+    let active_turn = state.acp_turn_cancellations.active_for_session(session_id);
+    let run_ids = active_turn
+        .as_ref()
+        .map(|turn| turn.run_ids.clone())
+        .unwrap_or_default();
     state.acp_tool_turns.cleanup_session(session_id);
-    let cancel_result =
-        cancel_letta_runs_by_id_or_skip(state.letta.as_ref(), pair_agent_id, &[], reason).await;
+    if active_turn.is_some() && run_ids.is_empty() {
+        tracing::warn!(
+            acp_session_id = %session_id,
+            bear_id = %bear_id,
+            pair_agent_id = %pair_agent_id,
+            active_request_id = ?active_turn.as_ref().map(|turn| turn.request_id),
+            active_conversation_id = ?active_turn.as_ref().and_then(|turn| turn.conversation_id.clone()),
+            reason,
+            "ACP preflight found an active turn without Letta run_ids; skipped upstream cancel to avoid agent-wide cancellation"
+        );
+    }
+    let cancel_result = if run_ids.is_empty() {
+        serde_json::json!({
+            "ok": true,
+            "skipped": true,
+            "attempted": false,
+            "run_ids": run_ids,
+            "reason": "no_run_ids",
+            "requested_reason": reason,
+            "message": "Skipped Letta run cancellation because no run IDs were known; refusing agent-wide cancel for concurrent ACP safety.",
+        })
+    } else {
+        cancel_letta_runs_by_id_or_skip(state.letta.as_ref(), pair_agent_id, &run_ids, reason).await
+    };
     tracing::info!(
         acp_session_id = %session_id,
         bear_id = %bear_id,
         pair_agent_id = %pair_agent_id,
         reason,
+        run_ids = ?run_ids,
         cancel_result = %cancel_result,
         "ACP runtime hygiene cleaned process-local state before prompt"
     );
@@ -1101,6 +1134,16 @@ async fn acp_cleanup_stale_runtime_state(
     request_id: Uuid,
 ) -> serde_json::Value {
     tool_turns.cleanup_session(&acp_session_id);
+    if run_ids.is_empty() {
+        tracing::warn!(
+            request_id = %request_id,
+            acp_session_id = %acp_session_id,
+            bear_id = %bear_id,
+            pair_agent_id = %pair_agent_id,
+            reason,
+            "ACP stale runtime cleanup had no Letta run_ids; skipped upstream cancel to avoid agent-wide cancellation"
+        );
+    }
     let cancel_result =
         cancel_letta_runs_by_id_or_skip(letta.as_ref(), &pair_agent_id, &run_ids, reason).await;
     let cancel_ok = cancel_result
@@ -1852,6 +1895,7 @@ async fn get_acp_session_runtime_inner(
                 "acp_session_id": turn.acp_session_id,
                 "request_id": turn.request_id,
                 "conversation_id": turn.conversation_id,
+                "run_ids": turn.run_ids,
             })
         });
     let pending = state
@@ -2934,11 +2978,26 @@ async fn cancel_session_inner(
             .await?
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty());
+    let run_ids = stream_cancel
+        .as_ref()
+        .map(|turn| turn.run_ids.clone())
+        .unwrap_or_default();
+    if stream_cancel.is_some() && run_ids.is_empty() {
+        tracing::warn!(
+            acp_session_id = %session.acp_session_id,
+            bear_id = %session.bear_id,
+            conversation_id = %session.conversation_id,
+            active_request_id = ?stream_cancel.as_ref().map(|turn| turn.request_id),
+            active_conversation_id = ?stream_cancel.as_ref().and_then(|turn| turn.conversation_id.clone()),
+            pair_agent_id = ?pair_agent_id,
+            "ACP cancel found an active stream but no Letta run_ids; skipped upstream cancel to avoid agent-wide cancellation"
+        );
+    }
     let cancel_result = if let Some(agent_id) = pair_agent_id.as_deref() {
         cancel_letta_runs_by_id_or_skip(
             state.letta.as_ref(),
             agent_id,
-            &[],
+            &run_ids,
             "explicit_acp_session_cancel",
         )
         .await
@@ -2955,6 +3014,7 @@ async fn cancel_session_inner(
         active_request_id = ?active.as_ref().map(|turn| turn.request_id).or_else(|| stream_cancel.as_ref().map(|turn| turn.request_id)),
         active_conversation_id = ?active.as_ref().and_then(|turn| turn.conversation_id.clone()).or_else(|| stream_cancel.as_ref().and_then(|turn| turn.conversation_id.clone())),
         pair_agent_id = ?pair_agent_id,
+        run_ids = ?run_ids,
         cancel_result = %cancel_result,
         "ACP cancel requested; cancelled active pair turn and cleaned session tool state"
     );
@@ -2966,6 +3026,7 @@ async fn cancel_session_inner(
             "acp_session_id": turn.acp_session_id,
             "request_id": turn.request_id,
             "conversation_id": turn.conversation_id,
+            "run_ids": turn.run_ids,
         })),
         "cancel_result": cancel_result,
     }))
@@ -4691,19 +4752,17 @@ impl AcpStreamDiagnostics {
         *map.entry(key.to_string()).or_insert(0) += 1;
     }
 
-    fn observe_parsed_event(&mut self, value: &serde_json::Value) {
+    fn observe_parsed_event(&mut self, value: &serde_json::Value) -> Vec<String> {
         self.parsed_events += 1;
+        let mut newly_observed_run_ids = Vec::new();
         let message_type = value
             .get("message_type")
             .and_then(|v| v.as_str())
             .unwrap_or("");
         let event_type = value.get("type").and_then(|v| v.as_str()).unwrap_or("");
-        if let Some(run_id) = value.get("run_id").and_then(|v| v.as_str()) {
-            self.observe_run_id(run_id);
-        }
-        if let Some(run_ids) = value.get("run_ids").and_then(|v| v.as_array()) {
-            for run_id in run_ids.iter().filter_map(|v| v.as_str()) {
-                self.observe_run_id(run_id);
+        for run_id in Self::extract_run_ids(value) {
+            if self.observe_run_id(&run_id) {
+                newly_observed_run_ids.push(run_id);
             }
         }
         Self::increment(&mut self.native_message_types, message_type);
@@ -4723,12 +4782,56 @@ impl AcpStreamDiagnostics {
             self.saw_requires_approval_stop = true;
         }
         Self::increment(&mut self.native_event_types, event_type);
+        newly_observed_run_ids
     }
 
-    fn observe_run_id(&mut self, run_id: &str) {
-        if !run_id.trim().is_empty() && !self.run_ids.iter().any(|known| known == run_id) {
-            self.run_ids.push(run_id.to_string());
+    fn extract_run_ids(value: &serde_json::Value) -> Vec<String> {
+        let mut run_ids = Vec::new();
+        for pointer in [
+            "/run_id",
+            "/message/run_id",
+            "/data/run_id",
+            "/run/id",
+            "/message/run/id",
+            "/data/run/id",
+        ] {
+            if let Some(run_id) = value
+                .pointer(pointer)
+                .and_then(serde_json::Value::as_str)
+                .map(str::trim)
+                .filter(|run_id| !run_id.is_empty())
+            {
+                let run_id = run_id.to_string();
+                if !run_ids.iter().any(|known| known == &run_id) {
+                    run_ids.push(run_id);
+                }
+            }
         }
+        for pointer in ["/run_ids", "/message/run_ids", "/data/run_ids"] {
+            if let Some(items) = value.pointer(pointer).and_then(serde_json::Value::as_array) {
+                for run_id in items
+                    .iter()
+                    .filter_map(serde_json::Value::as_str)
+                    .map(str::trim)
+                    .filter(|run_id| !run_id.is_empty())
+                {
+                    let run_id = run_id.to_string();
+                    if !run_ids.iter().any(|known| known == &run_id) {
+                        run_ids.push(run_id);
+                    }
+                }
+            }
+        }
+        run_ids
+    }
+
+    fn observe_run_id(&mut self, run_id: &str) -> bool {
+        let run_id = run_id.trim();
+        if run_id.is_empty() || self.run_ids.iter().any(|known| known == run_id) {
+            return false;
+        }
+        self.run_ids.push(run_id.to_string());
+        true
     }
 
     fn observe_mapped_event(&mut self, event: &AcpGatewayEvent) {
@@ -5133,7 +5236,23 @@ async fn map_letta_stream_frame_to_acp_adapter_events_with_persistence(
         Ok(None) => return Ok((Vec::new(), None, None)),
         Ok(Some(v)) => v,
     };
-    diagnostics.observe_parsed_event(&value);
+    let observed_run_ids = diagnostics.observe_parsed_event(&value);
+    if let Some(turn_cancellations) = context.role_runtime.turn_cancellations() {
+        for run_id in observed_run_ids {
+            if turn_cancellations.record_run_id(
+                &context.acp_session_id,
+                context.request_id,
+                &run_id,
+            ) {
+                tracing::debug!(
+                    request_id = %context.request_id,
+                    acp_session_id = %context.acp_session_id,
+                    run_id = %run_id,
+                    "attached observed Letta run_id to active ACP turn"
+                );
+            }
+        }
+    }
 
     let Some(mut event) = map_native_letta_stream_event_to_acp_event_with_accumulator(
         &value,
@@ -6402,6 +6521,11 @@ mod tests {
         let request_id = Uuid::new_v4();
         let role_runtime =
             RoleRuntime::with_turn_cancellations(registry.clone(), cancel_registry.clone());
+        let (_cancel_handle, _cancel_rx) = cancel_registry.register(
+            "acp-test-session",
+            request_id,
+            Some("conv-test-resolved".to_string()),
+        );
         let turn_scope = RoleTurnScope::acp_pair(
             Uuid::new_v4(),
             "acp-test-session",
@@ -6433,7 +6557,7 @@ mod tests {
         };
         let upstream = futures::stream::iter(vec![
             Ok::<Bytes, reqwest::Error>(Bytes::from(concat!(
-                "data: {\"id\":\"approval-1\",\"message_type\":\"approval_request_message\",",
+                "data: {\"id\":\"approval-1\",\"run_id\":\"run-stream-test\",\"message_type\":\"approval_request_message\",",
                 "\"tool_call\":{\"name\":\"fs_read_text_file\",\"tool_call_id\":\"call_test\",",
                 "\"arguments\":\"{\\\"path\\\":\\\"/tmp/acp-test.txt\\\"}\"}}\n\n"
             ))),
@@ -6462,11 +6586,6 @@ mod tests {
         assert!(first_text.contains("\"type\":\"tool_request\""));
         assert!(first_text.contains("\"tool_call_id\":\"call_test\""));
 
-        let (_cancel_handle, _cancel_rx) = cancel_registry.register(
-            "acp-test-session",
-            request_id,
-            Some("conv-test-resolved".to_string()),
-        );
         let runtime_snapshot =
             cancel_registry.runtime_snapshot_for_session("acp-test-session", &registry);
         assert_eq!(
@@ -6476,6 +6595,10 @@ mod tests {
         assert_eq!(
             runtime_snapshot["active_turn"]["pending_obligations"],
             serde_json::json!(1)
+        );
+        assert_eq!(
+            runtime_snapshot["active_turn"]["run_ids"],
+            serde_json::json!(["run-stream-test"])
         );
 
         let delivery = registry
@@ -7583,12 +7706,13 @@ mod tests {
         let mut output = String::new();
         while let Some(item) = stream.next().await {
             output.push_str(&String::from_utf8(item.unwrap().to_vec()).unwrap());
-            if output.contains("cleared stale approval/run state") {
+            if output.contains("\"status\":\"recovered\"") {
                 break;
             }
         }
+        assert!(output.contains("\"status\":\"recovered\""), "{output}");
         assert!(
-            output.contains("cleared stale approval/run state"),
+            output.contains("\"run_ids\":[\"run-conflict\"]"),
             "{output}"
         );
         assert_eq!(*cancel_calls.lock().await, 1);
