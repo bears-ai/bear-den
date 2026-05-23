@@ -1165,6 +1165,32 @@ def _slugify_note_title(title: str) -> str:
     return slug[:80] or "note"
 
 
+def _slugify_memory_segment(value: str, fallback: str = "entry") -> str:
+    slug = re.sub(r"[^a-zA-Z0-9]+", "-", str(value).strip().lower()).strip("-")
+    return slug[:80] or fallback
+
+
+def _normalize_semantic_path_segment(value: object, fallback: str) -> str:
+    return _slugify_memory_segment(str(value or ""), fallback)
+
+
+def _derive_role_memory_entry_path(
+    role: str, kind_dir: str, title: str, body: JSONDict
+) -> tuple[str, str]:
+    entry_id = f"mem_{uuid.uuid4().hex}"
+    title_slug = _slugify_note_title(title)
+    author = str(body.get("author") or "").strip()
+    if author:
+        owner_segment = _normalize_semantic_path_segment(author, "unknown-author")
+    else:
+        owner_segment = _normalize_semantic_path_segment(
+            body.get("runtime_target") or body.get("conversation_selection") or "shared",
+            "shared",
+        )
+    rel_path = f"{role}/{kind_dir}/{owner_segment}/{title_slug}.md"
+    return entry_id, rel_path
+
+
 def _yaml_quote(value: str) -> str:
     return json.dumps(value, ensure_ascii=False)
 
@@ -1239,8 +1265,7 @@ def _write_role_memory_entry(
     tags = [str(tag).strip() for tag in body.get("tags") or [] if str(tag).strip()]
     refs = [str(ref).strip() for ref in body.get("refs") or [] if str(ref).strip()]
     lifecycle = str(body.get("lifecycle") or "active").strip() or "active"
-    entry_id = f"mem_{uuid.uuid4().hex}"
-    rel_path = f"{role}/{kind_dir}/{entry_id}.md"
+    entry_id, rel_path = _derive_role_memory_entry_path(role, kind_dir, title, body)
     if not _role_write_path_allowed(role, rel_path):
         raise ValueError(f"role path policy rejected {rel_path}")
     canonical = ensure_canonical_repo(bear_id)
@@ -1252,6 +1277,11 @@ def _write_role_memory_entry(
         _git("-C", str(work), "config", "user.email", "den@bears.local")
         target = work / rel_path
         target.parent.mkdir(parents=True, exist_ok=True)
+        suffix = 2
+        while target.exists() and target.is_file():
+            rel_path = f"{role}/{kind_dir}/{target.parent.name}/{_slugify_note_title(title)}-{suffix}.md"
+            target = work / rel_path
+            suffix += 1
         metadata = [
             "---",
             f"entry_id: {_yaml_quote(entry_id)}",
