@@ -3534,9 +3534,11 @@ async fn prompt_inner(
             resolved_conversation_id: conversation_resolution.resolved_conversation_id.clone(),
             client: client.clone(),
             cwd: Some(cwd.clone()),
-            current_mode: is_new_session_binding
-                .then(|| requested_initial_mode.map(str::to_string))
-                .flatten(),
+            current_mode: if is_new_session_binding {
+                requested_initial_mode.map(str::to_string)
+            } else {
+                None
+            },
         },
     )
     .await
@@ -6348,6 +6350,31 @@ impl Stream for AcpLettaSseStream {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn acp_prompt_requested_mode_is_normalized() {
+        let body: AcpPromptRequest = serde_json::from_value(serde_json::json!({
+            "message": "hello",
+            "requested_mode": " WRITE "
+        }))
+        .expect("prompt request");
+
+        assert_eq!(requested_mode_from_prompt(&body).unwrap(), Some("write"));
+    }
+
+    #[test]
+    fn acp_prompt_requested_mode_rejects_unknown_values() {
+        let body: AcpPromptRequest = serde_json::from_value(serde_json::json!({
+            "message": "hello",
+            "requested_mode": "sudo"
+        }))
+        .expect("prompt request");
+
+        assert!(matches!(
+            requested_mode_from_prompt(&body),
+            Err(CustomError::ValidationError(_))
+        ));
+    }
 
     #[test]
     fn acp_recovery_approval_denial_reasons_do_not_look_like_policy_blocks() {
