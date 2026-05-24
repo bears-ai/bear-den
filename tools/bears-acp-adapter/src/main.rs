@@ -65,6 +65,7 @@ use std::{
 use tokio::{
     io::{self, AsyncBufReadExt, BufReader},
     sync::{broadcast, mpsc, Mutex as TokioMutex},
+    time::{timeout, Duration},
 };
 use tool_tasks::{log_tool_task_phase, ToolTaskPhase, ToolTaskRegistry};
 use tools::chrome::{
@@ -217,6 +218,7 @@ const MODE_PLAN: &str = "plan";
 const MODE_WRITE: &str = "write";
 const BEARS_ACP_ADAPTER_CONTRACT_NAME: &str = "bears.acp.adapter";
 const BEARS_ACP_ADAPTER_CONTRACT_VERSION: u32 = 1;
+const LOCAL_DEN_INSPECTION_TIMEOUT: Duration = Duration::from_secs(2);
 
 pub(crate) fn adapter_version() -> &'static str {
     env!("BEARS_ACP_ADAPTER_VERSION")
@@ -528,38 +530,7 @@ async fn should_send_plan_update(
 }
 
 async fn send_available_commands_update(session_id: &str) -> Result<()> {
-    let commands = vec![
-        AvailableCommand::new(
-            "doctor",
-            "Show BEARS ACP adapter, session, client, and Den configuration diagnostics.",
-        ),
-        AvailableCommand::new(
-            "compact",
-            "Ask Den to repair stale ACP/Letta approval state, then compact the conversation if needed.",
-        ),
-        AvailableCommand::new(
-            "collapse",
-            "Alias for /compact: repair stale approval state and compact if needed.",
-        ),
-        AvailableCommand::new(
-            "conversation",
-            "Show the current ACP session and Letta conversation binding.",
-        ),
-        AvailableCommand::new(
-            "capabilities",
-            "Show ACP client capabilities and adapter-local direct tools.",
-        ),
-        AvailableCommand::new(
-            "runtime",
-            "Show Den ACP runtime state and active adapter-local tool tasks for this session.",
-        ),
-        AvailableCommand::new(
-            "status",
-            "Show concise BEARS session status rendered from Den runtime/session health.",
-        ),
-        AvailableCommand::new("version", "Show BEARS adapter version/build metadata plus host browser bridge env status."),
-        AvailableCommand::new("debug-ui", "Show BEARS ACP debug UI environment status."),
-    ];
+    let commands = local_slash_available_commands();
     write_notification(
         "session/update",
         json!({
@@ -570,6 +541,52 @@ async fn send_available_commands_update(session_id: &str) -> Result<()> {
         }),
     )
     .await
+}
+
+fn spawn_adapter_environment_publish(
+    config: Config,
+    session_id: String,
+    adapter_state: AdapterState,
+    conversation_title: Option<String>,
+) {
+    tokio::spawn(async move {
+        let snapshot = match collect_bear_environment(
+            &adapter_state,
+            &session_id,
+            Some(&config),
+            None,
+            &json!({
+                "include_session_mcp": true,
+                "include_client_capabilities": true,
+                "include_raw_context": true,
+                "inspect_den": false,
+            }),
+        )
+        .await
+        {
+            Ok(snapshot) => snapshot,
+            Err(err) => {
+                eprintln!(
+                    "bears-acp-adapter: failed to collect adapter environment for publish session_id={} error={err:#}",
+                    session_id
+                );
+                return;
+            }
+        };
+        if let Err(err) = post_adapter_environment(
+            &config,
+            &session_id,
+            snapshot,
+            conversation_title.as_deref(),
+        )
+        .await
+        {
+            eprintln!(
+                "bears-acp-adapter: failed to publish adapter environment session_id={} error={err:#}",
+                session_id
+            );
+        }
+    });
 }
 
 async fn send_session_info_update(
@@ -1753,29 +1770,15 @@ async fn handle_request(
                 adapter_state
                     .session_contexts
                     .insert(session_id.clone(), context);
-                if let Some(config) = runtime.config.as_ref() {
-                    if let Ok(snapshot) = collect_bear_environment(
-                        adapter_state,
-                        &session_id,
-                        Some(config),
-                        Some(http),
-                        &json!({
-                            "include_session_mcp": true,
-                            "include_client_capabilities": true,
-                            "include_raw_context": true,
-                            "inspect_den": false,
-                        }),
-                    )
-                    .await
-                    {
-                        if let Err(err) =
-                            post_adapter_environment(config, &session_id, snapshot, None).await
-                        {
-                            eprintln!("bears-acp-adapter: failed to publish adapter environment after session/new session_id={} error={err:#}", session_id);
-                        }
-                    }
-                }
                 send_available_commands_update(&session_id).await?;
+                if let Some(config) = runtime.config.as_ref() {
+                    spawn_adapter_environment_publish(
+                        config.clone(),
+                        session_id.clone(),
+                        adapter_state.clone(),
+                        None,
+                    );
+                }
                 let mode = MODE_ASK;
                 let response = NewSessionResponse::new(session_id.clone())
                     .config_options(session_config_options_for_mode(mode))
@@ -2062,10 +2065,6 @@ async fn handle_request(
                     .await?;
                     return Ok(());
                 };
-                if let Err(err) = validate_den_code_token(http, config).await {
-                    write_response(id, Err(auth_check_json_rpc_error(&err, None))).await?;
-                    return Ok(());
-                }
                 match restore_session_from_den(
                     http,
                     config,
@@ -2108,10 +2107,6 @@ async fn handle_request(
                     .await?;
                     return Ok(());
                 };
-                if let Err(err) = validate_den_code_token(http, config).await {
-                    write_response(id, Err(auth_check_json_rpc_error(&err, None))).await?;
-                    return Ok(());
-                }
                 match handle_session_load(
                     http,
                     config,
@@ -2139,6 +2134,44 @@ async fn handle_request(
         }
         "session/prompt" => {
             if let Some(id) = request.id {
+                if let Some(command) = prompt_text_from_params(&request.params)
+                    .ok()
+                    .and_then(|prompt| parse_local_slash_command(&prompt))
+                {
+                    let http = http.clone();
+                    let config = runtime.config.clone();
+                    let shared_state = shared_state.clone();
+                    let prompt_state = AdapterState {
+                        client_capabilities: shared_state.client_capabilities.lock().await.clone(),
+                        session_contexts: shared_state.session_contexts.lock().await.clone(),
+                        transport: shared_state.transport.clone(),
+                    };
+                    tokio::spawn(async move {
+                        if let Err(err) = handle_local_slash_prompt(
+                            Some(&http),
+                            config.as_ref(),
+                            &prompt_state,
+                            &shared_state,
+                            id.clone(),
+                            request.params,
+                            command,
+                        )
+                        .await
+                        {
+                            let _ = write_response(
+                                id,
+                                Err(json_rpc_error(
+                                    -32003,
+                                    "BEARS local slash command failed",
+                                    Some(json!({ "message": format!("{err:#}") })),
+                                )),
+                            )
+                            .await;
+                        }
+                    });
+                    return Ok(());
+                }
+
                 let Some(config) = runtime.config.as_ref() else {
                     write_response(
                         id,
@@ -2656,6 +2689,24 @@ async fn validate_den_code_token(http: &reqwest::Client, config: &Config) -> Res
     Err(anyhow!(DenHttpError { status, body }))
 }
 
+async fn validate_den_code_token_for_diagnostics(
+    http: &reqwest::Client,
+    config: &Config,
+) -> Result<()> {
+    match timeout(
+        LOCAL_DEN_INSPECTION_TIMEOUT,
+        validate_den_code_token(http, config),
+    )
+    .await
+    {
+        Ok(result) => result,
+        Err(_) => Err(anyhow!(
+            "timed out after {}ms validating BEARS Code token with Den",
+            LOCAL_DEN_INSPECTION_TIMEOUT.as_millis()
+        )),
+    }
+}
+
 fn client_supports_read_text_file(adapter_state: &AdapterState) -> bool {
     adapter_state
         .client_capabilities
@@ -3160,7 +3211,61 @@ fn conversation_id_for_history(den_session: &Value) -> Option<String> {
 }
 
 fn local_session_context_from_params(params: &Value) -> Result<SessionContext> {
-    session_context_from_params(params)
+    match session_context_from_params(params) {
+        Ok(context) => Ok(context),
+        Err(err) if session_params_have_cwd_hint(params) => Err(err),
+        Err(err) => {
+            let cwd = env::current_dir()
+                .context("resolve adapter current directory for local ACP session fallback")?
+                .display()
+                .to_string();
+            if !is_absolute_local_path(&cwd) {
+                return Err(err).with_context(|| {
+                    format!("adapter current directory fallback is not absolute: {cwd:?}")
+                });
+            }
+            eprintln!(
+                "bears-acp-adapter: using adapter current directory as local session fallback cwd={} reason={err:#}",
+                cwd
+            );
+            let mut mcp_sources = parse_acp_mcp_servers(params)?;
+            if let Some(host_browser_bridge) = host_browser_bridge_config_from_env() {
+                mcp_sources.push(host_browser_bridge);
+            }
+            let mut context = SessionContext {
+                cwd: cwd.clone(),
+                roots: vec![cwd.clone()],
+                raw: json!({
+                    "cwd": cwd,
+                    "workspace_roots": [cwd],
+                    "adapter_version": adapter_version(),
+                    "adapter": adapter_capabilities_context(),
+                    "direct_tools": direct_tools_context(),
+                    "mcp_servers": mcp_sources
+                        .iter()
+                        .map(McpSourceConfig::safe_summary_for_session_context)
+                        .collect::<Vec<_>>(),
+                    "host_browser_bridge": host_browser_bridge_env_summary(),
+                    "local_fallback": {
+                        "reason": format!("{err:#}"),
+                        "source": "adapter.current_dir"
+                    }
+                }),
+                mcp_sources,
+                conversation_id: None,
+                resolved_conversation_id: None,
+                thread_title: None,
+            };
+            ensure_session_context_capabilities(&mut context);
+            Ok(context)
+        }
+    }
+}
+
+fn session_params_have_cwd_hint(params: &Value) -> bool {
+    explicit_cwd_from_params(params).is_some()
+        || fallback_cwd_from_params(params).is_some()
+        || !workspace_roots_from_params(params).is_empty()
 }
 
 fn session_context_from_den_session(params: &Value, den_session: &Value) -> Result<SessionContext> {
@@ -3302,6 +3407,19 @@ impl std::fmt::Display for DenHttpError {
 
 impl std::error::Error for DenHttpError {}
 
+fn den_session_error_allows_local_fallback(err: &anyhow::Error) -> bool {
+    if let Some(http) = err.downcast_ref::<DenHttpError>() {
+        return http.status == reqwest::StatusCode::NOT_FOUND
+            || http.status == reqwest::StatusCode::REQUEST_TIMEOUT
+            || http.status == reqwest::StatusCode::BAD_GATEWAY
+            || http.status == reqwest::StatusCode::SERVICE_UNAVAILABLE
+            || http.status == reqwest::StatusCode::GATEWAY_TIMEOUT
+            || http.status.is_server_error();
+    }
+    err.chain().any(|cause| cause.is::<reqwest::Error>())
+        || format!("{err:#}").contains("timed out after")
+}
+
 async fn request_den_session_mode(
     http: &reqwest::Client,
     config: Option<&Config>,
@@ -3391,6 +3509,25 @@ fn infer_mode_from_den_session(den: &Value) -> &'static str {
         };
     }
     infer_mode_from_plan_mode_state(den.get("plan_mode"))
+}
+
+async fn den_get_acp_session_for_lifecycle(
+    http: &reqwest::Client,
+    config: &Config,
+    session_id: &str,
+) -> Result<Value> {
+    match timeout(
+        LOCAL_DEN_INSPECTION_TIMEOUT,
+        den_get_acp_session(http, config, session_id),
+    )
+    .await
+    {
+        Ok(result) => result,
+        Err(_) => Err(anyhow!(
+            "timed out after {}ms getting ACP session from Den",
+            LOCAL_DEN_INSPECTION_TIMEOUT.as_millis()
+        )),
+    }
 }
 
 async fn den_get_acp_session(
@@ -3588,16 +3725,13 @@ async fn restore_session_from_den(
         .get("sessionId")
         .and_then(Value::as_str)
         .ok_or_else(|| anyhow!("session params missing sessionId"))?;
-    let den = match den_get_acp_session(http, config, session_id).await {
+    let den = match den_get_acp_session_for_lifecycle(http, config, session_id).await {
         Ok(den) => Some(den),
-        Err(err)
-            if err
-                .downcast_ref::<DenHttpError>()
-                .is_some_and(|http| http.status == reqwest::StatusCode::NOT_FOUND) =>
-        {
+        Err(err) if den_session_error_allows_local_fallback(&err) => {
             eprintln!(
-                "bears-acp-adapter: session/resume session_id={} not found in Den; restoring as local pending session",
-                session_id
+                "bears-acp-adapter: session/resume session_id={} could not load Den session ({}); restoring as local pending session",
+                session_id,
+                truncate_for_log(&format!("{err:#}"), 240)
             );
             None
         }
@@ -3635,25 +3769,13 @@ async fn restore_session_from_den(
     adapter_state
         .session_contexts
         .insert(session_id.to_string(), context);
-    if let Ok(snapshot) = collect_bear_environment(
-        adapter_state,
-        session_id,
-        Some(config),
-        Some(http),
-        &json!({
-            "include_session_mcp": true,
-            "include_client_capabilities": true,
-            "include_raw_context": true,
-            "inspect_den": false,
-        }),
-    )
-    .await
-    {
-        if let Err(err) = post_adapter_environment(config, session_id, snapshot, None).await {
-            eprintln!("bears-acp-adapter: failed to publish adapter environment after session/resume session_id={} error={err:#}", session_id);
-        }
-    }
     send_available_commands_update(session_id).await?;
+    spawn_adapter_environment_publish(
+        config.clone(),
+        session_id.to_string(),
+        adapter_state.clone(),
+        None,
+    );
     if let Some(den) = den.as_ref() {
         replay_history_for_den_session(http, config, session_id, den, "session/resume").await?;
         surface_submitted_plan_fallback(session_id, den).await?;
@@ -3676,16 +3798,13 @@ async fn handle_session_load(
         .get("sessionId")
         .and_then(Value::as_str)
         .ok_or_else(|| anyhow!("session/load params missing sessionId"))?;
-    let den = match den_get_acp_session(http, config, session_id).await {
+    let den = match den_get_acp_session_for_lifecycle(http, config, session_id).await {
         Ok(den) => Some(den),
-        Err(err)
-            if err
-                .downcast_ref::<DenHttpError>()
-                .is_some_and(|http| http.status == reqwest::StatusCode::NOT_FOUND) =>
-        {
+        Err(err) if den_session_error_allows_local_fallback(&err) => {
             eprintln!(
-                "bears-acp-adapter: session/load session_id={} not found in Den; loading as local pending session",
-                session_id
+                "bears-acp-adapter: session/load session_id={} could not load Den session ({}); loading as local pending session",
+                session_id,
+                truncate_for_log(&format!("{err:#}"), 240)
             );
             None
         }
@@ -3723,26 +3842,13 @@ async fn handle_session_load(
     adapter_state
         .session_contexts
         .insert(session_id.to_string(), context);
-    if let Ok(snapshot) = collect_bear_environment(
-        adapter_state,
-        session_id,
-        Some(config),
-        Some(http),
-        &json!({
-            "include_session_mcp": true,
-            "include_client_capabilities": true,
-            "include_raw_context": true,
-            "inspect_den": false,
-        }),
-    )
-    .await
-    {
-        if let Err(err) = post_adapter_environment(config, session_id, snapshot, None).await {
-            eprintln!("bears-acp-adapter: failed to publish adapter environment after session/load session_id={} error={err:#}", session_id);
-        }
-    }
-
     send_available_commands_update(session_id).await?;
+    spawn_adapter_environment_publish(
+        config.clone(),
+        session_id.to_string(),
+        adapter_state.clone(),
+        None,
+    );
     if let Some(den) = den.as_ref() {
         replay_history_for_den_session(http, config, session_id, den, "session/load").await?;
         surface_submitted_plan_fallback(session_id, den).await?;
@@ -3942,6 +4048,35 @@ async fn write_prompt_end_turn_response(response_id: Value) -> Result<()> {
     write_response(response_id, Ok(prompt_end_turn_response_value()?)).await
 }
 
+async fn handle_local_slash_prompt(
+    http: Option<&reqwest::Client>,
+    config: Option<&Config>,
+    adapter_state: &AdapterState,
+    shared_state: &AdapterSharedState,
+    response_id: Value,
+    params: Value,
+    command: LocalSlashCommand,
+) -> Result<()> {
+    let session_id = params
+        .get("sessionId")
+        .and_then(Value::as_str)
+        .ok_or_else(|| anyhow!("session/prompt params missing sessionId"))?;
+    let prompt = prompt_text_from_params(&params)?;
+    let display_prompt = prompt_display_text_from_params(&params).unwrap_or(prompt);
+    send_user_message_chunk(session_id, &display_prompt).await?;
+    let report = handle_local_slash_command(
+        http,
+        config,
+        adapter_state,
+        shared_state,
+        session_id,
+        command,
+    )
+    .await;
+    send_agent_message_chunk(session_id, &report).await?;
+    write_prompt_end_turn_response(response_id).await
+}
+
 async fn handle_prompt(
     http: &reqwest::Client,
     config: &Config,
@@ -4024,8 +4159,8 @@ async fn handle_prompt_with_retry(
     if let Some(command) = parse_local_slash_command(&prompt) {
         send_user_message_chunk(session_id, &display_prompt).await?;
         let report = handle_local_slash_command(
-            http,
-            config,
+            Some(http),
+            Some(config),
             adapter_state,
             shared_state,
             session_id,
@@ -4375,23 +4510,109 @@ enum LocalSlashCommand {
     DebugUi,
 }
 
+#[derive(Debug, Clone, Copy)]
+struct LocalSlashCommandDescriptor {
+    name: &'static str,
+    aliases: &'static [&'static str],
+    description: &'static str,
+    command: LocalSlashCommand,
+    den_required: bool,
+}
+
+const LOCAL_SLASH_COMMANDS: &[LocalSlashCommandDescriptor] = &[
+    LocalSlashCommandDescriptor {
+        name: "doctor",
+        aliases: &[],
+        description: "Show BEARS ACP adapter, session, client, and Den configuration diagnostics.",
+        command: LocalSlashCommand::Doctor,
+        den_required: false,
+    },
+    LocalSlashCommandDescriptor {
+        name: "compact",
+        aliases: &["collapse"],
+        description: "Ask Den to repair stale ACP/Letta approval state, then compact the conversation if needed.",
+        command: LocalSlashCommand::Compact,
+        den_required: true,
+    },
+    LocalSlashCommandDescriptor {
+        name: "conversation",
+        aliases: &[],
+        description: "Show the current ACP session and Letta conversation binding.",
+        command: LocalSlashCommand::Conversation,
+        den_required: false,
+    },
+    LocalSlashCommandDescriptor {
+        name: "capabilities",
+        aliases: &[],
+        description: "Show ACP client capabilities and adapter-local direct tools.",
+        command: LocalSlashCommand::Capabilities,
+        den_required: false,
+    },
+    LocalSlashCommandDescriptor {
+        name: "runtime",
+        aliases: &[],
+        description: "Show adapter runtime state, active local tool tasks, and optional Den runtime state.",
+        command: LocalSlashCommand::Runtime,
+        den_required: false,
+    },
+    LocalSlashCommandDescriptor {
+        name: "status",
+        aliases: &[],
+        description: "Show concise BEARS status from adapter-local environment plus optional Den health.",
+        command: LocalSlashCommand::Status,
+        den_required: false,
+    },
+    LocalSlashCommandDescriptor {
+        name: "version",
+        aliases: &[],
+        description: "Show BEARS adapter version/build metadata plus optional Den version.",
+        command: LocalSlashCommand::Version,
+        den_required: false,
+    },
+    LocalSlashCommandDescriptor {
+        name: "debug-ui",
+        aliases: &[],
+        description: "Show BEARS ACP debug UI environment status.",
+        command: LocalSlashCommand::DebugUi,
+        den_required: false,
+    },
+];
+
+fn local_slash_available_commands() -> Vec<AvailableCommand> {
+    LOCAL_SLASH_COMMANDS
+        .iter()
+        .flat_map(|descriptor| {
+            std::iter::once(descriptor.name)
+                .chain(descriptor.aliases.iter().copied())
+                .map(move |name| AvailableCommand::new(name, descriptor.description))
+        })
+        .collect()
+}
+
+fn local_slash_descriptor_for_name(name: &str) -> Option<&'static LocalSlashCommandDescriptor> {
+    let normalized = name.trim().trim_start_matches('/');
+    LOCAL_SLASH_COMMANDS.iter().find(|descriptor| {
+        descriptor.name == normalized || descriptor.aliases.iter().any(|alias| *alias == normalized)
+    })
+}
+
+fn local_slash_descriptor_for_command(
+    command: LocalSlashCommand,
+) -> Option<&'static LocalSlashCommandDescriptor> {
+    LOCAL_SLASH_COMMANDS
+        .iter()
+        .find(|descriptor| descriptor.command == command)
+}
+
 fn parse_local_slash_command(prompt: &str) -> Option<LocalSlashCommand> {
-    match prompt.trim().split_whitespace().next()? {
-        "/doctor" => Some(LocalSlashCommand::Doctor),
-        "/compact" | "/collapse" => Some(LocalSlashCommand::Compact),
-        "/conversation" => Some(LocalSlashCommand::Conversation),
-        "/capabilities" => Some(LocalSlashCommand::Capabilities),
-        "/runtime" => Some(LocalSlashCommand::Runtime),
-        "/status" => Some(LocalSlashCommand::Status),
-        "/version" => Some(LocalSlashCommand::Version),
-        "/debug-ui" => Some(LocalSlashCommand::DebugUi),
-        _ => None,
-    }
+    let token = prompt.trim().split_whitespace().next()?;
+    let name = token.strip_prefix('/')?;
+    local_slash_descriptor_for_name(name).map(|descriptor| descriptor.command)
 }
 
 async fn handle_local_slash_command(
-    http: &reqwest::Client,
-    config: &Config,
+    http: Option<&reqwest::Client>,
+    config: Option<&Config>,
     adapter_state: &AdapterState,
     shared_state: &AdapterSharedState,
     session_id: &str,
@@ -4408,6 +4629,9 @@ async fn handle_local_slash_command(
             .await
         }
         LocalSlashCommand::Compact => {
+            let (Some(http), Some(config)) = (http, config) else {
+                return den_required_slash_command_unavailable(command);
+            };
             match compact_session_conversation(http, config, session_id).await {
                 Ok(result) => render_compact_recovery_result(result),
                 Err(err) => format!("BEARS ACP recovery failed: {err:#}"),
@@ -4424,6 +4648,21 @@ async fn handle_local_slash_command(
         LocalSlashCommand::Version => version_report(http, config).await,
         LocalSlashCommand::DebugUi => debug_ui_report(),
     }
+}
+
+fn den_required_slash_command_unavailable(command: LocalSlashCommand) -> String {
+    let descriptor = local_slash_descriptor_for_command(command);
+    let name = descriptor
+        .map(|descriptor| descriptor.name)
+        .unwrap_or("command");
+    let requirement = if descriptor.is_some_and(|descriptor| descriptor.den_required) {
+        "requires Den"
+    } else {
+        "needs unavailable Den context"
+    };
+    format!(
+        "BEARS ACP /{name} {requirement}, but the adapter is not configured for Den right now. Use /status for adapter-local diagnostics."
+    )
 }
 
 fn client_context_for_doctor(adapter_state: &AdapterState, session_id: &str) -> SessionContext {
@@ -4604,8 +4843,8 @@ fn render_status_report(environment: &Value, tasks: &[tool_tasks::ToolTaskRecord
 }
 
 async fn status_report(
-    http: &reqwest::Client,
-    config: &Config,
+    http: Option<&reqwest::Client>,
+    config: Option<&Config>,
     adapter_state: &AdapterState,
     shared_state: &AdapterSharedState,
     session_id: &str,
@@ -4613,8 +4852,8 @@ async fn status_report(
     let environment = match collect_bear_environment(
         adapter_state,
         session_id,
-        Some(config),
-        Some(http),
+        config,
+        http,
         &json!({
             "include_session_mcp": true,
             "inspect_den": true
@@ -4646,8 +4885,8 @@ fn compact_json_for_status(value: &Value) -> String {
 }
 
 async fn runtime_report(
-    http: &reqwest::Client,
-    config: &Config,
+    http: Option<&reqwest::Client>,
+    config: Option<&Config>,
     adapter_state: &AdapterState,
     shared_state: &AdapterSharedState,
     session_id: &str,
@@ -4674,14 +4913,31 @@ async fn runtime_report(
             .unwrap_or_else(|_| context.raw.get("mcp").unwrap_or(&Value::Null).to_string()),
     );
     lines.push(String::new());
-    match fetch_den_runtime_state(http, config, session_id).await {
-        Ok(value) => {
-            lines.push("Den runtime state:".to_string());
-            lines.push(serde_json::to_string_pretty(&value).unwrap_or_else(|_| value.to_string()));
+    if let (Some(http), Some(config)) = (http, config) {
+        match timeout(
+            LOCAL_DEN_INSPECTION_TIMEOUT,
+            fetch_den_runtime_state(http, config, session_id),
+        )
+        .await
+        {
+            Ok(Ok(value)) => {
+                lines.push("Den runtime state:".to_string());
+                lines.push(
+                    serde_json::to_string_pretty(&value).unwrap_or_else(|_| value.to_string()),
+                );
+            }
+            Ok(Err(err)) => {
+                lines.push(format!("Den runtime state unavailable: {err:#}"));
+            }
+            Err(_) => {
+                lines.push(format!(
+                    "Den runtime state unavailable: timed out after {}ms",
+                    LOCAL_DEN_INSPECTION_TIMEOUT.as_millis()
+                ));
+            }
         }
-        Err(err) => {
-            lines.push(format!("Den runtime state unavailable: {err:#}"));
-        }
+    } else {
+        lines.push("Den runtime state unavailable: adapter is not configured for Den.".to_string());
     }
     lines.push(String::new());
     let tasks = shared_state.tool_tasks.list_for_session(session_id).await;
@@ -4702,10 +4958,14 @@ async fn runtime_report(
     lines.join("\n")
 }
 
-async fn version_report(http: &reqwest::Client, config: &Config) -> String {
-    let den = match fetch_server_version(http, config).await {
-        Ok(version) => version.summary(),
-        Err(err) => format!("Den server unreachable: {err:#}"),
+async fn version_report(http: Option<&reqwest::Client>, config: Option<&Config>) -> String {
+    let den = if let (Some(http), Some(config)) = (http, config) {
+        match fetch_server_version_for_diagnostics(http, config).await {
+            Ok(version) => version.summary(),
+            Err(err) => format!("Den server unreachable: {err:#}"),
+        }
+    } else {
+        "Den not configured in this adapter process".to_string()
     };
     let adapter = adapter_capabilities_context();
     let host_bridge_env = host_browser_bridge_env_summary();
@@ -4738,19 +4998,35 @@ fn debug_ui_report() -> String {
 }
 
 async fn acp_doctor_report(
-    http: &reqwest::Client,
-    config: &Config,
+    http: Option<&reqwest::Client>,
+    config: Option<&Config>,
     adapter_state: &AdapterState,
     context: &SessionContext,
 ) -> String {
-    let den_status = match fetch_server_version(http, config).await {
-        Ok(version) => version.summary(),
-        Err(err) => format!("Den server unreachable: {err:#}"),
-    };
-    let token_status = match validate_den_code_token(http, config).await {
-        Ok(()) => "valid for this Bear".to_string(),
-        Err(err) => format!("not validated: {err:#}"),
-    };
+    let (api_url, bear, den_status, token_status) =
+        if let (Some(http), Some(config)) = (http, config) {
+            let den_status = match fetch_server_version_for_diagnostics(http, config).await {
+                Ok(version) => version.summary(),
+                Err(err) => format!("Den server unreachable: {err:#}"),
+            };
+            let token_status = match validate_den_code_token_for_diagnostics(http, config).await {
+                Ok(()) => "valid for this Bear".to_string(),
+                Err(err) => format!("not validated: {err:#}"),
+            };
+            (
+                config.api_url.clone(),
+                config.bear.clone(),
+                den_status,
+                token_status,
+            )
+        } else {
+            (
+                "<not configured>".to_string(),
+                "<not configured>".to_string(),
+                "Den not configured in this adapter process".to_string(),
+                "not validated: Den not configured".to_string(),
+            )
+        };
     format!(
         "BEARS ACP doctor\n\nAdapter:\n- version: {}\n- git_sha: {}\n- built_at_utc: {}\n- contract: {} v{}\n\nDen:\n- api_url: {}\n- bear: {}\n- server: {}\n- token: {}\n\nClient capabilities:\n{}\n\nSession:\n- cwd: {}\n- roots: {}\n- resolved_conversation_id: {}\n\nDirect tools: {}\n\nBrowser tool source:\n{}\n\nHost browser bridge env:\n{}\n\nSession MCP state:\n{}",
         adapter_version(),
@@ -4758,8 +5034,8 @@ async fn acp_doctor_report(
         env!("BEARS_ACP_ADAPTER_BUILT_AT_UTC"),
         BEARS_ACP_ADAPTER_CONTRACT_NAME,
         BEARS_ACP_ADAPTER_CONTRACT_VERSION,
-        config.api_url,
-        config.bear,
+        api_url,
+        bear,
         den_status,
         token_status,
         serde_json::to_string_pretty(&adapter_state.client_capabilities).unwrap_or_else(|_| adapter_state.client_capabilities.to_string()),
@@ -4948,6 +5224,24 @@ async fn fetch_server_version(http: &reqwest::Client, config: &Config) -> Result
         )
     })?;
     Ok(server_version_from_json(&value))
+}
+
+async fn fetch_server_version_for_diagnostics(
+    http: &reqwest::Client,
+    config: &Config,
+) -> Result<ServerVersion> {
+    match timeout(
+        LOCAL_DEN_INSPECTION_TIMEOUT,
+        fetch_server_version(http, config),
+    )
+    .await
+    {
+        Ok(result) => result,
+        Err(_) => Err(anyhow!(
+            "timed out after {}ms fetching Den server version",
+            LOCAL_DEN_INSPECTION_TIMEOUT.as_millis()
+        )),
+    }
 }
 
 fn server_version_from_json(value: &Value) -> ServerVersion {
@@ -5237,7 +5531,6 @@ fn prompt_context_from_params(params: &Value) -> Result<AcpPromptContextBundle> 
     Ok(bundle)
 }
 
-#[cfg(test)]
 fn prompt_text_from_params(params: &Value) -> Result<String> {
     require_human_prompt_text(prompt_context_from_params(params)?.human_message)
 }
@@ -9702,7 +9995,10 @@ data: {"type":"done","outcome":"empty_fallback","recovery_hint":"check_upstream_
             "diagnostic": { "phase": "permission_local_tool_completed" }
         });
         assert_eq!(payload["content"], "");
-        assert_eq!(payload["structured_content"]["content"], "Local tool terminal_run_command completed.");
+        assert_eq!(
+            payload["structured_content"]["content"],
+            "Local tool terminal_run_command completed."
+        );
     }
 
     #[test]
@@ -11954,7 +12250,14 @@ data: {"type":"done","outcome":"empty_fallback","recovery_hint":"check_upstream_
             },
         );
         let shared = test_shared_state();
-        let report = runtime_report(&http, &config, &adapter_state, &shared, "session-1").await;
+        let report = runtime_report(
+            Some(&http),
+            Some(&config),
+            &adapter_state,
+            &shared,
+            "session-1",
+        )
+        .await;
         assert!(report.contains("Browser tools:"));
         assert!(report.contains("host_browser_bridge"));
     }

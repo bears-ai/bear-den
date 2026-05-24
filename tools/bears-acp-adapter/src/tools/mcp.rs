@@ -199,7 +199,9 @@ pub(crate) fn parse_acp_mcp_servers(params: &Value) -> Result<Vec<McpSourceConfi
             "bears-acp-adapter: acp_mcp_params invalid_shape summary={}",
             summarize_acp_mcp_servers_param(params)
         );
-        return Err(anyhow!("ACP mcpServers must be an array"));
+        return Err(anyhow!(
+            "ACP mcpServers are not supported in object form; mcpServers must be an array"
+        ));
     };
     eprintln!(
         "bears-acp-adapter: acp_mcp_params summary={}",

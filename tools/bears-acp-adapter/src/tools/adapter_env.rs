@@ -1,12 +1,15 @@
 use crate::{
-    adapter_capabilities_context, browser_tool_source_summary, direct_tools_context,
-    session_context, AdapterState, Config,
+    adapter_capabilities_context, adapter_version, browser_tool_source_summary,
+    direct_tools_context, session_context, AdapterState, Config, SessionContext,
 };
 use anyhow::Result;
 use reqwest::header::{HeaderValue, AUTHORIZATION};
 use serde_json::{json, Value};
+use tokio::time::{timeout, Duration};
 
 use super::mcp::host_browser_bridge_env_summary;
+
+const DEN_RUNTIME_INSPECTION_TIMEOUT: Duration = Duration::from_secs(2);
 
 pub(crate) async fn collect_bear_environment(
     adapter_state: &AdapterState,
@@ -15,7 +18,18 @@ pub(crate) async fn collect_bear_environment(
     http: Option<&reqwest::Client>,
     args: &Value,
 ) -> Result<Value> {
-    let context = session_context(adapter_state, session_id)?;
+    let mut warnings = Vec::<Value>::new();
+    let mut errors = Vec::<Value>::new();
+    let context = match session_context(adapter_state, session_id) {
+        Ok(context) => context.clone(),
+        Err(err) => {
+            warnings.push(json!(format!(
+                "ACP session context is missing locally: {err:#}"
+            )));
+            errors.push(json!(format!("ACP session context lookup failed: {err:#}")));
+            fallback_session_context(session_id, &err)
+        }
+    };
     let include_client_capabilities = args
         .get("include_client_capabilities")
         .and_then(Value::as_bool)
@@ -35,7 +49,7 @@ pub(crate) async fn collect_bear_environment(
 
     let adapter = adapter_capabilities_context();
     let direct_tools = direct_tools_context();
-    let browser = browser_tool_source_summary(context);
+    let browser = browser_tool_source_summary(&context);
     let host_bridge_env = host_browser_bridge_env_summary();
 
     let mut den_service = json!({
@@ -43,14 +57,17 @@ pub(crate) async fn collect_bear_environment(
         "configured": false,
         "status": "not_inspected",
     });
-    let mut warnings = Vec::<Value>::new();
-    let mut errors = Vec::<Value>::new();
 
     if inspect_den {
         if let (Some(config), Some(http)) = (config, http) {
             den_service["configured"] = Value::Bool(true);
-            match fetch_den_runtime_state(http, config, session_id).await {
-                Ok(runtime) => {
+            match timeout(
+                DEN_RUNTIME_INSPECTION_TIMEOUT,
+                fetch_den_runtime_state(http, config, session_id),
+            )
+            .await
+            {
+                Ok(Ok(runtime)) => {
                     den_service = json!({
                         "available": true,
                         "configured": true,
@@ -59,7 +76,7 @@ pub(crate) async fn collect_bear_environment(
                         "runtime": runtime,
                     });
                 }
-                Err(err) => {
+                Ok(Err(err)) => {
                     den_service = json!({
                         "available": false,
                         "configured": true,
@@ -69,6 +86,20 @@ pub(crate) async fn collect_bear_environment(
                     });
                     warnings.push(json!("Den runtime is unreachable from the adapter"));
                     errors.push(json!(format!("Den runtime inspection failed: {err:#}")));
+                }
+                Err(_) => {
+                    den_service = json!({
+                        "available": false,
+                        "configured": true,
+                        "reachable": false,
+                        "status": "timeout",
+                        "error": format!(
+                            "Den runtime inspection timed out after {}ms",
+                            DEN_RUNTIME_INSPECTION_TIMEOUT.as_millis()
+                        ),
+                    });
+                    warnings.push(json!("Den runtime inspection timed out from the adapter"));
+                    errors.push(json!("Den runtime inspection timed out"));
                 }
             }
         } else {
@@ -94,10 +125,10 @@ pub(crate) async fn collect_bear_environment(
         },
         "session": {
             "id": session_id,
-            "cwd": context.cwd,
-            "workspace_roots": context.roots,
-            "conversation_id": context.conversation_id,
-            "resolved_conversation_id": context.resolved_conversation_id,
+            "cwd": context.cwd.clone(),
+            "workspace_roots": context.roots.clone(),
+            "conversation_id": context.conversation_id.clone(),
+            "resolved_conversation_id": context.resolved_conversation_id.clone(),
         },
         "tools": {
             "direct": direct_tools,
@@ -138,6 +169,38 @@ pub(crate) async fn collect_bear_environment(
     }
 
     Ok(response)
+}
+
+fn fallback_session_context(session_id: &str, err: &anyhow::Error) -> SessionContext {
+    let cwd = std::env::current_dir()
+        .ok()
+        .map(|path| path.display().to_string())
+        .unwrap_or_default();
+    SessionContext {
+        cwd: cwd.clone(),
+        roots: if cwd.is_empty() {
+            Vec::new()
+        } else {
+            vec![cwd.clone()]
+        },
+        raw: json!({
+            "cwd": cwd,
+            "workspace_roots": if cwd.is_empty() { json!([]) } else { json!([cwd]) },
+            "adapter_version": adapter_version(),
+            "adapter": adapter_capabilities_context(),
+            "direct_tools": direct_tools_context(),
+            "mcp": Value::Null,
+            "local_fallback": {
+                "session_id": session_id,
+                "reason": format!("{err:#}"),
+                "source": "adapter_env.missing_session_context"
+            }
+        }),
+        mcp_sources: Vec::new(),
+        conversation_id: None,
+        resolved_conversation_id: None,
+        thread_title: None,
+    }
 }
 
 pub(crate) async fn handle_bear_environment(
