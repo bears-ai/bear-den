@@ -1,6 +1,6 @@
 # FAQ
 
-Short answers to common architecture questions. See [docs/architecture/DEN_ARCHITECTURE.md](docs/architecture/DEN_ARCHITECTURE.md) and [docs/planning/PLAN.md](docs/planning/PLAN.md) for detail.
+Short answers to common architecture questions. See [docs/architecture/den-architecture.md](docs/architecture/den-architecture.md) and [docs/roadmap/PLAN.md](docs/roadmap/PLAN.md) for detail.
 
 ## Why is web chat `browser → Den → Codepool → Letta` and not straight to Codepool?
 

@@ -27,6 +27,6 @@ Build local source images, start/recreate the stack, seed, and run smoke tests. 
 ./scripts/smoke-stack.sh
 ```
 
-Live bind-mount/hot-reload development is intentionally a separate future mode; see `docs/planning/LIVE_DEV_STACK_PLAN.md`.
+Live bind-mount/hot-reload development is intentionally a separate future mode; see `docs/roadmap/LIVE_DEV_STACK_PLAN.md`.
 
 

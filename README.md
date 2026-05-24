@@ -8,11 +8,11 @@ This repo is a **light monorepo**: `docs/`, `services/den/` for Den, `services/c
 
 | If you want to… | Open |
 |-----------------|------|
-| **Deploy** (Coolify; **recommended:** root Docker Compose `bears-*` app stack) | [docs/deployment/DEPLOYMENT.md](docs/deployment/DEPLOYMENT.md), [docker-compose.yaml](docker-compose.yaml) |
-| **Roadmap & architecture** | [docs/planning/PLAN.md](docs/planning/PLAN.md), [docs/architecture/ARCHITECTURE_NOTES.md](docs/architecture/ARCHITECTURE_NOTES.md) |
-| **Den + Letta + web chat** | [docs/architecture/DEN_ARCHITECTURE.md](docs/architecture/DEN_ARCHITECTURE.md) |
+| **Deploy** (Coolify; **recommended:** root Docker Compose `bears-*` app stack) | [docs/guides/deployment/deployment.md](docs/guides/deployment/deployment.md), [docker-compose.yaml](docker-compose.yaml) |
+| **Roadmap & architecture** | [docs/roadmap/PLAN.md](docs/roadmap/PLAN.md), [docs/architecture/overview.md](docs/architecture/overview.md) |
+| **Den + Letta + web chat** | [docs/architecture/den-architecture.md](docs/architecture/den-architecture.md) |
 | **Every doc in one place** | [docs/README.md](docs/README.md) |
-| **Troubleshoot ACP/Zed/Code token issues** | [docs/ACP_TROUBLESHOOTING.md](docs/ACP_TROUBLESHOOTING.md) |
+| **Troubleshoot ACP/Zed/Code token issues** | [docs/guides/acp-troubleshooting.md](docs/guides/acp-troubleshooting.md) |
 
 **Stack (high level):** Letta → Bifrost for models; **Letta Code** harness for channels/web; **Den** for operators and browser chat; **Garage** for S3 artifacts; **Outline** + Den for Cabinet when you add shared knowledge. Self-hosted Letta only.
 

@@ -1,4 +1,4 @@
-# Semantic Memory Schema and Work Surfaces — Architecture Decision Record
+# Semantic Memory Schema and Resources — Architecture Decision Record
 
 ## Status: Proposed
 
@@ -15,7 +15,7 @@ Several tensions have become clear in the current model:
 1. **Role-local memory is durable memory, not just staging.** A role-local entry can be the correct final home for a memory without promotion to `core/` or Cabinet.
 2. **Authenticated user identity has been overloaded.** Using authenticated username in the default path conflates provenance with scope.
 3. **Authorship and provenance are not the same thing.** In most semantic memory writes, the Bear role agent composes the memory entry, while the authenticated human provides session context, initiation, approval, or steering.
-4. **Work-surface memory needs stronger structure.** Durable technical understanding about a repo, subsystem, service, or workstream is not well served by a flat `<role>/<kind>/...` layout alone.
+4. **Resource-scoped memory needs stronger structure.** Durable technical understanding about a repo, subsystem, service, conversation, artifact cluster, or workstream is not well served by a flat `<role>/<kind>/...` layout alone.
 5. **`plans` as a semantic memory kind creates confusion.** It overlaps with ACP/Den planning tools, live work-plan state, and plan artifacts, and encourages mixing active planning state into semantic memory.
 
 Historically, semantic memory documentation has also mixed several concerns at once: memory philosophy, path conventions, tool direction, archive strategy, and UI aspirations. This ADR narrows the decision surface to the schema and routing model for semantic memory in Bear MemFS.
@@ -36,35 +36,35 @@ Instead:
 
 In ordinary `den.memory.write_entry` flows, the composing author is the Bear role agent, not the human.
 
-### 2. Work surfaces are first-class semantic memory containers
+### 2. Resources are first-class semantic memory containers
 
-Durable shared technical memory should prefer a first-class work-surface family:
+Durable shared technical memory should prefer a first-class resource family:
 
-- `pair/work_surfaces/<work_surface_slug>/`
+- `code/resources/<resource_slug>/`
 
-This is the preferred home for memory about a canonical repo, subsystem, service, artifact cluster, or workstream.
+This is the preferred home for memory about a canonical repo, subsystem, service, conversation, artifact cluster, or workstream.
 
-### 3. Work surfaces use a standard internal scaffold
+### 3. Resources use a standard internal scaffold
 
-Each work surface should support the following structure:
+Each resource should support the following structure:
 
-- `pair/work_surfaces/<work_surface_slug>/overview.md`
-- `pair/work_surfaces/<work_surface_slug>/concepts/`
-- `pair/work_surfaces/<work_surface_slug>/standards/`
-- `pair/work_surfaces/<work_surface_slug>/roadmap/`
-- `pair/work_surfaces/<work_surface_slug>/decisions/`
-- `pair/work_surfaces/<work_surface_slug>/notes/`
+- `code/resources/<resource_slug>/overview.md`
+- `code/resources/<resource_slug>/concepts/`
+- `code/resources/<resource_slug>/standards/`
+- `code/resources/<resource_slug>/roadmap/`
+- `code/resources/<resource_slug>/decisions/`
+- `code/resources/<resource_slug>/notes/`
 
 These subpaths mean:
 
-- `overview.md`: compact orientation to the work surface, its current state, and major anchors
+- `overview.md`: compact orientation to the resource, its current state, and major anchors
 - `concepts/`: durable conceptual understanding, architecture, terminology, and mental models
 - `standards/`: normative guidance, conventions, invariants, and canonical patterns
 - `roadmap/`: forward-looking shared intent, known gaps, and expected evolution
-- `decisions/`: durable decisions specific to the work surface
+- `decisions/`: durable decisions specific to the resource
 - `notes/`: useful shared observations and findings not yet elevated elsewhere
 
-### 4. General semantic memory kinds remain for non-work-surface memory
+### 4. General semantic memory kinds remain for non-resource memory
 
 The following remain valid general semantic memory families:
 
@@ -75,7 +75,7 @@ The following remain valid general semantic memory families:
 - `scratch`
 - `logs`
 
-These are used for memory that is not primarily organized as work-surface knowledge.
+These are used for memory that is not primarily organized as resource knowledge.
 
 ### 5. `plans` is not a semantic memory kind
 
@@ -99,24 +99,24 @@ Examples include:
 
 Suggested patterns:
 
-- `pair/notes/humans/<username>/<title-slug>.md`
-- `pair/summaries/humans/<username>/<title-slug>.md`
-- `pair/decisions/humans/<username>/<title-slug>.md` (rare)
+- `code/notes/humans/<username>/<title-slug>.md`
+- `code/summaries/humans/<username>/<title-slug>.md`
+- `code/decisions/humans/<username>/<title-slug>.md` (rare)
 
 ### 7. Conversation and shared fallbacks remain available
 
-When a memory is not work-surface scoped and not human-scoped:
+When a memory is not resource-scoped and not human-scoped:
 
-- use conversation-scoped paths if the memory is thread-local and no canonical work surface is known
-- use shared paths if the memory is durable and reusable but not tied to a specific work surface or human
+- use conversation-scoped paths if the memory is thread-local and no canonical resource is known
+- use shared paths if the memory is durable and reusable but not tied to a specific resource or human
 
 Suggested patterns:
 
-- `pair/notes/conversations/<conversation-id>/<title-slug>.md`
-- `pair/summaries/conversations/<conversation-id>/<title-slug>.md`
-- `pair/notes/shared/<title-slug>.md`
-- `pair/summaries/shared/<title-slug>.md`
-- `pair/decisions/shared/<title-slug>.md`
+- `code/notes/conversations/<conversation-id>/<title-slug>.md`
+- `code/summaries/conversations/<conversation-id>/<title-slug>.md`
+- `code/notes/shared/<title-slug>.md`
+- `code/summaries/shared/<title-slug>.md`
+- `code/decisions/shared/<title-slug>.md`
 
 ---
 
@@ -150,16 +150,16 @@ Conceptual provenance shape:
 Implications:
 - The Bear is the composing author.
 - The authenticated human is provenance, not default namespace.
-- Provenance remains rich even when the path is shared or work-surface scoped.
+- Provenance remains rich even when the path is shared or resource-scoped.
 
 ---
 
 ## Routing guidance
 
-### Prefer work-surface routing when
+### Prefer resource routing when
 
-- the memory is about a canonical repo, service, subsystem, or workstream
-- the memory should support future work on that same surface
+- the memory is about a canonical repo, service, subsystem, conversation, artifact cluster, or workstream
+- the memory should support future work on that same resource
 - the memory is durable shared technical understanding
 
 ### Prefer human routing when
@@ -170,13 +170,13 @@ Implications:
 ### Prefer conversation routing when
 
 - the memory is useful for the current thread
-- no reliable work surface is known yet
+- no reliable resource is known yet
 - durability is uncertain or local
 
 ### Prefer shared routing when
 
 - the memory is durable and reusable
-- but does not fit a known work surface or human scope
+- but does not fit a known resource or human scope
 
 ---
 
@@ -186,14 +186,14 @@ Implications:
 
 - Semantic memory paths become more legible and semantically meaningful.
 - Authenticated usernames stop polluting paths for shared technical memory.
-- Work-surface knowledge becomes easier to browse, retrieve, and maintain.
+- Resource-scoped knowledge becomes easier to browse, retrieve, and maintain.
 - The distinction between provenance and namespace becomes cleaner.
 - Semantic memory is better separated from planning systems.
 
 ### Tradeoffs
 
 - Write-path logic becomes more sophisticated.
-- Work-surface identification must be reliable enough to route memory well.
+- Resource identification must be reliable enough to route memory well.
 - Existing path conventions and retrieval expectations will need migration.
 - Some existing entries may need reclassification or grandfathered handling.
 
@@ -203,11 +203,11 @@ Implications:
 
 1. Stop default path derivation from authenticated username.
 2. Record Bear authorship and human identity in provenance metadata.
-3. Add first-class write support for `pair/work_surfaces/<slug>/...`.
-4. Prefer work-surface routing for durable technical memory.
+3. Add first-class write support for `code/resources/<slug>/...`.
+4. Prefer resource routing for durable technical memory.
 5. Retire `plan` from semantic-memory write validation for new general semantic memory entries.
 6. Preserve human-specific pathing only for genuinely human-scoped memory.
-7. Update retrieval/orientation logic to prefer work-surface memory for technical tasks.
+7. Update retrieval/orientation logic to prefer resource memory for technical tasks.
 
 ---
 

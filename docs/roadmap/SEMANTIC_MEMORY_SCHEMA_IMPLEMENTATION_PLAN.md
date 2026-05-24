@@ -2,11 +2,11 @@
 
 ## Goal
 
-Implement the ADR in `docs/architecture/adr/semantic-memory-schema-and-work-surfaces.md` by updating semantic memory write contracts, routing, retrieval assumptions, and documentation so Bear memory aligns with the new schema.
+Implement the ADR in `docs/architecture/adr/semantic-memory-schema-and-resources.md` by updating semantic memory write contracts, routing, retrieval assumptions, and documentation so Bear memory aligns with the new schema.
 
 This plan assumes:
 - authorship is provenance, not default pathing
-- work surfaces are first-class semantic memory containers
+- resources are first-class semantic memory containers
 - `plans` is not a semantic memory kind
 - authenticated usernames should not be the default namespace for shared technical memory
 
@@ -18,8 +18,8 @@ After implementation:
 
 - semantic memory writes no longer default to `<kind>/<username>/...`
 - Bear role authorship and human identity are recorded in provenance metadata
-- durable technical memory can be written under `pair/work_surfaces/<work_surface_slug>/...`
-- work-surface memory supports a standard scaffold:
+- durable technical memory can be written under `code/resources/<resource_slug>/...`
+- resource memory supports a standard scaffold:
   - `overview.md`
   - `concepts/`
   - `standards/`
@@ -27,7 +27,7 @@ After implementation:
   - `decisions/`
   - `notes/`
 - `plan` is removed from semantic-memory write validation and documentation
-- retrieval/orientation logic can prefer work-surface memory for technical tasks
+- retrieval/orientation logic can prefer resource memory for technical tasks
 - legacy memory remains readable during a transition period
 
 ---
@@ -45,9 +45,9 @@ Extend the semantic memory write contract so it can express ADR-compliant routin
 Update the Den-side memory write request shape to support explicit routing hints.
 
 Recommended additions:
-- `scope`: `human | work_surface | conversation | shared`
-- `work_surface_slug`: optional
-- `work_surface_section`: optional
+- `scope`: `human | resource | conversation | shared`
+- `resource_slug`: optional
+- `resource_section`: optional
   - `overview`
   - `concepts`
   - `standards`
@@ -87,31 +87,31 @@ Replace current default routing logic with scope-aware routing.
 
 Desired routing behavior:
 
-#### Work-surface scope
-- `pair/work_surfaces/<work_surface_slug>/overview.md`
-- `pair/work_surfaces/<work_surface_slug>/<section>/<title-slug>.md`
+#### Resource scope
+- `code/resources/<resource_slug>/overview.md`
+- `code/resources/<resource_slug>/<section>/<title-slug>.md`
 
 #### Human scope
-- `pair/<kind>/humans/<username>/<title-slug>.md`
+- `code/<kind>/humans/<username>/<title-slug>.md`
 
 #### Conversation scope
-- `pair/<kind>/conversations/<conversation-id>/<title-slug>.md`
+- `code/<kind>/conversations/<conversation-id>/<title-slug>.md`
 
 #### Shared scope
-- `pair/<kind>/shared/<title-slug>.md`
+- `code/<kind>/shared/<title-slug>.md`
 
 #### When scope is omitted
 Infer in this priority order:
-1. canonical work surface when confidently known
+1. canonical resource when confidently known
 2. conversation scope when clearly thread-local
 3. shared fallback
 
 Do not default to human scope purely because the human is authenticated.
 
 Additional changes:
-- validate allowed work-surface sections
-- implement collision handling for work-surface entries
-- update path policy to allow `pair/work_surfaces/...`
+- validate allowed resource sections
+- implement collision handling for resource entries
+- update path policy to allow `code/resources/...`
 - remove `plan` from kind-directory mappings for general semantic memory
 
 ### Likely files
@@ -127,15 +127,15 @@ Additional changes:
 
 ---
 
-## 3. Work-surface scaffold support
+## 3. Resource scaffold support
 
 ### Objective
 
-Treat work surfaces as structured memory containers rather than ad hoc directories.
+Treat resources as structured memory containers rather than ad hoc directories.
 
 ### Changes
 
-Ensure tooling can create and maintain a standard work-surface scaffold:
+Ensure tooling can create and maintain a standard resource scaffold:
 - `overview.md`
 - `concepts/`
 - `standards/`
@@ -149,7 +149,7 @@ This may be implemented by:
 
 ### Likely files
 
-- Den work-surface orientation/scaffold code
+- Den resource orientation/scaffold code
 - potentially MemFS helper code if canonical creation lives there
 
 ### Deliverables
@@ -164,11 +164,11 @@ This may be implemented by:
 
 ### Objective
 
-Make the system actually benefit from the new structure by preferring work-surface memory during technical tasks.
+Make the system actually benefit from the new structure by preferring resource memory during technical tasks.
 
 ### Changes
 
-Update memory orientation, browse, and retrieval logic so that when a work surface is known, the system prefers:
+Update memory orientation, browse, and retrieval logic so that when a resource is known, the system prefers:
 - `overview.md`
 - `standards/`
 - `concepts/`
@@ -177,8 +177,8 @@ Update memory orientation, browse, and retrieval logic so that when a work surfa
 - `notes/`
 
 Potential behavior changes:
-- work-surface orientation tool surfaces canonical paths under `pair/work_surfaces/<slug>/...`
-- technical memory reads/searches consult work-surface memory before broad generic role memory when confidence is high
+- resource orientation tool surfaces canonical paths under `code/resources/<slug>/...`
+- technical memory reads/searches consult resource memory before broad generic role memory when confidence is high
 - retrieval remains backward-compatible with legacy paths during transition
 
 ### Likely files
@@ -190,7 +190,7 @@ Potential behavior changes:
 
 - updated orientation output
 - retrieval preference rules
-- tests for work-surface-first technical memory orientation
+- tests for resource-first technical memory orientation
 
 ---
 
@@ -205,7 +205,7 @@ Align docs with the ADR and eliminate stale or competing memory-schema guidance.
 - keep the ADR as the primary source of truth for semantic memory schema
 - remove stale references to old flat pathing as authoritative schema
 - remove `plan` from semantic memory documentation/examples
-- ensure work-surface-first structure is reflected in planning and architecture docs where relevant
+- ensure resource-first structure is reflected in planning and architecture docs where relevant
 
 ### Current repo status
 
@@ -217,6 +217,7 @@ This cleanup has already started:
 
 - no stale docs treating `plan` as a semantic memory kind
 - no stale docs treating `<kind>/<username>` as the default routing model
+- no stale docs preferring `work surface` terminology over `resource`
 - updated references where semantic memory structure is mentioned
 
 ---
@@ -235,7 +236,7 @@ Start with soft migration:
 - browse/search/orientation can consider both old and new layouts during transition
 
 Future optional step:
-- targeted migration of clearly shared technical memory from `<kind>/<username>/...` into work-surface paths
+- targeted migration of clearly shared technical memory from `<kind>/<username>/...` into resource paths
 
 Avoid immediate full migration unless clear value emerges.
 
@@ -255,16 +256,16 @@ Avoid immediate full migration unless clear value emerges.
 
 ### Phase 2: MemFS routing
 4. Implement scope-aware path derivation in MemFS
-5. Add support for `pair/work_surfaces/<slug>/...`
-6. Add tests for work-surface, human, conversation, and shared routing
+5. Add support for `code/resources/<slug>/...`
+6. Add tests for resource, human, conversation, and shared routing
 
 ### Phase 3: Scaffold support
-7. Implement or extend work-surface scaffold creation
+7. Implement or extend resource scaffold creation
 8. Verify standard internal layout
 
 ### Phase 4: Retrieval/orientation
-9. Update work-surface orientation to prefer new canonical paths
-10. Update retrieval logic to favor work-surface memory for technical tasks
+9. Update resource orientation to prefer new canonical paths
+10. Update retrieval logic to favor resource memory for technical tasks
 
 ### Phase 5: Cleanup and compatibility
 11. Align docs and remove stale references
@@ -277,10 +278,10 @@ Avoid immediate full migration unless clear value emerges.
 These should be resolved during implementation:
 
 1. Should `scope` be optional with inference, or required for direct write callers?
-2. Should `overview.md` be written only through dedicated scaffold/orientation flows, or also allowed via generic write-entry with `work_surface_section: overview`?
-3. How should work-surface inference be represented in provenance when the caller did not specify it explicitly?
-4. Do we want a dedicated top-level memory tool for work-surface writes later, or should generic `memory_write_entry` remain the only writer?
-5. How aggressively should retrieval prefer work-surface memory over legacy role-local paths during transition?
+2. Should `overview.md` be written only through dedicated scaffold/orientation flows, or also allowed via generic write-entry with `resource_section: overview`?
+3. How should resource inference be represented in provenance when the caller did not specify it explicitly?
+4. Do we want a dedicated top-level memory tool for resource writes later, or should generic `memory_write_entry` remain the only writer?
+5. How aggressively should retrieval prefer resource memory over legacy role-local paths during transition?
 
 ---
 
@@ -289,8 +290,8 @@ These should be resolved during implementation:
 This ADR is implemented successfully when:
 
 - semantic memory no longer defaults to username-based routing for shared technical content
-- work-surface memory has a stable first-class on-disk shape
+- resource memory has a stable first-class on-disk shape
 - `plan` is absent from semantic memory kind validation and docs
 - Bear/human provenance is preserved without driving default path namespace
-- technical memory retrieval can orient through work-surface paths
+- technical memory retrieval can orient through resource paths
 - legacy memory remains accessible during transition
