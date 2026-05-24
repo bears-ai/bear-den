@@ -306,17 +306,12 @@ pub(crate) async fn handle_search_files(
     let mut files = Vec::new();
     let mut file_collection_truncated = false;
     let mut skipped_by_filter = 0usize;
-    collect_search_files(
-        context,
-        &path,
-        &path,
-        include_hidden,
-        &filters,
-        5_000,
-        &mut file_collection_truncated,
-        &mut skipped_by_filter,
-        &mut files,
-    )?;
+    let mut state = SearchFilesState {
+        truncated: &mut file_collection_truncated,
+        skipped_by_filter: &mut skipped_by_filter,
+        out: &mut files,
+    };
+    collect_search_files(context, &path, &path, include_hidden, &filters, 5_000, &mut state)?;
     files.sort();
 
     let mut matches = Vec::new();
@@ -1663,7 +1658,7 @@ fn collect_search_files(
     max_files: usize,
     state: &mut SearchFilesState<'_>,
 ) -> Result<()> {
-    if *truncated {
+    if *state.truncated {
         return Ok(());
     }
     if !include_hidden && is_hidden_path_component(path, root) {
@@ -1673,13 +1668,13 @@ fn collect_search_files(
     let metadata = fs::metadata(path).with_context(|| format!("stat {}", path.display()))?;
     if metadata.is_file() {
         if !search_file_passes_filters(root, path, filters) {
-            *skipped_by_filter += 1;
+            *state.skipped_by_filter += 1;
             return Ok(());
         }
-        if out.len() >= max_files {
-            *truncated = true;
+        if state.out.len() >= max_files {
+            *state.truncated = true;
         } else {
-            out.push(path.to_path_buf());
+            state.out.push(path.to_path_buf());
         }
         return Ok(());
     }
@@ -1697,11 +1692,9 @@ fn collect_search_files(
             include_hidden,
             filters,
             max_files,
-            truncated,
-            skipped_by_filter,
-            out,
+            state,
         )?;
-        if *truncated {
+        if *state.truncated {
             break;
         }
     }

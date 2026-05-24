@@ -6,7 +6,7 @@ use crate::{
 };
 use anyhow::{anyhow, Context, Result};
 use serde_json::{json, Value};
-use std::{collections::HashMap, process::Stdio, time::Duration};
+use std::{collections::HashMap, fmt, process::Stdio, time::Duration};
 use tokio::{io::AsyncReadExt, process::Command};
 
 pub(crate) async fn handle_process_run(
@@ -102,18 +102,17 @@ pub(crate) async fn handle_process_run(
                 .unwrap_or_else(|err| Err(anyhow!("stderr task failed: {err}")))?;
             let stdout_text = String::from_utf8_lossy(&stdout_result.bytes).to_string();
             let stderr_text = String::from_utf8_lossy(&stderr_result.bytes).to_string();
-            let content = process_result_content(
-                command,
-                &command_args,
-                &cwd.to_string_lossy(),
-                None,
-                true,
-                started.elapsed().as_millis(),
-                &stdout_text,
-                &stderr_text,
-                stdout_result.truncated || stderr_result.truncated,
-                Some(timeout_ms),
-            );
+            let result = ProcessResult {
+                exit_code: None,
+                timed_out: true,
+                elapsed_ms: started.elapsed().as_millis(),
+                stdout: &stdout_text,
+                stderr: &stderr_text,
+                truncated: stdout_result.truncated || stderr_result.truncated,
+                timeout_ms: Some(timeout_ms),
+            };
+            let content =
+                process_result_content(command, &command_args, &cwd.to_string_lossy(), &result);
             return Ok(json!({
                 "ok": false,
                 "command": command,
@@ -143,26 +142,23 @@ pub(crate) async fn handle_process_run(
     let stderr_text = String::from_utf8_lossy(&stderr_result.bytes).to_string();
     let exit_code = status.code();
     let ok = status.success();
-    let content = process_result_content(
-        command,
-        &command_args,
-        &cwd.to_string_lossy(),
-        exit_code.map(|code| code as i64),
-        false,
-        started.elapsed().as_millis(),
-        &stdout_text,
-        &stderr_text,
-        stdout_result.truncated || stderr_result.truncated,
-        None,
-    );
+    let result = ProcessResult {
+        exit_code: exit_code.map(|code| code as i64),
+        timed_out: false,
+        elapsed_ms: started.elapsed().as_millis(),
+        stdout: &stdout_text,
+        stderr: &stderr_text,
+        truncated: stdout_result.truncated || stderr_result.truncated,
+        timeout_ms: None,
+    };
+    let content = process_result_content(command, &command_args, &cwd.to_string_lossy(), &result);
     eprintln!(
-        "bears-acp-adapter: process_run session_id={} command={} args={} cwd={} exit_code={:?} timed_out={} duration_ms={}",
+        "bears-acp-adapter: process_run session_id={} command={} args={} cwd={} exit_code={:?} timed_out=false duration_ms={}",
         session_id,
         command,
         command_args.len(),
         cwd.display(),
         exit_code,
-        false,
         started.elapsed().as_millis(),
     );
     Ok(json!({
@@ -196,34 +192,50 @@ fn output_excerpt(raw: &str, max_chars: usize) -> String {
     }
 }
 
-fn process_result_content(
-    command: &str,
-    args: &[String],
-    cwd: &str,
+struct ProcessResult<'a> {
     exit_code: Option<i64>,
     timed_out: bool,
     elapsed_ms: u128,
-    stdout: &str,
-    stderr: &str,
+    stdout: &'a str,
+    stderr: &'a str,
     truncated: bool,
     timeout_ms: Option<u64>,
-) -> String {
-    let status = if timed_out {
-        "timed out".to_string()
-    } else if let Some(code) = exit_code {
-        format!("exit_code={code}")
-    } else {
-        "unknown status".to_string()
-    };
-    let timeout_line = timeout_ms
-        .map(|timeout| format!("timeout_ms: {timeout}\n"))
-        .unwrap_or_default();
+}
+
+impl fmt::Display for ProcessResult<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let status = if self.timed_out {
+            "timed out".to_string()
+        } else if let Some(code) = self.exit_code {
+            format!("exit_code={code}")
+        } else {
+            "unknown status".to_string()
+        };
+        let timeout_line = self
+            .timeout_ms
+            .map(|timeout| format!("timeout_ms: {timeout}\n"))
+            .unwrap_or_default();
+        write!(
+            f,
+            "status: {status}\n{timeout_line}elapsed_ms: {}\ntruncated: {}\n\nSTDOUT:\n{}\n\nSTDERR:\n{}",
+            self.elapsed_ms,
+            self.truncated,
+            output_excerpt(self.stdout, 16 * 1024),
+            output_excerpt(self.stderr, 16 * 1024),
+        )
+    }
+}
+
+fn process_result_content(command: &str, args: &[String], cwd: &str, result: &ProcessResult<'_>) -> String {
     format!(
-        "Process command: {}{}\ncwd: {cwd}\nstatus: {status}\n{timeout_line}elapsed_ms: {elapsed_ms}\ntruncated: {truncated}\n\nSTDOUT:\n{}\n\nSTDERR:\n{}",
+        "Process command: {}{}\ncwd: {cwd}\n{}",
         command,
-        if args.is_empty() { String::new() } else { format!(" {}", args.join(" ")) },
-        output_excerpt(stdout, 16 * 1024),
-        output_excerpt(stderr, 16 * 1024),
+        if args.is_empty() {
+            String::new()
+        } else {
+            format!(" {}", args.join(" "))
+        },
+        result,
     )
 }
 
@@ -301,7 +313,7 @@ fn validate_command(command: &str) -> Result<()> {
         ));
     }
     let denied = ["sudo", "su", "rm", "shutdown", "reboot"];
-    if denied.iter().any(|denied| *denied == command) {
+    if denied.contains(&command) {
         return Err(anyhow!(
             "process_run command {command:?} is denied by adapter policy"
         ));

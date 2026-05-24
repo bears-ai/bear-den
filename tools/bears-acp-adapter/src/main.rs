@@ -24,7 +24,8 @@ use anyhow::{anyhow, bail, Context, Result};
 
 use approvals::{
     approval_url_host_scope, parse_permission_decision, permission_class_for_tool,
-    permission_options_for_context, ApprovalCache, ApprovalScope, PermissionDecision,
+    permission_options_for_context, ApprovalCache, ApprovalScope, ApprovalTarget,
+    PermissionDecision,
 };
 use axum::{extract::State, response::IntoResponse};
 use futures_util::StreamExt;
@@ -2146,7 +2147,7 @@ async fn handle_request(
                     http,
                     config,
                     adapter_state,
-                    &shared_state,
+                    shared_state,
                     &request.params,
                 )
                 .await
@@ -2188,7 +2189,7 @@ async fn handle_request(
                     http,
                     config,
                     adapter_state,
-                    &shared_state,
+                    shared_state,
                     id.clone(),
                     &request.params,
                 )
@@ -2293,7 +2294,7 @@ async fn handle_request(
                 let turn_token = Uuid::new_v4();
                 let conversation_id_for_turn = prompt_conversation_id_from_params(&request.params);
                 let previous = register_prompt_turn_for_session(
-                    &shared_state,
+                    shared_state,
                     &session_id,
                     turn_token,
                     conversation_id_for_turn.clone(),
@@ -2381,7 +2382,7 @@ async fn handle_request(
                 }
                 return Ok(());
             };
-            match handle_session_close(http, config, &shared_state, request.params).await {
+            match handle_session_close(http, config, shared_state, request.params).await {
                 Ok(()) => {
                     if let Some(id) = id {
                         write_response(id, Ok(serde_json::to_value(CloseSessionResponse::new())?))
@@ -2426,7 +2427,7 @@ async fn handle_request(
                 }
                 return Ok(());
             };
-            match handle_session_cancel(http, config, &shared_state, request.params).await {
+            match handle_session_cancel(http, config, shared_state, request.params).await {
                 Ok(()) => {
                     if let Some(id) = id {
                         write_response(id, Ok(serde_json::to_value(CloseSessionResponse::new())?))
@@ -4228,10 +4229,12 @@ async fn handle_prompt(
         config,
         adapter_state,
         shared_state,
-        response_id,
-        params,
-        turn_token,
-        true,
+        PromptRetryContext {
+            response_id,
+            params,
+            turn_token,
+            allow_recovery_retry: true,
+        },
     )
     .await;
     let mut active = shared_state.active_prompts.lock().await;
@@ -4244,16 +4247,26 @@ async fn handle_prompt(
     result
 }
 
+struct PromptRetryContext {
+    response_id: Value,
+    params: Value,
+    turn_token: Uuid,
+    allow_recovery_retry: bool,
+}
+
 async fn handle_prompt_with_retry(
     http: &reqwest::Client,
     config: &Config,
     adapter_state: &mut AdapterState,
     shared_state: &AdapterSharedState,
-    response_id: Value,
-    params: Value,
-    turn_token: Uuid,
-    allow_recovery_retry: bool,
+    retry: PromptRetryContext,
 ) -> Result<()> {
+    let PromptRetryContext {
+        response_id,
+        params,
+        turn_token,
+        allow_recovery_retry,
+    } = retry;
     let session_id = params
         .get("sessionId")
         .and_then(Value::as_str)
@@ -4535,10 +4548,12 @@ async fn handle_prompt_with_retry(
                     config,
                     adapter_state,
                     shared_state,
-                    response_id,
-                    params,
-                    turn_token,
-                    false,
+                    PromptRetryContext {
+                        response_id,
+                        params,
+                        turn_token,
+                        allow_recovery_retry: false,
+                    },
                 ))
                 .await;
             }
@@ -4733,7 +4748,7 @@ fn local_slash_available_commands() -> Vec<AvailableCommand> {
 fn local_slash_descriptor_for_name(name: &str) -> Option<&'static LocalSlashCommandDescriptor> {
     let normalized = name.trim().trim_start_matches('/');
     LOCAL_SLASH_COMMANDS.iter().find(|descriptor| {
-        descriptor.name == normalized || descriptor.aliases.iter().any(|alias| *alias == normalized)
+        descriptor.name == normalized || descriptor.aliases.contains(&normalized)
     })
 }
 
@@ -4746,7 +4761,7 @@ fn local_slash_descriptor_for_command(
 }
 
 fn parse_local_slash_command(prompt: &str) -> Option<LocalSlashCommand> {
-    let token = prompt.trim().split_whitespace().next()?;
+    let token = prompt.split_whitespace().next()?;
     let name = token.strip_prefix('/')?;
     local_slash_descriptor_for_name(name).map(|descriptor| descriptor.command)
 }
@@ -6454,11 +6469,13 @@ async fn handle_tool_request_event(
         session_id,
         tool_call_id,
         tool_name,
-        "pending",
-        &preparing,
-        Some(event),
-        None,
-        Vec::new(),
+        ToolCallUpdatePayload {
+            status: "pending",
+            text: &preparing,
+            event: Some(event),
+            raw_output: None,
+            extra_content: Vec::new(),
+        },
     )
     .await?;
     let args = event.get("args").cloned().unwrap_or_else(|| json!({}));
@@ -6525,29 +6542,33 @@ async fn handle_tool_request_event(
             session_id,
             tool_call_id,
             tool_name,
-            "pending",
-            &permission,
-            Some(event),
-            None,
-            replace_plan
-                .as_ref()
-                .map(|plan| vec![replace_text_diff_content(plan)])
-                .unwrap_or_default(),
+            ToolCallUpdatePayload {
+                status: "pending",
+                text: &permission,
+                event: Some(event),
+                raw_output: None,
+                extra_content: replace_plan
+                    .as_ref()
+                    .map(|plan| vec![replace_text_diff_content(plan)])
+                    .unwrap_or_default(),
+            },
         )
         .await?;
         let replace_plan_ref = replace_plan.as_ref();
         let permission_decision = request_tool_permission(
             adapter_state,
             session_id,
-            tool_call_id,
-            tool_name,
-            event,
-            replace_plan_ref,
-            &policy,
-            context_for_approval.as_ref(),
-            target_path_for_approval.as_deref(),
-            target_url_for_approval.as_deref(),
-            target_command_for_approval.as_deref(),
+            PermissionRequestContext {
+                tool_call_id,
+                tool_name,
+                event,
+                replace_plan: replace_plan_ref,
+                policy: &policy,
+                context: context_for_approval.as_ref(),
+                target_path: target_path_for_approval.as_deref(),
+                target_url: target_url_for_approval.as_deref(),
+                target_command: target_command_for_approval.as_deref(),
+            },
         )
         .await;
         if let Err(err) = permission_decision {
@@ -6620,9 +6641,11 @@ async fn handle_tool_request_event(
                         tool_name,
                         policy.risk(),
                         scope,
-                        target_path_for_approval.as_deref(),
-                        target_url_for_approval.as_deref(),
-                        target_command_for_approval.as_deref(),
+                        ApprovalTarget {
+                            path: target_path_for_approval.as_deref(),
+                            url: target_url_for_approval.as_deref(),
+                            command: target_command_for_approval.as_deref(),
+                        },
                     )
                     .await;
                 eprintln!(
@@ -6645,11 +6668,13 @@ async fn handle_tool_request_event(
         session_id,
         tool_call_id,
         tool_name,
-        "pending",
-        &running,
-        Some(event),
-        None,
-        Vec::new(),
+        ToolCallUpdatePayload {
+            status: "pending",
+            text: &running,
+            event: Some(event),
+            raw_output: None,
+            extra_content: Vec::new(),
+        },
     )
     .await?;
     let started = std::time::Instant::now();
@@ -6823,11 +6848,13 @@ async fn handle_tool_request_event(
                 session_id,
                 tool_call_id,
                 tool_name,
-                "completed",
-                &preview,
-                Some(event),
-                Some(raw_output),
-                extra_content,
+                ToolCallUpdatePayload {
+                    status: "completed",
+                    text: &preview,
+                    event: Some(event),
+                    raw_output: Some(raw_output),
+                    extra_content,
+                },
             )
             .await?;
         }
@@ -6856,11 +6883,13 @@ async fn handle_tool_request_event(
                 session_id,
                 tool_call_id,
                 tool_name,
-                "failed",
-                payload["content"].as_str().unwrap_or("Local tool failed"),
-                Some(event),
-                None,
-                Vec::new(),
+                ToolCallUpdatePayload {
+                    status: "failed",
+                    text: payload["content"].as_str().unwrap_or("Local tool failed"),
+                    event: Some(event),
+                    raw_output: None,
+                    extra_content: Vec::new(),
+                },
             )
             .await?;
         }
@@ -6895,15 +6924,17 @@ async fn handle_tool_request_event(
             session_id,
             tool_call_id,
             tool_name,
-            "failed",
-            &message,
-            Some(event),
-            Some(json!({
-                "component": "bears-acp-adapter",
-                "phase": "result_post_failed",
-                "error": format!("{err:#}"),
-            })),
-            Vec::new(),
+            ToolCallUpdatePayload {
+                status: "failed",
+                text: &message,
+                event: Some(event),
+                raw_output: Some(json!({
+                    "component": "bears-acp-adapter",
+                    "phase": "result_post_failed",
+                    "error": format!("{err:#}"),
+                })),
+                extra_content: Vec::new(),
+            },
         )
         .await;
         return Err(err);
@@ -7100,11 +7131,13 @@ async fn post_local_tool_error_result(
         session_id,
         tool_call_id,
         tool_name,
-        "failed",
-        payload["content"].as_str().unwrap_or("Local tool failed"),
-        Some(event),
-        None,
-        Vec::new(),
+        ToolCallUpdatePayload {
+            status: "failed",
+            text: payload["content"].as_str().unwrap_or("Local tool failed"),
+            event: Some(event),
+            raw_output: None,
+            extra_content: Vec::new(),
+        },
     )
     .await?;
     post_tool_result(config, session_id, tool_call_id, payload).await
@@ -7122,19 +7155,34 @@ fn merge_diagnostic(target: &mut Value, extra: Value) {
     }
 }
 
+struct PermissionRequestContext<'a> {
+    tool_call_id: &'a str,
+    tool_name: &'a str,
+    event: &'a Value,
+    replace_plan: Option<&'a ReplaceTextPlan>,
+    policy: &'a ToolPolicy,
+    context: Option<&'a SessionContext>,
+    target_path: Option<&'a Path>,
+    target_url: Option<&'a str>,
+    target_command: Option<&'a str>,
+}
+
 async fn request_tool_permission(
     adapter_state: &mut AdapterState,
     session_id: &str,
-    tool_call_id: &str,
-    tool_name: &str,
-    event: &Value,
-    replace_plan: Option<&ReplaceTextPlan>,
-    policy: &ToolPolicy,
-    context: Option<&SessionContext>,
-    target_path: Option<&Path>,
-    target_url: Option<&str>,
-    target_command: Option<&str>,
+    request_context: PermissionRequestContext<'_>,
 ) -> Result<PermissionDecision> {
+    let PermissionRequestContext {
+        tool_call_id,
+        tool_name,
+        event,
+        replace_plan,
+        policy,
+        context,
+        target_path,
+        target_url,
+        target_command,
+    } = request_context;
     let path = event
         .get("args")
         .and_then(|v| v.get("path"))
@@ -7620,7 +7668,7 @@ async fn handle_permission_request_event(
         .kind(Some(display.kind))
         .status(Some(ToolCallStatus::Pending))
         .title(Some(title.to_string()))
-        .content(Some(content.drain(..).collect()))
+        .content(Some(std::mem::take(&mut content)))
         .raw_input(Some(target.clone()));
     let tool_call = ToolCallUpdate::new(tool_call_id.to_string(), fields).meta(Some({
         let mut meta = serde_json::Map::new();
@@ -7702,16 +7750,18 @@ async fn handle_permission_request_event(
                     session_id,
                     tool_call_id,
                     tool_name,
-                    "failed",
-                    &message,
-                    Some(event),
-                    Some(json!({
-                        "component": "bears-acp-adapter",
-                        "phase": "permission_request_failed",
-                        "permission_id": permission_id,
-                        "error": format!("{err:#}"),
-                    })),
-                    Vec::new(),
+                    ToolCallUpdatePayload {
+                        status: "failed",
+                        text: &message,
+                        event: Some(event),
+                        raw_output: Some(json!({
+                            "component": "bears-acp-adapter",
+                            "phase": "permission_request_failed",
+                            "permission_id": permission_id,
+                            "error": format!("{err:#}"),
+                        })),
+                        extra_content: Vec::new(),
+                    },
                 )
                 .await;
                 return Ok(());
@@ -8372,16 +8422,27 @@ pub(crate) async fn send_terminal_tool_call_update(
     .await
 }
 
+struct ToolCallUpdatePayload<'a> {
+    status: &'a str,
+    text: &'a str,
+    event: Option<&'a Value>,
+    raw_output: Option<Value>,
+    extra_content: Vec<ToolCallContent>,
+}
+
 async fn send_tool_call_update(
     session_id: &str,
     tool_call_id: &str,
     tool_name: &str,
-    status: &str,
-    text: &str,
-    event: Option<&Value>,
-    raw_output: Option<Value>,
-    extra_content: Vec<ToolCallContent>,
+    payload: ToolCallUpdatePayload<'_>,
 ) -> Result<()> {
+    let ToolCallUpdatePayload {
+        status,
+        text,
+        event,
+        raw_output,
+        extra_content,
+    } = payload;
     let display = event
         .map(|event| ToolDisplay::from_event(tool_name, event))
         .unwrap_or_else(|| tool_display(tool_name));

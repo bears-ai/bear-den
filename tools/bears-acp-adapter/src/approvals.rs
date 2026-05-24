@@ -14,10 +14,10 @@ use std::{
 };
 use tokio::sync::Mutex as TokioMutex;
 
-struct ApprovalTarget<'a> {
-    path: Option<&'a Path>,
-    url: Option<&'a str>,
-    command: Option<&'a str>,
+pub(crate) struct ApprovalTarget<'a> {
+    pub(crate) path: Option<&'a Path>,
+    pub(crate) url: Option<&'a str>,
+    pub(crate) command: Option<&'a str>,
 }
 
 #[derive(Clone, Default)]
@@ -274,17 +274,21 @@ impl ApprovalCache {
         let candidate_keys = candidate_scopes
             .into_iter()
             .filter_map(|scope| {
-                approval_scope_fingerprint(context, scope, target_path, target_url, target_command)
-                    .map(|fingerprint| {
-                        Self::key(
-                            &persistence.api_url,
-                            &persistence.bear,
-                            &persistence.client,
-                            permission_class,
-                            scope.as_str(),
-                            &fingerprint,
-                        )
-                    })
+                let target = ApprovalTarget {
+                    path: target_path,
+                    url: target_url,
+                    command: target_command,
+                };
+                approval_scope_fingerprint(context, scope, &target).map(|fingerprint| {
+                    Self::key(
+                        &persistence.api_url,
+                        &persistence.bear,
+                        &persistence.client,
+                        permission_class,
+                        scope.as_str(),
+                        &fingerprint,
+                    )
+                })
             })
             .collect::<Vec<_>>();
         let now = now_secs();

@@ -6,7 +6,7 @@ use crate::{
 };
 use anyhow::{anyhow, Context};
 use serde_json::{json, Value};
-use std::time::Duration;
+use std::{fmt, time::Duration};
 
 pub(crate) fn command_line(command: &str, args: &[String]) -> String {
     if args.is_empty() {
@@ -28,34 +28,46 @@ fn output_excerpt(raw: &str, max_chars: usize) -> String {
     }
 }
 
-fn terminal_result_content(
-    command: &str,
-    args: &[String],
-    cwd: &str,
+struct TerminalResult<'a> {
     exit_code: Option<i64>,
-    signal: Option<&str>,
+    signal: Option<&'a str>,
     timed_out: bool,
     elapsed_ms: u128,
-    output: &str,
+    output: &'a str,
     truncated: bool,
     timeout_ms: Option<u64>,
-) -> String {
-    let status = if timed_out {
-        "timed out".to_string()
-    } else if let Some(code) = exit_code {
-        format!("exit_code={code}")
-    } else if let Some(signal) = signal {
-        format!("signal={signal}")
-    } else {
-        "unknown status".to_string()
-    };
-    let timeout_line = timeout_ms
-        .map(|timeout| format!("timeout_ms: {timeout}\n"))
-        .unwrap_or_default();
-    let output = output_excerpt(output, 32 * 1024);
+}
+
+impl fmt::Display for TerminalResult<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let status = if self.timed_out {
+            "timed out".to_string()
+        } else if let Some(code) = self.exit_code {
+            format!("exit_code={code}")
+        } else if let Some(signal) = self.signal {
+            format!("signal={signal}")
+        } else {
+            "unknown status".to_string()
+        };
+        let timeout_line = self
+            .timeout_ms
+            .map(|timeout| format!("timeout_ms: {timeout}\n"))
+            .unwrap_or_default();
+        let output = output_excerpt(self.output, 32 * 1024);
+        write!(
+            f,
+            "status: {status}\n{timeout_line}elapsed_ms: {}\ntruncated: {}\n\nOutput:\n{output}",
+            self.elapsed_ms,
+            self.truncated,
+        )
+    }
+}
+
+fn terminal_result_content(command: &str, args: &[String], cwd: &str, result: &TerminalResult<'_>) -> String {
     format!(
-        "Terminal command: {}\ncwd: {cwd}\nstatus: {status}\n{timeout_line}elapsed_ms: {elapsed_ms}\ntruncated: {truncated}\n\nOutput:\n{output}",
-        command_line(command, args)
+        "Terminal command: {}\ncwd: {cwd}\n{}",
+        command_line(command, args),
+        result,
     )
 }
 
@@ -181,18 +193,17 @@ pub(crate) async fn handle_terminal_run_command(
                 .get("truncated")
                 .and_then(Value::as_bool)
                 .unwrap_or(false);
-            let content = terminal_result_content(
-                command,
-                &command_args,
-                &cwd.to_string_lossy(),
-                None,
-                None,
-                true,
-                started.elapsed().as_millis(),
-                output_text,
+            let result = TerminalResult {
+                exit_code: None,
+                signal: None,
+                timed_out: true,
+                elapsed_ms: started.elapsed().as_millis(),
+                output: output_text,
                 truncated,
-                Some(timeout_ms),
-            );
+                timeout_ms: Some(timeout_ms),
+            };
+            let content =
+                terminal_result_content(command, &command_args, &cwd.to_string_lossy(), &result);
             return Ok(json!({
                 "ok": false,
                 "command": command,
@@ -220,18 +231,16 @@ pub(crate) async fn handle_terminal_run_command(
         .and_then(Value::as_bool)
         .unwrap_or(false);
     let output_text = output.get("output").and_then(Value::as_str).unwrap_or("");
-    let content = terminal_result_content(
-        command,
-        &command_args,
-        &cwd.to_string_lossy(),
+    let result = TerminalResult {
         exit_code,
-        signal.as_deref(),
-        false,
-        started.elapsed().as_millis(),
-        output_text,
+        signal: signal.as_deref(),
+        timed_out: false,
+        elapsed_ms: started.elapsed().as_millis(),
+        output: output_text,
         truncated,
-        None,
-    );
+        timeout_ms: None,
+    };
+    let content = terminal_result_content(command, &command_args, &cwd.to_string_lossy(), &result);
     Ok(json!({
         "ok": ok,
         "command": command,
@@ -373,7 +382,7 @@ fn validate_build_command(command: &str) -> Result<()> {
     let allowed = [
         "cargo", "npm", "pnpm", "yarn", "pytest", "python", "python3",
     ];
-    if !allowed.iter().any(|allowed| *allowed == command) {
+    if !allowed.contains(&command) {
         return Err(anyhow!(
             "terminal_run_command command {command:?} is not in the build/test allowlist"
         ));
@@ -420,7 +429,7 @@ fn validate_first_arg(args: &[String], allowed: &[&str]) -> Result<()> {
             "terminal_run_command requires a subcommand argument"
         ));
     };
-    if allowed.iter().any(|allowed| *allowed == first) {
+    if allowed.contains(&first) {
         Ok(())
     } else {
         Err(anyhow!(
