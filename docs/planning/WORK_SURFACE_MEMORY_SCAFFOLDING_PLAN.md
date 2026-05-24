@@ -18,6 +18,29 @@ The problem this plan addresses is simple: memory is Bear-scoped, but user quest
 
 ## Canonical memory topology
 
+### Pinned orientation entrypoint
+
+To make this topology reliably legible to agents that otherwise discover `pair/...` progressively and on demand, add a small pinned orientation file such as:
+
+```text
+system/memory-map.md
+```
+
+or:
+
+```text
+system/work-surfaces.md
+```
+
+That file should stay compact and explain:
+
+- the major memory regions and which are pinned versus progressive/on-demand,
+- where work-surface anchors live,
+- which files are the preferred starting points for local understanding,
+- and how role-local memory relates to shared `core/` orientation.
+
+Where supported, the pinned orientation file should link explicitly to canonical anchors with wiki-style links such as `[[core/work_surfaces/<work_surface_slug>/overview.md]]`.
+
 ### Bear-global shared anchors
 
 ```text
@@ -37,6 +60,8 @@ core/work_surfaces/<work_surface_slug>/architecture.md
 core/work_surfaces/<work_surface_slug>/decisions.md
 core/work_surfaces/<work_surface_slug>/conventions.md
 ```
+
+`overview.md` should be treated as the primary anchor for a work surface: compact, link-oriented, and suitable as the first file an agent reads before following deeper links.
 
 ### Role-local work-surface working memory
 
@@ -104,4 +129,6 @@ This plan succeeds when:
 - a Bear can represent multiple Workplaces and multiple work surfaces clearly,
 - agents can find local understanding through stable work-surface anchor paths,
 - prompt guidance teaches work-surface-first retrieval within the current Workplace,
+- a compact pinned orientation file points agents toward work-surface anchors rather than relying on lucky subtree discovery,
+- `overview.md` files serve as reliable first-read entrypoints for each work surface,
 - and future implementation slices can add scaffold creation and runtime hints without changing the conceptual model.
