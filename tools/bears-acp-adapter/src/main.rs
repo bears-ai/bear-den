@@ -6534,13 +6534,17 @@ fn tool_completion_preview(tool_name: &str, value: &Value) -> String {
         return text;
     }
 
+    if matches!(tool_name, "update_plan" | "request_work_handoff") {
+        return String::new();
+    }
+
     let content = value
         .get("content")
         .and_then(Value::as_str)
         .unwrap_or("")
         .trim();
     let mut text = if content.is_empty() {
-        "Completed.".to_string()
+        String::new()
     } else {
         content.to_string()
     };
@@ -9674,6 +9678,18 @@ data: {"type":"done","outcome":"empty_fallback","recovery_hint":"check_upstream_
         assert!(preview.contains("`cargo test --all`"));
         assert!(preview.contains("exit code 0"));
         assert!(!preview.contains("Local tool"));
+    }
+
+    #[test]
+    fn update_plan_completion_preview_is_suppressed() {
+        let value = json!({ "content": "Local tool update_plan completed." });
+        assert_eq!(tool_completion_preview("update_plan", &value), "");
+    }
+
+    #[test]
+    fn generic_empty_completion_preview_is_suppressed() {
+        let value = json!({ "content": "" });
+        assert_eq!(tool_completion_preview("fs_stat", &value), "");
     }
 
     #[test]
