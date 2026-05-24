@@ -200,6 +200,7 @@ fn fallback_session_context(session_id: &str, err: &anyhow::Error) -> SessionCon
         conversation_id: None,
         resolved_conversation_id: None,
         thread_title: None,
+        current_mode: Some("ask".to_string()),
     }
 }
 
