@@ -54,7 +54,7 @@ Build local Den/Codepool/Bifrost images, start/recreate the dev stack, seed, and
 - Bear-scoped records should use `bear_id`. Bear-specific knowledge areas are **Domains** under the Bear, not Cabinet Missions.
 - Cabinet **Missions** are shared work/knowledge containers with an n:n relationship to Bears. Use `mission_ref` only for Cabinet Missions.
 - `core/` is canonical shared Bear memory. Role branches (`talk/`, `pair/`, `curate/`, `work/`, `watch/`) are role-local memory.
-- Letta Archives are derived semantic retrieval indexes over canonical sources, not the source of truth. Do not introduce a BEARS vector store while Letta Archives satisfy retrieval needs.
+- Letta Archives are derived semantic retrieval indexes over canonical sources, not the source of truth. Do not introduce a Bear Den vector store while Letta Archives satisfy retrieval needs.
 
 ## Tool Naming
 

@@ -34,7 +34,7 @@ x-preflight-environment: &preflight-environment
     OPENAI_API_KEY: ${OPENAI_API_KEY:-SETME}
     DATABASE_URL: ${DATABASE_URL:-SETME}
     LETTA_PG_URI: ${LETTA_PG_URI:-SETME}
-    WEB_SERVER_URL: ${WEB_SERVER_URL:-${SERVICE_URL_BEARS_DEN:-SETME}}
+    WEB_SERVER_URL: ${WEB_SERVER_URL:-${SERVICE_URL_DEN:-SETME}}
     LLM_API_URL: ${LLM_API_URL:-http://bears-bifrost:8080/v1}
     LETTA_BASE_URL: ${LETTA_BASE_URL:-http://bears-letta:8283}
     CODEPOOL_BASE_URL: ${CODEPOOL_BASE_URL:-http://bears-codepool:3030}
@@ -142,7 +142,7 @@ services:
             APP_PORT: ${BIFROST_APP_PORT:-8080}
             LOG_LEVEL: ${BIFROST_LOG_LEVEL:-info}
             LOG_STYLE: ${BIFROST_LOG_STYLE:-json}
-            BEARS_METADATA_PORT: ${BIFROST_METADATA_PORT:-8081}
+            DEN_METADATA_PORT: ${BIFROST_METADATA_PORT:-8081}
             OPENAI_API_KEY: ${OPENAI_API_KEY:-SETME}
         # `services/bifrost/Dockerfile` bakes config.json into the image. This avoids host bind-mount
         # path mismatches when Compose is driven from a devcontainer or remote Docker daemon.
@@ -334,7 +334,7 @@ services:
             API_PORT: ${DEN_API_PORT:-3001}
             APP_DISPLAY_NAME: ${APP_DISPLAY_NAME:-Bear Den}
             APP_SLUG: ${APP_SLUG:-bears-den}
-            WEB_SERVER_URL: ${WEB_SERVER_URL:-${SERVICE_URL_BEARS_DEN:-SETME}}
+            WEB_SERVER_URL: ${WEB_SERVER_URL:-${SERVICE_URL_DEN:-SETME}}
             API_SERVER_URL: ${API_SERVER_URL:-SETME}
             SESSION_COOKIE_DOMAIN: ${SESSION_COOKIE_DOMAIN:-}
             SESSION_COOKIE_SECURE: ${SESSION_COOKIE_SECURE:-true}

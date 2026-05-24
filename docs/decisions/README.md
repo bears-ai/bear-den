@@ -1,6 +1,6 @@
 # Architecture Decision Records
 
-This directory is the canonical home for BEARS Architecture Decision Records (ADRs).
+This directory is the canonical home for Bear Den Architecture Decision Records (ADRs).
 
 Use ADRs for cross-cutting product and architecture decisions that are expected to remain useful after a single implementation phase. Use planning documents for sequencing, milestones, checklists, and active delivery plans. Use `docs/architecture/` for conceptual models, stable contracts, and system overviews. Use `docs/guides/` for human-oriented operational and contributor documentation.
 

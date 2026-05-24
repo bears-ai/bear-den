@@ -297,11 +297,9 @@ mod tests {
         assert!(pair_contract.contains(
             "When the user asks to make, create, draft, update, or track a plan or task list"
         ));
-        assert!(pair_contract.contains(
-            "prefer planning-state tools when the current runtime makes them available"
-        ));
-        assert!(pair_contract.contains(
-            "Do not write active plans or ephemeral progress to durable memory"
-        ));
+        assert!(pair_contract
+            .contains("prefer planning-state tools when the current runtime makes them available"));
+        assert!(pair_contract
+            .contains("Do not write active plans or ephemeral progress to durable memory"));
     }
 }

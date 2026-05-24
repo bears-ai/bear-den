@@ -6,7 +6,7 @@
 
 ## Context
 
-BEARS supports ACP as the pair-programming channel into Zed and other ACP clients. The `bears-acp-adapter` can run in more than one place:
+Bear Den supports ACP as the pair-programming channel into Zed and other ACP clients. The `bears-acp-adapter` can run in more than one place:
 
 - On the **developer host**, where browser applications such as Chrome are installed and where non-container ACP clients can connect.
 - Inside a **dev container**, where workspace filesystem and command execution should remain container-scoped.
@@ -23,7 +23,7 @@ A tempting answer is to expose the host-installed ACP adapter to the container a
 
 At the same time, we want installation and operation to stay simple. We want a **single host-installed binary** that can serve as:
 
-1. the normal BEARS ACP adapter for host-side ACP clients, and
+1. the normal Bear Den ACP adapter for host-side ACP clients, and
 2. a host-local browser bridge for container-side adapters.
 
 ## Decision
@@ -44,7 +44,7 @@ The container adapter will treat the host bridge as an MCP server source, not as
 
 ## Scope of the bridge
 
-The host bridge may expose tools equivalent to the current BEARS browser tools:
+The host bridge may expose tools equivalent to the current Bear Den browser tools:
 
 - open/navigate a page
 - capture accessibility/page snapshot
@@ -128,27 +128,27 @@ Authorization: Bearer <token>
 Configuration examples:
 
 ```/dev/null/host-bridge-env.txt#L1-2
-BEARS_BROWSER_BRIDGE_TOKEN=<random-token>
+DEN_BROWSER_BRIDGE_TOKEN=<random-token>
 bears-acp-adapter browser-bridge --listen 127.0.0.1:9277
 ```
 
 ```/dev/null/container-adapter-env.txt#L1-2
-BEARS_HOST_BROWSER_MCP_URL=http://host.docker.internal:9277/mcp
-BEARS_HOST_BROWSER_MCP_TOKEN=<same-token>
+DEN_HOST_BROWSER_MCP_URL=http://host.docker.internal:9277/mcp
+DEN_HOST_BROWSER_MCP_TOKEN=<same-token>
 ```
 
 Binding to `127.0.0.1` is preferred. Docker Desktop host reachability should be tested; if `host.docker.internal` cannot reach a loopback-bound service, operators may bind to a Docker-facing interface only when token auth is enabled and the exposure is understood. Binding broadly to `0.0.0.0` should not be the default.
 
 ## Tool preference order
 
-The pair ACP tool surface should prefer client-local tools over BEARS fallbacks:
+The pair ACP tool surface should prefer client-local tools over Bear Den fallbacks:
 
 1. Zed/client-forwarded MCP tools discovered from `mcpServers`.
-2. Configured BEARS host browser MCP bridge tools.
-3. BEARS built-in local Chrome/CDP fallback tools.
+2. Configured Bear Den host browser MCP bridge tools.
+3. Bear Den built-in local Chrome/CDP fallback tools.
 4. No browser tools.
 
-When client-forwarded MCP browser tools are discovered, built-in BEARS browser tools should be treated as fallbacks and not advertised to the model. When no client MCP browser tools are discovered, the host browser MCP bridge may provide the browser fallback.
+When client-forwarded MCP browser tools are discovered, built-in Bear Den browser tools should be treated as fallbacks and not advertised to the model. When no client MCP browser tools are discovered, the host browser MCP bridge may provide the browser fallback.
 
 ## Container-to-host security boundary
 
@@ -164,7 +164,7 @@ Defense in depth:
 
 ## Relationship to ACP MCP forwarding and MCP-over-ACP
 
-This decision complements Zed-forwarded `mcpServers`; it does not replace them. If Zed forwards a client MCP server and BEARS can discover tools from it, those tools remain the preferred client-local surface.
+This decision complements Zed-forwarded `mcpServers`; it does not replace them. If Zed forwards a client MCP server and Bear Den can discover tools from it, those tools remain the preferred client-local surface.
 
 The ACP MCP-over-ACP RFD may eventually provide a cleaner way for clients or proxies to expose MCP servers over the existing ACP connection. Until that stabilizes, the host browser bridge uses ordinary MCP transport, preferably Streamable HTTP. The adapter should retain comments and structure that make a future `type: "acp"` transport source easy to add.
 
@@ -176,7 +176,7 @@ The ACP MCP-over-ACP RFD may eventually provide a cleaner way for clients or pro
 - Operators can start the bridge manually when needed; no launch-on-login requirement.
 - Host installation remains a single binary.
 - The host boundary is narrow and auditable.
-- The bridge uses MCP’s existing discovery/call/schema model instead of a BEARS-only tool protocol.
+- The bridge uses MCP’s existing discovery/call/schema model instead of a Bear Den-only tool protocol.
 - The design generalizes to other host-local browser clients without granting arbitrary host access.
 
 ### Negative / Tradeoffs
@@ -193,7 +193,7 @@ The ACP MCP-over-ACP RFD may eventually provide a cleaner way for clients or pro
 
 The container adapter could connect to a host-installed full ACP adapter and request browser operations through ACP. Rejected because a full ACP connection is too broad: it risks exposing host filesystem, process execution, host credentials, host MCP servers, and arbitrary ACP prompt/session behavior to the container adapter.
 
-### BEARS-only host browser HTTP API
+### Den-only host browser HTTP API
 
 A custom `/chrome/open`, `/chrome/snapshot`, etc. HTTP API would be simple and fast to implement. Rejected as the preferred long-term direction because MCP already provides tool discovery, schemas, calls, and errors. A custom API can remain a fallback if MCP HTTP support proves too costly.
 
@@ -207,10 +207,10 @@ A macOS `launchd` service could keep a debug Chrome profile available. Rejected 
 
 ## Open questions
 
-1. Should the host bridge wrap `chrome-devtools-mcp`, reuse BEARS’ existing CDP implementation, or implement a small MCP server directly?
+1. Should the host bridge wrap `chrome-devtools-mcp`, reuse Den’s existing CDP implementation, or implement a small MCP server directly?
 2. Should arbitrary JavaScript evaluation be excluded, separately approved, or never exposed through the bridge?
 3. What exact bind-address defaults work best across macOS Docker Desktop, Linux Docker, and remote SSH/container environments?
-4. Should the token be supplied manually, generated into a file, or derived from existing BEARS/Den credentials?
+4. Should the token be supplied manually, generated into a file, or derived from existing Den credentials?
 5. How should screenshot/image content be represented through Den/Letta and ACP UI surfaces?
 6. Should the host bridge be usable by non-container ACP adapters as a browser MCP source, or is it only for container fallback?
 7. Should bridge health and active tool source appear in `/doctor`, `/capabilities`, and `/runtime` slash commands?
@@ -221,5 +221,5 @@ A macOS `launchd` service could keep a debug Chrome profile available. Rejected 
 - ACP MCP-over-ACP RFD: <https://agentclientprotocol.com/rfds/mcp-over-acp>
 - Zed external agents configuration boundaries: <https://zed.dev/docs/ai/external-agents#configuration-boundaries>
 - Zed MCP docs: <https://zed.dev/docs/ai/mcp>
-- BEARS MCP services ADR: `docs/architecture/adr/mcp-services.md`
+- Bear Den MCP services ADR: `docs/architecture/adr/mcp-services.md`
 - Pair tool discovery and scope orientation ADR: `docs/architecture/adr/pair-tool-discovery-and-scope-orientation.md`

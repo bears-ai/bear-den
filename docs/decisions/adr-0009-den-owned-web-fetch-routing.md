@@ -102,7 +102,7 @@ localhost
 A deployment may configure local hosts with an environment variable such as:
 
 ```text
-BEARS_LOCAL_WEB_HOSTS=localhost,127.0.0.1,::1
+DEN_LOCAL_WEB_HOSTS=localhost,127.0.0.1,::1
 ```
 
 Den and the adapter should both validate local host policy as defense in depth.

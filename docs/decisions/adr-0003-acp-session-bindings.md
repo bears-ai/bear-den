@@ -9,21 +9,21 @@
 
 ## Context
 
-BEARS exposes Agent Client Protocol (ACP) to coding clients through a local `bears-acp-adapter`. The adapter calls Den's ACP gateway, and Den routes the `pair` role through the direct Letta conversation API. Earlier ACP designs routed through Codepool `bear_channel`; that is historical context only for the `pair` role.
+Bear Den exposes Agent Client Protocol (ACP) to coding clients through a local `bears-acp-adapter`. The adapter calls Den's ACP gateway, and Den routes the `pair` role through the direct Letta conversation API. Earlier ACP designs routed through Codepool `bear_channel`; that is historical context only for the `pair` role.
 
-ACP sessions are protocol/client lifecycle objects. BEARS conversations are canonical Letta/BEARS conversation identities:
+ACP sessions are protocol/client lifecycle objects. Bear Den conversations are canonical Letta/Bear Den conversation identities:
 
 - `default` for a bear's main thread;
 - `conv-...` for saved Letta conversations;
 - temporary `new-...` ids until Den/Letta resolves them.
 
-A durable ACP session therefore needs a binding from ACP `sessionId` to Den's selected/resolved BEARS/Letta conversation id, without treating ACP session rows as the source of truth for chat history.
+A durable ACP session therefore needs a binding from ACP `sessionId` to Den's selected/resolved Bear Den/Letta conversation id, without treating ACP session rows as the source of truth for chat history.
 
 ---
 
 ## Decision
 
-BEARS will model ACP sessions as **session bindings**, not canonical conversations.
+Bear Den will model ACP sessions as **session bindings**, not canonical conversations.
 
 Den may persist ACP session rows containing routing and lifecycle metadata, including:
 
@@ -36,7 +36,7 @@ Den may persist ACP session rows containing routing and lifecycle metadata, incl
 - resolved `conv-...` id when available;
 - closed/archive timestamps.
 
-Canonical conversation listing, history, search, memory, and archive behavior remain based on BEARS/Letta conversations, not ACP session rows.
+Canonical conversation listing, history, search, memory, and archive behavior remain based on Bear Den/Letta conversations, not ACP session rows.
 
 ### Filesystem context
 
@@ -54,7 +54,7 @@ Pagination uses opaque keyset cursors over `(updated_at, id)` in descending orde
 
 `session/resume` restores adapter routing context without replaying history.
 
-`session/load` replays all historical events BEARS can faithfully reconstruct. The current implementation replays user/assistant text messages only. Tool calls/results, reasoning/status chunks, errors, resource/image/audio content, and richer session configuration events are not claimed as reconstructable until Den/Letta expose faithful historical event data.
+`session/load` replays all historical events Bear Den can faithfully reconstruct. The current implementation replays user/assistant text messages only. Tool calls/results, reasoning/status chunks, errors, resource/image/audio content, and richer session configuration events are not claimed as reconstructable until Den/Letta expose faithful historical event data.
 
 ### Cancellation, close, and stuck Letta approvals
 
@@ -62,15 +62,15 @@ ACP `session/cancel` is plumbed through adapter -> Den where possible. `session/
 
 A stuck Letta approval on a bound `conv-*` is not safely fixed by silently rebinding the ACP session to a fresh conversation. The main value of retaining the ACP session is conversation continuity/history; replacing the bound conversation inside the same ACP session violates that expectation.
 
-When Letta reports stale approval state for a bound ACP session, BEARS should first attempt Letta conversation compaction on the same `conv-*` via `/v1/conversations/{conversation_id}/compact`. If compaction succeeds, the adapter may retry the prompt once against the same ACP session and conversation binding. If compaction fails or the retry still reports stale approval, BEARS should stop and ask the user to start a new ACP session rather than pretending the old session was repaired.
+When Letta reports stale approval state for a bound ACP session, Bear Den should first attempt Letta conversation compaction on the same `conv-*` via `/v1/conversations/{conversation_id}/compact`. If compaction succeeds, the adapter may retry the prompt once against the same ACP session and conversation binding. If compaction fails or the retry still reports stale approval, Bear Den should stop and ask the user to start a new ACP session rather than pretending the old session was repaired.
 
 This amends the earlier “unwedge” idea: cancellation of runs and cleanup of local in-memory tool turns may still be useful internal hygiene, but it is not a reliable user-facing recovery for malformed conversation approval state and should not be advertised as such.
 
 ### MCP server handling
 
-ACP-provided `mcpServers` are not supported by the BEARS local adapter today. Non-empty `mcpServers` are rejected with a clear unsupported-feature error. Empty/null values are tolerated. The adapter must not advertise HTTP/SSE MCP support until implemented.
+ACP-provided `mcpServers` are not supported by the Bear Den local adapter today. Non-empty `mcpServers` are rejected with a clear unsupported-feature error. Empty/null values are tolerated. The adapter must not advertise HTTP/SSE MCP support until implemented.
 
-If stdio MCP support is added later, the adapter process owns local MCP subprocess lifecycle. Den remains the policy and audit authority for BEARS tools, and local MCP credentials must not be persisted in Den.
+If stdio MCP support is added later, the adapter process owns local MCP subprocess lifecycle. Den remains the policy and audit authority for Bear Den tools, and local MCP credentials must not be persisted in Den.
 
 ### Auth policy
 

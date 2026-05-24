@@ -299,7 +299,7 @@ Execution:
 adapter
 ```
 
-Chrome tools assume a Chrome-family DevTools Protocol endpoint configured by `BEARS_CHROME_CDP_URL` or `BEARS_BROWSER_CDP_URL`.
+Chrome tools assume a Chrome-family DevTools Protocol endpoint configured by `DEN_CHROME_CDP_URL` or `DEN_BROWSER_CDP_URL`.
 
 ### Memory and situation tools
 

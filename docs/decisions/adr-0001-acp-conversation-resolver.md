@@ -8,11 +8,11 @@
 
 ## Context
 
-BEARS exposes Agent Client Protocol (ACP) through a local `bears-acp-adapter` and Den's HTTPS/SSE ACP gateway. Den authenticates the ACP Code token, authorizes access to a bear, resolves the bear's `pair` role Letta agent, persists ACP session bindings, and streams prompts to Letta.
+Bear Den exposes Agent Client Protocol (ACP) through a local `bears-acp-adapter` and Den's HTTPS/SSE ACP gateway. Den authenticates the ACP Code token, authorizes access to a bear, resolves the bear's `pair` role Letta agent, persists ACP session bindings, and streams prompts to Letta.
 
-ACP session setup can happen before Letta has a durable conversation id. The system therefore needs a temporary way to bind an ACP client session to an eventual Letta conversation. Historically this was represented with BEARS-local pending ids such as `new-acp-zed-...`.
+ACP session setup can happen before Letta has a durable conversation id. The system therefore needs a temporary way to bind an ACP client session to an eventual Letta conversation. Historically this was represented with Bear Den-local pending ids such as `new-acp-zed-...`.
 
-Letta conversation identifiers and BEARS-local placeholders are not the same namespace:
+Letta conversation identifiers and Bear Den-local placeholders are not the same namespace:
 
 | Value shape | Owner | Meaning | May be sent to Letta conversation path? |
 | --- | --- | --- | --- |
@@ -35,7 +35,7 @@ The resolver is responsible for converting client/session input plus persisted A
 
 The resolver must preserve this boundary:
 
-> BEARS-local pending identifiers are internal Den session-selection values and must never be sent as Letta conversation path identifiers.
+> Bear Den-local pending identifiers are internal Den session-selection values and must never be sent as Letta conversation path identifiers.
 
 ### Resolver inputs
 
