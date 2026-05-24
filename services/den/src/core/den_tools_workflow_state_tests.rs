@@ -196,7 +196,8 @@ fn memory_write_entry_semantics_reject_unlabeled_plan_task_result_and_observatio
             json!({
                 "kind": "note",
                 "title": "Observation",
-                "body": "Observed: API latency alert detected during telemetry review"
+                "body": "API latency alert detected during telemetry review",
+                "domain": "execution"
             }),
             "observation",
         ),

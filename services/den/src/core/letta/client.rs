@@ -2111,20 +2111,24 @@ mod tests {
 
     #[test]
     fn build_create_agent_body_merges_custom_tags_with_git_tag() {
+        let tool_ids = ["tool-1".to_string()];
+        let tags = [
+            "bear:00000000-0000-0000-0000-000000000123".to_string(),
+            "role:work".to_string(),
+            "git-memory-enabled".to_string(),
+            " ".to_string(),
+        ];
         let body = build_create_agent_body(
-            "Bear (work)",
-            "system",
-            Some("openai/gpt-4o"),
-            Some(128000),
-            Some("letta_v1_agent"),
-            &["tool-1".to_string()],
+            &LettaCreateAgentParams {
+                name: "Bear (work)",
+                system_prompt: "system",
+                model: Some("openai/gpt-4o"),
+                context_window: Some(128000),
+                agent_type: Some("letta_v1_agent"),
+                tool_ids: &tool_ids,
+                tags: &tags,
+            },
             true,
-            &[
-                "bear:00000000-0000-0000-0000-000000000123".to_string(),
-                "role:work".to_string(),
-                "git-memory-enabled".to_string(),
-                " ".to_string(),
-            ],
         );
 
         let tags = body
@@ -2146,15 +2150,19 @@ mod tests {
 
     #[test]
     fn build_create_agent_body_keeps_custom_tags_when_git_disabled() {
+        let tool_ids: [String; 0] = [];
+        let tags = ["role:pair".to_string()];
         let body = build_create_agent_body(
-            "Bear (pair)",
-            "system",
-            None,
-            None,
-            None,
-            &[],
+            &LettaCreateAgentParams {
+                name: "Bear (pair)",
+                system_prompt: "system",
+                model: None,
+                context_window: None,
+                agent_type: None,
+                tool_ids: &tool_ids,
+                tags: &tags,
+            },
             false,
-            &["role:pair".to_string()],
         );
         let tags = body
             .get("tags")

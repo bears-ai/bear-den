@@ -1310,14 +1310,17 @@ mod tests {
     async fn create_test_bear(pool: &sqlx::PgPool) -> Uuid {
         bears_db::create_bear(
             pool,
-            &format!("web-admin-{}", Uuid::new_v4()),
-            "Web Admin Test Bear",
-            "",
-            "System prompt",
-            None,
-            None::<Json<serde_json::Value>>,
-            None,
-            Json(Vec::new()),
+            BearParams {
+                slug: &format!("web-admin-{}", Uuid::new_v4()),
+                name: "Web Admin Test Bear",
+                description: "",
+                system_prompt: "System prompt",
+                default_model: None,
+                tools_enabled: None::<Json<serde_json::Value>>,
+                letta_agent_type: None,
+                letta_tool_ids: Json(Vec::new()),
+                context_profile: None,
+            },
         )
         .await
         .expect("create bear")
@@ -1484,17 +1487,19 @@ mod tests {
         .expect("record approval");
         web_policy::record_web_fetch_attempt(
             &pool,
-            bear_id,
-            Some("session-1"),
-            Some("tool-1"),
-            "https://example.com/",
-            None,
-            "example.com",
-            "den",
-            "user_host",
-            Some(200),
-            Some("text/html"),
-            Some(123),
+            web_policy::WebFetchAuditParams {
+                bear_id,
+                session_id: Some("session-1"),
+                tool_call_id: Some("tool-1"),
+                url: "https://example.com/",
+                final_url: None,
+                host: "example.com",
+                execution_location: "den",
+                approval_kind: "user_host",
+                http_status: Some(200),
+                content_type: Some("text/html"),
+                bytes: Some(123),
+            },
         )
         .await
         .expect("record fetch");

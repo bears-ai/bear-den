@@ -7935,12 +7935,12 @@ mod tests {
         assert!(!has_more);
         assert_eq!(next_before.as_deref(), Some("msg-human-scaffold"));
         assert_eq!(messages.len(), 3);
-        assert_eq!(messages[0].role, "assistant");
-        assert_eq!(messages[0].text, "Done.");
+        assert_eq!(messages[0].role, "user");
+        assert_eq!(messages[0].text, "Please only show the real user text.");
         assert_eq!(messages[1].role, "user");
         assert_eq!(messages[1].text, "Please check this thread.");
-        assert_eq!(messages[2].role, "user");
-        assert_eq!(messages[2].text, "Please only show the real user text.");
+        assert_eq!(messages[2].role, "assistant");
+        assert_eq!(messages[2].text, "Done.");
     }
 
     #[test]

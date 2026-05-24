@@ -13,7 +13,7 @@ use den::{
     config::Config,
     core::{
         acp_sessions, acp_tokens,
-        bears::{db as bears_db, BearAgentRole},
+        bears::{db as bears_db, db::BearParams, BearAgentRole},
         work_plans::{
             self, WorkPlanItem, WorkPlanItemStatus, WorkPlanStatus, WorkPlanUpdate, WorkPlanUpsert,
             WorkPlanVisibility,
@@ -259,14 +259,17 @@ async fn create_test_user_bear_with_pair(
 
     let bear_id = bears_db::create_bear(
         pool,
-        &bear_slug,
-        "ACP Test Bear",
-        "ACP integration test bear",
-        "",
-        None,
-        None,
-        None,
-        sqlx::types::Json(Vec::<String>::new()),
+        BearParams {
+            slug: &bear_slug,
+            name: "ACP Test Bear",
+            description: "ACP integration test bear",
+            system_prompt: "",
+            default_model: None,
+            tools_enabled: None,
+            letta_agent_type: None,
+            letta_tool_ids: sqlx::types::Json(Vec::<String>::new()),
+            context_profile: None,
+        },
     )
     .await
     .expect("create test bear");

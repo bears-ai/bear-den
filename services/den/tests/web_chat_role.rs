@@ -11,7 +11,7 @@ use axum::{
 use den::{
     config::Config,
     core::{
-        bears::{db as bears_db, BearAgentRole},
+        bears::{db as bears_db, db::BearParams, BearAgentRole},
         work_plans::{
             self, WorkPlanItem, WorkPlanItemStatus, WorkPlanStatus, WorkPlanUpdate, WorkPlanUpsert,
             WorkPlanVisibility,
@@ -151,14 +151,17 @@ async fn create_test_user_bear(pool: &sqlx::PgPool) -> TestUserBear {
 
     let bear_id = bears_db::create_bear(
         pool,
-        &bear_slug,
-        "Web Role Test Bear",
-        "Web chat talk-role integration test bear",
-        "",
-        None,
-        None,
-        None,
-        sqlx::types::Json(Vec::<String>::new()),
+        BearParams {
+            slug: &bear_slug,
+            name: "Web Role Test Bear",
+            description: "Web chat talk-role integration test bear",
+            system_prompt: "",
+            default_model: None,
+            tools_enabled: None,
+            letta_agent_type: None,
+            letta_tool_ids: sqlx::types::Json(Vec::<String>::new()),
+            context_profile: None,
+        },
     )
     .await
     .expect("create test bear");

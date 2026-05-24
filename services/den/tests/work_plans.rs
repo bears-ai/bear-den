@@ -3,7 +3,7 @@
 use den::{
     config::Config,
     core::{
-        bears::{db as bears_db, BearAgentRole},
+        bears::{db as bears_db, db::BearParams, BearAgentRole},
         den_tools::{self, DenToolInvocationContext, DEN_WORK_PLAN_LIST, DEN_WORK_PLAN_UPDATE},
         work_plans::{
             self, WorkPlanItem, WorkPlanItemStatus, WorkPlanListFilter, WorkPlanStatus,
@@ -47,14 +47,17 @@ async fn create_test_bear(pool: &sqlx::PgPool) -> Uuid {
     let suffix = Uuid::new_v4().simple().to_string();
     bears_db::create_bear(
         pool,
-        &format!("work-plan-test-{}", &suffix[..12]),
-        "Work Plan Test Bear",
-        "Work plan integration test bear",
-        "",
-        None,
-        None,
-        None,
-        sqlx::types::Json(Vec::<String>::new()),
+        BearParams {
+            slug: &format!("work-plan-test-{}", &suffix[..12]),
+            name: "Work Plan Test Bear",
+            description: "Work plan integration test bear",
+            system_prompt: "",
+            default_model: None,
+            tools_enabled: None,
+            letta_agent_type: None,
+            letta_tool_ids: sqlx::types::Json(Vec::<String>::new()),
+            context_profile: None,
+        },
     )
     .await
     .expect("create test bear")

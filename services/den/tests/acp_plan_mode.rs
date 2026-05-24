@@ -3,7 +3,7 @@
 use den::{
     core::{
         acp_plan_mode::{self, AcpPlanModeRequestedBy, EnterPlanModeParams, SubmitPlanModeParams},
-        bears::{db as bears_db, BearAgentRole},
+        bears::{db as bears_db, db::BearParams, BearAgentRole},
     },
     startup::run_sqlx_migrations,
 };
@@ -41,14 +41,17 @@ async fn create_test_bear(pool: &sqlx::PgPool) -> Uuid {
     let suffix = Uuid::new_v4().simple().to_string();
     bears_db::create_bear(
         pool,
-        &format!("plan-mode-test-{}", &suffix[..12]),
-        "Plan Mode Test Bear",
-        "ACP plan mode integration test bear",
-        "",
-        None,
-        None,
-        None,
-        sqlx::types::Json(Vec::<String>::new()),
+        BearParams {
+            slug: &format!("plan-mode-test-{}", &suffix[..12]),
+            name: "Plan Mode Test Bear",
+            description: "ACP plan mode integration test bear",
+            system_prompt: "",
+            default_model: None,
+            tools_enabled: None,
+            letta_agent_type: None,
+            letta_tool_ids: sqlx::types::Json(Vec::<String>::new()),
+            context_profile: None,
+        },
     )
     .await
     .expect("create test bear")
