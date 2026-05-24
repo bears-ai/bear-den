@@ -139,7 +139,7 @@ Avoid:
 
 ## Related docs
 
-- [Bears and Den](BEARS_AND_DEN.md)
+- [Bear Den and Den](BEARS_AND_DEN.md)
 - [Bear agent roles](BEAR_AGENT_ROLES.md)
 - [Memory model](MEMORY_MODEL.md)
 - [Reflection system](REFLECTION_SYSTEM.md)

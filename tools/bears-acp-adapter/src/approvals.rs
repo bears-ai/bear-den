@@ -14,6 +14,12 @@ use std::{
 };
 use tokio::sync::Mutex as TokioMutex;
 
+struct ApprovalTarget<'a> {
+    path: Option<&'a Path>,
+    url: Option<&'a str>,
+    command: Option<&'a str>,
+}
+
 #[derive(Clone, Default)]
 pub(crate) struct ApprovalCache {
     pub(crate) entries: Arc<TokioMutex<HashMap<String, ApprovalRecord>>>,
@@ -150,8 +156,18 @@ impl ApprovalCache {
         scope: ApprovalScope,
         target_path: Option<&Path>,
     ) {
-        self.remember_for_target(context, tool_name, risk, scope, target_path, None, None)
-            .await;
+        self.remember_for_target(
+            context,
+            tool_name,
+            risk,
+            scope,
+            ApprovalTarget {
+                path: target_path,
+                url: None,
+                command: None,
+            },
+        )
+        .await;
     }
 
     #[allow(dead_code)]
@@ -163,8 +179,18 @@ impl ApprovalCache {
         scope: ApprovalScope,
         target_url: Option<&str>,
     ) {
-        self.remember_for_target(context, tool_name, risk, scope, None, target_url, None)
-            .await;
+        self.remember_for_target(
+            context,
+            tool_name,
+            risk,
+            scope,
+            ApprovalTarget {
+                path: None,
+                url: target_url,
+                command: None,
+            },
+        )
+        .await;
     }
 
     pub(crate) async fn remember_for_target(
@@ -173,17 +199,13 @@ impl ApprovalCache {
         tool_name: &str,
         risk: &str,
         scope: ApprovalScope,
-        target_path: Option<&Path>,
-        target_url: Option<&str>,
-        target_command: Option<&str>,
+        target: ApprovalTarget<'_>,
     ) {
         let Some(persistence) = self.persistence.as_ref() else {
             return;
         };
         let root_fingerprint = approval_root_fingerprint(context);
-        let Some(scope_fingerprint) =
-            approval_scope_fingerprint(context, scope, target_path, target_url, target_command)
-        else {
+        let Some(scope_fingerprint) = approval_scope_fingerprint(context, scope, &target) else {
             return;
         };
         let now = now_secs();
@@ -372,17 +394,15 @@ pub(crate) fn approval_root_fingerprint(context: &SessionContext) -> String {
 fn approval_scope_fingerprint(
     context: &SessionContext,
     scope: ApprovalScope,
-    target_path: Option<&Path>,
-    target_url: Option<&str>,
-    target_command: Option<&str>,
+    target: &ApprovalTarget<'_>,
 ) -> Option<String> {
     match scope {
         ApprovalScope::Directory => {
-            approval_directory_scope(context, target_path).map(|path| path.display().to_string())
+            approval_directory_scope(context, target.path).map(|path| path.display().to_string())
         }
         ApprovalScope::Workspace => Some(approval_root_fingerprint(context)),
-        ApprovalScope::Host => target_url.and_then(approval_url_host_scope),
-        ApprovalScope::Command => target_command.map(normalize_command_scope),
+        ApprovalScope::Host => target.url.and_then(approval_url_host_scope),
+        ApprovalScope::Command => target.command.map(normalize_command_scope),
         ApprovalScope::Global => Some("global".to_string()),
     }
 }
@@ -431,7 +451,7 @@ pub(crate) fn approval_directory_scope(
         return None;
     }
     let directory = path.parent()?.to_path_buf();
-    if roots.iter().any(|root| directory == *root) {
+    if roots.contains(&directory) {
         return None;
     }
     Some(directory)

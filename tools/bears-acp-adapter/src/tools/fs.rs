@@ -224,18 +224,13 @@ pub(crate) async fn handle_find_paths(
     let mut visited = 0usize;
     let mut skipped_by_filter = 0usize;
     let mut truncated = false;
-    collect_find_paths(
-        context,
-        &root,
-        &root,
-        glob,
-        include_hidden,
-        limit,
-        &mut visited,
-        &mut skipped_by_filter,
-        &mut truncated,
-        &mut matches,
-    )?;
+    let mut state = FindPathsState {
+        visited: &mut visited,
+        skipped_by_filter: &mut skipped_by_filter,
+        truncated: &mut truncated,
+        out: &mut matches,
+    };
+    collect_find_paths(context, &root, &root, glob, include_hidden, limit, &mut state)?;
     matches.sort();
     let content = format_find_path_results(glob, &matches, truncated);
     eprintln!(
@@ -1588,6 +1583,13 @@ struct SearchFilters {
     extensions: Vec<String>,
 }
 
+struct FindPathsState<'a> {
+    visited: &'a mut usize,
+    skipped_by_filter: &'a mut usize,
+    truncated: &'a mut bool,
+    out: &'a mut Vec<PathBuf>,
+}
+
 fn collect_find_paths(
     context: &SessionContext,
     root: &Path,
@@ -1595,12 +1597,9 @@ fn collect_find_paths(
     glob: &str,
     include_hidden: bool,
     limit: usize,
-    visited: &mut usize,
-    skipped_by_filter: &mut usize,
-    truncated: &mut bool,
-    out: &mut Vec<PathBuf>,
+    state: &mut FindPathsState<'_>,
 ) -> Result<()> {
-    if *truncated {
+    if *state.truncated {
         return Ok(());
     }
     if !include_hidden && is_hidden_path_component(path, root) {
@@ -1609,20 +1608,20 @@ fn collect_find_paths(
     ensure_path_allowed_for_session(context, path)?;
     let metadata = fs::metadata(path).with_context(|| format!("stat {}", path.display()))?;
     if path != root {
-        *visited += 1;
+        *state.visited += 1;
         let relative = path
             .strip_prefix(root)
             .unwrap_or(path)
             .to_string_lossy()
             .replace('\\', "/");
         if glob_match(glob, &relative) {
-            if out.len() >= limit {
-                *truncated = true;
+            if state.out.len() >= limit {
+                *state.truncated = true;
                 return Ok(());
             }
-            out.push(path.to_path_buf());
+            state.out.push(path.to_path_buf());
         } else {
-            *skipped_by_filter += 1;
+            *state.skipped_by_filter += 1;
         }
     }
     if !metadata.is_dir() {
@@ -1640,16 +1639,19 @@ fn collect_find_paths(
             glob,
             include_hidden,
             limit,
-            visited,
-            skipped_by_filter,
-            truncated,
-            out,
+            state,
         )?;
-        if *truncated {
+        if *state.truncated {
             break;
         }
     }
     Ok(())
+}
+
+struct SearchFilesState<'a> {
+    truncated: &'a mut bool,
+    skipped_by_filter: &'a mut usize,
+    out: &'a mut Vec<PathBuf>,
 }
 
 fn collect_search_files(
@@ -1659,9 +1661,7 @@ fn collect_search_files(
     include_hidden: bool,
     filters: &SearchFilters,
     max_files: usize,
-    truncated: &mut bool,
-    skipped_by_filter: &mut usize,
-    out: &mut Vec<PathBuf>,
+    state: &mut SearchFilesState<'_>,
 ) -> Result<()> {
     if *truncated {
         return Ok(());

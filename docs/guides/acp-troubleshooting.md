@@ -1,6 +1,6 @@
 # ACP Troubleshooting Runbook
 
-This runbook covers the current BEARS ACP direct path:
+This runbook covers the current Bear Den ACP direct path:
 
 ```text
 Zed/OpenCode ⇄ bears-acp-adapter ⇄ Den ACP gateway ⇄ Letta conversation API
@@ -279,7 +279,7 @@ Do not confuse these layers:
 
 ```text
 Editor ⇄ adapter: ACP JSON-RPC over stdio
-Adapter ⇄ Den: BEARS-private HTTPS/SSE transport
+Adapter ⇄ Den: Den-private HTTPS/SSE transport
 Den ⇄ Letta: Letta REST/SSE
 ```
 

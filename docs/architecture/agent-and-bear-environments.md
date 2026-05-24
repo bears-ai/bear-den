@@ -176,7 +176,7 @@ The Bear is durable. The runtime is situated. The turn context is the immediate 
 
 ## Related docs
 
-- [Bears and Den](BEARS_AND_DEN.md)
+- [Bear Den and Den](BEARS_AND_DEN.md)
 - [Bear agent roles](BEAR_AGENT_ROLES.md)
 - [Capabilities and skills](CAPABILITIES_AND_SKILLS.md)
 - [Memory model](MEMORY_MODEL.md)

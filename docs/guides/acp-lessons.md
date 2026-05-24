@@ -1,6 +1,6 @@
 # Notes on ACP
 
-These notes capture lessons from implementing and testing BEARS' ACP adapter path. The current `pair` role ACP implementation is direct: local adapter ⇄ Den ⇄ Letta conversation API. Earlier Codepool/Letta Code relay lessons remain useful where noted, but new ACP work should not route pair-role tools through Codepool.
+These notes capture lessons from implementing and testing Bear Den's ACP adapter path. The current `pair` role ACP implementation is direct: local adapter ⇄ Den ⇄ Letta conversation API. Earlier Codepool/Letta Code relay lessons remain useful where noted, but new ACP work should not route pair-role tools through Codepool.
 
 ## 1. Keep ACP sessions separate from canonical conversations
 
@@ -11,12 +11,12 @@ Use ACP session records only as bindings between:
 - ACP `sessionId`;
 - client name, such as `zed`;
 - local workspace context, such as `cwd`;
-- authenticated BEARS user/bear;
-- canonical BEARS/Letta `conv-*` id, when one exists.
+- authenticated Bear Den user/bear;
+- canonical Bear Den/Letta `conv-*` id, when one exists.
 
 For the direct ACP `pair` role, new ACP sessions should create distinct Letta conversations with `POST /v1/conversations/?agent_id=...`, then send prompts to `POST /v1/conversations/{conv_id}/messages` with `streaming=true` and `stream_tokens=false`. Do not route new ACP sessions through agent-default endpoints; those can share conversation state.
 
-Conversation history, archive semantics, search, memory, and title generation should operate on canonical BEARS conversations, not on ACP session rows directly.
+Conversation history, archive semantics, search, memory, and title generation should operate on canonical Bear Den conversations, not on ACP session rows directly.
 
 A good name for this kind of table is `acp_session_bindings` or `client_session_bindings`, not a name that suggests it owns conversation history.
 
@@ -43,7 +43,7 @@ If these are not advertised, Zed may show messages about the agent not supportin
 
 ACP `session/close` means “cancel active work and free resources.” It does not necessarily mean “archive this conversation.”
 
-Mapping `session/close` to BEARS conversation archive can be useful, but it is a product choice and should be based on Zed's actual behavior.
+Mapping `session/close` to Bear Den conversation archive can be useful, but it is a product choice and should be based on Zed's actual behavior.
 
 `session/delete` is a better semantic fit for removing a session from a list, but at the time of this work it was still RFD-level rather than clearly stable.
 
@@ -56,24 +56,24 @@ Do **not** use `-32000` for generic prompt failures, upstream errors, malformed 
 Recommended pattern:
 
 - Use `-32000` only for genuinely missing/invalid adapter auth.
-- Use standard JSON-RPC codes or another `-320xx` value for generic BEARS failures.
+- Use standard JSON-RPC codes or another `-320xx` value for generic Den failures.
 - Include structured diagnostic data in `error.data` for request ids, component names, and remediation hints.
 
 ## 5. ACP auth methods can improve Zed UX
 
 Zed has an authentication UI for ACP. If an agent returns `-32000` without advertising useful `authMethods`, the UI can be confusing or empty.
 
-An env-var auth method is promising for BEARS Code tokens:
+An env-var auth method is promising for Den Code tokens:
 
 ```json
 {
-  "id": "bears_den_token",
-  "name": "BEARS Code Token",
+  "id": "den_token",
+  "name": "Den Code Token",
   "type": "env_var",
   "vars": [
     {
       "name": "DEN_TOKEN",
-      "label": "BEARS Code Token",
+      "label": "Den Code Token",
       "secret": true
     }
   ],
@@ -85,7 +85,7 @@ If using this, implement `authenticate` so it re-reads the environment/config an
 
 ## 6. Make token scopes visible and explicit
 
-For BEARS, a Den UI-created “Code token” should include both:
+For Bear Den, a Den UI-created “Code token” should include both:
 
 - `acp:chat`;
 - `acp:tools`.
@@ -276,7 +276,7 @@ Bad:
 Better:
 
 ```text
-The local editor tool acp_fs_read_text_file timed out before BEARS received a result. This is a tool delivery failure, not evidence that the requested file does not exist.
+The local editor tool acp_fs_read_text_file timed out before Bear Den received a result. This is a tool delivery failure, not evidence that the requested file does not exist.
 ```
 
 This keeps the model from confidently concluding that a file is missing when the infrastructure path failed.
@@ -295,7 +295,7 @@ For a new non-Letta-Code ACP implementation, still keep this lesson: when a runt
 
 Healthy ACP logs should look like ordinary ACP.
 
-BEARS internals such as Den, Codepool, bearer scopes, and internal request ids should not pollute normal protocol content. But when something fails, structured diagnostic metadata is useful:
+Bear Den internals such as Den, Codepool, bearer scopes, and internal request ids should not pollute normal protocol content. But when something fails, structured diagnostic metadata is useful:
 
 - `request_id`;
 - `call_id`;
@@ -335,7 +335,7 @@ The fewer translation layers between the model's tool call and the ACP client me
 
 A waiter system is easiest to reason about when one component owns live waiters.
 
-For BEARS, the most reliable shape is:
+For Bear Den, the most reliable shape is:
 
 - the runtime that is blocked waiting for the tool result owns the waiter;
 - other components authenticate, route, validate shape, and forward;
@@ -430,8 +430,8 @@ These metrics make it possible to distinguish model/tool behavior from protocol 
 
 ## 26. Recovery approval denials must not read like durable policy
 
-Letta stale-approval recovery may require BEARS to submit an explicit approval denial for an expired/orphaned tool call. That denial becomes part of the model-visible conversation state, so its reason must be phrased as runtime recovery, not as a current user or web policy decision.
+Letta stale-approval recovery may require Bear Den to submit an explicit approval denial for an expired/orphaned tool call. That denial becomes part of the model-visible conversation state, so its reason must be phrased as runtime recovery, not as a current user or web policy decision.
 
-Avoid reason strings like “Denied by BEARS manual ACP recovery command”. Models can reasonably interpret those as durable tool policy and refuse future `web_fetch` attempts even when Den `/status` reports no pending permissions and no active turn.
+Avoid reason strings like “Denied by Bear Den manual ACP recovery command”. Models can reasonably interpret those as durable tool policy and refuse future `web_fetch` attempts even when Den `/status` reports no pending permissions and no active turn.
 
 Use wording that says the denial applies only to the stale request, is not a user/web policy block, and that the model should retry the tool if it is still needed. If an existing session already contains the old wording, Den may be idle and healthy while the Letta transcript remains semantically poisoned; a fresh ACP session or explicit retry instruction may be needed for that historical conversation.

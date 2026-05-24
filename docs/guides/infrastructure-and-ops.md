@@ -5,7 +5,7 @@
 **This project** builds as **one Rust binary** (crate name defaults to **`newapp`**). At runtime you enable:
 
 - **Web** — `RUN_WEB=true` (port from `PORT`, default `3000`)
-- **API** — `RUN_API=true` (port from `API_PORT`, default `3001`); in the BEARS stack this hosts the API-only ACP gateway and must have a public origin reachable by adapters (for example `api.bears.[domain]`, another hostname, or a published port on the web host)
+- **API** — `RUN_API=true` (port from `API_PORT`, default `3001`); in the Bear Den stack this hosts the API-only ACP gateway and must have a public origin reachable by adapters (for example `api.bears.[domain]`, another hostname, or a published port on the web host)
 - **Workers** — `RUN_WORKERS=true` (background tasks in the same process)
 
 Legacy `SERVER_MODE=web|api|both` may still be parsed for migration; prefer the `RUN_*` flags (see `src/config.rs`).
@@ -46,7 +46,7 @@ When `ACP_GATEWAY_ENABLED=true`, the API also serves `POST /acp/bears/{slug}/ses
 
 **Build identity:** `GET /version` (web and API) returns JSON with `built_at_utc` (RFC 3339 UTC) from when the build script last ran, plus `git_sha` when the image was built with `GIT_SHA`. Set `SOURCE_DATE_EPOCH` during the image build if you need a deterministic timestamp (reproducible builds).
 
-### BEARS stack status (web)
+### Bear Den stack status (web)
 
 For a **single watch point** across the stack (databases, Codepool, Letta, Bifrost, low-cost env validation aligned with `services/preflight`, and optional **GHCR** comparison), use:
 

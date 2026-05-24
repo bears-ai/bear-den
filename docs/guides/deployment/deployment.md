@@ -1,6 +1,6 @@
-# BEARS Stack — Coolify Deployment Guide
+# Bear Den Stack — Coolify Deployment Guide
 
-Deploy BEARS on Coolify from the repository root `docker-compose.yaml`. This is the supported path for operators: one Compose resource, one shared network, and service names that resolve internally as `bears-*`.
+Deploy Bear Den on Coolify from the repository root `docker-compose.yaml`. This is the supported path for operators: one Compose resource, one shared network, and service names that resolve internally as `bears-*`.
 
 ## What You Deploy
 

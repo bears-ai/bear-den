@@ -105,6 +105,7 @@ fn validate_local_fetch_url(url: &Url) -> Result<()> {
     ))
 }
 
+#[cfg(test)]
 fn validate_fetch_url(url: &Url) -> Result<()> {
     match url.scheme() {
         "http" | "https" => {}
@@ -136,6 +137,7 @@ fn validate_fetch_url(url: &Url) -> Result<()> {
     Ok(())
 }
 
+#[cfg(test)]
 fn allow_local_web_fetch_for_tests() -> bool {
     cfg!(test)
         && std::env::var("BEARS_ACP_ALLOW_LOCAL_WEB_FETCH_FOR_TESTS")
@@ -169,6 +171,7 @@ fn normalize_host(host: &str, port: Option<u16>) -> String {
     }
 }
 
+#[cfg(test)]
 fn is_denied_ip(ip: IpAddr) -> bool {
     match ip {
         IpAddr::V4(ip) => {

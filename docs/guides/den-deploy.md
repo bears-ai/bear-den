@@ -21,8 +21,8 @@ Trestle expects a **working PostgreSQL service** you operate separately. The app
 | `RUN_WEB` / `RUN_API` / `RUN_WORKERS` | Enable HTTP web, HTTP API, and in-process workers (each defaults to `false` if unset). Turn **at least one** on for a meaningful smoke test. |
 | `PORT` / `API_PORT` | Listen ports when web/API are enabled (defaults `3000` / `3001`). |
 | `JWT_SECRET` | **Required** when `RUN_API=true` (OAuth access tokens are HS256-signed), or when the binary is built with `--features production` (release / Docker image). Use a long random secret. Web-only local runs without the production feature may omit it (a dev-only default applies only if the API listener is off). |
-| `ACP_GATEWAY_ENABLED` | Enable the API-only ACP gateway on `/acp/*`; requires `RUN_API=true` and `LETTA_BASE_URL`. ACP routes to the Bear's API-direct `pair` role, not Codepool. In the root BEARS Compose stack this defaults to `true`. |
-| `API_SERVER_URL` | Public API origin when `RUN_API=true`; for BEARS ACP adapters this may be `https://api.bears.[domain]`, another hostname, or a published host+port URL. |
+| `ACP_GATEWAY_ENABLED` | Enable the API-only ACP gateway on `/acp/*`; requires `RUN_API=true` and `LETTA_BASE_URL`. ACP routes to the Bear's API-direct `pair` role, not Codepool. In the root Bear Den Compose stack this defaults to `true`. |
+| `API_SERVER_URL` | Public API origin when `RUN_API=true`; for Den ACP adapters this may be `https://api.bears.[domain]`, another hostname, or a published host+port URL. |
 | `SQLX_MIGRATE_IGNORE_MISSING` | Leave **unset** (default) so SQLx applies [`migrations/`](../migrations/) strictly. Set to `true` only for documented recovery when `_sqlx_migrations` references files no longer present in the repo. |
 
 **Optional** keys your stack may need include: `WEB_SERVER_URL`, `API_SERVER_URL`, `SESSION_COOKIE_DOMAIN` (production cookie `Domain`; leave unset for host-only cookies), `MAILGUN_API_KEY`, `MAILGUN_DOMAIN`, `TEMPLATES_DIR`, and legacy `SERVER_MODE` (prefer `RUN_*`). Mail can stay empty for a minimal check.

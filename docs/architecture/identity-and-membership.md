@@ -174,7 +174,7 @@ Avoid:
 
 ## Related docs
 
-- [Bears and Den](BEARS_AND_DEN.md)
+- [Bear Den and Den](BEARS_AND_DEN.md)
 - [Bear agent roles](BEAR_AGENT_ROLES.md)
 - [Capabilities and skills](CAPABILITIES_AND_SKILLS.md)
 - [Tasks and autonomy](TASKS_AND_AUTONOMY.md)
