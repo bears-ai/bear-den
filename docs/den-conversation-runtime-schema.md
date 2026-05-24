@@ -47,7 +47,25 @@ The schema should work for:
 
 That means the tables must not assume one transport or runtime family.
 
-### 4. Model the event stream, not just flattened messages
+### 4. Treat the event log as the source for read-model updates
+
+The append-only event log should be the primary source for read-model and projection updates.
+
+That means:
+
+- write-side runtime state changes emit structured events
+- admin and UI views are served from explicit projections or read models derived from those events
+- event append remains separate from projection/update concerns
+
+For BEARS, this is especially useful because:
+
+- ACP runtime status needs a trustworthy audit trail
+- admin surfaces need to explain what happened, not just current row state
+- migration off Letta will be easier if Den can compare projected state with provider-derived behavior
+
+The recommended shape remains **conversation-scoped events with optional `run_id` linkage**, rather than a strictly run-scoped event table, because some important state transitions are thread-level rather than run-level.
+
+### 5. Model the event stream, not just flattened messages
 
 For migration, debugging, and replay, Den should preserve fine-grained event history, not just final assistant/user text.
 
@@ -60,8 +78,42 @@ That includes:
 - approval requests and responses
 - run lifecycle events
 - cancellation and error events
+- thread-level metadata changes such as title/archive/provider-sync transitions
 
-### 5. Be compatible with staged adoption
+### 6. Treat messages as transcript artifacts, not runtime state
+
+Messages should primarily represent the durable transcript/readable history.
+
+They should not be the canonical place to infer:
+
+- pending tool execution
+- approval state
+- suspension/resume state
+- cancellation state
+
+Those concerns belong in first-class runtime tables and the append-only event stream.
+
+### 7. Keep tool calls and approvals as independent state machines
+
+Tool calls and approvals should be represented as first-class records, not embedded solely in messages or inferred from run status.
+
+This is important because:
+
+- a run may be blocked on approval without being failed or cancelled
+- a tool call may be requested, approved, dispatched, completed, denied, or cancelled independently of transcript rendering
+- suspend/resume and recovery should be row/state transitions, not message archaeology
+
+### 8. Preserve provider neutrality while keeping migration visibility explicit
+
+Provider references should be stored as nullable compatibility fields, not as canonical identities.
+
+During migration, this means Letta-origin ids can be stored in dedicated provider reference columns so that:
+
+- Den ids remain canonical
+- dual-write and verification are straightforward
+- provider-specific fields can be removed cleanly later
+
+### 9. Be compatible with staged adoption
 
 The schema should support:
 
@@ -300,6 +352,8 @@ Recommended:
 
 This table is critical for ACP parity and poisoned-run debugging. It is the best place to preserve fine-grained causality.
 
+It should also be treated as the canonical event log for read-model updates. UI/admin surfaces should preferably read from explicit projections derived from these events rather than reconstructing state ad hoc from multiple write-side tables.
+
 ## 5. `conversation_tool_calls`
 
 ### Purpose
@@ -345,6 +399,8 @@ Recommended:
 
 This table should be the bridge between runtime behavior and ACP/Den permission logic.
 
+Tool-call lifecycle should remain first-class here even if messages also carry user-visible summaries of tool activity. The transcript is not the source of truth for tool execution state.
+
 ## 6. `conversation_approvals`
 
 ### Purpose
@@ -384,6 +440,8 @@ Recommended:
 ### Notes
 
 This table should be used for both current Letta approval interoperability and future Den-native approval state.
+
+Approval lifecycle should remain decoupled from run status. A run may be `awaiting_approval` while the approval record independently transitions through `pending`, `approved`, `denied`, `expired`, or `superseded`.
 
 ## 7. `conversation_runs`
 
@@ -647,18 +705,37 @@ If categories stabilize later, some fields can move to enums or domain types.
 
 ## Read-model guidance
 
+A useful mental model here is a Kubernetes-style controller or reconciler loop, but aimed at read models rather than external world state.
+
+- the write side records facts and state transitions
+- the event stream carries those transitions durably and in order
+- projection workers consume the event stream and reconcile derived read models until they reflect the recorded facts
+
+The key difference from Kubernetes reconciliation is that these projectors usually are not trying to make the outside world match a desired spec. Instead, they are trying to make Den-owned read models match what has already happened in the conversation/runtime state machine.
+
+In that sense, `conversation_events` is the event log: the append-only stream of structured events used to update derived read models and operator/UI views.
+
+The recommended pattern is:
+
+- write-side tables record authoritative operational state
+- `conversation_events` acts as the append-only event log
+- explicit read models or projections serve admin/UI views
+
+This keeps projection logic out of handlers and avoids forcing UI/admin paths to reconstruct state ad hoc from scattered write-side tables.
+
 ## User-facing chat transcript
 
-Eventually use:
+Eventually use a transcript-oriented read model derived primarily from:
 
 - `conversations`
 - `conversation_messages`
+- selected user-visible `conversation_events` where needed
 
 Filter to `visibility = 'user_visible'`.
 
 ## Operator/runtime debugging
 
-Use:
+Use projections or operator views derived from:
 
 - `conversation_runs`
 - `conversation_events`
@@ -668,11 +745,12 @@ Use:
 
 ## ACP active turn status
 
-Use:
+Use projections derived from:
 
 - latest `conversation_runs` row for current session/conversation
 - outstanding `conversation_tool_calls`
 - pending `conversation_approvals`
+- recent `conversation_events`
 
 This should replace Letta-derived pending-run assumptions over time.
 
