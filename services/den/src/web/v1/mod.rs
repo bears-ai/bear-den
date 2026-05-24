@@ -741,18 +741,33 @@ fn parse_set_conversation_title_request(message: &str) -> Option<String> {
     None
 }
 
+struct ConversationTitleRequest<'a> {
+    bear: &'a crate::core::bears::Bear,
+    talk_agent_id: &'a str,
+    user_id: i32,
+    username: Option<&'a str>,
+    membership_role: Option<&'a str>,
+    conv_id: &'a str,
+    session_id: &'a str,
+    message: &'a str,
+    request_id: Uuid,
+}
+
 async fn maybe_handle_direct_set_conversation_title(
     state: &AppState,
-    bear: &crate::core::bears::Bear,
-    talk_agent_id: &str,
-    user_id: i32,
-    username: Option<&str>,
-    membership_role: Option<&str>,
-    conv_id: &str,
-    session_id: &str,
-    message: &str,
-    request_id: Uuid,
+    request: ConversationTitleRequest<'_>,
 ) -> Result<Option<Response>, CustomError> {
+    let ConversationTitleRequest {
+        bear,
+        talk_agent_id,
+        user_id,
+        username,
+        membership_role,
+        conv_id,
+        session_id,
+        message,
+        request_id,
+    } = request;
     let Some(title) = parse_set_conversation_title_request(message) else {
         return Ok(None);
     };
@@ -874,15 +889,17 @@ async fn chat_send_inner(
     let session_id = format!("den-web:{}:{}", body.bear_id, conv_id);
     if let Some(response) = maybe_handle_direct_set_conversation_title(
         &state,
-        &bear,
-        &talk_agent_id,
-        user_id,
-        Some(username.as_str()),
-        membership_role.as_deref(),
-        &conv_id,
-        &session_id,
-        body.message.trim(),
-        request_id,
+        ConversationTitleRequest {
+            bear: &bear,
+            talk_agent_id: &talk_agent_id,
+            user_id,
+            username: Some(username.as_str()),
+            membership_role: membership_role.as_deref(),
+            conv_id: &conv_id,
+            session_id: &session_id,
+            message: body.message.trim(),
+            request_id,
+        },
     )
     .await?
     {
@@ -897,18 +914,18 @@ async fn chat_send_inner(
 
     let upstream = state
         .web_chat_transport
-        .post_bear_channel_message_streaming(
-            &session_id,
-            &conv_id,
-            &bear,
-            &talk_agent_id,
+        .post_bear_channel_message_streaming(crate::web::data::chat_transport::WebChatTransportRequest {
+            session_id: &session_id,
+            conversation_id: &conv_id,
+            bear: &bear,
+            talk_agent_id: &talk_agent_id,
             user_id,
-            Some(username.as_str()),
-            membership_role.as_deref(),
-            &upstream_message,
-            &runtime_plan,
+            username: Some(username.as_str()),
+            membership_role: membership_role.as_deref(),
+            message: &upstream_message,
+            runtime_plan: &runtime_plan,
             request_id,
-        )
+        })
         .await?;
 
     crate::observability::metrics::chat_send_started();

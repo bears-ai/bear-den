@@ -1154,7 +1154,7 @@ async fn acp_preflight_runtime_hygiene(
     })
 }
 
-async fn acp_cleanup_stale_runtime_state(
+struct AcpStaleRuntimeCleanupParams {
     letta: Arc<crate::core::letta::LettaClient>,
     tool_turns: AcpToolTurnCoordinator,
     acp_session_id: String,
@@ -1163,7 +1163,19 @@ async fn acp_cleanup_stale_runtime_state(
     run_ids: Vec<String>,
     reason: &'static str,
     request_id: Uuid,
-) -> serde_json::Value {
+}
+
+async fn acp_cleanup_stale_runtime_state(params: AcpStaleRuntimeCleanupParams) -> serde_json::Value {
+    let AcpStaleRuntimeCleanupParams {
+        letta,
+        tool_turns,
+        acp_session_id,
+        bear_id,
+        pair_agent_id,
+        run_ids,
+        reason,
+        request_id,
+    } = params;
     tool_turns.cleanup_session(&acp_session_id);
     if run_ids.is_empty() {
         tracing::warn!(
@@ -5456,6 +5468,15 @@ async fn map_letta_stream_frame_to_acp_adapter_events_with_persistence(
     Ok((events, tool_request_effect, adapter_result_rx))
 }
 
+type AcpFrameResult = Result<
+    (
+        Vec<AcpGatewayEvent>,
+        Option<PersistedToolRequestEffect>,
+        Option<(String, String, AcpResolvedToolResult)>,
+    ),
+    std::io::Error,
+>;
+
 enum AcpResolvedToolResult {
     Receiver(oneshot::Receiver<AcpToolResultRequest>),
     Ready(Box<AcpToolResultRequest>),
@@ -5465,19 +5486,7 @@ enum AcpPendingFuture {
     Frame(
         Pin<
             Box<
-                dyn Future<
-                        Output = (
-                            Result<
-                                (
-                                    Vec<AcpGatewayEvent>,
-                                    Option<PersistedToolRequestEffect>,
-                                    Option<(String, String, AcpResolvedToolResult)>,
-                                ),
-                                std::io::Error,
-                            >,
-                            AcpStreamDiagnostics,
-                        ),
-                    > + Send,
+                dyn Future<Output = (AcpFrameResult, AcpStreamDiagnostics)> + Send,
             >,
         >,
     ),
@@ -6090,16 +6099,16 @@ impl Stream for AcpLettaSseStream {
                                 let request_id = this.context.request_id;
                                 this.persist_future =
                                     Some(AcpPendingFuture::Cleanup(Box::pin(async move {
-                                        acp_cleanup_stale_runtime_state(
+                                        acp_cleanup_stale_runtime_state(AcpStaleRuntimeCleanupParams {
                                             letta,
                                             tool_turns,
                                             acp_session_id,
                                             bear_id,
                                             pair_agent_id,
                                             run_ids,
-                                            "tool_return_continuation_failed",
+                                            reason: "tool_return_continuation_failed",
                                             request_id,
-                                        )
+                                        })
                                         .await
                                     })));
                                 return self.poll_next(cx);
@@ -6304,16 +6313,16 @@ impl Stream for AcpLettaSseStream {
                     let run_ids = this.diagnostics.run_ids.clone();
                     let request_id = this.context.request_id;
                     this.persist_future = Some(AcpPendingFuture::Cleanup(Box::pin(async move {
-                        acp_cleanup_stale_runtime_state(
+                        acp_cleanup_stale_runtime_state(AcpStaleRuntimeCleanupParams {
                             letta,
                             tool_turns,
                             acp_session_id,
                             bear_id,
                             pair_agent_id,
                             run_ids,
-                            "orphaned_requires_approval_stop",
+                            reason: "orphaned_requires_approval_stop",
                             request_id,
-                        )
+                        })
                         .await
                     })));
                     self.poll_next(cx)

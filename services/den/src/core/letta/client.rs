@@ -7,6 +7,27 @@ use serde_json::{json, Value};
 
 use crate::{config::Config, errors::CustomError};
 
+pub struct LettaCreateAgentParams<'a> {
+    pub name: &'a str,
+    pub system_prompt: &'a str,
+    pub model: Option<&'a str>,
+    pub context_window: Option<u32>,
+    pub agent_type: Option<&'a str>,
+    pub tool_ids: &'a [String],
+    pub tags: &'a [String],
+}
+
+pub struct LettaPatchAgentParams<'a> {
+    pub agent_id: &'a str,
+    pub name: &'a str,
+    pub description: &'a str,
+    pub system: &'a str,
+    pub model: Option<&'a str>,
+    pub context_window: Option<u32>,
+    pub agent_type: Option<&'a str>,
+    pub tool_ids: &'a [String],
+}
+
 /// One row from `GET /v1/models/` suitable for `<select>` options (LLM only).
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct LettaModelOption {
@@ -391,16 +412,16 @@ impl LettaClient {
             ));
         }
 
-        let body_with_git = build_create_agent_body(
+        let params = LettaCreateAgentParams {
             name,
             system_prompt,
             model,
             context_window,
             agent_type,
             tool_ids,
-            true,
-            &[],
-        );
+            tags: &[],
+        };
+        let body_with_git = build_create_agent_body(&params, true);
         let (status, text) = self.post_create_agent_raw(&body_with_git).await?;
 
         if status.is_success() {
@@ -413,14 +434,11 @@ impl LettaClient {
                 "Letta rejected POST /v1/agents with git_enabled; retrying without git_enabled/context metadata"
             );
             let body_no_git = build_create_agent_body(
-                name,
-                system_prompt,
-                model,
-                None,
-                agent_type,
-                tool_ids,
+                &LettaCreateAgentParams {
+                    context_window: None,
+                    ..params
+                },
                 false,
-                &[],
             );
             let (status2, text2) = self.post_create_agent_raw(&body_no_git).await?;
             if status2.is_success() {
@@ -442,13 +460,7 @@ impl LettaClient {
 
     pub async fn create_agent_with_tags(
         &self,
-        name: &str,
-        system_prompt: &str,
-        model: Option<&str>,
-        context_window: Option<u32>,
-        agent_type: Option<&str>,
-        tool_ids: &[String],
-        tags: &[String],
+        params: LettaCreateAgentParams<'_>,
     ) -> Result<String, CustomError> {
         if !self.is_enabled() {
             return Err(CustomError::System(
@@ -456,16 +468,7 @@ impl LettaClient {
             ));
         }
 
-        let body_with_git = build_create_agent_body(
-            name,
-            system_prompt,
-            model,
-            context_window,
-            agent_type,
-            tool_ids,
-            true,
-            tags,
-        );
+        let body_with_git = build_create_agent_body(&params, true);
         let (status, text) = self.post_create_agent_raw(&body_with_git).await?;
 
         if status.is_success() {
@@ -478,14 +481,11 @@ impl LettaClient {
                 "Letta rejected POST /v1/agents with git_enabled/custom tags; retrying without git_enabled/context metadata"
             );
             let body_no_git = build_create_agent_body(
-                name,
-                system_prompt,
-                model,
-                None,
-                agent_type,
-                tool_ids,
+                &LettaCreateAgentParams {
+                    context_window: None,
+                    ..params
+                },
                 false,
-                tags,
             );
             let (status2, text2) = self.post_create_agent_raw(&body_no_git).await?;
             if status2.is_success() {
@@ -1508,14 +1508,7 @@ impl LettaClient {
     /// Like [`Self::create_agent`], retries once **without** `git_enabled` on **400/422** responses.
     pub async fn patch_agent(
         &self,
-        agent_id: &str,
-        name: &str,
-        description: &str,
-        system: &str,
-        model: Option<&str>,
-        context_window: Option<u32>,
-        agent_type: Option<&str>,
-        tool_ids: &[String],
+        params: LettaPatchAgentParams<'_>,
     ) -> Result<(), CustomError> {
         if !self.is_enabled() {
             return Err(CustomError::System(
@@ -1523,17 +1516,8 @@ impl LettaClient {
             ));
         }
 
-        let body_with_git = build_patch_agent_body(
-            name,
-            description,
-            system,
-            model,
-            context_window,
-            agent_type,
-            tool_ids,
-            true,
-        );
-        let (status, text) = self.post_patch_agent_raw(agent_id, &body_with_git).await?;
+        let body_with_git = build_patch_agent_body(&params, true);
+        let (status, text) = self.post_patch_agent_raw(params.agent_id, &body_with_git).await?;
 
         if status.is_success() {
             return Ok(());
@@ -1542,23 +1526,20 @@ impl LettaClient {
         if letta_status_suggests_retry_without_git(status) {
             tracing::warn!(
                 %status,
-                agent_id,
+                agent_id = params.agent_id,
                 "Letta rejected PATCH /v1/agents with git_enabled; retrying without git_enabled/context metadata"
             );
             let body_no_git = build_patch_agent_body(
-                name,
-                description,
-                system,
-                model,
-                None,
-                agent_type,
-                tool_ids,
+                &LettaPatchAgentParams {
+                    context_window: None,
+                    ..params
+                },
                 false,
             );
-            let (status2, text2) = self.post_patch_agent_raw(agent_id, &body_no_git).await?;
+            let (status2, text2) = self.post_patch_agent_raw(params.agent_id, &body_no_git).await?;
             if status2.is_success() {
                 tracing::warn!(
-                    agent_id,
+                    agent_id = params.agent_id,
                     "Letta patch agent succeeded without git_enabled/context metadata (server may not support these fields on this endpoint)"
                 );
                 return Ok(());
@@ -1663,15 +1644,18 @@ fn letta_status_suggests_retry_without_git(status: StatusCode) -> bool {
 }
 
 fn build_create_agent_body(
-    name: &str,
-    system_prompt: &str,
-    model: Option<&str>,
-    context_window: Option<u32>,
-    agent_type: Option<&str>,
-    tool_ids: &[String],
+    params: &LettaCreateAgentParams<'_>,
     git_enabled: bool,
-    tags: &[String],
 ) -> serde_json::Map<String, serde_json::Value> {
+    let LettaCreateAgentParams {
+        name,
+        system_prompt,
+        model,
+        context_window,
+        agent_type,
+        tool_ids,
+        tags,
+    } = params;
     let mut body = serde_json::Map::new();
     body.insert("name".to_string(), json!(name));
     body.insert("system".to_string(), json!(system_prompt));
@@ -1727,15 +1711,19 @@ fn parse_create_agent_id(text: &str) -> Result<String, CustomError> {
 }
 
 fn build_patch_agent_body(
-    name: &str,
-    description: &str,
-    system: &str,
-    model: Option<&str>,
-    context_window: Option<u32>,
-    agent_type: Option<&str>,
-    tool_ids: &[String],
+    params: &LettaPatchAgentParams<'_>,
     git_enabled: bool,
 ) -> serde_json::Map<String, serde_json::Value> {
+    let LettaPatchAgentParams {
+        agent_id: _,
+        name,
+        description,
+        system,
+        model,
+        context_window,
+        agent_type,
+        tool_ids,
+    } = params;
     let mut body = serde_json::Map::new();
     body.insert("name".to_string(), json!(name));
     body.insert("description".to_string(), json!(description));

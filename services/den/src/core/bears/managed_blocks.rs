@@ -8,6 +8,20 @@ use crate::errors::CustomError;
 
 use super::{context_composition, Bear, BearAgentRole};
 
+type ManagedBlockResolutionRow = (
+    String,
+    String,
+    String,
+    Option<i64>,
+    Option<i32>,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+    Option<i64>,
+    Option<i64>,
+);
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SystemBlockKind {
@@ -369,19 +383,7 @@ pub async fn resolve_managed_blocks_for_bear(
     pool: &PgPool,
     bear: &Bear,
 ) -> Result<ResolvedManagedBlockSet, CustomError> {
-    let rows: Vec<(
-        String,
-        String,
-        String,
-        Option<i64>,
-        Option<i32>,
-        Option<String>,
-        Option<String>,
-        Option<String>,
-        Option<String>,
-        Option<i64>,
-        Option<i64>,
-    )> = sqlx::query_as(
+    let rows: Vec<ManagedBlockResolutionRow> = sqlx::query_as(
         r#"
         SELECT sb.key,
                sb.kind,

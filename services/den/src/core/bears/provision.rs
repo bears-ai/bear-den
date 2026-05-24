@@ -293,15 +293,15 @@ async fn create_role_agent(
     let tags = role.tags_for_bear(bear.id);
 
     letta
-        .create_agent_with_tags(
-            name.as_str(),
-            prompt.as_str(),
-            Some(model),
+        .create_agent_with_tags(crate::core::letta::LettaCreateAgentParams {
+            name: name.as_str(),
+            system_prompt: prompt.as_str(),
+            model: Some(model),
             context_window,
-            Some(agent_type),
-            &tool_ids,
-            &tags,
-        )
+            agent_type: Some(agent_type),
+            tool_ids: &tool_ids,
+            tags: &tags,
+        })
         .await
 }
 

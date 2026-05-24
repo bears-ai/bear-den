@@ -10,6 +10,28 @@ use crate::core::bears::model::{Bear, BearAgentRole};
 
 use crate::{config::Config, errors::CustomError};
 
+pub struct BearRuntimeMessageRequest<'a> {
+    pub session_id: &'a str,
+    pub conversation_id: &'a str,
+    pub bear: &'a Bear,
+    pub role_agent_id: &'a str,
+    pub user_id: i32,
+    pub username: Option<&'a str>,
+    pub membership_role: Option<&'a str>,
+    pub user_input: &'a str,
+    pub runtime_plan: &'a serde_json::Value,
+    pub request_id: Uuid,
+}
+
+pub struct BearChannelMessageRequest<'a> {
+    pub runtime: BearRuntimeMessageRequest<'a>,
+    pub channel_family: &'a str,
+    pub channel_client: &'a str,
+    pub channel_protocol: &'a str,
+    pub supports_cancellation: bool,
+    pub supports_rich_events: bool,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CodepoolCancelResponse {
     #[serde(default)]
@@ -80,16 +102,7 @@ pub struct CodepoolMemfsClone {
 pub trait BearRuntimeClient {
     async fn post_bear_channel_message_streaming(
         &self,
-        session_id: &str,
-        conversation_id: &str,
-        bear: &Bear,
-        role_agent_id: &str,
-        user_id: i32,
-        username: Option<&str>,
-        membership_role: Option<&str>,
-        user_input: &str,
-        runtime_plan: &serde_json::Value,
-        request_id: Uuid,
+        request: BearRuntimeMessageRequest<'_>,
     ) -> Result<reqwest::Response, CustomError>;
 }
 
@@ -302,18 +315,41 @@ impl CodePoolClient {
     /// context and manages the warm Letta Code runtime.
     pub async fn post_bear_channel_message_streaming(
         &self,
-        session_id: &str,
-        conversation_id: &str,
-        bear: &Bear,
-        role_agent_id: &str,
-        user_id: i32,
-        username: Option<&str>,
-        membership_role: Option<&str>,
-        user_input: &str,
-        runtime_plan: &serde_json::Value,
-        request_id: Uuid,
+        request: BearRuntimeMessageRequest<'_>,
     ) -> Result<reqwest::Response, CustomError> {
-        self.post_bear_channel_message_for_channel_streaming(
+        self.post_bear_channel_message_for_channel_streaming(BearChannelMessageRequest {
+            runtime: request,
+            channel_family: "browser_chat",
+            channel_client: "den_web",
+            channel_protocol: "den_chat",
+            supports_cancellation: false,
+            supports_rich_events: true,
+        })
+        .await
+    }
+
+    /// Lower-level `bear_channel` sender for non-browser Letta Code-backed clients.
+    ///
+    /// ACP no longer uses this path; ACP is API-direct to the Bear's `pair` role.
+    pub async fn post_bear_channel_message_for_channel_streaming(
+        &self,
+        request: BearChannelMessageRequest<'_>,
+    ) -> Result<reqwest::Response, CustomError> {
+        if !self.is_enabled() {
+            return Err(CustomError::System(
+                "Codepool is not configured (set CODEPOOL_BASE_URL)".to_string(),
+            ));
+        }
+
+        let BearChannelMessageRequest {
+            runtime,
+            channel_family,
+            channel_client,
+            channel_protocol,
+            supports_cancellation,
+            supports_rich_events,
+        } = request;
+        let BearRuntimeMessageRequest {
             session_id,
             conversation_id,
             bear,
@@ -324,41 +360,7 @@ impl CodePoolClient {
             user_input,
             runtime_plan,
             request_id,
-            "browser_chat",
-            "den_web",
-            "den_chat",
-            false,
-            true,
-        )
-        .await
-    }
-
-    /// Lower-level `bear_channel` sender for non-browser Letta Code-backed clients.
-    ///
-    /// ACP no longer uses this path; ACP is API-direct to the Bear's `pair` role.
-    pub async fn post_bear_channel_message_for_channel_streaming(
-        &self,
-        session_id: &str,
-        conversation_id: &str,
-        bear: &Bear,
-        role_agent_id: &str,
-        user_id: i32,
-        username: Option<&str>,
-        membership_role: Option<&str>,
-        user_input: &str,
-        runtime_plan: &serde_json::Value,
-        request_id: Uuid,
-        channel_family: &str,
-        channel_client: &str,
-        channel_protocol: &str,
-        supports_cancellation: bool,
-        supports_rich_events: bool,
-    ) -> Result<reqwest::Response, CustomError> {
-        if !self.is_enabled() {
-            return Err(CustomError::System(
-                "Codepool is not configured (set CODEPOOL_BASE_URL)".to_string(),
-            ));
-        }
+        } = runtime;
 
         let agent_role = BearAgentRole::Talk;
         let agent_id = role_agent_id.trim();
@@ -526,30 +528,8 @@ impl CodePoolClient {
 impl BearRuntimeClient for CodePoolClient {
     async fn post_bear_channel_message_streaming(
         &self,
-        session_id: &str,
-        conversation_id: &str,
-        bear: &Bear,
-        role_agent_id: &str,
-        user_id: i32,
-        username: Option<&str>,
-        membership_role: Option<&str>,
-        user_input: &str,
-        runtime_plan: &serde_json::Value,
-        request_id: Uuid,
+        request: BearRuntimeMessageRequest<'_>,
     ) -> Result<reqwest::Response, CustomError> {
-        CodePoolClient::post_bear_channel_message_streaming(
-            self,
-            session_id,
-            conversation_id,
-            bear,
-            role_agent_id,
-            user_id,
-            username,
-            membership_role,
-            user_input,
-            runtime_plan,
-            request_id,
-        )
-        .await
+        CodePoolClient::post_bear_channel_message_streaming(self, request).await
     }
 }

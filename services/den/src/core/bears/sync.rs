@@ -165,16 +165,16 @@ async fn sync_one_role(
     let role_name = role_agent_name(bear, role);
 
     if let Err(err) = letta
-        .patch_agent(
-            &agent_id,
-            role_name.as_str(),
-            bear.description.as_str(),
-            prompt.as_str(),
+        .patch_agent(crate::core::letta::LettaPatchAgentParams {
+            agent_id: &agent_id,
+            name: role_name.as_str(),
+            description: bear.description.as_str(),
+            system: prompt.as_str(),
             model,
             context_window,
-            Some(agent_type),
-            &tool_ids,
-        )
+            agent_type: Some(agent_type),
+            tool_ids: &tool_ids,
+        })
         .await
     {
         let msg = format!("Letta PATCH failed: {err}");

@@ -2,4 +2,6 @@
 
 mod client;
 
-pub use client::{BearRuntimeClient, CodePoolClient};
+pub use client::{
+    BearChannelMessageRequest, BearRuntimeClient, BearRuntimeMessageRequest, CodePoolClient,
+};
