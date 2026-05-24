@@ -1,18 +1,18 @@
 # MemFS sidecar operator runbook
 
-This runbook covers recovery for the multi-agent MemFS sidecar repo-view design described in [`adr/memfs-sidecar-repo-views.md`](adr/memfs-sidecar-repo-views.md).
+This runbook covers recovery for the multi-role MemFS sidecar repo-view design described in [`adr/memfs-sidecar-repo-views.md`](adr/memfs-sidecar-repo-views.md).
 
 ## Mental model
 
-Each Bear has one canonical bare repository. Each role agent has a per-agent view repository whose `main` branch mirrors exactly one canonical role branch.
+Each Bear has one canonical bare repository. Each role runtime has a per-runtime view repository whose `main` branch mirrors exactly one canonical role branch.
 
 ```text
-agent view main  -> canonical Bear repo role branch
-agent-talk main  -> refs/heads/talk
-agent-pair main  -> refs/heads/pair
-agent-curate main -> refs/heads/curate
-agent-work main -> refs/heads/work
-agent-watch main -> refs/heads/watch
+runtime view main  -> canonical Bear repo role branch
+runtime-talk main  -> refs/heads/talk
+runtime-pair main  -> refs/heads/pair
+runtime-curate main -> refs/heads/curate
+runtime-work main  -> refs/heads/work
+runtime-watch main -> refs/heads/watch
 ```
 
 The sidecar automatically forwards safe view commits to canonical and reconciles views from canonical where possible. When the sidecar cannot safely decide which side should win, it quarantines the affected view rather than risking silent corruption.
@@ -31,7 +31,7 @@ Inspect one Bear/role:
 GET /v1/management/bears/{bear_id}/roles/{role}
 ```
 
-Inspect one agent's recent sidecar activity:
+Inspect one runtime's recent sidecar activity:
 
 ```text
 GET /v1/management/activity?agent_id={agent_id}&limit=100
@@ -184,7 +184,7 @@ Avoid force unless there is a clear incident plan.
 ## Recommended incident flow
 
 1. Inspect Bear detail in Den or call sidecar health directly.
-2. Read the diagnostic. Note Bear id, role, agent id, canonical tip, and view tip.
+2. Read the diagnostic. Note Bear id, role, runtime handle, canonical tip, and view tip.
 3. Try `POST /reconcile`.
 4. If still quarantined, inspect commits manually:
    - canonical: `git --git-dir <canonical_repo> log --oneline <role>`
@@ -201,9 +201,9 @@ Avoid force unless there is a clear incident plan.
 ## What not to do
 
 - Do not clear quarantine without understanding why it was set.
-- Do not use `view-wins` just because an agent recently wrote something.
+- Do not use `view-wins` just because a runtime recently wrote something.
 - Do not manually force-push canonical refs without recording what happened.
-- Do not allow agents to call override endpoints.
+- Do not allow role runtimes to call override endpoints.
 
 ## Diagnostics operators should expect
 

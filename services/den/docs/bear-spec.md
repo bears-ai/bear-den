@@ -1,10 +1,10 @@
-# BEARS Multi-Agent Bear Spec
+# BEARS Multi-Role Runtime Bear Spec
 
-This is the phase-0 implementation spec for [`../../../docs/architecture/adr/multi-role-runtime-architecture.md`](../../../docs/architecture/adr/multi-role-runtime-architecture.md) and [`../../../docs/planning/MULTI_AGENT_IMPLEMENTATION_PLAN.md`](../../../docs/planning/MULTI_AGENT_IMPLEMENTATION_PLAN.md). It freezes the canonical Den-owned configuration before provisioning code creates the role runtimes for a Bear.
+This is the phase-0 implementation spec for [`../../../docs/architecture/adr/multi-role-runtime-architecture.md`](../../../docs/architecture/adr/multi-role-runtime-architecture.md) and [`../../../docs/planning/MULTI_ROLE_RUNTIME_IMPLEMENTATION_PLAN.md`](../../../docs/planning/MULTI_ROLE_RUNTIME_IMPLEMENTATION_PLAN.md). It freezes the canonical Den-owned configuration before provisioning code creates the role runtimes for a Bear.
 
 ## Scope
 
-A Bear is a logical assistant backed by five Letta agents with fixed roles:
+A Bear is a logical assistant with five fixed roles. During the Letta-backed migration era, those roles are realized by Letta-managed runtimes:
 
 | Role | Surface | Letta path | Memory branch | Purpose |
 |------|---------|------------|---------------|---------|
@@ -14,9 +14,9 @@ A Bear is a logical assistant backed by five Letta agents with fixed roles:
 | `work` | Den task dispatcher only | Letta Code harness | `work` | Scheduled or event-triggered outbound external work execution. |
 | `watch` | Den subscription/event router only | Letta API | `watch` | Inbound external observation from webhooks, polling results, message queues, and other streams. |
 
-The old single-agent `bears.letta_agent_id` column is dropped from the active schema. Den resolves agents through `bear_agents(role, letta_agent_id)` and sends the selected role as `role_agent_id` to runtime services.
+The old single-agent `bears.letta_agent_id` column is dropped from the active schema. Den resolves role runtimes through `bear_agents(role, letta_agent_id)` and sends the selected runtime handle as `role_agent_id` to runtime services.
 
-The watch agent may be provisioned later than the first four roles during rollout, but Phase 0 data structures, branch layout, tags, prompts, harness choice, and skill manifest semantics reserve the `watch` role from the start.
+The watch role runtime may be provisioned later than the first four roles during rollout, but Phase 0 data structures, branch layout, tags, prompts, harness choice, and skill manifest semantics reserve the `watch` role from the start.
 
 ## Harness Choice
 
@@ -27,7 +27,7 @@ The five roles use two runtime families:
 | `talk` | Letta Code harness | Conversational channels benefit from Letta Code's tool execution surface, skills loader, and existing channel harness behavior. |
 | `pair` | Letta API direct | ACP's multi-session-per-connection model is incompatible with Letta Code harness single-session state. ACP client tools are mediated through ACP, not through the harness. |
 | `curate` | Letta API direct | Curate needs a deliberately narrow tool roster, controlled cycle execution, and custom multi-branch read access. Letta Code defaults would be too broad. |
-| `work` | Letta Code harness | Work's job is structured tool execution; Den controls dispatch so the per-agent sequential constraint is acceptable and useful. |
+| `work` | Letta Code harness | Work's job is structured tool execution; Den controls dispatch so the per-runtime sequential constraint is acceptable and useful. |
 | `watch` | Letta API direct | Watch is a thin inbound event-reception loop and should not get shell/filesystem/tooling breadth from a harness. |
 
 Harness choice is deterministic from role and should be included in each role's `runtime_policy_hash`. Den runs and manages Letta Code harness lifecycle for `talk` and `work`; Den drives `pair`, `curate`, and `watch` through API-direct adapters/runners.
@@ -47,14 +47,14 @@ Den tracks prompt/tool/skill/runtime drift using these canonical artifacts:
 
 The shared base prompt must state:
 
-- The assistant identity is the Bear, not the individual Letta agent.
-- The agent has one fixed role and must not claim capabilities outside that role.
+- The assistant identity is the Bear, not the individual provider-managed runtime.
+- The active runtime executes one fixed role and must not claim capabilities outside that role.
 - Durable cross-role knowledge lives in `core/` and is eventually consistent.
 - Secrets must never be written into MemFS task, result, observation, skill proposal, or note files.
 - External outbound work is asynchronous and must flow through structured task intents unless the current role is `work` executing an approved task.
 - External inbound events flow through watch observations and curate review before they can cause outbound action.
 - Durable skill changes flow through Den's skill proposal and manifest review process.
-- Privileged cross-branch operations are performed by Den tools, not by raw agent writes.
+- Privileged cross-branch operations are performed by Den tools, not by raw runtime writes.
 
 Role suffix requirements:
 
@@ -66,24 +66,24 @@ Role suffix requirements:
 | `work` | Read only `core/`, the dispatched task definition, and `work/`. Write only `work/`. Use only tools named in the approved task's `allowed_tools` and scoped by the Den-issued run context. Never read talk, pair, curate, or watch branches. Use `propose_skill` for reusable execution procedures rather than installing skills directly. |
 | `watch` | Read only `core/`, the delivered subscription event payload, and `watch/`. Write only `watch/`. Use `write_observation` for inbound event records. No outbound action tools are allowed. Never read talk, pair, curate, or work branches. Use `propose_skill` for reusable subscription parsing/handling procedures rather than installing skills directly. |
 
-## Letta Agent Tags
+## Letta Runtime Tags
 
-Every role agent Den provisions must have these tags:
+Every Letta-backed role runtime Den provisions must have these tags:
 
 | Tag | Purpose |
 |-----|---------|
-| `bear:<bear_id>` | Groups all role agents for one logical Bear. |
+| `bear:<bear_id>` | Groups all Letta-backed role runtimes for one logical Bear. |
 | `role:<role>` | Supports role filtering independent of Bear id. |
 | `bear:<bear_id>:role:<role>` | Stable reconciliation/discovery tag required by Phase 1 acceptance. |
-| `git-memory-enabled` | Marks the agent as using git-backed MemFS memory. |
+| `git-memory-enabled` | Marks the runtime as using git-backed MemFS memory. |
 
 Valid role tag values are `talk`, `pair`, `curate`, `work`, and `watch`.
 
-Den reconciliation uses the database as the source of truth first and Letta tags as secondary discovery/adoption evidence. Tagged Letta agents that are not represented in `bear_agents` must be reported by `reconcile_bear`; adoption vs replacement is an explicit operator decision unless the agent unambiguously matches a missing `(bear_id, role)` row and passes safety checks.
+Den reconciliation uses the database as the source of truth first and Letta tags as secondary discovery/adoption evidence. Tagged Letta runtimes that are not represented in `bear_agents` must be reported by `reconcile_bear`; adoption vs replacement is an explicit operator decision unless the runtime unambiguously matches a missing `(bear_id, role)` row and passes safety checks.
 
 ## Skill Management
 
-Skills are Den-managed Bear-scoped resources with per-role applicability. The manifest is the canonical source of truth; installed skills on individual agents are projections of the manifest.
+Skills are Den-managed Bear-scoped resources with per-role applicability. The manifest is the canonical source of truth; installed skills on individual role runtimes are projections of the manifest.
 
 ### Manifest model
 
@@ -109,7 +109,7 @@ Den uses two installation mechanisms from one manifest:
 | `talk`, `work` | Den writes role-relevant skills to `~/.letta/agents/{agent_id}/skills/` on the Letta Code harness host before harness start, or restarts the role harness after manifest changes. |
 | `pair`, `curate`, `watch` | Den attaches role-relevant skills through the Letta API. |
 
-Skills are not stored in MemFS as the canonical distribution mechanism. Filesystem skill discovery through MemFS would only serve the harness-backed agents and would not uniformly reach the API-direct roles.
+Skills are not stored in MemFS as the canonical distribution mechanism. Filesystem skill discovery through MemFS would only serve the harness-backed runtimes and would not uniformly reach the API-direct roles.
 
 ### Skill proposals
 
@@ -119,14 +119,14 @@ Agents do not get raw, in-place skill installation tools. `/skill` or equivalent
 2. Den writes a `bear_skill_proposals` row with `status = 'pending_review'`.
 3. Curate reviews pending proposals during its cycle.
 4. On approval, curate calls privileged Den tooling to create or update the manifest entry with chosen `applies_to_roles`.
-5. Den re-provisions or reconciles affected agents so the manifest projection is installed.
+5. Den re-provisions or reconciles affected role runtimes so the manifest projection is installed.
 6. On rejection, Den records `status = 'rejected'`, `reviewed_at`, and `rejection_reason`.
 
-Curate should use the proposing agent's role as a default applicability hint, not as an automatic rule. For example, a work-proposed integration procedure normally applies to `work`, while a coding convention may apply to both `talk` and `pair`.
+Curate should use the proposing runtime's role as a default applicability hint, not as an automatic rule. For example, a work-proposed integration procedure normally applies to `work`, while a coding convention may apply to both `talk` and `pair`.
 
 ### Skill reconciliation
 
-`reconcile_bear` compares each agent's actual installed skills against the manifest's role-relevant slice:
+`reconcile_bear` compares each runtime's actual installed skills against the manifest's role-relevant slice:
 
 - For `talk` and `work`, Den lists files/bundles under `~/.letta/agents/{agent_id}/skills/`, computes normalized content hashes, and compares them to the manifest.
 - For `pair`, `curate`, and `watch`, Den lists attached skills through the Letta API and compares them to the manifest.
@@ -153,13 +153,13 @@ Tool ids are environment-specific Letta ids. Den stores canonical tool names in 
 | `approve_skill_proposal` | privileged Den tool | `curate` | Adds or updates `bear_skills_manifest`, closes the proposal as approved, and triggers re-provisioning/reconciliation for affected roles. |
 | `reject_skill_proposal` | privileged Den tool | `curate` | Closes a pending skill proposal with reviewer metadata and rejection reason. |
 | `reflection` / `defragmentation` | server-side | `curate` | Letta reflection and memory maintenance. No external communication capability. |
-| ACP client tool relay | client-side | `pair` | Forwarded through ACP `session/request_permission`; Den does not execute these tools server-side. ACP prompt streaming is API-direct to the pair Letta agent, not Codepool. |
-| Integration tools (`http_get`, `slack_post`, `github_*`, etc.) | Letta Code harness tools plus privileged Den policy wrappers | `work` only | Runtime use must be within the approved task's `allowed_tools` and `scope`, verified by Den-issued run context and tool-side policy checks. Harness-level tools must be scoped or wrapped so the work agent cannot bypass Den policy. |
+| ACP client tool relay | client-side | `pair` | Forwarded through ACP `session/request_permission`; Den does not execute these tools server-side. ACP prompt streaming is API-direct to the pair role runtime, not Codepool. |
+| Integration tools (`http_get`, `slack_post`, `github_*`, etc.) | Letta Code harness tools plus privileged Den policy wrappers | `work` only | Runtime use must be within the approved task's `allowed_tools` and `scope`, verified by Den-issued run context and tool-side policy checks. Harness-level tools must be scoped or wrapped so the work runtime cannot bypass Den policy. |
 | Subscription/event delivery | Den control-plane operation | `watch` | Den registers durable subscriptions after curate-approved intents, validates inbound signatures, performs polling where required, and delivers structured event prompts to watch. This is not generic outbound network access for watch. |
 
 Denied by default for all roles:
 
-- Tools that attach/detach Letta tools or mutate Letta agent configuration.
+- Tools that attach/detach Letta tools or mutate Letta runtime configuration.
 - Tools that install out-of-band Letta skills.
 - Network egress tools on `talk`, `pair`, `curate`, or `watch`, except the conversational surface itself and ACP client-mediated tool calls.
 - Raw filesystem tools that bypass MemFS path validation.
@@ -167,7 +167,7 @@ Denied by default for all roles:
 
 ### Privileged Den Tool Principle
 
-Agents do not receive broad authority just because a task requires a cross-branch, skill-manifest, observation, or external effect. Instead, Den exposes narrow privileged tools with schema validation, authorization, audit logging, and policy checks.
+Role runtimes do not receive broad authority just because a task requires a cross-branch, skill-manifest, observation, or external effect. Instead, Den exposes narrow privileged tools with schema validation, authorization, audit logging, and policy checks.
 
 In particular:
 
@@ -186,7 +186,7 @@ Every `work` integration tool call, whether executed by the Letta Code harness d
 - `scope`
 - risk/approval state
 
-Tools must reject calls outside the approved task scope even if the underlying Letta agent attempts them. Because `work` runs behind Letta Code, Den must ensure the harness tool surface for work is either restricted to approved wrappers or configured so broad tools such as shell/filesystem/network clients cannot bypass task policy. Network egress allowlisting should also be enforced below the agent/tool layer where available. Tool-call logs must include `bear_id`, `task_id`, `run_id`, destination/action, status, byte counts where applicable, and timestamp.
+Tools must reject calls outside the approved task scope even if the underlying Letta runtime attempts them. Because `work` runs behind Letta Code, Den must ensure the harness tool surface for work is either restricted to approved wrappers or configured so broad tools such as shell/filesystem/network clients cannot bypass task policy. Network egress allowlisting should also be enforced below the runtime/tool layer where available. Tool-call logs must include `bear_id`, `task_id`, `run_id`, destination/action, status, byte counts where applicable, and timestamp.
 
 ### Watch Event Context
 

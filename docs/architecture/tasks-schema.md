@@ -1,29 +1,29 @@
 # BEARS Tasks Schema
 
-This document specifies the file formats and lifecycle for the task-management subsystem described in `multi-agent-architecture` ADR (section 5, "Task request flow") and operationalized by `multi-agent-implementation-plan.md` (phases 4–8).
+This document specifies the file formats and lifecycle for the task-management subsystem described in the `multi-role-runtime-architecture` ADR (section 5, "Task request flow") and operationalized by `MULTI_ROLE_RUNTIME_IMPLEMENTATION_PLAN.md` (phases 4–8).
 
-There are three distinct file types, each living on a different branch of the Bear's MemFS repo. They form a pipeline: **intent → approved task → result**, mediated by the curate agent and Den.
+There are three distinct file types, each living on a different branch of the Bear's MemFS repo. They form a pipeline: **intent → approved task → result**, mediated by the `curate` role and Den.
 
 ## Pipeline overview
 
 ```
                           ┌──────────────────┐
   user request via talk   │  talk/tasks/     │  intent files
-  user request via pair → │  pair/tasks/     │  written by channel agents
+  user request via pair → │  pair/tasks/     │  written by channel roles
                           └────────┬─────────┘
                                    │  curate run reviews,
                                    │  approves or rejects
                                    ▼
                           ┌──────────────────┐
                           │  core/tasks/   │  approved task definitions
-                          │                  │  written by curate agent
+                          │                  │  written by the `curate` role via Den
                           └────────┬─────────┘
                                    │  Den dispatches per
                                    │  schedule or trigger
                                    ▼
                           ┌──────────────────┐
                           │  work/results/   │  per-run execution results
-                          │  <task-id>/      │  written by work agent
+                          │  <task-id>/      │  written by the `work` role
                           │    <run-id>.md   │
                           └────────┬─────────┘
                                    │  curate run promotes

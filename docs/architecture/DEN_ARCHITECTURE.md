@@ -8,8 +8,8 @@ BEARS uses **only self-hosted Letta** (e.g. `letta/letta:latest` on Coolify). **
 
 | Layer | Product | Role |
 |-------|---------|------|
-| **Persistence** | **Letta** (self-hosted server) | Agent state: memory blocks, conversations, tool registration, model calls **Letta → Bifrost**. This is Letta’s **memory and persistence** API. |
-| **Harness** | **[Letta Code](https://docs.letta.com/letta-code)** (SDK / CLI) | **Agent execution**: skills, tool loops, local tools, [Channels](https://docs.letta.com/letta-code/channels/) (e.g. Slack), [scheduling](https://docs.letta.com/letta-code/scheduling). In BEARS, the primary runtime is **`services/codepool/`** (repo root): a **Node** service using **`@letta-ai/letta-code-sdk`** with a **warm session pool** for web traffic from Den; **channel listeners** (e.g. Slack) may run as **separate workers in the same container**, with metrics/APIs distinguishing **conversation handlers** from **channel listeners**. Letta remains the persistence API the harness calls. |
+| **Persistence** | **Letta** (self-hosted server) | Runtime state: memory blocks, conversations, tool registration, model calls **Letta → Bifrost**. This is Letta’s **memory and persistence** API. |
+| **Harness** | **[Letta Code](https://docs.letta.com/letta-code)** (SDK / CLI) | **Runtime execution** for roles that use the harness: skills, tool loops, local tools, [Channels](https://docs.letta.com/letta-code/channels/) (e.g. Slack), [scheduling](https://docs.letta.com/letta-code/scheduling). In BEARS, the primary runtime is **`services/codepool/`** (repo root): a **Node** service using **`@letta-ai/letta-code-sdk`** with a **warm session pool** for web traffic from Den; **channel listeners** (e.g. Slack) may run as **separate workers in the same container**, with metrics/APIs distinguishing **conversation handlers** from **channel listeners**. Letta remains the persistence API the harness calls. |
 | **Control plane** | **Den** | **Operations**: identity, bears, membership, skill and MCP catalogs, materialized config, **Den meta tools**, first-party **web chat UI**. (You can also call this the **operations layer**—same thing.) |
 
 **Artifact files ([Garage](https://garagehq.deuxfleurs.fr/), S3):** Bytes produced or consumed **during** agent turns (tools, skills, uploads) are read/written on paths executed by the **harness**—often **via** Den-issued presigned URLs or Den APIs. **Bucket layout, GC, and metadata policy** are **control-plane** (Den) concerns; **Garage** is infrastructure, not a fourth product layer. Letta does **not** store artifact blobs. See [artifacts-garage.md](adr/artifacts-garage.md).
@@ -39,7 +39,7 @@ API shapes depend on your Letta version—confirm against your server.
 
 ### Bears, users, and conversations
 
-- A **bear** is the **primary Letta agent** in Den’s registry (the assistant users talk to). Den also tracks **harness binding**: Slack channel bind, `LETTA_AGENT_ID` for `letta channels bind`, **skill** paths, and—where used—**predefined subagent** configuration (e.g. Letta **`reflection`** and related types) so deploys are reproducible; see [dynamic-skills-subagents.md](adr/dynamic-skills-subagents.md). One bear ↔ one primary Letta `agent_id` plus materialized harness config. **Users ↔ bears** is **many‑to‑many**: store `(user_id, bear_id)` membership in Den; optional roles (owner, member, read‑only).
+- A **bear** is the durable assistant identity in Den’s registry (the assistant users talk to). During the Letta-backed era, Den tracks the Letta runtime handles that currently realize Bear roles, plus **harness binding**: Slack channel bind, `LETTA_AGENT_ID` for `letta channels bind`, **skill** paths, and—where used—**predefined subagent** configuration (e.g. Letta **`reflection`** and related types) so deploys are reproducible; see [dynamic-skills-subagents.md](adr/dynamic-skills-subagents.md). **Users ↔ bears** is **many‑to‑many**: store `(user_id, bear_id)` membership in Den; optional roles (owner, member, read‑only).
 - **Conversations** isolate threads (Slack thread, WhatsApp chat, Den web chat session). Prefer **per-conversation** message APIs where available so concurrent channels do not block each other.
 
 ### Memory blocks
@@ -50,19 +50,19 @@ API shapes depend on your Letta version—confirm against your server.
 
 ### Provisioning bears (Den-owned)
 
-**Den** is responsible for **bear lifecycle**: create/update the Letta agent, record the bear in Den’s registry, attach **users↔bears** membership, **manage skills per bear for the harness** (see [Den-managed skills](#den-managed-skills)), **regenerate harness deploy config** and materialize skill trees, and (when Cabinet exists) set **Cabinet** permissions per user and bear.
+**Den** is responsible for **bear lifecycle**: create/update the role runtimes used by a Bear, record the Bear in Den’s registry, attach **users↔bears** membership, **manage skills per bear for the harness** (see [Den-managed skills](#den-managed-skills)), **regenerate harness deploy config** and materialize skill trees, and (when Cabinet exists) set **Cabinet** permissions per user and bear.
 
 **Templates / Identities** as described for Letta Cloud may not exist on self-hosted builds. Typical flow:
 
-1. **Den** calls Letta’s API to **create or update** the Letta agent (model, system prompt, tools, memory blocks) for a new or changed **bear**.
-2. Den stores **`bear_id` ↔ `associated_letta_id`** plus metadata (name, description, tool flags, default model, …).
+1. **Den** calls Letta’s API to **create or update** the Letta-backed role runtimes (model, system prompt, tools, memory blocks) for a new or changed **bear**.
+2. Den stores **`bear_id`** plus the role-to-runtime bindings and related metadata (name, description, tool flags, default model, …).
 3. Den maintains **`(user_id, bear_id)`** membership (many‑to‑many).
-4. Den **publishes** bear lists: Den JSON APIs expose membership-filtered bears for the **Den chat UI** and automation clients; **generated harness config** (env templates, Slack bind instructions, skill paths) is updated so each bear maps to the correct Letta agent id.
+4. Den **publishes** bear lists: Den JSON APIs expose membership-filtered bears for the **Den chat UI** and automation clients; **generated harness config** (env templates, Slack bind instructions, skill paths) is updated so each Bear role maps to the correct runtime handle.
 5. When Cabinet ships: Den applies **deck/kind ACLs** per `(user_id, bear_id)` on Cabinet operations.
 
 Admins may still use the Letta UI for experiments; **production truth** for which bears exist and who may use them should live in **Den**.
 
-For a concise list of **Letta agent knobs that Den’s bear UI does not yet drive**, see [LETTA_BEAR_UI_EXPOSURE.md](LETTA_BEAR_UI_EXPOSURE.md).
+For a concise list of **Letta runtime knobs that Den’s bear UI does not yet drive**, see [LETTA_BEAR_UI_EXPOSURE.md](LETTA_BEAR_UI_EXPOSURE.md).
 
 ---
 
@@ -88,7 +88,7 @@ Long-lived shared knowledge: **bears** via **Den** Cabinet tools; humans in **Ou
 
 1. **Authenticate** end users (OAuth, session, API key, etc.).
 2. **Register bears** and **`(user_id, bear_id)`** membership (many‑to‑many); optional `letta_identity` metadata if you use identities.
-3. **Provision bears:** create/update Letta agents via Letta’s API (state backend); keep registry and clients in sync (**Letta Code** harness config).
+3. **Provision bears:** create/update role runtimes via Letta’s API (state backend during migration); keep registry and clients in sync (**Letta Code** harness config).
 4. **Route** chat: resolve **bear** + conversation, call **`services/codepool/`** for the **streaming** agent loop (not Letta’s HTTP message APIs directly from Den for end-user sends); **stream** the response back to the browser or client. **History/list** may still use **Letta**’s REST API from Den.
 5. **Enforce** membership: the authenticated user may only invoke **bears** they belong to (on web paths Den controls before the harness).
 6. **Cabinet (later):** enforce per‑user, per‑bear permissions on Cabinet tools.
@@ -121,7 +121,7 @@ Cabinet tool endpoints are internal or agent-facing per PLAN.
 
 ## Letta Code (harness layer)
 
-**Letta Code is required** for BEARS: it is the **[harness](https://docs.letta.com/letta-code)** that runs the agent loop—skills, tool execution, [Channels](https://docs.letta.com/letta-code/channels/) (Slack), [scheduling](https://docs.letta.com/letta-code/scheduling), streaming to Den for web. **Letta** is the **persistence and server API** the harness uses—agents, blocks, conversations, and model calls **through Letta → Bifrost**.
+**Letta Code is required** for BEARS: it is the **[harness](https://docs.letta.com/letta-code)** that runs the runtime loop for harness-backed roles—skills, tool execution, [Channels](https://docs.letta.com/letta-code/channels/) (Slack), [scheduling](https://docs.letta.com/letta-code/scheduling), streaming to Den for web. **Letta** is the **persistence and server API** the harness uses—runtime state, blocks, conversations, and model calls **through Letta → Bifrost**.
 
 **BEARS app:** **`services/codepool/`** (repository root, next to **`services/den/`**) is the **Node**-based service that embeds **`@letta-ai/letta-code-sdk`**, maintains a **warm session pool** (TTL eviction, `resumeSession` on miss) for **conversation handlers**, and may host **channel listener** workers (e.g. Slack) in the **same deployment** with **separate** health/metrics labels so operators see **conversation** vs **channel** status. It is **not** the Letta server container; it talks **outbound** to **`LETTA_BASE_URL`** like any harness.
 
@@ -152,7 +152,7 @@ Regenerate **harness deploy artifacts** (e.g. `letta-code.yaml` from the operato
 
 ### Den-managed skills
 
-**Den is the system of record for which [Letta Code / Agent Skills](https://docs.letta.com/letta-code/skills/) each bear role may use.** Operators attach skills **per bear** and Den projects them to the appropriate role agents. **Letta Code** **loads and runs** skills from the filesystem layouts it supports; Den does not reimplement the skill runtime.
+**Den is the system of record for which [Letta Code / Agent Skills](https://docs.letta.com/letta-code/skills/) each Bear role may use.** Operators attach skills **per Bear** and Den projects them to the appropriate role runtimes. **Letta Code** **loads and runs** skills from the filesystem layouts it supports; Den does not reimplement the skill runtime.
 
 In BEARS, durable skills are treated as a **special class of Bear memory artifact**. That means Den is not only tracking a catalog/attachment relationship, but also governing canonical skill storage, metadata, review state, role applicability, and runtime materialization.
 
@@ -176,8 +176,8 @@ The namespace is flat at the skill-id level: BEARS does **not** encode authorita
 
 - **Catalog:** Den stores skill metadata (name, source URL or package id, pinned revision, scope: org-wide vs user-uploaded) and optional trust flags.
 - **Canonical skill memory:** Den records which catalog, imported, shared, or Bear-authored skills have been adopted into canonical Bear skill memory.
-- **Attachment:** `(bear_id, skill_id, enabled, order)` plus role applicability (or equivalent) defines the skill set projected to that bear’s role agents.
-- **Materialization:** On change, Den writes or syncs canonical Bear skill bundles into the [Agent Skills](https://agentskills.io/)–compatible runtime layouts Letta Code reads—e.g. under per-role-agent paths such as `~/.letta/agents/{letta_agent_id}/skills/` or another deploy-specific location. These runtime trees are **materialized views**, not canonical storage.
+- **Attachment:** `(bear_id, skill_id, enabled, order)` plus role applicability (or equivalent) defines the skill set projected to that Bear’s role runtimes.
+- **Materialization:** On change, Den writes or syncs canonical Bear skill bundles into the [Agent Skills](https://agentskills.io/)–compatible runtime layouts Letta Code reads—e.g. under per-role-runtime paths such as `~/.letta/agents/{letta_agent_id}/skills/` or another deploy-specific location. These runtime trees are **materialized views**, not canonical storage.
 - **Sharing:** Reuse the same catalog entry across many bears; preserve provenance when a skill is imported or shared; materialize copies or projections per runtime layout as needed.
 - **Drift handling:** Treat runtime-only skill changes as drift unless explicitly imported back through a governed review/promotion path.
 

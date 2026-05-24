@@ -4,7 +4,7 @@ Single-page view of the BEARS stack on Coolify. **Roadmap and contracts:** [PLAN
 
 ## Target architecture
 
-**Cabinet** (**Outline**) is the shared knowledgebase: humans edit in Outline; **bears** (Letta agents) access it through **Den** (Cabinet API, policy). **Letta** keeps **native memory** (blocks, conversations) per bear—Cabinet does not replace that. **Bear** = one agent; **BEARS** = the stack. See [PLAN.md](../planning/PLAN.md) terminology.
+**Cabinet** (**Outline**) is the shared knowledgebase: humans edit in Outline; **bears** access it through **Den** (Cabinet API, policy). **Letta** keeps **native memory** (blocks, conversations) for the active role runtimes during migration—Cabinet does not replace that. **Bear** = one assistant identity with multiple roles; **BEARS** = the stack. See [PLAN.md](../planning/PLAN.md) terminology.
 
 Three layers (see [DEN_ARCHITECTURE.md](DEN_ARCHITECTURE.md)): **persistence (Letta)** → **harness (Letta Code)** → **control plane (Den)** for operations; web and Slack sit on the harness.
 
@@ -14,7 +14,7 @@ Den (chat UI) ───────────────┐     Outline (huma
                              │      │──────────────► Garage (S3)
                              │      └──► Letta Code ──► Letta ──► Bifrost ──► providers
 ```
-(Den serves the first-party browser chat UI (Deep Chat); **Letta Code** is the mandatory harness for agent chat — [DEN_ARCHITECTURE.md](DEN_ARCHITECTURE.md).)
+(Den serves the first-party browser chat UI (Deep Chat); **Letta Code** is the mandatory harness for harness-backed role chat — [DEN_ARCHITECTURE.md](DEN_ARCHITECTURE.md).)
 
 **Until Den is deployed:** you can exercise Letta + Bifrost directly; add Den + Outline per [PLAN.md](../planning/PLAN.md).
 
@@ -23,11 +23,11 @@ Den (chat UI) ───────────────┐     Outline (huma
 | Component | Role |
 |-----------|------|
 | **Den** | **Operator console** (browser: users, bears, Letta provision, **skills and MCP servers per bear**, harness deploy config); **bear** provisioning on Letta + **Letta Code** config + **skill and MCP materialization**; **local MCP catalog** and per-bear attachments (Phase 1); **users↔bears** membership; auth; **web** routing **Den → Letta Code**; first-party chat UI; **[Den meta tools](DEN_ARCHITECTURE.md#den-meta-tools-bears-control-plane-tools)** (**control-plane tool definitions and policy in Den**; **Letta Code** brokers execution; **no** ad hoc tool code in Letta for these; MCP remains for optional third-party servers); Cabinet API; **Bifrost** for **observability on the bear model path** (Letta → Bifrost direct for chat); future Den-side LLM usage may differ ([PLAN.md](../planning/PLAN.md) §2.5) |
-| **Letta Code** | **[Harness](https://docs.letta.com/letta-code)** for web (via Den) and **Slack** ([Channels](https://docs.letta.com/letta-code/channels/), beta); uses **Letta** for persistence; loads [skills](https://docs.letta.com/letta-code/skills/) from paths Den manages; **brokers** [Den meta tools](DEN_ARCHITECTURE.md#den-meta-tools-bears-control-plane-tools) (Den APIs) to agents. **WhatsApp** is desired but not in Letta Code Channels yet. |
-| **Letta** | **Persistence** for the harness: tools, memory blocks, conversations per Letta agent (**bear**) |
+| **Letta Code** | **[Harness](https://docs.letta.com/letta-code)** for web (via Den) and **Slack** ([Channels](https://docs.letta.com/letta-code/channels/), beta); uses **Letta** for persistence; loads [skills](https://docs.letta.com/letta-code/skills/) from paths Den manages; **brokers** [Den meta tools](DEN_ARCHITECTURE.md#den-meta-tools-bears-control-plane-tools) (Den APIs) to role runtimes. **WhatsApp** is desired but not in Letta Code Channels yet. |
+| **Letta** | **Persistence** for the harness: tools, memory blocks, conversations, and runtime state for Letta-backed Bear roles |
 | **Bifrost** | Unified OpenAI-compatible model gateway (`/v1`) — see `services/bifrost/` |
 | **Den chat UI** | **Only** first-party web chat — Deep Chat web component served by Den; reference client for Den streaming APIs |
-| **Garage** | S3-compatible object storage — **artifacts** bucket (agent outputs, uploads, routines; **not** in Letta) + **separate** Cabinet bucket (Outline); GC on artifacts — [artifacts-garage.md](adr/artifacts-garage.md), [`services/garage/`](../../services/garage/) |
+| **Garage** | S3-compatible object storage — **artifacts** bucket (runtime outputs, uploads, routines; **not** in Letta) + **separate** Cabinet bucket (Outline); GC on artifacts — [artifacts-garage.md](adr/artifacts-garage.md), [`services/garage/`](../../services/garage/) |
 | **Outline** | Cabinet storage and UI |
 
 ## Letta
@@ -45,7 +45,7 @@ Den (chat UI) ───────────────┐     Outline (huma
 
 **Slack + harness:** **Slack** → **Letta Code** ([Channels](https://docs.letta.com/letta-code/channels/)) → **Letta**; **web** → **Den → Letta Code → Letta**. Den drives **which bears**, **which skills**, **which MCP servers**, and harness config. **WhatsApp:** not in Letta Code Channels yet—roadmap. Optional later: channel-only Den proxy for audit ([PLAN.md](../planning/PLAN.md)).
 
-**Cabinet:** Bear tool calls → **Letta Code** → **Den** → Outline. **Architecture:** agent-facing Cabinet operations use the **[Den meta tools](DEN_ARCHITECTURE.md#den-meta-tools-bears-control-plane-tools)** pattern (Den APIs + Letta Code broker), not a separate MCP layer by default.
+**Cabinet:** Bear tool calls → **Letta Code** → **Den** → Outline. **Architecture:** role-facing Cabinet operations use the **[Den meta tools](DEN_ARCHITECTURE.md#den-meta-tools-bears-control-plane-tools)** pattern (Den APIs + Letta Code broker), not a separate MCP layer by default.
 
 ## Ports (internal)
 
@@ -63,7 +63,7 @@ Expose only what users need (e.g. Den behind Coolify proxy).
 
 [Garage](https://garagehq.deuxfleurs.fr/) is the S3-compatible store for **files that must not live in Letta** (or large blobs in Postgres). Den issues presigned S3 URLs — browsers upload/download directly to Garage; Den never proxies the bytes.
 
-- **`bears-artifacts`** — Ephemeral **artifacts**: agent/tool/skill outputs, **human uploads**, routine file outputs; **metadata** (e.g. `conversation_id`, provenance); **garbage collection** by Den policy. Not Cabinet.
+- **`bears-artifacts`** — Ephemeral **artifacts**: runtime/tool/skill outputs, **human uploads**, routine file outputs; **metadata** (e.g. `conversation_id`, provenance); **garbage collection** by Den policy. Not Cabinet.
 - **`bears-cabinet`** — **Cabinet / Outline** attachments only (Phase 2+); **no** artifact GC rules from Den; optional **promote artifact → Cabinet** UX later.
 - **Auth:** scoped service keys (Den for artifacts; Outline/Cabinet wiring separately).
 - **Backup:** Garage volumes remain part of the three-input contract (repo + DB backups + object storage).
