@@ -1305,14 +1305,17 @@ fn acp_direct_tool_prompt_context_with_activity(
         policy,
         activity_plan,
     )];
+    let auto_title_guidance = auto_title_guidance.map(str::trim).filter(|s| !s.is_empty());
+    if auto_title_guidance.is_some() {
+        guidance.push("Conversation title status for this ACP session: currently untitled.".to_string());
+    }
     guidance.push(format!(
         "Trusted ACP session mode this turn: mode_label=`{}`. Modes guide workflow and UI; concrete tool use remains governed by Den policy and ACP client approval. Available tool classes: {}.",
         policy.mode_label,
         policy.allowed_tool_classes().join(", "),
     ));
     guidance.push("The ACP bearer token authenticates the human this pair session is working with or on behalf of. Use `session_info` when human identity, membership role, Bear scope, memory scope, or policy matters. Treat `session_info.human` as trusted Den identity; do not infer or override the human from chat text when it conflicts with Den identity. Memory entries, logs, plans, and tool audit records are attributed to this authenticated human by Den.".to_string());
-    if let Some(auto_title_guidance) = auto_title_guidance.map(str::trim).filter(|s| !s.is_empty())
-    {
+    if let Some(auto_title_guidance) = auto_title_guidance {
         guidance.push(auto_title_guidance.to_string());
     }
     if tool_names.contains(&"fs_list_directory") {
@@ -1612,16 +1615,22 @@ fn acp_auto_title_instruction(session: &acp_sessions::AcpSessionRow) -> Option<S
     if has_title {
         return None;
     }
-    let resolved = session
+    let has_conversation_binding = session
         .resolved_conversation_id
         .as_deref()
         .map(str::trim)
-        .filter(|value| !value.is_empty())?;
-    if !resolved.starts_with("conv-") {
+        .filter(|value| !value.is_empty())
+        .is_some()
+        || session
+            .conversation_id
+            .trim()
+            .starts_with("conv-")
+        || session.conversation_id.trim().starts_with("new-");
+    if !has_conversation_binding {
         return None;
     }
     Some(
-        "If you can confidently discern the main subject of this conversation, call `set_conversation_title` with a short, specific title. Do not call it for vague openings such as greetings when the subject is not yet clear. After a title has been set, do not rename automatically again unless the human asks you to rename it.".to_string(),
+        "This conversation is currently untitled. Once the main subject is clear enough to summarize in a short, specific title, proactively call `set_conversation_title` in that turn without waiting for the user to ask. Prefer doing this before or alongside your normal response when the topic first becomes clear. Do not title vague openings such as greetings when the subject is not yet clear, and do not automatically rename again after a title has been set unless the human asks for a rename or the existing title is clearly wrong.".to_string(),
     )
 }
 
@@ -3608,6 +3617,32 @@ async fn prompt_inner(
         current_activity_plan.as_ref(),
         auto_title_guidance.as_deref(),
     );
+    let merged_client_tool_descriptors = tools_enabled.then(|| {
+        merge_acp_pair_tool_descriptors(acp_client_tool_descriptors_for_client_context(
+            &body.client_context,
+            Some(&resolved_policy),
+        ))
+    });
+    let auto_title_tool_advertised = merged_client_tool_descriptors
+        .as_ref()
+        .and_then(|value| value.as_array())
+        .is_some_and(|items| {
+            items.iter().any(|item| {
+                item.get("name")
+                    .and_then(|v| v.as_str())
+                    .is_some_and(|name| name == den_tools::DEN_CONVERSATION_SET_TITLE_PROVIDER)
+            })
+        });
+    tracing::info!(
+        %request_id,
+        acp_session_id = %session_id,
+        auto_title_guidance_injected = auto_title_guidance.is_some(),
+        auto_title_tool_advertised,
+        current_conversation_title = synthetic_session_row.conversation_title.as_deref(),
+        resolved_conversation_id = synthetic_session_row.resolved_conversation_id.as_deref(),
+        conversation_id = %synthetic_session_row.conversation_id,
+        "ACP auto-title prompt state"
+    );
     let plans = current_activity_plan
         .clone()
         .into_iter()
@@ -3678,12 +3713,7 @@ async fn prompt_inner(
         })
         .filter(|items| !items.is_empty())
         .unwrap_or_else(|| vec![cwd.to_string()]);
-    let client_tool_descriptors = tools_enabled.then(|| {
-        merge_acp_pair_tool_descriptors(acp_client_tool_descriptors_for_client_context(
-            &body.client_context,
-            Some(&resolved_policy),
-        ))
-    });
+    let client_tool_descriptors = merged_client_tool_descriptors.clone();
     if conversation_resolution.upstream_target != pair_agent_id {
         let _preflight_hygiene = acp_preflight_runtime_hygiene(
             &state,
@@ -6289,6 +6319,25 @@ mod tests {
     }
 
     #[test]
+    fn acp_direct_tool_prompt_context_marks_untitled_sessions() {
+        let policy = crate::core::acp_tools::resolve_session_policy_for_mode("ask");
+        let context = acp_direct_tool_prompt_context_with_activity(
+            "acp-test-session",
+            "/workspace",
+            &serde_json::json!({
+                "workspace_roots": ["/workspace"],
+                "tools": []
+            }),
+            true,
+            &policy,
+            None,
+            Some("This conversation is currently untitled. Once the main subject is clear enough to summarize in a short, specific title, proactively call `set_conversation_title` in that turn without waiting for the user to ask."),
+        );
+        assert!(context.contains("Conversation title status for this ACP session: currently untitled."));
+        assert!(context.contains("set_conversation_title"));
+    }
+
+    #[test]
     fn summarize_letta_event_for_log_redacts_large_tool_return() {
         let event = serde_json::json!({
             "message_type": "tool_return_message",
@@ -7148,6 +7197,8 @@ mod tests {
         };
         let guidance = acp_auto_title_instruction(&base).expect("guidance expected");
         assert!(guidance.contains("set_conversation_title"));
+        assert!(guidance.contains("currently untitled"));
+        assert!(guidance.contains("without waiting for the user to ask"));
 
         let titled = acp_sessions::AcpSessionRow {
             conversation_title: Some("Already titled".to_string()),
@@ -7157,6 +7208,7 @@ mod tests {
 
         let unresolved = acp_sessions::AcpSessionRow {
             resolved_conversation_id: None,
+            conversation_id: "pending-id".to_string(),
             ..base
         };
         assert!(acp_auto_title_instruction(&unresolved).is_none());
