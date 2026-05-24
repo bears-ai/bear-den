@@ -30,7 +30,7 @@ pub struct AgentConversationsSnapshot {
     pub archived_count: usize,
 }
 
-pub fn letta_conversations_top_array<'a>(v: &'a Value) -> &'a [Value] {
+pub fn letta_conversations_top_array(v: &Value) -> &[Value] {
     if let Some(a) = v.as_array() {
         return a.as_slice();
     }
@@ -46,7 +46,7 @@ pub fn letta_conversations_top_array<'a>(v: &'a Value) -> &'a [Value] {
     &[]
 }
 
-fn letta_messages_top_array<'a>(v: &'a Value) -> &'a [Value] {
+fn letta_messages_top_array(v: &Value) -> &[Value] {
     if let Some(a) = v.as_array() {
         return a.as_slice();
     }

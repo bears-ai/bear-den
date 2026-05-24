@@ -124,7 +124,7 @@ fn validate_username_allowed(username: &str) -> Result<(), ValidationError> {
     Ok(())
 }
 fn validate_username_unique(
-    username: &String,
+    username: &str,
     context: &ValidateContext,
 ) -> Result<(), ValidationError> {
     tokio::task::block_in_place(|| {

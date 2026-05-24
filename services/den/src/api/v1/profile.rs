@@ -63,7 +63,7 @@ pub async fn get_profile(
     // Extract Bearer token from Authorization header
     let access_token = match extract_bearer_token(&headers) {
         Ok(token) => token,
-        Err(response) => return Ok(response),
+        Err(response) => return Ok(*response),
     };
 
     // Validate JWT access token
@@ -99,28 +99,28 @@ pub async fn get_profile(
 }
 
 /// Extract Bearer token from Authorization header
-fn extract_bearer_token(headers: &HeaderMap) -> Result<String, Response> {
+fn extract_bearer_token(headers: &HeaderMap) -> Result<String, Box<Response>> {
     let auth_header = headers.get(AUTHORIZATION).ok_or_else(|| {
-        bearer_error_response(OAuthError::InvalidRequest(
+        Box::new(bearer_error_response(OAuthError::InvalidRequest(
             "Missing Authorization header".to_string(),
-        ))
+        )))
     })?;
 
     let auth_str = auth_header.to_str().map_err(|_| {
-        bearer_error_response(OAuthError::InvalidRequest(
+        Box::new(bearer_error_response(OAuthError::InvalidRequest(
             "Invalid Authorization header encoding".to_string(),
-        ))
+        )))
     })?;
 
     if !auth_str.starts_with("Bearer ") {
-        return Err(bearer_error_response(OAuthError::InvalidRequest(
+        return Err(Box::new(bearer_error_response(OAuthError::InvalidRequest(
             "Authorization header must use Bearer scheme".to_string(),
-        )));
+        ))));
     }
 
     let token = auth_str[7..].trim();
     if token.is_empty() {
-        return Err(bearer_error_response(OAuthError::InvalidToken));
+        return Err(Box::new(bearer_error_response(OAuthError::InvalidToken)));
     }
 
     Ok(token.to_string())

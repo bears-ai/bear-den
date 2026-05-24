@@ -414,7 +414,7 @@ async fn chat_history(
     }))
 }
 
-fn letta_messages_top_array<'a>(v: &'a serde_json::Value) -> &'a [serde_json::Value] {
+fn letta_messages_top_array(v: &serde_json::Value) -> &[serde_json::Value] {
     if let Some(a) = v.as_array() {
         return a.as_slice();
     }

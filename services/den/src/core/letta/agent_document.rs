@@ -5,7 +5,7 @@ use serde_json::Value;
 /// Unwrap common envelopes (`data`, `agent`) so field reads match a flat agent object.
 ///
 /// Some responses nest the agent under `agent` or `data` (or both); we peel up to a few levels.
-pub fn unwrap_letta_agent_document<'a>(v: &'a Value) -> &'a Value {
+pub fn unwrap_letta_agent_document(v: &Value) -> &Value {
     let mut cur = v;
     for _ in 0..5 {
         let Some(obj) = cur.as_object() else {

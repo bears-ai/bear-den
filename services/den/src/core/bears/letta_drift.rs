@@ -112,7 +112,7 @@ fn letta_instruction_text_for_drift(
 ) -> Option<String> {
     let from_summary = summary
         .and_then(|s| s.system.as_deref())
-        .map(|s| normalize_drift_text(s));
+        .map(normalize_drift_text);
 
     if let Some(t) = from_summary.filter(|s| !s.is_empty()) {
         return Some(t);

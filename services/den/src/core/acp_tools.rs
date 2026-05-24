@@ -268,7 +268,7 @@ impl AcpToolName {
             if args
                 .get(arg)
                 .and_then(|v| v.as_str())
-                .filter(|s| self.allow_empty_required_string(*arg) || !s.trim().is_empty())
+                .filter(|s| self.allow_empty_required_string(arg) || !s.trim().is_empty())
                 .is_none()
             {
                 return Some(arg);

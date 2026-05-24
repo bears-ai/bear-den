@@ -287,6 +287,7 @@ struct AcpAdapterEnvironmentRequest {
     #[serde(default)]
     conversation_title: Option<String>,
     #[serde(default)]
+    #[allow(dead_code)]
     adapter_contract: Option<AdapterContract>,
 }
 
@@ -1492,7 +1493,7 @@ async fn verify_acp_conversation_belongs_to_bear(
     }
 }
 
-fn letta_messages_top_array<'a>(v: &'a serde_json::Value) -> &'a [serde_json::Value] {
+fn letta_messages_top_array(v: &serde_json::Value) -> &[serde_json::Value] {
     if let Some(a) = v.as_array() {
         return a.as_slice();
     }
@@ -3389,7 +3390,7 @@ async fn prompt_inner(
     request_id: Uuid,
 ) -> Result<Result<Response, CustomError>, ApiError> {
     let slug = slug.trim().to_string();
-    let token = auth::extract_bearer_token(&headers).map_err(|err| err)?;
+    let token = auth::extract_bearer_token(&headers)?;
     let auth = authenticate_acp_code_token_with_auth(&state, &token, &slug)
         .await
         .map_err(|err| {
@@ -3818,7 +3819,7 @@ async fn prompt_inner(
         PairTurnRequest {
             conversation_id: &conversation_resolution.upstream_target,
             role_agent_id: &pair_agent_id,
-            human_message: &prompt,
+            human_message: prompt,
             client_tools: client_tool_descriptors.clone(),
             stream_tokens,
             override_system: None,
@@ -3861,7 +3862,7 @@ async fn prompt_inner(
                 PairTurnRequest {
                     conversation_id: &conversation_resolution.upstream_target,
                     role_agent_id: &pair_agent_id,
-                    human_message: &prompt,
+                    human_message: prompt,
                     client_tools: client_tool_descriptors.clone(),
                     stream_tokens,
                     override_system: None,
@@ -3922,7 +3923,7 @@ async fn prompt_inner(
                         PairTurnRequest {
                             conversation_id: &conversation_resolution.upstream_target,
                             role_agent_id: &pair_agent_id,
-                            human_message: &prompt,
+                            human_message: prompt,
                             client_tools: client_tool_descriptors.clone(),
                             stream_tokens,
                             override_system: None,
@@ -4634,7 +4635,7 @@ async fn invoke_acp_runtime_local_tool(
             let tool_context = DenToolInvocationContext {
                 bear_id: context.bear_id,
                 bear_slug: context.bear_slug.clone(),
-                role_agent_id: context.pair_agent_id.clone().into(),
+                role_agent_id: context.pair_agent_id.clone(),
                 agent_role: Some(BearAgentRole::Pair),
                 user_id: context.user_id,
                 username: context
@@ -5439,7 +5440,7 @@ async fn map_letta_stream_frame_to_acp_adapter_events_with_persistence(
             adapter_result_rx = Some((
                 tool_call_id,
                 tool_name,
-                AcpResolvedToolResult::Ready(result),
+                AcpResolvedToolResult::Ready(Box::new(result)),
             ));
             Vec::new()
         } else {
@@ -5453,7 +5454,7 @@ async fn map_letta_stream_frame_to_acp_adapter_events_with_persistence(
 
 enum AcpResolvedToolResult {
     Receiver(oneshot::Receiver<AcpToolResultRequest>),
-    Ready(AcpToolResultRequest),
+    Ready(Box<AcpToolResultRequest>),
 }
 
 enum AcpPendingFuture {
@@ -5476,7 +5477,7 @@ enum AcpPendingFuture {
             >,
         >,
     ),
-    Tool(Pin<Box<dyn Future<Output = AcpToolResultRequest> + Send>>),
+    Tool(Pin<Box<dyn Future<Output = Box<AcpToolResultRequest>> + Send>>),
     ContinueTool(Pin<Box<dyn Future<Output = Result<reqwest::Response, CustomError>> + Send>>),
     Cleanup(Pin<Box<dyn Future<Output = serde_json::Value> + Send>>),
 }
@@ -5570,7 +5571,7 @@ impl AcpTextChunker {
         if text.len() > remaining {
             text = truncate_utf8_boundary(&text, remaining).to_string();
             self.reasoning_limit_reached = true;
-            text.push_str("\n");
+            text.push('\n');
             text.push_str(&normalize_display_status_text(
                 "BEARS suppressed additional thinking/status output for this turn because it exceeded the safety limit",
             ));
@@ -5943,7 +5944,7 @@ impl Stream for AcpLettaSseStream {
                                         )
                                         .await
                                         {
-                                            Err(_) => AcpToolResultRequest {
+                                            Err(_) => Box::new(AcpToolResultRequest {
                                                 tool_call_id: Some(tool_call_id.clone()),
                                                 tool_name: Some(tool_name.clone()),
                                                 approval_request_id: approval_request_id.clone(),
@@ -5960,8 +5961,8 @@ impl Stream for AcpLettaSseStream {
                                                     "timeout_ms": timeout_ms,
                                                 }),
                                                 ..Default::default()
-                                            },
-                                            Ok(Err(err)) => AcpToolResultRequest {
+                                            }),
+                                            Ok(Err(err)) => Box::new(AcpToolResultRequest {
                                                 tool_call_id: Some(tool_call_id.clone()),
                                                 tool_name: Some(tool_name.clone()),
                                                 approval_request_id: approval_request_id.clone(),
@@ -5977,8 +5978,8 @@ impl Stream for AcpLettaSseStream {
                                                     "tool_name": tool_name,
                                                 }),
                                                 ..Default::default()
-                                            },
-                                            Ok(Ok(value)) => value,
+                                            }),
+                                            Ok(Ok(value)) => Box::new(value),
                                         }
                                     },
                                 )));
@@ -6012,7 +6013,7 @@ impl Stream for AcpLettaSseStream {
                 AcpPendingFuture::Tool(fut) => {
                     let result = ready!(fut.as_mut().poll(cx));
                     this.persist_future = None;
-                    let tool_result = result;
+                    let tool_result = *result;
                     {
                         if let Some(done_id) = tool_result.tool_call_id.as_deref() {
                             let ok = tool_result.status == "ok";

@@ -86,8 +86,8 @@ pub async fn gather(state: &AppState) -> StackHealthReport {
     let (den_pg, letta_pg, codepool_h, letta_h, bifrost_h, memfs_views_h) = tokio::join!(
         check_den_postgres(state.sqlx_pool()),
         check_letta_postgres(&cfg.letta_pg_uri),
-        check_codepool(&state),
-        check_letta_api(&state),
+        check_codepool(state),
+        check_letta_api(state),
         check_bifrost_http(&cfg.bifrost_base_url, &cfg.bifrost_metadata_url),
         check_memfs_sidecar_views(&cfg.letta_memfs_service_url),
     );

@@ -813,7 +813,8 @@ async fn bear_work_surface_rows(
             (BearAgentRole::Work, work_current_understanding_present),
         ]
         .into_iter()
-        .filter_map(|(role, present)| present.then(|| role.as_str().to_string()))
+        .filter(|(_, present)| *present)
+        .map(|(role, _)| role.as_str().to_string())
         .collect::<Vec<_>>();
         let role_local_presence_count = workplace_labels.len();
         let active_workplace_count = workplace_labels.len();

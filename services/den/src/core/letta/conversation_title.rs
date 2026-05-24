@@ -119,7 +119,7 @@ pub fn derive_title_from_user_message(raw: &str) -> Option<String> {
     Some(line)
 }
 
-fn messages_array<'a>(body: &'a Value) -> &'a [Value] {
+fn messages_array(body: &Value) -> &[Value] {
     if let Some(a) = body.as_array() {
         return a.as_slice();
     }
@@ -135,7 +135,7 @@ fn messages_array<'a>(body: &'a Value) -> &'a [Value] {
     &[]
 }
 
-fn letta_inner<'a>(msg: &'a Value) -> &'a Value {
+fn letta_inner(msg: &Value) -> &Value {
     match msg.get("contents") {
         Some(c) if c.get("message_type").is_some() => c,
         _ => msg,

@@ -44,7 +44,7 @@ impl MediaStore {
 
         let bucket = Bucket::new(
             endpoint.clone(),
-            url_style.clone(),
+            url_style,
             config.s3_bucket.clone(),
             config.s3_region.clone(),
         )
