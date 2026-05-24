@@ -1,6 +1,6 @@
-# Implementation Plan: BEARS Multi-Agent Architecture
+# Implementation Plan: BEARS Multi-Role Runtime Architecture
 
-This plan implements the architecture described in the `multi-agent-architecture` ADR. The task-queue specifics referenced in phases 4–8 are detailed in `tasks-schema.md`. MemFS repo/view topology is specified by the [`memfs-sidecar-repo-views` ADR](../architecture/adr/memfs-sidecar-repo-views.md).
+This plan implements the architecture described in the `multi-role-runtime-architecture` ADR. The task-queue specifics referenced in phases 4–8 are detailed in `tasks-schema.md`. MemFS repo/view topology is specified by the [`memfs-sidecar-repo-views` ADR](../architecture/adr/memfs-sidecar-repo-views.md).
 
 Each phase has explicit acceptance criteria. Phases are ordered for safe incremental rollout. Phase 10 (migration) only runs after phases 1–9 have been validated on a test Bear.
 
@@ -8,16 +8,16 @@ Each phase has explicit acceptance criteria. Phases are ordered for safe increme
 
 As of the current Den slice:
 
-- The additive multi-agent schema exists for `bear_agents`, `bear_skills_manifest`, `bear_skill_proposals`, and `bear_subscriptions`.
+- The additive role-runtime schema exists for `bear_agents`, `bear_skills_manifest`, `bear_skill_proposals`, and `bear_subscriptions`.
 - Historical single-agent bear ids have been imported into `bear_agents(role='talk')` by migration, and `bears.letta_agent_id` is dropped by the follow-up schema migration.
-- Individual Bear detail pages list all role agents, perform per-role Letta fetch health checks, and expose `POST /admin/bears/{id}/provision-missing-roles` to create Letta agents only for roles with no recorded role agent id.
+- Individual Bear detail pages list all Bear roles, perform per-role Letta-backed runtime fetch health checks, and expose `POST /admin/bears/{id}/provision-missing-roles` to create Letta-backed role runtimes only for roles with no recorded runtime handle.
 - Browser web chat routes through the `talk` role and includes role metadata in the trusted Codepool `bear_channel` payload.
 - ACP is being migrated to strict `pair` role routing: no Codepool fallback and no `talk`/legacy fallback. Missing `pair` must produce an operator-actionable error directing admins to provision missing role agents.
 - Historical ACP naming such as `codepool_session_id` is being retired in favor of runtime-neutral session binding names such as `runtime_session_id`.
 
 ## Runtime completion checklist
 
-This checklist translates the durable role model in [`../concepts/BEAR_AGENT_ROLES.md`](../concepts/BEAR_AGENT_ROLES.md) and the Den implementation spec in [`../../services/den/docs/bear-spec.md`](../../services/den/docs/bear-spec.md) into PR-sized remaining runtime work. The existing numbered phases below remain the broader rollout plan; this section is the current implementation queue for finishing the active multi-agent runtime.
+This checklist translates the durable role model in [`../concepts/BEAR_AGENT_ROLES.md`](../concepts/BEAR_AGENT_ROLES.md) and the Den implementation spec in [`../../services/den/docs/bear-spec.md`](../../services/den/docs/bear-spec.md) into PR-sized remaining runtime work. The existing numbered phases below remain the broader rollout plan; this section is the current implementation queue for finishing the active multi-role runtime.
 
 ### A. Dropped single-agent cleanup — done
 

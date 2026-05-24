@@ -12,7 +12,7 @@ Related docs:
 - [Reflection System ADR](../architecture/adr/reflection-system.md)
 - [Semantic Bear Memory ADR](../architecture/adr/semantic-bear-memory.md)
 - [MemFS Sidecar Repo Views ADR](../architecture/adr/memfs-sidecar-repo-views.md)
-- [Multi-agent architecture ADR](../architecture/adr/multi-agent-architecture.md)
+- [Multi-role runtime architecture ADR](../architecture/adr/multi-role-runtime-architecture.md)
 - [Semantic memory context](../context/SEMANTIC_MEMORY.md)
 - [Memory model](../concepts/MEMORY_MODEL.md)
 

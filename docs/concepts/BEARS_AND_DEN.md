@@ -1,12 +1,12 @@
 # Bears and Den
 
-A **Bear** is the durable assistant identity users interact with. **Den** is the control plane that makes Bears real: it provisions them, routes traffic to them, governs access, schedules work, and keeps their underlying agents reconciled.
+A **Bear** is the durable assistant identity users interact with. **Den** is the control plane that makes Bears real: it provisions them, routes traffic to them, governs access, schedules work, and keeps their underlying role runtimes reconciled.
 
 ## Summary
 
 - A Bear is the product object: the assistant with memory, skills, conversations, tasks, and identity.
 - Den is the system of record and control plane for Bears.
-- Letta agents are implementation components underneath a Bear.
+- Provider-managed agents such as Letta agents are implementation components that may sit underneath a Bear role during migration, but they are not the primary product concept.
 - Surfaces such as Slack, web chat, IDEs, task dispatch, and webhooks reach a Bear through Den-managed routing.
 
 ## What is a Bear?
@@ -22,7 +22,7 @@ A Bear can:
 - watch external events,
 - and perform approved background work.
 
-Internally, a Bear is made of multiple specialized agents. Conceptually, though, users should not have to think of a Bear as five separate bots. The Bear is the stable identity; the internal agent roles are how the system delivers that identity safely across contexts.
+Internally, a Bear executes through multiple specialized roles. During the Letta-backed era, some of those role runtimes are implemented as separate provider-managed agents, but users should not have to think of a Bear as five separate bots. The Bear is the stable identity; the internal roles are how the system delivers that identity safely across contexts.
 
 ## What is Den?
 
@@ -32,7 +32,7 @@ Den is responsible for:
 
 - creating and provisioning Bears,
 - tracking Bear membership and access,
-- routing each surface to the correct internal agent role,
+- routing each surface to the correct internal role,
 - enforcing policy around tasks, tools, skills, and memory,
 - scheduling curate runs and background work,
 - receiving inbound events,
@@ -64,22 +64,22 @@ Den is not:
 - a Letta Code harness,
 - or the place where all agent reasoning happens.
 
-Den owns control, policy, routing, scheduling, and reconciliation. The Bear's internal agents do the role-specific reasoning and work.
+Den owns control, policy, routing, scheduling, and reconciliation. The Bear's internal roles and their runtime instances do the role-specific reasoning and work.
 
 ## Relationship to Letta
 
-Letta provides the underlying agent runtime and persistence. A Bear maps to multiple Letta agents, each with a fixed internal role.
+Letta currently provides some underlying runtime implementations and persistence during the migration era. In the Letta-backed architecture, some Bear roles map to Letta-managed agents or Letta Code harnesses.
 
 Den owns the Bear abstraction above Letta:
 
-- Den knows which Letta agents belong to a Bear.
-- Den knows each agent's role.
+- Den knows which provider-managed runtimes belong to a Bear role.
+- Den knows each role's policy, memory scope, and runtime family.
 - Den provisions prompts, tools, skills, memory policy, and runtime configuration.
 - Den repairs or reports drift when runtime state diverges from canonical configuration.
 
 ## Relationship to surfaces
 
-Different surfaces reach different internal Bear agent roles:
+Different surfaces reach different internal Bear roles:
 
 | Surface | Typical role |
 |---------|--------------|
@@ -97,7 +97,7 @@ Prefer:
 
 - “your Bear” for the assistant identity,
 - “Den manages Bears” for the control plane,
-- “Bear agent roles” for `talk`, `pair`, `curate`, `work`, and `watch`,
+- “Bear roles” for `talk`, `pair`, `curate`, `work`, and `watch`,
 - “membership roles” or “access roles” for human permissions.
 
 Avoid:
@@ -105,15 +105,15 @@ Avoid:
 - “Den answered the user,” unless describing infrastructure logs,
 - “a Bear is a Letta agent,”
 - “the five roles are five separate assistants,”
-- or “Bear roles” when the intended meaning is specifically internal agent roles.
+- or “Bear roles” when the intended meaning is specifically human membership or access roles.
 
 ## Related docs
 
-- [Bear agent roles](BEAR_AGENT_ROLES.md)
+- [Bear roles](BEAR_AGENT_ROLES.md)
 - [Memory model](MEMORY_MODEL.md)
 - [Tasks and autonomy](TASKS_AND_AUTONOMY.md)
 - [Capabilities and skills](CAPABILITIES_AND_SKILLS.md)
 - [Observations and subscriptions](OBSERVATIONS_AND_SUBSCRIPTIONS.md)
 - [Identity and membership](IDENTITY_AND_MEMBERSHIP.md)
-- [Multi-agent architecture ADR](../architecture/adr/multi-agent-architecture.md)
+- [Multi-role runtime architecture ADR](../architecture/adr/multi-role-runtime-architecture.md)
 - [Den Bear spec](../../services/den/docs/bear-spec.md)

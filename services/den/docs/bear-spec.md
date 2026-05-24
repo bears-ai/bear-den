@@ -1,6 +1,6 @@
 # BEARS Multi-Agent Bear Spec
 
-This is the phase-0 implementation spec for [`../../../docs/architecture/adr/multi-agent-architecture.md`](../../../docs/architecture/adr/multi-agent-architecture.md) and [`../../../docs/planning/MULTI_AGENT_IMPLEMENTATION_PLAN.md`](../../../docs/planning/MULTI_AGENT_IMPLEMENTATION_PLAN.md). It freezes the canonical Den-owned configuration before provisioning code creates the runtime agents for a Bear.
+This is the phase-0 implementation spec for [`../../../docs/architecture/adr/multi-role-runtime-architecture.md`](../../../docs/architecture/adr/multi-role-runtime-architecture.md) and [`../../../docs/planning/MULTI_AGENT_IMPLEMENTATION_PLAN.md`](../../../docs/planning/MULTI_AGENT_IMPLEMENTATION_PLAN.md). It freezes the canonical Den-owned configuration before provisioning code creates the role runtimes for a Bear.
 
 ## Scope
 

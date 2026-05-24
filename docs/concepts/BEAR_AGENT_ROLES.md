@@ -1,10 +1,10 @@
-# Bear agent roles: talk, pair, curate, work, and watch
+# Bear roles: talk, pair, curate, work, and watch
 
-This document describes the five internal agent roles BEARS uses. It exists to align product, design, engineering, documentation, support, and marketing around one shared implementation and trust-boundary model.
+This document describes the five internal roles BEARS uses. It exists to align product, design, engineering, documentation, support, and marketing around one shared implementation and trust-boundary model.
 
-A Bear should feel like one coherent assistant to a user. The preferred conceptual model is **roles, channels, and work surfaces**, not Spaces. Internally, BEARS uses five specialized agent roles. Each role has a distinct job, trust profile, memory branch, and relationship to external systems.
+A Bear should feel like one coherent assistant to a user. The preferred conceptual model is **roles, channels, and work surfaces**, not Spaces or separate provider-managed agents. Internally, BEARS uses a multi-role runtime. Each role has a distinct job, trust profile, memory branch, and relationship to external systems.
 
-Agent roles are implementation vocabulary, but they are also now the preferred conceptual vocabulary. They are useful for code, schemas, routing, provisioning, diagnostics, architecture discussion, and user-facing explanation when a boundary matters. The Bear should still identify as the Bear rather than as a separate role agent or sub-agent.
+Roles are the preferred conceptual vocabulary. They are useful for code, schemas, routing, provisioning, diagnostics, architecture discussion, and user-facing explanation when a boundary matters. The Bear should still identify as the Bear rather than as a separate role runtime or sub-agent.
 
 ## Status and relationship to other docs
 

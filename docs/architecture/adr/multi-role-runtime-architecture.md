@@ -1,4 +1,4 @@
-# ADR: BEARS Multi-Agent Architecture for Letta-Backed Coding Agents
+# ADR: BEARS Multi-Role Runtime Architecture
 
 **Status:** Accepted
 **Date:** 2026-05-03
@@ -21,15 +21,19 @@ A separate but related concern is the **lethal trifecta** for agentic systems: s
 
 ## Decision
 
-### 1. Bear and Den abstractions
+### 1. Bear, role, and runtime abstractions
 
-A **Bear** is a logical agent identity from the user's perspective — one coherent assistant with persistent memory and accumulated skills. Internally, a Bear is a cluster of five specialized Letta agents that share memory, prompts, and skills via centralized provisioning.
+A **Bear** is the durable assistant identity from the user's perspective — one coherent assistant with persistent memory, charter, and accumulated skills.
 
-**Den** is the control plane: it provisions Bears, keeps their constituent agents in sync, owns the MemFS sidecar, schedules curate runs, manages the work-task queue and watch subscriptions, and acts as gateway for surfaces that need one (Slack, web chat).
+BEARS uses a **multi-role runtime**. A Bear may execute under role-scoped contexts such as `talk`, `pair`, `work`, `curate`, and `watch`. Roles are Den-owned descriptors that define tools, memory scope, autonomy policy, surfaces, and audit behavior. They are not distinct provider-managed agents.
 
-### 2. Five specialized agents per Bear
+A **runtime instance** is the concrete execution binding for a Bear role under a particular provider or runtime family. During the Letta-backed era, many role runtimes are implemented as Letta agents or Letta Code harnesses. That implementation detail does not define the core architecture.
 
-Every Bear consists of:
+**Den** is the control plane: it provisions Bears, keeps their constituent role runtimes in sync, owns the MemFS sidecar, schedules curate runs, manages the work-task queue and watch subscriptions, and acts as gateway for surfaces that need one (Slack, web chat).
+
+### 2. Five specialized roles per Bear
+
+Every Bear operates through:
 
 - **talk agent** — Backs Letta Code-based conversational channels (Slack, web chat, Discord). **Runs behind a Letta Code harness.** Tool profile suited to text-in / text-out interaction with optional tool calls executed on the harness server. Holds: private data, durable state (own memory branch). No external comms beyond the channel itself.
 - **pair agent** — Backs ACP-direct connections from client-side tools (IDEs, Cowork, Figma plugins, future ACP-speaking apps). **Implemented as a Letta-API-direct client that speaks ACP; no Letta Code harness involved** — the harness's single-session state model is incompatible with ACP's multi-session-per-connection design. Tool execution forwarded to the client via ACP's native tool-call and `session/request_permission` flow. Holds: private data, durable state (own memory branch). External effects only via the client tool, gated by user approval per call.

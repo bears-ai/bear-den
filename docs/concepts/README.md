@@ -65,4 +65,4 @@ Key principle: plans, tasks, memory, and workboard state should attach to the **
 - **Membership** — A user's relationship and access role for a Bear.
 - **Trusted context** — Identity, membership, session, and runtime facts supplied by Den or the authenticated client rather than inferred from chat text.
 
-Start with [Bears and Den](BEARS_AND_DEN.md), [Bear agent roles](BEAR_AGENT_ROLES.md), [Memory model](MEMORY_MODEL.md), and [Tasks and autonomy](TASKS_AND_AUTONOMY.md) for the shortest path through the system.
+Start with [Bears and Den](BEARS_AND_DEN.md), [Bear roles](BEAR_AGENT_ROLES.md), [Memory model](MEMORY_MODEL.md), and [Tasks and autonomy](TASKS_AND_AUTONOMY.md) for the shortest path through the system.
