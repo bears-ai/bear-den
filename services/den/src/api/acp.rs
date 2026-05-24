@@ -6320,7 +6320,7 @@ mod tests {
 
     #[test]
     fn acp_direct_tool_prompt_context_marks_untitled_sessions() {
-        let policy = crate::core::acp_tools::resolve_session_policy_for_mode("ask");
+        let policy = crate::core::acp_tools::resolve_session_policy_for_mode("ask", None);
         let context = acp_direct_tool_prompt_context_with_activity(
             "acp-test-session",
             "/workspace",
