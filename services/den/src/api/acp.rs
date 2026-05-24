@@ -244,6 +244,11 @@ pub struct AcpPromptRequest {
     pub client_capabilities: serde_json::Value,
     #[serde(default)]
     pub client_context: serde_json::Value,
+    /// Adapter-local mode selected before Den has necessarily persisted the ACP
+    /// session binding. Den treats this as initial intent for new sessions only;
+    /// existing sessions continue to use Den's stored current_mode/plan state.
+    #[serde(default)]
+    pub requested_mode: Option<String>,
     #[serde(default)]
     pub adapter_contract: Option<AdapterContract>,
 }
@@ -426,6 +431,31 @@ fn tools_enabled_for_client(client: &str) -> bool {
         normalized.as_str(),
         "zed" | "cursor" | "vscode" | "windsurf"
     )
+}
+
+fn normalize_acp_requested_mode(raw: &str) -> Option<&'static str> {
+    match raw.trim().to_ascii_lowercase().as_str() {
+        "ask" => Some("ask"),
+        "plan" => Some("plan"),
+        "write" => Some("write"),
+        _ => None,
+    }
+}
+
+fn requested_mode_from_prompt(
+    body: &AcpPromptRequest,
+) -> Result<Option<&'static str>, CustomError> {
+    let Some(raw) = body
+        .requested_mode
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    else {
+        return Ok(None);
+    };
+    normalize_acp_requested_mode(raw).map(Some).ok_or_else(|| {
+        CustomError::ValidationError("requested_mode must be one of ask, plan, write".to_string())
+    })
 }
 
 #[derive(Debug, Clone)]
@@ -1307,7 +1337,9 @@ fn acp_direct_tool_prompt_context_with_activity(
     )];
     let auto_title_guidance = auto_title_guidance.map(str::trim).filter(|s| !s.is_empty());
     if auto_title_guidance.is_some() {
-        guidance.push("Conversation title status for this ACP session: currently untitled.".to_string());
+        guidance.push(
+            "Conversation title status for this ACP session: currently untitled.".to_string(),
+        );
     }
     guidance.push(format!(
         "Trusted ACP session mode this turn: mode_label=`{}`. Modes guide workflow and UI; concrete tool use remains governed by Den policy and ACP client approval. Available tool classes: {}.",
@@ -1342,7 +1374,7 @@ fn acp_direct_tool_prompt_context_with_activity(
         guidance.push("Use `fs_create_text_file` with {{\"path\":\"/absolute/new-file.txt\",\"content\":\"text\"}} to create new UTF-8 text files. It will not overwrite existing files; use `create_parent_dirs:true` only when parent directories should be created.".to_string());
     }
     if tool_names.contains(&"fs_delete_path") {
-        guidance.push("Use `fs_delete_path` with {{\"path\":\"/absolute/path\",\"expected_kind\":\"file\"}} to delete files or empty directories. For non-empty directories, `recursive:true` is required. Deleting workspace roots, hidden paths, and sensitive paths is denied.".to_string());
+        guidance.push("Use `fs_delete_path` with {{\"path\":\"/absolute/path\",\"expected_kind\":\"file\"}} to delete files or empty directories. For non-empty directories, `recursive:true` is required. Deleting workspace roots and sensitive paths is denied.".to_string());
     }
     guidance.push("Tool-loop rule: after any ACP tool result, continue from the returned content until the user's original request is complete. Do not stop merely because a tool succeeded. Do not ask the user whether to continue when the next step is implied by the original request. Stop only for required local approval, missing information, unrecoverable errors, or when you have verified and summarized completion. Never write textual tool-call syntax such as `to=functions...` or `functions.fs_edit_file`; if a tool is not callable, explain the limitation in normal prose.".to_string());
     format!(
@@ -1621,10 +1653,7 @@ fn acp_auto_title_instruction(session: &acp_sessions::AcpSessionRow) -> Option<S
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .is_some()
-        || session
-            .conversation_id
-            .trim()
-            .starts_with("conv-")
+        || session.conversation_id.trim().starts_with("conv-")
         || session.conversation_id.trim().starts_with("new-");
     if !has_conversation_binding {
         return None;
@@ -3429,6 +3458,11 @@ async fn prompt_inner(
                     err.to_string(),
                 )
             })?;
+    let is_new_session_binding = existing_session.is_none();
+    let requested_initial_mode = match requested_mode_from_prompt(&body) {
+        Ok(mode) => mode,
+        Err(err) => return Ok(Err(err)),
+    };
     let generated_conversation_id = new_acp_conversation_id(&client);
     let mut conversation_resolution = resolve_acp_prompt_conversation(
         body.conversation_id.as_deref(),
@@ -3500,7 +3534,9 @@ async fn prompt_inner(
             resolved_conversation_id: conversation_resolution.resolved_conversation_id.clone(),
             client: client.clone(),
             cwd: Some(cwd.clone()),
-            current_mode: None,
+            current_mode: is_new_session_binding
+                .then(|| requested_initial_mode.map(str::to_string))
+                .flatten(),
         },
     )
     .await
@@ -3511,6 +3547,56 @@ async fn prompt_inner(
             err.to_string(),
         )
     })?;
+    if is_new_session_binding {
+        match requested_initial_mode {
+            Some("plan") => {
+                acp_plan_mode::enter_plan_mode(
+                    &state.sqlx_pool,
+                    acp_plan_mode::EnterPlanModeParams {
+                        user_id,
+                        bear_id: bear.id,
+                        bear_slug: bear.slug.clone(),
+                        acp_session_id: session_id.to_string(),
+                        reason: "Client selected ACP Plan mode before first prompt".to_string(),
+                        requested_by: acp_plan_mode::AcpPlanModeRequestedBy::User,
+                        previous_permission_mode: Some("ask".to_string()),
+                    },
+                )
+                .await
+                .map_err(|err| {
+                    let (status, code, message) = acp_error_status_message(&err);
+                    ApiError::new(status, code, message)
+                })?;
+                acp_sessions::set_current_mode(
+                    &state.sqlx_pool,
+                    user_id,
+                    bear.id,
+                    session_id,
+                    "plan",
+                )
+                .await
+                .map_err(|err| {
+                    let (status, code, message) = acp_error_status_message(&err);
+                    ApiError::new(status, code, message)
+                })?;
+            }
+            Some("write") => {
+                acp_sessions::set_current_mode(
+                    &state.sqlx_pool,
+                    user_id,
+                    bear.id,
+                    session_id,
+                    "write",
+                )
+                .await
+                .map_err(|err| {
+                    let (status, code, message) = acp_error_status_message(&err);
+                    ApiError::new(status, code, message)
+                })?;
+            }
+            _ => {}
+        }
+    }
     tracing::info!(
         %request_id,
         acp_session_id = %session_id,
@@ -6333,7 +6419,9 @@ mod tests {
             None,
             Some("This conversation is currently untitled. Once the main subject is clear enough to summarize in a short, specific title, proactively call `set_conversation_title` in that turn without waiting for the user to ask."),
         );
-        assert!(context.contains("Conversation title status for this ACP session: currently untitled."));
+        assert!(
+            context.contains("Conversation title status for this ACP session: currently untitled.")
+        );
         assert!(context.contains("set_conversation_title"));
     }
 

@@ -194,6 +194,7 @@ struct SessionContext {
     conversation_id: Option<String>,
     resolved_conversation_id: Option<String>,
     thread_title: Option<String>,
+    current_mode: Option<String>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -296,6 +297,49 @@ fn normalize_mode(mode: &str) -> &'static str {
         MODE_WRITE => MODE_WRITE,
         _ => MODE_ASK,
     }
+}
+
+fn set_context_mode(
+    context: &mut SessionContext,
+    mode: &str,
+    source: &str,
+    pending_den_sync: bool,
+) -> &'static str {
+    let mode = normalize_mode(mode);
+    context.current_mode = Some(mode.to_string());
+    if !context.raw.is_object() {
+        context.raw = json!({});
+    }
+    context.raw["session_mode"] = json!({
+        "requested_mode": mode,
+        "effective_mode": mode,
+        "source": source,
+        "pending_den_sync": pending_den_sync,
+    });
+    mode
+}
+
+async fn remember_session_mode(
+    shared_state: &AdapterSharedState,
+    adapter_state: &mut AdapterState,
+    session_id: &str,
+    mode: &str,
+    source: &str,
+    pending_den_sync: bool,
+) -> &'static str {
+    let mode = normalize_mode(mode);
+    if let Some(context) = adapter_state.session_contexts.get_mut(session_id) {
+        set_context_mode(context, mode, source, pending_den_sync);
+    }
+    if let Some(context) = shared_state
+        .session_contexts
+        .lock()
+        .await
+        .get_mut(session_id)
+    {
+        set_context_mode(context, mode, source, pending_den_sync);
+    }
+    mode
 }
 
 fn session_modes_for_mode(mode: &str) -> SessionModeState {
@@ -1356,10 +1400,10 @@ impl BrowserBridgeConfig {
 
 impl RuntimeConfig {
     fn from_env_and_args() -> Result<Self> {
-        let mut api_url = env::var("BEARS_DEN_API_URL").unwrap_or_default();
-        let mut bear = env::var("BEARS_BEAR_SLUG").unwrap_or_default();
-        let mut token = env::var("BEARS_DEN_TOKEN").unwrap_or_default();
-        let mut token_env = env::var("BEARS_DEN_TOKEN_ENV").unwrap_or_default();
+        let mut api_url = env::var("DEN_API_URL").unwrap_or_default();
+        let mut bear = env::var("BEAR_SLUG").unwrap_or_default();
+        let mut token = env::var("DEN_TOKEN").unwrap_or_default();
+        let mut token_env = env::var("DEN_TOKEN_ENV").unwrap_or_default();
         let mut client = env::var("BEARS_ACP_CLIENT").unwrap_or_else(|_| "zed".to_string());
         let mut check_config = false;
         let mut check_server = false;
@@ -1408,7 +1452,7 @@ impl RuntimeConfig {
             match env::var(&token_env) {
                 Ok(value) => token = value,
                 Err(_) => diagnostics.push(format!(
-                    "BEARS_DEN_TOKEN_ENV points at {token_env:?}, but that environment variable is not set. Export {token_env} or change --token-env."
+                    "DEN_TOKEN_ENV points at {token_env:?}, but that environment variable is not set. Export {token_env} or change --token-env."
                 )),
             }
         }
@@ -1420,12 +1464,11 @@ impl RuntimeConfig {
 
         validate_api_url(&api_url, &mut diagnostics);
         if bear.is_empty() {
-            diagnostics
-                .push("Missing bear slug. Set BEARS_BEAR_SLUG or pass --bear <slug>.".to_string());
+            diagnostics.push("Missing bear slug. Set BEAR_SLUG or pass --bear <slug>.".to_string());
         }
         if token.is_empty() {
             diagnostics.push(
-                "Missing Den bearer token. Set BEARS_DEN_TOKEN, set BEARS_DEN_TOKEN_ENV to the name of an environment variable containing the token, pass --token <token>, or pass --token-env <env-var>. Den ACP tokens include the acp:chat scope."
+                "Missing Den bearer token. Set DEN_TOKEN, set DEN_TOKEN_ENV to the name of an environment variable containing the token, pass --token <token>, or pass --token-env <env-var>. Den ACP tokens include the acp:chat scope."
                     .to_string(),
             );
         }
@@ -1492,7 +1535,7 @@ impl RuntimeConfig {
             message.push_str(diagnostic);
         }
         message.push_str(
-            "\n\nExample:\n  BEARS_DEN_API_URL=https://api.bears.example\n  BEARS_BEAR_SLUG=my-bear\n  BEARS_DEN_TOKEN=...\n\nFor Zed, put those values in the custom agent server env block, or run with --token-env BEARS_DEN_TOKEN so the token can stay outside editor settings.",
+            "\n\nExample:\n  DEN_API_URL=https://api.bears.example\n  BEAR_SLUG=my-bear\n  DEN_TOKEN=...\n\nFor Zed, put those values in the custom agent server env block, or run with --token-env DEN_TOKEN so the token can stay outside editor settings.",
         );
         message
     }
@@ -1501,7 +1544,7 @@ impl RuntimeConfig {
 fn validate_api_url(api_url: &str, diagnostics: &mut Vec<String>) {
     if api_url.is_empty() {
         diagnostics.push(
-            "Missing Den API URL. Set BEARS_DEN_API_URL or pass --api-url <url>. Use the API origin reachable from your editor process, for example https://api.bears.example."
+            "Missing Den API URL. Set DEN_API_URL or pass --api-url <url>. Use the API origin reachable from your editor process, for example https://api.bears.example."
                 .to_string(),
         );
         return;
@@ -1532,7 +1575,7 @@ fn validate_api_url(api_url: &str, diagnostics: &mut Vec<String>) {
 
     if parsed.path().contains("/acp/") {
         diagnostics.push(
-            "BEARS_DEN_API_URL should be the Den API origin only, not the full ACP prompt endpoint. Use a value like https://api.bears.example, not a URL containing /acp/bears/..."
+            "DEN_API_URL should be the Den API origin only, not the full ACP prompt endpoint. Use a value like https://api.bears.example, not a URL containing /acp/bears/..."
                 .to_string(),
         );
     }
@@ -1584,10 +1627,10 @@ fn print_browser_bridge_help_to_stderr() {
 fn print_help_to_stderr() {
     eprintln!(
         "bears-acp-adapter {}\nBuild git SHA: {}\nLocal HEAD SHA: {}\nACP sessions: list/resume/load; conversations bound via Den\n\n\
-Usage: bears-acp-adapter --api-url <url> --bear <slug> [--client zed] [--token-env BEARS_DEN_TOKEN]\n       bears-acp-adapter doctor\n       bears-acp-adapter update-check [--channel stable]\n       bears-acp-adapter update [--open|--install|--download-only] [--yes]\n       bears-acp-adapter browser-bridge [--bind 127.0.0.1:3766] [--path /mcp] [--token <token>]\n\n\
+Usage: bears-acp-adapter --api-url <url> --bear <slug> [--client zed] [--token-env DEN_TOKEN]\n       bears-acp-adapter doctor\n       bears-acp-adapter update-check [--channel stable]\n       bears-acp-adapter update [--open|--install|--download-only] [--yes]\n       bears-acp-adapter browser-bridge [--bind 127.0.0.1:3766] [--path /mcp] [--token <token>]\n\n\
 Options:\n  --api-url <url>        Den API origin, for example https://api.bears.example\n  --bear <slug>          Bear slug to chat with\n  --token <token>        Den ACP token with acp:chat scope\n  --token-env <env-var>  Read the Den bearer token from this environment variable\n  --client <name>        Client label: zed, opencode, or acp_adapter\n  --check-config         Validate configuration and exit without starting ACP stdio\n  --check-server         Fetch Den /version and exit without starting ACP stdio\n  doctor, --doctor       Run user-friendly setup checks and exit\n  update-check           Check for a newer signed macOS package\n  update                 Download, verify, and install/open a newer macOS package\n  browser-bridge         Serve browser-only MCP tools over local Streamable HTTP\n  --version              Show version/build behavior and exit\n  --help                 Show this help\n\n\
-Environment fallbacks:\n  BEARS_DEN_API_URL\n  BEARS_BEAR_SLUG\n  BEARS_DEN_TOKEN\n  BEARS_DEN_TOKEN_ENV\n  BEARS_ACP_CLIENT\n  BEARS_ACP_UPDATE_CHANNEL\n  BEARS_ACP_UPDATE_MANIFEST_URL\n\n\
-BEARS_DEN_API_URL should be the API origin only, not the full /acp/bears/... endpoint.",
+Environment fallbacks:\n  DEN_API_URL\n  BEAR_SLUG\n  DEN_TOKEN\n  DEN_TOKEN_ENV\n  BEARS_ACP_CLIENT\n  BEARS_ACP_UPDATE_CHANNEL\n  BEARS_ACP_UPDATE_MANIFEST_URL\n\n\
+DEN_API_URL should be the API origin only, not the full /acp/bears/... endpoint.",
         adapter_version(),
         env!("BEARS_ACP_ADAPTER_GIT_SHA"),
         local_head_sha()
@@ -1865,6 +1908,23 @@ async fn handle_request(
                     requested_mode,
                 )
                 .await?;
+                let pending_den_sync = den_response
+                    .get("deferred")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false);
+                remember_session_mode(
+                    shared_state,
+                    adapter_state,
+                    session_id,
+                    mode,
+                    if pending_den_sync {
+                        "adapter.pending_den_session_mode"
+                    } else {
+                        "den.session_policy"
+                    },
+                    pending_den_sync,
+                )
+                .await;
                 eprintln!(
                     "bears-acp-adapter: session/set_config_option mode request session_id={} requested_mode={} effective_mode={} den_message={}",
                     session_id,
@@ -1947,6 +2007,23 @@ async fn handle_request(
                     requested_mode,
                 )
                 .await?;
+                let pending_den_sync = den_response
+                    .get("deferred")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false);
+                remember_session_mode(
+                    shared_state,
+                    adapter_state,
+                    session_id,
+                    mode,
+                    if pending_den_sync {
+                        "adapter.pending_den_session_mode"
+                    } else {
+                        "den.session_policy"
+                    },
+                    pending_den_sync,
+                )
+                .await;
                 eprintln!(
                     "bears-acp-adapter: session/set_mode request session_id={} requested_mode={} effective_mode={} den_message={}",
                     session_id,
@@ -2510,6 +2587,20 @@ fn ensure_session_context_capabilities(context: &mut SessionContext) {
     context.raw["adapter"] = adapter_capabilities_context_with_client_mcp(has_client_mcp_tools);
     context.raw["direct_tools"] =
         direct_tools_context_with_client_mcp(has_client_mcp_tools || has_host_browser_bridge_tools);
+    let mode = context
+        .current_mode
+        .as_deref()
+        .map(normalize_mode)
+        .unwrap_or(MODE_ASK);
+    context.current_mode = Some(mode.to_string());
+    if context.raw.get("session_mode").is_none() {
+        context.raw["session_mode"] = json!({
+            "requested_mode": mode,
+            "effective_mode": mode,
+            "source": "adapter.session_context",
+            "pending_den_sync": false,
+        });
+    }
     if !context.cwd.trim().is_empty() {
         context.raw["cwd"] = json!(context.cwd.clone());
     }
@@ -2558,7 +2649,14 @@ fn session_context_from_params(params: &Value) -> Result<SessionContext> {
         conversation_id: None,
         resolved_conversation_id: None,
         thread_title: None,
+        current_mode: Some(MODE_ASK.to_string()),
     };
+    set_context_mode(
+        &mut context,
+        MODE_ASK,
+        "adapter.session_context_default",
+        false,
+    );
     ensure_session_context_capabilities(&mut context);
     Ok(context)
 }
@@ -2623,8 +2721,8 @@ async fn handle_authenticate(
     let method_id = params
         .get("methodId")
         .and_then(Value::as_str)
-        .unwrap_or("bears_den_token");
-    if method_id != "bears_den_token" {
+        .unwrap_or("DEN_TOKEN");
+    if method_id != "DEN_TOKEN" {
         return Err(anyhow!("unsupported BEARS auth method: {method_id}"));
     }
     let config = runtime_config_from_current_env(runtime)?;
@@ -2635,11 +2733,13 @@ async fn handle_authenticate(
 }
 
 fn runtime_config_from_current_env(runtime: &RuntimeConfig) -> Result<Config> {
-    let mut token = env::var("BEARS_DEN_TOKEN").unwrap_or_default();
+    let mut token = env::var("DEN_TOKEN").unwrap_or_default();
     let token_env = runtime.token_env.trim();
     if !token_env.is_empty() {
         token = env::var(token_env).with_context(|| {
-            format!("BEARS_DEN_TOKEN_ENV points at {token_env:?}, but that environment variable is not set")
+            format!(
+                "DEN_TOKEN_ENV points at {token_env:?}, but that environment variable is not set"
+            )
         })?;
     }
     let api_url = runtime.api_url.trim().trim_end_matches('/').to_string();
@@ -2647,16 +2747,16 @@ fn runtime_config_from_current_env(runtime: &RuntimeConfig) -> Result<Config> {
     let token = token.trim().to_string();
     if api_url.is_empty() {
         return Err(anyhow!(
-            "Missing BEARS_DEN_API_URL / --api-url for BEARS authentication"
+            "Missing DEN_API_URL / --api-url for BEARS authentication"
         ));
     }
     if bear.is_empty() {
         return Err(anyhow!(
-            "Missing BEARS_BEAR_SLUG / --bear for BEARS authentication"
+            "Missing BEAR_SLUG / --bear for BEARS authentication"
         ));
     }
     if token.is_empty() {
-        return Err(anyhow!("Missing BEARS_DEN_TOKEN. Paste a Den Code token when prompted, or configure BEARS_DEN_TOKEN in Zed."));
+        return Err(anyhow!("Missing DEN_TOKEN. Paste a Den Code token when prompted, or configure DEN_TOKEN in Zed."));
     }
     Ok(Config {
         api_url,
@@ -3085,11 +3185,11 @@ fn session_context<'a>(
 }
 
 fn token_env_for_auth_method() -> String {
-    env::var("BEARS_DEN_TOKEN_ENV")
+    env::var("DEN_TOKEN_ENV")
         .ok()
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| "BEARS_DEN_TOKEN".to_string())
+        .unwrap_or_else(|| "DEN_TOKEN".to_string())
 }
 
 fn initialize_result(runtime: &RuntimeConfig) -> Result<Value> {
@@ -3112,14 +3212,14 @@ fn initialize_result(runtime: &RuntimeConfig) -> Result<Value> {
     let auth_methods = if runtime.should_advertise_auth_method() {
         vec![AuthMethod::EnvVar(
             AuthMethodEnvVar::new(
-                "bears_den_token",
+                "DEN_TOKEN",
                 "BEARS Den Code Token",
                 vec![AuthEnvVar::new(token_env_for_auth_method())
                     .label(Some("BEARS Den Code Token".to_string()))
                     .secret(true)],
             )
             .description(Some(
-                "Bear-scoped Den Code token. Requires BEARS_DEN_API_URL and BEARS_BEAR_SLUG to be configured in the ACP agent server environment. This auth flow cannot fix Den server outages or deployment/version mismatches."
+                "Bear-scoped Den Code token. Requires DEN_API_URL and BEAR_SLUG to be configured in the ACP agent server environment. This auth flow cannot fix Den server outages or deployment/version mismatches."
                     .to_string(),
             ))
             .link(Some("https://github.com/silarsis/BEARS".to_string())),
@@ -3255,7 +3355,14 @@ fn local_session_context_from_params(params: &Value) -> Result<SessionContext> {
                 conversation_id: None,
                 resolved_conversation_id: None,
                 thread_title: None,
+                current_mode: Some(MODE_ASK.to_string()),
             };
+            set_context_mode(
+                &mut context,
+                MODE_ASK,
+                "adapter.local_fallback_default",
+                false,
+            );
             ensure_session_context_capabilities(&mut context);
             Ok(context)
         }
@@ -3315,6 +3422,7 @@ fn session_context_from_den_session(params: &Value, den_session: &Value) -> Resu
             .map(str::trim)
             .filter(|value| !value.is_empty())
             .map(str::to_string),
+        current_mode: Some(infer_mode_from_den_session(den_session).to_string()),
     };
     ctx.raw = json!({
         "cwd": ctx.cwd.clone(),
@@ -3461,13 +3569,15 @@ async fn request_den_session_mode(
                 status,
                 truncate_for_log(body.trim(), 240)
             );
+            let pending_mode = normalize_mode(requested_mode);
             return Ok((
-                MODE_ASK,
+                pending_mode,
                 json!({
-                    "message": "Den session is not created yet; keeping adapter-local Ask mode until the first prompt binds the session.",
+                    "message": "Den session is not created yet; keeping the client-selected mode locally and applying it when the first prompt binds the session.",
                     "deferred": true,
                     "status": status.as_u16(),
-                    "source": "adapter.den_session_mode_not_found"
+                    "source": "adapter.den_session_mode_not_found",
+                    "pending_mode": pending_mode,
                 }),
             ));
         }
@@ -4022,19 +4132,41 @@ async fn compact_session_conversation(
     post_session_lifecycle_action_json(http, config, session_id, "compact").await
 }
 
-fn render_compact_recovery_result(result: Value) -> String {
-    let approval_recovery = result
-        .get("approval_recovery")
-        .cloned()
-        .unwrap_or_else(|| json!({ "attempted": false }));
+const STALE_APPROVAL_RECOVERY_RETRY_MESSAGE: &str =
+    "BEARS ran stale-approval recovery and is retrying your prompt.";
+
+fn render_compact_recovery_result(result: &Value) -> String {
+    let approval_recovery = result.get("approval_recovery");
+    let approval_attempted = approval_recovery
+        .and_then(|value| value.get("attempted"))
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let denied_count = approval_recovery
+        .and_then(|value| value.get("denied_count"))
+        .and_then(Value::as_u64);
     let compacted = result
         .get("compacted")
         .and_then(Value::as_bool)
         .unwrap_or(false);
-    let compact_result = result.get("compact_result").cloned().unwrap_or(Value::Null);
+
+    let approval_sentence = if approval_attempted {
+        match denied_count {
+            Some(0) => "No stale approval requests needed closing.".to_string(),
+            Some(1) => "Closed 1 stale approval request.".to_string(),
+            Some(count) => format!("Closed {count} stale approval requests."),
+            None => "Checked for stale approval requests.".to_string(),
+        }
+    } else {
+        "Stale approval recovery was not needed.".to_string()
+    };
+    let compact_sentence = if compacted {
+        "The conversation was compacted."
+    } else {
+        "The conversation was checked."
+    };
 
     format!(
-        "BEARS ACP recovery requested for this session. Retry your last prompt. stale_approval_recovery={approval_recovery}; compacted={compacted}; compact_result={compact_result}"
+        "BEARS ACP recovery completed for this session. {approval_sentence} {compact_sentence} Retry your last prompt."
     )
 }
 
@@ -4240,11 +4372,17 @@ async fn handle_prompt_with_retry(
     );
     headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
 
+    let requested_mode = client_context
+        .current_mode
+        .as_deref()
+        .map(normalize_mode)
+        .unwrap_or(MODE_ASK);
     let mut den_payload = json!({
         "message": den_prompt,
         "client": config.client,
         "client_capabilities": shared_state.client_capabilities.lock().await.clone(),
         "client_context": client_context.raw,
+        "requested_mode": requested_mode,
         "adapter_contract": adapter_contract_context(),
     });
     if let Some(conversation_id) = conversation_id.as_deref() {
@@ -4381,14 +4519,15 @@ async fn handle_prompt_with_retry(
         );
         match compact_session_conversation(http, config, session_id).await {
             Ok(result) => {
+                eprintln!(
+                    "bears-acp-adapter: Den stale-approval recovery completed session_id={} result={}",
+                    session_id, result
+                );
                 send_agent_message_chunk_for_turn(
                     shared_state,
                     session_id,
                     turn_token,
-                    &format!(
-                        "BEARS recovered stale approval state and is retrying your prompt. recovery_result={}",
-                        result
-                    ),
+                    STALE_APPROVAL_RECOVERY_RETRY_MESSAGE,
                 )
                 .await?;
                 return Box::pin(handle_prompt_with_retry(
@@ -4404,13 +4543,15 @@ async fn handle_prompt_with_retry(
                 .await;
             }
             Err(err) => {
+                eprintln!(
+                    "bears-acp-adapter: Den stale-approval recovery failed session_id={} error={err:#}",
+                    session_id
+                );
                 send_agent_message_chunk_for_turn(
                     shared_state,
                     session_id,
                     turn_token,
-                    &format!(
-                        "BEARS detected stale Letta approval state, but Den recovery failed. This ACP session's conversation may still be wedged; please start a new ACP session. Recovery error: {err:#}"
-                    ),
+                    "BEARS detected stale Letta approval state, but recovery failed. This ACP session's conversation may still be wedged; please start a new ACP session.",
                 )
                 .await?;
                 saw_visible_output = true;
@@ -4633,8 +4774,20 @@ async fn handle_local_slash_command(
                 return den_required_slash_command_unavailable(command);
             };
             match compact_session_conversation(http, config, session_id).await {
-                Ok(result) => render_compact_recovery_result(result),
-                Err(err) => format!("BEARS ACP recovery failed: {err:#}"),
+                Ok(result) => {
+                    eprintln!(
+                        "bears-acp-adapter: manual ACP recovery completed session_id={} result={}",
+                        session_id, result
+                    );
+                    render_compact_recovery_result(&result)
+                }
+                Err(err) => {
+                    eprintln!(
+                        "bears-acp-adapter: manual ACP recovery failed session_id={} error={err:#}",
+                        session_id
+                    );
+                    "BEARS ACP recovery failed. The session may still be wedged; please start a new ACP session if retrying does not work.".to_string()
+                }
             }
         }
         LocalSlashCommand::Conversation => conversation_report(adapter_state, session_id),
@@ -5089,24 +5242,24 @@ async fn run_doctor(http: &reqwest::Client, runtime: &RuntimeConfig) -> Result<(
 
     if runtime.api_url.trim().is_empty() {
         failed = true;
-        eprintln!("✗ BEARS_DEN_API_URL is missing");
+        eprintln!("✗ DEN_API_URL is missing");
     } else {
-        eprintln!("✓ BEARS_DEN_API_URL is set");
+        eprintln!("✓ DEN_API_URL is set");
         eprintln!("  {}", runtime.api_url);
     }
 
     if runtime.bear.trim().is_empty() {
         failed = true;
-        eprintln!("✗ BEARS_BEAR_SLUG is missing");
+        eprintln!("✗ BEAR_SLUG is missing");
     } else {
-        eprintln!("✓ BEARS_BEAR_SLUG is set");
+        eprintln!("✓ BEAR_SLUG is set");
         eprintln!("  {}", runtime.bear);
     }
 
     if runtime.token_env.trim().is_empty() {
-        eprintln!("• BEARS_DEN_TOKEN_ENV is not set; checking BEARS_DEN_TOKEN/--token directly");
+        eprintln!("• DEN_TOKEN_ENV is not set; checking DEN_TOKEN/--token directly");
     } else {
-        eprintln!("✓ BEARS_DEN_TOKEN_ENV is set");
+        eprintln!("✓ DEN_TOKEN_ENV is set");
         eprintln!("  {}", runtime.token_env);
     }
 
@@ -5172,13 +5325,13 @@ async fn run_doctor(http: &reqwest::Client, runtime: &RuntimeConfig) -> Result<(
     } else {
         &runtime.bear
     };
-    eprintln!("  BEARS_DEN_API_URL={api_url_hint}");
-    eprintln!("  BEARS_BEAR_SLUG={bear_hint}");
+    eprintln!("  DEN_API_URL={api_url_hint}");
+    eprintln!("  BEAR_SLUG={bear_hint}");
     if runtime.token_env.is_empty() {
-        eprintln!("  BEARS_DEN_TOKEN=...");
+        eprintln!("  DEN_TOKEN=...");
     } else {
         eprintln!("  {}=...", runtime.token_env);
-        eprintln!("  BEARS_DEN_TOKEN_ENV={}", runtime.token_env);
+        eprintln!("  DEN_TOKEN_ENV={}", runtime.token_env);
     }
     eprintln!();
 
@@ -5280,7 +5433,7 @@ fn server_version_json(server_version: ServerVersion) -> Value {
 
 fn den_request_context(url: &str) -> String {
     format!(
-        "could not connect to the BEARS Den API at {url}. Check that BEARS_DEN_API_URL is the Den API origin reachable from this editor process, that the API service is running with ACP_GATEWAY_ENABLED=true, and that the network/VPN/firewall permits the connection"
+        "could not connect to the BEARS Den API at {url}. Check that DEN_API_URL is the Den API origin reachable from this editor process, that the API service is running with ACP_GATEWAY_ENABLED=true, and that the network/VPN/firewall permits the connection"
     )
 }
 
@@ -5289,10 +5442,10 @@ fn den_status_error_message(status: reqwest::StatusCode, body: &str) -> String {
         return message;
     }
     let hint = match status.as_u16() {
-        401 => "The bearer token was rejected. Check BEARS_DEN_TOKEN or --token-env and make sure the token is an active Den Code token.",
+        401 => "The bearer token was rejected. Check DEN_TOKEN or --token-env and make sure the token is an active Den Code token.",
         403 => "The token authenticated but is not allowed to use this bear or ACP. Check bear membership and token scopes.",
-        404 => "The ACP gateway endpoint was not found. Check BEARS_DEN_API_URL, BEARS_BEAR_SLUG, and that Den is running with ACP_GATEWAY_ENABLED=true on the API service.",
-        405 => "The server exists but did not accept the ACP prompt method. Check that BEARS_DEN_API_URL points to the Den API origin, not the web UI origin or a proxy route with method restrictions.",
+        404 => "The ACP gateway endpoint was not found. Check DEN_API_URL, BEAR_SLUG, and that Den is running with ACP_GATEWAY_ENABLED=true on the API service.",
+        405 => "The server exists but did not accept the ACP prompt method. Check that DEN_API_URL points to the Den API origin, not the web UI origin or a proxy route with method restrictions.",
         429 => "The Den API rate limited this request. Wait and retry, or check service limits.",
         500..=599 => "The Den API returned a server error. Check Den service logs for the request failure.",
         _ => "The Den API rejected the prompt request. Check the response body and Den logs for details.",
@@ -8449,7 +8602,7 @@ fn authenticate_json_rpc_error(err: &anyhow::Error, runtime: &RuntimeConfig) -> 
         return configuration_error(Some(json!({
             "message": message,
             "problems": runtime.diagnostics,
-            "hint": "Configure BEARS_DEN_API_URL, BEARS_BEAR_SLUG, and BEARS_DEN_TOKEN/BEARS_DEN_TOKEN_ENV in the ACP agent server environment, then restart the agent server.",
+            "hint": "Configure DEN_API_URL, BEAR_SLUG, and DEN_TOKEN/DEN_TOKEN_ENV in the ACP agent server environment, then restart the agent server.",
         })));
     }
     auth_check_json_rpc_error(err, None)
@@ -8460,7 +8613,7 @@ fn auth_check_json_rpc_error(err: &anyhow::Error, token_hint: Option<&str>) -> V
     if looks_like_den_connectivity_error(err) {
         return den_connectivity_error(Some(json!({
             "message": format!("Could not reach the BEARS Den server while checking the Code token: {message}"),
-            "hint": "Check that BEARS_DEN_API_URL is correct and that the Den API server is online/reachable. This does not necessarily mean your token is invalid.",
+            "hint": "Check that DEN_API_URL is correct and that the Den API server is online/reachable. This does not necessarily mean your token is invalid.",
         })));
     }
     let mut data = json!({
@@ -8475,10 +8628,10 @@ fn auth_check_json_rpc_error(err: &anyhow::Error, token_hint: Option<&str>) -> V
 fn looks_like_configuration_error(err: &anyhow::Error) -> bool {
     err.chain().any(|cause| {
         let message = cause.to_string();
-        message.contains("Missing BEARS_DEN_TOKEN")
-            || message.contains("Missing BEARS_DEN_API_URL")
-            || message.contains("Missing BEARS_BEAR_SLUG")
-            || message.contains("BEARS_DEN_TOKEN_ENV points at")
+        message.contains("Missing DEN_TOKEN")
+            || message.contains("Missing DEN_API_URL")
+            || message.contains("Missing BEAR_SLUG")
+            || message.contains("DEN_TOKEN_ENV points at")
     })
 }
 
@@ -9403,7 +9556,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn adapter_defers_mode_update_until_den_session_exists() {
+    async fn adapter_keeps_pending_mode_until_den_session_exists() {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
         tokio::spawn(async move {
@@ -9439,9 +9592,10 @@ mod tests {
                 .await
                 .unwrap();
 
-        assert_eq!(mode, MODE_ASK);
+        assert_eq!(mode, MODE_WRITE);
         assert_eq!(response["deferred"], true);
         assert_eq!(response["source"], "adapter.den_session_mode_not_found");
+        assert_eq!(response["pending_mode"], MODE_WRITE);
     }
 
     #[test]
@@ -9473,6 +9627,36 @@ mod tests {
         assert!(!rendered.contains("large schema should not be dumped"));
         assert!(!rendered.contains("input_schema"));
         assert!(!rendered.contains("docker"));
+    }
+
+    #[test]
+    fn recovery_user_messages_do_not_expose_raw_debug_payloads() {
+        let result = json!({
+            "ok": true,
+            "compacted": true,
+            "approval_recovery": {
+                "attempted": true,
+                "denied_count": 1,
+                "denied_tool_call_ids": ["tool-call-secret"],
+                "denied_source_message_ids": ["message-secret"],
+            },
+            "compact_result": {
+                "debug": "raw upstream compaction response",
+            },
+        });
+
+        let rendered = render_compact_recovery_result(&result);
+        assert!(rendered.contains("Closed 1 stale approval request."));
+        assert!(rendered.contains("The conversation was compacted."));
+        assert!(!rendered.contains("approval_recovery"));
+        assert!(!rendered.contains("compact_result"));
+        assert!(!rendered.contains("tool-call-secret"));
+        assert!(!rendered.contains("message-secret"));
+        assert!(!rendered.contains("raw upstream compaction response"));
+
+        assert!(!STALE_APPROVAL_RECOVERY_RETRY_MESSAGE.contains("recovery_result"));
+        assert!(!STALE_APPROVAL_RECOVERY_RETRY_MESSAGE.contains('{'));
+        assert!(!STALE_APPROVAL_RECOVERY_RETRY_MESSAGE.contains('}'));
     }
 
     #[tokio::test]

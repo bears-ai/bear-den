@@ -2,7 +2,7 @@
 
 ## Summary
 
-BEARS uses Den as the trusted gateway and Codepool as a private Letta Code runtime/warm-pool manager.
+Bear Den uses Den as the trusted gateway and Codepool as a private Letta Code runtime/warm-pool manager.
 
 ```text
 Deep Chat / browser clients
@@ -50,11 +50,11 @@ Codepool does not become the external security authority.
 
 ## ACP session persistence model
 
-ACP sessions are **not** canonical BEARS conversations.
+ACP sessions are **not** canonical Bear Den conversations.
 
-Den may persist ACP session rows, but those rows are only protocol/client bindings that map an ACP client session to BEARS runtime state. They should be treated as lifecycle and routing metadata, not as chat history or the source of truth for conversations.
+Den may persist ACP session rows, but those rows are only protocol/client bindings that map an ACP client session to Bear Den runtime state. They should be treated as lifecycle and routing metadata, not as chat history or the source of truth for conversations.
 
-The canonical conversation history remains the Letta/BEARS conversation identity:
+The canonical conversation history remains the Letta/Bear Den conversation identity:
 
 - `default` for the bear's main thread;
 - `conv-...` for saved Letta conversations;
@@ -63,7 +63,7 @@ The canonical conversation history remains the Letta/BEARS conversation identity
 An ACP session binding may store:
 
 - ACP `sessionId`;
-- BEARS user and bear ids;
+- Bear Den user and bear ids;
 - ACP client name, such as `zed`;
 - client working directory (`cwd`);
 - runtime session/binding id (historically named `codepool_session_id`; migrate to `runtime_session_id`);
@@ -71,9 +71,20 @@ An ACP session binding may store:
 - resolved `conv-...` id when available;
 - protocol lifecycle timestamps such as closed or archived.
 
-Future development should not build conversation listing, history, memory, search, or archive semantics from ACP session rows directly. Those features should operate on canonical BEARS/Letta conversations and use ACP session bindings only to translate ACP lifecycle events, such as `session/close`, into the appropriate conversation operation.
+Future development should not build conversation listing, history, memory, search, or archive semantics from ACP session rows directly. Those features should operate on canonical Bear Den/Letta conversations and use ACP session bindings only to translate ACP lifecycle events, such as `session/close`, into the appropriate conversation operation.
 
 If this table/model is renamed later, prefer names that emphasize binding rather than conversation ownership, such as `acp_session_bindings` or `client_session_bindings`.
+
+## ACP mode and capability authority
+
+ACP UI mode, Den session policy, and tool descriptors must not be treated as separate sources of truth. The intended model is:
+
+1. The ACP client/adapter may hold a **requested mode** (`ask`, `plan`, or `write`) before Den has persisted the session binding.
+2. Den is the durable authority for the session's **effective mode** and per-turn capability envelope.
+3. Tool descriptors are generated from Den's resolved policy plus the adapter's advertised direct-tool support.
+4. If a mode change happens before the first prompt creates the Den binding, the adapter must carry that requested mode into the first prompt so Den can initialize the binding consistently before descriptor generation.
+
+This prevents a user-visible `Write` selection in an editor from producing a first turn whose Den policy still says `Ask` and therefore excludes write tools. Future ACP changes should prefer a single returned capability envelope (`effective_mode`, `allowed_tool_classes`, and advertised provider tool names) over parallel UI-mode and prompt-guidance paths.
 
 See also: [ACP Session Bindings ADR](adr/acp-session-bindings.md).
 
@@ -184,7 +195,7 @@ The current Den browser bridge drops reserved richer events to preserve the exis
 
 ## ACP mapping spike
 
-Agent Client Protocol (ACP) is the external protocol for Zed/OpenCode-like agent clients. BEARS currently supports the basic-chat slice through a local stdio adapter and Den's HTTPS/SSE ACP gateway.
+Agent Client Protocol (ACP) is the external protocol for Zed/OpenCode-like agent clients. Bear Den currently supports the basic-chat slice through a local stdio adapter and Den's HTTPS/SSE ACP gateway.
 
 The ACP gateway does not use `bear_channel` or Letta Code event names. Den parses native Letta conversation SSE events into Den ACP gateway domain events, then serializes a small Den-to-adapter transport:
 
