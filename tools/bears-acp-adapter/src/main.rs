@@ -4246,12 +4246,12 @@ async fn handle_prompt_with_retry(
         );
         match compact_session_conversation(http, config, session_id).await {
             Ok(result) => {
-                send_agent_thought_chunk_for_turn(
+                send_agent_message_chunk_for_turn(
                     shared_state,
                     session_id,
                     turn_token,
                     &format!(
-                        "BEARS detected stale approval state, asked Den to deny pending approvals and compact if needed, and is retrying your prompt automatically. recovery_result={}",
+                        "BEARS recovered stale approval state and is retrying your prompt. recovery_result={}",
                         result
                     ),
                 )
@@ -7371,7 +7371,7 @@ async fn handle_permission_request_event(
                     "tool_call_id": tool_call_id,
                     "tool_name": result_tool_name,
                     "status": "ok",
-                    "content": value.get("content").cloned().unwrap_or_else(|| json!("")),
+                    "content": "",
                     "structured_content": value,
                     "diagnostic": { "component": "bears-acp-adapter", "phase": "permission_local_tool_completed", "duration_ms": started.elapsed().as_millis() }
                 });
@@ -9303,13 +9303,11 @@ data: {"type":"done","outcome":"empty_fallback","recovery_hint":"check_upstream_
     #[test]
     fn classify_thought_status_keeps_recovery_notices() {
         assert_eq!(
-            classify_thought_status(
-                "BEARS detected stale approval state and is retrying your prompt automatically"
-            ),
+            classify_thought_status("Please approve or deny the pending request"),
             ThoughtStatusDisposition::KeepThought
         );
         assert_eq!(
-            classify_thought_status("Please approve or deny the pending request"),
+            classify_thought_status("Waiting for approval before continuing"),
             ThoughtStatusDisposition::KeepThought
         );
     }
@@ -9690,6 +9688,21 @@ data: {"type":"done","outcome":"empty_fallback","recovery_hint":"check_upstream_
     fn generic_empty_completion_preview_is_suppressed() {
         let value = json!({ "content": "" });
         assert_eq!(tool_completion_preview("fs_stat", &value), "");
+    }
+
+    #[test]
+    fn permission_local_tool_completion_payload_omits_noisy_content() {
+        let value = json!({ "content": "Local tool terminal_run_command completed." });
+        let payload = json!({
+            "tool_call_id": "call-1",
+            "tool_name": "terminal_run_command",
+            "status": "ok",
+            "content": "",
+            "structured_content": value,
+            "diagnostic": { "phase": "permission_local_tool_completed" }
+        });
+        assert_eq!(payload["content"], "");
+        assert_eq!(payload["structured_content"]["content"], "Local tool terminal_run_command completed.");
     }
 
     #[test]
