@@ -12,8 +12,8 @@ use crate::{
     core::{
         acp_tokens,
         bears::{
-            db as bears_db, db::BEAR_ROLE_ADMIN, provision::provision_missing_bear_roles,
-            runtime_plan::default_runtime_plan,
+            db as bears_db, db::BearParams, db::BEAR_ROLE_ADMIN,
+            provision::provision_missing_bear_roles, runtime_plan::default_runtime_plan,
         },
         bifrost::BifrostClient,
         letta::LettaClient,
@@ -140,14 +140,17 @@ async fn ensure_bear(pool: &PgPool, slug: &str) -> Result<uuid::Uuid> {
 
     bears_db::create_bear(
         pool,
-        slug,
-        "Test Bear",
-        "Seeded bear for devcontainer smoke tests and manual UI checks.",
-        "You are Test Bear, a concise assistant for local BEARS development and smoke testing.",
-        None,
-        None::<Json<serde_json::Value>>,
-        Some("letta_v1_agent"),
-        Json(Vec::new()),
+        BearParams {
+            slug,
+            name: "Test Bear",
+            description: "Seeded bear for devcontainer smoke tests and manual UI checks.",
+            system_prompt: "You are Test Bear, a concise assistant for local BEARS development and smoke testing.",
+            default_model: None,
+            tools_enabled: None::<Json<serde_json::Value>>,
+            letta_agent_type: Some("letta_v1_agent"),
+            letta_tool_ids: Json(Vec::new()),
+            context_profile: None,
+        },
     )
     .await
     .map_err(Into::into)

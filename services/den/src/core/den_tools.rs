@@ -2260,17 +2260,19 @@ async fn web_fetch(
     if matches!(decision, web_policy::WebApprovalDecision::Blocked) {
         web_policy::record_web_fetch_attempt(
             pool,
-            context.bear_id,
-            Some(context.session_id.as_str()),
-            None,
-            &normalized.url,
-            None,
-            &normalized.host,
-            "den",
-            decision.as_str(),
-            None,
-            None,
-            None,
+            web_policy::WebFetchAuditParams {
+                bear_id: context.bear_id,
+                session_id: Some(context.session_id.as_str()),
+                tool_call_id: None,
+                url: &normalized.url,
+                final_url: None,
+                host: &normalized.host,
+                execution_location: "den",
+                approval_kind: decision.as_str(),
+                http_status: None,
+                content_type: None,
+                bytes: None,
+            },
         )
         .await?;
         return Err(CustomError::Authorization(format!(
@@ -2281,17 +2283,19 @@ async fn web_fetch(
     if !decision.is_approved() {
         web_policy::record_web_fetch_attempt(
             pool,
-            context.bear_id,
-            Some(context.session_id.as_str()),
-            None,
-            &normalized.url,
-            None,
-            &normalized.host,
-            "den",
-            decision.as_str(),
-            None,
-            None,
-            None,
+            web_policy::WebFetchAuditParams {
+                bear_id: context.bear_id,
+                session_id: Some(context.session_id.as_str()),
+                tool_call_id: None,
+                url: &normalized.url,
+                final_url: None,
+                host: &normalized.host,
+                execution_location: "den",
+                approval_kind: decision.as_str(),
+                http_status: None,
+                content_type: None,
+                bytes: None,
+            },
         )
         .await?;
         return Err(CustomError::Authorization(format!(
@@ -2342,17 +2346,19 @@ async fn web_fetch(
     let final_normalized = web_policy::normalize_web_url(final_url.as_str())?;
     web_policy::record_web_fetch_attempt(
         pool,
-        context.bear_id,
-        Some(context.session_id.as_str()),
-        None,
-        &normalized.url,
-        Some(final_url.as_str()),
-        &final_normalized.host,
-        "den",
-        decision.as_str(),
-        Some(status.as_u16() as i32),
-        Some(&content_type),
-        Some(bytes.len() as i64),
+        web_policy::WebFetchAuditParams {
+            bear_id: context.bear_id,
+            session_id: Some(context.session_id.as_str()),
+            tool_call_id: None,
+            url: &normalized.url,
+            final_url: Some(final_url.as_str()),
+            host: &final_normalized.host,
+            execution_location: "den",
+            approval_kind: decision.as_str(),
+            http_status: Some(status.as_u16() as i32),
+            content_type: Some(&content_type),
+            bytes: Some(bytes.len() as i64),
+        },
     )
     .await?;
     Ok(json!({
@@ -4111,13 +4117,15 @@ async fn apply_core_update(
     };
     let resolved = memory_proposals::resolve_for_bear(
         pool,
-        context.bear_id,
-        proposal.id,
-        role,
-        Some(context.role_agent_id.as_str()),
-        "approved",
-        args.review_notes.as_deref(),
-        Some("Applied reviewed memory proposal to core."),
+        memory_proposals::ProposalResolutionParams {
+            bear_id: context.bear_id,
+            proposal_id: proposal.id,
+            reviewer_role: role,
+            reviewer_agent_id: Some(context.role_agent_id.as_str()),
+            status: "approved",
+            review_notes: args.review_notes.as_deref(),
+            decision_summary: Some("Applied reviewed memory proposal to core."),
+        },
     )
     .await?;
     Ok(json!({
@@ -4192,13 +4200,15 @@ async fn resolve_memory_proposal(
     }
     let proposal = memory_proposals::resolve_for_bear(
         pool,
-        context.bear_id,
-        args.proposal_id,
-        role,
-        Some(context.role_agent_id.as_str()),
-        status,
-        args.review_notes.as_deref(),
-        args.decision_summary.as_deref(),
+        memory_proposals::ProposalResolutionParams {
+            bear_id: context.bear_id,
+            proposal_id: args.proposal_id,
+            reviewer_role: role,
+            reviewer_agent_id: Some(context.role_agent_id.as_str()),
+            status,
+            review_notes: args.review_notes.as_deref(),
+            decision_summary: args.decision_summary.as_deref(),
+        },
     )
     .await?;
     Ok(json!({ "bear_id": context.bear_id, "proposal": proposal }))

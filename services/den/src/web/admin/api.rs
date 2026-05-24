@@ -13,7 +13,7 @@ use uuid::Uuid;
 use crate::{
     core::{
         bears::{
-            db::{self as bears_db, MembershipRow},
+            db::{self as bears_db, BearParams, MembershipRow},
             model::Bear,
             provision,
         },
@@ -91,17 +91,21 @@ async fn create_bear(
         .filter(|s| !s.is_empty());
     let id = bears_db::create_bear(
         state.sqlx_pool(),
-        slug,
-        body.name.trim(),
-        body.description.trim(),
-        body.system_prompt.trim(),
-        body.default_model
-            .as_deref()
-            .map(str::trim)
-            .filter(|s| !s.is_empty()),
-        tools,
-        letta_agent_type.as_deref(),
-        SqlxJson(letta_tool_ids),
+        BearParams {
+            slug,
+            name: body.name.trim(),
+            description: body.description.trim(),
+            system_prompt: body.system_prompt.trim(),
+            default_model: body
+                .default_model
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty()),
+            tools_enabled: tools,
+            letta_agent_type: letta_agent_type.as_deref(),
+            letta_tool_ids: SqlxJson(letta_tool_ids),
+            context_profile: None,
+        },
     )
     .await?;
 

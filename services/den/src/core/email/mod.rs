@@ -42,6 +42,14 @@ pub async fn get_current_config(
 
 static MAILGUN: OnceLock<Mailgun> = OnceLock::new();
 
+pub struct EmailTemplateRequest<'a> {
+    pub subject: String,
+    pub template_env: Environment<'a>,
+    pub template_name: &'a str,
+    pub ctx: minijinja::Value,
+    pub attachments: Option<Vec<Attachment>>,
+}
+
 /// Initialize the process-wide Mailgun client from startup [`Config`].
 ///
 /// Call exactly once from application entry after [`Config::load`].
@@ -62,12 +70,15 @@ pub async fn send_email_template(
     sqlx_pool: &PgPool,
     app_config: &Config,
     config: EmailConfig,
-    subject: String,
-    template_env: Environment<'static>,
-    template_name: &str,
-    ctx: minijinja::Value,
-    attachments: Option<Vec<Attachment>>,
+    request: EmailTemplateRequest<'static>,
 ) -> Result<(), CustomError> {
+    let EmailTemplateRequest {
+        subject,
+        template_env,
+        template_name,
+        ctx,
+        attachments,
+    } = request;
     let recipient = EmailAddress::name_address(&config.display_name, &config.email_address);
     tracing::debug!("Sending email to {} with subject '{}'", recipient, subject);
 

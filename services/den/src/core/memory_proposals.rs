@@ -124,15 +124,19 @@ pub async fn list_for_bear(
     Ok(rows.into_iter().map(row_from_sql).collect())
 }
 
+pub struct ProposalResolutionParams<'a> {
+    pub bear_id: Uuid,
+    pub proposal_id: Uuid,
+    pub reviewer_role: BearAgentRole,
+    pub reviewer_agent_id: Option<&'a str>,
+    pub status: &'a str,
+    pub review_notes: Option<&'a str>,
+    pub decision_summary: Option<&'a str>,
+}
+
 pub async fn resolve_for_bear(
     pool: &PgPool,
-    bear_id: Uuid,
-    proposal_id: Uuid,
-    reviewer_role: BearAgentRole,
-    reviewer_agent_id: Option<&str>,
-    status: &str,
-    review_notes: Option<&str>,
-    decision_summary: Option<&str>,
+    params: ProposalResolutionParams<'_>,
 ) -> Result<MemoryProposalRow, CustomError> {
     let row = sqlx::query(
         r#"
@@ -151,13 +155,13 @@ pub async fn resolve_for_bear(
                   result_path, result_commit, created_at, reviewed_at
         "#,
     )
-    .bind(bear_id)
-    .bind(proposal_id)
-    .bind(status)
-    .bind(reviewer_role.as_str())
-    .bind(reviewer_agent_id)
-    .bind(review_notes)
-    .bind(decision_summary)
+    .bind(params.bear_id)
+    .bind(params.proposal_id)
+    .bind(params.status)
+    .bind(params.reviewer_role.as_str())
+    .bind(params.reviewer_agent_id)
+    .bind(params.review_notes)
+    .bind(params.decision_summary)
     .fetch_one(pool)
     .await?;
     Ok(row_from_sql(row))

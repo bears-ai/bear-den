@@ -9,8 +9,8 @@ use validator::{Validate, ValidationError, ValidationErrors};
 use crate::{
     core::{
         bears::{
-            context_profile_to_json, db as bears_db, templates::first_bear_template, Bear,
-            BearAgentRole,
+            context_profile_to_json, db as bears_db, db::BearParams,
+            templates::first_bear_template, Bear, BearAgentRole,
         },
         letta::{LettaModelOption, LettaToolOption},
     },
@@ -488,14 +488,17 @@ pub async fn insert_new_bear_row(
 ) -> Result<Uuid, CustomError> {
     bears_db::create_bear(
         pool,
-        form.slug.trim(),
-        form.name.trim(),
-        form.description.trim(),
-        form.system_prompt.trim(),
-        default_model_opt,
-        None::<Json<serde_json::Value>>,
-        letta_agent_type_db.as_deref(),
-        Json(letta_tool_ids),
+        BearParams {
+            slug: form.slug.trim(),
+            name: form.name.trim(),
+            description: form.description.trim(),
+            system_prompt: form.system_prompt.trim(),
+            default_model: default_model_opt,
+            tools_enabled: None::<Json<serde_json::Value>>,
+            letta_agent_type: letta_agent_type_db.as_deref(),
+            letta_tool_ids: Json(letta_tool_ids),
+            context_profile: None,
+        },
     )
     .await
 }
@@ -513,15 +516,17 @@ pub async fn insert_new_bear_row_with_context_profile(
         composed_system_prompt_for_profile_json(form.name.trim(), &context_profile)?;
     bears_db::create_bear_with_context_profile(
         pool,
-        form.slug.trim(),
-        form.name.trim(),
-        form.description.trim(),
-        system_prompt.trim(),
-        default_model_opt,
-        None::<Json<serde_json::Value>>,
-        letta_agent_type_db.as_deref(),
-        Json(letta_tool_ids),
-        Some(context_profile),
+        BearParams {
+            slug: form.slug.trim(),
+            name: form.name.trim(),
+            description: form.description.trim(),
+            system_prompt: system_prompt.trim(),
+            default_model: default_model_opt,
+            tools_enabled: None::<Json<serde_json::Value>>,
+            letta_agent_type: letta_agent_type_db.as_deref(),
+            letta_tool_ids: Json(letta_tool_ids),
+            context_profile: Some(context_profile),
+        },
     )
     .await
 }

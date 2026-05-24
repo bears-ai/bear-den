@@ -24,7 +24,7 @@ use crate::{
         archived_conversations,
         bears::{
             compute_letta_drift_with_expected_tool_ids, db as bears_db,
-            db::{role_is_bear_admin, BearMemberRow, BEAR_ROLE_ADMIN, BEAR_ROLE_MEMBER},
+            db::{role_is_bear_admin, BearMemberRow, BearParams, BEAR_ROLE_ADMIN, BEAR_ROLE_MEMBER},
             provision, sync, Bear, BearAgent, BearAgentRole,
         },
         letta::{AgentSummary, LettaAgentDiagnostics},
@@ -1957,14 +1957,17 @@ async fn bear_edit_overview_post(
         bears_db::update_bear(
             state.sqlx_pool(),
             bear.id,
-            form.slug.trim(),
-            form.name.trim(),
-            form.description.trim(),
-            bear.system_prompt.as_str(),
-            bear.default_model.as_deref(),
-            None::<Json<serde_json::Value>>,
-            bear.letta_agent_type.as_deref(),
-            Json(bear.letta_tool_ids.0.clone()),
+            BearParams {
+                slug: form.slug.trim(),
+                name: form.name.trim(),
+                description: form.description.trim(),
+                system_prompt: bear.system_prompt.as_str(),
+                default_model: bear.default_model.as_deref(),
+                tools_enabled: None::<Json<serde_json::Value>>,
+                letta_agent_type: bear.letta_agent_type.as_deref(),
+                letta_tool_ids: Json(bear.letta_tool_ids.0.clone()),
+                context_profile: bear.context_profile.clone(),
+            },
         )
         .await?;
 
@@ -2078,14 +2081,17 @@ async fn bear_edit_prompt_post(
         bears_db::update_bear(
             state.sqlx_pool(),
             bear.id,
-            bear.slug.as_str(),
-            bear.name.as_str(),
-            bear.description.as_str(),
-            form.system_prompt.trim(),
-            bear.default_model.as_deref(),
-            None::<Json<serde_json::Value>>,
-            bear.letta_agent_type.as_deref(),
-            Json(bear.letta_tool_ids.0.clone()),
+            BearParams {
+                slug: bear.slug.as_str(),
+                name: bear.name.as_str(),
+                description: bear.description.as_str(),
+                system_prompt: form.system_prompt.trim(),
+                default_model: bear.default_model.as_deref(),
+                tools_enabled: None::<Json<serde_json::Value>>,
+                letta_agent_type: bear.letta_agent_type.as_deref(),
+                letta_tool_ids: Json(bear.letta_tool_ids.0.clone()),
+                context_profile: bear.context_profile.clone(),
+            },
         )
         .await?;
 
@@ -2232,14 +2238,17 @@ async fn bear_edit_configuration_post(
         bears_db::update_bear(
             state.sqlx_pool(),
             bear.id,
-            bear.slug.as_str(),
-            bear.name.as_str(),
-            bear.description.as_str(),
-            bear.system_prompt.as_str(),
-            default_model_opt,
-            None::<Json<serde_json::Value>>,
-            letta_agent_type_db.as_deref(),
-            Json(letta_tool_ids.clone()),
+            BearParams {
+                slug: bear.slug.as_str(),
+                name: bear.name.as_str(),
+                description: bear.description.as_str(),
+                system_prompt: bear.system_prompt.as_str(),
+                default_model: default_model_opt,
+                tools_enabled: None::<Json<serde_json::Value>>,
+                letta_agent_type: letta_agent_type_db.as_deref(),
+                letta_tool_ids: Json(letta_tool_ids.clone()),
+                context_profile: bear.context_profile.clone(),
+            },
         )
         .await?;
 
@@ -2856,13 +2865,15 @@ async fn bear_memory_proposal_post(
     }
     memory_proposals::resolve_for_bear(
         state.sqlx_pool(),
-        bear.id,
-        proposal_id,
-        BearAgentRole::Curate,
-        None,
-        status,
-        form.review_notes.as_deref(),
-        form.decision_summary.as_deref(),
+        memory_proposals::ProposalResolutionParams {
+            bear_id: bear.id,
+            proposal_id,
+            reviewer_role: BearAgentRole::Curate,
+            reviewer_agent_id: None,
+            status,
+            review_notes: form.review_notes.as_deref(),
+            decision_summary: form.decision_summary.as_deref(),
+        },
     )
     .await?;
     Ok(Redirect::to(&format!(

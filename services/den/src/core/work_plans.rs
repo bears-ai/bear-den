@@ -375,17 +375,19 @@ pub async fn create_or_update_work_plan(
 
     append_event(
         &mut tx,
-        row.id,
-        row.bear_id,
-        Some(params.owner_role),
-        params.owner_agent_id.as_deref(),
-        params.created_by_user_id,
-        event_type,
-        json!({
-            "version": row.version,
-            "status": row.status,
-            "visibility": row.visibility,
-        }),
+        WorkPlanEventParams {
+            plan_id: row.id,
+            bear_id: row.bear_id,
+            actor_role: Some(params.owner_role),
+            actor_agent_id: params.owner_agent_id.as_deref(),
+            actor_user_id: params.created_by_user_id,
+            event_type,
+            event_payload: json!({
+                "version": row.version,
+                "status": row.status,
+                "visibility": row.visibility,
+            }),
+        },
     )
     .await?;
     tx.commit().await?;
@@ -506,15 +508,19 @@ async fn update_existing_plan(
     })
 }
 
-async fn append_event(
-    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+struct WorkPlanEventParams<'a> {
     plan_id: Uuid,
     bear_id: Uuid,
     actor_role: Option<BearAgentRole>,
-    actor_agent_id: Option<&str>,
+    actor_agent_id: Option<&'a str>,
     actor_user_id: Option<i32>,
-    event_type: &str,
+    event_type: &'a str,
     event_payload: Value,
+}
+
+async fn append_event(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    params: WorkPlanEventParams<'_>,
 ) -> Result<(), CustomError> {
     sqlx::query(
         r#"
@@ -524,13 +530,13 @@ async fn append_event(
         VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)
         "#,
     )
-    .bind(plan_id)
-    .bind(bear_id)
-    .bind(actor_role.map(|role| role.as_str()))
-    .bind(actor_agent_id)
-    .bind(actor_user_id)
-    .bind(event_type)
-    .bind(event_payload)
+    .bind(params.plan_id)
+    .bind(params.bear_id)
+    .bind(params.actor_role.map(|role| role.as_str()))
+    .bind(params.actor_agent_id)
+    .bind(params.actor_user_id)
+    .bind(params.event_type)
+    .bind(params.event_payload)
     .execute(&mut **tx)
     .await?;
     Ok(())

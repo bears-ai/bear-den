@@ -73,31 +73,35 @@ pub async fn create_run(
     Ok(row_from_sql(row))
 }
 
+pub struct ProposalEnqueueParams<'a> {
+    pub bear_id: Uuid,
+    pub role_agent_id: Option<&'a str>,
+    pub conversation_id: Option<&'a str>,
+    pub conversation_key: Option<&'a str>,
+    pub conversation_date: Option<Date>,
+    pub trigger: &'a str,
+    pub proposal_ids: Vec<Uuid>,
+}
+
 pub async fn enqueue_memory_curate_for_proposals(
     pool: &PgPool,
-    bear_id: Uuid,
-    role_agent_id: Option<&str>,
-    conversation_id: Option<&str>,
-    conversation_key: Option<&str>,
-    conversation_date: Option<Date>,
-    trigger: &str,
-    proposal_ids: Vec<Uuid>,
+    params: ProposalEnqueueParams<'_>,
 ) -> Result<ReflectionRunRow, CustomError> {
-    let proposal_id_values: Vec<serde_json::Value> = proposal_ids
+    let proposal_id_values: Vec<serde_json::Value> = params.proposal_ids
         .into_iter()
         .map(|id| serde_json::Value::String(id.to_string()))
         .collect();
     create_run(
         pool,
         CreateReflectionRun {
-            bear_id,
+            bear_id: params.bear_id,
             lane: "memory_curate",
-            trigger,
+            trigger: params.trigger,
             status: "queued",
-            role_agent_id,
-            conversation_id,
-            conversation_key,
-            conversation_date,
+            role_agent_id: params.role_agent_id,
+            conversation_id: params.conversation_id,
+            conversation_key: params.conversation_key,
+            conversation_date: params.conversation_date,
             input_summary: serde_json::json!({ "proposal_ids": proposal_id_values }),
             output_summary: serde_json::json!({}),
             error: None,

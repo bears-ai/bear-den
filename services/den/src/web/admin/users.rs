@@ -358,11 +358,13 @@ pub async fn send_test_email_action(
         &sqlx_pool,
         &state.config,
         cfg,
-        "Test email".to_string(),
-        minijinja_env,
-        "test_email.html",
-        minijinja::context! { display_name => user.display_name },
-        None,
+        email::EmailTemplateRequest {
+            subject: "Test email".to_string(),
+            template_env: minijinja_env,
+            template_name: "test_email.html",
+            ctx: minijinja::context! { display_name => user.display_name },
+            attachments: None,
+        },
     )
     .await?;
 

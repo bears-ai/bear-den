@@ -1796,13 +1796,15 @@ async fn list_acp_sessions_inner(
     let fetch_limit = ACP_SESSIONS_PAGE_SIZE + 1;
     let mut rows = acp_sessions::list_for_user_bear(
         &state.sqlx_pool,
-        user_id,
-        &bear.slug,
-        query.include_closed,
-        cwd_filter,
-        fetch_limit,
-        cursor.as_ref().map(|c| c.updated_at),
-        cursor.as_ref().map(|c| c.id),
+        acp_sessions::SessionListParams {
+            user_id,
+            bear_slug: &bear.slug,
+            include_closed: query.include_closed,
+            cwd_filter,
+            limit: fetch_limit,
+            cursor_updated_at: cursor.as_ref().map(|c| c.updated_at),
+            cursor_id: cursor.as_ref().map(|c| c.id),
+        },
     )
     .await?;
     let has_more = rows.len() > ACP_SESSIONS_PAGE_SIZE as usize;
@@ -3319,13 +3321,15 @@ async fn run_pair_reflection_summary(
     let conversation_key = format!("memory_curate:{reflection_date}");
     reflection_conductor::enqueue_memory_curate_for_proposals(
         &state.sqlx_pool,
-        session.bear_id,
-        pair_agent_id.as_deref(),
-        conversation_id,
-        Some(&conversation_key),
-        Some(reflection_date),
-        "pair_reflection",
-        vec![proposal.id],
+        reflection_conductor::ProposalEnqueueParams {
+            bear_id: session.bear_id,
+            role_agent_id: pair_agent_id.as_deref(),
+            conversation_id,
+            conversation_key: Some(&conversation_key),
+            conversation_date: Some(reflection_date),
+            trigger: "pair_reflection",
+            proposal_ids: vec![proposal.id],
+        },
     )
     .await?;
     Ok(())

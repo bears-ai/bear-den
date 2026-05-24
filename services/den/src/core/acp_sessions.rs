@@ -185,18 +185,22 @@ pub async fn find_for_user_bear_session(
 }
 
 /// Lists persisted ACP sessions for a user on a bear, newest activity first.
+pub struct SessionListParams<'a> {
+    pub user_id: i32,
+    pub bear_slug: &'a str,
+    pub include_closed: bool,
+    pub cwd_filter: Option<&'a str>,
+    pub limit: i64,
+    pub cursor_updated_at: Option<OffsetDateTime>,
+    pub cursor_id: Option<Uuid>,
+}
+
 pub async fn list_for_user_bear(
     pool: &PgPool,
-    user_id: i32,
-    bear_slug: &str,
-    include_closed: bool,
-    cwd_filter: Option<&str>,
-    limit: i64,
-    cursor_updated_at: Option<OffsetDateTime>,
-    cursor_id: Option<Uuid>,
+    params: SessionListParams<'_>,
 ) -> Result<Vec<AcpSessionRow>, CustomError> {
-    let limit = limit.clamp(1, 100);
-    let cwd_filter = cwd_filter.map(str::trim).filter(|s| !s.is_empty());
+    let limit = params.limit.clamp(1, 100);
+    let cwd_filter = params.cwd_filter.map(str::trim).filter(|s| !s.is_empty());
     let rows = sqlx::query(
         r#"
         SELECT id, user_id, bear_id, bear_slug, acp_session_id, runtime_session_id,
@@ -216,13 +220,13 @@ pub async fn list_for_user_bear(
         LIMIT $5
         "#,
     )
-    .bind(user_id)
-    .bind(bear_slug)
-    .bind(include_closed)
+    .bind(params.user_id)
+    .bind(params.bear_slug)
+    .bind(params.include_closed)
     .bind(cwd_filter)
     .bind(limit)
-    .bind(cursor_updated_at)
-    .bind(cursor_id)
+    .bind(params.cursor_updated_at)
+    .bind(params.cursor_id)
     .fetch_all(pool)
     .await?;
 

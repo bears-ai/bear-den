@@ -17,7 +17,7 @@ use validator::{Validate, ValidationError, ValidationErrors};
 use crate::{
     auth_backend::AuthSession,
     core::{
-        bears::{db as bears_db, provision, sync, BearAgent, BearAgentRole},
+        bears::{db as bears_db, db::BearParams, provision, sync, BearAgent, BearAgentRole},
         letta::{AgentSummary, LettaAgentListItem},
         memory_manager_head::fetch_memfs_role_view_health,
         web_policy,
@@ -804,14 +804,17 @@ pub async fn new_action(
     if validation_errors.is_empty() {
         let id = bears_db::create_bear(
             state.sqlx_pool(),
-            form.slug.trim(),
-            form.name.trim(),
-            form.description.trim(),
-            form.system_prompt.trim(),
-            default_model_opt,
-            None::<Json<serde_json::Value>>,
-            letta_agent_type_db.as_deref(),
-            Json(letta_tool_ids.clone()),
+            BearParams {
+                slug: form.slug.trim(),
+                name: form.name.trim(),
+                description: form.description.trim(),
+                system_prompt: form.system_prompt.trim(),
+                default_model: default_model_opt,
+                tools_enabled: None::<Json<serde_json::Value>>,
+                letta_agent_type: letta_agent_type_db.as_deref(),
+                letta_tool_ids: Json(letta_tool_ids.clone()),
+                context_profile: None,
+            },
         )
         .await?;
 
@@ -968,14 +971,17 @@ async fn edit_action(
         bears_db::update_bear(
             state.sqlx_pool(),
             id,
-            form.slug.trim(),
-            form.name.trim(),
-            form.description.trim(),
-            form.system_prompt.trim(),
-            default_model_opt,
-            None::<Json<serde_json::Value>>,
-            letta_agent_type_db.as_deref(),
-            Json(letta_tool_ids.clone()),
+            BearParams {
+                slug: form.slug.trim(),
+                name: form.name.trim(),
+                description: form.description.trim(),
+                system_prompt: form.system_prompt.trim(),
+                default_model: default_model_opt,
+                tools_enabled: None::<Json<serde_json::Value>>,
+                letta_agent_type: letta_agent_type_db.as_deref(),
+                letta_tool_ids: Json(letta_tool_ids.clone()),
+                context_profile: None,
+            },
         )
         .await?;
 

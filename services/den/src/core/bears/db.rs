@@ -9,6 +9,18 @@ use super::model::{
     Bear, BearAgent, BearAgentRole, BearSkillManifestEntry, BearSkillProposal, BearWithMembership,
 };
 
+pub struct BearParams<'a> {
+    pub slug: &'a str,
+    pub name: &'a str,
+    pub description: &'a str,
+    pub system_prompt: &'a str,
+    pub default_model: Option<&'a str>,
+    pub tools_enabled: Option<Json<serde_json::Value>>,
+    pub letta_agent_type: Option<&'a str>,
+    pub letta_tool_ids: Json<Vec<String>>,
+    pub context_profile: Option<Json<serde_json::Value>>,
+}
+
 pub async fn list_bears(pool: &PgPool) -> Result<Vec<Bear>, CustomError> {
     sqlx::query_as::<_, Bear>(
         r#"
@@ -62,18 +74,7 @@ pub async fn bear_slug_exists_excluding(
     Ok(n.0 > 0)
 }
 
-pub async fn update_bear(
-    pool: &PgPool,
-    id: Uuid,
-    slug: &str,
-    name: &str,
-    description: &str,
-    system_prompt: &str,
-    default_model: Option<&str>,
-    tools_enabled: Option<Json<serde_json::Value>>,
-    letta_agent_type: Option<&str>,
-    letta_tool_ids: Json<Vec<String>>,
-) -> Result<(), CustomError> {
+pub async fn update_bear(pool: &PgPool, id: Uuid, params: BearParams<'_>) -> Result<(), CustomError> {
     let r = sqlx::query(
         r#"
         UPDATE bears
@@ -89,14 +90,14 @@ pub async fn update_bear(
         WHERE id = $9
         "#,
     )
-    .bind(slug)
-    .bind(name)
-    .bind(description)
-    .bind(system_prompt)
-    .bind(default_model)
-    .bind(tools_enabled)
-    .bind(letta_agent_type)
-    .bind(letta_tool_ids)
+    .bind(params.slug)
+    .bind(params.name)
+    .bind(params.description)
+    .bind(params.system_prompt)
+    .bind(params.default_model)
+    .bind(params.tools_enabled)
+    .bind(params.letta_agent_type)
+    .bind(params.letta_tool_ids)
     .bind(id)
     .execute(pool)
     .await?;
@@ -107,44 +108,14 @@ pub async fn update_bear(
 }
 
 /// Creates a logical Bear row. Runtime Letta ids live in `bear_agents`.
-pub async fn create_bear(
-    pool: &PgPool,
-    slug: &str,
-    name: &str,
-    description: &str,
-    system_prompt: &str,
-    default_model: Option<&str>,
-    tools_enabled: Option<Json<serde_json::Value>>,
-    letta_agent_type: Option<&str>,
-    letta_tool_ids: Json<Vec<String>>,
-) -> Result<Uuid, CustomError> {
-    create_bear_with_context_profile(
-        pool,
-        slug,
-        name,
-        description,
-        system_prompt,
-        default_model,
-        tools_enabled,
-        letta_agent_type,
-        letta_tool_ids,
-        None,
-    )
-    .await
+pub async fn create_bear(pool: &PgPool, params: BearParams<'_>) -> Result<Uuid, CustomError> {
+    create_bear_with_context_profile(pool, params).await
 }
 
 /// Creates a logical Bear row with optional role-aware context composition profile.
 pub async fn create_bear_with_context_profile(
     pool: &PgPool,
-    slug: &str,
-    name: &str,
-    description: &str,
-    system_prompt: &str,
-    default_model: Option<&str>,
-    tools_enabled: Option<Json<serde_json::Value>>,
-    letta_agent_type: Option<&str>,
-    letta_tool_ids: Json<Vec<String>>,
-    context_profile: Option<Json<serde_json::Value>>,
+    params: BearParams<'_>,
 ) -> Result<Uuid, CustomError> {
     let row: (Uuid,) = sqlx::query_as(
         r#"
@@ -156,15 +127,15 @@ pub async fn create_bear_with_context_profile(
         RETURNING id
         "#,
     )
-    .bind(slug)
-    .bind(name)
-    .bind(description)
-    .bind(system_prompt)
-    .bind(default_model)
-    .bind(tools_enabled)
-    .bind(letta_agent_type)
-    .bind(letta_tool_ids)
-    .bind(context_profile)
+    .bind(params.slug)
+    .bind(params.name)
+    .bind(params.description)
+    .bind(params.system_prompt)
+    .bind(params.default_model)
+    .bind(params.tools_enabled)
+    .bind(params.letta_agent_type)
+    .bind(params.letta_tool_ids)
+    .bind(params.context_profile)
     .fetch_one(pool)
     .await?;
     Ok(row.0)

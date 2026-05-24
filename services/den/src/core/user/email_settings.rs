@@ -377,11 +377,13 @@ pub async fn send_verify_email_for_user_id(
         db_pool,
         app_config,
         user_to_email,
-        subject,
-        minijinja_env,
-        "verify_email.html",
-        context,
-        None,
+        email::EmailTemplateRequest {
+            subject,
+            template_env: minijinja_env,
+            template_name: "verify_email.html",
+            ctx: context,
+            attachments: None,
+        },
     )
     .await?;
 

@@ -272,19 +272,23 @@ pub async fn record_web_approval(
     Ok(())
 }
 
+pub struct WebFetchAuditParams<'a> {
+    pub bear_id: Uuid,
+    pub session_id: Option<&'a str>,
+    pub tool_call_id: Option<&'a str>,
+    pub url: &'a str,
+    pub final_url: Option<&'a str>,
+    pub host: &'a str,
+    pub execution_location: &'a str,
+    pub approval_kind: &'a str,
+    pub http_status: Option<i32>,
+    pub content_type: Option<&'a str>,
+    pub bytes: Option<i64>,
+}
+
 pub async fn record_web_fetch_attempt(
     pool: &PgPool,
-    bear_id: Uuid,
-    session_id: Option<&str>,
-    tool_call_id: Option<&str>,
-    url: &str,
-    final_url: Option<&str>,
-    host: &str,
-    execution_location: &str,
-    approval_kind: &str,
-    http_status: Option<i32>,
-    content_type: Option<&str>,
-    bytes: Option<i64>,
+    params: WebFetchAuditParams<'_>,
 ) -> Result<(), CustomError> {
     sqlx::query(
         r#"
@@ -295,17 +299,17 @@ pub async fn record_web_fetch_attempt(
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
         "#,
     )
-    .bind(bear_id)
-    .bind(session_id)
-    .bind(tool_call_id)
-    .bind(url)
-    .bind(final_url)
-    .bind(host)
-    .bind(execution_location)
-    .bind(approval_kind)
-    .bind(http_status)
-    .bind(content_type)
-    .bind(bytes)
+    .bind(params.bear_id)
+    .bind(params.session_id)
+    .bind(params.tool_call_id)
+    .bind(params.url)
+    .bind(params.final_url)
+    .bind(params.host)
+    .bind(params.execution_location)
+    .bind(params.approval_kind)
+    .bind(params.http_status)
+    .bind(params.content_type)
+    .bind(params.bytes)
     .execute(pool)
     .await?;
     Ok(())
