@@ -80,7 +80,7 @@ Use these concepts for bear-specific work and knowledge:
 | Concept | Meaning | Example |
 |---------|---------|---------|
 | Domain | Durable knowledge/responsibility area within the Bear's scope. | smart home, renovations, billing, infrastructure |
-| Work surface | Durable work context that plans, tasks, artifacts, memory, and activity can attach to. | BEARS monorepo, a local checkout, production Den deployment, renovation budget |
+| Work surface | Durable work context that plans, tasks, artifacts, memory, and activity can attach to. | Bear Den monorepo, a local checkout, production Den deployment, renovation budget |
 | Project | Bounded initiative with a desired outcome. | kitchen renovation, Stripe billing v1 |
 | Routine | Recurring responsibility. | monthly maintenance review, weekly project digest |
 | Task | Executable unit of work. | compare electrician quotes, add webhook tests |

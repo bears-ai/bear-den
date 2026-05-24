@@ -7,7 +7,7 @@ Capabilities describe what a Bear is allowed to do. Tools are the concrete actio
 - A capability is a product-level permission or ability.
 - A tool is an executable action exposed to one or more Bear agent roles.
 - A skill is reusable know-how installed for selected roles.
-- In BEARS, durable skills are a **special class of Bear memory artifact**.
+- In Bear Den, durable skills are a **special class of Bear memory artifact**.
 - Den owns the canonical capability and skill configuration.
 - Durable skill learning happens through Reflection proposal and review, not raw self-installation.
 
@@ -54,11 +54,11 @@ Skills can encode:
 - subscription parsing guidance,
 - or team-specific practices.
 
-In BEARS, durable skills should be modeled as a **special kind of memory artifact**: they are part of what the Bear knows how to do in a reusable way, but they are governed differently from ordinary notes or summaries because they also need role assignment, dependency declarations, review state, and runtime materialization.
+In Bear Den, durable skills should be modeled as a **special kind of memory artifact**: they are part of what the Bear knows how to do in a reusable way, but they are governed differently from ordinary notes or summaries because they also need role assignment, dependency declarations, review state, and runtime materialization.
 
 That means skills are **not merely anonymous local runtime files**, but they are also **not identical to every other memory object**. They are governed memory with execution-oriented metadata.
 
-### Canonical skill format in BEARS
+### Canonical skill format in Bear Den
 
 The canonical durable representation of a Bear skill is a bundle under the Bear MemFS `skills/` namespace:
 
@@ -66,13 +66,13 @@ The canonical durable representation of a Bear skill is a bundle under the Bear 
 skills/
   adr-drafting/
     SKILL.md
-    bears.yaml
+    bear.yaml
 ```
 
 - `SKILL.md` holds the portable skill content.
-- `bears.yaml` holds BEARS-specific metadata such as lifecycle, review state, role applicability, provenance, dependencies, sharing policy, and sync/materialization state.
+- `bear.yaml` holds Bear Den-specific metadata such as lifecycle, review state, role applicability, provenance, dependencies, sharing policy, and sync/materialization state.
 
-The `skills/` namespace is flat at the skill-id level. BEARS should not encode role or lifecycle semantics in nested path hierarchies.
+The `skills/` namespace is flat at the skill-id level. Bear Den should not encode role or lifecycle semantics in nested path hierarchies.
 
 ## Role applicability
 
@@ -88,16 +88,16 @@ Not every role should receive every skill or tool.
 
 Role applicability keeps the Bear useful without giving every internal agent every power.
 
-For skills, role applicability should be metadata-driven rather than path-driven. A skill may be applicable to one, many, or all roles, and that assignment belongs in BEARS metadata and Den policy.
+For skills, role applicability should be metadata-driven rather than path-driven. A skill may be applicable to one, many, or all roles, and that assignment belongs in Bear Den metadata and Den policy.
 
 ## Skill proposals
 
-Agents do not install durable skills directly. Skill learning belongs to the **adaptation** side of BEARS Reflection system, but durable skill governance still overlaps strongly with memory governance because skills are a special memory artifact.
+Agents do not install durable skills directly. Skill learning belongs to the **adaptation** side of Bear Den Reflection system, but durable skill governance still overlaps strongly with memory governance because skills are a special memory artifact.
 
 The normal skill-learning flow is:
 
 1. A role or Reflection lane identifies a reusable procedure, convention, failure mode, or checklist.
-2. The role or lane submits a skill proposal through Den or a BEARS-governed review path.
+2. The role or lane submits a skill proposal through Den or a Bear Den-governed review path.
 3. `curate` or a future skill-review lane reviews the proposal.
 4. The reviewer chooses whether to approve it, which roles it applies to, and whether its dependency metadata is adequate.
 5. Den updates the Bear skill record only when policy allows.

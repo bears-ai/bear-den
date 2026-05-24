@@ -1,61 +1,97 @@
-{% extends "base.html" %}
-
-{% block title %}Code with {{ bear.name | e }}{% endblock %}
-
-{% block content %}
+{% extends "base.html" %} {% block title %}Code with {{ bear.name | e }}{%
+endblock %} {% block content %}
 <section class="two-columns">
-<div>
-    <div class="box full-width">
-        <h3>Code with {{ bear.name | e }}</h3>
-        <p>
-            Generate a Code token for local coding clients such as Zed. This token belongs to your account and is restricted to <strong>{{ bear.name | e }}</strong>.
-        </p>
+    <div>
         <div class="box full-width">
-            <h4>Code token permissions</h4>
-            <ul>
-                <li>Chat with this bear from coding clients.</li>
-                <li>Broker approved local editor tools exposed by the active ACP client, such as reading workspace files.</li>
-                <li>Local tools are session-scoped and unavailable after the editor disconnects.</li>
-            </ul>
-            <p class="form-hint">Your editor may still ask for permission before sensitive local actions. This token does not grant every possible tool.</p>
+            <h3>Code with {{ bear.name | e }}</h3>
+            <p>
+                Generate a Code token for local coding clients such as Zed. This
+                token belongs to your account and is restricted to
+                <strong>{{ bear.name | e }}</strong>.
+            </p>
+            <div class="box full-width">
+                <h4>Code token permissions</h4>
+                <ul>
+                    <li>Chat with this bear from coding clients.</li>
+                    <li>
+                        Broker approved local editor tools exposed by the active
+                        ACP client, such as reading workspace files.
+                    </li>
+                    <li>
+                        Local tools are session-scoped and unavailable after the
+                        editor disconnects.
+                    </li>
+                </ul>
+                <p class="form-hint">
+                    Your editor may still ask for permission before sensitive
+                    local actions. This token does not grant every possible
+                    tool.
+                </p>
+            </div>
+            {% if raw_token %}
+            <p class="form-errors">
+                Copy this token now. You will not be able to see it again.
+            </p>
+            <textarea
+                rows="4"
+                readonly
+                style="width: 100%; font-family: monospace"
+            >
+{{ raw_token | e }}</textarea
+            >
+            <p class="form-hint">
+                After copying it, store it in your shell or password manager as
+                <code>DEN_TOKEN</code>.
+            </p>
+            <p>
+                <a class="button-link" href="/account">View your Code tokens</a>
+            </p>
+            {% else %}
+            <form
+                method="post"
+                action="/bear/{{ bear.slug | e }}/details/code-token"
+            >
+                <label for="name">Token name</label>
+                <input
+                    id="name"
+                    name="name"
+                    type="text"
+                    value="{{ token_name | e }}"
+                    maxlength="120"
+                    required
+                />
+                <p class="form-hint">
+                    Use a name that identifies the client/device, e.g. “Zed on
+                    MacBook”.
+                </p>
+                <p><button type="submit">Generate Code token</button></p>
+            </form>
+            {% endif %}
         </div>
-        {% if raw_token %}
-        <p class="form-errors">
-            Copy this token now. You will not be able to see it again.
-        </p>
-        <textarea rows="4" readonly style="width: 100%; font-family: monospace;">{{ raw_token | e }}</textarea>
-        <p class="form-hint">
-            After copying it, store it in your shell or password manager as <code>BEARS_DEN_TOKEN</code>.
-        </p>
-        <p><a class="button-link" href="/account">View your Code tokens</a></p>
-        {% else %}
-        <form method="post" action="/bear/{{ bear.slug | e }}/details/code-token">
-            <label for="name">Token name</label>
-            <input id="name" name="name" type="text" value="{{ token_name | e }}" maxlength="120" required>
-            <p class="form-hint">Use a name that identifies the client/device, e.g. “Zed on MacBook”.</p>
-            <p><button type="submit">Generate Code token</button></p>
-        </form>
-        {% endif %}
     </div>
-</div>
-<div>
-    <div class="box full-width">
-        <h3>Zed configuration</h3>
-        <p class="form-hint">Use your public Den API origin for <code>BEARS_DEN_API_URL</code>. This can be a subdomain, another hostname, or a host+port URL.</p>
-        <pre>{
+    <div>
+        <div class="box full-width">
+            <h3>Zed configuration</h3>
+            <p class="form-hint">
+                Use your public Den API origin for <code>DEN_API_URL</code>.
+                This can be a subdomain, another hostname, or a host+port URL.
+            </p>
+            <pre>
+{
   "agent_servers": {
     "BEARS {{ bear.name | e }}": {
       "type": "custom",
       "command": "/path/to/bears-acp-adapter",
-      "args": ["--client", "zed", "--token-env", "BEARS_DEN_TOKEN"],
+      "args": ["--client", "zed", "--token-env", "DEN_TOKEN"],
       "env": {
-        "BEARS_DEN_API_URL": "{{ api_server_url | e }}",
-        "BEARS_BEAR_SLUG": "{{ bear.slug | e }}"
+        "DEN_API_URL": "{{ api_server_url | e }}",
+        "BEAR_SLUG": "{{ bear.slug | e }}"
       }
     }
   }
-}</pre>
+}</pre
+            >
+        </div>
     </div>
-</div>
 </section>
 {% endblock %}

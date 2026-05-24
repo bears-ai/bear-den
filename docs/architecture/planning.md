@@ -1,8 +1,8 @@
-# Planning in BEARS
+# Planning in Bear Den
 
-Planning in BEARS means a user-visible mini-project plan for an active body of work. Plans are Bear-level records with role provenance, and they usually attach to a **work surface**: the durable work context the Bear is acting on, such as a repo, local checkout, service, deployment, Cabinet Mission, Docket project, or long-running responsibility.
+Planning in Bear Den means a user-visible mini-project plan for an active body of work. Plans are Bear-level records with role provenance, and they usually attach to a **work surface**: the durable work context the Bear is acting on, such as a repo, local checkout, service, deployment, Cabinet Mission, Docket project, or long-running responsibility.
 
-Planning is distinct from continuation, which keeps an agent going in an existing task loop, and from a Cabinet Mission, which is a larger shared knowledge/work container. BEARS aligns with Letta Code's two planning layers while adapting them to Den's multi-role Bear architecture.
+Planning is distinct from continuation, which keeps an agent going in an existing task loop, and from a Cabinet Mission, which is a larger shared knowledge/work container. Bear Den aligns with Letta Code's two planning layers while adapting them to Den's multi-role Bear architecture.
 
 ## Two layers
 
@@ -12,7 +12,7 @@ Live progress tracking is the lightweight todo/status list an agent updates whil
 
 Letta Code has this as `TodoWrite` for Claude-style toolsets and `UpdatePlan` for Codex-style toolsets. In Letta Code this is mostly UI/state rendering; `UpdatePlan` is a no-op tool implementation whose arguments drive the visible plan, with a simple list of `{ step, status }` and statuses such as `pending`, `in_progress`, and `completed`.
 
-BEARS' Den equivalent is the **workboard**:
+Bear Den's Den equivalent is the **workboard**:
 
 - table: `bear_work_plans`
 - audit stream: `bear_work_plan_events`
@@ -26,9 +26,9 @@ A workboard plan is intentionally small and operational. It records what the Bea
 
 ### 2. ACP pair planning mode
 
-Letta Code has `EnterPlanMode` and `ExitPlanMode`. BEARS keeps the familiar **Ask**, **Plan**, and **Write** mode names for ACP `pair`, but treats them as workflow/UI modes rather than a separate durable mutation gate.
+Letta Code has `EnterPlanMode` and `ExitPlanMode`. Bear Den keeps the familiar **Ask**, **Plan**, and **Write** mode names for ACP `pair`, but treats them as workflow/UI modes rather than a separate durable mutation gate.
 
-In BEARS ACP:
+In Bear Den ACP:
 
 1. User or agent requests Plan mode when substantial implementation planning would help.
 2. ACP/Den records planning state for the current session.
@@ -57,7 +57,7 @@ Role is provenance and policy metadata for a plan, not the primary product owner
 
 ## Work-surface continuity
 
-Planning should follow the same work-surface continuity model used elsewhere in BEARS.
+Planning should follow the same work-surface continuity model used elsewhere in Bear Den.
 
 A common flow is:
 

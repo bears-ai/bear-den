@@ -1,4 +1,4 @@
-# BEARS stack — single Docker Compose project with one shared network (`bears-stack`).
+# Bear Den stack — single Docker Compose project with one shared network (`bears-stack`).
 #
 # Recommended for Coolify: Add Resource → Docker Compose → this repository,
 # Base Directory: `.` (repo root), Compose file: `docker-compose.yaml`.
@@ -332,7 +332,7 @@ services:
             RUST_LOG: ${RUST_LOG:-info}
             PORT: ${DEN_PORT:-3000}
             API_PORT: ${DEN_API_PORT:-3001}
-            APP_DISPLAY_NAME: ${APP_DISPLAY_NAME:-BEARS}
+            APP_DISPLAY_NAME: ${APP_DISPLAY_NAME:-Bear Den}
             APP_SLUG: ${APP_SLUG:-bears-den}
             WEB_SERVER_URL: ${WEB_SERVER_URL:-${SERVICE_URL_BEARS_DEN:-SETME}}
             API_SERVER_URL: ${API_SERVER_URL:-SETME}

@@ -14,7 +14,7 @@ Because memory is Bear-scoped, a single Bear may accumulate knowledge across mul
 - `curate` is responsible for deciding what becomes durable shared memory.
 - Memory curation is a lane within the broader **Reflection** system.
 - Letta Archives provide semantic retrieval indexes over selected canonical memory; they are not the source of truth.
-- BEARS should not introduce its own embedding strategy or vector store while Letta Archives satisfy retrieval needs.
+- Bear Den should not introduce its own embedding strategy or vector store while Letta Archives satisfy retrieval needs.
 - Local grounding should be **work-surface-first within the current role and channel**: use the current work surface's canonical anchors before falling back to broader Bear-global memory.
 
 ## Work-surface grounding
@@ -31,7 +31,7 @@ Examples of work surfaces:
 
 - one repository among many the Bear works in,
 - one deployment environment,
-- one service in the BEARS stack,
+- one service in the Bear Den stack,
 - one Mission or project,
 - one long-running operational responsibility.
 
@@ -203,7 +203,7 @@ Common role-local memory kinds include:
 
 ## Semantic retrieval with Letta Archives
 
-BEARS uses **Letta Archives** as the preferred semantic retrieval layer. Archives are collections of archival passages that can be shared between agents. They are useful for fuzzy recall, but they are derived indexes over canonical sources, not canonical memory.
+Bear Den uses **Letta Archives** as the preferred semantic retrieval layer. Archives are collections of archival passages that can be shared between agents. They are useful for fuzzy recall, but they are derived indexes over canonical sources, not canonical memory.
 
 Recommended archive rules:
 
@@ -232,7 +232,7 @@ For one Bear working on one long-lived responsibility, the Bear's curated archiv
 
 ## Reflection and memory curation
 
-Memory curation is part of BEARS **Reflection**: the auditable background review and learning system. Reflection can be triggered by heartbeat, manual request, memory write, task completion, or other events. Heartbeat cadence is throttled, so an active Bear can reflect more frequently than a dormant Bear.
+Memory curation is part of Bear Den **Reflection**: the auditable background review and learning system. Reflection can be triggered by heartbeat, manual request, memory write, task completion, or other events. Heartbeat cadence is throttled, so an active Bear can reflect more frequently than a dormant Bear.
 
 `curate` performs the memory curation lane of Reflection. Other Reflection lanes may handle archive indexing, introspection, health checks, cleanup, and skill review.
 
@@ -266,15 +266,15 @@ Secrets belong in secret-management systems, not in Bear memory.
 
 ## Relationship to Letta memory systems
 
-Letta and Letta Code provide several memory mechanisms. BEARS should use them at the right layer:
+Letta and Letta Code provide several memory mechanisms. Bear Den should use them at the right layer:
 
-| Mechanism | BEARS stance |
+| Mechanism | Bear Den stance |
 |-----------|--------------|
 | Letta Code reflection | Use for Letta Code-backed roles such as `talk` and `work` where appropriate. Do not duplicate it for those roles. |
-| Letta Archives / archival memory | Use for semantic retrieval. Do not build a separate BEARS vector store. |
+| Letta Archives / archival memory | Use for semantic retrieval. Do not build a separate Bear Den vector store. |
 | Letta conversation compaction | Letta owns context-window pressure and conversation summarization. |
-| Letta memory blocks | Treat as legacy/runtime state for BEARS direction; do not make them the primary long-term memory architecture. |
-| BEARS `curate` | Owns cross-role memory governance, `core/` cleanliness, and archive indexing policy. |
+| Letta memory blocks | Treat as legacy/runtime state for Bear Den direction; do not make them the primary long-term memory architecture. |
+| Bear Den `curate` | Owns cross-role memory governance, `core/` cleanliness, and archive indexing policy. |
 
 `pair` and `watch` are API-direct and do not naturally receive Letta Code reflection. Do not add separate dream agents for them at first: `pair` writes role-local entries and `watch` writes observations; `curate` reviews and consolidates their durable outputs.
 
@@ -314,7 +314,7 @@ Avoid:
 - “Shared memory is automatically updated by every agent.”
 - “Letta archival memory is the source of truth.”
 - “Every role should independently archive `core/`.”
-- “BEARS has its own vector store.”
+- “Bear Den has its own vector store.”
 - “Every memory must become Cabinet knowledge.”
 - “Every role memory is waiting for promotion.”
 - “A Cabinet Mission is the same thing as a Bear's purpose.”

@@ -98,7 +98,7 @@ Den constructs trusted context after authentication and membership checks, then 
 
 ## Conversation, thread, and session
 
-BEARS distinguishes among **conversations**, **threads**, and **sessions**.
+Bear Den distinguishes among **conversations**, **threads**, and **sessions**.
 
 - A **conversation** is the durable, user-visible exchange between a human and a Bear. It is the default cross-surface term for chat history, titles, summaries, and contextual continuity.
 - A **thread** is a channel-native reply structure, such as a Slack thread. Use this term only when the underlying surface explicitly has thread semantics.

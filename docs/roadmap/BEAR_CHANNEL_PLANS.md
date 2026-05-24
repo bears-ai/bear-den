@@ -68,7 +68,7 @@ Backlog notes:
 1. **Source/dev install first**
    - Keep adapter source under `tools/bears-acp-adapter/`.
    - Developers build locally with Cargo and configure Zed as a custom ACP agent.
-   - Token is provided via environment variable (`BEARS_DEN_TOKEN`) or `--token-env`.
+   - Token is provided via environment variable (`DEN_TOKEN`) or `--token-env`.
 
 2. **Prebuilt CLI releases**
    - Publish GitHub release artifacts for at least:

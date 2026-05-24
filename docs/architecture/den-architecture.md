@@ -2,7 +2,7 @@
 
 *Earlier notes drew on Letta Discord discussion:* https://discord.com/channels/1161736243340640419/1467667826730078386
 
-BEARS uses **only self-hosted Letta** (e.g. `letta/letta:latest` on Coolify). **Den** is the control plane and gateway (**Rust / Axum**). **For Phase 1 and bear chat**, **Letta calls Bifrost directly** for model calls; Den may talk to Bifrost **for observability** on that path (metrics/health/logs). **Future** Den features (for example control-plane LLM helpers) are **not** required to route through Bifrost—see [PLAN.md](../planning/PLAN.md) §2.5.
+Bear Den uses **only self-hosted Letta** (e.g. `letta/letta:latest` on Coolify). **Den** is the control plane and gateway (**Rust / Axum**). **For Phase 1 and bear chat**, **Letta calls Bifrost directly** for model calls; Den may talk to Bifrost **for observability** on that path (metrics/health/logs). **Future** Den features (for example control-plane LLM helpers) are **not** required to route through Bifrost—see [PLAN.md](../planning/PLAN.md) §2.5.
 
 ### Three layers (names)
 
@@ -121,9 +121,9 @@ Cabinet tool endpoints are internal or agent-facing per PLAN.
 
 ## Letta Code (harness layer)
 
-**Letta Code is required** for BEARS: it is the **[harness](https://docs.letta.com/letta-code)** that runs the runtime loop for harness-backed roles—skills, tool execution, [Channels](https://docs.letta.com/letta-code/channels/) (Slack), [scheduling](https://docs.letta.com/letta-code/scheduling), streaming to Den for web. **Letta** is the **persistence and server API** the harness uses—runtime state, blocks, conversations, and model calls **through Letta → Bifrost**.
+**Letta Code is required** for Bear Den: it is the **[harness](https://docs.letta.com/letta-code)** that runs the runtime loop for harness-backed roles—skills, tool execution, [Channels](https://docs.letta.com/letta-code/channels/) (Slack), [scheduling](https://docs.letta.com/letta-code/scheduling), streaming to Den for web. **Letta** is the **persistence and server API** the harness uses—runtime state, blocks, conversations, and model calls **through Letta → Bifrost**.
 
-**BEARS app:** **`services/codepool/`** (repository root, next to **`services/den/`**) is the **Node**-based service that embeds **`@letta-ai/letta-code-sdk`**, maintains a **warm session pool** (TTL eviction, `resumeSession` on miss) for **conversation handlers**, and may host **channel listener** workers (e.g. Slack) in the **same deployment** with **separate** health/metrics labels so operators see **conversation** vs **channel** status. It is **not** the Letta server container; it talks **outbound** to **`LETTA_BASE_URL`** like any harness.
+**Bear Den app:** **`services/codepool/`** (repository root, next to **`services/den/`**) is the **Node**-based service that embeds **`@letta-ai/letta-code-sdk`**, maintains a **warm session pool** (TTL eviction, `resumeSession` on miss) for **conversation handlers**, and may host **channel listener** workers (e.g. Slack) in the **same deployment** with **separate** health/metrics labels so operators see **conversation** vs **channel** status. It is **not** the Letta server container; it talks **outbound** to **`LETTA_BASE_URL`** like any harness.
 
 **Routines (Phase 1):** **Den** stores **first-class** scheduled work (**routines**) each **bound to one bear**; execution is delegated to the harness/Letta per [routines-automation.md](adr/routines-automation.md). **File outputs** go to **Garage** (artifacts bucket), not Letta — [artifacts-garage.md](adr/artifacts-garage.md). **no** automatic skill-learning from unattended runs by default ([PHASE1_DECISIONS.md](../planning/PHASE1_DECISIONS.md) decision **10**).
 
@@ -132,7 +132,7 @@ Cabinet tool endpoints are internal or agent-facing per PLAN.
 - **Letta Code → Letta:** The harness uses the self-hosted **Letta HTTP API** for persistence. **Den** uses **`LETTA_BASE_URL`** (and **`LETTA_API_KEY`**) for **provisioning**, **conversation list**, and **history** (`LettaClient` in `services/den/`).
 - **Den → `services/codepool/`:** Den bridges **browser** traffic for the **streaming send** path only: **`CODEPOOL_BASE_URL`** points at the internal **Codepool** HTTP listener. When **`RUN_WEB=true`**, Den requires a non-empty Codepool URL (production **release** images default to **`http://bears-codepool:3030`** when unset; override for local dev). This replaces treating a remote **`letta server`** process as the **HTTP façade** for web chat.
 - **Colocating Slack listeners with conversation handlers** shares one SDK version and volume but increases **blast radius** (restart affects both) and can **contend** for CPU/memory (always-on sockets vs bursty web). Mitigate with per-kind limits, separate subprocess isolation where possible, and **split deployments** only if SLOs require it.
-- **Tools:** For BEARS-defined capabilities (below), **Letta Code is the execution broker** between agents and **Den**—not a place to embed ad hoc tool scripts. See [Den meta tools](#den-meta-tools-bears-control-plane-tools).
+- **Tools:** For Bear Den-defined capabilities (below), **Letta Code is the execution broker** between agents and **Den**—not a place to embed ad hoc tool scripts. See [Den meta tools](#den-meta-tools-bears-control-plane-tools).
 
 Example **environment** (illustrative; confirm against [Letta Code docs](https://docs.letta.com/letta-code) and **`services/codepool/`** deploy docs when added):
 
@@ -154,7 +154,7 @@ Regenerate **harness deploy artifacts** (e.g. `letta-code.yaml` from the operato
 
 **Den is the system of record for which [Letta Code / Agent Skills](https://docs.letta.com/letta-code/skills/) each Bear role may use.** Operators attach skills **per Bear** and Den projects them to the appropriate role runtimes. **Letta Code** **loads and runs** skills from the filesystem layouts it supports; Den does not reimplement the skill runtime.
 
-In BEARS, durable skills are treated as a **special class of Bear memory artifact**. That means Den is not only tracking a catalog/attachment relationship, but also governing canonical skill storage, metadata, review state, role applicability, and runtime materialization.
+In Bear Den, durable skills are treated as a **special class of Bear memory artifact**. That means Den is not only tracking a catalog/attachment relationship, but also governing canonical skill storage, metadata, review state, role applicability, and runtime materialization.
 
 **Canonical durable format**
 
@@ -164,13 +164,13 @@ Canonical Bear skills live in the Bear MemFS `skills/` namespace as flat skill b
 skills/
   <skill-slug>/
     SKILL.md
-    bears.yaml
+    bear.yaml
 ```
 
 - `SKILL.md` contains portable skill content.
-- `bears.yaml` contains BEARS-specific metadata such as lifecycle, review state, role applicability, provenance, dependencies, sharing policy, and sync/materialization state.
+- `bear.yaml` contains Bear Den-specific metadata such as lifecycle, review state, role applicability, provenance, dependencies, sharing policy, and sync/materialization state.
 
-The namespace is flat at the skill-id level: BEARS does **not** encode authoritative role or lifecycle semantics in nested directory trees.
+The namespace is flat at the skill-id level: Bear Den does **not** encode authoritative role or lifecycle semantics in nested directory trees.
 
 **Responsibilities**
 
@@ -187,9 +187,9 @@ The namespace is flat at the skill-id level: BEARS does **not** encode authorita
 
 ### Dynamic skills, reflection subagents, and bear configuration
 
-**Beyond static catalog skills:** BEARS targets **dynamic** skills—operators attach **catalog** skills per bear (above), and **bears** may **create or refine** skills over time using **Letta Code** capabilities (e.g. upstream **skills-creation** patterns) and Letta **subagent** mechanisms such as **`reflection`** for auto-discovery. **Den** does not run the skill runtime; it **extends bear provisioning** so each bear’s configuration includes **predefined subagents** and remains **GitOps-friendly**.
+**Beyond static catalog skills:** Bear Den targets **dynamic** skills—operators attach **catalog** skills per bear (above), and **bears** may **create or refine** skills over time using **Letta Code** capabilities (e.g. upstream **skills-creation** patterns) and Letta **subagent** mechanisms such as **`reflection`** for auto-discovery. **Den** does not run the skill runtime; it **extends bear provisioning** so each bear’s configuration includes **predefined subagents** and remains **GitOps-friendly**.
 
-**Single ADR:** [dynamic-skills-subagents.md](adr/dynamic-skills-subagents.md) — canonical decisions for Bear skill bundles (`SKILL.md` + `bears.yaml`), storage/sync rules, skill governance, and an **inspirational** expert sketch (e.g. `skill-curator` subagent, `Task` policy, `SubagentStop` hook, git staging). BEARS prioritizes **user/operator control** over promoted skills; expert “conservative” bias is optional, not the default product goal.
+**Single ADR:** [dynamic-skills-subagents.md](adr/dynamic-skills-subagents.md) — canonical decisions for Bear skill bundles (`SKILL.md` + `bear.yaml`), storage/sync rules, skill governance, and an **inspirational** expert sketch (e.g. `skill-curator` subagent, `Task` policy, `SubagentStop` hook, git staging). Bear Den prioritizes **user/operator control** over promoted skills; expert “conservative” bias is optional, not the default product goal.
 
 ### Den-managed MCP servers (Phase 1)
 
@@ -210,23 +210,23 @@ See [PLAN.md](../planning/PLAN.md) Phase 1 for the phased implementation checkli
 
 ---
 
-## Den meta tools (BEARS control-plane tools)
+## Den meta tools (Bear Den control-plane tools)
 
-**Den-controlled tool facade, brokered through Letta Code.** BEARS distinguishes **control-plane** capabilities (identity, policy, org data) from generic **skills** and third-party **MCP** integrations. Those capabilities use a single architectural pattern: **Den** is the operational center; **Letta Code** brokers execution; **Letta** holds agent state but is **not** where BEARS-specific tool *implementations* live as ad-hoc local scripts.
+**Den-controlled tool facade, brokered through Letta Code.** Bear Den distinguishes **control-plane** capabilities (identity, policy, org data) from generic **skills** and third-party **MCP** integrations. Those capabilities use a single architectural pattern: **Den** is the operational center; **Letta Code** brokers execution; **Letta** holds agent state but is **not** where Bear Den-specific tool *implementations* live as ad-hoc local scripts.
 
 **Principles**
 
 - **Den** owns **tool definitions** (names, JSON schemas), **permissions**, **availability** per bear or environment, **routing**, and **rollout** configuration. Policy and enablement are **Den’s system of record**, not mutable one-off state inside a Letta runtime UI.
 - **Den** implements capabilities as **stable HTTP APIs** (or internal services behind a documented base path). Those endpoints are **reusable** by other components (operator console, automation, future clients)—not buried inside a single runtime process.
 - **Letta Code** is the **execution broker**: it resolves **which** tools an agent may call from **Den** (or from config materialized from Den), **invokes Den-routed operations** during the tool loop, and returns **normalized** results to the agent. Agents see tools **surfaced through the harness**; the **source of truth** for what those tools are remains **Den**.
-- **No ad hoc local tool code** (for example custom Python dropped into the Letta server’s tool sandbox) for BEARS control-plane features. **Deployment must be reproducible** from **version-controlled Den and Letta Code** config—plus the usual DB backups and object storage—not from manual edits in a Letta console.
+- **No ad hoc local tool code** (for example custom Python dropped into the Letta server’s tool sandbox) for Bear Den control-plane features. **Deployment must be reproducible** from **version-controlled Den and Letta Code** config—plus the usual DB backups and object storage—not from manual edits in a Letta console.
 
-**Intent.** These tools cover **BEARS control-plane** work: enforce **Den** policy, update **Letta** state in a governed way (e.g. conversation `summary`), or reach **Cabinet** through Den. Examples: **conversation titles**, **Cabinet** search/read/write with deck/kind ACLs, future **meta** actions (audit hooks, rate hints, feature gates).
+**Intent.** These tools cover **Bear Den control-plane** work: enforce **Den** policy, update **Letta** state in a governed way (e.g. conversation `summary`), or reach **Cabinet** through Den. Examples: **conversation titles**, **Cabinet** search/read/write with deck/kind ACLs, future **meta** actions (audit hooks, rate hints, feature gates).
 
 **Relationship to skills and MCP**
 
 - **[Den-managed skills](#den-managed-skills)** and **[Den-managed MCP servers](#den-managed-mcp-servers-phase-1)** stay the right patterns for **filesystem skills** and **optional third-party** tool hosts (Exa, Composio, org MCP). Letta/Letta Code remain the runtime that loads skills and opens MCP sessions where applicable.
-- **Den meta tools** are **tightly coupled** to BEARS identity and policy. They are **not** “must be MCP”—use MCP when you **deliberately** want a portable or vendor-hosted server.
+- **Den meta tools** are **tightly coupled** to Bear Den identity and policy. They are **not** “must be MCP”—use MCP when you **deliberately** want a portable or vendor-hosted server.
 - **Cabinet** follows the **same** Den-facade pattern: **Den** is the policy and API boundary to Outline; **Letta Code** brokers calls into Den. A separate “Cabinet MCP” is unnecessary unless you integrate an external MCP Den does not own—**Den still fronts policy** on every call.
 
 **Contract (conceptual).**
@@ -236,7 +236,7 @@ See [PLAN.md](../planning/PLAN.md) Phase 1 for the phased implementation checkli
 3. **Provisioning.** Den’s registry and materialized config record **which** meta tools each bear has; GitOps and review apply the same as other bear fields. Letta agent / harness wiring reflects that catalog—**without** embedding implementation source in the Letta process.
 4. **Transport.** Exact wire format (HTTP from Letta Code to Den, streaming callbacks, etc.) is defined by **Letta Code + Den** integration work—not by scattering executors in the Letta server. The invariant is: **handlers live in Den**; **Letta Code** mediates the agent tool loop.
 
-**When MCP is still appropriate.** Third-party catalogs, reuse across products, or **optional** per-bear attachments that are **not** BEARS-specific—attach via the MCP catalog and materialize into harness/Letta config as documented elsewhere in this file.
+**When MCP is still appropriate.** Third-party catalogs, reuse across products, or **optional** per-bear attachments that are **not** Bear Den-specific—attach via the MCP catalog and materialize into harness/Letta config as documented elsewhere in this file.
 
 ---
 

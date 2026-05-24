@@ -207,10 +207,10 @@ The shared adapter should resolve config in this order:
 Environment variables remain the primary devcontainer/Linux path:
 
 ```text
-BEARS_DEN_API_URL
-BEARS_BEAR_SLUG
-BEARS_DEN_TOKEN
-BEARS_DEN_TOKEN_ENV
+DEN_API_URL
+DEN_BEAR_SLUG
+DEN_TOKEN
+DEN_TOKEN_ENV
 BEARS_ACP_CLIENT
 ```
 

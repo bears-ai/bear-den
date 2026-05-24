@@ -1,8 +1,8 @@
 # Bear roles: talk, pair, curate, work, and watch
 
-This document describes the five internal roles BEARS uses. It exists to align product, design, engineering, documentation, support, and marketing around one shared implementation and trust-boundary model.
+This document describes the five internal roles Bear Den uses. It exists to align product, design, engineering, documentation, support, and marketing around one shared implementation and trust-boundary model.
 
-A Bear should feel like one coherent assistant to a user. The preferred conceptual model is **roles, channels, and work surfaces**, not Spaces or separate provider-managed agents. Internally, BEARS uses a multi-role runtime. Each role has a distinct job, trust profile, memory branch, and relationship to external systems.
+A Bear should feel like one coherent assistant to a user. The preferred conceptual model is **roles, channels, and work surfaces**, not Spaces or separate provider-managed agents. Internally, Bear Den uses a multi-role runtime. Each role has a distinct job, trust profile, memory branch, and relationship to external systems.
 
 Roles are the preferred conceptual vocabulary. They are useful for code, schemas, routing, provisioning, diagnostics, architecture discussion, and user-facing explanation when a boundary matters. The Bear should still identify as the Bear rather than as a separate role runtime or sub-agent.
 
@@ -249,7 +249,7 @@ In normal user-facing behavior, a Bear should identify itself as the Bear rather
 This means:
 
 - `talk` and `pair` should normally speak in the voice of the Bear, not as “the talk role,” “the pair role,” or a separate agent.
-- Internal role names should be exposed mainly in BEARS-building, operator, debugging, or other explicitly architectural contexts.
+- Internal role names should be exposed mainly in Bear Den-building, operator, debugging, or other explicitly architectural contexts.
 - Product surfaces may still use friendlier activity labels such as “chat,” “pairing,” or “background work,” but should avoid making the user feel like they are talking to five separate assistants.
 - When a boundary explanation is necessary for honesty or safety, the system may briefly describe the relevant internal distinction without centering it as the assistant's identity.
 

@@ -1,4 +1,4 @@
-# BEARS Tasks Schema
+# Bear Den Tasks Schema
 
 This document specifies the file formats and lifecycle for the task-management subsystem described in the `multi-role-runtime-architecture` ADR (section 5, "Task request flow") and operationalized by `MULTI_ROLE_RUNTIME_IMPLEMENTATION_PLAN.md` (phases 4–8).
 

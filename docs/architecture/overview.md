@@ -1,10 +1,10 @@
 # Architecture notes
 
-Single-page view of the BEARS stack on Coolify. **Roadmap and contracts:** [PLAN.md](../planning/PLAN.md). **Den + multi-user web:** [DEN_ARCHITECTURE.md](DEN_ARCHITECTURE.md).
+Single-page view of the Bear Den stack on Coolify. **Roadmap and contracts:** [PLAN.md](../planning/PLAN.md). **Den + multi-user web:** [DEN_ARCHITECTURE.md](DEN_ARCHITECTURE.md).
 
 ## Target architecture
 
-**Cabinet** (**Outline**) is the shared knowledgebase: humans edit in Outline; **bears** access it through **Den** (Cabinet API, policy). **Letta** keeps **native memory** (blocks, conversations) for the active role runtimes during migration—Cabinet does not replace that. **Bear** = one assistant identity with multiple roles; **BEARS** = the stack. See [PLAN.md](../planning/PLAN.md) terminology.
+**Cabinet** (**Outline**) is the shared knowledgebase: humans edit in Outline; **bears** access it through **Den** (Cabinet API, policy). **Letta** keeps **native memory** (blocks, conversations) for the active role runtimes during migration—Cabinet does not replace that. **Bear** = one assistant identity with multiple roles; **Bear Den** = the product. See [PLAN.md](../planning/PLAN.md) terminology.
 
 Three layers (see [DEN_ARCHITECTURE.md](DEN_ARCHITECTURE.md)): **persistence (Letta)** → **harness (Letta Code)** → **control plane (Den)** for operations; web and Slack sit on the harness.
 

@@ -1,6 +1,6 @@
 # Agent and Bear Environments
 
-This document defines shared language for the environments BEARS creates around Bears, roles, channels, work surfaces, and the runtime projections that let a Bear operate safely in different situations.
+This document defines shared language for the environments Bear Den creates around Bears, roles, channels, work surfaces, and the runtime projections that let a Bear operate safely in different situations.
 
 ## Summary
 
@@ -97,7 +97,7 @@ It may include:
 
 Turn Context is narrower than a role runtime, which is narrower than Bear Operating Environment.
 
-In current BEARS implementation, the stable prompt is composed by Den from these high-level parts, in order:
+In the current Bear Den implementation, the stable prompt is composed by Den from these high-level parts, in order:
 
 1. **Den baseline** — shared Bear safety and control-plane guidance. It establishes that the agent is operating as the Bear through a constrained environment, must preserve role and policy boundaries, must not claim unavailable tools or authority, should ask before destructive or externally visible actions, and should not intentionally remember secrets or credentials.
 2. **Role instructions** — role-specific instructions for `talk`, `pair`, `curate`, `work`, or `watch`. Older implementation docs may still refer to these as Space-specific instructions or role contracts.
@@ -125,7 +125,7 @@ Role runtime = situated projection for a role/channel/work surface
 Turn context = concrete model input/tool slice
 ```
 
-A practical way to read this in BEARS is:
+A practical way to read this in Bear Den is:
 
 - The **Bear Operating Environment** contains the full durable configuration and state Den knows about the Bear.
 - Den projects that into a **role runtime** by selecting a role, channel, memory view, tool surface, policy boundary, work-surface hints or anchors, and session/task metadata.
@@ -141,10 +141,10 @@ Agent Environment Design is the intentional design of the agent operating enviro
 
 This is distinct from **agent-facing product design**, which means making an external product usable by agents through APIs, MCP servers, structured documentation, or machine-readable workflows.
 
-In BEARS:
+In Bear Den:
 
 - Agent-facing product design makes external systems easier for agents to use.
-- Agent Environment Design shapes the world BEARS agents inhabit.
+- Agent Environment Design shapes the world Bear Den agents inhabit.
 - Bear Environment Design shapes the durable Bear Operating Environment from which role runtimes are projected.
 
 ## Optional philosophical language

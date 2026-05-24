@@ -1,6 +1,6 @@
 # Architecture
 
-Conceptual models, stable contracts, and architecture overviews for BEARS.
+Conceptual models, stable contracts, and architecture overviews for Bear Den.
 
 ## Suggested reading order
 

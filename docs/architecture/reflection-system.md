@@ -1,6 +1,6 @@
 # Reflection System
 
-Reflection is BEARS' auditable background review and learning system. It lets a Bear periodically or eventfully review recent activity, curate memory, maintain derived indexes, inspect behavior, and propose bounded improvements.
+Reflection is Bear Den's auditable background review and learning system. It lets a Bear periodically or eventfully review recent activity, curate memory, maintain derived indexes, inspect behavior, and propose bounded improvements.
 
 ## Summary
 
@@ -25,7 +25,7 @@ Reflection suggests:
 - improving future behavior;
 - bounded review rather than hidden self-modification.
 
-Avoid **subconscious** as an official term. It is evocative but implies hidden or opaque behavior, which conflicts with BEARS' goals of trust, auditability, and user/operator control.
+Avoid **subconscious** as an official term. It is evocative but implies hidden or opaque behavior, which conflicts with Bear Den's goals of trust, auditability, and user/operator control.
 
 Use narrower terms underneath Reflection:
 

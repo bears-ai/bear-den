@@ -2,11 +2,11 @@
 
 ## Purpose
 
-This note proposes a terminology shift for BEARS as the system migrates away from Letta.
+This note proposes a terminology shift for Bear Den as the system migrates away from Letta.
 
 Canonical framing:
 
-> **BEARS uses a multi-role runtime.** A Bear has one durable identity and charter, and may execute under role-scoped contexts such as `talk`, `pair`, `work`, `curate`, and `watch`. Roles are Den-owned descriptors that define tools, memory scope, autonomy policy, surfaces, and audit behavior. They are not distinct provider-managed agents.
+> **Bear Den uses a multi-role runtime.** A Bear has one durable identity and charter, and may execute under role-scoped contexts such as `talk`, `pair`, `work`, `curate`, and `watch`. Roles are Den-owned descriptors that define tools, memory scope, autonomy policy, surfaces, and audit behavior. They are not distinct provider-managed agents.
 
 The central idea is:
 
@@ -19,9 +19,9 @@ This note is not yet a full ADR. It is intended to guide ongoing schema, archite
 
 ## Why this matters now
 
-Under Letta, BEARS naturally inherited a multi-agent framing because the implementation literally provisioned multiple Letta agents.
+Under Letta, Bear Den naturally inherited a multi-agent framing because the implementation literally provisioned multiple Letta agents.
 
-As BEARS moves toward a Den-owned runtime, that framing becomes less accurate.
+As Bear Den moves toward a Den-owned runtime, that framing becomes less accurate.
 
 What the architecture appears to actually need is:
 
@@ -106,7 +106,7 @@ Why:
 
 ## Recommended architectural framing
 
-Instead of describing BEARS as:
+Instead of describing Bear Den as:
 
 > a logical assistant backed by five agents
 
@@ -240,7 +240,7 @@ rather than compatibility with the language of separate provider-created agents.
 
 ## Bottom line
 
-Post-Letta, BEARS is better described as a **single Bear identity with multiple roles** than as a set of distinct agents.
+Post-Letta, Bear Den is better described as a **single Bear identity with multiple roles** than as a set of distinct agents.
 
 That means:
 

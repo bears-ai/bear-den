@@ -1,6 +1,6 @@
-# BEARS documentation
+# Bear Den documentation
 
-Human-oriented docs for the BEARS stack.
+Human-oriented docs for the Bear Den product.
 
 **Start here:** [README.md](../README.md) at the repository root. **Agent/repo conventions:** [AGENTS.md](../AGENTS.md).
 
@@ -44,4 +44,4 @@ This repo is a light monorepo: documentation and `services/*` deploy artifacts s
 
 ## Assistant-oriented material
 
-Tooling notes for coding agents live at the repository root in **[AGENTS.md](../AGENTS.md)**. The [`.kilocode/memory_bank/`](../.kilocode/memory_bank/) directory is aligned with the same BEARS vocabulary but is not end-user documentation.
+Tooling notes for coding agents live at the repository root in **[AGENTS.md](../AGENTS.md)**. The [`.kilocode/memory_bank/`](../.kilocode/memory_bank/) directory is aligned with the same Bear Den vocabulary but is not end-user documentation.

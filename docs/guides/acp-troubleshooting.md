@@ -15,7 +15,7 @@ ACP `pair` role traffic should not route through Codepool.
 Check Den:
 
 ```bash
-curl -s "$BEARS_DEN_API_URL/version"
+curl -s "$DEN_API_URL/version"
 ```
 
 Check adapter startup in the editor logs:

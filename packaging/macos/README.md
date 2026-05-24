@@ -88,7 +88,7 @@ Validate the installed adapter:
 The adapter self-update command reads a small JSON manifest from a stable public URL and installs a newer signed/notarized `.pkg`. The default stable arm64 macOS manifest URL compiled into the adapter is:
 
 ```text
-https://theartificial.github.io/BEARS/bears-acp-adapter/stable/aarch64-apple-darwin.json
+https://bears-ai.github.io/bear-den/bears-acp-adapter/stable/aarch64-apple-darwin.json
 ```
 
 GitHub Releases generate a Pages payload under:
@@ -114,18 +114,18 @@ Generate a manifest manually with:
 ./packaging/macos/generate-update-manifest.sh \
   --pkg dist/macos/bears-acp-adapter-aarch64-apple-darwin.pkg \
   --output dist/update-site/bears-acp-adapter/stable/aarch64-apple-darwin.json \
-  --base-url https://theartificial.github.io/BEARS/bears-acp-adapter/stable \
+  --base-url https://bears-ai.github.io/bear-den/bears-acp-adapter/stable \
   --channel stable \
   --target aarch64-apple-darwin \
-  --release-notes-url https://github.com/TheArtificial/BEARS/releases/latest
+  --release-notes-url https://github.com/bears-ai/bear-den/releases/latest
 
 ./packaging/macos/generate-update-manifest.sh \
   --binary dist/update-site/bears-acp-adapter/stable/bears-acp-adapter-x86_64-unknown-linux-gnu \
   --output dist/update-site/bears-acp-adapter/stable/x86_64-unknown-linux-gnu.json \
-  --base-url https://theartificial.github.io/BEARS/bears-acp-adapter/stable \
+  --base-url https://bears-ai.github.io/bear-den/bears-acp-adapter/stable \
   --channel stable \
   --target x86_64-unknown-linux-gnu \
-  --release-notes-url https://github.com/TheArtificial/BEARS/releases/latest
+  --release-notes-url https://github.com/bears-ai/bear-den/releases/latest
 ```
 
 On release events, `.github/workflows/acp-adapter.yml` uploads that payload to the `gh-pages` branch while preserving other channels. Non-prerelease releases publish to `stable`; prereleases publish to `beta`. Enable repository Pages from the `gh-pages` branch before relying on the default URL.

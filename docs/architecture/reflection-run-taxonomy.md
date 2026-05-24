@@ -130,7 +130,7 @@ Constraints:
 
 Purpose:
 
-- maintain Letta Archives as derived semantic indexes over canonical BEARS sources.
+- maintain Letta Archives as derived semantic indexes over canonical Bear Den sources.
 
 Inputs:
 
@@ -151,7 +151,7 @@ Outputs:
 Constraints:
 
 - Letta Archives are not source of truth;
-- no BEARS vector store;
+- no Bear Den vector store;
 - changed source hashes use delete-and-create passage sync;
 - search results must point back to canonical sources.
 

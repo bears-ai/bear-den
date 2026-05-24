@@ -73,12 +73,12 @@ tools/bears-acp-adapter/target/debug/bears-acp-adapter
 The adapter needs a Den API URL, bear slug, and bearer token with `acp:chat` scope. Local editor file tools are not currently relayed through this adapter/Codepool path.
 
 ```bash
-export BEARS_DEN_API_URL="https://api.bears.[domain]" # or another public API origin, e.g. https://bears.[domain]:3001
-export BEARS_BEAR_SLUG="test-bear"
-export BEARS_DEN_TOKEN="..."
+export DEN_API_URL="https://api.bears.[domain]" # or another public API origin, e.g. https://bears.[domain]:3001
+export BEAR_SLUG="test-bear"
+export DEN_TOKEN="..."
 ```
 
-Use any Den API origin reachable from the process running the adapter. For Zed on macOS, this normally means a host-reachable HTTPS URL, a separate API hostname, or a published API port on the web host. `BEARS_DEN_API_URL` must be the API origin only, not the full `/acp/bears/.../prompt` endpoint.
+Use any Den API origin reachable from the process running the adapter. For Zed on macOS, this normally means a host-reachable HTTPS URL, a separate API hostname, or a published API port on the web host. `DEN_API_URL` must be the API origin only, not the full `/acp/bears/.../prompt` endpoint.
 
 You can validate configuration without starting ACP stdio:
 
@@ -117,7 +117,7 @@ bears-acp-adapter update --install --yes
 Update options:
 
 - `--channel <stable|beta>` selects the public update channel. The default is `BEARS_ACP_UPDATE_CHANNEL` or `stable`.
-- `--manifest-url <url>` overrides the manifest URL. The default stable arm64 macOS manifest is `https://theartificial.github.io/BEARS/bears-acp-adapter/stable/aarch64-apple-darwin.json`.
+- `--manifest-url <url>` overrides the manifest URL. The default stable arm64 macOS manifest is `https://bears-ai.github.io/bear-den/bears-acp-adapter/stable/aarch64-apple-darwin.json`.
 - `--open` downloads, verifies, and opens the `.pkg` in macOS Installer.
 - `--install`/`--cli` downloads, verifies, and runs `sudo /usr/sbin/installer`.
 - `--download-only` downloads and verifies the `.pkg` without installing.
@@ -130,9 +130,9 @@ You can also validate which Den server build the adapter reaches, without speaki
 bears-acp-adapter --check-server
 ```
 
-This fetches `GET /version` from `BEARS_DEN_API_URL` and prints Den's service name, package version, git SHA, and build timestamp when available.
+This fetches `GET /version` from `DEN_API_URL` and prints Den's service name, package version, git SHA, and build timestamp when available.
 
-If the adapter is started by an ACP client with missing or invalid configuration, it stays running and returns a JSON-RPC error on `session/prompt` with specific setup instructions. This avoids opaque client-side errors such as “server shut down unexpectedly” when, for example, `BEARS_DEN_API_URL` was never set.
+If the adapter is started by an ACP client with missing or invalid configuration, it stays running and returns a JSON-RPC error on `session/prompt` with specific setup instructions. This avoids opaque client-side errors such as “server shut down unexpectedly” when, for example, `DEN_API_URL` was never set.
 
 ## Zed custom agent config
 
@@ -146,9 +146,9 @@ In Zed settings, add a custom agent server. Adjust the command path and environm
       "command": "/absolute/path/to/bears-acp-adapter",
       "args": ["--client", "zed"],
       "env": {
-        "BEARS_DEN_API_URL": "https://api.bears.[domain]",
-        "BEARS_BEAR_SLUG": "test-bear",
-        "BEARS_DEN_TOKEN": "..."
+        "DEN_API_URL": "https://api.bears.[domain]",
+        "BEAR_SLUG": "test-bear",
+        "DEN_TOKEN": "..."
       }
     }
   }
@@ -163,10 +163,10 @@ For local development, prefer `--token-env` so the token is not written into Zed
     "BEARS": {
       "type": "custom",
       "command": "/absolute/path/to/bears-acp-adapter",
-      "args": ["--client", "zed", "--token-env", "BEARS_DEN_TOKEN"],
+      "args": ["--client", "zed", "--token-env", "DEN_TOKEN"],
       "env": {
-        "BEARS_DEN_API_URL": "https://api.bears.[domain]",
-        "BEARS_BEAR_SLUG": "test-bear"
+        "DEN_API_URL": "https://api.bears.[domain]",
+        "BEAR_SLUG": "test-bear"
       }
     }
   }
@@ -204,7 +204,7 @@ Production distribution should add Developer ID signing and Apple notarization b
 
 - Run `bears-acp-adapter doctor` for a user-friendly setup report.
 - Run `bears-acp-adapter --check-config` from the same shell or wrapper environment used by your editor.
-- Run `bears-acp-adapter --check-server` to print the Den `/version` response reached by `BEARS_DEN_API_URL`.
+- Run `bears-acp-adapter --check-server` to print the Den `/version` response reached by `DEN_API_URL`.
 - Open Zed command palette: `dev: open acp logs`.
 - The adapter writes logs only to stderr.
 - Stdout is reserved for JSON-RPC protocol messages.

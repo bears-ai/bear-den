@@ -2,7 +2,7 @@
 
 ## Purpose
 
-This document proposes the Phase 1 schema for moving BEARS conversation and runtime state out of Letta and into Den-owned persistence.
+This document proposes the Phase 1 schema for moving Bear Den conversation and runtime state out of Letta and into Den-owned persistence.
 
 It is intended to support the migration plan in [`./letta-migration-plan.md`](./letta-migration-plan.md) and should be read alongside the current dependency inventory in [`./letta-dependency-matrix.md`](./letta-dependency-matrix.md).
 
@@ -57,7 +57,7 @@ That means:
 - admin and UI views are served from explicit projections or read models derived from those events
 - event append remains separate from projection/update concerns
 
-For BEARS, this is especially useful because:
+For Bear Den, this is especially useful because:
 
 - ACP runtime status needs a trustworthy audit trail
 - admin surfaces need to explain what happened, not just current row state
@@ -250,7 +250,7 @@ Recommended:
 
 ### Notes
 
-- Den-owned `id` should be the canonical thread identity for BEARS.
+- Den-owned `id` should be the canonical thread identity for Bear Den.
 - Existing Letta conversation ids should be stored in `provider_conversation_ref` during migration.
 - `acp_sessions` can later reference `conversations(id)` instead of carrying the raw conversation id as the main identity.
 
@@ -374,7 +374,7 @@ This should support both:
 | `run_id` | UUID FK -> `conversation_runs(id)` NULL | associated run |
 | `message_id` | UUID FK -> `conversation_messages(id)` NULL | originating assistant/tool message |
 | `provider_tool_call_ref` | TEXT NULL | Letta or other runtime tool call id |
-| `tool_name` | TEXT | canonical BEARS tool name |
+| `tool_name` | TEXT | canonical Bear Den tool name |
 | `tool_namespace` | TEXT NULL | e.g. `den`, `acp`, `codepool`, `external` |
 | `origin` | TEXT | `runtime_requested`, `human_approved`, `system_dispatched` |
 | `status` | TEXT | `requested`, `awaiting_approval`, `dispatched`, `completed`, `failed`, `cancelled`, `denied` |

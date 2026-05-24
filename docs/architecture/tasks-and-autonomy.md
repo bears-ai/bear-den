@@ -132,7 +132,7 @@ Avoid:
 - [Memory model](MEMORY_MODEL.md)
 - [Observations and subscriptions](OBSERVATIONS_AND_SUBSCRIPTIONS.md)
 - [Capabilities and skills](CAPABILITIES_AND_SKILLS.md)
-- [Planning in BEARS](PLANNING.md)
+- [Planning in Bear Den](PLANNING.md)
 - [Schema-first path strategy ADR](../architecture/adr/schema-first-path-strategy.md)
 - [Bear Workplaces ADR](../architecture/adr/bear-workplaces.md)
 - [Multi-agent architecture ADR](../architecture/adr/multi-agent-architecture.md)

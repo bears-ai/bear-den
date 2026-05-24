@@ -19,7 +19,7 @@ BEARS ACP adapter installed successfully.
 
 Next steps:
   1. Configure your ACP client to run /usr/local/bin/bears-acp-adapter.
-  2. Provide BEARS_DEN_API_URL, BEARS_BEAR_SLUG, and BEARS_DEN_TOKEN in the client environment.
+  2. Provide DEN_API_URL, BEAR_SLUG, and DEN_TOKEN in the client environment.
   3. Run /usr/local/bin/bears-acp-adapter doctor from the same environment to validate setup.
 MESSAGE
 

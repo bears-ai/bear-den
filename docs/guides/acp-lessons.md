@@ -72,7 +72,7 @@ An env-var auth method is promising for BEARS Code tokens:
   "type": "env_var",
   "vars": [
     {
-      "name": "BEARS_DEN_TOKEN",
+      "name": "DEN_TOKEN",
       "label": "BEARS Code Token",
       "secret": true
     }

@@ -1068,7 +1068,7 @@ const ACP_EDIT_FILE_POLICY: AcpToolPolicy = AcpToolPolicy {
     max_replacements: Some(1),
     create_files: Some(false),
     allow_multiple: Some(false),
-    deny_hidden_paths: Some(true),
+    deny_hidden_paths: Some(false),
     total_timeout_ms: 150_000,
     permission_timeout_ms: 120_000,
 };
@@ -1089,7 +1089,7 @@ const ACP_CREATE_TEXT_FILE_POLICY: AcpToolPolicy = AcpToolPolicy {
     max_replacements: None,
     create_files: Some(true),
     allow_multiple: None,
-    deny_hidden_paths: Some(true),
+    deny_hidden_paths: Some(false),
     total_timeout_ms: 150_000,
     permission_timeout_ms: 120_000,
 };
@@ -1110,7 +1110,7 @@ const ACP_CREATE_DIRECTORY_POLICY: AcpToolPolicy = AcpToolPolicy {
     max_replacements: None,
     create_files: Some(true),
     allow_multiple: None,
-    deny_hidden_paths: Some(true),
+    deny_hidden_paths: Some(false),
     total_timeout_ms: 150_000,
     permission_timeout_ms: 120_000,
 };
@@ -1131,7 +1131,7 @@ const ACP_MOVE_PATH_POLICY: AcpToolPolicy = AcpToolPolicy {
     max_replacements: None,
     create_files: None,
     allow_multiple: None,
-    deny_hidden_paths: Some(true),
+    deny_hidden_paths: Some(false),
     total_timeout_ms: 150_000,
     permission_timeout_ms: 120_000,
 };
@@ -1152,7 +1152,7 @@ const ACP_COPY_PATH_POLICY: AcpToolPolicy = AcpToolPolicy {
     max_replacements: None,
     create_files: None,
     allow_multiple: None,
-    deny_hidden_paths: Some(true),
+    deny_hidden_paths: Some(false),
     total_timeout_ms: 150_000,
     permission_timeout_ms: 120_000,
 };
@@ -1173,7 +1173,7 @@ const ACP_APPLY_PATCH_POLICY: AcpToolPolicy = AcpToolPolicy {
     max_replacements: None,
     create_files: Some(true),
     allow_multiple: Some(true),
-    deny_hidden_paths: Some(true),
+    deny_hidden_paths: Some(false),
     total_timeout_ms: 150_000,
     permission_timeout_ms: 120_000,
 };
@@ -1194,7 +1194,7 @@ const ACP_DELETE_PATH_POLICY: AcpToolPolicy = AcpToolPolicy {
     max_replacements: None,
     create_files: None,
     allow_multiple: None,
-    deny_hidden_paths: Some(true),
+    deny_hidden_paths: Some(false),
     total_timeout_ms: 150_000,
     permission_timeout_ms: 120_000,
 };
@@ -2165,7 +2165,7 @@ pub fn acp_client_tool_descriptor(tool: &AcpToolDescriptor) -> serde_json::Value
         "fs_create_directory" => json!({
             "name": tool.provider_name,
             "description": format!(
-                "ACP local workspace tool ({}, target={}, adapter={}, client={}, kind={}, risk={}). Creates a directory in the workspace through the local adapter. Approval is required; sensitive and hidden paths are denied by policy.",
+                "ACP local workspace tool ({}, target={}, adapter={}, client={}, kind={}, risk={}). Creates a directory in the workspace through the local adapter. Approval is required; sensitive paths are denied by policy.",
                 tool.canonical_name,
                 "acp_client",
                 tool.adapter_method,
@@ -2186,7 +2186,7 @@ pub fn acp_client_tool_descriptor(tool: &AcpToolDescriptor) -> serde_json::Value
         "fs_move_path" => json!({
             "name": tool.provider_name,
             "description": format!(
-                "ACP local workspace tool ({}, target={}, adapter={}, client={}, kind={}, risk={}). Moves or renames a workspace file or directory through the local adapter. Approval is required; sensitive and hidden paths are denied by policy.",
+                "ACP local workspace tool ({}, target={}, adapter={}, client={}, kind={}, risk={}). Moves or renames a workspace file or directory through the local adapter. Approval is required; sensitive paths are denied by policy.",
                 tool.canonical_name,
                 "acp_client",
                 tool.adapter_method,
@@ -2208,7 +2208,7 @@ pub fn acp_client_tool_descriptor(tool: &AcpToolDescriptor) -> serde_json::Value
         "fs_copy_path" => json!({
             "name": tool.provider_name,
             "description": format!(
-                "ACP local workspace tool ({}, target={}, adapter={}, client={}, kind={}, risk={}). Copies a workspace file or directory through the local adapter. Approval is required; sensitive and hidden paths are denied by policy.",
+                "ACP local workspace tool ({}, target={}, adapter={}, client={}, kind={}, risk={}). Copies a workspace file or directory through the local adapter. Approval is required; sensitive paths are denied by policy.",
                 tool.canonical_name, "acp_client", tool.adapter_method, tool.client_method, tool.kind, tool.risk,
             ),
             "parameters": {
@@ -2226,7 +2226,7 @@ pub fn acp_client_tool_descriptor(tool: &AcpToolDescriptor) -> serde_json::Value
         "fs_apply_patch" => json!({
             "name": tool.provider_name,
             "description": format!(
-                "ACP local workspace tool ({}, target={}, adapter={}, client={}, kind={}, risk={}). Applies a simple unified diff patch to workspace text files through the local adapter. This is not a fuzzy patch engine: provide full intended file content via context and added lines for each affected file. Approval is required; sensitive and hidden paths are denied by policy.",
+                "ACP local workspace tool ({}, target={}, adapter={}, client={}, kind={}, risk={}). Applies a simple unified diff patch to workspace text files through the local adapter. This is not a fuzzy patch engine: provide full intended file content via context and added lines for each affected file. Approval is required; sensitive paths are denied by policy.",
                 tool.canonical_name, "acp_client", tool.adapter_method, tool.client_method, tool.kind, tool.risk,
             ),
             "parameters": {
@@ -2814,20 +2814,22 @@ mod tests {
     }
 
     #[test]
-    fn mutating_tools_deny_sensitive_and_hidden_paths_by_policy() {
+    fn mutating_tools_deny_sensitive_paths_and_allow_hidden_paths_by_policy() {
         for name in [
             "fs_edit_file",
             "fs_create_text_file",
             "fs_create_directory",
             "fs_move_path",
             "fs_delete_path",
+            "fs_copy_path",
+            "fs_apply_patch",
         ] {
             let policy = acp_tool_policy_json_for_provider(name);
             assert_eq!(
                 policy["sensitive_path_policy"], "deny_sensitive_paths",
                 "{name}"
             );
-            assert_eq!(policy["deny_hidden_paths"], true, "{name}");
+            assert_eq!(policy["deny_hidden_paths"], false, "{name}");
             assert!(
                 matches!(
                     policy["risk"].as_str(),

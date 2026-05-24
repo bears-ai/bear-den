@@ -1,6 +1,6 @@
-# 🐻 BEARS — Basic Environment for Agent Runtimes Stack
+# 🐻 Bear Den — Basic Environment for Agent Runtimes Stack
 
-**BEARS** is the stack name. Each product assistant is a **bear**: one logical assistant backed by role-specific Letta agents for conversation, collaboration, curation, approved work, and inbound observation. **Den** (Rust, in `services/den/`) is the control plane: provisioning, **users↔bears** membership, first-party web chat (Deep Chat), and Cabinet when Outline is deployed.
+**Bear Den** is the product name. Each product assistant is a **bear**: one logical assistant backed by role-specific Letta agents for conversation, collaboration, curation, approved work, and inbound observation. **Den** (Rust, in `services/den/`) is the control plane: provisioning, **users↔bears** membership, first-party web chat (Deep Chat), and Cabinet when Outline is deployed.
 
 This repo is a **light monorepo**: `docs/`, `services/den/` for Den, `services/codepool/` for Codepool, `services/memfs-manager/` for MemFS Manager, and supporting service assets under `services/`.
 

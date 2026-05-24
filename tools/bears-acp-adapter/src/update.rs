@@ -11,7 +11,7 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-const DEFAULT_UPDATE_BASE_URL: &str = "https://theartificial.github.io/BEARS/bears-acp-adapter";
+const DEFAULT_UPDATE_BASE_URL: &str = "https://bears-ai.github.io/bear-den/bears-acp-adapter";
 const MACOS_PACKAGE_IDENTIFIER: &str = "ai.bears.acp-adapter";
 
 #[derive(Clone, Debug)]

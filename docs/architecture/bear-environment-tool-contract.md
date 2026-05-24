@@ -4,9 +4,9 @@ This document defines the shared contract for the harness-level `bear_environmen
 
 ## Summary
 
-`bear_environment` is a harness-owned BEARS tool that returns a structured snapshot of the current Bear operating environment as visible to the active runtime.
+`bear_environment` is a harness-owned Bear Den tool that returns a structured snapshot of the current Bear operating environment as visible to the active runtime.
 
-It should be available across BEARS runtimes, including non-ACP and ACP-backed sessions.
+It should be available across Bear Den runtimes, including non-ACP and ACP-backed sessions.
 
 The tool is intended to help agents and operators answer questions such as:
 

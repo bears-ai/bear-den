@@ -132,14 +132,14 @@ install_bears_acp_adapter_from_source() {
     fi
     ln -sf /workspace/tools/bears-acp-adapter/target/release/bears-acp-adapter "${install_dir}/bears-acp-adapter"
   else
-    echo "bears-acp-adapter: set BEARS_ACP_ADAPTER_MANIFEST_URL or BEARS_ACP_ADAPTER_VERSION, or install manually" >&2
+    echo "bears-acp-adapter: set DEN_ACP_ADAPTER_MANIFEST_URL or install manually" >&2
   fi
 }
 
 install_bears_acp_adapter() {
-  local version="${BEARS_ACP_ADAPTER_VERSION:-}"
-  local channel="${BEARS_ACP_ADAPTER_CHANNEL:-stable}"
-  local install_dir="${BEARS_ACP_ADAPTER_INSTALL_DIR:-/usr/local/bin}"
+  local version="${DEN_ACP_ADAPTER_VERSION:-}"
+  local channel="${DEN_ACP_ADAPTER_CHANNEL:-stable}"
+  local install_dir="${DEN_ACP_ADAPTER_INSTALL_DIR:-/usr/local/bin}"
   local arch triple asset manifest_url manifest_tmp url sha256 size parsed_version cargo_version
 
   arch="$(uname -m)"
@@ -156,7 +156,7 @@ install_bears_acp_adapter() {
   fi
 
   if [ -z "${version}" ]; then
-    manifest_url="${BEARS_ACP_ADAPTER_MANIFEST_URL:-https://theartificial.github.io/BEARS/bears-acp-adapter/${channel}/${triple}.json}"
+    manifest_url="${DEN_ACP_ADAPTER_MANIFEST_URL:-https://bears-ai.github.io/bear-den/bears-acp-adapter/${channel}/${triple}.json}"
     manifest_tmp="$(mktemp)"
     echo "bears-acp-adapter: checking ${channel} manifest ${manifest_url}"
     if curl -fsSL "${manifest_url}" -o "${manifest_tmp}"; then
@@ -198,7 +198,7 @@ PY
     version="${cargo_version:-0.1.0}"
   fi
 
-  url="https://github.com/TheArtificial/BEARS/releases/download/bears-acp-adapter%2Fv${version}/${asset}"
+  url="https://github.com/bears-ai/bear-den/releases/download/bears-acp-adapter%2Fv${version}/${asset}"
   echo "bears-acp-adapter: installing ${asset} from release fallback ${url}"
   if ! install_bears_acp_adapter_binary "${url}" "${install_dir}"; then
     echo "bears-acp-adapter: release download failed for ${url}" >&2

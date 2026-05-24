@@ -13,7 +13,7 @@ TheArtificial/homebrew-bears/
 Users can then install with:
 
 ```bash
-brew tap TheArtificial/bears
+brew tap bears-ai/bear-den
 brew install bears-acp-adapter
 ```
 
