@@ -1,4 +1,4 @@
-//! Create/update Letta agents after Den bear rows exist.
+//! Create/update Letta-backed role runtimes after Den bear rows exist.
 
 use std::sync::OnceLock;
 
@@ -58,7 +58,7 @@ pub async fn register_role_view_if_configured(
     Ok(())
 }
 
-/// When Letta is configured, create role-specific Letta agents. No-op if Letta disabled.
+/// When Letta is configured, create role-specific Letta-backed runtime bindings. No-op if Letta is disabled.
 pub async fn provision_bear_if_configured(
     pool: &PgPool,
     letta: &LettaClient,
@@ -183,7 +183,7 @@ pub async fn reconcile_bear_if_configured(
                 .iter()
                 .map(|role| crate::core::bears::sync::BearRoleSyncOutcome {
                     role: role.as_str().to_string(),
-                    letta_agent_id: None,
+                    compatibility_binding_id: None,
                     status: "skipped_letta_disabled".to_string(),
                     message: Some("Letta is not configured (set LETTA_BASE_URL).".to_string()),
                 })
@@ -215,7 +215,7 @@ async fn provision_bear_role(
                 return Ok(());
             }
 
-            // Existing role agents are reconciled via PATCH rather than replaced.
+            // Existing role runtimes are reconciled via PATCH rather than replaced.
             let summary = crate::core::bears::sync::sync_all_bear_roles_to_letta(
                 pool, letta, bifrost, bear.id,
             )
@@ -243,7 +243,7 @@ async fn provision_bear_role(
             )
             .await?;
             register_role_view_if_configured(letta, bear.id, role, &agent_id).await?;
-            tracing::info!(bear_id = %bear.id, %agent_id, role = %role, "Letta role agent provisioned for bear");
+            tracing::info!(bear_id = %bear.id, compatibility_binding_id = %agent_id, role = %role, "Letta-backed role runtime provisioned for bear");
             Ok(())
         }
         Err(err) => {

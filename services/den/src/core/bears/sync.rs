@@ -1,4 +1,4 @@
-//! Push Den bear registry fields to role-specific Letta agents, then recompile them so Letta
+//! Push Den bear registry fields to Letta-backed role runtimes, then recompile them so Letta
 //! refreshes compiled system prompts.
 
 use serde::Serialize;
@@ -20,7 +20,7 @@ use crate::errors::CustomError;
 #[derive(Debug, Clone, Serialize)]
 pub struct BearRoleSyncOutcome {
     pub role: String,
-    pub letta_agent_id: Option<String>,
+    pub compatibility_binding_id: Option<String>,
     pub status: String,
     pub message: Option<String>,
 }
@@ -42,7 +42,7 @@ impl BearSyncSummary {
     pub fn skipped_roles(&self) -> Vec<&BearRoleSyncOutcome> {
         self.outcomes
             .iter()
-            .filter(|o| o.status == "skipped_missing_agent")
+            .filter(|o| o.status == "skipped_missing_binding")
             .collect()
     }
 
@@ -76,9 +76,9 @@ impl BearSyncSummary {
 fn skipped_missing(role: BearAgentRole) -> BearRoleSyncOutcome {
     BearRoleSyncOutcome {
         role: role.as_str().to_string(),
-        letta_agent_id: None,
-        status: "skipped_missing_agent".to_string(),
-        message: Some("No Letta agent id is recorded for this role.".to_string()),
+        compatibility_binding_id: None,
+        status: "skipped_missing_binding".to_string(),
+        message: Some("No Letta compatibility binding is recorded for this role.".to_string()),
     }
 }
 
@@ -119,10 +119,10 @@ async fn sync_one_role(
         Err(err) => {
             let msg = format!("tool roster resolution failed before patching Letta: {err}");
             let _ = bears_db::mark_bear_agent_drifted(pool, bear.id, role, &msg).await;
-            tracing::warn!(bear_id = %bear.id, role = %role, letta_agent_id = %agent_id, error = %err, "role sync failed resolving tool roster");
+            tracing::warn!(bear_id = %bear.id, role = %role, compatibility_binding_id = %agent_id, error = %err, "role sync failed resolving tool roster");
             return BearRoleSyncOutcome {
                 role: role.as_str().to_string(),
-                letta_agent_id: Some(agent_id),
+                compatibility_binding_id: Some(agent_id),
                 status: "failed".to_string(),
                 message: Some(msg),
             };
@@ -135,10 +135,10 @@ async fn sync_one_role(
             Err(err) => {
                 let msg = format!("model metadata lookup failed before patching Letta: {err}");
                 let _ = bears_db::mark_bear_agent_drifted(pool, bear.id, role, &msg).await;
-                tracing::warn!(bear_id = %bear.id, role = %role, letta_agent_id = %agent_id, error = %err, "role sync failed resolving model metadata");
+                tracing::warn!(bear_id = %bear.id, role = %role, compatibility_binding_id = %agent_id, error = %err, "role sync failed resolving model metadata");
                 return BearRoleSyncOutcome {
                     role: role.as_str().to_string(),
-                    letta_agent_id: Some(agent_id),
+                    compatibility_binding_id: Some(agent_id),
                     status: "failed".to_string(),
                     message: Some(msg),
                 };
@@ -153,10 +153,10 @@ async fn sync_one_role(
         Err(err) => {
             let msg = format!("role prompt rendering failed: {err}");
             let _ = bears_db::mark_bear_agent_drifted(pool, bear.id, role, &msg).await;
-            tracing::warn!(bear_id = %bear.id, role = %role, letta_agent_id = %agent_id, error = %err, "role sync failed rendering prompt");
+            tracing::warn!(bear_id = %bear.id, role = %role, compatibility_binding_id = %agent_id, error = %err, "role sync failed rendering prompt");
             return BearRoleSyncOutcome {
                 role: role.as_str().to_string(),
-                letta_agent_id: Some(agent_id),
+                compatibility_binding_id: Some(agent_id),
                 status: "failed".to_string(),
                 message: Some(msg),
             };
@@ -179,10 +179,10 @@ async fn sync_one_role(
     {
         let msg = format!("Letta PATCH failed: {err}");
         let _ = bears_db::mark_bear_agent_drifted(pool, bear.id, role, &msg).await;
-        tracing::warn!(bear_id = %bear.id, role = %role, letta_agent_id = %agent_id, error = %err, "role sync patch failed");
+        tracing::warn!(bear_id = %bear.id, role = %role, compatibility_binding_id = %agent_id, error = %err, "role sync patch failed");
         return BearRoleSyncOutcome {
             role: role.as_str().to_string(),
-            letta_agent_id: Some(agent_id),
+            compatibility_binding_id: Some(agent_id),
             status: "failed".to_string(),
             message: Some(msg),
         };
@@ -191,10 +191,10 @@ async fn sync_one_role(
     if let Err(err) = letta.recompile_agent(&agent_id).await {
         let msg = format!("Letta recompile failed after PATCH: {err}");
         let _ = bears_db::mark_bear_agent_drifted(pool, bear.id, role, &msg).await;
-        tracing::warn!(bear_id = %bear.id, role = %role, letta_agent_id = %agent_id, error = %err, "role sync recompile failed");
+        tracing::warn!(bear_id = %bear.id, role = %role, compatibility_binding_id = %agent_id, error = %err, "role sync recompile failed");
         return BearRoleSyncOutcome {
             role: role.as_str().to_string(),
-            letta_agent_id: Some(agent_id),
+            compatibility_binding_id: Some(agent_id),
             status: "failed".to_string(),
             message: Some(msg),
         };
@@ -205,10 +205,10 @@ async fn sync_one_role(
         Err(err) => {
             let msg = format!("failed to compute role config hash after sync: {err}");
             let _ = bears_db::mark_bear_agent_drifted(pool, bear.id, role, &msg).await;
-            tracing::warn!(bear_id = %bear.id, role = %role, letta_agent_id = %agent_id, error = %err, "role sync config hash computation failed");
+            tracing::warn!(bear_id = %bear.id, role = %role, compatibility_binding_id = %agent_id, error = %err, "role sync config hash computation failed");
             return BearRoleSyncOutcome {
                 role: role.as_str().to_string(),
-                letta_agent_id: Some(agent_id),
+                compatibility_binding_id: Some(agent_id),
                 status: "failed".to_string(),
                 message: Some(msg),
             };
@@ -224,26 +224,26 @@ async fn sync_one_role(
     .await
     {
         let msg = format!("Den updated Letta but failed to record role sync status: {err}");
-        tracing::warn!(bear_id = %bear.id, role = %role, letta_agent_id = %agent_id, error = %err, "role sync status update failed");
+        tracing::warn!(bear_id = %bear.id, role = %role, compatibility_binding_id = %agent_id, error = %err, "role sync status update failed");
         return BearRoleSyncOutcome {
             role: role.as_str().to_string(),
-            letta_agent_id: Some(agent_id),
+            compatibility_binding_id: Some(agent_id),
             status: "failed".to_string(),
             message: Some(msg),
         };
     }
 
-    tracing::info!(bear_id = %bear.id, role = %role, letta_agent_id = %agent_id, "role sync completed");
+    tracing::info!(bear_id = %bear.id, role = %role, compatibility_binding_id = %agent_id, "role sync completed");
     BearRoleSyncOutcome {
         role: role.as_str().to_string(),
-        letta_agent_id: Some(agent_id),
+        compatibility_binding_id: Some(agent_id),
         status: "synced".to_string(),
         message: None,
     }
 }
 
-/// Sync all provisioned Bear role agents to Letta. Missing role ids are skipped and reported; a
-/// failure for one role does not prevent other roles from syncing.
+/// Sync all provisioned Bear role runtimes to Letta. Missing compatibility bindings are skipped
+/// and reported; a failure for one role does not prevent other roles from syncing.
 pub async fn sync_all_bear_roles_to_letta(
     pool: &PgPool,
     letta: &LettaClient,
@@ -261,7 +261,7 @@ pub async fn sync_all_bear_roles_to_letta(
                 .iter()
                 .map(|role| BearRoleSyncOutcome {
                     role: role.as_str().to_string(),
-                    letta_agent_id: None,
+                    compatibility_binding_id: None,
                     status: "skipped_letta_disabled".to_string(),
                     message: Some("Letta is not configured (set LETTA_BASE_URL).".to_string()),
                 })
@@ -278,7 +278,7 @@ pub async fn sync_all_bear_roles_to_letta(
             Err(err) => {
                 outcomes.push(BearRoleSyncOutcome {
                     role: agent.role.clone(),
-                    letta_agent_id: agent.letta_agent_id.clone(),
+                    compatibility_binding_id: agent.letta_agent_id.clone(),
                     status: "failed".to_string(),
                     message: Some(format!("invalid role in DB: {err}")),
                 });

@@ -114,7 +114,7 @@ impl FromStr for BearAgentRole {
             "curate" => Ok(Self::Curate),
             "work" => Ok(Self::Work),
             "watch" => Ok(Self::Watch),
-            other => Err(format!("unknown bear agent role: {other}")),
+            other => Err(format!("unknown bear runtime role: {other}")),
         }
     }
 }

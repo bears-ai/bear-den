@@ -106,8 +106,8 @@ async fn seed_smoke(pool: &PgPool, profile: SeedProfile) -> Result<SeedReport> {
     ensure_smoke_acp_token(pool, user_id, bear_id)
         .await
         .context("ensure smoke ACP token")?;
-    if let Err(err) = ensure_smoke_role_agents(pool, bear_id).await {
-        tracing::warn!(error = %err, "smoke seed could not provision role agents; continuing with database fixtures only");
+    if let Err(err) = ensure_smoke_role_runtimes(pool, bear_id).await {
+        tracing::warn!(error = %err, "smoke seed could not provision role runtimes; continuing with database fixtures only");
     }
 
     Ok(SeedReport {
@@ -170,7 +170,7 @@ async fn ensure_smoke_bear_model(pool: &PgPool, bear_id: uuid::Uuid) -> Result<(
     Ok(())
 }
 
-async fn ensure_smoke_role_agents(pool: &PgPool, bear_id: uuid::Uuid) -> Result<()> {
+async fn ensure_smoke_role_runtimes(pool: &PgPool, bear_id: uuid::Uuid) -> Result<()> {
     let config = Config::load();
     let letta = LettaClient::new(&config);
     if !letta.is_enabled() {
@@ -179,7 +179,7 @@ async fn ensure_smoke_role_agents(pool: &PgPool, bear_id: uuid::Uuid) -> Result<
     let bifrost = BifrostClient::new(&config);
     provision_missing_bear_roles(pool, &letta, &bifrost, bear_id)
         .await
-        .context("provision missing smoke bear role agents")?;
+        .context("provision missing smoke bear role runtimes")?;
     Ok(())
 }
 

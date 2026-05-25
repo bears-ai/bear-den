@@ -111,7 +111,7 @@ pub async fn update_bear(
     Ok(())
 }
 
-/// Creates a logical Bear row. Runtime Letta ids live in `bear_agents`.
+/// Creates a logical Bear row. Legacy Letta compatibility ids currently live in `bear_agents`.
 pub async fn create_bear(pool: &PgPool, params: BearParams<'_>) -> Result<Uuid, CustomError> {
     create_bear_with_context_profile(pool, params).await
 }
@@ -458,6 +458,16 @@ pub async fn get_bear_agent(
     .map_err(Into::into)
 }
 
+/// Returns the currently recorded Letta compatibility binding for a Bear role.
+pub async fn role_runtime_binding_id(
+    pool: &PgPool,
+    bear_id: Uuid,
+    role: BearAgentRole,
+) -> Result<Option<String>, CustomError> {
+    role_agent_id(pool, bear_id, role).await
+}
+
+/// Backward-compatible alias while call sites migrate to runtime/binding terminology.
 pub async fn role_agent_id(
     pool: &PgPool,
     bear_id: Uuid,
