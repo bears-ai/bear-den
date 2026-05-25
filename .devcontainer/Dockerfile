@@ -34,3 +34,10 @@ RUN curl --proto '=https' --tlsv1.2 -fsSL https://sh.rustup.rs \
     && for bin in ${CARGO_HOME}/bin/*; do ln -sf "$bin" /usr/local/bin/"$(basename "$bin")"; done \
     && printf 'export PATH="%s/bin:$PATH"\n' "${CARGO_HOME}" > /etc/profile.d/cargo.sh \
     && chmod -R a+w ${RUSTUP_HOME} ${CARGO_HOME}
+
+# Dev defaults duplicated from devcontainer.json so they are present even when
+# a devcontainer launcher does not apply `containerEnv` at container-create time.
+ENV OPENCODE_AUTH_PATH=/root/.local/share/opencode/auth.json \
+    DATABASE_URL=postgres://bears:bears@bears-postgres:5432/den?sslmode=disable \
+    LETTA_PG_URI=postgresql://bears:bears@bears-letta-postgres:5432/letta \
+    MEMORY_SERVE_QUIET=1
