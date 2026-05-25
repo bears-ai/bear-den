@@ -240,6 +240,16 @@ Den should own:
 
 ### Runtime service(s)
 
+The migration should explicitly leverage Den's existing optional-worker / selectively enabled service model. One Den binary can then expose different capability mixes by environment and migration phase without forcing hard deployment forks.
+
+This is useful during migration because it allows:
+
+- Letta-compatibility providers and Den-native runtime providers to coexist temporarily
+- dual-write projectors and read-model workers to be enabled only where needed
+- `watch` / `review` workers or scheduled loops to be enabled independently from interactive API surfaces
+- migration/backfill jobs to run as opt-in worker capabilities rather than as one-off binaries
+- low-risk rollback by disabling a worker or provider path without replacing the deployed artifact
+
 A runtime implementation should own:
 
 - model invocation
@@ -481,6 +491,7 @@ Migration should be designed for reversible rollout at multiple scopes.
 ### Recommended controls
 
 - **feature flags** for major runtime paths and persistence readers/writers
+- **optional worker/service enablement** so one Den binary can selectively run compatibility providers, native runtime workers, projectors, review/watch loops, or migration jobs by environment
 - **per-role routing controls** to move roles independently
 - **per-Bear allowlists** for early canarying
 - **per-session fallback** where feasible for interactive surfaces
@@ -546,6 +557,7 @@ The migration plan allows for transitional hybrids, but the target picture shoul
 ### Likely end state
 
 - **Den owns the control plane** for Bear identity, role profiles, policy, approvals, workflow state, and interaction/run persistence.
+- **A single Den binary may still expose different capability mixes by configuration**, for example API surfaces, web/admin surfaces, native runtime workers, compatibility providers, projection workers, and migration jobs. Optional-worker deployment should remain an operational pattern, but not the domain model itself.
 - **A shared role-runner contract** defines model loop, tool loop, streaming, pause/resume, cancellation, and persistence hooks.
 - **One or more runtime implementations** may exist behind that contract, but they should present a common role-runner interface and not reintroduce provider-managed role identity as the core model.
 - **Actuators** such as ACP remain explicit execution surfaces, not implicit properties of a provider runtime.
@@ -713,6 +725,12 @@ Stop Letta from being an ambient assumption and make it a replaceable provider i
    - accept legacy role names at routing and persistence boundaries where needed
    - emit canonical role names in new docs, UI, and model-facing descriptors
    - avoid advertising legacy role names or provider-branded names to models
+
+6. Define optional-worker/service-toggle rollout policy for migration components:
+   - which capabilities can run in the same Den binary
+   - which workers are safe to enable independently
+   - which shared-state writers require singleton or idempotent behavior
+   - which compatibility workers are temporary and how they will be retired
 
 ### Deliverables
 
