@@ -131,6 +131,7 @@ Planned:
 
 ## Related docs
 
+- [Environment Affordance and Resource Boundaries ADR](../decisions/adr-0028-environment-affordance-and-resource-boundaries.md)
 - [Bear Den and Den](BEARS_AND_DEN.md)
 - [Bear agent roles](BEAR_AGENT_ROLES.md)
 - [Memory model](MEMORY_MODEL.md)

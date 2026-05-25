@@ -105,6 +105,7 @@ Near-term slices:
 
 ## Related documents
 
+- `docs/decisions/adr-0028-environment-affordance-and-resource-boundaries.md`
 - `docs/planning/PAIR_TOOL_DISCOVERY_AND_SCOPE_POLICY.md`
 - `docs/planning/PAIR_LETTA_MESSAGE_BOUNDARY_PLAN.md`
 - `docs/planning/PAIR_ENVIRONMENT_PROMPT_CONSTRUCTION_SPEC.md`

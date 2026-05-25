@@ -326,6 +326,7 @@ This decision is successfully implemented when:
 
 ## References
 
+- [ADR 0028: Environment Affordance and Resource Boundaries](./adr-0028-environment-affordance-and-resource-boundaries.md)
 - [Task System Implementation Plan](../../planning/TASK_SYSTEM_IMPLEMENTATION_PLAN.md)
 - [Memory Tools Implementation Plan](../../planning/MEMORY_TOOLS_IMPLEMENTATION_PLAN.md)
 - [Provider-Safe Tool Naming — Architecture Decision Record](provider-safe-tool-naming.md)

@@ -323,6 +323,7 @@ Avoid:
 
 ## Related docs
 
+- [Environment Affordance and Resource Boundaries ADR](../decisions/adr-0028-environment-affordance-and-resource-boundaries.md)
 - [Bear Den and Den](BEARS_AND_DEN.md)
 - [Bear agent roles](BEAR_AGENT_ROLES.md)
 - [Tasks and autonomy](TASKS_AND_AUTONOMY.md)
