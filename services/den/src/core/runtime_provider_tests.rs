@@ -4,8 +4,7 @@ mod tests {
         config::Config,
         core::runtime_provider::{
             acp_requires_letta_runtime, InteractionRunStore, RetrievalService,
-            RoleProfileRegistry, RoleRunner, RuntimeProviderKind, RuntimeStartupCapabilities,
-            ToolActuatorRegistry,
+            RoleProfileRegistry, RoleRunner, RuntimeStartupCapabilities, ToolActuatorRegistry,
         },
         errors::CustomError,
     };
@@ -43,7 +42,7 @@ mod tests {
     impl ToolActuatorRegistry for NoopRegistry {}
 
     impl RoleProfileRegistry for NoopRegistry {
-        async fn resolve_provider_binding(
+        async fn resolve_compatibility_binding(
             &self,
             _bear_id: uuid::Uuid,
             _role: &str,
@@ -71,12 +70,16 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn phase_zero_runtime_traits_are_implementable() {
+    async fn phase_zero_runtime_contracts_are_implementable() {
         let noop = NoopRegistry;
         let bear_id = uuid::Uuid::nil();
 
-        assert_eq!(RuntimeProviderKind::Letta.as_str(), "letta");
-        assert_eq!(noop.resolve_provider_binding(bear_id, "pair").await.unwrap(), None);
+        assert_eq!(
+            noop.resolve_compatibility_binding(bear_id, "pair")
+                .await
+                .unwrap(),
+            None
+        );
         assert_eq!(RoleRunner::check_health(&noop).await.unwrap(), "ok");
         assert_eq!(InteractionRunStore::check_health(&noop).await.unwrap(), "ok");
         assert_eq!(RetrievalService::check_health(&noop).await.unwrap(), "ok");

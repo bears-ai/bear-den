@@ -1,21 +1,8 @@
 use crate::{config::Config, errors::CustomError};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RuntimeProviderKind {
-    Letta,
-}
-
-impl RuntimeProviderKind {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Letta => "letta",
-        }
-    }
-}
-
 #[allow(async_fn_in_trait)]
-pub trait RuntimeProviderHealthCheck {
-    fn kind(&self) -> RuntimeProviderKind;
+pub trait RuntimeHealthCheck {
+    fn compatibility_backend_name(&self) -> &'static str;
     fn enabled(&self) -> bool;
     async fn check_health(&self) -> Result<String, CustomError>;
 }
@@ -41,7 +28,7 @@ pub fn acp_requires_letta_runtime(config: &Config) -> bool {
 
 #[allow(async_fn_in_trait)]
 pub trait RoleProfileRegistry {
-    async fn resolve_provider_binding(
+    async fn resolve_compatibility_binding(
         &self,
         bear_id: uuid::Uuid,
         role: &str,

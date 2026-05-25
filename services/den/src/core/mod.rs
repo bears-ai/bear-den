@@ -37,8 +37,8 @@ pub mod reflection_conductor;
 pub mod role_runtime;
 #[cfg(test)]
 mod role_runtime_tests;
+pub mod runtime_contracts;
 pub mod runtime_provider;
-pub mod runtime_traits;
 #[cfg(test)]
 mod runtime_provider_tests;
 pub mod s3;

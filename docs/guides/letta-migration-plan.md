@@ -583,6 +583,8 @@ The migration plan allows for transitional hybrids, but the target picture shoul
 
 The important bias here is that the end state should look like **Den-native runtime plus temporary compatibility adapters retired over time**, not like a permanent federation of equal runtime providers.
 
+More bluntly: phase 0 should not create a broad, symmetric, long-lived `provider` abstraction layer for runtime execution. Letta is something BEARS is removing, not a peer architecture that needs to be preserved conceptually. If a temporary seam uses provider-like language at a boundary, that seam should stay narrow, compatibility-scoped, and obviously transitional.
+
 ### Likely end state
 
 - **Den owns the control plane** for Bear identity, role profiles, policy, approvals, workflow state, and interaction/run persistence.
@@ -606,7 +608,7 @@ The plan will be easier to execute if workstreams and sequencing constraints are
 ### Likely workstreams
 
 1. **abstraction and terminology workstream**
-   - provider-neutral interfaces
+   - Den-native runtime contracts with narrow compatibility seams
    - canonical naming and alias handling
    - instrumentation
 
@@ -648,7 +650,9 @@ At a high level:
 
 ## Recommended internal abstractions
 
-The first implementation step should be to define narrow migration seams that isolate Letta and avoid creating new provider-shaped agent identity. These seams should be judged by whether they help Den-native runtime replace Letta incrementally, not by how completely they generalize runtime providers.
+The first implementation step should be to define narrow migration seams that isolate Letta and avoid creating new provider-shaped agent identity. These seams should be judged by whether they help Den-native runtime replace Letta incrementally, not by how completely they generalize across hypothetical runtime providers.
+
+In particular, prefer Den-native contracts such as role profile registry, role runner, interaction/run store, actuator registry, and retrieval service. If compatibility with Letta requires an adapter or binding record, keep that concern visibly in compatibility modules and persistence boundaries rather than elevating `provider` into the organizing concept of the target runtime.
 
 ### 1. Role profile registry
 
@@ -738,9 +742,10 @@ Stop Letta from being an ambient assumption and confine it to explicit compatibi
 2. Refactor Letta integration behind those interfaces.
 
 3. Replace direct Letta-centric naming in internal core logic where appropriate:
-   - favor `provider_binding_ref` over `letta_agent_id` in generic paths
+   - favor `compatibility_binding_ref` or another explicitly transitional compatibility term over `letta_agent_id` in generic paths
    - favor `role_profile_id` and `role_run_id` over provider-shaped role identity
    - keep legacy fields as compatibility shims until cutover
+   - avoid introducing new permanent generic concepts such as `runtime_provider` unless a concrete non-Letta post-migration need exists
 
 4. Add instrumentation around all Letta interactions:
    - endpoint called
@@ -859,7 +864,7 @@ The future roles should derive from these Den-owned mechanics instead of preserv
 
 3. Implement a Den-native role runner capable of executing `code` canary sessions behind a feature flag.
 
-4. Preserve compatibility with existing ACP behavior while moving logic behind provider-neutral role-runner interfaces.
+4. Preserve compatibility with existing ACP behavior while moving logic behind Den-native role-runner interfaces and narrow Letta compatibility adapters.
 
 5. Build parity tests for known Letta-era failure modes.
 
@@ -985,11 +990,11 @@ Move the ACP actuator path fully off the Letta execution substrate after shared-
 
 ### Objective
 
-Stop creating or synchronizing Letta agents as canonical role runtime identity.
+Stop creating or synchronizing Letta agents as canonical role runtime identity, and ensure any remaining external references are treated as temporary compatibility bindings rather than a permanent provider abstraction layer.
 
 ### Work items
 
-1. Generalize `bear_agents` or equivalent runtime metadata into role-profile and provider-binding concepts.
+1. Generalize `bear_agents` or equivalent runtime metadata into role-profile and compatibility-binding concepts.
 
 2. Replace generic internal assumptions that a role runtime is a provider-managed agent.
 
@@ -1186,8 +1191,8 @@ Recommended fields or concepts:
 - `role`
 - `role_profile_id`
 - `execution_mode`
-- `runtime_provider`
-- `provider_binding_ref`
+- avoid introducing long-lived generic names like `runtime_provider` unless a concrete post-Letta need exists
+- prefer explicitly transitional names such as `compatibility_binding_ref` when the field exists only to bridge legacy/external runtime state
 - `profile_config_hash`
 - `runtime_policy_hash`
 - `tool_policy_hash`
@@ -1279,7 +1284,7 @@ A practical milestone sequence:
 3. **M3** — shared role runner extracted from the `code`/ACP path
 4. **M4** — `watch` and `review` on Den-native runtime
 5. **M5** — production `code` path on Den-native runtime
-6. **M6** — provider-neutral role profile registry in place
+6. **M6** — Den-native role profile registry in place, with any remaining Letta/external bindings clearly compatibility-scoped
 7. **M7** — `chat`/`work` no longer depend on Letta Code
 8. **M8** — MemFS/resource workspace and retrieval cleanup complete
 9. **M9** — Letta infra retired

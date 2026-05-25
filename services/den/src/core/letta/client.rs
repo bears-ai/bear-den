@@ -7,7 +7,7 @@ use serde_json::{json, Value};
 
 use crate::{
     config::Config,
-    core::runtime_provider::{RuntimeProviderHealthCheck, RuntimeProviderKind},
+    core::runtime_provider::RuntimeHealthCheck,
     errors::CustomError,
 };
 
@@ -290,7 +290,7 @@ pub struct LettaClient {
 }
 
 #[derive(Clone)]
-pub struct LettaProviderHealthCheck {
+pub struct LettaCompatibilityHealthCheck {
     client: LettaClient,
 }
 
@@ -317,11 +317,14 @@ impl LettaClient {
         !self.base_url.is_empty()
     }
 
-    pub fn provider_health_check(&self) -> LettaProviderHealthCheck {
-        LettaProviderHealthCheck {
+    pub fn compatibility_health_check(&self) -> LettaCompatibilityHealthCheck {
+        LettaCompatibilityHealthCheck {
             client: self.clone(),
         }
     }
+}
+
+impl LettaClient {
 
     fn auth_headers(&self) -> HeaderMap {
         let mut h = HeaderMap::new();
@@ -1445,10 +1448,6 @@ impl LettaClient {
         Ok(text)
     }
 
-    pub fn runtime_provider_kind(&self) -> RuntimeProviderKind {
-        RuntimeProviderKind::Letta
-    }
-
     /// `GET /v1/agents/{agent_id}` — full JSON for operator diagnostics.
     ///
     /// Requests `include=agent.blocks` and `include=agent.tools` because current Letta
@@ -1945,9 +1944,9 @@ fn parse_letta_tool_list(v: &serde_json::Value) -> Vec<LettaToolOption> {
     out
 }
 
-impl RuntimeProviderHealthCheck for LettaProviderHealthCheck {
-    fn kind(&self) -> RuntimeProviderKind {
-        self.client.runtime_provider_kind()
+impl RuntimeHealthCheck for LettaCompatibilityHealthCheck {
+    fn compatibility_backend_name(&self) -> &'static str {
+        "letta"
     }
 
     fn enabled(&self) -> bool {
@@ -1955,7 +1954,26 @@ impl RuntimeProviderHealthCheck for LettaProviderHealthCheck {
     }
 
     async fn check_health(&self) -> Result<String, CustomError> {
-        self.client.check_health().await
+        let url = format!("{}/v1/health", self.client.base_url);
+        let resp = self
+            .client
+            .http
+            .get(url)
+            .headers(self.client.auth_headers())
+            .send()
+            .await
+            .map_err(|e| CustomError::System(format!("Letta health request failed: {e}")))?;
+        let status = resp.status();
+        let text = resp
+            .text()
+            .await
+            .map_err(|e| CustomError::System(format!("Letta health body failed: {e}")))?;
+        if !status.is_success() {
+            return Err(CustomError::System(format!(
+                "Letta health HTTP {status}: {text}"
+            )));
+        }
+        Ok(text)
     }
 }
 

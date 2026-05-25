@@ -4,7 +4,7 @@ use crate::config::Config;
 use crate::core::codepool::CodePoolClient;
 use crate::core::letta::LettaClient;
 use crate::core::runtime_provider::{
-    acp_requires_letta_runtime, RuntimeProviderHealthCheck, RuntimeStartupCapabilities,
+    acp_requires_letta_runtime, RuntimeHealthCheck, RuntimeStartupCapabilities,
 };
 use sqlx::PgPool;
 use thiserror::Error;
@@ -141,20 +141,19 @@ pub async fn validate_upstream_connections(config: &Config) -> Result<(), Startu
     if runtime_capabilities.letta_required_for_acp || !config.letta_base_url.trim().is_empty() {
         tracing::info!(
             url = %config.letta_base_url,
-            provider = "letta",
+            compatibility_backend = "letta",
             acp_gateway_enabled = runtime_capabilities.acp_gateway_enabled,
-            "Checking runtime provider connectivity"
+            "Checking runtime compatibility backend connectivity"
         );
         let letta = LettaClient::new(config);
-        let health = letta.provider_health_check();
+        let health = letta.compatibility_health_check();
         if health.enabled() {
-            health
-                .check_health()
+            RuntimeHealthCheck::check_health(&health)
                 .await
                 .map_err(|e| StartupError::Message(e.to_string()))?;
             tracing::info!(
-                provider = health.kind().as_str(),
-                "Runtime provider health check passed"
+                compatibility_backend = RuntimeHealthCheck::compatibility_backend_name(&health),
+                "Runtime compatibility backend health check passed"
             );
         } else if runtime_capabilities.letta_required_for_acp {
             return Err(StartupError::Message(

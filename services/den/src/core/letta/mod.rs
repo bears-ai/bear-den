@@ -18,8 +18,8 @@ pub use assistant_display::{
     normalize_display_status_text, sanitize_visible_transcript_text, strip_letta_harness_for_user,
 };
 pub use client::{
-    LettaAgentListItem, LettaClient, LettaContinuationContext, LettaCreateAgentParams,
-    LettaModelOption, LettaPatchAgentParams, LettaPendingApproval, LettaProviderHealthCheck,
+    LettaAgentListItem, LettaClient, LettaCompatibilityHealthCheck, LettaContinuationContext,
+    LettaCreateAgentParams, LettaModelOption, LettaPatchAgentParams, LettaPendingApproval,
     LettaToolOption, PendingApprovalDenialMode,
 };
 pub use conversation_title::{

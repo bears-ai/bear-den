@@ -1,5 +1,7 @@
 # Multi-User Architecture: Den (Axum) + Self-Hosted Letta
 
+> Note: this document describes the current Letta-backed architecture. The migration target is a **Den-native runtime** with Letta confined to temporary compatibility boundaries and eventually removed, not a permanent multi-provider runtime abstraction.
+
 *Earlier notes drew on Letta Discord discussion:* https://discord.com/channels/1161736243340640419/1467667826730078386
 
 Bear Den uses **only self-hosted Letta** (e.g. `letta/letta:latest` on Coolify). **Den** is the control plane and gateway (**Rust / Axum**). **For Phase 1 and bear chat**, **Letta calls Bifrost directly** for model calls; Den may talk to Bifrost **for observability** on that path (metrics/health/logs). **Future** Den features (for example control-plane LLM helpers) are **not** required to route through Bifrost—see [PLAN.md](../planning/PLAN.md) §2.5.

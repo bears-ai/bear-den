@@ -27,9 +27,9 @@ A fifth category, **memory/indexing**, is present but appears less foundational 
 | Area | Component / file(s) | Current Letta dependency | Capability Bear Den is using | Criticality | Suggested future owner |
 |---|---|---|---|---|---|
 | Deployment | `docker-compose.yaml`, `.env.example` | Runs `bears-letta`, Letta Postgres, shared Letta volume, Letta auth, health checks | Core runtime service, API endpoint, storage layout, ops wiring | High | Den-owned runtime service plus direct MemFS/index services |
-| Runtime config | `services/den/src/config.rs`, `services/den/src/startup.rs` | `LETTA_BASE_URL`, `LETTA_API_KEY`, `LETTA_MEMFS_SERVICE_URL`, `LETTA_PG_URI`; startup health validation | Runtime discovery, auth, health enforcement | High | Generic runtime config and health interface |
-| Letta client layer | `services/den/src/core/letta/mod.rs`, `services/den/src/core/letta/client.rs` | Dedicated Letta REST client and message lifecycle helpers | Agent CRUD, conversation APIs, streaming, approvals, cancellation, compaction | High | `AgentRuntime` + `ConversationRuntime` + `ConversationStore` abstractions |
-| Bear provisioning | `services/den/src/core/bears/provision.rs` | Creates role-specific Letta agents; resolves Letta tool ids; stores `letta_agent_id`; registers MemFS role views keyed by agent | Bear role runtime provisioning and identity | High | Den-owned runtime registry and runtime handle abstraction |
+| Runtime config | `services/den/src/config.rs`, `services/den/src/startup.rs` | `LETTA_BASE_URL`, `LETTA_API_KEY`, `LETTA_MEMFS_SERVICE_URL`, `LETTA_PG_URI`; startup health validation | Runtime discovery, auth, health enforcement | High | Den-native runtime config plus narrow Letta compatibility settings |
+| Letta client layer | `services/den/src/core/letta/mod.rs`, `services/den/src/core/letta/client.rs` | Dedicated Letta REST client and message lifecycle helpers | Agent CRUD, conversation APIs, streaming, approvals, cancellation, compaction | High | Den role runner + interaction/run store + Letta compatibility adapter |
+| Bear provisioning | `services/den/src/core/bears/provision.rs` | Creates role-specific Letta agents; resolves Letta tool ids; stores `letta_agent_id`; registers MemFS role views keyed by agent | Bear role runtime provisioning and identity | High | Den-owned role profile registry with temporary compatibility bindings where needed |
 | Bear reconciliation / drift | `services/den/src/core/bears/sync.rs`, `services/den/src/core/bears/letta_drift.rs` | PATCH/recompile Letta agents; compare Den desired state vs Letta state | Runtime config sync and drift detection | High | Den-owned runtime registry and diagnostics snapshots |
 | ACP / pair runtime | `services/den/src/api/acp.rs` | Uses Letta conversation/run lifecycle, tool continuation, pending approval handling, run cancellation hygiene | Stateful API-direct agent loop for `pair` | High | Den-native API-direct runner |
 | API state wiring | `services/den/src/api/service.rs` | Injects shared `LettaClient` into API state | Makes Letta a first-class API dependency | High | Runtime trait implementation selected by config |
@@ -121,11 +121,17 @@ Canonical memory appears portable because it lives in role branches, but operati
 
 That suggests MemFS is a strong foundation for migration, but still needs its own cleanup phase.
 
+## Architectural caution
+
+This inventory should not be read as a reason to build a broad, symmetric runtime-provider abstraction layer.
+
+The desired destination is a Den-native runtime that owns role execution, interaction persistence, approvals, and policy. Letta should be pushed into temporary compatibility adapters and legacy bindings only where needed during migration. In particular, replacing `letta_agent_id` with a new generic `provider` concept everywhere would preserve the same coupling in a more abstract form.
+
 ## Migration implications by dependency area
 
 | Dependency area | Near-term strategy |
 |---|---|
-| Agent provisioning | Introduce a Den-owned runtime registry abstraction before replacing the implementation |
+| Agent provisioning | Introduce a Den-owned role profile registry and temporary compatibility-binding handling before replacing the implementation |
 | API-direct execution | Build a Den-native runner, starting with `watch` |
 | Conversation persistence | Dual-write into Den-owned tables before cutting Letta over |
 | UI/admin read model | Repoint to Den-owned conversation and runtime tables |
