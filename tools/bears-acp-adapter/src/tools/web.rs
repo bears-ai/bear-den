@@ -2,7 +2,7 @@ use crate::ToolPolicy;
 use anyhow::{anyhow, Result};
 use reqwest::Url;
 use serde_json::{json, Value};
-use std::{net::IpAddr, time::Duration};
+use std::time::Duration;
 
 pub(crate) async fn handle_local_web_fetch(
     session_id: &str,
@@ -171,7 +171,7 @@ fn normalize_host(host: &str, port: Option<u16>) -> String {
 #[cfg(test)]
 fn is_denied_ip(ip: std::net::IpAddr) -> bool {
     match ip {
-        IpAddr::V4(ip) => {
+        std::net::IpAddr::V4(ip) => {
             ip.is_private()
                 || ip.is_loopback()
                 || ip.is_link_local()
@@ -179,7 +179,7 @@ fn is_denied_ip(ip: std::net::IpAddr) -> bool {
                 || ip.is_unspecified()
                 || ip == std::net::Ipv4Addr::new(169, 254, 169, 254)
         }
-        IpAddr::V6(ip) => {
+        std::net::IpAddr::V6(ip) => {
             ip.is_loopback()
                 || ip.is_unspecified()
                 || matches!(ip.segments()[0] & 0xfe00, 0xfc00)

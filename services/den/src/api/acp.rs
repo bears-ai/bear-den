@@ -90,7 +90,6 @@ const BEARS_ACP_ADAPTER_CONTRACT_MAX_SUPPORTED: u32 = 1;
 // adapter processes. Set this to true only when a Den change is actually
 // incompatible with adapters that do not send `adapter_contract`.
 const BEARS_ACP_ADAPTER_CONTRACT_REQUIRED: bool = false;
-const ACP_MANUAL_RECOVERY_APPROVAL_DENIAL_REASON: &str = "BEARS closed an expired ACP approval request during manual recovery. This denial applies only to that stale request; it is not a user or web policy block. Retry the tool if it is still needed.";
 const ACP_STALE_APPROVAL_RECOVERY_DENIAL_REASON: &str = "BEARS closed an expired ACP approval request during stale-approval recovery. This denial applies only to that stale request; it is not a user or web policy block. Retry the tool if it is still needed.";
 
 fn env_flag(name: &str) -> bool {
@@ -1047,7 +1046,6 @@ fn looks_like_letta_waiting_for_approval_error(err: &CustomError) -> bool {
     message.contains("waiting for approval")
         || message.contains("please approve or deny")
         || message.contains("requires_approval")
-        || message.contains("another run is still processing")
 }
 
 fn looks_like_letta_no_active_runs_error(err: &CustomError) -> bool {
@@ -2921,30 +2919,12 @@ async fn compact_session_inner(
                 "ACP session has no resolved Letta conversation to compact".to_string(),
             )
         })?;
-    let pair_agent_id =
-        bears_db::role_agent_id(&state.sqlx_pool, session.bear_id, BearAgentRole::Pair)
-            .await?
-            .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty());
-    let denied = state
-        .letta
-        .deny_pending_conversation_approvals(
-            conversation_id,
-            pair_agent_id.as_deref(),
-            ACP_MANUAL_RECOVERY_APPROVAL_DENIAL_REASON,
-            PendingApprovalDenialMode::PostToConversation,
-        )
-        .await?;
     let compact_result = state.letta.compact_conversation(conversation_id).await?;
     tracing::warn!(
         acp_session_id = %session_id,
         bear_id = %session.bear_id,
         conversation_id,
-        pair_agent_id = ?pair_agent_id,
-        denied_count = denied.len(),
-        denied_tool_call_ids = ?denied.iter().map(|p| p.tool_call_id.as_str()).collect::<Vec<_>>(),
-        denied_source_message_ids = ?denied.iter().filter_map(|p| p.source_message_id.as_deref()).collect::<Vec<_>>(),
-        "ACP session recovery requested: denied pending Letta approvals and compacted conversation"
+        "ACP session compact requested; no stale approval recovery attempted because compaction does not resolve pending Letta approvals"
     );
     Ok(Json(serde_json::json!({
         "ok": true,
@@ -2952,10 +2932,8 @@ async fn compact_session_inner(
         "acp_session_id": session_id,
         "conversation_id": conversation_id,
         "approval_recovery": {
-            "attempted": true,
-            "denied_count": denied.len(),
-            "denied_tool_call_ids": denied.iter().map(|p| p.tool_call_id.as_str()).collect::<Vec<_>>(),
-            "denied_source_message_ids": denied.iter().filter_map(|p| p.source_message_id.as_deref()).collect::<Vec<_>>(),
+            "attempted": false,
+            "reason": "compaction_only"
         },
         "compact_result": compact_result,
     }))
@@ -5651,15 +5629,14 @@ impl AcpLettaSseStream {
     }
 
     fn turn_result_event(role_result: &RoleTurnResult) -> AcpGatewayEvent {
-        let (status, reason, request_id, session_id, retryable, diagnostics) =
-            role_result.to_event_fields();
+        let terminal = role_result.to_terminal_event();
         AcpGatewayEvent::TurnResult {
-            status,
-            reason,
-            request_id,
-            session_id,
-            retryable,
-            diagnostics,
+            status: terminal.status,
+            reason: terminal.reason,
+            request_id: terminal.request_id,
+            session_id: terminal.session_id,
+            retryable: terminal.retryable,
+            diagnostics: terminal.diagnostics,
         }
     }
 
@@ -6420,11 +6397,18 @@ mod tests {
     }
 
     #[test]
+    fn concurrent_letta_run_conflict_is_not_stale_approval() {
+        let err = CustomError::System(
+            "Letta send message HTTP 409 Conflict: another run is still processing this conversation"
+                .to_string(),
+        );
+
+        assert!(!looks_like_letta_waiting_for_approval_error(&err));
+    }
+
+    #[test]
     fn acp_recovery_approval_denial_reasons_do_not_look_like_policy_blocks() {
-        for reason in [
-            ACP_MANUAL_RECOVERY_APPROVAL_DENIAL_REASON,
-            ACP_STALE_APPROVAL_RECOVERY_DENIAL_REASON,
-        ] {
+        for reason in [ACP_STALE_APPROVAL_RECOVERY_DENIAL_REASON] {
             assert!(!reason.contains("Denied by BEARS"));
             assert!(reason.contains("expired ACP approval request"));
             assert!(reason.contains("not a user or web policy block"));

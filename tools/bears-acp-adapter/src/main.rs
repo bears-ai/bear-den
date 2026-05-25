@@ -4133,9 +4133,6 @@ async fn compact_session_conversation(
     post_session_lifecycle_action_json(http, config, session_id, "compact").await
 }
 
-const STALE_APPROVAL_RECOVERY_RETRY_MESSAGE: &str =
-    "BEARS ran stale-approval recovery and is retrying your prompt.";
-
 fn render_compact_recovery_result(result: &Value) -> String {
     let approval_recovery = result.get("approval_recovery");
     let approval_attempted = approval_recovery
@@ -4158,7 +4155,8 @@ fn render_compact_recovery_result(result: &Value) -> String {
             None => "Checked for stale approval requests.".to_string(),
         }
     } else {
-        "Stale approval recovery was not needed.".to_string()
+        "No stale approval recovery was attempted; compaction does not repair unresolved approvals."
+            .to_string()
     };
     let compact_sentence = if compacted {
         "The conversation was compacted."
@@ -4524,67 +4522,13 @@ async fn handle_prompt_with_retry(
         upstream_errors.extend(outcome.upstream_errors);
     }
 
-    if recover_and_retry && allow_recovery_retry && !saw_visible_output && !saw_tool_activity {
+    if recover_and_retry && !saw_visible_output && !saw_tool_activity {
         eprintln!(
-            "bears-acp-adapter: asking Den to recover stuck conversation before retry session_id={} errors={}",
+            "bears-acp-adapter: stale approval recovery requested by Den stream, but automatic compaction recovery is disabled session_id={} allow_recovery_retry={} errors={}",
             session_id,
+            allow_recovery_retry,
             upstream_errors.join("; ")
         );
-        match compact_session_conversation(http, config, session_id).await {
-            Ok(result) => {
-                eprintln!(
-                    "bears-acp-adapter: Den stale-approval recovery completed session_id={} result={}",
-                    session_id, result
-                );
-                send_agent_message_chunk_for_turn(
-                    shared_state,
-                    session_id,
-                    turn_token,
-                    STALE_APPROVAL_RECOVERY_RETRY_MESSAGE,
-                )
-                .await?;
-                return Box::pin(handle_prompt_with_retry(
-                    http,
-                    config,
-                    adapter_state,
-                    shared_state,
-                    PromptRetryContext {
-                        response_id,
-                        params,
-                        turn_token,
-                        allow_recovery_retry: false,
-                    },
-                ))
-                .await;
-            }
-            Err(err) => {
-                eprintln!(
-                    "bears-acp-adapter: Den stale-approval recovery failed session_id={} error={err:#}",
-                    session_id
-                );
-                send_agent_message_chunk_for_turn(
-                    shared_state,
-                    session_id,
-                    turn_token,
-                    "BEARS detected stale Letta approval state, but recovery failed. This ACP session's conversation may still be wedged; please start a new ACP session.",
-                )
-                .await?;
-                saw_visible_output = true;
-                upstream_errors.clear();
-            }
-        }
-    }
-
-    if recover_and_retry && !allow_recovery_retry && !saw_visible_output && !saw_tool_activity {
-        send_agent_message_chunk_for_turn(
-            shared_state,
-            session_id,
-            turn_token,
-            "BEARS retried after Den stale-approval recovery, but stale approval state persisted. Please start a new ACP session.",
-        )
-        .await?;
-        saw_visible_output = true;
-        upstream_errors.clear();
     }
 
     if !upstream_errors.is_empty() {
@@ -4612,9 +4556,11 @@ async fn handle_prompt_with_retry(
                 upstream_errors.join("; ")
             );
             let rendered = match recovery_hint.as_deref() {
-                Some("compact_and_retry") => format!(
-                    "{message}\n\nThe ACP session is still alive, so you can use `/compact` or `/collapse` to try recovery."
-                ),
+                Some("compact_and_retry") => terminal_user_message.clone().unwrap_or_else(|| {
+                    format!(
+                        "{message}\n\nAutomatic stale-approval recovery by compaction is disabled because compaction does not resolve unresolved Letta approvals. Retry after any active turn finishes; if the conversation remains wedged, use an operator recovery path that denies pending approvals rather than compacting."
+                    )
+                }),
                 Some("check_upstream_logs") => terminal_user_message.clone().unwrap_or_else(|| {
                     format!(
                         "{message}\n\nBEARS recommends checking Codepool/Letta logs before retrying."
@@ -4686,7 +4632,7 @@ const LOCAL_SLASH_COMMANDS: &[LocalSlashCommandDescriptor] = &[
     LocalSlashCommandDescriptor {
         name: "compact",
         aliases: &["collapse"],
-        description: "Ask Den to repair stale ACP/Letta approval state, then compact the conversation if needed.",
+        description: "Ask Den to compact the conversation transcript. Compaction does not repair stale Letta approval state.",
         command: LocalSlashCommand::Compact,
         den_required: true,
     },
@@ -6119,12 +6065,10 @@ async fn handle_sse_frame(
                 }
             }
             let formatted = format_den_event_error(&event);
-            if looks_like_waiting_for_approval_error(&formatted)
-                || outcome.recovery_hint.as_deref() == Some("compact_and_retry")
-            {
+            if looks_like_waiting_for_approval_error(&formatted) {
                 outcome.recover_and_retry = true;
                 outcome.upstream_errors.push(
-                    "Letta was waiting for stale approval; BEARS will ask Den to deny pending approvals and compact if needed before retrying the prompt."
+                    "Letta reported unresolved approval state. Automatic compaction recovery is disabled because compaction does not unpoison unresolved approvals; Den-side recovery must settle or deny pending approvals directly."
                         .to_string(),
                 );
             } else {
@@ -9696,8 +9640,8 @@ mod tests {
             "ok": true,
             "compacted": true,
             "approval_recovery": {
-                "attempted": true,
-                "denied_count": 1,
+                "attempted": false,
+                "reason": "compaction_only",
                 "denied_tool_call_ids": ["tool-call-secret"],
                 "denied_source_message_ids": ["message-secret"],
             },
@@ -9707,46 +9651,19 @@ mod tests {
         });
 
         let rendered = render_compact_recovery_result(&result);
-        assert!(rendered.contains("Closed 1 stale approval request."));
+        assert!(rendered.contains("No stale approval recovery was attempted"));
         assert!(rendered.contains("The conversation was compacted."));
         assert!(!rendered.contains("approval_recovery"));
         assert!(!rendered.contains("compact_result"));
         assert!(!rendered.contains("tool-call-secret"));
         assert!(!rendered.contains("message-secret"));
         assert!(!rendered.contains("raw upstream compaction response"));
-
-        assert!(!STALE_APPROVAL_RECOVERY_RETRY_MESSAGE.contains("recovery_result"));
-        assert!(!STALE_APPROVAL_RECOVERY_RETRY_MESSAGE.contains('{'));
-        assert!(!STALE_APPROVAL_RECOVERY_RETRY_MESSAGE.contains('}'));
     }
 
     #[tokio::test]
-    async fn stale_approval_event_requests_recovery_retry() {
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr = listener.local_addr().unwrap();
-        tokio::spawn(async move {
-            let (mut stream, _) = listener.accept().await.unwrap();
-            let mut reader = BufReader::new(stream);
-            let mut line = String::new();
-            loop {
-                line.clear();
-                let n = reader.read_line(&mut line).await.unwrap();
-                if n == 0 || line == "\r\n" || line == "\n" {
-                    break;
-                }
-            }
-            stream = reader.into_inner();
-            use tokio::io::AsyncWriteExt;
-            stream
-                .write_all(
-                    b"HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: 11\r\n\r\n{\"ok\":true}",
-                )
-                .await
-                .unwrap();
-        });
-
+    async fn stale_approval_event_does_not_request_compaction_recovery() {
         let config = Config {
-            api_url: format!("http://{addr}"),
+            api_url: "http://example.invalid".to_string(),
             bear: "test-bear".to_string(),
             token: "token".to_string(),
             client: "test".to_string(),
@@ -9776,7 +9693,8 @@ mod tests {
         assert!(outcome.recover_and_retry);
         assert_eq!(outcome.recovery_hint.as_deref(), None);
         assert_eq!(outcome.upstream_errors.len(), 1);
-        assert!(outcome.upstream_errors[0].contains("deny pending approvals"));
+        assert!(outcome.upstream_errors[0].contains("compaction recovery is disabled"));
+        assert!(!outcome.upstream_errors[0].contains("compact if needed"));
     }
 
     #[tokio::test]
