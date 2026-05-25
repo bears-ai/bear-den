@@ -57,13 +57,17 @@ impl fmt::Display for TerminalResult<'_> {
         write!(
             f,
             "status: {status}\n{timeout_line}elapsed_ms: {}\ntruncated: {}\n\nOutput:\n{output}",
-            self.elapsed_ms,
-            self.truncated,
+            self.elapsed_ms, self.truncated,
         )
     }
 }
 
-fn terminal_result_content(command: &str, args: &[String], cwd: &str, result: &TerminalResult<'_>) -> String {
+fn terminal_result_content(
+    command: &str,
+    args: &[String],
+    cwd: &str,
+    result: &TerminalResult<'_>,
+) -> String {
     format!(
         "Terminal command: {}\ncwd: {cwd}\n{}",
         command_line(command, args),

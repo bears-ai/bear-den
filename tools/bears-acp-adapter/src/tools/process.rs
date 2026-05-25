@@ -226,7 +226,12 @@ impl fmt::Display for ProcessResult<'_> {
     }
 }
 
-fn process_result_content(command: &str, args: &[String], cwd: &str, result: &ProcessResult<'_>) -> String {
+fn process_result_content(
+    command: &str,
+    args: &[String],
+    cwd: &str,
+    result: &ProcessResult<'_>,
+) -> String {
     format!(
         "Process command: {}{}\ncwd: {cwd}\n{}",
         command,

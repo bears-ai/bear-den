@@ -230,7 +230,15 @@ pub(crate) async fn handle_find_paths(
         truncated: &mut truncated,
         out: &mut matches,
     };
-    collect_find_paths(context, &root, &root, glob, include_hidden, limit, &mut state)?;
+    collect_find_paths(
+        context,
+        &root,
+        &root,
+        glob,
+        include_hidden,
+        limit,
+        &mut state,
+    )?;
     matches.sort();
     let content = format_find_path_results(glob, &matches, truncated);
     eprintln!(
@@ -311,7 +319,15 @@ pub(crate) async fn handle_search_files(
         skipped_by_filter: &mut skipped_by_filter,
         out: &mut files,
     };
-    collect_search_files(context, &path, &path, include_hidden, &filters, 5_000, &mut state)?;
+    collect_search_files(
+        context,
+        &path,
+        &path,
+        include_hidden,
+        &filters,
+        5_000,
+        &mut state,
+    )?;
     files.sort();
 
     let mut matches = Vec::new();

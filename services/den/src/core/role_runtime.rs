@@ -4,9 +4,7 @@ use uuid::Uuid;
 use crate::{
     core::{
         acp_tool_turns::AcpToolTurnCoordinator,
-        acp_turn_controller::{
-            AcpActiveTurnCancelHandle, AcpActiveTurnCancelRegistry,
-        },
+        acp_turn_controller::{AcpActiveTurnCancelHandle, AcpActiveTurnCancelRegistry},
     },
     errors::CustomError,
 };
@@ -142,19 +140,29 @@ pub struct RoleTurnResult {
     pub diagnostics: Value,
 }
 
+#[derive(Debug, Clone)]
+pub struct RoleTurnTerminalEvent {
+    pub status: String,
+    pub reason: String,
+    pub request_id: Option<String>,
+    pub session_id: Option<String>,
+    pub retryable: bool,
+    pub diagnostics: Value,
+}
+
 impl RoleTurnResult {
-    pub fn to_event_fields(&self) -> (String, String, Option<String>, Option<String>, bool, Value) {
-        (
-            self.status.as_str().to_string(),
-            self.reason.as_str().to_string(),
-            Some(self.request_id.to_string()),
-            Some(self.scope.channel_id.clone()),
-            self.retryable,
-            json!({
+    pub fn to_terminal_event(&self) -> RoleTurnTerminalEvent {
+        RoleTurnTerminalEvent {
+            status: self.status.as_str().to_string(),
+            reason: self.reason.as_str().to_string(),
+            request_id: Some(self.request_id.to_string()),
+            session_id: Some(self.scope.channel_id.clone()),
+            retryable: self.retryable,
+            diagnostics: json!({
                 "scope": self.scope.diagnostic(),
                 "details": self.diagnostics,
             }),
-        )
+        }
     }
 }
 
@@ -186,7 +194,10 @@ pub struct AcpTurnLifecycleLease {
 }
 
 impl AcpTurnLifecycleRuntime {
-    pub fn new(tool_turns: AcpToolTurnCoordinator, turn_cancellations: AcpActiveTurnCancelRegistry) -> Self {
+    pub fn new(
+        tool_turns: AcpToolTurnCoordinator,
+        turn_cancellations: AcpActiveTurnCancelRegistry,
+    ) -> Self {
         Self {
             role_runtime: RoleRuntime::with_turn_cancellations(tool_turns, turn_cancellations),
         }
@@ -206,8 +217,11 @@ impl AcpTurnLifecycleRuntime {
             context.acp_session_id,
             context.resolved_conversation_id,
         );
-        let active_turn_guard = self.role_runtime.acquire_turn(turn_scope.clone(), request_id)?;
-        let (cancel_handle, cancel_rx) = self.role_runtime
+        let active_turn_guard = self
+            .role_runtime
+            .acquire_turn(turn_scope.clone(), request_id)?;
+        let (cancel_handle, cancel_rx) = self
+            .role_runtime
             .turn_cancellations()
             .expect("ACP turn lifecycle runtime requires cancellation registry")
             .register(
