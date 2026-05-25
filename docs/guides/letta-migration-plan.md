@@ -34,9 +34,17 @@ Other terminology used in this plan:
 
 BEARS should not treat this migration as a simple vector-store replacement, nor as a migration from Letta agents to a different set of provider-managed agents.
 
-The target architecture is a **multi-role Bear runtime**:
+It also should not overcorrect into building a large, permanent, generalized runtime-provider platform if the real destination is clear.
+
+The target architecture is a **Den-native multi-role Bear runtime**:
 
 > A Bear is one durable identity with a charter. Roles such as `code`, `chat`, `work`, `watch`, and `review` are Den-owned profiles and execution contexts. They define memory access, tools, actuators, resources, autonomy, model policy, and audit behavior. They are not distinct provider-managed agents.
+
+The long-term destination should be understood as:
+
+- **Den-native runtime** as the durable target architecture
+- **Letta compatibility boundaries/adapters** as temporary migration scaffolding
+- **no commitment** to a broad long-term ecosystem of symmetric runtime providers unless a real future need emerges
 
 The current repository depends on Letta primarily for:
 
@@ -84,6 +92,23 @@ These should **not** be treated as first-order migration goals for phase 1:
 - reworking MemFS branch policy from scratch
 - fully unifying `code`/`chat`/`review`/`work`/`watch` execution behavior at the start
 - renaming every legacy code symbol and persisted enum value in one hard cutover
+
+## Steering principle for implementation
+
+The migration should build only enough abstraction to:
+
+- contain Letta-specific behavior so it stops spreading
+- make coexistence and rollback explicit during migration
+- allow Den-native runtime pieces to replace Letta incrementally
+- avoid re-encoding provider-managed identity as the conceptual core of the system
+
+The migration should **not** assume a need for a large, permanent, generalized runtime-provider framework unless a concrete post-Letta requirement justifies it.
+
+In practice, the preferred framing is:
+
+- **Den-native runtime** as the destination
+- **Letta compatibility path** as transitional infrastructure
+- **migration seams** where needed, rather than symmetric long-term provider architecture
 
 ## Core migration principles
 
@@ -241,6 +266,8 @@ Den should own:
 ### Runtime service(s)
 
 The migration should explicitly leverage Den's existing optional-worker / selectively enabled service model. One Den binary can then expose different capability mixes by environment and migration phase without forcing hard deployment forks.
+
+This should be understood as an operational deployment pattern, not evidence that Den needs a large permanent runtime-provider platform. The intended destination remains a Den-native runtime, with Letta retained only behind temporary compatibility seams during migration.
 
 This is useful during migration because it allows:
 
@@ -554,19 +581,21 @@ Certain guarantees must not regress during migration, even temporarily.
 
 The migration plan allows for transitional hybrids, but the target picture should be explicit enough to guide implementation.
 
+The important bias here is that the end state should look like **Den-native runtime plus temporary compatibility adapters retired over time**, not like a permanent federation of equal runtime providers.
+
 ### Likely end state
 
 - **Den owns the control plane** for Bear identity, role profiles, policy, approvals, workflow state, and interaction/run persistence.
 - **A single Den binary may still expose different capability mixes by configuration**, for example API surfaces, web/admin surfaces, native runtime workers, compatibility providers, projection workers, and migration jobs. Optional-worker deployment should remain an operational pattern, but not the domain model itself.
 - **A shared role-runner contract** defines model loop, tool loop, streaming, pause/resume, cancellation, and persistence hooks.
-- **One or more runtime implementations** may exist behind that contract, but they should present a common role-runner interface and not reintroduce provider-managed role identity as the core model.
+- **Transitional compatibility implementations may exist during migration**, but they should be treated as temporary adapters behind Den-owned contracts rather than as permanent peer runtimes that define the architecture.
 - **Actuators** such as ACP remain explicit execution surfaces, not implicit properties of a provider runtime.
 - **Codepool**, if retained, should either become a BEARS-native execution service behind the shared contracts or shrink into a compatibility adapter rather than a distinct conceptual runtime family.
 - **MemFS/git and retrieval services** remain separate owned systems behind explicit interfaces.
 
 ### Architectural guardrails
 
-- shared concepts should be Bear, role profile, role run, actuator, resource, provider binding, and interaction/run store
+- shared concepts should be Bear, role profile, role run, actuator, resource, compatibility binding where temporarily needed, and interaction/run store
 - avoid new architecture that requires a role to be represented primarily as an external provider object
 - avoid coupling retrieval/index implementation choices to runtime execution contracts
 
@@ -619,7 +648,7 @@ At a high level:
 
 ## Recommended internal abstractions
 
-The first implementation step should be to define interfaces that isolate Letta and avoid creating new provider-shaped agent identity.
+The first implementation step should be to define narrow migration seams that isolate Letta and avoid creating new provider-shaped agent identity. These seams should be judged by whether they help Den-native runtime replace Letta incrementally, not by how completely they generalize runtime providers.
 
 ### 1. Role profile registry
 
@@ -627,7 +656,7 @@ Responsibilities:
 
 - create/update/delete Den-owned role profiles for a Bear
 - persist role descriptor settings and policy hashes
-- persist execution mode and provider binding references where needed
+- persist execution mode and temporary compatibility-binding references where needed during migration
 - expose diagnostics and status
 - compare desired role profile config with applied config
 
@@ -636,8 +665,8 @@ Suggested concepts:
 - `role`: `code`, `chat`, `work`, `watch`, or `review`
 - `role_profile_id`
 - `execution_mode`: interactive, background, event, governance, harness, etc.
-- `runtime_provider`: `den_native`, `codepool_native`, `letta_api`, `letta_code`, etc. during migration
-- `provider_binding_ref`: opaque provider-specific reference, replacing generic reliance on `letta_agent_id`
+- `runtime_mode`: `den_native` as the target, with temporary compatibility values only where migration still requires them
+- `compatibility_binding_ref`: opaque legacy/external reference, replacing generic reliance on `letta_agent_id`
 - `config_hash`
 - `policy_hash`
 - `status`
@@ -695,7 +724,7 @@ Responsibilities:
 
 ### Objective
 
-Stop Letta from being an ambient assumption and make it a replaceable provider implementation.
+Stop Letta from being an ambient assumption and confine it to explicit compatibility boundaries that can be removed as Den-native runtime ownership expands.
 
 ### Work items
 
@@ -735,13 +764,13 @@ Stop Letta from being an ambient assumption and make it a replaceable provider i
 ### Deliverables
 
 - internal abstraction layer merged
-- Letta becomes one provider implementation
+- Letta becomes a contained compatibility implementation rather than ambient architecture
 - improved observability for migration planning
 - terminology compatibility path documented
 
 ### Exit criteria
 
-- major call sites no longer directly depend on `LettaClient` semantics outside provider layers
+- major call sites no longer directly depend on `LettaClient` semantics outside compatibility layers
 - replacement implementation could be added without touching UI or role logic everywhere
 - new docs and API surfaces avoid new generic agent/provisioning terminology
 
@@ -1257,18 +1286,17 @@ A practical milestone sequence:
 
 ## Recommended immediate next steps
 
-1. Define the provider-neutral interfaces in code:
-   - role profile registry
-   - role runner
-   - interaction and run store
-   - tool and actuator registry
-   - retrieval service
+1. Define only the narrow migration seams that are immediately useful in code:
+   - Den-native role runner extraction points
+   - interaction and run store boundaries
+   - Letta compatibility boundaries that stop Letta-specific logic from spreading
+   - tool and actuator registry seams where needed
 
 2. Design Den-owned schema for interactions/runs/tool calls/approvals/resource references.
 
 3. Document current `code`/ACP actuator runtime invariants from `api/acp.rs` so parity targets are explicit.
 
-4. Extract the shared role-runner contracts from the `code` path before migrating additional roles.
+4. Extract the shared Den-native role-runner contracts from the `code` path before migrating additional roles.
 
 5. Inventory Codepool's Letta-specific contracts in similar detail to the Den dependency matrix.
 
@@ -1284,6 +1312,8 @@ The recommended path is:
 - **yes** to one durable Bear identity with Den-owned role profiles and role run contexts
 - **yes** to deriving the shared runtime from the existing `code`/ACP work
 - **yes** to Den-owned runtime and persistence abstractions
+- **yes** to narrow migration seams and compatibility boundaries
+- **no** to overbuilding a permanent generalized runtime-provider framework without a concrete post-Letta need
 - **yes** to dual-write transition state
 - **yes** to migration by execution mode and risk surface
 - **yes** to a separate harness migration for `chat` and `work`
