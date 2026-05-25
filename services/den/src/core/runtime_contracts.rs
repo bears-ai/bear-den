@@ -1,4 +1,105 @@
 use crate::{config::Config, errors::CustomError};
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RoleRuntimeBinding {
+    /// Den-owned opaque handle for the configured compatibility/runtime binding for a Bear role.
+    pub binding_id: String,
+    /// Transitional compatibility backend name (for diagnostics and migration only).
+    pub compatibility_backend: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RuntimeConversationRef {
+    /// Den-owned opaque runtime conversation handle. Backends may currently back this with a
+    /// Letta `conv-*` id, but ACP should treat it as opaque.
+    pub id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RuntimeTurnRef {
+    /// Den-owned opaque runtime turn handle. Backends may back this with a provider run id.
+    pub id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EnsureConversationRequest {
+    pub bear_id: uuid::Uuid,
+    pub role: String,
+    pub acp_session_id: String,
+    pub requested_selection: Option<String>,
+    pub binding: RoleRuntimeBinding,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EnsureConversationResult {
+    pub conversation: RuntimeConversationRef,
+    pub created: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RuntimeHistoryRecord {
+    pub message_id: Option<String>,
+    pub role: String,
+    pub content: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StartTurnRequest {
+    pub conversation: RuntimeConversationRef,
+    pub binding: RoleRuntimeBinding,
+    pub human_message: String,
+    pub runtime_context: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ContinueTurnRequest {
+    pub conversation: RuntimeConversationRef,
+    pub turn: Option<RuntimeTurnRef>,
+    pub payload: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CancelTurnRequest {
+    pub conversation: RuntimeConversationRef,
+    pub turn: Option<RuntimeTurnRef>,
+    pub reason: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum RuntimeStreamEvent {
+    ConversationResolved { conversation: RuntimeConversationRef },
+    AssistantTextDelta { text: String },
+    AssistantMessageCompleted { message_id: Option<String> },
+    ToolCallRequested {
+        tool_call_id: String,
+        tool_name: String,
+        arguments_json: String,
+        approval_required: bool,
+    },
+    ToolCallSettled { tool_call_id: String, status: String },
+    WaitingForContinuation { turn: Option<RuntimeTurnRef> },
+    TurnCompleted { turn: Option<RuntimeTurnRef> },
+    TurnFailed {
+        turn: Option<RuntimeTurnRef>,
+        category: RuntimeErrorCategory,
+        message: String,
+    },
+    TurnCancelled { turn: Option<RuntimeTurnRef> },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum RuntimeErrorCategory {
+    Unavailable,
+    Misconfigured,
+    InvalidIdentity,
+    PermissionDenied,
+    ConflictPendingApproval,
+    Cancelled,
+    Timeout,
+    BackendProtocol,
+    Internal,
+}
 
 #[allow(async_fn_in_trait)]
 pub trait RuntimeHealthCheck {
@@ -32,7 +133,43 @@ pub trait RoleProfileRegistry {
         &self,
         bear_id: uuid::Uuid,
         role: &str,
-    ) -> Result<Option<String>, CustomError>;
+    ) -> Result<Option<RoleRuntimeBinding>, CustomError>;
+}
+
+#[allow(async_fn_in_trait)]
+pub trait AcpConversationRuntime {
+    async fn ensure_session_conversation(
+        &self,
+        request: EnsureConversationRequest,
+    ) -> Result<EnsureConversationResult, CustomError>;
+
+    async fn load_history(
+        &self,
+        binding: &RoleRuntimeBinding,
+        conversation: &RuntimeConversationRef,
+    ) -> Result<Vec<RuntimeHistoryRecord>, CustomError>;
+}
+
+#[allow(async_fn_in_trait)]
+pub trait AcpTurnRunner {
+    async fn preflight_hygiene(
+        &self,
+        binding: &RoleRuntimeBinding,
+        conversation: Option<&RuntimeConversationRef>,
+        reason: &str,
+    ) -> Result<(), CustomError>;
+
+    async fn start_turn(
+        &self,
+        request: StartTurnRequest,
+    ) -> Result<Vec<RuntimeStreamEvent>, CustomError>;
+
+    async fn continue_turn(
+        &self,
+        request: ContinueTurnRequest,
+    ) -> Result<Vec<RuntimeStreamEvent>, CustomError>;
+
+    async fn cancel_turn(&self, request: CancelTurnRequest) -> Result<(), CustomError>;
 }
 
 #[allow(async_fn_in_trait)]

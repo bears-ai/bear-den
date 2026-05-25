@@ -4,7 +4,8 @@ mod tests {
         config::Config,
         core::runtime_provider::{
             acp_requires_letta_runtime, InteractionRunStore, RetrievalService,
-            RoleProfileRegistry, RoleRunner, RuntimeStartupCapabilities, ToolActuatorRegistry,
+            RoleProfileRegistry, RoleRunner, RoleRuntimeBinding, RuntimeStartupCapabilities,
+            ToolActuatorRegistry,
         },
         errors::CustomError,
     };
@@ -46,7 +47,7 @@ mod tests {
             &self,
             _bear_id: uuid::Uuid,
             _role: &str,
-        ) -> Result<Option<String>, CustomError> {
+        ) -> Result<Option<RoleRuntimeBinding>, CustomError> {
             Ok(None)
         }
     }
