@@ -161,6 +161,55 @@ pub struct RoleRuntime {
     turn_cancellations: Option<AcpActiveTurnCancelRegistry>,
 }
 
+#[derive(Debug, Clone)]
+pub struct AcpTurnLifecycleRuntime {
+    role_runtime: RoleRuntime,
+}
+
+#[derive(Debug, Clone)]
+pub struct AcpTurnLifecycleContext {
+    pub bear_id: Uuid,
+    pub acp_session_id: String,
+    pub resolved_conversation_id: Option<String>,
+}
+
+#[derive(Debug)]
+pub struct AcpTurnLifecycleLease {
+    pub role_runtime: RoleRuntime,
+    pub turn_scope: RoleTurnScope,
+    pub active_turn_guard: RoleTurnGuard,
+}
+
+impl AcpTurnLifecycleRuntime {
+    pub fn new(tool_turns: AcpToolTurnCoordinator, turn_cancellations: AcpActiveTurnCancelRegistry) -> Self {
+        Self {
+            role_runtime: RoleRuntime::with_turn_cancellations(tool_turns, turn_cancellations),
+        }
+    }
+
+    pub fn runtime(&self) -> &RoleRuntime {
+        &self.role_runtime
+    }
+
+    pub fn acquire_pair_turn(
+        &self,
+        context: AcpTurnLifecycleContext,
+        request_id: Uuid,
+    ) -> Result<AcpTurnLifecycleLease, CustomError> {
+        let turn_scope = RoleTurnScope::acp_pair(
+            context.bear_id,
+            context.acp_session_id,
+            context.resolved_conversation_id,
+        );
+        let active_turn_guard = self.role_runtime.acquire_turn(turn_scope.clone(), request_id)?;
+        Ok(AcpTurnLifecycleLease {
+            role_runtime: self.role_runtime.clone(),
+            turn_scope,
+            active_turn_guard,
+        })
+    }
+}
+
 impl RoleRuntime {
     pub fn new(tool_turns: AcpToolTurnCoordinator) -> Self {
         Self {

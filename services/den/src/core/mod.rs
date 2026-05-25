@@ -35,6 +35,8 @@ pub mod pair_reflection;
 pub mod pair_turn;
 pub mod reflection_conductor;
 pub mod role_runtime;
+#[cfg(test)]
+mod role_runtime_tests;
 pub mod runtime_provider;
 #[cfg(test)]
 mod runtime_provider_tests;
