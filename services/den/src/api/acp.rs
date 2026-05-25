@@ -44,6 +44,10 @@ use crate::{
             LettaToolCallAccumulator,
         },
         acp_plan_mode,
+        acp_runtime::{
+            ensure_acp_session_conversation, require_pair_runtime_binding,
+            verify_acp_conversation_belongs_to_binding,
+        },
         acp_sessions::{self, UpsertAcpSession},
         acp_tokens,
         acp_tool_turns::{
@@ -842,131 +846,6 @@ fn normalized_durable_acp_conversation_id(raw: Option<&str>) -> Option<String> {
         .map(str::to_string)
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum AcpConversationSelectionSource {
-    Explicit,
-    Resolved,
-    Stored,
-    Generated,
-}
-
-impl AcpConversationSelectionSource {
-    fn as_str(self) -> &'static str {
-        match self {
-            Self::Explicit => "explicit",
-            Self::Resolved => "resolved",
-            Self::Stored => "stored",
-            Self::Generated => "generated",
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct AcpConversationResolution {
-    /// Den-persisted ACP session selection. May be `default`, `conv-*`, or pending `new-*`.
-    session_selection: String,
-    /// Known durable conversation id. Never a pending `new-*` placeholder.
-    resolved_conversation_id: Option<String>,
-    /// Letta path target. Never a pending `new-*` placeholder.
-    upstream_target: String,
-    selection_source: AcpConversationSelectionSource,
-    history_target: Option<String>,
-    archive_target: Option<String>,
-    requires_belongs_to_bear_check: bool,
-}
-
-impl AcpConversationResolution {
-    fn from_selection(
-        session_selection: String,
-        selection_source: AcpConversationSelectionSource,
-        pair_agent_id: &str,
-        existing_session: Option<&acp_sessions::AcpSessionRow>,
-    ) -> Self {
-        let resolved_conversation_id = if is_acp_history_target(&session_selection) {
-            Some(session_selection.clone())
-        } else if existing_session.is_some_and(|s| s.conversation_id.trim() == session_selection) {
-            normalized_durable_acp_conversation_id(
-                existing_session.and_then(|s| s.resolved_conversation_id.as_deref()),
-            )
-        } else {
-            None
-        };
-        let upstream_target = if session_selection.starts_with("new-") {
-            // `new-*` IDs are BEARS/ACP-local pending identifiers. Letta validates the path
-            // parameter strictly (`default`, `conv-*`, or `agent-*`), so create/resume the
-            // pending thread through the agent target and persist the real `conv-*` once the
-            // stream emits `conversation_resolved`.
-            pair_agent_id.to_string()
-        } else {
-            session_selection.clone()
-        };
-        let history_target = resolved_conversation_id
-            .as_deref()
-            .filter(|s| is_acp_history_target(s))
-            .map(str::to_string);
-        let archive_target = resolved_conversation_id
-            .as_deref()
-            .filter(|s| is_acp_archive_target(s))
-            .map(str::to_string);
-        let requires_belongs_to_bear_check = selection_source
-            == AcpConversationSelectionSource::Explicit
-            && session_selection.starts_with("conv-");
-
-        Self {
-            session_selection,
-            resolved_conversation_id,
-            upstream_target,
-            selection_source,
-            history_target,
-            archive_target,
-            requires_belongs_to_bear_check,
-        }
-    }
-}
-
-fn resolve_acp_prompt_conversation(
-    requested_raw: Option<&str>,
-    existing_session: Option<&acp_sessions::AcpSessionRow>,
-    pair_agent_id: &str,
-    generated_pending_id: String,
-) -> Result<AcpConversationResolution, CustomError> {
-    let requested = requested_raw
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .map(|s| normalize_acp_conversation_id(Some(s)))
-        .transpose()?
-        // Older adapters hardcoded `conversation_id: "default"` for every prompt.
-        // Treat that as omission so ACP session/new still creates a pending thread and
-        // later prompts can use the stored/resolved conversation for this ACP session.
-        .filter(|id| id != "default");
-
-    let (session_selection, source) = if let Some(id) = requested {
-        (id, AcpConversationSelectionSource::Explicit)
-    } else if let Some(id) = existing_session
-        .and_then(|s| normalized_durable_acp_conversation_id(s.resolved_conversation_id.as_deref()))
-    {
-        (id, AcpConversationSelectionSource::Resolved)
-    } else if let Some(id) = existing_session
-        .map(|s| s.conversation_id.trim())
-        .filter(|s| !s.is_empty())
-        .filter(|s| s.starts_with("conv-") || is_valid_pending_acp_conversation_id(s))
-        .map(str::to_string)
-    {
-        (id, AcpConversationSelectionSource::Stored)
-    } else {
-        (
-            generated_pending_id,
-            AcpConversationSelectionSource::Generated,
-        )
-    };
-
-    Ok(AcpConversationResolution::from_selection(
-        session_selection,
-        source,
-        pair_agent_id,
-        existing_session,
-    ))
-}
 
 fn acp_archive_target_for_session(session: &acp_sessions::AcpSessionRow) -> Option<&str> {
     session
@@ -978,15 +857,6 @@ fn acp_archive_target_for_session(session: &acp_sessions::AcpSessionRow) -> Opti
             let selection = session.conversation_id.trim();
             is_acp_archive_target(selection).then_some(selection)
         })
-}
-
-fn letta_conversation_id_from_create_response(value: &serde_json::Value) -> Option<String> {
-    value
-        .get("id")
-        .and_then(|v| v.as_str())
-        .map(str::trim)
-        .filter(|s| s.starts_with("conv-"))
-        .map(str::to_string)
 }
 
 pub(crate) fn acp_pair_den_tool_descriptors() -> serde_json::Value {
@@ -1447,59 +1317,6 @@ fn normalize_acp_conversation_id(raw: Option<&str>) -> Result<String, CustomErro
     }
 }
 
-fn acp_missing_pair_agent_message(bear_slug: &str) -> String {
-    format!(
-        "ACP requires this Bear to have a provisioned `pair` role Letta agent, but none is recorded for bear `{bear_slug}`. Ask an operator to open Admin → Bears → this Bear and click `Provision missing role agents`, then retry."
-    )
-}
-
-async fn require_pair_agent_id(state: &ApiState, bear: &Bear) -> Result<String, CustomError> {
-    if !state.letta.is_enabled() {
-        return Err(CustomError::System(
-            "Letta is not configured (set LETTA_BASE_URL); ACP pair role cannot run.".to_string(),
-        ));
-    }
-    bears_db::role_agent_id(&state.sqlx_pool, bear.id, BearAgentRole::Pair)
-        .await?
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
-        .ok_or_else(|| CustomError::ValidationError(acp_missing_pair_agent_message(&bear.slug)))
-}
-
-async fn verify_acp_conversation_belongs_to_bear(
-    state: &ApiState,
-    agent_id: &str,
-    conversation_id: &str,
-) -> Result<(), CustomError> {
-    if conversation_id == "default" || conversation_id.starts_with("new-") {
-        return Ok(());
-    }
-    if !conversation_id.starts_with("conv-") {
-        return Err(CustomError::ValidationError(format!(
-            "invalid conversation_id: {conversation_id}"
-        )));
-    }
-    if !state.letta.is_enabled() {
-        return Err(CustomError::System(
-            "Letta is not configured (set LETTA_BASE_URL)".to_string(),
-        ));
-    }
-    let agent_id = agent_id.trim();
-    if agent_id.is_empty() {
-        return Err(CustomError::ValidationError(
-            "this bear is not linked to a Letta agent".to_string(),
-        ));
-    }
-    let snap = load_agent_conversations(state.letta.as_ref(), agent_id).await;
-    let found = snap.all.iter().any(|row| row.id == conversation_id);
-    if found {
-        Ok(())
-    } else {
-        Err(CustomError::Authorization(
-            "conversation not found for this bear".to_string(),
-        ))
-    }
-}
 
 fn letta_messages_top_array(v: &serde_json::Value) -> &[serde_json::Value] {
     if let Some(a) = v.as_array() {
@@ -2344,7 +2161,9 @@ async fn conversations_inner(
     if !state.letta.is_enabled() {
         return Ok(default_only());
     }
-    let agent_id = require_pair_agent_id(&state, &bear).await?;
+    let runtime_binding =
+        require_pair_runtime_binding(&state.sqlx_pool, state.letta.as_ref(), &bear).await?;
+    let agent_id = runtime_binding.binding_id;
 
     let archived_ids = archived_conversations::list_for_bear(&state.sqlx_pool, bear.id).await?;
     let snap = load_agent_conversations(state.letta.as_ref(), &agent_id).await;
@@ -2410,7 +2229,9 @@ async fn conversation_history_inner(
         })
         .into_response());
     }
-    let agent_id = require_pair_agent_id(&state, &bear).await?;
+    let runtime_binding =
+        require_pair_runtime_binding(&state.sqlx_pool, state.letta.as_ref(), &bear).await?;
+    let agent_id = runtime_binding.binding_id.clone();
     let conv_id = normalize_acp_conversation_id(Some(&conversation_id))?;
     if conv_id.starts_with("new-") {
         return Err(CustomError::ValidationError(
@@ -2418,7 +2239,12 @@ async fn conversation_history_inner(
         ));
     }
     if conv_id.starts_with("conv-") {
-        verify_acp_conversation_belongs_to_bear(&state, &agent_id, &conv_id).await?;
+        verify_acp_conversation_belongs_to_binding(
+            state.letta.as_ref(),
+            &runtime_binding,
+            &conv_id,
+        )
+        .await?;
     }
     let limit = query.limit.unwrap_or(50).clamp(1, 100);
     let before = query
@@ -3423,10 +3249,11 @@ async fn prompt_inner(
             )
         })?;
 
-    let pair_agent_id = match require_pair_agent_id(&state, &bear).await {
-        Ok(agent_id) => agent_id,
-        Err(err) => return Ok(Err(err)),
-    };
+    let pair_runtime_binding =
+        match require_pair_runtime_binding(&state.sqlx_pool, state.letta.as_ref(), &bear).await {
+            Ok(binding) => binding,
+            Err(err) => return Ok(Err(err)),
+        };
 
     let session_id = session_id.trim();
     if session_id.is_empty() {
@@ -3457,20 +3284,27 @@ async fn prompt_inner(
         Err(err) => return Ok(Err(err)),
     };
     let generated_conversation_id = new_acp_conversation_id(&client);
-    let mut conversation_resolution = resolve_acp_prompt_conversation(
-        body.conversation_id.as_deref(),
+    let (conversation_resolution, ensure_conversation_result) = ensure_acp_session_conversation(
+        state.letta.as_ref(),
+        crate::core::runtime_contracts::EnsureConversationRequest {
+            bear_id: bear.id,
+            role: "pair".to_string(),
+            acp_session_id: session_id.to_string(),
+            requested_selection: body.conversation_id.clone(),
+            binding: pair_runtime_binding.clone(),
+        },
         existing_session.as_ref(),
-        &pair_agent_id,
         generated_conversation_id,
     )
+    .await
     .map_err(|err| {
-        let (_, _, message) = acp_error_status_message(&err);
-        ApiError::new(StatusCode::BAD_REQUEST, "validation", message)
+        let (status, code, message) = acp_error_status_message(&err);
+        ApiError::new(status, code, message)
     })?;
     if conversation_resolution.requires_belongs_to_bear_check {
-        verify_acp_conversation_belongs_to_bear(
-            &state,
-            &pair_agent_id,
+        verify_acp_conversation_belongs_to_binding(
+            state.letta.as_ref(),
+            &pair_runtime_binding,
             &conversation_resolution.session_selection,
         )
         .await
@@ -3479,40 +3313,15 @@ async fn prompt_inner(
             ApiError::new(status, code, message)
         })?;
     }
-    if conversation_resolution
-        .session_selection
-        .starts_with("new-")
-        && conversation_resolution.resolved_conversation_id.is_none()
-    {
-        let created = state
-            .letta
-            .create_conversation_for_agent(&pair_agent_id)
-            .await
-            .map_err(|err| {
-                let (status, code, message) = acp_error_status_message(&err);
-                ApiError::new(status, code, message)
-            })?;
-        let conv_id = letta_conversation_id_from_create_response(&created).ok_or_else(|| {
-            ApiError::new(
-                StatusCode::UNPROCESSABLE_ENTITY,
-                "letta_create_conversation",
-                format!(
-                    "Letta create conversation response did not contain a conv-* id: {created}"
-                ),
-            )
-        })?;
+    if ensure_conversation_result.created {
         tracing::info!(
             %request_id,
             acp_session_id = %session_id,
             bear_id = %bear.id,
             pending_conversation_id = %conversation_resolution.session_selection,
-            resolved_conversation_id = %conv_id,
+            resolved_conversation_id = %ensure_conversation_result.conversation.id,
             "ACP created fresh Letta conversation for new session"
         );
-        conversation_resolution.resolved_conversation_id = Some(conv_id.clone());
-        conversation_resolution.history_target = Some(conv_id.clone());
-        conversation_resolution.archive_target = Some(conv_id.clone());
-        conversation_resolution.upstream_target = conv_id;
     }
     let runtime_session_id = format!("acp-api-direct:{client}:{}:{session_id}", bear.id);
     acp_sessions::upsert_session(
@@ -3524,7 +3333,10 @@ async fn prompt_inner(
             acp_session_id: session_id.to_string(),
             runtime_session_id: runtime_session_id.clone(),
             conversation_id: conversation_resolution.session_selection.clone(),
-            resolved_conversation_id: conversation_resolution.resolved_conversation_id.clone(),
+            resolved_conversation_id: conversation_resolution
+                .resolved_conversation
+                .as_ref()
+                .map(|conversation| conversation.id.clone()),
             client: client.clone(),
             cwd: Some(cwd.clone()),
             current_mode: if is_new_session_binding {
@@ -3598,15 +3410,24 @@ async fn prompt_inner(
         bear_slug = %bear.slug,
         bear_id = %bear.id,
         role = "pair",
-        letta_agent_id = %pair_agent_id,
+        compatibility_binding_id = %pair_runtime_binding.binding_id,
         client = %client,
         cwd = %cwd,
         requested_conversation_id = body.conversation_id.as_deref().map(str::trim),
         conversation_id = %conversation_resolution.session_selection,
         conversation_selection_source = %conversation_resolution.selection_source.as_str(),
-        resolved_conversation_id = conversation_resolution.resolved_conversation_id.as_deref(),
-        history_target = conversation_resolution.history_target.as_deref(),
-        archive_target = conversation_resolution.archive_target.as_deref(),
+        resolved_conversation_id = conversation_resolution
+            .resolved_conversation
+            .as_ref()
+            .map(|conversation| conversation.id.as_str()),
+        history_target = conversation_resolution
+            .history_target
+            .as_ref()
+            .map(|conversation| conversation.id.as_str()),
+        archive_target = conversation_resolution
+            .archive_target
+            .as_ref()
+            .map(|conversation| conversation.id.as_str()),
         letta_conversation_id = %conversation_resolution.upstream_target,
         "ACP gateway routing prompt to pair role via Letta API"
     );
@@ -3637,7 +3458,10 @@ async fn prompt_inner(
         acp_session_id: session_id.to_string(),
         runtime_session_id: "runtime-test".to_string(),
         conversation_id: conversation_resolution.session_selection.clone(),
-        resolved_conversation_id: conversation_resolution.resolved_conversation_id.clone(),
+        resolved_conversation_id: conversation_resolution
+            .resolved_conversation
+            .as_ref()
+            .map(|conversation| conversation.id.clone()),
         client: client.clone(),
         cwd: Some(cwd.clone()),
         adapter_environment: None,
@@ -3742,8 +3566,10 @@ async fn prompt_inner(
     );
     let mut initial_events = Vec::new();
     let mut session_info_event_sent = false;
-    if let Some(conversation_id) = conversation_resolution.resolved_conversation_id.clone() {
-        initial_events.push(AcpGatewayEvent::ConversationResolved { conversation_id });
+    if let Some(conversation) = conversation_resolution.resolved_conversation.clone() {
+        initial_events.push(AcpGatewayEvent::ConversationResolved {
+            conversation_id: conversation.id,
+        });
     }
     if let Some(title_event) = pending_session_title_update_event(
         &state.sqlx_pool,
@@ -3795,12 +3621,12 @@ async fn prompt_inner(
         .filter(|items| !items.is_empty())
         .unwrap_or_else(|| vec![cwd.to_string()]);
     let client_tool_descriptors = merged_client_tool_descriptors.clone();
-    if conversation_resolution.upstream_target != pair_agent_id {
+    if conversation_resolution.upstream_target != pair_runtime_binding.binding_id {
         let _preflight_hygiene = acp_preflight_runtime_hygiene(
             &state,
             session_id,
             bear.id,
-            &pair_agent_id,
+            &pair_runtime_binding.binding_id,
             "before_new_acp_prompt",
         )
         .await;
@@ -3810,7 +3636,7 @@ async fn prompt_inner(
         state.letta.as_ref(),
         PairTurnRequest {
             conversation_id: &conversation_resolution.upstream_target,
-            role_agent_id: &pair_agent_id,
+            role_agent_id: &pair_runtime_binding.binding_id,
             human_message: prompt,
             client_tools: client_tool_descriptors.clone(),
             stream_tokens,
@@ -3830,14 +3656,14 @@ async fn prompt_inner(
             tracing::warn!(
                 %request_id,
                 acp_session_id = %session_id,
-                pair_agent_id = %pair_agent_id,
+                compatibility_binding_id = %pair_runtime_binding.binding_id,
                 error = %err,
                 "Letta conversation is waiting for stale approval; skipping agent-wide cancel before retry"
             );
             state.acp_tool_turns.cleanup_session(session_id);
             let cancel_result = cancel_letta_runs_by_id_or_skip(
                 state.letta.as_ref(),
-                &pair_agent_id,
+                &pair_runtime_binding.binding_id,
                 &[],
                 "stale_approval_retry",
             )
@@ -3845,7 +3671,7 @@ async fn prompt_inner(
             tracing::info!(
                 %request_id,
                 acp_session_id = %session_id,
-                pair_agent_id = %pair_agent_id,
+                compatibility_binding_id = %pair_runtime_binding.binding_id,
                 cancel_result = %cancel_result,
                 "ACP stale-approval retry cleaned process-local state without agent-wide cancellation"
             );
@@ -3853,7 +3679,7 @@ async fn prompt_inner(
                 state.letta.as_ref(),
                 PairTurnRequest {
                     conversation_id: &conversation_resolution.upstream_target,
-                    role_agent_id: &pair_agent_id,
+                    role_agent_id: &pair_runtime_binding.binding_id,
                     human_message: prompt,
                     client_tools: client_tool_descriptors.clone(),
                     stream_tokens,
@@ -3880,7 +3706,7 @@ async fn prompt_inner(
                     tracing::warn!(
                         %request_id,
                         acp_session_id = %session_id,
-                        pair_agent_id = %pair_agent_id,
+                        compatibility_binding_id = %pair_runtime_binding.binding_id,
                         conversation_id = %conversation_resolution.upstream_target,
                         active_tool_call_id = tracing::field::Empty,
                         error = %retry_err,
@@ -3890,7 +3716,7 @@ async fn prompt_inner(
                         .letta
                         .deny_pending_conversation_approvals(
                             &conversation_resolution.upstream_target,
-                            Some(&pair_agent_id),
+                            Some(&pair_runtime_binding.binding_id),
                             ACP_STALE_APPROVAL_RECOVERY_DENIAL_REASON,
                             PendingApprovalDenialMode::InspectOnly,
                         )
@@ -3902,7 +3728,7 @@ async fn prompt_inner(
                     tracing::warn!(
                         %request_id,
                         acp_session_id = %session_id,
-                        pair_agent_id = %pair_agent_id,
+                        compatibility_binding_id = %pair_runtime_binding.binding_id,
                         conversation_id = %conversation_resolution.upstream_target,
                         denied_count = denied.len(),
                         denied_tool_call_ids = ?denied.iter().map(|p| p.tool_call_id.as_str()).collect::<Vec<_>>(),
@@ -3914,7 +3740,7 @@ async fn prompt_inner(
                         state.letta.as_ref(),
                         PairTurnRequest {
                             conversation_id: &conversation_resolution.upstream_target,
-                            role_agent_id: &pair_agent_id,
+                            role_agent_id: &pair_runtime_binding.binding_id,
                             human_message: prompt,
                             client_tools: client_tool_descriptors.clone(),
                             stream_tokens,
@@ -3947,7 +3773,10 @@ async fn prompt_inner(
         AcpTurnLifecycleContext {
             bear_id: bear.id,
             acp_session_id: session_id.to_string(),
-            resolved_conversation_id: conversation_resolution.resolved_conversation_id.clone(),
+            resolved_conversation_id: conversation_resolution
+                .resolved_conversation
+                .as_ref()
+                .map(|conversation| conversation.id.clone()),
         },
         request_id,
     ) {
@@ -3976,13 +3805,16 @@ async fn prompt_inner(
             acp_session_id: session_id.to_string(),
             client: client.clone(),
             conversation_selection: conversation_resolution.session_selection.clone(),
-            resolved_conversation_id: conversation_resolution.resolved_conversation_id.clone(),
+            resolved_conversation_id: conversation_resolution
+                .resolved_conversation
+                .as_ref()
+                .map(|conversation| conversation.id.clone()),
             upstream_target: conversation_resolution.upstream_target.clone(),
             workspace_roots: workspace_roots.clone(),
             session_policy: Some(session_policy),
             activity,
             request_id,
-            pair_agent_id: pair_agent_id.clone(),
+            pair_agent_id: pair_runtime_binding.binding_id.clone(),
             config: state.config.clone(),
             role_runtime,
             turn_scope,
@@ -3992,7 +3824,7 @@ async fn prompt_inner(
         state.letta.clone(),
         LettaContinuationContext {
             conversation_id: conversation_resolution.upstream_target.clone(),
-            agent_id: Some(pair_agent_id.clone()),
+            agent_id: Some(pair_runtime_binding.binding_id.clone()),
             client_tools: client_tool_descriptors,
             stream_tokens,
             max_steps: 4,
@@ -6337,6 +6169,10 @@ impl Stream for AcpLettaSseStream {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::acp_runtime::{
+        resolve_acp_prompt_conversation, AcpConversationResolution,
+        AcpConversationSelectionSource,
+    };
 
     #[test]
     fn acp_prompt_requested_mode_is_normalized() {
@@ -8015,13 +7851,20 @@ data: "hello"}"#;
 
     #[test]
     fn resolver_maps_pending_acp_selection_to_letta_agent_target() {
-        let agent_id = "agent-12345678-1234-4567-89ab-123456789abc";
-        let resolution =
-            resolve_acp_prompt_conversation(None, None, agent_id, "new-acp-zed-abc123".to_string())
-                .unwrap();
+        let binding = crate::core::runtime_contracts::RoleRuntimeBinding {
+            binding_id: "agent-12345678-1234-4567-89ab-123456789abc".to_string(),
+            compatibility_backend: Some("letta".to_string()),
+        };
+        let resolution = resolve_acp_prompt_conversation(
+            None,
+            None,
+            &binding,
+            "new-acp-zed-abc123".to_string(),
+        )
+        .unwrap();
         assert_eq!(resolution.session_selection, "new-acp-zed-abc123");
-        assert_eq!(resolution.resolved_conversation_id, None);
-        assert_eq!(resolution.upstream_target, agent_id);
+        assert_eq!(resolution.resolved_conversation, None);
+        assert_eq!(resolution.upstream_target, binding.binding_id);
         assert_eq!(resolution.history_target, None);
         assert_eq!(resolution.archive_target, None);
         assert_eq!(
@@ -8032,23 +7875,32 @@ data: "hello"}"#;
 
     #[test]
     fn resolver_routes_explicit_conv_directly_and_requires_bear_check() {
-        let agent_id = "agent-12345678-1234-4567-89ab-123456789abc";
+        let binding = crate::core::runtime_contracts::RoleRuntimeBinding {
+            binding_id: "agent-12345678-1234-4567-89ab-123456789abc".to_string(),
+            compatibility_backend: Some("letta".to_string()),
+        };
         let conv_id = "conv-12345678-1234-4567-89ab-123456789abc";
         let resolution = resolve_acp_prompt_conversation(
             Some(conv_id),
             None,
-            agent_id,
+            &binding,
             "new-acp-zed-unused".to_string(),
         )
         .unwrap();
         assert_eq!(resolution.session_selection, conv_id);
         assert_eq!(
-            resolution.resolved_conversation_id.as_deref(),
+            resolution.resolved_conversation.as_ref().map(|c| c.id.as_str()),
             Some(conv_id)
         );
         assert_eq!(resolution.upstream_target, conv_id);
-        assert_eq!(resolution.history_target.as_deref(), Some(conv_id));
-        assert_eq!(resolution.archive_target.as_deref(), Some(conv_id));
+        assert_eq!(
+            resolution.history_target.as_ref().map(|c| c.id.as_str()),
+            Some(conv_id)
+        );
+        assert_eq!(
+            resolution.archive_target.as_ref().map(|c| c.id.as_str()),
+            Some(conv_id)
+        );
         assert_eq!(
             resolution.selection_source,
             AcpConversationSelectionSource::Explicit
@@ -8058,10 +7910,14 @@ data: "hello"}"#;
 
     #[test]
     fn resolver_never_archives_pending_or_default_targets() {
+        let binding = crate::core::runtime_contracts::RoleRuntimeBinding {
+            binding_id: "agent-12345678-1234-4567-89ab-123456789abc".to_string(),
+            compatibility_backend: Some("letta".to_string()),
+        };
         let pending = AcpConversationResolution::from_selection(
             "new-acp-zed-abc123".to_string(),
             AcpConversationSelectionSource::Generated,
-            "agent-12345678-1234-4567-89ab-123456789abc",
+            &binding,
             None,
         );
         assert_eq!(pending.history_target, None);
@@ -8070,10 +7926,13 @@ data: "hello"}"#;
         let default = AcpConversationResolution::from_selection(
             "default".to_string(),
             AcpConversationSelectionSource::Stored,
-            "agent-12345678-1234-4567-89ab-123456789abc",
+            &binding,
             None,
         );
-        assert_eq!(default.history_target.as_deref(), Some("default"));
+        assert_eq!(
+            default.history_target.as_ref().map(|c| c.id.as_str()),
+            Some("default")
+        );
         assert_eq!(default.archive_target, None);
     }
 
