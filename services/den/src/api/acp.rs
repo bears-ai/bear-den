@@ -72,7 +72,8 @@ use crate::{
         pair_turn::{post_pair_turn_messages_streaming, PairTurnBoundaryLog, PairTurnRequest},
         reflection_conductor,
         role_runtime::{
-            RoleRuntime, RoleTurnResult, RoleTurnScope, TurnResultReason, TurnResultStatus,
+            AcpTurnLifecycleContext, AcpTurnLifecycleRuntime, RoleRuntime, RoleTurnResult,
+            RoleTurnScope, TurnResultReason, TurnResultStatus,
         },
         turn_state, user, web_policy,
         work_plans::{self, WorkPlanLookup, WorkPlanProjection},
@@ -3960,19 +3961,24 @@ async fn prompt_inner(
         Err(err) => return Ok(Err(err)),
     };
 
-    let role_runtime = RoleRuntime::with_turn_cancellations(
+    let turn_lifecycle = AcpTurnLifecycleRuntime::new(
         state.acp_tool_turns.clone(),
         state.acp_turn_cancellations.clone(),
     );
-    let turn_scope = RoleTurnScope::acp_pair(
-        bear.id,
-        session_id.to_string(),
-        conversation_resolution.resolved_conversation_id.clone(),
-    );
-    let active_turn_guard = match role_runtime.acquire_turn(turn_scope.clone(), request_id) {
-        Ok(guard) => guard,
+    let lifecycle_lease = match turn_lifecycle.acquire_pair_turn(
+        AcpTurnLifecycleContext {
+            bear_id: bear.id,
+            acp_session_id: session_id.to_string(),
+            resolved_conversation_id: conversation_resolution.resolved_conversation_id.clone(),
+        },
+        request_id,
+    ) {
+        Ok(lease) => lease,
         Err(err) => return Ok(Err(err)),
     };
+    let role_runtime = lifecycle_lease.role_runtime.clone();
+    let turn_scope = lifecycle_lease.turn_scope.clone();
+    let active_turn_guard = lifecycle_lease.active_turn_guard;
 
     let session_policy = resolved_policy.to_json();
     let activity = current_activity_plan
