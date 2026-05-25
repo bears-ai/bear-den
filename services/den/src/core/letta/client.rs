@@ -1430,6 +1430,10 @@ impl LettaClient {
         Ok(text)
     }
 
+    pub fn runtime_provider_kind(&self) -> RuntimeProviderKind {
+        RuntimeProviderKind::Letta
+    }
+
     /// `GET /v1/agents/{agent_id}` — full JSON for operator diagnostics.
     ///
     /// Requests `include=agent.blocks` and `include=agent.tools` because current Letta

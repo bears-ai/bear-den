@@ -3,6 +3,7 @@
 use crate::config::Config;
 use crate::core::codepool::CodePoolClient;
 use crate::core::letta::LettaClient;
+use crate::core::runtime_provider::acp_requires_letta_runtime;
 use sqlx::PgPool;
 use thiserror::Error;
 
@@ -96,7 +97,7 @@ pub fn validate_runtime_config(config: &Config) -> Result<(), StartupError> {
                 .into(),
         ));
     }
-    if config.acp_gateway_enabled && config.letta_base_url.trim().is_empty() {
+    if acp_requires_letta_runtime(config) && config.letta_base_url.trim().is_empty() {
         return Err(StartupError::Message(
             "LETTA_BASE_URL must be set when ACP_GATEWAY_ENABLED=true. Den routes ACP prompts directly to the pair role through the Letta API."
                 .into(),
