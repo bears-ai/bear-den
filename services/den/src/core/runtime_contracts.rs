@@ -50,6 +50,9 @@ pub struct StartTurnRequest {
     pub binding: RoleRuntimeBinding,
     pub human_message: String,
     pub runtime_context: Option<String>,
+    pub acp_session_id: Option<String>,
+    pub client_tools: Option<serde_json::Value>,
+    pub stream_tokens: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -64,6 +67,19 @@ pub struct CancelTurnRequest {
     pub conversation: RuntimeConversationRef,
     pub turn: Option<RuntimeTurnRef>,
     pub reason: Option<String>,
+    pub binding: Option<RoleRuntimeBinding>,
+    pub run_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StartTurnResult {
+    pub turn: Option<RuntimeTurnRef>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CancelTurnResult {
+    pub skipped: bool,
+    pub detail: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -159,17 +175,17 @@ pub trait AcpTurnRunner {
         reason: &str,
     ) -> Result<(), CustomError>;
 
-    async fn start_turn(
-        &self,
-        request: StartTurnRequest,
-    ) -> Result<Vec<RuntimeStreamEvent>, CustomError>;
+    async fn start_turn(&self, request: StartTurnRequest) -> Result<StartTurnResult, CustomError>;
 
     async fn continue_turn(
         &self,
         request: ContinueTurnRequest,
     ) -> Result<Vec<RuntimeStreamEvent>, CustomError>;
 
-    async fn cancel_turn(&self, request: CancelTurnRequest) -> Result<(), CustomError>;
+    async fn cancel_turn(
+        &self,
+        request: CancelTurnRequest,
+    ) -> Result<CancelTurnResult, CustomError>;
 }
 
 #[allow(async_fn_in_trait)]

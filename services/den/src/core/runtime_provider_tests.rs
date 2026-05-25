@@ -3,9 +3,9 @@ mod tests {
     use crate::{
         config::Config,
         core::runtime_provider::{
-            acp_requires_letta_runtime, InteractionRunStore, RetrievalService,
-            RoleProfileRegistry, RoleRunner, RoleRuntimeBinding, RuntimeStartupCapabilities,
-            ToolActuatorRegistry,
+            acp_requires_letta_runtime, AcpTurnRunner, CancelTurnRequest, InteractionRunStore,
+            RetrievalService, RoleProfileRegistry, RoleRunner, RoleRuntimeBinding,
+            RuntimeConversationRef, RuntimeStartupCapabilities, ToolActuatorRegistry,
         },
         errors::CustomError,
     };
@@ -70,6 +70,41 @@ mod tests {
         }
     }
 
+    impl AcpTurnRunner for NoopRegistry {
+        async fn preflight_hygiene(
+            &self,
+            _binding: &RoleRuntimeBinding,
+            _conversation: Option<&RuntimeConversationRef>,
+            _reason: &str,
+        ) -> Result<(), CustomError> {
+            Ok(())
+        }
+
+        async fn start_turn(
+            &self,
+            _request: crate::core::runtime_provider::StartTurnRequest,
+        ) -> Result<crate::core::runtime_provider::StartTurnResult, CustomError> {
+            Ok(crate::core::runtime_provider::StartTurnResult { turn: None })
+        }
+
+        async fn continue_turn(
+            &self,
+            _request: crate::core::runtime_provider::ContinueTurnRequest,
+        ) -> Result<Vec<crate::core::runtime_provider::RuntimeStreamEvent>, CustomError> {
+            Ok(vec![])
+        }
+
+        async fn cancel_turn(
+            &self,
+            _request: CancelTurnRequest,
+        ) -> Result<crate::core::runtime_provider::CancelTurnResult, CustomError> {
+            Ok(crate::core::runtime_provider::CancelTurnResult {
+                skipped: true,
+                detail: "noop".to_string(),
+            })
+        }
+    }
+
     #[tokio::test]
     async fn phase_zero_runtime_contracts_are_implementable() {
         let noop = NoopRegistry;
@@ -84,5 +119,18 @@ mod tests {
         assert_eq!(RoleRunner::check_health(&noop).await.unwrap(), "ok");
         assert_eq!(InteractionRunStore::check_health(&noop).await.unwrap(), "ok");
         assert_eq!(RetrievalService::check_health(&noop).await.unwrap(), "ok");
+        assert!(AcpTurnRunner::preflight_hygiene(
+            &noop,
+            &RoleRuntimeBinding {
+                binding_id: "binding".to_string(),
+                compatibility_backend: Some("letta".to_string()),
+            },
+            Some(&RuntimeConversationRef {
+                id: "conv-test".to_string(),
+            }),
+            "test"
+        )
+        .await
+        .is_ok());
     }
 }
