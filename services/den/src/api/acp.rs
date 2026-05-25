@@ -69,7 +69,7 @@ use crate::{
             AcpTurnController, AcpTurnPhase,
         },
         archived_conversations,
-        bears::{db as bears_db, Bear, BearAgentRole},
+        bears::{db as bears_db, BearAgentRole},
         den_tools::{self, DenToolChannelContext, DenToolInvocationContext},
         letta::{
             load_agent_conversations, normalize_display_status_text,
@@ -834,20 +834,9 @@ fn is_valid_pending_acp_conversation_id(conversation_id: &str) -> bool {
         && normalize_acp_conversation_id(Some(conversation_id)).is_ok()
 }
 
-fn is_acp_history_target(conversation_id: &str) -> bool {
-    conversation_id == "default" || conversation_id.starts_with("conv-")
-}
-
 fn is_acp_archive_target(conversation_id: &str) -> bool {
     conversation_id.starts_with("conv-")
 }
-
-fn normalized_durable_acp_conversation_id(raw: Option<&str>) -> Option<String> {
-    raw.map(str::trim)
-        .filter(|s| is_acp_history_target(s))
-        .map(str::to_string)
-}
-
 
 fn acp_archive_target_for_session(session: &acp_sessions::AcpSessionRow) -> Option<&str> {
     session
@@ -6940,6 +6929,7 @@ mod tests {
         assert!(acp_auto_title_instruction(&unresolved).is_none());
     }
 
+    #[tokio::test]
     async fn acp_stream_timeout_pending_local_tool() {
         use axum::{
             extract::State, http::header, response::IntoResponse, routing::post, Json, Router,

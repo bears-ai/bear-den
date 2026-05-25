@@ -206,9 +206,11 @@ fn memory_write_entry_semantics_reject_unlabeled_plan_task_result_and_observatio
     for (label, value, expected) in cases {
         let args: crate::core::den_tools::MemoryWriteEntryArguments =
             serde_json::from_value(value).unwrap();
-        let err = validate_memory_write_entry_semantics(&args, &pair_context())
-            .unwrap_err()
-            .to_string();
+        let result = validate_memory_write_entry_semantics(&args, &pair_context());
+        let err = match result {
+            Err(err) => err.to_string(),
+            Ok(kind) => panic!("{label} unexpectedly allowed with kind {kind}"),
+        };
         assert!(
             err.to_ascii_lowercase().contains(expected),
             "{label} should mention {expected}, got {err}"

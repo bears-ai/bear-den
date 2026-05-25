@@ -4523,6 +4523,24 @@ pub(crate) fn validate_memory_write_entry_semantics(
             "This content appears to be a workplan; use update_plan for visible activity plans and exit_plan_mode for submitted implementation plans instead of memory_write_entry.".to_string(),
         ));
     }
+    let title_lower = args.title.trim().to_ascii_lowercase();
+    let body_lower = args.body.trim().to_ascii_lowercase();
+    let haystack = format!("{}\n{}", title_lower, body_lower);
+    let lines = args.body.lines().map(str::trim).collect::<Vec<_>>();
+    let task_like = looks_like_activity_or_task_content(&haystack, &title_lower, &lines);
+    let plan_like = looks_like_workplan_content(&haystack, &title_lower, &lines);
+    let explicit_plan_title =
+        contains_any(&title_lower, &["implementation plan", "execution plan"]);
+    if task_like && !plan_like {
+        return Err(CustomError::ValidationError(
+            "This content appears to be task tracking or a task intent; use update_plan or request_work_handoff instead of memory_write_entry.".to_string(),
+        ));
+    }
+    if plan_like && explicit_plan_title {
+        return Err(CustomError::ValidationError(
+            "This content appears to be an active workplan or implementation plan; use enter_plan_mode/exit_plan_mode for approval plans or update_plan for visible activity tracking instead of memory_write_entry.".to_string(),
+        ));
+    }
     if let Some(domain) = args.domain.as_deref() {
         match domain {
             "memory" => {}
@@ -4537,6 +4555,19 @@ pub(crate) fn validate_memory_write_entry_semantics(
                 ));
             }
             "execution" => {
+                let title = args.title.trim().to_ascii_lowercase();
+                let body = args.body.trim().to_ascii_lowercase();
+                if title.contains("observation")
+                    || body.contains("alert")
+                    || body.contains("telemetry")
+                    || body.contains("incident")
+                    || body.contains("detected")
+                    || body.contains("observed")
+                {
+                    return Err(CustomError::ValidationError(
+                        "This content appears to be an observation; use the observation tool instead of memory_write_entry.".to_string(),
+                    ));
+                }
                 return Err(CustomError::ValidationError(
                     "This content appears to describe execution or run output rather than semantic memory; use the appropriate execution/result tool instead of memory_write_entry.".to_string(),
                 ));
@@ -4584,6 +4615,27 @@ pub(crate) fn validate_memory_write_entry_semantics(
             }
             _ => {}
         }
+    }
+    if looks_like_activity_or_task_content(&haystack, &title_lower, &lines) {
+        return Err(CustomError::ValidationError(
+            "This content appears to be task tracking or a task intent; use update_plan or request_work_handoff instead of memory_write_entry.".to_string(),
+        ));
+    }
+    if looks_like_run_result_content(&haystack) {
+        return Err(CustomError::ValidationError(
+            "This content appears to be a run result or command output; use the appropriate execution/result tool instead of memory_write_entry.".to_string(),
+        ));
+    }
+    if title_lower.contains("observation")
+        || body_lower.contains("alert")
+        || body_lower.contains("telemetry")
+        || body_lower.contains("incident")
+        || body_lower.contains("detected")
+        || body_lower.contains("observed")
+    {
+        return Err(CustomError::ValidationError(
+            "This content appears to be an observation; use the observation tool instead of memory_write_entry.".to_string(),
+        ));
     }
     Ok(kind)
 }
@@ -4773,13 +4825,17 @@ fn looks_like_observation_content(haystack: &str) -> bool {
     contains_any(
         haystack,
         &[
+            "observation",
             "observation:",
             "observed:",
             "i observed",
             "watch observed",
             "monitoring observed",
+            "detected",
             "detected:",
+            "incident",
             "incident:",
+            "alert",
             "alert:",
             "telemetry",
             "metric spike",

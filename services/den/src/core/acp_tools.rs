@@ -1068,7 +1068,7 @@ const ACP_EDIT_FILE_POLICY: AcpToolPolicy = AcpToolPolicy {
     max_replacements: Some(1),
     create_files: Some(false),
     allow_multiple: Some(false),
-    deny_hidden_paths: Some(false),
+    deny_hidden_paths: Some(true),
     total_timeout_ms: 150_000,
     permission_timeout_ms: 120_000,
 };
@@ -1089,7 +1089,7 @@ const ACP_CREATE_TEXT_FILE_POLICY: AcpToolPolicy = AcpToolPolicy {
     max_replacements: None,
     create_files: Some(true),
     allow_multiple: None,
-    deny_hidden_paths: Some(false),
+    deny_hidden_paths: Some(true),
     total_timeout_ms: 150_000,
     permission_timeout_ms: 120_000,
 };
@@ -1110,7 +1110,7 @@ const ACP_CREATE_DIRECTORY_POLICY: AcpToolPolicy = AcpToolPolicy {
     max_replacements: None,
     create_files: Some(true),
     allow_multiple: None,
-    deny_hidden_paths: Some(false),
+    deny_hidden_paths: Some(true),
     total_timeout_ms: 150_000,
     permission_timeout_ms: 120_000,
 };
@@ -1131,7 +1131,7 @@ const ACP_MOVE_PATH_POLICY: AcpToolPolicy = AcpToolPolicy {
     max_replacements: None,
     create_files: None,
     allow_multiple: None,
-    deny_hidden_paths: Some(false),
+    deny_hidden_paths: Some(true),
     total_timeout_ms: 150_000,
     permission_timeout_ms: 120_000,
 };
@@ -1152,7 +1152,7 @@ const ACP_COPY_PATH_POLICY: AcpToolPolicy = AcpToolPolicy {
     max_replacements: None,
     create_files: None,
     allow_multiple: None,
-    deny_hidden_paths: Some(false),
+    deny_hidden_paths: Some(true),
     total_timeout_ms: 150_000,
     permission_timeout_ms: 120_000,
 };
@@ -1173,7 +1173,7 @@ const ACP_APPLY_PATCH_POLICY: AcpToolPolicy = AcpToolPolicy {
     max_replacements: None,
     create_files: Some(true),
     allow_multiple: Some(true),
-    deny_hidden_paths: Some(false),
+    deny_hidden_paths: Some(true),
     total_timeout_ms: 150_000,
     permission_timeout_ms: 120_000,
 };
@@ -1194,7 +1194,7 @@ const ACP_DELETE_PATH_POLICY: AcpToolPolicy = AcpToolPolicy {
     max_replacements: None,
     create_files: None,
     allow_multiple: None,
-    deny_hidden_paths: Some(false),
+    deny_hidden_paths: Some(true),
     total_timeout_ms: 150_000,
     permission_timeout_ms: 120_000,
 };
@@ -2832,7 +2832,7 @@ mod tests {
                 policy["sensitive_path_policy"], "deny_sensitive_paths",
                 "{name}"
             );
-            assert_eq!(policy["deny_hidden_paths"], false, "{name}");
+            assert_eq!(policy["deny_hidden_paths"], true, "{name}");
             assert!(
                 matches!(
                     policy["risk"].as_str(),

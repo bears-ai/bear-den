@@ -317,6 +317,10 @@ impl LettaClient {
         !self.base_url.is_empty()
     }
 
+    pub fn base_url(&self) -> &str {
+        &self.base_url
+    }
+
     pub fn compatibility_health_check(&self) -> LettaCompatibilityHealthCheck {
         LettaCompatibilityHealthCheck {
             client: self.clone(),

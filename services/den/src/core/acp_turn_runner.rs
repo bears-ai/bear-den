@@ -57,7 +57,7 @@ pub fn looks_like_letta_waiting_for_approval_error(err: &CustomError) -> bool {
 }
 
 async fn cancel_letta_runs_by_id_or_skip(
-    _letta: &LettaClient,
+    letta: &LettaClient,
     role_agent_id: &str,
     run_ids: &[String],
     reason: &str,
@@ -71,13 +71,34 @@ async fn cancel_letta_runs_by_id_or_skip(
         return "skipped:no_active_run_ids".to_string();
     }
 
-    tracing::warn!(
-        pair_agent_id = role_agent_id,
-        reason,
-        run_ids = ?run_ids,
-        "Skipping Letta run-id cancellation because targeted per-run cancellation is not yet available in the runtime adapter"
-    );
-    format!("skipped:run_id_cancellation_unavailable:{}", run_ids.len())
+    let url = format!("{}/v1/agents/{role_agent_id}/messages/cancel", letta.base_url());
+    let body = serde_json::json!({ "run_ids": run_ids });
+    match letta.http().post(url).json(&body).send().await {
+        Ok(resp) if resp.status().is_success() => format!("cancelled:{}", run_ids.len()),
+        Ok(resp) => {
+            let status = resp.status();
+            let text = resp.text().await.unwrap_or_default();
+            tracing::warn!(
+                pair_agent_id = role_agent_id,
+                reason,
+                run_ids = ?run_ids,
+                %status,
+                body = %text,
+                "Failed Letta run cancellation request"
+            );
+            format!("failed:{status}:{text}")
+        }
+        Err(err) => {
+            tracing::warn!(
+                pair_agent_id = role_agent_id,
+                reason,
+                run_ids = ?run_ids,
+                error = %err,
+                "Failed Letta run cancellation request"
+            );
+            format!("failed:reqwest:{err}")
+        }
+    }
 }
 
 async fn acp_preflight_runtime_hygiene(
