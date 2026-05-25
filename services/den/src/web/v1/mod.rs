@@ -914,18 +914,20 @@ async fn chat_send_inner(
 
     let upstream = state
         .web_chat_transport
-        .post_bear_channel_message_streaming(crate::web::data::chat_transport::WebChatTransportRequest {
-            session_id: &session_id,
-            conversation_id: &conv_id,
-            bear: &bear,
-            talk_agent_id: &talk_agent_id,
-            user_id,
-            username: Some(username.as_str()),
-            membership_role: membership_role.as_deref(),
-            message: &upstream_message,
-            runtime_plan: &runtime_plan,
-            request_id,
-        })
+        .post_bear_channel_message_streaming(
+            crate::web::data::chat_transport::WebChatTransportRequest {
+                session_id: &session_id,
+                conversation_id: &conv_id,
+                bear: &bear,
+                talk_agent_id: &talk_agent_id,
+                user_id,
+                username: Some(username.as_str()),
+                membership_role: membership_role.as_deref(),
+                message: &upstream_message,
+                runtime_plan: &runtime_plan,
+                request_id,
+            },
+        )
         .await?;
 
     crate::observability::metrics::chat_send_started();

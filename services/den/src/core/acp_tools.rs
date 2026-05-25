@@ -2744,7 +2744,10 @@ mod tests {
         );
         assert_eq!(replace_policy["max_replacements"], 1);
         assert_eq!(replace_policy["create_files"], false);
-        assert_eq!(replace_policy["allow_multiple"], serde_json::Value::Bool(false));
+        assert_eq!(
+            replace_policy["allow_multiple"],
+            serde_json::Value::Bool(false)
+        );
         assert_eq!(replace_policy["deny_hidden_paths"], true);
         assert!(replace_policy.get("max_results").is_none());
         assert_eq!(replace_policy["approval_required"], true);

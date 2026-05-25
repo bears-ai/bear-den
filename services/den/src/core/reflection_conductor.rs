@@ -87,7 +87,8 @@ pub async fn enqueue_memory_curate_for_proposals(
     pool: &PgPool,
     params: ProposalEnqueueParams<'_>,
 ) -> Result<ReflectionRunRow, CustomError> {
-    let proposal_id_values: Vec<serde_json::Value> = params.proposal_ids
+    let proposal_id_values: Vec<serde_json::Value> = params
+        .proposal_ids
         .into_iter()
         .map(|id| serde_json::Value::String(id.to_string()))
         .collect();

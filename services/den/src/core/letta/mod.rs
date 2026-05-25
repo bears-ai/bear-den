@@ -19,8 +19,8 @@ pub use assistant_display::{
 };
 pub use client::{
     LettaAgentListItem, LettaClient, LettaContinuationContext, LettaCreateAgentParams,
-    LettaModelOption, LettaPatchAgentParams, LettaPendingApproval, LettaToolOption,
-    PendingApprovalDenialMode,
+    LettaModelOption, LettaPatchAgentParams, LettaPendingApproval, LettaProviderHealthCheck,
+    LettaToolOption, PendingApprovalDenialMode,
 };
 pub use conversation_title::{
     display_conversation_title, first_user_message_text_for_title, is_acceptable_derived_title,

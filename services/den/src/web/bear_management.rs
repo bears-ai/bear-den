@@ -24,7 +24,9 @@ use crate::{
         archived_conversations,
         bears::{
             compute_letta_drift_with_expected_tool_ids, db as bears_db,
-            db::{role_is_bear_admin, BearMemberRow, BearParams, BEAR_ROLE_ADMIN, BEAR_ROLE_MEMBER},
+            db::{
+                role_is_bear_admin, BearMemberRow, BearParams, BEAR_ROLE_ADMIN, BEAR_ROLE_MEMBER,
+            },
             provision, sync, Bear, BearAgent, BearAgentRole,
         },
         letta::{AgentSummary, LettaAgentDiagnostics},

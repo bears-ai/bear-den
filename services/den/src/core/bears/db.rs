@@ -74,7 +74,11 @@ pub async fn bear_slug_exists_excluding(
     Ok(n.0 > 0)
 }
 
-pub async fn update_bear(pool: &PgPool, id: Uuid, params: BearParams<'_>) -> Result<(), CustomError> {
+pub async fn update_bear(
+    pool: &PgPool,
+    id: Uuid,
+    params: BearParams<'_>,
+) -> Result<(), CustomError> {
     let r = sqlx::query(
         r#"
         UPDATE bears

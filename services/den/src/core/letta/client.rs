@@ -5,7 +5,11 @@ use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, CONTENT_TYPE};
 use reqwest::StatusCode;
 use serde_json::{json, Value};
 
-use crate::{config::Config, errors::CustomError};
+use crate::{
+    config::Config,
+    core::runtime_provider::{RuntimeProviderHealthCheck, RuntimeProviderKind},
+    errors::CustomError,
+};
 
 pub struct LettaCreateAgentParams<'a> {
     pub name: &'a str,
@@ -285,6 +289,11 @@ pub struct LettaClient {
     api_key: String,
 }
 
+#[derive(Clone)]
+pub struct LettaProviderHealthCheck {
+    client: LettaClient,
+}
+
 impl LettaClient {
     pub fn new(config: &Config) -> Self {
         let http = reqwest::Client::builder()
@@ -306,6 +315,12 @@ impl LettaClient {
 
     pub fn is_enabled(&self) -> bool {
         !self.base_url.is_empty()
+    }
+
+    pub fn provider_health_check(&self) -> LettaProviderHealthCheck {
+        LettaProviderHealthCheck {
+            client: self.clone(),
+        }
     }
 
     fn auth_headers(&self) -> HeaderMap {
@@ -1510,10 +1525,7 @@ impl LettaClient {
     /// `PATCH /v1/agents/{agent_id}` — align Letta agent with Den bear fields.
     ///
     /// Like [`Self::create_agent`], retries once **without** `git_enabled` on **400/422** responses.
-    pub async fn patch_agent(
-        &self,
-        params: LettaPatchAgentParams<'_>,
-    ) -> Result<(), CustomError> {
+    pub async fn patch_agent(&self, params: LettaPatchAgentParams<'_>) -> Result<(), CustomError> {
         if !self.is_enabled() {
             return Err(CustomError::System(
                 "Letta is not configured (set LETTA_BASE_URL)".to_string(),
@@ -1521,7 +1533,9 @@ impl LettaClient {
         }
 
         let body_with_git = build_patch_agent_body(&params, true);
-        let (status, text) = self.post_patch_agent_raw(params.agent_id, &body_with_git).await?;
+        let (status, text) = self
+            .post_patch_agent_raw(params.agent_id, &body_with_git)
+            .await?;
 
         if status.is_success() {
             return Ok(());
@@ -1540,7 +1554,9 @@ impl LettaClient {
                 },
                 false,
             );
-            let (status2, text2) = self.post_patch_agent_raw(params.agent_id, &body_no_git).await?;
+            let (status2, text2) = self
+                .post_patch_agent_raw(params.agent_id, &body_no_git)
+                .await?;
             if status2.is_success() {
                 tracing::warn!(
                     agent_id = params.agent_id,
@@ -1927,6 +1943,20 @@ fn parse_letta_tool_list(v: &serde_json::Value) -> Vec<LettaToolOption> {
 
     out.sort_by(|a, b| a.label.cmp(&b.label));
     out
+}
+
+impl RuntimeProviderHealthCheck for LettaProviderHealthCheck {
+    fn kind(&self) -> RuntimeProviderKind {
+        self.client.runtime_provider_kind()
+    }
+
+    fn enabled(&self) -> bool {
+        self.client.is_enabled()
+    }
+
+    async fn check_health(&self) -> Result<String, CustomError> {
+        self.client.check_health().await
+    }
 }
 
 #[cfg(test)]
