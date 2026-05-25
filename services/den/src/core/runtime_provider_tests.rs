@@ -2,7 +2,12 @@
 mod tests {
     use crate::{
         config::Config,
-        core::runtime_provider::{acp_requires_letta_runtime, RuntimeStartupCapabilities},
+        core::runtime_provider::{
+            acp_requires_letta_runtime, InteractionRunStore, RetrievalService,
+            RoleProfileRegistry, RoleRunner, RuntimeProviderKind, RuntimeStartupCapabilities,
+            ToolActuatorRegistry,
+        },
+        errors::CustomError,
     };
 
     #[test]
@@ -31,5 +36,49 @@ mod tests {
         let caps = RuntimeStartupCapabilities::from_config(&config);
         assert!(!caps.acp_gateway_enabled);
         assert!(!caps.letta_required_for_acp);
+    }
+
+    struct NoopRegistry;
+
+    impl ToolActuatorRegistry for NoopRegistry {}
+
+    impl RoleProfileRegistry for NoopRegistry {
+        async fn resolve_provider_binding(
+            &self,
+            _bear_id: uuid::Uuid,
+            _role: &str,
+        ) -> Result<Option<String>, CustomError> {
+            Ok(None)
+        }
+    }
+
+    impl RoleRunner for NoopRegistry {
+        async fn check_health(&self) -> Result<String, CustomError> {
+            Ok("ok".to_string())
+        }
+    }
+
+    impl InteractionRunStore for NoopRegistry {
+        async fn check_health(&self) -> Result<String, CustomError> {
+            Ok("ok".to_string())
+        }
+    }
+
+    impl RetrievalService for NoopRegistry {
+        async fn check_health(&self) -> Result<String, CustomError> {
+            Ok("ok".to_string())
+        }
+    }
+
+    #[tokio::test]
+    async fn phase_zero_runtime_traits_are_implementable() {
+        let noop = NoopRegistry;
+        let bear_id = uuid::Uuid::nil();
+
+        assert_eq!(RuntimeProviderKind::Letta.as_str(), "letta");
+        assert_eq!(noop.resolve_provider_binding(bear_id, "pair").await.unwrap(), None);
+        assert_eq!(RoleRunner::check_health(&noop).await.unwrap(), "ok");
+        assert_eq!(InteractionRunStore::check_health(&noop).await.unwrap(), "ok");
+        assert_eq!(RetrievalService::check_health(&noop).await.unwrap(), "ok");
     }
 }
