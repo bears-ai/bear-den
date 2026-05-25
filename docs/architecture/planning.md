@@ -24,19 +24,18 @@ Bear Den's Den equivalent is the **workboard**:
 
 A workboard plan is intentionally small and operational. It records what the Bear is trying to do now, the current item, blockers, the role that created or last updated it, whether the plan should be private to that role, visible to the same user, visible to the Bear, or ready for handoff, and the current work-surface attachment when one is known.
 
-### 2. ACP pair planning mode
+### 2. ACP pair session mode
 
-Letta Code has `EnterPlanMode` and `ExitPlanMode`. Bear Den keeps the familiar **Ask**, **Plan**, and **Write** mode names for ACP `pair`, but treats them as workflow/UI modes rather than a separate durable mutation gate.
+Letta Code has `EnterPlanMode` and `ExitPlanMode`. Bear Den keeps the familiar **Ask**, **Plan**, and **Write** mode names for ACP `pair`, but treats them as user/client-controlled workflow modes rather than model-operated planning tools.
 
 In Bear Den ACP:
 
-1. User or agent requests Plan mode when substantial implementation planning would help.
-2. ACP/Den records planning state for the current session.
+1. The user or ACP client UI selects Ask, Plan, or Write mode.
+2. ACP/Den records mode state for the current session.
 3. Ask and Plan modes expose read/search/inspect tools.
 4. Write mode enables mutation/execution/browser tools; concrete effects still require Den policy, adapter safety checks, and ACP client approval.
-5. Pair may write a durable markdown plan artifact under `pair/plans/`.
-6. `exit_plan_mode` submits or updates that artifact; it does not create a global mutation gate or require an ACP approval modal.
-7. `record_plan_approval` records explicit authenticated-human approval when useful for workflow/audit and switches the ACP UI to Write.
+5. The model should still plan in Write mode by using the workboard tools (`update_plan`, `get_plan_status`, `list_plans`, and `request_work_handoff`) and concise prose.
+6. The model-facing pair tool surface does not advertise Plan-mode control tools such as `enter_plan_mode`, `exit_plan_mode`, `record_plan_approval`, `get_plan_mode_status`, or `cancel_plan_mode`. Those transitions are controlled by the human/client UI or Den control surfaces.
 
 ## Planning objects and how they relate
 
@@ -111,14 +110,13 @@ Implemented:
 - Work plan validation with at most one `in_progress` item.
 - Den workboard tools and role policy.
 - ACP prompt injection of current session workboard context.
-- ACP pair exposure of Den workboard tools.
+- ACP pair exposure of Den workboard tools (`update_plan`, `get_plan_status`, `list_plans`, and `request_work_handoff`).
 - ACP pair plan-mode DB schema and audit events.
-- Den plan-mode tools: `den.plan_mode.enter`, `den.plan_mode.status`, `den.plan_mode.exit`, and `den.plan_mode.cancel`.
-- ACP plan-mode prompt reminders.
+- Den internal/API plan-mode operations for user/client-controlled mode transitions.
+- ACP prompt reminders that treat mode as user/client-controlled and direct the model to workboard planning tools instead of mode-control tools.
 - Pair-local `plan` memory entries under `pair/plans/` for markdown plan artifacts.
 - ACP `ask` and `plan` modes expose read/search/inspect tools; `write` mode enables mutation/execution/browser tools, which still require concrete ACP client approval and Den/adapter policy checks.
-- `den.plan_mode.exit` submits or updates a markdown plan artifact; it no longer creates a durable mutation gate or requires an ACP permission request.
-- `record_plan_approval` records explicit approval from the authenticated human when useful for workflow/audit, but planning approval is not a global prerequisite for all mutation.
+- Plan-mode artifact submission and approval remain available through Den control surfaces when needed for workflow/audit, but they are not advertised as model-facing ACP pair tools and planning approval is not a global prerequisite for mutation.
 - ACP native `plan` updates projected from Den workboard items.
 - ACP native mode/config updates using `Ask`, `Plan`, and `Write` modes.
 - ACP `session/new` / `session/resume` mode state with both modern `configOptions` and legacy `modes` compatibility.

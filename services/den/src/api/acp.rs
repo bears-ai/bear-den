@@ -1009,11 +1009,6 @@ pub(crate) fn acp_pair_den_tool_descriptors() -> serde_json::Value {
                     | den_tools::DEN_WORK_PLAN_GET_STATUS
                     | den_tools::DEN_WORK_PLAN_UPDATE
                     | den_tools::DEN_WORK_PLAN_REQUEST_HANDOFF
-                    | den_tools::DEN_PLAN_MODE_ENTER
-                    | den_tools::DEN_PLAN_MODE_STATUS
-                    | den_tools::DEN_PLAN_MODE_RECORD_APPROVAL
-                    | den_tools::DEN_PLAN_MODE_EXIT
-                    | den_tools::DEN_PLAN_MODE_CANCEL
             )
         })
         .map(|descriptor| {
@@ -1165,7 +1160,9 @@ struct AcpStaleRuntimeCleanupParams {
     request_id: Uuid,
 }
 
-async fn acp_cleanup_stale_runtime_state(params: AcpStaleRuntimeCleanupParams) -> serde_json::Value {
+async fn acp_cleanup_stale_runtime_state(
+    params: AcpStaleRuntimeCleanupParams,
+) -> serde_json::Value {
     let AcpStaleRuntimeCleanupParams {
         letta,
         tool_turns,
@@ -1372,7 +1369,7 @@ fn acp_direct_tool_prompt_context_with_activity(
     if tool_names.contains(&"fs_read_text_file") {
         guidance.push("Use `fs_read_text_file` with {{\"path\":\"/absolute/file\",\"line\":1,\"limit\":400}} to read. Do not guess file contents.".to_string());
     }
-    guidance.push("Use server tools for non-local capabilities: `session_info` for trusted information about the authenticated human, current bear, role, session, memory scopes, and policy; `memory_write_entry` only for durable pair-local notes, logs, decisions, reflections, scratch, and summaries attributed to the authenticated human; `memory_status`, `memory_browse`, `memory_read`, and `memory_search` to inspect Bear memory; `memory_request_review` to ask Reflection/curate to review role-local memory without writing shared memory directly; `update_plan` to create and maintain the visible ACP task plan for the current mini-project with at most one `in_progress` item; `get_plan_status` and `list_plans` to recover visible plan state; `request_work_handoff` when channel work should become a durable reviewed task intent; `enter_plan_mode` when the user asks to plan or when a substantial implementation plan would help; `exit_plan_mode` to submit a markdown implementation plan artifact; `record_plan_approval` when the authenticated human clearly approves the submitted plan in chat (for example, 'go ahead' or 'approved'); `get_plan_mode_status` and `cancel_plan_mode` to inspect or cancel planning; `web_fetch` for bounded HTTP(S) page fetching; and `web_search` only when a Den search provider is configured. If the user asks to enter planning mode or create/execute a plan, use `enter_plan_mode` and `update_plan` rather than `memory_write_entry`; do not use memory entry tools for active plans, task lists, observations, run results, Cabinet writes, or direct core updates.".to_string());
+    guidance.push("Use server tools for non-local capabilities: `session_info` for trusted information about the authenticated human, current bear, role, session, memory scopes, and policy; `memory_write_entry` only for durable pair-local notes, logs, decisions, reflections, scratch, and summaries attributed to the authenticated human; `memory_status`, `memory_browse`, `memory_read`, and `memory_search` to inspect Bear memory; `memory_request_review` to ask Reflection/curate to review role-local memory without writing shared memory directly; `update_plan` to create and maintain the visible ACP task plan for the current mini-project with at most one `in_progress` item; `get_plan_status` and `list_plans` to recover visible plan state; `request_work_handoff` when channel work should become a durable reviewed task intent; `web_fetch` for bounded HTTP(S) page fetching; and `web_search` only when a Den search provider is configured. Do not switch ACP session modes yourself: Plan/Write/Ask mode is controlled by the user or ACP client UI. When planning would help, use `update_plan` and concise prose while remaining in the current mode; do not use memory entry tools for active plans, task lists, observations, run results, Cabinet writes, or direct core updates.".to_string());
     guidance.push("Memory is Bear-scoped across Workplaces and may contain multiple work surfaces. A Workplace is the role-scoped memory surface; for pair, that is the `pair` workplace. For questions about the current project, repo, service, architecture, terminology, or prior local decisions, first identify the relevant current work surface from trusted session hints, workspace roots, repo clues, or explicit user references rather than treating all Bear memory as one flat pool.".to_string());
     guidance.push("Prefer work-surface-first retrieval for local-understanding questions: current conversation and trusted session info -> current Workplace and current work-surface hints -> current work-surface canonical anchors -> current work-surface role-local working memory -> Bear-global shared anchors -> broader Bear memory search -> local workspace artifacts -> general world knowledge.".to_string());
     guidance.push("Use `memory_browse`, `memory_read`, and `memory_search` not only to recall prior notes, but to learn the current work surface within the current Workplace. If canonical work-surface anchors exist, prefer them over broad memory search for questions like 'what do you know about this?' or 'how does this work here?'.".to_string());
@@ -1417,7 +1414,7 @@ async fn acp_plan_mode_prompt_context(
     };
     let execution_unlocked = plan_mode.state == "approved";
     Ok(format!(
-        "\n\n<system-reminder>ACP workflow state for this session: workflow_id={} workflow_state={} submitted_plan_present={} approval_status={} execution_unlocked={}. Workflow state is authoritative; artifact path is audit context only. Plan mode is a workflow aid, not a mutation lock; concrete tool use is still governed by Den policy and ACP client approval. Use `exit_plan_mode` to submit or update a markdown implementation plan. If the authenticated human clearly approves the submitted plan in chat, use `record_plan_approval`; once approved, implementation may proceed immediately when this turn's callable tools permit it. Artifact path remains available for audit when needed: {}.</system-reminder>",
+        "\n\n<system-reminder>ACP workflow state for this session: workflow_id={} workflow_state={} submitted_plan_present={} approval_status={} execution_unlocked={}. Workflow state is authoritative; artifact path is audit context only. Plan mode is controlled by the user or ACP client UI, not by model tool calls. Keep planning visible with `update_plan` and concise prose. If implementation is requested but write tools are not callable this turn, explain that the user can switch the session to Write mode. Artifact path remains available for audit when needed: {}.</system-reminder>",
         plan_mode.id,
         plan_mode.state,
         submitted_plan_present,
@@ -2520,7 +2517,7 @@ async fn permission_result_inner(
                 "plan_mode": row,
                 "workflow_state": row.as_ref().map(|plan| workflow_state_json_from_sources(&policy, Some(plan), None)).unwrap_or_else(|| workflow_state_json(&policy)),
                 "approval_fallback": row.as_ref().filter(|plan| plan.state == "submitted").map(plan_approval_fallback_payload),
-                "message": "The transient ACP approval request timed out, but the submitted plan remains pending. The user may approve it through chat with record_plan_approval, Den UI, or a new ACP approval request."
+                "message": "The transient ACP approval request timed out, but the submitted plan remains pending. The user may approve it through Den UI, ACP client mode controls, or a new ACP approval request."
             }))
             .into_response());
         }
@@ -5483,13 +5480,7 @@ enum AcpResolvedToolResult {
 }
 
 enum AcpPendingFuture {
-    Frame(
-        Pin<
-            Box<
-                dyn Future<Output = (AcpFrameResult, AcpStreamDiagnostics)> + Send,
-            >,
-        >,
-    ),
+    Frame(Pin<Box<dyn Future<Output = (AcpFrameResult, AcpStreamDiagnostics)> + Send>>),
     Tool(Pin<Box<dyn Future<Output = Box<AcpToolResultRequest>> + Send>>),
     ContinueTool(Pin<Box<dyn Future<Output = Result<reqwest::Response, CustomError>> + Send>>),
     Cleanup(Pin<Box<dyn Future<Output = serde_json::Value> + Send>>),
@@ -6099,16 +6090,18 @@ impl Stream for AcpLettaSseStream {
                                 let request_id = this.context.request_id;
                                 this.persist_future =
                                     Some(AcpPendingFuture::Cleanup(Box::pin(async move {
-                                        acp_cleanup_stale_runtime_state(AcpStaleRuntimeCleanupParams {
-                                            letta,
-                                            tool_turns,
-                                            acp_session_id,
-                                            bear_id,
-                                            pair_agent_id,
-                                            run_ids,
-                                            reason: "tool_return_continuation_failed",
-                                            request_id,
-                                        })
+                                        acp_cleanup_stale_runtime_state(
+                                            AcpStaleRuntimeCleanupParams {
+                                                letta,
+                                                tool_turns,
+                                                acp_session_id,
+                                                bear_id,
+                                                pair_agent_id,
+                                                run_ids,
+                                                reason: "tool_return_continuation_failed",
+                                                request_id,
+                                            },
+                                        )
                                         .await
                                     })));
                                 return self.poll_next(cx);
@@ -6388,6 +6381,39 @@ mod tests {
             requested_mode_from_prompt(&body),
             Err(CustomError::ValidationError(_))
         ));
+    }
+
+    #[test]
+    fn acp_pair_descriptors_keep_workboard_tools_but_hide_mode_control_tools() {
+        let descriptors = acp_pair_den_tool_descriptors();
+        let names = descriptors
+            .as_array()
+            .expect("descriptor array")
+            .iter()
+            .filter_map(|descriptor| descriptor.get("name").and_then(|value| value.as_str()))
+            .collect::<Vec<_>>();
+
+        for expected in [
+            den_tools::DEN_WORK_PLAN_UPDATE_PROVIDER,
+            den_tools::DEN_WORK_PLAN_GET_STATUS_PROVIDER,
+            den_tools::DEN_WORK_PLAN_LIST_PROVIDER,
+            den_tools::DEN_WORK_PLAN_REQUEST_HANDOFF_PROVIDER,
+        ] {
+            assert!(names.contains(&expected), "missing {expected}");
+        }
+
+        for hidden in [
+            den_tools::DEN_PLAN_MODE_ENTER_PROVIDER,
+            den_tools::DEN_PLAN_MODE_STATUS_PROVIDER,
+            den_tools::DEN_PLAN_MODE_RECORD_APPROVAL_PROVIDER,
+            den_tools::DEN_PLAN_MODE_EXIT_PROVIDER,
+            den_tools::DEN_PLAN_MODE_CANCEL_PROVIDER,
+        ] {
+            assert!(
+                !names.contains(&hidden),
+                "unexpected mode-control tool {hidden}"
+            );
+        }
     }
 
     #[test]
