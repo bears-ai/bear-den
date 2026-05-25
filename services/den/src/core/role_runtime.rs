@@ -3,7 +3,10 @@ use uuid::Uuid;
 
 use crate::{
     core::{
-        acp_tool_turns::AcpToolTurnCoordinator, acp_turn_controller::AcpActiveTurnCancelRegistry,
+        acp_tool_turns::AcpToolTurnCoordinator,
+        acp_turn_controller::{
+            AcpActiveTurnCancelHandle, AcpActiveTurnCancelRegistry,
+        },
     },
     errors::CustomError,
 };
@@ -178,6 +181,8 @@ pub struct AcpTurnLifecycleLease {
     pub role_runtime: RoleRuntime,
     pub turn_scope: RoleTurnScope,
     pub active_turn_guard: RoleTurnGuard,
+    pub cancel_handle: AcpActiveTurnCancelHandle,
+    pub cancel_rx: tokio::sync::watch::Receiver<bool>,
 }
 
 impl AcpTurnLifecycleRuntime {
@@ -202,10 +207,20 @@ impl AcpTurnLifecycleRuntime {
             context.resolved_conversation_id,
         );
         let active_turn_guard = self.role_runtime.acquire_turn(turn_scope.clone(), request_id)?;
+        let (cancel_handle, cancel_rx) = self.role_runtime
+            .turn_cancellations()
+            .expect("ACP turn lifecycle runtime requires cancellation registry")
+            .register(
+                turn_scope.channel_id.clone(),
+                request_id,
+                turn_scope.conversation_id.clone(),
+            );
         Ok(AcpTurnLifecycleLease {
             role_runtime: self.role_runtime.clone(),
             turn_scope,
             active_turn_guard,
+            cancel_handle,
+            cancel_rx,
         })
     }
 }

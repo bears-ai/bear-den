@@ -30,6 +30,8 @@ mod tests {
         assert_eq!(lease.turn_scope.role, RoleRuntimeRole::Pair);
         assert_eq!(lease.turn_scope.channel_id, "session-1");
         assert_eq!(lease.turn_scope.conversation_id.as_deref(), Some("conv-1"));
+        assert!(!*lease.cancel_rx.borrow());
+        assert!(runtime.runtime().turn_cancellations().is_some());
 
         lease.active_turn_guard.release();
     }

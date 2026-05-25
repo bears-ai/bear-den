@@ -3979,16 +3979,13 @@ async fn prompt_inner(
     let role_runtime = lifecycle_lease.role_runtime.clone();
     let turn_scope = lifecycle_lease.turn_scope.clone();
     let active_turn_guard = lifecycle_lease.active_turn_guard;
+    let cancel_handle = lifecycle_lease.cancel_handle;
+    let cancel_rx = lifecycle_lease.cancel_rx;
 
     let session_policy = resolved_policy.to_json();
     let activity = current_activity_plan
         .as_ref()
         .map(|plan| serde_json::json!(plan));
-    let (cancel_handle, cancel_rx) = state.acp_turn_cancellations.register(
-        session_id.to_string(),
-        request_id,
-        conversation_resolution.resolved_conversation_id.clone(),
-    );
     let stream = AcpLettaSseStream::new(
         upstream.bytes_stream(),
         AcpStreamContext {
