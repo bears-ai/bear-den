@@ -54,6 +54,11 @@ use crate::{
             AcpToolResultDelivery, AcpToolResultRequest, AcpToolTurnCoordinator,
             AcpToolTurnRegistration,
         },
+        acp_turn_runner::{
+            acp_cleanup_stale_runtime_state, start_acp_turn_with_retries,
+            AcpStaleRuntimeCleanupParams, AcpTurnStartRequest,
+            ACP_STALE_APPROVAL_RECOVERY_DENIAL_REASON,
+        },
         acp_tools::{
             acp_client_tool_descriptors_for_client_context, acp_diag_phase,
             acp_provider_tool_names_for_client_context, acp_tool_policy_json_for_provider,
@@ -73,7 +78,6 @@ use crate::{
         memory_manager_head::{write_memfs_role_memory_entry, MemfsWriteRoleMemoryEntryRequest},
         memory_proposals::{self, CreateMemoryProposal},
         pair_reflection::{self, CompletePairReflectionRun, CreatePairReflectionRun},
-        pair_turn::{post_pair_turn_messages_streaming, PairTurnBoundaryLog, PairTurnRequest},
         reflection_conductor,
         role_runtime::{
             AcpTurnLifecycleContext, AcpTurnLifecycleRuntime, RoleRuntime, RoleTurnResult,
@@ -94,8 +98,6 @@ const BEARS_ACP_ADAPTER_CONTRACT_MAX_SUPPORTED: u32 = 1;
 // adapter processes. Set this to true only when a Den change is actually
 // incompatible with adapters that do not send `adapter_contract`.
 const BEARS_ACP_ADAPTER_CONTRACT_REQUIRED: bool = false;
-const ACP_STALE_APPROVAL_RECOVERY_DENIAL_REASON: &str = "BEARS closed an expired ACP approval request during stale-approval recovery. This denial applies only to that stale request; it is not a user or web policy block. Retry the tool if it is still needed.";
-
 fn env_flag(name: &str) -> bool {
     std::env::var(name).ok().is_some_and(|value| {
         matches!(
@@ -963,135 +965,6 @@ async fn cancel_letta_runs_by_id_or_skip(
             "error": err.to_string(),
         }),
     }
-}
-
-async fn acp_preflight_runtime_hygiene(
-    state: &ApiState,
-    session_id: &str,
-    bear_id: Uuid,
-    pair_agent_id: &str,
-    reason: &str,
-) -> serde_json::Value {
-    let active_turn = state.acp_turn_cancellations.active_for_session(session_id);
-    let run_ids = active_turn
-        .as_ref()
-        .map(|turn| turn.run_ids.clone())
-        .unwrap_or_default();
-    state.acp_tool_turns.cleanup_session(session_id);
-    if active_turn.is_some() && run_ids.is_empty() {
-        tracing::warn!(
-            acp_session_id = %session_id,
-            bear_id = %bear_id,
-            pair_agent_id = %pair_agent_id,
-            active_request_id = ?active_turn.as_ref().map(|turn| turn.request_id),
-            active_conversation_id = ?active_turn.as_ref().and_then(|turn| turn.conversation_id.clone()),
-            reason,
-            "ACP preflight found an active turn without Letta run_ids; skipped upstream cancel to avoid agent-wide cancellation"
-        );
-    }
-    let cancel_result = if run_ids.is_empty() {
-        serde_json::json!({
-            "ok": true,
-            "skipped": true,
-            "attempted": false,
-            "run_ids": run_ids,
-            "reason": "no_run_ids",
-            "requested_reason": reason,
-            "message": "Skipped Letta run cancellation because no run IDs were known; refusing agent-wide cancel for concurrent ACP safety.",
-        })
-    } else {
-        cancel_letta_runs_by_id_or_skip(state.letta.as_ref(), pair_agent_id, &run_ids, reason).await
-    };
-    tracing::info!(
-        acp_session_id = %session_id,
-        bear_id = %bear_id,
-        pair_agent_id = %pair_agent_id,
-        reason,
-        run_ids = ?run_ids,
-        cancel_result = %cancel_result,
-        "ACP runtime hygiene cleaned process-local state before prompt"
-    );
-    serde_json::json!({
-        "ok": cancel_result.get("ok").and_then(serde_json::Value::as_bool).unwrap_or(false),
-        "reason": reason,
-        "cancel_result": cancel_result,
-    })
-}
-
-struct AcpStaleRuntimeCleanupParams {
-    letta: Arc<crate::core::letta::LettaClient>,
-    tool_turns: AcpToolTurnCoordinator,
-    acp_session_id: String,
-    bear_id: Uuid,
-    pair_agent_id: String,
-    run_ids: Vec<String>,
-    reason: &'static str,
-    request_id: Uuid,
-}
-
-async fn acp_cleanup_stale_runtime_state(
-    params: AcpStaleRuntimeCleanupParams,
-) -> serde_json::Value {
-    let AcpStaleRuntimeCleanupParams {
-        letta,
-        tool_turns,
-        acp_session_id,
-        bear_id,
-        pair_agent_id,
-        run_ids,
-        reason,
-        request_id,
-    } = params;
-    tool_turns.cleanup_session(&acp_session_id);
-    if run_ids.is_empty() {
-        tracing::warn!(
-            request_id = %request_id,
-            acp_session_id = %acp_session_id,
-            bear_id = %bear_id,
-            pair_agent_id = %pair_agent_id,
-            reason,
-            "ACP stale runtime cleanup had no Letta run_ids; skipped upstream cancel to avoid agent-wide cancellation"
-        );
-    }
-    let cancel_result =
-        cancel_letta_runs_by_id_or_skip(letta.as_ref(), &pair_agent_id, &run_ids, reason).await;
-    let cancel_ok = cancel_result
-        .get("ok")
-        .and_then(serde_json::Value::as_bool)
-        .unwrap_or(false);
-    let cancel_skipped = cancel_result
-        .get("skipped")
-        .and_then(serde_json::Value::as_bool)
-        .unwrap_or(false);
-    if cancel_ok {
-        tracing::warn!(
-            request_id = %request_id,
-            acp_session_id = %acp_session_id,
-            bear_id = %bear_id,
-            pair_agent_id = %pair_agent_id,
-            run_ids = ?run_ids,
-            reason,
-            cancel_skipped,
-            "ACP stale Letta runtime cleanup completed without agent-wide cancellation"
-        );
-    } else {
-        tracing::warn!(
-            request_id = %request_id,
-            acp_session_id = %acp_session_id,
-            bear_id = %bear_id,
-            pair_agent_id = %pair_agent_id,
-            run_ids = ?run_ids,
-            reason,
-            cancel_result = %cancel_result,
-            "ACP stale Letta runtime cleanup failed"
-        );
-    }
-    serde_json::json!({
-        "ok": cancel_ok,
-        "reason": reason,
-        "run_ids": run_ids,
-        "cancel_result": cancel_result,
-    })
 }
 
 pub(crate) fn workflow_state_json(
@@ -3621,147 +3494,22 @@ async fn prompt_inner(
         .filter(|items| !items.is_empty())
         .unwrap_or_else(|| vec![cwd.to_string()]);
     let client_tool_descriptors = merged_client_tool_descriptors.clone();
-    if conversation_resolution.upstream_target != pair_runtime_binding.binding_id {
-        let _preflight_hygiene = acp_preflight_runtime_hygiene(
-            &state,
-            session_id,
-            bear.id,
-            &pair_runtime_binding.binding_id,
-            "before_new_acp_prompt",
-        )
-        .await;
-    }
     let stream_tokens = acp_stream_tokens_enabled();
-    let upstream = match post_pair_turn_messages_streaming(
-        state.letta.as_ref(),
-        PairTurnRequest {
-            conversation_id: &conversation_resolution.upstream_target,
-            role_agent_id: &pair_runtime_binding.binding_id,
-            human_message: prompt,
-            client_tools: client_tool_descriptors.clone(),
-            stream_tokens,
-            override_system: None,
-            boundary: PairTurnBoundaryLog {
-                request_id: &request_id.to_string(),
-                channel_family: "acp",
-                session_id,
-                runtime_context_len: turn_runtime_context.len(),
-            },
-        },
-    )
+    let upstream = match start_acp_turn_with_retries(AcpTurnStartRequest {
+        state: &state,
+        request_id,
+        session_id,
+        bear_id: bear.id,
+        binding: &pair_runtime_binding,
+        upstream_target: &conversation_resolution.upstream_target,
+        prompt,
+        client_tools: client_tool_descriptors.clone(),
+        runtime_context_len: turn_runtime_context.len(),
+        stream_tokens,
+    })
     .await
     {
         Ok(upstream) => upstream,
-        Err(err) if looks_like_letta_waiting_for_approval_error(&err) => {
-            tracing::warn!(
-                %request_id,
-                acp_session_id = %session_id,
-                compatibility_binding_id = %pair_runtime_binding.binding_id,
-                error = %err,
-                "Letta conversation is waiting for stale approval; skipping agent-wide cancel before retry"
-            );
-            state.acp_tool_turns.cleanup_session(session_id);
-            let cancel_result = cancel_letta_runs_by_id_or_skip(
-                state.letta.as_ref(),
-                &pair_runtime_binding.binding_id,
-                &[],
-                "stale_approval_retry",
-            )
-            .await;
-            tracing::info!(
-                %request_id,
-                acp_session_id = %session_id,
-                compatibility_binding_id = %pair_runtime_binding.binding_id,
-                cancel_result = %cancel_result,
-                "ACP stale-approval retry cleaned process-local state without agent-wide cancellation"
-            );
-            match post_pair_turn_messages_streaming(
-                state.letta.as_ref(),
-                PairTurnRequest {
-                    conversation_id: &conversation_resolution.upstream_target,
-                    role_agent_id: &pair_runtime_binding.binding_id,
-                    human_message: prompt,
-                    client_tools: client_tool_descriptors.clone(),
-                    stream_tokens,
-                    override_system: None,
-                    boundary: PairTurnBoundaryLog {
-                        request_id: &request_id.to_string(),
-                        channel_family: "acp",
-                        session_id,
-                        runtime_context_len: turn_runtime_context.len(),
-                    },
-                },
-            )
-            .await
-            {
-                Ok(upstream) => upstream,
-                Err(retry_err) if looks_like_letta_waiting_for_approval_error(&retry_err) => {
-                    // Important: do not replace this with conversation compaction.
-                    // Letta has confirmed that compaction is not expected to recover a
-                    // conversation poisoned by pending/incomplete approvals. The durable
-                    // blocked state is unresolved approval_request_message tool calls, so
-                    // the antidote is to submit explicit approval denials for those tool
-                    // call ids. `/compact` remains useful as a manual transcript/context
-                    // management operation, but it is not stale-approval recovery.
-                    tracing::warn!(
-                        %request_id,
-                        acp_session_id = %session_id,
-                        compatibility_binding_id = %pair_runtime_binding.binding_id,
-                        conversation_id = %conversation_resolution.upstream_target,
-                        active_tool_call_id = tracing::field::Empty,
-                        error = %retry_err,
-                        "Stale approval persisted after run cleanup; denying pending Letta approvals before final ACP prompt retry"
-                    );
-                    let denied = match state
-                        .letta
-                        .deny_pending_conversation_approvals(
-                            &conversation_resolution.upstream_target,
-                            Some(&pair_runtime_binding.binding_id),
-                            ACP_STALE_APPROVAL_RECOVERY_DENIAL_REASON,
-                            PendingApprovalDenialMode::InspectOnly,
-                        )
-                        .await
-                    {
-                        Ok(denied) => denied,
-                        Err(deny_err) => return Ok(Err(deny_err)),
-                    };
-                    tracing::warn!(
-                        %request_id,
-                        acp_session_id = %session_id,
-                        compatibility_binding_id = %pair_runtime_binding.binding_id,
-                        conversation_id = %conversation_resolution.upstream_target,
-                        denied_count = denied.len(),
-                        denied_tool_call_ids = ?denied.iter().map(|p| p.tool_call_id.as_str()).collect::<Vec<_>>(),
-                        denied_source_message_ids = ?denied.iter().filter_map(|p| p.source_message_id.as_deref()).collect::<Vec<_>>(),
-                        active_tool_call_id = tracing::field::Empty,
-                        "Detected stale pending Letta approvals after retry failure; suppressed conversation-posted denial to avoid contaminating later turns"
-                    );
-                    match post_pair_turn_messages_streaming(
-                        state.letta.as_ref(),
-                        PairTurnRequest {
-                            conversation_id: &conversation_resolution.upstream_target,
-                            role_agent_id: &pair_runtime_binding.binding_id,
-                            human_message: prompt,
-                            client_tools: client_tool_descriptors.clone(),
-                            stream_tokens,
-                            override_system: None,
-                            boundary: PairTurnBoundaryLog {
-                                request_id: &request_id.to_string(),
-                                channel_family: "acp",
-                                session_id,
-                                runtime_context_len: turn_runtime_context.len(),
-                            },
-                        },
-                    )
-                    .await
-                    {
-                        Ok(upstream) => upstream,
-                        Err(denial_retry_err) => return Ok(Err(denial_retry_err)),
-                    }
-                }
-                Err(retry_err) => return Ok(Err(retry_err)),
-            }
-        }
         Err(err) => return Ok(Err(err)),
     };
 
