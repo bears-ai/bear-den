@@ -25,6 +25,7 @@ Conceptual models, stable contracts, and architecture overviews for Bear Den.
 
 ### Runtime and systems
 - [overview](overview.md)
+- [workflow state overview](workflow-state-overview.md)
 - [den architecture](den-architecture.md)
 - [bear channel and ACP](bear-channel-and-acp.md)
 - [den bear spec](den-bear-spec.md)
