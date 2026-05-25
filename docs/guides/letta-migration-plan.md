@@ -277,6 +277,334 @@ Qdrant or another owned system should own:
 
 Retrieval should stay behind descriptor-owned model-facing tools such as `memory_search`, rather than being baked into role logic.
 
+## Migration scorecard and success metrics
+
+Progress through the phases should be evaluated with explicit metrics rather than judgment alone. Exit criteria already describe what must be true architecturally; this section adds suggested operational measures.
+
+### Cross-cutting success metrics
+
+Suggested metrics to capture from phase 0 onward:
+
+- **response latency parity**: p50/p95 end-to-end latency by role and execution mode compared to the Letta-backed baseline
+- **stream continuity**: percentage of runs that stream first token/event successfully and percentage that complete streaming without truncation or duplicate segments
+- **tool continuation correctness**: percentage of tool-call runs that successfully resume and complete after tool results are returned
+- **approval round-trip correctness**: percentage of approval-gated runs that pause, resume, and complete without bypass or duplicate execution
+- **cancellation correctness**: percentage of cancelled runs that stop producing model/tool side effects after cancellation is recorded
+- **interaction projection consistency**: rate at which Den-owned interaction/read-model projections match Letta-backed source data during dual-write periods
+- **session recovery success**: percentage of interrupted sessions that can be resumed or safely terminated according to policy
+- **operator-debuggability**: percentage of production incidents where Den-owned logs and state are sufficient without querying Letta directly
+- **role-level migration coverage**: percentage of traffic for each role running on the target runtime path
+
+### Role-specific parity indicators
+
+#### `code`
+
+- first-token latency and full-turn latency under ACP
+- tool request/response continuation success
+- Ask / Plan / Write gate correctness
+- pending approval correctness
+- cancellation and active-turn cleanup correctness under concurrent load
+- recovery rate for poisoned or interrupted sessions
+
+#### `chat`
+
+- turn latency and stream quality parity
+- conversation title/archive/history consistency
+- summarization/compaction correctness
+- session continuity across reconnects or web reloads
+
+#### `work`
+
+- task completion rate
+- policy-gated tool execution correctness
+- background run recovery and retry behavior
+- autonomy boundary compliance
+
+#### `watch`
+
+- event ingestion-to-output latency
+- deduplication correctness
+- observation persistence correctness
+- alert/noise quality where applicable
+
+#### `review`
+
+- memory-read completeness across intended scopes
+- governance/approval flow correctness
+- promotion/review audit trail completeness
+- synthesis quality against staging baselines
+
+### Suggested rollout thresholds
+
+Thresholds will vary by role, but the rollout policy should define target envelopes before cutover, for example:
+
+- parity or better for p95 latency within an agreed tolerance
+- no unresolved correctness regressions for approvals, cancellations, and tool continuation
+- Den read models matching Letta-backed data above an agreed threshold during dual-write
+- no sev-1/sev-2 migration incidents for a defined soak period before expanding traffic
+
+## Compatibility and aliasing policy
+
+Migration should make compatibility handling explicit instead of allowing aliases to spread through ad hoc conditional logic.
+
+### Compatibility rules
+
+1. **Canonical role names** in new docs, UI labels, model-facing descriptors, and new internal abstractions are:
+   - `code`
+   - `chat`
+   - `work`
+   - `watch`
+   - `review`
+
+2. **Accepted legacy aliases** during transition are:
+   - `pair` → `code`
+   - `talk` → `chat`
+   - `curate` → `review`
+
+3. **Canonicalization should happen at routing and persistence boundaries** where legacy values may still arrive from existing clients, jobs, or stored data.
+
+4. **Core runtime logic should operate on canonical role values** once inputs have been normalized.
+
+5. **Provider-specific identifiers and legacy names should not be exposed as the conceptual source of truth** in new model-facing tools or operator-facing architecture docs.
+
+### Suggested implementation guidance
+
+- centralize alias resolution in one descriptor resolver or normalization layer
+- avoid scattered `match` statements for legacy role aliases across the codebase
+- add tests that verify accepted input aliases normalize to a single canonical role value
+- annotate compatibility fields and branches with expected removal criteria
+
+### Alias sunset criteria
+
+Legacy aliases can be retired only when all of the following are true:
+
+- no supported external client or persisted workflow still emits legacy role names
+- migrated read/write paths canonicalize or backfill legacy data safely
+- operator/admin workflows no longer depend on legacy labels
+- migration telemetry shows no meaningful incoming legacy-name traffic for a defined period
+
+## Historical data migration and backfill strategy
+
+Dual-write alone is not enough. The migration also needs a deliberate plan for historical interaction and runtime data.
+
+### Recommended principles
+
+- preserve auditability over perfect one-time normalization
+- prefer immutable import or projection of historical events where practical
+- keep provenance indicating whether records originated in Letta, Den dual-write, or Den-native execution
+- avoid blocking runtime migration on a perfect historical import if lazy-read compatibility is sufficient for older data
+
+### Suggested historical data approach
+
+1. **Recent and user-visible history**
+   - prioritize backfill or projection for recent `chat` and `code` sessions that are likely to be viewed or resumed
+   - preserve titles, archive state, run markers, tool events, and approval events where available
+
+2. **Older or low-value history**
+   - allow on-demand compatibility reads from Letta or imported archives during transition
+   - backfill only summary/index metadata if full event import is too expensive initially
+
+3. **ID mapping and provenance**
+   - maintain mapping tables or provenance fields linking Den-owned entities to legacy Letta conversation/run/message identifiers
+   - record import time, source system, and import version for audit/debug purposes
+
+4. **Admin and diagnostics continuity**
+   - ensure operators can still pivot from new Den identifiers to legacy provider identifiers while compatibility remains in place
+   - keep replay/debug tools aware of mixed-origin histories during migration
+
+### Questions to answer during implementation
+
+- which Letta-backed records must be fully imported versus lazily read
+- whether old tool-call payloads require normalization into the new schema
+- how archived/deleted state should be represented when source semantics differ
+- what minimum fidelity is required for compliance, audit, and incident response
+
+## Testing and validation strategy
+
+Migration risk is dominated by behavior mismatches, not only by compile-time integration errors. Validation should therefore include behavioral, concurrency, and failure-path testing.
+
+### Test layers
+
+#### 1. Unit and interface tests
+
+- verify provider-neutral interfaces and adapters
+- verify canonicalization of role names and provider bindings
+- verify persistence schema serialization and event envelopes
+
+#### 2. Contract tests
+
+- provider-neutral role runner contract tests
+- tool and actuator registry contract tests
+- interaction/run store contract tests
+- retrieval service contract tests
+
+These should be runnable against both Letta-backed compatibility implementations and Den-native implementations where practical.
+
+#### 3. Transcript and replay tests
+
+- replay captured Letta-era sessions against the Den-native runner in staging
+- compare tool-call ordering, pause/resume behavior, final status, and user-visible output envelopes
+- keep golden traces for critical `code` ACP turns and representative `chat`, `review`, `watch`, and `work` flows
+
+#### 4. Concurrency and load tests
+
+Especially for `code` and `work`:
+
+- simultaneous sessions per Bear
+- tool execution overlap
+- cancellation during tool wait
+- cancellation during stream emission
+- repeated resume attempts
+- active-turn cleanup under contention
+
+#### 5. Failure-injection and chaos tests
+
+- dropped tool results
+- delayed approval responses
+- provider timeouts
+- partial stream interruption
+- persistence write failures during dual-write
+- stale lock or stuck-run conditions
+
+### Staging acceptance guidance
+
+Before each production cutover step, staging should demonstrate:
+
+- parity on representative transcripts
+- no unresolved correctness failures for approvals/cancellation/tool continuation
+- sufficient observability to debug discrepancies without ad hoc provider inspection
+
+## Operational rollout and rollback controls
+
+Migration should be designed for reversible rollout at multiple scopes.
+
+### Recommended controls
+
+- **feature flags** for major runtime paths and persistence readers/writers
+- **per-role routing controls** to move roles independently
+- **per-Bear allowlists** for early canarying
+- **per-session fallback** where feasible for interactive surfaces
+- **shadow mode** for write/read comparison without user-visible cutover
+- **canary mode** with explicit percentage-based or allowlisted traffic expansion
+
+### Rollout mechanics
+
+For each cutover-capable phase, define:
+
+- what traffic enters shadow mode
+- what traffic is eligible for canary mode
+- how rollback is triggered
+- what telemetry dashboards are required
+- who owns the go/no-go decision
+
+### Suggested rollback triggers
+
+Examples:
+
+- approval state inconsistencies
+- cancellation correctness failures
+- repeated tool continuation failures
+- Den/Letta projection divergence above threshold during dual-write
+- severe latency regressions beyond agreed tolerance
+- admin/debug read-path failures that block incident response
+
+### Operational readiness artifacts
+
+Before broad rollout, prepare:
+
+- dashboards by role and execution mode
+- alerts for correctness and latency regressions
+- runbooks for provider fallback and traffic re-routing
+- incident checklists for mixed-origin history issues
+- support guidance for operators during compatibility periods
+
+## Security and policy invariants
+
+Certain guarantees must not regress during migration, even temporarily.
+
+### Must-preserve invariants
+
+- trusted human identity must come from Den/ACP authenticated state, not from chat text
+- tool policy must remain server-authoritative
+- approval-gated actions must not execute before approval is recorded
+- resumed runs must re-check applicable policy state before continuing
+- actuator permissions must remain scoped to approved resources and session policy
+- cancellation must prevent further side effects after the authoritative cancellation point
+- dual-write or replay paths must not cause duplicate tool execution or duplicate approval fulfillment
+- model-facing tools must not gain broader memory/resource scope because of compatibility shortcuts
+
+### Recommended verification approach
+
+- encode invariants as integration tests where possible
+- add runtime assertions and audit logs around approval/cancellation boundaries
+- explicitly review any fallback path that bypasses the shared runner or Den persistence
+
+## Likely end-state runtime topology
+
+The migration plan allows for transitional hybrids, but the target picture should be explicit enough to guide implementation.
+
+### Likely end state
+
+- **Den owns the control plane** for Bear identity, role profiles, policy, approvals, workflow state, and interaction/run persistence.
+- **A shared role-runner contract** defines model loop, tool loop, streaming, pause/resume, cancellation, and persistence hooks.
+- **One or more runtime implementations** may exist behind that contract, but they should present a common role-runner interface and not reintroduce provider-managed role identity as the core model.
+- **Actuators** such as ACP remain explicit execution surfaces, not implicit properties of a provider runtime.
+- **Codepool**, if retained, should either become a BEARS-native execution service behind the shared contracts or shrink into a compatibility adapter rather than a distinct conceptual runtime family.
+- **MemFS/git and retrieval services** remain separate owned systems behind explicit interfaces.
+
+### Architectural guardrails
+
+- shared concepts should be Bear, role profile, role run, actuator, resource, provider binding, and interaction/run store
+- avoid new architecture that requires a role to be represented primarily as an external provider object
+- avoid coupling retrieval/index implementation choices to runtime execution contracts
+
+## Ownership, dependencies, and critical path
+
+The plan will be easier to execute if workstreams and sequencing constraints are explicit.
+
+### Likely workstreams
+
+1. **abstraction and terminology workstream**
+   - provider-neutral interfaces
+   - canonical naming and alias handling
+   - instrumentation
+
+2. **Den persistence workstream**
+   - interaction/run schema
+   - dual-write paths
+   - admin/UI read models
+
+3. **shared role-runner workstream**
+   - extraction from `code`
+   - common event and tool protocol
+   - approval/cancellation lifecycle
+
+4. **role migration workstream**
+   - `watch`
+   - `review`
+   - `code`
+   - `chat` / `work`
+
+5. **MemFS and retrieval workstream**
+   - direct git APIs
+   - retrieval/index replacement
+   - invalidation hooks/jobs
+
+6. **operations and retirement workstream**
+   - rollout controls
+   - dashboards/runbooks
+   - infrastructure cleanup
+
+### Critical path dependencies
+
+At a high level:
+
+- abstraction boundaries should land before broad migration work
+- Den-owned persistence should begin before most runtime cutovers
+- shared role-runner extraction should precede `watch`/`review`/`code` migration completion
+- `chat`/`work` migration depends on decisions about Codepool evolution or replacement
+- Letta retirement should wait until read paths, runtime paths, and historical access needs are satisfied
+
 ## Recommended internal abstractions
 
 The first implementation step should be to define interfaces that isolate Letta and avoid creating new provider-shaped agent identity.
