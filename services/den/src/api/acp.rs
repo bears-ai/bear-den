@@ -5034,7 +5034,21 @@ enum AcpResolvedToolResult {
 enum AcpPendingFuture {
     Frame(Pin<Box<dyn Future<Output = (AcpFrameResult, AcpStreamDiagnostics)> + Send>>),
     Tool(Pin<Box<dyn Future<Output = Box<AcpToolResultRequest>> + Send>>),
-    ContinueTool(Pin<Box<dyn Future<Output = Result<reqwest::Response, CustomError>> + Send>>),
+    ContinueTool(
+        Pin<
+            Box<
+                dyn Future<
+                        Output = Result<
+                            (
+                                crate::core::runtime_provider::RuntimeStreamContinuation,
+                                reqwest::Response,
+                            ),
+                            CustomError,
+                        >,
+                    > + Send,
+            >,
+        >,
+    ),
     Cleanup(Pin<Box<dyn Future<Output = serde_json::Value> + Send>>),
 }
 
@@ -5626,8 +5640,15 @@ impl Stream for AcpLettaSseStream {
                     let result = ready!(fut.as_mut().poll(cx));
                     this.persist_future = None;
                     match result {
-                        Ok(response) => {
-                            this.inner = Box::pin(response.bytes_stream());
+                        Ok((stream_kind, response)) => {
+                            match stream_kind {
+                                crate::core::runtime_provider::RuntimeStreamContinuation::HttpResponse => {
+                                    this.inner = Box::pin(response.bytes_stream());
+                                }
+                                crate::core::runtime_provider::RuntimeStreamContinuation::Deferred => {
+                                    this.inner = Box::pin(response.bytes_stream());
+                                }
+                            }
                             return self.poll_next(cx);
                         }
                         Err(err) => {

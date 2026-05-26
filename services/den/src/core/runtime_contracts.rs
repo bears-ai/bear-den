@@ -115,6 +115,7 @@ pub struct ContinueTurnResult {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum RuntimeStreamContinuation {
     Deferred,
+    HttpResponse,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

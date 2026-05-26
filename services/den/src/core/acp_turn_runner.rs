@@ -402,7 +402,7 @@ impl AcpTurnRunner for LettaAcpTurnRunner<'_> {
         let _response = self.continue_turn_response(request, &stream).await?;
         Ok(ContinueTurnResult {
             turn,
-            stream: crate::core::runtime_contracts::RuntimeStreamContinuation::Deferred,
+            stream: crate::core::runtime_contracts::RuntimeStreamContinuation::HttpResponse,
         })
     }
 
@@ -453,7 +453,13 @@ pub async fn start_acp_turn_with_retries(
 
 pub async fn continue_acp_turn_with_runtime(
     request: AcpTurnContinueRequest<'_>,
-) -> Result<Response, CustomError> {
+) -> Result<
+    (
+        crate::core::runtime_contracts::RuntimeStreamContinuation,
+        Response,
+    ),
+    CustomError,
+> {
     let runner = LettaAcpTurnRunner {
         state: request.state,
         request_id: request.request_id,
@@ -463,7 +469,7 @@ pub async fn continue_acp_turn_with_runtime(
         RuntimeContinuation::ToolResult { .. }
         | RuntimeContinuation::ApprovalDecision { .. } => request.continuation,
     };
-    runner
+    let response = runner
         .continue_turn_response(
             ContinueTurnRequest {
                 conversation: RuntimeConversationRef {
@@ -475,7 +481,11 @@ pub async fn continue_acp_turn_with_runtime(
             },
             &request.stream_context,
         )
-        .await
+        .await?;
+    Ok((
+        crate::core::runtime_contracts::RuntimeStreamContinuation::HttpResponse,
+        response,
+    ))
 }
 
 pub async fn acp_cleanup_stale_runtime_state(
