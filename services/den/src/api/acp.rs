@@ -5179,9 +5179,6 @@ fn truncate_utf8_boundary(s: &str, max_bytes: usize) -> &str {
 
 struct AcpLettaSseStream {
     inner: Pin<Box<dyn Stream<Item = Result<Bytes, CustomError>> + Send>>,
-    buffer: Vec<u8>,
-    /// Complete upstream SSE event bodies (delimiter stripped), FIFO.
-    pending_raw_frames: VecDeque<Vec<u8>>,
     pending: VecDeque<Bytes>,
     context: AcpStreamContext,
     letta: Arc<crate::core::letta::LettaClient>,
@@ -5315,8 +5312,6 @@ impl AcpLettaSseStream {
         }
         Self {
             inner: Box::pin(inner),
-            buffer: Vec::new(),
-            pending_raw_frames: VecDeque::new(),
             pending,
             context,
             letta,
@@ -5740,21 +5735,6 @@ impl Stream for AcpLettaSseStream {
             }
         }
 
-        if let Some(frame_body) = this.pending_raw_frames.pop_front() {
-            let context = this.context.clone();
-            let mut diagnostics = std::mem::take(&mut this.diagnostics);
-            this.persist_future = Some(AcpPendingFuture::Frame(Box::pin(async move {
-                let result = map_letta_stream_frame_to_acp_adapter_events_with_persistence(
-                    frame_body,
-                    context,
-                    &mut diagnostics,
-                )
-                .await;
-                (result, diagnostics)
-            })));
-            return self.poll_next(cx);
-        }
-
         if this.turn_controller.phase() == AcpTurnPhase::Terminal {
             this.log_summary_once();
             return Poll::Ready(None);
@@ -5762,12 +5742,17 @@ impl Stream for AcpLettaSseStream {
 
         match ready!(this.inner.as_mut().poll_next(cx)) {
             Some(Ok(chunk)) => {
-                this.buffer.extend_from_slice(&chunk);
-                while let Some(end) = find_sse_frame_end(&this.buffer) {
-                    let raw: Vec<u8> = this.buffer.drain(..end).collect();
-                    let frame_body = strip_trailing_sse_delimiter_owned(raw);
-                    this.pending_raw_frames.push_back(frame_body);
-                }
+                let context = this.context.clone();
+                let mut diagnostics = std::mem::take(&mut this.diagnostics);
+                this.persist_future = Some(AcpPendingFuture::Frame(Box::pin(async move {
+                    let result = map_letta_stream_frame_to_acp_adapter_events_with_persistence(
+                        chunk.to_vec(),
+                        context,
+                        &mut diagnostics,
+                    )
+                    .await;
+                    (result, diagnostics)
+                })));
                 self.poll_next(cx)
             }
             Some(Err(err)) => {
@@ -5811,20 +5796,7 @@ impl Stream for AcpLettaSseStream {
                 }
             }
             None => {
-                if !this.buffer.is_empty() {
-                    let preview = preview_bytes_utf8_lossy(&this.buffer);
-                    tracing::warn!(
-                        request_id = %this.context.request_id,
-                        acp_session_id = %this.context.acp_session_id,
-                        incomplete_bytes = this.buffer.len(),
-                        preview = %preview,
-                        "ACP upstream Letta SSE stream ended with incomplete frame"
-                    );
-                    this.buffer.clear();
-                }
-                if !this.pending_raw_frames.is_empty() {
-                    self.poll_next(cx)
-                } else if this.diagnostics.saw_requires_approval_stop
+                if this.diagnostics.saw_requires_approval_stop
                     && !this.outstanding_tool_obligations().is_empty()
                 {
                     this.turn_controller.on_requires_approval_stop();

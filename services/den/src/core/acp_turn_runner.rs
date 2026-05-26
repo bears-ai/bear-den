@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use futures::StreamExt;
+use futures::{Stream, StreamExt};
 use reqwest::Response;
 use serde_json::{json, Value};
 use uuid::Uuid;
@@ -452,6 +452,26 @@ pub async fn start_acp_turn_with_retries(
         .await
 }
 
+fn find_sse_frame_end(buf: &[u8]) -> Option<usize> {
+    let lf = buf.windows(2).position(|w| w == b"\n\n").map(|p| p + 2);
+    let crlf = buf.windows(4).position(|w| w == b"\r\n\r\n").map(|p| p + 4);
+    match (lf, crlf) {
+        (Some(a), Some(b)) => Some(a.min(b)),
+        (Some(a), None) => Some(a),
+        (None, Some(b)) => Some(b),
+        (None, None) => None,
+    }
+}
+
+fn strip_trailing_sse_delimiter_owned(mut frame: Vec<u8>) -> Vec<u8> {
+    if frame.ends_with(b"\r\n\r\n") {
+        frame.truncate(frame.len().saturating_sub(4));
+    } else if frame.ends_with(b"\n\n") {
+        frame.truncate(frame.len().saturating_sub(2));
+    }
+    frame
+}
+
 pub async fn continue_acp_turn_with_runtime(
     request: AcpTurnContinueRequest<'_>,
 ) -> Result<
@@ -483,14 +503,56 @@ pub async fn continue_acp_turn_with_runtime(
             &request.stream_context,
         )
         .await?;
+    let mut parsed = response.bytes_stream().map(|item| item.map_err(CustomError::from));
+    let mut buffer = Vec::new();
+    let mut queued_events: std::collections::VecDeque<
+        Result<crate::core::runtime_contracts::RuntimeStreamEvent, CustomError>,
+    > = std::collections::VecDeque::new();
+    let mut finished = false;
+    let stream = futures::stream::poll_fn(move |cx| loop {
+        if let Some(item) = queued_events.pop_front() {
+            return std::task::Poll::Ready(Some(item));
+        }
+        if finished {
+            return std::task::Poll::Ready(None);
+        }
+        match std::pin::Pin::new(&mut parsed).poll_next(cx) {
+            std::task::Poll::Ready(Some(Ok(bytes))) => {
+                buffer.extend_from_slice(&bytes);
+                while let Some(end) = find_sse_frame_end(&buffer) {
+                    let raw: Vec<u8> = buffer.drain(..end).collect();
+                    let frame_body = strip_trailing_sse_delimiter_owned(raw);
+                    queued_events.push_back(Ok(
+                        crate::core::runtime_contracts::RuntimeStreamEvent::RawBytes {
+                            bytes: frame_body,
+                        },
+                    ));
+                }
+            }
+            std::task::Poll::Ready(Some(Err(err))) => {
+                return std::task::Poll::Ready(Some(Err(err)));
+            }
+            std::task::Poll::Ready(None) => {
+                finished = true;
+                if buffer.is_empty() {
+                    queued_events.push_back(Ok(
+                        crate::core::runtime_contracts::RuntimeStreamEvent::TurnCompleted {
+                            turn: None,
+                        },
+                    ));
+                } else {
+                    queued_events.push_back(Err(CustomError::System(format!(
+                        "continuation SSE stream ended with incomplete frame ({} bytes)",
+                        buffer.len()
+                    ))));
+                }
+            }
+            std::task::Poll::Pending => return std::task::Poll::Pending,
+        }
+    });
     Ok((
         crate::core::runtime_contracts::RuntimeStreamContinuation::BytesSse,
-        Box::pin(
-            response
-                .bytes_stream()
-                .map(|item| item.map_err(Into::into))
-                .map(|item| item.map(|bytes| crate::core::runtime_contracts::RuntimeStreamEvent::RawBytes { bytes: bytes.to_vec() })),
-        ),
+        Box::pin(stream),
     ))
 }
 
