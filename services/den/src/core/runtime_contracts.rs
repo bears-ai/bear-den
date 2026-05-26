@@ -123,6 +123,11 @@ pub enum RuntimeStreamContinuation {
 
 pub type RuntimeByteStream =
     Pin<Box<dyn Stream<Item = Result<Bytes, crate::errors::CustomError>> + Send + 'static>>;
+pub type RuntimeEventStream = Pin<
+    Box<
+        dyn Stream<Item = Result<RuntimeStreamEvent, crate::errors::CustomError>> + Send + 'static,
+    >,
+>;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CancelTurnResult {
@@ -132,6 +137,7 @@ pub struct CancelTurnResult {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum RuntimeStreamEvent {
+    RawBytes { bytes: Vec<u8> },
     ConversationResolved { conversation: RuntimeConversationRef },
     AssistantTextDelta { text: String },
     AssistantMessageCompleted { message_id: Option<String> },

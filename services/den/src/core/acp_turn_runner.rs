@@ -457,7 +457,7 @@ pub async fn continue_acp_turn_with_runtime(
 ) -> Result<
     (
         crate::core::runtime_contracts::RuntimeStreamContinuation,
-        crate::core::runtime_contracts::RuntimeByteStream,
+        crate::core::runtime_contracts::RuntimeEventStream,
     ),
     CustomError,
 > {
@@ -485,7 +485,12 @@ pub async fn continue_acp_turn_with_runtime(
         .await?;
     Ok((
         crate::core::runtime_contracts::RuntimeStreamContinuation::BytesSse,
-        Box::pin(response.bytes_stream().map(|item| item.map_err(Into::into))),
+        Box::pin(
+            response
+                .bytes_stream()
+                .map(|item| item.map_err(Into::into))
+                .map(|item| item.map(|bytes| crate::core::runtime_contracts::RuntimeStreamEvent::RawBytes { bytes: bytes.to_vec() })),
+        ),
     ))
 }
 

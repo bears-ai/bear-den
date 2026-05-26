@@ -5041,7 +5041,7 @@ enum AcpPendingFuture {
                         Output = Result<
                             (
                                 crate::core::runtime_provider::RuntimeStreamContinuation,
-                                crate::core::runtime_provider::RuntimeByteStream,
+                                crate::core::runtime_provider::RuntimeEventStream,
                             ),
                             CustomError,
                         >,
@@ -5643,10 +5643,24 @@ impl Stream for AcpLettaSseStream {
                         Ok((stream_kind, stream)) => {
                             match stream_kind {
                                 crate::core::runtime_provider::RuntimeStreamContinuation::BytesSse => {
-                                    this.inner = stream;
+                                    this.inner = Box::pin(stream.map(|item| {
+                                        item.and_then(|event| match event {
+                                            crate::core::runtime_provider::RuntimeStreamEvent::RawBytes { bytes } => Ok(Bytes::from(bytes)),
+                                            other => Err(CustomError::System(format!(
+                                                "unexpected runtime continuation event in ACP byte-stream bridge: {other:?}"
+                                            ))),
+                                        })
+                                    }));
                                 }
                                 crate::core::runtime_provider::RuntimeStreamContinuation::Deferred => {
-                                    this.inner = stream;
+                                    this.inner = Box::pin(stream.map(|item| {
+                                        item.and_then(|event| match event {
+                                            crate::core::runtime_provider::RuntimeStreamEvent::RawBytes { bytes } => Ok(Bytes::from(bytes)),
+                                            other => Err(CustomError::System(format!(
+                                                "unexpected deferred runtime continuation event in ACP byte-stream bridge: {other:?}"
+                                            ))),
+                                        })
+                                    }));
                                 }
                             }
                             return self.poll_next(cx);
