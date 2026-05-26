@@ -56,10 +56,40 @@ pub struct StartTurnRequest {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum RuntimeToolResultStatus {
+    Ok,
+    Error,
+    Timeout,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum RuntimeApprovalDecision {
+    Approve,
+    Deny,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum RuntimeContinuation {
+    ToolResult {
+        tool_call_id: String,
+        approval_request_id: Option<String>,
+        status: RuntimeToolResultStatus,
+        content: String,
+    },
+    ApprovalDecision {
+        approval_request_id: String,
+        tool_call_id: Option<String>,
+        decision: RuntimeApprovalDecision,
+        reason: Option<String>,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ContinueTurnRequest {
     pub conversation: RuntimeConversationRef,
     pub turn: Option<RuntimeTurnRef>,
-    pub payload: String,
+    pub binding: RoleRuntimeBinding,
+    pub continuation: RuntimeContinuation,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -74,6 +104,17 @@ pub struct CancelTurnRequest {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct StartTurnResult {
     pub turn: Option<RuntimeTurnRef>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ContinueTurnResult {
+    pub turn: Option<RuntimeTurnRef>,
+    pub stream: RuntimeStreamContinuation,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum RuntimeStreamContinuation {
+    Deferred,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -180,7 +221,7 @@ pub trait AcpTurnRunner {
     async fn continue_turn(
         &self,
         request: ContinueTurnRequest,
-    ) -> Result<Vec<RuntimeStreamEvent>, CustomError>;
+    ) -> Result<ContinueTurnResult, CustomError>;
 
     async fn cancel_turn(
         &self,

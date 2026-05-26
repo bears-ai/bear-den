@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use reqwest::Response;
+use serde_json::Value;
 use uuid::Uuid;
 
 use crate::{
@@ -11,7 +12,8 @@ use crate::{
         pair_turn::{post_pair_turn_messages_streaming, PairTurnBoundaryLog, PairTurnRequest},
         runtime_contracts::{
             AcpTurnRunner, CancelTurnRequest, CancelTurnResult, ContinueTurnRequest,
-            RoleRuntimeBinding, RuntimeConversationRef, RuntimeStreamEvent, RuntimeTurnRef,
+            ContinueTurnResult, RoleRuntimeBinding, RuntimeApprovalDecision,
+            RuntimeContinuation, RuntimeConversationRef, RuntimeToolResultStatus,
             StartTurnRequest, StartTurnResult,
         },
     },
@@ -42,6 +44,22 @@ pub struct AcpStaleRuntimeCleanupParams {
     pub run_ids: Vec<String>,
     pub reason: &'static str,
     pub request_id: Uuid,
+}
+
+pub struct AcpTurnContinueRequest<'a> {
+    pub state: &'a ApiState,
+    pub request_id: Uuid,
+    pub acp_session_id: &'a str,
+    pub binding: &'a RoleRuntimeBinding,
+    pub continuation: RuntimeContinuation,
+    pub stream_context: AcpTurnStreamContext,
+}
+
+#[derive(Debug, Clone)]
+pub struct AcpTurnStreamContext {
+    pub client_tools: Option<Value>,
+    pub stream_tokens: bool,
+    pub max_steps: u32,
 }
 
 pub struct LettaAcpTurnRunner<'a> {
@@ -143,6 +161,85 @@ async fn post_turn(
 }
 
 impl<'a> LettaAcpTurnRunner<'a> {
+    fn continuation_context(
+        &self,
+        conversation: &RuntimeConversationRef,
+        binding: &RoleRuntimeBinding,
+        stream: &AcpTurnStreamContext,
+    ) -> crate::core::letta::LettaContinuationContext {
+        crate::core::letta::LettaContinuationContext {
+            conversation_id: conversation.id.clone(),
+            agent_id: Some(binding.binding_id.clone()),
+            client_tools: stream.client_tools.clone(),
+            stream_tokens: stream.stream_tokens,
+            max_steps: stream.max_steps,
+        }
+    }
+
+    async fn continue_turn_response(
+        &self,
+        request: ContinueTurnRequest,
+        stream: &AcpTurnStreamContext,
+    ) -> Result<Response, CustomError> {
+        let session_id = request.conversation.id.as_str();
+        let context = self.continuation_context(&request.conversation, &request.binding, stream);
+        match request.continuation {
+            RuntimeContinuation::ToolResult {
+                tool_call_id,
+                approval_request_id,
+                status,
+                content,
+            } => {
+                let status = match status {
+                    RuntimeToolResultStatus::Ok => "ok",
+                    RuntimeToolResultStatus::Error => "error",
+                    RuntimeToolResultStatus::Timeout => "timeout",
+                };
+                let response = self
+                    .state
+                    .letta
+                    .post_conversation_tool_returns_streaming(
+                        &context,
+                        &tool_call_id,
+                        approval_request_id.as_deref(),
+                        status,
+                        &content,
+                    )
+                    .await?;
+                self.state.acp_tool_turns.cleanup_session(session_id);
+                Ok(response)
+            }
+            RuntimeContinuation::ApprovalDecision {
+                approval_request_id,
+                tool_call_id,
+                decision,
+                reason,
+            } => {
+                let approve = matches!(decision, RuntimeApprovalDecision::Approve);
+                let tool_call_id = tool_call_id.unwrap_or_default();
+                let content = if approve {
+                    reason.unwrap_or_else(|| "approved".to_string())
+                } else {
+                    reason.unwrap_or_else(|| "denied".to_string())
+                };
+                let status = if approve { "ok" } else { "error" };
+                let response = self
+                    .state
+                    .letta
+                    .post_conversation_tool_returns_streaming(
+                        &context,
+                        &tool_call_id,
+                        Some(&approval_request_id),
+                        status,
+                        &content,
+                    )
+                    .await?;
+                self.state.acp_tool_turns.cleanup_session(session_id);
+                Ok(response)
+            }
+        }
+    }
+
     async fn start_turn_response(
         &self,
         request: StartTurnRequest,
@@ -294,13 +391,19 @@ impl AcpTurnRunner for LettaAcpTurnRunner<'_> {
 
     async fn continue_turn(
         &self,
-        _request: ContinueTurnRequest,
-    ) -> Result<Vec<RuntimeStreamEvent>, CustomError> {
-        Ok(vec![RuntimeStreamEvent::WaitingForContinuation {
-            turn: Some(RuntimeTurnRef {
-                id: "letta-continuation-unimplemented".to_string(),
-            }),
-        }])
+        request: ContinueTurnRequest,
+    ) -> Result<ContinueTurnResult, CustomError> {
+        let turn = request.turn.clone();
+        let stream = AcpTurnStreamContext {
+            client_tools: None,
+            stream_tokens: false,
+            max_steps: 2,
+        };
+        let _response = self.continue_turn_response(request, &stream).await?;
+        Ok(ContinueTurnResult {
+            turn,
+            stream: crate::core::runtime_contracts::RuntimeStreamContinuation::Deferred,
+        })
     }
 
     async fn cancel_turn(
@@ -345,6 +448,33 @@ pub async fn start_acp_turn_with_retries(
             client_tools: request.client_tools,
             stream_tokens: request.stream_tokens,
         })
+        .await
+}
+
+pub async fn continue_acp_turn_with_runtime(
+    request: AcpTurnContinueRequest<'_>,
+) -> Result<Response, CustomError> {
+    let runner = LettaAcpTurnRunner {
+        state: request.state,
+        request_id: request.request_id,
+        runtime_context_len: 0,
+    };
+    let status = match request.continuation {
+        RuntimeContinuation::ToolResult { .. }
+        | RuntimeContinuation::ApprovalDecision { .. } => request.continuation,
+    };
+    runner
+        .continue_turn_response(
+            ContinueTurnRequest {
+                conversation: RuntimeConversationRef {
+                    id: request.acp_session_id.to_string(),
+                },
+                turn: None,
+                binding: request.binding.clone(),
+                continuation: status,
+            },
+            &request.stream_context,
+        )
         .await
 }
 

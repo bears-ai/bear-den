@@ -55,8 +55,9 @@ use crate::{
             AcpToolTurnRegistration,
         },
         acp_turn_runner::{
-            acp_cleanup_stale_runtime_state, start_acp_turn_with_retries,
-            AcpStaleRuntimeCleanupParams, AcpTurnStartRequest,
+            acp_cleanup_stale_runtime_state, continue_acp_turn_with_runtime,
+            start_acp_turn_with_retries, AcpStaleRuntimeCleanupParams,
+            AcpTurnContinueRequest, AcpTurnStartRequest, AcpTurnStreamContext,
             ACP_STALE_APPROVAL_RECOVERY_DENIAL_REASON,
         },
         acp_tools::{
@@ -71,6 +72,7 @@ use crate::{
         archived_conversations,
         bears::{db as bears_db, BearAgentRole},
         den_tools::{self, DenToolChannelContext, DenToolInvocationContext},
+        runtime_provider::{RoleRuntimeBinding, RuntimeContinuation},
         letta::{
             load_agent_conversations, normalize_display_status_text,
             sanitize_visible_transcript_text, LettaContinuationContext, PendingApprovalDenialMode,
@@ -5828,18 +5830,50 @@ impl Stream for AcpLettaSseStream {
                     let tool_return = tool_result.content.clone().unwrap_or_default();
                     let status = tool_result.status.clone();
                     let approval_request_id = tool_result.approval_request_id.clone();
-                    this.persist_future =
-                        Some(AcpPendingFuture::ContinueTool(Box::pin(async move {
-                            letta
-                                .post_conversation_tool_returns_streaming(
-                                    &continuation,
-                                    &tool_call_id,
-                                    approval_request_id.as_deref(),
-                                    &status,
-                                    &tool_return,
-                                )
-                                .await
-                        })));
+                    let config = this.context.config.clone();
+                    let api_state = ApiState {
+                        sqlx_pool: this.context.pool.clone(),
+                        config: config.clone(),
+                        letta: letta.clone(),
+                        bifrost: Arc::new(crate::core::bifrost::BifrostClient::new(config.as_ref())),
+                        acp_tool_turns: this.context.tool_turns.clone(),
+                        acp_turn_cancellations: crate::core::acp_turn_controller::AcpActiveTurnCancelRegistry::new(),
+                    };
+                    let binding = RoleRuntimeBinding {
+                        binding_id: continuation
+                            .agent_id
+                            .clone()
+                            .unwrap_or_else(|| this.context.pair_agent_id.clone()),
+                        compatibility_backend: Some("letta".to_string()),
+                    };
+                    let request_id = this.context.request_id;
+                    let acp_session_id = this.context.acp_session_id.clone();
+                    let continuation_request = RuntimeContinuation::ToolResult {
+                        tool_call_id: tool_call_id.clone(),
+                        approval_request_id,
+                        status: match status.as_str() {
+                            "ok" => crate::core::runtime_provider::RuntimeToolResultStatus::Ok,
+                            "timeout" => crate::core::runtime_provider::RuntimeToolResultStatus::Timeout,
+                            _ => crate::core::runtime_provider::RuntimeToolResultStatus::Error,
+                        },
+                        content: tool_return.clone(),
+                    };
+                    let stream_context = AcpTurnStreamContext {
+                        client_tools: continuation.client_tools.clone(),
+                        stream_tokens: continuation.stream_tokens,
+                        max_steps: continuation.max_steps,
+                    };
+                    this.persist_future = Some(AcpPendingFuture::ContinueTool(Box::pin(async move {
+                        continue_acp_turn_with_runtime(AcpTurnContinueRequest {
+                            state: &api_state,
+                            request_id,
+                            acp_session_id: &acp_session_id,
+                            binding: &binding,
+                            continuation: continuation_request,
+                            stream_context,
+                        })
+                        .await
+                    })));
                     self.poll_next(cx)
                 } else if this.diagnostics.saw_requires_approval_stop
                     && this.turn_controller.status_snapshot().open_obligations == 0

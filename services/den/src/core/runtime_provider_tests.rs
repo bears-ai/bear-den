@@ -3,9 +3,11 @@ mod tests {
     use crate::{
         config::Config,
         core::runtime_provider::{
-            acp_requires_letta_runtime, AcpTurnRunner, CancelTurnRequest, InteractionRunStore,
-            RetrievalService, RoleProfileRegistry, RoleRunner, RoleRuntimeBinding,
-            RuntimeConversationRef, RuntimeStartupCapabilities, ToolActuatorRegistry,
+            acp_requires_letta_runtime, AcpTurnRunner, CancelTurnRequest, ContinueTurnRequest,
+            ContinueTurnResult, InteractionRunStore, RetrievalService, RoleProfileRegistry,
+            RoleRunner, RoleRuntimeBinding, RuntimeApprovalDecision, RuntimeContinuation,
+            RuntimeConversationRef, RuntimeStartupCapabilities, RuntimeStreamContinuation,
+            RuntimeToolResultStatus, ToolActuatorRegistry,
         },
         errors::CustomError,
     };
@@ -89,9 +91,12 @@ mod tests {
 
         async fn continue_turn(
             &self,
-            _request: crate::core::runtime_provider::ContinueTurnRequest,
-        ) -> Result<Vec<crate::core::runtime_provider::RuntimeStreamEvent>, CustomError> {
-            Ok(vec![])
+            _request: ContinueTurnRequest,
+        ) -> Result<ContinueTurnResult, CustomError> {
+            Ok(ContinueTurnResult {
+                turn: None,
+                stream: RuntimeStreamContinuation::Deferred,
+            })
         }
 
         async fn cancel_turn(
@@ -119,18 +124,64 @@ mod tests {
         assert_eq!(RoleRunner::check_health(&noop).await.unwrap(), "ok");
         assert_eq!(InteractionRunStore::check_health(&noop).await.unwrap(), "ok");
         assert_eq!(RetrievalService::check_health(&noop).await.unwrap(), "ok");
+        let binding = RoleRuntimeBinding {
+            binding_id: "binding".to_string(),
+            compatibility_backend: Some("letta".to_string()),
+        };
+        let conversation = RuntimeConversationRef {
+            id: "conv-test".to_string(),
+        };
         assert!(AcpTurnRunner::preflight_hygiene(
             &noop,
-            &RoleRuntimeBinding {
-                binding_id: "binding".to_string(),
-                compatibility_backend: Some("letta".to_string()),
-            },
-            Some(&RuntimeConversationRef {
-                id: "conv-test".to_string(),
-            }),
+            &binding,
+            Some(&conversation),
             "test"
         )
         .await
         .is_ok());
+        assert_eq!(
+            AcpTurnRunner::continue_turn(
+                &noop,
+                ContinueTurnRequest {
+                    conversation: conversation.clone(),
+                    turn: None,
+                    binding: binding.clone(),
+                    continuation: RuntimeContinuation::ToolResult {
+                        tool_call_id: "call-1".to_string(),
+                        approval_request_id: Some("approval-1".to_string()),
+                        status: RuntimeToolResultStatus::Ok,
+                        content: "tool ok".to_string(),
+                    },
+                }
+            )
+            .await
+            .unwrap(),
+            ContinueTurnResult {
+                turn: None,
+                stream: RuntimeStreamContinuation::Deferred,
+            }
+        );
+        assert_eq!(
+            AcpTurnRunner::continue_turn(
+                &noop,
+                ContinueTurnRequest {
+                    conversation,
+                    turn: None,
+                    binding,
+                    continuation: RuntimeContinuation::ApprovalDecision {
+                        approval_request_id: "approval-2".to_string(),
+                        tool_call_id: Some("call-2".to_string()),
+                        decision: RuntimeApprovalDecision::Deny,
+                        reason: Some("user denied".to_string()),
+                    },
+                }
+            )
+            .await
+            .unwrap(),
+            ContinueTurnResult {
+                turn: None,
+                stream: RuntimeStreamContinuation::Deferred,
+            }
+        );
     }
 }
