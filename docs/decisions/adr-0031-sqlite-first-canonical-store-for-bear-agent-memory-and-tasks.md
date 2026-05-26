@@ -51,6 +51,8 @@ SQLite will store:
 - promotion/review records,
 - and change-tracking metadata.
 
+All writes to a Bear database will go through a **single logical write path** owned by application code. Within one process, that should be enforced with a dedicated write pool or connection configured for one writer. Across multiple processes, SQLite itself remains the serialization mechanism through WAL locking and `busy_timeout`; application pooling does not replace engine-level write serialization.
+
 Git remains the canonical store for human-authored artifacts such as:
 
 - skills documentation,
@@ -116,7 +118,7 @@ For the expected concurrent-reader / serialized-writer pattern, the SQLite confi
 - `PRAGMA synchronous=NORMAL;`
 - `PRAGMA busy_timeout=5000;`
 
-Write serialization should be explicit in application code where appropriate, for example with a dedicated `SqlitePool` write path configured with `max_connections(1)`.
+All writes should go through the single logical write path. In a single process, that should use a dedicated `SqlitePool` or connection configured with `max_connections(1)`. If multiple Bear roles write from separate processes, SQLite WAL locking and `busy_timeout` remain the actual cross-process serialization mechanism.
 
 These defaults are intended to keep the operational model simple while allowing readers to proceed concurrently and writers to wait briefly instead of failing immediately under modest contention.
 
@@ -262,20 +264,19 @@ Suggested fields:
 
 ### Change tracking
 
-All canonical appended records should participate in a monotonic ordering, either through:
+All canonical appended records must participate in one global monotonic ordering.
 
-- a shared append journal, or
-- a shared `sequence_no` allocation strategy across canonical tables.
+This ADR chooses an explicit **shared sequence allocator** for that purpose. Each logical write first allocates the next global sequence value from a dedicated sequence mechanism in SQLite, then uses that value in the canonical row or rows written by that operation. We accept this as a serialization point because replay, sync, and "what changed since X" depend on a single Bear-wide ordering.
 
-This supports:
+This ordering supports:
 
 - replay,
 - debugging,
 - entity history,
 - projection refresh,
-- and future export or replication workflows.
+- and future export workflows.
 
-If downstream replicas, caches, or exported views are introduced, consumer progress should be tracked explicitly, for example through a `replication_cursors` table.
+This ADR does **not** assume downstream replicas or local mirrors by default. If replicas, caches, or exported derivative stores are introduced later, that decision must explicitly re-evaluate drift and consistency tradeoffs rather than treating dual-store operation as the default path.
 
 ## Access model
 
@@ -284,6 +285,8 @@ The canonical SQLite database for a Bear is authoritative.
 Rust services and runtimes write through application code backed by `sqlx`, not through ad hoc file mutation or unmanaged shared state.
 
 Readers derive current state from append-only canonical records. Materialized projections may be introduced where useful, but append-only records remain the source of truth.
+
+`sqlx` compile-time query checking is part of the intended workflow. That means builds and CI must either run against an appropriate schema-backed database at compile time or commit the `.sqlx` offline cache needed for checked queries.
 
 This ADR does not fix the final hosting topology for each Bear database file. It selects SQLite as the canonical storage engine and `sqlx` as the primary Rust integration path.
 
@@ -328,7 +331,7 @@ This ADR does not define:
 - exact per-Bear file placement and lifecycle,
 - final runtime hosting topology for each canonical SQLite database,
 - full task state-machine semantics,
-- final Quack integration design,
+- any integration with Quack (a separate data-access/query protocol under evaluation),
 - skills storage beyond retaining git for human-authored artifacts,
 - or whether narrow future coordination primitives may use another backing store.
 
@@ -336,9 +339,9 @@ This ADR does not define:
 
 - define per-Bear SQLite database lifecycle and ownership,
 - define minimal canonical schemas for memory and task events,
-- define sequence/change-tracking strategy,
+- implement the shared global sequence allocator,
 - define migration strategy in Rust/`sqlx`,
 - define promotion/review flow in detail,
 - define task transition rules and ownership semantics,
 - define developer inspection/export tooling,
-- and evaluate Quack as a query/access interface over Bear state.
+- and evaluate whether Quack (a separate data-access/query protocol) should sit in front of Bear state later.
