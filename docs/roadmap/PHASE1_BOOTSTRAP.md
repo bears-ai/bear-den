@@ -141,7 +141,7 @@ services/den/
 **`bear_agents`**
 
 - `bear_id` UUID FK → bears ON DELETE CASCADE
-- `role` TEXT — `talk`, `pair`, `curate`, `work`, or `watch`
+- `role` TEXT — `chat`, `pair`, `review`, `work`, or `watch`
 - `letta_agent_id` TEXT NULL — Letta's agent id string for this role
 - `provisioning_status`, `last_synced_at`, `last_provisioning_error`, `created_at`, `updated_at`
 - Unique `(bear_id, role)`; active routing resolves through this table

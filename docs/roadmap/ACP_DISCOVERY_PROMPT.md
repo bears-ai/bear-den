@@ -1,5 +1,6 @@
 # ACP Discovery Prompt
 
+For the canonical role model and current role names, see [bear roles](../architecture/bear-roles.md).
 Status: historical discovery checklist kept for reference.
 
 Use this checklist as historical background from the period before the direct ACP runtime was implemented.

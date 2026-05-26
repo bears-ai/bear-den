@@ -1,5 +1,6 @@
 # First Bear Onboarding Plan
 
+For the canonical role model and current role names, see [bear roles](../../architecture/bear-roles.md).
 ## Summary
 
 New users with no bears should be sent directly into a guided "first bear" setup flow. The flow should use **heavy templates with simple language**: internally, templates materialize role contracts for the Bear's five internal roles and collect user steering/context; externally, users should feel like they are answering practical questions about how they want their Bear to work with them.
@@ -10,7 +11,7 @@ The goal is not merely to create a bear record. The goal is to introduce the pro
 
 A Bear should not feel like a generic chat window with a name. It should feel like one coherent assistant backed by specialized internal roles, with:
 
-- protected role contracts for `talk`, `pair`, `curate`, `work`, and `watch`
+- protected role contracts for `chat`, `pair`, `review`, `work`, and `watch`
 - user steering for working style and preferences
 - remembered/stable context
 - clear capabilities and boundaries
@@ -320,7 +321,7 @@ Each template should include:
 - short description
 - example tasks
 - default bear name
-- role contracts or role contract references for `talk`, `pair`, `curate`, `work`, and `watch`
+- role contracts or role contract references for `chat`, `pair`, `review`, `work`, and `watch`
 - setup questions that generate user steering
 - context questions that generate Bear context
 - capability expectations
@@ -340,7 +341,7 @@ A service should assemble role-specific prompts from:
 - user-provided Bear context
 - runtime/thread context when available
 
-This should avoid stringly ad hoc prompt construction in route handlers and preserve the internal `talk`, `pair`, `curate`, `work`, and `watch` boundaries.
+This should avoid stringly ad hoc prompt construction in route handlers and preserve the internal `chat`, `pair`, `review`, `work`, and `watch` boundaries.
 
 Expected enabling project: define role-aware context composition rules and test fixtures.
 

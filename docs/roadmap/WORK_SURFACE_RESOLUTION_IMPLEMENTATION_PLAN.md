@@ -1,5 +1,6 @@
 # Work-Surface Resolution Implementation Plan
 
+For the canonical role model and current role names, see [bear roles](../architecture/bear-roles.md).
 ## Status
 
 Draft. Follows the Pair Letta message-boundary and tool-discovery work.
@@ -235,7 +236,7 @@ Constraints:
 
 - role/session scoped,
 - not a memory write by itself,
-- no broad Bear-global claim unless curate later promotes it.
+- no broad Bear-global claim unless review later promotes it.
 
 ### 3.3 Update `session_info`
 
@@ -317,7 +318,7 @@ The Bear should not ask on every turn. It should ask when ambiguity materially a
 
 ## Related docs
 
-- `docs/concepts/MEMORY_MODEL.md`
+- `docs/concepts/../architecture/memory-model.md`
 - `docs/architecture/adr/bear-workplaces.md`
 - `docs/architecture/adr/pair-tool-discovery-and-scope-orientation.md`
 - `docs/planning/PAIR_TOOL_DISCOVERY_AND_SCOPE_POLICY.md`

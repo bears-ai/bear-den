@@ -20,12 +20,12 @@ This file is the canonical planning dashboard for `docs/planning/`. It should le
 | ACP `pair` direct local-tool runtime | Baseline runtime exists and has confirmed end-to-end local tool operation; current work is reliability and continuation hardening | [`ACP_DIRECT_LOCAL_TOOL_RUNTIME_PLAN.md`](ACP_DIRECT_LOCAL_TOOL_RUNTIME_PLAN.md), [`ACP_ADAPTER_IMPROVEMENT_PLAN.md`](ACP_ADAPTER_IMPROVEMENT_PLAN.md) |
 | Activity plans and ACP plan mode | Implemented baseline; current priority is Den-wide ontology alignment so workplan, activity, memory, and execution remain clearly separated across reminders, APIs, operators, and UI | [`TASK_SYSTEM_IMPLEMENTATION_PLAN.md`](TASK_SYSTEM_IMPLEMENTATION_PLAN.md), [`../architecture/adr/workflow-state-ontology.md`](../architecture/adr/workflow-state-ontology.md) |
 | Memory tools | Partial implementation / active follow-up, especially for `pair`; must align with the workflow-state ontology so semantic memory is structurally distinct from workplan artifacts, activity state, and execution state | [`MEMORY_TOOLS_IMPLEMENTATION_PLAN.md`](MEMORY_TOOLS_IMPLEMENTATION_PLAN.md), [`../architecture/adr/workflow-state-ontology.md`](../architecture/adr/workflow-state-ontology.md) |
-| Reflection and memory governance | MVP schema/storage foundation exists; full curate review and promotion runtime remains active follow-up work | [`CURATE_MEMORY_GOVERNANCE_PLAN.md`](CURATE_MEMORY_GOVERNANCE_PLAN.md), [`REFLECTION_SYSTEM_PLAN.md`](REFLECTION_SYSTEM_PLAN.md) |
+| Reflection and memory governance | MVP schema/storage foundation exists; full review review and promotion runtime remains active follow-up work | [`CURATE_MEMORY_GOVERNANCE_PLAN.md`](CURATE_MEMORY_GOVERNANCE_PLAN.md), [`REFLECTION_SYSTEM_PLAN.md`](REFLECTION_SYSTEM_PLAN.md) |
 
 ### Current implementation picture
 
 - **Phase 1 Den bootstrap remains the broad platform track.** [`PHASE1_BOOTSTRAP.md`](PHASE1_BOOTSTRAP.md) and [`PHASE1_DECISIONS.md`](PHASE1_DECISIONS.md) are still the top-level source for the first deployable Den stack, operator console, web chat path, Letta Code harnessing, routines, and Garage/artifacts decisions.
-- **Multi-role BEARS is no longer just conceptual.** [`MULTI_ROLE_RUNTIME_IMPLEMENTATION_PLAN.md`](MULTI_ROLE_RUNTIME_IMPLEMENTATION_PLAN.md) documents a meaningful implemented baseline: additive role-scoped schema exists, role-scoped routing is active, the legacy single-agent `bears.letta_agent_id` model is retired, and the current runtime queue is focused on task intent capture, curate review, work dispatch, watch ingestion, and trust-boundary hardening.
+- **Multi-role BEARS is no longer just conceptual.** [`MULTI_ROLE_RUNTIME_IMPLEMENTATION_PLAN.md`](MULTI_ROLE_RUNTIME_IMPLEMENTATION_PLAN.md) documents a meaningful implemented baseline: additive role-scoped schema exists, role-scoped routing is active, the legacy single-agent `bears.letta_agent_id` model is retired, and the current runtime queue is focused on task intent capture, review review, work dispatch, watch ingestion, and trust-boundary hardening.
 - **ACP for `pair` has changed direction and is now real.** The canonical path is the **direct Den ⇄ adapter ⇄ Letta conversation API runtime** in [`ACP_DIRECT_LOCAL_TOOL_RUNTIME_PLAN.md`](ACP_DIRECT_LOCAL_TOOL_RUNTIME_PLAN.md), with current hardening work captured in [`ACP_ADAPTER_IMPROVEMENT_PLAN.md`](ACP_ADAPTER_IMPROVEMENT_PLAN.md). Older Codepool relay documents are historical only.
 - **Work planning now has two layers.** [`TASK_SYSTEM_IMPLEMENTATION_PLAN.md`](TASK_SYSTEM_IMPLEMENTATION_PLAN.md) distinguishes Den live **activity** plans from the ACP `pair` **workplan** approval gate. This is the active planning/status model rather than older ad hoc plan ideas.
 - **Workplan artifacts are not semantic memory.** Even where current implementation still stores a durable markdown artifact under `pair/plans/`, that artifact is part of the workplan domain, not a MemFS semantic-memory document and not part of the `den.memory.*` tool family.
@@ -44,9 +44,9 @@ This file is the canonical planning dashboard for `docs/planning/`. It should le
 
 1. Continue Den Phase 1/bootstrap work for deployability, auth, operator UX, web chat, and provisioning.
 2. Complete the current multi-role runtime queue in [`MULTI_ROLE_RUNTIME_IMPLEMENTATION_PLAN.md`](MULTI_ROLE_RUNTIME_IMPLEMENTATION_PLAN.md):
-   - task intent capture for `talk` and `pair`
+   - task intent capture for `chat` and `pair`
    - skill proposal/review lifecycle
-   - curate review runtime
+   - review review runtime
    - work dispatcher and result lifecycle
    - watch ingestion and observation lifecycle
    - trust-boundary hardening and end-to-end proof
@@ -81,7 +81,7 @@ This file is the canonical planning dashboard for `docs/planning/`. It should le
 - [Workflow state ontology ADR](../architecture/adr/workflow-state-ontology.md) — unify workplan, activity, memory, and execution state now rather than as a later cleanup, and align all remaining Den surfaces to that ontology.
 - [Task system implementation](TASK_SYSTEM_IMPLEMENTATION_PLAN.md) — live activity plans, workplan approval gates, handoff, and task runtime.
 - [Memory tools implementation](MEMORY_TOOLS_IMPLEMENTATION_PLAN.md) — role-facing Den memory tools.
-- [Curate memory governance](CURATE_MEMORY_GOVERNANCE_PLAN.md) — review and promotion of memory into `core/`.
+- [Review memory governance](CURATE_MEMORY_GOVERNANCE_PLAN.md) — review and promotion of memory into `core/`.
 - [Reflection system](REFLECTION_SYSTEM_PLAN.md) — reflection lanes and review architecture.
 - [ACP direct local tool runtime](ACP_DIRECT_LOCAL_TOOL_RUNTIME_PLAN.md) — canonical ACP `pair` local-tool architecture.
 - [ACP adapter improvement plan](ACP_ADAPTER_IMPROVEMENT_PLAN.md) — active ACP hardening follow-up.
@@ -93,7 +93,7 @@ This file is the canonical planning dashboard for `docs/planning/`. It should le
 - [Live dev stack](LIVE_DEV_STACK_PLAN.md) — development-environment support work, not the primary delivery spine.
 - [Memory automation roadmap](MEMORY_AUTOMATION_ROADMAP.md) — canonical implementation tracker for pair reflection, memory proposals, `memory_curate`, archives, and work-context bridge.
 - [Reflection system shared infrastructure](REFLECTION_SYSTEM_PLAN.md) — focused queue/runner/scheduler design.
-- [Curate memory governance](CURATE_MEMORY_GOVERNANCE_PLAN.md) — focused memory proposal and core-write governance design.
+- [Review memory governance](CURATE_MEMORY_GOVERNANCE_PLAN.md) — focused memory proposal and core-write governance design.
 - [Pair reflection and work memory](PAIR_REFLECTION_AND_WORK_MEMORY_PLAN.md) — focused pair→curate→work boundary design.
 
 ### Reference design and downstream product plans
@@ -144,7 +144,7 @@ These remain useful as background, but should not drive new implementation witho
 - **Users ↔ bears (many‑to‑many)** — a **user** may access **many** bears (e.g. personal + household + project). A **bear** may be shared by **many** users (e.g. a household assistant). Den stores membership and enforces it on every chat and Cabinet call.
 - **Routine** — a **scheduled or triggered** unit of work managed in **Den** (Phase 1), **assigned to exactly one bear**; inherits that bear’s tools, policy, and membership context. **Where outputs are stored or shown** is **not yet fixed** — see [routines-automation.md](../architecture/adr/routines-automation.md).
 - **Den** — the **BEARS control plane and gateway** (also the **operations layer** in plain language): identity, **bear lifecycle** (provision Letta agents, surface bears in the **Den chat UI** and **Letta Code** harness config), **[routines](#routines-and-scheduled-work-phase-1-idea-5)** (DB-backed schedules + UI, Phase 1), **[skills catalog and per-bear attachments](https://docs.letta.com/letta-code/skills/)** (materialized for **Letta Code**; see [DEN_ARCHITECTURE.md](../architecture/DEN_ARCHITECTURE.md)), **local MCP server catalog and per-bear MCP attachments** (Phase 1, alongside skills; [DEN_ARCHITECTURE.md](../architecture/DEN_ARCHITECTURE.md)), routing, authz, Cabinet API, and **optional Bifrost observability reads** for the **Letta → Bifrost bear inference path** (details in [§2.5](#25-den-and-bifrost-observability-on-the-bear-path)). Den is the **system of record** for which users may use which bears, which skills each bear loads, **which MCP servers each bear may use**, and how they appear on **web** and **Slack** (**WhatsApp** desired upstream; not in Letta Code Channels yet).
-- **bear_id** / **letta_agent_id** / **role_agent_id** — **`bear_id`** is Den’s **public** identifier for a bear in JSON APIs (**v1:** `bear_id` only; see [PHASE1_DECISIONS.md](PHASE1_DECISIONS.md)). **`letta_agent_id`** is Letta’s internal id for **one** runtime agent; a bear may have **several** (per role). Runtime handoffs use **`role_agent_id`** for the selected role (talk / pair / curate / work / watch). The legacy **`bears.letta_agent_id`** column has been dropped; active routing reads `bear_agents`.
+- **bear_id** / **letta_agent_id** / **role_agent_id** — **`bear_id`** is Den’s **public** identifier for a bear in JSON APIs (**v1:** `bear_id` only; see [PHASE1_DECISIONS.md](PHASE1_DECISIONS.md)). **`letta_agent_id`** is Letta’s internal id for **one** runtime agent; a bear may have **several** (per role). Runtime handoffs use **`role_agent_id`** for the selected role (talk / pair / review / work / watch). The legacy **`bears.letta_agent_id`** column has been dropped; active routing reads `bear_agents`.
 
 ---
 
@@ -160,7 +160,7 @@ These remain useful as background, but should not drive new implementation witho
    - **Manages MCP servers for each bear (Phase 1, with skills):** **local catalog** in Den (org-defined and curated third-party entries), optional **discovery** from the [official MCP Registry](https://modelcontextprotocol.io/registry) without requiring Den to proxy public servers; **per-bear attachments** using the **same catalog vs attachment pattern** as skills; **provisioning** of MCP server processes left to **Coolify** (Den stores connection metadata and policy, not generic process orchestration).
    - **Manages routines (Phase 1):** **first-class** **schedules** and **routine** definitions in Den (Postgres + operator UI); each routine is **bound to one bear**; **tooling and membership** match that bear. Execution uses **Letta Code** / Letta as the harness; **delivery of outputs** (artifacts vs dedicated conversation vs hybrid) remains **open** — see [routines-automation.md](../architecture/adr/routines-automation.md). **No automatic skill-learning** from unattended routine runs without explicit design ([PHASE1_DECISIONS.md](PHASE1_DECISIONS.md) decision **10**, [dynamic-skills-subagents.md](../architecture/adr/dynamic-skills-subagents.md)).
    - **User and Cabinet permissions:** membership tables (users↔bears); later, **Cabinet** ACLs per user and bear (decks, kinds, read/write)—enforced on Den’s Cabinet API.
-   - **Routes** web chat through **Letta Code** to the chosen bear's `talk` role agent; **channels** connect to Letta Code directly, still backed by the role-scoped Letta agent ids Den provisions.
+   - **Routes** web chat through **Letta Code** to the chosen bear's `chat` role agent; **channels** connect to Letta Code directly, still backed by the role-scoped Letta agent ids Den provisions.
    - **Auth** and **tool/model policies** (RBAC, gating, rate limits).
    - **Cabinet API** for bears (search/read/write), implemented against **Outline**.
    - **Bifrost (Phase 1 and bear chat paths):** On the **end-user bear inference path**, Den does **not** proxy model traffic: **Letta → Bifrost** (via `LLM_API_URL`). Den may still connect to Bifrost for **metrics, health checks, Prometheus scrapes, or log exports** (per your Bifrost version and config), and join that with Den’s `user_id` / `bear_id` / channel data where your logging pipeline allows. **Future flexibility:** Den may call models or gateways **directly** for **control-plane or operational** LLM work without changing the **Letta → Bifrost** path for bear chat.
@@ -302,7 +302,7 @@ Not exact APIs, but what each interface *does*.
   - Input: `{ user_token, channel, bear_id, message, conversation_id?, metadata }`
     - `user_token`: Den or upstream auth token → Den resolves to internal `user_id`.
     - `channel`: `"slack" | "whatsapp" | "web" | ..."`
-    - `bear_id`: which **bear** to talk to (Den’s id → selected role `letta_agent_id`; web chat uses `talk`), or default per-channel—**only if** this user is a member of that bear.
+    - `bear_id`: which **bear** to chat to (Den’s id → selected role `letta_agent_id`; web chat uses `chat`), or default per-channel—**only if** this user is a member of that bear.
     - `metadata`:
       - `channel_user_id`, `channel_conversation_id`, etc.
   - Behavior:
@@ -338,7 +338,7 @@ You can think of a single logical RPC from Den’s perspective:
 Where:
 
 - `user_id`: Den’s internal ID (stable across Slack/WhatsApp/web).
-- `bear_id`: Den’s **bear** key; resolves to the selected role's **`letta_agent_id`** and the harness binding Den configured (web chat uses `talk`; all web requests must pass **user↔bear** membership checks).
+- `bear_id`: Den’s **bear** key; resolves to the selected role's **`letta_agent_id`** and the harness binding Den configured (web chat uses `chat`; all web requests must pass **user↔bear** membership checks).
 - `channel_ctx`: `{ channel, channel_user_id, channel_conversation_id }`.
 - `session_ctx`: optional (recent messages, caller `conversation_id`, thread hints, etc.); **resolved canonically by Letta Code/Letta** in Phase 1.
 
@@ -364,7 +364,7 @@ Pseudo‑contract:
 - `cabinet_create(kind, title, body, properties) -> doc_id`
 - `cabinet_update(doc_id, body?, properties?) -> doc_id`
 
-Bears never talk directly to Outline; they call these tools, which **Den** implements on top of Outline APIs and policies.
+Bears never chat directly to Outline; they call these tools, which **Den** implements on top of Outline APIs and policies.
 
 #### b) User profile / preferences (optional but nice)
 

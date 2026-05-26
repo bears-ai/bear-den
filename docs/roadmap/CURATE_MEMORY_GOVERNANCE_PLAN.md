@@ -1,8 +1,9 @@
-# Curate memory governance plan
+# Review memory governance plan
 
+For the canonical role model and current role names, see [bear roles](../architecture/bear-roles.md).
 Status: focused design plan. Implementation status and sequencing live in [Memory Automation Roadmap](MEMORY_AUTOMATION_ROADMAP.md).
 
-This plan designs how memories move between role-local branches and shared Bear memory. It focuses on the `memory_curate` lane of BEARS **Reflection** system and the `curate` role as the only role allowed to integrate role-local memory into shared `core/` memory or propose/promote Cabinet updates.
+This plan designs how memories move between role-local branches and shared Bear memory. It focuses on the `memory_curate` lane of BEARS **Reflection** system and the `review` role as the only role allowed to integrate role-local memory into shared `core/` memory or propose/promote Cabinet updates.
 
 Related docs:
 
@@ -14,7 +15,7 @@ Related docs:
 - [MemFS Sidecar Repo Views ADR](../architecture/adr/memfs-sidecar-repo-views.md)
 - [Multi-role runtime architecture ADR](../architecture/adr/multi-role-runtime-architecture.md)
 - [Semantic memory context](../context/SEMANTIC_MEMORY.md)
-- [Memory model](../concepts/MEMORY_MODEL.md)
+- [Memory model](../concepts/../architecture/memory-model.md)
 
 ---
 
@@ -24,7 +25,7 @@ Give BEARS a governed, inspectable mechanism for memory movement:
 
 1. Role-local memories can remain local forever.
 2. Role-local memories can be proposed for promotion when useful beyond one role.
-3. `curate` can review all role branches and decide what to do.
+3. `review` can review all role branches and decide what to do.
 4. Approved durable shared knowledge is written to `core/`.
 5. Cabinet-worthy knowledge is proposed or written through Cabinet-specific workflows, not silently copied from MemFS.
 6. Every movement records provenance and leaves an audit trail.
@@ -37,7 +38,7 @@ Give BEARS a governed, inspectable mechanism for memory movement:
 ## Non-goals
 
 - Do not automatically promote all role memories.
-- Do not let `talk`, `pair`, `work`, or `watch` write directly to `core/`.
+- Do not let `chat`, `pair`, `work`, or `watch` write directly to `core/`.
 - Do not let `work` read channel branches or watch branches.
 - Do not require promoted memories to have Cabinet objects.
 - Do not treat Cabinet as a mirror of Bear memory.
@@ -62,13 +63,13 @@ A local memory that has been identified as potentially useful elsewhere.
 Candidate sources:
 
 - explicit proposal from the writing role;
-- `curate` finds it during review;
+- `review` finds it during review;
 - a human marks it for review in the Den UI;
 - a future Reflection heartbeat or event-triggered curation run surfaces it.
 
 ### Proposal
 
-A structured review object that asks `curate` to take an action.
+A structured review object that asks `review` to take an action.
 
 Proposal destinations:
 
@@ -92,19 +93,19 @@ Promotion should be a new commit with provenance, not a raw file copy.
 
 | Role | Memory responsibility |
 |---|---|
-| `talk` | Writes conversational role-local memory and may propose durable shared updates. |
+| `chat` | Writes conversational role-local memory and may propose durable shared updates. |
 | `pair` | Writes coding/pairing notes, logs, decisions, reflections, and summaries; may propose shared updates. |
 | `watch` | Writes observations/logs from inbound events; should not decide shared truth. |
 | `work` | Writes task/run-bound logs, decisions, summaries, and results; may propose durable lessons. |
-| `curate` | Reads all branches, reviews candidates/proposals, writes `core/`, rejects/no-ops noisy memory, and manages memory integration state. |
+| `review` | Reads all branches, reviews candidates/proposals, writes `core/`, rejects/no-ops noisy memory, and manages memory integration state. |
 
 ---
 
 ## Tool model
 
-### Read tools for `curate`
+### Read tools for `review`
 
-`curate` needs broad read access:
+`review` needs broad read access:
 
 | Canonical | Provider-safe | Purpose |
 |---|---|---|
@@ -121,7 +122,7 @@ Non-curate roles should not write `core/` or Cabinet directly. They can request 
 
 | Canonical | Provider-safe | Roles | Purpose |
 |---|---|---|---|
-| `den.memory.request_review` | `memory_request_review` | `talk`, `pair`, `work`, `watch` | Request curation of role-local memory without choosing the final outcome. |
+| `den.memory.request_review` | `memory_request_review` | `chat`, `pair`, `work`, `watch` | Request curation of role-local memory without choosing the final outcome. |
 
 `den.memory.request_review` supersedes narrower producer-side names such as `den.memory.propose_core_update`, `den.memory.propose_core_write`, and `den.memory.propose_cabinet_update`. The request may include a `suggested_action`, such as `summarize_into_core`, `promote_to_core`, `cabinet_update`, `skill_review`, `retain_role_local`, `delete_after_review`, `human_review`, or `unspecified`.
 
@@ -139,7 +140,7 @@ Initial `den.memory.request_review` input shape:
 - `sensitivity`: `normal`, `person`, `secret_risk`, `external_untrusted`, or `unknown`;
 - `requires_human`: optional human-review flag.
 
-### Review tools for `curate`
+### Review tools for `review`
 
 | Canonical | Provider-safe | Purpose |
 |---|---|---|
@@ -158,7 +159,7 @@ Candidate future tools:
 | Canonical | Provider-safe | Purpose |
 |---|---|---|
 | `cabinet.propose_update` | `cabinet_propose_update` | Create a Cabinet update proposal. |
-| `cabinet.create_or_update` | `cabinet_create_or_update` | Curate/human-approved Cabinet write. |
+| `cabinet.create_or_update` | `cabinet_create_or_update` | Review/human-approved Cabinet write. |
 | `cabinet.link_memory` | `cabinet_link_memory` | Record a link from memory entry to Cabinet object. |
 
 ---
@@ -328,15 +329,15 @@ Sync behavior:
 
 Agents may search attached archives, but shared archives should not be collaboratively maintained by every agent. Shared archive writes should go through Den/curate indexing workflows using `/v1/archives/{archive_id}/passages` rather than agent-scoped `archival_memory_insert`.
 
-`pair` can contribute technical notes to role-local memory and request curation. `curate` decides whether to index a summary into the Bear curated archive, a Cabinet Mission archive, Cabinet, or `core/`.
+`pair` can contribute technical notes to role-local memory and request curation. `review` decides whether to index a summary into the Bear curated archive, a Cabinet Mission archive, Cabinet, or `core/`.
 
 ## Core write strategy
 
-`curate` writes `core/` through Den-mediated tools, not raw arbitrary paths.
+`review` writes `core/` through Den-mediated tools, not raw arbitrary paths.
 
-The highest-risk part of this design is keeping `core/` clean. `core/` should not become an append-only dumping ground for role-local memories. Curate must be able to **dream**, consolidate, defragment, rewrite, and prune shared memory so `core/` remains compact, current, and useful.
+The highest-risk part of this design is keeping `core/` clean. `core/` should not become an append-only dumping ground for role-local memories. Review must be able to **dream**, consolidate, defragment, rewrite, and prune shared memory so `core/` remains compact, current, and useful.
 
-This makes memory maintenance a first-class curate responsibility, not a later cleanup task.
+This makes memory maintenance a first-class review responsibility, not a later cleanup task.
 
 ### Initial allowed core paths
 
@@ -366,7 +367,7 @@ Initial write modes:
 4. **Rewrite curated section** — replace a bounded generated/curated section with a cleaner summary.
 5. **Compact file** — summarize, deduplicate, and prune a whole `core/` file or a named section.
 
-Curate dreaming/defragmentation should prefer cleaned summaries over raw copies. Broad patch application can come later, but curate needs enough authority to maintain quality rather than only append.
+Review dreaming/defragmentation should prefer cleaned summaries over raw copies. Broad patch application can come later, but review needs enough authority to maintain quality rather than only append.
 
 ### Provenance
 
@@ -398,11 +399,11 @@ Do not require this for MVP if editing source frontmatter is too expensive. A DB
 
 ---
 
-## Curate run design
+## Review run design
 
-Curate is expected to be autonomous. Human intervention is a last resort for sensitive, ambiguous, or policy-blocked cases.
+Review is expected to be autonomous. Human intervention is a last resort for sensitive, ambiguous, or policy-blocked cases.
 
-Curate can run as:
+Review can run as:
 
 1. **Scheduled curation cycle** controlled by Den.
 2. **Event-triggered review** after enough proposals or memory activity accumulates.
@@ -410,7 +411,7 @@ Curate can run as:
 
 Initial implementation should support autonomous review first, with human review as an escalation path rather than the default path.
 
-A curate run prompt should include:
+A review run prompt should include:
 
 - Bear identity and purpose;
 - role, policy, and relevant Domains;
@@ -422,7 +423,7 @@ A curate run prompt should include:
 - explicit instruction to prefer concise `core/` summaries over copying raw logs;
 - explicit instruction that archive passages are derived indexes and should point back to canonical sources.
 
-Curate should produce one of:
+Review should produce one of:
 
 - approve core update;
 - propose Cabinet update;
@@ -442,7 +443,7 @@ For each selected memory file:
 
 - `Propose for core`
 - `Propose for Cabinet`
-- `Mark for curate review`
+- `Mark for review review`
 - `Mark local/final` (admin/curate only)
 
 ### Curation queue
@@ -481,7 +482,7 @@ Shows:
 - approve/reject forms;
 - resulting commit/path after approval.
 
-Human admins should be able to inspect, override, and manually review, but manual review is an operations fallback. The primary product posture is that the Bear can maintain its own memory through the curate role.
+Human admins should be able to inspect, override, and manually review, but manual review is an operations fallback. The primary product posture is that the Bear can maintain its own memory through the review role.
 
 ---
 
@@ -493,27 +494,27 @@ Detailed phase status, completed work, and next implementation steps are tracked
 
 ## Safety rules
 
-- `curate` is the only agent role that can approve shared `core/` writes.
+- `review` is the only agent role that can approve shared `core/` writes.
 - Human Bear admins can inspect, override, or manually approve through UI, but this is a fallback rather than the default workflow.
 - Non-curate roles can propose, not promote.
-- Work and watch should not see raw talk/pair memory except through `core/` or approved proposals.
+- Work and watch should not see raw chat/pair memory except through `core/` or approved proposals.
 - Promotion should summarize and distill; do not copy raw logs into `core/`.
 - Cabinet promotion requires separate Cabinet policy.
 - Letta Archives are derived indexes; Den/curate owns shared archive indexing.
 - Non-curate roles must not independently archive `core/` content.
-- Destructive cleanup remains admin/operator action, not curate autonomy.
+- Destructive cleanup remains admin/operator action, not review autonomy.
 
 ---
 
 ## Open questions
 
-1. Should proposals live only in Den DB, or also be mirrored into `curate/proposals/` for agent visibility?
+1. Should proposals live only in Den DB, or also be mirrored into `review/proposals/` for agent visibility?
 2. Should manual human approval and curate-agent approval use the same API path?
 3. Should source entry frontmatter be updated after approval, or is DB provenance sufficient for MVP?
 4. What are the first allowed `core/` paths and section conventions?
-5. Should `core/` writes live on the `curate` branch, a separate `core` branch, or a sidecar-managed projection into all role views?
+5. Should `core/` writes live on the `review` branch, a separate `core` branch, or a sidecar-managed projection into all role views?
 6. How should Cabinet proposal permissions differ from `core` proposal permissions?
-7. What bounded compaction/dreaming operations are safe enough for autonomous curate to perform without human approval?
+7. What bounded compaction/dreaming operations are safe enough for autonomous review to perform without human approval?
 8. What is the initial Bear archive attachment policy by role?
 9. How should Cabinet Mission archives be scoped and attached once Cabinet Missions and Bear↔Mission assignments are defined?
 10. Which `core/` sections should be indexed into Archives as summaries/pointers, and which should remain only in MemFS?
@@ -524,4 +525,4 @@ Detailed phase status, completed work, and next implementation steps are tracked
 
 Use [Memory Automation Roadmap](MEMORY_AUTOMATION_ROADMAP.md) for the current next step.
 
-The product priority remains: make curate activity visible and overrideable, while keeping routine memory governance autonomous rather than making human approval the normal path.
+The product priority remains: make review activity visible and overrideable, while keeping routine memory governance autonomous rather than making human approval the normal path.

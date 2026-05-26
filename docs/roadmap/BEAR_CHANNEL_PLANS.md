@@ -1,5 +1,6 @@
 # `bear_channel` Phase 7+ Plans
 
+For the canonical role model and current role names, see [bear roles](../architecture/bear-roles.md).
 This document captures planned work after the initial `bear_channel` migration. These items are intentionally **not implemented** in the phase that introduced `bear_channel` for Den web chat.
 
 See also: [`../architecture/BEAR_CHANNEL_AND_ACP.md`](../architecture/BEAR_CHANNEL_AND_ACP.md).

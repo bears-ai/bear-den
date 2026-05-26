@@ -1,5 +1,6 @@
 # Den model registry and Bifrost configuration plan
 
+For the canonical role model and current role names, see [bear roles](../architecture/bear-roles.md).
 Status: proposed implementation plan.
 
 This document describes a target architecture in which **Den** owns the canonical model capability registry and **Bifrost** acts as the execution plane. It also describes the current repository state, recommended metadata sources, and a migration path from the current Bifrost-first metadata approach.

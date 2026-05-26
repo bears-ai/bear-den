@@ -1,5 +1,6 @@
 # Reflection system shared infrastructure plan
 
+For the canonical role model and current role names, see [bear roles](../architecture/bear-roles.md).
 Status: focused shared-infrastructure plan. Implementation status and sequencing now live in [Memory Automation Roadmap](MEMORY_AUTOMATION_ROADMAP.md).
 
 This document describes the shared Reflection control-plane infrastructure that supports multiple BEARS maintenance and learning lanes. It intentionally avoids tracking lane-specific implementation phases; use the roadmap for current/pending work.
@@ -10,7 +11,7 @@ Related docs:
 - [Reflection System ADR](../architecture/adr/reflection-system.md) — durable architecture decision and risk boundaries.
 - [Reflection system concept](../concepts/REFLECTION_SYSTEM.md) — vocabulary, conductor model, heartbeats, and lanes.
 - [Reflection run taxonomy](../concepts/REFLECTION_RUN_TAXONOMY.md) — lane names and purposes.
-- [Curate memory governance plan](CURATE_MEMORY_GOVERNANCE_PLAN.md) — `memory_curate` lane behavior and proposal lifecycle.
+- [Review memory governance plan](CURATE_MEMORY_GOVERNANCE_PLAN.md) — `memory_curate` lane behavior and proposal lifecycle.
 - [Pair reflection and work memory plan](PAIR_REFLECTION_AND_WORK_MEMORY_PLAN.md) — pair-local memory sharing boundary.
 
 ---
@@ -91,7 +92,7 @@ Initial lanes:
 
 | Lane | Shared-infrastructure implication |
 |---|---|
-| `memory_curate` | First queued role-backed lane; uses memory proposals and daily curate conversations. |
+| `memory_curate` | First queued role-backed lane; uses memory proposals and daily review conversations. |
 | `archive_index` | Later Den/indexer lane; uses archive source-to-passage mappings. |
 | `health_check` | Low-risk lane useful for validating scheduler, events, and UI. |
 | `introspection` | Later role-backed or Den-assisted lane over telemetry. |
@@ -285,7 +286,7 @@ A generic runner should:
 8. Release locks.
 9. Surface activity in UI.
 
-Semantic decisions belong to the lane implementation, usually a role agent such as `curate`, not to ad hoc Den heuristics in the generic runner.
+Semantic decisions belong to the lane implementation, usually a role agent such as `review`, not to ad hoc Den heuristics in the generic runner.
 
 ---
 

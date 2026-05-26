@@ -1,5 +1,6 @@
 # Den Model Registry Schema and Sync Spec
 
+For the canonical role model and current role names, see [bear roles](../architecture/bear-roles.md).
 Status: proposed implementation spec.
 
 ## Objective

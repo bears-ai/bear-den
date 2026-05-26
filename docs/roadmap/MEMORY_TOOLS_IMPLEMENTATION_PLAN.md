@@ -1,5 +1,6 @@
 # Memory tools implementation plan
 
+For the canonical role model and current role names, see [bear roles](../architecture/bear-roles.md).
 Status: proposed implementation plan.
 
 This plan implements Den-hosted memory tools for BEARS agents, prioritizing the ACP/API-direct `pair` role.
@@ -12,7 +13,7 @@ Related docs:
 - [Bear Memory Tool Boundary ADR](../architecture/adr/bear-memory-tool-boundary.md)
 - [MemFS Sidecar Repo Views ADR](../architecture/adr/memfs-sidecar-repo-views.md)
 - [Semantic memory context](../context/SEMANTIC_MEMORY.md)
-- [Memory model](../concepts/MEMORY_MODEL.md)
+- [Memory model](../concepts/../architecture/memory-model.md)
 - [ACP direct local tool runtime](ACP_DIRECT_LOCAL_TOOL_RUNTIME_PLAN.md)
 - [Den-specific bear tools implementation plan](archives/DEN_SPECIFIC_TOOLS_PLAN.md)
 
@@ -83,18 +84,18 @@ For `pair`, read/search scope should include:
 
 - `pair/` role-local memory;
 - `core/` curated shared memory when available;
-- no access to `talk/`, `curate/`, `work/`, or `watch/` branches.
+- no access to `chat/`, `review/`, `work/`, or `watch/` branches.
 
 ### P2 — broaden read-only memory tools to other roles
 
 | Role | Read/search scope |
 |---|---|
-| `talk` | `talk/`, `core/` |
-| `curate` | all role branches and `core/` |
+| `chat` | `chat/`, `core/` |
+| `review` | all role branches and `core/` |
 | `work` | `work/`, `core/`, dispatched task context |
 | `watch` | `watch/`, `core/`, delivered event/subscription context |
 
-`talk` and `work` may still use native Letta Code memory tools for ordinary MemFS editing. Den read/search/status APIs remain useful for policy, diagnostics, and UI.
+`chat` and `work` may still use native Letta Code memory tools for ordinary MemFS editing. Den read/search/status APIs remain useful for policy, diagnostics, and UI.
 
 ### P3 — role-local write entries for selected roles
 
@@ -102,8 +103,8 @@ Extend `den.memory.write_entry` beyond `pair` only after pair is stable.
 
 | Role | Recommended write kinds | Notes |
 |---|---|---|
-| `talk` | `note`, `log`, `decision`, `reflection`, `scratch`, `summary` | Avoid replacing native Letta Code memory tools unless Den adds audit/policy value. |
-| `curate` | `note`, `log`, `decision`, `reflection`, `summary` | Useful for review notes and rejected-promotion rationale. |
+| `chat` | `note`, `log`, `decision`, `reflection`, `scratch`, `summary` | Avoid replacing native Letta Code memory tools unless Den adds audit/policy value. |
+| `review` | `note`, `log`, `decision`, `reflection`, `summary` | Useful for review notes and rejected-promotion rationale. |
 | `work` | `log`, `decision`, `summary`, `scratch` | Should usually be bound to a task/run. Prefer `write_run_result` for results. |
 | `watch` | `log`, `summary`, `scratch` | Prefer `write_observation` for observations. |
 
@@ -113,18 +114,18 @@ Future tools:
 
 | Canonical | Provider-safe | Roles | Purpose |
 |---|---|---|---|
-| `den.memory.request_review` | `memory_request_review` | `talk`, `pair`, `work`, `watch` | Request curation of role-local memory without choosing the final outcome. |
-| `den.memory.list_proposals` | `memory_list_proposals` | `curate` | List memory review proposals. |
-| `den.memory.read_proposal` | `memory_read_proposal` | `curate` | Read one memory review proposal with source pointers and status. |
-| `den.memory.resolve_proposal` | `memory_resolve_proposal` | `curate` | Resolve a proposal as approved, rejected, retained local, deferred, superseded, or human-review-needed. |
-| `den.memory.apply_core_update` | `memory_apply_core_update` | `curate` | Apply a reviewed `core/` update with provenance. |
-| `den.memory.supersede_entry` | `memory_supersede_entry` | `curate` | Mark or record that source memory has been superseded by a `core`/Cabinet outcome. |
-| `den.memory.history` | `memory_history` | role-scoped, curate broader | Inspect commit/file history. |
-| `den.memory.diff` | `memory_diff` | role-scoped, curate broader | Inspect diffs between commits or proposal states. |
+| `den.memory.request_review` | `memory_request_review` | `chat`, `pair`, `work`, `watch` | Request curation of role-local memory without choosing the final outcome. |
+| `den.memory.list_proposals` | `memory_list_proposals` | `review` | List memory review proposals. |
+| `den.memory.read_proposal` | `memory_read_proposal` | `review` | Read one memory review proposal with source pointers and status. |
+| `den.memory.resolve_proposal` | `memory_resolve_proposal` | `review` | Resolve a proposal as approved, rejected, retained local, deferred, superseded, or human-review-needed. |
+| `den.memory.apply_core_update` | `memory_apply_core_update` | `review` | Apply a reviewed `core/` update with provenance. |
+| `den.memory.supersede_entry` | `memory_supersede_entry` | `review` | Mark or record that source memory has been superseded by a `core`/Cabinet outcome. |
+| `den.memory.history` | `memory_history` | role-scoped, review broader | Inspect commit/file history. |
+| `den.memory.diff` | `memory_diff` | role-scoped, review broader | Inspect diffs between commits or proposal states. |
 | `den.memory.semantic_search` | `memory_semantic_search` | role-scoped by archive attachment/policy | Search Letta Archives as derived semantic indexes. |
-| `den.memory.index_curated_summary` | `memory_index_curated_summary` | `curate` / Den internal | Index selected curated summaries or pointers into Bear/mission Letta Archives. |
+| `den.memory.index_curated_summary` | `memory_index_curated_summary` | `review` / Den internal | Index selected curated summaries or pointers into Bear/mission Letta Archives. |
 
-`den.memory.request_review` supersedes narrower producer-side names such as `den.memory.propose_core_write` or `den.memory.propose_core_update`. The caller may provide a `suggested_action`, but `curate` decides the final outcome.
+`den.memory.request_review` supersedes narrower producer-side names such as `den.memory.propose_core_write` or `den.memory.propose_core_update`. The caller may provide a `suggested_action`, but `review` decides the final outcome.
 
 ### P5 — Letta Archives semantic retrieval
 
@@ -316,30 +317,30 @@ GET  /v1/management/bears/{bear_id}/roles/{role}/memory-files/{path}
 GET  /v1/management/bears/{bear_id}/roles/{role}/memory-search
 ```
 
-Endpoint naming can be adjusted during implementation; the important point is that Den talks to MemFS Manager, and agents talk to Den.
+Endpoint naming can be adjusted during implementation; the important point is that Den talks to MemFS Manager, and agents chat to Den.
 
 ### Role initialization
 
 Update canonical branch initialization to create conventional directories:
 
 ```text
-talk/notes/
-talk/logs/
-talk/decisions/
-talk/reflections/
-talk/scratch/
-talk/summaries/
+chat/notes/
+chat/logs/
+chat/decisions/
+chat/reflections/
+chat/scratch/
+chat/summaries/
 pair/notes/
 pair/logs/
 pair/decisions/
 pair/reflections/
 pair/scratch/
 pair/summaries/
-curate/notes/
-curate/logs/
-curate/decisions/
-curate/reflections/
-curate/summaries/
+review/notes/
+review/logs/
+review/decisions/
+review/reflections/
+review/summaries/
 work/logs/
 work/decisions/
 work/scratch/
@@ -353,8 +354,8 @@ Keep existing reserved directories:
 
 ```text
 pair/tasks/
-curate/core/tasks/
-curate/core/results/
+review/core/tasks/
+review/core/results/
 work/results/
 watch/observations/
 watch/subscriptions/
@@ -438,7 +439,7 @@ Write constraints:
 
 ### Future policy
 
-- `curate` can read all branches and eventually approve/reject promotions.
+- `review` can read all branches and eventually approve/reject promotions.
 - `work` writes should be task/run-bound.
 - `watch` writes should prefer `write_observation` for observations.
 - Person references require privacy review before adding person-specific memory write semantics.
@@ -538,8 +539,8 @@ Goal: make read/tree/search/status available beyond pair.
 Deliverables:
 
 1. Role matrix implementation.
-2. Curate can read all branches.
-3. Talk/work/watch scopes enforced.
+2. Review can read all branches.
+3. Chat/work/watch scopes enforced.
 4. Codepool or Letta Code integration decision for harness-backed roles.
 5. Tests by role.
 
@@ -549,7 +550,7 @@ Goal: add role-local semantic entries for roles where Den adds value.
 
 Deliverables:
 
-1. Enable `talk`, `curate`, `work`, and/or `watch` according to policy.
+1. Enable `chat`, `review`, `work`, and/or `watch` according to policy.
 2. Work writes require task/run binding when relevant.
 3. Watch observations remain behind `write_observation`; generic entries avoid `kind: observation` initially.
 4. Tests by role and kind.
@@ -561,8 +562,8 @@ Goal: implement governed memory lifecycle in a Reflection-compatible way.
 Deliverables:
 
 1. `den.memory.request_review` for producer roles, starting with `pair`.
-2. Curate proposal list/read.
-3. Curate proposal resolution through `den.memory.resolve_proposal`.
+2. Review proposal list/read.
+3. Review proposal resolution through `den.memory.resolve_proposal`.
 4. Constrained `core/` updates through `den.memory.apply_core_update` or equivalent structured core-write tools.
 5. History/diff APIs.
 6. UI-ready audit trail.
@@ -604,7 +605,7 @@ Add or extend stack smoke coverage for:
 1. Should P0 expose `den.memory.status`, or should status be included only in `den.session.info` until P1?
 2. Should role-local entry writes use only opaque IDs, or include optional safe display slugs?
 3. How much frontmatter parsing should P1 search implement versus deferring to UI work?
-4. Should `den.memory.write_entry` be visible to `talk` if native Letta Code memory tools are available?
+4. Should `den.memory.write_entry` be visible to `chat` if native Letta Code memory tools are available?
 5. Should `scratch` entries have automatic retention/cleanup, or just lifecycle metadata at first?
 6. Should person references be accepted as opaque strings in P0, or deferred until privacy policy is designed?
 

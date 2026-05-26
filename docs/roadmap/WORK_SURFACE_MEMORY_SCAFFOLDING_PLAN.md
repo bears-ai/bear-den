@@ -1,10 +1,11 @@
 # Work-Surface Memory Scaffolding Plan
 
+For the canonical role model and current role names, see [bear roles](../architecture/bear-roles.md).
 ## Purpose
 
 This document defines the first implementation slice for making BEARS memory easier to use across multiple **work surfaces** within a single Bear and Workplace.
 
-A **Workplace** is the role-scoped memory surface such as `pair`, `talk`, `curate`, `work`, or `watch`. A **work surface** is the durable Bear-level work setting described in `docs/architecture/adr/bear-workplaces.md`. Examples include repositories, services, deployments, Missions, projects, and other coherent long-running scopes of work.
+A **Workplace** is the role-scoped memory surface such as `pair`, `chat`, `review`, `work`, or `watch`. A **work surface** is the durable Bear-level work setting described in `docs/architecture/adr/bear-workplaces.md`. Examples include repositories, services, deployments, Missions, projects, and other coherent long-running scopes of work.
 
 The problem this plan addresses is simple: memory is Bear-scoped, but user questions are often work-surface-specific. Without predictable work-surface anchors, an agent may search all Bear memory and answer from the wrong slice of knowledge.
 

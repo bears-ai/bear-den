@@ -1,16 +1,17 @@
 # Memory Automation Roadmap
 
+For the canonical role model and current role names, see [bear roles](../architecture/bear-roles.md).
 Status: implementation roadmap; P0 pair-reflection proposal enqueue is implemented for ACP close.
 
-This roadmap sequences the remaining work needed for `pair` learning to become useful to `work` through reflection, curate governance, `core/`, Cabinet, task context, and Letta Archives.
+This roadmap sequences the remaining work needed for `pair` learning to become useful to `work` through reflection, review governance, `core/`, Cabinet, task context, and Letta Archives.
 
 Related docs:
 
 - [Pair Reflection and Work Memory Sharing Plan](PAIR_REFLECTION_AND_WORK_MEMORY_PLAN.md) — focused pair→curate→work boundary design.
-- [Curate Memory Governance Plan](CURATE_MEMORY_GOVERNANCE_PLAN.md) — focused memory proposal and core-write governance design.
+- [Review Memory Governance Plan](CURATE_MEMORY_GOVERNANCE_PLAN.md) — focused memory proposal and core-write governance design.
 - [Reflection System Shared Infrastructure Plan](REFLECTION_SYSTEM_PLAN.md) — queue, runner, scheduler, and shared control-plane design.
 - [Memory Tools Implementation Plan](MEMORY_TOOLS_IMPLEMENTATION_PLAN.md)
-- [Memory Model](../concepts/MEMORY_MODEL.md)
+- [Memory Model](../concepts/../architecture/memory-model.md)
 
 ---
 
@@ -22,7 +23,7 @@ pair learns useful workplace knowledge
 → pair reflection summarizes/consolidates pair memory
 → pair reflection creates `bear_memory_proposals`
 → queued `memory_curate` reflection run processes proposals
-→ curate updates core / indexes archives / prepares task context / creates Cabinet proposals
+→ review updates core / indexes archives / prepares task context / creates Cabinet proposals
 → work receives approved task context and can search permitted archives
 ```
 
@@ -30,7 +31,7 @@ pair learns useful workplace knowledge
 
 ---
 
-## P0 — Pair reflection to curate trigger
+## P0 — Pair reflection to review trigger
 
 Status: implemented for the ACP close path, except UI surfacing.
 
@@ -44,26 +45,26 @@ Pair reflection should immediately feed curation without waiting for manual huma
 2. ✅ Pair reflection creates a `bear_memory_proposals` row referencing that summary.
 3. ✅ Pair reflection enqueues a queued `bear_reflection_runs` row with `lane = memory_curate` and `trigger = pair_reflection`.
 4. ✅ ACP close remains responsive; curation does not run inline during ACP close.
-5. Pending: UI shows the generated proposal and queued curate run.
+5. Pending: UI shows the generated proposal and queued review run.
 
 ### Notes
 
 - The proposal uses `suggested_action: unspecified` initially.
 - The automatic proposal has `source_role = pair`, `source_paths = [pair/summaries/...]`, `sensitivity = normal`, and `requires_human = false`.
-- Curate decides final outcome.
+- Review decides final outcome.
 - Human review is an escalation path, not the default workflow.
 
 ---
 
-## P1 — Automated curate conductor
+## P1 — Automated review conductor
 
 ### Goal
 
-Make `curate` autonomous for memory review and `core/` cleanliness.
+Make `review` autonomous for memory review and `core/` cleanliness.
 
 ### Conversation policy
 
-Use one curate conversation per Bear + lane + UTC day.
+Use one review conversation per Bear + lane + UTC day.
 
 ```text
 conversation_key = memory_curate:YYYY-MM-DD
@@ -128,8 +129,8 @@ bear_id + lane + conversation_date
 A memory-review cycle should:
 
 1. Load pending proposals.
-2. Resolve or create the daily curate conversation.
-3. Prompt the curate role with bounded context.
+2. Resolve or create the daily review conversation.
+3. Prompt the review role with bounded context.
 4. Allow only approved Den memory/proposal tools.
 5. Record cycle state and outputs.
 6. Surface cycle activity in UI.
@@ -324,7 +325,7 @@ Attach curated pair-derived knowledge to approved `work` tasks.
 ```text
 pair memory / pair reflection
 → memory proposal
-→ curate review
+→ review review
 → task context attachment
 → work receives scoped context
 ```
@@ -332,7 +333,7 @@ pair memory / pair reflection
 ### Deliverables
 
 1. Extend task/work schemas with memory source refs and curated context excerpts.
-2. Curate can attach selected proposal summaries to task context.
+2. Review can attach selected proposal summaries to task context.
 3. Work task prompt includes:
    - curated summary;
    - source refs;
@@ -359,8 +360,8 @@ Keep shared memory clean and searchable.
 ### Deliverables
 
 1. `memory_apply_core_update` supports bounded append/create/replace workflows.
-2. Curate can compact `core/` files/sections.
-3. Curate can index curated summaries into Bear Archive.
+2. Review can compact `core/` files/sections.
+3. Review can index curated summaries into Bear Archive.
 4. UI shows source proposal → core path → archive passage mapping.
 5. Revert/rollback flow is designed for bad shared memory updates.
 
@@ -391,5 +392,5 @@ Humans should see what the system is doing and override when necessary, without 
 4. Next: surface generated proposals and queued reflection runs in UI.
 5. Later: add model-assisted pair reflection.
 6. Later: add Bear curated archive provisioning and index table.
-7. Add `memory_semantic_search` for curate/pair/work by policy.
+7. Add `memory_semantic_search` for review/pair/work by policy.
 8. Add work task context bridge.

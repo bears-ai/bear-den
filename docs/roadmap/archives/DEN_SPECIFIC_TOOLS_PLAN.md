@@ -1,11 +1,12 @@
 # Den-specific bear tools implementation plan
 
+For the canonical role model and current role names, see [bear roles](../../architecture/bear-roles.md).
 This plan defines the first implementation slice for **Den-hosted bear tools**: tools whose value comes from Den's control-plane state, identity, membership, policy, and capability registry.
 
 It follows:
 
-- [Den architecture: Den meta tools](../architecture/DEN_ARCHITECTURE.md#den-meta-tools-bears-control-plane-tools)
-- [Bear memory tool boundary ADR](../architecture/adr/bear-memory-tool-boundary.md)
+- [Den architecture: Den meta tools](../../architecture/DEN_ARCHITECTURE.md#den-meta-tools-bears-control-plane-tools)
+- [Bear memory tool boundary ADR](../../architecture/adr/bear-memory-tool-boundary.md)
 - [Bear capability management plan](BEAR_CAPABILITY_MANAGEMENT_PLAN.md)
 
 ## Boundary

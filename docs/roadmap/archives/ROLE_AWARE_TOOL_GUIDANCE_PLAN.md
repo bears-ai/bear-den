@@ -1,5 +1,6 @@
 # Role-Aware Tool Guidance Plan
 
+For the canonical role model and current role names, see [bear roles](../../architecture/bear-roles.md).
 This plan centralizes BEARS agent tool guidance so prompts, tool descriptors, tool results, ACP projection, and operator UI all use one Den-owned source of truth.
 
 ## Problem
@@ -257,17 +258,17 @@ Guidance must be role-aware from the start.
 - Write task/run results through run-result tooling, not ordinary memory, for task outputs.
 - Do not execute channel-originated plans directly; only approved tasks.
 
-### Talk
+### Chat
 
-`talk` guidance should cover:
+`chat` guidance should cover:
 
 - Use workboard only for user-visible multi-step conversational work.
 - Use handoff/task-intent pathways for autonomous/background work.
 - Do not pretend to run background work directly.
 
-### Curate
+### Review
 
-`curate` guidance should cover:
+`review` guidance should cover:
 
 - Review and promote, not raw-produce.
 - Treat role-local plans as candidate evidence, not shared truth.
@@ -322,7 +323,7 @@ Initial implementation can be read-only and static. It should use the same guida
 
 Recommended UI grouping:
 
-1. Role tabs/sections: `talk`, `pair`, `curate`, `work`, `watch`.
+1. Role tabs/sections: `chat`, `pair`, `review`, `work`, `watch`.
 2. Tool rows sorted by provider name.
 3. Expandable guidance details.
 4. Highlight tools available to the selected role.
@@ -415,7 +416,7 @@ Acceptance:
 Acceptance:
 
 - Codepool-facing Den tool descriptors include or can query guidance summaries.
-- `talk` and `work` prompts/context use the same guidance source where Den controls their tool profile.
+- `chat` and `work` prompts/context use the same guidance source where Den controls their tool profile.
 - Any Letta Code-native planning guidance remains conceptually aligned with Den guidance.
 
 ### Phase 7 — Future customization design hook

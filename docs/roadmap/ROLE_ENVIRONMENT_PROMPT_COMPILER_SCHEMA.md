@@ -1,5 +1,6 @@
 # Role Environment Prompt Compiler Schema
 
+For the canonical role model and current role names, see [bear roles](../architecture/bear-roles.md).
 ## Purpose
 This document defines the concrete schema for the first implementation of BEARS role-environment prompt construction.
 
@@ -275,7 +276,7 @@ The following schema types are intended as explicit enums in Rust implementation
 
 ### `BearRole`
 ```text
-BearRole = Talk | Pair | Curate | Work | Watch
+BearRole = Chat | Pair | Review | Work | Watch
 ```
 
 ### `PermissionMode`

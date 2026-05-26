@@ -1,7 +1,8 @@
 # Role Environment Prompt-Construction Implementation Plan
 
+For the canonical role model and current role names, see [bear roles](../architecture/bear-roles.md).
 ## Objective
-Implement the shared role-environment prompt-construction architecture described in [`ROLE_ENVIRONMENT_PROMPT_CONSTRUCTION_SPEC.md`](ROLE_ENVIRONMENT_PROMPT_CONSTRUCTION_SPEC.md), moving from prose-first prompt assembly toward schema-first, ontology-aware, role-general environment construction across `talk`, `pair`, `curate`, `work`, and `watch`.
+Implement the shared role-environment prompt-construction architecture described in [`ROLE_ENVIRONMENT_PROMPT_CONSTRUCTION_SPEC.md`](ROLE_ENVIRONMENT_PROMPT_CONSTRUCTION_SPEC.md), moving from prose-first prompt assembly toward schema-first, ontology-aware, role-general environment construction across `chat`, `pair`, `review`, `work`, and `watch`.
 
 This plan focuses on practical rollout sequencing, integration points, acceptance criteria, and the first concrete runtime slices. The concrete implementation-facing schema contract lives in [`ROLE_ENVIRONMENT_PROMPT_COMPILER_SCHEMA.md`](ROLE_ENVIRONMENT_PROMPT_COMPILER_SCHEMA.md).
 
@@ -14,7 +15,7 @@ The implementation should proceed in bounded phases:
 1. align terminology and planning docs around the role-general architecture;
 2. define the concrete runtime/compiler data model;
 3. ship the first structured rendering slice for `pair`;
-4. generalize the architecture to `curate` and `watch` as additional direct Letta/API role harnesses;
+4. generalize the architecture to `review` and `watch` as additional direct Letta/API role harnesses;
 5. separate transcript, runtime annotations, and compiled prompt artifacts;
 6. complete validation, observability, and operator-facing diagnostics.
 
@@ -130,12 +131,12 @@ Goal:
 - prove the architecture is truly shared by applying it beyond `pair`.
 
 Priority order:
-1. `curate`
+1. `review`
 2. `watch`
-3. `talk`
+3. `chat`
 4. `work` as appropriate for its runtime path
 
-#### 4.1 `curate`
+#### 4.1 `review`
 
 Emphasis:
 - memory governance
@@ -160,7 +161,7 @@ Tasks:
 - ensure observation-oriented current-turn state is represented cleanly.
 
 Acceptance criteria:
-- `curate` and `watch` can use the same outer prompt schema;
+- `review` and `watch` can use the same outer prompt schema;
 - specialization happens through structured role data and policy, not forked prompt architecture.
 
 ---
@@ -236,7 +237,7 @@ Deliverables:
 - standardized workflow/tool sections
 - initial deduplication pass
 
-### Phase D: `curate` and `watch` rollout
+### Phase D: `review` and `watch` rollout
 
 Deliverables:
 - role-specialized policy instances using the same architecture
@@ -282,7 +283,7 @@ Mitigation:
 
 ### Risk 2: Pair-specific assumptions leak back into the shared design
 Mitigation:
-- explicitly test the architecture against `curate` and `watch` before declaring it stable.
+- explicitly test the architecture against `review` and `watch` before declaring it stable.
 
 ### Risk 3: Hidden runtime state still leaks into the transcript
 Mitigation:
@@ -303,7 +304,7 @@ Mitigation:
 This implementation plan should be considered successful when:
 
 1. at least one active role (`pair`) is using schema-first structured environment rendering;
-2. at least two additional roles (`curate` and `watch`) can adopt the same outer architecture with role-specific policy instances;
+2. at least two additional roles (`review` and `watch`) can adopt the same outer architecture with role-specific policy instances;
 3. current-turn runtime state is rendered in a compact authoritative section;
 4. active progress/activity representation is clearly separated from workplan artifacts and durable memory;
 5. visible transcript content is separated from hidden runtime annotations and compiled prompt artifacts;

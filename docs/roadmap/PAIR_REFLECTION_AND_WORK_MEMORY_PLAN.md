@@ -1,17 +1,18 @@
 # Pair Reflection and Work Memory Sharing Plan
 
+For the canonical role model and current role names, see [bear roles](../architecture/bear-roles.md).
 Status: focused architecture/design plan. Implementation status and sequencing live in [Memory Automation Roadmap](MEMORY_AUTOMATION_ROADMAP.md).
 
-This plan defines the role boundary and data flow for making `pair` memory useful to `work` without exposing raw `pair/` memory. It assumes BEARS will go all the way to a dedicated **pair reflection loop** for improving `pair` role-local memory, and then use `curate` to share useful knowledge across spaces such as `core/`, Bear curated archives, Cabinet, and approved `work` task context.
+This plan defines the role boundary and data flow for making `pair` memory useful to `work` without exposing raw `pair/` memory. It assumes BEARS will go all the way to a dedicated **pair reflection loop** for improving `pair` role-local memory, and then use `review` to share useful knowledge across spaces such as `core/`, Bear curated archives, Cabinet, and approved `work` task context.
 
 Related docs:
 
 - [Memory Automation Roadmap](MEMORY_AUTOMATION_ROADMAP.md) — canonical implementation status and sequencing.
 - [Memory tools implementation plan](MEMORY_TOOLS_IMPLEMENTATION_PLAN.md)
-- [Curate memory governance plan](CURATE_MEMORY_GOVERNANCE_PLAN.md)
+- [Review memory governance plan](CURATE_MEMORY_GOVERNANCE_PLAN.md)
 - [Semantic Bear Memory ADR](../architecture/adr/semantic-bear-memory.md)
 - [Bear Charter and Cabinet Missions](../concepts/BEAR_CHARTER_AND_CABINET_MISSIONS.md)
-- [Memory model](../concepts/MEMORY_MODEL.md)
+- [Memory model](../concepts/../architecture/memory-model.md)
 
 ---
 
@@ -25,8 +26,8 @@ The target flow is:
 pair learns workplace knowledge
 → pair writes role-local memory
 → pair reflection consolidates pair-local memory
-→ curate reviews pair outputs and proposals
-→ curate shares durable knowledge through core/archive/Cabinet/task context
+→ review reviews pair outputs and proposals
+→ review shares durable knowledge through core/archive/Cabinet/task context
 → work consumes curated knowledge, not raw pair memory
 ```
 
@@ -36,7 +37,7 @@ pair learns workplace knowledge
 
 1. `pair` may learn things useful to `work`, but `work` should not read raw `pair/` memory.
 2. `pair` reflection maintains and improves `pair/` memory.
-3. `curate` governs cross-role sharing.
+3. `review` governs cross-role sharing.
 4. `core/` remains compact shared Bear orientation.
 5. Letta Archives are derived semantic retrieval indexes, not canonical memory.
 6. Cabinet is human-facing canonical shared knowledge.
@@ -50,7 +51,7 @@ pair learns workplace knowledge
 |---|---|
 | `pair` | Interactive coding/client collaboration. Writes role-local notes, logs, decisions, reflections, summaries, and review requests. |
 | Pair reflection loop | Background/session-end maintenance of `pair/`: summarize, deduplicate, identify durable learnings, request curation when useful. |
-| `curate` | Cross-role memory governance. Reads role branches, reviews proposals, keeps `core/` clean, indexes curated summaries, and prepares work-safe context. |
+| `review` | Cross-role memory governance. Reads role branches, reviews proposals, keeps `core/` clean, indexes curated summaries, and prepares work-safe context. |
 | `work` | Executes approved scoped tasks. Reads `core/`, `work/`, task context, and allowed archives; does not read raw `pair/`. |
 | Den | Orchestrates loops, stores proposal/activity state, enforces policy, writes audit records, and exposes UI. |
 
@@ -96,7 +97,7 @@ It should:
 - identify repeated failure modes;
 - clean noisy logs into useful summaries;
 - preserve human attribution from ACP token identity;
-- create review requests for `curate` when knowledge may benefit `core`, Cabinet, archives, or `work`;
+- create review requests for `review` when knowledge may benefit `core`, Cabinet, archives, or `work`;
 - avoid writing `core/` or Cabinet directly.
 
 ### Non-goals
@@ -107,7 +108,7 @@ Pair reflection must not:
 - write Cabinet;
 - create approved work tasks directly;
 - run external tools;
-- read `talk/`, `work/`, `watch/`, or `curate/` branches;
+- read `chat/`, `work/`, `watch/`, or `review/` branches;
 - become a sixth Bear role.
 
 It is a Den-orchestrated maintenance loop for the existing `pair` role.
@@ -152,7 +153,7 @@ pair/decisions/
 pair/notes/
 ```
 
-It may create Den DB review proposals for `curate`. Automatic ACP-close summary proposals are described and tracked in the roadmap.
+It may create Den DB review proposals for `review`. Automatic ACP-close summary proposals are described and tracked in the roadmap.
 
 It should prefer concise summaries over raw transcript copies.
 
@@ -198,13 +199,13 @@ Proposal fields should include:
   - Cabinet refs;
 - human attribution.
 
-The suggested action is only a hint. `curate` decides the final outcome.
+The suggested action is only a hint. `review` decides the final outcome.
 
 ---
 
-## Curate sharing outcomes
+## Review sharing outcomes
 
-Curate turns pair-local knowledge into forms `work` can safely use.
+Review turns pair-local knowledge into forms `work` can safely use.
 
 | Outcome | Destination | Work visibility |
 |---|---|---|
@@ -215,7 +216,7 @@ Curate turns pair-local knowledge into forms `work` can safely use.
 | Reusable procedure | Skill proposal/review | `work` may later use approved skill. |
 | No-op/reject | Proposal closed | Not visible to `work`. |
 
-Curate should distill and transform. It should not copy raw pair logs into `core` or task context.
+Review should distill and transform. It should not copy raw pair logs into `core` or task context.
 
 ---
 
@@ -234,9 +235,9 @@ Allowed:
 
 Denied:
 - raw pair/
-- raw talk/
+- raw chat/
 - raw watch/
-- raw curate/
+- raw review/
 ```
 
 When a task is created from pair learnings, Den/curate should attach:
@@ -252,7 +253,7 @@ When a task is created from pair learnings, Den/curate should attach:
 
 ## Letta Archives use
 
-Pair reflection and curate should not create a BEARS vector store.
+Pair reflection and review should not create a BEARS vector store.
 
 Use Letta Archives as derived indexes:
 
@@ -300,7 +301,7 @@ The Bear memory UI should surface:
 - inputs considered;
 - memory entries written;
 - memory proposals created;
-- curate decisions;
+- review decisions;
 - `core/` updates;
 - archive passages indexed;
 - task contexts generated for `work`.
@@ -320,7 +321,7 @@ Detailed phase status, completed work, and next implementation steps are tracked
 1. Should pair reflection use the same pair Letta agent, a separate temporary reflection run, or a dedicated lightweight reflection prompt runner?
 2. How much pair conversation content should reflection see versus only memory/tool activity summaries?
 3. What is the first pre-turn memory hint budget?
-4. Should pair reflection run before curate, or should curate be able to trigger pair reflection on demand?
+4. Should pair reflection run before curate, or should review be able to trigger pair reflection on demand?
 5. When should pair-derived knowledge become task context versus `core` versus archive?
 6. How should human-sensitive pair memories be redacted before `work` sees derived summaries?
 
@@ -328,4 +329,4 @@ Detailed phase status, completed work, and next implementation steps are tracked
 
 ## Recommended next step
 
-Use [Memory Automation Roadmap](MEMORY_AUTOMATION_ROADMAP.md) for the current next step. As of this design, the next product concern is still the same boundary: make pair memory useful through `curate`, while ensuring `work` consumes only curated context and never raw `pair/`.
+Use [Memory Automation Roadmap](MEMORY_AUTOMATION_ROADMAP.md) for the current next step. As of this design, the next product concern is still the same boundary: make pair memory useful through `review`, while ensuring `work` consumes only curated context and never raw `pair/`.

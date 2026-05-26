@@ -1,5 +1,6 @@
 # Pair Tool Discovery and Scope Policy
 
+For the canonical role model and current role names, see [bear roles](../architecture/bear-roles.md).
 ## Status
 
 Initial implementation slice complete. `session_info` is the canonical orientation descriptor, its output includes policy/activity state for ACP pair turns, and memory/workplan/ACP local tool descriptors now include scope and orientation guidance. User testing confirms the agent uses tools naturally without prompt suffix injection.
@@ -13,7 +14,7 @@ This policy complements:
 - `docs/planning/PAIR_LETTA_MESSAGE_BOUNDARY_PLAN.md`
 - `docs/planning/PAIR_ENVIRONMENT_PROMPT_CONSTRUCTION_SPEC.md`
 - `docs/planning/archives/CONTEXT_COMPOSITION_PLAN.md`
-- `docs/concepts/MEMORY_MODEL.md`
+- `docs/concepts/../architecture/memory-model.md`
 
 The central problem is that Bear conversations contain layered context: platform invariants, Bear identity, role/Workplace contract, work-surface grounding, thread state, turn-local runtime state, and execution/tool state. Tool discovery must respect those layers.
 
@@ -54,7 +55,7 @@ The central problem is that Bear conversations contain layered context: platform
 
 ## Scope model
 
-Use the scope hierarchy from `MEMORY_MODEL.md`:
+Use the scope hierarchy from `../architecture/memory-model.md`:
 
 ```text
 Bear

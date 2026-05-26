@@ -1,5 +1,6 @@
 # macOS Bears client app implementation plan
 
+For the canonical role model and current role names, see [bear roles](../architecture/bear-roles.md).
 Status: proposed implementation plan.
 
 ## Goal
@@ -738,5 +739,5 @@ Future iOS/iPadOS tests should verify that shared UI/state code builds without h
 - [ACP direct local tool runtime implementation plan](ACP_DIRECT_LOCAL_TOOL_RUNTIME_PLAN.md)
 - [ACP Adapter Improvement Plan](ACP_ADAPTER_IMPROVEMENT_PLAN.md)
 - [Phase 1 bootstrap plan](PHASE1_BOOTSTRAP.md)
-- [Bears and Den](../concepts/BEARS_AND_DEN.md)
+- [Bears and Den](../concepts/../architecture/bears-and-den.md)
 - [Identity and Membership](../concepts/IDENTITY_AND_MEMBERSHIP.md)

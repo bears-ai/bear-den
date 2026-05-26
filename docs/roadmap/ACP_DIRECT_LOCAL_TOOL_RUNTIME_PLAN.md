@@ -1,5 +1,6 @@
 # ACP direct local tool runtime implementation plan
 
+For the canonical role model and current role names, see [bear roles](../architecture/bear-roles.md).
 Status: proposed implementation plan.
 
 Owner boundary: `bears-acp-adapter` is the local ACP stdio edge and owns calls to editor/client capabilities. Den is the auth, policy, audit, session, and Letta conversation gateway. Letta remains the durable conversation/memory service. Codepool/Letta Code are not in the ACP direct path.

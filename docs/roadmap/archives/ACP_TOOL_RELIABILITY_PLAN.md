@@ -1,5 +1,6 @@
 # ACP tool reliability plan — historical Codepool waiter design
 
+For the canonical role model and current role names, see [bear roles](../../architecture/bear-roles.md).
 Status: historical / superseded for ACP direct mode. Do not use this as the active implementation plan for `pair` role ACP tools.
 
 This plan documents reliability work for the older Codepool/Letta Code external-tool waiter relay. ACP direct local tools now use Den's direct Letta conversation API path and the Den ⇄ adapter tool-turn runtime. Use [`ACP_DIRECT_LOCAL_TOOL_RUNTIME_PLAN.md`](ACP_DIRECT_LOCAL_TOOL_RUNTIME_PLAN.md) for active implementation work. The diagnostics principles here remain useful background, but the Codepool waiter architecture is not the target for ACP direct mode.

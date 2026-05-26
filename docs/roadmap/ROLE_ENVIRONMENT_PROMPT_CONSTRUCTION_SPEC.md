@@ -1,9 +1,10 @@
 # Role Environment Prompt-Construction Spec
 
+For the canonical role model and current role names, see [bear roles](../architecture/bear-roles.md).
 ## Objective
 Refactor BEARS role-environment construction from prose-first concatenation into schema-first prompt assembly with explicit layer separation, compact operational summaries, structured policies, initiative configuration, context accounting, memory policy, and environment feedback support.
 
-This spec defines a shared prompt-construction architecture for BEARS role environments. Role-specific environments such as `talk`, `pair`, `curate`, `work`, and `watch` should all be composed from the same layered model, with role contracts and runtime capabilities providing specialization. `pair` is the first concrete worked example, not the exclusive target.
+This spec defines a shared prompt-construction architecture for BEARS role environments. Role-specific environments such as `chat`, `pair`, `review`, `work`, and `watch` should all be composed from the same layered model, with role contracts and runtime capabilities providing specialization. `pair` is the first concrete worked example, not the exclusive target.
 
 ---
 
@@ -11,7 +12,7 @@ This spec defines a shared prompt-construction architecture for BEARS role envir
 
 This specification applies to all Bear roles.
 
-It is especially relevant to direct Letta/API role harnesses such as `pair`, `curate`, and `watch`, where prompt assembly, runtime state, tool capability boundaries, memory boundaries, and workflow ontology must remain legible both to the agent and to operators.
+It is especially relevant to direct Letta/API role harnesses such as `pair`, `review`, and `watch`, where prompt assembly, runtime state, tool capability boundaries, memory boundaries, and workflow ontology must remain legible both to the agent and to operators.
 
 The architecture should be shared across roles, while role-specific behavior should be expressed through structured role contracts, capability policies, workflow policies, and runtime context rather than ad hoc prompt forks.
 
@@ -41,9 +42,9 @@ This means the context-composition model remains the conceptual authoring archit
 
 Different roles will emphasize different policy areas:
 
-- `talk` emphasizes conversational steering, user interaction, and handoff clarity.
+- `chat` emphasizes conversational steering, user interaction, and handoff clarity.
 - `pair` emphasizes collaborative client-mediated tool use, live activity/progress tracking, and mutation/execution boundaries.
-- `curate` emphasizes semantic integration, review authority, memory governance, and durable knowledge boundaries.
+- `review` emphasizes semantic integration, review authority, memory governance, and durable knowledge boundaries.
 - `work` emphasizes approved execution, task authorization, and result/reporting flows.
 - `watch` emphasizes observation, event interpretation, and boundaries between observation, activity, memory, and execution.
 
@@ -212,7 +213,7 @@ Fields:
 
 Purpose:
 - Clarifies what should and should not become durable memory.
-- Especially important for roles like `curate`, but should be explicit across all roles.
+- Especially important for roles like `review`, but should be explicit across all roles.
 
 ### 3.9 EnvironmentFeedbackPolicy
 Fields:
@@ -301,7 +302,7 @@ Requirements:
 - Use `enter_plan_mode` / `exit_plan_mode` when a durable markdown implementation plan artifact is specifically needed for approval, review, or audit.
 - Do not substitute memory entries or stored artifacts for active plan state.
 
-Note: this policy will be most directly relevant to interactive roles such as `pair` and `talk`, but the architecture should preserve the same distinction across other roles so that `curate`, `work`, and `watch` do not collapse activity, workplan, memory, and execution into one undifferentiated layer.
+Note: this policy will be most directly relevant to interactive roles such as `pair` and `chat`, but the architecture should preserve the same distinction across other roles so that `review`, `work`, and `watch` do not collapse activity, workplan, memory, and execution into one undifferentiated layer.
 
 ### 4.5 [INITIATIVE PROFILE]
 Rendered only if configured.
@@ -510,7 +511,7 @@ To avoid abrupt behavior changes:
 - Move fully to schema-first prompt construction.
 - Retain only minimal explanatory prose where evidence shows it helps.
 - Reserve artifact submission guidance for explicit approval/review use cases.
-- Generalize the architecture consistently across `talk`, `pair`, `curate`, `work`, and `watch`.
+- Generalize the architecture consistently across `chat`, `pair`, `review`, `work`, and `watch`.
 
 ---
 

@@ -1,8 +1,9 @@
 # Bear Details UI Improvement Plan
 
+For the canonical role model and current role names, see [bear roles](../../architecture/bear-roles.md).
 ## Summary
 
-The Bear details page should become the Bear's workspace home: a vanilla, progressive-enhancement UI that makes one coherent Bear legible while preserving the five-role internal architecture (`talk`, `pair`, `curate`, `work`, `watch`).
+The Bear details page should become the Bear's workspace home: a vanilla, progressive-enhancement UI that makes one coherent Bear legible while preserving the five-role internal architecture (`chat`, `pair`, `review`, `work`, `watch`).
 
 The page should not be organized around database fields, Letta ids, or one-agent prompt concepts. It should be organized around the user's mental model of a Bear:
 
@@ -97,7 +98,7 @@ Exact route names can change, but role details should be independently addressab
 
 ### 2.1 Active threads
 
-- Web / `talk` threads
+- Web / `chat` threads
 - ACP / `pair` threads
 - Last activity
 - Open action
@@ -112,7 +113,7 @@ Exact route names can change, but role details should be independently addressab
 ### 2.3 Task intents
 
 - Captured requests that may require review
-- Source role: `talk` or `pair`
+- Source role: `chat` or `pair`
 - Status: pending / approved / rejected / dispatched
 
 ### 2.4 Background work
@@ -124,7 +125,7 @@ Exact route names can change, but role details should be independently addressab
 ### 2.5 Observations
 
 - Recent `watch` observations
-- Observations awaiting `curate` review
+- Observations awaiting `review` review
 
 ### 2.6 Archive
 
@@ -204,7 +205,7 @@ Provisioning, runtime family, sync, ids, errors.
 Relevant user/admin actions.
 ```
 
-### 5.1 `talk` — conversational front door
+### 5.1 `chat` — conversational front door
 
 #### Purpose
 
@@ -227,7 +228,7 @@ Relevant user/admin actions.
 #### Memory
 
 - Reads `core/`
-- Reads/writes `talk/`
+- Reads/writes `chat/`
 - Does not directly promote to `core/`
 
 #### Contract
@@ -237,7 +238,7 @@ Relevant user/admin actions.
 
 #### Prompt
 
-- View composed `talk` prompt
+- View composed `chat` prompt
 - Copy prompt
 
 #### Runtime status
@@ -304,7 +305,7 @@ Relevant user/admin actions.
 - Create/view code token
 - View role memory
 
-### 5.3 `curate` — memory and integration reviewer
+### 5.3 `review` — memory and integration reviewer
 
 #### Purpose
 
@@ -328,7 +329,7 @@ Relevant user/admin actions.
 #### Memory
 
 - Reads across role branches, subject to policy
-- Writes `curate/`
+- Writes `review/`
 - Promotes to `core/`
 - Does not write directly to other role branches
 
@@ -339,7 +340,7 @@ Relevant user/admin actions.
 
 #### Prompt
 
-- View composed `curate` prompt
+- View composed `review` prompt
 - Copy prompt
 
 #### Runtime status
@@ -381,7 +382,7 @@ Relevant user/admin actions.
 - Reads `core/`
 - Reads task definition/run context
 - Reads/writes `work/`
-- Does not read raw `talk/`, `pair/`, or `watch/` branches directly
+- Does not read raw `chat/`, `pair/`, or `watch/` branches directly
 
 #### Contract
 
@@ -484,7 +485,7 @@ Shared memory is Bear-wide memory, not role-specific branch memory. Role-specifi
 ### 6.3 Recent memory changes
 
 - Recent promotions into `core/`
-- Recent updates by `curate`
+- Recent updates by `review`
 - Recent role branch changes, summarized
 
 ### 6.4 Memory details
@@ -623,7 +624,7 @@ Current implementation has pieces of the future IA but not the final organizatio
 - user steering display
 - Bear context display
 - role agents table
-- composed `talk`/`pair` prompt previews
+- composed `chat`/`pair` prompt previews
 - memory health/details
 - active/all threads
 - advanced prompt/config blocks

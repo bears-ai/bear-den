@@ -1,5 +1,6 @@
 # ACP Adapter Improvement Plan
 
+For the canonical role model and current role names, see [bear roles](../architecture/bear-roles.md).
 Status: active follow-up plan after initial ACP direct local tool rollout.
 
 This plan captures the current state, known caveats, and next steps for hardening the BEARS ACP adapter / Den direct local tool runtime. It intentionally focuses on adapter resilience and continuation behavior, not expanding the toolset.

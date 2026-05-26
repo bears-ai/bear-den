@@ -1,5 +1,6 @@
 # Planning-Tool and Memory-Orientation Recommendations
 
+For the canonical role model and current role names, see [bear roles](../architecture/bear-roles.md).
 ## Objective
 Recommend a lightweight, implementation-oriented set of changes that improves two related environment behaviors without making prompt construction overly heavy:
 

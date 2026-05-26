@@ -1,5 +1,6 @@
 # `bear_environment` Harness Rollout Implementation Plan
 
+For the canonical role model and current role names, see [bear roles](../architecture/bear-roles.md).
 **Status:** Draft  
 **Date:** 2026-05-22  
 **Related ADR:** `docs/architecture/adr/harness-bear-environment-tool.md`

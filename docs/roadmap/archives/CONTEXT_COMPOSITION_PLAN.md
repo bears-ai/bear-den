@@ -1,10 +1,11 @@
 # Context Composition Plan
 
+For the canonical role model and current role names, see [bear roles](../../architecture/bear-roles.md).
 ## Summary
 
 Before building first-bear onboarding or significantly redesigning the bear details UI, BEARS should define a **role-aware context composition model**.
 
-A Bear feels like one coherent assistant to a user, but internally it has five specialized roles: `talk`, `pair`, `curate`, `work`, and `watch`. Context composition must therefore let users steer their Bear without accidentally breaking the role boundaries that make the Bear useful and safe.
+A Bear feels like one coherent assistant to a user, but internally it has five specialized roles: `chat`, `pair`, `review`, `work`, and `watch`. Context composition must therefore let users steer their Bear without accidentally breaking the role boundaries that make the Bear useful and safe.
 
 The first implementation should still be simple. Avoid building a prompt CMS too early. Start with five legible layers:
 
@@ -42,9 +43,9 @@ Users should be able to steer preferences such as:
 
 But user steering should not casually override structural role boundaries, such as:
 
-- `talk` should not perform arbitrary autonomous outbound work.
+- `chat` should not perform arbitrary autonomous outbound work.
 - `pair` should remain client-mediated and user-gated.
-- `curate` should remain the semantic integration and review authority.
+- `review` should remain the semantic integration and review authority.
 - `work` should execute only approved outbound tasks in approved scope.
 - `watch` should observe inbound events and produce observations, not take outbound action.
 
@@ -88,9 +89,9 @@ They define what each role is for, what it can do, what it must not do, and how 
 
 The five initial role contracts correspond to:
 
-- `talk` — conversational front door
+- `chat` — conversational front door
 - `pair` — collaborative client/tool role
-- `curate` — semantic integration and review role
+- `review` — semantic integration and review role
 - `work` — approved outbound executor
 - `watch` — inbound observer
 
@@ -167,7 +168,7 @@ Runtime/thread context is injected dynamically.
 
 It may include:
 
-- active role (`talk`, `pair`, `curate`, `work`, or `watch`)
+- active role (`chat`, `pair`, `review`, `work`, or `watch`)
 - current surface/channel/client
 - tool availability
 - current thread/task context
@@ -245,7 +246,7 @@ Recommended transitional model:
 - For legacy bears, `system_prompt` remains the prompt.
 - For role-aware bears, Den stores role contracts, user steering, and bear context in a profile.
 - Den generates role-specific prompts from that profile.
-- Where existing provisioning/sync paths still require a single `system_prompt`, Den can generate a default visible-role prompt, likely for `talk` or the currently provisioned agent type, until role-specific provisioning is implemented.
+- Where existing provisioning/sync paths still require a single `system_prompt`, Den can generate a default visible-role prompt, likely for `chat` or the currently provisioned agent type, until role-specific provisioning is implemented.
 
 Long-term, role-aware context profile should become canonical, with prompt text generated as output.
 
@@ -266,9 +267,9 @@ Conceptual shape:
   "template_version": "1",
   "role_contract_version": "1",
   "role_contracts": {
-    "talk": "You are the Bear's talk role...",
+    "talk": "You are the Bear's chat role...",
     "pair": "You are the Bear's pair role...",
-    "curate": "You are the Bear's curate role...",
+    "curate": "You are the Bear's review role...",
     "work": "You are the Bear's work role...",
     "watch": "You are the Bear's watch role..."
   },
@@ -290,7 +291,7 @@ The authoritative Bear details IA lives in [`BEAR_DETAILS_UI_IMPROVEMENT_PLAN.md
 
 Context composition supports that UI by providing:
 
-- role contracts for `talk`, `pair`, `curate`, `work`, and `watch`
+- role contracts for `chat`, `pair`, `review`, `work`, and `watch`
 - user steering
 - Bear context
 - composed role prompts
@@ -322,9 +323,9 @@ Each template should define role contracts for all five Bear roles, even if some
 
 Possible role emphasis:
 
-- `talk`: product discussion, synchronous planning, task intent capture
+- `chat`: product discussion, synchronous planning, task intent capture
 - `pair`: IDE/client collaboration, code changes, debugging, docs updates
-- `curate`: product/project memory integration, skill proposal review
+- `review`: product/project memory integration, skill proposal review
 - `work`: approved background build/product/release tasks
 - `watch`: approved observation of dev/product events
 
@@ -332,9 +333,9 @@ Possible role emphasis:
 
 Possible role emphasis:
 
-- `talk`: conversational planning, drafting, follow-up capture
+- `chat`: conversational planning, drafting, follow-up capture
 - `pair`: collaboration inside productivity tools, when available
-- `curate`: durable preference/contact/routine integration
+- `review`: durable preference/contact/routine integration
 - `work`: approved scheduling, follow-up, and admin tasks
 - `watch`: inbound observations from calendar/email/events, when connected
 
@@ -342,9 +343,9 @@ Possible role emphasis:
 
 Possible role emphasis:
 
-- `talk`: exploratory conversation, explanations, drafting support
+- `chat`: exploratory conversation, explanations, drafting support
 - `pair`: collaboration inside document/editor tools
-- `curate`: durable topic/project/style integration
+- `review`: durable topic/project/style integration
 - `work`: approved research or writing tasks
 - `watch`: inbound observation of subscribed sources or document changes
 
@@ -357,7 +358,7 @@ Goal: Lock down terminology and boundaries.
 Deliverables:
 
 - define `Den baseline`, `Role contracts`, `User steering`, `Bear context`, `Runtime/thread context`, and `Composed role prompt`
-- define how the five role contracts relate to `talk`, `pair`, `curate`, `work`, and `watch`
+- define how the five role contracts relate to `chat`, `pair`, `review`, `work`, and `watch`
 - define how legacy `system_prompt` maps into this model
 - define composition order
 - define what is user-visible in v1
@@ -437,7 +438,7 @@ Each template should provide:
 - template id/version
 - default bear name
 - default description
-- role contracts or role contract references for `talk`, `pair`, `curate`, `work`, `watch`
+- role contracts or role contract references for `chat`, `pair`, `review`, `work`, `watch`
 - question set
 - default user steering generation
 - default bear context generation
@@ -581,7 +582,7 @@ Not in v1.
 
 ### Should users copy/export composed prompts?
 
-Yes, especially for `talk` and `pair`, because it supports education and debugging.
+Yes, especially for `chat` and `pair`, because it supports education and debugging.
 
 ## Recommended first slice
 
@@ -602,7 +603,7 @@ The initial MVP implementation now covers the first slice above:
 - `context_profile` storage exists on `bears`.
 - Role-aware composition exists with Den baseline, role contracts, user steering, Bear context, runtime context, and legacy fallback.
 - First-Bear onboarding writes role-aware context profiles.
-- Bear details displays user steering, Bear context, and composed `talk`/`pair` prompts.
+- Bear details displays user steering, Bear context, and composed `chat`/`pair` prompts.
 - Current provisioning paths generate prompt text from the context profile where available.
 
 ## Remaining near-term work
@@ -610,7 +611,7 @@ The initial MVP implementation now covers the first slice above:
 The next implementation passes should focus on:
 
 1. Editing UI for `User steering` and `Bear context`.
-2. Composed prompt previews for all five roles, not only `talk` and `pair`.
+2. Composed prompt previews for all five roles, not only `chat` and `pair`.
 3. Inspectable role contract text for all five roles.
 4. Role-aware drift detection using composed role prompts.
 5. First-task/starter-prompt handoff into chat or details.

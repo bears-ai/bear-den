@@ -1,5 +1,6 @@
 # Host Browser MCP Bridge Implementation Plan
 
+For the canonical role model and current role names, see [bear roles](../architecture/bear-roles.md).
 **Status:** Draft  
 **Date:** 2026-05-18  
 **Related ADR:** `docs/architecture/adr/acp-host-browser-mcp-bridge.md`

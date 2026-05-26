@@ -1,5 +1,6 @@
 # Semantic Memory Schema ADR Implementation Plan
 
+For the canonical role model and current role names, see [bear roles](../architecture/bear-roles.md).
 ## Goal
 
 Implement the ADR in `docs/architecture/adr/semantic-memory-schema-and-resources.md` by updating semantic memory write contracts, routing, retrieval assumptions, and documentation so Bear memory aligns with the new schema.

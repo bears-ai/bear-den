@@ -1,5 +1,6 @@
 # Task System Implementation Plan
 
+For the canonical role model and current role names, see [bear roles](../architecture/bear-roles.md).
 This plan turns the multi-agent task architecture into implementable Den work. It complements [`tasks-schema.md`](../architecture/tasks-schema.md), which remains the canonical file format for MemFS task intents, approved tasks, and work results.
 
 This document now also tracks the task/activity portion of the single ontology-aware workflow-state model defined in [`../architecture/adr/workflow-state-ontology.md`](../architecture/adr/workflow-state-ontology.md). Workplan mode, live activity state, semantic memory, and execution capabilities must be represented as distinct domains rather than left as prompt-only conventions.
@@ -10,7 +11,7 @@ This document now also tracks the task/activity portion of the single ontology-a
 - BEARS should support ACP `pair` Ask/Plan/Write modes aligned with common coding-agent clients: Ask and Plan expose read/search/inspect tools; Write enables mutation/execution/browser tools, with concrete effects still requiring Den policy, adapter safety checks, and ACP client approval.
 - MemFS owns durable task artifacts: channel intent files, curate-approved task files, and work result files. Workplan/plan-mode artifacts are a separate ontology domain and must not be treated, described, or surfaced as MemFS semantic-memory documents, even if some current implementation details still use `pair/plans/` storage.
 - ACP session rows remain protocol bindings only. They may reference an activity plan, but they do not own planning state. Legacy fields such as ACP `current_mode` may remain for compatibility, but must resolve into the canonical turn-state model rather than acting as an independent source of truth.
-- Channel agents never hand work directly to the work agent. They write or request task intents; curate approval is the promotion boundary.
+- Channel agents never hand work directly to the work agent. They write or request task intents; review approval is the promotion boundary.
 - Letta Code-based agents interact with activity state through Den meta tools and short injected context, not by reading Den database rows directly.
 
 ## Data Model Foundation
@@ -20,7 +21,7 @@ The initial migration adds `bear_work_plans` and `bear_work_plan_events`.
 `bear_work_plans` is the live, queryable activity board:
 
 - `bear_id`: the logical Bear that owns the plan.
-- `owner_role`: the role that owns the plan, usually `pair`, `talk`, or `work`.
+- `owner_role`: the role that owns the plan, usually `pair`, `chat`, or `work`.
 - `owner_agent_id`: optional Letta role-agent id for audit and role lookup.
 - `created_by_user_id`: nullable because Den workers or future system cycles may create plans.
 - `source_conversation_id` and `source_acp_session_id`: bindings back to the surface that created the plan.
@@ -44,9 +45,9 @@ These tools implement the live activity/progress layer, not the full pre-impleme
 
 Tool policy:
 
-- `talk`, `pair`, `curate`, and `work` may list/read visible plans.
-- `talk`, `pair`, and `work` may update their own plans.
-- `talk` and `pair` may request handoff into the task-intent pipeline.
+- `chat`, `pair`, `review`, and `work` may list/read visible plans.
+- `chat`, `pair`, and `work` may update their own plans.
+- `chat` and `pair` may request handoff into the task-intent pipeline.
 - `work` must not execute directly from a channel plan. It executes only Den-dispatched approved tasks from `core/tasks/`.
 - `watch` is intentionally excluded from activity tools until a concrete observation-status use case exists.
 
@@ -57,9 +58,9 @@ Use these visibility values initially:
 - `private_to_role`: only the owning role and Den admin/operator surfaces may read it.
 - `same_user`: the originating user and Den admin/operator surfaces may read it across roles.
 - `bear_visible`: any role in the Bear may read a redacted projection.
-- `handoff_requested`: readable by curate and Den task tooling while handoff is pending.
+- `handoff_requested`: readable by review and Den task tooling while handoff is pending.
 
-The read API should return projections, not raw rows. For example, `talk` asking about `pair` work should receive title, status, current item, blockers, and timestamps, but not raw ACP workspace paths or unredacted local context unless policy explicitly allows it.
+The read API should return projections, not raw rows. For example, `chat` asking about `pair` work should receive title, status, current item, blockers, and timestamps, but not raw ACP workspace paths or unredacted local context unless policy explicitly allows it.
 
 ## Pair Plan Mode
 
@@ -104,7 +105,7 @@ Acceptance:
 
 - ACP pair prompts receive a short current-plan summary when a plan exists for the ACP session.
 - ACP pair tool descriptors expose `den.work_plan.update`, `den.work_plan.get_status`, `den.work_plan.list`, and `den.work_plan.request_handoff` alongside memory/search/situation tools.
-- Letta Code `talk` and `work` contexts receive a compact activity summary through existing Den/Codepool trusted context paths.
+- Letta Code `chat` and `work` contexts receive a compact activity summary through existing Den/Codepool trusted context paths.
 - System prompts describe when to call `den.work_plan.update`.
 - The agent-facing wording treats this as normal planning/status, not database manipulation.
 
@@ -114,7 +115,7 @@ Acceptance:
 
 - `den.work_plan.request_handoff` validates selected plan items and writes a task intent through the same code path as `den.task.write_intent`.
 - Handoff updates `handoff_intent_path`, sets visibility to `handoff_requested`, and appends an audit event.
-- Curate review remains the only path from channel-originated intent to `core/tasks/`.
+- Review review remains the only path from channel-originated intent to `core/tasks/`.
 - Work dispatch only reads approved `core/tasks/` definitions.
 
 ### Phase 5: Task Runtime Completion
@@ -125,14 +126,14 @@ Acceptance:
 - Den dispatches one approved task at a time to the `work` role harness.
 - Work runs receive only curated task definitions, allowed tools, scope, limits, and run id.
 - `den.run.write_result` validates and writes `work/results/<task-id>/<run-id>.md`.
-- Curate can promote summaries to `core/results/`.
+- Review can promote summaries to `core/results/`.
 
 ### Phase 6: Operator and Chat UX
 
 Acceptance:
 
 - Operator UI shows active work plans, pending handoffs, approved tasks, runs, and failures per Bear.
-- Talk can answer “what is pair working on?” from `bear_visible` or `same_user` projections.
+- Chat can answer “what is pair working on?” from `bear_visible` or `same_user` projections.
 - Pair can resume an ACP session and recover its live plan.
 - High-risk task runs surface in a human approval queue before work executes.
 
@@ -164,7 +165,7 @@ Required additions:
 - Use optimistic concurrency with `version` on updates to prevent silent status clobbering.
 - Keep work plans short. Durable details belong in MemFS task files, result files, or conversation history.
 - If a plan item implies external effects, prefer `request_handoff` over continuing as live plan state.
-- Planning state is not shared Bear memory by default. Use the activity board for tactical progress, a workplan artifact for approval, role-local memory for durable lessons, and curate review for anything that should enter `core/`.
+- Planning state is not shared Bear memory by default. Use the activity board for tactical progress, a workplan artifact for approval, role-local memory for durable lessons, and review review for anything that should enter `core/`.
 
 ## Next implementation steps
 

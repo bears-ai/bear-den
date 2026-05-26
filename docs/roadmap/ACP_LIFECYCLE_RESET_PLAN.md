@@ -1,5 +1,6 @@
 # ACP Lifecycle Reset Plan
 
+For the canonical role model and current role names, see [bear roles](../architecture/bear-roles.md).
 ## Status
 
 Active implementation. This plan supersedes narrow ACP lifecycle patching as the near-term reliability strategy for `pair` over ACP.

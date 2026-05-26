@@ -1,5 +1,6 @@
 # Live dev stack plan
 
+For the canonical role model and current role names, see [bear roles](../architecture/bear-roles.md).
 ## Summary
 
 The default smoke stack should be GitOps-like: build immutable images from the current Git workspace, run those images without source/config bind mounts, seed explicitly, then smoke-test the resulting deployment shape. That mode answers: "would the artifact we just built run?"

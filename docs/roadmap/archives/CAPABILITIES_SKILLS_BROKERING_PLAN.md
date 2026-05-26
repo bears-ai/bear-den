@@ -1,13 +1,14 @@
 # Capabilities, skills, and Den brokering plan
 
+For the canonical role model and current role names, see [bear roles](../../architecture/bear-roles.md).
 This plan formalizes the long-term model discussed for BEARS capabilities, skills, connected apps, managed MCP passthrough, and selective Den-brokered tool execution.
 
 It complements:
 
 - [BEAR_CAPABILITY_MANAGEMENT_PLAN.md](BEAR_CAPABILITY_MANAGEMENT_PLAN.md)
 - [DEN_SPECIFIC_TOOLS_PLAN.md](DEN_SPECIFIC_TOOLS_PLAN.md)
-- [DEN_ARCHITECTURE.md](../architecture/DEN_ARCHITECTURE.md)
-- [bear-memory-tool-boundary.md](../architecture/adr/bear-memory-tool-boundary.md)
+- [DEN_ARCHITECTURE.md](../../architecture/DEN_ARCHITECTURE.md)
+- [bear-memory-tool-boundary.md](../../architecture/adr/bear-memory-tool-boundary.md)
 
 ## Decisions
 

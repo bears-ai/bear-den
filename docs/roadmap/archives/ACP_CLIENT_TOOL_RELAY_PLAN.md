@@ -1,5 +1,6 @@
 # ACP client tool relay plan — historical Codepool design
 
+For the canonical role model and current role names, see [bear roles](../../architecture/bear-roles.md).
 Status: historical / superseded. Do not implement for ACP direct mode.
 
 This document describes the earlier Codepool/Letta Code ACP client-tool relay design. ACP for the `pair` role now uses Den's direct Letta conversation API path and a dedicated Den ⇄ adapter local tool runtime. Use [`ACP_DIRECT_LOCAL_TOOL_RUNTIME_PLAN.md`](ACP_DIRECT_LOCAL_TOOL_RUNTIME_PLAN.md) for active implementation work.
@@ -10,7 +11,7 @@ Related docs:
 
 - [`BEAR_CHANNEL_PLANS.md`](BEAR_CHANNEL_PLANS.md)
 - [`BEAR_CAPABILITY_MANAGEMENT_PLAN.md`](BEAR_CAPABILITY_MANAGEMENT_PLAN.md)
-- [`../architecture/BEAR_CHANNEL_AND_ACP.md`](../architecture/BEAR_CHANNEL_AND_ACP.md)
+- [`../../architecture/BEAR_CHANNEL_AND_ACP.md`](../../architecture/BEAR_CHANNEL_AND_ACP.md)
 
 ## Goal
 

@@ -1,5 +1,6 @@
 # Role Runtime Wedge Prevention Plan
 
+For the canonical role model and current role names, see [bear roles](../architecture/bear-roles.md).
 ## Status
 
 Active near-term reliability work.
@@ -23,7 +24,7 @@ Any role/channel that uses Letta runs, tools, approvals, or streamed continuatio
 - `pair` over ACP, because it combines local client tools, permission requests, Den server tools, and Letta continuation;
 - `work`, because it is expected to run longer execution-oriented tasks and may not have an interactive ACP approval loop;
 - `watch`, when observations or monitors invoke tools and must report results;
-- `curate`, when review/memory tools are used in longer governance flows.
+- `review`, when review/memory tools are used in longer governance flows.
 
 ## Invariant
 
@@ -143,7 +144,7 @@ Implement the Work Handoff ADR for `work` runtime policy.
 - `work` must not wait indefinitely for interactive ACP-style approval.
 - Approval timeout should deny or block.
 - Approval needs become durable Workplace/activity handoff records.
-- `talk` is the default human notification route.
+- `chat` is the default human notification route.
 - `pair` is optional when an active technical channel exists.
 
 ### 7. Den-owned visible transcript

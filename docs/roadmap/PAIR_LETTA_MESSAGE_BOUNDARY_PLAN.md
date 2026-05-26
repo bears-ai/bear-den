@@ -1,5 +1,6 @@
 # Pair Letta Message Boundary Refactor Plan
 
+For the canonical role model and current role names, see [bear roles](../architecture/bear-roles.md).
 ## Status
 
 Phase 1 implemented. User testing confirms the agent can use tools naturally without runtime prompt suffix injection.
