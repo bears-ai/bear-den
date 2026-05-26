@@ -501,6 +501,124 @@ fn parse_sse_event_body_to_json(body: &[u8]) -> Result<Option<serde_json::Value>
         .map_err(|e| CustomError::System(format!("invalid continuation SSE JSON: {e}")))
 }
 
+fn runtime_stream_event_from_letta_json(
+    event: &serde_json::Value,
+) -> Option<crate::core::runtime_contracts::RuntimeStreamEvent> {
+    let inner = match event.get("contents") {
+        Some(contents) if contents.get("message_type").is_some() => contents,
+        _ => event,
+    };
+    let message_type = inner
+        .get("message_type")
+        .and_then(|v| v.as_str())
+        .or_else(|| event.get("message_type").and_then(|v| v.as_str()))
+        .unwrap_or("");
+    match message_type {
+        "ping" => None,
+        "assistant_message" => {
+            let text = crate::core::acp_letta_events::letta_stream_text_preserving_whitespace(inner)
+                .or_else(|| crate::core::acp_letta_events::letta_stream_text_preserving_whitespace(event))
+                .unwrap_or_default();
+            Some(crate::core::runtime_contracts::RuntimeStreamEvent::AssistantTextDelta { text })
+        }
+        "reasoning_message" => Some(crate::core::runtime_contracts::RuntimeStreamEvent::StatusText {
+            text: inner
+                .get("reasoning")
+                .and_then(|v| v.as_str())
+                .map(str::to_string)
+                .or_else(|| event.get("reasoning").and_then(|v| v.as_str()).map(str::to_string))
+                .or_else(|| crate::core::acp_letta_events::letta_stream_text_preserving_whitespace(inner))
+                .or_else(|| crate::core::acp_letta_events::letta_stream_text_preserving_whitespace(event))
+                .unwrap_or_default(),
+        }),
+        "error_message" => Some(crate::core::runtime_contracts::RuntimeStreamEvent::Error {
+            message: event
+                .get("message")
+                .and_then(|v| v.as_str())
+                .unwrap_or("Upstream error")
+                .to_string(),
+            detail: event.get("detail").and_then(|v| v.as_str()).map(str::to_string),
+            error_type: event.get("error_type").and_then(|v| v.as_str()).map(str::to_string),
+            request_id: event.get("request_id").and_then(|v| v.as_str()).map(str::to_string),
+            context: event.get("context").cloned(),
+        }),
+        "stop_reason" => {
+            let stop_reason = inner
+                .get("stop_reason")
+                .and_then(|v| v.as_str())
+                .or_else(|| event.get("stop_reason").and_then(|v| v.as_str()))
+                .unwrap_or("unknown");
+            if stop_reason == "end_turn" {
+                Some(crate::core::runtime_contracts::RuntimeStreamEvent::TurnCompleted {
+                    turn: None,
+                })
+            } else if stop_reason == "requires_approval" {
+                Some(crate::core::runtime_contracts::RuntimeStreamEvent::WaitingForContinuation {
+                    turn: None,
+                })
+            } else {
+                Some(crate::core::runtime_contracts::RuntimeStreamEvent::TurnFailed {
+                    turn: None,
+                    category: crate::core::runtime_contracts::RuntimeErrorCategory::BackendProtocol,
+                    message: format!(
+                        "Letta stopped before producing assistant output: {stop_reason}"
+                    ),
+                })
+            }
+        }
+        "tool_call_message" | "approval_request_message" | "function_call" => Some(
+            crate::core::runtime_contracts::RuntimeStreamEvent::ToolCallRequested {
+                tool_call_id: event
+                    .get("tool_call_id")
+                    .or_else(|| inner.get("tool_call_id"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or_default()
+                    .to_string(),
+                tool_name: event
+                    .get("tool_name")
+                    .or_else(|| inner.get("tool_name"))
+                    .or_else(|| event.pointer("/tool_call/name"))
+                    .or_else(|| inner.pointer("/tool_call/name"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or_default()
+                    .to_string(),
+                title: event.get("tool_title").and_then(|v| v.as_str()).map(str::to_string),
+                kind: event.get("tool_kind").and_then(|v| v.as_str()).map(str::to_string),
+                arguments: event
+                    .get("args")
+                    .cloned()
+                    .or_else(|| inner.get("args").cloned())
+                    .or_else(|| event.get("arguments").cloned())
+                    .or_else(|| inner.get("arguments").cloned())
+                    .unwrap_or_else(|| serde_json::json!({})),
+                approval_request_id: event
+                    .get("approval_request_id")
+                    .or_else(|| inner.get("approval_request_id"))
+                    .and_then(|v| v.as_str())
+                    .map(str::to_string),
+                approval_required: message_type == "approval_request_message",
+                approval_reason: event
+                    .get("approval_reason")
+                    .or_else(|| inner.get("approval_reason"))
+                    .and_then(|v| v.as_str())
+                    .map(str::to_string),
+            },
+        ),
+        _ => crate::core::acp_letta_events::native_letta_conversation_resolved_event(event).map(
+            |evt| match evt {
+                crate::core::acp_letta_events::AcpGatewayEvent::ConversationResolved {
+                    conversation_id,
+                } => crate::core::runtime_contracts::RuntimeStreamEvent::ConversationResolved {
+                    conversation: crate::core::runtime_contracts::RuntimeConversationRef {
+                        id: conversation_id,
+                    },
+                },
+                _ => unreachable!(),
+            },
+        ),
+    }
+}
+
 pub async fn continue_acp_turn_with_runtime(
     request: AcpTurnContinueRequest<'_>,
 ) -> Result<
@@ -552,11 +670,17 @@ pub async fn continue_acp_turn_with_runtime(
                     let raw: Vec<u8> = buffer.drain(..end).collect();
                     let frame_body = strip_trailing_sse_delimiter_owned(raw);
                     match parse_sse_event_body_to_json(&frame_body) {
-                        Ok(Some(value)) => queued_events.push_back(Ok(
-                            crate::core::runtime_contracts::RuntimeStreamEvent::JsonValue {
-                                value,
-                            },
-                        )),
+                        Ok(Some(value)) => {
+                            if let Some(event) = runtime_stream_event_from_letta_json(&value) {
+                                queued_events.push_back(Ok(event));
+                            } else {
+                                queued_events.push_back(Ok(
+                                    crate::core::runtime_contracts::RuntimeStreamEvent::JsonValue {
+                                        value,
+                                    },
+                                ));
+                            }
+                        }
                         Ok(None) => {}
                         Err(err) => queued_events.push_back(Err(err)),
                     }

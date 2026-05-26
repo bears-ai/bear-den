@@ -4893,8 +4893,8 @@ fn map_letta_stream_frame_to_acp_adapter_events(frame: &[u8]) -> Vec<Bytes> {
     }
 }
 
-async fn map_letta_stream_frame_to_acp_adapter_events_with_persistence(
-    frame: Vec<u8>,
+async fn map_runtime_stream_event_to_acp_adapter_events_with_persistence(
+    runtime_event: crate::core::runtime_provider::RuntimeStreamEvent,
     context: AcpStreamContext,
     diagnostics: &mut AcpStreamDiagnostics,
 ) -> Result<
@@ -4906,19 +4906,32 @@ async fn map_letta_stream_frame_to_acp_adapter_events_with_persistence(
     std::io::Error,
 > {
     diagnostics.upstream_frames += 1;
-    let body = strip_trailing_sse_delimiter_owned(frame);
-    let value = match parse_sse_event_body_to_json(&body) {
-        Err(msg) => {
-            tracing::warn!(
-                request_id = %context.request_id,
-                acp_session_id = %context.acp_session_id,
-                error = %msg,
-                "ACP upstream Letta SSE event JSON parse failed"
-            );
-            return Ok((Vec::new(), None, None));
+    let value = match runtime_event {
+        crate::core::runtime_provider::RuntimeStreamEvent::JsonValue { value } => value,
+        crate::core::runtime_provider::RuntimeStreamEvent::ToolCallRequested {
+            tool_call_id,
+            tool_name,
+            title,
+            kind,
+            arguments,
+            approval_request_id,
+            approval_required,
+            approval_reason,
+        } => serde_json::json!({
+            "message_type": if approval_required { "approval_request_message" } else { "tool_call_message" },
+            "tool_call_id": tool_call_id,
+            "tool_name": tool_name,
+            "tool_title": title,
+            "tool_kind": kind,
+            "args": arguments,
+            "approval_request_id": approval_request_id,
+            "approval_reason": approval_reason,
+        }),
+        other => {
+            return Err(std::io::Error::other(format!(
+                "runtime event not supported by ACP persistence mapper: {other:?}"
+            )));
         }
-        Ok(None) => return Ok((Vec::new(), None, None)),
-        Ok(Some(v)) => v,
     };
     let observed_run_ids = diagnostics.observe_parsed_event(&value);
     if let Some(turn_cancellations) = context.role_runtime.turn_cancellations() {
@@ -5636,30 +5649,76 @@ impl Stream for AcpLettaSseStream {
                     this.persist_future = None;
                     match result {
                         Ok((stream_kind, stream)) => {
-                            match stream_kind {
-                                crate::core::runtime_provider::RuntimeStreamContinuation::BytesSse => {
-                                    this.inner = Box::pin(stream.map(|item| {
-                                        item.and_then(|event| match event {
-                                            crate::core::runtime_provider::RuntimeStreamEvent::JsonValue { value } => Ok(Bytes::from(value.to_string())),
-                                            crate::core::runtime_provider::RuntimeStreamEvent::RawSseFrame { frame_body } => Ok(Bytes::from(frame_body)),
-                                            other => Err(CustomError::System(format!(
-                                                "unexpected runtime continuation event in ACP continuation bridge: {other:?}"
-                                            ))),
-                                        })
-                                    }));
-                                }
-                                crate::core::runtime_provider::RuntimeStreamContinuation::Deferred => {
-                                    this.inner = Box::pin(stream.map(|item| {
-                                        item.and_then(|event| match event {
-                                            crate::core::runtime_provider::RuntimeStreamEvent::JsonValue { value } => Ok(Bytes::from(value.to_string())),
-                                            crate::core::runtime_provider::RuntimeStreamEvent::RawSseFrame { frame_body } => Ok(Bytes::from(frame_body)),
-                                            other => Err(CustomError::System(format!(
-                                                "unexpected deferred runtime continuation event in ACP continuation bridge: {other:?}"
-                                            ))),
-                                        })
-                                    }));
-                                }
-                            }
+                            let _ = stream_kind;
+                            let request_id = this.context.request_id.to_string();
+                            let acp_session_id = this.context.acp_session_id.clone();
+                            this.inner = Box::pin(stream.map(move |item| {
+                                let request_id = request_id.clone();
+                                let acp_session_id = acp_session_id.clone();
+                                item.and_then(|event| match event {
+                                    crate::core::runtime_provider::RuntimeStreamEvent::AssistantTextDelta { text } => {
+                                        Ok(acp_event_to_adapter_sse(AcpGatewayEvent::AssistantTextDelta { text }))
+                                    }
+                                    crate::core::runtime_provider::RuntimeStreamEvent::StatusText { text } => {
+                                        Ok(acp_event_to_adapter_sse(AcpGatewayEvent::StatusText { text }))
+                                    }
+                                    crate::core::runtime_provider::RuntimeStreamEvent::ConversationResolved { conversation } => {
+                                        Ok(acp_event_to_adapter_sse(AcpGatewayEvent::ConversationResolved {
+                                            conversation_id: conversation.id,
+                                        }))
+                                    }
+                                    crate::core::runtime_provider::RuntimeStreamEvent::WaitingForContinuation { .. } => {
+                                        Ok(Bytes::new())
+                                    }
+                                    crate::core::runtime_provider::RuntimeStreamEvent::TurnCompleted { .. } => {
+                                        Ok(acp_event_to_adapter_sse(AcpGatewayEvent::TurnComplete {
+                                            outcome: "ok".to_string(),
+                                        }))
+                                    }
+                                    crate::core::runtime_provider::RuntimeStreamEvent::TurnFailed { message, .. } => {
+                                        Ok(acp_event_to_adapter_sse(AcpGatewayEvent::Error {
+                                            message,
+                                            detail: None,
+                                            error_type: Some("runtime_turn_failed".to_string()),
+                                            request_id: Some(request_id.clone()),
+                                            context: Some(serde_json::json!({
+                                                "component": "den.acp",
+                                                "acp_session_id": acp_session_id,
+                                            })),
+                                        }))
+                                    }
+                                    crate::core::runtime_provider::RuntimeStreamEvent::TurnCancelled { .. } => {
+                                        Ok(acp_event_to_adapter_sse(AcpGatewayEvent::Error {
+                                            message: "Runtime continuation was cancelled.".to_string(),
+                                            detail: None,
+                                            error_type: Some("runtime_turn_cancelled".to_string()),
+                                            request_id: Some(request_id.clone()),
+                                            context: Some(serde_json::json!({
+                                                "component": "den.acp",
+                                                "acp_session_id": acp_session_id,
+                                            })),
+                                        }))
+                                    }
+                                    crate::core::runtime_provider::RuntimeStreamEvent::Error { message, detail, error_type, request_id: upstream_request_id, context } => {
+                                        Ok(acp_event_to_adapter_sse(AcpGatewayEvent::Error {
+                                            message,
+                                            detail,
+                                            error_type,
+                                            request_id: upstream_request_id.or_else(|| Some(request_id.clone())),
+                                            context: context.or_else(|| Some(serde_json::json!({
+                                                "component": "den.acp",
+                                                "acp_session_id": acp_session_id,
+                                            }))),
+                                        }))
+                                    }
+                                    crate::core::runtime_provider::RuntimeStreamEvent::ToolCallRequested { .. }
+                                    | crate::core::runtime_provider::RuntimeStreamEvent::JsonValue { .. } => {
+                                        Err(CustomError::System(
+                                            "semantic continuation path still requires ACP persistence integration for tool events".to_string(),
+                                        ))
+                                    }
+                                })
+                            }).filter(|item| futures::future::ready(!matches!(item, Ok(bytes) if bytes.is_empty()))));
                             return self.poll_next(cx);
                         }
                         Err(err) => {
@@ -5747,8 +5806,13 @@ impl Stream for AcpLettaSseStream {
                 let context = this.context.clone();
                 let mut diagnostics = std::mem::take(&mut this.diagnostics);
                 this.persist_future = Some(AcpPendingFuture::Frame(Box::pin(async move {
-                    let result = map_letta_stream_frame_to_acp_adapter_events_with_persistence(
-                        chunk.to_vec(),
+                    let result = map_runtime_stream_event_to_acp_adapter_events_with_persistence(
+                        crate::core::runtime_provider::RuntimeStreamEvent::JsonValue {
+                            value: parse_sse_event_body_to_json(&chunk)
+                                .ok()
+                                .flatten()
+                                .unwrap_or_else(|| serde_json::json!({})),
+                        },
                         context,
                         &mut diagnostics,
                     )

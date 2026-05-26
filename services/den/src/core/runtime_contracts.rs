@@ -135,20 +135,29 @@ pub struct CancelTurnResult {
     pub detail: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum RuntimeStreamEvent {
-    RawSseFrame { frame_body: Vec<u8> },
     JsonValue { value: serde_json::Value },
-    ConversationResolved { conversation: RuntimeConversationRef },
     AssistantTextDelta { text: String },
-    AssistantMessageCompleted { message_id: Option<String> },
+    StatusText { text: String },
     ToolCallRequested {
         tool_call_id: String,
         tool_name: String,
-        arguments_json: String,
+        title: Option<String>,
+        kind: Option<String>,
+        arguments: serde_json::Value,
+        approval_request_id: Option<String>,
         approval_required: bool,
+        approval_reason: Option<String>,
     },
-    ToolCallSettled { tool_call_id: String, status: String },
+    Error {
+        message: String,
+        detail: Option<String>,
+        error_type: Option<String>,
+        request_id: Option<String>,
+        context: Option<serde_json::Value>,
+    },
+    ConversationResolved { conversation: RuntimeConversationRef },
     WaitingForContinuation { turn: Option<RuntimeTurnRef> },
     TurnCompleted { turn: Option<RuntimeTurnRef> },
     TurnFailed {
