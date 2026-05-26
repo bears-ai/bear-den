@@ -535,31 +535,31 @@ fn runtime_stream_event_from_letta_json(
                     .unwrap_or_default();
             Some(crate::core::runtime_contracts::RuntimeStreamEvent::AssistantTextDelta { text })
         }
-        "reasoning_message" => Some(
-            crate::core::runtime_contracts::RuntimeStreamEvent::StatusText {
-                text: inner
-                    .get("reasoning")
-                    .and_then(|v| v.as_str())
-                    .map(str::to_string)
-                    .or_else(|| {
-                        event
-                            .get("reasoning")
-                            .and_then(|v| v.as_str())
-                            .map(str::to_string)
-                    })
-                    .or_else(|| {
-                        crate::core::acp_letta_events::letta_stream_text_preserving_whitespace(
-                            inner,
-                        )
-                    })
-                    .or_else(|| {
-                        crate::core::acp_letta_events::letta_stream_text_preserving_whitespace(
-                            event,
-                        )
-                    })
-                    .unwrap_or_default(),
-            },
-        ),
+        "reasoning_message" => {
+            let text = inner
+                .get("reasoning")
+                .and_then(|v| v.as_str())
+                .map(str::to_string)
+                .or_else(|| {
+                    event
+                        .get("reasoning")
+                        .and_then(|v| v.as_str())
+                        .map(str::to_string)
+                })
+                .or_else(|| {
+                    crate::core::acp_letta_events::letta_stream_text_preserving_whitespace(inner)
+                })
+                .or_else(|| {
+                    crate::core::acp_letta_events::letta_stream_text_preserving_whitespace(event)
+                })
+                .unwrap_or_default();
+            Some(crate::core::runtime_contracts::RuntimeStreamEvent::RunProgress {
+                kind: "status_text".to_string(),
+                text: Some(text),
+                phase: None,
+                detail: None,
+            })
+        }
         "error_message" => Some(crate::core::runtime_contracts::RuntimeStreamEvent::Error {
             message: event
                 .get("message")
@@ -593,11 +593,11 @@ fn runtime_stream_event_from_letta_json(
                     },
                 )
             } else if stop_reason == "requires_approval" {
-                Some(
-                    crate::core::runtime_contracts::RuntimeStreamEvent::WaitingForContinuation {
-                        turn: None,
-                    },
-                )
+                Some(crate::core::runtime_contracts::RuntimeStreamEvent::RunPaused {
+                    reason: "awaiting_approval".to_string(),
+                    resume_token: None,
+                    expires_at: None,
+                })
             } else {
                 Some(
                     crate::core::runtime_contracts::RuntimeStreamEvent::TurnFailed {

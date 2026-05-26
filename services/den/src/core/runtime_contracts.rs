@@ -141,8 +141,19 @@ pub enum RuntimeStreamEvent {
     AssistantTextDelta {
         text: String,
     },
+    RunProgress {
+        kind: String,
+        text: Option<String>,
+        phase: Option<String>,
+        detail: Option<serde_json::Value>,
+    },
     StatusText {
         text: String,
+    },
+    RunPaused {
+        reason: String,
+        resume_token: Option<String>,
+        expires_at: Option<String>,
     },
     ToolCallRequested {
         tool_call_id: String,

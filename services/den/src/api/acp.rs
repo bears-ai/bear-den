@@ -5657,6 +5657,14 @@ impl Stream for AcpLettaSseStream {
                                     crate::core::runtime_provider::RuntimeStreamEvent::AssistantTextDelta { text } => {
                                         Ok(acp_event_to_adapter_sse(AcpGatewayEvent::AssistantTextDelta { text }))
                                     }
+                                    crate::core::runtime_provider::RuntimeStreamEvent::RunProgress { kind, text, phase: _, detail: _ } => {
+                                        let rendered = if kind == "status_text" {
+                                            text.unwrap_or_default()
+                                        } else {
+                                            text.unwrap_or_else(|| kind)
+                                        };
+                                        Ok(acp_event_to_adapter_sse(AcpGatewayEvent::StatusText { text: rendered }))
+                                    }
                                     crate::core::runtime_provider::RuntimeStreamEvent::StatusText { text } => {
                                         Ok(acp_event_to_adapter_sse(AcpGatewayEvent::StatusText { text }))
                                     }
@@ -5665,7 +5673,8 @@ impl Stream for AcpLettaSseStream {
                                             conversation_id: conversation.id,
                                         }))
                                     }
-                                    crate::core::runtime_provider::RuntimeStreamEvent::WaitingForContinuation { .. } => {
+                                    crate::core::runtime_provider::RuntimeStreamEvent::RunPaused { .. }
+                                    | crate::core::runtime_provider::RuntimeStreamEvent::WaitingForContinuation { .. } => {
                                         Ok(Bytes::new())
                                     }
                                     crate::core::runtime_provider::RuntimeStreamEvent::TurnCompleted { .. } => {
@@ -5709,11 +5718,30 @@ impl Stream for AcpLettaSseStream {
                                             }))),
                                         }))
                                     }
-                                    crate::core::runtime_provider::RuntimeStreamEvent::ToolCallRequested { .. }
-                                    | crate::core::runtime_provider::RuntimeStreamEvent::JsonValue { .. } => {
-                                        Err(CustomError::System(
-                                            "semantic continuation path still requires ACP persistence integration for tool events".to_string(),
-                                        ))
+                                    crate::core::runtime_provider::RuntimeStreamEvent::ToolCallRequested {
+                                        tool_call_id,
+                                        tool_name,
+                                        title,
+                                        kind,
+                                        arguments,
+                                        approval_request_id,
+                                        approval_required,
+                                        approval_reason,
+                                    } => {
+                                        let payload = serde_json::json!({
+                                            "type": if approval_required { "approval_request_message" } else { "tool_call_message" },
+                                            "tool_call_id": tool_call_id,
+                                            "tool_name": tool_name,
+                                            "tool_title": title,
+                                            "tool_kind": kind,
+                                            "args": arguments,
+                                            "approval_request_id": approval_request_id,
+                                            "approval_reason": approval_reason,
+                                        });
+                                        Ok(Bytes::from(payload.to_string()))
+                                    }
+                                    crate::core::runtime_provider::RuntimeStreamEvent::JsonValue { value } => {
+                                        Ok(Bytes::from(value.to_string()))
                                     }
                                 })
                             }).filter(|item| futures::future::ready(!matches!(item, Ok(bytes) if bytes.is_empty()))));
