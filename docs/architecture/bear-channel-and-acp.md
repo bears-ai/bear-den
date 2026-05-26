@@ -98,7 +98,7 @@ Implemented:
 - Codepool cancellation route:
   - `POST /internal/bear_channel/sessions/:sessionId/cancel` cancels active bear-channel runs where possible.
 - Den `CodePoolClient::post_bear_channel_message_streaming` for browser chat and future Slack/talk surfaces.
-- Den web chat (`POST /v1/chat/send`) calls `bear_channel` internally while preserving the browser-facing SSE contract and sends the `talk` role id in the trusted payload.
+- Den web chat (`POST /v1/chat/send`) calls `bear_channel` internally while preserving the browser-facing SSE contract and sends the `chat` role id in the trusted payload.
 - Den maps `bear_channel` events back to the current Deep Chat / Letta-shaped SSE payloads:
   - `assistant_delta` -> `assistant_message`
   - `reasoning_delta` -> `reasoning_message`

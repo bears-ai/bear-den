@@ -2,13 +2,15 @@
 
 This document defines shared language for the environments Bear Den creates around Bears, roles, channels, work surfaces, and the runtime projections that let a Bear operate safely in different situations.
 
+For the canonical role model and current role names, see [bear roles](bear-roles.md). This document focuses on environment vocabulary and runtime projections.
+
 ## Summary
 
 - A **Bear Operating Environment** is the durable environment owned by a Bear.
 - A **role runtime** is the situated runtime environment Den projects for one Bear role in a specific channel, task, or session.
 - An **Environment Projection** is the mapping from durable Bear state into a role runtime.
 - A **Turn Context** is the serialized slice of the runtime environment presented to a model for one step.
-- An **agent role** is the Bear's current operating mode and responsibility boundary, such as `talk`, `pair`, `curate`, `work`, or `watch`.
+- An **agent role** is the Bear's current operating mode and responsibility boundary, such as `chat`, `pair`, `review`, `work`, or `watch`.
 - A **channel** is the concrete touchpoint through which the Bear is interacting or executing.
 - A **work surface** is the durable work context the Bear is acting on.
 
@@ -41,7 +43,7 @@ A Bear operates through **roles**, in **channels**, and often against one or mor
 
 | Concept | Meaning | Examples |
 |---------|---------|----------|
-| Role | The Bear's current operating mode and responsibility boundary. | `talk`, `pair`, `curate`, `work`, `watch` |
+| Role | The Bear's current operating mode and responsibility boundary. | `chat`, `pair`, `review`, `work`, `watch` |
 | Channel | The concrete touchpoint through which the Bear is interacting or executing. | web chat, Slack thread, ACP session, webhook source, task run |
 | Work surface | The durable work context the Bear is acting on. | repo, local checkout, service, deployment, Mission, project |
 
@@ -53,7 +55,7 @@ A **role runtime** is the situated runtime environment Den projects for a Bear r
 
 It includes things such as:
 
-- the current role, such as `talk`, `pair`, `curate`, `work`, or `watch`;
+- the current role, such as `chat`, `pair`, `review`, `work`, or `watch`;
 - the current channel;
 - the current work-surface hints or resolved work-surface anchors when relevant;
 - role instructions and runtime reminders;
@@ -76,7 +78,7 @@ Examples:
 
 - A `pair` runtime in ACP may include workspace tools, pair memory, editor session state, work-surface hints, relevant skills, current-human context, and client-mediated approvals.
 - A `work` runtime may include task instructions, approved web sources, non-interactive execution tools, stricter egress policy, curated context, and the work surface being executed against.
-- A `curate` runtime may include memory review tools, skill proposals, task intents, observation summaries, and audit history.
+- A `review` runtime may include memory review tools, skill proposals, task intents, observation summaries, and audit history.
 - A `watch` runtime may include subscription context, inbound payload interpretation tools, and write access to observations.
 
 Environment projection is how one durable Bear can safely support multiple roles and channels without giving each runtime all context and all authority.
@@ -100,7 +102,7 @@ Turn Context is narrower than a role runtime, which is narrower than Bear Operat
 In the current Bear Den implementation, the stable prompt is composed by Den from these high-level parts, in order:
 
 1. **Den baseline** — shared Bear safety and control-plane guidance. It establishes that the agent is operating as the Bear through a constrained environment, must preserve role and policy boundaries, must not claim unavailable tools or authority, should ask before destructive or externally visible actions, and should not intentionally remember secrets or credentials.
-2. **Role instructions** — role-specific instructions for `talk`, `pair`, `curate`, `work`, or `watch`. Older implementation docs may still refer to these as Space-specific instructions or role contracts.
+2. **Role instructions** — role-specific instructions for `chat`, `pair`, `review`, `work`, or `watch`. Older implementation docs may still refer to these as Space-specific instructions or role contracts.
 3. **User steering** — operator/user-provided steering for how this Bear should behave.
 4. **Bear context** — durable Bear-specific context such as identity, purpose, preferences, and scope.
 5. **Runtime/thread context** — optional situational context for a particular chat, ACP session, task run, event, or thread.
@@ -168,7 +170,7 @@ A Bear's Operating Environment may include long-term memory, approved documentat
 
 When the Bear is invoked through ACP, Den projects that environment into a `pair` runtime. The runtime environment contains workspace-local tools, relevant memory, ACP session state, authenticated-human context, work-surface hints, and user approval affordances. The turn context includes the `pair` instructions plus per-turn reminders about callable client tools, Den server tools, workspace roots, plan-mode constraints, and memory/tool boundaries.
 
-When the Bear is invoked through web chat, Den projects that environment into a `talk` runtime. Den sends trusted Bear, user, channel, tool, and runtime-plan metadata to Codepool. Codepool runs the Letta Code harness for that role. The model still sees the stable `talk` instructions, while runtime details such as tool registration, session handling, and memory setup are partly carried outside the natural-language prompt.
+When the Bear is invoked through web chat, Den projects that environment into a `chat` runtime. Den sends trusted Bear, user, channel, tool, and runtime-plan metadata to Codepool. Codepool runs the Letta Code harness for that role. The model still sees the stable `chat` instructions, while runtime details such as tool registration, session handling, and memory setup are partly carried outside the natural-language prompt.
 
 When the same Bear runs scheduled work, Den projects a different runtime environment into a `work` runtime containing task instructions, approved web sources, non-interactive validation tools, approved tool scope, curated context, relevant work-surface identity, and stricter egress policy.
 
@@ -176,9 +178,9 @@ The Bear is durable. The runtime is situated. The turn context is the immediate 
 
 ## Related docs
 
-- [Bear Den and Den](BEARS_AND_DEN.md)
-- [Bear agent roles](BEAR_AGENT_ROLES.md)
-- [Capabilities and skills](CAPABILITIES_AND_SKILLS.md)
-- [Memory model](MEMORY_MODEL.md)
+- [Bear Den and Den](bears-and-den.md)
+- [bear roles](bear-roles.md)
+- [Capabilities and skills](capabilities-and-skills.md)
+- [Memory model](memory-model.md)
 - [Tasks and autonomy](TASKS_AND_AUTONOMY.md)
 - [Tool naming and execution strategy ADR](../architecture/adr/tool-naming-and-execution-strategy.md)

@@ -2,21 +2,23 @@
 
 This document specifies the file formats and lifecycle for the task-management subsystem described in the `multi-role-runtime-architecture` ADR (section 5, "Task request flow") and operationalized by `MULTI_ROLE_RUNTIME_IMPLEMENTATION_PLAN.md` (phases 4–8).
 
-There are three distinct file types, each living on a different branch of the Bear's MemFS repo. They form a pipeline: **intent → approved task → result**, mediated by the `curate` role and Den.
+For the canonical role model and current role names, see [bear roles](bear-roles.md). This document focuses on task artifact shapes and lifecycle.
+
+There are three distinct file types, each living on a different branch of the Bear's MemFS repo. They form a pipeline: **intent → approved task → result**, mediated by the `review` role and Den.
 
 ## Pipeline overview
 
 ```
                           ┌──────────────────┐
-  user request via talk   │  talk/tasks/     │  intent files
+  user request via chat   │  chat/tasks/     │  intent files
   user request via pair → │  pair/tasks/     │  written by channel roles
                           └────────┬─────────┘
-                                   │  curate run reviews,
+                                   │  review run reviews,
                                    │  approves or rejects
                                    ▼
                           ┌──────────────────┐
                           │  core/tasks/   │  approved task definitions
-                          │                  │  written by the `curate` role via Den
+                          │                  │  written by the `review` role via Den
                           └────────┬─────────┘
                                    │  Den dispatches per
                                    │  schedule or trigger
@@ -26,7 +28,7 @@ There are three distinct file types, each living on a different branch of the Be
                           │  <task-id>/      │  written by the `work` role
                           │    <run-id>.md   │
                           └────────┬─────────┘
-                                   │  curate run promotes
+                                   │  review run promotes
                                    │  summaries to core/
                                    ▼
                           ┌──────────────────┐
@@ -41,15 +43,15 @@ All files are markdown with YAML frontmatter. This matches the format of skills 
 
 ## File type 1: Intent (channel branch)
 
-**Location:** `talk/tasks/<intent-id>.md` or `pair/tasks/<intent-id>.md`
+**Location:** `chat/tasks/<intent-id>.md` or `pair/tasks/<intent-id>.md`
 
 **Written by:** the channel agent (talk or pair) when a user requests work with external effects.
 
-**Read by:** the curate agent during its cycle.
+**Read by:** the review agent during its cycle.
 
 **Lifecycle:** `pending_review` → `approved` (intent file remains as audit record; canonical state moves to `core/tasks/`) or `rejected` (intent file updated with rejection reason).
 
-The approval/rejection update is performed by a privileged Den tool, not by granting the curate agent raw write access to the channel branch. The curate agent decides approve/reject during its cycle; Den validates the transition and writes the source-branch audit metadata as a control-plane operation.
+The approval/rejection update is performed by a privileged Den tool, not by granting the review agent raw write access to the channel branch. The review agent decides approve/reject during its cycle; Den validates the transition and writes the source-branch audit metadata as a control-plane operation.
 
 ### Schema
 
@@ -71,8 +73,8 @@ proposed_scope:                         # destinations the agent thinks it'll to
   slack_channels: ["#team-alerts"]
 proposed_risk: low                      # low | high (agent's best guess)
 
-# Outcome of curate review (populated when status changes):
-reviewed_by: null                       # agent-id of the curate agent that reviewed
+# Outcome of review review (populated when status changes):
+reviewed_by: null                       # agent-id of the review agent that reviewed
 reviewed_at: null
 rejection_reason: null                  # populated only when status: rejected
 approved_task_id: null                  # populated only when status: approved
@@ -82,13 +84,13 @@ approved_task_id: null                  # populated only when status: approved
 # <human-readable title>
 
 <2-4 sentence description of what the task does and why the user requested it.
-Should include enough detail for the curate agent to evaluate the request and
+Should include enough detail for the review agent to evaluate the request and
 for the work agent to execute it later. Avoid encoding secrets or credentials.>
 
 ## User context
 
 <Optional. Any context from the conversation that informs the task —
-preferences, constraints, prior related work. The curate agent uses this
+preferences, constraints, prior related work. The review agent uses this
 when deciding whether to approve.>
 ```
 
@@ -106,7 +108,7 @@ when deciding whether to approve.>
 
 The channel agent uses `write_task_intent`, a privileged Den tool that takes structured inputs, validates them, and writes the file. The agent should not write intent files directly via raw filesystem operations; the tool exists to enforce schema and avoid malformed entries that would be rejected during review.
 
-Approval and rejection are similarly performed through privileged Den tools (`approve_task_intent` and `reject_task_intent`). These tools update source intent audit fields without giving the curate agent raw write access to `talk/` or `pair/` paths.
+Approval and rejection are similarly performed through privileged Den tools (`approve_task_intent` and `reject_task_intent`). These tools update source intent audit fields without giving the review agent raw write access to `chat/` or `pair/` paths.
 
 ### Examples
 
@@ -186,7 +188,7 @@ choosing a standard.
 
 **Location:** `core/tasks/<task-id>.md`
 
-**Written by:** privileged Den tooling after the curate agent reviews and approves an intent. The curate agent supplies the decision and refined task definition; Den validates and writes the file.
+**Written by:** privileged Den tooling after the review agent reviews and approves an intent. The review agent supplies the decision and refined task definition; Den validates and writes the file.
 
 **Read by:** Den (for scheduling and dispatch); the work agent (when Den dispatches a run).
 
@@ -201,9 +203,9 @@ schema_version: 1
 status: approved                         # approved | active | paused | completed | failed | expired
 
 # Origin:
-parent_intent: talk/tasks/intent-2026-05-03-001.md
-created_by: talk                         # which channel originated the request
-approved_by: curate                      # always curate (named for completeness)
+parent_intent: chat/tasks/intent-2026-05-03-001.md
+created_by: chat                         # which channel originated the request
+approved_by: review                      # always review (named for completeness)
 approved_at: 2026-05-03T16:00:00Z
 
 # Definition:
@@ -233,7 +235,7 @@ consecutive_failures: 0
 
 # Daily deploy status check
 
-<The curate agent should propose a clean, executable description of the task
+<The review agent should propose a clean, executable description of the task
 based on the intent and any context the agent has. Den validates and writes
 this description through `approve_task_intent`. This is what the work agent
 will see when dispatched. Write it in the second person, addressing the work
@@ -261,19 +263,19 @@ error details. Do not post to Slack.
 - `id` matches `^task-\d{4}-\d{2}-\d{2}-\d{3,}$` and is unique within the Bear.
 - `schema_version` is `1`.
 - `status` starts at `approved`; transitions managed by Den.
-- `parent_intent` references a real file in `talk/tasks/` or `pair/tasks/` whose `status` is `approved` and whose `approved_task_id` matches this file's `id`.
+- `parent_intent` references a real file in `chat/tasks/` or `pair/tasks/` whose `status` is `approved` and whose `approved_task_id` matches this file's `id`.
 - `schedule` is a valid 5-field cron expression iff `type: scheduled`.
 - `event_trigger` is non-null iff `type: event_triggered` (out of scope for MVP per phase 7).
 - `allowed_tools` is non-empty and is a subset of the work agent's available tool roster.
 - `scope` has at least one entry. Wildcards (`*`) are forbidden.
-- `risk` is `high` if `allowed_tools` includes any tool that performs writes against external systems by default (e.g., `slack_post`, `github_create_issue`, anything matching a configurable destructive-tool list). Curate may downgrade to `low` only if scope is sufficiently narrow (specific channels, specific repos) — the policy for this is documented in `bear-spec.md`.
+- `risk` is `high` if `allowed_tools` includes any tool that performs writes against external systems by default (e.g., `slack_post`, `github_create_issue`, anything matching a configurable destructive-tool list). Review may downgrade to `low` only if scope is sufficiently narrow (specific channels, specific repos) — the policy for this is documented in `bear-spec.md`.
 - `max_runtime_seconds` is between 30 and 3600.
 - `expires_at` is in the future at time of writing.
 - The body is structured as instructions to the work agent.
 
 ### Authoring
 
-The curate agent reads the corresponding intent, evaluates it, and calls privileged Den tooling (`approve_task_intent`) with the intent path, a refined task definition, and validation parameters. The tool:
+The review agent reads the corresponding intent, evaluates it, and calls privileged Den tooling (`approve_task_intent`) with the intent path, a refined task definition, and validation parameters. The tool:
 
 - Validates the result against this schema.
 - Writes the file to `core/tasks/`.
@@ -281,7 +283,7 @@ The curate agent reads the corresponding intent, evaluates it, and calls privile
 
 For rejections, a parallel privileged Den tool (`reject_task_intent`) updates the source intent audit metadata as a Den control-plane operation: `status: rejected`, `reviewed_by`, `reviewed_at`, `rejection_reason`.
 
-Neither tool grants the curate agent raw write access to `talk/` or `pair/` paths.
+Neither tool grants the review agent raw write access to `chat/` or `pair/` paths.
 
 ### State transitions (managed by Den)
 
@@ -299,7 +301,7 @@ Neither tool grants the curate agent raw write access to `talk/` or `pair/` path
 
 **Written by:** the work agent at the end of each task run.
 
-**Read by:** the curate agent during its cycle (to decide whether to surface a summary in `core/results/`); Den (for logging); the user (via UI).
+**Read by:** the review agent during its cycle (to decide whether to surface a summary in `core/results/`); Den (for logging); the user (via UI).
 
 **Lifecycle:** terminal — once written, never modified.
 
@@ -327,9 +329,9 @@ external_calls:
     status_code: 200
     timestamp: 2026-05-04T09:00:13Z
 
-# For UI display and curate review:
+# For UI display and review review:
 summary: "Found 2 deploy failures in last 24h, posted summary to #team-deploy-alerts."
-surfaceable: true                        # curate uses this as a hint;
+surfaceable: true                        # review uses this as a hint;
                                          # true means "worth promoting to core/results/"
 
 # For debugging:
@@ -393,7 +395,7 @@ None of these files may contain secrets, credentials, tokens, or other sensitive
 
 Validation runs at three points:
 
-1. **Authoring tools** — the tools that channel/curate/work agents use to create these files validate before writing. Bad inputs fail fast.
+1. **Authoring tools** — the tools that channel/review/work agents use to create these files validate before writing. Bad inputs fail fast.
 2. **Pre-receive hook** — for files in paths Den cares about, the bare repo's `pre-receive` hook can optionally re-validate (recommended for `core/tasks/` since it's the dispatch source of truth). The hook also enforces branch/path write policy; Den-mediated privileged tools are responsible for any approved cross-branch audit updates.
 3. **Den's polling/index** — when Den picks up a new approved task, it validates again before scheduling. Failures are logged and the task is not dispatched.
 
@@ -402,6 +404,6 @@ Validation runs at three points:
 These are not blockers for phase 0–8 implementation but should be settled before broader rollout:
 
 1. **Event-triggered tasks.** The schema reserves `type: event_triggered` and an `event_trigger` slot, but the trigger format and webhook auth are TBD. Defer to a follow-up ADR.
-2. **Task supersession.** If a user creates a new intent that conflicts with an existing approved task ("change the schedule to weekly"), how is the prior task replaced? Current model: curate writes a new task and Den retires the old one (`status: completed`, with a note). Worth confirming this UX with users before locking it in.
+2. **Task supersession.** If a user creates a new intent that conflicts with an existing approved task ("change the schedule to weekly"), how is the prior task replaced? Current model: review writes a new task and Den retires the old one (`status: completed`, with a note). Worth confirming this UX with users before locking it in.
 3. **Result retention.** Run result files accumulate over time. Need a retention policy (e.g., keep last N runs per task, plus all `failed` runs for 90 days). Implement in phase 11 monitoring or as a separate cleanup job.
 4. **Cross-Bear task delegation.** Out of scope. If it becomes relevant later, schema needs a `delegated_to_bear` field or similar.

@@ -8,7 +8,7 @@ Reflection runs are bounded background executions that help Bears learn, maintai
 - The **conductor** is Den infrastructure that advances Reflection runs.
 - A **Reflection lane** is a type of background work.
 - A **Reflection run** is one bounded execution in a lane.
-- Role agents such as `curate` make semantic decisions during runs; the conductor coordinates and records them.
+- Role agents such as `review` make semantic decisions during runs; the conductor coordinates and records them.
 
 ## Top-level model
 
@@ -43,15 +43,15 @@ Reflection
 | Lane | Run name | Primary owner | Purpose |
 |------|----------|---------------|---------|
 | `pair_reflect` | Pair reflection run | Den / pair reflection process | Maintain `pair/` memory and create review requests. |
-| `memory_curate` | Curate memory run | `curate` | Review role-local memory and maintain `core/`. |
+| `memory_curate` | Review memory run | `review` | Review role-local memory and maintain `core/`. |
 | `archive_index` | Archive indexing run | Den / indexer | Sync selected canonical sources into Letta Archives. |
-| `watch_observation_review` | Watch observation review run | `curate` | Review `watch` observations before memory/action. |
-| `work_result_review` | Work result review run | `curate` | Review `work` results and promote useful summaries. |
-| `skill_review` | Skill review run | `curate` or reviewer | Review proposed reusable skills/procedures. |
+| `watch_observation_review` | Watch observation review run | `review` | Review `watch` observations before memory/action. |
+| `work_result_review` | Work result review run | `review` | Review `work` results and promote useful summaries. |
+| `skill_review` | Skill review run | `review` or reviewer | Review proposed reusable skills/procedures. |
 | `skill_apply` | Skill apply run | Den + policy | Apply approved skill changes. |
-| `introspection` | Introspection run | `curate` or reviewer | Review behavior, tool failures, cost, and patterns. |
+| `introspection` | Introspection run | `review` or reviewer | Review behavior, tool failures, cost, and patterns. |
 | `health_check` | Health check run | Den | Check role agents, services, queues, and drift. |
-| `cleanup` | Cleanup run | Den / `curate` | Mark stale/superseded items or clean policy-allowed data. |
+| `cleanup` | Cleanup run | Den / `review` | Mark stale/superseded items or clean policy-allowed data. |
 | `human_review_escalation` | Human review escalation run | Den | Surface unresolved or sensitive items to humans. |
 
 ## `pair_reflect`
@@ -348,7 +348,7 @@ Inputs:
 - proposals marked `needs_human_review`;
 - sensitive person data;
 - secret-risk detections;
-- failed curate decisions;
+- failed review decisions;
 - policy conflicts.
 
 Outputs:
@@ -394,9 +394,9 @@ health_check_due
 cleanup_due
 ```
 
-## Curate conversation policy
+## Review conversation policy
 
-For `curate` runs, use one conversation per Bear + lane + UTC day:
+For `review` runs, use one conversation per Bear + lane + UTC day:
 
 ```text
 memory_curate:2026-05-09

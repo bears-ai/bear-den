@@ -55,7 +55,7 @@ A problematic view health response should include enough information to decide r
   "last_reconciled_at": 1777876000.123,
   "last_reconcile_status": "quarantined",
   "quarantined": true,
-  "diagnostic": "canonical would reject role talk path core/nope.md",
+  "diagnostic": "canonical would reject role chat path core/nope.md",
   "recommended_action": "Inspect diagnostic, then run reconcile or an operator override."
 }
 ```

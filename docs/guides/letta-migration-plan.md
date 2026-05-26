@@ -13,8 +13,8 @@ This plan uses the current canonical role names:
 | Legacy name | Canonical name |
 |---|---|
 | `pair` | `code` |
-| `talk` | `chat` |
-| `curate` | `review` |
+| `chat` | `chat` |
+| `review` | `review` |
 | `work` | `work` |
 | `watch` | `watch` |
 
@@ -152,8 +152,8 @@ The migration should continue in that direction.
 
 The old split was:
 
-- **API-direct**: legacy `pair`, `curate`, `watch`
-- **harness-backed**: legacy `talk`, `work`
+- **API-direct**: legacy `pair`, `review`, `watch`
+- **harness-backed**: legacy `chat`, `work`
 
 That split reflects Letta implementation history. The migration should instead reason about execution modes and risk surfaces:
 
@@ -178,8 +178,8 @@ Compatibility aliases may be required for legacy role names, persistent values, 
 The target role names are:
 
 - `code` for legacy `pair`
-- `chat` for legacy `talk`
-- `review` for legacy `curate`
+- `chat` for legacy `chat`
+- `review` for legacy `review`
 - `work`
 - `watch`
 
@@ -190,7 +190,7 @@ During migration, implementation code may need to accept both canonical and lega
 Canonical roles:
 
 - `code` (legacy `pair`)
-- `review` (legacy `curate`)
+- `review` (legacy `review`)
 - `watch`
 
 Current behavior:
@@ -204,7 +204,7 @@ Current behavior:
 
 Canonical roles:
 
-- `chat` (legacy `talk`)
+- `chat` (legacy `chat`)
 - `work`
 
 Current behavior:
@@ -395,8 +395,8 @@ Migration should make compatibility handling explicit instead of allowing aliase
 
 2. **Accepted legacy aliases** during transition are:
    - `pair` → `code`
-   - `talk` → `chat`
-   - `curate` → `review`
+   - `chat` → `chat`
+   - `review` → `review`
 
 3. **Canonicalization should happen at routing and persistence boundaries** where legacy values may still arrive from existing clients, jobs, or stored data.
 

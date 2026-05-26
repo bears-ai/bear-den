@@ -15,9 +15,9 @@ It focuses on:
 
 Bear Den currently depends on Letta in four major ways:
 
-1. **Runtime execution substrate** for API-direct roles (`pair`, `curate`, `watch`)
+1. **Runtime execution substrate** for API-direct roles (`pair`, `review`, `watch`)
 2. **Agent registry and provisioning target** for all Bear role agents
-3. **Harness backend** for `talk` and `work` via Codepool / Letta Code
+3. **Harness backend** for `chat` and `work` via Codepool / Letta Code
 4. **Operational datastore/read model** for conversations, diagnostics, and admin UI
 
 A fifth category, **memory/indexing**, is present but appears less foundational than the runtime and registry dependencies because canonical Bear memory already lives primarily in MemFS/git role branches rather than inside Letta-native memory blocks.
@@ -34,10 +34,10 @@ A fifth category, **memory/indexing**, is present but appears less foundational 
 | ACP / pair runtime | `services/den/src/api/acp.rs` | Uses Letta conversation/run lifecycle, tool continuation, pending approval handling, run cancellation hygiene | Stateful API-direct agent loop for `pair` | High | Den-native API-direct runner |
 | API state wiring | `services/den/src/api/service.rs` | Injects shared `LettaClient` into API state | Makes Letta a first-class API dependency | High | Runtime trait implementation selected by config |
 | Web conversation data | `services/den/src/web/data/letta.rs` | Fetches agent state, conversations, message history, title/archive/delete operations | Read model for Den web/admin UI | High | Den-owned conversation store/read model |
-| Bear management UI | `services/den/src/web/bear_management.rs` | Lists Letta conversations for talk/pair, shows drift/diagnostics, filters tool ids via Letta catalog | Admin/operator visibility into runtime state | Medium-High | Den read model + runtime diagnostics service |
+| Bear management UI | `services/den/src/web/bear_management.rs` | Lists Letta conversations for chat/pair, shows drift/diagnostics, filters tool ids via Letta catalog | Admin/operator visibility into runtime state | Medium-High | Den read model + runtime diagnostics service |
 | Bear spec / architecture | `services/den/docs/bear-spec.md` | Role model explicitly names Letta API direct and Letta Code harness runtime families | Architectural contract and current assumptions | High | New Bear Den-native runtime spec |
-| Letta Code harness config | `services/den/src/core/bears/letta_code_harness.rs` | Generates Letta Code harness YAML with Letta server URL/API key and role agents | Channel harness integration for `talk`/`work` | High | Codepool-next or alternative Bear Den-native harness config |
-| Codepool integration | `services/den/src/core/codepool/client.rs`, `docker-compose.yaml` | Codepool is documented and configured as Letta Code SDK harness; depends on Letta base URL/API key | Harness-backed runtime for `talk` and `work` | High | Codepool backend replacement or new Bear Den runtime service |
+| Letta Code harness config | `services/den/src/core/bears/letta_code_harness.rs` | Generates Letta Code harness YAML with Letta server URL/API key and role agents | Channel harness integration for `chat`/`work` | High | Codepool-next or alternative Bear Den-native harness config |
+| Codepool integration | `services/den/src/core/codepool/client.rs`, `docker-compose.yaml` | Codepool is documented and configured as Letta Code SDK harness; depends on Letta base URL/API key | Harness-backed runtime for `chat` and `work` | High | Codepool backend replacement or new Bear Den runtime service |
 | Seed/dev bootstrap | `services/den/src/seeds.rs` | Smoke seed provisions missing Bear role agents through Letta | Local/dev environment bootstrap | Medium | Den-native runtime bootstrap |
 | Startup / ACP validation | `services/den/src/startup.rs` | ACP currently requires Letta to be configured | Hard runtime gate for API-direct operation | High | ACP should target generic runtime provider |
 | MemFS integration | `docker-compose.yaml`, `services/den/src/core/bears/provision.rs`, `services/den/src/core/memory_manager_head.rs` | Letta-shaped storage layout, Letta memfs sidecar URL, agent-associated role views | Memory repo compatibility and per-agent role view registration | Medium-High | MemFS manager should become direct owner of repo/view lifecycle |
@@ -98,16 +98,16 @@ By contrast, canonical Bear memory appears to be more strongly rooted in MemFS/g
 - waiting-for-approval recovery
 - client tool continuation
 
-This suggests `pair` should not be the first role migrated off Letta, even though it is one of the API-direct roles. `watch` is likely a better first proving ground, then `curate`, then `pair`.
+This suggests `pair` should not be the first role migrated off Letta, even though it is one of the API-direct roles. `watch` is likely a better first proving ground, then `review`, then `pair`.
 
-### 4. Talk/work remain indirectly Letta-dependent through Codepool
+### 4. Chat/work remain indirectly Letta-dependent through Codepool
 
 Even if Den stops calling Letta directly for API-direct roles, the system is still Letta-dependent because Codepool is currently configured as a Letta Code harness.
 
 So migration likely needs two tracks:
 
-1. replace API-direct runtime for `pair` / `curate` / `watch`
-2. replace or evolve Codepool backend for `talk` / `work`
+1. replace API-direct runtime for `pair` / `review` / `watch`
+2. replace or evolve Codepool backend for `chat` / `work`
 
 ### 5. MemFS is promising, but still Letta-shaped operationally
 

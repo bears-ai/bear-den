@@ -2,12 +2,14 @@
 
 Subscriptions let a Bear receive external events. Observations are the structured records `watch` writes when those events arrive.
 
+For the canonical role model and current role names, see [bear roles](bear-roles.md). This document focuses on subscription and observation flow.
+
 ## Summary
 
 - A subscription is a durable request to monitor an external source.
 - Den owns subscription registration, validation, routing, and polling where needed.
 - `watch` receives inbound events and writes observations.
-- `curate` reviews observations before they become shared memory or tasks.
+- `review` reviews observations before they become shared memory or tasks.
 - Inbound monitoring does not directly imply outbound action.
 
 ## Subscriptions
@@ -22,7 +24,7 @@ Examples:
 - queue messages,
 - scheduled polling of a read-only endpoint.
 
-Subscriptions are usually requested through `talk` or `pair` as task intents. After review, Den registers and maintains the subscription.
+Subscriptions are usually requested through `chat` or `pair` as task intents. After review, Den registers and maintains the subscription.
 
 ## Events
 
@@ -53,9 +55,9 @@ An observation should capture:
 
 Observations live in `watch/` until reviewed.
 
-## Review by `curate`
+## Review by `review`
 
-`curate` reviews observations and decides what happens next.
+`review` reviews observations and decides what happens next.
 
 Possible outcomes:
 
@@ -70,17 +72,17 @@ This review step prevents raw external payloads from directly controlling Bear m
 
 Monitoring is inbound. Action is outbound.
 
-`watch` monitors and records. It does not post, mutate external systems, or dispatch work on its own. If an observation should cause action, that action flows through `curate`, Den policy, and the normal task path to `work`.
+`watch` monitors and records. It does not post, mutate external systems, or dispatch work on its own. If an observation should cause action, that action flows through `review`, Den policy, and the normal task path to `work`.
 
 ## Role responsibilities
 
 | Role/System | Responsibility |
 |-------------|----------------|
-| `talk` | Capture user requests to monitor something. |
+| `chat` | Capture user requests to monitor something. |
 | `pair` | Capture client-context requests to monitor something. |
 | Den | Register subscriptions, validate events, perform polling, route payloads. |
 | `watch` | Interpret inbound events and write observations. |
-| `curate` | Review observations and decide whether to promote, dismiss, or derive work. |
+| `review` | Review observations and decide whether to promote, dismiss, or derive work. |
 | `work` | Execute approved outbound tasks derived from observations. |
 
 ## Product language
@@ -101,10 +103,10 @@ Avoid:
 
 ## Related docs
 
-- [Bear Den and Den](BEARS_AND_DEN.md)
-- [Bear agent roles](BEAR_AGENT_ROLES.md)
-- [Memory model](MEMORY_MODEL.md)
+- [Bear Den and Den](bears-and-den.md)
+- [bear roles](bear-roles.md)
+- [Memory model](memory-model.md)
 - [Tasks and autonomy](TASKS_AND_AUTONOMY.md)
-- [Capabilities and skills](CAPABILITIES_AND_SKILLS.md)
+- [Capabilities and skills](capabilities-and-skills.md)
 - [Multi-agent architecture ADR](../architecture/adr/multi-agent-architecture.md)
 - [Den Bear spec](../../services/den/docs/bear-spec.md)

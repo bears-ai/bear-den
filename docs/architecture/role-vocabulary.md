@@ -6,7 +6,7 @@ This note proposes a terminology shift for Bear Den as the system migrates away 
 
 Canonical framing:
 
-> **Bear Den uses a multi-role runtime.** A Bear has one durable identity and charter, and may execute under role-scoped contexts such as `talk`, `pair`, `work`, `curate`, and `watch`. Roles are Den-owned descriptors that define tools, memory scope, autonomy policy, surfaces, and audit behavior. They are not distinct provider-managed agents.
+> **Bear Den uses a multi-role runtime.** A Bear has one durable identity and charter, and may execute under role-scoped contexts such as `chat`, `pair`, `work`, `review`, and `watch`. Roles are Den-owned descriptors that define tools, memory scope, autonomy policy, surfaces, and audit behavior. They are not distinct provider-managed agents.
 
 The central idea is:
 
@@ -60,9 +60,9 @@ A role defines:
 
 Current roles include:
 
-- `talk`
+- `chat`
 - `pair`
-- `curate`
+- `review`
 - `work`
 - `watch`
 

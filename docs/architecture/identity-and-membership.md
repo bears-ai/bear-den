@@ -7,8 +7,8 @@ Identity defines who a user is and which Bear they are interacting with. Members
 - Users and Bears are separate identities.
 - A user may belong to many Bears.
 - A Bear may have many users.
-- Den enforces membership before routing requests to Bear agent roles.
-- Human membership roles are different from internal Bear agent roles.
+- Den enforces membership before routing requests to bear roles.
+- Human membership roles are different from internal bear roles.
 
 ## Users
 
@@ -44,7 +44,7 @@ Membership is the relationship between a user and a Bear.
 Membership answers:
 
 - Can this user see the Bear?
-- Can this user talk to the Bear?
+- Can this user chat to the Bear?
 - Can this user pair with the Bear in a client tool?
 - Can this user administer the Bear?
 - Can this user change capabilities, skills, integrations, or membership?
@@ -53,7 +53,7 @@ Den checks membership before allowing requests to proceed to the Bear's internal
 
 ## Membership roles
 
-Membership roles are human access roles. They are not the same as Bear agent roles.
+Membership roles are human access roles. They are not the same as bear roles.
 
 Possible membership roles may include:
 
@@ -65,7 +65,7 @@ Possible membership roles may include:
 | Read-only | Can inspect allowed Bear state but not make changes or initiate work. |
 | Operator | Site-level or deployment-level authority, not necessarily a normal Bear member. |
 
-The exact role set can evolve. The important distinction is that membership roles describe human permissions; Bear agent roles describe internal agent responsibilities.
+The exact role set can evolve. The important distinction is that membership roles describe human permissions; bear roles describe internal agent responsibilities.
 
 ## Personal and shared Bears
 
@@ -163,7 +163,7 @@ Prefer:
 - “This user is a member of that Bear.”
 - “Den checks membership before routing the request.”
 - “Membership roles control human access.”
-- “Bear agent roles control internal responsibilities.”
+- “bear roles control internal responsibilities.”
 
 Avoid:
 
@@ -174,10 +174,10 @@ Avoid:
 
 ## Related docs
 
-- [Bear Den and Den](BEARS_AND_DEN.md)
-- [Bear agent roles](BEAR_AGENT_ROLES.md)
-- [Capabilities and skills](CAPABILITIES_AND_SKILLS.md)
+- [Bear Den and Den](bears-and-den.md)
+- [bear roles](bear-roles.md)
+- [Capabilities and skills](capabilities-and-skills.md)
 - [Tasks and autonomy](TASKS_AND_AUTONOMY.md)
-- [Observations and subscriptions](OBSERVATIONS_AND_SUBSCRIPTIONS.md)
+- [Observations and subscriptions](observations-and-subscriptions.md)
 - [Den architecture](../architecture/DEN_ARCHITECTURE.md)
 - [Bear channel and ACP](../architecture/BEAR_CHANNEL_AND_ACP.md)

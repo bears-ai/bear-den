@@ -1,6 +1,8 @@
 # Reflection System
 
-Reflection is Bear Den's auditable background review and learning system. It lets a Bear periodically or eventfully review recent activity, curate memory, maintain derived indexes, inspect behavior, and propose bounded improvements.
+Reflection is Bear Den's auditable background review and learning system. It lets a Bear periodically or eventfully review recent activity, review memory, maintain derived indexes, inspect behavior, and propose bounded improvements.
+
+For the canonical role model and current role names, see [bear roles](bear-roles.md). This document focuses on Reflection as a system rather than re-defining the roles themselves.
 
 ## Summary
 
@@ -8,7 +10,7 @@ Reflection is Bear Den's auditable background review and learning system. It let
 - A **Reflection run** is one bounded execution for a Bear, lane, role, or scope.
 - A **Reflection lane** is a specific kind of work such as memory curation, archive indexing, introspection, or skill review.
 - A **conductor** is Den's active orchestration system for advancing bounded Reflection runs.
-- `curate` is a Bear role; Reflection is the broader process.
+- `review` is a Bear role; Reflection is the broader process.
 - Memory curation and skill adaptation are related but separate.
 - Heartbeats are throttled: active Bears can reflect more frequently than dormant Bears.
 - Reflection must be visible, auditable, budgeted, and policy-governed.
@@ -45,7 +47,7 @@ Use narrower terms underneath Reflection:
 | Reflection lane | A specific kind of background work. |
 | Reflection event | Auditable event emitted during a run. |
 | Conductor | Den-side infrastructure that selects work, opens/reuses the right role conversation, invokes the role, enforces budgets/locks, and records activity. |
-| Curate run | A Reflection run in which the conductor invokes `curate` for a bounded lane such as memory review. |
+| Review run | A Reflection run in which the conductor invokes `review` for a bounded lane such as memory review. |
 | Reflection proposal | A proposed durable change discovered through Reflection. |
 | Memory proposal | Proposal to change Bear memory, `core/`, Cabinet links, or memory lifecycle. |
 | Skill proposal | Proposal to change behavior, skills, workflows, prompts, or role instructions. |
@@ -58,13 +60,13 @@ Reflection should use a shared orchestration structure, but separate lanes. Lane
 
 | Lane | Purpose | Typical owner | Risk |
 |---|---|---|---|
-| `memory_curate` | Review role-local memory, maintain `core/`, compact/prune memory. | `curate` + Den | Medium |
+| `memory_curate` | Review role-local memory, maintain `core/`, compact/prune memory. | `review` + Den | Medium |
 | `archive_index` | Sync selected canonical sources into derived Letta Archives. | Den/indexer | Low/medium |
-| `introspection` | Review role behavior, failures, tool use, and recurring patterns. | `curate` or future reviewer | Medium |
-| `skill_review` | Draft skill/workflow/prompt proposals from evidence. | `curate` or future reviewer | Medium/high |
+| `introspection` | Review role behavior, failures, tool use, and recurring patterns. | `review` or future reviewer | Medium |
+| `skill_review` | Draft skill/workflow/prompt proposals from evidence. | `review` or future reviewer | Medium/high |
 | `skill_apply` | Apply approved behavior changes. | Den + policy/human gate | High |
 | `health_check` | Check agents, tools, queues, services, and drift. | Den | Low |
-| `cleanup` | Remove or mark stale/superseded artifacts within policy. | Den + `curate` | Medium |
+| `cleanup` | Remove or mark stale/superseded artifacts within policy. | Den + `review` | Medium |
 | `human_review_escalation` | Surface risky or unresolved items. | Den | Low |
 
 ## Conductor
@@ -75,18 +77,18 @@ For a `memory_curate` run, the conductor should:
 
 1. select pending memory proposals or recent memory activity;
 2. acquire a Bear/lane lock so cycles do not collide;
-3. resolve the role agent, usually `curate`;
+3. resolve the role agent, usually `review`;
 4. open or reuse the correct Letta conversation;
 5. build a bounded prompt with proposal IDs, source summaries, policy, and tool instructions;
 6. invoke the role with only lane-appropriate tools;
 7. record cycle status, tool activity, decisions, errors, and outputs;
 8. surface the run in UI.
 
-Semantic decisions belong to the role agent, usually `curate`, not to ad hoc Den heuristics in the conductor.
+Semantic decisions belong to the role agent, usually `review`, not to ad hoc Den heuristics in the conductor.
 
 ### Conversation rollover
 
-For `curate`, use one conversation per Bear + lane + UTC day in the first implementation:
+For `review`, use one conversation per Bear + lane + UTC day in the first implementation:
 
 ```text
 conversation_key = memory_curate:YYYY-MM-DD
@@ -165,7 +167,7 @@ Reflection should do useful bounded work and then stop. Long-running autonomous 
 
 Memory curation asks: **what should the Bear remember?**
 
-The `memory_curate` lane reviews role-local memory from `talk/`, `pair/`, `work/`, `watch/`, and `curate/`, then decides whether to:
+The `memory_curate` lane reviews role-local memory from `chat/`, `pair/`, `work/`, `watch/`, and `review/`, then decides whether to:
 
 - retain it locally;
 - summarize it;
@@ -240,9 +242,9 @@ Initially, high-risk adaptation should require human approval. This includes cha
 |---|---|
 | Den | Scheduler, policy, run/event records, locks, tool authorization, archive indexer, UI/API. |
 | MemFS Manager | Git-backed canonical file operations under path policy. |
-| `curate` | Memory curation, review, consolidation, cleanup recommendations, skill proposal drafting. |
+| `review` | Memory curation, review, consolidation, cleanup recommendations, skill proposal drafting. |
 | `pair` | Writes role-local memory and may request review. |
-| `talk` | Writes conversation-derived local memory and may request review. |
+| `chat` | Writes conversation-derived local memory and may request review. |
 | `work` | Writes task/run memory and may request review. |
 | `watch` | Writes observations/logs; does not decide shared truth. |
 
@@ -261,7 +263,7 @@ The UI should show:
 - run budgets and failure summaries;
 - per-Bear heartbeat/cadence policy;
 - conductor queue/status;
-- daily curate conversation used for each lane;
+- daily review conversation used for each lane;
 - manual "run reflection now" controls.
 
 Product language examples:
@@ -280,11 +282,11 @@ Avoid:
 ## Related docs
 
 - [Reflection System ADR](../architecture/adr/reflection-system.md)
-- [Memory model](MEMORY_MODEL.md)
-- [Capabilities and skills](CAPABILITIES_AND_SKILLS.md)
-- [Bear agent roles](BEAR_AGENT_ROLES.md)
+- [Memory model](memory-model.md)
+- [Capabilities and skills](capabilities-and-skills.md)
+- [bear roles](bear-roles.md)
 - [Tasks and autonomy](TASKS_AND_AUTONOMY.md)
 - [Semantic Bear Memory ADR](../architecture/adr/semantic-bear-memory.md)
 - [Reflection system implementation plan](../planning/REFLECTION_SYSTEM_PLAN.md)
-- [Curate memory governance plan](../planning/CURATE_MEMORY_GOVERNANCE_PLAN.md)
+- [Review memory governance plan](../planning/CURATE_MEMORY_GOVERNANCE_PLAN.md)
 - [Memory automation roadmap](../planning/MEMORY_AUTOMATION_ROADMAP.md)

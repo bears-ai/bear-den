@@ -2,6 +2,8 @@
 
 Planning in Bear Den means a user-visible mini-project plan for an active body of work. Plans are Bear-level records with role provenance, and they usually attach to a **work surface**: the durable work context the Bear is acting on, such as a repo, local checkout, service, deployment, Cabinet Mission, Docket project, or long-running responsibility.
 
+For the canonical role model and current role names, see [bear roles](bear-roles.md). This document focuses on planning behavior and planning artifacts rather than re-explaining the full role system.
+
 Planning is distinct from continuation, which keeps an agent going in an existing task loop, and from a Cabinet Mission, which is a larger shared knowledge/work container. Bear Den aligns with Letta Code's two planning layers while adapting them to Den's multi-role Bear architecture.
 
 ## Two layers
@@ -46,8 +48,8 @@ These are related but different objects:
 | Work surface | Den canonical model and anchors | Durable work context that planning, tasks, artifacts, memory, and activity can attach to | Durable continuity object, not an authorization boundary |
 | Workboard plan | Den DB | Current visible todo/progress state | Durable enough for resume/status, but not a project archive |
 | Plan artifact | MemFS or approved local plan file | Proposed implementation plan for user approval before mutation or future reference | Durable markdown artifact |
-| Task intent | MemFS | Request for reviewed background/autonomous work | Durable input to `curate` review |
-| Approved task | MemFS | Curate-approved executable work for `work` | Durable task definition |
+| Task intent | MemFS | Request for reviewed background/autonomous work | Durable input to `review` review |
+| Approved task | MemFS | Review-approved executable work for `work` | Durable task definition |
 | Work result | MemFS/Garage | Result/log/report from `work` | Durable output, curatable into `core/` |
 
 A workboard plan can attach to a **work_surface_id** when Den can resolve or infer one from available anchors. Those anchors may include a local checkout path, workspace root, normalized Git remote, service name, deployment id, Cabinet Mission reference, Docket project reference, or artifact path. A workboard plan can link to a task intent when `den.work_plan.request_handoff` is used. A pre-implementation plan artifact may later be summarized into a workboard plan, task intent, or role-local memory, but it is not itself a Cabinet Mission.
@@ -77,7 +79,7 @@ Key principle: plans, handoffs, task intents, approved tasks, runs, and related 
 - Mark items `completed`, `blocked`, or `cancelled` as reality changes.
 - Use `den.work_plan.get_status` to recover the current ACP session's plan after interruption.
 - Include available work-surface signals and anchors such as repo, local checkout, workspace root, normalized Git remote, service, deployment, Cabinet Mission, Docket project, or artifact path when relevant.
-- Use `den.work_plan.request_handoff` when the plan becomes broader background work that needs `curate` review and `work` execution.
+- Use `den.work_plan.request_handoff` when the plan becomes broader background work that needs `review` review and `work` execution.
 - Do not treat every response as requiring a plan; very small single-step answers can proceed without one.
 
 ## Work role behavior
@@ -127,13 +129,13 @@ Planned:
 - A unified Bear-level `list_plans` view that includes live workboard plans, active/submitted planning artifacts, saved plan artifacts, handoffs/task intents, and available work-surface references.
 - Work-surface resolution and canonicalization from ACP workspace roots, local checkout paths, Git remotes, Cabinet Mission references, Docket project references, service names, deployments, and artifact paths.
 - Handoff implementation from workboard items to durable task intents.
-- Reflection/curate review of completed plan summaries and durable lessons.
+- Reflection/review of completed plan summaries and durable lessons.
 
 ## Related docs
 
+- [bear roles](bear-roles.md)
 - [Environment Affordance and Resource Boundaries ADR](../decisions/adr-0028-environment-affordance-and-resource-boundaries.md)
-- [Bear Den and Den](BEARS_AND_DEN.md)
-- [Bear agent roles](BEAR_AGENT_ROLES.md)
-- [Memory model](MEMORY_MODEL.md)
-- [Tasks and autonomy](TASKS_AND_AUTONOMY.md)
+- [Bear Den and Den](bears-and-den.md)
+- [Memory model](memory-model.md)
+- [Tasks and autonomy](tasks-and-autonomy.md)
 - [Bear Workplaces ADR](../architecture/adr/bear-workplaces.md)

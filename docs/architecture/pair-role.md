@@ -2,6 +2,8 @@
 
 The `pair` role is the Bear's live collaborative operating mode for working with a human inside ACP-speaking tools such as IDEs, design tools, product surfaces, and future productivity clients.
 
+For the canonical role model and current role names, see [bear roles](bear-roles.md). This document focuses specifically on the `pair` role.
+
 This note preserves product and implementation thinking for the `pair` role: what it should do inline, when it should delegate to other roles, what tools it should have, how it should treat memory, and how the Bear should behave inside the user's current work when operating through this role.
 
 ## Job description
@@ -72,7 +74,7 @@ Trust posture:
 | Private/raw context | Sees user workspace/session context and client-approved tool results. |
 | External communication | Client-mediated tools only, plus Den-mediated read-only retrieval tools. |
 | Durable state | Writes only its own `pair/` memory branch or Den-mediated structured records. |
-| Shared memory | Cannot write `core/` directly. Curate promotes durable shared knowledge. |
+| Shared memory | Cannot write `core/` directly. Review promotes durable shared knowledge. |
 | Autonomous work | Cannot execute directly. Creates task intents for review. |
 
 ## Common use cases
@@ -124,8 +126,8 @@ Expected behavior:
 
 ```text
 pair writes a note under pair/
-  -> curate later reviews
-  -> if broadly useful, curate promotes distilled knowledge to core/
+  -> review later reviews
+  -> if broadly useful, review promotes distilled knowledge to core/
 ```
 
 Pair can write role-local notes, but cannot unilaterally write `core/`.
@@ -144,7 +146,7 @@ Expected behavior:
 ```text
 pair proposes skill
   -> bear_skill_proposals
-  -> curate reviews
+  -> review reviews
   -> Den updates skill manifest if approved
   -> affected roles are re-provisioned/reconciled
 ```
@@ -163,10 +165,10 @@ Expected behavior:
 
 ```text
 pair writes or requests a task intent / handoff
-  -> curate reviews and approves/rejects
+  -> review reviews and approves/rejects
   -> Den dispatches approved work to work
   -> work writes a result/report
-  -> curate promotes summary/report to core/results or core knowledge
+  -> review promotes summary/report to core/results or core knowledge
   -> pair can surface it to the user
 ```
 
@@ -277,9 +279,9 @@ Future tool:
 
 - `memory_request_review`
 
-`memory_request_review` is the producer-side Reflection tool for asking `curate` to review pair-local memory. It creates a memory proposal row for the `memory_curate` lane; it does not write `core/`, Cabinet, skills, tasks, observations, or run results.
+`memory_request_review` is the producer-side Reflection tool for asking `review` to review pair-local memory. It creates a memory proposal row for the `memory_curate` lane; it does not write `core/`, Cabinet, skills, tasks, observations, or run results.
 
-Pair should use this when local memory may matter beyond future pair sessions. The request can include a `suggested_action`, such as `summarize_into_core`, `promote_to_core`, `cabinet_update`, `skill_review`, `retain_role_local`, `delete_after_review`, `human_review`, or `unspecified`. `curate` decides the final outcome.
+Pair should use this when local memory may matter beyond future pair sessions. The request can include a `suggested_action`, such as `summarize_into_core`, `promote_to_core`, `cabinet_update`, `skill_review`, `retain_role_local`, `delete_after_review`, `human_review`, or `unspecified`. `review` decides the final outcome.
 
 Pair should not request review for every local note. Most tactical notes can remain pair-local forever.
 
@@ -327,9 +329,9 @@ For example:
 
 | Role | `memory_write_entry` destinations |
 |------|---------------------------------------|
-| `talk` | `talk/notes/`, `talk/logs/`, `talk/decisions/`, ... |
+| `chat` | `chat/notes/`, `chat/logs/`, `chat/decisions/`, ... |
 | `pair` | `pair/notes/`, `pair/logs/`, `pair/decisions/`, ... |
-| `curate` | `curate/notes/`, `curate/reflections/`, `curate/decisions/`, ... |
+| `review` | `review/notes/`, `review/reflections/`, `review/decisions/`, ... |
 | `work` | task/run-bound `work/logs/`, `work/decisions/`, `work/summaries/` |
 | `watch` | `watch/logs/` and summaries; observations should use observation tooling |
 
@@ -342,7 +344,7 @@ Pair should distinguish between:
 1. **temporary context** — web/docs search snippets used in the current turn;
 2. **role-local memory** — notes under `pair/` useful for future pair sessions;
 3. **shared Bear memory** — curated content promoted to `core/`;
-4. **reports/results** — explicit outputs from `work`, usually under `core/results/` after curate review;
+4. **reports/results** — explicit outputs from `work`, usually under `core/results/` after review review;
 5. **skills** — reviewed durable procedures in the Bear skill manifest.
 
 Pair should not treat every docs lookup as memory. It should only write notes when the information is likely useful beyond the current turn.
@@ -386,7 +388,7 @@ User:
 
 Pair:
 
-> Noted for future pair sessions. I wrote this to pair-local memory. If you want, I can also request Reflection review so `curate` can decide whether it belongs in shared Bear memory.
+> Noted for future pair sessions. I wrote this to pair-local memory. If you want, I can also request Reflection review so `review` can decide whether it belongs in shared Bear memory.
 
 ### Broad research
 

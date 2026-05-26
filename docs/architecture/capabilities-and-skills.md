@@ -2,10 +2,12 @@
 
 Capabilities describe what a Bear is allowed to do. Tools are the concrete actions available to agents. Skills are reusable procedures or knowledge packages that help a Bear use its tools and memory well.
 
+For the canonical role model and current role names, see [bear roles](bear-roles.md). This document focuses on capability, tool, and skill concepts.
+
 ## Summary
 
 - A capability is a product-level permission or ability.
-- A tool is an executable action exposed to one or more Bear agent roles.
+- A tool is an executable action exposed to one or more bear roles.
 - A skill is reusable know-how installed for selected roles.
 - In Bear Den, durable skills are a **special class of Bear memory artifact**.
 - Den owns the canonical capability and skill configuration.
@@ -39,7 +41,7 @@ Examples:
 - write an observation,
 - relay a client-side ACP tool call.
 
-Tools are role-scoped. A tool that is safe for `work` may be unsafe for `talk`; a tool that is appropriate for `curate` may be inappropriate for `watch`.
+Tools are role-scoped. A tool that is safe for `work` may be unsafe for `chat`; a tool that is appropriate for `review` may be inappropriate for `watch`.
 
 ## Skills
 
@@ -80,9 +82,9 @@ Not every role should receive every skill or tool.
 
 | Role | Typical capability shape |
 |------|--------------------------|
-| `talk` | Conversation, task-intent capture, general user help. |
+| `chat` | Conversation, task-intent capture, general user help. |
 | `pair` | Client-mediated collaboration and coding/design assistance. |
-| `curate` | Reflection, review, memory integration, skill approval. |
+| `review` | Reflection, review, memory integration, skill approval. |
 | `work` | Approved outbound execution with scoped integration tools. |
 | `watch` | Inbound event interpretation and observation writing. |
 
@@ -98,7 +100,7 @@ The normal skill-learning flow is:
 
 1. A role or Reflection lane identifies a reusable procedure, convention, failure mode, or checklist.
 2. The role or lane submits a skill proposal through Den or a Bear Den-governed review path.
-3. `curate` or a future skill-review lane reviews the proposal.
+3. `review` or a future skill-review lane reviews the proposal.
 4. The reviewer chooses whether to approve it, which roles it applies to, and whether its dependency metadata is adequate.
 5. Den updates the Bear skill record only when policy allows.
 6. Den provisions or reconciles affected runtime views.
@@ -125,7 +127,7 @@ Agents may request capability changes. Den enforces and installs them.
 Prefer:
 
 - “This Bear has the GitHub capability.”
-- “This skill applies to `talk` and `pair`.”
+- “This skill applies to `chat` and `pair`.”
 - “The Bear proposed a new skill for review.”
 - “Den provisions tools and skills according to policy.”
 - “This skill is stored in Bear memory and materialized into the runtime.”
@@ -139,12 +141,12 @@ Avoid:
 
 ## Related docs
 
-- [Bear Den and Den](BEARS_AND_DEN.md)
-- [Bear agent roles](BEAR_AGENT_ROLES.md)
-- [Memory model](MEMORY_MODEL.md)
+- [Bear Den and Den](bears-and-den.md)
+- [bear roles](bear-roles.md)
+- [Memory model](memory-model.md)
 - [Reflection system](REFLECTION_SYSTEM.md)
 - [Tasks and autonomy](TASKS_AND_AUTONOMY.md)
-- [Observations and subscriptions](OBSERVATIONS_AND_SUBSCRIPTIONS.md)
+- [Observations and subscriptions](observations-and-subscriptions.md)
 - [Dynamic skills, reflection subagents, and bear configuration ADR](../architecture/adr/dynamic-skills-subagents.md)
 - [Multi-agent architecture ADR](../architecture/adr/multi-agent-architecture.md)
 - [Reflection System ADR](../architecture/adr/reflection-system.md)

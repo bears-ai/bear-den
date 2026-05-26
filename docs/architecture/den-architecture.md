@@ -4,7 +4,7 @@
 
 *Earlier notes drew on Letta Discord discussion:* https://discord.com/channels/1161736243340640419/1467667826730078386
 
-Bear Den uses **only self-hosted Letta** (e.g. `letta/letta:latest` on Coolify). **Den** is the control plane and gateway (**Rust / Axum**). **For Phase 1 and bear chat**, **Letta calls Bifrost directly** for model calls; Den may talk to Bifrost **for observability** on that path (metrics/health/logs). **Future** Den features (for example control-plane LLM helpers) are **not** required to route through Bifrost—see [PLAN.md](../planning/PLAN.md) §2.5.
+Bear Den uses **only self-hosted Letta** (e.g. `letta/letta:latest` on Coolify). **Den** is the control plane and gateway (**Rust / Axum**). **For Phase 1 and bear chat**, **Letta calls Bifrost directly** for model calls; Den may chat to Bifrost **for observability** on that path (metrics/health/logs). **Future** Den features (for example control-plane LLM helpers) are **not** required to route through Bifrost—see [PLAN.md](../planning/PLAN.md) §2.5.
 
 ### Three layers (names)
 
@@ -41,7 +41,7 @@ API shapes depend on your Letta version—confirm against your server.
 
 ### Bears, users, and conversations
 
-- A **bear** is the durable assistant identity in Den’s registry (the assistant users talk to). During the Letta-backed era, Den tracks the Letta runtime handles that currently realize Bear roles, plus **harness binding**: Slack channel bind, `LETTA_AGENT_ID` for `letta channels bind`, **skill** paths, and—where used—**predefined subagent** configuration (e.g. Letta **`reflection`** and related types) so deploys are reproducible; see [dynamic-skills-subagents.md](adr/dynamic-skills-subagents.md). **Users ↔ bears** is **many‑to‑many**: store `(user_id, bear_id)` membership in Den; optional roles (owner, member, read‑only).
+- A **bear** is the durable assistant identity in Den’s registry (the assistant users chat to). During the Letta-backed era, Den tracks the Letta runtime handles that currently realize Bear roles, plus **harness binding**: Slack channel bind, `LETTA_AGENT_ID` for `letta channels bind`, **skill** paths, and—where used—**predefined subagent** configuration (e.g. Letta **`reflection`** and related types) so deploys are reproducible; see [dynamic-skills-subagents.md](adr/dynamic-skills-subagents.md). **Users ↔ bears** is **many‑to‑many**: store `(user_id, bear_id)` membership in Den; optional roles (owner, member, read‑only).
 - **Conversations** isolate threads (Slack thread, WhatsApp chat, Den web chat session). Prefer **per-conversation** message APIs where available so concurrent channels do not block each other.
 
 ### Memory blocks

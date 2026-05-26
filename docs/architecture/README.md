@@ -5,8 +5,8 @@ Conceptual models, stable contracts, and architecture overviews for Bear Den.
 ## Suggested reading order
 
 - [overview](overview.md)
-- [bears and den](bears-and-den.md)
 - [bear roles](bear-roles.md)
+- [bears and den](bears-and-den.md)
 - [den architecture](den-architecture.md)
 - [memory model](memory-model.md)
 - [tasks and autonomy](tasks-and-autonomy.md)
@@ -16,8 +16,8 @@ Conceptual models, stable contracts, and architecture overviews for Bear Den.
 ## Contents
 
 ### Core concepts
-- [bears and den](bears-and-den.md)
 - [bear roles](bear-roles.md)
+- [bears and den](bears-and-den.md)
 - [bear charter and cabinet missions](bear-charter-and-cabinet-missions.md)
 - [identity and membership](identity-and-membership.md)
 - [capabilities and skills](capabilities-and-skills.md)

@@ -1,17 +1,17 @@
 # Memory Model
 
-Bear memory is the durable knowledge a Bear can use across work surfaces, channels, and time. Raw interactions may enter role-specific memory first; durable shared knowledge can be promoted into `core/` by `curate` when it is useful across roles. Role-local memory can also be a final destination.
+Bear memory is the durable knowledge a Bear can use across work surfaces, channels, and time. Raw interactions may enter role-specific memory first; durable shared knowledge can be promoted into `core/` by `review` when it is useful across roles. Role-local memory can also be a final destination.
 
-Because memory is Bear-scoped, a single Bear may accumulate knowledge across multiple active **work surfaces** while operating through different roles and channels. A **role** is the Bear's operating mode, such as `pair`, `talk`, `curate`, `work`, or `watch`. A **work surface** is the currently engaged repo, local checkout, service, deployment, Mission, project, or other coherent scope of work the Bear may act on. A **channel** is the concrete touchpoint through which the Bear is interacting or executing, such as an ACP session, Slack thread, webhook source, or task run. That means local understanding should not default to all Bear memory at once. Agents should first ground themselves in the current work surface when one is known.
+Because memory is Bear-scoped, a single Bear may accumulate knowledge across multiple active **work surfaces** while operating through different roles and channels. A **role** is the Bear's operating mode, such as `pair`, `chat`, `review`, `work`, or `watch`. A **work surface** is the currently engaged repo, local checkout, service, deployment, Mission, project, or other coherent scope of work the Bear may act on. A **channel** is the concrete touchpoint through which the Bear is interacting or executing, such as an ACP session, Slack thread, webhook source, or task run. That means local understanding should not default to all Bear memory at once. Agents should first ground themselves in the current work surface when one is known.
 
 ## Summary
 
 - A Bear has shared memory and role-specific memory.
 - `core/` is the shared, curated memory every role can use.
-- `talk/`, `pair/`, `curate/`, `work/`, and `watch/` are role-specific memory areas.
+- `chat/`, `pair/`, `review/`, `work/`, and `watch/` are role-specific memory areas.
 - Raw inputs should not automatically become shared truth.
 - Role-local memory is not merely a staging area; it may stay local forever.
-- `curate` is responsible for deciding what becomes durable shared memory.
+- `review` is responsible for deciding what becomes durable shared memory.
 - Memory curation is a lane within the broader **Reflection** system.
 - Letta Archives provide semantic retrieval indexes over selected canonical memory; they are not the source of truth.
 - Bear Den should not introduce its own embedding strategy or vector store while Letta Archives satisfy retrieval needs.
@@ -23,7 +23,7 @@ Memory is Bear-scoped, but many user questions are really about one **work surfa
 
 Definitions:
 
-- **Role** = the Bear's operating mode, such as `pair`, `talk`, `curate`, `work`, or `watch`.
+- **Role** = the Bear's operating mode, such as `pair`, `chat`, `review`, `work`, or `watch`.
 - **Channel** = the concrete touchpoint through which the Bear is currently interacting or executing.
 - **Work surface** = the currently engaged repo, local checkout, deployment, service, Mission, project, or other coherent scope of work the Bear may act on.
 
@@ -181,9 +181,9 @@ Each internal Bear agent role has its own memory area:
 
 | Area | Purpose |
 |------|---------|
-| `talk/` | Notes and task intents from chat-like conversations. |
+| `chat/` | Notes and task intents from chat-like conversations. |
 | `pair/` | Notes and task intents from client-side collaboration. |
-| `curate/` | Reflection notes, review state, and integration work. |
+| `review/` | Reflection notes, review state, and integration work. |
 | `work/` | Task execution notes, logs, and results. |
 | `watch/` | Structured observations from inbound events. |
 | `core/` | Shared durable memory curated for the whole Bear. |
@@ -224,7 +224,7 @@ Typical archives:
 
 A Bear has a **charter**: the Bear's durable purpose and responsibility boundary. Bear-specific knowledge lives under the Bear. **Domains** are durable areas of knowledge and responsibility within the Bear's scope, such as smart home, renovations, billing, or infrastructure.
 
-A **role** is the Bear's operating mode, such as `pair`, `talk`, `curate`, `work`, or `watch`. A **work surface** is a durable Bear-level scope of work that a Bear may act on: a repo, local checkout, service, deployment, Cabinet Mission, Docket project, or long-running responsibility. A **channel** is the concrete touchpoint through which the Bear is interacting or executing. Work-surface references can help memories stay connected to what the Bear was working on without making role branches or Cabinet the source of truth.
+A **role** is the Bear's operating mode, such as `pair`, `chat`, `review`, `work`, or `watch`. A **work surface** is a durable Bear-level scope of work that a Bear may act on: a repo, local checkout, service, deployment, Cabinet Mission, Docket project, or long-running responsibility. A **channel** is the concrete touchpoint through which the Bear is interacting or executing. Work-surface references can help memories stay connected to what the Bear was working on without making role branches or Cabinet the source of truth.
 
 Cabinet **Missions** are different: they are shared knowledge/work containers that may contain multiple projects and may involve multiple Bears. The Bear↔Mission relationship is many-to-many.
 
@@ -234,16 +234,16 @@ For one Bear working on one long-lived responsibility, the Bear's curated archiv
 
 Memory curation is part of Bear Den **Reflection**: the auditable background review and learning system. Reflection can be triggered by heartbeat, manual request, memory write, task completion, or other events. Heartbeat cadence is throttled, so an active Bear can reflect more frequently than a dormant Bear.
 
-`curate` performs the memory curation lane of Reflection. Other Reflection lanes may handle archive indexing, introspection, health checks, cleanup, and skill review.
+`review` performs the memory curation lane of Reflection. Other Reflection lanes may handle archive indexing, introspection, health checks, cleanup, and skill review.
 
 ## How memory becomes shared
 
 A common memory sharing flow is:
 
-1. `talk`, `pair`, `work`, or `watch` writes role-specific notes, logs, decisions, results, intents, or observations.
-2. `curate` reviews those branches on its cycle.
-3. `curate` decides what is durable, useful, and safe to share.
-4. `curate` promotes the distilled knowledge into `core/` when multiple roles should rely on it.
+1. `chat`, `pair`, `work`, or `watch` writes role-specific notes, logs, decisions, results, intents, or observations.
+2. `review` reviews those branches on its cycle.
+3. `review` decides what is durable, useful, and safe to share.
+4. `review` promotes the distilled knowledge into `core/` when multiple roles should rely on it.
 5. Other roles can use the updated `core/` on future turns or runs.
 
 This keeps shared memory deliberate rather than accidental.
@@ -270,13 +270,13 @@ Letta and Letta Code provide several memory mechanisms. Bear Den should use them
 
 | Mechanism | Bear Den stance |
 |-----------|--------------|
-| Letta Code reflection | Use for Letta Code-backed roles such as `talk` and `work` where appropriate. Do not duplicate it for those roles. |
+| Letta Code reflection | Use for Letta Code-backed roles such as `chat` and `work` where appropriate. Do not duplicate it for those roles. |
 | Letta Archives / archival memory | Use for semantic retrieval. Do not build a separate Bear Den vector store. |
 | Letta conversation compaction | Letta owns context-window pressure and conversation summarization. |
 | Letta memory blocks | Treat as legacy/runtime state for Bear Den direction; do not make them the primary long-term memory architecture. |
-| Bear Den `curate` | Owns cross-role memory governance, `core/` cleanliness, and archive indexing policy. |
+| Bear Den `review` | Owns cross-role memory governance, `core/` cleanliness, and archive indexing policy. |
 
-`pair` and `watch` are API-direct and do not naturally receive Letta Code reflection. Do not add separate dream agents for them at first: `pair` writes role-local entries and `watch` writes observations; `curate` reviews and consolidates their durable outputs.
+`pair` and `watch` are API-direct and do not naturally receive Letta Code reflection. Do not add separate dream agents for them at first: `pair` writes role-local entries and `watch` writes observations; `review` reviews and consolidates their durable outputs.
 
 ## Cabinet and semantic references
 
@@ -304,7 +304,7 @@ Prefer:
 - “Bears act in roles and channels and may act on work surfaces.”
 - “Cabinet Missions are shared work/knowledge containers that can involve many Bears.”
 - “Situation briefings tell the Bear where it is operating and what boundaries apply.”
-- “`curate` decides what the Bear should carry forward.”
+- “`review` decides what the Bear should carry forward.”
 
 Avoid:
 
@@ -324,11 +324,11 @@ Avoid:
 ## Related docs
 
 - [Environment Affordance and Resource Boundaries ADR](../decisions/adr-0028-environment-affordance-and-resource-boundaries.md)
-- [Bear Den and Den](BEARS_AND_DEN.md)
-- [Bear agent roles](BEAR_AGENT_ROLES.md)
+- [Bear Den and Den](bears-and-den.md)
+- [bear roles](bear-roles.md)
 - [Tasks and autonomy](TASKS_AND_AUTONOMY.md)
 - [Reflection system](REFLECTION_SYSTEM.md)
-- [Observations and subscriptions](OBSERVATIONS_AND_SUBSCRIPTIONS.md)
+- [Observations and subscriptions](observations-and-subscriptions.md)
 - [Semantic memory context](../context/SEMANTIC_MEMORY.md)
 - [Semantic Bear Memory ADR](../architecture/adr/semantic-bear-memory.md)
 - [Bear Workplaces ADR](../architecture/adr/bear-workplaces.md)

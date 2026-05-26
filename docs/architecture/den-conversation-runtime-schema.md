@@ -42,8 +42,8 @@ rather than as core business identity.
 
 The schema should work for:
 
-- `pair`, `curate`, `watch` (API-direct)
-- `talk`, `work` (currently harness-backed)
+- `pair`, `review`, `watch` (API-direct)
+- `chat`, `work` (currently harness-backed)
 
 That means the tables must not assume one transport or runtime family.
 
@@ -179,7 +179,7 @@ Short term, this can coexist with `bear_agents`.
 |---|---|---|
 | `id` | UUID PK | Den-owned identity |
 | `bear_id` | UUID FK -> `bears(id)` | owning Bear |
-| `role` | TEXT | `talk`, `pair`, `curate`, `work`, `watch` |
+| `role` | TEXT | `chat`, `pair`, `review`, `work`, `watch` |
 | `runtime_family` | TEXT | e.g. `letta_api`, `letta_code`, `den_native`, `codepool_native` |
 | `runtime_provider` | TEXT | vendor/service label, e.g. `letta`, `den`, `codepool` |
 | `runtime_handle` | TEXT | opaque provider handle; may mirror Letta agent id initially |
@@ -363,7 +363,7 @@ First-class record of tool invocation lifecycle.
 This should support both:
 
 - API-direct tool continuation (`pair`)
-- harness-backed tool execution visibility (`talk`, `work`)
+- harness-backed tool execution visibility (`chat`, `work`)
 
 ### Suggested columns
 
@@ -818,5 +818,5 @@ That structure should make it possible to:
 
 - dual-write during Letta-backed execution
 - migrate UI/admin reads off Letta
-- replace `watch`, then `curate`, then `pair`
+- replace `watch`, then `review`, then `pair`
 - later replace Codepool/Letta Code without another schema reset
