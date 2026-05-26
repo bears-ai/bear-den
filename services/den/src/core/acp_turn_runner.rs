@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use reqwest::Response;
-use serde_json::Value;
+use serde_json::{json, Value};
 use uuid::Uuid;
 
 use crate::{
@@ -509,4 +509,183 @@ pub async fn acp_cleanup_stale_runtime_state(
         "run_ids": run_ids,
         "cancel_result": cancel_result,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::{
+        extract::State,
+        http::header,
+        response::{IntoResponse, Response},
+        routing::post,
+        Json, Router,
+    };
+    use sqlx::postgres::PgPoolOptions;
+    use std::sync::Arc;
+    use tokio::sync::Mutex as TokioMutex;
+
+    #[derive(Clone)]
+    struct FakeState {
+        captured: Arc<TokioMutex<Option<serde_json::Value>>>,
+    }
+
+    async fn fake_tool_return(
+        State(state): State<FakeState>,
+        Json(body): Json<serde_json::Value>,
+    ) -> Response {
+        *state.captured.lock().await = Some(body);
+        (
+            [(header::CONTENT_TYPE, "text/event-stream; charset=utf-8")],
+            concat!(
+                "data: {\"message_type\":\"assistant_message\",\"content\":\"continued\"}\n\n",
+                "data: {\"message_type\":\"stop_reason\",\"stop_reason\":\"end_turn\"}\n\n"
+            ),
+        )
+            .into_response()
+    }
+
+    fn test_api_state(letta: Arc<LettaClient>) -> ApiState {
+        let config = Arc::new(crate::config::Config::test_stub());
+        ApiState {
+            sqlx_pool: PgPoolOptions::new()
+                .connect_lazy("postgres://postgres:postgres@127.0.0.1/postgres")
+                .unwrap(),
+            config: config.clone(),
+            letta,
+            bifrost: Arc::new(crate::core::bifrost::BifrostClient::new(config.as_ref())),
+            acp_tool_turns: AcpToolTurnCoordinator::new(),
+            acp_turn_cancellations:
+                crate::core::acp_turn_controller::AcpActiveTurnCancelRegistry::new(),
+        }
+    }
+
+    #[tokio::test]
+    async fn continue_turn_tool_result_without_approval_posts_tool_return_payload() {
+        let captured = Arc::new(TokioMutex::new(None));
+        let app = Router::new()
+            .route(
+                "/v1/conversations/{conversation_id}/messages",
+                post(fake_tool_return),
+            )
+            .with_state(FakeState {
+                captured: captured.clone(),
+            });
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+
+        let mut config = crate::config::Config::test_stub();
+        config.letta_base_url = format!("http://{addr}");
+        let letta = Arc::new(LettaClient::new(&config));
+        let state = test_api_state(letta);
+        let runner = LettaAcpTurnRunner {
+            state: &state,
+            request_id: Uuid::new_v4(),
+            runtime_context_len: 0,
+        };
+
+        let result = runner
+            .continue_turn_response(
+                ContinueTurnRequest {
+                    conversation: RuntimeConversationRef {
+                        id: "conv-test".to_string(),
+                    },
+                    turn: None,
+                    binding: RoleRuntimeBinding {
+                        binding_id: "agent-test".to_string(),
+                        compatibility_backend: Some("letta".to_string()),
+                    },
+                    continuation: RuntimeContinuation::ToolResult {
+                        tool_call_id: "call-1".to_string(),
+                        approval_request_id: None,
+                        status: RuntimeToolResultStatus::Ok,
+                        content: "plain tool result".to_string(),
+                    },
+                },
+                &AcpTurnStreamContext {
+                    client_tools: Some(json!([{ "name": "fs_read_text_file" }])),
+                    stream_tokens: false,
+                    max_steps: 2,
+                },
+            )
+            .await;
+        assert!(result.is_ok());
+
+        let body = captured.lock().await.clone().unwrap();
+        assert_eq!(body["messages"][0]["type"], "tool_return");
+        assert_eq!(body["messages"][0]["tool_returns"][0]["type"], "tool");
+        assert_eq!(body["messages"][0]["tool_returns"][0]["status"], "success");
+        assert_eq!(body["messages"][0]["tool_returns"][0]["tool_call_id"], "call-1");
+        assert_eq!(
+            body["messages"][0]["tool_returns"][0]["tool_return"],
+            "plain tool result"
+        );
+    }
+
+    #[tokio::test]
+    async fn continue_turn_approval_decision_posts_approval_payload() {
+        let captured = Arc::new(TokioMutex::new(None));
+        let app = Router::new()
+            .route(
+                "/v1/conversations/{conversation_id}/messages",
+                post(fake_tool_return),
+            )
+            .with_state(FakeState {
+                captured: captured.clone(),
+            });
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+
+        let mut config = crate::config::Config::test_stub();
+        config.letta_base_url = format!("http://{addr}");
+        let letta = Arc::new(LettaClient::new(&config));
+        let state = test_api_state(letta);
+        let runner = LettaAcpTurnRunner {
+            state: &state,
+            request_id: Uuid::new_v4(),
+            runtime_context_len: 0,
+        };
+
+        let result = runner
+            .continue_turn_response(
+                ContinueTurnRequest {
+                    conversation: RuntimeConversationRef {
+                        id: "conv-test".to_string(),
+                    },
+                    turn: None,
+                    binding: RoleRuntimeBinding {
+                        binding_id: "agent-test".to_string(),
+                        compatibility_backend: Some("letta".to_string()),
+                    },
+                    continuation: RuntimeContinuation::ApprovalDecision {
+                        approval_request_id: "approval-1".to_string(),
+                        tool_call_id: Some("call-2".to_string()),
+                        decision: RuntimeApprovalDecision::Deny,
+                        reason: Some("tool failed".to_string()),
+                    },
+                },
+                &AcpTurnStreamContext {
+                    client_tools: Some(json!([{ "name": "fs_read_text_file" }])),
+                    stream_tokens: false,
+                    max_steps: 2,
+                },
+            )
+            .await;
+        assert!(result.is_ok());
+
+        let body = captured.lock().await.clone().unwrap();
+        assert_eq!(body["messages"][0]["type"], "approval");
+        assert_eq!(body["messages"][0]["approval_request_id"], "approval-1");
+        assert_eq!(body["messages"][0]["approve"], false);
+        assert_eq!(body["messages"][0]["approvals"][0]["type"], "approval");
+        assert_eq!(body["messages"][0]["approvals"][0]["approve"], false);
+        assert_eq!(body["messages"][0]["approvals"][0]["tool_call_id"], "call-2");
+        assert_eq!(body["messages"][0]["approvals"][0]["reason"], "tool failed");
+    }
 }

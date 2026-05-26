@@ -5848,15 +5848,28 @@ impl Stream for AcpLettaSseStream {
                     };
                     let request_id = this.context.request_id;
                     let acp_session_id = this.context.acp_session_id.clone();
-                    let continuation_request = RuntimeContinuation::ToolResult {
-                        tool_call_id: tool_call_id.clone(),
-                        approval_request_id,
-                        status: match status.as_str() {
-                            "ok" => crate::core::runtime_provider::RuntimeToolResultStatus::Ok,
-                            "timeout" => crate::core::runtime_provider::RuntimeToolResultStatus::Timeout,
-                            _ => crate::core::runtime_provider::RuntimeToolResultStatus::Error,
-                        },
-                        content: tool_return.clone(),
+                    let continuation_request = if let Some(approval_request_id) = approval_request_id {
+                        RuntimeContinuation::ApprovalDecision {
+                            approval_request_id,
+                            tool_call_id: Some(tool_call_id.clone()),
+                            decision: if status == "ok" {
+                                crate::core::runtime_provider::RuntimeApprovalDecision::Approve
+                            } else {
+                                crate::core::runtime_provider::RuntimeApprovalDecision::Deny
+                            },
+                            reason: Some(tool_return.clone()),
+                        }
+                    } else {
+                        RuntimeContinuation::ToolResult {
+                            tool_call_id: tool_call_id.clone(),
+                            approval_request_id: None,
+                            status: match status.as_str() {
+                                "ok" => crate::core::runtime_provider::RuntimeToolResultStatus::Ok,
+                                "timeout" => crate::core::runtime_provider::RuntimeToolResultStatus::Timeout,
+                                _ => crate::core::runtime_provider::RuntimeToolResultStatus::Error,
+                            },
+                            content: tool_return.clone(),
+                        }
                     };
                     let stream_context = AcpTurnStreamContext {
                         client_tools: continuation.client_tools.clone(),
