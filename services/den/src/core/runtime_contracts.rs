@@ -122,7 +122,7 @@ pub enum RuntimeStreamContinuation {
 }
 
 pub type RuntimeByteStream =
-    Pin<Box<dyn Stream<Item = Result<Bytes, reqwest::Error>> + Send + 'static>>;
+    Pin<Box<dyn Stream<Item = Result<Bytes, crate::errors::CustomError>> + Send + 'static>>;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CancelTurnResult {

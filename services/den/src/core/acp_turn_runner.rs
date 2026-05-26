@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use futures::StreamExt;
 use reqwest::Response;
 use serde_json::{json, Value};
 use uuid::Uuid;
@@ -484,7 +485,7 @@ pub async fn continue_acp_turn_with_runtime(
         .await?;
     Ok((
         crate::core::runtime_contracts::RuntimeStreamContinuation::BytesSse,
-        Box::pin(response.bytes_stream()),
+        Box::pin(response.bytes_stream().map(|item| item.map_err(Into::into))),
     ))
 }
 

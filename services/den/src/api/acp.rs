@@ -14,7 +14,7 @@ use axum::{
 };
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use bytes::Bytes;
-use futures::{ready, Stream};
+use futures::{ready, Stream, StreamExt};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sqlx::PgPool;
@@ -3533,7 +3533,7 @@ async fn prompt_inner(
         .as_ref()
         .map(|plan| serde_json::json!(plan));
     let stream = AcpLettaSseStream::new(
-        upstream.bytes_stream(),
+        upstream.bytes_stream().map(|item| item.map_err(Into::into)),
         AcpStreamContext {
             pool: state.sqlx_pool.clone(),
             tool_turns: state.acp_tool_turns.clone(),
@@ -5178,7 +5178,7 @@ fn truncate_utf8_boundary(s: &str, max_bytes: usize) -> &str {
 }
 
 struct AcpLettaSseStream {
-    inner: Pin<Box<dyn Stream<Item = Result<Bytes, reqwest::Error>> + Send>>,
+    inner: Pin<Box<dyn Stream<Item = Result<Bytes, CustomError>> + Send>>,
     buffer: Vec<u8>,
     /// Complete upstream SSE event bodies (delimiter stripped), FIFO.
     pending_raw_frames: VecDeque<Vec<u8>>,
@@ -5301,7 +5301,7 @@ impl AcpLettaSseStream {
     }
 
     fn new(
-        inner: impl Stream<Item = Result<Bytes, reqwest::Error>> + Send + 'static,
+        inner: impl Stream<Item = Result<Bytes, CustomError>> + Send + 'static,
         context: AcpStreamContext,
         initial_events: Vec<AcpGatewayEvent>,
         session_info_event_sent: bool,
@@ -6388,12 +6388,12 @@ mod tests {
             turn_scope,
         };
         let upstream = futures::stream::iter(vec![
-            Ok::<Bytes, reqwest::Error>(Bytes::from(concat!(
+            Ok::<Bytes, CustomError>(Bytes::from(concat!(
                 "data: {\"id\":\"approval-1\",\"run_id\":\"run-stream-test\",\"message_type\":\"approval_request_message\",",
                 "\"tool_call\":{\"name\":\"fs_read_text_file\",\"tool_call_id\":\"call_test\",",
                 "\"arguments\":\"{\\\"path\\\":\\\"/tmp/acp-test.txt\\\"}\"}}\n\n"
             ))),
-            Ok::<Bytes, reqwest::Error>(Bytes::from(
+            Ok::<Bytes, CustomError>(Bytes::from(
                 "data: {\"message_type\":\"stop_reason\",\"stop_reason\":\"requires_approval\"}\n\n",
             )),
         ]);
@@ -6573,12 +6573,12 @@ mod tests {
             turn_scope,
         };
         let upstream = futures::stream::iter(vec![
-            Ok::<Bytes, reqwest::Error>(Bytes::from(concat!(
+            Ok::<Bytes, CustomError>(Bytes::from(concat!(
                 "data: {\"id\":\"approval-error\",\"run_id\":\"run-stream-error\",\"message_type\":\"approval_request_message\",",
                 "\"tool_call\":{\"name\":\"fs_read_text_file\",\"tool_call_id\":\"call_error\",",
                 "\"arguments\":\"{\\\"path\\\":\\\"/tmp/acp-error.txt\\\"}\"}}\n\n"
             ))),
-            Ok::<Bytes, reqwest::Error>(Bytes::from(
+            Ok::<Bytes, CustomError>(Bytes::from(
                 "data: {\"message_type\":\"stop_reason\",\"stop_reason\":\"requires_approval\"}\n\n",
             )),
         ]);
@@ -6728,12 +6728,12 @@ mod tests {
             turn_scope,
         };
         let upstream = futures::stream::iter(vec![
-            Ok::<Bytes, reqwest::Error>(Bytes::from(concat!(
+            Ok::<Bytes, CustomError>(Bytes::from(concat!(
                 "data: {\"id\":\"approval-1\",\"message_type\":\"approval_request_message\",",
                 "\"tool_call\":{\"name\":\"fs_read_text_file\",\"tool_call_id\":\"call_test\",",
                 "\"arguments\":\"{\\\"path\\\":\\\"/tmp/acp-test.txt\\\"}\"}}\n\n"
             ))),
-            Ok::<Bytes, reqwest::Error>(Bytes::from(
+            Ok::<Bytes, CustomError>(Bytes::from(
                 "data: {\"message_type\":\"stop_reason\",\"stop_reason\":\"requires_approval\"}\n\n",
             )),
         ]);
@@ -6875,7 +6875,7 @@ mod tests {
             turn_scope,
         };
         let upstream =
-            futures::stream::iter(vec![Ok::<Bytes, reqwest::Error>(Bytes::from(concat!(
+            futures::stream::iter(vec![Ok::<Bytes, CustomError>(Bytes::from(concat!(
                 "data: {\"message_type\":\"stop_reason\",\"stop_reason\":\"end_turn\"}\n\n",
                 "data: {\"message_type\":\"stop_reason\",\"stop_reason\":\"end_turn\"}\n\n"
             )))]);
@@ -6995,7 +6995,7 @@ mod tests {
             turn_scope,
         };
         let upstream =
-            futures::stream::iter(vec![Ok::<Bytes, reqwest::Error>(Bytes::from(concat!(
+            futures::stream::iter(vec![Ok::<Bytes, CustomError>(Bytes::from(concat!(
                 "data: {\"id\":\"approval-1\",\"message_type\":\"approval_request_message\",",
                 "\"tool_call\":{\"name\":\"session_info\",\"tool_call_id\":\"call_session_info\",",
                 "\"arguments\":\"{}\"}}\n\n"
@@ -7086,7 +7086,7 @@ mod tests {
             role_runtime,
             turn_scope,
         };
-        let upstream = futures::stream::pending::<Result<Bytes, reqwest::Error>>();
+        let upstream = futures::stream::pending::<Result<Bytes, CustomError>>();
         let mut stream = AcpLettaSseStream::new(
             upstream,
             context,
@@ -7250,12 +7250,12 @@ mod tests {
             turn_scope,
         };
         let upstream = futures::stream::iter(vec![
-            Ok::<Bytes, reqwest::Error>(Bytes::from(concat!(
+            Ok::<Bytes, CustomError>(Bytes::from(concat!(
                 "data: {\"id\":\"approval-timeout\",\"message_type\":\"approval_request_message\",",
                 "\"tool_call\":{\"name\":\"fs_read_text_file\",\"tool_call_id\":\"call_timeout\",",
                 "\"arguments\":\"{\\\"path\\\":\\\"/tmp/acp-timeout.txt\\\"}\"}}\n\n"
             ))),
-            Ok::<Bytes, reqwest::Error>(Bytes::from(
+            Ok::<Bytes, CustomError>(Bytes::from(
                 "data: {\"message_type\":\"stop_reason\",\"stop_reason\":\"requires_approval\"}\n\n",
             )),
         ]);
@@ -7386,7 +7386,7 @@ mod tests {
             turn_scope,
         };
         let upstream =
-            futures::stream::iter(vec![Ok::<Bytes, reqwest::Error>(Bytes::from(concat!(
+            futures::stream::iter(vec![Ok::<Bytes, CustomError>(Bytes::from(concat!(
                 "data: {\"id\":\"approval-cancel\",\"message_type\":\"approval_request_message\",",
                 "\"tool_call\":{\"name\":\"fs_read_text_file\",\"tool_call_id\":\"call_cancel\",",
                 "\"arguments\":\"{\\\"path\\\":\\\"/tmp/acp-cancel.txt\\\"}\"}}\n\n"
@@ -7527,7 +7527,7 @@ mod tests {
             role_runtime: role_runtime.clone(),
             turn_scope,
         };
-        let upstream = futures::stream::iter(vec![Ok::<Bytes, reqwest::Error>(Bytes::from(
+        let upstream = futures::stream::iter(vec![Ok::<Bytes, CustomError>(Bytes::from(
             "data: {\"message_type\":\"stop_reason\",\"stop_reason\":\"requires_approval\"}\n\n",
         ))]);
         let mut stream = AcpLettaSseStream::new(
@@ -7659,12 +7659,12 @@ mod tests {
             turn_scope,
         };
         let upstream = futures::stream::iter(vec![
-            Ok::<Bytes, reqwest::Error>(Bytes::from(concat!(
+            Ok::<Bytes, CustomError>(Bytes::from(concat!(
                 "data: {\"id\":\"approval-1\",\"run_id\":\"run-conflict\",\"message_type\":\"approval_request_message\",",
                 "\"tool_call\":{\"name\":\"fs_read_text_file\",\"tool_call_id\":\"call_conflict\",",
                 "\"arguments\":\"{\\\"path\\\":\\\"/tmp/acp-test.txt\\\"}\"}}\n\n"
             ))),
-            Ok::<Bytes, reqwest::Error>(Bytes::from(
+            Ok::<Bytes, CustomError>(Bytes::from(
                 "data: {\"message_type\":\"stop_reason\",\"stop_reason\":\"requires_approval\"}\n\n",
             )),
         ]);

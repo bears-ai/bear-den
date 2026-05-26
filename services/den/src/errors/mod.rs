@@ -222,3 +222,9 @@ impl From<validator::ValidationErrors> for CustomError {
         CustomError::ValidationError(format!("{:?}", err))
     }
 }
+
+impl From<reqwest::Error> for CustomError {
+    fn from(err: reqwest::Error) -> CustomError {
+        CustomError::System(err.to_string())
+    }
+}
