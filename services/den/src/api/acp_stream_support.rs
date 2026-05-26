@@ -323,6 +323,7 @@ pub(super) fn strip_trailing_sse_delimiter_owned(mut frame: Vec<u8>) -> Vec<u8> 
 }
 
 #[cfg(test)]
+#[allow(dead_code)]
 pub(super) fn strip_trailing_sse_delimiter(frame: &[u8]) -> &[u8] {
     if frame.ends_with(b"\r\n\r\n") {
         &frame[..frame.len().saturating_sub(4)]

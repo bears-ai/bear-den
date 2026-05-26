@@ -119,6 +119,13 @@ pub struct AcpActiveTurnCancelHandle {
     request_id: Uuid,
 }
 
+impl AcpActiveTurnCancelHandle {
+    pub fn record_run_id(&self, run_id: &str) -> bool {
+        self.registry
+            .record_run_id(&self.acp_session_id, self.request_id, run_id)
+    }
+}
+
 impl Drop for AcpActiveTurnCancelHandle {
     fn drop(&mut self) {
         self.registry

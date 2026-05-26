@@ -87,21 +87,34 @@ pub(super) async fn map_runtime_stream_event_to_acp_adapter_events_with_persiste
             .map_err(|err| std::io::Error::other(err.to_string()))?;
         let mut adapter_result_rx = None;
         let events = if let Some(effect) = tool_request_effect.as_mut() {
-            if let Some(rx) = effect.den_server_result_rx.take() {
-                let tool_call_id = effect.tool_call_id.clone();
-                let tool_name = effect.tool_name.clone();
-                let result: crate::core::acp_tool_turns::AcpToolResultRequest = rx
-                    .await
-                    .map_err(|err| std::io::Error::other(err.to_string()))?;
-                adapter_result_rx = Some((
-                    tool_call_id,
-                    tool_name,
-                    AcpResolvedToolResult::Ready(Box::new(result)),
-                ));
-                Vec::new()
-            } else {
-                vec![event]
+            match effect.route {
+                crate::api::acp::ToolExecutionRoute::AdapterLocal => {
+                    if let AcpGatewayEvent::ToolRequest { result_rx, .. } = &mut event {
+                        if let Some(rx) = result_rx.take() {
+                            let tool_call_id = effect.tool_call_id.clone();
+                            let tool_name = effect.tool_name.clone();
+                            adapter_result_rx = Some((
+                                tool_call_id,
+                                tool_name,
+                                AcpResolvedToolResult::Receiver(rx),
+                            ));
+                        }
+                    }
+                }
+                crate::api::acp::ToolExecutionRoute::DenServer => {
+                    if let Some(rx) = effect.den_server_result_rx.take() {
+                        let tool_call_id = effect.tool_call_id.clone();
+                        let tool_name = effect.tool_name.clone();
+                        adapter_result_rx = Some((
+                            tool_call_id,
+                            tool_name,
+                            AcpResolvedToolResult::Receiver(rx),
+                        ));
+                    }
+                }
+                crate::api::acp::ToolExecutionRoute::Unsupported => {}
             }
+            vec![event]
         } else {
             vec![event]
         };
