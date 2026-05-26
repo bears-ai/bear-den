@@ -5640,9 +5640,10 @@ impl Stream for AcpLettaSseStream {
                                 crate::core::runtime_provider::RuntimeStreamContinuation::BytesSse => {
                                     this.inner = Box::pin(stream.map(|item| {
                                         item.and_then(|event| match event {
-                                            crate::core::runtime_provider::RuntimeStreamEvent::RawBytes { bytes } => Ok(Bytes::from(bytes)),
+                                            crate::core::runtime_provider::RuntimeStreamEvent::JsonValue { value } => Ok(Bytes::from(value.to_string())),
+                                            crate::core::runtime_provider::RuntimeStreamEvent::RawSseFrame { frame_body } => Ok(Bytes::from(frame_body)),
                                             other => Err(CustomError::System(format!(
-                                                "unexpected runtime continuation event in ACP byte-stream bridge: {other:?}"
+                                                "unexpected runtime continuation event in ACP continuation bridge: {other:?}"
                                             ))),
                                         })
                                     }));
@@ -5650,9 +5651,10 @@ impl Stream for AcpLettaSseStream {
                                 crate::core::runtime_provider::RuntimeStreamContinuation::Deferred => {
                                     this.inner = Box::pin(stream.map(|item| {
                                         item.and_then(|event| match event {
-                                            crate::core::runtime_provider::RuntimeStreamEvent::RawBytes { bytes } => Ok(Bytes::from(bytes)),
+                                            crate::core::runtime_provider::RuntimeStreamEvent::JsonValue { value } => Ok(Bytes::from(value.to_string())),
+                                            crate::core::runtime_provider::RuntimeStreamEvent::RawSseFrame { frame_body } => Ok(Bytes::from(frame_body)),
                                             other => Err(CustomError::System(format!(
-                                                "unexpected deferred runtime continuation event in ACP byte-stream bridge: {other:?}"
+                                                "unexpected deferred runtime continuation event in ACP continuation bridge: {other:?}"
                                             ))),
                                         })
                                     }));

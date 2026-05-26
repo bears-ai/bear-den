@@ -472,6 +472,35 @@ fn strip_trailing_sse_delimiter_owned(mut frame: Vec<u8>) -> Vec<u8> {
     frame
 }
 
+fn parse_sse_event_body_to_json(body: &[u8]) -> Result<Option<serde_json::Value>, CustomError> {
+    let text = std::str::from_utf8(body).map_err(|_| {
+        CustomError::System(format!(
+            "invalid UTF-8 in continuation SSE event body ({} bytes)",
+            body.len()
+        ))
+    })?;
+    let mut chunks: Vec<&str> = Vec::new();
+    for line in text.split('\n') {
+        let line = line.strip_suffix('\r').unwrap_or(line);
+        if line.is_empty() || line.starts_with(':') {
+            continue;
+        }
+        let Some(rest) = line.strip_prefix("data:") else {
+            continue;
+        };
+        let rest = rest.strip_prefix(' ').unwrap_or(rest);
+        chunks.push(rest);
+    }
+    let joined = chunks.join("\n");
+    let joined = joined.trim();
+    if joined.is_empty() || joined == "[DONE]" {
+        return Ok(None);
+    }
+    serde_json::from_str::<serde_json::Value>(joined)
+        .map(Some)
+        .map_err(|e| CustomError::System(format!("invalid continuation SSE JSON: {e}")))
+}
+
 pub async fn continue_acp_turn_with_runtime(
     request: AcpTurnContinueRequest<'_>,
 ) -> Result<
@@ -522,11 +551,15 @@ pub async fn continue_acp_turn_with_runtime(
                 while let Some(end) = find_sse_frame_end(&buffer) {
                     let raw: Vec<u8> = buffer.drain(..end).collect();
                     let frame_body = strip_trailing_sse_delimiter_owned(raw);
-                    queued_events.push_back(Ok(
-                        crate::core::runtime_contracts::RuntimeStreamEvent::RawBytes {
-                            bytes: frame_body,
-                        },
-                    ));
+                    match parse_sse_event_body_to_json(&frame_body) {
+                        Ok(Some(value)) => queued_events.push_back(Ok(
+                            crate::core::runtime_contracts::RuntimeStreamEvent::JsonValue {
+                                value,
+                            },
+                        )),
+                        Ok(None) => {}
+                        Err(err) => queued_events.push_back(Err(err)),
+                    }
                 }
             }
             std::task::Poll::Ready(Some(Err(err))) => {

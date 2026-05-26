@@ -137,7 +137,8 @@ pub struct CancelTurnResult {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum RuntimeStreamEvent {
-    RawBytes { bytes: Vec<u8> },
+    RawSseFrame { frame_body: Vec<u8> },
+    JsonValue { value: serde_json::Value },
     ConversationResolved { conversation: RuntimeConversationRef },
     AssistantTextDelta { text: String },
     AssistantMessageCompleted { message_id: Option<String> },
