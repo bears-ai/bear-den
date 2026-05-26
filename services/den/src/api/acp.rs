@@ -54,12 +54,6 @@ use crate::{
             AcpToolResultDelivery, AcpToolResultRequest, AcpToolTurnCoordinator,
             AcpToolTurnRegistration,
         },
-        acp_turn_runner::{
-            acp_cleanup_stale_runtime_state, continue_acp_turn_with_runtime,
-            start_acp_turn_with_retries, AcpStaleRuntimeCleanupParams,
-            AcpTurnContinueRequest, AcpTurnStartRequest, AcpTurnStreamContext,
-            ACP_STALE_APPROVAL_RECOVERY_DENIAL_REASON,
-        },
         acp_tools::{
             acp_client_tool_descriptors_for_client_context, acp_diag_phase,
             acp_provider_tool_names_for_client_context, acp_tool_policy_json_for_provider,
@@ -69,13 +63,17 @@ use crate::{
             AcpActiveTurnCancelHandle, AcpToolExecutionRoute as ControllerToolExecutionRoute,
             AcpTurnController, AcpTurnPhase,
         },
+        acp_turn_runner::{
+            acp_cleanup_stale_runtime_state, continue_acp_turn_with_runtime,
+            start_acp_turn_with_retries, AcpStaleRuntimeCleanupParams, AcpTurnContinueRequest,
+            AcpTurnStartRequest, AcpTurnStreamContext,
+        },
         archived_conversations,
         bears::{db as bears_db, BearAgentRole},
         den_tools::{self, DenToolChannelContext, DenToolInvocationContext},
-        runtime_provider::{RoleRuntimeBinding, RuntimeContinuation},
         letta::{
             load_agent_conversations, normalize_display_status_text,
-            sanitize_visible_transcript_text, LettaContinuationContext, PendingApprovalDenialMode,
+            sanitize_visible_transcript_text, LettaContinuationContext,
         },
         memory_manager_head::{write_memfs_role_memory_entry, MemfsWriteRoleMemoryEntryRequest},
         memory_proposals::{self, CreateMemoryProposal},
@@ -85,6 +83,7 @@ use crate::{
             AcpTurnLifecycleContext, AcpTurnLifecycleRuntime, RoleRuntime, RoleTurnResult,
             RoleTurnScope, TurnResultReason, TurnResultStatus,
         },
+        runtime_provider::{RoleRuntimeBinding, RuntimeContinuation},
         turn_state, user, web_policy,
         work_plans::{self, WorkPlanLookup, WorkPlanProjection},
     },
@@ -1180,7 +1179,6 @@ fn normalize_acp_conversation_id(raw: Option<&str>) -> Result<String, CustomErro
         )))
     }
 }
-
 
 fn letta_messages_top_array(v: &serde_json::Value) -> &[serde_json::Value] {
     if let Some(a) = v.as_array() {
@@ -3486,24 +3484,6 @@ async fn prompt_inner(
         .unwrap_or_else(|| vec![cwd.to_string()]);
     let client_tool_descriptors = merged_client_tool_descriptors.clone();
     let stream_tokens = acp_stream_tokens_enabled();
-    let upstream = match start_acp_turn_with_retries(AcpTurnStartRequest {
-        state: &state,
-        request_id,
-        session_id,
-        bear_id: bear.id,
-        binding: &pair_runtime_binding,
-        upstream_target: &conversation_resolution.upstream_target,
-        prompt,
-        client_tools: client_tool_descriptors.clone(),
-        runtime_context_len: turn_runtime_context.len(),
-        stream_tokens,
-    })
-    .await
-    {
-        Ok(upstream) => upstream,
-        Err(err) => return Ok(Err(err)),
-    };
-
     let turn_lifecycle = AcpTurnLifecycleRuntime::new(
         state.acp_tool_turns.clone(),
         state.acp_turn_cancellations.clone(),
@@ -3527,6 +3507,24 @@ async fn prompt_inner(
     let active_turn_guard = lifecycle_lease.active_turn_guard;
     let cancel_handle = lifecycle_lease.cancel_handle;
     let cancel_rx = lifecycle_lease.cancel_rx;
+
+    let upstream = match start_acp_turn_with_retries(AcpTurnStartRequest {
+        state: &state,
+        request_id,
+        session_id,
+        bear_id: bear.id,
+        binding: &pair_runtime_binding,
+        upstream_target: &conversation_resolution.upstream_target,
+        prompt,
+        client_tools: client_tool_descriptors.clone(),
+        runtime_context_len: turn_runtime_context.len(),
+        stream_tokens,
+    })
+    .await
+    {
+        Ok(upstream) => upstream,
+        Err(err) => return Ok(Err(err)),
+    };
 
     let session_policy = resolved_policy.to_json();
     let activity = current_activity_plan
@@ -5908,9 +5906,12 @@ impl Stream for AcpLettaSseStream {
                         sqlx_pool: this.context.pool.clone(),
                         config: config.clone(),
                         letta: letta.clone(),
-                        bifrost: Arc::new(crate::core::bifrost::BifrostClient::new(config.as_ref())),
+                        bifrost: Arc::new(crate::core::bifrost::BifrostClient::new(
+                            config.as_ref(),
+                        )),
                         acp_tool_turns: this.context.tool_turns.clone(),
-                        acp_turn_cancellations: crate::core::acp_turn_controller::AcpActiveTurnCancelRegistry::new(),
+                        acp_turn_cancellations:
+                            crate::core::acp_turn_controller::AcpActiveTurnCancelRegistry::new(),
                     };
                     let binding = RoleRuntimeBinding {
                         binding_id: continuation
@@ -5921,45 +5922,49 @@ impl Stream for AcpLettaSseStream {
                     };
                     let request_id = this.context.request_id;
                     let acp_session_id = this.context.acp_session_id.clone();
-                    let continuation_request = if let Some(approval_request_id) = approval_request_id {
-                        RuntimeContinuation::ApprovalDecision {
-                            approval_request_id,
-                            tool_call_id: Some(tool_call_id.clone()),
-                            decision: if status == "ok" {
-                                crate::core::runtime_provider::RuntimeApprovalDecision::Approve
-                            } else {
-                                crate::core::runtime_provider::RuntimeApprovalDecision::Deny
-                            },
-                            reason: Some(tool_return.clone()),
-                        }
-                    } else {
-                        RuntimeContinuation::ToolResult {
+                    let continuation_request =
+                        if let Some(approval_request_id) = approval_request_id {
+                            RuntimeContinuation::ApprovalDecision {
+                                approval_request_id,
+                                tool_call_id: Some(tool_call_id.clone()),
+                                decision: if status == "ok" {
+                                    crate::core::runtime_provider::RuntimeApprovalDecision::Approve
+                                } else {
+                                    crate::core::runtime_provider::RuntimeApprovalDecision::Deny
+                                },
+                                reason: Some(tool_return.clone()),
+                            }
+                        } else {
+                            RuntimeContinuation::ToolResult {
                             tool_call_id: tool_call_id.clone(),
                             approval_request_id: None,
                             status: match status.as_str() {
                                 "ok" => crate::core::runtime_provider::RuntimeToolResultStatus::Ok,
-                                "timeout" => crate::core::runtime_provider::RuntimeToolResultStatus::Timeout,
+                                "timeout" => {
+                                    crate::core::runtime_provider::RuntimeToolResultStatus::Timeout
+                                }
                                 _ => crate::core::runtime_provider::RuntimeToolResultStatus::Error,
                             },
                             content: tool_return.clone(),
                         }
-                    };
+                        };
                     let stream_context = AcpTurnStreamContext {
                         client_tools: continuation.client_tools.clone(),
                         stream_tokens: continuation.stream_tokens,
                         max_steps: continuation.max_steps,
                     };
-                    this.persist_future = Some(AcpPendingFuture::ContinueTool(Box::pin(async move {
-                        continue_acp_turn_with_runtime(AcpTurnContinueRequest {
-                            state: &api_state,
-                            request_id,
-                            acp_session_id: &acp_session_id,
-                            binding: &binding,
-                            continuation: continuation_request,
-                            stream_context,
-                        })
-                        .await
-                    })));
+                    this.persist_future =
+                        Some(AcpPendingFuture::ContinueTool(Box::pin(async move {
+                            continue_acp_turn_with_runtime(AcpTurnContinueRequest {
+                                state: &api_state,
+                                request_id,
+                                acp_session_id: &acp_session_id,
+                                binding: &binding,
+                                continuation: continuation_request,
+                                stream_context,
+                            })
+                            .await
+                        })));
                     self.poll_next(cx)
                 } else if this.diagnostics.saw_requires_approval_stop
                     && this.turn_controller.status_snapshot().open_obligations == 0
@@ -6026,9 +6031,13 @@ impl Stream for AcpLettaSseStream {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::acp_runtime::{
-        resolve_acp_prompt_conversation, AcpConversationResolution,
-        AcpConversationSelectionSource,
+    use crate::core::{
+        acp_runtime::{
+            resolve_acp_prompt_conversation, AcpConversationResolution,
+            AcpConversationSelectionSource,
+        },
+        acp_turn_runner::ACP_STALE_APPROVAL_RECOVERY_DENIAL_REASON,
+        letta::PendingApprovalDenialMode,
     };
 
     #[test]
@@ -6693,7 +6702,10 @@ mod tests {
         assert_eq!(body["messages"][0]["approve"], false);
         assert_eq!(body["messages"][0]["approvals"][0]["type"], "approval");
         assert_eq!(body["messages"][0]["approvals"][0]["approve"], false);
-        assert_eq!(body["messages"][0]["approvals"][0]["tool_call_id"], "call_error");
+        assert_eq!(
+            body["messages"][0]["approvals"][0]["tool_call_id"],
+            "call_error"
+        );
         assert_eq!(body["messages"][0]["approvals"][0]["reason"], "tool failed");
     }
 
@@ -6926,11 +6938,10 @@ mod tests {
             role_runtime: role_runtime.clone(),
             turn_scope,
         };
-        let upstream =
-            futures::stream::iter(vec![Ok::<Bytes, CustomError>(Bytes::from(concat!(
-                "data: {\"message_type\":\"stop_reason\",\"stop_reason\":\"end_turn\"}\n\n",
-                "data: {\"message_type\":\"stop_reason\",\"stop_reason\":\"end_turn\"}\n\n"
-            )))]);
+        let upstream = futures::stream::iter(vec![Ok::<Bytes, CustomError>(Bytes::from(concat!(
+            "data: {\"message_type\":\"stop_reason\",\"stop_reason\":\"end_turn\"}\n\n",
+            "data: {\"message_type\":\"stop_reason\",\"stop_reason\":\"end_turn\"}\n\n"
+        )))]);
         let mut stream = AcpLettaSseStream::new(
             upstream,
             context,
@@ -7046,12 +7057,11 @@ mod tests {
             role_runtime: role_runtime.clone(),
             turn_scope,
         };
-        let upstream =
-            futures::stream::iter(vec![Ok::<Bytes, CustomError>(Bytes::from(concat!(
-                "data: {\"id\":\"approval-1\",\"message_type\":\"approval_request_message\",",
-                "\"tool_call\":{\"name\":\"session_info\",\"tool_call_id\":\"call_session_info\",",
-                "\"arguments\":\"{}\"}}\n\n"
-            )))]);
+        let upstream = futures::stream::iter(vec![Ok::<Bytes, CustomError>(Bytes::from(concat!(
+            "data: {\"id\":\"approval-1\",\"message_type\":\"approval_request_message\",",
+            "\"tool_call\":{\"name\":\"session_info\",\"tool_call_id\":\"call_session_info\",",
+            "\"arguments\":\"{}\"}}\n\n"
+        )))]);
         let mut stream = AcpLettaSseStream::new(
             upstream,
             context,
@@ -7437,12 +7447,11 @@ mod tests {
             role_runtime: role_runtime.clone(),
             turn_scope,
         };
-        let upstream =
-            futures::stream::iter(vec![Ok::<Bytes, CustomError>(Bytes::from(concat!(
-                "data: {\"id\":\"approval-cancel\",\"message_type\":\"approval_request_message\",",
-                "\"tool_call\":{\"name\":\"fs_read_text_file\",\"tool_call_id\":\"call_cancel\",",
-                "\"arguments\":\"{\\\"path\\\":\\\"/tmp/acp-cancel.txt\\\"}\"}}\n\n"
-            )))]);
+        let upstream = futures::stream::iter(vec![Ok::<Bytes, CustomError>(Bytes::from(concat!(
+            "data: {\"id\":\"approval-cancel\",\"message_type\":\"approval_request_message\",",
+            "\"tool_call\":{\"name\":\"fs_read_text_file\",\"tool_call_id\":\"call_cancel\",",
+            "\"arguments\":\"{\\\"path\\\":\\\"/tmp/acp-cancel.txt\\\"}\"}}\n\n"
+        )))]);
         let config = crate::config::Config::test_stub();
         let letta = Arc::new(crate::core::letta::LettaClient::new(&config));
         let (cancel_tx, cancel_rx) = tokio::sync::watch::channel(false);
@@ -7881,13 +7890,9 @@ data: "hello"}"#;
             binding_id: "agent-12345678-1234-4567-89ab-123456789abc".to_string(),
             compatibility_backend: Some("letta".to_string()),
         };
-        let resolution = resolve_acp_prompt_conversation(
-            None,
-            None,
-            &binding,
-            "new-acp-zed-abc123".to_string(),
-        )
-        .unwrap();
+        let resolution =
+            resolve_acp_prompt_conversation(None, None, &binding, "new-acp-zed-abc123".to_string())
+                .unwrap();
         assert_eq!(resolution.session_selection, "new-acp-zed-abc123");
         assert_eq!(resolution.resolved_conversation, None);
         assert_eq!(resolution.upstream_target, binding.binding_id);
@@ -7915,7 +7920,10 @@ data: "hello"}"#;
         .unwrap();
         assert_eq!(resolution.session_selection, conv_id);
         assert_eq!(
-            resolution.resolved_conversation.as_ref().map(|c| c.id.as_str()),
+            resolution
+                .resolved_conversation
+                .as_ref()
+                .map(|c| c.id.as_str()),
             Some(conv_id)
         );
         assert_eq!(resolution.upstream_target, conv_id);

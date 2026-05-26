@@ -1,9 +1,7 @@
 use crate::core::{
     acp_plan_mode::AcpPlanModeSessionRow,
     acp_tools::{AcpResolvedSessionPolicy, AcpToolEnablementState},
-    den_tools::{
-        self, validate_memory_write_entry_semantics, MemoryWriteEntryArguments,
-    },
+    den_tools::{self, validate_memory_write_entry_semantics, MemoryWriteEntryArguments},
     turn_state::{approval_status_label, workflow_state_label},
 };
 

@@ -122,7 +122,10 @@ mod tests {
             None
         );
         assert_eq!(RoleRunner::check_health(&noop).await.unwrap(), "ok");
-        assert_eq!(InteractionRunStore::check_health(&noop).await.unwrap(), "ok");
+        assert_eq!(
+            InteractionRunStore::check_health(&noop).await.unwrap(),
+            "ok"
+        );
         assert_eq!(RetrievalService::check_health(&noop).await.unwrap(), "ok");
         let binding = RoleRuntimeBinding {
             binding_id: "binding".to_string(),
@@ -131,14 +134,11 @@ mod tests {
         let conversation = RuntimeConversationRef {
             id: "conv-test".to_string(),
         };
-        assert!(AcpTurnRunner::preflight_hygiene(
-            &noop,
-            &binding,
-            Some(&conversation),
-            "test"
-        )
-        .await
-        .is_ok());
+        assert!(
+            AcpTurnRunner::preflight_hygiene(&noop, &binding, Some(&conversation), "test")
+                .await
+                .is_ok()
+        );
         assert_eq!(
             AcpTurnRunner::continue_turn(
                 &noop,

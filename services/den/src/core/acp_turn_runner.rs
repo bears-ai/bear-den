@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use futures::{Stream, StreamExt};
 use reqwest::Response;
-use serde_json::{json, Value};
+use serde_json::Value;
 use uuid::Uuid;
 
 use crate::{
@@ -13,9 +13,8 @@ use crate::{
         pair_turn::{post_pair_turn_messages_streaming, PairTurnBoundaryLog, PairTurnRequest},
         runtime_contracts::{
             AcpTurnRunner, CancelTurnRequest, CancelTurnResult, ContinueTurnRequest,
-            ContinueTurnResult, RoleRuntimeBinding, RuntimeApprovalDecision,
-            RuntimeContinuation, RuntimeConversationRef, RuntimeToolResultStatus,
-            StartTurnRequest, StartTurnResult,
+            ContinueTurnResult, RoleRuntimeBinding, RuntimeApprovalDecision, RuntimeContinuation,
+            RuntimeConversationRef, RuntimeToolResultStatus, StartTurnRequest, StartTurnResult,
         },
     },
     errors::CustomError,
@@ -71,8 +70,7 @@ pub struct LettaAcpTurnRunner<'a> {
 
 pub fn looks_like_letta_waiting_for_approval_error(err: &CustomError) -> bool {
     let text = err.to_string();
-    text.contains("waiting on an unresolved tool approval")
-        || text.contains("waiting for approval")
+    text.contains("waiting on an unresolved tool approval") || text.contains("waiting for approval")
 }
 
 async fn cancel_letta_runs_by_id_or_skip(
@@ -90,7 +88,10 @@ async fn cancel_letta_runs_by_id_or_skip(
         return "skipped:no_active_run_ids".to_string();
     }
 
-    let url = format!("{}/v1/agents/{role_agent_id}/messages/cancel", letta.base_url());
+    let url = format!(
+        "{}/v1/agents/{role_agent_id}/messages/cancel",
+        letta.base_url()
+    );
     let body = serde_json::json!({ "run_ids": run_ids });
     match letta.http().post(url).json(&body).send().await {
         Ok(resp) if resp.status().is_success() => format!("cancelled:{}", run_ids.len()),
@@ -207,7 +208,7 @@ impl<'a> LettaAcpTurnRunner<'a> {
                         &content,
                     )
                     .await?;
-                self.state.acp_tool_turns.cleanup_session(session_id);
+                self.state.acp_tool_turns.remove(session_id, &tool_call_id);
                 Ok(response)
             }
             RuntimeContinuation::ApprovalDecision {
@@ -235,7 +236,9 @@ impl<'a> LettaAcpTurnRunner<'a> {
                         &content,
                     )
                     .await?;
-                self.state.acp_tool_turns.cleanup_session(session_id);
+                if !tool_call_id.is_empty() {
+                    self.state.acp_tool_turns.remove(session_id, &tool_call_id);
+                }
                 Ok(response)
             }
         }
@@ -284,7 +287,10 @@ impl<'a> LettaAcpTurnRunner<'a> {
                     error = %err,
                     "Letta conversation is waiting for stale approval; skipping agent-wide cancel before retry"
                 );
-                self.state.acp_tool_turns.cleanup_session(session_id);
+                let process_cleanup = self
+                    .state
+                    .acp_tool_turns
+                    .cleanup_expired_tool_turns_for_session(session_id);
                 let cancel_result = cancel_letta_runs_by_id_or_skip(
                     self.state.letta.as_ref(),
                     &request.binding.binding_id,
@@ -297,7 +303,8 @@ impl<'a> LettaAcpTurnRunner<'a> {
                     acp_session_id = %session_id,
                     compatibility_binding_id = %request.binding.binding_id,
                     cancel_result = %cancel_result,
-                    "ACP stale-approval retry cleaned process-local state without agent-wide cancellation"
+                    process_cleanup = ?process_cleanup,
+                    "ACP stale-approval retry cleaned expired process-local tool state without agent-wide cancellation"
                 );
                 match post_turn(
                     self.state.letta.as_ref(),
@@ -373,7 +380,9 @@ impl AcpTurnRunner for LettaAcpTurnRunner<'_> {
         conversation: Option<&RuntimeConversationRef>,
         reason: &str,
     ) -> Result<(), CustomError> {
-        let session_id = conversation.map(|c| c.id.as_str()).unwrap_or("unknown-session");
+        let session_id = conversation
+            .map(|c| c.id.as_str())
+            .unwrap_or("unknown-session");
         let _ = acp_preflight_runtime_hygiene(
             self.state,
             session_id,
@@ -516,30 +525,59 @@ fn runtime_stream_event_from_letta_json(
     match message_type {
         "ping" => None,
         "assistant_message" => {
-            let text = crate::core::acp_letta_events::letta_stream_text_preserving_whitespace(inner)
-                .or_else(|| crate::core::acp_letta_events::letta_stream_text_preserving_whitespace(event))
-                .unwrap_or_default();
+            let text =
+                crate::core::acp_letta_events::letta_stream_text_preserving_whitespace(inner)
+                    .or_else(|| {
+                        crate::core::acp_letta_events::letta_stream_text_preserving_whitespace(
+                            event,
+                        )
+                    })
+                    .unwrap_or_default();
             Some(crate::core::runtime_contracts::RuntimeStreamEvent::AssistantTextDelta { text })
         }
-        "reasoning_message" => Some(crate::core::runtime_contracts::RuntimeStreamEvent::StatusText {
-            text: inner
-                .get("reasoning")
-                .and_then(|v| v.as_str())
-                .map(str::to_string)
-                .or_else(|| event.get("reasoning").and_then(|v| v.as_str()).map(str::to_string))
-                .or_else(|| crate::core::acp_letta_events::letta_stream_text_preserving_whitespace(inner))
-                .or_else(|| crate::core::acp_letta_events::letta_stream_text_preserving_whitespace(event))
-                .unwrap_or_default(),
-        }),
+        "reasoning_message" => Some(
+            crate::core::runtime_contracts::RuntimeStreamEvent::StatusText {
+                text: inner
+                    .get("reasoning")
+                    .and_then(|v| v.as_str())
+                    .map(str::to_string)
+                    .or_else(|| {
+                        event
+                            .get("reasoning")
+                            .and_then(|v| v.as_str())
+                            .map(str::to_string)
+                    })
+                    .or_else(|| {
+                        crate::core::acp_letta_events::letta_stream_text_preserving_whitespace(
+                            inner,
+                        )
+                    })
+                    .or_else(|| {
+                        crate::core::acp_letta_events::letta_stream_text_preserving_whitespace(
+                            event,
+                        )
+                    })
+                    .unwrap_or_default(),
+            },
+        ),
         "error_message" => Some(crate::core::runtime_contracts::RuntimeStreamEvent::Error {
             message: event
                 .get("message")
                 .and_then(|v| v.as_str())
                 .unwrap_or("Upstream error")
                 .to_string(),
-            detail: event.get("detail").and_then(|v| v.as_str()).map(str::to_string),
-            error_type: event.get("error_type").and_then(|v| v.as_str()).map(str::to_string),
-            request_id: event.get("request_id").and_then(|v| v.as_str()).map(str::to_string),
+            detail: event
+                .get("detail")
+                .and_then(|v| v.as_str())
+                .map(str::to_string),
+            error_type: event
+                .get("error_type")
+                .and_then(|v| v.as_str())
+                .map(str::to_string),
+            request_id: event
+                .get("request_id")
+                .and_then(|v| v.as_str())
+                .map(str::to_string),
             context: event.get("context").cloned(),
         }),
         "stop_reason" => {
@@ -549,21 +587,28 @@ fn runtime_stream_event_from_letta_json(
                 .or_else(|| event.get("stop_reason").and_then(|v| v.as_str()))
                 .unwrap_or("unknown");
             if stop_reason == "end_turn" {
-                Some(crate::core::runtime_contracts::RuntimeStreamEvent::TurnCompleted {
-                    turn: None,
-                })
+                Some(
+                    crate::core::runtime_contracts::RuntimeStreamEvent::TurnCompleted {
+                        turn: None,
+                    },
+                )
             } else if stop_reason == "requires_approval" {
-                Some(crate::core::runtime_contracts::RuntimeStreamEvent::WaitingForContinuation {
-                    turn: None,
-                })
+                Some(
+                    crate::core::runtime_contracts::RuntimeStreamEvent::WaitingForContinuation {
+                        turn: None,
+                    },
+                )
             } else {
-                Some(crate::core::runtime_contracts::RuntimeStreamEvent::TurnFailed {
-                    turn: None,
-                    category: crate::core::runtime_contracts::RuntimeErrorCategory::BackendProtocol,
-                    message: format!(
-                        "Letta stopped before producing assistant output: {stop_reason}"
-                    ),
-                })
+                Some(
+                    crate::core::runtime_contracts::RuntimeStreamEvent::TurnFailed {
+                        turn: None,
+                        category:
+                            crate::core::runtime_contracts::RuntimeErrorCategory::BackendProtocol,
+                        message: format!(
+                            "Letta stopped before producing assistant output: {stop_reason}"
+                        ),
+                    },
+                )
             }
         }
         "tool_call_message" | "approval_request_message" | "function_call" => Some(
@@ -582,8 +627,14 @@ fn runtime_stream_event_from_letta_json(
                     .and_then(|v| v.as_str())
                     .unwrap_or_default()
                     .to_string(),
-                title: event.get("tool_title").and_then(|v| v.as_str()).map(str::to_string),
-                kind: event.get("tool_kind").and_then(|v| v.as_str()).map(str::to_string),
+                title: event
+                    .get("tool_title")
+                    .and_then(|v| v.as_str())
+                    .map(str::to_string),
+                kind: event
+                    .get("tool_kind")
+                    .and_then(|v| v.as_str())
+                    .map(str::to_string),
                 arguments: event
                     .get("args")
                     .cloned()
@@ -634,8 +685,9 @@ pub async fn continue_acp_turn_with_runtime(
         runtime_context_len: 0,
     };
     let status = match request.continuation {
-        RuntimeContinuation::ToolResult { .. }
-        | RuntimeContinuation::ApprovalDecision { .. } => request.continuation,
+        RuntimeContinuation::ToolResult { .. } | RuntimeContinuation::ApprovalDecision { .. } => {
+            request.continuation
+        }
     };
     let response = runner
         .continue_turn_response(
@@ -650,7 +702,9 @@ pub async fn continue_acp_turn_with_runtime(
             &request.stream_context,
         )
         .await?;
-    let mut parsed = response.bytes_stream().map(|item| item.map_err(CustomError::from));
+    let mut parsed = response
+        .bytes_stream()
+        .map(|item| item.map_err(CustomError::from));
     let mut buffer = Vec::new();
     let mut queued_events: std::collections::VecDeque<
         Result<crate::core::runtime_contracts::RuntimeStreamEvent, CustomError>,
@@ -726,7 +780,7 @@ pub async fn acp_cleanup_stale_runtime_state(
         reason,
         request_id,
     } = params;
-    tool_turns.cleanup_session(&acp_session_id);
+    let tool_turn_cleanup = tool_turns.cleanup_request_tool_turns(&acp_session_id, request_id);
     if run_ids.is_empty() {
         tracing::warn!(
             request_id = %request_id,
@@ -737,12 +791,18 @@ pub async fn acp_cleanup_stale_runtime_state(
             "ACP stale runtime cleanup had no Letta run_ids; skipped upstream cancel to avoid agent-wide cancellation"
         );
     }
-    let cancel_result = cancel_letta_runs_by_id_or_skip(letta.as_ref(), &pair_agent_id, &run_ids, reason).await;
+    let cancel_result =
+        cancel_letta_runs_by_id_or_skip(letta.as_ref(), &pair_agent_id, &run_ids, reason).await;
     serde_json::json!({
         "ok": cancel_result.starts_with("cancelled:") || cancel_result.starts_with("skipped:"),
         "reason": reason,
         "run_ids": run_ids,
         "cancel_result": cancel_result,
+        "tool_turn_cleanup": tool_turn_cleanup.to_json(),
+        "cleanup_scope": {
+            "kind": "request",
+            "request_id": request_id,
+        },
     })
 }
 
@@ -756,6 +816,7 @@ mod tests {
         routing::post,
         Json, Router,
     };
+    use serde_json::json;
     use sqlx::postgres::PgPoolOptions;
     use std::sync::Arc;
     use tokio::sync::Mutex as TokioMutex;
@@ -853,7 +914,10 @@ mod tests {
         assert_eq!(body["messages"][0]["type"], "tool_return");
         assert_eq!(body["messages"][0]["tool_returns"][0]["type"], "tool");
         assert_eq!(body["messages"][0]["tool_returns"][0]["status"], "success");
-        assert_eq!(body["messages"][0]["tool_returns"][0]["tool_call_id"], "call-1");
+        assert_eq!(
+            body["messages"][0]["tool_returns"][0]["tool_call_id"],
+            "call-1"
+        );
         assert_eq!(
             body["messages"][0]["tool_returns"][0]["tool_return"],
             "plain tool result"
@@ -920,7 +984,10 @@ mod tests {
         assert_eq!(body["messages"][0]["approve"], false);
         assert_eq!(body["messages"][0]["approvals"][0]["type"], "approval");
         assert_eq!(body["messages"][0]["approvals"][0]["approve"], false);
-        assert_eq!(body["messages"][0]["approvals"][0]["tool_call_id"], "call-2");
+        assert_eq!(
+            body["messages"][0]["approvals"][0]["tool_call_id"],
+            "call-2"
+        );
         assert_eq!(body["messages"][0]["approvals"][0]["reason"], "tool failed");
     }
 }

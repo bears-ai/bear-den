@@ -26,8 +26,7 @@ pub async fn require_pair_runtime_binding(
 ) -> Result<RoleRuntimeBinding, CustomError> {
     if !letta.is_enabled() {
         return Err(CustomError::System(
-            "Letta is not configured (set LETTA_BASE_URL); ACP pair role cannot run."
-                .to_string(),
+            "Letta is not configured (set LETTA_BASE_URL); ACP pair role cannot run.".to_string(),
         ));
     }
     bears_db::role_runtime_binding_id(pool, bear.id, BearAgentRole::Pair)
@@ -147,8 +146,7 @@ pub fn normalize_acp_conversation_id(raw: Option<&str>) -> Result<String, Custom
     let ok = s == "default"
         || (s.starts_with("conv-") && s.len() >= 8)
         || (s.starts_with("new-") && s.len() >= 8)
-        || s
-            .chars()
+        || s.chars()
             .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_');
     if ok {
         Ok(s.to_string())
@@ -186,7 +184,10 @@ pub fn resolve_acp_prompt_conversation(
     {
         (id, AcpConversationSelectionSource::Stored)
     } else {
-        (generated_pending_id, AcpConversationSelectionSource::Generated)
+        (
+            generated_pending_id,
+            AcpConversationSelectionSource::Generated,
+        )
     };
 
     Ok(AcpConversationResolution::from_selection(
@@ -210,26 +211,34 @@ pub async fn ensure_acp_session_conversation(
         generated_pending_id,
     )?;
     let mut created = false;
-    if resolution.session_selection.starts_with("new-") && resolution.resolved_conversation.is_none() {
-        let created_response = letta.create_conversation_for_agent(&request.binding.binding_id).await?;
-        let conv_id = letta_conversation_id_from_create_response(&created_response).ok_or_else(|| {
-            CustomError::System(format!(
+    if resolution.session_selection.starts_with("new-")
+        && resolution.resolved_conversation.is_none()
+    {
+        let created_response = letta
+            .create_conversation_for_agent(&request.binding.binding_id)
+            .await?;
+        let conv_id =
+            letta_conversation_id_from_create_response(&created_response).ok_or_else(|| {
+                CustomError::System(format!(
                 "Letta create conversation response did not contain a conv-* id: {created_response}"
             ))
-        })?;
-        let conversation = RuntimeConversationRef { id: conv_id.clone() };
+            })?;
+        let conversation = RuntimeConversationRef {
+            id: conv_id.clone(),
+        };
         resolution.resolved_conversation = Some(conversation.clone());
         resolution.history_target = Some(conversation.clone());
         resolution.archive_target = Some(conversation.clone());
         resolution.upstream_target = conv_id;
         created = true;
     }
-    let conversation = resolution
-        .resolved_conversation
-        .clone()
-        .unwrap_or_else(|| RuntimeConversationRef {
-            id: resolution.upstream_target.clone(),
-        });
+    let conversation =
+        resolution
+            .resolved_conversation
+            .clone()
+            .unwrap_or_else(|| RuntimeConversationRef {
+                id: resolution.upstream_target.clone(),
+            });
     Ok((
         resolution,
         EnsureConversationResult {

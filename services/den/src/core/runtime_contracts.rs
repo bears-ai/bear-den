@@ -124,9 +124,7 @@ pub enum RuntimeStreamContinuation {
 pub type RuntimeByteStream =
     Pin<Box<dyn Stream<Item = Result<Bytes, crate::errors::CustomError>> + Send + 'static>>;
 pub type RuntimeEventStream = Pin<
-    Box<
-        dyn Stream<Item = Result<RuntimeStreamEvent, crate::errors::CustomError>> + Send + 'static,
-    >,
+    Box<dyn Stream<Item = Result<RuntimeStreamEvent, crate::errors::CustomError>> + Send + 'static>,
 >;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -137,9 +135,15 @@ pub struct CancelTurnResult {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum RuntimeStreamEvent {
-    JsonValue { value: serde_json::Value },
-    AssistantTextDelta { text: String },
-    StatusText { text: String },
+    JsonValue {
+        value: serde_json::Value,
+    },
+    AssistantTextDelta {
+        text: String,
+    },
+    StatusText {
+        text: String,
+    },
     ToolCallRequested {
         tool_call_id: String,
         tool_name: String,
@@ -157,15 +161,23 @@ pub enum RuntimeStreamEvent {
         request_id: Option<String>,
         context: Option<serde_json::Value>,
     },
-    ConversationResolved { conversation: RuntimeConversationRef },
-    WaitingForContinuation { turn: Option<RuntimeTurnRef> },
-    TurnCompleted { turn: Option<RuntimeTurnRef> },
+    ConversationResolved {
+        conversation: RuntimeConversationRef,
+    },
+    WaitingForContinuation {
+        turn: Option<RuntimeTurnRef>,
+    },
+    TurnCompleted {
+        turn: Option<RuntimeTurnRef>,
+    },
     TurnFailed {
         turn: Option<RuntimeTurnRef>,
         category: RuntimeErrorCategory,
         message: String,
     },
-    TurnCancelled { turn: Option<RuntimeTurnRef> },
+    TurnCancelled {
+        turn: Option<RuntimeTurnRef>,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

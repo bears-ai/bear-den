@@ -5,11 +5,7 @@ use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, CONTENT_TYPE};
 use reqwest::StatusCode;
 use serde_json::{json, Value};
 
-use crate::{
-    config::Config,
-    core::runtime_provider::RuntimeHealthCheck,
-    errors::CustomError,
-};
+use crate::{config::Config, core::runtime_provider::RuntimeHealthCheck, errors::CustomError};
 
 pub struct LettaCreateAgentParams<'a> {
     pub name: &'a str,
@@ -329,7 +325,6 @@ impl LettaClient {
 }
 
 impl LettaClient {
-
     fn auth_headers(&self) -> HeaderMap {
         let mut h = HeaderMap::new();
         if !self.api_key.is_empty() {
