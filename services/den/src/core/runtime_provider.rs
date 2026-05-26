@@ -5,7 +5,7 @@ pub use crate::core::runtime_contracts::{
     EnsureConversationResult, InteractionRunStore, RetrievalService, RoleProfileRegistry,
     RoleRunner, RoleRuntimeBinding, RuntimeApprovalDecision, RuntimeContinuation,
     RuntimeConversationRef, RuntimeErrorCategory, RuntimeHealthCheck, RuntimeHistoryRecord,
-    RuntimeStartupCapabilities, RuntimeStreamContinuation, RuntimeStreamEvent,
-    RuntimeToolResultStatus, RuntimeTurnRef, StartTurnRequest, StartTurnResult,
-    ToolActuatorRegistry,
+    RuntimeByteStream, RuntimeStartupCapabilities, RuntimeStreamContinuation,
+    RuntimeStreamEvent, RuntimeToolResultStatus, RuntimeTurnRef, StartTurnRequest,
+    StartTurnResult, ToolActuatorRegistry,
 };

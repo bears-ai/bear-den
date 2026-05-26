@@ -5041,7 +5041,7 @@ enum AcpPendingFuture {
                         Output = Result<
                             (
                                 crate::core::runtime_provider::RuntimeStreamContinuation,
-                                reqwest::Response,
+                                crate::core::runtime_provider::RuntimeByteStream,
                             ),
                             CustomError,
                         >,
@@ -5640,13 +5640,13 @@ impl Stream for AcpLettaSseStream {
                     let result = ready!(fut.as_mut().poll(cx));
                     this.persist_future = None;
                     match result {
-                        Ok((stream_kind, response)) => {
+                        Ok((stream_kind, stream)) => {
                             match stream_kind {
-                                crate::core::runtime_provider::RuntimeStreamContinuation::HttpResponse => {
-                                    this.inner = Box::pin(response.bytes_stream());
+                                crate::core::runtime_provider::RuntimeStreamContinuation::BytesSse => {
+                                    this.inner = stream;
                                 }
                                 crate::core::runtime_provider::RuntimeStreamContinuation::Deferred => {
-                                    this.inner = Box::pin(response.bytes_stream());
+                                    this.inner = stream;
                                 }
                             }
                             return self.poll_next(cx);

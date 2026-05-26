@@ -1,5 +1,8 @@
 use crate::{config::Config, errors::CustomError};
+use bytes::Bytes;
+use futures::Stream;
 use serde::{Deserialize, Serialize};
+use std::pin::Pin;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RoleRuntimeBinding {
@@ -115,8 +118,11 @@ pub struct ContinueTurnResult {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum RuntimeStreamContinuation {
     Deferred,
-    HttpResponse,
+    BytesSse,
 }
+
+pub type RuntimeByteStream =
+    Pin<Box<dyn Stream<Item = Result<Bytes, reqwest::Error>> + Send + 'static>>;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CancelTurnResult {

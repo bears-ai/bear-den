@@ -402,7 +402,7 @@ impl AcpTurnRunner for LettaAcpTurnRunner<'_> {
         let _response = self.continue_turn_response(request, &stream).await?;
         Ok(ContinueTurnResult {
             turn,
-            stream: crate::core::runtime_contracts::RuntimeStreamContinuation::HttpResponse,
+            stream: crate::core::runtime_contracts::RuntimeStreamContinuation::BytesSse,
         })
     }
 
@@ -456,7 +456,7 @@ pub async fn continue_acp_turn_with_runtime(
 ) -> Result<
     (
         crate::core::runtime_contracts::RuntimeStreamContinuation,
-        Response,
+        crate::core::runtime_contracts::RuntimeByteStream,
     ),
     CustomError,
 > {
@@ -483,8 +483,8 @@ pub async fn continue_acp_turn_with_runtime(
         )
         .await?;
     Ok((
-        crate::core::runtime_contracts::RuntimeStreamContinuation::HttpResponse,
-        response,
+        crate::core::runtime_contracts::RuntimeStreamContinuation::BytesSse,
+        Box::pin(response.bytes_stream()),
     ))
 }
 
