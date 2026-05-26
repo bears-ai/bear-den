@@ -147,9 +147,6 @@ pub enum RuntimeStreamEvent {
         phase: Option<String>,
         detail: Option<serde_json::Value>,
     },
-    StatusText {
-        text: String,
-    },
     RunPaused {
         reason: String,
         resume_token: Option<String>,
@@ -174,9 +171,6 @@ pub enum RuntimeStreamEvent {
     },
     ConversationResolved {
         conversation: RuntimeConversationRef,
-    },
-    WaitingForContinuation {
-        turn: Option<RuntimeTurnRef>,
     },
     TurnCompleted {
         turn: Option<RuntimeTurnRef>,

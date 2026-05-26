@@ -4425,6 +4425,98 @@ struct AcpStreamDiagnostics {
 }
 
 impl AcpStreamDiagnostics {
+    fn merge_from(&mut self, other: Self) {
+        self.upstream_frames += other.upstream_frames;
+        self.parsed_events += other.parsed_events;
+        self.mapped_events += other.mapped_events;
+        self.unmapped_events += other.unmapped_events;
+        for (key, value) in other.native_message_types {
+            *self.native_message_types.entry(key).or_insert(0) += value;
+        }
+        for (key, value) in other.native_event_types {
+            *self.native_event_types.entry(key).or_insert(0) += value;
+        }
+        for (key, value) in other.adapter_event_types {
+            *self.adapter_event_types.entry(key).or_insert(0) += value;
+        }
+        for (key, value) in other.tool_request_counts {
+            *self.tool_request_counts.entry(key).or_insert(0) += value;
+        }
+        for sample in other.unmapped_event_samples {
+            if self.unmapped_event_samples.len() < 5 {
+                self.unmapped_event_samples.push(sample);
+            }
+        }
+        for run_id in other.run_ids {
+            if !self.run_ids.iter().any(|known| known == &run_id) {
+                self.run_ids.push(run_id);
+            }
+        }
+        self.saw_visible_output |= other.saw_visible_output;
+        self.saw_error |= other.saw_error;
+        self.saw_turn_complete |= other.saw_turn_complete;
+        self.saw_tool_return_ack |= other.saw_tool_return_ack;
+        self.saw_requires_approval_stop |= other.saw_requires_approval_stop;
+        self.emitted_empty_turn_error |= other.emitted_empty_turn_error;
+        self.emitted_runtime_cleanup |= other.emitted_runtime_cleanup;
+    }
+
+    fn observe_runtime_event(
+        &mut self,
+        event: &crate::core::runtime_provider::RuntimeStreamEvent,
+    ) {
+        self.parsed_events += 1;
+        let runtime_type = match event {
+            crate::core::runtime_provider::RuntimeStreamEvent::JsonValue { .. } => "json_value",
+            crate::core::runtime_provider::RuntimeStreamEvent::AssistantTextDelta { .. } => {
+                self.saw_visible_output = true;
+                "assistant_text_delta"
+            }
+            crate::core::runtime_provider::RuntimeStreamEvent::RunProgress { .. } => {
+                self.saw_visible_output = true;
+                "run_progress"
+            }
+            crate::core::runtime_provider::RuntimeStreamEvent::RunPaused { reason, .. } => {
+                if reason == "awaiting_approval" {
+                    self.saw_requires_approval_stop = true;
+                }
+                "run_paused"
+            }
+            crate::core::runtime_provider::RuntimeStreamEvent::ToolCallRequested { tool_call_id, .. } => {
+                let count = self.tool_request_counts.entry(tool_call_id.clone()).or_insert(0);
+                *count += 1;
+                "tool_call_requested"
+            }
+            crate::core::runtime_provider::RuntimeStreamEvent::Error { .. } => {
+                self.saw_error = true;
+                self.saw_visible_output = true;
+                "error"
+            }
+            crate::core::runtime_provider::RuntimeStreamEvent::ConversationResolved { conversation } => {
+                let run_id = conversation.id.clone();
+                if !self.run_ids.iter().any(|known| known == &run_id) {
+                    self.run_ids.push(run_id);
+                }
+                "conversation_resolved"
+            }
+            crate::core::runtime_provider::RuntimeStreamEvent::TurnCompleted { .. } => {
+                self.saw_turn_complete = true;
+                "turn_completed"
+            }
+            crate::core::runtime_provider::RuntimeStreamEvent::TurnFailed { .. } => {
+                self.saw_error = true;
+                self.saw_visible_output = true;
+                "turn_failed"
+            }
+            crate::core::runtime_provider::RuntimeStreamEvent::TurnCancelled { .. } => {
+                self.saw_error = true;
+                self.saw_visible_output = true;
+                "turn_cancelled"
+            }
+        };
+        Self::increment(&mut self.native_event_types, runtime_type);
+    }
+
     fn increment(map: &mut BTreeMap<String, usize>, key: &str) {
         let key = if key.trim().is_empty() {
             "<missing>"
@@ -5190,6 +5282,7 @@ fn truncate_utf8_boundary(s: &str, max_bytes: usize) -> &str {
 
 struct AcpLettaSseStream {
     inner: Pin<Box<dyn Stream<Item = Result<Bytes, CustomError>> + Send>>,
+    buffer: Vec<u8>,
     pending: VecDeque<Bytes>,
     context: AcpStreamContext,
     letta: Arc<crate::core::letta::LettaClient>,
@@ -5323,6 +5416,7 @@ impl AcpLettaSseStream {
         }
         Self {
             inner: Box::pin(inner),
+            buffer: Vec::new(),
             pending,
             context,
             letta,
@@ -5650,6 +5744,8 @@ impl Stream for AcpLettaSseStream {
                             let context = this.context.clone();
                             let request_id = this.context.request_id.to_string();
                             let acp_session_id = this.context.acp_session_id.clone();
+                            let diagnostics = std::sync::Arc::new(std::sync::Mutex::new(std::mem::take(&mut this.diagnostics)));
+                            let diagnostics_for_stream = diagnostics.clone();
                             let mut queued_outputs: std::collections::VecDeque<Result<Bytes, CustomError>> = std::collections::VecDeque::new();
                             let mut runtime_stream = stream;
                             let mut finished = false;
@@ -5662,6 +5758,9 @@ impl Stream for AcpLettaSseStream {
                                 }
                                 match std::pin::Pin::new(&mut runtime_stream).poll_next(cx) {
                                     std::task::Poll::Ready(Some(Ok(event))) => {
+                                        if let Ok(mut guard) = diagnostics_for_stream.lock() {
+                                            guard.observe_runtime_event(&event);
+                                        }
                                         match event {
                                             crate::core::runtime_provider::RuntimeStreamEvent::AssistantTextDelta { text } => {
                                                 queued_outputs.push_back(Ok(acp_event_to_adapter_sse(AcpGatewayEvent::AssistantTextDelta { text })));
@@ -5674,16 +5773,12 @@ impl Stream for AcpLettaSseStream {
                                                 };
                                                 queued_outputs.push_back(Ok(acp_event_to_adapter_sse(AcpGatewayEvent::StatusText { text: rendered })));
                                             }
-                                            crate::core::runtime_provider::RuntimeStreamEvent::StatusText { text } => {
-                                                queued_outputs.push_back(Ok(acp_event_to_adapter_sse(AcpGatewayEvent::StatusText { text })));
-                                            }
                                             crate::core::runtime_provider::RuntimeStreamEvent::ConversationResolved { conversation } => {
                                                 queued_outputs.push_back(Ok(acp_event_to_adapter_sse(AcpGatewayEvent::ConversationResolved {
                                                     conversation_id: conversation.id,
                                                 })));
                                             }
-                                            crate::core::runtime_provider::RuntimeStreamEvent::RunPaused { .. }
-                                            | crate::core::runtime_provider::RuntimeStreamEvent::WaitingForContinuation { .. } => {}
+                                            crate::core::runtime_provider::RuntimeStreamEvent::RunPaused { .. } => {}
                                             crate::core::runtime_provider::RuntimeStreamEvent::TurnCompleted { .. } => {
                                                 queued_outputs.push_back(Ok(acp_event_to_adapter_sse(AcpGatewayEvent::TurnComplete {
                                                     outcome: "ok".to_string(),
@@ -5734,6 +5829,12 @@ impl Stream for AcpLettaSseStream {
                                                     &mut temp_diagnostics,
                                                 )) {
                                                     Ok((events, _effect, _adapter_result_rx)) => {
+                                                        if let Ok(mut guard) = diagnostics_for_stream.lock() {
+                                                            guard.merge_from(temp_diagnostics);
+                                                            for event in &events {
+                                                                guard.observe_mapped_event(event);
+                                                            }
+                                                        }
                                                         for event in events {
                                                             queued_outputs.push_back(Ok(acp_event_to_adapter_sse(event)));
                                                         }
@@ -5754,6 +5855,11 @@ impl Stream for AcpLettaSseStream {
                                     std::task::Poll::Pending => return std::task::Poll::Pending,
                                 }
                             }));
+                            if let Ok(mutex) = std::sync::Arc::try_unwrap(diagnostics) {
+                                if let Ok(diagnostics) = mutex.into_inner() {
+                                    this.diagnostics = diagnostics;
+                                }
+                            }
                             return self.poll_next(cx);
                         }
                         Err(err) => {
@@ -5838,23 +5944,29 @@ impl Stream for AcpLettaSseStream {
 
         match ready!(this.inner.as_mut().poll_next(cx)) {
             Some(Ok(chunk)) => {
-                let context = this.context.clone();
-                let mut diagnostics = std::mem::take(&mut this.diagnostics);
-                this.persist_future = Some(AcpPendingFuture::Frame(Box::pin(async move {
-                    let result = map_runtime_stream_event_to_acp_adapter_events_with_persistence(
-                        crate::core::runtime_provider::RuntimeStreamEvent::JsonValue {
-                            value: parse_sse_event_body_to_json(&chunk)
-                                .ok()
-                                .flatten()
-                                .unwrap_or_else(|| serde_json::json!({})),
-                        },
-                        context,
-                        &mut diagnostics,
-                    )
-                    .await;
-                    (result, diagnostics)
-                })));
-                self.poll_next(cx)
+                this.buffer.extend_from_slice(&chunk);
+                if let Some(end) = find_sse_frame_end(&this.buffer) {
+                    let frame: Vec<u8> = this.buffer.drain(..end).collect();
+                    let context = this.context.clone();
+                    let mut diagnostics = std::mem::take(&mut this.diagnostics);
+                    this.persist_future = Some(AcpPendingFuture::Frame(Box::pin(async move {
+                        let body = strip_trailing_sse_delimiter_owned(frame);
+                        let result = match parse_sse_event_body_to_json(&body) {
+                            Ok(Some(value)) => map_runtime_stream_event_to_acp_adapter_events_with_persistence(
+                                crate::core::runtime_provider::RuntimeStreamEvent::JsonValue { value },
+                                context,
+                                &mut diagnostics,
+                            )
+                            .await,
+                            Ok(None) => Ok((Vec::new(), None, None)),
+                            Err(err) => Err(std::io::Error::other(err)),
+                        };
+                        (result, diagnostics)
+                    })));
+                    self.poll_next(cx)
+                } else {
+                    std::task::Poll::Pending
+                }
             }
             Some(Err(err)) => {
                 let message = format!("Letta stream read failed: {err}");
@@ -5897,6 +6009,24 @@ impl Stream for AcpLettaSseStream {
                 }
             }
             None => {
+                if !this.buffer.is_empty() {
+                    let message = format!(
+                        "ACP upstream Letta SSE stream ended with incomplete frame ({} bytes)",
+                        this.buffer.len()
+                    );
+                    this.buffer.clear();
+                    this.push_adapter_event(AcpGatewayEvent::Error {
+                        message: "BEARS failed while processing an ACP stream event.".to_string(),
+                        detail: Some(message),
+                        error_type: Some("acp_stream_frame_processing_failed".to_string()),
+                        request_id: Some(this.context.request_id.to_string()),
+                        context: Some(serde_json::json!({
+                            "component": "den.acp",
+                            "acp_session_id": this.context.acp_session_id,
+                        })),
+                    });
+                    return self.poll_next(cx);
+                }
                 if this.diagnostics.saw_requires_approval_stop
                     && !this.outstanding_tool_obligations().is_empty()
                 {
