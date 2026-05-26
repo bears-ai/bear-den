@@ -47,6 +47,8 @@
 //! - `SERVER_MODE=both` - Run both services simultaneously
 
 pub mod acp;
+pub mod acp_stream_mapping;
+pub mod acp_stream_support;
 #[cfg(test)]
 mod acp_turn_state_alignment_tests;
 #[cfg(test)]

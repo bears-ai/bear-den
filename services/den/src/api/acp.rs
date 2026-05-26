@@ -33,6 +33,15 @@ use uuid::Uuid;
 
 use crate::{
     api::{
+        acp_stream_mapping::{
+            map_letta_stream_frame_to_acp_adapter_events,
+            map_runtime_stream_event_to_acp_adapter_events_with_persistence,
+            summarize_event_for_log,
+        },
+        acp_stream_support::{
+            find_sse_frame_end, parse_sse_event_body_to_json, strip_trailing_sse_delimiter,
+            strip_trailing_sse_delimiter_owned, AcpStreamDiagnostics,
+        },
         auth::{self, ApiError},
         oauth::OAuthScope,
         service::ApiState,
@@ -145,7 +154,7 @@ fn acp_tool_timeout_ms_for_provider(tool_name: &str) -> u64 {
         })
 }
 
-fn acp_debug_event_sample_chars() -> usize {
+pub(super) fn acp_debug_event_sample_chars() -> usize {
     std::env::var("ACP_DEBUG_EVENT_SAMPLE_CHARS")
         .ok()
         .and_then(|s| s.trim().parse::<usize>().ok())
@@ -3595,26 +3604,26 @@ async fn prompt_inner(
 }
 
 #[derive(Clone)]
-struct AcpStreamContext {
-    pool: PgPool,
-    tool_turns: AcpToolTurnCoordinator,
-    user_id: i32,
-    user_profile: Option<crate::core::user::User>,
-    bear_id: Uuid,
-    bear_slug: String,
-    acp_session_id: String,
-    client: String,
-    conversation_selection: String,
-    resolved_conversation_id: Option<String>,
-    upstream_target: String,
-    workspace_roots: Vec<String>,
-    session_policy: Option<serde_json::Value>,
-    activity: Option<serde_json::Value>,
-    request_id: Uuid,
-    pair_agent_id: String,
-    config: Arc<crate::config::Config>,
-    role_runtime: RoleRuntime,
-    turn_scope: RoleTurnScope,
+pub(super) struct AcpStreamContext {
+    pub(super) pool: PgPool,
+    pub(super) tool_turns: AcpToolTurnCoordinator,
+    pub(super) user_id: i32,
+    pub(super) user_profile: Option<crate::core::user::User>,
+    pub(super) bear_id: Uuid,
+    pub(super) bear_slug: String,
+    pub(super) acp_session_id: String,
+    pub(super) client: String,
+    pub(super) conversation_selection: String,
+    pub(super) resolved_conversation_id: Option<String>,
+    pub(super) upstream_target: String,
+    pub(super) workspace_roots: Vec<String>,
+    pub(super) session_policy: Option<serde_json::Value>,
+    pub(super) activity: Option<serde_json::Value>,
+    pub(super) request_id: Uuid,
+    pub(super) pair_agent_id: String,
+    pub(super) config: Arc<crate::config::Config>,
+    pub(super) role_runtime: RoleRuntime,
+    pub(super) turn_scope: RoleTurnScope,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -3644,14 +3653,14 @@ fn tool_execution_route(tool_name: &str, args: &serde_json::Value) -> ToolExecut
     }
 }
 
-struct PersistedToolRequestEffect {
-    tool_call_id: String,
-    tool_name: String,
-    route: ToolExecutionRoute,
-    den_server_result_rx: Option<oneshot::Receiver<AcpToolResultRequest>>,
+pub(super) struct PersistedToolRequestEffect {
+    pub(super) tool_call_id: String,
+    pub(super) tool_name: String,
+    pub(super) route: ToolExecutionRoute,
+    pub(super) den_server_result_rx: Option<oneshot::Receiver<AcpToolResultRequest>>,
 }
 
-async fn persist_stream_event_side_effects(
+pub(super) async fn persist_stream_event_side_effects(
     context: &AcpStreamContext,
     event: &mut AcpGatewayEvent,
 ) -> Result<Option<PersistedToolRequestEffect>, CustomError> {
@@ -4402,741 +4411,6 @@ async fn invoke_acp_den_tool(
     }
 }
 
-#[derive(Debug, Default)]
-struct AcpStreamDiagnostics {
-    upstream_frames: usize,
-    parsed_events: usize,
-    mapped_events: usize,
-    unmapped_events: usize,
-    native_message_types: BTreeMap<String, usize>,
-    native_event_types: BTreeMap<String, usize>,
-    adapter_event_types: BTreeMap<String, usize>,
-    tool_request_counts: BTreeMap<String, usize>,
-    tool_call_accumulator: LettaToolCallAccumulator,
-    unmapped_event_samples: Vec<String>,
-    run_ids: Vec<String>,
-    saw_visible_output: bool,
-    saw_error: bool,
-    saw_turn_complete: bool,
-    saw_tool_return_ack: bool,
-    saw_requires_approval_stop: bool,
-    emitted_empty_turn_error: bool,
-    emitted_runtime_cleanup: bool,
-}
-
-impl AcpStreamDiagnostics {
-    fn merge_from(&mut self, other: Self) {
-        self.upstream_frames += other.upstream_frames;
-        self.parsed_events += other.parsed_events;
-        self.mapped_events += other.mapped_events;
-        self.unmapped_events += other.unmapped_events;
-        for (key, value) in other.native_message_types {
-            *self.native_message_types.entry(key).or_insert(0) += value;
-        }
-        for (key, value) in other.native_event_types {
-            *self.native_event_types.entry(key).or_insert(0) += value;
-        }
-        for (key, value) in other.adapter_event_types {
-            *self.adapter_event_types.entry(key).or_insert(0) += value;
-        }
-        for (key, value) in other.tool_request_counts {
-            *self.tool_request_counts.entry(key).or_insert(0) += value;
-        }
-        for sample in other.unmapped_event_samples {
-            if self.unmapped_event_samples.len() < 5 {
-                self.unmapped_event_samples.push(sample);
-            }
-        }
-        for run_id in other.run_ids {
-            if !self.run_ids.iter().any(|known| known == &run_id) {
-                self.run_ids.push(run_id);
-            }
-        }
-        self.saw_visible_output |= other.saw_visible_output;
-        self.saw_error |= other.saw_error;
-        self.saw_turn_complete |= other.saw_turn_complete;
-        self.saw_tool_return_ack |= other.saw_tool_return_ack;
-        self.saw_requires_approval_stop |= other.saw_requires_approval_stop;
-        self.emitted_empty_turn_error |= other.emitted_empty_turn_error;
-        self.emitted_runtime_cleanup |= other.emitted_runtime_cleanup;
-    }
-
-    fn observe_runtime_event(
-        &mut self,
-        event: &crate::core::runtime_provider::RuntimeStreamEvent,
-    ) {
-        self.parsed_events += 1;
-        let runtime_type = match event {
-            crate::core::runtime_provider::RuntimeStreamEvent::JsonValue { .. } => "json_value",
-            crate::core::runtime_provider::RuntimeStreamEvent::AssistantTextDelta { .. } => {
-                self.saw_visible_output = true;
-                "assistant_text_delta"
-            }
-            crate::core::runtime_provider::RuntimeStreamEvent::RunProgress { .. } => {
-                self.saw_visible_output = true;
-                "run_progress"
-            }
-            crate::core::runtime_provider::RuntimeStreamEvent::RunPaused { reason, .. } => {
-                if reason == "awaiting_approval" {
-                    self.saw_requires_approval_stop = true;
-                }
-                "run_paused"
-            }
-            crate::core::runtime_provider::RuntimeStreamEvent::ToolCallRequested { tool_call_id, .. } => {
-                let count = self.tool_request_counts.entry(tool_call_id.clone()).or_insert(0);
-                *count += 1;
-                "tool_call_requested"
-            }
-            crate::core::runtime_provider::RuntimeStreamEvent::Error { .. } => {
-                self.saw_error = true;
-                self.saw_visible_output = true;
-                "error"
-            }
-            crate::core::runtime_provider::RuntimeStreamEvent::ConversationResolved { conversation } => {
-                let run_id = conversation.id.clone();
-                if !self.run_ids.iter().any(|known| known == &run_id) {
-                    self.run_ids.push(run_id);
-                }
-                "conversation_resolved"
-            }
-            crate::core::runtime_provider::RuntimeStreamEvent::TurnCompleted { .. } => {
-                self.saw_turn_complete = true;
-                "turn_completed"
-            }
-            crate::core::runtime_provider::RuntimeStreamEvent::TurnFailed { .. } => {
-                self.saw_error = true;
-                self.saw_visible_output = true;
-                "turn_failed"
-            }
-            crate::core::runtime_provider::RuntimeStreamEvent::TurnCancelled { .. } => {
-                self.saw_error = true;
-                self.saw_visible_output = true;
-                "turn_cancelled"
-            }
-        };
-        Self::increment(&mut self.native_event_types, runtime_type);
-    }
-
-    fn increment(map: &mut BTreeMap<String, usize>, key: &str) {
-        let key = if key.trim().is_empty() {
-            "<missing>"
-        } else {
-            key
-        };
-        *map.entry(key.to_string()).or_insert(0) += 1;
-    }
-
-    fn observe_parsed_event(&mut self, value: &serde_json::Value) -> Vec<String> {
-        self.parsed_events += 1;
-        let mut newly_observed_run_ids = Vec::new();
-        let message_type = value
-            .get("message_type")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
-        let event_type = value.get("type").and_then(|v| v.as_str()).unwrap_or("");
-        for run_id in Self::extract_run_ids(value) {
-            if self.observe_run_id(&run_id) {
-                newly_observed_run_ids.push(run_id);
-            }
-        }
-        Self::increment(&mut self.native_message_types, message_type);
-        if message_type == "tool_return_message" {
-            self.saw_tool_return_ack = true;
-        }
-        let stop_reason = value
-            .get("stop_reason")
-            .and_then(|v| v.as_str())
-            .or_else(|| {
-                value
-                    .pointer("/message/stop_reason")
-                    .and_then(|v| v.as_str())
-            })
-            .or_else(|| value.pointer("/data/stop_reason").and_then(|v| v.as_str()));
-        if stop_reason == Some("requires_approval") {
-            self.saw_requires_approval_stop = true;
-        }
-        Self::increment(&mut self.native_event_types, event_type);
-        newly_observed_run_ids
-    }
-
-    fn extract_run_ids(value: &serde_json::Value) -> Vec<String> {
-        let mut run_ids = Vec::new();
-        for pointer in [
-            "/run_id",
-            "/message/run_id",
-            "/data/run_id",
-            "/run/id",
-            "/message/run/id",
-            "/data/run/id",
-        ] {
-            if let Some(run_id) = value
-                .pointer(pointer)
-                .and_then(serde_json::Value::as_str)
-                .map(str::trim)
-                .filter(|run_id| !run_id.is_empty())
-            {
-                let run_id = run_id.to_string();
-                if !run_ids.iter().any(|known| known == &run_id) {
-                    run_ids.push(run_id);
-                }
-            }
-        }
-        for pointer in ["/run_ids", "/message/run_ids", "/data/run_ids"] {
-            if let Some(items) = value.pointer(pointer).and_then(serde_json::Value::as_array) {
-                for run_id in items
-                    .iter()
-                    .filter_map(serde_json::Value::as_str)
-                    .map(str::trim)
-                    .filter(|run_id| !run_id.is_empty())
-                {
-                    let run_id = run_id.to_string();
-                    if !run_ids.iter().any(|known| known == &run_id) {
-                        run_ids.push(run_id);
-                    }
-                }
-            }
-        }
-        run_ids
-    }
-
-    fn observe_run_id(&mut self, run_id: &str) -> bool {
-        let run_id = run_id.trim();
-        if run_id.is_empty() || self.run_ids.iter().any(|known| known == run_id) {
-            return false;
-        }
-        self.run_ids.push(run_id.to_string());
-        true
-    }
-
-    fn observe_mapped_event(&mut self, event: &AcpGatewayEvent) {
-        self.mapped_events += 1;
-        Self::increment(&mut self.adapter_event_types, acp_event_adapter_type(event));
-        self.saw_visible_output |= acp_event_has_visible_output(event);
-        self.saw_error |= matches!(event, AcpGatewayEvent::Error { .. });
-        self.saw_turn_complete |= matches!(
-            event,
-            AcpGatewayEvent::TurnComplete { .. } | AcpGatewayEvent::TurnResult { .. }
-        );
-    }
-
-    fn observe_unmapped_event(&mut self, value: &serde_json::Value) {
-        self.unmapped_events += 1;
-        if self.unmapped_event_samples.len() < 5 {
-            self.unmapped_event_samples
-                .push(summarize_letta_event_for_log(value).to_string());
-        }
-    }
-
-    fn empty_turn_error_event(&mut self, context: &AcpStreamContext) -> Option<AcpGatewayEvent> {
-        if self.emitted_empty_turn_error
-            || self.saw_visible_output
-            || self.saw_error
-            || self.saw_tool_return_ack
-            || self.emitted_runtime_cleanup
-        {
-            return None;
-        }
-        self.emitted_empty_turn_error = true;
-        let detail = format!(
-            "Letta stream ended without displayable assistant/status/error output. upstream_frames={}, parsed_events={}, mapped_events={}, unmapped_events={}, message_types={:?}, event_types={:?}",
-            self.upstream_frames,
-            self.parsed_events,
-            self.mapped_events,
-            self.unmapped_events,
-            self.native_message_types,
-            self.native_event_types,
-        );
-        Some(AcpGatewayEvent::Error {
-            message: "Letta completed the turn without producing displayable ACP output."
-                .to_string(),
-            detail: Some(detail),
-            error_type: Some("empty_mapped_turn".to_string()),
-            request_id: Some(context.request_id.to_string()),
-            context: Some(serde_json::json!({
-                "acp_session_id": context.acp_session_id,
-                "unmapped_event_samples": self.unmapped_event_samples,
-                "run_ids": self.run_ids,
-            })),
-        })
-    }
-
-    fn mark_runtime_cleanup_emitted(&mut self) {
-        self.emitted_runtime_cleanup = true;
-    }
-
-    fn diagnostic_json_with_turn_controller(
-        &self,
-        context: &AcpStreamContext,
-        turn_controller: Option<&AcpTurnController>,
-    ) -> serde_json::Value {
-        serde_json::json!({
-            "request_id": context.request_id,
-            "acp_session_id": context.acp_session_id,
-            "upstream_frames": self.upstream_frames,
-            "parsed_events": self.parsed_events,
-            "mapped_events": self.mapped_events,
-            "unmapped_events": self.unmapped_events,
-            "native_message_types": self.native_message_types,
-            "native_event_types": self.native_event_types,
-            "adapter_event_types": self.adapter_event_types,
-            "tool_request_counts": self.tool_request_counts,
-            "run_ids": self.run_ids,
-            "saw_visible_output": self.saw_visible_output,
-            "saw_error": self.saw_error,
-            "saw_turn_complete": self.saw_turn_complete,
-            "saw_tool_return_ack": self.saw_tool_return_ack,
-            "saw_requires_approval_stop": self.saw_requires_approval_stop,
-            "turn_controller": turn_controller.map(|controller| {
-                let snapshot = controller.status_snapshot();
-                serde_json::json!({
-                    "phase": format!("{:?}", snapshot.phase),
-                    "open_obligations": snapshot.open_obligations,
-                    "pending_adapter_tools": snapshot.pending_adapter_tools,
-                    "pending_den_tools": snapshot.pending_den_tools,
-                    "pending_permissions": snapshot.pending_permissions,
-                    "terminal_status": snapshot.terminal_status.map(|status| format!("{:?}", status)),
-                    "terminal_reason": snapshot.terminal_reason.map(|reason| format!("{:?}", reason)),
-                    "orphaned_requires_approval": snapshot.orphaned_requires_approval,
-                    "late_results_ignored": snapshot.late_results_ignored,
-                })
-            }),
-        })
-    }
-
-    fn log_summary(&self, context: &AcpStreamContext) {
-        let turn_result_count = self
-            .adapter_event_types
-            .get("turn_result")
-            .copied()
-            .unwrap_or(0);
-        if turn_result_count > 1 {
-            tracing::warn!(
-                request_id = %context.request_id,
-                acp_session_id = %context.acp_session_id,
-                turn_result_count,
-                "ACP stream emitted more than one terminal turn_result"
-            );
-        }
-        tracing::info!(
-            request_id = %context.request_id,
-            acp_session_id = %context.acp_session_id,
-            upstream_frames = self.upstream_frames,
-            parsed_events = self.parsed_events,
-            mapped_events = self.mapped_events,
-            unmapped_events = self.unmapped_events,
-            saw_visible_output = self.saw_visible_output,
-            saw_error = self.saw_error,
-            saw_turn_complete = self.saw_turn_complete,
-            saw_tool_return_ack = self.saw_tool_return_ack,
-            native_message_types = ?self.native_message_types,
-            native_event_types = ?self.native_event_types,
-            adapter_event_types = ?self.adapter_event_types,
-            tool_request_counts = ?self.tool_request_counts,
-            pending_tool_argument_buffers = self.tool_call_accumulator.pending_argument_buffers(),
-            pending_tool_name_buffers = self.tool_call_accumulator.pending_name_buffers(),
-            unmapped_event_samples = ?self.unmapped_event_samples,
-            run_ids = ?self.run_ids,
-            "ACP Letta stream summary"
-        );
-    }
-}
-
-/// Byte offset **after** the first complete SSE frame delimiter (`\n\n` or `\r\n\r\n`).
-fn find_sse_frame_end(buf: &[u8]) -> Option<usize> {
-    let lf = buf.windows(2).position(|w| w == b"\n\n").map(|p| p + 2);
-    let crlf = buf.windows(4).position(|w| w == b"\r\n\r\n").map(|p| p + 4);
-    match (lf, crlf) {
-        (Some(a), Some(b)) => Some(a.min(b)),
-        (Some(a), None) => Some(a),
-        (None, Some(b)) => Some(b),
-        (None, None) => None,
-    }
-}
-
-fn strip_trailing_sse_delimiter_owned(mut frame: Vec<u8>) -> Vec<u8> {
-    if frame.ends_with(b"\r\n\r\n") {
-        frame.truncate(frame.len().saturating_sub(4));
-    } else if frame.ends_with(b"\n\n") {
-        frame.truncate(frame.len().saturating_sub(2));
-    }
-    frame
-}
-
-#[cfg(test)]
-fn strip_trailing_sse_delimiter(frame: &[u8]) -> &[u8] {
-    if frame.ends_with(b"\r\n\r\n") {
-        &frame[..frame.len().saturating_sub(4)]
-    } else if frame.ends_with(b"\n\n") {
-        &frame[..frame.len().saturating_sub(2)]
-    } else {
-        frame
-    }
-}
-
-const SSE_JSON_PREVIEW_MAX: usize = 192;
-
-fn preview_bytes_utf8_lossy(bytes: &[u8]) -> String {
-    let s = String::from_utf8_lossy(bytes);
-    preview_str_truncated(&s, SSE_JSON_PREVIEW_MAX)
-}
-
-fn sha256_short(value: &str) -> String {
-    use base64::Engine as _;
-    use sha2::{Digest, Sha256};
-    let digest = Sha256::digest(value.as_bytes());
-    base64::engine::general_purpose::URL_SAFE_NO_PAD
-        .encode(digest)
-        .chars()
-        .take(16)
-        .collect()
-}
-
-fn summarize_large_text_field(value: &str, allow_preview: bool) -> serde_json::Value {
-    let mut summary = serde_json::json!({
-        "redacted": true,
-        "bytes": value.len(),
-        "chars": value.chars().count(),
-        "sha256": sha256_short(value),
-    });
-    if allow_preview && !value.is_empty() {
-        summary["preview"] = serde_json::json!(preview_str_truncated(
-            value,
-            acp_debug_event_sample_chars().min(512),
-        ));
-        summary["truncated"] =
-            serde_json::json!(value.len() > acp_debug_event_sample_chars().min(512));
-    }
-    summary
-}
-
-fn summarize_tool_arguments(value: &str) -> serde_json::Value {
-    let mut summary = summarize_large_text_field(value, false);
-    if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(value) {
-        if let Some(object) = parsed.as_object() {
-            summary["json_keys"] = serde_json::json!(object.keys().cloned().collect::<Vec<_>>());
-        }
-    }
-    summary
-}
-
-fn summarize_letta_event_for_log(value: &serde_json::Value) -> serde_json::Value {
-    fn summarize(value: &serde_json::Value, depth: usize, key: Option<&str>) -> serde_json::Value {
-        const REDACTED_TEXT_FIELDS: &[&str] = &[
-            "content",
-            "reasoning",
-            "tool_return",
-            "stdout",
-            "stderr",
-            "message",
-            "detail",
-            "old_text",
-            "new_text",
-        ];
-        if depth > 3 {
-            return serde_json::json!({ "redacted": true, "reason": "max_depth" });
-        }
-        match value {
-            serde_json::Value::String(s) => {
-                if key == Some("arguments") {
-                    summarize_tool_arguments(s)
-                } else if key.is_some_and(|k| REDACTED_TEXT_FIELDS.contains(&k)) {
-                    summarize_large_text_field(s, false)
-                } else if s.len() > acp_debug_event_sample_chars() {
-                    summarize_large_text_field(s, true)
-                } else {
-                    serde_json::Value::String(s.clone())
-                }
-            }
-            serde_json::Value::Array(items) => {
-                let mut summarized = items
-                    .iter()
-                    .take(8)
-                    .map(|item| summarize(item, depth + 1, None))
-                    .collect::<Vec<_>>();
-                let shown = summarized.len();
-                if items.len() > shown {
-                    summarized.push(serde_json::json!({
-                        "truncated_items": items.len() - shown,
-                    }));
-                }
-                serde_json::Value::Array(summarized)
-            }
-            serde_json::Value::Object(object) => {
-                let mut out = serde_json::Map::new();
-                out.insert(
-                    "keys".to_string(),
-                    serde_json::json!(object.keys().cloned().collect::<Vec<_>>()),
-                );
-                for field in [
-                    "message_type",
-                    "type",
-                    "id",
-                    "run_id",
-                    "step_id",
-                    "seq_id",
-                    "tool_call_id",
-                    "stop_reason",
-                    "status",
-                    "name",
-                    "date",
-                ] {
-                    if let Some(raw) = object.get(field) {
-                        out.insert(field.to_string(), summarize(raw, depth + 1, Some(field)));
-                    }
-                }
-                for field in ["tool_call", "tool_calls", "function"] {
-                    if let Some(raw) = object.get(field) {
-                        out.insert(field.to_string(), summarize(raw, depth + 1, Some(field)));
-                    }
-                }
-                for field in [
-                    "content",
-                    "reasoning",
-                    "tool_return",
-                    "stdout",
-                    "stderr",
-                    "message",
-                    "detail",
-                    "arguments",
-                ] {
-                    if let Some(raw) = object.get(field) {
-                        out.insert(field.to_string(), summarize(raw, depth + 1, Some(field)));
-                    }
-                }
-                serde_json::Value::Object(out)
-            }
-            other => other.clone(),
-        }
-    }
-    let summarized = summarize(value, 0, None);
-    let serialized = summarized.to_string();
-    if serialized.len() > 4096 {
-        serde_json::json!({
-            "redacted": true,
-            "reason": "summary_too_large",
-            "bytes": serialized.len(),
-            "sha256": sha256_short(&serialized),
-        })
-    } else {
-        summarized
-    }
-}
-
-fn preview_str_truncated(s: &str, max: usize) -> String {
-    if s.len() <= max {
-        s.to_string()
-    } else {
-        format!("{}...", &s[..max])
-    }
-}
-
-/// One SSE *event* (between delimiters): join all `data:` field lines with `\n`, then parse JSON once.
-fn parse_sse_event_body_to_json(body: &[u8]) -> Result<Option<serde_json::Value>, String> {
-    let text = std::str::from_utf8(body).map_err(|_| {
-        format!(
-            "invalid UTF-8 in SSE event body (preview: {})",
-            preview_bytes_utf8_lossy(body)
-        )
-    })?;
-    let mut chunks: Vec<&str> = Vec::new();
-    for line in text.split('\n') {
-        let line = line.strip_suffix('\r').unwrap_or(line);
-        if line.is_empty() {
-            continue;
-        }
-        if line.starts_with(':') {
-            continue;
-        }
-        let Some(rest) = line.strip_prefix("data:") else {
-            continue;
-        };
-        let rest = rest.strip_prefix(' ').unwrap_or(rest);
-        chunks.push(rest);
-    }
-    let joined = chunks.join("\n");
-    let joined = joined.trim();
-    if joined.is_empty() || joined == "[DONE]" {
-        return Ok(None);
-    }
-    serde_json::from_str::<serde_json::Value>(joined)
-        .map(Some)
-        .map_err(|e| {
-            format!(
-                "{e} (preview: {})",
-                preview_str_truncated(joined, SSE_JSON_PREVIEW_MAX)
-            )
-        })
-}
-
-#[cfg(test)]
-fn map_letta_stream_frame_to_acp_adapter_events(frame: &[u8]) -> Vec<Bytes> {
-    let body = strip_trailing_sse_delimiter(frame);
-    match parse_sse_event_body_to_json(body) {
-        Ok(Some(value)) => map_native_letta_stream_event_to_acp_event_with_accumulator(
-            &value,
-            &mut LettaToolCallAccumulator::default(),
-        )
-        .map(acp_event_to_adapter_sse)
-        .into_iter()
-        .collect(),
-        Ok(None) | Err(_) => Vec::new(),
-    }
-}
-
-async fn map_runtime_stream_event_to_acp_adapter_events_with_persistence(
-    runtime_event: crate::core::runtime_provider::RuntimeStreamEvent,
-    context: AcpStreamContext,
-    diagnostics: &mut AcpStreamDiagnostics,
-) -> Result<
-    (
-        Vec<AcpGatewayEvent>,
-        Option<PersistedToolRequestEffect>,
-        Option<(String, String, AcpResolvedToolResult)>,
-    ),
-    std::io::Error,
-> {
-    diagnostics.upstream_frames += 1;
-    let value = match runtime_event {
-        crate::core::runtime_provider::RuntimeStreamEvent::JsonValue { value } => value,
-        crate::core::runtime_provider::RuntimeStreamEvent::ToolCallRequested {
-            tool_call_id,
-            tool_name,
-            title,
-            kind,
-            arguments,
-            approval_request_id,
-            approval_required,
-            approval_reason,
-        } => serde_json::json!({
-            "message_type": if approval_required { "approval_request_message" } else { "tool_call_message" },
-            "tool_call_id": tool_call_id,
-            "tool_name": tool_name,
-            "tool_title": title,
-            "tool_kind": kind,
-            "args": arguments,
-            "approval_request_id": approval_request_id,
-            "approval_reason": approval_reason,
-        }),
-        crate::core::runtime_provider::RuntimeStreamEvent::RunPaused { reason, .. } => {
-            let stop_reason = if reason == "awaiting_approval" {
-                "requires_approval".to_string()
-            } else {
-                reason
-            };
-            serde_json::json!({
-                "message_type": "stop_reason",
-                "stop_reason": stop_reason,
-            })
-        }
-        crate::core::runtime_provider::RuntimeStreamEvent::TurnCompleted { .. } => {
-            serde_json::json!({
-                "message_type": "stop_reason",
-                "stop_reason": "end_turn",
-            })
-        }
-        other => {
-            return Err(std::io::Error::other(format!(
-                "runtime event not supported by ACP persistence mapper: {other:?}"
-            )));
-        }
-    };
-    let observed_run_ids = diagnostics.observe_parsed_event(&value);
-    if let Some(turn_cancellations) = context.role_runtime.turn_cancellations() {
-        for run_id in observed_run_ids {
-            if turn_cancellations.record_run_id(
-                &context.acp_session_id,
-                context.request_id,
-                &run_id,
-            ) {
-                tracing::debug!(
-                    request_id = %context.request_id,
-                    acp_session_id = %context.acp_session_id,
-                    run_id = %run_id,
-                    "attached observed Letta run_id to active ACP turn"
-                );
-            }
-        }
-    }
-
-    let Some(mut event) = map_native_letta_stream_event_to_acp_event_with_accumulator(
-        &value,
-        &mut diagnostics.tool_call_accumulator,
-    ) else {
-        diagnostics.observe_unmapped_event(&value);
-        return Ok((Vec::new(), None, None));
-    };
-    // Keep both halves of the per-tool result channel on the event until
-    // `persist_stream_event_side_effects` has decided whether this is an
-    // adapter-local tool or a Den-executed server tool. Den server tools such
-    // as `web_fetch` consume `result_tx` internally and must not be stripped of
-    // the sender just because the stream driver wants to await adapter-local
-    // tool results.
-    let mut adapter_result_rx = None;
-    if let AcpGatewayEvent::ToolRequest { tool_call_id, .. } = &event {
-        let count = diagnostics
-            .tool_request_counts
-            .entry(tool_call_id.clone())
-            .or_insert(0);
-        *count += 1;
-        if *count > 1 {
-            tracing::debug!(
-                request_id = %context.request_id,
-                acp_session_id = %context.acp_session_id,
-                tool_call_id = %tool_call_id,
-                duplicate_count = *count,
-                "ignoring duplicate streamed ACP tool request"
-            );
-            return Ok((Vec::new(), None, None));
-        }
-    }
-    let tool_request_effect = persist_stream_event_side_effects(&context, &mut event)
-        .await
-        .map_err(|err| std::io::Error::other(err.to_string()))?;
-    if let AcpGatewayEvent::ToolRequest {
-        tool_call_id,
-        tool_name,
-        args,
-        result_rx,
-        ..
-    } = &mut event
-    {
-        match tool_execution_route(tool_name, args) {
-            ToolExecutionRoute::AdapterLocal => {
-                adapter_result_rx = result_rx.take().map(|rx| {
-                    (
-                        tool_call_id.clone(),
-                        tool_name.clone(),
-                        AcpResolvedToolResult::Receiver(rx),
-                    )
-                });
-            }
-            ToolExecutionRoute::DenServer => {}
-            ToolExecutionRoute::Unsupported => {}
-        }
-    }
-    let mut tool_request_effect = tool_request_effect;
-    let events = if let Some(effect) = tool_request_effect.as_mut() {
-        if let Some(rx) = effect.den_server_result_rx.take() {
-            let tool_call_id = effect.tool_call_id.clone();
-            let tool_name = effect.tool_name.clone();
-            let result = rx
-                .await
-                .map_err(|err| std::io::Error::other(err.to_string()))?;
-            adapter_result_rx = Some((
-                tool_call_id,
-                tool_name,
-                AcpResolvedToolResult::Ready(Box::new(result)),
-            ));
-            Vec::new()
-        } else {
-            vec![event]
-        }
-    } else {
-        vec![event]
-    };
-    Ok((events, tool_request_effect, adapter_result_rx))
-}
-
 type AcpFrameResult = Result<
     (
         Vec<AcpGatewayEvent>,
@@ -5155,7 +4429,7 @@ type AcpContinueToolPrepared = Result<
     CustomError,
 >;
 
-enum AcpResolvedToolResult {
+pub(super) enum AcpResolvedToolResult {
     Receiver(oneshot::Receiver<AcpToolResultRequest>),
     Ready(Box<AcpToolResultRequest>),
 }
@@ -6361,7 +5635,7 @@ mod tests {
                 }
             }
         });
-        let summary = summarize_letta_event_for_log(&event);
+        let summary = summarize_event_for_log(&event);
         assert_eq!(summary["message_type"], "tool_return_message");
         assert_eq!(summary["run_id"], "run-test");
         assert_eq!(summary["tool_call_id"], "call-test");
