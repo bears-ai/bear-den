@@ -5757,116 +5757,101 @@ impl Stream for AcpLettaSseStream {
                             let request_id = this.context.request_id.to_string();
                             let acp_session_id = this.context.acp_session_id.clone();
                             let diagnostics_for_stream = diagnostics.clone();
-                            let mut queued_outputs: std::collections::VecDeque<Result<Bytes, CustomError>> = std::collections::VecDeque::new();
-                            let mut runtime_stream = stream;
-                            let mut finished = false;
-                            this.inner = Box::pin(futures::stream::poll_fn(move |cx| loop {
-                                if let Some(item) = queued_outputs.pop_front() {
-                                    return std::task::Poll::Ready(Some(item));
-                                }
-                                if finished {
-                                    return std::task::Poll::Ready(None);
-                                }
-                                match std::pin::Pin::new(&mut runtime_stream).poll_next(cx) {
-                                    std::task::Poll::Ready(Some(Ok(event))) => {
-                                        if let Ok(mut guard) = diagnostics_for_stream.lock() {
-                                            guard.observe_runtime_event(&event);
-                                        }
-                                        match event {
-                                            crate::core::runtime_provider::RuntimeStreamEvent::AssistantTextDelta { text } => {
-                                                queued_outputs.push_back(Ok(acp_event_to_adapter_sse(AcpGatewayEvent::AssistantTextDelta { text })));
+                            this.persist_future = Some(AcpPendingFuture::Frame(Box::pin(async move {
+                                let mut queued_events = Vec::new();
+                                let mut runtime_stream = stream;
+                                while let Some(item) = futures::StreamExt::next(&mut runtime_stream).await {
+                                    match item {
+                                        Ok(event) => {
+                                            if let Ok(mut guard) = diagnostics_for_stream.lock() {
+                                                guard.observe_runtime_event(&event);
                                             }
-                                            crate::core::runtime_provider::RuntimeStreamEvent::RunProgress { kind, text, phase: _, detail: _ } => {
-                                                let rendered = if kind == "status_text" {
-                                                    text.unwrap_or_default()
-                                                } else {
-                                                    text.unwrap_or_else(|| kind)
-                                                };
-                                                queued_outputs.push_back(Ok(acp_event_to_adapter_sse(AcpGatewayEvent::StatusText { text: rendered })));
-                                            }
-                                            crate::core::runtime_provider::RuntimeStreamEvent::ConversationResolved { conversation } => {
-                                                queued_outputs.push_back(Ok(acp_event_to_adapter_sse(AcpGatewayEvent::ConversationResolved {
-                                                    conversation_id: conversation.id,
-                                                })));
-                                            }
-                                            crate::core::runtime_provider::RuntimeStreamEvent::RunPaused { .. }
-                                            | crate::core::runtime_provider::RuntimeStreamEvent::TurnCompleted { .. }
-                                            | crate::core::runtime_provider::RuntimeStreamEvent::ToolCallRequested { .. }
-                                            | crate::core::runtime_provider::RuntimeStreamEvent::JsonValue { .. } => {
-                                                let mut temp_diagnostics = AcpStreamDiagnostics::default();
-                                                match futures::executor::block_on(map_runtime_stream_event_to_acp_adapter_events_with_persistence(
-                                                    event,
-                                                    context.clone(),
-                                                    &mut temp_diagnostics,
-                                                )) {
-                                                    Ok((events, _effect, _adapter_result_rx)) => {
-                                                        if let Ok(mut guard) = diagnostics_for_stream.lock() {
-                                                            guard.merge_from(temp_diagnostics);
-                                                            for event in &events {
-                                                                guard.observe_mapped_event(event);
-                                                            }
-                                                        }
-                                                        for event in events {
-                                                            queued_outputs.push_back(Ok(acp_event_to_adapter_sse(event)));
-                                                        }
+                                            match event {
+                                                crate::core::runtime_provider::RuntimeStreamEvent::AssistantTextDelta { text } => {
+                                                    queued_events.push(AcpGatewayEvent::AssistantTextDelta { text });
+                                                }
+                                                crate::core::runtime_provider::RuntimeStreamEvent::RunProgress { kind, text, phase: _, detail: _ } => {
+                                                    let rendered = if kind == "status_text" {
+                                                        text.unwrap_or_default()
+                                                    } else {
+                                                        text.unwrap_or_else(|| kind)
+                                                    };
+                                                    queued_events.push(AcpGatewayEvent::StatusText { text: rendered });
+                                                }
+                                                crate::core::runtime_provider::RuntimeStreamEvent::ConversationResolved { conversation } => {
+                                                    queued_events.push(AcpGatewayEvent::ConversationResolved {
+                                                        conversation_id: conversation.id,
+                                                    });
+                                                }
+                                                crate::core::runtime_provider::RuntimeStreamEvent::TurnCompleted { .. } => {
+                                                    queued_events.push(AcpGatewayEvent::TurnComplete {
+                                                        outcome: "ok".to_string(),
+                                                    });
+                                                }
+                                                crate::core::runtime_provider::RuntimeStreamEvent::RunPaused { .. }
+                                                | crate::core::runtime_provider::RuntimeStreamEvent::ToolCallRequested { .. }
+                                                | crate::core::runtime_provider::RuntimeStreamEvent::JsonValue { .. } => {
+                                                    let mut temp_diagnostics = AcpStreamDiagnostics::default();
+                                                    let (events, _effect, _adapter_result_rx) = match map_runtime_stream_event_to_acp_adapter_events_with_persistence(
+                                                        event,
+                                                        context.clone(),
+                                                        &mut temp_diagnostics,
+                                                    ).await {
+                                                        Ok(ok) => ok,
+                                                        Err(err) => return (Err(err), AcpStreamDiagnostics::default()),
+                                                    };
+                                                    if let Ok(mut guard) = diagnostics_for_stream.lock() {
+                                                        guard.merge_from(temp_diagnostics);
                                                     }
-                                                    Err(err) => {
-                                                        queued_outputs.push_back(Err(CustomError::System(err.to_string())));
-                                                    }
+                                                    queued_events.extend(events);
+                                                }
+                                                crate::core::runtime_provider::RuntimeStreamEvent::TurnFailed { message, .. } => {
+                                                    queued_events.push(AcpGatewayEvent::Error {
+                                                        message,
+                                                        detail: None,
+                                                        error_type: Some("runtime_turn_failed".to_string()),
+                                                        request_id: Some(request_id.clone()),
+                                                        context: Some(serde_json::json!({
+                                                            "component": "den.acp",
+                                                            "acp_session_id": acp_session_id,
+                                                        })),
+                                                    });
+                                                }
+                                                crate::core::runtime_provider::RuntimeStreamEvent::TurnCancelled { .. } => {
+                                                    queued_events.push(AcpGatewayEvent::Error {
+                                                        message: "Runtime continuation was cancelled.".to_string(),
+                                                        detail: None,
+                                                        error_type: Some("runtime_turn_cancelled".to_string()),
+                                                        request_id: Some(request_id.clone()),
+                                                        context: Some(serde_json::json!({
+                                                            "component": "den.acp",
+                                                            "acp_session_id": acp_session_id,
+                                                        })),
+                                                    });
+                                                }
+                                                crate::core::runtime_provider::RuntimeStreamEvent::Error { message, detail, error_type, request_id: upstream_request_id, context: runtime_context } => {
+                                                    queued_events.push(AcpGatewayEvent::Error {
+                                                        message,
+                                                        detail,
+                                                        error_type,
+                                                        request_id: upstream_request_id.or_else(|| Some(request_id.clone())),
+                                                        context: runtime_context.or_else(|| Some(serde_json::json!({
+                                                            "component": "den.acp",
+                                                            "acp_session_id": acp_session_id,
+                                                        }))),
+                                                    });
                                                 }
                                             }
-                                            crate::core::runtime_provider::RuntimeStreamEvent::TurnFailed { message, .. } => {
-                                                queued_outputs.push_back(Ok(acp_event_to_adapter_sse(AcpGatewayEvent::Error {
-                                                    message,
-                                                    detail: None,
-                                                    error_type: Some("runtime_turn_failed".to_string()),
-                                                    request_id: Some(request_id.clone()),
-                                                    context: Some(serde_json::json!({
-                                                        "component": "den.acp",
-                                                        "acp_session_id": acp_session_id,
-                                                    })),
-                                                })));
-                                            }
-                                            crate::core::runtime_provider::RuntimeStreamEvent::TurnCancelled { .. } => {
-                                                queued_outputs.push_back(Ok(acp_event_to_adapter_sse(AcpGatewayEvent::Error {
-                                                    message: "Runtime continuation was cancelled.".to_string(),
-                                                    detail: None,
-                                                    error_type: Some("runtime_turn_cancelled".to_string()),
-                                                    request_id: Some(request_id.clone()),
-                                                    context: Some(serde_json::json!({
-                                                        "component": "den.acp",
-                                                        "acp_session_id": acp_session_id,
-                                                    })),
-                                                })));
-                                            }
-                                            crate::core::runtime_provider::RuntimeStreamEvent::Error { message, detail, error_type, request_id: upstream_request_id, context: runtime_context } => {
-                                                queued_outputs.push_back(Ok(acp_event_to_adapter_sse(AcpGatewayEvent::Error {
-                                                    message,
-                                                    detail,
-                                                    error_type,
-                                                    request_id: upstream_request_id.or_else(|| Some(request_id.clone())),
-                                                    context: runtime_context.or_else(|| Some(serde_json::json!({
-                                                        "component": "den.acp",
-                                                        "acp_session_id": acp_session_id,
-                                                    }))),
-                                                })));
-                                            }
                                         }
+                                        Err(err) => return (Err(std::io::Error::other(err.to_string())), AcpStreamDiagnostics::default()),
                                     }
-                                    std::task::Poll::Ready(Some(Err(err))) => {
-                                        queued_outputs.push_back(Err(err));
-                                    }
-                                    std::task::Poll::Ready(None) => {
-                                        finished = true;
-                                    }
-                                    std::task::Poll::Pending => return std::task::Poll::Pending,
                                 }
-                            }));
-                            if let Ok(mutex) = std::sync::Arc::try_unwrap(diagnostics) {
-                                if let Ok(diagnostics) = mutex.into_inner() {
-                                    this.diagnostics = diagnostics;
+                                let mut diagnostics = std::sync::Arc::try_unwrap(diagnostics).ok().and_then(|m| m.into_inner().ok()).unwrap_or_default();
+                                for event in &queued_events {
+                                    diagnostics.observe_mapped_event(event);
                                 }
-                            }
+                                (Ok((queued_events, None, None)), diagnostics)
+                            })));
                             return self.poll_next(cx);
                         }
                         Err(err) => {
@@ -6138,8 +6123,11 @@ impl Stream for AcpLettaSseStream {
                                 stream_context,
                             })
                             .await?;
-                            Ok((prepared.0, prepared.1, std::sync::Arc::new(std::sync::Mutex::new(AcpStreamDiagnostics::default()))))
+                            let mut diagnostics = AcpStreamDiagnostics::default();
+                            diagnostics.saw_requires_approval_stop = false;
+                            Ok((prepared.0, prepared.1, std::sync::Arc::new(std::sync::Mutex::new(diagnostics))))
                         })));
+                    this.diagnostics.saw_requires_approval_stop = false;
                     self.poll_next(cx)
                 } else if this.diagnostics.saw_requires_approval_stop
                     && this.turn_controller.status_snapshot().open_obligations == 0
