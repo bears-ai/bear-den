@@ -502,9 +502,13 @@ using a no-op `AcpTurnRunner` to prove the seam is mockable and not hard-wired t
 Today the seam meaningfully owns:
 
 - ACP turn start
+- explicit Den-owned turn continuation request/result types
+- approval-decision and tool-result continuation semantics
+- Letta-backed continuation payload translation behind the adapter
 - stale-approval retry behavior used during turn start
 - targeted stale runtime cleanup before retry / recovery
-- contract-level request/result types for turn start and cancellation-oriented cleanup paths
+- contract-level request/result types for turn start, continuation, and cancellation-oriented cleanup paths
+- Den-owned continuation stream handles and stream error types
 
 ### What still remains adapter-specific or outside the seam
 
@@ -512,10 +516,11 @@ The migration is still incomplete. The following concerns remain partially Letta
 
 - runtime conversation lifecycle and conversation resolution
 - history loading / transcript normalization as a first-class contract surface
-- turn continuation as an explicit contract method
+- continuation stream parsing still remains transitional: the runtime seam now exposes a Den-owned event stream type, but continuation events are currently carried as `RuntimeStreamEvent::RawBytes` rather than fully semantic runtime events
 - broader cancellation semantics for active runtime work beyond the currently extracted targeted cleanup path
 - normalized Den-owned runtime error categories used consistently across all ACP runtime operations
 - runtime health/capability reporting for a future non-Letta implementation
+- ACP still owns the final bridge from continuation stream events into ACP wire events, which should eventually be driven by structured runtime events rather than raw backend SSE payloads
 
 ### Transitional entrypoints
 
@@ -539,16 +544,17 @@ The long-term direction is to either:
 
 The next work should focus on expanding the seam from "turn start + stale recovery" into a backend-complete ACP runtime boundary.
 
-### Next milestone 1: Explicit continuation contract
+### Next milestone 1: Structured continuation event stream
 
-Add a Den-owned continuation surface so ACP no longer coordinates backend-specific continuation details directly.
+Advance the Den-owned continuation surface from transport wrapping into semantic runtime streaming.
 
 Target outcomes:
 
-- introduce a `ContinueTurnRequest` / `ContinueTurnResult` contract
-- move tool-result continuation behavior behind the runtime adapter
-- move approval denial/success continuation behavior behind the runtime adapter
-- make stale blocked-state recovery part of continuation behavior rather than ad hoc ACP orchestration logic
+- preserve `ContinueTurnRequest` / `ContinueTurnResult` as the continuation contract
+- replace continuation `RuntimeStreamEvent::RawBytes` payloads with structured runtime events where practical
+- move continuation SSE parsing / normalization behind the runtime adapter seam
+- make ACP consume Den-owned continuation events rather than Letta-shaped SSE frame bytes
+- keep stale blocked-state recovery part of continuation behavior rather than ad hoc ACP orchestration logic
 
 ### Next milestone 2: Conversation lifecycle contract
 
@@ -606,8 +612,9 @@ A practical near-term sequence is:
 
 The most valuable immediate next step is:
 
-1. add an explicit continuation contract (`ContinueTurnRequest` / `ContinueTurnResult`)
-2. move ACP tool-result and approval continuation flows behind the adapter seam
-3. pin those behaviors with backend-agnostic contract tests
+1. keep the explicit continuation contract (`ContinueTurnRequest` / `ContinueTurnResult`) as the stable Den-owned surface
+2. replace continuation `RuntimeStreamEvent::RawBytes` bridging with structured runtime stream events
+3. move continuation SSE parsing / normalization fully behind the adapter seam
+4. pin those behaviors with backend-agnostic contract tests
 
 That is the next highest-leverage extraction because continuation, approval settlement, and stale blocked-state recovery are still where backend-specific runtime semantics leak most strongly into ACP orchestration.
