@@ -5646,105 +5646,114 @@ impl Stream for AcpLettaSseStream {
                     let result = ready!(fut.as_mut().poll(cx));
                     this.persist_future = None;
                     match result {
-                        Ok((stream_kind, stream)) => {
-                            let _ = stream_kind;
+                        Ok((_stream_kind, stream)) => {
+                            let context = this.context.clone();
                             let request_id = this.context.request_id.to_string();
                             let acp_session_id = this.context.acp_session_id.clone();
-                            this.inner = Box::pin(stream.map(move |item| {
-                                let request_id = request_id.clone();
-                                let acp_session_id = acp_session_id.clone();
-                                item.and_then(|event| match event {
-                                    crate::core::runtime_provider::RuntimeStreamEvent::AssistantTextDelta { text } => {
-                                        Ok(acp_event_to_adapter_sse(AcpGatewayEvent::AssistantTextDelta { text }))
+                            let mut queued_outputs: std::collections::VecDeque<Result<Bytes, CustomError>> = std::collections::VecDeque::new();
+                            let mut runtime_stream = stream;
+                            let mut finished = false;
+                            this.inner = Box::pin(futures::stream::poll_fn(move |cx| loop {
+                                if let Some(item) = queued_outputs.pop_front() {
+                                    return std::task::Poll::Ready(Some(item));
+                                }
+                                if finished {
+                                    return std::task::Poll::Ready(None);
+                                }
+                                match std::pin::Pin::new(&mut runtime_stream).poll_next(cx) {
+                                    std::task::Poll::Ready(Some(Ok(event))) => {
+                                        match event {
+                                            crate::core::runtime_provider::RuntimeStreamEvent::AssistantTextDelta { text } => {
+                                                queued_outputs.push_back(Ok(acp_event_to_adapter_sse(AcpGatewayEvent::AssistantTextDelta { text })));
+                                            }
+                                            crate::core::runtime_provider::RuntimeStreamEvent::RunProgress { kind, text, phase: _, detail: _ } => {
+                                                let rendered = if kind == "status_text" {
+                                                    text.unwrap_or_default()
+                                                } else {
+                                                    text.unwrap_or_else(|| kind)
+                                                };
+                                                queued_outputs.push_back(Ok(acp_event_to_adapter_sse(AcpGatewayEvent::StatusText { text: rendered })));
+                                            }
+                                            crate::core::runtime_provider::RuntimeStreamEvent::StatusText { text } => {
+                                                queued_outputs.push_back(Ok(acp_event_to_adapter_sse(AcpGatewayEvent::StatusText { text })));
+                                            }
+                                            crate::core::runtime_provider::RuntimeStreamEvent::ConversationResolved { conversation } => {
+                                                queued_outputs.push_back(Ok(acp_event_to_adapter_sse(AcpGatewayEvent::ConversationResolved {
+                                                    conversation_id: conversation.id,
+                                                })));
+                                            }
+                                            crate::core::runtime_provider::RuntimeStreamEvent::RunPaused { .. }
+                                            | crate::core::runtime_provider::RuntimeStreamEvent::WaitingForContinuation { .. } => {}
+                                            crate::core::runtime_provider::RuntimeStreamEvent::TurnCompleted { .. } => {
+                                                queued_outputs.push_back(Ok(acp_event_to_adapter_sse(AcpGatewayEvent::TurnComplete {
+                                                    outcome: "ok".to_string(),
+                                                })));
+                                            }
+                                            crate::core::runtime_provider::RuntimeStreamEvent::TurnFailed { message, .. } => {
+                                                queued_outputs.push_back(Ok(acp_event_to_adapter_sse(AcpGatewayEvent::Error {
+                                                    message,
+                                                    detail: None,
+                                                    error_type: Some("runtime_turn_failed".to_string()),
+                                                    request_id: Some(request_id.clone()),
+                                                    context: Some(serde_json::json!({
+                                                        "component": "den.acp",
+                                                        "acp_session_id": acp_session_id,
+                                                    })),
+                                                })));
+                                            }
+                                            crate::core::runtime_provider::RuntimeStreamEvent::TurnCancelled { .. } => {
+                                                queued_outputs.push_back(Ok(acp_event_to_adapter_sse(AcpGatewayEvent::Error {
+                                                    message: "Runtime continuation was cancelled.".to_string(),
+                                                    detail: None,
+                                                    error_type: Some("runtime_turn_cancelled".to_string()),
+                                                    request_id: Some(request_id.clone()),
+                                                    context: Some(serde_json::json!({
+                                                        "component": "den.acp",
+                                                        "acp_session_id": acp_session_id,
+                                                    })),
+                                                })));
+                                            }
+                                            crate::core::runtime_provider::RuntimeStreamEvent::Error { message, detail, error_type, request_id: upstream_request_id, context: runtime_context } => {
+                                                queued_outputs.push_back(Ok(acp_event_to_adapter_sse(AcpGatewayEvent::Error {
+                                                    message,
+                                                    detail,
+                                                    error_type,
+                                                    request_id: upstream_request_id.or_else(|| Some(request_id.clone())),
+                                                    context: runtime_context.or_else(|| Some(serde_json::json!({
+                                                        "component": "den.acp",
+                                                        "acp_session_id": acp_session_id,
+                                                    }))),
+                                                })));
+                                            }
+                                            crate::core::runtime_provider::RuntimeStreamEvent::ToolCallRequested { .. }
+                                            | crate::core::runtime_provider::RuntimeStreamEvent::JsonValue { .. } => {
+                                                let mut temp_diagnostics = AcpStreamDiagnostics::default();
+                                                match futures::executor::block_on(map_runtime_stream_event_to_acp_adapter_events_with_persistence(
+                                                    event,
+                                                    context.clone(),
+                                                    &mut temp_diagnostics,
+                                                )) {
+                                                    Ok((events, _effect, _adapter_result_rx)) => {
+                                                        for event in events {
+                                                            queued_outputs.push_back(Ok(acp_event_to_adapter_sse(event)));
+                                                        }
+                                                    }
+                                                    Err(err) => {
+                                                        queued_outputs.push_back(Err(CustomError::System(err.to_string())));
+                                                    }
+                                                }
+                                            }
+                                        }
                                     }
-                                    crate::core::runtime_provider::RuntimeStreamEvent::RunProgress { kind, text, phase: _, detail: _ } => {
-                                        let rendered = if kind == "status_text" {
-                                            text.unwrap_or_default()
-                                        } else {
-                                            text.unwrap_or_else(|| kind)
-                                        };
-                                        Ok(acp_event_to_adapter_sse(AcpGatewayEvent::StatusText { text: rendered }))
+                                    std::task::Poll::Ready(Some(Err(err))) => {
+                                        queued_outputs.push_back(Err(err));
                                     }
-                                    crate::core::runtime_provider::RuntimeStreamEvent::StatusText { text } => {
-                                        Ok(acp_event_to_adapter_sse(AcpGatewayEvent::StatusText { text }))
+                                    std::task::Poll::Ready(None) => {
+                                        finished = true;
                                     }
-                                    crate::core::runtime_provider::RuntimeStreamEvent::ConversationResolved { conversation } => {
-                                        Ok(acp_event_to_adapter_sse(AcpGatewayEvent::ConversationResolved {
-                                            conversation_id: conversation.id,
-                                        }))
-                                    }
-                                    crate::core::runtime_provider::RuntimeStreamEvent::RunPaused { .. }
-                                    | crate::core::runtime_provider::RuntimeStreamEvent::WaitingForContinuation { .. } => {
-                                        Ok(Bytes::new())
-                                    }
-                                    crate::core::runtime_provider::RuntimeStreamEvent::TurnCompleted { .. } => {
-                                        Ok(acp_event_to_adapter_sse(AcpGatewayEvent::TurnComplete {
-                                            outcome: "ok".to_string(),
-                                        }))
-                                    }
-                                    crate::core::runtime_provider::RuntimeStreamEvent::TurnFailed { message, .. } => {
-                                        Ok(acp_event_to_adapter_sse(AcpGatewayEvent::Error {
-                                            message,
-                                            detail: None,
-                                            error_type: Some("runtime_turn_failed".to_string()),
-                                            request_id: Some(request_id.clone()),
-                                            context: Some(serde_json::json!({
-                                                "component": "den.acp",
-                                                "acp_session_id": acp_session_id,
-                                            })),
-                                        }))
-                                    }
-                                    crate::core::runtime_provider::RuntimeStreamEvent::TurnCancelled { .. } => {
-                                        Ok(acp_event_to_adapter_sse(AcpGatewayEvent::Error {
-                                            message: "Runtime continuation was cancelled.".to_string(),
-                                            detail: None,
-                                            error_type: Some("runtime_turn_cancelled".to_string()),
-                                            request_id: Some(request_id.clone()),
-                                            context: Some(serde_json::json!({
-                                                "component": "den.acp",
-                                                "acp_session_id": acp_session_id,
-                                            })),
-                                        }))
-                                    }
-                                    crate::core::runtime_provider::RuntimeStreamEvent::Error { message, detail, error_type, request_id: upstream_request_id, context } => {
-                                        Ok(acp_event_to_adapter_sse(AcpGatewayEvent::Error {
-                                            message,
-                                            detail,
-                                            error_type,
-                                            request_id: upstream_request_id.or_else(|| Some(request_id.clone())),
-                                            context: context.or_else(|| Some(serde_json::json!({
-                                                "component": "den.acp",
-                                                "acp_session_id": acp_session_id,
-                                            }))),
-                                        }))
-                                    }
-                                    crate::core::runtime_provider::RuntimeStreamEvent::ToolCallRequested {
-                                        tool_call_id,
-                                        tool_name,
-                                        title,
-                                        kind,
-                                        arguments,
-                                        approval_request_id,
-                                        approval_required,
-                                        approval_reason,
-                                    } => {
-                                        let payload = serde_json::json!({
-                                            "type": if approval_required { "approval_request_message" } else { "tool_call_message" },
-                                            "tool_call_id": tool_call_id,
-                                            "tool_name": tool_name,
-                                            "tool_title": title,
-                                            "tool_kind": kind,
-                                            "args": arguments,
-                                            "approval_request_id": approval_request_id,
-                                            "approval_reason": approval_reason,
-                                        });
-                                        Ok(Bytes::from(payload.to_string()))
-                                    }
-                                    crate::core::runtime_provider::RuntimeStreamEvent::JsonValue { value } => {
-                                        Ok(Bytes::from(value.to_string()))
-                                    }
-                                })
-                            }).filter(|item| futures::future::ready(!matches!(item, Ok(bytes) if bytes.is_empty()))));
+                                    std::task::Poll::Pending => return std::task::Poll::Pending,
+                                }
+                            }));
                             return self.poll_next(cx);
                         }
                         Err(err) => {
