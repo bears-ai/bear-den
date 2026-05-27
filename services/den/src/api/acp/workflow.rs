@@ -1,4 +1,5 @@
 use crate::{
+    api::acp::workflow_guidance::render_turn_state_summary,
     core::{acp_tools::AcpResolvedSessionPolicy, turn_state, work_plans::WorkPlanProjection},
 };
 
@@ -38,10 +39,13 @@ pub(super) fn render_turn_state_summary_with_activity(
     let current_item = turn_state["activity"]["current_item"]["title"]
         .as_str()
         .unwrap_or("none");
-    format!(
-        "<system-reminder>AUTHORITATIVE WORKFLOW STATE for this turn: permission_mode=`{}`; tool_classes={}; workplan.state=`{}`; workplan.approval_status={}; activity.status=`{}`; activity.plan_id=`{}`; activity.current_item=`{}`; memory.active_plan_write_allowed=false; execution.execution_unlocked={}; state_authority=current turn capabilities override prior-turn assumptions. BEARS ACP direct local workspace tools available this turn: {}. Server tools available to pair: {}. Current ACP session id is `{}`. Use absolute paths under these workspace roots: {}.</system-reminder>",
+    render_turn_state_summary(
+        session_id,
+        roots,
+        local_tool_names,
+        den_tool_names,
         policy.mode_label,
-        policy.allowed_tool_classes().join(", "),
+        &policy.allowed_tool_classes(),
         turn_state["workplan"]["state"].as_str().unwrap_or("inactive"),
         turn_state["workplan"]["approval_status"]
             .as_str()
@@ -50,9 +54,5 @@ pub(super) fn render_turn_state_summary_with_activity(
         activity_plan_id,
         current_item,
         execution_unlocked,
-        local_tool_names.join(", "),
-        den_tool_names.join(", "),
-        session_id,
-        roots.join(", "),
     )
 }

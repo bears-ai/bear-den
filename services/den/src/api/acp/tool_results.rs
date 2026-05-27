@@ -1,8 +1,14 @@
 use crate::{
-    api::acp::AcpToolResultResponse,
+    api::acp::{
+        tool_result_diagnostics::{
+            delivered_tool_result_diagnostic, late_result_settlement_from_status,
+            late_tool_result_ignored_diagnostic,
+        },
+        AcpToolResultResponse,
+    },
     core::{
         acp_tool_turns::{AcpToolResultDelivery, AcpToolTurnCoordinator},
-        acp_tools::{acp_diag_phase, AcpToolStatus},
+        acp_tools::AcpToolStatus,
     },
 };
 
@@ -12,15 +18,6 @@ pub(super) fn default_unavailable_context_budget() -> serde_json::Value {
         "reason": "Letta/provider context usage data is not wired into Den session_info yet",
         "source": "den.acp",
     })
-}
-
-fn late_result_settlement_from_status(status: &str) -> &'static str {
-    match status {
-        "timeout" => "timed_out",
-        "cancelled" => "cancelled",
-        "ok" | "error" | "unsupported" => "already_settled",
-        _ => "unknown",
-    }
 }
 
 pub(super) fn acp_tool_result_response_from_delivery(
@@ -37,11 +34,7 @@ pub(super) fn acp_tool_result_response_from_delivery(
             settlement: None,
             turn_id: body.turn_id,
             tool_call_id: tool_call_id_param,
-            diagnostic: Some(serde_json::json!({
-                "component": "den.acp",
-                "phase": acp_diag_phase::DEN_RESULT_DELIVERED,
-                "status": parsed_status.as_str(),
-            })),
+            diagnostic: Some(delivered_tool_result_diagnostic(parsed_status)),
         },
         AcpToolResultDelivery::TurnMissing {
             turn_id,
@@ -52,10 +45,7 @@ pub(super) fn acp_tool_result_response_from_delivery(
             settlement: Some("unknown".to_string()),
             turn_id,
             tool_call_id,
-            diagnostic: Some(serde_json::json!({
-                "component": "den.acp",
-                "phase": "late_tool_result_ignored",
-            })),
+            diagnostic: Some(late_tool_result_ignored_diagnostic()),
         },
         AcpToolResultDelivery::AlreadySettled {
             turn_id,

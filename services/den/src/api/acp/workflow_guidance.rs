@@ -1,0 +1,30 @@
+pub(super) fn render_turn_state_summary(
+    session_id: &str,
+    roots: &[String],
+    local_tool_names: &[&str],
+    den_tool_names: &[&str],
+    policy_mode_label: &str,
+    allowed_tool_classes: &[&str],
+    workplan_state: &str,
+    workplan_approval_status: &str,
+    activity_status: &str,
+    activity_plan_id: &str,
+    current_item: &str,
+    execution_unlocked: bool,
+) -> String {
+    format!(
+        "<system-reminder>AUTHORITATIVE WORKFLOW STATE for this turn: permission_mode=`{}`; tool_classes={}; workplan.state=`{}`; workplan.approval_status={}; activity.status=`{}`; activity.plan_id=`{}`; activity.current_item=`{}`; memory.active_plan_write_allowed=false; execution.execution_unlocked={}; state_authority=current turn capabilities override prior-turn assumptions. BEARS ACP direct local workspace tools available this turn: {}. Server tools available to pair: {}. Current ACP session id is `{}`. Use absolute paths under these workspace roots: {}.</system-reminder>",
+        policy_mode_label,
+        allowed_tool_classes.join(", "),
+        workplan_state,
+        workplan_approval_status,
+        activity_status,
+        activity_plan_id,
+        current_item,
+        execution_unlocked,
+        local_tool_names.join(", "),
+        den_tool_names.join(", "),
+        session_id,
+        roots.join(", "),
+    )
+}
