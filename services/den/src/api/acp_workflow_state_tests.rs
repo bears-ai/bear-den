@@ -5,10 +5,8 @@ use crate::core::{
     turn_state::{approval_status_label, workflow_state_label},
 };
 
-use super::acp::{
-    acp_direct_tool_prompt_context, acp_pair_den_tool_descriptors, resolve_acp_turn_context,
-    workflow_state_json,
-};
+use super::acp::{acp_pair_den_tool_descriptors, resolve_acp_turn_context, workflow_state_json};
+use super::acp::prompt_context::acp_direct_tool_prompt_context;
 
 #[test]
 fn submitted_plan_fallback_is_visible_output_and_adapter_plan_update() {

@@ -1,10 +1,8 @@
 use bytes::Bytes;
 
 use crate::{
-    api::acp::{
-        persist_stream_event_side_effects, AcpResolvedToolResult, AcpStreamContext,
-        PersistedToolRequestEffect,
-    },
+    api::acp::{persist_stream_event_side_effects, AcpResolvedToolResult, AcpStreamContext},
+    api::acp::types::PersistedToolRequestEffect,
     api::acp::stream::support::{parse_sse_event_body_to_json, AcpStreamDiagnostics},
     core::{
         acp_letta_events::{

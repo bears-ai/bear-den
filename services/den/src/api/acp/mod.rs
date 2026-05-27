@@ -6,6 +6,7 @@
 
 pub(super) mod client;
 pub(super) mod compat;
+pub(super) mod config;
 pub(super) mod handlers;
 pub(super) mod history;
 pub(super) mod letta_support;
@@ -18,27 +19,18 @@ pub(super) mod sessions;
 pub(super) mod stream;
 pub(super) mod tool_result_diagnostics;
 pub(super) mod tool_results;
+pub(super) mod types;
 pub(super) mod workflow;
 pub(super) mod workflow_guidance;
 
 use axum::{
     extract::{Path, State},
-    http::{HeaderMap, StatusCode},
-    response::{IntoResponse, Response},
+    http::HeaderMap,
+    response::IntoResponse,
     routing::{get, post},
     Json, Router,
 };
-use bytes::Bytes;
 use serde::{Deserialize, Serialize};
-use sqlx::PgPool;
-use std::{
-    collections::HashMap,
-    future::Future,
-    pin::Pin,
-    sync::Arc,
-};
-use time::format_description::well_known::Rfc3339;
-use tokio::sync::{oneshot, Mutex as TokioMutex};
 use tracing::Instrument;
 use uuid::Uuid;
 
@@ -49,125 +41,42 @@ use crate::{
                 acp_compatibility_error_response, check_adapter_contract,
             },
             stream::{
-                mapping::{
-                    map_letta_stream_frame_to_acp_adapter_events,
-                    map_runtime_stream_event_to_acp_adapter_events_with_persistence,
-                    summarize_event_for_log,
-                },
+                mapping::map_runtime_stream_event_to_acp_adapter_events_with_persistence,
                 plan::{
                     mode_from_den_tool_result, plan_approval_fallback_payload,
                     plan_update_from_den_tool_result,
                 },
                 prompt_flow::run_prompt_flow,
                 runtime::{invoke_acp_den_tool, persist_stream_event_side_effects},
-                sse_stream::AcpLettaSseStream,
-                support::AcpStreamDiagnostics,
-                support_sse::{find_sse_frame_end, parse_sse_event_body_to_json},
-                text::AcpTextChunker,
             },
-            tool_results::{
-                acp_tool_result_response_from_delivery, default_unavailable_context_budget,
-            },
+            tool_results::default_unavailable_context_budget,
         },
-        auth::ApiError,
         service::ApiState,
     },
     core::{
         acp_letta_events::AcpGatewayEvent,
         acp_sessions,
-        acp_tool_turns::{
-            AcpToolResultDelivery, AcpToolResultRequest, AcpToolTurnCoordinator,
-            AcpToolTurnRegistration,
-        },
-        acp_tools::{
-            acp_provider_tool_names_for_client_context, acp_tool_policy_json_for_provider,
-            resolve_session_policy_for_mode, AcpToolStatus,
-        },
-        acp_turn_controller::{
-            AcpActiveTurnCancelHandle, AcpToolExecutionRoute as ControllerToolExecutionRoute,
-        },
+        acp_tools::{acp_provider_tool_names_for_client_context, resolve_session_policy_for_mode},
+        acp_turn_controller::AcpActiveTurnCancelHandle,
         acp_turn_runner::{
             acp_cleanup_stale_runtime_state, continue_acp_turn_with_runtime,
             AcpStaleRuntimeCleanupParams, AcpTurnContinueRequest, AcpTurnStreamContext,
         },
         den_tools,
         letta::LettaContinuationContext,
-        role_runtime::{RoleRuntime, RoleTurnScope},
         runtime_provider::RoleRuntimeBinding,
-        web_policy,
     },
-    errors::CustomError,
 };
-use self::responses::acp_error_status_message;
+use self::{
+    responses::acp_error_status_message,
+    types::{
+        format_acp_session_timestamp, AcpPendingFuture, AcpResolvedToolResult,
+        AcpResolvedTurnContext, AcpSessionHttp, AcpStreamContext, AdapterContract,
+        ToolExecutionRoute,
+    },
+};
 
 const ACP_SESSIONS_PAGE_SIZE: i64 = 50;
-fn env_flag(name: &str) -> bool {
-    std::env::var(name).ok().is_some_and(|value| {
-        matches!(
-            value.trim().to_ascii_lowercase().as_str(),
-            "1" | "true" | "yes" | "on"
-        )
-    })
-}
-
-fn acp_stream_tokens_enabled() -> bool {
-    env_flag("BEARS_ACP_STREAM_TOKENS")
-}
-
-fn acp_text_chunk_chars() -> usize {
-    std::env::var("BEARS_ACP_TEXT_CHUNK_CHARS")
-        .ok()
-        .and_then(|value| value.trim().parse::<usize>().ok())
-        .map(|value| value.clamp(64, 2048))
-        .unwrap_or(384)
-}
-
-fn acp_debug_ui_enabled() -> bool {
-    env_flag("BEARS_ACP_DEBUG_UI")
-}
-
-fn acp_tool_timeout_ms_for_provider(tool_name: &str) -> u64 {
-    std::env::var("BEARS_ACP_TOOL_TIMEOUT_MS")
-        .ok()
-        .and_then(|value| value.trim().parse::<u64>().ok())
-        .map(|value| value.clamp(1, 300_000))
-        .unwrap_or_else(|| {
-            acp_tool_policy_json_for_provider(tool_name)
-                .get("tool_timeout_ms")
-                .and_then(serde_json::Value::as_u64)
-                .unwrap_or(30_000)
-        })
-}
-
-pub(super) fn acp_debug_event_sample_chars() -> usize {
-    std::env::var("ACP_DEBUG_EVENT_SAMPLE_CHARS")
-        .ok()
-        .and_then(|s| s.trim().parse::<usize>().ok())
-        .map(|n| n.clamp(128, 20_000))
-        .unwrap_or(360)
-}
-
-type PendingWebFetchMap = Arc<TokioMutex<HashMap<String, PendingWebFetchApproval>>>;
-static PENDING_WEB_FETCH_APPROVALS: std::sync::OnceLock<PendingWebFetchMap> =
-    std::sync::OnceLock::new();
-
-fn pending_web_fetch_approvals() -> PendingWebFetchMap {
-    PENDING_WEB_FETCH_APPROVALS
-        .get_or_init(|| Arc::new(TokioMutex::new(HashMap::new())))
-        .clone()
-}
-
-struct PendingWebFetchApproval {
-    user_id: i32,
-    bear_id: Uuid,
-    result_tx: oneshot::Sender<AcpToolResultRequest>,
-    context: AcpStreamContext,
-    provider_name: String,
-    tool_call_id: String,
-    approval_request_id: Option<String>,
-    args: serde_json::Value,
-    normalized_url: web_policy::NormalizedWebUrl,
-}
 
 pub fn router() -> Router<ApiState> {
     Router::new()
@@ -329,11 +238,6 @@ struct AcpErrorResponse {
     suggested_action: Option<&'static str>,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct AdapterContract {
-    pub(super) name: String,
-    pub(super) version: u32,
-}
 
 #[derive(Debug, Deserialize)]
 struct AcpConversationsQuery {
@@ -395,53 +299,6 @@ struct AcpSessionsListHttpResponse {
     next_cursor: Option<String>,
 }
 
-#[derive(Debug, Serialize)]
-pub(crate) struct AcpSessionHttp {
-    acp_session_id: String,
-    runtime_session_id: String,
-    conversation_id: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    resolved_conversation_id: Option<String>,
-    client: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    cwd: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    title: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    conversation_title_updated_at: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    conversation_title_synced_at: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    closed_at: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    archived_at: Option<String>,
-    created_at: String,
-    updated_at: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    plan_mode: Option<serde_json::Value>,
-    session_policy: serde_json::Value,
-    workflow_state: serde_json::Value,
-}
-
-fn format_acp_session_timestamp(t: time::OffsetDateTime) -> String {
-    t.format(&Rfc3339).unwrap_or_else(|_| t.to_string())
-}
-
-
-#[derive(Debug, Clone)]
-pub(crate) struct AcpResolvedTurnContext {
-    pub(crate) policy: crate::core::acp_tools::AcpResolvedSessionPolicy,
-    pub(crate) workflow_state: serde_json::Value,
-    pub(crate) effective_mode: String,
-}
-
-
-fn is_valid_pending_acp_conversation_id(conversation_id: &str) -> bool {
-    conversation_id.starts_with("new-")
-        && conversation_id.len() <= 42
-        && normalize_acp_conversation_id(Some(conversation_id)).is_ok()
-}
-
 fn is_acp_archive_target(conversation_id: &str) -> bool {
     conversation_id.starts_with("conv-")
 }
@@ -467,12 +324,17 @@ pub(crate) use self::client::{
     acp_pair_den_tool_descriptors, merge_acp_pair_tool_descriptors, new_acp_conversation_id,
     normalize_acp_client, requested_mode_from_prompt, tools_enabled_for_client,
 };
+pub(crate) use self::config::{
+    acp_debug_event_sample_chars, acp_debug_ui_enabled, acp_stream_tokens_enabled,
+    acp_text_chunk_chars, acp_tool_timeout_ms_for_provider,
+};
+use self::config::pending_web_fetch_approvals;
+use self::config::PendingWebFetchApproval;
 pub(crate) use self::history::normalize_acp_conversation_id;
 pub(crate) use self::letta_support::{
     cancel_letta_runs_by_id_or_skip, looks_like_letta_waiting_for_approval_error,
 };
 pub(crate) use self::pair_reflection_support::run_pair_reflection_summary;
-pub(crate) use self::prompt_context::acp_direct_tool_prompt_context;
 pub(crate) use self::sessions::{acp_session_row_to_http_with_modes, resolve_acp_turn_context};
 pub(crate) use self::workflow::{workflow_state_json, workflow_state_json_from_sources};
 
@@ -488,8 +350,6 @@ use self::{
         },
         tool_results::tool_result,
     },
-    history::{acp_auto_title_instruction, map_acp_history_page},
-    prompt_context::acp_direct_tool_prompt_context_with_activity,
     responses::{acp_error_response, api_auth_error_response},
     sessions::{decode_acp_sessions_cursor, encode_acp_sessions_cursor},
 };
@@ -522,48 +382,8 @@ async fn prompt_inner(
     headers: HeaderMap,
     body: AcpPromptRequest,
     request_id: Uuid,
-) -> Result<Result<Response, CustomError>, ApiError> {
+) -> types::AcpPromptInnerResult {
     run_prompt_flow(state, slug, session_id, headers, body, request_id).await
-}
-
-#[derive(Clone)]
-pub(super) struct AcpStreamContext {
-    pub(super) pool: PgPool,
-    pub(super) tool_turns: AcpToolTurnCoordinator,
-    pub(super) user_id: i32,
-    pub(super) user_profile: Option<crate::core::user::User>,
-    pub(super) bear_id: Uuid,
-    pub(super) bear_slug: String,
-    pub(super) acp_session_id: String,
-    pub(super) client: String,
-    pub(super) conversation_selection: String,
-    pub(super) resolved_conversation_id: Option<String>,
-    pub(super) upstream_target: String,
-    pub(super) workspace_roots: Vec<String>,
-    pub(super) session_policy: Option<serde_json::Value>,
-    pub(super) activity: Option<serde_json::Value>,
-    pub(super) request_id: Uuid,
-    pub(super) pair_agent_id: String,
-    pub(super) config: Arc<crate::config::Config>,
-    pub(super) role_runtime: RoleRuntime,
-    pub(super) turn_scope: RoleTurnScope,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum ToolExecutionRoute {
-    DenServer,
-    AdapterLocal,
-    Unsupported,
-}
-
-impl From<ToolExecutionRoute> for ControllerToolExecutionRoute {
-    fn from(route: ToolExecutionRoute) -> Self {
-        match route {
-            ToolExecutionRoute::DenServer => Self::DenServer,
-            ToolExecutionRoute::AdapterLocal => Self::AdapterLocal,
-            ToolExecutionRoute::Unsupported => Self::Unsupported,
-        }
-    }
 }
 
 fn tool_execution_route(tool_name: &str, args: &serde_json::Value) -> ToolExecutionRoute {
@@ -576,54 +396,40 @@ fn tool_execution_route(tool_name: &str, args: &serde_json::Value) -> ToolExecut
     }
 }
 
-pub(super) struct PersistedToolRequestEffect {
-    pub(super) tool_call_id: String,
-    pub(super) tool_name: String,
-    pub(super) route: ToolExecutionRoute,
-    pub(super) den_server_result_rx: Option<oneshot::Receiver<AcpToolResultRequest>>,
-}
-
-
-type AcpFrameResult = Result<
-    (
-        Vec<AcpGatewayEvent>,
-        Option<PersistedToolRequestEffect>,
-        Option<(String, String, AcpResolvedToolResult)>,
-    ),
-    std::io::Error,
->;
-
-type AcpContinueToolPrepared = Result<
-    (
-        crate::core::runtime_provider::RuntimeStreamContinuation,
-        crate::core::runtime_provider::RuntimeEventStream,
-        std::sync::Arc<std::sync::Mutex<AcpStreamDiagnostics>>,
-    ),
-    CustomError,
->;
-
-pub(super) enum AcpResolvedToolResult {
-    Receiver(oneshot::Receiver<AcpToolResultRequest>),
-}
-
-enum AcpPendingFuture {
-    Frame(Pin<Box<dyn Future<Output = (AcpFrameResult, AcpStreamDiagnostics)> + Send>>),
-    Tool(Pin<Box<dyn Future<Output = Option<Box<AcpToolResultRequest>>> + Send>>),
-    ContinueTool(Pin<Box<dyn Future<Output = AcpContinueToolPrepared> + Send>>),
-    Cleanup(Pin<Box<dyn Future<Output = serde_json::Value> + Send>>),
-}
-
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::{
-        acp_runtime::{
-            resolve_acp_prompt_conversation, AcpConversationResolution,
-            AcpConversationSelectionSource,
+    use bytes::Bytes;
+    use reqwest::StatusCode;
+    use crate::{
+        errors::CustomError,
+        api::acp::{
+            history::{acp_auto_title_instruction, map_acp_history_page},
+            prompt_context::acp_direct_tool_prompt_context_with_activity,
+            stream::{
+                mapping::{
+                    map_letta_stream_frame_to_acp_adapter_events, summarize_event_for_log,
+                },
+                sse_stream::AcpLettaSseStream,
+                support_sse::{find_sse_frame_end, parse_sse_event_body_to_json},
+                text::AcpTextChunker,
+            },
+            tool_results::acp_tool_result_response_from_delivery,
         },
-        acp_turn_runner::ACP_STALE_APPROVAL_RECOVERY_DENIAL_REASON,
-        letta::PendingApprovalDenialMode,
+        core::{
+            acp_runtime::{
+                is_valid_pending_acp_conversation_id, resolve_acp_prompt_conversation,
+                AcpConversationResolution, AcpConversationSelectionSource,
+            },
+            acp_tool_turns::{
+                AcpToolResultDelivery, AcpToolResultRequest, AcpToolTurnCoordinator,
+                AcpToolTurnRegistration,
+            },
+            acp_tools::AcpToolStatus,
+            acp_turn_runner::ACP_STALE_APPROVAL_RECOVERY_DENIAL_REASON,
+            letta::PendingApprovalDenialMode,
+            role_runtime::{RoleRuntime, RoleTurnScope},
+        },
     };
 
     #[test]

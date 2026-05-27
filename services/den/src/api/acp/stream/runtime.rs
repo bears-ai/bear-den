@@ -7,9 +7,9 @@ use crate::{
         acp::{
             acp_den_provider_to_canonical_tool_name, acp_tool_timeout_ms_for_provider,
             default_unavailable_context_budget, pending_web_fetch_approvals, AcpGatewayEvent,
-            AcpStreamContext, PersistedToolRequestEffect, PendingWebFetchApproval,
-            ToolExecutionRoute,
+            AcpStreamContext, PendingWebFetchApproval, ToolExecutionRoute,
         },
+        acp::types::PersistedToolRequestEffect,
     },
     core::{
         acp_sessions,

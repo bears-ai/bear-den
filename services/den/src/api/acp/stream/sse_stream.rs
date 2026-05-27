@@ -17,9 +17,9 @@ use crate::{
             mode_from_den_tool_result, plan_update_from_den_tool_result,
             AcpActiveTurnCancelHandle, AcpPendingFuture, AcpResolvedToolResult,
             AcpStaleRuntimeCleanupParams, AcpStreamContext, AcpTurnContinueRequest,
-            AcpTurnStreamContext, ControllerToolExecutionRoute, LettaContinuationContext,
-            PersistedToolRequestEffect, RoleRuntimeBinding,
+            AcpTurnStreamContext, LettaContinuationContext, RoleRuntimeBinding,
         },
+        acp::types::PersistedToolRequestEffect,
         service::ApiState,
     },
     core::{
@@ -399,7 +399,7 @@ impl Stream for AcpLettaSseStream {
                                 this.turn_controller.on_tool_request(
                                     effect.tool_call_id.clone(),
                                     effect.tool_name.clone(),
-                                    ControllerToolExecutionRoute::from(effect.route),
+                                    effect.route.into(),
                                 );
                             }
                             for event in events {
