@@ -1722,6 +1722,148 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn acp_stream_requires_approval_stop_with_active_tool_does_not_trigger_cleanup() {
+        use axum::{extract::State, http::header, response::IntoResponse, routing::post, Router};
+        use futures::StreamExt;
+        use sqlx::postgres::PgPoolOptions;
+        use std::sync::Arc;
+        use tokio::sync::Mutex as TokioMutex;
+
+        #[derive(Clone)]
+        struct FakeState {
+            cancel_calls: Arc<TokioMutex<usize>>,
+        }
+
+        async fn fake_cancel(State(state): State<FakeState>) -> impl IntoResponse {
+            *state.cancel_calls.lock().await += 1;
+            (
+                [(header::CONTENT_TYPE, "application/json")],
+                "{\"cancelled\":true}",
+            )
+        }
+
+        let cancel_calls = Arc::new(TokioMutex::new(0));
+        let app = Router::new()
+            .route("/v1/agents/{agent_id}/messages/cancel", post(fake_cancel))
+            .with_state(FakeState {
+                cancel_calls: cancel_calls.clone(),
+            });
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+
+        let mut config = crate::config::Config::test_stub();
+        config.letta_base_url = format!("http://{addr}");
+        let letta = Arc::new(crate::core::letta::LettaClient::new(&config));
+        let pool = PgPoolOptions::new()
+            .connect_lazy("postgres://postgres:postgres@127.0.0.1/postgres")
+            .unwrap();
+        let registry = AcpToolTurnCoordinator::new();
+        let request_id = Uuid::new_v4();
+        let role_runtime = RoleRuntime::new(registry.clone());
+        let turn_scope = RoleTurnScope::acp_pair(
+            Uuid::new_v4(),
+            "acp-requires-approval-active-tool",
+            Some("conv-test".to_string()),
+        );
+        let active_turn_guard = role_runtime
+            .acquire_turn(turn_scope.clone(), request_id)
+            .unwrap();
+        let context = AcpStreamContext {
+            pool,
+            tool_turns: registry.clone(),
+            user_id: 1,
+            user_profile: None,
+            bear_id: Uuid::new_v4(),
+            bear_slug: "test-bear".to_string(),
+            acp_session_id: "acp-requires-approval-active-tool".to_string(),
+            client: "zed".to_string(),
+            conversation_selection: "conv-test".to_string(),
+            resolved_conversation_id: Some("conv-test".to_string()),
+            upstream_target: "conv-test".to_string(),
+            workspace_roots: vec!["/workspace".to_string()],
+            session_policy: None,
+            activity: None,
+            request_id,
+            pair_agent_id: "agent-12345678-1234-4567-89ab-123456789abc".to_string(),
+            config: Arc::new(crate::config::Config::test_stub()),
+            role_runtime: role_runtime.clone(),
+            turn_scope,
+        };
+        let upstream = futures::stream::iter(vec![
+            Ok::<Bytes, CustomError>(Bytes::from(concat!(
+                "data: {\"id\":\"approval-active\",\"run_id\":\"run-active\",\"message_type\":\"approval_request_message\",",
+                "\"tool_call\":{\"name\":\"fs_read_text_file\",\"tool_call_id\":\"call_active\",",
+                "\"arguments\":\"{\\\"path\\\":\\\"/tmp/acp-test.txt\\\"}\"}}\n\n"
+            ))),
+            Ok::<Bytes, CustomError>(Bytes::from(
+                "data: {\"message_type\":\"stop_reason\",\"stop_reason\":\"requires_approval\"}\n\n",
+            )),
+        ]);
+        let mut stream = AcpLettaSseStream::new(
+            upstream,
+            context,
+            Vec::new(),
+            false,
+            letta,
+            LettaContinuationContext {
+                conversation_id: "conv-test".to_string(),
+                agent_id: Some("agent-12345678-1234-4567-89ab-123456789abc".to_string()),
+                client_tools: Some(serde_json::json!([{ "name": "fs_read_text_file" }])),
+                stream_tokens: false,
+                max_steps: 2,
+            },
+            active_turn_guard,
+        );
+
+        let first = stream.next().await.unwrap().unwrap();
+        let first_text = String::from_utf8(first.to_vec()).unwrap();
+        assert!(first_text.contains("\"type\":\"tool_request\""));
+        assert!(first_text.contains("\"tool_call_id\":\"call_active\""));
+
+        let pending = tokio::time::timeout(std::time::Duration::from_millis(150), stream.next())
+            .await
+            .expect("stream should yield at most a tool status update while obligation is open");
+        let pending_text = String::from_utf8(pending.unwrap().unwrap().to_vec()).unwrap();
+        assert!(
+            pending_text.contains("\"type\":\"status_text\""),
+            "unexpected output while waiting on active tool: {pending_text}"
+        );
+        assert!(
+            pending_text.contains("Local tool fs_read_text_file completed"),
+            "unexpected output while waiting on active tool: {pending_text}"
+        );
+        assert_eq!(
+            *cancel_calls.lock().await,
+            0,
+            "requires_approval with an active tool must not trigger stale cleanup"
+        );
+
+        let late = registry
+            .deliver_result(
+                1,
+                "test-bear",
+                "acp-requires-approval-active-tool",
+                "call_active",
+                AcpToolResultRequest {
+                    tool_call_id: Some("call_active".to_string()),
+                    tool_name: Some("fs_read_text_file".to_string()),
+                    status: "ok".to_string(),
+                    content: Some("late result after pending check".to_string()),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        assert!(matches!(
+            late,
+            AcpToolResultDelivery::RecentlySettled { .. }
+                | AcpToolResultDelivery::TurnMissing { .. }
+        ));
+    }
+
+    #[tokio::test]
     async fn acp_stream_cleans_orphaned_requires_approval_stop() {
         use axum::{extract::State, http::header, response::IntoResponse, routing::post, Router};
         use futures::StreamExt;

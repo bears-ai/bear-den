@@ -787,7 +787,7 @@ impl Stream for AcpLettaSseStream {
                     && !this.outstanding_tool_obligations().is_empty()
                 {
                     this.turn_controller.on_requires_approval_stop();
-                    self.poll_next(cx)
+                    Poll::Pending
                 } else if this.turn_controller.phase() == AcpTurnPhase::WaitingForObligations
                     && this.turn_controller.status_snapshot().open_obligations == 0
                     && this.outstanding_tool_obligations().is_empty()
