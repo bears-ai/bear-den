@@ -15,7 +15,7 @@ use crate::{
 
 pub fn acp_missing_pair_binding_message(bear_slug: &str) -> String {
     format!(
-        "ACP requires this Bear to have a provisioned `pair` role Letta compatibility binding, but none is recorded for bear `{bear_slug}`. Ask an operator to open Admin → Bears → this Bear and click `Provision missing role agents`, then retry."
+        "ACP requires this Bear to have a provisioned `pair` role runtime binding, but none is recorded for bear `{bear_slug}`. Ask an operator to open Admin → Bears → this Bear and click `Provision missing role agents`, then retry."
     )
 }
 
@@ -35,7 +35,7 @@ pub async fn require_pair_runtime_binding(
         .filter(|s| !s.is_empty())
         .map(|binding_id| RoleRuntimeBinding {
             binding_id,
-            compatibility_backend: Some("letta".to_string()),
+            compatibility_backend: Some("runtime:letta".to_string()),
         })
         .ok_or_else(|| CustomError::ValidationError(acp_missing_pair_binding_message(&bear.slug)))
 }

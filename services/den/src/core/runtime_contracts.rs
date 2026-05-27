@@ -9,6 +9,7 @@ pub struct RoleRuntimeBinding {
     /// Den-owned opaque handle for the configured compatibility/runtime binding for a Bear role.
     pub binding_id: String,
     /// Transitional compatibility backend name (for diagnostics and migration only).
+    /// Prefer treating this as a runtime/provider label rather than a concrete vendor name.
     pub compatibility_backend: Option<String>,
 }
 
