@@ -336,11 +336,6 @@ pub(super) fn strip_trailing_sse_delimiter(frame: &[u8]) -> &[u8] {
 
 const SSE_JSON_PREVIEW_MAX: usize = 192;
 
-pub(super) fn preview_bytes_utf8_lossy(bytes: &[u8]) -> String {
-    let s = String::from_utf8_lossy(bytes);
-    preview_str_truncated(&s, SSE_JSON_PREVIEW_MAX)
-}
-
 fn sha256_short(value: &str) -> String {
     use sha2::{Digest, Sha256};
     let digest = Sha256::digest(value.as_bytes());

@@ -1,14 +1,38 @@
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum ToolExecutionRoute {
+    Unsupported,
+    DenServer,
+    AdapterLocal,
+}
+
+#[derive(Debug)]
+pub(super) struct PersistedToolRequestEffect {
+    pub(super) tool_call_id: String,
+    pub(super) tool_name: String,
+    pub(super) route: ToolExecutionRoute,
+    pub(super) den_server_result_rx: Option<tokio::sync::oneshot::Receiver<crate::core::acp_tool_turns::AcpToolResultRequest>>,
+}
+
+pub(super) enum AcpResolvedToolResult {
+    Receiver(tokio::sync::oneshot::Receiver<crate::core::acp_tool_turns::AcpToolResultRequest>),
+}
+
+#[derive(Clone)]
+pub(super) struct AcpStreamContext;
+
+pub(super) async fn persist_stream_event_side_effects(
+    _context: &AcpStreamContext,
+    _event: &mut AcpGatewayEvent,
+) -> Result<Option<PersistedToolRequestEffect>, crate::errors::CustomError> {
+    Ok(None)
+}
+
 use bytes::Bytes;
 
 use crate::{
-    api::{
-        acp::{
-            persist_stream_event_side_effects, AcpResolvedToolResult, AcpStreamContext,
-            PersistedToolRequestEffect,
-        },
-        acp_stream_support::{
-            parse_sse_event_body_to_json, summarize_letta_event_for_log, AcpStreamDiagnostics,
-        },
+    api::acp_stream_support::{
+        parse_sse_event_body_to_json, summarize_letta_event_for_log, AcpStreamDiagnostics,
     },
     core::{
         acp_letta_events::{
@@ -88,7 +112,7 @@ pub(super) async fn map_runtime_stream_event_to_acp_adapter_events_with_persiste
         let mut adapter_result_rx = None;
         let events = if let Some(effect) = tool_request_effect.as_mut() {
             match effect.route {
-                crate::api::acp::ToolExecutionRoute::AdapterLocal => {
+                ToolExecutionRoute::AdapterLocal => {
                     if let AcpGatewayEvent::ToolRequest { result_rx, .. } = &mut event {
                         if let Some(rx) = result_rx.take() {
                             let tool_call_id = effect.tool_call_id.clone();
@@ -101,7 +125,7 @@ pub(super) async fn map_runtime_stream_event_to_acp_adapter_events_with_persiste
                         }
                     }
                 }
-                crate::api::acp::ToolExecutionRoute::DenServer => {
+                ToolExecutionRoute::DenServer => {
                     if let Some(rx) = effect.den_server_result_rx.take() {
                         let tool_call_id = effect.tool_call_id.clone();
                         let tool_name = effect.tool_name.clone();
@@ -112,7 +136,7 @@ pub(super) async fn map_runtime_stream_event_to_acp_adapter_events_with_persiste
                         ));
                     }
                 }
-                crate::api::acp::ToolExecutionRoute::Unsupported => {}
+                ToolExecutionRoute::Unsupported => {}
             }
             vec![event]
         } else {
