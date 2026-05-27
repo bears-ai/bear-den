@@ -1610,6 +1610,77 @@ mod tests {
         ));
     }
 
+    #[test]
+    fn acp_tool_result_endpoint_treats_replayed_identical_result_as_idempotent() {
+        let registry = AcpToolTurnCoordinator::new();
+        let request_id = Uuid::new_v4();
+        let (result_tx, result_rx) = tokio::sync::oneshot::channel();
+        registry
+            .register(AcpToolTurnRegistration {
+                user_id: 1,
+                bear_id: Uuid::new_v4(),
+                bear_slug: "test-bear".to_string(),
+                acp_session_id: "acp-idempotent-session".to_string(),
+                request_id,
+                tool_call_id: "call_idempotent".to_string(),
+                tool_name: "fs_read_text_file".to_string(),
+                approval_request_id: None,
+                timeout_ms: 1_000,
+                result_tx,
+            })
+            .expect("register tool turn");
+
+        let body = AcpToolResultRequest {
+            tool_call_id: Some("call_idempotent".to_string()),
+            tool_name: Some("fs_read_text_file".to_string()),
+            status: "ok".to_string(),
+            content: Some("same body".to_string()),
+            structured_content: serde_json::json!({"k":"v"}),
+            diagnostic: serde_json::json!({"phase":"first"}),
+            ..Default::default()
+        };
+
+        let first = registry
+            .deliver_result(
+                1,
+                "test-bear",
+                "acp-idempotent-session",
+                "call_idempotent",
+                body.clone(),
+            )
+            .expect("first delivery");
+        assert!(matches!(first, AcpToolResultDelivery::Delivered { .. }));
+
+        let delivered = result_rx.blocking_recv().expect("receiver gets delivered body");
+        assert_eq!(delivered.content.as_deref(), Some("same body"));
+
+        let replay = registry
+            .deliver_result(
+                1,
+                "test-bear",
+                "acp-idempotent-session",
+                "call_idempotent",
+                body,
+            )
+            .expect("replayed delivery should not error");
+        let response = acp_tool_result_response_from_delivery(
+            replay,
+            "acp-idempotent-session",
+            "call_idempotent".to_string(),
+            AcpToolStatus::Ok,
+            &registry,
+        );
+        let value = response.to_value();
+        assert_eq!(value["accepted"], true);
+        assert_eq!(value["reason"], "duplicate_result_ignored");
+        assert_eq!(value["settlement"], "already_settled");
+        assert_eq!(
+            value["diagnostic"]["tool_call_id"],
+            serde_json::json!("call_idempotent")
+        );
+        assert_eq!(value["diagnostic"]["status"], "ok");
+    }
+
     #[tokio::test]
     async fn acp_stream_cancel_pending_local_tool() {
         use futures::StreamExt;

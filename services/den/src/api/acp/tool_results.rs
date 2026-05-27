@@ -51,8 +51,8 @@ pub(super) fn acp_tool_result_response_from_delivery(
             turn_id,
             tool_call_id,
         } => AcpToolResultResponse {
-            accepted: false,
-            reason: "late_result_ignored".to_string(),
+            accepted: true,
+            reason: "duplicate_result_ignored".to_string(),
             settlement: Some("already_settled".to_string()),
             turn_id,
             tool_call_id: tool_call_id.clone(),
