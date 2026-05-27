@@ -55,6 +55,7 @@ pub mod acp_stream_plan;
 pub mod acp_stream_support;
 pub mod acp_stream_text;
 pub mod acp_tool_results;
+pub mod acp_workflow;
 #[cfg(test)]
 mod acp_turn_state_alignment_tests;
 #[cfg(test)]
