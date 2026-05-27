@@ -33,7 +33,7 @@ The ACP runtime contract is therefore the first major containment seam. It shoul
 
 ## Scope
 
-This contract is for the ACP-facing role runtime used by the Bear `code` role (legacy `pair`) and any future ACP-capable role runtime with the same interaction model.
+This contract is for the ACP-facing role runtime used by the Bear `pair` role and any future ACP-capable role runtime with the same interaction model.
 
 It covers:
 
@@ -118,7 +118,7 @@ Purpose:
 
 Examples of what this may return:
 
-- the currently configured compatibility binding handle for the `code` role
+- the currently configured compatibility binding handle for the `pair` role
 - enough binding metadata for the runtime adapter to route turns correctly
 
 This belongs near the role profile / runtime registry boundary, not inside ACP orchestration.

@@ -8,17 +8,9 @@ It is based on the dependency inventory in [`../architecture/letta-dependency-ma
 
 ## Terminology note
 
-This plan uses the current canonical role names:
+This plan uses the current canonical role names from [bear roles](../architecture/bear-roles.md): `pair`, `chat`, `review`, `work`, and `watch`.
 
-| Legacy name | Canonical name |
-|---|---|
-| `pair` | `code` |
-| `chat` | `chat` |
-| `review` | `review` |
-| `work` | `work` |
-| `watch` | `watch` |
-
-Existing code, data, migrations, and compatibility shims may still use legacy names during the transition. New architecture and product language should prefer the canonical names.
+Earlier migration drafts explored renaming `pair` to `code`, and some implementation notes may still reflect that abandoned direction. Those references should now be read as referring to the `pair` role. New architecture and product language should keep `pair` as the stable name.
 
 Other terminology used in this plan:
 
@@ -38,7 +30,7 @@ It also should not overcorrect into building a large, permanent, generalized run
 
 The target architecture is a **Den-native multi-role Bear runtime**:
 
-> A Bear is one durable identity with a charter. Roles such as `code`, `chat`, `work`, `watch`, and `review` are Den-owned profiles and execution contexts. They define memory access, tools, actuators, resources, autonomy, model policy, and audit behavior. They are not distinct provider-managed agents.
+> A Bear is one durable identity with a charter. Roles such as `pair`, `chat`, `work`, `watch`, and `review` are Den-owned profiles and execution contexts. They define memory access, tools, actuators, resources, autonomy, model policy, and audit behavior. They are not distinct provider-managed agents.
 
 The long-term destination should be understood as:
 
@@ -58,7 +50,7 @@ Canonical Bear memory already appears to live primarily in MemFS/git role branch
 
 1. **contain** Letta behind explicit provider boundaries
 2. **move persistence ownership** for interactions, runs, approvals, and diagnostics into Den
-3. **extract the shared Den-native role runner from the `code`/ACP path** rather than treating `code` as a late one-off migration
+3. **extract the shared Den-native role runner from the `pair`/ACP path** rather than treating `pair` as a late one-off migration
 4. **migrate roles by execution mode and risk surface**, not by old Letta runtime family
 5. **replace provisioning/registry semantics** with Den-owned role profiles, role run contexts, and provider bindings
 6. **replace Letta Code / Codepool dependencies** for `chat` and `work`
@@ -72,7 +64,7 @@ Canonical Bear memory already appears to live primarily in MemFS/git role branch
 - Preserve BEARS role semantics and current user-visible behavior.
 - Preserve the single-Bear, multi-role mental model rather than introducing new provider-managed agent identities.
 - Keep canonical memory in BEARS-owned systems.
-- Maintain `code`/ACP actuator safety, approval, cancellation, and concurrency semantics.
+- Maintain `pair`/ACP actuator safety, approval, cancellation, and concurrency semantics.
 - Preserve or improve observability and debuggability.
 
 ### Secondary goals
@@ -90,7 +82,7 @@ These should **not** be treated as first-order migration goals for phase 1:
 - replacing every Letta-adjacent concept with Qdrant
 - redesigning all BEARS role semantics
 - reworking MemFS branch policy from scratch
-- fully unifying `code`/`chat`/`review`/`work`/`watch` execution behavior at the start
+- fully unifying `pair`/`chat`/`review`/`work`/`watch` execution behavior at the start
 - renaming every legacy code symbol and persisted enum value in one hard cutover
 
 ## Steering principle for implementation
@@ -157,13 +149,13 @@ The old split was:
 
 That split reflects Letta implementation history. The migration should instead reason about execution modes and risk surfaces:
 
-- **interactive code collaboration**: `code`, through an ACP actuator
+- **interactive collaboration in tools and coding environments**: `pair`, through an ACP actuator
 - **interactive conversation**: `chat`
 - **background or semi-autonomous task execution**: `work`
 - **event observation and monitoring**: `watch`
 - **memory review, synthesis, and governance**: `review`
 
-The `code` path should be treated as the reference implementation to extract from, because the future roles are expected to derive from the work already done there.
+The `pair` path should be treated as the reference implementation to extract from, because the future roles are expected to derive from the work already done there.
 
 ### 5. Prefer dual-write and compatibility periods over hard cutovers
 
@@ -177,28 +169,28 @@ Compatibility aliases may be required for legacy role names, persistent values, 
 
 The target role names are:
 
-- `code` for legacy `pair`
-- `chat` for legacy `chat`
-- `review` for legacy `review`
+- `pair`
+- `chat`
+- `review`
 - `work`
 - `watch`
 
-During migration, implementation code may need to accept both canonical and legacy values. New docs, UI labels, model-facing tool descriptions, and operator language should prefer the canonical names.
+Some implementation code may still carry compatibility or abandoned-draft references to `pair` for the same role. New docs, UI labels, model-facing tool descriptions, and operator language should prefer `pair`.
 
 ### API-direct-like roles
 
 Canonical roles:
 
-- `code` (legacy `pair`)
-- `review` (legacy `review`)
+- `pair`
+- `review`
 - `watch`
 
 Current behavior:
 
 - Den uses Letta conversations and runs as execution substrate for parts of these roles.
 - Den adds policy, tool mediation, and workflow control around that runtime.
-- The `code` role, through the ACP actuator, has especially strong Letta-specific recovery, approval, cancellation, and continuation logic.
-- The `code` path already contains important Den-owned patterns that should be generalized into the shared role runner.
+- The `pair` role, through the ACP actuator, has especially strong Letta-specific recovery, approval, cancellation, and continuation logic.
+- The `pair` path already contains important Den-owned patterns that should be generalized into the shared role runner.
 
 ### Harness-backed roles
 
@@ -334,7 +326,7 @@ Suggested metrics to capture from phase 0 onward:
 
 ### Role-specific parity indicators
 
-#### `code`
+#### `pair`
 
 - first-token latency and full-turn latency under ACP
 - tool request/response continuation success
@@ -386,15 +378,15 @@ Migration should make compatibility handling explicit instead of allowing aliase
 
 ### Compatibility rules
 
-1. **Canonical role names** in new docs, UI labels, model-facing descriptors, and new internal abstractions are:
-   - `code`
+1. **Current canonical role names** in new docs, UI labels, model-facing descriptors, and new internal abstractions are:
+   - `pair`
    - `chat`
    - `work`
    - `watch`
    - `review`
 
 2. **Accepted legacy aliases** during transition are:
-   - `pair` → `code`
+   - abandoned draft alias: `pair` → `pair`
    - `chat` → `chat`
    - `review` → `review`
 
@@ -434,7 +426,7 @@ Dual-write alone is not enough. The migration also needs a deliberate plan for h
 ### Suggested historical data approach
 
 1. **Recent and user-visible history**
-   - prioritize backfill or projection for recent `chat` and `code` sessions that are likely to be viewed or resumed
+   - prioritize backfill or projection for recent `chat` and `pair` sessions that are likely to be viewed or resumed
    - preserve titles, archive state, run markers, tool events, and approval events where available
 
 2. **Older or low-value history**
@@ -481,11 +473,11 @@ These should be runnable against both Letta-backed compatibility implementations
 
 - replay captured Letta-era sessions against the Den-native runner in staging
 - compare tool-call ordering, pause/resume behavior, final status, and user-visible output envelopes
-- keep golden traces for critical `code` ACP turns and representative `chat`, `review`, `watch`, and `work` flows
+- keep golden traces for critical `pair` ACP turns and representative `chat`, `review`, `watch`, and `work` flows
 
 #### 4. Concurrency and load tests
 
-Especially for `code` and `work`:
+Especially for `pair` and `work`:
 
 - simultaneous sessions per Bear
 - tool execution overlap
@@ -618,14 +610,14 @@ The plan will be easier to execute if workstreams and sequencing constraints are
    - admin/UI read models
 
 3. **shared role-runner workstream**
-   - extraction from `code`
+   - extraction from `pair`
    - common event and tool protocol
    - approval/cancellation lifecycle
 
 4. **role migration workstream**
    - `watch`
    - `review`
-   - `code`
+   - `pair`
    - `chat` / `work`
 
 5. **MemFS and retrieval workstream**
@@ -644,7 +636,7 @@ At a high level:
 
 - abstraction boundaries should land before broad migration work
 - Den-owned persistence should begin before most runtime cutovers
-- shared role-runner extraction should precede `watch`/`review`/`code` migration completion
+- shared role-runner extraction should precede `watch`/`review`/`pair` migration completion
 - `chat`/`work` migration depends on decisions about Codepool evolution or replacement
 - Letta retirement should wait until read paths, runtime paths, and historical access needs are satisfied
 
@@ -666,7 +658,7 @@ Responsibilities:
 
 Suggested concepts:
 
-- `role`: `code`, `chat`, `work`, `watch`, or `review`
+- `role`: `pair`, `chat`, `work`, `watch`, or `review`
 - `role_profile_id`
 - `execution_mode`: interactive, background, event, governance, harness, etc.
 - `runtime_mode`: `den_native` as the target, with temporary compatibility values only where migration still requires them
@@ -757,7 +749,7 @@ Stop Letta from being an ambient assumption and confine it to explicit compatibi
 
 5. Add terminology compatibility guidance:
    - accept legacy role names at routing and persistence boundaries where needed
-   - emit canonical role names in new docs, UI, and model-facing descriptors
+   - emit current canonical role names in new docs, UI, and model-facing descriptors
    - avoid advertising legacy role names or provider-branded names to models
 
 6. Define optional-worker/service-toggle rollout policy for migration components:
@@ -818,7 +810,7 @@ Make Den the source of truth for interaction metadata and run tracking before ch
 
 ### Exit criteria
 
-- UI can render recent `chat` and `code` interaction lists from Den
+- UI can render recent `chat` and `pair` interaction lists from Den
 - Den can answer thread title/archive/delete state from its own store
 - run and approval state is queryable without asking Letta first
 
@@ -827,15 +819,15 @@ Make Den the source of truth for interaction metadata and run tracking before ch
 - continue reading Letta as fallback if Den projections are incomplete
 - dual-write remains non-destructive
 
-## Phase 2 — extract shared Den-native role runner from `code`
+## Phase 2 — extract shared Den-native role runner from `pair`
 
 ### Objective
 
-Use the existing `code`/ACP path as the reference implementation for the shared Den-native role runner.
+Use the existing `pair`/ACP path as the reference implementation for the shared Den-native role runner.
 
-### Why `code` is the reference path
+### Why `pair` is the reference path
 
-The `code` role already exercises the hardest runtime invariants:
+The `pair` role already exercises the hardest runtime invariants:
 
 - streaming interactive turns
 - server-mediated tool calls
@@ -851,9 +843,9 @@ The future roles should derive from these Den-owned mechanics instead of preserv
 
 ### Work items
 
-1. Document current `code`/ACP actuator invariants from implementation and tests.
+1. Document current `pair`/ACP actuator invariants from implementation and tests.
 
-2. Extract shared role-runner interfaces from the `code` path:
+2. Extract shared role-runner interfaces from the `pair` path:
    - prompt/context assembly
    - event streaming
    - tool request/result protocol
@@ -862,7 +854,7 @@ The future roles should derive from these Den-owned mechanics instead of preserv
    - run ids and request ids
    - persistence hooks
 
-3. Implement a Den-native role runner capable of executing `code` canary sessions behind a feature flag.
+3. Implement a Den-native role runner capable of executing `pair` canary sessions behind a feature flag.
 
 4. Preserve compatibility with existing ACP behavior while moving logic behind Den-native role-runner interfaces and narrow Letta compatibility adapters.
 
@@ -871,13 +863,13 @@ The future roles should derive from these Den-owned mechanics instead of preserv
 ### Deliverables
 
 - shared Den-native role-runner skeleton
-- documented `code` actuator invariants
-- canary-capable `code` execution path
+- documented `pair` actuator invariants
+- canary-capable `pair` execution path
 - compatibility tests for streaming, approvals, tool continuations, and cancellation
 
 ### Exit criteria
 
-- a `code` session can complete through the Den-native role runner in a controlled/canary environment
+- a `pair` session can complete through the Den-native role runner in a controlled/canary environment
 - the shared runner abstractions are usable by non-ACP roles
 - existing ACP sessions remain stable on the compatibility path
 
@@ -898,7 +890,7 @@ Prove the shared runner on lower-risk non-ACP execution modes before broad user-
 
 - `watch` is narrow and event-driven
 - `review` exercises memory governance and synthesis without the full ACP actuator surface
-- both are less directly user-interactive than `code` and `chat`
+- both are less directly user-interactive than `pair` and `chat`
 - both help validate memory, retrieval, workflow, and persistence behavior
 
 ### Work items
@@ -932,7 +924,7 @@ Prove the shared runner on lower-risk non-ACP execution modes before broad user-
 - no Letta API dependency remains for these execution paths
 - memory governance remains visible and auditable
 
-## Phase 4 — production rollout for `code`
+## Phase 4 — production rollout for `pair`
 
 ### Objective
 
@@ -940,7 +932,7 @@ Move the ACP actuator path fully off the Letta execution substrate after shared-
 
 ### Why this remains high risk
 
-`code` is the highest-risk interactive role because it depends on strict handling for:
+`pair` is the highest-risk interactive role because it depends on strict handling for:
 
 - pending approvals
 - tool-return continuations
@@ -952,7 +944,7 @@ Move the ACP actuator path fully off the Letta execution substrate after shared-
 
 ### Work items
 
-1. Complete Den-native `code` runtime parity:
+1. Complete Den-native `pair` runtime parity:
    - stream-safe incremental responses
    - server-mediated tool call requests
    - actuator execution protocol
@@ -960,7 +952,7 @@ Move the ACP actuator path fully off the Letta execution substrate after shared-
    - continuation after tool execution
    - run ids / request ids / cancellation semantics
 
-2. Preserve `code` policy semantics:
+2. Preserve `pair` policy semantics:
    - Ask / Plan / Write gating
    - pending permissions
    - pending plan approvals
@@ -972,7 +964,7 @@ Move the ACP actuator path fully off the Letta execution substrate after shared-
 
 ### Deliverables
 
-- production Den-native `code` runtime
+- production Den-native `pair` runtime
 - removal of Letta-specific ACP runtime logic from core session paths
 
 ### Exit criteria
@@ -1154,7 +1146,7 @@ Fully remove Letta from the stack and codebase.
 
 - no production path depends on Letta
 - infra and docs no longer mention Letta except in migration history
-- canonical docs use `code`, `chat`, `work`, `watch`, and `review`
+- canonical docs use `pair`, `chat`, `work`, `watch`, and `review`
 
 ## Data model recommendations
 
@@ -1225,11 +1217,11 @@ Provider bindings are transitional for Letta and useful for future external prov
 
 ## Risks and mitigations
 
-### Risk: ACP actuator regression during `code` migration
+### Risk: ACP actuator regression during `pair` migration
 
 Mitigation:
 
-- treat `code` as the reference path to extract from, but keep production cutover controlled
+- treat `pair` as the reference path to extract from, but keep production cutover controlled
 - dual-write interaction and run state early
 - preserve fallback provider binding during rollout
 - build explicit concurrency/cancellation/approval tests
@@ -1271,7 +1263,7 @@ Mitigation:
 Mitigation:
 
 - accept legacy role names at routing and persistence boundaries during transition
-- canonicalize to `code`, `chat`, `work`, `watch`, and `review` internally where safe
+- canonicalize to `pair`, `chat`, `work`, `watch`, and `review` internally where safe
 - make alias handling explicit and temporary
 - avoid scattered hardcoded alias `match` arms when a descriptor resolver can be used
 
@@ -1281,9 +1273,9 @@ A practical milestone sequence:
 
 1. **M1** — abstraction layer introduced, Letta isolated, terminology compatibility documented
 2. **M2** — Den-owned interaction/run store dual-write enabled
-3. **M3** — shared role runner extracted from the `code`/ACP path
+3. **M3** — shared role runner extracted from the `pair`/ACP path
 4. **M4** — `watch` and `review` on Den-native runtime
-5. **M5** — production `code` path on Den-native runtime
+5. **M5** — production `pair` path on Den-native runtime
 6. **M6** — Den-native role profile registry in place, with any remaining Letta/external bindings clearly compatibility-scoped
 7. **M7** — `chat`/`work` no longer depend on Letta Code
 8. **M8** — MemFS/resource workspace and retrieval cleanup complete
@@ -1299,9 +1291,9 @@ A practical milestone sequence:
 
 2. Design Den-owned schema for interactions/runs/tool calls/approvals/resource references.
 
-3. Document current `code`/ACP actuator runtime invariants from `api/acp.rs` so parity targets are explicit.
+3. Document current `pair`/ACP actuator runtime invariants from `api/acp.rs` so parity targets are explicit.
 
-4. Extract the shared Den-native role-runner contracts from the `code` path before migrating additional roles.
+4. Extract the shared Den-native role-runner contracts from the `pair` path before migrating additional roles.
 
 5. Inventory Codepool's Letta-specific contracts in similar detail to the Den dependency matrix.
 
@@ -1315,7 +1307,7 @@ The recommended path is:
 - **not** a Qdrant-first migration
 - **not** a replacement of Letta agents with another set of provider-managed agents
 - **yes** to one durable Bear identity with Den-owned role profiles and role run contexts
-- **yes** to deriving the shared runtime from the existing `code`/ACP work
+- **yes** to deriving the shared runtime from the existing `pair`/ACP work
 - **yes** to Den-owned runtime and persistence abstractions
 - **yes** to narrow migration seams and compatibility boundaries
 - **no** to overbuilding a permanent generalized runtime-provider framework without a concrete post-Letta need
