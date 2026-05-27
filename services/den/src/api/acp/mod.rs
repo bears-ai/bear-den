@@ -20,15 +20,13 @@ pub(super) mod workflow_guidance;
 
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use axum::{
-    body::Body,
     extract::{Path, State},
-    http::{header, HeaderMap, HeaderName, HeaderValue, StatusCode},
+    http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
     routing::{get, post},
     Json, Router,
 };
 use bytes::Bytes;
-use futures::StreamExt;
 use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
 use std::{
@@ -55,6 +53,7 @@ use crate::{
                     map_runtime_stream_event_to_acp_adapter_events_with_persistence,
                     summarize_event_for_log,
                 },
+                orchestration::{build_acp_sse_response, build_acp_stream_setup},
                 plan::{
                     mode_from_den_tool_result, plan_approval_fallback_payload,
                     plan_update_from_den_tool_result,
@@ -95,8 +94,7 @@ use crate::{
         },
         acp_turn_runner::{
             acp_cleanup_stale_runtime_state, continue_acp_turn_with_runtime,
-            start_acp_turn_with_retries, AcpStaleRuntimeCleanupParams, AcpTurnContinueRequest,
-            AcpTurnStartRequest, AcpTurnStreamContext,
+            AcpStaleRuntimeCleanupParams, AcpTurnContinueRequest, AcpTurnStreamContext,
         },
         bears::{db as bears_db, BearAgentRole},
         den_tools,
@@ -105,11 +103,9 @@ use crate::{
         memory_proposals::{self, CreateMemoryProposal},
         pair_reflection::{self, CompletePairReflectionRun, CreatePairReflectionRun},
         reflection_conductor,
-        role_runtime::{
-            AcpTurnLifecycleContext, AcpTurnLifecycleRuntime, RoleRuntime, RoleTurnScope,
-        },
+        role_runtime::{RoleRuntime, RoleTurnScope},
         runtime_provider::RoleRuntimeBinding,
-        user, web_policy,
+        web_policy,
         work_plans::{self, WorkPlanLookup},
     },
     errors::CustomError,
@@ -648,7 +644,7 @@ use self::{
         },
         tool_results::tool_result,
     },
-    history::{acp_auto_title_instruction, map_acp_history_page, pending_session_title_update_event},
+    history::{acp_auto_title_instruction, map_acp_history_page},
     prompt_context::{acp_direct_tool_prompt_context_with_activity, acp_plan_mode_prompt_context},
     responses::{acp_error_response, api_auth_error_response},
     sessions::{decode_acp_sessions_cursor, encode_acp_sessions_cursor},
@@ -1276,172 +1272,39 @@ async fn prompt_inner(
         prompt_has_system_reminder = prompt.contains("<system-reminder>"),
         "ACP prompt context assembly lengths"
     );
-    let mut initial_events = Vec::new();
-    let mut session_info_event_sent = false;
-    if let Some(conversation) = conversation_resolution.resolved_conversation.clone() {
-        initial_events.push(AcpGatewayEvent::ConversationResolved {
-            conversation_id: conversation.id,
-        });
-    }
-    if let Some(title_event) = pending_session_title_update_event(
-        &state.sqlx_pool,
+    let setup = build_acp_stream_setup(
+        &state,
         user_id,
-        bear.id,
-        &bear.slug,
+        &bear,
         session_id,
-    )
-    .await
-    .map_err(|err| {
-        let (status, code, message) = acp_error_status_message(&err);
-        ApiError::new(status, code, message)
-    })? {
-        session_info_event_sent = true;
-        initial_events.push(title_event);
-    }
-    if let Some(plan_event) = current_activity_plan
-        .clone()
-        .map(AcpGatewayEvent::PlanUpdate)
-    {
-        initial_events.push(plan_event);
-    }
-    let turn_runtime_context =
-        format!("{plan_mode_context}{activity_context}{tool_prompt_context}");
-    tracing::info!(
-        %request_id,
-        acp_session_id = %session_id,
-        upstream_user_prompt_len = prompt.len(),
-        turn_runtime_context_len = turn_runtime_context.len(),
-        turn_runtime_context_has_trusted_mode_suffix =
-            turn_runtime_context.contains("Trusted ACP session mode this turn:"),
-        turn_runtime_context_has_system_reminder =
-            turn_runtime_context.contains("<system-reminder>"),
-        runtime_context_sent_as_user_content = false,
-        "ACP final upstream prompt assembly"
-    );
-    let workspace_roots = body
-        .client_context
-        .get("workspace_roots")
-        .or_else(|| body.client_context.get("workspaceRoots"))
-        .and_then(|v| v.as_array())
-        .map(|items| {
-            items
-                .iter()
-                .filter_map(|v| v.as_str())
-                .map(str::to_string)
-                .collect::<Vec<_>>()
-        })
-        .filter(|items| !items.is_empty())
-        .unwrap_or_else(|| vec![cwd.to_string()]);
-    let client_tool_descriptors = merged_client_tool_descriptors.clone();
-    let stream_tokens = acp_stream_tokens_enabled();
-    let turn_lifecycle = AcpTurnLifecycleRuntime::new(
-        state.acp_tool_turns.clone(),
-        state.acp_turn_cancellations.clone(),
-    );
-    let lifecycle_lease = match turn_lifecycle.acquire_pair_turn(
-        AcpTurnLifecycleContext {
-            bear_id: bear.id,
-            acp_session_id: session_id.to_string(),
-            resolved_conversation_id: conversation_resolution
-                .resolved_conversation
-                .as_ref()
-                .map(|conversation| conversation.id.clone()),
-        },
-        request_id,
-    ) {
-        Ok(lease) => lease,
-        Err(err) => return Ok(Err(err)),
-    };
-    let role_runtime = lifecycle_lease.role_runtime.clone();
-    let turn_scope = lifecycle_lease.turn_scope.clone();
-    let active_turn_guard = lifecycle_lease.active_turn_guard;
-    let cancel_handle = lifecycle_lease.cancel_handle;
-    let cancel_rx = lifecycle_lease.cancel_rx;
-
-    let upstream = match start_acp_turn_with_retries(AcpTurnStartRequest {
-        state: &state,
-        request_id,
-        session_id,
-        bear_id: bear.id,
-        binding: &pair_runtime_binding,
-        upstream_target: &conversation_resolution.upstream_target,
+        &cwd,
+        &body.client_context,
+        &conversation_resolution,
+        &current_activity_plan,
+        &plan_mode_context,
+        &activity_context,
+        &tool_prompt_context,
         prompt,
-        client_tools: client_tool_descriptors.clone(),
-        runtime_context_len: turn_runtime_context.len(),
-        stream_tokens,
-    })
-    .await
-    {
-        Ok(upstream) => upstream,
-        Err(err) => return Ok(Err(err)),
-    };
-
-    let session_policy = resolved_policy.to_json();
-    let activity = current_activity_plan
-        .as_ref()
-        .map(|plan| serde_json::json!(plan));
-    let stream = AcpLettaSseStream::new(
-        upstream.bytes_stream().map(|item| item.map_err(Into::into)),
-        AcpStreamContext {
-            pool: state.sqlx_pool.clone(),
-            tool_turns: state.acp_tool_turns.clone(),
-            user_id,
-            user_profile: user::user_by_id(&state.sqlx_pool, user_id).await.ok(),
-            bear_id: bear.id,
-            bear_slug: bear.slug.clone(),
-            acp_session_id: session_id.to_string(),
-            client: client.clone(),
-            conversation_selection: conversation_resolution.session_selection.clone(),
-            resolved_conversation_id: conversation_resolution
-                .resolved_conversation
-                .as_ref()
-                .map(|conversation| conversation.id.clone()),
-            upstream_target: conversation_resolution.upstream_target.clone(),
-            workspace_roots: workspace_roots.clone(),
-            session_policy: Some(session_policy),
-            activity,
-            request_id,
-            pair_agent_id: pair_runtime_binding.binding_id.clone(),
-            config: state.config.clone(),
-            role_runtime,
-            turn_scope,
-        },
-        initial_events,
-        session_info_event_sent,
-        state.letta.clone(),
-        LettaContinuationContext {
-            conversation_id: conversation_resolution.upstream_target.clone(),
-            agent_id: Some(pair_runtime_binding.binding_id.clone()),
-            client_tools: client_tool_descriptors,
-            stream_tokens,
-            max_steps: 4,
-        },
-        active_turn_guard,
+        request_id,
     )
-    .with_cancel_registration(cancel_handle, cancel_rx);
-    let request_id_header = HeaderValue::from_str(&request_id.to_string()).map_err(|_| {
-        ApiError::new(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "invalid_request_id",
-            "invalid request id for response header",
-        )
-    })?;
+    .await?;
 
-    Response::builder()
-        .status(StatusCode::OK)
-        .header(header::CONTENT_TYPE, "text/event-stream; charset=utf-8")
-        .header(header::CACHE_CONTROL, "no-cache")
-        .header(header::CONNECTION, "keep-alive")
-        .header(HeaderName::from_static("x-request-id"), request_id_header)
-        .body(Body::from_stream(stream))
-        .map_err(|e| {
-            ApiError::new(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "response_build",
-                format!("response build: {e}"),
-            )
-        })
-        .map(Ok)
+    build_acp_sse_response(
+        state,
+        user_id,
+        request_id,
+        session_id,
+        &bear,
+        &client,
+        prompt,
+        &pair_runtime_binding,
+        &conversation_resolution,
+        &resolved_policy,
+        &current_activity_plan,
+        merged_client_tool_descriptors,
+        setup,
+    )
+    .await
 }
 
 #[derive(Clone)]
