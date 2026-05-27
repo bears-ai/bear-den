@@ -4,6 +4,7 @@
 //! injects trusted context, and maps text prompts to the Bear's API-direct `pair` Letta agent.
 //! Client-tool relay and full ACP stdio transport live in later slices / an external adapter.
 
+pub(super) mod client;
 pub(super) mod compat;
 pub(super) mod handlers;
 pub(super) mod history;
@@ -18,7 +19,6 @@ pub(super) mod tool_results;
 pub(super) mod workflow;
 pub(super) mod workflow_guidance;
 
-use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use axum::{
     extract::{Path, State},
     http::{HeaderMap, StatusCode},
@@ -430,38 +430,6 @@ fn format_acp_session_timestamp(t: time::OffsetDateTime) -> String {
     t.format(&Rfc3339).unwrap_or_else(|_| t.to_string())
 }
 
-fn tools_enabled_for_client(client: &str) -> bool {
-    let normalized = normalize_acp_client(Some(client));
-    matches!(
-        normalized.as_str(),
-        "zed" | "cursor" | "vscode" | "windsurf"
-    )
-}
-
-fn normalize_acp_requested_mode(raw: &str) -> Option<&'static str> {
-    match raw.trim().to_ascii_lowercase().as_str() {
-        "ask" => Some("ask"),
-        "plan" => Some("plan"),
-        "write" => Some("write"),
-        _ => None,
-    }
-}
-
-fn requested_mode_from_prompt(
-    body: &AcpPromptRequest,
-) -> Result<Option<&'static str>, CustomError> {
-    let Some(raw) = body
-        .requested_mode
-        .as_deref()
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-    else {
-        return Ok(None);
-    };
-    normalize_acp_requested_mode(raw).map(Some).ok_or_else(|| {
-        CustomError::ValidationError("requested_mode must be one of ask, plan, write".to_string())
-    })
-}
 
 #[derive(Debug, Clone)]
 pub(crate) struct AcpResolvedTurnContext {
@@ -470,25 +438,6 @@ pub(crate) struct AcpResolvedTurnContext {
     pub(crate) effective_mode: String,
 }
 
-fn normalize_acp_client(raw: Option<&str>) -> String {
-    let value = raw
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .unwrap_or("acp_adapter");
-    match value.to_ascii_lowercase().as_str() {
-        "zed" => "zed".to_string(),
-        "opencode" => "opencode".to_string(),
-        _ => "acp_adapter".to_string(),
-    }
-}
-
-fn new_acp_conversation_id(client: &str) -> String {
-    let uuid = Uuid::new_v4();
-    format!(
-        "new-acp-{client}-{}",
-        URL_SAFE_NO_PAD.encode(uuid.as_bytes())
-    )
-}
 
 fn is_valid_pending_acp_conversation_id(conversation_id: &str) -> bool {
     conversation_id.starts_with("new-")
@@ -512,56 +461,9 @@ fn acp_archive_target_for_session(session: &acp_sessions::AcpSessionRow) -> Opti
         })
 }
 
-pub(crate) fn acp_pair_den_tool_descriptors() -> serde_json::Value {
-    let descriptors = den_tools::builtin_den_tool_descriptors_for_role(BearAgentRole::Pair)
-        .into_iter()
-        .filter(|descriptor| {
-            matches!(
-                descriptor.name,
-                den_tools::DEN_CONVERSATION_SET_TITLE
-                    | den_tools::DEN_WEB_FETCH
-                    | den_tools::DEN_WEB_SEARCH
-                    | den_tools::DEN_SITUATION_GET
-                    | den_tools::DEN_MEMORY_WRITE_ENTRY
-                    | den_tools::DEN_MEMORY_STATUS
-                    | den_tools::DEN_MEMORY_TREE
-                    | den_tools::DEN_MEMORY_READ
-                    | den_tools::DEN_MEMORY_SEARCH
-                    | den_tools::DEN_MEMORY_REQUEST_REVIEW
-                    | den_tools::DEN_WORK_PLAN_LIST
-                    | den_tools::DEN_WORK_PLAN_GET_STATUS
-                    | den_tools::DEN_WORK_PLAN_UPDATE
-                    | den_tools::DEN_WORK_PLAN_REQUEST_HANDOFF
-            )
-        })
-        .map(|descriptor| {
-            serde_json::json!({
-                "name": descriptor.provider_name,
-                "description": format!(
-                    "Den server tool ({}). {}",
-                    descriptor.name, descriptor.description
-                ),
-                "parameters": descriptor.input_schema,
-                "x-bears-domain": descriptor.domain,
-                "x-bears-content-class": descriptor.content_class,
-                "x-bears-display": descriptor.display,
-            })
-        })
-        .collect::<Vec<_>>();
-    serde_json::json!(descriptors)
-}
-
 fn acp_den_provider_to_canonical_tool_name(provider_name: &str) -> Option<&'static str> {
     den_tools::builtin_den_tool_descriptor_for_provider_name(provider_name)
         .map(|descriptor| descriptor.name)
-}
-
-fn merge_acp_pair_tool_descriptors(client_tools: serde_json::Value) -> serde_json::Value {
-    let mut merged = client_tools.as_array().cloned().unwrap_or_default();
-    if let Some(server_tools) = acp_pair_den_tool_descriptors().as_array() {
-        merged.extend(server_tools.iter().cloned());
-    }
-    serde_json::json!(merged)
 }
 
 fn looks_like_letta_waiting_for_approval_error(err: &CustomError) -> bool {
@@ -618,6 +520,10 @@ async fn cancel_letta_runs_by_id_or_skip(
     }
 }
 
+pub(crate) use self::client::{
+    acp_pair_den_tool_descriptors, merge_acp_pair_tool_descriptors, new_acp_conversation_id,
+    normalize_acp_client, requested_mode_from_prompt, tools_enabled_for_client,
+};
 pub(crate) use self::history::normalize_acp_conversation_id;
 pub(crate) use self::prompt_context::acp_direct_tool_prompt_context;
 pub(crate) use self::sessions::{acp_session_row_to_http_with_modes, resolve_acp_turn_context};
