@@ -48,6 +48,7 @@
 
 pub mod acp;
 pub mod acp_stream_mapping;
+pub mod acp_stream_plan;
 pub mod acp_stream_support;
 pub mod acp_stream_text;
 #[cfg(test)]
