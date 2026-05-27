@@ -9,6 +9,7 @@ pub(super) mod compat;
 pub(super) mod config;
 pub(super) mod handlers;
 pub(super) mod history;
+pub(super) mod http_types;
 pub(super) mod letta_support;
 pub(super) mod pair_reflection_support;
 pub(super) mod paths;
@@ -31,7 +32,6 @@ use axum::{
     routing::{get, post},
     Json, Router,
 };
-use serde::{Deserialize, Serialize};
 use tracing::Instrument;
 use uuid::Uuid;
 
@@ -122,182 +122,6 @@ pub fn router() -> Router<ApiState> {
         .route("/bears/{slug}/auth-check", get(auth_check))
 }
 
-#[derive(Debug, Deserialize)]
-struct AcpSetModeRequest {
-    mode: String,
-    #[serde(default)]
-    reason: Option<String>,
-    #[serde(default)]
-    adapter_contract: Option<AdapterContract>,
-}
-
-#[derive(Debug, Serialize)]
-struct AcpSetModeResponse {
-    requested_mode: String,
-    effective_mode: String,
-    session_policy: serde_json::Value,
-    workflow_state: serde_json::Value,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    plan_mode: Option<serde_json::Value>,
-    message: String,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct AcpPromptRequest {
-    pub message: String,
-    #[serde(default)]
-    pub conversation_id: Option<String>,
-    #[serde(default)]
-    pub client: Option<String>,
-    #[serde(default)]
-    pub client_capabilities: serde_json::Value,
-    #[serde(default)]
-    pub client_context: serde_json::Value,
-    /// Adapter-local mode selected before Den has necessarily persisted the ACP
-    /// session binding. Den treats this as initial intent for new sessions only;
-    /// existing sessions continue to use Den's stored current_mode/plan state.
-    #[serde(default)]
-    pub requested_mode: Option<String>,
-    #[serde(default)]
-    pub adapter_contract: Option<AdapterContract>,
-}
-
-#[derive(Debug, Serialize)]
-pub(super) struct AcpToolResultResponse {
-    pub(super) accepted: bool,
-    pub(super) reason: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub(super) settlement: Option<String>,
-    pub(super) turn_id: Option<String>,
-    pub(super) tool_call_id: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub(super) diagnostic: Option<serde_json::Value>,
-}
-
-#[cfg(test)]
-impl AcpToolResultResponse {
-    fn to_value(&self) -> serde_json::Value {
-        serde_json::to_value(self).expect("AcpToolResultResponse serializes")
-    }
-}
-
-#[derive(Debug, Deserialize)]
-struct AcpPermissionDecisionRequest {
-    decision: String,
-    #[serde(default)]
-    plan_mode_id: Option<Uuid>,
-    #[serde(default)]
-    adapter_contract: Option<AdapterContract>,
-}
-
-#[derive(Debug, Deserialize)]
-struct AcpAdapterEnvironmentRequest {
-    environment: serde_json::Value,
-    #[serde(default)]
-    conversation_title: Option<String>,
-    #[serde(default)]
-    #[allow(dead_code)]
-    adapter_contract: Option<AdapterContract>,
-}
-
-#[derive(Debug, Serialize)]
-struct AcpPermissionDecisionResponse {
-    accepted: bool,
-    reason: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    local_tool_request: Option<serde_json::Value>,
-}
-
-#[derive(Debug, Serialize)]
-struct AcpCloseSessionResponse {
-    ok: bool,
-    archived: bool,
-    conversation_id: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    #[allow(dead_code)]
-    unwedged: Option<bool>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    workflow_state: Option<serde_json::Value>,
-}
-
-#[derive(Debug, Serialize)]
-struct AcpErrorResponse {
-    error: String,
-    error_code: &'static str,
-    request_id: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    adapter_contract_version: Option<u32>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    minimum_adapter_contract_version: Option<u32>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    current_adapter_contract_version: Option<u32>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    maximum_adapter_contract_version: Option<u32>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    suggested_action: Option<&'static str>,
-}
-
-
-#[derive(Debug, Deserialize)]
-struct AcpConversationsQuery {
-    #[serde(default)]
-    include_archived: bool,
-}
-
-#[derive(Debug, Serialize)]
-struct AcpConversationRow {
-    id: String,
-    title: String,
-    last_message_at: Option<String>,
-    archived: bool,
-}
-
-#[derive(Debug, Serialize)]
-struct AcpConversationsResponse {
-    conversations: Vec<AcpConversationRow>,
-}
-
-#[derive(Debug, Deserialize)]
-struct AcpConversationHistoryQuery {
-    #[serde(default)]
-    before: Option<String>,
-    #[serde(default)]
-    limit: Option<u32>,
-}
-
-#[derive(Debug, Serialize)]
-struct AcpConversationHistoryMessage {
-    id: Option<String>,
-    role: String,
-    text: String,
-    created_at: Option<String>,
-}
-
-#[derive(Debug, Serialize)]
-struct AcpConversationHistoryResponse {
-    messages: Vec<AcpConversationHistoryMessage>,
-    has_more: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    next_before: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-struct AcpSessionsListQuery {
-    #[serde(default)]
-    include_closed: bool,
-    #[serde(default)]
-    cwd: Option<String>,
-    #[serde(default)]
-    cursor: Option<String>,
-}
-
-#[derive(Debug, Serialize)]
-struct AcpSessionsListHttpResponse {
-    sessions: Vec<AcpSessionHttp>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    next_cursor: Option<String>,
-}
-
 pub(crate) use self::client::{
     acp_pair_den_tool_descriptors, merge_acp_pair_tool_descriptors, new_acp_conversation_id,
     normalize_acp_client, requested_mode_from_prompt, tools_enabled_for_client,
@@ -305,6 +129,16 @@ pub(crate) use self::client::{
 pub(crate) use self::config::{
     acp_debug_event_sample_chars, acp_debug_ui_enabled, acp_stream_tokens_enabled,
     acp_text_chunk_chars, acp_tool_timeout_ms_for_provider,
+};
+pub(crate) use self::http_types::{
+    AcpConversationHistoryMessage, AcpConversationRow, AcpErrorResponse, AcpPromptRequest,
+    AcpToolResultResponse,
+};
+use self::http_types::{
+    AcpAdapterEnvironmentRequest, AcpCloseSessionResponse, AcpConversationHistoryQuery,
+    AcpConversationHistoryResponse, AcpConversationsQuery, AcpConversationsResponse,
+    AcpPermissionDecisionRequest, AcpPermissionDecisionResponse, AcpSessionsListHttpResponse,
+    AcpSessionsListQuery, AcpSetModeRequest, AcpSetModeResponse,
 };
 use self::config::pending_web_fetch_approvals;
 use self::config::PendingWebFetchApproval;
