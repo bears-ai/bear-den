@@ -2,6 +2,7 @@ pub(super) mod logging;
 pub(super) mod mapping;
 pub(super) mod orchestration;
 pub(super) mod plan;
+pub(super) mod prompt_flow;
 pub(super) mod plan_entries;
 pub(super) mod runtime;
 pub(super) mod sse_stream;
