@@ -1,14 +1,11 @@
 use bytes::Bytes;
 
 use crate::{
-    api::{
-        acp::{
-            persist_stream_event_side_effects, AcpResolvedToolResult, AcpStreamContext,
-            PersistedToolRequestEffect,
-        },
-        acp_stream_logging::summarize_letta_event_for_log,
-        acp_stream_support::{parse_sse_event_body_to_json, AcpStreamDiagnostics},
+    api::acp::{
+        persist_stream_event_side_effects, AcpResolvedToolResult, AcpStreamContext,
+        PersistedToolRequestEffect,
     },
+    api::acp::stream_support::{parse_sse_event_body_to_json, AcpStreamDiagnostics},
     core::{
         acp_letta_events::{
             acp_event_to_adapter_sse, map_native_letta_stream_event_to_acp_event_with_accumulator,
@@ -140,5 +137,5 @@ pub(super) fn map_letta_stream_frame_to_acp_adapter_events(frame: &[u8]) -> Vec<
 }
 
 pub(super) fn summarize_event_for_log(value: &serde_json::Value) -> serde_json::Value {
-    summarize_letta_event_for_log(value)
+    super::stream_logging::summarize_letta_event_for_log(value)
 }

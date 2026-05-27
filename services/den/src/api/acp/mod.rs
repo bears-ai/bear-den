@@ -4,6 +4,16 @@
 //! injects trusted context, and maps text prompts to the Bear's API-direct `pair` Letta agent.
 //! Client-tool relay and full ACP stdio transport live in later slices / an external adapter.
 
+pub(super) mod compat;
+pub(super) mod paths;
+pub(super) mod stream_logging;
+pub(super) mod stream_mapping;
+pub(super) mod stream_plan;
+pub(super) mod stream_support;
+pub(super) mod stream_text;
+pub(super) mod tool_results;
+pub(super) mod workflow;
+
 use axum::{
     body::Body,
     extract::{Path, Query, State},
@@ -32,31 +42,33 @@ use uuid::Uuid;
 
 use crate::{
     api::{
-        acp_compat::{
-            acp_compatibility_error_response, adapter_contract_from_value,
-            check_adapter_contract, compatibility_tool_result_body,
+        acp::{
+            compat::{
+                acp_compatibility_error_response, adapter_contract_from_value,
+                check_adapter_contract, compatibility_tool_result_body,
+            },
+            paths::{
+                is_absolute_local_path, optional_absolute_cwd_filter, require_absolute_cwd,
+            },
+            stream_mapping::{
+                map_letta_stream_frame_to_acp_adapter_events,
+                map_runtime_stream_event_to_acp_adapter_events_with_persistence,
+                summarize_event_for_log,
+            },
+            stream_plan::{
+                mode_from_den_tool_result, plan_approval_fallback_payload,
+                plan_update_from_den_tool_result,
+            },
+            stream_support::{
+                find_sse_frame_end, parse_sse_event_body_to_json,
+                strip_trailing_sse_delimiter_owned, AcpStreamDiagnostics,
+            },
+            stream_text::AcpTextChunker,
+            tool_results::{
+                acp_tool_result_response_from_delivery, default_unavailable_context_budget,
+            },
+            workflow::render_turn_state_summary_with_activity,
         },
-        acp_paths::{
-            is_absolute_local_path, optional_absolute_cwd_filter, require_absolute_cwd,
-        },
-        acp_stream_mapping::{
-            map_letta_stream_frame_to_acp_adapter_events,
-            map_runtime_stream_event_to_acp_adapter_events_with_persistence,
-            summarize_event_for_log,
-        },
-        acp_tool_results::{
-            acp_tool_result_response_from_delivery, default_unavailable_context_budget,
-        },
-        acp_workflow::render_turn_state_summary_with_activity,
-        acp_stream_plan::{
-            mode_from_den_tool_result, plan_approval_fallback_payload,
-            plan_update_from_den_tool_result,
-        },
-        acp_stream_support::{
-            find_sse_frame_end, parse_sse_event_body_to_json,
-            strip_trailing_sse_delimiter_owned, AcpStreamDiagnostics,
-        },
-        acp_stream_text::AcpTextChunker,
         auth::{self, ApiError},
         oauth::OAuthScope,
         service::ApiState,
@@ -804,9 +816,7 @@ async fn cancel_letta_runs_by_id_or_skip(
     }
 }
 
-pub(crate) use crate::api::acp_workflow::{
-    workflow_state_json, workflow_state_json_from_sources,
-};
+pub(crate) use self::workflow::{workflow_state_json, workflow_state_json_from_sources};
 
 #[cfg(test)]
 pub(crate) fn acp_direct_tool_prompt_context(

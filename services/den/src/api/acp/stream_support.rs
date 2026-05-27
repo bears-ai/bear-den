@@ -2,10 +2,7 @@ use serde_json::json;
 use std::collections::BTreeMap;
 
 use crate::{
-    api::{
-        acp::AcpStreamContext,
-        acp_stream_logging::{summarize_json_parse_error_for_log, summarize_letta_event_for_log},
-    },
+    api::acp::AcpStreamContext,
     core::{
         acp_letta_events::{
             acp_event_adapter_type, acp_event_has_visible_output, AcpGatewayEvent,
@@ -204,7 +201,8 @@ impl AcpStreamDiagnostics {
     pub(super) fn observe_unmapped_event(&mut self, value: &serde_json::Value) {
         self.unmapped_events += 1;
         if self.unmapped_event_samples.len() < 5 {
-            self.unmapped_event_samples.push(summarize_letta_event_for_log(value).to_string());
+            self.unmapped_event_samples
+                .push(super::stream_logging::summarize_letta_event_for_log(value).to_string());
         }
     }
 
@@ -353,7 +351,7 @@ pub(super) fn parse_sse_event_body_to_json(body: &[u8]) -> Result<Option<serde_j
     serde_json::from_str::<serde_json::Value>(&joined)
         .map(Some)
         .map_err(|err| {
-            let summary = summarize_json_parse_error_for_log(&joined);
+            let summary = super::stream_logging::summarize_json_parse_error_for_log(&joined);
             format!("{err}; body_preview={summary}")
         })
 }
