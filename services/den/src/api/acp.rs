@@ -130,14 +130,6 @@ fn acp_text_chunk_chars() -> usize {
         .unwrap_or(384)
 }
 
-fn acp_max_thought_bytes_per_turn() -> usize {
-    std::env::var("BEARS_ACP_MAX_THOUGHT_BYTES")
-        .ok()
-        .and_then(|value| value.trim().parse::<usize>().ok())
-        .map(|value| value.clamp(1024, 1024 * 1024))
-        .unwrap_or(128 * 1024)
-}
-
 fn acp_debug_ui_enabled() -> bool {
     env_flag("BEARS_ACP_DEBUG_UI")
 }

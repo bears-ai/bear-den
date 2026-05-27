@@ -2,7 +2,13 @@ use crate::{
     core::{acp_letta_events::AcpGatewayEvent, letta::normalize_display_status_text},
 };
 
-const ACP_MAX_THOUGHT_BYTES_PER_TURN: usize = 64 * 1024;
+fn acp_max_thought_bytes_per_turn() -> usize {
+    std::env::var("BEARS_ACP_MAX_THOUGHT_BYTES")
+        .ok()
+        .and_then(|value| value.trim().parse::<usize>().ok())
+        .map(|value| value.clamp(1024, 1024 * 1024))
+        .unwrap_or(128 * 1024)
+}
 
 #[derive(Default)]
 pub(super) struct AcpTextChunker {
@@ -16,7 +22,7 @@ pub(super) struct AcpTextChunker {
 
 impl AcpTextChunker {
     pub(super) fn new(max_chars: usize) -> Self {
-        Self::new_with_reasoning_limit(max_chars, ACP_MAX_THOUGHT_BYTES_PER_TURN)
+        Self::new_with_reasoning_limit(max_chars, acp_max_thought_bytes_per_turn())
     }
 
     pub(super) fn new_with_reasoning_limit(max_chars: usize, max_reasoning_bytes: usize) -> Self {
