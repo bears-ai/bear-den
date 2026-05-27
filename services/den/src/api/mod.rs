@@ -48,11 +48,13 @@
 
 pub mod acp;
 pub mod acp_compat;
+pub mod acp_paths;
 pub mod acp_stream_logging;
 pub mod acp_stream_mapping;
 pub mod acp_stream_plan;
 pub mod acp_stream_support;
 pub mod acp_stream_text;
+pub mod acp_tool_results;
 #[cfg(test)]
 mod acp_turn_state_alignment_tests;
 #[cfg(test)]

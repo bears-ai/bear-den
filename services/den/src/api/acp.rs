@@ -21,7 +21,6 @@ use sqlx::PgPool;
 use std::{
     collections::{HashMap, VecDeque},
     future::Future,
-    path::Path as FsPath,
     pin::Pin,
     sync::Arc,
     task::Poll,
@@ -37,10 +36,16 @@ use crate::{
             acp_compatibility_error_response, adapter_contract_from_value,
             check_adapter_contract, compatibility_tool_result_body,
         },
+        acp_paths::{
+            is_absolute_local_path, optional_absolute_cwd_filter, require_absolute_cwd,
+        },
         acp_stream_mapping::{
             map_letta_stream_frame_to_acp_adapter_events,
             map_runtime_stream_event_to_acp_adapter_events_with_persistence,
             summarize_event_for_log,
+        },
+        acp_tool_results::{
+            acp_tool_result_response_from_delivery, default_unavailable_context_budget,
         },
         acp_stream_plan::{
             mode_from_den_tool_result, plan_approval_fallback_payload,
@@ -259,15 +264,15 @@ pub struct AcpPromptRequest {
 }
 
 #[derive(Debug, Serialize)]
-struct AcpToolResultResponse {
-    accepted: bool,
-    reason: String,
+pub(super) struct AcpToolResultResponse {
+    pub(super) accepted: bool,
+    pub(super) reason: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    settlement: Option<String>,
-    turn_id: Option<String>,
-    tool_call_id: String,
+    pub(super) settlement: Option<String>,
+    pub(super) turn_id: Option<String>,
+    pub(super) tool_call_id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    diagnostic: Option<serde_json::Value>,
+    pub(super) diagnostic: Option<serde_json::Value>,
 }
 
 #[cfg(test)]
@@ -569,50 +574,6 @@ fn decode_acp_sessions_cursor(raw: Option<&str>) -> Result<Option<AcpSessionsCur
         .parse::<Uuid>()
         .map_err(|_| CustomError::ValidationError("invalid sessions cursor id".to_string()))?;
     Ok(Some(AcpSessionsCursor { updated_at, id }))
-}
-
-fn is_absolute_local_path(path: &str) -> bool {
-    let path = path.trim();
-    if path.is_empty() {
-        return false;
-    }
-    FsPath::new(path).is_absolute()
-        || path.starts_with("\\\\")
-        || (path.len() >= 3
-            && path.as_bytes()[0].is_ascii_alphabetic()
-            && path.as_bytes()[1] == b':'
-            && matches!(path.as_bytes()[2], b'/' | b'\\'))
-}
-
-fn optional_absolute_cwd_filter(raw: Option<&str>) -> Result<Option<&str>, CustomError> {
-    let Some(cwd) = raw.map(str::trim).filter(|s| !s.is_empty()) else {
-        return Ok(None);
-    };
-    if is_absolute_local_path(cwd) {
-        Ok(Some(cwd))
-    } else {
-        tracing::warn!(cwd = %cwd, "rejecting non-absolute ACP sessions cwd filter");
-        Err(CustomError::ValidationError(
-            "cwd filter must be an absolute local path".to_string(),
-        ))
-    }
-}
-
-fn require_absolute_cwd(raw: Option<&str>) -> Result<String, CustomError> {
-    let Some(cwd) = raw.map(str::trim).filter(|s| !s.is_empty()) else {
-        tracing::warn!("rejecting ACP prompt with missing cwd");
-        return Err(CustomError::ValidationError(
-            "ACP client_context.cwd must be an absolute local path".to_string(),
-        ));
-    };
-    if is_absolute_local_path(cwd) {
-        Ok(cwd.to_string())
-    } else {
-        tracing::warn!(cwd = %cwd, "rejecting ACP prompt with non-absolute cwd");
-        Err(CustomError::ValidationError(
-            "ACP client_context.cwd must be an absolute local path".to_string(),
-        ))
-    }
 }
 
 fn acp_error_status_message(err: &CustomError) -> (StatusCode, &'static str, String) {
@@ -2291,85 +2252,6 @@ async fn tool_result(
     match tool_result_inner(state, slug, session_id, tool_call_id, headers, body).await {
         Ok(response) => response,
         Err(err) => acp_error_response(err, request_id),
-    }
-}
-
-fn default_unavailable_context_budget() -> serde_json::Value {
-    serde_json::json!({
-        "status": "unavailable",
-        "reason": "Letta/provider context usage data is not wired into Den session_info yet",
-        "source": "den.acp",
-    })
-}
-
-fn late_result_settlement_from_status(status: &str) -> &'static str {
-    match status {
-        "timeout" => "timed_out",
-        "cancelled" => "cancelled",
-        "ok" | "error" | "unsupported" => "already_settled",
-        _ => "unknown",
-    }
-}
-
-fn acp_tool_result_response_from_delivery(
-    delivery: AcpToolResultDelivery,
-    session_id: &str,
-    tool_call_id_param: String,
-    parsed_status: AcpToolStatus,
-    tool_turns: &AcpToolTurnCoordinator,
-) -> AcpToolResultResponse {
-    match delivery {
-        AcpToolResultDelivery::Delivered { body, .. } => AcpToolResultResponse {
-            accepted: true,
-            reason: "delivered".to_string(),
-            settlement: None,
-            turn_id: body.turn_id,
-            tool_call_id: tool_call_id_param,
-            diagnostic: Some(serde_json::json!({
-                "component": "den.acp",
-                "phase": acp_diag_phase::DEN_RESULT_DELIVERED,
-                "status": parsed_status.as_str(),
-            })),
-        },
-        AcpToolResultDelivery::TurnMissing {
-            turn_id,
-            tool_call_id,
-        } => AcpToolResultResponse {
-            accepted: false,
-            reason: "late_result_ignored".to_string(),
-            settlement: Some("unknown".to_string()),
-            turn_id,
-            tool_call_id,
-            diagnostic: Some(serde_json::json!({
-                "component": "den.acp",
-                "phase": "late_tool_result_ignored",
-            })),
-        },
-        AcpToolResultDelivery::AlreadySettled {
-            turn_id,
-            tool_call_id,
-        } => AcpToolResultResponse {
-            accepted: false,
-            reason: "late_result_ignored".to_string(),
-            settlement: Some("already_settled".to_string()),
-            turn_id,
-            tool_call_id: tool_call_id.clone(),
-            diagnostic: tool_turns
-                .recently_settled(session_id, &tool_call_id)
-                .map(|cached| cached.diagnostic()),
-        },
-        AcpToolResultDelivery::RecentlySettled {
-            turn_id,
-            tool_call_id,
-            cached,
-        } => AcpToolResultResponse {
-            accepted: false,
-            reason: "late_result_ignored".to_string(),
-            settlement: Some(late_result_settlement_from_status(&cached.status).to_string()),
-            turn_id,
-            tool_call_id,
-            diagnostic: Some(cached.diagnostic()),
-        },
     }
 }
 
