@@ -2,13 +2,9 @@ use crate::{
     core::{acp_letta_events::AcpGatewayEvent, letta::normalize_display_status_text},
 };
 
-fn acp_max_thought_bytes_per_turn() -> usize {
-    std::env::var("BEARS_ACP_MAX_THOUGHT_BYTES")
-        .ok()
-        .and_then(|value| value.trim().parse::<usize>().ok())
-        .map(|value| value.clamp(1024, 1024 * 1024))
-        .unwrap_or(128 * 1024)
-}
+use super::stream_text_utils::{
+    acp_max_thought_bytes_per_turn, should_flush_text, truncate_utf8_boundary,
+};
 
 #[derive(Default)]
 pub(super) struct AcpTextChunker {
@@ -116,21 +112,3 @@ impl AcpTextChunker {
     }
 }
 
-pub(super) fn should_flush_text(buffer: &str, max_chars: usize) -> bool {
-    buffer.chars().count() >= max_chars
-        || buffer.ends_with('\n')
-        || buffer.ends_with(". ")
-        || buffer.ends_with("! ")
-        || buffer.ends_with("? ")
-}
-
-pub(super) fn truncate_utf8_boundary(s: &str, max_bytes: usize) -> &str {
-    if s.len() <= max_bytes {
-        return s;
-    }
-    let mut end = max_bytes;
-    while end > 0 && !s.is_char_boundary(end) {
-        end -= 1;
-    }
-    &s[..end]
-}
