@@ -15,6 +15,7 @@ pub(super) mod paths;
 pub(super) mod prompt_context;
 pub(super) mod prompt_guidance;
 pub(super) mod responses;
+pub(super) mod routing;
 pub(super) mod sessions;
 pub(super) mod stream;
 pub(super) mod tool_result_diagnostics;
@@ -55,14 +56,12 @@ use crate::{
     },
     core::{
         acp_letta_events::AcpGatewayEvent,
-        acp_sessions,
         acp_tools::{acp_provider_tool_names_for_client_context, resolve_session_policy_for_mode},
         acp_turn_controller::AcpActiveTurnCancelHandle,
         acp_turn_runner::{
             acp_cleanup_stale_runtime_state, continue_acp_turn_with_runtime,
             AcpStaleRuntimeCleanupParams, AcpTurnContinueRequest, AcpTurnStreamContext,
         },
-        den_tools,
         letta::LettaContinuationContext,
         runtime_provider::RoleRuntimeBinding,
     },
@@ -299,27 +298,6 @@ struct AcpSessionsListHttpResponse {
     next_cursor: Option<String>,
 }
 
-fn is_acp_archive_target(conversation_id: &str) -> bool {
-    conversation_id.starts_with("conv-")
-}
-
-fn acp_archive_target_for_session(session: &acp_sessions::AcpSessionRow) -> Option<&str> {
-    session
-        .resolved_conversation_id
-        .as_deref()
-        .map(str::trim)
-        .filter(|s| is_acp_archive_target(s))
-        .or_else(|| {
-            let selection = session.conversation_id.trim();
-            is_acp_archive_target(selection).then_some(selection)
-        })
-}
-
-fn acp_den_provider_to_canonical_tool_name(provider_name: &str) -> Option<&'static str> {
-    den_tools::builtin_den_tool_descriptor_for_provider_name(provider_name)
-        .map(|descriptor| descriptor.name)
-}
-
 pub(crate) use self::client::{
     acp_pair_den_tool_descriptors, merge_acp_pair_tool_descriptors, new_acp_conversation_id,
     normalize_acp_client, requested_mode_from_prompt, tools_enabled_for_client,
@@ -331,6 +309,10 @@ pub(crate) use self::config::{
 use self::config::pending_web_fetch_approvals;
 use self::config::PendingWebFetchApproval;
 pub(crate) use self::history::normalize_acp_conversation_id;
+pub(crate) use self::routing::{
+    acp_archive_target_for_session, acp_den_provider_to_canonical_tool_name,
+};
+use self::routing::tool_execution_route;
 pub(crate) use self::letta_support::{
     cancel_letta_runs_by_id_or_skip, looks_like_letta_waiting_for_approval_error,
 };
@@ -386,16 +368,6 @@ async fn prompt_inner(
     run_prompt_flow(state, slug, session_id, headers, body, request_id).await
 }
 
-fn tool_execution_route(tool_name: &str, args: &serde_json::Value) -> ToolExecutionRoute {
-    if args.get("_unsupported_detail").is_some() {
-        ToolExecutionRoute::Unsupported
-    } else if acp_den_provider_to_canonical_tool_name(tool_name).is_some() {
-        ToolExecutionRoute::DenServer
-    } else {
-        ToolExecutionRoute::AdapterLocal
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -421,6 +393,8 @@ mod tests {
                 is_valid_pending_acp_conversation_id, resolve_acp_prompt_conversation,
                 AcpConversationResolution, AcpConversationSelectionSource,
             },
+            acp_sessions,
+            den_tools,
             acp_tool_turns::{
                 AcpToolResultDelivery, AcpToolResultRequest, AcpToolTurnCoordinator,
                 AcpToolTurnRegistration,
