@@ -1,4 +1,4 @@
-pub(super) fn find_sse_frame_end(buf: &[u8]) -> Option<usize> {
+pub(in crate::api::acp) fn find_sse_frame_end(buf: &[u8]) -> Option<usize> {
     let lf = buf.windows(2).position(|w| w == b"\n\n").map(|p| p + 2);
     let crlf = buf.windows(4).position(|w| w == b"\r\n\r\n").map(|p| p + 4);
     match (lf, crlf) {
@@ -9,7 +9,7 @@ pub(super) fn find_sse_frame_end(buf: &[u8]) -> Option<usize> {
     }
 }
 
-pub(super) fn strip_trailing_sse_delimiter_owned(mut frame: Vec<u8>) -> Vec<u8> {
+pub(in crate::api::acp) fn strip_trailing_sse_delimiter_owned(mut frame: Vec<u8>) -> Vec<u8> {
     if frame.ends_with(b"\r\n\r\n") {
         frame.truncate(frame.len().saturating_sub(4));
     } else if frame.ends_with(b"\n\n") {
@@ -30,7 +30,7 @@ pub(super) fn strip_trailing_sse_delimiter(frame: &[u8]) -> &[u8] {
     }
 }
 
-pub(super) fn parse_sse_event_body_to_json(body: &[u8]) -> Result<Option<serde_json::Value>, String> {
+pub(in crate::api::acp) fn parse_sse_event_body_to_json(body: &[u8]) -> Result<Option<serde_json::Value>, String> {
     let body = String::from_utf8_lossy(body);
     let mut data_lines = Vec::new();
     for raw_line in body.lines() {
@@ -47,7 +47,7 @@ pub(super) fn parse_sse_event_body_to_json(body: &[u8]) -> Result<Option<serde_j
     serde_json::from_str::<serde_json::Value>(&joined)
         .map(Some)
         .map_err(|err| {
-            let summary = super::stream_logging::summarize_json_parse_error_for_log(&joined);
+            let summary = super::logging::summarize_json_parse_error_for_log(&joined);
             format!("{err}; body_preview={summary}")
         })
 }

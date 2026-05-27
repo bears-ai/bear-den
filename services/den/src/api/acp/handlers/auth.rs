@@ -17,7 +17,7 @@ use crate::{
     errors::CustomError,
 };
 
-pub(super) async fn auth_check(
+pub(in crate::api::acp) async fn auth_check(
     State(state): State<ApiState>,
     Path(slug): Path<String>,
     headers: HeaderMap,
@@ -36,7 +36,7 @@ pub(super) async fn auth_check(
     }
 }
 
-pub(super) async fn authenticate_acp_code_token(
+pub(in crate::api::acp) async fn authenticate_acp_code_token(
     state: &ApiState,
     headers: &HeaderMap,
     slug: &str,
@@ -48,7 +48,7 @@ pub(super) async fn authenticate_acp_code_token(
         .user_id)
 }
 
-pub(super) async fn authenticate_acp_code_token_with_auth(
+pub(in crate::api::acp) async fn authenticate_acp_code_token_with_auth(
     state: &ApiState,
     token: &str,
     slug: &str,

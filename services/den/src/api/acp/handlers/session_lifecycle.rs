@@ -25,13 +25,14 @@ use crate::{
     errors::CustomError,
 };
 
-use super::{
-    acp_archive_target_for_session, auth_session::authenticate_acp_code_token,
-    cancel_letta_runs_by_id_or_skip, resolve_acp_turn_context, run_pair_reflection_summary,
-    AcpCloseSessionResponse,
+use crate::api::acp::{
+    acp_archive_target_for_session, cancel_letta_runs_by_id_or_skip,
+    resolve_acp_turn_context, run_pair_reflection_summary, AcpCloseSessionResponse,
 };
 
-pub(super) async fn compact_session(
+use super::auth::authenticate_acp_code_token;
+
+pub(in crate::api::acp) async fn compact_session(
     State(state): State<ApiState>,
     Path((slug, session_id)): Path<(String, String)>,
     headers: HeaderMap,
@@ -94,7 +95,7 @@ pub(super) async fn compact_session_inner(
     .into_response())
 }
 
-pub(super) async fn close_session(
+pub(in crate::api::acp) async fn close_session(
     State(state): State<ApiState>,
     Path((slug, session_id)): Path<(String, String)>,
     headers: HeaderMap,
@@ -113,7 +114,7 @@ pub(super) async fn close_session(
     }
 }
 
-pub(super) async fn cancel_session(
+pub(in crate::api::acp) async fn cancel_session(
     State(state): State<ApiState>,
     Path((slug, session_id)): Path<(String, String)>,
     headers: HeaderMap,

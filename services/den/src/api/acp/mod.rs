@@ -4,28 +4,16 @@
 //! injects trusted context, and maps text prompts to the Bear's API-direct `pair` Letta agent.
 //! Client-tool relay and full ACP stdio transport live in later slices / an external adapter.
 
-pub(super) mod auth_session;
 pub(super) mod compat;
-pub(super) mod conversation_handlers;
+pub(super) mod handlers;
 pub(super) mod history;
 pub(super) mod paths;
-pub(super) mod permission_handlers;
 pub(super) mod prompt_context;
 pub(super) mod prompt_guidance;
 pub(super) mod responses;
-pub(super) mod session_handlers;
-pub(super) mod session_lifecycle_handlers;
 pub(super) mod sessions;
-pub(super) mod stream_logging;
-pub(super) mod stream_mapping;
-pub(super) mod stream_plan;
-pub(super) mod stream_plan_entries;
-pub(super) mod stream_support;
-pub(super) mod stream_support_sse;
-pub(super) mod stream_text;
-pub(super) mod stream_text_utils;
+pub(super) mod stream;
 pub(super) mod tool_result_diagnostics;
-pub(super) mod tool_result_handlers;
 pub(super) mod tool_results;
 pub(super) mod workflow;
 pub(super) mod workflow_guidance;
@@ -62,20 +50,22 @@ use crate::{
                 acp_compatibility_error_response, check_adapter_contract,
             },
             paths::{require_absolute_cwd},
-            stream_mapping::{
-                map_letta_stream_frame_to_acp_adapter_events,
-                map_runtime_stream_event_to_acp_adapter_events_with_persistence,
-                summarize_event_for_log,
+            stream::{
+                mapping::{
+                    map_letta_stream_frame_to_acp_adapter_events,
+                    map_runtime_stream_event_to_acp_adapter_events_with_persistence,
+                    summarize_event_for_log,
+                },
+                plan::{
+                    mode_from_den_tool_result, plan_approval_fallback_payload,
+                    plan_update_from_den_tool_result,
+                },
+                support::{
+                    find_sse_frame_end, parse_sse_event_body_to_json,
+                    strip_trailing_sse_delimiter_owned, AcpStreamDiagnostics,
+                },
+                text::AcpTextChunker,
             },
-            stream_plan::{
-                mode_from_den_tool_result, plan_approval_fallback_payload,
-                plan_update_from_den_tool_result,
-            },
-            stream_support::{
-                find_sse_frame_end, parse_sse_event_body_to_json,
-                strip_trailing_sse_delimiter_owned, AcpStreamDiagnostics,
-            },
-            stream_text::AcpTextChunker,
             tool_results::{
                 acp_tool_result_response_from_delivery, default_unavailable_context_budget,
             },
@@ -653,19 +643,21 @@ pub(crate) use self::sessions::{acp_session_row_to_http_with_modes, resolve_acp_
 pub(crate) use self::workflow::{workflow_state_json, workflow_state_json_from_sources};
 
 use self::{
-    auth_session::{auth_check, authenticate_acp_code_token_with_auth},
-    conversation_handlers::{conversation_history, conversations},
+    handlers::{
+        auth::{auth_check, authenticate_acp_code_token_with_auth},
+        conversations::{conversation_history, conversations},
+        permissions::permission_result,
+        session_lifecycle::{cancel_session, close_session, compact_session},
+        sessions::{
+            get_acp_session, get_acp_session_runtime, list_acp_sessions,
+            post_adapter_environment, set_session_mode,
+        },
+        tool_results::tool_result,
+    },
     history::{acp_auto_title_instruction, map_acp_history_page, pending_session_title_update_event},
-    permission_handlers::permission_result,
     prompt_context::{acp_direct_tool_prompt_context_with_activity, acp_plan_mode_prompt_context},
     responses::{acp_error_response, api_auth_error_response},
-    session_handlers::{
-        get_acp_session, get_acp_session_runtime, list_acp_sessions, post_adapter_environment,
-        set_session_mode,
-    },
-    session_lifecycle_handlers::{cancel_session, close_session, compact_session},
     sessions::{decode_acp_sessions_cursor, encode_acp_sessions_cursor},
-    tool_result_handlers::tool_result,
 };
 
 async fn prompt(

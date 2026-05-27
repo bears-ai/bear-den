@@ -14,34 +14,34 @@ use crate::{
     },
 };
 
-pub(super) use super::stream_support_sse::{
+pub(in crate::api::acp) use super::support_sse::{
     find_sse_frame_end, parse_sse_event_body_to_json, strip_trailing_sse_delimiter_owned,
 };
 
 #[derive(Default)]
-pub(super) struct AcpStreamDiagnostics {
-    pub(super) upstream_frames: usize,
-    pub(super) parsed_events: usize,
-    pub(super) mapped_events: usize,
-    pub(super) unmapped_events: usize,
-    pub(super) native_message_types: BTreeMap<String, usize>,
-    pub(super) native_event_types: BTreeMap<String, usize>,
-    pub(super) adapter_event_types: BTreeMap<String, usize>,
-    pub(super) tool_request_counts: BTreeMap<String, usize>,
-    pub(super) tool_call_accumulator: LettaToolCallAccumulator,
-    pub(super) unmapped_event_samples: Vec<String>,
-    pub(super) run_ids: Vec<String>,
-    pub(super) saw_visible_output: bool,
-    pub(super) saw_error: bool,
-    pub(super) saw_turn_complete: bool,
-    pub(super) saw_tool_return_ack: bool,
-    pub(super) saw_requires_approval_stop: bool,
-    pub(super) emitted_empty_turn_error: bool,
-    pub(super) emitted_runtime_cleanup: bool,
+pub(in crate::api::acp) struct AcpStreamDiagnostics {
+    pub(in crate::api::acp) upstream_frames: usize,
+    pub(in crate::api::acp) parsed_events: usize,
+    pub(in crate::api::acp) mapped_events: usize,
+    pub(in crate::api::acp) unmapped_events: usize,
+    pub(in crate::api::acp) native_message_types: BTreeMap<String, usize>,
+    pub(in crate::api::acp) native_event_types: BTreeMap<String, usize>,
+    pub(in crate::api::acp) adapter_event_types: BTreeMap<String, usize>,
+    pub(in crate::api::acp) tool_request_counts: BTreeMap<String, usize>,
+    pub(in crate::api::acp) tool_call_accumulator: LettaToolCallAccumulator,
+    pub(in crate::api::acp) unmapped_event_samples: Vec<String>,
+    pub(in crate::api::acp) run_ids: Vec<String>,
+    pub(in crate::api::acp) saw_visible_output: bool,
+    pub(in crate::api::acp) saw_error: bool,
+    pub(in crate::api::acp) saw_turn_complete: bool,
+    pub(in crate::api::acp) saw_tool_return_ack: bool,
+    pub(in crate::api::acp) saw_requires_approval_stop: bool,
+    pub(in crate::api::acp) emitted_empty_turn_error: bool,
+    pub(in crate::api::acp) emitted_runtime_cleanup: bool,
 }
 
 impl AcpStreamDiagnostics {
-    pub(super) fn merge_from(&mut self, other: Self) {
+    pub(in crate::api::acp) fn merge_from(&mut self, other: Self) {
         self.upstream_frames += other.upstream_frames;
         self.parsed_events += other.parsed_events;
         self.mapped_events += other.mapped_events;
@@ -77,7 +77,7 @@ impl AcpStreamDiagnostics {
         self.emitted_runtime_cleanup |= other.emitted_runtime_cleanup;
     }
 
-    pub(super) fn observe_runtime_event(
+    pub(in crate::api::acp) fn observe_runtime_event(
         &mut self,
         event: &crate::core::runtime_provider::RuntimeStreamEvent,
     ) {
@@ -138,7 +138,7 @@ impl AcpStreamDiagnostics {
         *map.entry(key.to_string()).or_insert(0) += 1;
     }
 
-    pub(super) fn observe_parsed_event(&mut self, value: &serde_json::Value) -> Vec<String> {
+    pub(in crate::api::acp) fn observe_parsed_event(&mut self, value: &serde_json::Value) -> Vec<String> {
         self.parsed_events += 1;
         let mut newly_observed_run_ids = Vec::new();
         let message_type = value.get("message_type").and_then(|v| v.as_str()).unwrap_or("");
@@ -196,7 +196,7 @@ impl AcpStreamDiagnostics {
         true
     }
 
-    pub(super) fn observe_mapped_event(&mut self, event: &AcpGatewayEvent) {
+    pub(in crate::api::acp) fn observe_mapped_event(&mut self, event: &AcpGatewayEvent) {
         self.mapped_events += 1;
         Self::increment(&mut self.adapter_event_types, acp_event_adapter_type(event));
         self.saw_visible_output |= acp_event_has_visible_output(event);
@@ -204,15 +204,15 @@ impl AcpStreamDiagnostics {
         self.saw_turn_complete |= matches!(event, AcpGatewayEvent::TurnComplete { .. } | AcpGatewayEvent::TurnResult { .. });
     }
 
-    pub(super) fn observe_unmapped_event(&mut self, value: &serde_json::Value) {
+    pub(in crate::api::acp) fn observe_unmapped_event(&mut self, value: &serde_json::Value) {
         self.unmapped_events += 1;
         if self.unmapped_event_samples.len() < 5 {
             self.unmapped_event_samples
-                .push(super::stream_logging::summarize_letta_event_for_log(value).to_string());
+                .push(super::logging::summarize_letta_event_for_log(value).to_string());
         }
     }
 
-    pub(super) fn empty_turn_error_event(&mut self, context: &AcpStreamContext) -> Option<AcpGatewayEvent> {
+    pub(in crate::api::acp) fn empty_turn_error_event(&mut self, context: &AcpStreamContext) -> Option<AcpGatewayEvent> {
         if self.emitted_empty_turn_error || self.saw_visible_output || self.saw_error || self.saw_tool_return_ack || self.emitted_runtime_cleanup {
             return None;
         }
@@ -234,11 +234,11 @@ impl AcpStreamDiagnostics {
         })
     }
 
-    pub(super) fn mark_runtime_cleanup_emitted(&mut self) {
+    pub(in crate::api::acp) fn mark_runtime_cleanup_emitted(&mut self) {
         self.emitted_runtime_cleanup = true;
     }
 
-    pub(super) fn diagnostic_json_with_turn_controller(&self, context: &AcpStreamContext, turn_controller: Option<&AcpTurnController>) -> serde_json::Value {
+    pub(in crate::api::acp) fn diagnostic_json_with_turn_controller(&self, context: &AcpStreamContext, turn_controller: Option<&AcpTurnController>) -> serde_json::Value {
         json!({
             "request_id": context.request_id,
             "acp_session_id": context.acp_session_id,
@@ -273,7 +273,7 @@ impl AcpStreamDiagnostics {
         })
     }
 
-    pub(super) fn log_summary(&self, context: &AcpStreamContext) {
+    pub(in crate::api::acp) fn log_summary(&self, context: &AcpStreamContext) {
         let turn_result_count = self.adapter_event_types.get("turn_result").copied().unwrap_or(0);
         if turn_result_count > 1 {
             tracing::warn!(

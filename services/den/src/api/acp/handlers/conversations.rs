@@ -17,8 +17,7 @@ use crate::{
     errors::CustomError,
 };
 
-use super::{
-    auth_session::authenticate_acp_code_token,
+use crate::api::acp::{
     history::map_acp_history_page,
     normalize_acp_conversation_id,
     responses::acp_error_response,
@@ -26,7 +25,9 @@ use super::{
     AcpConversationsQuery, AcpConversationsResponse,
 };
 
-pub(super) async fn conversations(
+use super::auth::authenticate_acp_code_token;
+
+pub(in crate::api::acp) async fn conversations(
     State(state): State<ApiState>,
     Path(slug): Path<String>,
     Query(query): Query<AcpConversationsQuery>,
@@ -101,7 +102,7 @@ pub(super) async fn conversations_inner(
     Ok(Json(AcpConversationsResponse { conversations }).into_response())
 }
 
-pub(super) async fn conversation_history(
+pub(in crate::api::acp) async fn conversation_history(
     State(state): State<ApiState>,
     Path((slug, conversation_id)): Path<(String, String)>,
     Query(query): Query<AcpConversationHistoryQuery>,

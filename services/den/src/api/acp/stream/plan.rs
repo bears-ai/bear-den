@@ -2,14 +2,14 @@ use serde_json::Value;
 use uuid::Uuid;
 
 use crate::{
-    api::acp::stream_plan_entries::work_plan_item_to_acp_plan_entry,
+    api::acp::stream::plan_entries::work_plan_item_to_acp_plan_entry,
     core::{
         acp_letta_events::AcpGatewayEvent, acp_plan_mode,
         acp_tool_turns::AcpToolResultRequest, turn_state,
     },
 };
 
-pub(super) fn mode_from_den_tool_result(result: &AcpToolResultRequest) -> Option<&str> {
+pub(in crate::api::acp) fn mode_from_den_tool_result(result: &AcpToolResultRequest) -> Option<&str> {
     result
         .structured_content
         .get("mode_update")
@@ -17,7 +17,7 @@ pub(super) fn mode_from_den_tool_result(result: &AcpToolResultRequest) -> Option
         .filter(|mode| matches!(*mode, "ask" | "plan" | "write"))
 }
 
-pub(super) fn plan_update_from_den_tool_result(
+pub(in crate::api::acp) fn plan_update_from_den_tool_result(
     result: &AcpToolResultRequest,
 ) -> Option<AcpGatewayEvent> {
     if let Some(plan) = result.structured_content.get("plan") {
@@ -35,7 +35,7 @@ pub(super) fn plan_update_from_den_tool_result(
     plan_approval_fallback_from_tool_result(result)
 }
 
-pub(super) fn plan_approval_fallback_payload(
+pub(in crate::api::acp) fn plan_approval_fallback_payload(
     row: &acp_plan_mode::AcpPlanModeSessionRow,
 ) -> Value {
     serde_json::json!({

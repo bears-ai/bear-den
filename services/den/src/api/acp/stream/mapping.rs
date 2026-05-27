@@ -5,7 +5,7 @@ use crate::{
         persist_stream_event_side_effects, AcpResolvedToolResult, AcpStreamContext,
         PersistedToolRequestEffect,
     },
-    api::acp::stream_support::{parse_sse_event_body_to_json, AcpStreamDiagnostics},
+    api::acp::stream::support::{parse_sse_event_body_to_json, AcpStreamDiagnostics},
     core::{
         acp_letta_events::{
             acp_event_to_adapter_sse, map_native_letta_stream_event_to_acp_event_with_accumulator,
@@ -24,7 +24,7 @@ pub(super) type AcpFrameResult = Result<
     std::io::Error,
 >;
 
-pub(super) async fn map_runtime_stream_event_to_acp_adapter_events_with_persistence(
+pub(in crate::api::acp) async fn map_runtime_stream_event_to_acp_adapter_events_with_persistence(
     runtime_event: RuntimeStreamEvent,
     context: AcpStreamContext,
     diagnostics: &mut AcpStreamDiagnostics,
@@ -126,7 +126,7 @@ pub(super) async fn map_runtime_stream_event_to_acp_adapter_events_with_persiste
     }
 }
 
-pub(super) fn map_letta_stream_frame_to_acp_adapter_events(frame: &[u8]) -> Vec<Bytes> {
+pub(in crate::api::acp) fn map_letta_stream_frame_to_acp_adapter_events(frame: &[u8]) -> Vec<Bytes> {
     let Some(value) = parse_sse_event_body_to_json(frame).ok().flatten() else {
         return Vec::new();
     };
@@ -136,6 +136,6 @@ pub(super) fn map_letta_stream_frame_to_acp_adapter_events(frame: &[u8]) -> Vec<
         .unwrap_or_default()
 }
 
-pub(super) fn summarize_event_for_log(value: &serde_json::Value) -> serde_json::Value {
-    super::stream_logging::summarize_letta_event_for_log(value)
+pub(in crate::api::acp) fn summarize_event_for_log(value: &serde_json::Value) -> serde_json::Value {
+    super::logging::summarize_letta_event_for_log(value)
 }

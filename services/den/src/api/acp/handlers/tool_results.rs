@@ -27,9 +27,9 @@ use crate::{
     errors::CustomError,
 };
 
-use super::auth_session::authenticate_acp_code_token_with_auth;
+use super::auth::authenticate_acp_code_token_with_auth;
 
-pub(super) async fn tool_result(
+pub(in crate::api::acp) async fn tool_result(
     State(state): State<ApiState>,
     Path((slug, session_id, tool_call_id)): Path<(String, String, String)>,
     headers: HeaderMap,

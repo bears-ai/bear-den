@@ -24,20 +24,21 @@ use crate::{
     errors::CustomError,
 };
 
-use super::{
-    auth_session::authenticate_acp_code_token_with_auth, invoke_acp_den_tool,
-    pending_web_fetch_approvals, plan_approval_fallback_payload, workflow_state_json,
-    workflow_state_json_from_sources,
+use crate::api::acp::{
+    check_adapter_contract, invoke_acp_den_tool, pending_web_fetch_approvals,
+    plan_approval_fallback_payload, workflow_state_json, workflow_state_json_from_sources,
 };
 
-pub(super) async fn permission_result(
+use super::auth::authenticate_acp_code_token_with_auth;
+
+pub(in crate::api::acp) async fn permission_result(
     State(state): State<ApiState>,
     Path((slug, session_id, permission_id)): Path<(String, String, String)>,
     headers: HeaderMap,
     Json(body): Json<AcpPermissionDecisionRequest>,
 ) -> Response {
     let request_id = Uuid::new_v4();
-    if let Err(err) = super::check_adapter_contract(body.adapter_contract.as_ref()) {
+    if let Err(err) = check_adapter_contract(body.adapter_contract.as_ref()) {
         return acp_compatibility_error_response(err, request_id);
     }
     match permission_result_inner(state, slug, session_id, permission_id, headers, body).await {

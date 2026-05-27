@@ -31,15 +31,16 @@ use crate::{
     errors::CustomError,
 };
 
-use super::{
-    acp_session_row_to_http_with_modes,
-    auth_session::{authenticate_acp_code_token, authenticate_acp_code_token_with_auth},
-    decode_acp_sessions_cursor, encode_acp_sessions_cursor, format_acp_session_timestamp,
-    resolve_acp_turn_context, tools_enabled_for_client, AcpAdapterEnvironmentRequest,
-    AcpSessionsListHttpResponse, AcpSessionsListQuery, AcpSetModeRequest, AcpSetModeResponse,
+use crate::api::acp::{
+    acp_session_row_to_http_with_modes, decode_acp_sessions_cursor, encode_acp_sessions_cursor,
+    format_acp_session_timestamp, resolve_acp_turn_context, tools_enabled_for_client,
+    AcpAdapterEnvironmentRequest, AcpSessionsListHttpResponse, AcpSessionsListQuery,
+    AcpSetModeRequest, AcpSetModeResponse,
 };
 
-pub(super) async fn list_acp_sessions(
+use super::auth::{authenticate_acp_code_token, authenticate_acp_code_token_with_auth};
+
+pub(in crate::api::acp) async fn list_acp_sessions(
     State(state): State<ApiState>,
     Path(slug): Path<String>,
     Query(query): Query<AcpSessionsListQuery>,
@@ -121,7 +122,7 @@ pub(super) async fn list_acp_sessions_inner(
     .into_response())
 }
 
-pub(super) async fn get_acp_session(
+pub(in crate::api::acp) async fn get_acp_session(
     State(state): State<ApiState>,
     Path((slug, session_id)): Path<(String, String)>,
     headers: HeaderMap,
@@ -133,7 +134,7 @@ pub(super) async fn get_acp_session(
     }
 }
 
-pub(super) async fn get_acp_session_runtime(
+pub(in crate::api::acp) async fn get_acp_session_runtime(
     State(state): State<ApiState>,
     Path((slug, session_id)): Path<(String, String)>,
     headers: HeaderMap,
@@ -277,7 +278,7 @@ pub(super) async fn get_acp_session_runtime_inner(
     .into_response())
 }
 
-pub(super) async fn set_session_mode(
+pub(in crate::api::acp) async fn set_session_mode(
     State(state): State<ApiState>,
     Path((slug, session_id)): Path<(String, String)>,
     headers: HeaderMap,
@@ -290,7 +291,7 @@ pub(super) async fn set_session_mode(
     }
 }
 
-pub(super) async fn post_adapter_environment(
+pub(in crate::api::acp) async fn post_adapter_environment(
     State(state): State<ApiState>,
     Path((slug, session_id)): Path<(String, String)>,
     headers: HeaderMap,
@@ -373,7 +374,10 @@ pub(super) async fn set_session_mode_inner(
     body: AcpSetModeRequest,
 ) -> Result<Response, CustomError> {
     if let Err(err) = check_adapter_contract(body.adapter_contract.as_ref()) {
-        return Ok(super::compat::acp_compatibility_error_response(err, Uuid::new_v4()));
+        return Ok(crate::api::acp::compat::acp_compatibility_error_response(
+            err,
+            Uuid::new_v4(),
+        ));
     }
     let user_id = authenticate_acp_code_token(&state, &headers, &slug).await?;
     let bear = bears_db::bear_for_user_by_slug(&state.sqlx_pool, user_id, slug.trim())
