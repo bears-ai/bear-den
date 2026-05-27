@@ -63,6 +63,99 @@ pub(in crate::api::acp) struct AcpLettaSseStream {
     pub(in crate::api::acp) turn_controller: AcpTurnController,
 }
 
+pub(in crate::api::acp) fn runtime_terminal_events(
+    event: RuntimeStreamEvent,
+    request_id: &str,
+    acp_session_id: &str,
+) -> Option<Vec<AcpGatewayEvent>> {
+    match event {
+        RuntimeStreamEvent::TurnFailed { message, .. } => Some(vec![
+            AcpGatewayEvent::Error {
+                message,
+                detail: None,
+                error_type: Some("runtime_turn_failed".to_string()),
+                request_id: Some(request_id.to_string()),
+                context: Some(serde_json::json!({
+                    "component": "den.acp",
+                    "acp_session_id": acp_session_id,
+                })),
+            },
+            AcpGatewayEvent::TurnResult {
+                status: "failed".to_string(),
+                reason: "runtime_cleanup".to_string(),
+                request_id: Some(request_id.to_string()),
+                session_id: Some(acp_session_id.to_string()),
+                retryable: false,
+                diagnostics: serde_json::json!({
+                    "component": "den.acp",
+                    "source": "runtime_stream_event",
+                    "event": "turn_failed",
+                }),
+            },
+        ]),
+        RuntimeStreamEvent::TurnCancelled { .. } => Some(vec![
+            AcpGatewayEvent::Error {
+                message: "Runtime continuation was cancelled.".to_string(),
+                detail: None,
+                error_type: Some("runtime_turn_cancelled".to_string()),
+                request_id: Some(request_id.to_string()),
+                context: Some(serde_json::json!({
+                    "component": "den.acp",
+                    "acp_session_id": acp_session_id,
+                })),
+            },
+            AcpGatewayEvent::TurnResult {
+                status: "cancelled".to_string(),
+                reason: "cancelled".to_string(),
+                request_id: Some(request_id.to_string()),
+                session_id: Some(acp_session_id.to_string()),
+                retryable: false,
+                diagnostics: serde_json::json!({
+                    "component": "den.acp",
+                    "source": "runtime_stream_event",
+                    "event": "turn_cancelled",
+                }),
+            },
+        ]),
+        RuntimeStreamEvent::Error {
+            message,
+            detail,
+            error_type,
+            request_id: upstream_request_id,
+            context: runtime_context,
+        } => {
+            let terminal_request_id = upstream_request_id
+                .clone()
+                .unwrap_or_else(|| request_id.to_string());
+            Some(vec![
+                AcpGatewayEvent::Error {
+                    message,
+                    detail,
+                    error_type,
+                    request_id: Some(terminal_request_id.clone()),
+                    context: runtime_context.or_else(|| Some(serde_json::json!({
+                        "component": "den.acp",
+                        "acp_session_id": acp_session_id,
+                    }))),
+                },
+                AcpGatewayEvent::TurnResult {
+                    status: "failed".to_string(),
+                    reason: "runtime_cleanup".to_string(),
+                    request_id: Some(terminal_request_id),
+                    session_id: Some(acp_session_id.to_string()),
+                    retryable: false,
+                    diagnostics: serde_json::json!({
+                        "component": "den.acp",
+                        "source": "runtime_stream_event",
+                        "event": "error",
+                    }),
+                },
+            ])
+        }
+        _ => None,
+    }
+}
+
 impl AcpLettaSseStream {
     pub(in crate::api::acp) fn outstanding_tool_obligations(&self) -> Vec<String> {
         self.context
@@ -511,7 +604,15 @@ impl Stream for AcpLettaSseStream {
                                             if let Ok(mut guard) = diagnostics_for_stream.lock() {
                                                 guard.observe_runtime_event(&event);
                                             }
-                                            match event {
+                                            if let Some(events) = runtime_terminal_events(
+                                                event.clone(),
+                                                &request_id,
+                                                &acp_session_id,
+                                            ) {
+                                                queued_events.extend(events);
+                                                saw_terminal_event = true;
+                                            } else {
+                                                match event {
                                                 RuntimeStreamEvent::AssistantTextDelta { text } => {
                                                     queued_events.push(AcpGatewayEvent::AssistantTextDelta { text });
                                                 }
@@ -554,44 +655,11 @@ impl Stream for AcpLettaSseStream {
                                                     }
                                                     queued_events.extend(events);
                                                 }
-                                                RuntimeStreamEvent::TurnFailed { message, .. } => {
-                                                    queued_events.push(AcpGatewayEvent::Error {
-                                                        message,
-                                                        detail: None,
-                                                        error_type: Some("runtime_turn_failed".to_string()),
-                                                        request_id: Some(request_id.clone()),
-                                                        context: Some(serde_json::json!({
-                                                            "component": "den.acp",
-                                                            "acp_session_id": acp_session_id,
-                                                        })),
-                                                    });
-                                                    saw_terminal_event = true;
-                                                }
-                                                RuntimeStreamEvent::TurnCancelled { .. } => {
-                                                    queued_events.push(AcpGatewayEvent::Error {
-                                                        message: "Runtime continuation was cancelled.".to_string(),
-                                                        detail: None,
-                                                        error_type: Some("runtime_turn_cancelled".to_string()),
-                                                        request_id: Some(request_id.clone()),
-                                                        context: Some(serde_json::json!({
-                                                            "component": "den.acp",
-                                                            "acp_session_id": acp_session_id,
-                                                        })),
-                                                    });
-                                                    saw_terminal_event = true;
-                                                }
-                                                RuntimeStreamEvent::Error { message, detail, error_type, request_id: upstream_request_id, context: runtime_context } => {
-                                                    queued_events.push(AcpGatewayEvent::Error {
-                                                        message,
-                                                        detail,
-                                                        error_type,
-                                                        request_id: upstream_request_id.or_else(|| Some(request_id.clone())),
-                                                        context: runtime_context.or_else(|| Some(serde_json::json!({
-                                                            "component": "den.acp",
-                                                            "acp_session_id": acp_session_id,
-                                                        }))),
-                                                    });
-                                                    saw_terminal_event = true;
+                                                RuntimeStreamEvent::TurnFailed { .. }
+                                                | RuntimeStreamEvent::TurnCancelled { .. }
+                                                | RuntimeStreamEvent::Error { .. } => unreachable!(
+                                                    "runtime terminal events are handled before non-terminal match"
+                                                ),
                                                 }
                                             }
                                             if saw_terminal_event {

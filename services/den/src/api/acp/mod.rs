@@ -216,7 +216,7 @@ mod tests {
                 mapping::{
                     map_letta_stream_frame_to_acp_adapter_events, summarize_event_for_log,
                 },
-                sse_stream::AcpLettaSseStream,
+                sse_stream::{runtime_terminal_events, AcpLettaSseStream},
                 support_sse::{find_sse_frame_end, parse_sse_event_body_to_json},
                 text::AcpTextChunker,
             },
@@ -1877,6 +1877,54 @@ mod tests {
             AcpToolResultDelivery::RecentlySettled { .. }
                 | AcpToolResultDelivery::TurnMissing { .. }
         ));
+    }
+
+    #[test]
+    fn runtime_terminal_failure_events_follow_strict_terminal_contract() {
+        let request_id = "req-test";
+        let session_id = "acp-test-session";
+
+        let turn_failed = runtime_terminal_events(
+            crate::core::runtime_provider::RuntimeStreamEvent::TurnFailed {
+                turn: None,
+                category: crate::core::runtime_provider::RuntimeErrorCategory::Internal,
+                message: "runtime failed".to_string(),
+            },
+            request_id,
+            session_id,
+        )
+        .expect("turn failed maps to terminal events");
+        assert!(matches!(turn_failed[0], AcpGatewayEvent::Error { .. }));
+        assert!(matches!(turn_failed[1], AcpGatewayEvent::TurnResult { .. }));
+
+        let turn_cancelled = runtime_terminal_events(
+            crate::core::runtime_provider::RuntimeStreamEvent::TurnCancelled {
+                turn: None,
+            },
+            request_id,
+            session_id,
+        )
+        .expect("turn cancelled maps to terminal events");
+        assert!(matches!(turn_cancelled[0], AcpGatewayEvent::Error { .. }));
+        assert!(matches!(turn_cancelled[1], AcpGatewayEvent::TurnResult { .. }));
+
+        let generic_error = runtime_terminal_events(
+            crate::core::runtime_provider::RuntimeStreamEvent::Error {
+                message: "runtime error".to_string(),
+                detail: Some("detail".to_string()),
+                error_type: Some("runtime_error".to_string()),
+                request_id: Some(request_id.to_string()),
+                context: Some(serde_json::json!({
+                    "component": "den.acp",
+                    "acp_session_id": session_id,
+                })),
+            },
+            request_id,
+            session_id,
+        )
+        .expect("generic runtime error maps to terminal events");
+        assert!(matches!(generic_error[0], AcpGatewayEvent::Error { .. }));
+        assert!(matches!(generic_error[1], AcpGatewayEvent::TurnResult { .. }));
     }
 
     #[test]
