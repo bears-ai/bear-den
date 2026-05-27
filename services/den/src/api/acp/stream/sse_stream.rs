@@ -943,11 +943,46 @@ impl Stream for AcpLettaSseStream {
                         .await
                     })));
                     self.poll_next(cx)
+                } else if this.diagnostics.saw_requires_approval_stop
+                    && this.outstanding_tool_obligations().is_empty()
+                    && !this.diagnostics.emitted_runtime_cleanup
+                    && this.queued_tool_result_continuation.is_none()
+                {
+                    let letta = this.letta.clone();
+                    let tool_turns = this.context.tool_turns.clone();
+                    let acp_session_id = this.context.acp_session_id.clone();
+                    let bear_id = this.context.bear_id;
+                    let pair_agent_id = this.context.pair_agent_id.clone();
+                    let run_ids = this.diagnostics.run_ids.clone();
+                    let request_id = this.context.request_id;
+                    this.persist_future = Some(AcpPendingFuture::Cleanup(Box::pin(async move {
+                        super::super::acp_cleanup_stale_runtime_state(
+                            AcpStaleRuntimeCleanupParams {
+                                letta,
+                                tool_turns,
+                                acp_session_id,
+                                bear_id,
+                                pair_agent_id,
+                                run_ids,
+                                reason: "orphaned_requires_approval_stop",
+                                request_id,
+                            },
+                        )
+                        .await
+                    })));
+                    self.poll_next(cx)
                 } else if let Some(event) = this.diagnostics.empty_turn_error_event(&this.context) {
                     for event in this.text_chunker.push(event) {
                         this.push_adapter_event(event);
                     }
                     self.poll_next(cx)
+                } else if this.diagnostics.saw_error {
+                    this.turn_controller.on_stream_error();
+                    if !this.pending.is_empty() {
+                        return self.poll_next(cx);
+                    }
+                    this.log_summary_once();
+                    Poll::Ready(None)
                 } else {
                     for event in this.text_chunker.flush_all() {
                         this.push_adapter_event(event);
