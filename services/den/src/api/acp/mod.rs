@@ -223,6 +223,7 @@ mod tests {
             tool_results::acp_tool_result_response_from_delivery,
         },
         core::{
+            acp_letta_events::AcpGatewayEvent,
             acp_runtime::{
                 is_valid_pending_acp_conversation_id, resolve_acp_prompt_conversation,
                 AcpConversationResolution, AcpConversationSelectionSource,
@@ -1198,7 +1199,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn acp_stream_terminal_error_does_not_emit_turn_result_after_error() {
+    async fn acp_stream_terminal_error_emits_error_and_failed_turn_result() {
         use futures::StreamExt;
         use sqlx::postgres::PgPoolOptions;
         use std::sync::Arc;
@@ -1271,7 +1272,15 @@ mod tests {
         );
         assert_eq!(
             output.matches("\"type\":\"turn_result\"").count(),
-            0,
+            1,
+            "output was: {output}"
+        );
+        assert!(
+            output.contains("\"status\":\"failed\""),
+            "output was: {output}"
+        );
+        assert!(
+            output.contains("\"reason\":\"runtime_cleanup\""),
             "output was: {output}"
         );
         assert_eq!(
@@ -1279,6 +1288,164 @@ mod tests {
             0,
             "output was: {output}"
         );
+    }
+
+    #[tokio::test]
+    async fn acp_stream_runtime_continuation_conflict_emits_error_and_failed_turn_result() {
+        use axum::{
+            extract::State, http::header, response::IntoResponse, routing::post, Json, Router,
+        };
+        use futures::StreamExt;
+        use sqlx::postgres::PgPoolOptions;
+        use std::sync::Arc;
+        use tokio::sync::Mutex as TokioMutex;
+
+        #[derive(Clone)]
+        struct FakeState {
+            captured: Arc<TokioMutex<Option<serde_json::Value>>>,
+            cancel_calls: Arc<TokioMutex<usize>>,
+        }
+
+        async fn fake_tool_return(
+            State(state): State<FakeState>,
+            Json(body): Json<serde_json::Value>,
+        ) -> impl IntoResponse {
+            *state.captured.lock().await = Some(body);
+            (
+                StatusCode::CONFLICT,
+                [(header::CONTENT_TYPE, "application/json")],
+                "{\"error\":\"conversation waiting for approval\"}",
+            )
+        }
+
+        async fn fake_cancel(State(state): State<FakeState>) -> impl IntoResponse {
+            *state.cancel_calls.lock().await += 1;
+            (
+                [(header::CONTENT_TYPE, "application/json")],
+                "{\"cancelled\":true}",
+            )
+        }
+
+        let captured = Arc::new(TokioMutex::new(None));
+        let cancel_calls = Arc::new(TokioMutex::new(0));
+        let app = Router::new()
+            .route(
+                "/v1/conversations/{conversation_id}/messages",
+                post(fake_tool_return),
+            )
+            .route("/v1/agents/{agent_id}/messages/cancel", post(fake_cancel))
+            .with_state(FakeState {
+                captured: captured.clone(),
+                cancel_calls: cancel_calls.clone(),
+            });
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+
+        let mut config = crate::config::Config::test_stub();
+        config.letta_base_url = format!("http://{addr}");
+        let letta = Arc::new(crate::core::letta::LettaClient::new(&config));
+        let pool = PgPoolOptions::new()
+            .connect_lazy("postgres://postgres:postgres@127.0.0.1/postgres")
+            .unwrap();
+        let registry = AcpToolTurnCoordinator::new();
+        let request_id = Uuid::new_v4();
+        let role_runtime = RoleRuntime::new(registry.clone());
+        let turn_scope = RoleTurnScope::acp_pair(
+            Uuid::new_v4(),
+            "acp-conflict-failed-terminal",
+            Some("conv-test".to_string()),
+        );
+        let active_turn_guard = role_runtime
+            .acquire_turn(turn_scope.clone(), request_id)
+            .unwrap();
+        let context = AcpStreamContext {
+            pool,
+            tool_turns: registry.clone(),
+            user_id: 1,
+            user_profile: None,
+            bear_id: Uuid::new_v4(),
+            bear_slug: "test-bear".to_string(),
+            acp_session_id: "acp-conflict-failed-terminal".to_string(),
+            client: "zed".to_string(),
+            conversation_selection: "conv-test".to_string(),
+            resolved_conversation_id: Some("conv-test".to_string()),
+            upstream_target: "conv-test".to_string(),
+            workspace_roots: vec!["/workspace".to_string()],
+            session_policy: None,
+            activity: None,
+            request_id,
+            pair_agent_id: "agent-12345678-1234-4567-89ab-123456789abc".to_string(),
+            config: Arc::new(crate::config::Config::test_stub()),
+            role_runtime: role_runtime.clone(),
+            turn_scope,
+        };
+        let upstream = futures::stream::iter(vec![
+            Ok::<Bytes, CustomError>(Bytes::from(concat!(
+                "data: {\"id\":\"approval-1\",\"run_id\":\"run-conflict\",\"message_type\":\"approval_request_message\",",
+                "\"tool_call\":{\"name\":\"fs_read_text_file\",\"tool_call_id\":\"call_conflict\",",
+                "\"arguments\":\"{\\\"path\\\":\\\"/tmp/acp-test.txt\\\"}\"}}\n\n"
+            ))),
+            Ok::<Bytes, CustomError>(Bytes::from(
+                "data: {\"message_type\":\"stop_reason\",\"stop_reason\":\"requires_approval\"}\n\n",
+            )),
+        ]);
+        let mut stream = AcpLettaSseStream::new(
+            upstream,
+            context,
+            Vec::new(),
+            false,
+            letta,
+            LettaContinuationContext {
+                conversation_id: "conv-test".to_string(),
+                agent_id: Some("agent-12345678-1234-4567-89ab-123456789abc".to_string()),
+                client_tools: Some(serde_json::json!([{ "name": "fs_read_text_file" }])),
+                stream_tokens: false,
+                max_steps: 2,
+            },
+            active_turn_guard,
+        );
+
+        let first = stream.next().await.unwrap().unwrap();
+        assert!(String::from_utf8(first.to_vec())
+            .unwrap()
+            .contains("tool_request"));
+        registry
+            .deliver_result(
+                1,
+                "test-bear",
+                "acp-conflict-failed-terminal",
+                "call_conflict",
+                AcpToolResultRequest {
+                    tool_call_id: Some("call_conflict".to_string()),
+                    tool_name: Some("fs_read_text_file".to_string()),
+                    approval_request_id: None,
+                    status: "ok".to_string(),
+                    content: Some("hello".to_string()),
+                    structured_content: serde_json::json!({}),
+                    diagnostic: serde_json::json!({}),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+
+        let mut output = String::new();
+        while let Some(item) = stream.next().await {
+            output.push_str(&String::from_utf8(item.unwrap().to_vec()).unwrap());
+        }
+        assert_eq!(output.matches("\"type\":\"error\"").count(), 0, "{output}");
+        assert_eq!(
+            output.matches("\"type\":\"turn_result\"").count(),
+            1,
+            "{output}"
+        );
+        assert!(output.contains("\"status\":\"recovered\""), "{output}");
+        assert!(output.contains("\"reason\":\"runtime_cleanup\""), "{output}");
+        assert_eq!(output.matches("\"type\":\"turn_complete\"").count(), 0, "{output}");
+        assert_eq!(*cancel_calls.lock().await, 1);
+        assert!(captured.lock().await.is_some());
     }
 
     #[tokio::test]

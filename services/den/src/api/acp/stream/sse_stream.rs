@@ -978,6 +978,18 @@ impl Stream for AcpLettaSseStream {
                     self.poll_next(cx)
                 } else if this.diagnostics.saw_error {
                     this.turn_controller.on_stream_error();
+                    let role_result = this.context.role_runtime.turn_result(
+                        TurnResultStatus::Failed,
+                        TurnResultReason::RuntimeCleanup,
+                        this.context.request_id,
+                        this.context.turn_scope.clone(),
+                        false,
+                        this.diagnostics.diagnostic_json_with_turn_controller(
+                            &this.context,
+                            Some(&this.turn_controller),
+                        ),
+                    );
+                    this.push_terminal_result_when_ready(role_result);
                     if !this.pending.is_empty() {
                         return self.poll_next(cx);
                     }
