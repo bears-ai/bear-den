@@ -2,13 +2,11 @@ use sqlx::PgPool;
 use uuid::Uuid;
 
 use crate::{
-    core::{acp_letta_events::AcpGatewayEvent, acp_sessions},
+    core::{acp_letta_events::AcpGatewayEvent, acp_sessions, letta::sanitize_visible_transcript_text},
     errors::CustomError,
 };
 
-use super::{
-    format_acp_session_timestamp, sanitize_visible_transcript_text, AcpConversationHistoryMessage,
-};
+use super::{format_acp_session_timestamp, AcpConversationHistoryMessage};
 
 pub(crate) fn normalize_acp_conversation_id(raw: Option<&str>) -> Result<String, CustomError> {
     let s = raw

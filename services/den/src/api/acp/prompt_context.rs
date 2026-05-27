@@ -13,7 +13,6 @@ use super::{
     workflow::render_turn_state_summary_with_activity,
 };
 
-#[cfg(test)]
 pub(crate) fn acp_direct_tool_prompt_context(
     session_id: &str,
     cwd: &str,
