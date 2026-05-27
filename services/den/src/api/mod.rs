@@ -49,6 +49,7 @@
 pub mod acp;
 pub mod acp_stream_mapping;
 pub mod acp_stream_support;
+pub mod acp_stream_text;
 #[cfg(test)]
 mod acp_turn_state_alignment_tests;
 #[cfg(test)]
