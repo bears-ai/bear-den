@@ -234,6 +234,9 @@ mod tests {
                 AcpToolTurnRegistration,
             },
             acp_tools::AcpToolStatus,
+            acp_turn_controller::{
+                AcpTerminalReason, AcpTerminalStatus, AcpTurnController, AcpTurnPhase,
+            },
             acp_turn_runner::ACP_STALE_APPROVAL_RECOVERY_DENIAL_REASON,
             letta::PendingApprovalDenialMode,
             role_runtime::{RoleRuntime, RoleTurnScope},
@@ -1177,6 +1180,21 @@ mod tests {
             0,
             "output was: {output}"
         );
+    }
+
+    #[test]
+    fn acp_turn_controller_emits_terminal_turn_result_for_stream_error() {
+        let mut controller = AcpTurnController::new();
+        controller.on_stream_started();
+        controller.on_stream_error();
+
+        assert!(controller.may_emit_terminal());
+        let outcome = controller
+            .take_terminal_event()
+            .expect("stream error should authorize a terminal event");
+        assert_eq!(outcome.status, AcpTerminalStatus::Failed);
+        assert_eq!(outcome.reason, AcpTerminalReason::StreamError);
+        assert_eq!(controller.phase(), AcpTurnPhase::Terminal);
     }
 
     #[tokio::test]
