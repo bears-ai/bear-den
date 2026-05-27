@@ -47,6 +47,7 @@
 //! - `SERVER_MODE=both` - Run both services simultaneously
 
 pub mod acp;
+pub mod acp_stream_logging;
 pub mod acp_stream_mapping;
 pub mod acp_stream_plan;
 pub mod acp_stream_support;

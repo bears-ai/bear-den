@@ -6,9 +6,8 @@ use crate::{
             persist_stream_event_side_effects, AcpResolvedToolResult, AcpStreamContext,
             PersistedToolRequestEffect,
         },
-        acp_stream_support::{
-            parse_sse_event_body_to_json, summarize_letta_event_for_log, AcpStreamDiagnostics,
-        },
+        acp_stream_logging::summarize_letta_event_for_log,
+        acp_stream_support::{parse_sse_event_body_to_json, AcpStreamDiagnostics},
     },
     core::{
         acp_letta_events::{
