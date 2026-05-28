@@ -24,7 +24,7 @@ pub(crate) fn normalize_acp_conversation_id(raw: Option<&str>) -> Result<String,
         Ok(s.to_string())
     } else {
         Err(CustomError::ValidationError(format!(
-            "invalid conversation_id (expected 'default', a Letta conv- id, or a pending new- id): {s}"
+            "invalid conversation_id (expected 'default', a runtime conv- id, or a pending new- id): {s}"
         )))
     }
 }

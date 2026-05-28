@@ -68,12 +68,12 @@ pub struct LettaAcpTurnRunner<'a> {
     pub runtime_context_len: usize,
 }
 
-pub fn looks_like_letta_waiting_for_approval_error(err: &CustomError) -> bool {
+pub fn looks_like_runtime_waiting_for_approval_error(err: &CustomError) -> bool {
     let text = err.to_string();
     text.contains("waiting on an unresolved tool approval") || text.contains("waiting for approval")
 }
 
-async fn cancel_letta_runs_by_id_or_skip(
+async fn cancel_runtime_runs_by_id_or_skip(
     letta: &LettaClient,
     role_agent_id: &str,
     run_ids: &[String],
@@ -83,7 +83,7 @@ async fn cancel_letta_runs_by_id_or_skip(
         tracing::warn!(
             pair_agent_id = role_agent_id,
             reason,
-            "Skipping Letta run cancellation because no active run ids were recorded"
+            "Skipping runtime run cancellation because no active run ids were recorded"
         );
         return "skipped:no_active_run_ids".to_string();
     }
@@ -104,7 +104,7 @@ async fn cancel_letta_runs_by_id_or_skip(
                 run_ids = ?run_ids,
                 %status,
                 body = %text,
-                "Failed Letta run cancellation request"
+                "Failed runtime run cancellation request"
             );
             format!("failed:{status}:{text}")
         }
@@ -114,7 +114,7 @@ async fn cancel_letta_runs_by_id_or_skip(
                 reason,
                 run_ids = ?run_ids,
                 error = %err,
-                "Failed Letta run cancellation request"
+                "Failed runtime run cancellation request"
             );
             format!("failed:reqwest:{err}")
         }
@@ -279,19 +279,19 @@ impl<'a> LettaAcpTurnRunner<'a> {
 
         match first_attempt {
             Ok(upstream) => Ok(upstream),
-            Err(err) if looks_like_letta_waiting_for_approval_error(&err) => {
+            Err(err) if looks_like_runtime_waiting_for_approval_error(&err) => {
                 tracing::warn!(
                     %self.request_id,
                     acp_session_id = %session_id,
                     compatibility_binding_id = %request.binding.binding_id,
                     error = %err,
-                    "Letta conversation is waiting for stale approval; skipping agent-wide cancel before retry"
+                    "runtime conversation is waiting for stale approval; skipping agent-wide cancel before retry"
                 );
                 let process_cleanup = self
                     .state
                     .acp_tool_turns
                     .cleanup_expired_tool_turns_for_session(session_id);
-                let cancel_result = cancel_letta_runs_by_id_or_skip(
+                let cancel_result = cancel_runtime_runs_by_id_or_skip(
                     self.state.letta.as_ref(),
                     &request.binding.binding_id,
                     &[],
@@ -320,7 +320,7 @@ impl<'a> LettaAcpTurnRunner<'a> {
                 .await
                 {
                     Ok(upstream) => Ok(upstream),
-                    Err(retry_err) if looks_like_letta_waiting_for_approval_error(&retry_err) => {
+                    Err(retry_err) if looks_like_runtime_waiting_for_approval_error(&retry_err) => {
                         tracing::warn!(
                             %self.request_id,
                             acp_session_id = %session_id,
@@ -328,7 +328,7 @@ impl<'a> LettaAcpTurnRunner<'a> {
                             conversation_id = %upstream_target,
                             active_tool_call_id = tracing::field::Empty,
                             error = %retry_err,
-                            "Stale approval persisted after run cleanup; denying pending Letta approvals before final ACP prompt retry"
+                            "Stale approval persisted after run cleanup; denying pending runtime approvals before final ACP prompt retry"
                         );
                         let denied = self
                             .state
@@ -349,7 +349,7 @@ impl<'a> LettaAcpTurnRunner<'a> {
                             denied_tool_call_ids = ?denied.iter().map(|p| p.tool_call_id.as_str()).collect::<Vec<_>>(),
                             denied_source_message_ids = ?denied.iter().filter_map(|p| p.source_message_id.as_deref()).collect::<Vec<_>>(),
                             active_tool_call_id = tracing::field::Empty,
-                            "Detected stale pending Letta approvals after retry failure; suppressed conversation-posted denial to avoid contaminating later turns"
+                            "Detected stale pending runtime approvals after retry failure; suppressed conversation-posted denial to avoid contaminating later turns"
                         );
                         post_turn(
                             self.state.letta.as_ref(),
@@ -420,7 +420,7 @@ impl AcpTurnRunner for LettaAcpTurnRunner<'_> {
         &self,
         request: CancelTurnRequest,
     ) -> Result<CancelTurnResult, CustomError> {
-        let detail = cancel_letta_runs_by_id_or_skip(
+        let detail = cancel_runtime_runs_by_id_or_skip(
             self.state.letta.as_ref(),
             request
                 .binding
@@ -788,11 +788,11 @@ pub async fn acp_cleanup_stale_runtime_state(
             bear_id = %bear_id,
             pair_agent_id = %pair_agent_id,
             reason,
-            "ACP stale runtime cleanup had no Letta run_ids; skipped upstream cancel to avoid agent-wide cancellation"
+            "ACP stale runtime cleanup had no runtime run_ids; skipped upstream cancel to avoid agent-wide cancellation"
         );
     }
     let cancel_result =
-        cancel_letta_runs_by_id_or_skip(letta.as_ref(), &pair_agent_id, &run_ids, reason).await;
+        cancel_runtime_runs_by_id_or_skip(letta.as_ref(), &pair_agent_id, &run_ids, reason).await;
     serde_json::json!({
         "ok": cancel_result.starts_with("cancelled:") || cancel_result.starts_with("skipped:"),
         "reason": reason,

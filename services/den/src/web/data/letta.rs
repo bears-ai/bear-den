@@ -17,7 +17,7 @@ pub struct WebConversationRow {
     pub archived: bool,
 }
 
-/// Web-facing snapshot of Letta conversations for one agent.
+/// Web-facing snapshot of runtime conversations for one agent.
 #[derive(Debug, Clone)]
 pub struct WebConversationSnapshot {
     pub all: Vec<WebConversationRow>,

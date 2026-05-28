@@ -83,7 +83,7 @@ async fn list_my_bears(
 #[derive(Debug, Deserialize)]
 pub struct ChatHistoryQuery {
     pub bear_id: Uuid,
-    /// Letta conversation: `default` (agent main conversation) or `conv-…`.
+    /// runtime conversation: `default` (agent main conversation) or `conv-…`.
     #[serde(default)]
     pub conversation_id: Option<String>,
     /// Letta cursor: messages older than this id (see `GET /v1/agents/{id}/messages?before=`).
@@ -143,7 +143,7 @@ pub struct ChatHistoryResponse {
     pub next_before: Option<String>,
 }
 
-/// `None` / empty / `default` → agent main conversation. Existing Letta conversations are `conv-...`.
+/// `None` / empty / `default` → agent main conversation. Existing runtime conversations are `conv-...`.
 /// The web UI may also send a temporary `new-...` placeholder before Letta allocates the real
 /// conversation id; Codepool turns that into an SDK `createSession(agent_id)` call.
 fn normalize_client_conversation_id(raw: Option<&str>) -> Result<String, CustomError> {
@@ -162,7 +162,7 @@ fn normalize_client_conversation_id(raw: Option<&str>) -> Result<String, CustomE
         Ok(s.to_string())
     } else {
         Err(CustomError::ValidationError(format!(
-            "invalid conversation_id (expected 'default', a Letta conv- id, or a pending new- id): {s}"
+            "invalid conversation_id (expected 'default', a runtime conv- id, or a pending new- id): {s}"
         )))
     }
 }
@@ -638,7 +638,7 @@ fn map_letta_history_page(
 pub struct ChatSendRequest {
     pub bear_id: Uuid,
     pub message: String,
-    /// Reserved for Letta conversation / OTID pass-through (optional).
+    /// Reserved for runtime conversation / OTID pass-through (optional).
     #[serde(default)]
     pub conversation_id: Option<String>,
 }

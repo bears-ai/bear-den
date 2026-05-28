@@ -148,7 +148,7 @@ pub(crate) use self::routing::{
 };
 use self::routing::tool_execution_route;
 pub(crate) use self::letta_support::{
-    cancel_letta_runs_by_id_or_skip, looks_like_letta_waiting_for_approval_error,
+    cancel_runtime_runs_by_id_or_skip, looks_like_runtime_waiting_for_approval_error,
 };
 pub(crate) use self::pair_reflection_support::run_pair_reflection_summary;
 pub(crate) use self::sessions::{acp_session_row_to_http_with_modes, resolve_acp_turn_context};
@@ -309,7 +309,7 @@ mod tests {
                 .to_string(),
         );
 
-        assert!(!looks_like_letta_waiting_for_approval_error(&err));
+        assert!(!looks_like_runtime_waiting_for_approval_error(&err));
     }
 
     #[test]

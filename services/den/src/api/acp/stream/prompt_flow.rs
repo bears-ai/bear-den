@@ -154,7 +154,7 @@ pub(in crate::api::acp) async fn run_prompt_flow(
             bear_id = %bear.id,
             pending_conversation_id = %conversation_resolution.session_selection,
             resolved_conversation_id = %ensure_conversation_result.conversation.id,
-            "ACP created fresh Letta conversation for new session"
+            "ACP created fresh runtime conversation for new session"
         );
     }
     let runtime_session_id = format!("acp-api-direct:{client}:{}:{session_id}", bear.id);

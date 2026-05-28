@@ -143,7 +143,7 @@ fn letta_http_error_message(operation: &str, status: StatusCode, text: &str) -> 
     let base = format!("Letta {operation} HTTP {status}: {text}");
     if status == StatusCode::CONFLICT && text.contains("waiting for approval") {
         format!(
-            "{base}. The Letta conversation is waiting on an unresolved tool approval. This usually means a prior tool call was not settled correctly; deny the pending approval in Letta or start a new conversation."
+            "{base}. The runtime conversation is waiting on an unresolved tool approval. This usually means a prior tool call was not settled correctly; deny the pending approval in Letta or start a new conversation."
         )
     } else {
         base
@@ -908,7 +908,7 @@ impl LettaClient {
             .send()
             .await
             .map_err(|e| {
-                CustomError::System(format!("Letta conversation messages request failed: {e}"))
+                CustomError::System(format!("runtime conversation messages request failed: {e}"))
             })?;
 
         if !resp.status().is_success() {

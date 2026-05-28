@@ -12,7 +12,7 @@ use crate::{
     api::{
         acp::{
             acp_debug_ui_enabled, acp_text_chunk_chars, acp_tool_timeout_ms_for_provider,
-            continue_acp_turn_with_runtime, looks_like_letta_waiting_for_approval_error,
+            continue_acp_turn_with_runtime, looks_like_runtime_waiting_for_approval_error,
             map_runtime_stream_event_to_acp_adapter_events_with_persistence,
             mode_from_den_tool_result, plan_update_from_den_tool_result,
             AcpActiveTurnCancelHandle, AcpPendingFuture, AcpResolvedToolResult,
@@ -681,7 +681,7 @@ impl Stream for AcpLettaSseStream {
                             return self.poll_next(cx);
                         }
                         Err(err) => {
-                            if looks_like_letta_waiting_for_approval_error(&err) {
+                            if looks_like_runtime_waiting_for_approval_error(&err) {
                                 let letta = this.letta.clone();
                                 let tool_turns = this.context.tool_turns.clone();
                                 let acp_session_id = this.context.acp_session_id.clone();
@@ -710,7 +710,7 @@ impl Stream for AcpLettaSseStream {
                             this.pending.push_back(acp_event_to_adapter_sse(
                                 AcpGatewayEvent::Error {
                                     message:
-                                        "Failed to continue Letta after ACP local tool result."
+                                        "Failed to continue runtime after ACP local tool result."
                                             .to_string(),
                                     detail: Some(err.to_string()),
                                     error_type: Some("letta_tool_return_failed".to_string()),

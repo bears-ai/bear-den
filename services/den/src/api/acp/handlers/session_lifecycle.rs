@@ -26,7 +26,7 @@ use crate::{
 };
 
 use crate::api::acp::{
-    acp_archive_target_for_session, cancel_letta_runs_by_id_or_skip,
+    acp_archive_target_for_session, cancel_runtime_runs_by_id_or_skip,
     resolve_acp_turn_context, run_pair_reflection_summary, AcpCloseSessionResponse,
 };
 
@@ -71,7 +71,7 @@ pub(super) async fn compact_session_inner(
         })
         .ok_or_else(|| {
             CustomError::ValidationError(
-                "ACP session has no resolved Letta conversation to compact".to_string(),
+                "ACP session has no resolved runtime conversation to compact".to_string(),
             )
         })?;
     let compact_result = state.letta.compact_conversation(conversation_id).await?;
@@ -79,7 +79,7 @@ pub(super) async fn compact_session_inner(
         acp_session_id = %session_id,
         bear_id = %session.bear_id,
         conversation_id,
-        "ACP session compact requested; no stale approval recovery attempted because compaction does not resolve pending Letta approvals"
+        "ACP session compact requested; no stale approval recovery attempted because compaction does not resolve pending runtime approvals"
     );
     Ok(Json(serde_json::json!({
         "ok": true,
@@ -174,11 +174,11 @@ pub(super) async fn cancel_session_inner(
             active_request_id = ?stream_cancel.as_ref().map(|turn| turn.request_id),
             active_conversation_id = ?stream_cancel.as_ref().and_then(|turn| turn.conversation_id.clone()),
             pair_agent_id = ?pair_agent_id,
-            "ACP cancel found an active stream but no Letta run_ids; skipped upstream cancel to avoid agent-wide cancellation"
+            "ACP cancel found an active stream but no runtime run_ids; skipped upstream cancel to avoid agent-wide cancellation"
         );
     }
     let cancel_result = if let Some(agent_id) = pair_agent_id.as_deref() {
-        cancel_letta_runs_by_id_or_skip(
+        cancel_runtime_runs_by_id_or_skip(
             state.letta.as_ref(),
             agent_id,
             &run_ids,

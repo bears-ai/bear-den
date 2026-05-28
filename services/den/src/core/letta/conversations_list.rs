@@ -1,4 +1,4 @@
-//! Shared Letta conversation listing for the chat JSON API and bear details HTML.
+//! Shared runtime conversation listing for the chat JSON API and bear details HTML.
 
 use std::cmp::Ordering;
 
