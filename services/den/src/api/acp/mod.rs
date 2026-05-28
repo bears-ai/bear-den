@@ -10,7 +10,7 @@ pub(super) mod config;
 pub(super) mod handlers;
 pub(super) mod history;
 pub(super) mod http_types;
-pub(super) mod letta_support;
+pub(super) mod runtime_support;
 pub(super) mod pair_reflection_support;
 pub(super) mod paths;
 pub(super) mod prompt_context;
@@ -147,7 +147,7 @@ pub(crate) use self::routing::{
     acp_archive_target_for_session, acp_den_provider_to_canonical_tool_name,
 };
 use self::routing::tool_execution_route;
-pub(crate) use self::letta_support::{
+pub(crate) use self::runtime_support::{
     cancel_runtime_runs_by_id_or_skip, looks_like_runtime_waiting_for_approval_error,
 };
 pub(crate) use self::pair_reflection_support::run_pair_reflection_summary;
@@ -541,7 +541,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn acp_stream_waits_for_tool_result_and_continues_letta() {
+    async fn acp_stream_waits_for_tool_result_and_continues_runtime() {
         use axum::{
             extract::State,
             http::header,
