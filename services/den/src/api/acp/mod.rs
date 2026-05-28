@@ -591,7 +591,7 @@ mod tests {
                 "/v1/conversations/{conversation_id}/messages",
                 post(fake_tool_return),
             )
-            .route("/v1/agents/{agent_id}/messages/cancel", post(fake_cancel))
+            .route("/v1/agents/{runtime_binding_id}/messages/cancel", post(fake_cancel))
             .with_state(FakeState {
                 captured: captured.clone(),
                 tool_return_status: StatusCode::OK,
@@ -1333,7 +1333,7 @@ mod tests {
                 "/v1/conversations/{conversation_id}/messages",
                 post(fake_tool_return),
             )
-            .route("/v1/agents/{agent_id}/messages/cancel", post(fake_cancel))
+            .route("/v1/agents/{runtime_binding_id}/messages/cancel", post(fake_cancel))
             .with_state(FakeState {
                 captured: captured.clone(),
                 cancel_calls: cancel_calls.clone(),
@@ -2132,7 +2132,7 @@ mod tests {
 
         let cancel_calls = Arc::new(TokioMutex::new(0));
         let app = Router::new()
-            .route("/v1/agents/{agent_id}/messages/cancel", post(fake_cancel))
+            .route("/v1/agents/{runtime_binding_id}/messages/cancel", post(fake_cancel))
             .with_state(FakeState {
                 cancel_calls: cancel_calls.clone(),
             });
@@ -2274,7 +2274,7 @@ mod tests {
 
         let cancel_calls = Arc::new(TokioMutex::new(0));
         let app = Router::new()
-            .route("/v1/agents/{agent_id}/messages/cancel", post(fake_cancel))
+            .route("/v1/agents/{runtime_binding_id}/messages/cancel", post(fake_cancel))
             .with_state(FakeState {
                 cancel_calls: cancel_calls.clone(),
             });
@@ -2404,7 +2404,7 @@ mod tests {
                 "/v1/conversations/{conversation_id}/messages",
                 post(fake_tool_return),
             )
-            .route("/v1/agents/{agent_id}/messages/cancel", post(fake_cancel))
+            .route("/v1/agents/{runtime_binding_id}/messages/cancel", post(fake_cancel))
             .with_state(FakeState {
                 captured: captured.clone(),
                 cancel_calls: cancel_calls.clone(),

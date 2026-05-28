@@ -138,7 +138,7 @@ pub(super) async fn conversation_history_inner(
     }
     let runtime_binding =
         require_pair_runtime_binding(&state.sqlx_pool, state.letta.as_ref(), &bear).await?;
-    let runtime_binding_id = runtime_binding.binding_id.clone();
+    let agent_id = runtime_binding.binding_id.clone();
     let conv_id = normalize_acp_conversation_id(Some(&conversation_id))?;
     if conv_id.starts_with("new-") {
         return Err(CustomError::ValidationError(
@@ -160,7 +160,7 @@ pub(super) async fn conversation_history_inner(
         .map(str::trim)
         .filter(|s| !s.is_empty());
     let binding_for_conv = if conv_id == "default" {
-        Some(runtime_binding_id.as_str())
+        Some(agent_id.as_str())
     } else {
         None
     };
