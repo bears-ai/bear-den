@@ -29,7 +29,7 @@ pub(crate) fn normalize_acp_conversation_id(raw: Option<&str>) -> Result<String,
     }
 }
 
-fn letta_messages_top_array(v: &serde_json::Value) -> &[serde_json::Value] {
+fn runtime_messages_top_array(v: &serde_json::Value) -> &[serde_json::Value] {
     if let Some(a) = v.as_array() {
         return a.as_slice();
     }
@@ -45,14 +45,14 @@ fn letta_messages_top_array(v: &serde_json::Value) -> &[serde_json::Value] {
     &[]
 }
 
-fn letta_inner_for_acp_history(msg: &serde_json::Value) -> &serde_json::Value {
+fn runtime_inner_for_acp_history(msg: &serde_json::Value) -> &serde_json::Value {
     match msg.get("contents") {
         Some(c) if c.get("message_type").is_some() => c,
         _ => msg,
     }
 }
 
-fn letta_message_text(inner: &serde_json::Value) -> Option<String> {
+fn runtime_message_text(inner: &serde_json::Value) -> Option<String> {
     let content = inner.get("content")?;
     if let Some(s) = content.as_str() {
         let s = s.trim();
@@ -85,7 +85,7 @@ fn letta_message_text(inner: &serde_json::Value) -> Option<String> {
     }
 }
 
-fn letta_message_id_string(msg: &serde_json::Value) -> Option<String> {
+fn runtime_message_id_string(msg: &serde_json::Value) -> Option<String> {
     match msg.get("id")? {
         serde_json::Value::String(s) if !s.is_empty() => Some(s.clone()),
         serde_json::Value::Number(n) => Some(n.to_string()),
@@ -93,14 +93,14 @@ fn letta_message_id_string(msg: &serde_json::Value) -> Option<String> {
     }
 }
 
-fn letta_message_created_at(msg: &serde_json::Value) -> Option<String> {
+fn runtime_message_created_at(msg: &serde_json::Value) -> Option<String> {
     msg.get("date")
         .or_else(|| msg.get("created_at"))
         .and_then(|x| x.as_str())
         .map(str::to_string)
 }
 
-fn letta_user_message_role_is_human(inner: &serde_json::Value, msg: &serde_json::Value) -> bool {
+fn runtime_user_message_role_is_human(inner: &serde_json::Value, msg: &serde_json::Value) -> bool {
     for v in [inner, msg] {
         let Some(role) = v.get("role").and_then(|x| x.as_str()) else {
             continue;
@@ -117,12 +117,12 @@ pub(super) fn map_acp_history_page(
     body: &serde_json::Value,
     page_limit: u32,
 ) -> (Vec<AcpConversationHistoryMessage>, bool, Option<String>) {
-    let raw = letta_messages_top_array(body);
+    let raw = runtime_messages_top_array(body);
     let has_more = raw.len() >= page_limit as usize;
-    let next_before = raw.iter().filter_map(letta_message_id_string).next_back();
+    let next_before = raw.iter().filter_map(runtime_message_id_string).next_back();
     let mut rows = Vec::new();
     for msg in raw.iter().rev() {
-        let inner = letta_inner_for_acp_history(msg);
+        let inner = runtime_inner_for_acp_history(msg);
         let message_type = inner
             .get("message_type")
             .and_then(|x| x.as_str())
@@ -133,10 +133,10 @@ pub(super) fn map_acp_history_page(
             "assistant_message" => "assistant",
             _ => continue,
         };
-        if message_type == "user_message" && !letta_user_message_role_is_human(inner, msg) {
+        if message_type == "user_message" && !runtime_user_message_role_is_human(inner, msg) {
             continue;
         }
-        let Some(text) = letta_message_text(inner).or_else(|| letta_message_text(msg)) else {
+        let Some(text) = runtime_message_text(inner).or_else(|| runtime_message_text(msg)) else {
             continue;
         };
         let text = sanitize_visible_transcript_text(&text);
@@ -144,10 +144,10 @@ pub(super) fn map_acp_history_page(
             continue;
         }
         rows.push(AcpConversationHistoryMessage {
-            id: letta_message_id_string(msg),
+            id: runtime_message_id_string(msg),
             role: role.to_string(),
             text,
-            created_at: letta_message_created_at(msg),
+            created_at: runtime_message_created_at(msg),
         });
     }
     (rows, has_more, next_before)

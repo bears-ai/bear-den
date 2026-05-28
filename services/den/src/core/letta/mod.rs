@@ -18,7 +18,7 @@ pub use assistant_display::{
     normalize_display_status_text, sanitize_visible_transcript_text, strip_letta_harness_for_user,
 };
 pub use client::{
-    LettaAgentListItem, LettaClient, LettaCompatibilityHealthCheck, LettaContinuationContext,
+    LettaAgentListItem, LettaClient, LettaCompatibilityHealthCheck, RuntimeContinuationContext,
     LettaCreateAgentParams, LettaModelOption, LettaPatchAgentParams, LettaPendingApproval,
     LettaToolOption, PendingApprovalDenialMode,
 };

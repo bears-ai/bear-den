@@ -57,7 +57,7 @@ pub struct LettaAgentListItem {
 
 /// Thin Letta REST client (create agent, stream chat). Disabled when `letta_base_url` is empty.
 #[derive(Debug, Clone)]
-pub struct LettaContinuationContext {
+pub struct RuntimeContinuationContext {
     pub conversation_id: String,
     pub agent_id: Option<String>,
     pub client_tools: Option<Value>,
@@ -66,7 +66,7 @@ pub struct LettaContinuationContext {
 }
 
 fn conversation_tool_return_continuation_body(
-    context: &LettaContinuationContext,
+    context: &RuntimeContinuationContext,
     tool_call_id: &str,
     approval_request_id: Option<&str>,
     status: &str,
@@ -255,7 +255,7 @@ fn pending_approvals_from_variants(variants: &[Value]) -> Vec<LettaPendingApprov
         .collect()
 }
 
-impl LettaContinuationContext {
+impl RuntimeContinuationContext {
     pub fn client_tools_bytes(&self) -> usize {
         self.client_tools
             .as_ref()
@@ -1167,7 +1167,7 @@ impl LettaClient {
 
     pub async fn post_conversation_tool_returns_streaming(
         &self,
-        context: &LettaContinuationContext,
+        context: &RuntimeContinuationContext,
         tool_call_id: &str,
         approval_request_id: Option<&str>,
         status: &str,
@@ -1980,8 +1980,8 @@ impl RuntimeHealthCheck for LettaCompatibilityHealthCheck {
 mod tests {
     use super::*;
 
-    fn continuation_context_for_tests() -> LettaContinuationContext {
-        LettaContinuationContext {
+    fn continuation_context_for_tests() -> RuntimeContinuationContext {
+        RuntimeContinuationContext {
             conversation_id: "conv-test".to_string(),
             agent_id: Some("agent-test".to_string()),
             client_tools: Some(json!([{ "name": "session_info" }])),

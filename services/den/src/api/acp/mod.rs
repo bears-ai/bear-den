@@ -62,7 +62,7 @@ use crate::{
             acp_cleanup_stale_runtime_state, continue_acp_turn_with_runtime,
             AcpStaleRuntimeCleanupParams, AcpTurnContinueRequest, AcpTurnStreamContext,
         },
-        letta::LettaContinuationContext,
+        letta::RuntimeContinuationContext,
         runtime_provider::RoleRuntimeBinding,
     },
 };
@@ -668,7 +668,7 @@ mod tests {
             Vec::new(),
             false,
             letta,
-            LettaContinuationContext {
+            RuntimeContinuationContext {
                 conversation_id: "conv-test-continuation".to_string(),
                 agent_id: Some("agent-12345678-1234-4567-89ab-123456789abc".to_string()),
                 client_tools: Some(serde_json::json!([{ "name": "fs_read_text_file" }])),
@@ -854,7 +854,7 @@ mod tests {
             Vec::new(),
             false,
             letta,
-            LettaContinuationContext {
+            RuntimeContinuationContext {
                 conversation_id: "conv-error-continuation".to_string(),
                 agent_id: Some("agent-12345678-1234-4567-89ab-123456789abc".to_string()),
                 client_tools: Some(serde_json::json!([{ "name": "fs_read_text_file" }])),
@@ -1012,7 +1012,7 @@ mod tests {
             Vec::new(),
             false,
             letta,
-            LettaContinuationContext {
+            RuntimeContinuationContext {
                 conversation_id: "conv-test-continuation".to_string(),
                 agent_id: Some("agent-12345678-1234-4567-89ab-123456789abc".to_string()),
                 client_tools: Some(serde_json::json!([{ "name": "fs_read_text_file" }])),
@@ -1156,7 +1156,7 @@ mod tests {
             Vec::new(),
             false,
             letta,
-            LettaContinuationContext {
+            RuntimeContinuationContext {
                 conversation_id: "conv-test-continuation".to_string(),
                 agent_id: Some("agent-12345678-1234-4567-89ab-123456789abc".to_string()),
                 client_tools: None,
@@ -1250,7 +1250,7 @@ mod tests {
             Vec::new(),
             false,
             letta,
-            LettaContinuationContext {
+            RuntimeContinuationContext {
                 conversation_id: "conv-test-continuation".to_string(),
                 agent_id: Some("agent-12345678-1234-4567-89ab-123456789abc".to_string()),
                 client_tools: None,
@@ -1398,7 +1398,7 @@ mod tests {
             Vec::new(),
             false,
             letta,
-            LettaContinuationContext {
+            RuntimeContinuationContext {
                 conversation_id: "conv-test".to_string(),
                 agent_id: Some("agent-12345678-1234-4567-89ab-123456789abc".to_string()),
                 client_tools: Some(serde_json::json!([{ "name": "fs_read_text_file" }])),
@@ -1541,7 +1541,7 @@ mod tests {
             Vec::new(),
             false,
             letta,
-            LettaContinuationContext {
+            RuntimeContinuationContext {
                 conversation_id: "conv-test-continuation".to_string(),
                 agent_id: Some("agent-12345678-1234-4567-89ab-123456789abc".to_string()),
                 client_tools: Some(serde_json::json!([{ "name": "session_info" }])),
@@ -1632,7 +1632,7 @@ mod tests {
             }],
             true,
             letta,
-            LettaContinuationContext {
+            RuntimeContinuationContext {
                 conversation_id: "conv-test-resolved".to_string(),
                 agent_id: Some("agent-12345678-1234-4567-89ab-123456789abc".to_string()),
                 client_tools: None,
@@ -1800,7 +1800,7 @@ mod tests {
             Vec::new(),
             false,
             letta,
-            LettaContinuationContext {
+            RuntimeContinuationContext {
                 conversation_id: "conv-timeout".to_string(),
                 agent_id: Some("agent-12345678-1234-4567-89ab-123456789abc".to_string()),
                 client_tools: Some(serde_json::json!([{ "name": "fs_read_text_file" }])),
@@ -2053,7 +2053,7 @@ mod tests {
             Vec::new(),
             false,
             letta,
-            LettaContinuationContext {
+            RuntimeContinuationContext {
                 conversation_id: "conv-cancel".to_string(),
                 agent_id: Some("agent-12345678-1234-4567-89ab-123456789abc".to_string()),
                 client_tools: Some(serde_json::json!([{ "name": "fs_read_text_file" }])),
@@ -2196,7 +2196,7 @@ mod tests {
             Vec::new(),
             false,
             letta,
-            LettaContinuationContext {
+            RuntimeContinuationContext {
                 conversation_id: "conv-test".to_string(),
                 agent_id: Some("agent-12345678-1234-4567-89ab-123456789abc".to_string()),
                 client_tools: Some(serde_json::json!([{ "name": "fs_read_text_file" }])),
@@ -2331,7 +2331,7 @@ mod tests {
             Vec::new(),
             false,
             letta,
-            LettaContinuationContext {
+            RuntimeContinuationContext {
                 conversation_id: "conv-test".to_string(),
                 agent_id: Some("agent-12345678-1234-4567-89ab-123456789abc".to_string()),
                 client_tools: None,
@@ -2469,7 +2469,7 @@ mod tests {
             Vec::new(),
             false,
             letta,
-            LettaContinuationContext {
+            RuntimeContinuationContext {
                 conversation_id: "conv-test".to_string(),
                 agent_id: Some("agent-12345678-1234-4567-89ab-123456789abc".to_string()),
                 client_tools: Some(serde_json::json!([{ "name": "fs_read_text_file" }])),

@@ -12,7 +12,7 @@ use crate::{
         acp_runtime::{require_pair_runtime_binding, verify_acp_conversation_belongs_to_binding},
         archived_conversations,
         bears::db as bears_db,
-        letta::load_agent_conversations,
+        letta::load_agent_conversations as load_runtime_conversations,
     },
     errors::CustomError,
 };
@@ -70,10 +70,10 @@ pub(super) async fn conversations_inner(
     }
     let runtime_binding =
         require_pair_runtime_binding(&state.sqlx_pool, state.letta.as_ref(), &bear).await?;
-    let agent_id = runtime_binding.binding_id;
+    let runtime_binding_id = runtime_binding.binding_id;
 
     let archived_ids = archived_conversations::list_for_bear(&state.sqlx_pool, bear.id).await?;
-    let snap = load_agent_conversations(state.letta.as_ref(), &agent_id).await;
+    let snap = load_runtime_conversations(state.letta.as_ref(), &runtime_binding_id).await;
     let source: Vec<_> = if query.include_archived {
         snap.all
             .into_iter()
@@ -138,7 +138,7 @@ pub(super) async fn conversation_history_inner(
     }
     let runtime_binding =
         require_pair_runtime_binding(&state.sqlx_pool, state.letta.as_ref(), &bear).await?;
-    let agent_id = runtime_binding.binding_id.clone();
+    let runtime_binding_id = runtime_binding.binding_id.clone();
     let conv_id = normalize_acp_conversation_id(Some(&conversation_id))?;
     if conv_id.starts_with("new-") {
         return Err(CustomError::ValidationError(
@@ -159,14 +159,14 @@ pub(super) async fn conversation_history_inner(
         .as_deref()
         .map(str::trim)
         .filter(|s| !s.is_empty());
-    let agent_for_conv = if conv_id == "default" {
-        Some(agent_id.as_str())
+    let binding_for_conv = if conv_id == "default" {
+        Some(runtime_binding_id.as_str())
     } else {
         None
     };
     let body = state
         .letta
-        .list_conversation_messages(&conv_id, agent_for_conv, limit, before, false)
+        .list_conversation_messages(&conv_id, binding_for_conv, limit, before, false)
         .await?;
     let (messages, has_more, next_before) = map_acp_history_page(&body, limit);
     Ok(Json(AcpConversationHistoryResponse {

@@ -19,7 +19,7 @@ use crate::{
         acp_runtime::AcpConversationResolution,
         acp_tools::AcpResolvedSessionPolicy,
         bears::Bear,
-        letta::LettaContinuationContext,
+        letta::RuntimeContinuationContext,
         role_runtime::{AcpTurnLifecycleContext, AcpTurnLifecycleRuntime},
         runtime_provider::RoleRuntimeBinding,
         user,
@@ -206,7 +206,7 @@ pub(in crate::api::acp) async fn build_acp_sse_response(
         setup.initial_events,
         setup.session_info_event_sent,
         state.letta.clone(),
-        LettaContinuationContext {
+        RuntimeContinuationContext {
             conversation_id: conversation_resolution.upstream_target.clone(),
             agent_id: Some(pair_runtime_binding.binding_id.clone()),
             client_tools: client_tool_descriptors,

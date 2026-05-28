@@ -17,7 +17,7 @@ use crate::{
             mode_from_den_tool_result, plan_update_from_den_tool_result,
             AcpActiveTurnCancelHandle, AcpPendingFuture, AcpResolvedToolResult,
             AcpStaleRuntimeCleanupParams, AcpStreamContext, AcpTurnContinueRequest,
-            AcpTurnStreamContext, LettaContinuationContext, RoleRuntimeBinding,
+            AcpTurnStreamContext, RuntimeContinuationContext, RoleRuntimeBinding,
         },
         acp::types::PersistedToolRequestEffect,
         service::ApiState,
@@ -48,7 +48,7 @@ pub(in crate::api::acp) struct AcpLettaSseStream {
     pub(in crate::api::acp) pending: VecDeque<Bytes>,
     pub(in crate::api::acp) context: AcpStreamContext,
     pub(in crate::api::acp) letta: Arc<crate::core::letta::LettaClient>,
-    pub(in crate::api::acp) continuation: LettaContinuationContext,
+    pub(in crate::api::acp) continuation: RuntimeContinuationContext,
     pub(in crate::api::acp) waiting_adapter_tool_result:
         Option<(String, String, AcpResolvedToolResult)>,
     pub(in crate::api::acp) queued_tool_result_continuation: Option<AcpToolResultRequest>,
@@ -267,7 +267,7 @@ impl AcpLettaSseStream {
         initial_events: Vec<AcpGatewayEvent>,
         session_info_event_sent: bool,
         letta: Arc<crate::core::letta::LettaClient>,
-        continuation: LettaContinuationContext,
+        continuation: RuntimeContinuationContext,
         active_turn_guard: RoleTurnGuard,
     ) -> Self {
         let mut pending = VecDeque::new();

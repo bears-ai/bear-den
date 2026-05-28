@@ -168,8 +168,8 @@ impl<'a> LettaAcpTurnRunner<'a> {
         conversation: &RuntimeConversationRef,
         binding: &RoleRuntimeBinding,
         stream: &AcpTurnStreamContext,
-    ) -> crate::core::letta::LettaContinuationContext {
-        crate::core::letta::LettaContinuationContext {
+    ) -> crate::core::letta::RuntimeContinuationContext {
+        crate::core::letta::RuntimeContinuationContext {
             conversation_id: conversation.id.clone(),
             agent_id: Some(binding.binding_id.clone()),
             client_tools: stream.client_tools.clone(),
