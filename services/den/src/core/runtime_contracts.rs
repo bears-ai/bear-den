@@ -209,20 +209,20 @@ pub trait RuntimeHealthCheck {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RuntimeStartupCapabilities {
     pub acp_gateway_enabled: bool,
-    pub letta_required_for_acp: bool,
+    pub runtime_required_for_acp: bool,
 }
 
 impl RuntimeStartupCapabilities {
     pub fn from_config(config: &Config) -> Self {
         Self {
             acp_gateway_enabled: config.acp_gateway_enabled,
-            letta_required_for_acp: config.acp_gateway_enabled,
+            runtime_required_for_acp: config.acp_gateway_enabled,
         }
     }
 }
 
-pub fn acp_requires_letta_runtime(config: &Config) -> bool {
-    RuntimeStartupCapabilities::from_config(config).letta_required_for_acp
+pub fn acp_requires_runtime(config: &Config) -> bool {
+    RuntimeStartupCapabilities::from_config(config).runtime_required_for_acp
 }
 
 #[allow(async_fn_in_trait)]

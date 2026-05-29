@@ -183,7 +183,7 @@ pub async fn reconcile_bear_if_configured(
                 .iter()
                 .map(|role| crate::core::bears::sync::BearRoleSyncOutcome {
                     role: role.as_str().to_string(),
-                    compatibility_binding_id: None,
+                    runtime_binding_id: None,
                     status: "skipped_letta_disabled".to_string(),
                     message: Some("Letta is not configured (set LETTA_BASE_URL).".to_string()),
                 })
@@ -243,7 +243,7 @@ async fn provision_bear_role(
             )
             .await?;
             register_role_view_if_configured(letta, bear.id, role, &agent_id).await?;
-            tracing::info!(bear_id = %bear.id, compatibility_binding_id = %agent_id, role = %role, "Letta-backed role runtime provisioned for bear");
+            tracing::info!(bear_id = %bear.id, runtime_binding_id = %agent_id, role = %role, "Letta-backed role runtime provisioned for bear");
             Ok(())
         }
         Err(err) => {

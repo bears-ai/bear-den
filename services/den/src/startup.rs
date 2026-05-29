@@ -4,7 +4,7 @@ use crate::config::Config;
 use crate::core::codepool::CodePoolClient;
 use crate::core::letta::LettaClient;
 use crate::core::runtime_provider::{
-    acp_requires_letta_runtime, RuntimeHealthCheck, RuntimeStartupCapabilities,
+    acp_requires_runtime, RuntimeHealthCheck, RuntimeStartupCapabilities,
 };
 use sqlx::PgPool;
 use thiserror::Error;
@@ -99,7 +99,7 @@ pub fn validate_runtime_config(config: &Config) -> Result<(), StartupError> {
                 .into(),
         ));
     }
-    if acp_requires_letta_runtime(config) && config.letta_base_url.trim().is_empty() {
+    if acp_requires_runtime(config) && config.letta_base_url.trim().is_empty() {
         return Err(StartupError::Message(
             "LETTA_BASE_URL must be set when ACP_GATEWAY_ENABLED=true. Den routes ACP prompts directly to the pair role through the Letta API."
                 .into(),
@@ -138,7 +138,7 @@ pub async fn validate_upstream_connections(config: &Config) -> Result<(), Startu
     }
 
     let runtime_capabilities = RuntimeStartupCapabilities::from_config(config);
-    if runtime_capabilities.letta_required_for_acp || !config.letta_base_url.trim().is_empty() {
+    if runtime_capabilities.runtime_required_for_acp || !config.letta_base_url.trim().is_empty() {
         tracing::info!(
             url = %config.letta_base_url,
             compatibility_backend = "letta",
@@ -155,7 +155,7 @@ pub async fn validate_upstream_connections(config: &Config) -> Result<(), Startu
                 compatibility_backend = RuntimeHealthCheck::compatibility_backend_name(&health),
                 "Runtime compatibility backend health check passed"
             );
-        } else if runtime_capabilities.letta_required_for_acp {
+        } else if runtime_capabilities.runtime_required_for_acp {
             return Err(StartupError::Message(
                 "LETTA_BASE_URL must be set when ACP_GATEWAY_ENABLED=true. Den routes ACP prompts directly to the pair role through the Letta API."
                     .into(),

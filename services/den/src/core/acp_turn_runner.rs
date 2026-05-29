@@ -62,7 +62,7 @@ pub struct AcpTurnStreamContext {
     pub max_steps: u32,
 }
 
-pub struct LettaAcpTurnRunner<'a> {
+pub struct DenRuntimeAcpTurnRunner<'a> {
     pub state: &'a ApiState,
     pub request_id: Uuid,
     pub runtime_context_len: usize,
@@ -162,7 +162,7 @@ async fn post_turn(
     .await
 }
 
-impl<'a> LettaAcpTurnRunner<'a> {
+impl<'a> DenRuntimeAcpTurnRunner<'a> {
     fn continuation_context(
         &self,
         conversation: &RuntimeConversationRef,
@@ -283,7 +283,7 @@ impl<'a> LettaAcpTurnRunner<'a> {
                 tracing::warn!(
                     %self.request_id,
                     acp_session_id = %session_id,
-                    compatibility_binding_id = %request.binding.binding_id,
+                    runtime_binding_id = %request.binding.binding_id,
                     error = %err,
                     "runtime conversation is waiting for stale approval; skipping agent-wide cancel before retry"
                 );
@@ -301,7 +301,7 @@ impl<'a> LettaAcpTurnRunner<'a> {
                 tracing::info!(
                     %self.request_id,
                     acp_session_id = %session_id,
-                    compatibility_binding_id = %request.binding.binding_id,
+                    runtime_binding_id = %request.binding.binding_id,
                     cancel_result = %cancel_result,
                     process_cleanup = ?process_cleanup,
                     "ACP stale-approval retry cleaned expired process-local tool state without agent-wide cancellation"
@@ -324,7 +324,7 @@ impl<'a> LettaAcpTurnRunner<'a> {
                         tracing::warn!(
                             %self.request_id,
                             acp_session_id = %session_id,
-                            compatibility_binding_id = %request.binding.binding_id,
+                            runtime_binding_id = %request.binding.binding_id,
                             conversation_id = %upstream_target,
                             active_tool_call_id = tracing::field::Empty,
                             error = %retry_err,
@@ -343,7 +343,7 @@ impl<'a> LettaAcpTurnRunner<'a> {
                         tracing::warn!(
                             %self.request_id,
                             acp_session_id = %session_id,
-                            compatibility_binding_id = %request.binding.binding_id,
+                            runtime_binding_id = %request.binding.binding_id,
                             conversation_id = %upstream_target,
                             denied_count = denied.len(),
                             denied_tool_call_ids = ?denied.iter().map(|p| p.tool_call_id.as_str()).collect::<Vec<_>>(),
@@ -373,7 +373,7 @@ impl<'a> LettaAcpTurnRunner<'a> {
 }
 
 #[allow(async_fn_in_trait)]
-impl AcpTurnRunner for LettaAcpTurnRunner<'_> {
+impl AcpTurnRunner for DenRuntimeAcpTurnRunner<'_> {
     async fn preflight_hygiene(
         &self,
         binding: &RoleRuntimeBinding,
@@ -441,7 +441,7 @@ impl AcpTurnRunner for LettaAcpTurnRunner<'_> {
 pub async fn start_acp_turn_with_retries(
     request: AcpTurnStartRequest<'_>,
 ) -> Result<Response, CustomError> {
-    let runner = LettaAcpTurnRunner {
+    let runner = DenRuntimeAcpTurnRunner {
         state: request.state,
         request_id: request.request_id,
         runtime_context_len: request.runtime_context_len,
@@ -679,7 +679,7 @@ pub async fn continue_acp_turn_with_runtime(
     ),
     CustomError,
 > {
-    let runner = LettaAcpTurnRunner {
+    let runner = DenRuntimeAcpTurnRunner {
         state: request.state,
         request_id: request.request_id,
         runtime_context_len: 0,
@@ -877,7 +877,7 @@ mod tests {
         config.letta_base_url = format!("http://{addr}");
         let letta = Arc::new(LettaClient::new(&config));
         let state = test_api_state(letta);
-        let runner = LettaAcpTurnRunner {
+        let runner = DenRuntimeAcpTurnRunner {
             state: &state,
             request_id: Uuid::new_v4(),
             runtime_context_len: 0,
@@ -945,7 +945,7 @@ mod tests {
         config.letta_base_url = format!("http://{addr}");
         let letta = Arc::new(LettaClient::new(&config));
         let state = test_api_state(letta);
-        let runner = LettaAcpTurnRunner {
+        let runner = DenRuntimeAcpTurnRunner {
             state: &state,
             request_id: Uuid::new_v4(),
             runtime_context_len: 0,

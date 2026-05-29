@@ -244,7 +244,7 @@ pub(in crate::api::acp) async fn run_prompt_flow(
         bear_slug = %bear.slug,
         bear_id = %bear.id,
         role = "pair",
-        compatibility_binding_id = %pair_runtime_binding.binding_id,
+        runtime_binding_id = %pair_runtime_binding.binding_id,
         client = %client,
         cwd = %cwd,
         requested_conversation_id = body.conversation_id.as_deref().map(str::trim),

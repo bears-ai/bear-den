@@ -269,7 +269,7 @@ pub async fn verify_acp_conversation_belongs_to_binding(
     let binding_id = binding.binding_id.trim();
     if binding_id.is_empty() {
         return Err(CustomError::ValidationError(
-            "this bear role is not linked to a runtime compatibility binding".to_string(),
+            "this bear role is not linked to a runtime runtime binding".to_string(),
         ));
     }
     let snap = load_agent_conversations(letta, binding_id).await;

@@ -458,7 +458,7 @@ pub async fn get_bear_agent(
     .map_err(Into::into)
 }
 
-/// Returns the currently recorded Letta compatibility binding for a Bear role.
+/// Returns the currently recorded Letta runtime binding for a Bear role.
 pub async fn role_runtime_binding_id(
     pool: &PgPool,
     bear_id: Uuid,

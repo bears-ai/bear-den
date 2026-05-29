@@ -3,7 +3,7 @@ mod tests {
     use crate::{
         config::Config,
         core::runtime_provider::{
-            acp_requires_letta_runtime, AcpTurnRunner, CancelTurnRequest, ContinueTurnRequest,
+            acp_requires_runtime, AcpTurnRunner, CancelTurnRequest, ContinueTurnRequest,
             ContinueTurnResult, InteractionRunStore, RetrievalService, RoleProfileRegistry,
             RoleRunner, RoleRuntimeBinding, RuntimeApprovalDecision, RuntimeContinuation,
             RuntimeConversationRef, RuntimeStartupCapabilities, RuntimeStreamContinuation,
@@ -13,17 +13,17 @@ mod tests {
     };
 
     #[test]
-    fn acp_requires_letta_runtime_when_gateway_enabled() {
+    fn acp_requires_runtime_when_gateway_enabled() {
         let mut config = Config::test_stub();
         config.acp_gateway_enabled = true;
-        assert!(acp_requires_letta_runtime(&config));
+        assert!(acp_requires_runtime(&config));
     }
 
     #[test]
     fn acp_does_not_require_letta_runtime_when_gateway_disabled() {
         let mut config = Config::test_stub();
         config.acp_gateway_enabled = false;
-        assert!(!acp_requires_letta_runtime(&config));
+        assert!(!acp_requires_runtime(&config));
     }
 
     #[test]
@@ -32,12 +32,12 @@ mod tests {
         config.acp_gateway_enabled = true;
         let caps = RuntimeStartupCapabilities::from_config(&config);
         assert!(caps.acp_gateway_enabled);
-        assert!(caps.letta_required_for_acp);
+        assert!(caps.runtime_required_for_acp);
 
         config.acp_gateway_enabled = false;
         let caps = RuntimeStartupCapabilities::from_config(&config);
         assert!(!caps.acp_gateway_enabled);
-        assert!(!caps.letta_required_for_acp);
+        assert!(!caps.runtime_required_for_acp);
     }
 
     struct NoopRegistry;
