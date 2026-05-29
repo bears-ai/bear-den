@@ -14,8 +14,8 @@ use crate::{
         runtime_contracts::{
             AcpTurnRunner, CancelTurnRequest, CancelTurnResult, ContinueTurnRequest,
             ContinueTurnResult, RoleRuntimeBinding, RuntimeApprovalDecision, RuntimeCancellationBackend,
-            RuntimeContinuation, RuntimeConversationRef, RuntimeToolResultStatus, StartTurnRequest,
-            StartTurnResult,
+            RuntimeContinuation, RuntimeConversationRef, RuntimeStreamContinuation,
+            RuntimeToolResultStatus, RuntimeTurnBackend, StartTurnRequest, StartTurnResult,
         },
     },
     errors::CustomError,
@@ -157,35 +157,56 @@ async fn acp_preflight_runtime_hygiene(
     "skipped:session_turn_introspection_unavailable".to_string()
 }
 
-async fn post_turn(
-    letta: &LettaClient,
+pub struct LettaRuntimeTurnBackend<'a> {
+    letta: &'a LettaClient,
     request_id: Uuid,
-    session_id: &str,
-    upstream_target: &str,
-    role_agent_id: &str,
-    prompt: &str,
-    client_tools: Option<serde_json::Value>,
     runtime_context_len: usize,
-    stream_tokens: bool,
-) -> Result<Response, CustomError> {
-    post_pair_turn_messages_streaming(
-        letta,
-        PairTurnRequest {
-            conversation_id: upstream_target,
-            role_agent_id,
-            human_message: prompt,
-            client_tools,
-            stream_tokens,
-            override_system: None,
-            boundary: PairTurnBoundaryLog {
-                request_id: &request_id.to_string(),
-                channel_family: "acp",
-                session_id,
-                runtime_context_len,
+}
+
+impl<'a> LettaRuntimeTurnBackend<'a> {
+    pub fn new(letta: &'a LettaClient, request_id: Uuid, runtime_context_len: usize) -> Self {
+        Self {
+            letta,
+            request_id,
+            runtime_context_len,
+        }
+    }
+
+    async fn post_turn_response(&self, request: &StartTurnRequest) -> Result<Response, CustomError> {
+        let session_id = request
+            .acp_session_id
+            .as_deref()
+            .ok_or_else(|| CustomError::ValidationError("missing acp_session_id".to_string()))?;
+        post_pair_turn_messages_streaming(
+            self.letta,
+            PairTurnRequest {
+                conversation_id: &request.conversation.id,
+                role_agent_id: &request.binding.binding_id,
+                human_message: &request.human_message,
+                client_tools: request.client_tools.clone(),
+                stream_tokens: request.stream_tokens,
+                override_system: None,
+                boundary: PairTurnBoundaryLog {
+                    request_id: &self.request_id.to_string(),
+                    channel_family: "acp",
+                    session_id,
+                    runtime_context_len: self.runtime_context_len,
+                },
             },
-        },
-    )
-    .await
+        )
+        .await
+    }
+}
+
+#[allow(async_fn_in_trait)]
+impl RuntimeTurnBackend for LettaRuntimeTurnBackend<'_> {
+    async fn start_turn(&self, request: StartTurnRequest) -> Result<StartTurnResult, CustomError> {
+        let _response = self.post_turn_response(&request).await?;
+        Ok(StartTurnResult {
+            turn: None,
+            stream: RuntimeStreamContinuation::BytesSse,
+        })
+    }
 }
 
 impl<'a> DenRuntimeAcpTurnRunner<'a> {
@@ -290,18 +311,12 @@ impl<'a> DenRuntimeAcpTurnRunner<'a> {
             .await;
         }
 
-        let first_attempt = post_turn(
+        let backend = LettaRuntimeTurnBackend::new(
             self.state.letta.as_ref(),
             self.request_id,
-            session_id,
-            upstream_target,
-            &request.binding.binding_id,
-            &request.human_message,
-            request.client_tools.clone(),
             self.runtime_context_len,
-            request.stream_tokens,
-        )
-        .await;
+        );
+        let first_attempt = backend.post_turn_response(&request).await;
 
         match first_attempt {
             Ok(upstream) => Ok(upstream),
@@ -335,19 +350,7 @@ impl<'a> DenRuntimeAcpTurnRunner<'a> {
                     process_cleanup = ?process_cleanup,
                     "ACP stale-approval retry cleaned expired process-local tool state without agent-wide cancellation"
                 );
-                match post_turn(
-                    self.state.letta.as_ref(),
-                    self.request_id,
-                    session_id,
-                    upstream_target,
-                    &request.binding.binding_id,
-                    &request.human_message,
-                    request.client_tools.clone(),
-                    self.runtime_context_len,
-                    request.stream_tokens,
-                )
-                .await
-                {
+                match backend.post_turn_response(&request).await {
                     Ok(upstream) => Ok(upstream),
                     Err(retry_err) if looks_like_runtime_waiting_for_approval_error(&retry_err) => {
                         tracing::warn!(
@@ -380,18 +383,7 @@ impl<'a> DenRuntimeAcpTurnRunner<'a> {
                             active_tool_call_id = tracing::field::Empty,
                             "Detected stale pending runtime approvals after retry failure; suppressed conversation-posted denial to avoid contaminating later turns"
                         );
-                        post_turn(
-                            self.state.letta.as_ref(),
-                            self.request_id,
-                            session_id,
-                            upstream_target,
-                            &request.binding.binding_id,
-                            &request.human_message,
-                            request.client_tools,
-                            self.runtime_context_len,
-                            request.stream_tokens,
-                        )
-                        .await
+                        backend.post_turn_response(&request).await
                     }
                     Err(retry_err) => Err(retry_err),
                 }
@@ -424,8 +416,13 @@ impl AcpTurnRunner for DenRuntimeAcpTurnRunner<'_> {
     }
 
     async fn start_turn(&self, request: StartTurnRequest) -> Result<StartTurnResult, CustomError> {
-        let _response = self.start_turn_response(request).await?;
-        Ok(StartTurnResult { turn: None })
+        LettaRuntimeTurnBackend::new(
+            self.state.letta.as_ref(),
+            self.request_id,
+            self.runtime_context_len,
+        )
+        .start_turn(request)
+        .await
     }
 
     async fn continue_turn(

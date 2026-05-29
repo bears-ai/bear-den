@@ -108,6 +108,7 @@ pub struct CancelTurnRequest {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct StartTurnResult {
     pub turn: Option<RuntimeTurnRef>,
+    pub stream: RuntimeStreamContinuation,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -294,6 +295,11 @@ pub trait AcpTurnRunner {
 pub trait RuntimeCancellationBackend {
     async fn cancel_turn(&self, request: CancelTurnRequest)
     -> Result<CancelTurnResult, CustomError>;
+}
+
+#[allow(async_fn_in_trait)]
+pub trait RuntimeTurnBackend {
+    async fn start_turn(&self, request: StartTurnRequest) -> Result<StartTurnResult, CustomError>;
 }
 
 #[allow(async_fn_in_trait)]
