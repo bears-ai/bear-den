@@ -62,7 +62,6 @@ use crate::{
             acp_cleanup_stale_runtime_state, continue_acp_turn_with_runtime,
             AcpStaleRuntimeCleanupParams, AcpTurnContinueRequest, AcpTurnStreamContext,
         },
-        letta::RuntimeContinuationContext,
         runtime_provider::RoleRuntimeBinding,
     },
 };

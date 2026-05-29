@@ -17,7 +17,7 @@ use crate::{
             mode_from_den_tool_result, plan_update_from_den_tool_result,
             AcpActiveTurnCancelHandle, AcpPendingFuture, AcpResolvedToolResult,
             AcpStaleRuntimeCleanupParams, AcpStreamContext, AcpTurnContinueRequest,
-            AcpTurnStreamContext, RuntimeContinuationContext, RoleRuntimeBinding,
+            AcpTurnStreamContext, RoleRuntimeBinding,
         },
         acp::types::PersistedToolRequestEffect,
         service::ApiState,
@@ -47,8 +47,6 @@ pub(in crate::api::acp) struct AcpRuntimeSseStream {
     pub(in crate::api::acp) buffer: Vec<u8>,
     pub(in crate::api::acp) pending: VecDeque<Bytes>,
     pub(in crate::api::acp) context: AcpStreamContext,
-    pub(in crate::api::acp) letta: Arc<crate::core::letta::LettaClient>,
-    pub(in crate::api::acp) continuation: RuntimeContinuationContext,
     pub(in crate::api::acp) waiting_adapter_tool_result:
         Option<(String, String, AcpResolvedToolResult)>,
     pub(in crate::api::acp) queued_tool_result_continuation: Option<AcpToolResultRequest>,
@@ -266,8 +264,6 @@ impl AcpRuntimeSseStream {
         context: AcpStreamContext,
         initial_events: Vec<AcpGatewayEvent>,
         session_info_event_sent: bool,
-        letta: Arc<crate::core::letta::LettaClient>,
-        continuation: RuntimeContinuationContext,
         active_turn_guard: RoleTurnGuard,
     ) -> Self {
         let mut pending = VecDeque::new();
@@ -279,8 +275,6 @@ impl AcpRuntimeSseStream {
             buffer: Vec::new(),
             pending,
             context,
-            letta,
-            continuation,
             waiting_adapter_tool_result: None,
             queued_tool_result_continuation: None,
             diagnostics: AcpStreamDiagnostics::default(),
@@ -682,7 +676,7 @@ impl Stream for AcpRuntimeSseStream {
                         }
                         Err(err) => {
                             if looks_like_runtime_waiting_for_approval_error(&err) {
-                                let letta = this.letta.clone();
+                                let letta = Arc::new(crate::core::letta::LettaClient::new(this.context.config.as_ref()));
                                 let tool_turns = this.context.tool_turns.clone();
                                 let acp_session_id = this.context.acp_session_id.clone();
                                 let bear_id = this.context.bear_id;
@@ -888,8 +882,6 @@ impl Stream for AcpRuntimeSseStream {
                     );
                     Poll::Pending
                 } else if let Some(tool_result) = this.queued_tool_result_continuation.take() {
-                    let letta = this.letta.clone();
-                    let continuation = this.continuation.clone();
                     let tool_name = tool_result
                         .tool_name
                         .as_deref()
@@ -917,16 +909,13 @@ impl Stream for AcpRuntimeSseStream {
                     let api_state = ApiState {
                         sqlx_pool: this.context.pool.clone(),
                         config: config.clone(),
-                        letta: letta.clone(),
+                        letta: Arc::new(crate::core::letta::LettaClient::new(config.as_ref())),
                         bifrost: Arc::new(BifrostClient::new(config.as_ref())),
                         acp_tool_turns: this.context.tool_turns.clone(),
                         acp_turn_cancellations: AcpActiveTurnCancelRegistry::new(),
                     };
                     let binding = RoleRuntimeBinding {
-                        binding_id: continuation
-                            .agent_id
-                            .clone()
-                            .unwrap_or_else(|| this.context.pair_agent_id.clone()),
+                        binding_id: this.context.pair_agent_id.clone(),
                         compatibility_backend: Some("letta".to_string()),
                     };
                     let request_id = this.context.request_id;
@@ -956,9 +945,9 @@ impl Stream for AcpRuntimeSseStream {
                             }
                         };
                     let stream_context = AcpTurnStreamContext {
-                        client_tools: continuation.client_tools.clone(),
-                        stream_tokens: continuation.stream_tokens,
-                        max_steps: continuation.max_steps,
+                        client_tools: None,
+                        stream_tokens: false,
+                        max_steps: 4,
                     };
                     this.persist_future =
                         Some(AcpPendingFuture::ContinueTool(Box::pin(async move {
@@ -988,7 +977,7 @@ impl Stream for AcpRuntimeSseStream {
                     && !this.diagnostics.emitted_runtime_cleanup
                     && this.queued_tool_result_continuation.is_none()
                 {
-                    let letta = this.letta.clone();
+                    let letta = Arc::new(crate::core::letta::LettaClient::new(this.context.config.as_ref()));
                     let tool_turns = this.context.tool_turns.clone();
                     let acp_session_id = this.context.acp_session_id.clone();
                     let bear_id = this.context.bear_id;
@@ -1016,7 +1005,7 @@ impl Stream for AcpRuntimeSseStream {
                     && !this.diagnostics.emitted_runtime_cleanup
                     && this.queued_tool_result_continuation.is_none()
                 {
-                    let letta = this.letta.clone();
+                    let letta = Arc::new(crate::core::letta::LettaClient::new(this.context.config.as_ref()));
                     let tool_turns = this.context.tool_turns.clone();
                     let acp_session_id = this.context.acp_session_id.clone();
                     let bear_id = this.context.bear_id;
