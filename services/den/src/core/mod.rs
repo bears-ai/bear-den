@@ -29,6 +29,7 @@ mod den_tools_work_surface_scaffold_tests;
 mod den_tools_workflow_state_tests;
 pub mod email;
 pub mod letta;
+pub mod letta_runtime_stream_parser;
 pub mod memory_manager_head;
 #[cfg(test)]
 mod memory_manager_head_append_markdown_tests;
