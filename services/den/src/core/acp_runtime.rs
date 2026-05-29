@@ -254,8 +254,8 @@ pub async fn ensure_acp_session_conversation(
     .await
 }
 
-pub async fn verify_acp_conversation_belongs_to_binding(
-    letta: &LettaClient,
+pub async fn verify_acp_conversation_belongs_to_binding_with_backend<B: RuntimeConversationBackend>(
+    backend: &B,
     binding: &RoleRuntimeBinding,
     conversation_id: &str,
 ) -> Result<(), CustomError> {
@@ -267,26 +267,25 @@ pub async fn verify_acp_conversation_belongs_to_binding(
             "invalid conversation_id: {conversation_id}"
         )));
     }
-    if !letta.is_enabled() {
-        return Err(CustomError::System(
-            "Letta is not configured (set LETTA_BASE_URL)".to_string(),
-        ));
-    }
     let binding_id = binding.binding_id.trim();
     if binding_id.is_empty() {
         return Err(CustomError::ValidationError(
             "this bear role is not linked to a runtime runtime binding".to_string(),
         ));
     }
-    let snap = load_agent_conversations(letta, binding_id).await;
-    let found = snap.all.iter().any(|row| row.id == conversation_id);
-    if found {
-        Ok(())
-    } else {
-        Err(CustomError::Authorization(
-            "conversation not found for this bear".to_string(),
-        ))
-    }
+    backend
+        .verify_conversation_belongs_to_binding(binding, conversation_id)
+        .await
+}
+
+pub async fn verify_acp_conversation_belongs_to_binding(
+    letta: &LettaClient,
+    binding: &RoleRuntimeBinding,
+    conversation_id: &str,
+) -> Result<(), CustomError> {
+    let backend = LettaRuntimeConversationBackend { letta };
+    verify_acp_conversation_belongs_to_binding_with_backend(&backend, binding, conversation_id)
+        .await
 }
 
 fn letta_conversation_id_from_create_response(value: &serde_json::Value) -> Option<String> {
@@ -319,6 +318,43 @@ impl RuntimeConversationBackend for LettaRuntimeConversationBackend<'_> {
         })?;
         Ok(RuntimeConversationRef { id: conv_id })
     }
+
+    async fn verify_conversation_belongs_to_binding(
+        &self,
+        binding: &RoleRuntimeBinding,
+        conversation_id: &str,
+    ) -> Result<(), CustomError> {
+        if !self.letta.is_enabled() {
+            return Err(CustomError::System(
+                "Letta is not configured (set LETTA_BASE_URL)".to_string(),
+            ));
+        }
+        let snap = load_agent_conversations(self.letta, binding.binding_id.trim()).await;
+        let found = snap.all.iter().any(|row| row.id == conversation_id);
+        if found {
+            Ok(())
+        } else {
+            Err(CustomError::Authorization(
+                "conversation not found for this bear".to_string(),
+            ))
+        }
+    }
+
+    async fn load_history(
+        &self,
+        _binding: &RoleRuntimeBinding,
+        _conversation: &RuntimeConversationRef,
+    ) -> Result<Vec<RuntimeHistoryRecord>, CustomError> {
+        Ok(Vec::new())
+    }
+}
+
+pub async fn load_acp_history_with_backend<B: RuntimeConversationBackend>(
+    backend: &B,
+    binding: &RoleRuntimeBinding,
+    conversation: &RuntimeConversationRef,
+) -> Result<Vec<RuntimeHistoryRecord>, CustomError> {
+    backend.load_history(binding, conversation).await
 }
 
 pub struct LettaAcpConversationRuntime<'a> {
@@ -353,9 +389,14 @@ impl AcpConversationRuntime for LettaAcpConversationRuntime<'_> {
 
     async fn load_history(
         &self,
-        _binding: &RoleRuntimeBinding,
-        _conversation: &RuntimeConversationRef,
+        binding: &RoleRuntimeBinding,
+        conversation: &RuntimeConversationRef,
     ) -> Result<Vec<RuntimeHistoryRecord>, CustomError> {
-        Ok(Vec::new())
+        load_acp_history_with_backend(
+            &LettaRuntimeConversationBackend { letta: self.letta },
+            binding,
+            conversation,
+        )
+        .await
     }
 }

@@ -254,6 +254,18 @@ pub trait RuntimeConversationBackend {
         &self,
         binding: &RoleRuntimeBinding,
     ) -> Result<RuntimeConversationRef, CustomError>;
+
+    async fn verify_conversation_belongs_to_binding(
+        &self,
+        binding: &RoleRuntimeBinding,
+        conversation_id: &str,
+    ) -> Result<(), CustomError>;
+
+    async fn load_history(
+        &self,
+        binding: &RoleRuntimeBinding,
+        conversation: &RuntimeConversationRef,
+    ) -> Result<Vec<RuntimeHistoryRecord>, CustomError>;
 }
 
 #[allow(async_fn_in_trait)]
