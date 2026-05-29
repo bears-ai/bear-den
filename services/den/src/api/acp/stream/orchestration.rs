@@ -155,7 +155,7 @@ pub(in crate::api::acp) async fn build_acp_sse_response(
     let cancel_handle = lifecycle_lease.cancel_handle;
     let cancel_rx = lifecycle_lease.cancel_rx;
 
-    let upstream = match crate::core::acp_turn_runner::start_acp_turn_with_retries(
+    let upstream = match crate::core::acp_turn_runner::start_acp_turn_stream_with_retries(
         crate::core::acp_turn_runner::AcpTurnStartRequest {
             state: &state,
             request_id,
@@ -178,7 +178,7 @@ pub(in crate::api::acp) async fn build_acp_sse_response(
     let session_policy = resolved_policy.to_json();
     let activity = current_activity_plan.as_ref().map(|plan| serde_json::json!(plan));
     let stream = AcpLettaSseStream::new(
-        upstream.bytes_stream().map(|item| item.map_err(Into::into)),
+        upstream,
         AcpStreamContext {
             pool: state.sqlx_pool.clone(),
             tool_turns: state.acp_tool_turns.clone(),

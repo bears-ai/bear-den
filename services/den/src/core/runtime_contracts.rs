@@ -305,6 +305,16 @@ pub trait RuntimeTurnBackend {
         &self,
         request: ContinueTurnRequest,
     ) -> Result<ContinueTurnResult, CustomError>;
+
+    async fn start_turn_stream(
+        &self,
+        request: StartTurnRequest,
+    ) -> Result<RuntimeByteStream, CustomError>;
+
+    async fn continue_turn_stream(
+        &self,
+        request: ContinueTurnRequest,
+    ) -> Result<RuntimeByteStream, CustomError>;
 }
 
 #[allow(async_fn_in_trait)]

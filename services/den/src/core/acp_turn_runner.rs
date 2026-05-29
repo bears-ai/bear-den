@@ -293,6 +293,22 @@ impl RuntimeTurnBackend for LettaRuntimeTurnBackend<'_> {
             stream: RuntimeStreamContinuation::BytesSse,
         })
     }
+
+    async fn start_turn_stream(
+        &self,
+        request: StartTurnRequest,
+    ) -> Result<crate::core::runtime_contracts::RuntimeByteStream, CustomError> {
+        let response = self.post_turn_response(&request).await?;
+        Ok(Box::pin(response.bytes_stream().map(|item| item.map_err(Into::into))))
+    }
+
+    async fn continue_turn_stream(
+        &self,
+        request: ContinueTurnRequest,
+    ) -> Result<crate::core::runtime_contracts::RuntimeByteStream, CustomError> {
+        let response = self.continue_turn_response(&request).await?;
+        Ok(Box::pin(response.bytes_stream().map(|item| item.map_err(Into::into))))
+    }
 }
 
 impl<'a> DenRuntimeAcpTurnRunner<'a> {
@@ -478,24 +494,45 @@ impl AcpTurnRunner for DenRuntimeAcpTurnRunner<'_> {
 pub async fn start_acp_turn_with_retries(
     request: AcpTurnStartRequest<'_>,
 ) -> Result<Response, CustomError> {
-    let runner = DenRuntimeAcpTurnRunner {
-        state: request.state,
-        request_id: request.request_id,
-        runtime_context_len: request.runtime_context_len,
-    };
-    runner
-        .start_turn_response(StartTurnRequest {
-            conversation: RuntimeConversationRef {
-                id: request.upstream_target.to_string(),
-            },
-            binding: request.binding.clone(),
-            human_message: request.prompt.to_string(),
-            runtime_context: None,
-            acp_session_id: Some(request.session_id.to_string()),
-            client_tools: request.client_tools,
-            stream_tokens: request.stream_tokens,
-        })
-        .await
+    LettaRuntimeTurnBackend::new(
+        request.state.letta.as_ref(),
+        request.request_id,
+        request.runtime_context_len,
+    )
+    .post_turn_response(&StartTurnRequest {
+        conversation: RuntimeConversationRef {
+            id: request.upstream_target.to_string(),
+        },
+        binding: request.binding.clone(),
+        human_message: request.prompt.to_string(),
+        runtime_context: None,
+        acp_session_id: Some(request.session_id.to_string()),
+        client_tools: request.client_tools,
+        stream_tokens: request.stream_tokens,
+    })
+    .await
+}
+
+pub async fn start_acp_turn_stream_with_retries(
+    request: AcpTurnStartRequest<'_>,
+) -> Result<crate::core::runtime_contracts::RuntimeByteStream, CustomError> {
+    LettaRuntimeTurnBackend::new(
+        request.state.letta.as_ref(),
+        request.request_id,
+        request.runtime_context_len,
+    )
+    .start_turn_stream(StartTurnRequest {
+        conversation: RuntimeConversationRef {
+            id: request.upstream_target.to_string(),
+        },
+        binding: request.binding.clone(),
+        human_message: request.prompt.to_string(),
+        runtime_context: None,
+        acp_session_id: Some(request.session_id.to_string()),
+        client_tools: request.client_tools,
+        stream_tokens: request.stream_tokens,
+    })
+    .await
 }
 
 fn find_sse_frame_end(buf: &[u8]) -> Option<usize> {
