@@ -300,6 +300,11 @@ pub trait RuntimeCancellationBackend {
 #[allow(async_fn_in_trait)]
 pub trait RuntimeTurnBackend {
     async fn start_turn(&self, request: StartTurnRequest) -> Result<StartTurnResult, CustomError>;
+
+    async fn continue_turn(
+        &self,
+        request: ContinueTurnRequest,
+    ) -> Result<ContinueTurnResult, CustomError>;
 }
 
 #[allow(async_fn_in_trait)]

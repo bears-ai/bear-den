@@ -196,43 +196,28 @@ impl<'a> LettaRuntimeTurnBackend<'a> {
         )
         .await
     }
-}
 
-#[allow(async_fn_in_trait)]
-impl RuntimeTurnBackend for LettaRuntimeTurnBackend<'_> {
-    async fn start_turn(&self, request: StartTurnRequest) -> Result<StartTurnResult, CustomError> {
-        let _response = self.post_turn_response(&request).await?;
-        Ok(StartTurnResult {
-            turn: None,
-            stream: RuntimeStreamContinuation::BytesSse,
-        })
-    }
-}
-
-impl<'a> DenRuntimeAcpTurnRunner<'a> {
     fn continuation_context(
         &self,
         conversation: &RuntimeConversationRef,
         binding: &RoleRuntimeBinding,
-        stream: &AcpTurnStreamContext,
     ) -> crate::core::letta::RuntimeContinuationContext {
         crate::core::letta::RuntimeContinuationContext {
             conversation_id: conversation.id.clone(),
             agent_id: Some(binding.binding_id.clone()),
-            client_tools: stream.client_tools.clone(),
-            stream_tokens: stream.stream_tokens,
-            max_steps: stream.max_steps,
+            client_tools: None,
+            stream_tokens: false,
+            max_steps: 2,
         }
     }
 
     async fn continue_turn_response(
         &self,
-        request: ContinueTurnRequest,
-        stream: &AcpTurnStreamContext,
+        request: &ContinueTurnRequest,
     ) -> Result<Response, CustomError> {
         let session_id = request.conversation.id.as_str();
-        let context = self.continuation_context(&request.conversation, &request.binding, stream);
-        match request.continuation {
+        let context = self.continuation_context(&request.conversation, &request.binding);
+        match &request.continuation {
             RuntimeContinuation::ToolResult {
                 tool_call_id,
                 approval_request_id,
@@ -245,17 +230,15 @@ impl<'a> DenRuntimeAcpTurnRunner<'a> {
                     RuntimeToolResultStatus::Timeout => "timeout",
                 };
                 let response = self
-                    .state
                     .letta
                     .post_conversation_tool_returns_streaming(
                         &context,
-                        &tool_call_id,
+                        tool_call_id,
                         approval_request_id.as_deref(),
                         status,
-                        &content,
+                        content,
                     )
                     .await?;
-                self.state.acp_tool_turns.remove(session_id, &tool_call_id);
                 Ok(response)
             }
             RuntimeContinuation::ApprovalDecision {
@@ -265,30 +248,74 @@ impl<'a> DenRuntimeAcpTurnRunner<'a> {
                 reason,
             } => {
                 let approve = matches!(decision, RuntimeApprovalDecision::Approve);
-                let tool_call_id = tool_call_id.unwrap_or_default();
+                let tool_call_id = tool_call_id.clone().unwrap_or_default();
                 let content = if approve {
-                    reason.unwrap_or_else(|| "approved".to_string())
+                    reason.clone().unwrap_or_else(|| "approved".to_string())
                 } else {
-                    reason.unwrap_or_else(|| "denied".to_string())
+                    reason.clone().unwrap_or_else(|| "denied".to_string())
                 };
                 let status = if approve { "ok" } else { "error" };
                 let response = self
-                    .state
                     .letta
                     .post_conversation_tool_returns_streaming(
                         &context,
                         &tool_call_id,
-                        Some(&approval_request_id),
+                        Some(approval_request_id),
                         status,
                         &content,
                     )
                     .await?;
-                if !tool_call_id.is_empty() {
-                    self.state.acp_tool_turns.remove(session_id, &tool_call_id);
-                }
+                let _ = session_id;
                 Ok(response)
             }
         }
+    }
+}
+
+#[allow(async_fn_in_trait)]
+impl RuntimeTurnBackend for LettaRuntimeTurnBackend<'_> {
+    async fn start_turn(&self, request: StartTurnRequest) -> Result<StartTurnResult, CustomError> {
+        let _response = self.post_turn_response(&request).await?;
+        Ok(StartTurnResult {
+            turn: None,
+            stream: RuntimeStreamContinuation::BytesSse,
+        })
+    }
+
+    async fn continue_turn(
+        &self,
+        request: ContinueTurnRequest,
+    ) -> Result<ContinueTurnResult, CustomError> {
+        let turn = request.turn.clone();
+        let _response = self.continue_turn_response(&request).await?;
+        Ok(ContinueTurnResult {
+            turn,
+            stream: RuntimeStreamContinuation::BytesSse,
+        })
+    }
+}
+
+impl<'a> DenRuntimeAcpTurnRunner<'a> {
+    async fn continue_turn_response(
+        &self,
+        request: ContinueTurnRequest,
+        _stream: &AcpTurnStreamContext,
+    ) -> Result<Response, CustomError> {
+        let session_id = request.conversation.id.as_str().to_string();
+        let tool_call_id_to_remove = match &request.continuation {
+            RuntimeContinuation::ToolResult { tool_call_id, .. } => Some(tool_call_id.clone()),
+            RuntimeContinuation::ApprovalDecision { tool_call_id, .. } => tool_call_id.clone(),
+        };
+        let backend = LettaRuntimeTurnBackend::new(
+            self.state.letta.as_ref(),
+            self.request_id,
+            self.runtime_context_len,
+        );
+        let response = backend.continue_turn_response(&request).await?;
+        if let Some(tool_call_id) = tool_call_id_to_remove.filter(|id| !id.is_empty()) {
+            self.state.acp_tool_turns.remove(&session_id, &tool_call_id);
+        }
+        Ok(response)
     }
 
     async fn start_turn_response(
@@ -429,17 +456,13 @@ impl AcpTurnRunner for DenRuntimeAcpTurnRunner<'_> {
         &self,
         request: ContinueTurnRequest,
     ) -> Result<ContinueTurnResult, CustomError> {
-        let turn = request.turn.clone();
-        let stream = AcpTurnStreamContext {
-            client_tools: None,
-            stream_tokens: false,
-            max_steps: 2,
-        };
-        let _response = self.continue_turn_response(request, &stream).await?;
-        Ok(ContinueTurnResult {
-            turn,
-            stream: crate::core::runtime_contracts::RuntimeStreamContinuation::BytesSse,
-        })
+        LettaRuntimeTurnBackend::new(
+            self.state.letta.as_ref(),
+            self.request_id,
+            self.runtime_context_len,
+        )
+        .continue_turn(request)
+        .await
     }
 
     async fn cancel_turn(
