@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 use futures::{Stream, StreamExt};
 use reqwest::Response;
 use serde_json::Value;
@@ -18,8 +16,9 @@ use crate::{
         runtime_contracts::{
             AcpTurnRunner, CancelTurnRequest, CancelTurnResult, ContinueTurnRequest,
             ContinueTurnResult, RoleRuntimeBinding, RuntimeApprovalDecision, RuntimeCancellationBackend,
-            RuntimeContinuation, RuntimeConversationRef, RuntimeStreamContinuation,
-            RuntimeToolResultStatus, RuntimeTurnBackend, StartTurnRequest, StartTurnResult,
+            RuntimeCleanupRequest, RuntimeCleanupResult, RuntimeContinuation,
+            RuntimeConversationRef, RuntimeStreamContinuation, RuntimeToolResultStatus,
+            RuntimeTurnBackend, StartTurnRequest, StartTurnResult,
         },
     },
     errors::CustomError,
@@ -41,7 +40,6 @@ pub struct AcpTurnStartRequest<'a> {
 }
 
 pub struct AcpStaleRuntimeCleanupParams {
-    pub letta: Arc<LettaClient>,
     pub tool_turns: AcpToolTurnCoordinator,
     pub acp_session_id: String,
     pub bear_id: Uuid,
@@ -147,6 +145,36 @@ impl RuntimeCancellationBackend for LettaRuntimeCancellationBackend<'_> {
         Ok(CancelTurnResult {
             skipped: detail.starts_with("skipped:"),
             detail,
+        })
+    }
+
+    async fn cleanup_stale_runtime(
+        &self,
+        request: RuntimeCleanupRequest,
+    ) -> Result<RuntimeCleanupResult, CustomError> {
+        let tool_turn_cleanup = request
+            .acp_session_id
+            .as_str()
+            .to_string();
+        let cancel = self
+            .cancel_turn(CancelTurnRequest {
+                conversation: request.conversation.clone(),
+                turn: None,
+                reason: Some(request.reason.clone()),
+                binding: Some(request.binding.clone()),
+                run_ids: request.run_ids.clone(),
+            })
+            .await?;
+        Ok(RuntimeCleanupResult {
+            payload: serde_json::json!({
+                "cancel": cancel.detail,
+                "tool_turn_cleanup": tool_turn_cleanup,
+                "run_ids": request.run_ids,
+                "reason": request.reason,
+                "request_id": request.request_id,
+                "bear_id": request.bear_id,
+                "pair_agent_id": request.binding.binding_id,
+            }),
         })
     }
 }
@@ -506,7 +534,6 @@ pub async fn acp_cleanup_stale_runtime_state(
     params: AcpStaleRuntimeCleanupParams,
 ) -> serde_json::Value {
     let AcpStaleRuntimeCleanupParams {
-        letta,
         tool_turns,
         acp_session_id,
         bear_id,
@@ -516,57 +543,55 @@ pub async fn acp_cleanup_stale_runtime_state(
         request_id,
     } = params;
     let tool_turn_cleanup = tool_turns.cleanup_request_tool_turns(&acp_session_id, request_id);
-    if run_ids.is_empty() {
-        tracing::warn!(
-            request_id = %request_id,
-            acp_session_id = %acp_session_id,
-            bear_id = %bear_id,
-            pair_agent_id = %pair_agent_id,
-            reason,
-            "ACP stale runtime cleanup had no runtime run_ids; skipped upstream cancel to avoid agent-wide cancellation"
-        );
-    }
-    let cancel_result = match LettaRuntimeCancellationBackend::new(letta.as_ref())
-        .cancel_turn(CancelTurnRequest {
+    let config = crate::config::Config::load();
+    let letta = LettaClient::new(&config);
+    let backend = LettaRuntimeCancellationBackend::new(&letta);
+    match backend
+        .cleanup_stale_runtime(RuntimeCleanupRequest {
             conversation: RuntimeConversationRef {
                 id: acp_session_id.clone(),
             },
-            turn: None,
-            binding: Some(RoleRuntimeBinding {
+            binding: RoleRuntimeBinding {
                 binding_id: pair_agent_id.clone(),
                 compatibility_backend: Some("runtime:letta".to_string()),
-            }),
-            reason: Some(reason.to_string()),
+            },
+            acp_session_id: acp_session_id.clone(),
+            bear_id,
             run_ids: run_ids.clone(),
+            reason: reason.to_string(),
+            request_id: request_id.to_string(),
         })
         .await
     {
-        Ok(result) => result,
-        Err(err) => {
-            return serde_json::json!({
-                "ok": false,
-                "reason": reason,
-                "run_ids": run_ids,
-                "cancel_result": format!("failed:{err}"),
-                "tool_turn_cleanup": tool_turn_cleanup.to_json(),
-                "cleanup_scope": {
-                    "kind": "request",
-                    "request_id": request_id,
-                },
-            });
-        }
-    };
-    serde_json::json!({
-        "ok": !cancel_result.detail.starts_with("failed:"),
-        "reason": reason,
-        "run_ids": run_ids,
-        "cancel_result": cancel_result.detail,
-        "tool_turn_cleanup": tool_turn_cleanup.to_json(),
-        "cleanup_scope": {
-            "kind": "request",
-            "request_id": request_id,
-        },
-    })
+        Ok(result) => serde_json::json!({
+            "ok": result
+                .payload
+                .get("cancel")
+                .and_then(serde_json::Value::as_str)
+                .map(|detail| !detail.starts_with("failed:"))
+                .unwrap_or(true),
+            "reason": reason,
+            "run_ids": run_ids,
+            "cancel_result": result.payload.get("cancel").cloned().unwrap_or(serde_json::Value::Null),
+            "tool_turn_cleanup": tool_turn_cleanup.to_json(),
+            "cleanup_scope": {
+                "kind": "request",
+                "request_id": request_id,
+            },
+            "backend_cleanup": result.payload,
+        }),
+        Err(err) => serde_json::json!({
+            "ok": false,
+            "reason": reason,
+            "run_ids": run_ids,
+            "cancel_result": format!("failed:{err}"),
+            "tool_turn_cleanup": tool_turn_cleanup.to_json(),
+            "cleanup_scope": {
+                "kind": "request",
+                "request_id": request_id,
+            },
+        }),
+    }
 }
 
 #[cfg(test)]

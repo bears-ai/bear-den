@@ -135,6 +135,22 @@ pub struct CancelTurnResult {
     pub detail: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RuntimeCleanupRequest {
+    pub conversation: RuntimeConversationRef,
+    pub binding: RoleRuntimeBinding,
+    pub acp_session_id: String,
+    pub bear_id: uuid::Uuid,
+    pub run_ids: Vec<String>,
+    pub reason: String,
+    pub request_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RuntimeCleanupResult {
+    pub payload: serde_json::Value,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum RuntimeStreamEvent {
     JsonValue {
@@ -295,6 +311,11 @@ pub trait AcpTurnRunner {
 pub trait RuntimeCancellationBackend {
     async fn cancel_turn(&self, request: CancelTurnRequest)
     -> Result<CancelTurnResult, CustomError>;
+
+    async fn cleanup_stale_runtime(
+        &self,
+        request: RuntimeCleanupRequest,
+    ) -> Result<RuntimeCleanupResult, CustomError>;
 }
 
 #[allow(async_fn_in_trait)]

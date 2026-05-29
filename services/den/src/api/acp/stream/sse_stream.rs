@@ -676,7 +676,6 @@ impl Stream for AcpRuntimeSseStream {
                         }
                         Err(err) => {
                             if looks_like_runtime_waiting_for_approval_error(&err) {
-                                let letta = Arc::new(crate::core::letta::LettaClient::new(this.context.config.as_ref()));
                                 let tool_turns = this.context.tool_turns.clone();
                                 let acp_session_id = this.context.acp_session_id.clone();
                                 let bear_id = this.context.bear_id;
@@ -687,7 +686,6 @@ impl Stream for AcpRuntimeSseStream {
                                     Some(AcpPendingFuture::Cleanup(Box::pin(async move {
                                         super::super::acp_cleanup_stale_runtime_state(
                                             AcpStaleRuntimeCleanupParams {
-                                                letta,
                                                 tool_turns,
                                                 acp_session_id,
                                                 bear_id,
@@ -977,7 +975,6 @@ impl Stream for AcpRuntimeSseStream {
                     && !this.diagnostics.emitted_runtime_cleanup
                     && this.queued_tool_result_continuation.is_none()
                 {
-                    let letta = Arc::new(crate::core::letta::LettaClient::new(this.context.config.as_ref()));
                     let tool_turns = this.context.tool_turns.clone();
                     let acp_session_id = this.context.acp_session_id.clone();
                     let bear_id = this.context.bear_id;
@@ -987,7 +984,6 @@ impl Stream for AcpRuntimeSseStream {
                     this.persist_future = Some(AcpPendingFuture::Cleanup(Box::pin(async move {
                         super::super::acp_cleanup_stale_runtime_state(
                             AcpStaleRuntimeCleanupParams {
-                                letta,
                                 tool_turns,
                                 acp_session_id,
                                 bear_id,
@@ -1005,7 +1001,6 @@ impl Stream for AcpRuntimeSseStream {
                     && !this.diagnostics.emitted_runtime_cleanup
                     && this.queued_tool_result_continuation.is_none()
                 {
-                    let letta = Arc::new(crate::core::letta::LettaClient::new(this.context.config.as_ref()));
                     let tool_turns = this.context.tool_turns.clone();
                     let acp_session_id = this.context.acp_session_id.clone();
                     let bear_id = this.context.bear_id;
@@ -1015,7 +1010,6 @@ impl Stream for AcpRuntimeSseStream {
                     this.persist_future = Some(AcpPendingFuture::Cleanup(Box::pin(async move {
                         super::super::acp_cleanup_stale_runtime_state(
                             AcpStaleRuntimeCleanupParams {
-                                letta,
                                 tool_turns,
                                 acp_session_id,
                                 bear_id,
