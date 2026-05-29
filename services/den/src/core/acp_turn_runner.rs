@@ -13,8 +13,9 @@ use crate::{
         pair_turn::{post_pair_turn_messages_streaming, PairTurnBoundaryLog, PairTurnRequest},
         runtime_contracts::{
             AcpTurnRunner, CancelTurnRequest, CancelTurnResult, ContinueTurnRequest,
-            ContinueTurnResult, RoleRuntimeBinding, RuntimeApprovalDecision, RuntimeContinuation,
-            RuntimeConversationRef, RuntimeToolResultStatus, StartTurnRequest, StartTurnResult,
+            ContinueTurnResult, RoleRuntimeBinding, RuntimeApprovalDecision, RuntimeCancellationBackend,
+            RuntimeContinuation, RuntimeConversationRef, RuntimeToolResultStatus, StartTurnRequest,
+            StartTurnResult,
         },
     },
     errors::CustomError,
@@ -73,51 +74,76 @@ pub fn looks_like_runtime_waiting_for_approval_error(err: &CustomError) -> bool 
     text.contains("waiting on an unresolved tool approval") || text.contains("waiting for approval")
 }
 
-async fn cancel_runtime_runs_by_id_or_skip(
-    letta: &LettaClient,
-    role_agent_id: &str,
-    run_ids: &[String],
-    reason: &str,
-) -> String {
-    if run_ids.is_empty() {
-        tracing::warn!(
-            pair_agent_id = role_agent_id,
-            reason,
-            "Skipping runtime run cancellation because no active run ids were recorded"
-        );
-        return "skipped:no_active_run_ids".to_string();
-    }
+pub struct LettaRuntimeCancellationBackend<'a> {
+    letta: &'a LettaClient,
+}
 
-    let url = format!(
-        "{}/v1/agents/{role_agent_id}/messages/cancel",
-        letta.base_url()
-    );
-    let body = serde_json::json!({ "run_ids": run_ids });
-    match letta.http().post(url).json(&body).send().await {
-        Ok(resp) if resp.status().is_success() => format!("cancelled:{}", run_ids.len()),
-        Ok(resp) => {
-            let status = resp.status();
-            let text = resp.text().await.unwrap_or_default();
+impl<'a> LettaRuntimeCancellationBackend<'a> {
+    pub fn new(letta: &'a LettaClient) -> Self {
+        Self { letta }
+    }
+}
+
+#[allow(async_fn_in_trait)]
+impl RuntimeCancellationBackend for LettaRuntimeCancellationBackend<'_> {
+    async fn cancel_turn(
+        &self,
+        request: CancelTurnRequest,
+    ) -> Result<CancelTurnResult, CustomError> {
+        let role_agent_id = request
+            .binding
+            .as_ref()
+            .map(|binding| binding.binding_id.as_str())
+            .unwrap_or("unknown-binding");
+        let reason = request.reason.as_deref().unwrap_or("runtime_cancel");
+        let run_ids = request.run_ids;
+        if run_ids.is_empty() {
             tracing::warn!(
                 pair_agent_id = role_agent_id,
                 reason,
-                run_ids = ?run_ids,
-                %status,
-                body = %text,
-                "Failed runtime run cancellation request"
+                "Skipping runtime run cancellation because no active run ids were recorded"
             );
-            format!("failed:{status}:{text}")
+            return Ok(CancelTurnResult {
+                skipped: true,
+                detail: "skipped:no_active_run_ids".to_string(),
+            });
         }
-        Err(err) => {
-            tracing::warn!(
-                pair_agent_id = role_agent_id,
-                reason,
-                run_ids = ?run_ids,
-                error = %err,
-                "Failed runtime run cancellation request"
-            );
-            format!("failed:reqwest:{err}")
-        }
+
+        let url = format!(
+            "{}/v1/agents/{role_agent_id}/messages/cancel",
+            self.letta.base_url()
+        );
+        let body = serde_json::json!({ "run_ids": run_ids });
+        let detail = match self.letta.http().post(url).json(&body).send().await {
+            Ok(resp) if resp.status().is_success() => format!("cancelled:{}", body["run_ids"].as_array().map(|ids| ids.len()).unwrap_or(0)),
+            Ok(resp) => {
+                let status = resp.status();
+                let text = resp.text().await.unwrap_or_default();
+                tracing::warn!(
+                    pair_agent_id = role_agent_id,
+                    reason,
+                    run_ids = ?body["run_ids"],
+                    %status,
+                    body = %text,
+                    "Failed runtime run cancellation request"
+                );
+                format!("failed:{status}:{text}")
+            }
+            Err(err) => {
+                tracing::warn!(
+                    pair_agent_id = role_agent_id,
+                    reason,
+                    run_ids = ?body["run_ids"],
+                    error = %err,
+                    "Failed runtime run cancellation request"
+                );
+                format!("failed:reqwest:{err}")
+            }
+        };
+        Ok(CancelTurnResult {
+            skipped: detail.starts_with("skipped:"),
+            detail,
+        })
     }
 }
 
@@ -291,13 +317,16 @@ impl<'a> DenRuntimeAcpTurnRunner<'a> {
                     .state
                     .acp_tool_turns
                     .cleanup_expired_tool_turns_for_session(session_id);
-                let cancel_result = cancel_runtime_runs_by_id_or_skip(
-                    self.state.letta.as_ref(),
-                    &request.binding.binding_id,
-                    &[],
-                    "stale_approval_retry",
-                )
-                .await;
+                let cancel_result = LettaRuntimeCancellationBackend::new(self.state.letta.as_ref())
+                    .cancel_turn(CancelTurnRequest {
+                        conversation: request.conversation.clone(),
+                        turn: None,
+                        binding: Some(request.binding.clone()),
+                        reason: Some("stale_approval_retry".to_string()),
+                        run_ids: Vec::new(),
+                    })
+                    .await?
+                    .detail;
                 tracing::info!(
                     %self.request_id,
                     acp_session_id = %session_id,
@@ -420,21 +449,9 @@ impl AcpTurnRunner for DenRuntimeAcpTurnRunner<'_> {
         &self,
         request: CancelTurnRequest,
     ) -> Result<CancelTurnResult, CustomError> {
-        let detail = cancel_runtime_runs_by_id_or_skip(
-            self.state.letta.as_ref(),
-            request
-                .binding
-                .as_ref()
-                .map(|binding| binding.binding_id.as_str())
-                .unwrap_or("unknown-binding"),
-            &request.run_ids,
-            request.reason.as_deref().unwrap_or("runtime_cancel"),
-        )
-        .await;
-        Ok(CancelTurnResult {
-            skipped: detail.starts_with("skipped:"),
-            detail,
-        })
+        LettaRuntimeCancellationBackend::new(self.state.letta.as_ref())
+            .cancel_turn(request)
+            .await
     }
 }
 
@@ -791,13 +808,41 @@ pub async fn acp_cleanup_stale_runtime_state(
             "ACP stale runtime cleanup had no runtime run_ids; skipped upstream cancel to avoid agent-wide cancellation"
         );
     }
-    let cancel_result =
-        cancel_runtime_runs_by_id_or_skip(letta.as_ref(), &pair_agent_id, &run_ids, reason).await;
+    let cancel_result = match LettaRuntimeCancellationBackend::new(letta.as_ref())
+        .cancel_turn(CancelTurnRequest {
+            conversation: RuntimeConversationRef {
+                id: acp_session_id.clone(),
+            },
+            turn: None,
+            binding: Some(RoleRuntimeBinding {
+                binding_id: pair_agent_id.clone(),
+                compatibility_backend: Some("runtime:letta".to_string()),
+            }),
+            reason: Some(reason.to_string()),
+            run_ids: run_ids.clone(),
+        })
+        .await
+    {
+        Ok(result) => result,
+        Err(err) => {
+            return serde_json::json!({
+                "ok": false,
+                "reason": reason,
+                "run_ids": run_ids,
+                "cancel_result": format!("failed:{err}"),
+                "tool_turn_cleanup": tool_turn_cleanup.to_json(),
+                "cleanup_scope": {
+                    "kind": "request",
+                    "request_id": request_id,
+                },
+            });
+        }
+    };
     serde_json::json!({
-        "ok": cancel_result.starts_with("cancelled:") || cancel_result.starts_with("skipped:"),
+        "ok": !cancel_result.detail.starts_with("failed:"),
         "reason": reason,
         "run_ids": run_ids,
-        "cancel_result": cancel_result,
+        "cancel_result": cancel_result.detail,
         "tool_turn_cleanup": tool_turn_cleanup.to_json(),
         "cleanup_scope": {
             "kind": "request",

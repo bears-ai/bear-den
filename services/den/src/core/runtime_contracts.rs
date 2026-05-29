@@ -271,6 +271,12 @@ pub trait AcpTurnRunner {
 }
 
 #[allow(async_fn_in_trait)]
+pub trait RuntimeCancellationBackend {
+    async fn cancel_turn(&self, request: CancelTurnRequest)
+    -> Result<CancelTurnResult, CustomError>;
+}
+
+#[allow(async_fn_in_trait)]
 pub trait RoleRunner {
     async fn check_health(&self) -> Result<String, CustomError>;
 }
