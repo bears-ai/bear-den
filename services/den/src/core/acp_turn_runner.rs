@@ -311,30 +311,6 @@ impl RuntimeTurnBackend for LettaRuntimeTurnBackend<'_> {
     }
 }
 
-impl<'a> DenRuntimeAcpTurnRunner<'a> {
-    async fn continue_turn_response(
-        &self,
-        request: ContinueTurnRequest,
-        _stream: &AcpTurnStreamContext,
-    ) -> Result<Response, CustomError> {
-        let session_id = request.conversation.id.as_str().to_string();
-        let tool_call_id_to_remove = match &request.continuation {
-            RuntimeContinuation::ToolResult { tool_call_id, .. } => Some(tool_call_id.clone()),
-            RuntimeContinuation::ApprovalDecision { tool_call_id, .. } => tool_call_id.clone(),
-        };
-        let backend = LettaRuntimeTurnBackend::new(
-            self.state.letta.as_ref(),
-            self.request_id,
-            self.runtime_context_len,
-        );
-        let response = backend.continue_turn_response(&request).await?;
-        if let Some(tool_call_id) = tool_call_id_to_remove.filter(|id| !id.is_empty()) {
-            self.state.acp_tool_turns.remove(&session_id, &tool_call_id);
-        }
-        Ok(response)
-    }
-
-}
 
 #[allow(async_fn_in_trait)]
 impl AcpTurnRunner for DenRuntimeAcpTurnRunner<'_> {
@@ -653,32 +629,22 @@ pub async fn continue_acp_turn_with_runtime(
     ),
     CustomError,
 > {
-    let runner = DenRuntimeAcpTurnRunner {
-        state: request.state,
-        request_id: request.request_id,
-        runtime_context_len: 0,
-    };
     let status = match request.continuation {
         RuntimeContinuation::ToolResult { .. } | RuntimeContinuation::ApprovalDecision { .. } => {
             request.continuation
         }
     };
-    let response = runner
-        .continue_turn_response(
-            ContinueTurnRequest {
-                conversation: RuntimeConversationRef {
-                    id: request.acp_session_id.to_string(),
-                },
-                turn: None,
-                binding: request.binding.clone(),
-                continuation: status,
+    let stream = LettaRuntimeTurnBackend::new(request.state.letta.as_ref(), request.request_id, 0)
+        .continue_turn_stream(ContinueTurnRequest {
+            conversation: RuntimeConversationRef {
+                id: request.acp_session_id.to_string(),
             },
-            &request.stream_context,
-        )
+            turn: None,
+            binding: request.binding.clone(),
+            continuation: status,
+        })
         .await?;
-    let mut parsed = response
-        .bytes_stream()
-        .map(|item| item.map_err(CustomError::from));
+    let mut parsed = stream;
     let mut buffer = Vec::new();
     let mut queued_events: std::collections::VecDeque<
         Result<crate::core::runtime_contracts::RuntimeStreamEvent, CustomError>,
