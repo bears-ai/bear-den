@@ -9,7 +9,7 @@ use crate::{
     api::service::ApiState,
     core::{
         acp_tool_turns::AcpToolTurnCoordinator,
-        letta::{LettaClient, PendingApprovalDenialMode},
+        letta::LettaClient,
         pair_turn::{post_pair_turn_messages_streaming, PairTurnBoundaryLog, PairTurnRequest},
         runtime_contracts::{
             AcpTurnRunner, CancelTurnRequest, CancelTurnResult, ContinueTurnRequest,
@@ -334,106 +334,6 @@ impl<'a> DenRuntimeAcpTurnRunner<'a> {
         Ok(response)
     }
 
-    async fn start_turn_response(
-        &self,
-        request: StartTurnRequest,
-    ) -> Result<Response, CustomError> {
-        let session_id = request
-            .acp_session_id
-            .as_deref()
-            .ok_or_else(|| CustomError::ValidationError("missing acp_session_id".to_string()))?;
-        let upstream_target = request.conversation.id.as_str();
-        if upstream_target != request.binding.binding_id {
-            let _preflight_hygiene = acp_preflight_runtime_hygiene(
-                self.state,
-                session_id,
-                Uuid::nil(),
-                &request.binding.binding_id,
-                "before_new_acp_prompt",
-            )
-            .await;
-        }
-
-        let backend = LettaRuntimeTurnBackend::new(
-            self.state.letta.as_ref(),
-            self.request_id,
-            self.runtime_context_len,
-        );
-        let first_attempt = backend.post_turn_response(&request).await;
-
-        match first_attempt {
-            Ok(upstream) => Ok(upstream),
-            Err(err) if looks_like_runtime_waiting_for_approval_error(&err) => {
-                tracing::warn!(
-                    %self.request_id,
-                    acp_session_id = %session_id,
-                    runtime_binding_id = %request.binding.binding_id,
-                    error = %err,
-                    "runtime conversation is waiting for stale approval; skipping agent-wide cancel before retry"
-                );
-                let process_cleanup = self
-                    .state
-                    .acp_tool_turns
-                    .cleanup_expired_tool_turns_for_session(session_id);
-                let cancel_result = LettaRuntimeCancellationBackend::new(self.state.letta.as_ref())
-                    .cancel_turn(CancelTurnRequest {
-                        conversation: request.conversation.clone(),
-                        turn: None,
-                        binding: Some(request.binding.clone()),
-                        reason: Some("stale_approval_retry".to_string()),
-                        run_ids: Vec::new(),
-                    })
-                    .await?
-                    .detail;
-                tracing::info!(
-                    %self.request_id,
-                    acp_session_id = %session_id,
-                    runtime_binding_id = %request.binding.binding_id,
-                    cancel_result = %cancel_result,
-                    process_cleanup = ?process_cleanup,
-                    "ACP stale-approval retry cleaned expired process-local tool state without agent-wide cancellation"
-                );
-                match backend.post_turn_response(&request).await {
-                    Ok(upstream) => Ok(upstream),
-                    Err(retry_err) if looks_like_runtime_waiting_for_approval_error(&retry_err) => {
-                        tracing::warn!(
-                            %self.request_id,
-                            acp_session_id = %session_id,
-                            runtime_binding_id = %request.binding.binding_id,
-                            conversation_id = %upstream_target,
-                            active_tool_call_id = tracing::field::Empty,
-                            error = %retry_err,
-                            "Stale approval persisted after run cleanup; denying pending runtime approvals before final ACP prompt retry"
-                        );
-                        let denied = self
-                            .state
-                            .letta
-                            .deny_pending_conversation_approvals(
-                                upstream_target,
-                                Some(&request.binding.binding_id),
-                                ACP_STALE_APPROVAL_RECOVERY_DENIAL_REASON,
-                                PendingApprovalDenialMode::InspectOnly,
-                            )
-                            .await?;
-                        tracing::warn!(
-                            %self.request_id,
-                            acp_session_id = %session_id,
-                            runtime_binding_id = %request.binding.binding_id,
-                            conversation_id = %upstream_target,
-                            denied_count = denied.len(),
-                            denied_tool_call_ids = ?denied.iter().map(|p| p.tool_call_id.as_str()).collect::<Vec<_>>(),
-                            denied_source_message_ids = ?denied.iter().filter_map(|p| p.source_message_id.as_deref()).collect::<Vec<_>>(),
-                            active_tool_call_id = tracing::field::Empty,
-                            "Detected stale pending runtime approvals after retry failure; suppressed conversation-posted denial to avoid contaminating later turns"
-                        );
-                        backend.post_turn_response(&request).await
-                    }
-                    Err(retry_err) => Err(retry_err),
-                }
-            }
-            Err(err) => Err(err),
-        }
-    }
 }
 
 #[allow(async_fn_in_trait)]
