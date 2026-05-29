@@ -7,7 +7,8 @@ use crate::{
         letta::{load_agent_conversations, LettaClient},
         runtime_contracts::{
             AcpConversationRuntime, EnsureConversationRequest, EnsureConversationResult,
-            RoleProfileRegistry, RoleRuntimeBinding, RuntimeConversationRef, RuntimeHistoryRecord,
+            RoleProfileRegistry, RoleRuntimeBinding, RuntimeConversationBackend,
+            RuntimeConversationRef, RuntimeHistoryRecord,
         },
     },
     errors::CustomError,
@@ -198,8 +199,8 @@ pub fn resolve_acp_prompt_conversation(
     ))
 }
 
-pub async fn ensure_acp_session_conversation(
-    letta: &LettaClient,
+pub async fn ensure_acp_session_conversation_with_backend<B: RuntimeConversationBackend>(
+    backend: &B,
     request: EnsureConversationRequest,
     existing_session: Option<&acp_sessions::AcpSessionRow>,
     generated_pending_id: String,
@@ -214,22 +215,11 @@ pub async fn ensure_acp_session_conversation(
     if resolution.session_selection.starts_with("new-")
         && resolution.resolved_conversation.is_none()
     {
-        let created_response = letta
-            .create_conversation_for_agent(&request.binding.binding_id)
-            .await?;
-        let conv_id =
-            letta_conversation_id_from_create_response(&created_response).ok_or_else(|| {
-                CustomError::System(format!(
-                "Letta create conversation response did not contain a conv-* id: {created_response}"
-            ))
-            })?;
-        let conversation = RuntimeConversationRef {
-            id: conv_id.clone(),
-        };
+        let conversation = backend.create_conversation(&request.binding).await?;
         resolution.resolved_conversation = Some(conversation.clone());
         resolution.history_target = Some(conversation.clone());
         resolution.archive_target = Some(conversation.clone());
-        resolution.upstream_target = conv_id;
+        resolution.upstream_target = conversation.id.clone();
         created = true;
     }
     let conversation =
@@ -246,6 +236,22 @@ pub async fn ensure_acp_session_conversation(
             created,
         },
     ))
+}
+
+pub async fn ensure_acp_session_conversation(
+    letta: &LettaClient,
+    request: EnsureConversationRequest,
+    existing_session: Option<&acp_sessions::AcpSessionRow>,
+    generated_pending_id: String,
+) -> Result<(AcpConversationResolution, EnsureConversationResult), CustomError> {
+    let backend = LettaRuntimeConversationBackend { letta };
+    ensure_acp_session_conversation_with_backend(
+        &backend,
+        request,
+        existing_session,
+        generated_pending_id,
+    )
+    .await
 }
 
 pub async fn verify_acp_conversation_belongs_to_binding(
@@ -290,6 +296,29 @@ fn letta_conversation_id_from_create_response(value: &serde_json::Value) -> Opti
         .map(str::trim)
         .filter(|s| s.starts_with("conv-"))
         .map(str::to_string)
+}
+
+pub struct LettaRuntimeConversationBackend<'a> {
+    letta: &'a LettaClient,
+}
+
+#[allow(async_fn_in_trait)]
+impl RuntimeConversationBackend for LettaRuntimeConversationBackend<'_> {
+    async fn create_conversation(
+        &self,
+        binding: &RoleRuntimeBinding,
+    ) -> Result<RuntimeConversationRef, CustomError> {
+        let created_response = self
+            .letta
+            .create_conversation_for_agent(&binding.binding_id)
+            .await?;
+        let conv_id = letta_conversation_id_from_create_response(&created_response).ok_or_else(|| {
+            CustomError::System(format!(
+                "Letta create conversation response did not contain a conv-* id: {created_response}"
+            ))
+        })?;
+        Ok(RuntimeConversationRef { id: conv_id })
+    }
 }
 
 pub struct LettaAcpConversationRuntime<'a> {

@@ -249,6 +249,14 @@ pub trait AcpConversationRuntime {
 }
 
 #[allow(async_fn_in_trait)]
+pub trait RuntimeConversationBackend {
+    async fn create_conversation(
+        &self,
+        binding: &RoleRuntimeBinding,
+    ) -> Result<RuntimeConversationRef, CustomError>;
+}
+
+#[allow(async_fn_in_trait)]
 pub trait AcpTurnRunner {
     async fn preflight_hygiene(
         &self,
