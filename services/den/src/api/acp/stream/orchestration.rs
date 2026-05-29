@@ -3,7 +3,6 @@ use axum::{
     http::{header, HeaderName, HeaderValue, StatusCode},
     response::Response,
 };
-use futures::StreamExt;
 use uuid::Uuid;
 
 use crate::{
@@ -27,7 +26,7 @@ use crate::{
     errors::CustomError,
 };
 
-use super::sse_stream::AcpLettaSseStream;
+use super::sse_stream::AcpRuntimeSseStream;
 
 pub(in crate::api::acp) struct AcpStreamSetup {
     pub(in crate::api::acp) initial_events: Vec<AcpGatewayEvent>,
@@ -177,7 +176,7 @@ pub(in crate::api::acp) async fn build_acp_sse_response(
 
     let session_policy = resolved_policy.to_json();
     let activity = current_activity_plan.as_ref().map(|plan| serde_json::json!(plan));
-    let stream = AcpLettaSseStream::new(
+    let stream = AcpRuntimeSseStream::new(
         upstream,
         AcpStreamContext {
             pool: state.sqlx_pool.clone(),

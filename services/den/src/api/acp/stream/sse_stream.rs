@@ -42,7 +42,7 @@ use super::{
     text::AcpTextChunker,
 };
 
-pub(in crate::api::acp) struct AcpLettaSseStream {
+pub(in crate::api::acp) struct AcpRuntimeSseStream {
     pub(in crate::api::acp) inner: Pin<Box<dyn Stream<Item = Result<Bytes, CustomError>> + Send>>,
     pub(in crate::api::acp) buffer: Vec<u8>,
     pub(in crate::api::acp) pending: VecDeque<Bytes>,
@@ -156,7 +156,7 @@ pub(in crate::api::acp) fn runtime_terminal_events(
     }
 }
 
-impl AcpLettaSseStream {
+impl AcpRuntimeSseStream {
     pub(in crate::api::acp) fn outstanding_tool_obligations(&self) -> Vec<String> {
         self.context
             .tool_turns
@@ -345,7 +345,7 @@ impl AcpLettaSseStream {
     }
 }
 
-impl Drop for AcpLettaSseStream {
+impl Drop for AcpRuntimeSseStream {
     fn drop(&mut self) {
         self.cleanup_active_tool_turns();
         self.cancel_handle.take();
@@ -355,7 +355,7 @@ impl Drop for AcpLettaSseStream {
     }
 }
 
-impl Stream for AcpLettaSseStream {
+impl Stream for AcpRuntimeSseStream {
     type Item = Result<Bytes, std::io::Error>;
 
     fn poll_next(
