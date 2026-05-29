@@ -682,10 +682,19 @@ impl Stream for AcpRuntimeSseStream {
                                 let pair_agent_id = this.context.pair_agent_id.clone();
                                 let run_ids = this.diagnostics.run_ids.clone();
                                 let request_id = this.context.request_id;
+                                let cleanup_state = ApiState {
+                                    sqlx_pool: this.context.pool.clone(),
+                                    config: this.context.config.clone(),
+                                    letta: Arc::new(crate::core::letta::LettaClient::new(this.context.config.as_ref())),
+                                    bifrost: Arc::new(BifrostClient::new(this.context.config.as_ref())),
+                                    acp_tool_turns: this.context.tool_turns.clone(),
+                                    acp_turn_cancellations: AcpActiveTurnCancelRegistry::new(),
+                                };
                                 this.persist_future =
                                     Some(AcpPendingFuture::Cleanup(Box::pin(async move {
                                         super::super::acp_cleanup_stale_runtime_state(
                                             AcpStaleRuntimeCleanupParams {
+                                                state: cleanup_state,
                                                 tool_turns,
                                                 acp_session_id,
                                                 bear_id,
@@ -981,9 +990,18 @@ impl Stream for AcpRuntimeSseStream {
                     let pair_agent_id = this.context.pair_agent_id.clone();
                     let run_ids = this.diagnostics.run_ids.clone();
                     let request_id = this.context.request_id;
+                    let cleanup_state = ApiState {
+                        sqlx_pool: this.context.pool.clone(),
+                        config: this.context.config.clone(),
+                        letta: Arc::new(crate::core::letta::LettaClient::new(this.context.config.as_ref())),
+                        bifrost: Arc::new(BifrostClient::new(this.context.config.as_ref())),
+                        acp_tool_turns: this.context.tool_turns.clone(),
+                        acp_turn_cancellations: AcpActiveTurnCancelRegistry::new(),
+                    };
                     this.persist_future = Some(AcpPendingFuture::Cleanup(Box::pin(async move {
                         super::super::acp_cleanup_stale_runtime_state(
                             AcpStaleRuntimeCleanupParams {
+                                state: cleanup_state,
                                 tool_turns,
                                 acp_session_id,
                                 bear_id,
@@ -1007,9 +1025,18 @@ impl Stream for AcpRuntimeSseStream {
                     let pair_agent_id = this.context.pair_agent_id.clone();
                     let run_ids = this.diagnostics.run_ids.clone();
                     let request_id = this.context.request_id;
+                    let cleanup_state = ApiState {
+                        sqlx_pool: this.context.pool.clone(),
+                        config: this.context.config.clone(),
+                        letta: Arc::new(crate::core::letta::LettaClient::new(this.context.config.as_ref())),
+                        bifrost: Arc::new(BifrostClient::new(this.context.config.as_ref())),
+                        acp_tool_turns: this.context.tool_turns.clone(),
+                        acp_turn_cancellations: AcpActiveTurnCancelRegistry::new(),
+                    };
                     this.persist_future = Some(AcpPendingFuture::Cleanup(Box::pin(async move {
                         super::super::acp_cleanup_stale_runtime_state(
                             AcpStaleRuntimeCleanupParams {
+                                state: cleanup_state,
                                 tool_turns,
                                 acp_session_id,
                                 bear_id,

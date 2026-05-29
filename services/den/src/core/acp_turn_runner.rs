@@ -40,6 +40,7 @@ pub struct AcpTurnStartRequest<'a> {
 }
 
 pub struct AcpStaleRuntimeCleanupParams {
+    pub state: ApiState,
     pub tool_turns: AcpToolTurnCoordinator,
     pub acp_session_id: String,
     pub bear_id: Uuid,
@@ -534,6 +535,7 @@ pub async fn acp_cleanup_stale_runtime_state(
     params: AcpStaleRuntimeCleanupParams,
 ) -> serde_json::Value {
     let AcpStaleRuntimeCleanupParams {
+        state,
         tool_turns,
         acp_session_id,
         bear_id,
@@ -543,9 +545,7 @@ pub async fn acp_cleanup_stale_runtime_state(
         request_id,
     } = params;
     let tool_turn_cleanup = tool_turns.cleanup_request_tool_turns(&acp_session_id, request_id);
-    let config = crate::config::Config::load();
-    let letta = LettaClient::new(&config);
-    let backend = LettaRuntimeCancellationBackend::new(&letta);
+    let backend = LettaRuntimeCancellationBackend::new(state.letta.as_ref());
     match backend
         .cleanup_stale_runtime(RuntimeCleanupRequest {
             conversation: RuntimeConversationRef {
