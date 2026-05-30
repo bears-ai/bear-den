@@ -203,3 +203,109 @@ pub trait RuntimeConversationBackend {
         request: RuntimeApprovalActionRequest,
     ) -> Result<Vec<RuntimePendingApproval>, CustomError>;
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub enum RuntimeSemanticGroupKind {
+    UserTurn,
+    AssistantReply,
+    ToolInteraction,
+    ApprovalInteraction,
+    WorkflowUpdate,
+    ArtifactUpdate,
+    PriorCompactionArtifact,
+    SystemEvent,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RuntimeSemanticGroup {
+    pub kind: RuntimeSemanticGroupKind,
+    pub start_message_id: Option<String>,
+    pub end_message_id: Option<String>,
+    pub message_count: usize,
+    pub protected: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub enum RuntimeCompactionArtifactKind {
+    IterativeSummary,
+    CollapsedToolBundle,
+    StructuredWorkflowSummary,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RuntimeCompactionArtifactRef {
+    pub artifact_id: String,
+    pub kind: RuntimeCompactionArtifactKind,
+    pub source_group_start: usize,
+    pub source_group_end: usize,
+    pub policy_version: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub enum RuntimeCompactionTriggerKind {
+    TokenPressure,
+    SemanticGroupCount,
+    Manual,
+    ModelSafetyMargin,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RuntimeCompactionBoundary {
+    pub retained_group_count: usize,
+    pub compacted_group_count: usize,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn runtime_conversation_is_archived_detects_top_level_and_nested_flags() {
+        assert!(runtime_conversation_is_archived(&json!({"archived": true})));
+        assert!(runtime_conversation_is_archived(&json!({"metadata": {"status": "archived"}})));
+        assert!(runtime_conversation_is_archived(&json!({"attributes": {"hidden": "true"}})));
+        assert!(runtime_conversation_is_archived(&json!({"tags": ["active", "archived"]})));
+        assert!(!runtime_conversation_is_archived(&json!({"status": "active"})));
+    }
+
+    #[test]
+    fn summarize_runtime_messages_prefers_recent_nonempty_messages() {
+        let summary = summarize_runtime_messages(Some(&json!({
+            "messages": [
+                {"role": "user", "content": "first"},
+                {"role": "assistant", "content": "   "},
+                {"role": "assistant", "content": "second"}
+            ]
+        })));
+        assert_eq!(summary, vec!["assistant: second", "user: first"]);
+    }
+
+    #[test]
+    fn semantic_group_and_compaction_types_serialize_stably() {
+        let group = RuntimeSemanticGroup {
+            kind: RuntimeSemanticGroupKind::ToolInteraction,
+            start_message_id: Some("m1".into()),
+            end_message_id: Some("m3".into()),
+            message_count: 3,
+            protected: true,
+        };
+        let artifact = RuntimeCompactionArtifactRef {
+            artifact_id: "artifact-1".into(),
+            kind: RuntimeCompactionArtifactKind::IterativeSummary,
+            source_group_start: 0,
+            source_group_end: 4,
+            policy_version: "v1".into(),
+        };
+        let trigger = RuntimeCompactionTriggerKind::ModelSafetyMargin;
+        let boundary = RuntimeCompactionBoundary {
+            retained_group_count: 5,
+            compacted_group_count: 12,
+        };
+
+        assert_eq!(serde_json::to_value(&group).unwrap()["kind"], "ToolInteraction");
+        assert_eq!(serde_json::to_value(&artifact).unwrap()["kind"], "IterativeSummary");
+        assert_eq!(serde_json::to_value(&trigger).unwrap(), "ModelSafetyMargin");
+        assert_eq!(serde_json::to_value(&boundary).unwrap()["retained_group_count"], 5);
+    }
+}
