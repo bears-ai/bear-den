@@ -101,26 +101,12 @@ struct AdapterInstallManager: AdapterInstallManaging, AdapterVersionProviding {
             lastInstallStatus: status,
             lastError: combinedError
         )
-        if let installedVersionError {
-            fputs("[Bears][inspectInstallState][installedVersionError] \(installedVersionError)\n", stderr)
-        }
-        if let bundledVersionError {
-            fputs("[Bears][inspectInstallState][bundledVersionError] \(bundledVersionError)\n", stderr)
-        }
-        if let manifestVersionError {
-            fputs("[Bears][inspectInstallState][availableVersionError] \(manifestVersionError)\n", stderr)
-        }
-        if let combinedError {
-            fputs("[Bears][inspectInstallState][error] \(combinedError)\n", stderr)
-        }
         try persistInstallState(state)
         return state
     }
 
     func updateInstall() throws -> InstallState {
         let source = try resolveInstallSource()
-
-        fputs("[Bears][updateInstall][managedAdapterPath] \(pathProvider.managedAdapterPath.path)\n", stderr)
 
         var packageInstallOutput: String?
         if source.source.isInstallerPackage {
@@ -160,22 +146,6 @@ struct AdapterInstallManager: AdapterInstallManaging, AdapterVersionProviding {
             lastInstallStatus: status,
             lastError: combinedError
         )
-
-        if let installedVersionError {
-            fputs("[Bears][updateInstall][installedVersionError] \(installedVersionError)\n", stderr)
-        }
-        if let bundledVersionError {
-            fputs("[Bears][updateInstall][bundledVersionError] \(bundledVersionError)\n", stderr)
-        }
-        if let availableVersionError {
-            fputs("[Bears][updateInstall][availableVersionError] \(availableVersionError)\n", stderr)
-        }
-        if let packageInstallOutput {
-            fputs("[Bears][updateInstall][packageInstallerOutput] \(packageInstallOutput)\n", stderr)
-        }
-        if let combinedError {
-            fputs("[Bears][updateInstall][error] \(combinedError)\n", stderr)
-        }
 
         try persistInstallState(repairedState)
         return repairedState
