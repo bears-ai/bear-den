@@ -20,9 +20,14 @@ struct OverviewView: View {
                     keyValueRow("Installed Version", value: viewModel.installedVersion)
 
                     if let error = viewModel.lastError, !error.isEmpty {
-                        Text(error)
-                            .font(.caption)
-                            .foregroundStyle(.red)
+                        ScrollView {
+                            Text(error)
+                                .font(.caption.monospaced())
+                                .foregroundStyle(.red)
+                                .textSelection(.enabled)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                        .frame(minHeight: 80, maxHeight: 140)
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)

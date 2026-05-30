@@ -32,6 +32,7 @@ final class OverviewViewModel: ObservableObject {
         } catch {
             statusText = "Error"
             lastError = error.localizedDescription
+            fputs("[Bears][refresh] \(error.localizedDescription)\n", stderr)
         }
     }
 
@@ -46,6 +47,7 @@ final class OverviewViewModel: ObservableObject {
         } catch {
             statusText = "Error"
             lastError = error.localizedDescription
+            fputs("[Bears][repairInstall] \(error.localizedDescription)\n", stderr)
         }
     }
 
