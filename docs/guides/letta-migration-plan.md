@@ -230,7 +230,7 @@ This matrix now maps reasonably well to a subset of existing docs, but coverage 
 The most obvious gaps after this mapping are:
 
 1. **Editable prompt-memory replacement** — either a new dedicated doc or a major expansion of `memory-model.md` to define block-like runtime memory and prompt-compilation semantics.
-2. **Context compaction and summarization** — a dedicated design note for transcript compaction, summaries, recovery, and context assembly policy.
+2. **Context compaction and summarization** — now covered directionally by [ADR-0032: Den Context Compaction Architecture](../decisions/adr-0032-den-context-compaction-architecture.md) and the implementation sequence in [DEN Context Compaction Implementation Plan](../roadmap/DEN_CONTEXT_COMPACTION_IMPLEMENTATION_PLAN.md), but likely still requiring follow-on refinement as transcript/read-model and retrieval work land.
 3. **Retrieval ingestion and archival replacement** — a design doc covering source records, passage generation, provenance, update/delete behavior, and search semantics after Letta Archives are gone.
 4. **Migration/backfill mechanics** — a dedicated note for export/import, dual-write verification, identifier mapping, replay, and rollback strategy.
 5. **Unified tool-registry/runtime config parity** — either new docs or expansions that make Letta tool/config replacement explicit across all roles, not only ACP.
