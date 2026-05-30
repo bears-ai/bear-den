@@ -7,6 +7,10 @@ use crate::{
         memory_proposals::{self, CreateMemoryProposal},
         pair_reflection::{self, CompletePairReflectionRun, CreatePairReflectionRun},
         reflection_conductor,
+        runtime_conversations::{
+            RuntimeConversationBackend, RuntimeConversationMessagesRequest,
+            summarize_runtime_messages,
+        },
     },
     errors::CustomError,
 };
@@ -32,9 +36,14 @@ pub(crate) async fn run_pair_reflection_summary(
         });
     let messages_value = if state.letta.is_enabled() {
         if let Some(conversation_id) = conversation_id {
-            state
-                .letta
-                .list_conversation_messages(conversation_id, None, 20, None, false)
+            crate::core::acp_turn_runner::LettaRuntimeCancellationBackend::new(state.letta.as_ref())
+                .list_messages(RuntimeConversationMessagesRequest {
+                    conversation_id: conversation_id.to_string(),
+                    binding_id: None,
+                    limit: 20,
+                    before: None,
+                    ascending: false,
+                })
                 .await
                 .ok()
         } else {
@@ -43,7 +52,7 @@ pub(crate) async fn run_pair_reflection_summary(
     } else {
         None
     };
-    let message_summaries = summarize_letta_messages(messages_value.as_ref());
+    let message_summaries = summarize_runtime_messages(messages_value.as_ref());
     let run = pair_reflection::create_run(
         &state.sqlx_pool,
         CreatePairReflectionRun {
@@ -197,52 +206,3 @@ pub(crate) async fn run_pair_reflection_summary(
     Ok(())
 }
 
-pub(super) fn summarize_letta_messages(value: Option<&serde_json::Value>) -> Vec<String> {
-    let Some(value) = value else {
-        return Vec::new();
-    };
-    let messages = value
-        .get("messages")
-        .or_else(|| value.get("data"))
-        .or_else(|| value.get("items"))
-        .and_then(|v| v.as_array())
-        .or_else(|| value.as_array());
-    let Some(messages) = messages else {
-        return Vec::new();
-    };
-    messages
-        .iter()
-        .rev()
-        .filter_map(|message| {
-            let role = message
-                .get("role")
-                .or_else(|| message.get("message_type"))
-                .and_then(|v| v.as_str())
-                .unwrap_or("message");
-            let content = message
-                .get("content")
-                .and_then(|v| v.as_str())
-                .or_else(|| message.get("text").and_then(|v| v.as_str()))
-                .unwrap_or("")
-                .trim();
-            if content.is_empty() {
-                None
-            } else {
-                Some(format!("{role}: {}", truncate_for_reflection(content, 300)))
-            }
-        })
-        .take(20)
-        .collect()
-}
-
-pub(super) fn truncate_for_reflection(value: &str, max_chars: usize) -> String {
-    let mut out = String::new();
-    for (idx, ch) in value.chars().enumerate() {
-        if idx >= max_chars {
-            out.push('…');
-            break;
-        }
-        out.push(ch);
-    }
-    out
-}
