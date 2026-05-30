@@ -118,10 +118,10 @@ struct AdapterInstallManager: AdapterInstallManaging, AdapterVersionProviding {
     }
 
     private func makeExecutable(_ url: URL) throws {
-        var values = URLResourceValues()
-        values.isExecutable = true
-        var mutableURL = url
-        try mutableURL.setResourceValues(values)
+        let attributes = try fileManager.attributesOfItem(atPath: url.path)
+        let currentPermissions = (attributes[.posixPermissions] as? NSNumber)?.uint16Value ?? 0o755
+        let updatedPermissions = currentPermissions | 0o111
+        try fileManager.setAttributes([.posixPermissions: NSNumber(value: updatedPermissions)], ofItemAtPath: url.path)
     }
 
     private func persistInstallState(_ installState: InstallState) throws {

@@ -16,8 +16,11 @@ let package = Package(
         .executableTarget(
             name: "BearsApp",
             path: "BearsApp",
+            exclude: [
+                "README.md"
+            ],
             resources: [
-                .copy("../Resources/Adapter/bears-acp-adapter")
+                .copy("../Resources/Adapter")
             ],
             swiftSettings: [
                 .enableExperimentalFeature("StrictConcurrency")

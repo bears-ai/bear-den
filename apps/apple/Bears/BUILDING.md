@@ -18,11 +18,38 @@ It builds a minimal macOS executable app target named `BearsApp`.
 
 ## Prepare the bundled adapter resource
 
-Before building, place the adapter executable at:
+Use the helper script to prepare the adapter resource automatically:
+
+```bash
+cd apps/apple/Bears
+bash Scripts/prepare_adapter.sh
+```
+
+By default the script will:
+
+1. use an existing built adapter at `target/debug/bears-acp-adapter` if present;
+2. otherwise use an existing built adapter at `tools/bears-acp-adapter/target/debug/bears-acp-adapter` if present;
+3. otherwise fall back to `cargo build` if `cargo` is available.
+
+To prepare a release adapter artifact instead:
+
+```bash
+cd apps/apple/Bears
+PROFILE=release bash Scripts/prepare_adapter.sh
+```
+
+You can also point at an explicit prebuilt adapter binary, which is useful on hosts without Rust tooling or in future CI packaging flows:
+
+```bash
+cd apps/apple/Bears
+ADAPTER_BINARY=/path/to/bears-acp-adapter bash Scripts/prepare_adapter.sh
+```
+
+The script places the adapter at:
 
 - `apps/apple/Bears/Resources/Adapter/bears-acp-adapter`
 
-For example, after building the Rust adapter separately, copy it into that path.
+This is intentionally compatible with a future GitHub Actions pipeline: CI can invoke the same script before building and packaging the app, while either reusing a previously built adapter artifact or providing an explicit adapter path.
 
 ## Build
 
