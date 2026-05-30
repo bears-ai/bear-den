@@ -1,12 +1,11 @@
 # BearsApp
 
-macOS app target sources and entry points will live here.
+Swift Package executable target sources for the lightweight macOS Bears app scaffold.
 
-Planned phase-0 responsibilities:
+Current layout:
 
-- app entry point;
-- window/navigation shell;
-- overview/status screen;
-- client setup screen;
-- settings/update screen shell;
-- wiring shared AppCore view models to macOS services.
+- `BearsApp.swift` — app entry point
+- `OverviewView.swift` — simple phase-0 status UI
+- `Support/` — models, protocols, and view models used by the target
+- `Platform/` — platform helpers used by the target
+- `Install/` — adapter installation and repair flow logic

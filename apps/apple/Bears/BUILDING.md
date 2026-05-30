@@ -40,6 +40,14 @@ cd apps/apple/Bears
 swift run Bears
 ```
 
+## Package layout note
+
+The Swift sources needed by the executable target have now been consolidated under:
+
+- `apps/apple/Bears/BearsApp/`
+
+That keeps the initial Swift Package setup simple and gives the first local build a better chance of succeeding.
+
 ## Current limitations
 
 This is an intentionally lightweight package-based scaffold for early testing.
