@@ -27,6 +27,10 @@ struct BundledAdapterLocator: BundledAdapterLocating {
             return url
         }
 
+        if let url = bundle.url(forResource: "bears-acp-adapter", withExtension: nil, subdirectory: "Adapter") {
+            return url
+        }
+
         if let resourcesURL = bundle.resourceURL {
             let candidate = resourcesURL
                 .appendingPathComponent("Adapter", isDirectory: true)
