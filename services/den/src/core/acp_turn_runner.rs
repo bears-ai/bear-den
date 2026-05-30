@@ -99,6 +99,7 @@ impl RuntimeConversationBackend for LettaRuntimeCancellationBackend<'_> {
         &self,
         request: RuntimeConversationListRequest,
     ) -> Result<RuntimeConversationSnapshot, CustomError> {
+        let _ = request.limit;
         Ok(crate::core::letta::load_agent_conversations(self.letta, &request.binding_id).await)
     }
 

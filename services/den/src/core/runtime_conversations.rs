@@ -28,6 +28,7 @@ pub struct RuntimePendingApproval {
 #[derive(Debug, Clone)]
 pub struct RuntimeConversationListRequest {
     pub binding_id: String,
+    pub limit: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -59,19 +60,30 @@ pub struct RuntimeApprovalActionRequest {
     pub mode: RuntimeApprovalActionMode,
 }
 
+pub fn runtime_messages_top_array(value: &Value) -> &[Value] {
+    if let Some(a) = value.as_array() {
+        return a.as_slice();
+    }
+    if let Some(a) = value.get("messages").and_then(|x| x.as_array()) {
+        return a.as_slice();
+    }
+    if let Some(a) = value.get("data").and_then(|x| x.as_array()) {
+        return a.as_slice();
+    }
+    if let Some(a) = value.get("items").and_then(|x| x.as_array()) {
+        return a.as_slice();
+    }
+    &[]
+}
+
 pub fn summarize_runtime_messages(value: Option<&Value>) -> Vec<String> {
     let Some(value) = value else {
         return Vec::new();
     };
-    let messages = value
-        .get("messages")
-        .or_else(|| value.get("data"))
-        .or_else(|| value.get("items"))
-        .and_then(|v| v.as_array())
-        .or_else(|| value.as_array());
-    let Some(messages) = messages else {
+    let messages = runtime_messages_top_array(value);
+    if messages.is_empty() {
         return Vec::new();
-    };
+    }
     messages
         .iter()
         .rev()
@@ -95,6 +107,22 @@ pub fn summarize_runtime_messages(value: Option<&Value>) -> Vec<String> {
         })
         .take(20)
         .collect()
+}
+
+pub fn runtime_conversations_top_array(value: &Value) -> &[Value] {
+    if let Some(a) = value.as_array() {
+        return a.as_slice();
+    }
+    if let Some(a) = value.get("conversations").and_then(|x| x.as_array()) {
+        return a.as_slice();
+    }
+    if let Some(a) = value.get("data").and_then(|x| x.as_array()) {
+        return a.as_slice();
+    }
+    if let Some(a) = value.get("items").and_then(|x| x.as_array()) {
+        return a.as_slice();
+    }
+    &[]
 }
 
 pub fn truncate_runtime_message(value: &str, max_chars: usize) -> String {

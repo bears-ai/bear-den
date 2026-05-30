@@ -5,7 +5,8 @@ use std::cmp::Ordering;
 use serde_json::Value;
 
 use crate::core::runtime_conversations::{
-    RuntimeConversationRow, RuntimeConversationSnapshot,
+    runtime_conversations_top_array, runtime_messages_top_array, RuntimeConversationRow,
+    RuntimeConversationSnapshot,
 };
 
 use super::conversation_title::{
@@ -17,35 +18,11 @@ pub type LettaConversationRow = RuntimeConversationRow;
 pub type AgentConversationsSnapshot = RuntimeConversationSnapshot;
 
 pub fn letta_conversations_top_array(v: &Value) -> &[Value] {
-    if let Some(a) = v.as_array() {
-        return a.as_slice();
-    }
-    if let Some(a) = v.get("conversations").and_then(|x| x.as_array()) {
-        return a.as_slice();
-    }
-    if let Some(a) = v.get("data").and_then(|x| x.as_array()) {
-        return a.as_slice();
-    }
-    if let Some(a) = v.get("items").and_then(|x| x.as_array()) {
-        return a.as_slice();
-    }
-    &[]
+    runtime_conversations_top_array(v)
 }
 
 fn letta_messages_top_array(v: &Value) -> &[Value] {
-    if let Some(a) = v.as_array() {
-        return a.as_slice();
-    }
-    if let Some(a) = v.get("messages").and_then(|x| x.as_array()) {
-        return a.as_slice();
-    }
-    if let Some(a) = v.get("data").and_then(|x| x.as_array()) {
-        return a.as_slice();
-    }
-    if let Some(a) = v.get("items").and_then(|x| x.as_array()) {
-        return a.as_slice();
-    }
-    &[]
+    runtime_messages_top_array(v)
 }
 
 fn value_has_true_flag(v: &Value, key: &str) -> bool {
