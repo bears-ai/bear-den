@@ -1,7 +1,7 @@
 import Foundation
 
 protocol AdapterPackageInstalling {
-    func installPackage(at packageURL: URL) throws
+    func installPackage(at packageURL: URL) throws -> String
 }
 
 enum AdapterPackageInstallerError: LocalizedError {
@@ -22,7 +22,7 @@ struct InstallerAppAdapterPackageInstaller: AdapterPackageInstalling {
         self.processRunner = processRunner
     }
 
-    func installPackage(at packageURL: URL) throws {
+    func installPackage(at packageURL: URL) throws -> String {
         let shellCommand = "/usr/sbin/installer -pkg \(shellQuoted(packageURL.path)) -target /"
         let appleScript = "do shell script \(appleScriptQuoted(shellCommand)) with administrator privileges"
 
@@ -31,18 +31,21 @@ struct InstallerAppAdapterPackageInstaller: AdapterPackageInstalling {
             arguments: ["-e", appleScript]
         )
 
+        let stderr = result.standardError.trimmingCharacters(in: .whitespacesAndNewlines)
+        let stdout = result.standardOutput.trimmingCharacters(in: .whitespacesAndNewlines)
+        let combinedOutput = [stdout, stderr]
+            .filter { !$0.isEmpty }
+            .joined(separator: "\n")
+
         guard result.terminationStatus == 0 else {
-            let stderr = result.standardError.trimmingCharacters(in: .whitespacesAndNewlines)
-            let stdout = result.standardOutput.trimmingCharacters(in: .whitespacesAndNewlines)
-            let message = [stderr, stdout]
-                .filter { !$0.isEmpty }
-                .joined(separator: "\n")
             throw AdapterPackageInstallerError.installerFailed(
-                message.isEmpty
+                combinedOutput.isEmpty
                     ? "macOS installer failed to install the adapter package."
-                    : message
+                    : combinedOutput
             )
         }
+
+        return combinedOutput
     }
 
     private func shellQuoted(_ string: String) -> String {

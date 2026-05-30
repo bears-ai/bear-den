@@ -25,8 +25,10 @@ final class OverviewViewModel: ObservableObject {
 
     func refresh() {
         do {
-            let referenceInfo = try? installManager.referenceAdapterVersion()
-            let installedInfo = try? installManager.installedAdapterVersion()
+            let referenceInfoResult = Result { try installManager.referenceAdapterVersion() }
+            let installedInfoResult = Result { try installManager.installedAdapterVersion() }
+            let referenceInfo = try? referenceInfoResult.get()
+            let installedInfo = try? installedInfoResult.get()
             let state = try installManager.inspectInstallState()
             installState = state
             bundledVersion = state.bundledVersion ?? referenceInfo?.version ?? "Unavailable"
@@ -34,7 +36,14 @@ final class OverviewViewModel: ObservableObject {
             bundledVersionDetails = Self.versionDetails(from: referenceInfo)
             installedVersionDetails = Self.versionDetails(from: installedInfo)
             statusText = Self.statusText(for: state.lastInstallStatus)
-            lastError = state.lastError
+            lastError = Self.combinedError(
+                primary: state.lastError,
+                referenceVersionError: Self.errorDescription(from: referenceInfoResult, prefix: "Reference version read failed"),
+                installedVersionError: Self.errorDescription(from: installedInfoResult, prefix: "Installed version read failed")
+            )
+            if let lastError {
+                fputs("[Bears][OverviewViewModel][refresh][visibleError] \(lastError)\n", stderr)
+            }
         } catch {
             statusText = "Error"
             lastError = error.localizedDescription
@@ -47,15 +56,24 @@ final class OverviewViewModel: ObservableObject {
     func repairInstall() {
         do {
             let state = try installManager.repairInstall()
-            let referenceInfo = try? installManager.referenceAdapterVersion()
-            let installedInfo = try? installManager.installedAdapterVersion()
+            let referenceInfoResult = Result { try installManager.referenceAdapterVersion() }
+            let installedInfoResult = Result { try installManager.installedAdapterVersion() }
+            let referenceInfo = try? referenceInfoResult.get()
+            let installedInfo = try? installedInfoResult.get()
             installState = state
             bundledVersion = state.bundledVersion ?? referenceInfo?.version ?? "Unavailable"
             installedVersion = state.installedVersion ?? installedInfo?.version ?? "Unavailable"
             bundledVersionDetails = Self.versionDetails(from: referenceInfo)
             installedVersionDetails = Self.versionDetails(from: installedInfo)
             statusText = Self.statusText(for: state.lastInstallStatus)
-            lastError = state.lastError
+            lastError = Self.combinedError(
+                primary: state.lastError,
+                referenceVersionError: Self.errorDescription(from: referenceInfoResult, prefix: "Reference version read failed"),
+                installedVersionError: Self.errorDescription(from: installedInfoResult, prefix: "Installed version read failed")
+            )
+            if let lastError {
+                fputs("[Bears][OverviewViewModel][repairInstall][visibleError] \(lastError)\n", stderr)
+            }
         } catch {
             statusText = "Error"
             lastError = error.localizedDescription
@@ -77,6 +95,20 @@ final class OverviewViewModel: ObservableObject {
             "builtAtUTC=\(info.builtAtUtc)",
             "chromeTools=\(info.chromeTools)"
         ].joined(separator: "\n")
+    }
+
+    private static func errorDescription<T>(from result: Result<T, Error>, prefix: String) -> String? {
+        switch result {
+        case .success:
+            return nil
+        case .failure(let error):
+            return "\(prefix): \(error.localizedDescription)"
+        }
+    }
+
+    private static func combinedError(primary: String?, referenceVersionError: String?, installedVersionError: String?) -> String? {
+        let parts = [primary, referenceVersionError, installedVersionError].compactMap { $0 }
+        return parts.isEmpty ? nil : parts.joined(separator: "\n")
     }
 
     private static func statusText(for status: InstallStatus) -> String {

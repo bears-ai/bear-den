@@ -22,14 +22,19 @@ struct OverviewView: View {
                     keyValueRow("Installed Version Details", value: viewModel.installedVersionDetails)
 
                     if let error = viewModel.lastError, !error.isEmpty {
-                        ScrollView {
-                            Text(error)
+                        Button {
+                            #if os(macOS)
+                            NSPasteboard.general.clearContents()
+                            NSPasteboard.general.setString(error, forType: .string)
+                            #endif
+                        } label: {
+                            Text(shortErrorSummary(error))
                                 .font(.caption.monospaced())
                                 .foregroundStyle(.red)
-                                .textSelection(.enabled)
                                 .frame(maxWidth: .infinity, alignment: .leading)
                         }
-                        .frame(minHeight: 80, maxHeight: 140)
+                        .buttonStyle(.plain)
+                        .help(error + "\n\nClick to copy full error to clipboard.")
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -70,5 +75,15 @@ struct OverviewView: View {
                 .font(.body.monospaced())
                 .textSelection(.enabled)
         }
+    }
+
+    private func shortErrorSummary(_ error: String) -> String {
+        let firstLine = error
+            .split(separator: "\n", omittingEmptySubsequences: false)
+            .first
+            .map(String.init) ?? error
+        let trimmed = firstLine.trimmingCharacters(in: .whitespacesAndNewlines)
+        let summary = trimmed.isEmpty ? "Error details available" : trimmed
+        return summary.count > 160 ? String(summary.prefix(157)) + "..." : summary
     }
 }

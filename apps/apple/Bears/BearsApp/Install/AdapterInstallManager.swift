@@ -63,18 +63,41 @@ struct AdapterInstallManager: AdapterInstallManaging, AdapterVersionProviding {
             return state
         }
 
-        let installedVersion = try? installedAdapterVersion().version
-        let bundledVersion = try? bundledAdapterVersion().version
+        let installedVersionResult = Result { try installedAdapterVersion() }
+        let bundledVersionResult = Result { try bundledAdapterVersion() }
+        let installedVersion = try? installedVersionResult.get().version
+        let bundledVersion = try? bundledVersionResult.get().version
+        let installedVersionError = errorDescription(from: installedVersionResult)
+        let bundledVersionError = errorDescription(from: bundledVersionResult)
         let isCompatible = versionsAreCompatible(installedVersion: installedVersion, bundledVersion: bundledVersion)
         let status: InstallStatus = isCompatible ? .ok : .repairNeeded
+        let mismatchDetails = compatibilityDetails(installedVersion: installedVersion, referenceVersion: bundledVersion)
+        let combinedError = combinedInstallError(
+            primary: status == .ok ? nil : mismatchDetails,
+            installedVersionError: installedVersionError,
+            bundledVersionError: bundledVersionError,
+            packageInstallOutput: nil
+        )
         let state = InstallState(
             managedAdapterPath: pathProvider.managedAdapterPath.path,
             installedVersion: installedVersion,
             bundledVersion: bundledVersion,
             installedAt: try loadInstallState()?.installedAt,
             lastInstallStatus: status,
-            lastError: status == .ok ? nil : "Managed adapter is incompatible with bundled adapter. Patch-level differences are allowed, but major/minor versions must match."
+            lastError: combinedError
         )
+        if let installedVersionError {
+            fputs("[Bears][inspectInstallState][installedVersionError] \(installedVersionError)\n", stderr)
+        }
+        if let bundledVersionError {
+            fputs("[Bears][inspectInstallState][bundledVersionError] \(bundledVersionError)\n", stderr)
+        }
+        if status != .ok {
+            fputs("[Bears][inspectInstallState][compatibility] \(mismatchDetails)\n", stderr)
+        }
+        if let combinedError {
+            fputs("[Bears][inspectInstallState][error] \(combinedError)\n", stderr)
+        }
         try persistInstallState(state)
         return state
     }
@@ -82,8 +105,11 @@ struct AdapterInstallManager: AdapterInstallManaging, AdapterVersionProviding {
     func repairInstall() throws -> InstallState {
         let source = try resolveInstallSource()
 
+        fputs("[Bears][repairInstall][managedAdapterPath] \(pathProvider.managedAdapterPath.path)\n", stderr)
+
+        var packageInstallOutput: String?
         if source.source.isInstallerPackage {
-            try packageInstaller.installPackage(at: source.localURL)
+            packageInstallOutput = try packageInstaller.installPackage(at: source.localURL)
         } else {
             try pathProvider.ensureManagedDirectoriesExist()
             if fileManager.fileExists(atPath: pathProvider.managedAdapterPath.path) {
@@ -93,20 +119,47 @@ struct AdapterInstallManager: AdapterInstallManaging, AdapterVersionProviding {
             try makeExecutable(pathProvider.managedAdapterPath)
         }
 
-        let installedInfo = try? installedAdapterVersion()
-        let bundledInfo = try? bundledAdapterVersion()
+        let installedVersionResult = Result { try installedAdapterVersion() }
+        let bundledVersionResult = Result { try bundledAdapterVersion() }
+        let installedInfo = try? installedVersionResult.get()
+        let bundledInfo = try? bundledVersionResult.get()
         let installedVersion = installedInfo?.version
         let referenceVersion = bundledInfo?.version ?? source.source.versionHint ?? installedVersion
+        let installedVersionError = errorDescription(from: installedVersionResult)
+        let bundledVersionError = errorDescription(from: bundledVersionResult)
         let isCompatible = versionsAreCompatible(installedVersion: installedVersion, bundledVersion: referenceVersion)
         let status: InstallStatus = isCompatible ? .ok : .repairNeeded
+        let mismatchDetails = compatibilityDetails(installedVersion: installedVersion, referenceVersion: referenceVersion)
+        let combinedError = combinedInstallError(
+            primary: status == .ok ? nil : mismatchDetails,
+            installedVersionError: installedVersionError,
+            bundledVersionError: bundledVersionError,
+            packageInstallOutput: packageInstallOutput
+        )
         let repairedState = InstallState(
             managedAdapterPath: pathProvider.managedAdapterPath.path,
             installedVersion: installedVersion,
             bundledVersion: referenceVersion,
             installedAt: Date(),
             lastInstallStatus: status,
-            lastError: status == .ok ? nil : "Installed adapter is incompatible with the app's reference adapter version. Patch-level differences are allowed, but major/minor versions must match."
+            lastError: combinedError
         )
+
+        if let installedVersionError {
+            fputs("[Bears][repairInstall][installedVersionError] \(installedVersionError)\n", stderr)
+        }
+        if let bundledVersionError {
+            fputs("[Bears][repairInstall][bundledVersionError] \(bundledVersionError)\n", stderr)
+        }
+        if status != .ok {
+            fputs("[Bears][repairInstall][compatibility] \(mismatchDetails)\n", stderr)
+        }
+        if let packageInstallOutput {
+            fputs("[Bears][repairInstall][packageInstallerOutput] \(packageInstallOutput)\n", stderr)
+        }
+        if let combinedError {
+            fputs("[Bears][repairInstall][error] \(combinedError)\n", stderr)
+        }
 
         try persistInstallState(repairedState)
         return repairedState
@@ -171,6 +224,53 @@ struct AdapterInstallManager: AdapterInstallManaging, AdapterVersionProviding {
         }
 
         return installedSemanticVersion.isCompatiblePatchwise(with: bundledSemanticVersion)
+    }
+
+    private func compatibilityDetails(installedVersion: String?, referenceVersion: String?) -> String {
+        let installed = installedVersion ?? "nil"
+        let reference = referenceVersion ?? "nil"
+
+        if reference == "latest" {
+            return "Installed adapter version compatibility check bypassed because the app reference version is 'latest'. installed=\(installed), reference=\(reference)"
+        }
+
+        guard let installedVersion, let referenceVersion else {
+            return "Installed adapter is incompatible with the app's reference adapter version because one or both versions are unavailable. installed=\(installed), reference=\(reference)"
+        }
+
+        guard
+            let installedSemanticVersion = SemanticVersion(parsing: installedVersion),
+            let referenceSemanticVersion = SemanticVersion(parsing: referenceVersion)
+        else {
+            return "Installed adapter is incompatible with the app's reference adapter version. Non-semver fallback comparison failed. installed=\(installedVersion), reference=\(referenceVersion)"
+        }
+
+        return "Installed adapter is incompatible with the app's reference adapter version. Patch-level differences are allowed, but major/minor versions must match. installed=\(installedVersion) [major=\(installedSemanticVersion.major), minor=\(installedSemanticVersion.minor), patch=\(installedSemanticVersion.patch)] reference=\(referenceVersion) [major=\(referenceSemanticVersion.major), minor=\(referenceSemanticVersion.minor), patch=\(referenceSemanticVersion.patch)]"
+    }
+
+    private func errorDescription<T>(from result: Result<T, Error>) -> String? {
+        switch result {
+        case .success:
+            return nil
+        case .failure(let error):
+            return error.localizedDescription
+        }
+    }
+
+    private func combinedInstallError(
+        primary: String?,
+        installedVersionError: String?,
+        bundledVersionError: String?,
+        packageInstallOutput: String?
+    ) -> String? {
+        let parts = [
+            primary,
+            packageInstallOutput.map { "Package installer output:\n\($0)" },
+            installedVersionError.map { "Installed version read failed: \($0)" },
+            bundledVersionError.map { "Reference version read failed: \($0)" }
+        ].compactMap { $0 }
+
+        return parts.isEmpty ? nil : parts.joined(separator: "\n")
     }
 
     private func resolveInstallSource() throws -> DownloadedAdapterArtifact {
