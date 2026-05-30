@@ -1,10 +1,9 @@
 //! Shared runtime conversation listing for the chat JSON API and bear details HTML.
 
-use std::cmp::Ordering;
-
 use serde_json::Value;
 
 use crate::core::runtime_conversations::{
+    cmp_runtime_conversation_row_newest_first, runtime_conversation_is_archived,
     runtime_conversations_top_array, runtime_messages_top_array, RuntimeConversationRow,
     RuntimeConversationSnapshot,
 };
@@ -25,47 +24,16 @@ fn letta_messages_top_array(v: &Value) -> &[Value] {
     runtime_messages_top_array(v)
 }
 
-fn value_has_true_flag(v: &Value, key: &str) -> bool {
-    v.get(key).and_then(|x| x.as_bool()) == Some(true)
-        || v.get(key).and_then(|x| x.as_str()) == Some("true")
-}
-
-fn object_marks_archived(v: &Value) -> bool {
-    value_has_true_flag(v, "archived")
-        || value_has_true_flag(v, "is_archived")
-        || value_has_true_flag(v, "deleted")
-        || value_has_true_flag(v, "hidden")
-        || v.get("archived_at").is_some_and(|x| !x.is_null())
-        || v.get("status")
-            .and_then(|x| x.as_str())
-            .is_some_and(|s| s.eq_ignore_ascii_case("archived"))
-}
-
 /// Hide rows that look archived (Letta may extend the schema; Den may add flags later).
 pub fn conversation_is_archived(v: &Value) -> bool {
-    object_marks_archived(v)
-        || v.get("metadata").is_some_and(object_marks_archived)
-        || v.get("attributes").is_some_and(object_marks_archived)
-        || v.get("tags")
-            .and_then(|x| x.as_array())
-            .is_some_and(|tags| {
-                tags.iter().any(|tag| {
-                    tag.as_str()
-                        .is_some_and(|s| s.eq_ignore_ascii_case("archived"))
-                })
-            })
+    runtime_conversation_is_archived(v)
 }
 
 pub fn cmp_conversation_row_newest_first(
     a: &LettaConversationRow,
     b: &LettaConversationRow,
-) -> Ordering {
-    match (&a.last_message_at, &b.last_message_at) {
-        (Some(al), Some(bl)) => bl.cmp(al),
-        (None, Some(_)) => Ordering::Greater,
-        (None, None) => a.id.cmp(&b.id),
-        (Some(_), None) => Ordering::Less,
-    }
+) -> std::cmp::Ordering {
+    cmp_runtime_conversation_row_newest_first(a, b)
 }
 
 async fn resolve_conversation_row_title(
