@@ -1,4 +1,7 @@
 import Foundation
+#if os(macOS)
+import AppKit
+#endif
 
 @MainActor
 final class OverviewViewModel: ObservableObject {
@@ -10,6 +13,8 @@ final class OverviewViewModel: ObservableObject {
     @Published private(set) var installedVersionDetails: String = "Unavailable"
     @Published private(set) var statusText: String = "Not checked"
     @Published private(set) var lastError: String?
+    @Published private(set) var bundledVersionCopied = false
+    @Published private(set) var installedVersionCopied = false
 
     private let installManager: AdapterInstallManager
     private let pathProvider: BearsPathResolver
@@ -36,13 +41,14 @@ final class OverviewViewModel: ObservableObject {
             bundledVersionDetails = Self.versionDetails(from: referenceInfo)
             installedVersionDetails = Self.versionDetails(from: installedInfo)
             statusText = Self.statusText(for: state.lastInstallStatus)
-            lastError = Self.combinedError(
+            let combinedError = Self.combinedError(
                 primary: state.lastError,
                 referenceVersionError: Self.errorDescription(from: referenceInfoResult, prefix: "Reference version read failed"),
                 installedVersionError: Self.errorDescription(from: installedInfoResult, prefix: "Installed version read failed")
             )
-            if let lastError {
-                fputs("[Bears][OverviewViewModel][refresh][visibleError] \(lastError)\n", stderr)
+            lastError = installedInfo != nil ? nil : Self.shortVisibleError(from: combinedError)
+            if let combinedError {
+                fputs("[Bears][OverviewViewModel][refresh][visibleError] \(combinedError)\n", stderr)
             }
         } catch {
             statusText = "Error"
@@ -66,13 +72,14 @@ final class OverviewViewModel: ObservableObject {
             bundledVersionDetails = Self.versionDetails(from: referenceInfo)
             installedVersionDetails = Self.versionDetails(from: installedInfo)
             statusText = Self.statusText(for: state.lastInstallStatus)
-            lastError = Self.combinedError(
+            let combinedError = Self.combinedError(
                 primary: state.lastError,
                 referenceVersionError: Self.errorDescription(from: referenceInfoResult, prefix: "Reference version read failed"),
                 installedVersionError: Self.errorDescription(from: installedInfoResult, prefix: "Installed version read failed")
             )
-            if let lastError {
-                fputs("[Bears][OverviewViewModel][repairInstall][visibleError] \(lastError)\n", stderr)
+            lastError = installedInfo != nil ? nil : Self.shortVisibleError(from: combinedError)
+            if let combinedError {
+                fputs("[Bears][OverviewViewModel][repairInstall][visibleError] \(combinedError)\n", stderr)
             }
         } catch {
             statusText = "Error"
@@ -107,9 +114,54 @@ final class OverviewViewModel: ObservableObject {
         }
     }
 
+    func versionDetails(forInstalledVersion: Bool) -> String {
+        forInstalledVersion ? installedVersionDetails : bundledVersionDetails
+    }
+
+    func copyVersionDetails(forInstalledVersion: Bool) {
+        #if os(macOS)
+        let details = versionDetails(forInstalledVersion: forInstalledVersion)
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(details, forType: .string)
+        #endif
+
+        if forInstalledVersion {
+            installedVersionCopied = true
+        } else {
+            bundledVersionCopied = true
+        }
+
+        Task {
+            try? await Task.sleep(nanoseconds: 1_000_000_000)
+            if forInstalledVersion {
+                installedVersionCopied = false
+            } else {
+                bundledVersionCopied = false
+            }
+        }
+    }
+
     private static func combinedError(primary: String?, referenceVersionError: String?, installedVersionError: String?) -> String? {
         let parts = [primary, referenceVersionError, installedVersionError].compactMap { $0 }
         return parts.isEmpty ? nil : parts.joined(separator: "\n")
+    }
+
+    private static func shortVisibleError(from error: String?) -> String? {
+        guard let error, !error.isEmpty else {
+            return nil
+        }
+
+        let firstLine = error
+            .split(separator: "\n", omittingEmptySubsequences: false)
+            .first
+            .map(String.init)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+
+        guard let firstLine, !firstLine.isEmpty else {
+            return "Error details available"
+        }
+
+        return firstLine.count > 160 ? String(firstLine.prefix(157)) + "..." : firstLine
     }
 
     private static func statusText(for status: InstallStatus) -> String {

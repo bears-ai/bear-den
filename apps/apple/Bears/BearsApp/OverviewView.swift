@@ -16,10 +16,20 @@ struct OverviewView: View {
                 VStack(alignment: .leading, spacing: 10) {
                     keyValueRow("Status", value: viewModel.statusText)
                     keyValueRow("Managed Path", value: viewModel.managedAdapterPath)
-                    keyValueRow("Bundled Version", value: viewModel.bundledVersion)
-                    keyValueRow("Bundled Version Details", value: viewModel.bundledVersionDetails)
-                    keyValueRow("Installed Version", value: viewModel.installedVersion)
-                    keyValueRow("Installed Version Details", value: viewModel.installedVersionDetails)
+                    versionRow(
+                        "Bundled Version",
+                        value: viewModel.bundledVersion,
+                        details: viewModel.versionDetails(forInstalledVersion: false),
+                        copied: viewModel.bundledVersionCopied,
+                        action: { viewModel.copyVersionDetails(forInstalledVersion: false) }
+                    )
+                    versionRow(
+                        "Installed Version",
+                        value: viewModel.installedVersion,
+                        details: viewModel.versionDetails(forInstalledVersion: true),
+                        copied: viewModel.installedVersionCopied,
+                        action: { viewModel.copyVersionDetails(forInstalledVersion: true) }
+                    )
 
                     if let error = viewModel.lastError, !error.isEmpty {
                         Button {
@@ -28,7 +38,7 @@ struct OverviewView: View {
                             NSPasteboard.general.setString(error, forType: .string)
                             #endif
                         } label: {
-                            Text(shortErrorSummary(error))
+                            Text(error)
                                 .font(.caption.monospaced())
                                 .foregroundStyle(.red)
                                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -77,13 +87,25 @@ struct OverviewView: View {
         }
     }
 
-    private func shortErrorSummary(_ error: String) -> String {
-        let firstLine = error
-            .split(separator: "\n", omittingEmptySubsequences: false)
-            .first
-            .map(String.init) ?? error
-        let trimmed = firstLine.trimmingCharacters(in: .whitespacesAndNewlines)
-        let summary = trimmed.isEmpty ? "Error details available" : trimmed
-        return summary.count > 160 ? String(summary.prefix(157)) + "..." : summary
+    @ViewBuilder
+    private func versionRow(
+        _ label: String,
+        value: String,
+        details: String,
+        copied: Bool,
+        action: @escaping () -> Void
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(label)
+                .font(.headline)
+            Button(action: action) {
+                Text(copied ? "details copied" : value)
+                    .font(.body.monospaced())
+                    .foregroundStyle(copied ? .secondary : .primary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .buttonStyle(.plain)
+            .help(details + "\n\nClick to copy full details to clipboard.")
+        }
     }
 }
