@@ -1,12 +1,18 @@
 use uuid::Uuid;
 
 use crate::{
-    api::acp::{acp_pair_den_tool_descriptors, acp_provider_tool_names_for_client_context},
+    api::acp::{
+        acp_pair_den_tool_descriptors, acp_provider_tool_names_for_client_context,
+        history::{
+            runtime_compaction_event_for_history, runtime_iterative_summary_for_compaction,
+        },
+    },
     core::{
         acp_plan_mode,
         acp_tools::AcpResolvedSessionPolicy,
         runtime_compaction::{build_runtime_context_envelope, RuntimeContextEnvelopeInput},
-        runtime_conversations::RuntimeIterativeSummary,
+        runtime_compaction_observability::RuntimeCompactionEventStatus,
+        runtime_conversations::RuntimeCompactionTriggerKind,
         work_plans::WorkPlanProjection,
     },
     errors::CustomError,
@@ -38,22 +44,74 @@ pub(crate) fn acp_direct_tool_prompt_context(
     )
 }
 
-fn runtime_compaction_prompt_context(session_id: &str) -> String {
+fn runtime_compaction_prompt_context(
+    session_id: &str,
+    client_context: &serde_json::Value,
+    activity_plan: Option<&WorkPlanProjection>,
+) -> String {
+    let transcript_summary = runtime_iterative_summary_for_compaction(client_context);
+    let compacted_summary = if let Some(plan) = activity_plan {
+        let mut merged = transcript_summary;
+        if !merged
+            .active_user_goals
+            .iter()
+            .any(|value| value == &format!("workplan:{}", plan.title))
+        {
+            merged.active_user_goals.push(format!("workplan:{}", plan.title));
+        }
+        if !merged
+            .important_constraints
+            .iter()
+            .any(|value| value == &format!("plan_status:{}", plan.status))
+        {
+            merged
+                .important_constraints
+                .push(format!("plan_status:{}", plan.status));
+        }
+        if !merged
+            .workflow_state_refs
+            .iter()
+            .any(|value| value == &format!("plan_id:{}", plan.id))
+        {
+            merged.workflow_state_refs.push(format!("plan_id:{}", plan.id));
+        }
+        Some(merged)
+    } else {
+        Some(transcript_summary)
+    };
+    let workflow_state = activity_plan
+        .map(|plan| vec![format!("plan_status:{}", plan.status)])
+        .unwrap_or_default();
     let envelope = build_runtime_context_envelope(RuntimeContextEnvelopeInput {
         active_instructions: vec![format!("session:{session_id}")],
-        workflow_state: Vec::new(),
+        workflow_state,
         recent_groups: Vec::new(),
-        compacted_summary: Some(RuntimeIterativeSummary::default()),
+        compacted_summary,
     });
     let compacted = envelope.compacted_context.unwrap_or_default();
+    let event = runtime_compaction_event_for_history(
+        session_id,
+        client_context,
+        RuntimeCompactionTriggerKind::SemanticGroupCount,
+    );
+    let decision_status = match event.status {
+        RuntimeCompactionEventStatus::Applied => "applied",
+        RuntimeCompactionEventStatus::Skipped => "skipped",
+        RuntimeCompactionEventStatus::Failed => "failed",
+    };
     format!(
-        "Runtime compaction context is Den-owned. Treat active instructions, workflow state, recent uncompacted groups, and compacted summary state as distinct context layers. Current compacted summary signals: goals={} constraints={} decisions={} artifacts={} workflow_refs={} followups={}.",
+        "Runtime compaction context is Den-owned. Treat active instructions, workflow state, recent uncompacted groups, and compacted summary state as distinct context layers. Current compacted summary signals: goals={} constraints={} decisions={} artifacts={} workflow_refs={} followups={}. Current compaction evaluation: status={} policy_version={} source_range={:?}-{:?} diagnostic={}.",
         compacted.active_user_goals.len(),
         compacted.important_constraints.len(),
         compacted.decisions_made.len(),
         compacted.artifact_refs.len(),
         compacted.workflow_state_refs.len(),
         compacted.unresolved_followups.len(),
+        decision_status,
+        event.policy_version,
+        event.source_group_start,
+        event.source_group_end,
+        event.diagnostic.as_deref().unwrap_or("none"),
     )
 }
 
@@ -116,7 +174,7 @@ pub(super) fn acp_direct_tool_prompt_context_with_activity(
     if let Some(auto_title_guidance) = auto_title_guidance {
         guidance.push(auto_title_guidance.to_string());
     }
-    guidance.push(runtime_compaction_prompt_context(session_id));
+    guidance.push(runtime_compaction_prompt_context(session_id, client_context, activity_plan));
     guidance.extend(maybe_workspace_tool_guidance(&tool_names));
     guidance.extend(server_memory_tool_guidance());
     guidance.push(tool_loop_rule_guidance());

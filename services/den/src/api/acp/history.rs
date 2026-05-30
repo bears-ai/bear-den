@@ -2,7 +2,22 @@ use sqlx::PgPool;
 use uuid::Uuid;
 
 use crate::{
-    core::{acp_letta_events::AcpGatewayEvent, acp_sessions, letta::sanitize_visible_transcript_text},
+    core::{
+        acp_letta_events::AcpGatewayEvent,
+        acp_sessions,
+        letta::sanitize_visible_transcript_text,
+        runtime_compaction::{
+            choose_compaction_decision, semantic_groups_from_runtime_messages,
+            RuntimeCompactionDecision, RuntimeCompactionPolicy,
+        },
+        runtime_compaction_observability::{
+            build_compaction_applied_event, build_compaction_skipped_event,
+            RuntimeCompactionEvent,
+        },
+        runtime_conversations::{
+            RuntimeCompactionTriggerKind, RuntimeIterativeSummary, RuntimeSemanticGroup,
+        },
+    },
     errors::CustomError,
 };
 
@@ -98,6 +113,118 @@ fn runtime_message_created_at(msg: &serde_json::Value) -> Option<String> {
         .or_else(|| msg.get("created_at"))
         .and_then(|x| x.as_str())
         .map(str::to_string)
+}
+
+pub(crate) fn runtime_messages_for_compaction(
+    body: &serde_json::Value,
+) -> Vec<serde_json::Value> {
+    runtime_messages_top_array(body)
+        .iter()
+        .map(runtime_inner_for_acp_history)
+        .cloned()
+        .collect()
+}
+
+pub(crate) fn runtime_semantic_groups_for_compaction(
+    body: &serde_json::Value,
+) -> Vec<RuntimeSemanticGroup> {
+    let messages = runtime_messages_for_compaction(body);
+    semantic_groups_from_runtime_messages(&messages)
+}
+
+pub(crate) fn runtime_iterative_summary_for_compaction(
+    body: &serde_json::Value,
+) -> RuntimeIterativeSummary {
+    let groups = runtime_semantic_groups_for_compaction(body);
+    build_iterative_summary_from_groups(&groups)
+}
+
+pub(crate) fn default_runtime_compaction_policy() -> RuntimeCompactionPolicy {
+    RuntimeCompactionPolicy {
+        policy_version: "acp-history-v1".to_string(),
+        protected_recent_group_count: 3,
+        max_groups_before_compaction: 6,
+    }
+}
+
+pub(crate) fn runtime_compaction_decision_for_history(
+    body: &serde_json::Value,
+    trigger: RuntimeCompactionTriggerKind,
+) -> Option<RuntimeCompactionDecision> {
+    let groups = runtime_semantic_groups_for_compaction(body);
+    let policy = default_runtime_compaction_policy();
+    choose_compaction_decision(&groups, trigger, &policy)
+}
+
+pub(crate) fn runtime_compaction_event_for_history(
+    conversation_id: &str,
+    body: &serde_json::Value,
+    trigger: RuntimeCompactionTriggerKind,
+) -> RuntimeCompactionEvent {
+    let policy = default_runtime_compaction_policy();
+    match runtime_compaction_decision_for_history(body, trigger.clone()) {
+        Some(decision) => {
+            let artifact = crate::core::runtime_compaction::artifact_ref_from_decision(
+                format!("{conversation_id}:{}-{}", decision.selected_group_start, decision.selected_group_end),
+                &decision,
+                &policy,
+            );
+            build_compaction_applied_event(conversation_id.to_string(), &decision, &policy, artifact)
+        }
+        None => build_compaction_skipped_event(
+            conversation_id.to_string(),
+            trigger,
+            &policy,
+            "no eligible history groups outside protected floors",
+        ),
+    }
+}
+
+fn build_iterative_summary_from_groups(groups: &[RuntimeSemanticGroup]) -> RuntimeIterativeSummary {
+    let mut summary = RuntimeIterativeSummary::default();
+    for group in groups {
+        let label = format!(
+            "{:?}:{}:{}",
+            group.kind,
+            group.start_message_id.as_deref().unwrap_or("start"),
+            group.end_message_id.as_deref().unwrap_or("end")
+        );
+        match group.kind {
+            crate::core::runtime_conversations::RuntimeSemanticGroupKind::UserTurn => {
+                push_unique_summary_value(&mut summary.active_user_goals, label);
+            }
+            crate::core::runtime_conversations::RuntimeSemanticGroupKind::AssistantReply => {
+                push_unique_summary_value(&mut summary.unresolved_followups, label);
+            }
+            crate::core::runtime_conversations::RuntimeSemanticGroupKind::ToolInteraction
+            | crate::core::runtime_conversations::RuntimeSemanticGroupKind::ArtifactUpdate => {
+                push_unique_summary_value(&mut summary.artifact_refs, label);
+            }
+            crate::core::runtime_conversations::RuntimeSemanticGroupKind::ApprovalInteraction => {
+                push_unique_summary_value(&mut summary.decisions_made, label);
+            }
+            crate::core::runtime_conversations::RuntimeSemanticGroupKind::WorkflowUpdate => {
+                push_unique_summary_value(&mut summary.workflow_state_refs, label);
+            }
+            crate::core::runtime_conversations::RuntimeSemanticGroupKind::PriorCompactionArtifact
+            | crate::core::runtime_conversations::RuntimeSemanticGroupKind::SystemEvent => {
+                push_unique_summary_value(&mut summary.important_constraints, label);
+            }
+        }
+        if group.protected {
+            push_unique_summary_value(
+                &mut summary.important_constraints,
+                format!("protected:{:?}", group.kind),
+            );
+        }
+    }
+    summary
+}
+
+fn push_unique_summary_value(values: &mut Vec<String>, value: String) {
+    if !values.iter().any(|existing| existing == &value) {
+        values.push(value);
+    }
 }
 
 fn runtime_user_message_role_is_human(inner: &serde_json::Value, msg: &serde_json::Value) -> bool {
