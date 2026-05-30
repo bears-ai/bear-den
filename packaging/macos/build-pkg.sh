@@ -11,7 +11,7 @@ Options:
   --binary <path>                 Path to the compiled bears-acp-adapter binary (required)
   --version <version>             Package version (default: read from Cargo.toml)
   --identifier <id>               Package identifier (default: ai.bears.acp-adapter)
-  --install-location <path>       Install prefix (default: /usr/local/bin)
+  --install-location <path>       Install prefix (default: /Library/Application Support/Bears/adapter)
   --output <path>                 Output package path (default: dist/macos/bears-acp-adapter-<version>.pkg)
   --application-identity <name>   Developer ID Application identity for codesign
   --installer-identity <name>     Developer ID Installer identity for productbuild signing
@@ -29,7 +29,7 @@ USAGE
 repo_root="$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)"
 version=""
 identifier="ai.bears.acp-adapter"
-install_location="/usr/local/bin"
+install_location="/Library/Application Support/Bears/adapter"
 output=""
 binary=""
 application_identity="${MACOS_APPLICATION_CERT_IDENTITY:-}"

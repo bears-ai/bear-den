@@ -5,6 +5,7 @@ struct AdapterInstallManager: AdapterInstallManaging, AdapterVersionProviding {
     private let bundledAdapterLocator: BundledAdapterLocating
     private let artifactSourceProvider: AdapterArtifactSourceProviding
     private let artifactDownloader: AdapterArtifactDownloading
+    private let packageInstaller: AdapterPackageInstalling
     private let processRunner: ProcessRunning
     private let fileManager: FileManager
     private let jsonDecoder: JSONDecoder
@@ -15,6 +16,7 @@ struct AdapterInstallManager: AdapterInstallManaging, AdapterVersionProviding {
         bundledAdapterLocator: BundledAdapterLocating = BundledAdapterLocator(),
         artifactSourceProvider: AdapterArtifactSourceProviding = GitHubReleaseAdapterSource(),
         artifactDownloader: AdapterArtifactDownloading = URLSessionAdapterArtifactDownloader(),
+        packageInstaller: AdapterPackageInstalling = InstallerAppAdapterPackageInstaller(),
         processRunner: ProcessRunning = FoundationProcessRunner(),
         fileManager: FileManager = .default
     ) {
@@ -22,6 +24,7 @@ struct AdapterInstallManager: AdapterInstallManaging, AdapterVersionProviding {
         self.bundledAdapterLocator = bundledAdapterLocator
         self.artifactSourceProvider = artifactSourceProvider
         self.artifactDownloader = artifactDownloader
+        self.packageInstaller = packageInstaller
         self.processRunner = processRunner
         self.fileManager = fileManager
 
@@ -77,19 +80,23 @@ struct AdapterInstallManager: AdapterInstallManaging, AdapterVersionProviding {
     }
 
     func repairInstall() throws -> InstallState {
-        try pathProvider.ensureManagedDirectoriesExist()
+        let source = try resolveInstallSource()
 
-        let sourceAdapterURL = try resolveInstallSourceAdapterURL()
-        if fileManager.fileExists(atPath: pathProvider.managedAdapterPath.path) {
-            try fileManager.removeItem(at: pathProvider.managedAdapterPath)
+        if source.source.isInstallerPackage {
+            try packageInstaller.installPackage(at: source.localURL)
+        } else {
+            try pathProvider.ensureManagedDirectoriesExist()
+            if fileManager.fileExists(atPath: pathProvider.managedAdapterPath.path) {
+                try fileManager.removeItem(at: pathProvider.managedAdapterPath)
+            }
+            try fileManager.copyItem(at: source.localURL, to: pathProvider.managedAdapterPath)
+            try makeExecutable(pathProvider.managedAdapterPath)
         }
-        try fileManager.copyItem(at: sourceAdapterURL, to: pathProvider.managedAdapterPath)
-        try makeExecutable(pathProvider.managedAdapterPath)
 
         let installedInfo = try? installedAdapterVersion()
         let bundledInfo = try? bundledAdapterVersion()
         let installedVersion = installedInfo?.version
-        let referenceVersion = bundledInfo?.version ?? installedVersion
+        let referenceVersion = bundledInfo?.version ?? source.source.versionHint ?? installedVersion
         let isCompatible = versionsAreCompatible(installedVersion: installedVersion, bundledVersion: referenceVersion)
         let status: InstallStatus = isCompatible ? .ok : .repairNeeded
         let repairedState = InstallState(
@@ -166,13 +173,22 @@ struct AdapterInstallManager: AdapterInstallManaging, AdapterVersionProviding {
         return installedSemanticVersion.isCompatiblePatchwise(with: bundledSemanticVersion)
     }
 
-    private func resolveInstallSourceAdapterURL() throws -> URL {
+    private func resolveInstallSource() throws -> DownloadedAdapterArtifact {
         if let bundledURL = try? bundledAdapterLocator.bundledAdapterExecutableURL() {
-            return bundledURL
+            return DownloadedAdapterArtifact(
+                localURL: bundledURL,
+                source: AdapterArtifactSource(
+                    downloadURL: bundledURL,
+                    versionHint: try? bundledAdapterVersion().version,
+                    assetName: bundledURL.lastPathComponent,
+                    isInstallerPackage: false
+                )
+            )
         }
 
         let source = try artifactSourceProvider.latestMacOSArtifactSource()
-        return try artifactDownloader.downloadArtifact(from: source)
+        let localURL = try artifactDownloader.downloadArtifact(from: source)
+        return DownloadedAdapterArtifact(localURL: localURL, source: source)
     }
 
     private func makeExecutable(_ url: URL) throws {
@@ -183,6 +199,8 @@ struct AdapterInstallManager: AdapterInstallManaging, AdapterVersionProviding {
     }
 
     private func persistInstallState(_ installState: InstallState) throws {
+        let stateDirectory = pathProvider.installStatePath.deletingLastPathComponent()
+        try fileManager.createDirectory(at: stateDirectory, withIntermediateDirectories: true)
         let data = try jsonEncoder.encode(installState)
         try data.write(to: pathProvider.installStatePath, options: .atomic)
     }

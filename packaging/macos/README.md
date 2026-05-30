@@ -2,13 +2,13 @@
 
 This directory contains the first-pass macOS `.pkg` installer pipeline for `bears-acp-adapter`.
 
-The package installs the adapter at:
+The package now installs the adapter at:
 
 ```text
-/usr/local/bin/bears-acp-adapter
+/Library/Application Support/Bears/adapter/bears-acp-adapter
 ```
 
-That system-wide path is intentionally stable so non-technical users can paste the same command into ACP clients such as aizen, and so future client-specific configuration helpers can target one location.
+That system-level Bears-owned path aligns more closely with the Bears app-managed installation contract while avoiding `/usr/local/bin`.
 
 ## Local package build
 
@@ -77,8 +77,8 @@ sudo installer -pkg dist/macos/bears-acp-adapter-aarch64-apple-darwin.pkg -targe
 Validate the installed adapter:
 
 ```bash
-/usr/local/bin/bears-acp-adapter --version
-/usr/local/bin/bears-acp-adapter doctor
+"/Library/Application Support/Bears/adapter/bears-acp-adapter" --version
+"/Library/Application Support/Bears/adapter/bears-acp-adapter" doctor
 ```
 
 `doctor` needs `BEARS_DEN_API_URL`, `BEARS_BEAR_SLUG`, and either `BEARS_DEN_TOKEN` or `BEARS_DEN_TOKEN_ENV` set in the same environment used by the ACP client for a complete pass. Without those values, it prints the missing setup items and exits non-zero.

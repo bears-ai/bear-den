@@ -29,7 +29,8 @@ struct GitHubReleaseAdapterSource: AdapterArtifactSourceProviding {
         return AdapterArtifactSource(
             downloadURL: downloadURL,
             versionHint: nil,
-            assetName: downloadURL.lastPathComponent.isEmpty ? "bears-acp-adapter-macos-universal" : downloadURL.lastPathComponent
+            assetName: downloadURL.lastPathComponent.isEmpty ? "bears-acp-adapter-aarch64-apple-darwin.pkg" : downloadURL.lastPathComponent,
+            isInstallerPackage: downloadURL.pathExtension == "pkg"
         )
     }
 }

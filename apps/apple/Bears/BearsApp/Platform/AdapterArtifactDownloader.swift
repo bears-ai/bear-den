@@ -4,15 +4,17 @@ protocol AdapterArtifactDownloading {
     func downloadArtifact(from source: AdapterArtifactSource) throws -> URL
 }
 
+struct DownloadedAdapterArtifact {
+    let localURL: URL
+    let source: AdapterArtifactSource
+}
+
 enum AdapterArtifactDownloadError: LocalizedError {
-    case unsupportedArchive(URL)
     case missingDownloadedFile(URL)
     case invalidExecutableFormat(String)
 
     var errorDescription: String? {
         switch self {
-        case .unsupportedArchive(let url):
-            return "Downloaded adapter artifact uses an unsupported format: \(url.lastPathComponent)"
         case .missingDownloadedFile(let url):
             return "Downloaded adapter artifact could not be found at \(url.path)."
         case .invalidExecutableFormat(let details):
@@ -37,7 +39,9 @@ struct URLSessionAdapterArtifactDownloader: AdapterArtifactDownloading {
 
         let downloadedURL = try downloadSynchronously(from: source.downloadURL, into: temporaryDirectory)
         let resolvedURL = try resolveDownloadedBinary(from: downloadedURL, source: source, in: temporaryDirectory)
-        try validateDownloadedBinary(at: resolvedURL)
+        if !source.isInstallerPackage {
+            try validateDownloadedBinary(at: resolvedURL)
+        }
         return resolvedURL
     }
 
@@ -76,8 +80,11 @@ struct URLSessionAdapterArtifactDownloader: AdapterArtifactDownloading {
     }
 
     private func resolveDownloadedBinary(from downloadedURL: URL, source: AdapterArtifactSource, in directory: URL) throws -> URL {
-        if downloadedURL.pathExtension == "zip" {
-            throw AdapterArtifactDownloadError.unsupportedArchive(downloadedURL)
+        if source.isInstallerPackage || downloadedURL.pathExtension == "pkg" {
+            guard fileManager.fileExists(atPath: downloadedURL.path) else {
+                throw AdapterArtifactDownloadError.missingDownloadedFile(downloadedURL)
+            }
+            return downloadedURL
         }
 
         if fileManager.fileExists(atPath: downloadedURL.path) {

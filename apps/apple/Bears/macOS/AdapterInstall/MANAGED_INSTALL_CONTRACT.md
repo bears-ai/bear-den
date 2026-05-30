@@ -6,26 +6,26 @@ This document defines the initial managed install layout for the Bears macOS app
 
 It is intentionally optimized for the first execution slice:
 
-- simple per-user installation;
-- no administrator privileges;
-- no writes into system executable locations;
+- a Bears-owned system adapter installation path;
+- per-user writable app metadata and logs;
 - stable path for manual ACP client configuration;
-- enough metadata to support install, display, and repair behavior.
+- enough metadata to support install, display, and repair behavior;
+- alignment with the notarized macOS package install location.
 
 ## Goals
 
 The managed install contract must provide:
 
 1. a stable executable path that users can paste into ACP client configuration;
-2. a per-user writable install area under Application Support;
+2. a stable Bears-owned adapter install area plus per-user writable app metadata under Application Support;
 3. a place to persist install metadata independently of the app bundle;
 4. a path shape that can grow into versioned installs later if needed.
 
 ## Contract
 
-### Application Support root
+### Per-user Application Support root
 
-The Bears app owns this per-user root:
+The Bears app stores user-specific metadata and logs under:
 
 ```text
 ~/Library/Application Support/Bears/
@@ -33,10 +33,10 @@ The Bears app owns this per-user root:
 
 ### Phase-0 adapter install root
 
-The adapter install root is:
+The system adapter install root is:
 
 ```text
-~/Library/Application Support/Bears/adapter/
+/Library/Application Support/Bears/adapter/
 ```
 
 ### Stable executable path
@@ -44,7 +44,7 @@ The adapter install root is:
 For phase 0, the app should expose this stable executable path to users and ACP clients:
 
 ```text
-~/Library/Application Support/Bears/adapter/bears-acp-adapter
+/Library/Application Support/Bears/adapter/bears-acp-adapter
 ```
 
 This is the path the app should show in the UI and copy to the clipboard for manual client setup.
@@ -76,7 +76,7 @@ Suggested shape:
 ```json
 {
   "schema_version": 1,
-  "managed_adapter_path": "/Users/alice/Library/Application Support/Bears/adapter/bears-acp-adapter",
+  "managed_adapter_path": "/Library/Application Support/Bears/adapter/bears-acp-adapter",
   "installed_version": "0.1.5",
   "bundled_version": "0.1.5",
   "installed_at": "2026-05-30T10:00:00Z",
@@ -101,7 +101,7 @@ Suggested shape:
 
 On first launch the app should:
 
-1. create `~/Library/Application Support/Bears/adapter/` if missing;
+1. create `/Library/Application Support/Bears/adapter/` if missing;
 2. create `~/Library/Application Support/Bears/state/` if missing;
 3. copy the bundled adapter to the stable executable path;
 4. ensure the file is executable;

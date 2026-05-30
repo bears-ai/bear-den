@@ -71,10 +71,15 @@ By default it uses:
 You can override that for development with:
 
 ```bash
-BEARS_ADAPTER_DOWNLOAD_URL=https://example.com/path/to/bears-acp-adapter xcrun swift run Bears
+BEARS_ADAPTER_DOWNLOAD_URL=https://example.com/path/to/bears-acp-adapter-aarch64-apple-darwin.pkg xcrun swift run Bears
 ```
 
-The remote artifact must be a macOS Mach-O executable, not a Linux container-built binary.
+The app now supports either:
+
+- a direct macOS Mach-O adapter binary, or
+- a macOS installer package (`.pkg`)
+
+When given a `.pkg`, the app invokes the system installer targeting `/`, and macOS may prompt for administrator credentials.
 
 ## Build
 
