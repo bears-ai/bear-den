@@ -347,15 +347,33 @@ jobs:
                   site_url="https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/bears-acp-adapter/$UPDATE_CHANNEL"
                   mkdir -p "$site_dir"
 
-                  cp dist/macos/bears-acp-adapter-aarch64-apple-darwin.pkg "$site_dir/bears-acp-adapter-aarch64-apple-darwin.pkg"
+                  macos_pkg_name="bears-acp-adapter-aarch64-apple-darwin.pkg"
+                  macos_pkg_path="$site_dir/$macos_pkg_name"
+                  cp dist/macos/bears-acp-adapter-aarch64-apple-darwin.pkg "$macos_pkg_path"
                   ./packaging/macos/generate-update-manifest.sh \
-                    --pkg "$site_dir/bears-acp-adapter-aarch64-apple-darwin.pkg" \
+                    --pkg "$macos_pkg_path" \
                     --output "$site_dir/aarch64-apple-darwin.json" \
                     --base-url "$site_url" \
                     --channel "$UPDATE_CHANNEL" \
                     --version "$UPDATE_VERSION" \
                     --target aarch64-apple-darwin \
                     --release-notes-url "$UPDATE_RELEASE_NOTES_URL"
+
+                  macos_sha256="$(shasum -a 256 "$macos_pkg_path" | awk '{print $1}')"
+                  python3 - "$site_dir/macos.json" "$UPDATE_VERSION" "$site_url/$macos_pkg_name" "$macos_sha256" "$UPDATE_RELEASE_NOTES_URL" <<'PY'
+                  import json
+                  import pathlib
+                  import sys
+
+                  output_path = pathlib.Path(sys.argv[1])
+                  manifest = {
+                      "version": sys.argv[2],
+                      "pkg_url": sys.argv[3],
+                      "sha256": sys.argv[4],
+                      "release_notes_url": sys.argv[5],
+                  }
+                  output_path.write_text(json.dumps(manifest, indent=2) + "\n")
+                  PY
 
                   for target in x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu; do
                     asset="bears-acp-adapter-$target"
