@@ -13,7 +13,7 @@ use crate::{
         archived_conversations,
         bears::db as bears_db,
         letta::load_agent_conversations as load_runtime_conversations,
-        runtime_compaction_store::record_runtime_compaction_event,
+        runtime_compaction_store::{list_runtime_compaction_events, record_runtime_compaction_event},
     },
     errors::CustomError,
 };
@@ -137,6 +137,7 @@ pub(super) async fn conversation_history_inner(
             has_more: false,
             next_before: None,
             compaction: None,
+            compaction_history: vec![],
         })
         .into_response());
     }
@@ -180,11 +181,15 @@ pub(super) async fn conversation_history_inner(
     );
     let _ = record_runtime_compaction_event(&state.sqlx_pool, &event).await;
     let compaction = Some(map_compaction_status_for_history(&conv_id, &body));
+    let compaction_history = list_runtime_compaction_events(&state.sqlx_pool, &conv_id, 10)
+        .await
+        .unwrap_or_default();
     Ok(Json(AcpConversationHistoryResponse {
         messages,
         has_more,
         next_before,
         compaction,
+        compaction_history,
     })
     .into_response())
 }

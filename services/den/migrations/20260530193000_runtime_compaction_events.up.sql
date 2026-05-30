@@ -4,6 +4,7 @@ CREATE TABLE IF NOT EXISTS runtime_compaction_events (
     trigger TEXT NOT NULL,
     policy_version TEXT NOT NULL,
     status TEXT NOT NULL CHECK (status IN ('Applied', 'Skipped', 'Failed')),
+    event_hash TEXT NOT NULL,
     boundary JSONB NULL,
     source_group_start INTEGER NULL,
     source_group_end INTEGER NULL,
@@ -13,6 +14,9 @@ CREATE TABLE IF NOT EXISTS runtime_compaction_events (
     CHECK (boundary IS NULL OR jsonb_typeof(boundary) = 'object'),
     CHECK (artifact IS NULL OR jsonb_typeof(artifact) = 'object')
 );
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_runtime_compaction_events_dedupe
+    ON runtime_compaction_events (conversation_id, event_hash);
 
 CREATE INDEX IF NOT EXISTS idx_runtime_compaction_events_conversation_time
     ON runtime_compaction_events (conversation_id, created_at DESC);
