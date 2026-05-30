@@ -1,7 +1,16 @@
 #!/bin/sh
-set -eu
+set -eux
 
-BIN="/usr/local/bin/bears-acp-adapter"
+BIN="/Library/Application Support/Bears/adapter/bears-acp-adapter"
+
+echo "[postinstall] validating installed adapter at: $BIN" >&2
+ls -ld "/Library/Application Support" "/Library/Application Support/Bears" "/Library/Application Support/Bears/adapter" >&2 || true
+ls -l "$BIN" >&2 || true
+
+if [ ! -e "$BIN" ]; then
+  echo "BEARS ACP adapter package completed, but $BIN does not exist." >&2
+  exit 1
+fi
 
 if [ ! -x "$BIN" ]; then
   echo "BEARS ACP adapter was installed, but $BIN is not executable." >&2
@@ -9,7 +18,7 @@ if [ ! -x "$BIN" ]; then
 fi
 
 # Avoid running network/config checks here; installs should succeed before the user has credentials.
-"$BIN" --version >/dev/null 2>&1 || {
+"$BIN" --version >&2 || {
   echo "BEARS ACP adapter was installed, but --version failed." >&2
   exit 1
 }
@@ -18,9 +27,9 @@ cat <<'MESSAGE'
 BEARS ACP adapter installed successfully.
 
 Next steps:
-  1. Configure your ACP client to run /usr/local/bin/bears-acp-adapter.
+  1. Configure your ACP client to run /Library/Application Support/Bears/adapter/bears-acp-adapter.
   2. Provide DEN_API_URL, BEAR_SLUG, and DEN_TOKEN in the client environment.
-  3. Run /usr/local/bin/bears-acp-adapter doctor from the same environment to validate setup.
+  3. Run /Library/Application Support/Bears/adapter/bears-acp-adapter doctor from the same environment to validate setup.
 MESSAGE
 
 exit 0

@@ -64,6 +64,18 @@ The script places the adapter at:
 
 If no bundled adapter is present, the app will try to download a macOS adapter artifact.
 
+## Important: publishing a rebuilt package requires a version bump
+
+The GitHub release/update-site flow is version-driven. If you rebuild the adapter package and want GitHub to publish a new package artifact at the release/update URL, you must:
+
+1. bump `version` in `tools/bears-acp-adapter/Cargo.toml`
+2. update `tools/bears-acp-adapter/Cargo.lock`
+3. rebuild and republish the release assets
+
+If you only change packaging or installer scripts without bumping the adapter version, the existing published release/tag may be reused and the app can keep downloading an older `.pkg` built with stale packaging behavior.
+
+When debugging install path or package-script changes, always treat this version bump as part of the publish step.
+
 By default it uses:
 
 - `https://bears-ai.github.io/bear-den/bears-acp-adapter/stable/bears-acp-adapter-aarch64-apple-darwin.pkg`
