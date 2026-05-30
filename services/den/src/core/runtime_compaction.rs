@@ -3,7 +3,8 @@ use serde_json::Value;
 
 use crate::core::runtime_conversations::{
     RuntimeCompactionArtifactKind, RuntimeCompactionArtifactRef, RuntimeCompactionBoundary,
-    RuntimeCompactionTriggerKind, RuntimeSemanticGroup, RuntimeSemanticGroupKind,
+    RuntimeCompactionTriggerKind, RuntimeIterativeSummary, RuntimeSemanticGroup,
+    RuntimeSemanticGroupKind,
 };
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -169,6 +170,75 @@ pub fn artifact_ref_from_decision(
     }
 }
 
+pub fn merge_iterative_summary(
+    prior: Option<&RuntimeIterativeSummary>,
+    groups: &[RuntimeSemanticGroup],
+) -> RuntimeIterativeSummary {
+    let mut summary = prior.cloned().unwrap_or_default();
+
+    for group in groups {
+        let bucket = match group.kind {
+            RuntimeSemanticGroupKind::UserTurn => &mut summary.active_user_goals,
+            RuntimeSemanticGroupKind::AssistantReply => &mut summary.unresolved_followups,
+            RuntimeSemanticGroupKind::ToolInteraction => &mut summary.artifact_refs,
+            RuntimeSemanticGroupKind::ApprovalInteraction => &mut summary.decisions_made,
+            RuntimeSemanticGroupKind::WorkflowUpdate => &mut summary.workflow_state_refs,
+            RuntimeSemanticGroupKind::ArtifactUpdate => &mut summary.artifact_refs,
+            RuntimeSemanticGroupKind::PriorCompactionArtifact => &mut summary.important_constraints,
+            RuntimeSemanticGroupKind::SystemEvent => &mut summary.important_constraints,
+        };
+
+        let label = format!(
+            "{:?}:{}:{}",
+            group.kind,
+            group.start_message_id.as_deref().unwrap_or("start"),
+            group.end_message_id.as_deref().unwrap_or("end")
+        );
+        push_unique(bucket, label);
+        if group.protected {
+            push_unique(
+                &mut summary.important_constraints,
+                format!("protected:{:?}", group.kind),
+            );
+        }
+    }
+
+    summary
+}
+
+fn push_unique(values: &mut Vec<String>, value: String) {
+    if !values.iter().any(|existing| existing == &value) {
+        values.push(value);
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RuntimePromptAssemblyInput {
+    pub active_instructions: Vec<String>,
+    pub workflow_state: Vec<String>,
+    pub recent_groups: Vec<RuntimeSemanticGroup>,
+    pub compacted_summary: Option<RuntimeIterativeSummary>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RuntimePromptAssemblyEnvelope {
+    pub instructions: Vec<String>,
+    pub workflow_state: Vec<String>,
+    pub recent_groups: Vec<RuntimeSemanticGroup>,
+    pub compacted_context: Option<RuntimeIterativeSummary>,
+}
+
+pub fn assemble_runtime_prompt_context(
+    input: RuntimePromptAssemblyInput,
+) -> RuntimePromptAssemblyEnvelope {
+    RuntimePromptAssemblyEnvelope {
+        instructions: input.active_instructions,
+        workflow_state: input.workflow_state,
+        recent_groups: input.recent_groups,
+        compacted_context: input.compacted_summary,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -315,5 +385,81 @@ mod tests {
         assert_eq!(artifact.source_group_start, 1);
         assert_eq!(artifact.source_group_end, 2);
         assert_eq!(artifact.policy_version, "policy-7");
+    }
+
+    #[test]
+    fn iterative_summary_merge_accumulates_unique_entries_and_protected_markers() {
+        let prior = RuntimeIterativeSummary {
+            active_user_goals: vec!["UserTurn:start:end".into()],
+            important_constraints: vec![],
+            decisions_made: vec![],
+            artifact_refs: vec![],
+            workflow_state_refs: vec![],
+            unresolved_followups: vec![],
+        };
+        let groups = vec![
+            RuntimeSemanticGroup {
+                kind: RuntimeSemanticGroupKind::UserTurn,
+                start_message_id: None,
+                end_message_id: None,
+                message_count: 1,
+                protected: false,
+            },
+            RuntimeSemanticGroup {
+                kind: RuntimeSemanticGroupKind::WorkflowUpdate,
+                start_message_id: Some("w1".into()),
+                end_message_id: Some("w2".into()),
+                message_count: 2,
+                protected: true,
+            },
+            RuntimeSemanticGroup {
+                kind: RuntimeSemanticGroupKind::ArtifactUpdate,
+                start_message_id: Some("a1".into()),
+                end_message_id: Some("a1".into()),
+                message_count: 1,
+                protected: false,
+            },
+        ];
+
+        let merged = merge_iterative_summary(Some(&prior), &groups);
+        assert_eq!(merged.active_user_goals.len(), 1);
+        assert!(merged.workflow_state_refs.iter().any(|v| v.contains("WorkflowUpdate:w1:w2")));
+        assert!(merged.artifact_refs.iter().any(|v| v.contains("ArtifactUpdate:a1:a1")));
+        assert!(merged
+            .important_constraints
+            .iter()
+            .any(|v| v == "protected:WorkflowUpdate"));
+    }
+
+    #[test]
+    fn prompt_assembly_keeps_compacted_context_separate_from_recent_groups() {
+        let envelope = assemble_runtime_prompt_context(RuntimePromptAssemblyInput {
+            active_instructions: vec!["system".into(), "developer".into()],
+            workflow_state: vec!["plan:active".into()],
+            recent_groups: vec![RuntimeSemanticGroup {
+                kind: RuntimeSemanticGroupKind::AssistantReply,
+                start_message_id: Some("m1".into()),
+                end_message_id: Some("m1".into()),
+                message_count: 1,
+                protected: false,
+            }],
+            compacted_summary: Some(RuntimeIterativeSummary {
+                active_user_goals: vec!["ship compaction".into()],
+                important_constraints: vec!["do not compact approvals".into()],
+                decisions_made: vec![],
+                artifact_refs: vec![],
+                workflow_state_refs: vec!["plan:active".into()],
+                unresolved_followups: vec![],
+            }),
+        });
+
+        assert_eq!(envelope.instructions, vec!["system", "developer"]);
+        assert_eq!(envelope.workflow_state, vec!["plan:active"]);
+        assert_eq!(envelope.recent_groups.len(), 1);
+        assert!(envelope.compacted_context.is_some());
+        assert_eq!(
+            envelope.compacted_context.unwrap().important_constraints,
+            vec!["do not compact approvals"]
+        );
     }
 }

@@ -232,6 +232,16 @@ pub enum RuntimeCompactionArtifactKind {
     StructuredWorkflowSummary,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct RuntimeIterativeSummary {
+    pub active_user_goals: Vec<String>,
+    pub important_constraints: Vec<String>,
+    pub decisions_made: Vec<String>,
+    pub artifact_refs: Vec<String>,
+    pub workflow_state_refs: Vec<String>,
+    pub unresolved_followups: Vec<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct RuntimeCompactionArtifactRef {
     pub artifact_id: String,
