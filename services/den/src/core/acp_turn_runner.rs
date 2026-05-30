@@ -20,6 +20,12 @@ use crate::{
             RuntimeConversationRef, RuntimeEventParser, RuntimeStreamContinuation,
             RuntimeToolResultStatus, RuntimeTurnBackend, StartTurnRequest, StartTurnResult,
         },
+        runtime_conversations::{
+            RuntimeApprovalActionMode, RuntimeApprovalActionRequest, RuntimeApprovalRequest,
+            RuntimeConversationBackend, RuntimeConversationListRequest,
+            RuntimeConversationMessagesRequest, RuntimeConversationSnapshot,
+            RuntimePendingApproval,
+        },
     },
     errors::CustomError,
 };
@@ -84,6 +90,83 @@ pub struct LettaRuntimeCancellationBackend<'a> {
 impl<'a> LettaRuntimeCancellationBackend<'a> {
     pub fn new(letta: &'a LettaClient) -> Self {
         Self { letta }
+    }
+}
+
+#[allow(async_fn_in_trait)]
+impl RuntimeConversationBackend for LettaRuntimeCancellationBackend<'_> {
+    async fn list_conversations(
+        &self,
+        request: RuntimeConversationListRequest,
+    ) -> Result<RuntimeConversationSnapshot, CustomError> {
+        Ok(crate::core::letta::load_agent_conversations(self.letta, &request.binding_id).await)
+    }
+
+    async fn list_messages(
+        &self,
+        request: RuntimeConversationMessagesRequest,
+    ) -> Result<Value, CustomError> {
+        self.letta
+            .list_conversation_messages(
+                &request.conversation_id,
+                request.binding_id.as_deref(),
+                request.limit.try_into().map_err(|_| CustomError::ValidationError("conversation message limit exceeds u32".to_string()))?,
+                request.before.as_deref(),
+                request.ascending,
+            )
+            .await
+    }
+
+    async fn pending_approvals(
+        &self,
+        request: RuntimeApprovalRequest,
+    ) -> Result<Vec<RuntimePendingApproval>, CustomError> {
+        let pending = self
+            .letta
+            .pending_conversation_approvals(
+                &request.conversation_id,
+                request.binding_id.as_deref(),
+            )
+            .await?;
+        Ok(pending
+            .into_iter()
+            .map(|item| RuntimePendingApproval {
+                tool_call_id: item.tool_call_id,
+                approval_request_id: item.source_message_id,
+                tool_name: item.name,
+            })
+            .collect())
+    }
+
+    async fn apply_approval_action(
+        &self,
+        request: RuntimeApprovalActionRequest,
+    ) -> Result<Vec<RuntimePendingApproval>, CustomError> {
+        let mode = match request.mode {
+            RuntimeApprovalActionMode::InspectOnly => {
+crate::core::letta::PendingApprovalDenialMode::InspectOnly
+            }
+            RuntimeApprovalActionMode::Deny => {
+crate::core::letta::PendingApprovalDenialMode::PostToConversation
+            }
+        };
+        let approvals = self
+            .letta
+            .deny_pending_conversation_approvals(
+                &request.conversation_id,
+                request.binding_id.as_deref(),
+                &request.reason,
+                mode,
+            )
+            .await?;
+        Ok(approvals
+            .into_iter()
+            .map(|item| RuntimePendingApproval {
+                tool_call_id: item.tool_call_id,
+                approval_request_id: item.source_message_id,
+                tool_name: item.name,
+            })
+            .collect())
     }
 }
 

@@ -41,6 +41,7 @@ pub mod role_runtime;
 #[cfg(test)]
 mod role_runtime_tests;
 pub mod runtime_contracts;
+pub mod runtime_conversations;
 pub mod runtime_provider;
 #[cfg(test)]
 mod runtime_provider_tests;

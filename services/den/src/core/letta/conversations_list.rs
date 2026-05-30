@@ -2,33 +2,19 @@
 
 use std::cmp::Ordering;
 
-use serde::Serialize;
 use serde_json::Value;
+
+use crate::core::runtime_conversations::{
+    RuntimeConversationRow, RuntimeConversationSnapshot,
+};
 
 use super::conversation_title::{
     display_conversation_title, first_user_message_text_for_title, is_meaningful_conversation_title,
 };
 use super::LettaClient;
 
-/// One thread (default main chat or `conv-…`), including archive state from Letta.
-#[derive(Debug, Clone, Serialize)]
-pub struct LettaConversationRow {
-    pub id: String,
-    pub title: String,
-    pub last_message_at: Option<String>,
-    pub archived: bool,
-}
-
-/// Result of [`load_agent_conversations`].
-#[derive(Debug, Clone)]
-pub struct AgentConversationsSnapshot {
-    /// Non-archived rows, newest activity first.
-    pub active: Vec<LettaConversationRow>,
-    /// All rows including archived, newest activity first.
-    pub all: Vec<LettaConversationRow>,
-    /// Number of archived `conv-…` threads returned by Letta.
-    pub archived_count: usize,
-}
+pub type LettaConversationRow = RuntimeConversationRow;
+pub type AgentConversationsSnapshot = RuntimeConversationSnapshot;
 
 pub fn letta_conversations_top_array(v: &Value) -> &[Value] {
     if let Some(a) = v.as_array() {
