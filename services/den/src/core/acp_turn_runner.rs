@@ -17,8 +17,8 @@ use crate::{
             AcpTurnRunner, CancelTurnRequest, CancelTurnResult, ContinueTurnRequest,
             ContinueTurnResult, RoleRuntimeBinding, RuntimeApprovalDecision, RuntimeCancellationBackend,
             RuntimeCleanupRequest, RuntimeCleanupResult, RuntimeContinuation,
-            RuntimeConversationRef, RuntimeStreamContinuation, RuntimeToolResultStatus,
-            RuntimeTurnBackend, StartTurnRequest, StartTurnResult,
+            RuntimeConversationRef, RuntimeEventParser, RuntimeStreamContinuation,
+            RuntimeToolResultStatus, RuntimeTurnBackend, StartTurnRequest, StartTurnResult,
         },
     },
     errors::CustomError,
@@ -342,6 +342,12 @@ impl RuntimeTurnBackend for LettaRuntimeTurnBackend<'_> {
         let response = self.continue_turn_response(&request).await?;
         Ok(Box::pin(response.bytes_stream().map(|item| item.map_err(Into::into))))
     }
+
+    fn event_parser(&self) -> RuntimeEventParser {
+        RuntimeEventParser {
+            parse_json_event: runtime_stream_event_from_letta_json,
+        }
+    }
 }
 
 
@@ -458,8 +464,9 @@ pub async fn continue_acp_turn_with_runtime(
             request.continuation
         }
     };
-    let stream = LettaRuntimeTurnBackend::new(request.state.letta.as_ref(), request.request_id, 0)
-        .continue_turn_stream(ContinueTurnRequest {
+    let backend = LettaRuntimeTurnBackend::new(request.state.letta.as_ref(), request.request_id, 0);
+    let parser = backend.event_parser();
+    let stream = backend.continue_turn_stream(ContinueTurnRequest {
             conversation: RuntimeConversationRef {
                 id: request.acp_session_id.to_string(),
             },
@@ -489,7 +496,7 @@ pub async fn continue_acp_turn_with_runtime(
                     let frame_body = strip_trailing_sse_delimiter_owned(raw);
                     match parse_sse_event_body_to_json(&frame_body) {
                         Ok(Some(value)) => {
-                            if let Some(event) = runtime_stream_event_from_letta_json(&value) {
+                            if let Some(event) = (parser.parse_json_event)(&value) {
                                 queued_events.push_back(Ok(event));
                             } else {
                                 queued_events.push_back(Ok(

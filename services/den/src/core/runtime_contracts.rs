@@ -123,11 +123,18 @@ pub enum RuntimeStreamContinuation {
     BytesSse,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct RuntimeEventParser {
+    pub parse_json_event: RuntimeParserFn,
+}
+
 pub type RuntimeByteStream =
     Pin<Box<dyn Stream<Item = Result<Bytes, crate::errors::CustomError>> + Send + 'static>>;
 pub type RuntimeEventStream = Pin<
     Box<dyn Stream<Item = Result<RuntimeStreamEvent, crate::errors::CustomError>> + Send + 'static>,
 >;
+
+pub type RuntimeParserFn = fn(&serde_json::Value) -> Option<RuntimeStreamEvent>;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CancelTurnResult {
@@ -336,6 +343,8 @@ pub trait RuntimeTurnBackend {
         &self,
         request: ContinueTurnRequest,
     ) -> Result<RuntimeByteStream, CustomError>;
+
+    fn event_parser(&self) -> RuntimeEventParser;
 }
 
 #[allow(async_fn_in_trait)]
