@@ -121,7 +121,9 @@ struct GitHubReleaseAdapterSource: AdapterArtifactSourceProviding {
         }
 
         do {
-            return try JSONDecoder().decode(MacOSAdapterManifest.self, from: responseData)
+            let decoder = JSONDecoder()
+            decoder.keyDecodingStrategy = .convertFromSnakeCase
+            return try decoder.decode(MacOSAdapterManifest.self, from: responseData)
         } catch {
             let raw = String(data: responseData, encoding: .utf8) ?? "<non-utf8 response>"
             throw GitHubReleaseAdapterSourceError.invalidManifestJSON("\(error.localizedDescription). Raw response: \(raw)")
