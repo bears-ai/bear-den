@@ -76,11 +76,19 @@ If you only change packaging or installer scripts without bumping the adapter ve
 
 When debugging install path or package-script changes, always treat this version bump as part of the publish step.
 
-By default it uses:
+By default it uses the macOS update manifest:
 
-- `https://bears-ai.github.io/bear-den/bears-acp-adapter/stable/bears-acp-adapter-aarch64-apple-darwin.pkg`
+- `https://bears-ai.github.io/bear-den/bears-acp-adapter/stable/macos.json`
 
-You can override that for development with:
+The app reads `version` and `pkg_url` from that manifest, uses the version as the update reference, and downloads the package from `pkg_url`.
+
+You can override that for development with either:
+
+```bash
+BEARS_ADAPTER_MANIFEST_URL=https://example.com/path/to/macos.json xcrun swift run Bears
+```
+
+or a direct package URL:
 
 ```bash
 BEARS_ADAPTER_DOWNLOAD_URL=https://example.com/path/to/bears-acp-adapter-aarch64-apple-darwin.pkg xcrun swift run Bears
