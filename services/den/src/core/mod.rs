@@ -42,6 +42,7 @@ pub mod role_runtime;
 mod role_runtime_tests;
 pub mod runtime_compaction;
 pub mod runtime_compaction_observability;
+pub mod runtime_compaction_store;
 pub mod runtime_contracts;
 pub mod runtime_conversations;
 pub mod runtime_provider;

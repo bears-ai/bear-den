@@ -13,12 +13,15 @@ use crate::{
         archived_conversations,
         bears::db as bears_db,
         letta::load_agent_conversations as load_runtime_conversations,
+        runtime_compaction_store::record_runtime_compaction_event,
     },
     errors::CustomError,
 };
 
 use crate::api::acp::{
-    history::{map_acp_history_page, map_compaction_status_for_history},
+    history::{
+        map_acp_history_page, map_compaction_status_for_history, runtime_compaction_event_for_history,
+    },
     normalize_acp_conversation_id,
     responses::acp_error_response,
     AcpConversationHistoryQuery, AcpConversationHistoryResponse, AcpConversationRow,
@@ -170,6 +173,12 @@ pub(super) async fn conversation_history_inner(
         .list_conversation_messages(&conv_id, binding_for_conv, limit, before, false)
         .await?;
     let (messages, has_more, next_before) = map_acp_history_page(&body, limit);
+    let event = runtime_compaction_event_for_history(
+        &conv_id,
+        &body,
+        crate::core::runtime_conversations::RuntimeCompactionTriggerKind::SemanticGroupCount,
+    );
+    let _ = record_runtime_compaction_event(&state.sqlx_pool, &event).await;
     let compaction = Some(map_compaction_status_for_history(&conv_id, &body));
     Ok(Json(AcpConversationHistoryResponse {
         messages,
