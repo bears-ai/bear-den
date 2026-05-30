@@ -340,3 +340,104 @@ The implementation is successful when:
 10. Phase 9 — rollout
 
 This ordering favors correctness of transcript ownership, safety floors, and prompt-assembly semantics before broad rollout.
+
+---
+
+## Current implementation status
+
+This section tracks the current status of the Den-owned compaction migration slice.
+
+### Completed in this slice
+
+- **Phase 0 — specification and invariants**
+  - implementation-facing contract documented in:
+    - `docs/architecture/den-context-compaction-contract.md`
+  - protected floors and compaction terms are explicitly documented.
+
+- **Phase 1 — transcript/artifact schema direction**
+  - logical schema direction documented in:
+    - `docs/architecture/den-context-compaction-schema.md`
+  - transcript/artifact/event separation is now explicit at the design level.
+
+- **Phase 2 — semantic grouping (scaffold level)**
+  - initial semantic-group types and grouping logic added in:
+    - `services/den/src/core/runtime_conversations.rs`
+    - `services/den/src/core/runtime_compaction.rs`
+  - coverage exists for user, assistant, tool, approval, workflow, artifact, and system grouping behavior.
+
+- **Phase 3 — compaction policy engine (initial implementation)**
+  - initial trigger-aware policy, protected-tail handling, and protected-span skipping implemented in:
+    - `services/den/src/core/runtime_compaction.rs`
+  - policy behavior is covered by unit tests.
+
+- **Phase 4 — iterative summary artifacts (initial implementation)**
+  - v1 summary shape and merge/update behavior implemented in:
+    - `services/den/src/core/runtime_conversations.rs`
+    - `services/den/src/core/runtime_compaction.rs`
+
+- **Phase 5 — prompt assembly integration (initial foothold)**
+  - explicit runtime context-envelope primitives implemented in:
+    - `services/den/src/core/runtime_compaction.rs`
+  - ACP prompt assembly now includes an initial Den-owned compaction-layer reminder in:
+    - `services/den/src/api/acp/prompt_context.rs`
+
+- **Phase 7 — observability (initial event model)**
+  - compaction event/status types and helper builders implemented in:
+    - `services/den/src/core/runtime_compaction_observability.rs`
+  - observability note documented in:
+    - `docs/architecture/den-context-compaction-observability.md`
+
+- **Phase 8 — continuation-quality evaluation harness (deterministic scaffold)**
+  - deterministic pair/chat continuation probes implemented in:
+    - `services/den/src/core/runtime_compaction_eval_tests.rs`
+  - guide-level explanation documented in:
+    - `docs/guides/context-compaction-guide.md`
+
+- **Validation**
+  - `cargo test --lib --manifest-path /workspace/services/den/Cargo.toml` is passing after these changes.
+
+### Partially complete / still in progress
+
+- **Phase 2** is only partially integrated into real runtime data flows.
+  - semantic grouping currently exists as shared primitives and tests,
+  - but it is not yet built from live persisted transcript history end-to-end.
+
+- **Phase 5** has an initial runtime-path integration,
+  - but prompt assembly is not yet fed by real transcript-backed compacted artifacts.
+
+- **Phase 7** has event shapes,
+  - but these are not yet wired into durable event recording or operator/admin read models.
+
+### Remaining work before this migration slice is complete
+
+1. **Connect compaction to real transcript history**
+   - build `RuntimeSemanticGroup` values from real stored session/conversation events,
+   - not just synthetic fixtures and helper inputs.
+
+2. **Run compaction decisions against live runtime state**
+   - evaluate triggers against actual sessions,
+   - select eligible historical ranges,
+   - emit applied/skipped events from real execution paths.
+
+3. **Persist and retrieve real compaction artifacts**
+   - move from schema direction and in-memory shapes to stored artifacts with provenance.
+
+4. **Feed prompt assembly from real compacted state**
+   - replace the current placeholder/default compaction envelope in ACP prompt assembly with transcript-backed compacted context.
+
+5. **Expose compaction state in operator surfaces**
+   - session-level compaction history,
+   - artifact visibility,
+   - trigger/policy provenance.
+
+### Practical migration summary
+
+Current status can be summarized as:
+
+- **Cleanup and test-alignment phase:** complete
+- **Compaction architecture/contract/schema phase:** complete
+- **Compaction primitives and regression scaffold:** complete
+- **First runtime prompt-path foothold:** complete
+- **End-to-end transcript-backed Den-owned compaction:** not yet complete
+
+This means compaction is no longer a missing design blocker in the Letta migration, but it is still not the final end-to-end runtime implementation.

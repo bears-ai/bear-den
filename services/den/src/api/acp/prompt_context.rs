@@ -2,7 +2,13 @@ use uuid::Uuid;
 
 use crate::{
     api::acp::{acp_pair_den_tool_descriptors, acp_provider_tool_names_for_client_context},
-    core::{acp_plan_mode, acp_tools::AcpResolvedSessionPolicy, work_plans::WorkPlanProjection},
+    core::{
+        acp_plan_mode,
+        acp_tools::AcpResolvedSessionPolicy,
+        runtime_compaction::{build_runtime_context_envelope, RuntimeContextEnvelopeInput},
+        runtime_conversations::RuntimeIterativeSummary,
+        work_plans::WorkPlanProjection,
+    },
     errors::CustomError,
 };
 
@@ -29,6 +35,25 @@ pub(crate) fn acp_direct_tool_prompt_context(
         policy,
         None,
         None,
+    )
+}
+
+fn runtime_compaction_prompt_context(session_id: &str) -> String {
+    let envelope = build_runtime_context_envelope(RuntimeContextEnvelopeInput {
+        active_instructions: vec![format!("session:{session_id}")],
+        workflow_state: Vec::new(),
+        recent_groups: Vec::new(),
+        compacted_summary: Some(RuntimeIterativeSummary::default()),
+    });
+    let compacted = envelope.compacted_context.unwrap_or_default();
+    format!(
+        "Runtime compaction context is Den-owned. Treat active instructions, workflow state, recent uncompacted groups, and compacted summary state as distinct context layers. Current compacted summary signals: goals={} constraints={} decisions={} artifacts={} workflow_refs={} followups={}.",
+        compacted.active_user_goals.len(),
+        compacted.important_constraints.len(),
+        compacted.decisions_made.len(),
+        compacted.artifact_refs.len(),
+        compacted.workflow_state_refs.len(),
+        compacted.unresolved_followups.len(),
     )
 }
 
@@ -91,6 +116,7 @@ pub(super) fn acp_direct_tool_prompt_context_with_activity(
     if let Some(auto_title_guidance) = auto_title_guidance {
         guidance.push(auto_title_guidance.to_string());
     }
+    guidance.push(runtime_compaction_prompt_context(session_id));
     guidance.extend(maybe_workspace_tool_guidance(&tool_names));
     guidance.extend(server_memory_tool_guidance());
     guidance.push(tool_loop_rule_guidance());
