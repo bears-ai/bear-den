@@ -47,7 +47,7 @@ ADAPTER_BINARY=/path/to/bears-acp-adapter bash Scripts/prepare_adapter.sh
 
 The script places the adapter at:
 
-- `apps/apple/Bears/Resources/Adapter/bears-acp-adapter`
+- `apps/apple/Bears/BearsApp/Resources/Adapter/bears-acp-adapter`
 
 This is intentionally compatible with a future GitHub Actions pipeline: CI can invoke the same script before building and packaging the app, while either reusing a previously built adapter artifact or providing an explicit adapter path.
 

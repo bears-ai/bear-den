@@ -2,7 +2,7 @@
 
 The app expects a bundled `bears-acp-adapter` executable at:
 
-- `Resources/Adapter/bears-acp-adapter`
+- `BearsApp/Resources/Adapter/bears-acp-adapter`
 
 For local development, populate that path with:
 

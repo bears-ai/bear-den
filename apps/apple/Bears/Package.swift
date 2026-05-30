@@ -20,7 +20,7 @@ let package = Package(
                 "README.md"
             ],
             resources: [
-                .copy("../Resources/Adapter")
+                .copy("Resources/Adapter")
             ],
             swiftSettings: [
                 .enableExperimentalFeature("StrictConcurrency")

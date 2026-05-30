@@ -5,41 +5,37 @@ protocol BundledAdapterLocating {
 }
 
 enum BundledAdapterLocatorError: LocalizedError {
-    case missingResource
+    case missingResource(checkedPaths: [String])
 
     var errorDescription: String? {
         switch self {
-        case .missingResource:
-            return "The Bears app bundle does not contain a bundled bears-acp-adapter executable yet."
+        case .missingResource(let checkedPaths):
+            let details = checkedPaths.isEmpty ? "No candidate paths were checked." : checkedPaths.joined(separator: "\n")
+            return "The Bears app bundle does not contain a bundled bears-acp-adapter executable yet. Checked:\n\(details)"
         }
     }
 }
 
 struct BundledAdapterLocator: BundledAdapterLocating {
-    let bundle: Bundle
-
-    init(bundle: Bundle = .main) {
-        self.bundle = bundle
-    }
-
     func bundledAdapterExecutableURL() throws -> URL {
-        if let url = bundle.url(forResource: "bears-acp-adapter", withExtension: nil) {
-            return url
-        }
-
-        if let url = bundle.url(forResource: "bears-acp-adapter", withExtension: nil, subdirectory: "Adapter") {
-            return url
-        }
-
-        if let resourcesURL = bundle.resourceURL {
-            let candidate = resourcesURL
+        let candidates = [
+            Bundle.module.url(forResource: "bears-acp-adapter", withExtension: nil),
+            Bundle.module.url(forResource: "bears-acp-adapter", withExtension: nil, subdirectory: "Adapter"),
+            Bundle.module.url(forResource: "bears-acp-adapter", withExtension: nil, subdirectory: "Resources/Adapter"),
+            Bundle.module.resourceURL?
+                .appendingPathComponent("Adapter", isDirectory: true)
+                .appendingPathComponent("bears-acp-adapter", isDirectory: false),
+            Bundle.module.resourceURL?
+                .appendingPathComponent("Resources", isDirectory: true)
                 .appendingPathComponent("Adapter", isDirectory: true)
                 .appendingPathComponent("bears-acp-adapter", isDirectory: false)
-            if FileManager.default.fileExists(atPath: candidate.path) {
-                return candidate
-            }
+        ]
+
+        for case let url? in candidates where FileManager.default.fileExists(atPath: url.path) {
+            return url
         }
 
-        throw BundledAdapterLocatorError.missingResource
+        let checkedPaths = candidates.map { $0?.path ?? "<nil>" }
+        throw BundledAdapterLocatorError.missingResource(checkedPaths: checkedPaths)
     }
 }
