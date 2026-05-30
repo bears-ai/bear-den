@@ -37,11 +37,10 @@ final class OverviewViewModel: ObservableObject {
         do {
             let manifestVersionResult = installManager.currentManifestVersion()
             let installedInfoResult = Result { try installManager.installedAdapterVersion() }
-            let manifestVersion = try? manifestVersionResult.get()
             let installedInfo = try? installedInfoResult.get()
             let state = try installManager.inspectInstallState()
             installState = state
-            latestVersion = manifestVersion ?? "Unavailable"
+            latestVersion = Self.manifestVersionDisplay(from: manifestVersionResult)
             installedVersion = state.installedVersion ?? installedInfo?.version ?? "Unavailable"
             latestVersionDetails = Self.manifestVersionDetails(from: manifestVersionResult)
             installedVersionDetails = Self.versionDetails(from: installedInfo)
@@ -70,10 +69,9 @@ final class OverviewViewModel: ObservableObject {
             let state = try installManager.repairInstall()
             let manifestVersionResult = installManager.currentManifestVersion()
             let installedInfoResult = Result { try installManager.installedAdapterVersion() }
-            let manifestVersion = try? manifestVersionResult.get()
             let installedInfo = try? installedInfoResult.get()
             installState = state
-            latestVersion = manifestVersion ?? "Unavailable"
+            latestVersion = Self.manifestVersionDisplay(from: manifestVersionResult)
             installedVersion = state.installedVersion ?? installedInfo?.version ?? "Unavailable"
             latestVersionDetails = Self.manifestVersionDetails(from: manifestVersionResult)
             installedVersionDetails = Self.versionDetails(from: installedInfo)
@@ -110,6 +108,24 @@ final class OverviewViewModel: ObservableObject {
             "chromeTools=\(info.chromeTools)",
             "directTools=\(info.directTools?.count ?? 0) entries"
         ].joined(separator: "\n")
+    }
+
+    private static func manifestVersionDisplay(from result: Result<String?, Error>) -> String {
+        switch result {
+        case .success(let version):
+            return version ?? "Unavailable"
+        case .failure(let error as GitHubReleaseAdapterSourceError):
+            switch error {
+            case .manifestNotFound:
+                return "Not Found"
+            case .manifestUnavailable, .invalidManifestJSON:
+                return "Error"
+            default:
+                return "Unavailable"
+            }
+        case .failure:
+            return "Error"
+        }
     }
 
     private static func manifestVersionDetails(from result: Result<String?, Error>) -> String {

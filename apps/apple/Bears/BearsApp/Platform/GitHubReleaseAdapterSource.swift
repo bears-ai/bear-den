@@ -2,7 +2,8 @@ import Foundation
 
 enum GitHubReleaseAdapterSourceError: LocalizedError {
     case invalidURL(String)
-    case manifestDownloadFailed(String)
+    case manifestNotFound(String)
+    case manifestUnavailable(String)
     case invalidManifestJSON(String)
     case missingPackageURL
 
@@ -10,8 +11,10 @@ enum GitHubReleaseAdapterSourceError: LocalizedError {
         switch self {
         case .invalidURL(let urlString):
             return "Invalid adapter download URL: \(urlString)"
-        case .manifestDownloadFailed(let details):
-            return "Failed to download macOS adapter manifest: \(details)"
+        case .manifestNotFound(let details):
+            return "macOS adapter manifest not found: \(details)"
+        case .manifestUnavailable(let details):
+            return "Failed to load macOS adapter manifest: \(details)"
         case .invalidManifestJSON(let details):
             return "Failed to decode macOS adapter manifest JSON: \(details)"
         case .missingPackageURL:
@@ -82,9 +85,14 @@ struct GitHubReleaseAdapterSource: AdapterArtifactSourceProviding {
         let semaphore = DispatchSemaphore(value: 0)
         var responseData: Data?
         var responseError: Error?
+        var urlResponse: URLResponse?
 
-        URLSession.shared.dataTask(with: manifestURL) { data, _, error in
+        var request = URLRequest(url: manifestURL)
+        request.cachePolicy = .reloadIgnoringLocalCacheData
+
+        URLSession.shared.dataTask(with: request) { data, response, error in
             responseData = data
+            urlResponse = response
             responseError = error
             semaphore.signal()
         }.resume()
@@ -92,11 +100,24 @@ struct GitHubReleaseAdapterSource: AdapterArtifactSourceProviding {
         semaphore.wait()
 
         if let responseError {
-            throw GitHubReleaseAdapterSourceError.manifestDownloadFailed(responseError.localizedDescription)
+            throw GitHubReleaseAdapterSourceError.manifestNotFound(responseError.localizedDescription)
+        }
+
+        if let httpResponse = urlResponse as? HTTPURLResponse {
+            switch httpResponse.statusCode {
+            case 200:
+                break
+            case 404:
+                throw GitHubReleaseAdapterSourceError.manifestNotFound("HTTP 404 at \(manifestURL.absoluteString)")
+            case 500...599:
+                throw GitHubReleaseAdapterSourceError.manifestUnavailable("HTTP \(httpResponse.statusCode) at \(manifestURL.absoluteString)")
+            default:
+                throw GitHubReleaseAdapterSourceError.manifestNotFound("HTTP \(httpResponse.statusCode) at \(manifestURL.absoluteString)")
+            }
         }
 
         guard let responseData else {
-            throw GitHubReleaseAdapterSourceError.manifestDownloadFailed("No data returned from \(manifestURL.absoluteString)")
+            throw GitHubReleaseAdapterSourceError.manifestNotFound("No data returned from \(manifestURL.absoluteString)")
         }
 
         do {
