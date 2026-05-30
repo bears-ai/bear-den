@@ -56,6 +56,65 @@ Den will adopt a **layered context compaction architecture** with the following 
 
 ## Consequences
 
+### Canonical vs derived state
+
+Den should treat context-compaction state as three distinct layers:
+
+- **Canonical transcript state**: the durable ordered record of session/runtime history, including user turns, assistant replies, tool calls, tool results, approvals, and other runtime events.
+- **Derived compaction state**: summaries, collapsed tool bundles, and other prompt-assembly artifacts produced from transcript history to keep active context bounded.
+- **Durable memory state**: separately governed memory entries promoted for longer-lived reuse beyond the current session continuation.
+
+This ADR treats the transcript as canonical. Compaction artifacts are derived state that should be inspectable, attributable, and, where practical, rebuildable from transcript history plus compaction policy. Durable memory promotion remains a separate governance flow and must not be implied automatically by compaction.
+
+### Runtime invariants
+
+Compaction policy must preserve Den runtime safety and continuation invariants. In particular, Den should not compact away or blur:
+
+- unresolved tool interactions,
+- unresolved approval requests,
+- active plan/workflow state needed for the next step,
+- artifact references still required for continuation,
+- current constraints, decisions, or commitments that materially shape the next turn,
+- and recent exchanges still inside the active working set.
+
+For ACP and other tool-heavy runtimes, unresolved tool/approval spans should be treated as semantic floors that compaction may not cross.
+
+### Replay and resume semantics
+
+Den should define compaction so that a resumed session is assembled from:
+
+- active instructions and role policy,
+- active plan/workflow state,
+- uncompacted recent semantic groups,
+- and derived compaction artifacts representing older history.
+
+Compaction should therefore support a clear replay/resume model:
+
+- operators can inspect canonical transcript history separately from derived compacted state,
+- runtime prompt assembly can inject structured compacted summaries as explicit context objects rather than pretending they are raw transcript,
+- and continuation behavior should remain explainable after compaction boundaries are crossed.
+
+### Trigger classes and safety floors
+
+This ADR does not fix exact thresholds, but implementation should support at least these trigger classes:
+
+- token-pressure triggers,
+- turn-count or semantic-group-count triggers,
+- explicit/manual compaction triggers for maintenance or operator workflows,
+- and model-window safety-margin triggers.
+
+It should also support safety floors that prevent compaction from crossing protected boundaries such as active tool spans, approval spans, and the current plan/workflow working set.
+
+### Role-sensitive policy
+
+This architecture should be shared across Den roles, but compaction policy may vary by role risk surface and execution mode.
+
+Examples:
+
+- `pair` should preserve unresolved tool/approval spans, current coding constraints, active artifacts, and immediate workplan state.
+- `chat` may allow more aggressive compaction of older conversational material while still preserving current commitments and user intent.
+- `work`, `watch`, and `review` may require role-specific preservation rules around observations, queued work, audits, or synthesis artifacts.
+
 ### Positive
 
 - Den will have a clearer separation between:
@@ -74,6 +133,9 @@ Den will adopt a **layered context compaction architecture** with the following 
 - Den must define compaction triggers, targets, floors, and backstops.
 - Den should add telemetry and traceability around compaction events.
 - Den should build an evaluation harness for post-compaction continuation quality.
+- Den must keep transcript ownership, derived compaction artifacts, and durable memory promotion as distinct implementation concerns.
+- Den should make compaction artifacts inspectable in operator/admin read models so compaction remains auditable rather than hidden prompt mutation.
+- Den should version or otherwise attribute compaction artifacts so changes in policy or summary strategy are debuggable over time.
 
 ### Non-goals
 
@@ -139,6 +201,17 @@ This decision combines the strongest observed ideas from the systems reviewed:
 
 This combination best fits Den’s needs as a multi-turn, tool-using, artifact-aware agent runtime.
 
+## Migration implications
+
+This ADR should be read as Den's replacement direction for Letta-era long-context handling. In migration planning, parity should be evaluated not only by token reduction but by:
+
+- continuation quality after compaction,
+- retention of active constraints, decisions, artifacts, and plans,
+- auditability of what was compacted and why,
+- and recoverability when policies or summaries need to be rebuilt.
+
+This means transcript persistence, compaction artifacts, and operator read models must evolve together rather than as isolated subsystems.
+
 ## Implementation guidance
 
 Implementation planning should assume:
@@ -148,7 +221,10 @@ Implementation planning should assume:
 - structured iterative summary updates,
 - durable-memory extraction as a separate flow,
 - compaction telemetry,
-- and post-compaction evaluation probes.
+- post-compaction evaluation probes,
+- explicit prompt-assembly handling for derived compacted state,
+- canonical transcript retention separate from compacted summaries,
+- and role-sensitive compaction floors for active tool, approval, workflow, and artifact state.
 
 ## Status
 
