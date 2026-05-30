@@ -763,29 +763,22 @@ mod tests {
         };
 
         let result = runner
-            .continue_turn_response(
-                ContinueTurnRequest {
-                    conversation: RuntimeConversationRef {
-                        id: "conv-test".to_string(),
-                    },
-                    turn: None,
-                    binding: RoleRuntimeBinding {
-                        binding_id: "agent-test".to_string(),
-                        compatibility_backend: Some("letta".to_string()),
-                    },
-                    continuation: RuntimeContinuation::ToolResult {
-                        tool_call_id: "call-1".to_string(),
-                        approval_request_id: None,
-                        status: RuntimeToolResultStatus::Ok,
-                        content: "plain tool result".to_string(),
-                    },
+            .continue_turn(ContinueTurnRequest {
+                conversation: RuntimeConversationRef {
+                    id: "conv-test".to_string(),
                 },
-                &AcpTurnStreamContext {
-                    client_tools: Some(json!([{ "name": "fs_read_text_file" }])),
-                    stream_tokens: false,
-                    max_steps: 2,
+                turn: None,
+                binding: RoleRuntimeBinding {
+                    binding_id: "agent-test".to_string(),
+                    compatibility_backend: Some("letta".to_string()),
                 },
-            )
+                continuation: RuntimeContinuation::ToolResult {
+                    tool_call_id: "call-1".to_string(),
+                    approval_request_id: None,
+                    status: RuntimeToolResultStatus::Ok,
+                    content: "plain tool result".to_string(),
+                },
+            })
             .await;
         assert!(result.is_ok());
 
@@ -831,29 +824,22 @@ mod tests {
         };
 
         let result = runner
-            .continue_turn_response(
-                ContinueTurnRequest {
-                    conversation: RuntimeConversationRef {
-                        id: "conv-test".to_string(),
-                    },
-                    turn: None,
-                    binding: RoleRuntimeBinding {
-                        binding_id: "agent-test".to_string(),
-                        compatibility_backend: Some("letta".to_string()),
-                    },
-                    continuation: RuntimeContinuation::ApprovalDecision {
-                        approval_request_id: "approval-1".to_string(),
-                        tool_call_id: Some("call-2".to_string()),
-                        decision: RuntimeApprovalDecision::Deny,
-                        reason: Some("tool failed".to_string()),
-                    },
+            .continue_turn(ContinueTurnRequest {
+                conversation: RuntimeConversationRef {
+                    id: "conv-test".to_string(),
                 },
-                &AcpTurnStreamContext {
-                    client_tools: Some(json!([{ "name": "fs_read_text_file" }])),
-                    stream_tokens: false,
-                    max_steps: 2,
+                turn: None,
+                binding: RoleRuntimeBinding {
+                    binding_id: "agent-test".to_string(),
+                    compatibility_backend: Some("letta".to_string()),
                 },
-            )
+                continuation: RuntimeContinuation::ApprovalDecision {
+                    approval_request_id: "approval-1".to_string(),
+                    tool_call_id: Some("call-2".to_string()),
+                    decision: RuntimeApprovalDecision::Deny,
+                    reason: Some("tool failed".to_string()),
+                },
+            })
             .await;
         assert!(result.is_ok());
 

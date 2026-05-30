@@ -215,7 +215,7 @@ mod tests {
                 mapping::{
                     map_letta_stream_frame_to_acp_adapter_events, summarize_event_for_log,
                 },
-                sse_stream::{runtime_terminal_events, AcpLettaSseStream},
+                sse_stream::{runtime_terminal_events, AcpRuntimeSseStream},
                 support_sse::{find_sse_frame_end, parse_sse_event_body_to_json},
                 text::AcpTextChunker,
             },
@@ -238,7 +238,7 @@ mod tests {
                 AcpTerminalReason, AcpTerminalStatus, AcpTurnController, AcpTurnPhase,
             },
             acp_turn_runner::ACP_STALE_APPROVAL_RECOVERY_DENIAL_REASON,
-            letta::PendingApprovalDenialMode,
+            letta::{PendingApprovalDenialMode, RuntimeContinuationContext},
             role_runtime::{RoleRuntime, RoleTurnScope},
         },
     };
@@ -661,7 +661,7 @@ mod tests {
                 "data: {\"message_type\":\"stop_reason\",\"stop_reason\":\"requires_approval\"}\n\n",
             )),
         ]);
-        let mut stream = AcpLettaSseStream::new(
+        let mut stream = AcpRuntimeSseStream::new(
             upstream,
             context,
             Vec::new(),
@@ -847,7 +847,7 @@ mod tests {
                 "data: {\"message_type\":\"stop_reason\",\"stop_reason\":\"requires_approval\"}\n\n",
             )),
         ]);
-        let mut stream = AcpLettaSseStream::new(
+        let mut stream = AcpRuntimeSseStream::new(
             upstream,
             context,
             Vec::new(),
@@ -1005,7 +1005,7 @@ mod tests {
                 "data: {\"message_type\":\"stop_reason\",\"stop_reason\":\"requires_approval\"}\n\n",
             )),
         ]);
-        let mut stream = AcpLettaSseStream::new(
+        let mut stream = AcpRuntimeSseStream::new(
             upstream,
             context,
             Vec::new(),
@@ -1149,7 +1149,7 @@ mod tests {
             "data: {\"message_type\":\"stop_reason\",\"stop_reason\":\"end_turn\"}\n\n",
             "data: {\"message_type\":\"stop_reason\",\"stop_reason\":\"end_turn\"}\n\n"
         )))]);
-        let mut stream = AcpLettaSseStream::new(
+        let mut stream = AcpRuntimeSseStream::new(
             upstream,
             context,
             Vec::new(),
@@ -1243,7 +1243,7 @@ mod tests {
         let upstream = futures::stream::iter(vec![Ok::<Bytes, CustomError>(Bytes::from(
             "data: {\"message_type\":\"error_message\",\"message\":\"boom\",\"error_type\":\"upstream_failure\"}\n\n",
         ))]);
-        let mut stream = AcpLettaSseStream::new(
+        let mut stream = AcpRuntimeSseStream::new(
             upstream,
             context,
             Vec::new(),
@@ -1391,7 +1391,7 @@ mod tests {
                 "data: {\"message_type\":\"stop_reason\",\"stop_reason\":\"requires_approval\"}\n\n",
             )),
         ]);
-        let mut stream = AcpLettaSseStream::new(
+        let mut stream = AcpRuntimeSseStream::new(
             upstream,
             context,
             Vec::new(),
@@ -1534,7 +1534,7 @@ mod tests {
             "\"tool_call\":{\"name\":\"session_info\",\"tool_call_id\":\"call_session_info\",",
             "\"arguments\":\"{}\"}}\n\n"
         )))]);
-        let mut stream = AcpLettaSseStream::new(
+        let mut stream = AcpRuntimeSseStream::new(
             upstream,
             context,
             Vec::new(),
@@ -1621,7 +1621,7 @@ mod tests {
             turn_scope,
         };
         let upstream = futures::stream::pending::<Result<Bytes, CustomError>>();
-        let mut stream = AcpLettaSseStream::new(
+        let mut stream = AcpRuntimeSseStream::new(
             upstream,
             context,
             vec![AcpGatewayEvent::SessionInfoUpdate {
@@ -1793,7 +1793,7 @@ mod tests {
                 "data: {\"message_type\":\"stop_reason\",\"stop_reason\":\"requires_approval\"}\n\n",
             )),
         ]);
-        let mut stream = AcpLettaSseStream::new(
+        let mut stream = AcpRuntimeSseStream::new(
             upstream,
             context,
             Vec::new(),
@@ -2046,7 +2046,7 @@ mod tests {
         let config = crate::config::Config::test_stub();
         let letta = Arc::new(crate::core::letta::LettaClient::new(&config));
         let (cancel_tx, cancel_rx) = tokio::sync::watch::channel(false);
-        let mut stream = AcpLettaSseStream::new(
+        let mut stream = AcpRuntimeSseStream::new(
             upstream,
             context,
             Vec::new(),
@@ -2189,7 +2189,7 @@ mod tests {
                 "data: {\"message_type\":\"stop_reason\",\"stop_reason\":\"requires_approval\"}\n\n",
             )),
         ]);
-        let mut stream = AcpLettaSseStream::new(
+        let mut stream = AcpRuntimeSseStream::new(
             upstream,
             context,
             Vec::new(),
@@ -2324,7 +2324,7 @@ mod tests {
         let upstream = futures::stream::iter(vec![Ok::<Bytes, CustomError>(Bytes::from(
             "data: {\"message_type\":\"stop_reason\",\"stop_reason\":\"requires_approval\"}\n\n",
         ))]);
-        let mut stream = AcpLettaSseStream::new(
+        let mut stream = AcpRuntimeSseStream::new(
             upstream,
             context,
             Vec::new(),
@@ -2462,7 +2462,7 @@ mod tests {
                 "data: {\"message_type\":\"stop_reason\",\"stop_reason\":\"requires_approval\"}\n\n",
             )),
         ]);
-        let mut stream = AcpLettaSseStream::new(
+        let mut stream = AcpRuntimeSseStream::new(
             upstream,
             context,
             Vec::new(),

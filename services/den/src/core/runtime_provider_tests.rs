@@ -86,7 +86,10 @@ mod tests {
             &self,
             _request: crate::core::runtime_provider::StartTurnRequest,
         ) -> Result<crate::core::runtime_provider::StartTurnResult, CustomError> {
-            Ok(crate::core::runtime_provider::StartTurnResult { turn: None })
+            Ok(crate::core::runtime_provider::StartTurnResult {
+                turn: None,
+                stream: crate::core::runtime_provider::RuntimeStreamContinuation::Deferred,
+            })
         }
 
         async fn continue_turn(
