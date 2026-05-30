@@ -17,7 +17,9 @@ struct OverviewView: View {
                     keyValueRow("Status", value: viewModel.statusText)
                     keyValueRow("Managed Path", value: viewModel.managedAdapterPath)
                     keyValueRow("Bundled Version", value: viewModel.bundledVersion)
+                    keyValueRow("Bundled Version Details", value: viewModel.bundledVersionDetails)
                     keyValueRow("Installed Version", value: viewModel.installedVersion)
+                    keyValueRow("Installed Version Details", value: viewModel.installedVersionDetails)
 
                     if let error = viewModel.lastError, !error.isEmpty {
                         ScrollView {

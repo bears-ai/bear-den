@@ -56,14 +56,15 @@ struct AdapterInstallManager: AdapterInstallManaging, AdapterVersionProviding {
 
         let installedVersion = try? installedAdapterVersion().version
         let bundledVersion = try? bundledAdapterVersion().version
-        let status: InstallStatus = (installedVersion != nil && bundledVersion != nil && installedVersion == bundledVersion) ? .ok : .repairNeeded
+        let isCompatible = versionsAreCompatible(installedVersion: installedVersion, bundledVersion: bundledVersion)
+        let status: InstallStatus = isCompatible ? .ok : .repairNeeded
         let state = InstallState(
             managedAdapterPath: pathProvider.managedAdapterPath.path,
             installedVersion: installedVersion,
             bundledVersion: bundledVersion,
             installedAt: try loadInstallState()?.installedAt,
             lastInstallStatus: status,
-            lastError: status == .ok ? nil : "Managed adapter is missing version parity with bundled adapter."
+            lastError: status == .ok ? nil : "Managed adapter is incompatible with bundled adapter. Patch-level differences are allowed, but major/minor versions must match."
         )
         try persistInstallState(state)
         return state
@@ -81,14 +82,15 @@ struct AdapterInstallManager: AdapterInstallManaging, AdapterVersionProviding {
 
         let installedVersion = try? installedAdapterVersion().version
         let bundledVersion = try? bundledAdapterVersion().version
-        let status: InstallStatus = (installedVersion != nil && bundledVersion != nil && installedVersion == bundledVersion) ? .ok : .repairNeeded
+        let isCompatible = versionsAreCompatible(installedVersion: installedVersion, bundledVersion: bundledVersion)
+        let status: InstallStatus = isCompatible ? .ok : .repairNeeded
         let repairedState = InstallState(
             managedAdapterPath: pathProvider.managedAdapterPath.path,
             installedVersion: installedVersion,
             bundledVersion: bundledVersion,
             installedAt: Date(),
             lastInstallStatus: status,
-            lastError: status == .ok ? nil : "Installed adapter version does not match bundled adapter version."
+            lastError: status == .ok ? nil : "Installed adapter is incompatible with bundled adapter. Patch-level differences are allowed, but major/minor versions must match."
         )
 
         try persistInstallState(repairedState)
@@ -115,6 +117,21 @@ struct AdapterInstallManager: AdapterInstallManaging, AdapterVersionProviding {
 
         let data = Data(result.standardOutput.utf8)
         return try jsonDecoder.decode(AdapterVersionInfo.self, from: data)
+    }
+
+    private func versionsAreCompatible(installedVersion: String?, bundledVersion: String?) -> Bool {
+        guard let installedVersion, let bundledVersion else {
+            return false
+        }
+
+        guard
+            let installedSemanticVersion = SemanticVersion(parsing: installedVersion),
+            let bundledSemanticVersion = SemanticVersion(parsing: bundledVersion)
+        else {
+            return installedVersion == bundledVersion
+        }
+
+        return installedSemanticVersion.isCompatiblePatchwise(with: bundledSemanticVersion)
     }
 
     private func makeExecutable(_ url: URL) throws {

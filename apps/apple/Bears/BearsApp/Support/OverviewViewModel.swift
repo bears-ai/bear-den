@@ -6,6 +6,8 @@ final class OverviewViewModel: ObservableObject {
     @Published private(set) var managedAdapterPath: String
     @Published private(set) var bundledVersion: String = "Unavailable"
     @Published private(set) var installedVersion: String = "Unavailable"
+    @Published private(set) var bundledVersionDetails: String = "Unavailable"
+    @Published private(set) var installedVersionDetails: String = "Unavailable"
     @Published private(set) var statusText: String = "Not checked"
     @Published private(set) var lastError: String?
 
@@ -23,15 +25,21 @@ final class OverviewViewModel: ObservableObject {
 
     func refresh() {
         do {
+            let bundledInfo = try? installManager.bundledAdapterVersion()
+            let installedInfo = try? installManager.installedAdapterVersion()
             let state = try installManager.inspectInstallState()
             installState = state
-            bundledVersion = state.bundledVersion ?? "Unavailable"
-            installedVersion = state.installedVersion ?? "Unavailable"
+            bundledVersion = state.bundledVersion ?? bundledInfo?.version ?? "Unavailable"
+            installedVersion = state.installedVersion ?? installedInfo?.version ?? "Unavailable"
+            bundledVersionDetails = Self.versionDetails(from: bundledInfo)
+            installedVersionDetails = Self.versionDetails(from: installedInfo)
             statusText = Self.statusText(for: state.lastInstallStatus)
             lastError = state.lastError
         } catch {
             statusText = "Error"
             lastError = error.localizedDescription
+            bundledVersionDetails = "Unavailable"
+            installedVersionDetails = "Unavailable"
             fputs("[Bears][refresh] \(error.localizedDescription)\n", stderr)
         }
     }
@@ -39,16 +47,35 @@ final class OverviewViewModel: ObservableObject {
     func repairInstall() {
         do {
             let state = try installManager.repairInstall()
+            let bundledInfo = try? installManager.bundledAdapterVersion()
+            let installedInfo = try? installManager.installedAdapterVersion()
             installState = state
-            bundledVersion = state.bundledVersion ?? "Unavailable"
-            installedVersion = state.installedVersion ?? "Unavailable"
+            bundledVersion = state.bundledVersion ?? bundledInfo?.version ?? "Unavailable"
+            installedVersion = state.installedVersion ?? installedInfo?.version ?? "Unavailable"
+            bundledVersionDetails = Self.versionDetails(from: bundledInfo)
+            installedVersionDetails = Self.versionDetails(from: installedInfo)
             statusText = Self.statusText(for: state.lastInstallStatus)
             lastError = state.lastError
         } catch {
             statusText = "Error"
             lastError = error.localizedDescription
+            bundledVersionDetails = "Unavailable"
+            installedVersionDetails = "Unavailable"
             fputs("[Bears][repairInstall] \(error.localizedDescription)\n", stderr)
         }
+    }
+
+    private static func versionDetails(from info: AdapterVersionInfo?) -> String {
+        guard let info else {
+            return "Unavailable"
+        }
+
+        return [
+            "version=\(info.version)",
+            "gitSha=\(info.gitSha ?? \"n/a\")",
+            "localHeadSha=\(info.localHeadSha ?? \"n/a\")",
+            "builtAtUTC=\(info.builtAtUTC?.description ?? \"n/a\")"
+        ].joined(separator: "\n")
     }
 
     private static func statusText(for status: InstallStatus) -> String {
