@@ -22,6 +22,13 @@ Other terminology used in this plan:
 - **Resource**: the canonical target a role is acting on, reasoning over, planning around, or organizing memory around, such as a repository, service, subsystem, conversation, artifact set, or external system boundary.
 - **Provider binding**: an implementation-level reference to an external provider object, kept at provider boundaries rather than treated as core Bear identity.
 
+## How to use this document
+
+- Use the **parity matrix** to understand what Letta responsibilities must be replaced.
+- Use the **repo coverage review** to see which parts already have design support and which still need docs.
+- Use the **step-by-step implementation plan** for build order.
+- Use the **phased migration plan** for rollout grouping and exit gates.
+
 ## Executive summary
 
 BEARS should not treat this migration as a simple vector-store replacement, nor as a migration from Letta agents to a different set of provider-managed agents.
@@ -163,6 +170,71 @@ Where feasible, migration should first add BEARS-owned data models and write to 
 
 Compatibility aliases may be required for legacy role names, persistent values, and external integrations. They should be explicit routing-boundary shims, not advertised model-facing terminology.
 
+## Letta API-server feature parity matrix
+
+Before maturing this plan further, BEARS should treat Letta migration as replacement of a concrete feature surface, not just a general move away from provider-managed agents. The Letta API server appears to provide a bundle of runtime, memory, retrieval, configuration, tool, and operational capabilities that must each land with a clear BEARS owner and migration strategy.
+
+The list below is intended to be complete enough for planning. It should be updated as repository audits find narrower Letta-coupled behaviors, but major new feature families should be rare after this point.
+
+| Letta feature family | Responsibilities Letta currently serves | BEARS / Den replacement owner | Current plan coverage | Planning note |
+|---|---|---|---|---|
+| Agent object lifecycle | Create/update/delete/list agent resources; persist agent state; import/export; templates and starting configurations | Den Bear registry, role profiles, migration/import tooling | Partial | Expand provider-binding migration into an explicit Bear/role lifecycle parity track, including import/export expectations where needed for backfill or rollback. |
+| Conversation transcript store | Persist ordered messages, agent responses, and conversation history; support history reads and resumed state | Den interaction store and conversation read models | Partial | Current plan mentions interaction metadata and read models, but should explicitly require transcript storage, message ordering, idempotency/dedup support where needed, and resume/replay semantics. |
+| Turn/run execution lifecycle | Submit messages; execute runs; stream events; continue after tool calls; settle approvals; cancel active turns; recover stale runs | Shared Den-native role runner plus role-specific adapters | Strong | Already central to the plan; keep parity tests focused on streaming, continuation, approval settlement, cancellation hygiene, and failure semantics. |
+| Editable in-context memory blocks | Persist editable memory blocks attached to agents; compile them into prompts; allow API and agent-side mutation | Bear memory model, role-local/core memory tools, prompt compiler | Weak | The plan talks about canonical memory broadly, but should explicitly replace Letta's block semantics: attachment, mutability, prompt inclusion, and auditability. |
+| Archival / recall memory | Store long-lived facts outside the immediate prompt; let agents write to archival memory and search it later | Den retrieval/index services over canonical Bear memory and curated sources | Partial | Make archival-memory replacement explicit as a product surface, not just "retrieval" in general. Define write paths, retrieval semantics, and ownership boundaries. |
+| Source / passage ingestion APIs | Register external sources, chunk content into passages, batch ingest/update/delete indexed material, preserve provenance | Den ingestion/index pipeline plus canonical source records | Weak | Current plan mentions Letta Archives replacement but not enough about ingestion APIs. Add explicit source registration, chunking, provenance, update, and deletion requirements. |
+| Conversation compaction / summarization | Summarize or compact transcripts under context pressure; preserve continuity after compaction | Den context assembly and compaction subsystem | Weak | This must become a first-class replacement workstream. Define compaction triggers, summary artifacts, replayability, and interaction with transcript storage and retrieval. |
+| Tool registry and tool execution model | Store tool schemas; expose them to models; execute server-side tools; support client-side/external tools and MCP-style patterns | Den tool registry, role policy, ACP/client mediation, runtime adapters | Partial | Current plan covers tool mediation, but should explicitly call out schema management, execution classes, continuation semantics, and model-visible tool assembly as Letta parity surfaces. |
+| Model / provider / embedding configuration | Persist model choice, provider handles, embedding config, advanced runtime settings, and compaction settings | Den role profiles, provider bindings, retrieval config, runtime policy | Partial | Expand configuration parity to include model settings, embedding settings, compaction policy, and other runtime knobs currently hidden inside Letta-managed agent config. |
+| Identity and attachment associations | Associate identities with agents and blocks; support user/application-level mappings and attachment relationships | Den auth/membership, Bear identity model, role/work-surface attachments | Weak | We may not replicate Letta's exact identity objects, but we should replace the responsibilities they served: attachment, ownership, mapping, and safe scoping. |
+| Background memory-management jobs | Run asynchronous memory maintenance such as background summarization or archival management | Den workers / Reflection / maintenance services | Weak | Decide explicitly which Letta background behaviors BEARS needs: compaction, indexing, memory cleanup, summarization, or archival writes. |
+| Admin, diagnostics, and operational read models | Inspect agent state, recent interactions, failures, diagnostics, and operational health | Den admin/API read models and observability stack | Strong | Already recognized in the plan; ensure migration phases preserve operator visibility and debugging parity, not only end-user behavior. |
+| Authentication and tenant boundary assumptions | Gate access to agent state and APIs; support application-layer user-to-agent mapping patterns | Den auth, membership, and Bear routing | Partial | Den already owns auth, but the migration plan should explicitly preserve Letta-served isolation responsibilities when replacing API server endpoints. |
+| Migration / backfill utilities | Export/import existing state, strip or retain history selectively, map legacy ids to new stores, support rollback windows | Den migration tooling, compatibility adapters, backfill jobs | Weak | Add a deliberate migration-tooling track so parity includes the practical mechanics of moving off Letta safely. |
+
+## Feature-family implications for the migration plan
+
+The parity matrix implies several concrete upgrades to this plan:
+
+1. **Make transcript storage a named deliverable.** Distinguish transcript/event storage from run state, read models, summaries, memory, and retrieval indexes.
+2. **Add a context-compaction subsystem.** Treat compaction/summarization as its own replacement workstream, with parity and recovery criteria.
+3. **Add explicit block-memory replacement.** Describe how editable in-context memory will map to BEARS memory structures and prompt compilation.
+4. **Split retrieval into ingestion and recall.** Replacing Letta Archives means both indexed storage pipelines and query-time retrieval semantics, not just a future vector DB mention.
+5. **Make tool-surface parity explicit.** Document server-side, client-side, and externally mediated tool classes and how they appear to models and operators.
+6. **Add migration-tooling scope.** Safe cutover depends on export/import, backfill, id mapping, and rollback-aware dual-write periods.
+
+## Existing repo coverage vs missing design treatment
+
+This matrix now maps reasonably well to a subset of existing docs, but coverage is uneven. Some feature families already have a dedicated design home, while others are only mentioned incidentally inside broader migration or memory documents.
+
+| Letta feature family | Existing docs with meaningful coverage | Coverage assessment | Missing or weak treatment |
+|---|---|---|---|
+| Agent object lifecycle | `docs/architecture/bear-roles.md`, `docs/architecture/bears-and-den.md`, `docs/architecture/den-conversation-runtime-schema.md`, `docs/architecture/role-vocabulary.md` | Partial | We have role-profile and Bear-identity framing, but no dedicated design for import/export, template migration, or exact replacement of Letta agent-resource lifecycle APIs. |
+| Conversation transcript store | `docs/architecture/den-conversation-runtime-schema.md`, `docs/architecture/acp-runtime-contract.md`, `docs/architecture/identity-and-membership.md` | Strong | Transcript/read-model separation is described well, but transcript retention, dedup/idempotency, and cross-surface replay policy are still not gathered into one explicit transcript design note. |
+| Turn/run execution lifecycle | `docs/architecture/acp-runtime-contract.md`, `docs/architecture/den-conversation-runtime-schema.md`, `docs/architecture/acp-runtime-invariants.md`, `docs/architecture/bear-channel-and-acp.md` | Strong | Good ACP/runtime coverage exists. Remaining gap is broader non-ACP shared role-runner design parity across `chat`, `review`, `watch`, and `work`. |
+| Editable in-context memory blocks | `docs/architecture/memory-model.md`, `docs/architecture/workflow-state-overview.md` | Weak | We describe canonical memory and retrieval, but we do not yet have a dedicated replacement design for Letta-style editable prompt blocks, attachment semantics, or block compilation into runtime context. |
+| Archival / recall memory | `docs/architecture/memory-model.md`, `docs/architecture/reflection-system.md`, `docs/architecture/reflection-run-taxonomy.md` | Partial | Retrieval is recognized, but the plan still leans on Letta Archives. We lack a BEARS-owned replacement design for archival write/query semantics and lifecycle after Letta removal. |
+| Source / passage ingestion APIs | `docs/architecture/memory-model.md` | Weak | Passage/source ingestion is only discussed as part of current Letta Archive usage. We do not yet have a dedicated ingestion pipeline design covering chunking, provenance, updates, deletes, or source records. |
+| Conversation compaction / summarization | `docs/architecture/den-conversation-runtime-schema.md`, `docs/architecture/acp-runtime-contract.md`, `docs/architecture/workflow-state-overview.md` | Weak | Compaction is acknowledged, but there is no dedicated design for summarization triggers, artifacts, replay behavior, or transcript/summary/archive interactions. |
+| Tool registry and tool execution model | `docs/architecture/capabilities-and-skills.md`, `docs/architecture/bear-environment-tool-contract.md`, `docs/architecture/acp-runtime-contract.md`, `docs/architecture/bear-channel-and-acp.md` | Partial | Tool concepts and ACP mediation are documented, but we still lack a unified cross-role tool-registry design covering model-visible schemas, execution classes, and parity with Letta-managed tool metadata. |
+| Model / provider / embedding configuration | `docs/architecture/role-vocabulary.md`, `docs/architecture/bears-and-den.md`, `docs/architecture/den-conversation-runtime-schema.md` | Partial | Provider bindings are covered conceptually, but there is no focused doc for runtime/model/embedding settings parity, including compaction policy and advanced per-role config surfaces. |
+| Identity and attachment associations | `docs/architecture/identity-and-membership.md`, `docs/architecture/agent-and-bear-environments.md`, `docs/architecture/memory-model.md` | Partial | Human membership and work-surface attachment are documented, but not a direct replacement design for Letta identity/block attachment responsibilities and migration mapping. |
+| Background memory-management jobs | `docs/architecture/reflection-system.md`, `docs/architecture/reflection-run-taxonomy.md`, `docs/architecture/planning.md` | Partial | Reflection gives us a home for maintenance behavior, but we have not yet made an explicit call on which Letta background memory-management jobs must exist in BEARS and which can be dropped. |
+| Admin, diagnostics, and operational read models | `docs/architecture/den-conversation-runtime-schema.md`, `docs/architecture/acp-runtime-invariants.md`, `docs/architecture/acp-troubleshooting.md`, `docs/architecture/bears-and-den.md` | Strong | This area is comparatively well covered; the main remaining need is to keep admin/read-model expectations explicit during phased cutover. |
+| Authentication and tenant boundary assumptions | `docs/architecture/identity-and-membership.md`, `docs/architecture/bear-channel-and-acp.md`, `docs/architecture/bears-and-den.md` | Strong | Den ownership is clear. Remaining work is implementation/migration detail rather than missing conceptual docs. |
+| Migration / backfill utilities | `docs/guides/letta-migration-plan.md`, `docs/architecture/den-conversation-runtime-schema.md`, `docs/architecture/letta-dependency-matrix.md` | Weak | The migration guide references dual-write and compatibility, but we do not yet have a dedicated migration/backfill design note describing export/import, verification, rollback windows, and id remapping mechanics. |
+
+## Highest-priority missing design docs or upgrades
+
+The most obvious gaps after this mapping are:
+
+1. **Editable prompt-memory replacement** — either a new dedicated doc or a major expansion of `memory-model.md` to define block-like runtime memory and prompt-compilation semantics.
+2. **Context compaction and summarization** — a dedicated design note for transcript compaction, summaries, recovery, and context assembly policy.
+3. **Retrieval ingestion and archival replacement** — a design doc covering source records, passage generation, provenance, update/delete behavior, and search semantics after Letta Archives are gone.
+4. **Migration/backfill mechanics** — a dedicated note for export/import, dual-write verification, identifier mapping, replay, and rollback strategy.
+5. **Unified tool-registry/runtime config parity** — either new docs or expansions that make Letta tool/config replacement explicit across all roles, not only ACP.
+
 ## Current-state assessment
 
 ### Canonical roles and legacy compatibility
@@ -175,7 +247,7 @@ The target role names are:
 - `work`
 - `watch`
 
-Some implementation code may still carry compatibility or abandoned-draft references to `pair` for the same role. New docs, UI labels, model-facing tool descriptions, and operator language should prefer `pair`.
+Some implementation code may still carry compatibility or abandoned-draft references to `code` for the same role. New docs, UI labels, model-facing tool descriptions, and operator language should prefer `pair`.
 
 ### API-direct-like roles
 
@@ -223,12 +295,12 @@ The target is a Den-owned multi-role Bear runtime:
 graph TD
     Bear[Bear identity + charter] --> Den[Den control plane]
     Den --> Profiles[Role profiles]
-    Profiles --> Code[code]
+    Profiles --> Pair[pair]
     Profiles --> Chat[chat]
     Profiles --> Work[work]
     Profiles --> Watch[watch]
     Profiles --> Review[review]
-    Code --> Runner[Shared role runner]
+    Pair --> Runner[Shared role runner]
     Chat --> Runner
     Work --> Runner
     Watch --> Runner
@@ -716,54 +788,174 @@ Responsibilities:
 
 ## Phased migration plan
 
+## Step-by-step implementation plan
+
+This step list is the practical implementation ordering that should guide work inside the broader phased plan below. The goal is to make dependency-breaking work happen in the right sequence: first establish Den-owned data and contracts, then replace Letta-served feature families one by one, and only then remove compatibility paths.
+
+### Step 1 — freeze the replacement surface and assign owners
+
+- Treat the Letta API-server feature parity matrix in this document as the migration scope baseline.
+- For each feature family, record the intended primary owner: role runner, interaction store, memory subsystem, retrieval subsystem, auth/routing, or migration tooling.
+- Confirm which Letta behaviors are required parity, which are compatibility-only during transition, and which can be intentionally dropped.
+- Record open questions as explicit migration decisions instead of leaving them implicit in implementation tickets.
+
+**Outputs**
+
+- an accepted parity matrix
+- named subsystem owners for each feature family
+- a decision list for intentionally dropped or deferred Letta behaviors
+
+### Step 2 — establish Den-owned contracts and containment seams
+
+- Land the runtime, interaction-store, retrieval, and configuration abstractions described in this plan.
+- Refactor Letta-specific logic behind compatibility adapters so new work stops depending directly on Letta client semantics.
+- Preserve legacy identifiers only as compatibility fields at boundaries.
+- Add tracing and diagnostics around remaining Letta calls so migration can be measured and audited.
+
+**Outputs**
+
+- explicit compatibility seams
+- provider-neutral Den interfaces
+- observability around all remaining Letta dependencies
+
+### Step 3 — make Den the source of truth for transcript and run state
+
+- Implement Den-owned conversation, run, tool-call, approval, and event storage.
+- Dual-write from Letta-backed execution into Den-owned stores.
+- Move user-facing and admin read paths to Den-owned projections where feasible.
+- Define transcript retention, message identity, replay, and read-model expectations explicitly.
+
+**Outputs**
+
+- Den-owned transcript/event ledger
+- Den-owned run/approval/tool state
+- read models that no longer require Letta as the first read source
+
+### Step 4 — define and implement prompt-state memory replacement
+
+- Specify how Letta-style editable memory blocks map into BEARS memory structures.
+- Define attachment/scoping rules for block-like runtime memory versus canonical role/core memory.
+- Define how prompt-state memory is compiled into turn context and how mutations are audited.
+- Implement the minimum viable block-replacement path for one role before broad rollout.
+
+**Outputs**
+
+- explicit prompt-memory design
+- auditable block-like runtime memory behavior
+- first production-capable block replacement path
+
+### Step 5 — define context assembly, compaction, and summarization
+
+- Create a dedicated compaction design covering triggers, summary artifacts, replay behavior, and recovery after context reduction.
+- Define the relationship between transcript, summaries, prompt-state memory, and retrieval indexes.
+- Implement compaction behind Den-owned context assembly, not as a Letta-specific side effect.
+- Add parity tests for resume and long-running conversation continuity.
+
+**Outputs**
+
+- context-compaction subsystem design
+- summary artifact model
+- tested resume/continuity behavior after compaction
+
+### Step 6 — replace the `pair` runtime path with the shared Den-native role runner
+
+- Use the ACP `pair` path as the reference implementation for shared role-runner behavior.
+- Preserve existing streaming, approval, continuation, cancellation, and workspace-context invariants.
+- Run canaries behind feature flags and compare behavior against the compatibility path.
+- Keep rollback and per-session fallback available until parity is established.
+
+**Outputs**
+
+- shared Den-native role runner
+- canaryable `pair` execution path
+- parity test coverage for the hardest Letta-era runtime behaviors
+
+### Step 7 — migrate lower-risk roles onto the shared runner
+
+- Move `watch` and `review` onto the shared runner after `pair` parity is credible.
+- Validate that event-driven and review-oriented flows work without ACP-specific assumptions.
+- Capture any remaining role-specific gaps before moving `chat` and `work`.
+
+**Outputs**
+
+- multi-role confidence in the shared runner
+- narrowed list of role-specific exceptions
+
+### Step 8 — replace retrieval, archives, and ingestion pipelines
+
+- Design and implement BEARS-owned source registration, passage generation/chunking, provenance tracking, update/delete semantics, and query paths.
+- Replace Letta Archives as the operational retrieval substrate.
+- Define retrieval policy across Bear-global, role-local, and work-surface-local scopes.
+- Ensure retrieval remains derived from canonical sources rather than becoming the source of truth.
+
+**Outputs**
+
+- BEARS-owned ingestion/index pipeline
+- archival retrieval replacement
+- explicit retrieval policy and provenance model
+
+### Step 9 — replace provisioning/configuration semantics and harness-backed runtime dependencies
+
+- Move role configuration, provider bindings, model settings, embedding settings, and related runtime configuration into Den-owned role profiles.
+- Replace the remaining Codepool / Letta Code assumptions for `chat` and `work`.
+- Ensure tool metadata, model-visible tool schemas, and runtime config surfaces are Den-owned.
+
+**Outputs**
+
+- Den-owned role-profile and configuration model
+- removal path for Letta-backed provisioning assumptions
+- reduced dependency on Letta Code / Codepool behavior
+
+### Step 10 — build migration, backfill, and rollback tooling for cutover
+
+- Implement export/import, id mapping, dual-write verification, replay, and rollback-aware cutover tooling.
+- Define operator runbooks for partial failures, reconciliation, and backfill retries.
+- Prove that legacy Letta-backed state can be inspected and migrated without losing auditability.
+
+**Outputs**
+
+- migration/backfill toolchain
+- verification and rollback procedures
+- operator-ready cutover plan
+
+### Step 11 — cut over reads, then writes, then execution defaults
+
+- Move read paths first where Den-owned data is already authoritative.
+- Move write authority next once dual-write verification is stable.
+- Only switch execution defaults after transcript, memory, compaction, retrieval, and role-runner parity are demonstrated.
+- Keep feature-flagged rollback available until production behavior is stable.
+
+**Outputs**
+
+- staged cutover sequence with explicit gates
+- production validation criteria before Letta retirement
+
+### Step 12 — retire compatibility paths and remove Letta-specific assumptions
+
+- Remove obsolete Letta compatibility fields, adapters, and fallback paths once rollback windows close.
+- Delete stale naming, internal assumptions, and admin dependencies that only existed for the compatibility period.
+- Re-run the parity matrix as a retirement checklist before declaring Letta removed.
+
+**Outputs**
+
+- Letta compatibility removed or minimized to intentional residual integrations
+- parity checklist closed out
+- post-migration cleanup complete
+
 ## Phase 0 — preparation and containment
+
+**Primary implementation steps:** Step 1 (freeze the replacement surface and assign owners) and Step 2 (establish Den-owned contracts and containment seams).
 
 ### Objective
 
 Stop Letta from being an ambient assumption and confine it to explicit compatibility boundaries that can be removed as Den-native runtime ownership expands.
 
-### Work items
+### Phase checklist
 
-1. Introduce explicit traits/interfaces for:
-   - role profile registry
-   - role runner
-   - interaction and run store
-   - tool and actuator registry
-   - retrieval service
-
-2. Refactor Letta integration behind those interfaces.
-
-3. Replace direct Letta-centric naming in internal core logic where appropriate:
-   - favor `compatibility_binding_ref` or another explicitly transitional compatibility term over `letta_agent_id` in generic paths
-   - favor `role_profile_id` and `role_run_id` over provider-shaped role identity
-   - keep legacy fields as compatibility shims until cutover
-   - avoid introducing new permanent generic concepts such as `runtime_provider` unless a concrete non-Letta post-migration need exists
-
-4. Add instrumentation around all Letta interactions:
-   - endpoint called
-   - role and execution mode
-   - provider binding used
-   - latency
-   - failure mode
-   - correlation ids / run ids
-
-5. Add terminology compatibility guidance:
-   - accept legacy role names at routing and persistence boundaries where needed
-   - emit current canonical role names in new docs, UI, and model-facing descriptors
-   - avoid advertising legacy role names or provider-branded names to models
-
-6. Define optional-worker/service-toggle rollout policy for migration components:
-   - which capabilities can run in the same Den binary
-   - which workers are safe to enable independently
-   - which shared-state writers require singleton or idempotent behavior
-   - which compatibility workers are temporary and how they will be retired
-
-### Deliverables
-
-- internal abstraction layer merged
-- Letta becomes a contained compatibility implementation rather than ambient architecture
-- improved observability for migration planning
-- terminology compatibility path documented
+- land provider-neutral Den interfaces for runtime, storage, tools, retrieval, and configuration
+- move Letta logic behind compatibility adapters
+- normalize internal terminology toward role profiles, role runs, and compatibility bindings
+- add tracing and rollout controls for remaining Letta dependencies
 
 ### Exit criteria
 
@@ -773,53 +965,29 @@ Stop Letta from being an ambient assumption and confine it to explicit compatibi
 
 ## Phase 1 — Den-owned interaction and run persistence
 
+**Primary implementation step:** Step 3 (make Den the source of truth for transcript and run state).
+
 ### Objective
 
 Make Den the source of truth for interaction metadata and run tracking before changing execution.
 
-### Work items
+### Phase checklist
 
-1. Add Den tables for:
-   - interaction sessions or conversations
-   - role context associations
-   - messages/events
-   - tool calls
-   - tool results
-   - approvals
-   - runs
-   - run cancellation state
-   - resource references where applicable
-
-2. Start dual-writing metadata during Letta-backed execution:
-   - new sessions/conversations
-   - titles
-   - archived state
-   - messages/events
-   - run lifecycle markers
-   - tool and approval events
-
-3. Repoint admin/UI reads where possible to Den-owned data instead of Letta list/read endpoints.
-
-4. Preserve compatibility providers for existing Letta-backed histories during transition.
-
-### Deliverables
-
-- Den-owned interaction read model
-- Den-owned run ledger
-- admin/UI less coupled to Letta
+- land Den-owned conversation, event, run, tool-call, and approval records
+- dual-write Letta-backed execution into Den-owned stores
+- repoint admin and user-facing reads to Den projections where stable
+- keep fallback reads available while projections mature
 
 ### Exit criteria
 
 - UI can render recent `chat` and `pair` interaction lists from Den
 - Den can answer thread title/archive/delete state from its own store
 - run and approval state is queryable without asking Letta first
-
-### Rollback strategy
-
-- continue reading Letta as fallback if Den projections are incomplete
-- dual-write remains non-destructive
+- dual-write remains non-destructive and rollback-safe
 
 ## Phase 2 — extract shared Den-native role runner from `pair`
+
+**Primary implementation steps:** Step 4 (define and implement prompt-state memory replacement), Step 5 (define context assembly, compaction, and summarization), and Step 6 (replace the `pair` runtime path with the shared Den-native role runner).
 
 ### Objective
 
@@ -841,31 +1009,12 @@ The `pair` role already exercises the hardest runtime invariants:
 
 The future roles should derive from these Den-owned mechanics instead of preserving old Letta runtime families.
 
-### Work items
+### Phase checklist
 
-1. Document current `pair`/ACP actuator invariants from implementation and tests.
-
-2. Extract shared role-runner interfaces from the `pair` path:
-   - prompt/context assembly
-   - event streaming
-   - tool request/result protocol
-   - approval state machine
-   - cancellation semantics
-   - run ids and request ids
-   - persistence hooks
-
-3. Implement a Den-native role runner capable of executing `pair` canary sessions behind a feature flag.
-
-4. Preserve compatibility with existing ACP behavior while moving logic behind Den-native role-runner interfaces and narrow Letta compatibility adapters.
-
-5. Build parity tests for known Letta-era failure modes.
-
-### Deliverables
-
-- shared Den-native role-runner skeleton
-- documented `pair` actuator invariants
-- canary-capable `pair` execution path
-- compatibility tests for streaming, approvals, tool continuations, and cancellation
+- define prompt-state memory replacement and prompt-compilation behavior needed by the runner
+- define context assembly and compaction behavior needed for long-lived sessions
+- extract shared role-runner interfaces from the `pair` path
+- run `pair` canaries behind feature flags with parity tests and rollback
 
 ### Exit criteria
 
@@ -873,12 +1022,9 @@ The future roles should derive from these Den-owned mechanics instead of preserv
 - the shared runner abstractions are usable by non-ACP roles
 - existing ACP sessions remain stable on the compatibility path
 
-### Rollback strategy
-
-- maintain per-session or per-Bear provider fallback during rollout
-- keep old Letta-backed execution path until Den-native parity is proven
-
 ## Phase 3 — migrate `watch` and `review` onto the shared role runner
+
+**Primary implementation step:** Step 7 (migrate lower-risk roles onto the shared runner).
 
 ### Objective
 
@@ -893,30 +1039,12 @@ Prove the shared runner on lower-risk non-ACP execution modes before broad user-
 - both are less directly user-interactive than `pair` and `chat`
 - both help validate memory, retrieval, workflow, and persistence behavior
 
-### Work items
+### Phase checklist
 
-1. Implement `watch` execution on the shared runner:
-   - event input ingestion
-   - context retrieval from relevant resources and `core/`
-   - model call
-   - tool mediation
-   - event/run persistence in Den
-
-2. Implement `review` execution on the shared runner:
-   - multi-branch read context assembly
-   - narrow tool roster
-   - review/approval/write flows
-   - summarization and memory-promotion hooks
-
-3. Replace Letta-dependent reflection, defragmentation, or observation logic with explicit Den-native workflows or scheduled jobs.
-
-4. Compare outputs and operational logs against Letta-backed baselines in staging.
-
-### Deliverables
-
-- `watch` running without Letta
-- `review` running without Letta
-- explicit review and observation orchestration in Den
+- run `watch` end-to-end on the shared runner with Den-owned persistence
+- run `review` end-to-end on the shared runner with memory-governance visibility intact
+- replace Letta-dependent reflection or observation glue with explicit Den workflows or jobs
+- compare staging behavior against Letta-backed baselines
 
 ### Exit criteria
 
@@ -925,6 +1053,8 @@ Prove the shared runner on lower-risk non-ACP execution modes before broad user-
 - memory governance remains visible and auditable
 
 ## Phase 4 — production rollout for `pair`
+
+**Primary implementation step:** Step 11 (cut over reads, then writes, then execution defaults) for the highest-risk interactive role.
 
 ### Objective
 
@@ -942,30 +1072,12 @@ Move the ACP actuator path fully off the Letta execution substrate after shared-
 - trusted human identity from ACP token state
 - actuator permissions and resource boundaries
 
-### Work items
+### Phase checklist
 
-1. Complete Den-native `pair` runtime parity:
-   - stream-safe incremental responses
-   - server-mediated tool call requests
-   - actuator execution protocol
-   - approval state machine
-   - continuation after tool execution
-   - run ids / request ids / cancellation semantics
-
-2. Preserve `pair` policy semantics:
-   - Ask / Plan / Write gating
-   - pending permissions
-   - pending plan approvals
-   - active turn cleanup and cancellation safety
-
-3. Perform shadow or canary rollout for low-risk sessions first.
-
-4. Remove Letta-specific ACP runtime logic from core session paths after rollout.
-
-### Deliverables
-
-- production Den-native `pair` runtime
-- removal of Letta-specific ACP runtime logic from core session paths
+- complete production-level `pair` parity for streaming, tools, approvals, continuation, and cancellation
+- preserve Ask / Plan / Write and permission-gating semantics during cutover
+- roll out through shadow or canary traffic before making Den-native execution default
+- keep per-session or per-Bear rollback available until production behavior is stable
 
 ### Exit criteria
 
@@ -973,42 +1085,20 @@ Move the ACP actuator path fully off the Letta execution substrate after shared-
 - session cancellation and tool continuation are reliable under concurrency
 - trusted human identity continues to come from Den/ACP state, not inferred chat text
 
-### Rollback strategy
-
-- maintain per-session or per-Bear provider fallback to Letta during rollout
-- keep migration flags until concurrency and cancellation behavior has been exercised in production-like conditions
-
 ## Phase 5 — replace provisioning with role profiles and provider bindings
+
+**Primary implementation step:** Step 9 (replace provisioning/configuration semantics and harness-backed runtime dependencies), focused on role-profile identity and configuration ownership.
 
 ### Objective
 
 Stop creating or synchronizing Letta agents as canonical role runtime identity, and ensure any remaining external references are treated as temporary compatibility bindings rather than a permanent provider abstraction layer.
 
-### Work items
+### Phase checklist
 
-1. Generalize `bear_agents` or equivalent runtime metadata into role-profile and compatibility-binding concepts.
-
-2. Replace generic internal assumptions that a role runtime is a provider-managed agent.
-
-3. Migrate provisioning/sync code to:
-   - compute desired role profile config
-   - apply provider-specific setup only through provider boundaries
-   - persist provider-neutral role profile metadata
-   - persist provider bindings only where a temporary provider still requires them
-
-4. Update admin/UI language:
-   - “provision missing agents” → “initialize role profiles”
-   - “role agent id” → “role profile id” or “provider binding” depending on context
-   - “agent health” → “role runtime health”
-
-5. Keep Letta provider bindings for any remaining roles until harness migration is complete.
-
-### Deliverables
-
-- provider-neutral role profile registry
-- per-role execution mode control
-- reduced reliance on `letta_agent_id`
-- operator-facing terminology aligned with the terminology ADR
+- generalize provider-managed runtime metadata into role profiles and compatibility bindings
+- replace internal assumptions that role identity equals provider agent identity
+- move configuration reconciliation behind Den-owned role-profile semantics
+- update operator-facing language to match the role terminology model
 
 ### Exit criteria
 
@@ -1018,67 +1108,22 @@ Stop creating or synchronizing Letta agents as canonical role runtime identity, 
 
 ## Phase 6 — replace Codepool / Letta Code dependency for `chat` and `work`
 
+**Primary implementation steps:** Step 7 (migrate lower-risk roles onto the shared runner) as precedent, Step 9 (replace provisioning/configuration semantics and harness-backed runtime dependencies), and Step 11 (stage cutover by reads, writes, then execution defaults).
+
 ### Objective
 
 Remove the indirect Letta dependency that remains through Codepool.
 
-### Two viable paths
+### Decision note
 
-#### Option A: evolve Codepool into a BEARS-native harness
+Prefer evolving Codepool as a bridge only if it accelerates delivery without preserving Letta-era concepts as permanent architecture. The long-term target should still be role-run, resource, actuator, and tool semantics owned by Den.
 
-Pros:
+### Phase checklist
 
-- preserves Den-facing interface
-- smaller blast radius for Den web/chat routes
-- keeps warm-runtime/session management in a dedicated service
-- can expose actuator-like capabilities for controlled task execution
-
-Cons:
-
-- still requires substantial runtime reimplementation inside Codepool
-- risks preserving Letta-era concepts if not governed by role profiles and provider bindings
-
-#### Option B: replace Codepool's Letta-specific role with a new runtime service
-
-Pros:
-
-- cleaner long-term architecture
-- avoids preserving Letta Code-specific assumptions
-- can be designed directly around role runs, resources, actuators, and tool descriptors
-
-Cons:
-
-- larger integration change up front
-
-### Recommended direction
-
-Prefer **Option A as a bridge** if delivery speed matters, but design toward **Option B semantics** so Codepool does not become a permanent compatibility layer for Letta-era concepts.
-
-### Work items
-
-1. Inventory exactly what Codepool depends on Letta for:
-   - interaction state
-   - skills loading
-   - harness startup lifecycle
-   - channel behavior
-   - MemFS local mirror assumptions
-   - provider-managed identity assumptions
-
-2. Implement replacement backend behavior under the existing Den-facing API.
-
-3. Migrate `chat` first or `work` first depending on operational risk:
-   - `chat` has more direct user experience impact
-   - `work` has more policy/tooling/autonomy risk
-
-4. Align Codepool or its successor with the shared role runner contracts where practical.
-
-5. Remove Letta Code harness YAML generation once no longer needed.
-
-### Deliverables
-
-- `chat` and `work` running without Letta Code
-- Codepool or successor runtime no longer requires `LETTA_BASE_URL`
-- Den-facing semantics expressed in terms of role runs, resources, actuators, and tools
+- inventory the exact Letta dependencies that still flow through Codepool
+- implement replacement backend behavior behind the existing Den-facing contract or a successor with equivalent semantics
+- choose migration order between `chat` and `work` based on operational risk
+- remove Letta Code harness generation and provider-specific assumptions once replacement paths are stable
 
 ### Exit criteria
 
@@ -1087,30 +1132,18 @@ Prefer **Option A as a bridge** if delivery speed matters, but design toward **O
 
 ## Phase 7 — MemFS/resource workspace and retrieval replacement
 
+**Primary implementation step:** Step 8 (replace retrieval, archives, and ingestion pipelines), with supporting configuration work from Step 9.
+
 ### Objective
 
 Remove the remaining Letta-shaped storage and indexing assumptions.
 
-### Work items
+### Phase checklist
 
-1. Replace Letta `/v1/git/*` proxy assumptions with direct MemFS/git APIs.
-
-2. Move any cache/index invalidation behavior to explicit jobs or hooks.
-
-3. Replace Letta Archives with Qdrant or another owned retrieval/index service.
-
-4. Remove Letta-specific filesystem layout assumptions where practical.
-
-5. Rename provider-owned workspace view terminology toward role/run/resource workspace views.
-
-6. Ensure retrieval remains derived from canonical memory and resources, not the source of truth.
-
-### Deliverables
-
-- direct MemFS/git ownership by BEARS services
-- owned retrieval/index layer
-- no Letta-shaped storage coupling required
-- workspace view terminology aligned with roles, runs, and resources
+- replace Letta-shaped git or workspace proxy assumptions with direct MemFS/git ownership
+- move invalidation and indexing behavior into explicit jobs or hooks
+- replace Letta Archives with a BEARS-owned ingestion and retrieval service
+- keep retrieval derived from canonical memory and resources rather than becoming the source of truth
 
 ### Exit criteria
 
@@ -1120,27 +1153,18 @@ Remove the remaining Letta-shaped storage and indexing assumptions.
 
 ## Phase 8 — retirement and cleanup
 
+**Primary implementation steps:** Step 10 (build migration, backfill, and rollback tooling), Step 11 (complete staged cutover), and Step 12 (retire compatibility paths and remove Letta-specific assumptions).
+
 ### Objective
 
 Fully remove Letta from the stack and codebase.
 
-### Work items
+### Phase checklist
 
-1. Remove:
-   - `bears-letta`
-   - `bears-letta-postgres`
-   - Letta env vars
-   - Letta-specific health checks
-   - Letta backup jobs
-   - Letta-specific docs and comments
-
-2. Delete dead provider code and compatibility shims.
-
-3. Backfill any remaining interaction/runtime data from Letta if needed.
-
-4. Update docs, operational runbooks, deployment templates, and admin UI.
-
-5. Remove or retire legacy role-name aliases only after compatibility requirements are satisfied.
+- complete backfill, verification, and rollback-window closure
+- remove Letta packages, env vars, jobs, health checks, and compatibility shims
+- update docs, runbooks, deployment templates, and admin UI
+- retire legacy aliases only after compatibility obligations are satisfied
 
 ### Exit criteria
 
