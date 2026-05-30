@@ -213,7 +213,7 @@ fn push_unique(values: &mut Vec<String>, value: String) {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct RuntimePromptAssemblyInput {
+pub struct RuntimeContextEnvelopeInput {
     pub active_instructions: Vec<String>,
     pub workflow_state: Vec<String>,
     pub recent_groups: Vec<RuntimeSemanticGroup>,
@@ -221,17 +221,17 @@ pub struct RuntimePromptAssemblyInput {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct RuntimePromptAssemblyEnvelope {
+pub struct RuntimeContextEnvelope {
     pub instructions: Vec<String>,
     pub workflow_state: Vec<String>,
     pub recent_groups: Vec<RuntimeSemanticGroup>,
     pub compacted_context: Option<RuntimeIterativeSummary>,
 }
 
-pub fn assemble_runtime_prompt_context(
-    input: RuntimePromptAssemblyInput,
-) -> RuntimePromptAssemblyEnvelope {
-    RuntimePromptAssemblyEnvelope {
+pub fn build_runtime_context_envelope(
+    input: RuntimeContextEnvelopeInput,
+) -> RuntimeContextEnvelope {
+    RuntimeContextEnvelope {
         instructions: input.active_instructions,
         workflow_state: input.workflow_state,
         recent_groups: input.recent_groups,
@@ -433,7 +433,7 @@ mod tests {
 
     #[test]
     fn prompt_assembly_keeps_compacted_context_separate_from_recent_groups() {
-        let envelope = assemble_runtime_prompt_context(RuntimePromptAssemblyInput {
+        let envelope = build_runtime_context_envelope(RuntimeContextEnvelopeInput {
             active_instructions: vec!["system".into(), "developer".into()],
             workflow_state: vec!["plan:active".into()],
             recent_groups: vec![RuntimeSemanticGroup {

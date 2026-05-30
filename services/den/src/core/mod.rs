@@ -41,9 +41,12 @@ pub mod role_runtime;
 #[cfg(test)]
 mod role_runtime_tests;
 pub mod runtime_compaction;
+pub mod runtime_compaction_observability;
 pub mod runtime_contracts;
 pub mod runtime_conversations;
 pub mod runtime_provider;
+#[cfg(test)]
+mod runtime_compaction_eval_tests;
 #[cfg(test)]
 mod runtime_provider_tests;
 pub mod s3;
