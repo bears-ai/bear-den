@@ -93,7 +93,8 @@ final class OverviewViewModel: ObservableObject {
             "buildGitSha=\(info.buildGitSha)",
             "localHeadSha=\(info.localHeadSha)",
             "builtAtUTC=\(info.builtAtUtc)",
-            "chromeTools=\(info.chromeTools)"
+            "chromeTools=\(info.chromeTools)",
+            "directTools=\(info.directTools?.count ?? 0) entries"
         ].joined(separator: "\n")
     }
 
