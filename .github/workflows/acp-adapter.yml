@@ -260,12 +260,6 @@ jobs:
                   path: dist/*
                   if-no-files-found: error
 
-            - name: Attach binary to GitHub release
-              if: env.RELEASE_TAG != ''
-              env:
-                  GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-              run: gh release upload "$RELEASE_TAG" dist/* --clobber
-
     macos-pkg:
         name: Build macOS arm64 installer package
         runs-on: macos-14
@@ -376,6 +370,121 @@ jobs:
                       --release-notes-url "$UPDATE_RELEASE_NOTES_URL"
                   done
 
+                  build_datetime="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+                  python3 - "$site_dir" "$UPDATE_VERSION" "$UPDATE_CHANNEL" "$build_datetime" "$UPDATE_RELEASE_NOTES_URL" <<'PY'
+                  import html
+                  import json
+                  import pathlib
+                  import sys
+                  from urllib.parse import urlparse
+
+                  site_dir = pathlib.Path(sys.argv[1])
+                  version = sys.argv[2]
+                  channel = sys.argv[3]
+                  build_datetime = sys.argv[4]
+                  release_notes_url = sys.argv[5]
+
+                  def e(value):
+                      return html.escape(str(value), quote=True)
+
+                  def format_size(value):
+                      try:
+                          size = int(value)
+                      except (TypeError, ValueError):
+                          return "unknown"
+                      units = ["B", "KiB", "MiB", "GiB"]
+                      amount = float(size)
+                      unit = units[0]
+                      for unit in units:
+                          if amount < 1024 or unit == units[-1]:
+                              break
+                          amount /= 1024
+                      if unit == "B":
+                          return f"{size} B"
+                      return f"{amount:.1f} {unit}"
+
+                  rows = []
+                  for manifest_path in sorted(site_dir.glob("*.json")):
+                      manifest = json.loads(manifest_path.read_text())
+                      for target, data in sorted(manifest.get("platforms", {}).items()):
+                          asset_url = data.get("pkg_url") or data.get("binary_url") or ""
+                          asset_name = pathlib.PurePosixPath(urlparse(asset_url).path).name if asset_url else ""
+                          rows.append({
+                              "target": target,
+                              "manifest": manifest_path.name,
+                              "asset": asset_name,
+                              "size": format_size(data.get("size")),
+                              "sha256": data.get("sha256", ""),
+                          })
+
+                  table_rows = "\n".join(
+                      "<tr>"
+                      f"<td><code>{e(row['target'])}</code></td>"
+                      f"<td><a href=\"{e(row['manifest'])}\">{e(row['manifest'])}</a></td>"
+                      f"<td><a href=\"{e(row['asset'])}\">{e(row['asset'])}</a></td>"
+                      f"<td>{e(row['size'])}</td>"
+                      f"<td><code>{e(row['sha256'])}</code></td>"
+                      "</tr>"
+                      for row in rows
+                  ) or '<tr><td colspan="5">No platform manifests were generated.</td></tr>'
+
+                  release_notes = (
+                      f'<p><a href="{e(release_notes_url)}">Release notes</a></p>'
+                      if release_notes_url
+                      else ""
+                  )
+
+                  channel_page = f"""<!doctype html>
+                  <html lang="en">
+                  <head>
+                    <meta charset="utf-8">
+                    <meta name="viewport" content="width=device-width, initial-scale=1">
+                    <title>BEARS ACP adapter {e(channel)} {e(version)}</title>
+                    <style>
+                      body {{ font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; line-height: 1.5; margin: 2rem; max-width: 72rem; }}
+                      table {{ border-collapse: collapse; width: 100%; }}
+                      th, td {{ border: 1px solid #d0d7de; padding: 0.5rem; text-align: left; vertical-align: top; }}
+                      th {{ background: #f6f8fa; }}
+                      code {{ word-break: break-all; }}
+                    </style>
+                  </head>
+                  <body>
+                    <h1>BEARS ACP adapter</h1>
+                    <dl>
+                      <dt>Channel</dt><dd><code>{e(channel)}</code></dd>
+                      <dt>Version</dt><dd><code>{e(version)}</code></dd>
+                      <dt>Build datetime</dt><dd><time datetime="{e(build_datetime)}">{e(build_datetime)} UTC</time></dd>
+                    </dl>
+                    {release_notes}
+                    <h2>Downloads and manifests</h2>
+                    <table>
+                      <thead><tr><th>Target</th><th>Manifest</th><th>Asset</th><th>Size</th><th>SHA-256</th></tr></thead>
+                      <tbody>{table_rows}</tbody>
+                    </table>
+                  </body>
+                  </html>
+                  """
+                  (site_dir / "index.html").write_text(channel_page)
+
+                  root_dir = site_dir.parent
+                  root_page = f"""<!doctype html>
+                  <html lang="en">
+                  <head>
+                    <meta charset="utf-8">
+                    <meta name="viewport" content="width=device-width, initial-scale=1">
+                    <meta http-equiv="refresh" content="0; url={e(channel)}/">
+                    <title>BEARS ACP adapter</title>
+                  </head>
+                  <body>
+                    <h1>BEARS ACP adapter</h1>
+                    <p>Latest published channel: <a href="{e(channel)}/"><code>{e(channel)}</code> {e(version)}</a></p>
+                    <p>Build datetime: <time datetime="{e(build_datetime)}">{e(build_datetime)} UTC</time></p>
+                  </body>
+                  </html>
+                  """
+                  (root_dir / "index.html").write_text(root_page)
+                  PY
+
             - name: Validate public update payload metadata
               if: env.PUBLISH_UPDATE_SITE == 'true'
               run: |
@@ -415,15 +524,75 @@ jobs:
                   path: dist/macos/bears-acp-adapter-aarch64-apple-darwin.pkg
                   if-no-files-found: error
 
-            - name: Attach macOS package to GitHub release
-              if: env.RELEASE_TAG != ''
-              env:
-                  GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    upload-release-assets:
+        name: Attach ACP adapter assets to GitHub release
+        runs-on: ubuntu-24.04
+        needs: [prepare-release, build, macos-pkg]
+        if: needs.prepare-release.outputs.release_tag != ''
+        env:
+            RELEASE_TAG: ${{ needs.prepare-release.outputs.release_tag }}
+            UPDATE_CHANNEL: ${{ needs.prepare-release.outputs.update_channel }}
+            PUBLISH_UPDATE_SITE: ${{ needs.prepare-release.outputs.publish_update_site }}
+            GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+        steps:
+            - name: Download macOS binary release asset
+              uses: actions/download-artifact@v5
+              with:
+                  name: bears-acp-adapter-aarch64-apple-darwin
+                  path: release-assets
+
+            - name: Download Linux binary release assets
+              uses: actions/download-artifact@v5
+              with:
+                  pattern: bears-acp-adapter-*-unknown-linux-gnu
+                  path: release-assets
+                  merge-multiple: true
+
+            - name: Download macOS package release asset
+              uses: actions/download-artifact@v5
+              with:
+                  name: bears-acp-adapter-aarch64-apple-darwin-pkg
+                  path: release-assets
+
+            - name: Download public update payload release assets
+              if: env.PUBLISH_UPDATE_SITE == 'true'
+              uses: actions/download-artifact@v5
+              with:
+                  name: bears-acp-adapter-update-site
+                  path: dist/update-site
+
+            - name: Stage release assets
               run: |
-                  gh release upload "$RELEASE_TAG" \
-                    dist/macos/bears-acp-adapter-aarch64-apple-darwin.pkg \
-                    "dist/update-site/bears-acp-adapter/${UPDATE_CHANNEL}/aarch64-apple-darwin.json" \
-                    --clobber
+                  set -eu
+                  if [ "$PUBLISH_UPDATE_SITE" = "true" ]; then
+                    manifest="dist/update-site/bears-acp-adapter/${UPDATE_CHANNEL}/aarch64-apple-darwin.json"
+                    cp "$manifest" release-assets/aarch64-apple-darwin.json
+                  fi
+                  find release-assets -maxdepth 1 -type f -print | sort
+
+            - name: Attach assets to GitHub release
+              run: |
+                  set -eu
+                  gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null
+
+                  attempt=1
+                  max_attempts=6
+                  while true; do
+                    if gh release upload "$RELEASE_TAG" release-assets/* --clobber --repo "$GITHUB_REPOSITORY"; then
+                      break
+                    fi
+
+                    if [ "$attempt" -ge "$max_attempts" ]; then
+                      echo "::error::Failed to upload release assets after ${max_attempts} attempts"
+                      exit 1
+                    fi
+
+                    sleep_for=$((attempt * 10))
+                    echo "Release asset upload failed; retrying in ${sleep_for}s (attempt ${attempt}/${max_attempts})"
+                    sleep "$sleep_for"
+                    attempt=$((attempt + 1))
+                  done
 
     publish-update-site:
         name: Publish ACP adapter update site

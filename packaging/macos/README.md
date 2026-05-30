@@ -99,6 +99,7 @@ dist/update-site/bears-acp-adapter/<stable-or-beta>/
 
 The payload contains:
 
+- `index.html` at `bears-acp-adapter/` and `bears-acp-adapter/<channel>/` with the published version, build datetime, and download links
 - `bears-acp-adapter-aarch64-apple-darwin.pkg`
 - `bears-acp-adapter-x86_64-unknown-linux-gnu`
 - `bears-acp-adapter-aarch64-unknown-linux-gnu`
