@@ -35,6 +35,13 @@ struct OverviewView: View {
                         action: { viewModel.copyVersionDetails(forInstalledVersion: true) }
                     )
 
+                    if let message = viewModel.actionMessage, !message.isEmpty {
+                        Text(message)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+
                     if let error = viewModel.lastError, !error.isEmpty {
                         Button {
                             #if os(macOS)

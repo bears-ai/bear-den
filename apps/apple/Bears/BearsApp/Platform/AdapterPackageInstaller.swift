@@ -1,4 +1,7 @@
 import Foundation
+#if os(macOS)
+import AppKit
+#endif
 
 protocol AdapterPackageInstalling {
     func installPackage(at packageURL: URL) throws -> String
@@ -16,43 +19,28 @@ enum AdapterPackageInstallerError: LocalizedError {
 }
 
 struct InstallerAppAdapterPackageInstaller: AdapterPackageInstalling {
-    private let processRunner: ProcessRunning
-
-    init(processRunner: ProcessRunning = FoundationProcessRunner()) {
-        self.processRunner = processRunner
-    }
-
     func installPackage(at packageURL: URL) throws -> String {
-        let shellCommand = "/usr/sbin/installer -pkg \(shellQuoted(packageURL.path)) -target /"
-        let appleScript = "do shell script \(appleScriptQuoted(shellCommand)) with administrator privileges"
+        #if os(macOS)
+        let configuration = NSWorkspace.OpenConfiguration()
+        configuration.activates = true
 
-        let result = try processRunner.run(
-            URL(fileURLWithPath: "/usr/bin/osascript"),
-            arguments: ["-e", appleScript]
-        )
+        var openError: Error?
+        let semaphore = DispatchSemaphore(value: 0)
 
-        let stderr = result.standardError.trimmingCharacters(in: .whitespacesAndNewlines)
-        let stdout = result.standardOutput.trimmingCharacters(in: .whitespacesAndNewlines)
-        let combinedOutput = [stdout, stderr]
-            .filter { !$0.isEmpty }
-            .joined(separator: "\n")
-
-        guard result.terminationStatus == 0 else {
-            throw AdapterPackageInstallerError.installerFailed(
-                combinedOutput.isEmpty
-                    ? "macOS installer failed to install the adapter package."
-                    : combinedOutput
-            )
+        NSWorkspace.shared.open([packageURL], withApplicationAt: URL(fileURLWithPath: "/System/Library/CoreServices/Installer.app"), configuration: configuration) { _, error in
+            openError = error
+            semaphore.signal()
         }
 
-        return combinedOutput
-    }
+        semaphore.wait()
 
-    private func shellQuoted(_ string: String) -> String {
-        "'" + string.replacingOccurrences(of: "'", with: "'\\''") + "'"
-    }
+        if let openError {
+            throw AdapterPackageInstallerError.installerFailed("Failed to open the adapter package in Installer.app: \(openError.localizedDescription)")
+        }
 
-    private func appleScriptQuoted(_ string: String) -> String {
-        "\"" + string.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"") + "\""
+        return "Opened adapter package in Installer.app."
+        #else
+        throw AdapterPackageInstallerError.installerFailed("Opening Installer.app is only supported on macOS.")
+        #endif
     }
 }

@@ -16,6 +16,7 @@ final class OverviewViewModel: ObservableObject {
     @Published private(set) var statusText: String = "Not checked"
     @Published private(set) var canUpdate = false
     @Published private(set) var lastError: String?
+    @Published private(set) var actionMessage: String?
     @Published private(set) var statusCopied = false
     @Published private(set) var latestVersionCopied = false
     @Published private(set) var installedVersionCopied = false
@@ -60,13 +61,18 @@ final class OverviewViewModel: ObservableObject {
                 referenceVersionError: Self.errorDescription(from: manifestVersionResult, prefix: "Latest version read failed"),
                 installedVersionError: Self.errorDescription(from: installedInfoResult, prefix: "Installed version read failed")
             )
-            lastError = installedInfo != nil ? nil : Self.shortVisibleError(from: combinedError)
+            let visibleError = installedInfo != nil ? nil : Self.shortVisibleError(from: combinedError)
+            if visibleError != nil {
+                actionMessage = nil
+            }
+            lastError = visibleError
             if let combinedError, lastError != nil {
                 fputs("[Bears][OverviewViewModel][refresh][visibleError] \(combinedError)\n", stderr)
             }
         } catch {
             statusText = "Error"
             canUpdate = false
+            actionMessage = nil
             lastError = error.localizedDescription
             latestVersion = "Unavailable"
             latestVersionDetails = "Unavailable"
@@ -77,34 +83,19 @@ final class OverviewViewModel: ObservableObject {
 
     func updateInstall() {
         do {
-            let state = try installManager.updateInstall()
-            let manifestVersionResult = installManager.currentManifestVersion()
-            let installedInfoResult = Result { try installManager.installedAdapterVersion() }
-            let installedInfo = try? installedInfoResult.get()
-            installState = state
-            latestVersion = Self.manifestVersionDisplay(from: manifestVersionResult)
-            installedVersion = state.installedVersion ?? installedInfo?.version ?? "Unavailable"
-            latestVersionDetails = Self.manifestVersionDetails(from: manifestVersionResult)
-            installedVersionDetails = Self.versionDetails(from: installedInfo)
-            statusText = Self.statusText(for: state.lastInstallStatus)
-            canUpdate = state.lastInstallStatus == .repairNeeded
-            let combinedError = Self.combinedError(
-                primary: state.lastError,
-                referenceVersionError: Self.errorDescription(from: manifestVersionResult, prefix: "Latest version read failed"),
-                installedVersionError: Self.errorDescription(from: installedInfoResult, prefix: "Installed version read failed")
-            )
-            lastError = installedInfo != nil ? nil : Self.shortVisibleError(from: combinedError)
-            if let combinedError, lastError != nil {
-                fputs("[Bears][OverviewViewModel][updateInstall][visibleError] \(combinedError)\n", stderr)
-            }
+            _ = try installManager.updateInstall()
+            actionMessage = "Installer opened — complete installation there, then click Refresh."
+            lastError = nil
+            refreshManifestAndState()
         } catch {
             statusText = "Error"
             canUpdate = false
+            actionMessage = nil
             lastError = error.localizedDescription
             latestVersion = "Unavailable"
             latestVersionDetails = "Unavailable"
             installedVersionDetails = "Unavailable"
-            fputs("[Bears][repairInstall] \(error.localizedDescription)\n", stderr)
+            fputs("[Bears][updateInstall] \(error.localizedDescription)\n", stderr)
         }
     }
 
