@@ -69,15 +69,23 @@ struct AdapterInstallManager: AdapterInstallManaging, AdapterVersionProviding {
         let bundledVersion = try? bundledVersionResult.get().version
         let installedVersionError = errorDescription(from: installedVersionResult)
         let bundledVersionError = errorDescription(from: bundledVersionResult)
-        let isCompatible = versionsAreCompatible(installedVersion: installedVersion, bundledVersion: bundledVersion)
-        let status: InstallStatus = isCompatible ? .ok : .repairNeeded
-        let mismatchDetails = compatibilityDetails(installedVersion: installedVersion, referenceVersion: bundledVersion)
-        let combinedError = combinedInstallError(
-            primary: status == .ok ? nil : mismatchDetails,
-            installedVersionError: installedVersionError,
-            bundledVersionError: bundledVersionError,
-            packageInstallOutput: nil
-        )
+
+        let status: InstallStatus
+        let combinedError: String?
+
+        if installedVersion != nil {
+            status = .ok
+            combinedError = nil
+        } else {
+            status = .repairNeeded
+            combinedError = combinedInstallError(
+                primary: "Installed adapter is missing version metadata and likely needs repair.",
+                installedVersionError: installedVersionError,
+                bundledVersionError: bundledVersionError,
+                packageInstallOutput: nil
+            )
+        }
+
         let state = InstallState(
             managedAdapterPath: pathProvider.managedAdapterPath.path,
             installedVersion: installedVersion,
@@ -91,9 +99,6 @@ struct AdapterInstallManager: AdapterInstallManaging, AdapterVersionProviding {
         }
         if let bundledVersionError {
             fputs("[Bears][inspectInstallState][bundledVersionError] \(bundledVersionError)\n", stderr)
-        }
-        if status != .ok {
-            fputs("[Bears][inspectInstallState][compatibility] \(mismatchDetails)\n", stderr)
         }
         if let combinedError {
             fputs("[Bears][inspectInstallState][error] \(combinedError)\n", stderr)
@@ -124,14 +129,12 @@ struct AdapterInstallManager: AdapterInstallManaging, AdapterVersionProviding {
         let installedInfo = try? installedVersionResult.get()
         let bundledInfo = try? bundledVersionResult.get()
         let installedVersion = installedInfo?.version
-        let referenceVersion = bundledInfo?.version ?? source.source.versionHint ?? installedVersion
+        let referenceVersion = bundledInfo?.version ?? source.source.versionHint
         let installedVersionError = errorDescription(from: installedVersionResult)
         let bundledVersionError = errorDescription(from: bundledVersionResult)
-        let isCompatible = versionsAreCompatible(installedVersion: installedVersion, bundledVersion: referenceVersion)
-        let status: InstallStatus = isCompatible ? .ok : .repairNeeded
-        let mismatchDetails = compatibilityDetails(installedVersion: installedVersion, referenceVersion: referenceVersion)
-        let combinedError = combinedInstallError(
-            primary: status == .ok ? nil : mismatchDetails,
+        let status: InstallStatus = installedVersion != nil ? .ok : .repairNeeded
+        let combinedError = installedVersion != nil ? nil : combinedInstallError(
+            primary: "Installed adapter is missing version metadata and likely needs repair.",
             installedVersionError: installedVersionError,
             bundledVersionError: bundledVersionError,
             packageInstallOutput: packageInstallOutput
@@ -150,9 +153,6 @@ struct AdapterInstallManager: AdapterInstallManaging, AdapterVersionProviding {
         }
         if let bundledVersionError {
             fputs("[Bears][repairInstall][bundledVersionError] \(bundledVersionError)\n", stderr)
-        }
-        if status != .ok {
-            fputs("[Bears][repairInstall][compatibility] \(mismatchDetails)\n", stderr)
         }
         if let packageInstallOutput {
             fputs("[Bears][repairInstall][packageInstallerOutput] \(packageInstallOutput)\n", stderr)

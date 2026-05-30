@@ -14,8 +14,12 @@ struct OverviewView: View {
 
             GroupBox("Adapter Status") {
                 VStack(alignment: .leading, spacing: 10) {
-                    keyValueRow("Status", value: viewModel.statusText)
-                    keyValueRow("Managed Path", value: viewModel.managedAdapterPath)
+                    statusRow(
+                        value: viewModel.statusText,
+                        path: viewModel.managedAdapterPath,
+                        copied: viewModel.statusCopied,
+                        action: { viewModel.copyManagedAdapterPath() }
+                    )
                     versionRow(
                         "Bundled Version",
                         value: viewModel.bundledVersion,
@@ -59,12 +63,6 @@ struct OverviewView: View {
                     viewModel.repairInstall()
                 }
 
-                Button("Copy Path") {
-                    #if os(macOS)
-                    NSPasteboard.general.clearContents()
-                    NSPasteboard.general.setString(viewModel.managedAdapterPath, forType: .string)
-                    #endif
-                }
             }
 
             Spacer()
@@ -77,13 +75,23 @@ struct OverviewView: View {
     }
 
     @ViewBuilder
-    private func keyValueRow(_ label: String, value: String) -> some View {
+    private func statusRow(
+        value: String,
+        path: String,
+        copied: Bool,
+        action: @escaping () -> Void
+    ) -> some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text(label)
+            Text("Status")
                 .font(.headline)
-            Text(value)
-                .font(.body.monospaced())
-                .textSelection(.enabled)
+            Button(action: action) {
+                Text(copied ? "path copied" : value)
+                    .font(.body.monospaced())
+                    .foregroundStyle(copied ? .secondary : .primary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .buttonStyle(.plain)
+            .help(path + "\n\nClick to copy managed adapter path to clipboard.")
         }
     }
 

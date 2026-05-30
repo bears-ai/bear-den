@@ -13,6 +13,7 @@ final class OverviewViewModel: ObservableObject {
     @Published private(set) var installedVersionDetails: String = "Unavailable"
     @Published private(set) var statusText: String = "Not checked"
     @Published private(set) var lastError: String?
+    @Published private(set) var statusCopied = false
     @Published private(set) var bundledVersionCopied = false
     @Published private(set) var installedVersionCopied = false
 
@@ -118,6 +119,19 @@ final class OverviewViewModel: ObservableObject {
         forInstalledVersion ? installedVersionDetails : bundledVersionDetails
     }
 
+    func copyManagedAdapterPath() {
+        #if os(macOS)
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(managedAdapterPath, forType: .string)
+        #endif
+
+        statusCopied = true
+        Task {
+            try? await Task.sleep(nanoseconds: 1_000_000_000)
+            statusCopied = false
+        }
+    }
+
     func copyVersionDetails(forInstalledVersion: Bool) {
         #if os(macOS)
         let details = versionDetails(forInstalledVersion: forInstalledVersion)
@@ -167,13 +181,13 @@ final class OverviewViewModel: ObservableObject {
     private static func statusText(for status: InstallStatus) -> String {
         switch status {
         case .ok:
-            return "Installed"
+            return "Up to Date"
         case .missing:
-            return "Missing"
+            return "Not Installed"
         case .repairNeeded:
-            return "Repair Needed"
+            return "Needs Update"
         case .error:
-            return "Error"
+            return "Needs Update"
         }
     }
 }
