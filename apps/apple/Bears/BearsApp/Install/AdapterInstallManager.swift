@@ -203,8 +203,28 @@ struct AdapterInstallManager: AdapterInstallManaging, AdapterVersionProviding {
             )
         }
 
-        let data = Data(result.standardOutput.utf8)
-        return try jsonDecoder.decode(AdapterVersionInfo.self, from: data)
+        let output = result.standardOutput.trimmingCharacters(in: .whitespacesAndNewlines)
+        let jsonStartIndex = output.firstIndex(of: "{")
+        guard let jsonStartIndex else {
+            throw NSError(
+                domain: "Bears.AdapterInstallManager",
+                code: 1001,
+                userInfo: [NSLocalizedDescriptionKey: "Failed to parse adapter version metadata as JSON. Raw output:\n\(output)"]
+            )
+        }
+
+        let jsonText = String(output[jsonStartIndex...])
+        let data = Data(jsonText.utf8)
+
+        do {
+            return try jsonDecoder.decode(AdapterVersionInfo.self, from: data)
+        } catch {
+            throw NSError(
+                domain: "Bears.AdapterInstallManager",
+                code: 1002,
+                userInfo: [NSLocalizedDescriptionKey: "Failed to decode adapter version metadata JSON. Raw output:\n\(output)\nDecode error: \(error.localizedDescription)"]
+            )
+        }
     }
 
     private func versionsAreCompatible(installedVersion: String?, bundledVersion: String?) -> Bool {
