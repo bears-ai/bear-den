@@ -117,10 +117,10 @@ struct AdapterInstallManager: AdapterInstallManaging, AdapterVersionProviding {
         return state
     }
 
-    func repairInstall() throws -> InstallState {
+    func updateInstall() throws -> InstallState {
         let source = try resolveInstallSource()
 
-        fputs("[Bears][repairInstall][managedAdapterPath] \(pathProvider.managedAdapterPath.path)\n", stderr)
+        fputs("[Bears][updateInstall][managedAdapterPath] \(pathProvider.managedAdapterPath.path)\n", stderr)
 
         var packageInstallOutput: String?
         if source.source.isInstallerPackage {
@@ -162,19 +162,19 @@ struct AdapterInstallManager: AdapterInstallManaging, AdapterVersionProviding {
         )
 
         if let installedVersionError {
-            fputs("[Bears][repairInstall][installedVersionError] \(installedVersionError)\n", stderr)
+            fputs("[Bears][updateInstall][installedVersionError] \(installedVersionError)\n", stderr)
         }
         if let bundledVersionError {
-            fputs("[Bears][repairInstall][bundledVersionError] \(bundledVersionError)\n", stderr)
+            fputs("[Bears][updateInstall][bundledVersionError] \(bundledVersionError)\n", stderr)
         }
         if let availableVersionError {
-            fputs("[Bears][repairInstall][availableVersionError] \(availableVersionError)\n", stderr)
+            fputs("[Bears][updateInstall][availableVersionError] \(availableVersionError)\n", stderr)
         }
         if let packageInstallOutput {
-            fputs("[Bears][repairInstall][packageInstallerOutput] \(packageInstallOutput)\n", stderr)
+            fputs("[Bears][updateInstall][packageInstallerOutput] \(packageInstallOutput)\n", stderr)
         }
         if let combinedError {
-            fputs("[Bears][repairInstall][error] \(combinedError)\n", stderr)
+            fputs("[Bears][updateInstall][error] \(combinedError)\n", stderr)
         }
 
         try persistInstallState(repairedState)

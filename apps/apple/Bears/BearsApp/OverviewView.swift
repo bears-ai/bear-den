@@ -59,9 +59,10 @@ struct OverviewView: View {
                     viewModel.refreshManifestAndState()
                 }
 
-                Button("Repair Installation") {
-                    viewModel.repairInstall()
+                Button("Update") {
+                    viewModel.updateInstall()
                 }
+                .disabled(!viewModel.canUpdate)
 
             }
 

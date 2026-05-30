@@ -3,7 +3,7 @@ import Foundation
 protocol AdapterInstallManaging {
     func loadInstallState() throws -> InstallState?
     func inspectInstallState() throws -> InstallState
-    func repairInstall() throws -> InstallState
+    func updateInstall() throws -> InstallState
 }
 
 protocol AdapterVersionProviding {

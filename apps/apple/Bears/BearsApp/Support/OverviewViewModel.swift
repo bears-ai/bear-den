@@ -5,6 +5,8 @@ import AppKit
 
 @MainActor
 final class OverviewViewModel: ObservableObject {
+    private var hasRefreshedOnce = false
+
     @Published private(set) var installState: InstallState?
     @Published private(set) var managedAdapterPath: String
     @Published private(set) var latestVersion: String = "Unavailable"
@@ -12,6 +14,7 @@ final class OverviewViewModel: ObservableObject {
     @Published private(set) var latestVersionDetails: String = "Unavailable"
     @Published private(set) var installedVersionDetails: String = "Unavailable"
     @Published private(set) var statusText: String = "Not checked"
+    @Published private(set) var canUpdate = false
     @Published private(set) var lastError: String?
     @Published private(set) var statusCopied = false
     @Published private(set) var latestVersionCopied = false
@@ -30,6 +33,12 @@ final class OverviewViewModel: ObservableObject {
     }
 
     func refresh() {
+        guard !hasRefreshedOnce else {
+            refreshManifestAndState()
+            return
+        }
+
+        hasRefreshedOnce = true
         refreshManifestAndState()
     }
 
@@ -45,17 +54,19 @@ final class OverviewViewModel: ObservableObject {
             latestVersionDetails = Self.manifestVersionDetails(from: manifestVersionResult)
             installedVersionDetails = Self.versionDetails(from: installedInfo)
             statusText = Self.statusText(for: state.lastInstallStatus)
+            canUpdate = state.lastInstallStatus == .repairNeeded
             let combinedError = Self.combinedError(
                 primary: state.lastError,
                 referenceVersionError: Self.errorDescription(from: manifestVersionResult, prefix: "Latest version read failed"),
                 installedVersionError: Self.errorDescription(from: installedInfoResult, prefix: "Installed version read failed")
             )
             lastError = installedInfo != nil ? nil : Self.shortVisibleError(from: combinedError)
-            if let combinedError {
+            if let combinedError, lastError != nil {
                 fputs("[Bears][OverviewViewModel][refresh][visibleError] \(combinedError)\n", stderr)
             }
         } catch {
             statusText = "Error"
+            canUpdate = false
             lastError = error.localizedDescription
             latestVersion = "Unavailable"
             latestVersionDetails = "Unavailable"
@@ -64,9 +75,9 @@ final class OverviewViewModel: ObservableObject {
         }
     }
 
-    func repairInstall() {
+    func updateInstall() {
         do {
-            let state = try installManager.repairInstall()
+            let state = try installManager.updateInstall()
             let manifestVersionResult = installManager.currentManifestVersion()
             let installedInfoResult = Result { try installManager.installedAdapterVersion() }
             let installedInfo = try? installedInfoResult.get()
@@ -76,17 +87,19 @@ final class OverviewViewModel: ObservableObject {
             latestVersionDetails = Self.manifestVersionDetails(from: manifestVersionResult)
             installedVersionDetails = Self.versionDetails(from: installedInfo)
             statusText = Self.statusText(for: state.lastInstallStatus)
+            canUpdate = state.lastInstallStatus == .repairNeeded
             let combinedError = Self.combinedError(
                 primary: state.lastError,
                 referenceVersionError: Self.errorDescription(from: manifestVersionResult, prefix: "Latest version read failed"),
                 installedVersionError: Self.errorDescription(from: installedInfoResult, prefix: "Installed version read failed")
             )
             lastError = installedInfo != nil ? nil : Self.shortVisibleError(from: combinedError)
-            if let combinedError {
-                fputs("[Bears][OverviewViewModel][repairInstall][visibleError] \(combinedError)\n", stderr)
+            if let combinedError, lastError != nil {
+                fputs("[Bears][OverviewViewModel][updateInstall][visibleError] \(combinedError)\n", stderr)
             }
         } catch {
             statusText = "Error"
+            canUpdate = false
             lastError = error.localizedDescription
             latestVersion = "Unavailable"
             latestVersionDetails = "Unavailable"

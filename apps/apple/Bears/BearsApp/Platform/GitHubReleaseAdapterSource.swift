@@ -28,6 +28,13 @@ struct MacOSAdapterManifest: Decodable {
     let pkgURL: String
     let sha256: String?
     let releaseNotesURL: String?
+
+    private enum CodingKeys: String, CodingKey {
+        case version
+        case pkgURL = "pkg_url"
+        case sha256
+        case releaseNotesURL = "release_notes_url"
+    }
 }
 
 struct GitHubReleaseAdapterSource: AdapterArtifactSourceProviding {
@@ -121,9 +128,7 @@ struct GitHubReleaseAdapterSource: AdapterArtifactSourceProviding {
         }
 
         do {
-            let decoder = JSONDecoder()
-            decoder.keyDecodingStrategy = .convertFromSnakeCase
-            return try decoder.decode(MacOSAdapterManifest.self, from: responseData)
+            return try JSONDecoder().decode(MacOSAdapterManifest.self, from: responseData)
         } catch {
             let raw = String(data: responseData, encoding: .utf8) ?? "<non-utf8 response>"
             throw GitHubReleaseAdapterSourceError.invalidManifestJSON("\(error.localizedDescription). Raw response: \(raw)")
