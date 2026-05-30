@@ -289,6 +289,10 @@ struct AdapterInstallManager: AdapterInstallManaging, AdapterVersionProviding {
         try gitHubReleaseAdapterSource.latestMacOSManifest().version
     }
 
+    func currentManifestVersion() -> Result<String?, Error> {
+        Result { try latestAvailableVersion() }
+    }
+
     private func resolveInstallSource() throws -> DownloadedAdapterArtifact {
         if let bundledURL = try? bundledAdapterLocator.bundledAdapterExecutableURL() {
             return DownloadedAdapterArtifact(

@@ -21,10 +21,10 @@ struct OverviewView: View {
                         action: { viewModel.copyManagedAdapterPath() }
                     )
                     versionRow(
-                        "Bundled Version",
-                        value: viewModel.bundledVersion,
+                        "Latest Version",
+                        value: viewModel.latestVersion,
                         details: viewModel.versionDetails(forInstalledVersion: false),
-                        copied: viewModel.bundledVersionCopied,
+                        copied: viewModel.latestVersionCopied,
                         action: { viewModel.copyVersionDetails(forInstalledVersion: false) }
                     )
                     versionRow(
@@ -56,7 +56,7 @@ struct OverviewView: View {
 
             HStack {
                 Button("Refresh") {
-                    viewModel.refresh()
+                    viewModel.refreshManifestAndState()
                 }
 
                 Button("Repair Installation") {

@@ -7,14 +7,14 @@ import AppKit
 final class OverviewViewModel: ObservableObject {
     @Published private(set) var installState: InstallState?
     @Published private(set) var managedAdapterPath: String
-    @Published private(set) var bundledVersion: String = "Unavailable"
+    @Published private(set) var latestVersion: String = "Unavailable"
     @Published private(set) var installedVersion: String = "Unavailable"
-    @Published private(set) var bundledVersionDetails: String = "Unavailable"
+    @Published private(set) var latestVersionDetails: String = "Unavailable"
     @Published private(set) var installedVersionDetails: String = "Unavailable"
     @Published private(set) var statusText: String = "Not checked"
     @Published private(set) var lastError: String?
     @Published private(set) var statusCopied = false
-    @Published private(set) var bundledVersionCopied = false
+    @Published private(set) var latestVersionCopied = false
     @Published private(set) var installedVersionCopied = false
 
     private let installManager: AdapterInstallManager
@@ -30,21 +30,25 @@ final class OverviewViewModel: ObservableObject {
     }
 
     func refresh() {
+        refreshManifestAndState()
+    }
+
+    func refreshManifestAndState() {
         do {
-            let referenceInfoResult = Result { try installManager.referenceAdapterVersion() }
+            let manifestVersionResult = installManager.currentManifestVersion()
             let installedInfoResult = Result { try installManager.installedAdapterVersion() }
-            let referenceInfo = try? referenceInfoResult.get()
+            let manifestVersion = try? manifestVersionResult.get()
             let installedInfo = try? installedInfoResult.get()
             let state = try installManager.inspectInstallState()
             installState = state
-            bundledVersion = state.bundledVersion ?? referenceInfo?.version ?? "Unavailable"
+            latestVersion = manifestVersion ?? "Unavailable"
             installedVersion = state.installedVersion ?? installedInfo?.version ?? "Unavailable"
-            bundledVersionDetails = Self.versionDetails(from: referenceInfo)
+            latestVersionDetails = Self.manifestVersionDetails(from: manifestVersionResult)
             installedVersionDetails = Self.versionDetails(from: installedInfo)
             statusText = Self.statusText(for: state.lastInstallStatus)
             let combinedError = Self.combinedError(
                 primary: state.lastError,
-                referenceVersionError: Self.errorDescription(from: referenceInfoResult, prefix: "Reference version read failed"),
+                referenceVersionError: Self.errorDescription(from: manifestVersionResult, prefix: "Latest version read failed"),
                 installedVersionError: Self.errorDescription(from: installedInfoResult, prefix: "Installed version read failed")
             )
             lastError = installedInfo != nil ? nil : Self.shortVisibleError(from: combinedError)
@@ -54,7 +58,8 @@ final class OverviewViewModel: ObservableObject {
         } catch {
             statusText = "Error"
             lastError = error.localizedDescription
-            bundledVersionDetails = "Unavailable"
+            latestVersion = "Unavailable"
+            latestVersionDetails = "Unavailable"
             installedVersionDetails = "Unavailable"
             fputs("[Bears][refresh] \(error.localizedDescription)\n", stderr)
         }
@@ -63,19 +68,19 @@ final class OverviewViewModel: ObservableObject {
     func repairInstall() {
         do {
             let state = try installManager.repairInstall()
-            let referenceInfoResult = Result { try installManager.referenceAdapterVersion() }
+            let manifestVersionResult = installManager.currentManifestVersion()
             let installedInfoResult = Result { try installManager.installedAdapterVersion() }
-            let referenceInfo = try? referenceInfoResult.get()
+            let manifestVersion = try? manifestVersionResult.get()
             let installedInfo = try? installedInfoResult.get()
             installState = state
-            bundledVersion = state.bundledVersion ?? referenceInfo?.version ?? "Unavailable"
+            latestVersion = manifestVersion ?? "Unavailable"
             installedVersion = state.installedVersion ?? installedInfo?.version ?? "Unavailable"
-            bundledVersionDetails = Self.versionDetails(from: referenceInfo)
+            latestVersionDetails = Self.manifestVersionDetails(from: manifestVersionResult)
             installedVersionDetails = Self.versionDetails(from: installedInfo)
             statusText = Self.statusText(for: state.lastInstallStatus)
             let combinedError = Self.combinedError(
                 primary: state.lastError,
-                referenceVersionError: Self.errorDescription(from: referenceInfoResult, prefix: "Reference version read failed"),
+                referenceVersionError: Self.errorDescription(from: manifestVersionResult, prefix: "Latest version read failed"),
                 installedVersionError: Self.errorDescription(from: installedInfoResult, prefix: "Installed version read failed")
             )
             lastError = installedInfo != nil ? nil : Self.shortVisibleError(from: combinedError)
@@ -85,7 +90,8 @@ final class OverviewViewModel: ObservableObject {
         } catch {
             statusText = "Error"
             lastError = error.localizedDescription
-            bundledVersionDetails = "Unavailable"
+            latestVersion = "Unavailable"
+            latestVersionDetails = "Unavailable"
             installedVersionDetails = "Unavailable"
             fputs("[Bears][repairInstall] \(error.localizedDescription)\n", stderr)
         }
@@ -106,6 +112,15 @@ final class OverviewViewModel: ObservableObject {
         ].joined(separator: "\n")
     }
 
+    private static func manifestVersionDetails(from result: Result<String?, Error>) -> String {
+        switch result {
+        case .success(let version):
+            return version.map { "version=\($0)" } ?? "Latest version unavailable from manifest"
+        case .failure(let error):
+            return "Latest version unavailable: \(error.localizedDescription)"
+        }
+    }
+
     private static func errorDescription<T>(from result: Result<T, Error>, prefix: String) -> String? {
         switch result {
         case .success:
@@ -116,7 +131,7 @@ final class OverviewViewModel: ObservableObject {
     }
 
     func versionDetails(forInstalledVersion: Bool) -> String {
-        forInstalledVersion ? installedVersionDetails : bundledVersionDetails
+        forInstalledVersion ? installedVersionDetails : latestVersionDetails
     }
 
     func copyManagedAdapterPath() {
@@ -142,7 +157,7 @@ final class OverviewViewModel: ObservableObject {
         if forInstalledVersion {
             installedVersionCopied = true
         } else {
-            bundledVersionCopied = true
+            latestVersionCopied = true
         }
 
         Task {
@@ -150,7 +165,7 @@ final class OverviewViewModel: ObservableObject {
             if forInstalledVersion {
                 installedVersionCopied = false
             } else {
-                bundledVersionCopied = false
+                latestVersionCopied = false
             }
         }
     }
