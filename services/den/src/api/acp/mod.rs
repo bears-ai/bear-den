@@ -130,8 +130,8 @@ pub(crate) use self::config::{
     acp_text_chunk_chars, acp_tool_timeout_ms_for_provider,
 };
 pub(crate) use self::http_types::{
-    AcpConversationHistoryMessage, AcpConversationRow, AcpErrorResponse, AcpPromptRequest,
-    AcpToolResultResponse,
+    AcpCompactionStatusResponse, AcpConversationHistoryMessage, AcpConversationRow,
+    AcpErrorResponse, AcpPromptRequest, AcpToolResultResponse,
 };
 use self::http_types::{
     AcpAdapterEnvironmentRequest, AcpCloseSessionResponse, AcpConversationHistoryQuery,

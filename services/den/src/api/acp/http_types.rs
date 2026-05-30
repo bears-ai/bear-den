@@ -155,11 +155,27 @@ pub(crate) struct AcpConversationHistoryMessage {
 }
 
 #[derive(Debug, Serialize)]
+pub(crate) struct AcpCompactionStatusResponse {
+    pub(super) status: String,
+    pub(super) policy_version: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) source_group_start: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) source_group_end: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) diagnostic: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) artifact: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Serialize)]
 pub(super) struct AcpConversationHistoryResponse {
     pub(super) messages: Vec<AcpConversationHistoryMessage>,
     pub(super) has_more: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(super) next_before: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) compaction: Option<AcpCompactionStatusResponse>,
 }
 
 #[derive(Debug, Deserialize)]

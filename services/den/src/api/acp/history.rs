@@ -21,7 +21,9 @@ use crate::{
     errors::CustomError,
 };
 
-use super::{format_acp_session_timestamp, AcpConversationHistoryMessage};
+use super::{
+    format_acp_session_timestamp, AcpCompactionStatusResponse, AcpConversationHistoryMessage,
+};
 
 pub(crate) fn normalize_acp_conversation_id(raw: Option<&str>) -> Result<String, CustomError> {
     let s = raw
@@ -238,6 +240,37 @@ fn runtime_user_message_role_is_human(inner: &serde_json::Value, msg: &serde_jso
         }
     }
     true
+}
+
+pub(crate) fn map_compaction_status_for_history(
+    conversation_id: &str,
+    body: &serde_json::Value,
+) -> AcpCompactionStatusResponse {
+    let event = runtime_compaction_event_for_history(
+        conversation_id,
+        body,
+        RuntimeCompactionTriggerKind::SemanticGroupCount,
+    );
+    let status = match event.status {
+        crate::core::runtime_compaction_observability::RuntimeCompactionEventStatus::Applied => {
+            "applied"
+        }
+        crate::core::runtime_compaction_observability::RuntimeCompactionEventStatus::Skipped => {
+            "skipped"
+        }
+        crate::core::runtime_compaction_observability::RuntimeCompactionEventStatus::Failed => {
+            "failed"
+        }
+    }
+    .to_string();
+    AcpCompactionStatusResponse {
+        status,
+        policy_version: event.policy_version,
+        source_group_start: event.source_group_start,
+        source_group_end: event.source_group_end,
+        diagnostic: event.diagnostic,
+        artifact: event.artifact.and_then(|artifact| serde_json::to_value(artifact).ok()),
+    }
 }
 
 pub(super) fn map_acp_history_page(

@@ -18,7 +18,7 @@ use crate::{
 };
 
 use crate::api::acp::{
-    history::map_acp_history_page,
+    history::{map_acp_history_page, map_compaction_status_for_history},
     normalize_acp_conversation_id,
     responses::acp_error_response,
     AcpConversationHistoryQuery, AcpConversationHistoryResponse, AcpConversationRow,
@@ -133,6 +133,7 @@ pub(super) async fn conversation_history_inner(
             messages: vec![],
             has_more: false,
             next_before: None,
+            compaction: None,
         })
         .into_response());
     }
@@ -169,10 +170,12 @@ pub(super) async fn conversation_history_inner(
         .list_conversation_messages(&conv_id, binding_for_conv, limit, before, false)
         .await?;
     let (messages, has_more, next_before) = map_acp_history_page(&body, limit);
+    let compaction = Some(map_compaction_status_for_history(&conv_id, &body));
     Ok(Json(AcpConversationHistoryResponse {
         messages,
         has_more,
         next_before,
+        compaction,
     })
     .into_response())
 }
