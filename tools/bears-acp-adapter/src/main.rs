@@ -1435,6 +1435,23 @@ impl RuntimeConfig {
                 "--check-config" => check_config = true,
                 "--check-server" => check_server = true,
                 "doctor" | "--doctor" => doctor = true,
+                "version" => {
+                    match args.next().as_deref() {
+                        Some("--json") => {
+                            print_version_json_to_stdout()?;
+                            std::process::exit(0);
+                        }
+                        Some(unexpected) => {
+                            return Err(anyhow!(
+                                "unknown argument {unexpected:?} for `version`; use `bears-acp-adapter version --json`"
+                            ));
+                        }
+                        None => {
+                            print_version_to_stderr();
+                            std::process::exit(0);
+                        }
+                    }
+                }
                 "--version" | "-V" => {
                     print_version_to_stderr();
                     std::process::exit(0);
@@ -1586,15 +1603,52 @@ fn require_arg_value(flag: &str, value: Option<String>) -> Result<String> {
     value.ok_or_else(|| anyhow!("{flag} requires a value"))
 }
 
+#[derive(Serialize)]
+struct AdapterVersionInfo<'a> {
+    name: &'a str,
+    version: &'a str,
+    build_git_sha: &'a str,
+    built_at_utc: &'a str,
+    local_head_sha: String,
+    supports_session_list: bool,
+    supports_session_resume: bool,
+    supports_session_load: bool,
+    direct_tools: Value,
+    chrome_tools: String,
+}
+
+fn adapter_version_info() -> AdapterVersionInfo<'static> {
+    AdapterVersionInfo {
+        name: "bears-acp-adapter",
+        version: adapter_version(),
+        build_git_sha: env!("BEARS_ACP_ADAPTER_GIT_SHA"),
+        built_at_utc: env!("BEARS_ACP_ADAPTER_BUILT_AT_UTC"),
+        local_head_sha: local_head_sha(),
+        supports_session_list: true,
+        supports_session_resume: true,
+        supports_session_load: true,
+        direct_tools: direct_tools_context(),
+        chrome_tools: chrome_capability_status_line(),
+    }
+}
+
 fn print_version_to_stderr() {
+    let info = adapter_version_info();
     eprintln!(
-        "bears-acp-adapter {}\nBuild git SHA: {}\nLocal HEAD SHA: {}\nACP sessions: list/resume/load; conversations bound via Den\nDirect tools: {}\nChrome tools: {}",
-        adapter_version(),
-        env!("BEARS_ACP_ADAPTER_GIT_SHA"),
-        local_head_sha(),
-        direct_tools_context(),
-        chrome_capability_status_line()
+        "{} {}\nBuild git SHA: {}\nBuilt at UTC: {}\nLocal HEAD SHA: {}\nACP sessions: list/resume/load; conversations bound via Den\nDirect tools: {}\nChrome tools: {}",
+        info.name,
+        info.version,
+        info.build_git_sha,
+        info.built_at_utc,
+        info.local_head_sha,
+        info.direct_tools,
+        info.chrome_tools,
     );
+}
+
+fn print_version_json_to_stdout() -> Result<()> {
+    println!("{}", serde_json::to_string_pretty(&adapter_version_info())?);
+    Ok(())
 }
 
 fn local_head_sha() -> String {
@@ -1628,8 +1682,8 @@ fn print_browser_bridge_help_to_stderr() {
 fn print_help_to_stderr() {
     eprintln!(
         "bears-acp-adapter {}\nBuild git SHA: {}\nLocal HEAD SHA: {}\nACP sessions: list/resume/load; conversations bound via Den\n\n\
-Usage: bears-acp-adapter --api-url <url> --bear <slug> [--client zed] [--token-env DEN_TOKEN]\n       bears-acp-adapter doctor\n       bears-acp-adapter update-check [--channel stable]\n       bears-acp-adapter update [--open|--install|--download-only] [--yes]\n       bears-acp-adapter browser-bridge [--bind 127.0.0.1:3766] [--path /mcp] [--token <token>]\n\n\
-Options:\n  --api-url <url>        Den API origin, for example https://api.bears.example\n  --bear <slug>          Bear slug to chat with\n  --token <token>        Den ACP token with acp:chat scope\n  --token-env <env-var>  Read the Den bearer token from this environment variable\n  --client <name>        Client label: zed, opencode, or acp_adapter\n  --check-config         Validate configuration and exit without starting ACP stdio\n  --check-server         Fetch Den /version and exit without starting ACP stdio\n  doctor, --doctor       Run user-friendly setup checks and exit\n  update-check           Check for a newer signed macOS package\n  update                 Download, verify, and install/open a newer macOS package\n  browser-bridge         Serve browser-only MCP tools over local Streamable HTTP\n  --version              Show version/build behavior and exit\n  --help                 Show this help\n\n\
+Usage: bears-acp-adapter --api-url <url> --bear <slug> [--client zed] [--token-env DEN_TOKEN]\n       bears-acp-adapter doctor\n       bears-acp-adapter version [--json]\n       bears-acp-adapter update-check [--channel stable]\n       bears-acp-adapter update [--open|--install|--download-only] [--yes]\n       bears-acp-adapter browser-bridge [--bind 127.0.0.1:3766] [--path /mcp] [--token <token>]\n\n\
+Options:\n  --api-url <url>        Den API origin, for example https://api.bears.example\n  --bear <slug>          Bear slug to chat with\n  --token <token>        Den ACP token with acp:chat scope\n  --token-env <env-var>  Read the Den bearer token from this environment variable\n  --client <name>        Client label: zed, opencode, or acp_adapter\n  --check-config         Validate configuration and exit without starting ACP stdio\n  --check-server         Fetch Den /version and exit without starting ACP stdio\n  doctor, --doctor       Run user-friendly setup checks and exit\n  version --json         Emit machine-readable version/build metadata\n  update-check           Check for a newer signed macOS package\n  update                 Download, verify, and install/open a newer macOS package\n  browser-bridge         Serve browser-only MCP tools over local Streamable HTTP\n  --version              Show version/build behavior and exit\n  --help                 Show this help\n\n\
 Environment fallbacks:\n  DEN_API_URL\n  BEAR_SLUG\n  DEN_TOKEN\n  DEN_TOKEN_ENV\n  BEARS_ACP_CLIENT\n  BEARS_ACP_UPDATE_CHANNEL\n  BEARS_ACP_UPDATE_MANIFEST_URL\n\n\
 DEN_API_URL should be the API origin only, not the full /acp/bears/... endpoint.",
         adapter_version(),
