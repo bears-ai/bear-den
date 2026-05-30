@@ -8,6 +8,7 @@ protocol AdapterInstallManaging {
 
 protocol AdapterVersionProviding {
     func bundledAdapterVersion() throws -> AdapterVersionInfo
+    func referenceAdapterVersion() throws -> AdapterVersionInfo
     func installedAdapterVersion() throws -> AdapterVersionInfo
 }
 

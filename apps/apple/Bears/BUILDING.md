@@ -18,7 +18,18 @@ It builds a minimal macOS executable app target named `BearsApp`.
 
 ## Prepare the bundled adapter resource
 
-Use the helper script to prepare the adapter resource automatically:
+## Adapter source options
+
+The app now supports two adapter-install sources:
+
+1. a bundled adapter resource inside the app target, if present;
+2. a downloaded macOS adapter artifact, if no bundled adapter is present.
+
+This preview app is currently intended only for Apple Silicon Macs.
+
+### Optional local bundled adapter for development
+
+Use the helper script to prepare the bundled adapter resource automatically:
 
 ```bash
 cd apps/apple/Bears
@@ -38,7 +49,7 @@ cd apps/apple/Bears
 PROFILE=release bash Scripts/prepare_adapter.sh
 ```
 
-You can also point at an explicit prebuilt adapter binary, which is useful on hosts without Rust tooling or in future CI packaging flows:
+You can also point at an explicit prebuilt adapter binary:
 
 ```bash
 cd apps/apple/Bears
@@ -49,7 +60,21 @@ The script places the adapter at:
 
 - `apps/apple/Bears/BearsApp/Resources/Adapter/bears-acp-adapter`
 
-This is intentionally compatible with a future GitHub Actions pipeline: CI can invoke the same script before building and packaging the app, while either reusing a previously built adapter artifact or providing an explicit adapter path.
+### Remote download fallback
+
+If no bundled adapter is present, the app will try to download a macOS adapter artifact.
+
+By default it uses:
+
+- `https://bears-ai.github.io/bear-den/bears-acp-adapter/stable/bears-acp-adapter-aarch64-apple-darwin.pkg`
+
+You can override that for development with:
+
+```bash
+BEARS_ADAPTER_DOWNLOAD_URL=https://example.com/path/to/bears-acp-adapter xcrun swift run Bears
+```
+
+The remote artifact must be a macOS Mach-O executable, not a Linux container-built binary.
 
 ## Build
 

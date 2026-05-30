@@ -25,13 +25,13 @@ final class OverviewViewModel: ObservableObject {
 
     func refresh() {
         do {
-            let bundledInfo = try? installManager.bundledAdapterVersion()
+            let referenceInfo = try? installManager.referenceAdapterVersion()
             let installedInfo = try? installManager.installedAdapterVersion()
             let state = try installManager.inspectInstallState()
             installState = state
-            bundledVersion = state.bundledVersion ?? bundledInfo?.version ?? "Unavailable"
+            bundledVersion = state.bundledVersion ?? referenceInfo?.version ?? "Unavailable"
             installedVersion = state.installedVersion ?? installedInfo?.version ?? "Unavailable"
-            bundledVersionDetails = Self.versionDetails(from: bundledInfo)
+            bundledVersionDetails = Self.versionDetails(from: referenceInfo)
             installedVersionDetails = Self.versionDetails(from: installedInfo)
             statusText = Self.statusText(for: state.lastInstallStatus)
             lastError = state.lastError
@@ -47,12 +47,12 @@ final class OverviewViewModel: ObservableObject {
     func repairInstall() {
         do {
             let state = try installManager.repairInstall()
-            let bundledInfo = try? installManager.bundledAdapterVersion()
+            let referenceInfo = try? installManager.referenceAdapterVersion()
             let installedInfo = try? installManager.installedAdapterVersion()
             installState = state
-            bundledVersion = state.bundledVersion ?? bundledInfo?.version ?? "Unavailable"
+            bundledVersion = state.bundledVersion ?? referenceInfo?.version ?? "Unavailable"
             installedVersion = state.installedVersion ?? installedInfo?.version ?? "Unavailable"
-            bundledVersionDetails = Self.versionDetails(from: bundledInfo)
+            bundledVersionDetails = Self.versionDetails(from: referenceInfo)
             installedVersionDetails = Self.versionDetails(from: installedInfo)
             statusText = Self.statusText(for: state.lastInstallStatus)
             lastError = state.lastError
@@ -72,9 +72,10 @@ final class OverviewViewModel: ObservableObject {
 
         return [
             "version=\(info.version)",
-            "gitSha=\(info.gitSha ?? \"n/a\")",
-            "localHeadSha=\(info.localHeadSha ?? \"n/a\")",
-            "builtAtUTC=\(info.builtAtUTC?.description ?? \"n/a\")"
+            "buildGitSha=\(info.buildGitSha)",
+            "localHeadSha=\(info.localHeadSha)",
+            "builtAtUTC=\(info.builtAtUtc)",
+            "chromeTools=\(info.chromeTools)"
         ].joined(separator: "\n")
     }
 

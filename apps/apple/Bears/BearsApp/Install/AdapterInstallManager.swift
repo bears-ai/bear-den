@@ -3,6 +3,8 @@ import Foundation
 struct AdapterInstallManager: AdapterInstallManaging, AdapterVersionProviding {
     private let pathProvider: BearsPathResolver
     private let bundledAdapterLocator: BundledAdapterLocating
+    private let artifactSourceProvider: AdapterArtifactSourceProviding
+    private let artifactDownloader: AdapterArtifactDownloading
     private let processRunner: ProcessRunning
     private let fileManager: FileManager
     private let jsonDecoder: JSONDecoder
@@ -11,11 +13,15 @@ struct AdapterInstallManager: AdapterInstallManaging, AdapterVersionProviding {
     init(
         pathProvider: BearsPathResolver = BearsPathResolver(),
         bundledAdapterLocator: BundledAdapterLocating = BundledAdapterLocator(),
+        artifactSourceProvider: AdapterArtifactSourceProviding = GitHubReleaseAdapterSource(),
+        artifactDownloader: AdapterArtifactDownloading = URLSessionAdapterArtifactDownloader(),
         processRunner: ProcessRunning = FoundationProcessRunner(),
         fileManager: FileManager = .default
     ) {
         self.pathProvider = pathProvider
         self.bundledAdapterLocator = bundledAdapterLocator
+        self.artifactSourceProvider = artifactSourceProvider
+        self.artifactDownloader = artifactDownloader
         self.processRunner = processRunner
         self.fileManager = fileManager
 
@@ -73,24 +79,26 @@ struct AdapterInstallManager: AdapterInstallManaging, AdapterVersionProviding {
     func repairInstall() throws -> InstallState {
         try pathProvider.ensureManagedDirectoriesExist()
 
-        let bundledAdapterURL = try bundledAdapterLocator.bundledAdapterExecutableURL()
+        let sourceAdapterURL = try resolveInstallSourceAdapterURL()
         if fileManager.fileExists(atPath: pathProvider.managedAdapterPath.path) {
             try fileManager.removeItem(at: pathProvider.managedAdapterPath)
         }
-        try fileManager.copyItem(at: bundledAdapterURL, to: pathProvider.managedAdapterPath)
+        try fileManager.copyItem(at: sourceAdapterURL, to: pathProvider.managedAdapterPath)
         try makeExecutable(pathProvider.managedAdapterPath)
 
-        let installedVersion = try? installedAdapterVersion().version
-        let bundledVersion = try? bundledAdapterVersion().version
-        let isCompatible = versionsAreCompatible(installedVersion: installedVersion, bundledVersion: bundledVersion)
+        let installedInfo = try? installedAdapterVersion()
+        let bundledInfo = try? bundledAdapterVersion()
+        let installedVersion = installedInfo?.version
+        let referenceVersion = bundledInfo?.version ?? installedVersion
+        let isCompatible = versionsAreCompatible(installedVersion: installedVersion, bundledVersion: referenceVersion)
         let status: InstallStatus = isCompatible ? .ok : .repairNeeded
         let repairedState = InstallState(
             managedAdapterPath: pathProvider.managedAdapterPath.path,
             installedVersion: installedVersion,
-            bundledVersion: bundledVersion,
+            bundledVersion: referenceVersion,
             installedAt: Date(),
             lastInstallStatus: status,
-            lastError: status == .ok ? nil : "Installed adapter is incompatible with bundled adapter. Patch-level differences are allowed, but major/minor versions must match."
+            lastError: status == .ok ? nil : "Installed adapter is incompatible with the app's reference adapter version. Patch-level differences are allowed, but major/minor versions must match."
         )
 
         try persistInstallState(repairedState)
@@ -99,6 +107,26 @@ struct AdapterInstallManager: AdapterInstallManaging, AdapterVersionProviding {
 
     func bundledAdapterVersion() throws -> AdapterVersionInfo {
         try readVersionInfo(from: bundledAdapterLocator.bundledAdapterExecutableURL())
+    }
+
+    func referenceAdapterVersion() throws -> AdapterVersionInfo {
+        if let bundledInfo = try? bundledAdapterVersion() {
+            return bundledInfo
+        }
+
+        let source = try artifactSourceProvider.latestMacOSArtifactSource()
+        return AdapterVersionInfo(
+            name: "bears-acp-adapter",
+            version: source.versionHint ?? "latest",
+            buildGitSha: "remote",
+            builtAtUtc: "n/a",
+            localHeadSha: "n/a",
+            supportsSessionList: false,
+            supportsSessionResume: false,
+            supportsSessionLoad: false,
+            directTools: nil,
+            chromeTools: "unknown"
+        )
     }
 
     func installedAdapterVersion() throws -> AdapterVersionInfo {
@@ -124,6 +152,10 @@ struct AdapterInstallManager: AdapterInstallManaging, AdapterVersionProviding {
             return false
         }
 
+        if bundledVersion == "latest" {
+            return true
+        }
+
         guard
             let installedSemanticVersion = SemanticVersion(parsing: installedVersion),
             let bundledSemanticVersion = SemanticVersion(parsing: bundledVersion)
@@ -132,6 +164,15 @@ struct AdapterInstallManager: AdapterInstallManaging, AdapterVersionProviding {
         }
 
         return installedSemanticVersion.isCompatiblePatchwise(with: bundledSemanticVersion)
+    }
+
+    private func resolveInstallSourceAdapterURL() throws -> URL {
+        if let bundledURL = try? bundledAdapterLocator.bundledAdapterExecutableURL() {
+            return bundledURL
+        }
+
+        let source = try artifactSourceProvider.latestMacOSArtifactSource()
+        return try artifactDownloader.downloadArtifact(from: source)
     }
 
     private func makeExecutable(_ url: URL) throws {

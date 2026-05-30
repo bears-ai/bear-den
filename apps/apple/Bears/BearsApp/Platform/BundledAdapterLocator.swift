@@ -11,7 +11,7 @@ enum BundledAdapterLocatorError: LocalizedError {
         switch self {
         case .missingResource(let checkedPaths):
             let details = checkedPaths.isEmpty ? "No candidate paths were checked." : checkedPaths.joined(separator: "\n")
-            return "The Bears app bundle does not contain a bundled bears-acp-adapter executable yet. Checked:\n\(details)"
+            return "The Bears app bundle does not contain a bundled bears-acp-adapter executable. The app can fall back to downloading one if configured. Checked:\n\(details)"
         }
     }
 }
