@@ -26,7 +26,7 @@ enum GitHubReleaseAdapterSourceError: LocalizedError {
 struct MacOSAdapterManifest: Decodable {
     let version: String?
     let pkgURL: String
-    let pkgSha256: String?
+    let sha256: String?
     let releaseNotesURL: String?
 }
 
