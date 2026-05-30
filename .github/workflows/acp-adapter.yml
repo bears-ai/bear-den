@@ -514,15 +514,28 @@ jobs:
                   root = pathlib.Path(sys.argv[1])
                   expected = sys.argv[2]
                   failed = False
+                  simple_manifests = {"macos.json"}
+
                   for manifest_path in sorted(root.glob("*.json")):
                       manifest = json.loads(manifest_path.read_text())
                       actual = manifest.get("version")
                       if actual != expected:
                           print(f"::error file={manifest_path}::manifest version {actual!r} != expected {expected!r}")
                           failed = True
+
+                      if manifest_path.name in simple_manifests:
+                          if not manifest.get("pkg_url"):
+                              print(f"::error file={manifest_path}::simple manifest missing pkg_url")
+                              failed = True
+                          if not manifest.get("sha256"):
+                              print(f"::error file={manifest_path}::simple manifest missing sha256")
+                              failed = True
+                          continue
+
                       if not manifest.get("platforms"):
                           print(f"::error file={manifest_path}::manifest has no platforms")
                           failed = True
+
                   if failed:
                       raise SystemExit(1)
                   PY
