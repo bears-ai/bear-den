@@ -695,7 +695,6 @@ mod tests {
         routing::post,
         Json, Router,
     };
-    use serde_json::json;
     use sqlx::postgres::PgPoolOptions;
     use std::sync::Arc;
     use tokio::sync::Mutex as TokioMutex;
