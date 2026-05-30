@@ -1,25 +1,33 @@
 import Foundation
 
-struct AdapterInstallManager: AdapterInstallManaging {
+struct AdapterInstallManager: AdapterInstallManaging, AdapterVersionProviding {
     private let pathProvider: BearsPathResolver
+    private let bundledAdapterLocator: BundledAdapterLocating
+    private let processRunner: ProcessRunning
     private let fileManager: FileManager
     private let jsonDecoder: JSONDecoder
     private let jsonEncoder: JSONEncoder
 
     init(
         pathProvider: BearsPathResolver = BearsPathResolver(),
+        bundledAdapterLocator: BundledAdapterLocating = BundledAdapterLocator(),
+        processRunner: ProcessRunning = FoundationProcessRunner(),
         fileManager: FileManager = .default
     ) {
         self.pathProvider = pathProvider
+        self.bundledAdapterLocator = bundledAdapterLocator
+        self.processRunner = processRunner
         self.fileManager = fileManager
 
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
         self.jsonDecoder = decoder
 
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         encoder.dateEncodingStrategy = .iso8601
+        encoder.keyEncodingStrategy = .convertToSnakeCase
         self.jsonEncoder = encoder
     }
 
@@ -33,31 +41,87 @@ struct AdapterInstallManager: AdapterInstallManaging {
     }
 
     func inspectInstallState() throws -> InstallState {
-        if let state = try loadInstallState() {
+        let managedAdapterExists = fileManager.fileExists(atPath: pathProvider.managedAdapterPath.path)
+
+        guard managedAdapterExists else {
+            let state = InstallState(
+                managedAdapterPath: pathProvider.managedAdapterPath.path,
+                bundledVersion: try? bundledAdapterVersion().version,
+                lastInstallStatus: .missing,
+                lastError: nil
+            )
+            try persistInstallState(state)
             return state
         }
 
-        return InstallState(
+        let installedVersion = try? installedAdapterVersion().version
+        let bundledVersion = try? bundledAdapterVersion().version
+        let status: InstallStatus = (installedVersion != nil && bundledVersion != nil && installedVersion == bundledVersion) ? .ok : .repairNeeded
+        let state = InstallState(
             managedAdapterPath: pathProvider.managedAdapterPath.path,
-            lastInstallStatus: fileManager.fileExists(atPath: pathProvider.managedAdapterPath.path) ? .repairNeeded : .missing,
-            lastError: nil
+            installedVersion: installedVersion,
+            bundledVersion: bundledVersion,
+            installedAt: try loadInstallState()?.installedAt,
+            lastInstallStatus: status,
+            lastError: status == .ok ? nil : "Managed adapter is missing version parity with bundled adapter."
         )
+        try persistInstallState(state)
+        return state
     }
 
     func repairInstall() throws -> InstallState {
         try pathProvider.ensureManagedDirectoriesExist()
 
+        let bundledAdapterURL = try bundledAdapterLocator.bundledAdapterExecutableURL()
+        if fileManager.fileExists(atPath: pathProvider.managedAdapterPath.path) {
+            try fileManager.removeItem(at: pathProvider.managedAdapterPath)
+        }
+        try fileManager.copyItem(at: bundledAdapterURL, to: pathProvider.managedAdapterPath)
+        try makeExecutable(pathProvider.managedAdapterPath)
+
+        let installedVersion = try? installedAdapterVersion().version
+        let bundledVersion = try? bundledAdapterVersion().version
+        let status: InstallStatus = (installedVersion != nil && bundledVersion != nil && installedVersion == bundledVersion) ? .ok : .repairNeeded
         let repairedState = InstallState(
             managedAdapterPath: pathProvider.managedAdapterPath.path,
-            installedVersion: nil,
-            bundledVersion: nil,
+            installedVersion: installedVersion,
+            bundledVersion: bundledVersion,
             installedAt: Date(),
-            lastInstallStatus: .repairNeeded,
-            lastError: "Adapter copy/install wiring not implemented yet."
+            lastInstallStatus: status,
+            lastError: status == .ok ? nil : "Installed adapter version does not match bundled adapter version."
         )
 
         try persistInstallState(repairedState)
         return repairedState
+    }
+
+    func bundledAdapterVersion() throws -> AdapterVersionInfo {
+        try readVersionInfo(from: bundledAdapterLocator.bundledAdapterExecutableURL())
+    }
+
+    func installedAdapterVersion() throws -> AdapterVersionInfo {
+        try readVersionInfo(from: pathProvider.managedAdapterPath)
+    }
+
+    private func readVersionInfo(from executableURL: URL) throws -> AdapterVersionInfo {
+        let result = try processRunner.run(executableURL, arguments: ["version", "--json"])
+        guard result.terminationStatus == 0 else {
+            throw NSError(
+                domain: "Bears.AdapterInstallManager",
+                code: Int(result.terminationStatus),
+                userInfo: [NSLocalizedDescriptionKey: result.standardError.isEmpty ? "Failed to read adapter version metadata." : result.standardError]
+            )
+        }
+
+        let data = Data(result.standardOutput.utf8)
+        return try jsonDecoder.decode(AdapterVersionInfo.self, from: data)
+    }
+
+    private func makeExecutable(_ url: URL) throws {
+        var values = URLResourceValues()
+        values.isExecutable = true
+        var mutableURL = url
+        try mutableURL.setResourceValues(values)
     }
 
     private func persistInstallState(_ installState: InstallState) throws {
