@@ -24,3 +24,4 @@ Common statuses in this repository include:
 - Prefer updating an existing ADR over creating near-duplicate decision records.
 - Link to ADRs from architecture, guides, and planning docs when those docs depend on a durable decision.
 - Avoid scattering ADR files outside `docs/decisions/`.
+- Link ADRs to supporting research notes when the decision depends on a longer comparative analysis.

@@ -23,6 +23,7 @@ Human-oriented documentation, operational notes, contributor guides, troubleshoo
 - [letta bear ui exposure](letta-bear-ui-exposure.md)
 - [letta migration plan](letta-migration-plan.md)
 - [rename from starter](rename-from-starter.md)
+- [context compaction comparative report](../research/context-compaction-comparative-report.md)
 
 ## Deployment
 
