@@ -7,8 +7,8 @@ use crate::{
             DEN_JOB_SETTLE_TASK, DEN_JOB_SETTLE_TASK_PROVIDER, DEN_MEMORY_WRITE_ENTRY_PROVIDER,
             DEN_PROMPT_MEMORY_UPSERT_PROVIDER, DEN_RUNTIME_DIAGNOSTICS_LIST_PROVIDER,
             DEN_SITUATION_GET_PROVIDER, DEN_TASK_CREATE_PROVIDER, DEN_TASK_FOCUS_PROVIDER,
-            DEN_TASK_LISTS_UPDATE_PROVIDER, DEN_TASK_LIST_CHECKOUT_PROVIDER,
-            DEN_TASK_LIST_PROVIDER, DEN_TASK_SELECT_PROVIDER,
+            DEN_TASK_LISTS_REQUEST_HANDOFF_PROVIDER, DEN_TASK_LISTS_UPDATE_PROVIDER,
+            DEN_TASK_LIST_CHECKOUT_PROVIDER, DEN_TASK_LIST_PROVIDER, DEN_TASK_SELECT_PROVIDER,
             DEN_TASK_UPDATE_CURRENT_STATUS_PROVIDER,
         },
         descriptor::{builtin_den_tool_descriptors, builtin_den_tool_descriptors_for_profile},
@@ -342,4 +342,29 @@ fn docket_work_descriptors_keep_execution_evidence_and_surfaces_explicit() {
             .unwrap_or_else(|| panic!("{provider_name} descriptor"));
         assert!(descriptor.description.contains(expected_handle));
     }
+}
+
+#[test]
+fn task_list_handoff_descriptor_does_not_require_a_server_owned_projection() {
+    let descriptor = builtin_den_tool_descriptors()
+        .into_iter()
+        .find(|descriptor| descriptor.provider_name == DEN_TASK_LISTS_REQUEST_HANDOFF_PROVIDER)
+        .expect("request_task_list_handoff descriptor");
+
+    let properties = descriptor.input_schema["properties"]
+        .as_object()
+        .expect("handoff properties");
+    assert!(
+        !properties.contains_key("task_list"),
+        "the runtime must derive the task-list projection from session context"
+    );
+    assert!(
+        !properties.contains_key("title") && !properties.contains_key("summary"),
+        "the request should not repeat metadata already held by the task list"
+    );
+    assert_eq!(
+        descriptor.input_schema["required"],
+        serde_json::json!(["requested_outcome"]),
+        "only the desired handoff outcome belongs in an ordinary request"
+    );
 }

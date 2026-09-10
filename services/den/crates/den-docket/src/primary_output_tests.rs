@@ -31,6 +31,18 @@ fn accepts_report_only_completion_without_output_evidence() {
 }
 
 #[test]
+fn accepts_report_only_completion_with_model_validation_metadata() {
+    assert!(validate_primary_output_evidence(Some(&json!({
+        "validation": {
+            "command": "cargo test -p den-docket",
+            "result": "passed",
+            "execution_provenance": "model report"
+        }
+    })))
+    .is_ok());
+}
+
+#[test]
 fn rejects_incomplete_primary_output_evidence() {
     assert!(validate_primary_output_evidence(Some(&json!({
         "primary_output": {
